@@ -4,7 +4,24 @@
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
 
 > **Purpose**: Establish the canonical repository scaffold, the single `infernix` Haskell
-> executable, and the supported host or container operator modes that all later phases build on.
+> executable, the supported control-plane execution contexts, and the runtime-mode selection
+> baseline that all later phases build on.
+
+## Current Repo Assessment
+
+The repository already has a Haskell project, a single executable, and repo-local build and data
+roots. The missing closure work is that those surfaces do not yet fully encode the three runtime
+modes or the generated mode-specific demo-config contract.
+
+## Runtime-Mode Foundation
+
+This phase owns the baseline distinction between execution context and runtime mode.
+
+- execution context answers where `infernix` runs
+- runtime mode answers which README-matrix engine column is active
+- the canonical runtime-mode ids are `apple-silicon`, `linux-cpu`, and `linux-cuda`
+- later phases consume those ids when staging and publishing `infernix-demo-<mode>.dhall`,
+  building UI catalog state, selecting runtime bindings, and reporting test results
 
 ## Sprint 1.1: Canonical Repository Scaffold [Active]
 
@@ -22,14 +39,18 @@ Create the repository skeleton described in [00-overview.md](00-overview.md).
 - the repo-owned `cabal.project` encodes the default host-native Cabal build doctrine, including
   artifact placement under `./.build/`
 - `proto/`, `chart/`, `kind/`, `docker/`, `test/`, and `web/` implementation directories, with `documents/` already supplied by Phase 0
-- root `.gitignore` and `.dockerignore` files that ignore `./.data/`, `./.claude/`, `./.build/`, generated `.dhall` build artifacts, and repo build artifacts
+- `proto/` is the authoritative home for repo-owned `.proto` schemas covering durable runtime
+  manifests and Pulsar topic payloads
+- root `.gitignore` and `.dockerignore` files that ignore `./.data/`, `./.claude/`, `./.build/`,
+  generated mode-specific `.dhall` build artifacts, and repo build artifacts
 - no competing `docs/` tree or alternate layout guide in the root README
 - one obvious home for service code, one for frontend code, and one for governed docs
 
 ### Validation
 
 - `find . -maxdepth 2 -type d | sort` shows the planned top-level directories
-- `.gitignore` and `.dockerignore` both exclude `.data/`, `.claude/`, `.build/`, generated `.dhall`, and compiled output paths
+- `.gitignore` and `.dockerignore` both exclude `.data/`, `.claude/`, `.build/`,
+  `infernix-demo-*.dhall`, and compiled output paths
 - `cabal build exe:infernix` succeeds on Apple Silicon without passing `--builddir` and produces
   `./.build/infernix` via the repo-owned `cabal.project`
 - `docker compose run --rm infernix cabal build exe:infernix --builddir=/opt/build/infernix` succeeds on the Linux outer-container path
@@ -37,7 +58,7 @@ Create the repository skeleton described in [00-overview.md](00-overview.md).
 ### Remaining Work
 
 - wire the Linux outer-container path into a validated `docker compose run --rm infernix ...` workflow
-- move host-side build artifact placement from wrapper-based `.build/infernix` execution to a repo-owned build-root doctrine that does not rely on unsupported Cabal config
+- make the ignore rules and repository scaffold reflect the mode-specific generated demo-config filenames
 
 ---
 
@@ -93,6 +114,10 @@ Additional rules:
 - CLI help and reference docs describe the declarative semantics of `cluster up`, `cluster down`,
   `cluster status`, `test ...`, and `docs check`, plus the repo-local kubeconfig behavior of
   `infernix kubectl ...`
+
+### Remaining Work
+
+None. Runtime-mode selection and generated demo-config semantics are expanded in Sprint 1.5.
 
 ---
 
@@ -150,9 +175,9 @@ different control-plane products.
 
 ### Objective
 
-Keep compiled artifacts out of tracked source paths and establish the webapp build path that
-generates frontend contracts without a standalone CLI codegen command, while making Haskell
-formatting, linting, and compiler hygiene enforceable through one canonical validation path.
+Keep compiled artifacts out of tracked source paths, establish the webapp build path that generates
+frontend contracts without a standalone CLI codegen command, and make Haskell formatting, linting,
+and compiler hygiene enforceable through one canonical validation path.
 
 ### Deliverables
 
@@ -166,11 +191,15 @@ formatting, linting, and compiler hygiene enforceable through one canonical vali
   `--builddir=/opt/build/infernix`
 - unqualified bare `cabal` invocations inside the supported container workflow are wrapped,
   rejected, or otherwise prevented from writing build artifacts into the mounted repo tree
-- `cluster up` auto-generates `./.build/infernix-test-config.dhall` on Apple and
-  `/opt/build/infernix/infernix-test-config.dhall` in the outer-container path
+- `cluster up` auto-generates `./.build/infernix-demo-<mode>.dhall` on Apple and
+  `/opt/build/infernix-demo-<mode>.dhall` in containerized execution contexts
+- in containerized execution contexts, `cluster up` publishes that generated content into
+  `ConfigMap/infernix-demo-config`, mounted at `/opt/build/`
+- the daemon looks for the active-mode `.dhall` in the same folder as its binary and actively
+  watches it there for changes
 - `cluster up` writes `./.build/infernix.kubeconfig` on Apple and
   `/opt/build/infernix/infernix.kubeconfig` in the outer-container path
-- the generated Dhall config enables all models appropriate for the active mode under test
+- the generated demo config enables every README-matrix row appropriate for the active runtime mode
 - web build caches and Playwright artifacts live under `./.data/`
 - `fourmolu` is the authoritative formatter for repo-owned Haskell source
 - `cabal-fmt` is the authoritative formatter for `.cabal` and `cabal.project` files
@@ -192,7 +221,8 @@ formatting, linting, and compiler hygiene enforceable through one canonical vali
   compiled binary under `./.build/infernix`
 - a containerized `cabal build exe:infernix` launched through the supported workflow resolves to
   `/opt/build/infernix` rather than creating repo-local build output
-- `cluster up` produces the generated test Dhall config in the build-output location for the active execution context
+- `cluster up` produces the generated demo `.dhall` file in the build-output location for the active runtime mode
+- in containerized execution contexts, `cluster up` mounts the published demo-config ConfigMap at `/opt/build/`
 - `cluster up` produces the repo-local kubeconfig in the build-output location for the active
   execution context
 - `infernix test lint` passes when formatting, Cabal file layout, lint, and compiler-warning
@@ -206,15 +236,51 @@ formatting, linting, and compiler hygiene enforceable through one canonical vali
 
 ### Remaining Work
 
+- replace the current generic test-config output with fully mode-specific generated demo catalogs
+- make the build-root `.dhall` an explicit staging artifact and `/opt/build/` the watched runtime
+  mount path in containerized execution contexts
+- enforce active-mode naming and reporting consistently across host and outer-container build roots
 - replace wrapper-based host builds with a first-class repo-owned build-root configuration once the local Cabal toolchain supports it
-- adopt external Haskell formatting and lint tooling once compatible releases exist for the supported compiler
+
+---
+
+## Sprint 1.5: Runtime-Mode Selection and Naming Contract [Blocked]
+
+**Status**: Blocked
+**Blocked by**: `0.5`
+**Docs to update**: `documents/architecture/runtime_modes.md`, `documents/engineering/build_artifacts.md`, `documents/reference/cli_reference.md`
+
+### Objective
+
+Make runtime-mode selection explicit so later phases can build the active mode's demo catalog,
+engine bindings, and test matrix deterministically.
+
+### Deliverables
+
+- the CLI and config layers define the canonical runtime-mode ids `apple-silicon`, `linux-cpu`, and `linux-cuda`
+- runtime mode is selected independently of control-plane execution context
+- unsupported runtime-mode selections fail with typed, user-facing errors
+- runtime-mode selection flows into `cluster up`, `service`, `test integration`, `test e2e`, and `test all`
+- status output, watched config location, and generated artifact naming always report the active runtime mode explicitly
+
+### Validation
+
+- Apple host-native and Linux outer-container workflows can both resolve the active runtime mode
+- `cluster status` reports the active runtime mode and the active demo-config publication target or watched path
+- selecting an unsupported or ambiguous runtime mode fails before reconciliation or test execution begins
+
+### Remaining Work
+
+- implement and validate explicit runtime-mode selection
+- thread that selection through generated demo-config naming, ConfigMap publication, and test reporting
 
 ## Documentation Requirements
 
 **Engineering docs to create/update:**
 - `documents/engineering/docker_policy.md` - host versus outer-container control-plane rules
-- `documents/engineering/build_artifacts.md` - builddir and generated-artifact isolation policy
+- `documents/engineering/build_artifacts.md` - builddir, generated-demo-config staging, watched mount path, and artifact isolation policy
 - `documents/development/haskell_style.md` - formatter, lint, and compiler-warning policy
+- `documents/architecture/runtime_modes.md` - execution contexts versus runtime modes
 
 **Product or reference docs to create/update:**
 - `documents/reference/cli_reference.md` - canonical `infernix` CLI
@@ -222,4 +288,4 @@ formatting, linting, and compiler hygiene enforceable through one canonical vali
 - `documents/README.md` - repository documentation index
 
 **Cross-references to add:**
-- keep [00-overview.md](00-overview.md) and [system-components.md](system-components.md) aligned when the repo scaffold changes
+- keep [00-overview.md](00-overview.md) and [system-components.md](system-components.md) aligned when runtime-mode ids, build-root rules, or generated-demo-config naming changes

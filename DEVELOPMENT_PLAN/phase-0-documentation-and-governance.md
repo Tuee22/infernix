@@ -8,10 +8,35 @@
 
 ## Documentation-First Gate
 
-This phase closes before any code-writing phase begins.
+This phase closes before later phases can close.
 
-- Phases 1-6 remain blocked until these documentation sprints close.
-- The repo writes the docs suite before the implementation tree grows around it.
+- Phases 1-6 remain phase-level blocked until the docs suite and plan fully reflect the updated
+  three-mode, matrix-driven product contract.
+- The repo writes and maintains the docs suite before more implementation-closure claims continue.
+
+## Current Repo Assessment
+
+The repository already has a governed docs suite and a docs validator. The gap is not the existence
+of documentation infrastructure; it is that the updated README direction now requires stronger
+coverage across the governed docs.
+
+- the docs suite does not yet consistently distinguish control-plane execution context from runtime mode
+- the docs suite does not yet carry the README-scale model or format or engine matrix as a
+  first-class planning and validation contract
+- the docs suite does not yet state clearly enough that generated mode-specific demo `.dhall` files
+  are staged and then published through `ConfigMap/infernix-demo-config` for cluster-resident
+  consumers
+- the docs suite does not yet state clearly enough that, in containerized execution contexts, the
+  mounted `.dhall` lives at `/opt/build/` because the daemon watches the file next to its binary
+- the docs suite does not yet state clearly enough that durable runtime manifests and Pulsar topic
+  payloads come from repo-owned `.proto` schemas, using `proto-lens` on the Haskell side and
+  Pulsar's built-in protobuf schema support on the broker side
+- the docs suite does not yet state clearly enough that `linux-cuda` requires a GPU-enabled Kind
+  cluster path with NVIDIA container runtime support
+- the docs suite does not yet state clearly enough that integration and E2E cover every generated
+  catalog entry for the active mode
+- the docs suite does not yet capture the `9090`-first edge-port selection rule or that `cluster up`
+  prints the chosen port during bring-up
 
 ## Sprint 0.1: `documents/` Suite Scaffold [Done]
 
@@ -49,6 +74,10 @@ documents/
 - `find documents -maxdepth 1 -type d | sort` shows the governed suite structure
 - `README.md` points to `documents/` and `DEVELOPMENT_PLAN/` rather than embedding layout sketches
 
+### Remaining Work
+
+None.
+
 ---
 
 ## Sprint 0.2: Documentation Standards and Suite Rules [Done]
@@ -72,6 +101,10 @@ Create the documentation equivalent of the reference repositories' standards fil
 - every governed document begins with the required metadata block
 - the standards file names the canonical suite taxonomy and the SSoT rules
 - root guidance files do not contradict the documentation workflow
+
+### Remaining Work
+
+None.
 
 ---
 
@@ -100,6 +133,10 @@ Create the minimum governed docs needed to explain the intended product before i
 - README becomes an orientation document instead of the authoritative home of deep architecture rules
 - inbound and outbound links across the suite resolve correctly
 
+### Remaining Work
+
+None.
+
 ---
 
 ## Sprint 0.4: Documentation Validation and Plan Harmony [Done]
@@ -111,7 +148,7 @@ Create the minimum governed docs needed to explain the intended product before i
 ### Objective
 
 Make doc consistency a first-class gate and keep the plan and governed docs synchronized during the
-bootstrap stage before the Haskell CLI exists.
+bootstrap stage before the Haskell CLI owns the same workflow.
 
 ### Deliverables
 
@@ -126,6 +163,65 @@ bootstrap stage before the Haskell CLI exists.
 - changing a canonical route, storage rule, or CLI command requires updating the plan and the owning docs in the same change
 - stale references to disallowed README-only architecture guidance fail the docs validation path
 
+### Remaining Work
+
+None. Runtime-mode matrix and generated-demo-config expansion lives in Sprint 0.5.
+
+---
+
+## Sprint 0.5: Runtime-Mode Matrix Documentation Realignment [Active]
+
+**Status**: Active
+**Implementation**: `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/00-overview.md`, `DEVELOPMENT_PLAN/system-components.md`, `documents/architecture/runtime_modes.md`, `documents/architecture/model_catalog.md`, `documents/development/testing_strategy.md`, `documents/engineering/build_artifacts.md`
+**Docs to update**: `README.md`, `documents/architecture/runtime_modes.md`, `documents/architecture/model_catalog.md`, `documents/development/testing_strategy.md`, `documents/engineering/build_artifacts.md`, `documents/engineering/model_lifecycle.md`, `documents/tools/pulsar.md`, `documents/reference/web_portal_surface.md`
+
+### Objective
+
+Realign the governed docs and plan around the updated README direction before more implementation
+closure claims continue.
+
+### Deliverables
+
+- the plan and governed docs explicitly distinguish the two control-plane execution contexts from
+  the three runtime modes
+- the README matrix is reflected as the authoritative target coverage envelope in the plan and the
+  owning governed docs
+- the governed docs explain that `cluster up` stages `infernix-demo-<mode>.dhall` for the active
+  runtime mode and publishes it into `ConfigMap/infernix-demo-config`
+- the governed docs explain that the mounted ConfigMap-backed `.dhall` file is the exact source of
+  truth for cluster-resident demo-visible models and their engine binding in that mode
+- the governed docs explain that, in containerized execution contexts, the mounted `.dhall` lives
+  at `/opt/build/` because the daemon watches the file next to its binary
+- the governed docs explain that durable runtime manifests and Pulsar payloads are defined by
+  repo-owned `.proto` schemas, with `proto-lens`-generated Haskell bindings and Pulsar built-in
+  protobuf schema support
+- the governed docs explain that `linux-cuda` requires a GPU-enabled Kind path with NVIDIA runtime
+  support and `nvidia.com/gpu` advertising
+- the governed docs explain that integration and E2E enumerate every generated catalog entry for
+  the active mode and use the engine binding encoded in that file
+- the governed docs explain that `cluster up` chooses the edge port by trying `9090` first,
+  increments by 1 until open, records the result, and prints the chosen port to the operator
+- the docs validator and documentation standards name these relationships clearly enough that later
+  drift is caught quickly
+
+### Validation
+
+- runtime-mode, model-catalog, build-artifact, and testing-strategy docs all use the same runtime
+  mode names and describe the same generated demo-config contract
+- the plan, README, and docs suite all state that integration and E2E coverage are active-mode
+  exhaustive rather than smoke-only when no explicit exception is called out
+- `python3 tools/docs_check.py` passes after the alignment updates
+
+### Remaining Work
+
+- update the governed docs so the three runtime modes, generated demo `.dhall`, and exhaustive
+  active-mode test semantics are all documented in the canonical docs suite
+- update the governed docs so ConfigMap-backed publication, the watched `/opt/build/` mount path,
+  GPU-enabled Kind for `linux-cuda`, the protobuf manifest and Pulsar payload contract, and
+  `9090`-first edge-port selection are documented in the owning docs
+- extend docs validation where needed so future README or plan changes cannot drift away from the
+  owning docs silently
+
 ## Documentation Requirements
 
 **Engineering docs to create/update:**
@@ -134,22 +230,22 @@ bootstrap stage before the Haskell CLI exists.
 - `documents/development/local_dev.md` - supported local workflows
 - `documents/development/frontend_contracts.md` - Haskell-owned frontend contract and webapp build-time generation rules
 - `documents/development/haskell_style.md` - Haskell formatter, lint, and compiler-warning policy
-- `documents/development/testing_strategy.md` - supported validation matrix
-- `documents/engineering/build_artifacts.md` - builddir and generated-artifact isolation
+- `documents/development/testing_strategy.md` - supported validation matrix and active-mode exhaustive coverage rules
+- `documents/engineering/build_artifacts.md` - builddir, generated-demo-config staging, watched mount path, and artifact isolation
 - `documents/engineering/docker_policy.md` - outer-container rules
 - `documents/engineering/k8s_storage.md` - manual PV doctrine
-- `documents/engineering/edge_routing.md` - one-port route policy
-- `documents/engineering/k8s_native_dev_policy.md` - Kind and Helm workflow
+- `documents/engineering/edge_routing.md` - `9090`-first one-port route policy and operator display
+- `documents/engineering/k8s_native_dev_policy.md` - Kind, Helm, and GPU-enabled `linux-cuda` workflow
 - `documents/engineering/object_storage.md` - MinIO authority and routed access
 - `documents/engineering/model_lifecycle.md` - artifact lifecycle and local materialization
 - `documents/engineering/storage_and_state.md` - durable versus derived state
-- `documents/architecture/model_catalog.md` - model registration and selection
-- `documents/architecture/runtime_modes.md` - host and cluster daemon modes
+- `documents/architecture/model_catalog.md` - model registration, matrix row ownership, and generated catalog contract
+- `documents/architecture/runtime_modes.md` - execution contexts versus runtime modes
 - `documents/architecture/web_ui_architecture.md` - cluster-resident webapp service and UI topology
 - `documents/reference/cli_reference.md` - CLI surface
 - `documents/reference/cli_surface.md` - CLI summary surface
 - `documents/reference/api_surface.md` - typed API contract
-- `documents/reference/web_portal_surface.md` - browser surface
+- `documents/reference/web_portal_surface.md` - browser surface and active-mode catalog behavior
 - `documents/tools/harbor.md` - Harbor notes
 - `documents/tools/minio.md` - MinIO notes
 - `documents/tools/pulsar.md` - Pulsar notes
@@ -158,4 +254,4 @@ bootstrap stage before the Haskell CLI exists.
 - `documents/README.md` - suite index and navigation
 
 **Cross-references to add:**
-- keep [README.md](README.md), [development_plan_standards.md](development_plan_standards.md), and [00-overview.md](00-overview.md) aligned once the documentation suite exists
+- keep [README.md](README.md), [development_plan_standards.md](development_plan_standards.md), [00-overview.md](00-overview.md), and the governed docs aligned on runtime-mode names, ConfigMap-backed generated demo-config semantics, the watched `/opt/build/` mount path, GPU-enabled `linux-cuda` rules, and active-mode test coverage

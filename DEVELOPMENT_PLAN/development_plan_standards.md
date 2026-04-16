@@ -156,8 +156,8 @@ finished-product document.
 - `00-overview.md`, all phase files, and `system-components.md` use the same phase names and
   current-state claims.
 - `README.md` still reflects the authoritative intended product shape, canonical CLI surface,
-  storage doctrine, and operator workflows described by the plan, even when those capabilities are
-  not fully implemented yet.
+  storage doctrine, operator workflows, runtime-mode envelope, and validation direction described by
+  the plan, even when those capabilities are not fully implemented yet.
 - Once Phase 0 lands, `documents/documentation_standards.md` governs the docs suite while this file
   remains authoritative for the plan itself.
 - When root-level workflow guidance changes, update `README.md`, `AGENTS.md`, and `CLAUDE.md` in
@@ -199,7 +199,66 @@ Rules:
   and `./.data/` bind mounted.
 - `docker compose up` and `docker compose exec` are not supported outer-control-plane workflows.
 
-### L. Storage Doctrine Closure
+### L. Runtime Mode Matrix Contract
+
+The plan distinguishes control-plane execution context from supported runtime mode.
+
+Runtime modes are the product-facing inference lanes:
+
+| Runtime mode | Canonical mode id | Engine column selected from the README matrix |
+|--------------|-------------------|-----------------------------------------------|
+| Apple Silicon / Metal | `apple-silicon` | `Best Apple Silicon engine` |
+| Ubuntu 24.04 / CPU | `linux-cpu` | `Best Linux CPU engine` |
+| Ubuntu 24.04 / NVIDIA CUDA Container | `linux-cuda` | `Best Linux CUDA engine` |
+
+Rules:
+
+- Plan documents, `system-components.md`, and the governed docs must explicitly distinguish the two
+  execution contexts from the three runtime modes.
+- The comprehensive model, format, and engine matrix in the root README is the authoritative target
+  coverage envelope for runtime-mode planning.
+- For any given runtime mode, a matrix row is supported when that mode's engine column names a real
+  engine rather than `Not recommended` or an empty cell.
+- `linux-cuda` closes only when the Kind-backed cluster path exposes NVIDIA container runtime
+  support, advertises `nvidia.com/gpu` resources to Kubernetes, and can schedule CUDA workloads on
+  that substrate.
+- Later-phase completion claims must not narrow the matrix to a hand-picked smoke subset once
+  broad mode support is claimed.
+
+### M. Generated Demo `.dhall` and ConfigMap Contract
+
+`cluster up` generates the demo configuration for the active runtime mode as staging content and
+publishes it into the cluster as a ConfigMap for cluster-resident consumers.
+
+Rules:
+
+- Apple host mode may stage the active mode's generated file under `./.build/` when the host-native
+  daemon path needs it.
+- Outer-container Linux stages the active mode's generated file ephemerally, then creates or
+  updates the cluster ConfigMap; the outer container does not treat a static container file as the
+  runtime input.
+- The generated filename uses the active runtime-mode id, for example
+  `infernix-demo-apple-silicon.dhall`, `infernix-demo-linux-cpu.dhall`, or
+  `infernix-demo-linux-cuda.dhall`.
+- The generated file enumerates every demo-visible model or workload supported in the active
+  runtime mode and records the matrix row identity, artifact or format family, selected engine,
+  request or result contract identifiers, and any mode-specific runtime-lane metadata needed by the
+  service, web UI, or tests.
+- `cluster up` creates or updates `ConfigMap/infernix-demo-config` from that generated content.
+- In containerized execution contexts, cluster-resident consumers mount
+  `ConfigMap/infernix-demo-config` read-only at `/opt/build/`.
+- The daemon looks for the active-mode `.dhall` in the same folder as its binary and actively
+  watches that file for changes.
+- Cluster-resident consumers consume the active mode's file from that watched mount rather than
+  from an image-baked static file.
+- Rows whose active-mode engine cell is `Not recommended` are omitted from that mode's generated
+  demo catalog.
+- Across the full set of generated mode-specific demo `.dhall` files, every row in the README
+  matrix appears in at least one generated catalog.
+- The ConfigMap-backed mounted demo `.dhall` file is the exact source of truth for which models
+  appear in the demo UI for the active runtime mode and which engine binding those models use.
+
+### N. Storage Doctrine Closure
 
 The manual storage model is a hard architectural rule and cannot be weakened in later phases.
 
@@ -210,7 +269,7 @@ The manual storage model is a hard architectural rule and cannot be weakened in 
 - PVs are created only by `infernix` lifecycle code and map deterministically into `./.data/`.
 - Hand-authored standalone PVC manifests for durable workloads are forbidden.
 
-### M. CLI Surface and Behavior Contract
+### O. CLI Surface and Behavior Contract
 
 All supported repository operations close through the `infernix` CLI.
 
@@ -234,8 +293,12 @@ Rules:
   family that is not idempotent by design.
 - Every repo-owned lifecycle, validation, and docs command other than `infernix service` is
   declarative and idempotent.
-- `infernix cluster up` reconciles cluster, storage, image, Helm, and mandatory local HA service
-  state to the requested target rather than performing one-shot bootstrap steps.
+- `infernix cluster up` reconciles cluster, storage, image, Helm, mandatory local HA service state,
+  the active runtime mode's demo-config staging and ConfigMap publication, and the chosen edge port
+  to the requested target rather than performing one-shot bootstrap steps.
+- `infernix cluster up` chooses the edge port by attempting `9090` first and incrementing by 1
+  until an open port is found, records the chosen port under `./.data/runtime/edge-port.json`, and
+  prints the chosen port to the operator during bring-up.
 - `infernix cluster down` reconciles cluster absence while preserving authoritative repo data under
   `./.data/`.
 - `infernix cluster status` is read-only and never mutates cluster or repo state.
@@ -247,7 +310,22 @@ Rules:
 - No CLI flag or alternate command family selects between non-HA and HA service topology; the
   mandatory local HA topology is the only supported cluster target.
 
-### N. Haskell Quality Gate Contract
+### P. Integration and E2E Coverage Contract
+
+Mode-aware validation is explicit.
+
+- `infernix test integration` for a given active runtime mode exercises every model or workload
+  entry present in that mode's ConfigMap-backed mounted demo `.dhall` catalog.
+- `infernix test e2e` for a given active runtime mode drives the browser against every demo-visible
+  catalog entry present in that same generated file unless a narrower exception is called out
+  explicitly in the owning phase document.
+- Integration and E2E checks use the engine binding encoded in the mounted ConfigMap-backed demo
+  `.dhall`, which must match the appropriate mode column from the README matrix.
+- `infernix test all` aggregates lint, unit, integration, and E2E for the active runtime mode; the
+  full Apple, CPU, and CUDA matrix closes only when those mode-specific runs all pass on their
+  supported lanes.
+
+### Q. Haskell Quality Gate Contract
 
 Haskell formatting, linting, and compiler hygiene are first-class repository requirements.
 
@@ -258,41 +336,3 @@ Haskell formatting, linting, and compiler hygiene are first-class repository req
 - Repo-owned validation enables strict compiler warnings and treats warnings as errors on supported
   paths.
 - No second Haskell formatter or competing style authority is introduced.
-
-### O. Cabal Build Doctrine and Container Artifact Isolation
-
-Repo-owned Cabal defaults and container build isolation are hard repository rules.
-
-- The repo contains an authoritative `cabal.project` that encodes the default Cabal build policy
-  for supported host-native workflows, including artifact placement under `./.build/` and other
-  repo-owned Cabal defaults.
-- Supported Apple host-native `cabal build`, `cabal test`, or equivalent bare Cabal invocations
-  inherit that `cabal.project` configuration and must not recreate `dist-newstyle/` or similar
-  build output in the repo root.
-- The container build root is `/opt/build/infernix`.
-- Repo-owned container workflows and Dockerfile `cabal` invocations pass
-  `--builddir=/opt/build/infernix` explicitly for Cabal work, even though the repo-owned
-  `cabal.project` defines the host-native default.
-- Unqualified `cabal build`, `cabal test`, or equivalent bare Cabal invocations are not a
-  supported container workflow unless the container entrypoint or wrapper guarantees the same
-  `/opt/build/infernix` isolation.
-- Implementation must prevent accidental recreation of `dist-newstyle/` or similar build output in
-  the mounted repo during supported container workflows.
-
-### P. Test-Cluster Configuration Generation
-
-`cluster up` is the supported test-environment bring-up command, and it owns the test Dhall
-configuration needed by validation flows.
-
-- `cluster up` auto-generates the Dhall configuration used for supported test workflows.
-- The generated configuration enables every model appropriate for the active runtime mode or test
-  environment.
-- Generated Dhall configuration is not a tracked source artifact and must live in ignored build
-  output locations.
-
-## Cross-Reference Conventions
-
-- Links inside `DEVELOPMENT_PLAN/` use relative paths.
-- Use Markdown links only for files that exist in the current worktree.
-- Future `documents/...` obligations are written as code-formatted paths until Phase 0 creates them.
-- If a file is renamed, update every plan reference in the same change.
