@@ -1,0 +1,45 @@
+.git
+.gitignore
+.data
+.claude
+.build
+.build/*.dhall
+build
+build/*.dhall
+
+# Haskell build artifacts
+dist-newstyle
+.stack-work
+cabal.project.local
+cabal.project.local~
+*.hi
+*.o
+*.dyn_hi
+*.dyn_o
+*.prof
+*.aux
+*.hp
+*.eventlog
+
+# Tooling and coverage output
+coverage
+.hpc
+test-results
+.tix
+*.tix
+
+# Frontend build artifacts
+node_modules
+web/node_modules
+web/dist
+web/output
+web/.spago
+web/.parcel-cache
+web/playwright-report
+web/test-results
+
+# Temporary files
+*.log
+.DS_Store
+tmp
+.tmp
