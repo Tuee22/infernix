@@ -31,10 +31,10 @@ These rules close in this phase and remain mandatory afterward:
 - No separate imperative storage, image-publication, or deploy command family exists outside
   `cluster up`.
 
-## Sprint 2.1: Kind Bootstrap and StorageClass Reset [Blocked]
+## Sprint 2.1: Kind Bootstrap and StorageClass Reset [Active]
 
-**Status**: Blocked
-**Blocked by**: `0.1-0.4`, `1.1-1.4`
+**Status**: Active
+**Implementation**: `src/Infernix/Cluster.hs`
 **Docs to update**: `documents/engineering/k8s_native_dev_policy.md`, `documents/engineering/k8s_storage.md`
 
 ### Objective
@@ -61,12 +61,17 @@ Create or reuse the Kind cluster and establish the manual storage-class baseline
 - the generated test Dhall config exists in the build-output location for the active execution context
 - the repo-local kubeconfig exists in the build-output location for the active execution context
 
+### Remaining Work
+
+- replace the current cluster-state compatibility layer with real Kind lifecycle integration
+- validate the reset behavior against a real Kubernetes storage-class inventory
+
 ---
 
-## Sprint 2.2: Manual PV Reconciliation During Cluster Up [Blocked]
+## Sprint 2.2: Manual PV Reconciliation During Cluster Up [Active]
 
-**Status**: Blocked
-**Blocked by**: `0.1-0.4`, `1.1-1.4`
+**Status**: Active
+**Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Models.hs`
 **Docs to update**: `documents/engineering/k8s_storage.md`, `documents/operations/cluster_bootstrap_runbook.md`
 
 ### Objective
@@ -95,12 +100,17 @@ upgrade runs.
 - `cluster down` followed by `cluster up` rebinds durable claims to the same PVs without manual
   storage repair
 
+### Remaining Work
+
+- template expected durable claims from chart-owned manifests instead of the current seeded compatibility inventory
+- bind real PV and PVC objects once the Kind and Helm path is closed
+
 ---
 
 ## Sprint 2.3: Helm Umbrella Chart and Repo Workload Layout [Blocked]
 
 **Status**: Blocked
-**Blocked by**: `0.1-0.4`, `1.1-1.4`
+**Blocked by**: `1.1-1.4`
 **Docs to update**: `documents/architecture/overview.md`, `documents/engineering/k8s_native_dev_policy.md`
 
 ### Objective
@@ -132,7 +142,7 @@ Put repo-owned and third-party workloads behind one Helm deployment model.
 ## Sprint 2.4: Automatic Harbor Image Preparation and Helm Pull Contract [Blocked]
 
 **Status**: Blocked
-**Blocked by**: `0.1-0.4`, `1.1-1.4`
+**Blocked by**: `1.1-1.4`
 **Docs to update**: `documents/engineering/k8s_native_dev_policy.md`, `documents/tools/harbor.md`
 
 ### Objective
@@ -157,10 +167,10 @@ automatically during `cluster up`.
 
 ---
 
-## Sprint 2.5: Kind Lifecycle Idempotency and Status Surface [Blocked]
+## Sprint 2.5: Kind Lifecycle Idempotency and Status Surface [Active]
 
-**Status**: Blocked
-**Blocked by**: `0.1-0.4`, `1.1-1.4`
+**Status**: Active
+**Implementation**: `src/Infernix/Cluster.hs`, `.build/infernix`
 **Docs to update**: `README.md`, `documents/reference/cli_reference.md`, `documents/operations/cluster_bootstrap_runbook.md`
 
 ### Objective
@@ -183,6 +193,11 @@ Make cluster reconcile, status, and teardown predictable.
 - repeated `docker compose run --rm infernix infernix cluster down` succeeds without requiring manual cluster cleanup
 - durable volumes rebind to the same `./.data/` paths after teardown and redeploy
 - status output includes the active localhost port and the browser route prefixes
+
+### Remaining Work
+
+- validate the same lifecycle sequence on the outer-container path
+- extend status output from repo-local state summaries to real cluster health once Kind rollout is wired in
 
 ## Documentation Requirements
 

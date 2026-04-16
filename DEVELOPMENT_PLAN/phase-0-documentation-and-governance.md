@@ -13,9 +13,10 @@ This phase closes before any code-writing phase begins.
 - Phases 1-6 remain blocked until these documentation sprints close.
 - The repo writes the docs suite before the implementation tree grows around it.
 
-## Sprint 0.1: `documents/` Suite Scaffold [Planned]
+## Sprint 0.1: `documents/` Suite Scaffold [Done]
 
-**Status**: Planned
+**Status**: Done
+**Implementation**: `documents/README.md`, `documents/architecture/overview.md`
 **Docs to update**: `README.md`, `documents/README.md`
 
 ### Objective
@@ -50,9 +51,10 @@ documents/
 
 ---
 
-## Sprint 0.2: Documentation Standards and Suite Rules [Planned]
+## Sprint 0.2: Documentation Standards and Suite Rules [Done]
 
-**Status**: Planned
+**Status**: Done
+**Implementation**: `documents/documentation_standards.md`, `AGENTS.md`, `CLAUDE.md`
 **Docs to update**: `documents/documentation_standards.md`, `AGENTS.md`, `CLAUDE.md`
 
 ### Objective
@@ -73,9 +75,10 @@ Create the documentation equivalent of the reference repositories' standards fil
 
 ---
 
-## Sprint 0.3: Canonical Documentation Set [Planned]
+## Sprint 0.3: Canonical Documentation Set [Done]
 
-**Status**: Planned
+**Status**: Done
+**Implementation**: `documents/`
 **Docs to update**: `documents/architecture/overview.md`, `documents/architecture/model_catalog.md`, `documents/architecture/runtime_modes.md`, `documents/architecture/web_ui_architecture.md`, `documents/development/frontend_contracts.md`, `documents/development/haskell_style.md`, `documents/development/local_dev.md`, `documents/development/testing_strategy.md`, `documents/engineering/build_artifacts.md`, `documents/engineering/docker_policy.md`, `documents/engineering/edge_routing.md`, `documents/engineering/k8s_native_dev_policy.md`, `documents/engineering/k8s_storage.md`, `documents/engineering/model_lifecycle.md`, `documents/engineering/object_storage.md`, `documents/engineering/storage_and_state.md`, `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/reference/api_surface.md`, `documents/reference/cli_reference.md`, `documents/reference/cli_surface.md`, `documents/reference/web_portal_surface.md`, `documents/tools/harbor.md`, `documents/tools/minio.md`, `documents/tools/pulsar.md`
 
 ### Objective
@@ -99,24 +102,27 @@ Create the minimum governed docs needed to explain the intended product before i
 
 ---
 
-## Sprint 0.4: Documentation Validation and Plan Harmony [Planned]
+## Sprint 0.4: Documentation Validation and Plan Harmony [Done]
 
-**Status**: Planned
+**Status**: Done
+**Implementation**: `tools/docs_check.py`, `README.md`
 **Docs to update**: `documents/documentation_standards.md`, `documents/README.md`, `README.md`
 
 ### Objective
 
-Make doc consistency a first-class gate and keep the plan and governed docs synchronized.
+Make doc consistency a first-class gate and keep the plan and governed docs synchronized during the
+bootstrap stage before the Haskell CLI exists.
 
 ### Deliverables
 
-- `infernix docs check` validates required headers, relative links, and plan or docs cross-references
+- `tools/docs_check.py` validates required headers, relative links, and plan or docs cross-references
 - the plan remains authoritative for implementation status
 - the docs suite remains authoritative for architecture and operator guidance once the relevant docs exist
+- Phase 1 wires the same validation logic into `infernix docs check`
 
 ### Validation
 
-- `infernix docs check` passes after documentation edits
+- `python3 tools/docs_check.py` passes after documentation edits
 - changing a canonical route, storage rule, or CLI command requires updating the plan and the owning docs in the same change
 - stale references to disallowed README-only architecture guidance fail the docs validation path
 

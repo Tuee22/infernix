@@ -177,38 +177,13 @@ The browser surface is a PureScript application with Haskell-generated shared co
 - Playwright runs from the same image that serves the web UI
 - the UI can submit manual inference requests against any registered model
 
-## Repository Layout
-
-```text
-infernix/
-├── DEVELOPMENT_PLAN/
-├── documents/
-│   ├── architecture/
-│   ├── development/
-│   ├── engineering/
-│   ├── operations/
-│   ├── reference/
-│   ├── tools/
-│   └── research/
-├── infernix.cabal
-├── cabal.project
-├── app/
-├── src/
-├── proto/
-├── web/
-├── chart/
-├── kind/
-├── docker/
-├── test/
-├── .build/
-└── .data/
-```
-
 ## Documentation
 
-- `documents/` contains the governed architecture, development, engineering, operations, reference,
-  tools, and research documentation
+- `documents/` is the canonical home for governed architecture, development, engineering,
+  operations, reference, tools, and research documentation
 - `DEVELOPMENT_PLAN/` contains the execution-ordered buildout plan and phase closure criteria
+- start with [documents/README.md](documents/README.md) for the suite index
+- use [DEVELOPMENT_PLAN/README.md](DEVELOPMENT_PLAN/README.md) for phase order and closure rules
 
 ## Contributing
 
@@ -216,8 +191,8 @@ Contributions should keep implementation, tests, and docs aligned in the same ch
 
 - use `documents/` for architecture, operator, and development guidance
 - use `DEVELOPMENT_PLAN/` for phase ordering, scope, and closure criteria
-- run `infernix docs check`, `infernix test lint`, and the relevant `infernix test ...` targets
-  before opening changes
+- run `python3 tools/docs_check.py`, `infernix test lint`, and the relevant `infernix test ...`
+  targets before opening changes
 
 ## License
 

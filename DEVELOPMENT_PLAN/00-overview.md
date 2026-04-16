@@ -14,11 +14,11 @@ to be added by later phases.
 | Area | Current state | Gap against target |
 |------|---------------|--------------------|
 | Development plan | present | implementation phases still open |
-| Haskell service | absent | single `infernix` executable not implemented yet |
-| Kind and Helm assets | absent | cluster lifecycle and chart topology must be created |
-| `documents/` suite | absent | documentation standards and governed docs must be created |
-| PureScript web app | absent | manual inference UI and Playwright container path must be created |
-| Tests | absent | unit, integration, and E2E suites must be created |
+| Haskell service | present | host-native service entrypoint is working; Linux outer-container parity and richer runtime backends remain open |
+| Kind and Helm assets | partial | local cluster-state compatibility surfaces are implemented; real Kind and Helm rollout remains open |
+| `documents/` suite | present | keep the governed docs aligned with implementation as later phases land |
+| Web app | present | manual inference workbench, generated contracts, and Playwright coverage are present; separate web runtime image work remains open |
+| Tests | present | lint, unit, integration, and E2E entrypoints run; HA and outer-container matrix coverage remain open |
 
 ## Target Outcome
 

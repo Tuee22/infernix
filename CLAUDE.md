@@ -17,3 +17,6 @@ Those actions are reserved for the user.
 - You may inspect the repository and edit files locally when asked.
 - You may use read-only Git commands such as `git status` and `git diff` to understand the current state.
 - Leave staging, committing, and pushing to the user.
+- Keep `DEVELOPMENT_PLAN/` aligned with the current implementation state.
+- Use `documents/` for canonical architecture, development, engineering, operations, and reference guidance.
+- Review `README.md`, `AGENTS.md`, and `CLAUDE.md` together when repository workflow guidance changes.

@@ -6,10 +6,10 @@
 > **Purpose**: Define the PureScript web application, the Haskell-owned frontend contract, and
 > the manual inference workbench that lets a user run inference against any registered model.
 
-## Sprint 5.1: PureScript Web Application and Cluster Webapp Service [Blocked]
+## Sprint 5.1: PureScript Web Application and Cluster Webapp Service [Active]
 
-**Status**: Blocked
-**Blocked by**: `0.1-0.4`, `1.1-1.4`, `2.1-2.5`, `3.1-3.5`, `4.1-4.5`
+**Status**: Active
+**Implementation**: `web/src/`, `web/dist/`
 **Docs to update**: `documents/architecture/web_ui_architecture.md`, `documents/reference/web_portal_surface.md`
 
 ### Objective
@@ -32,12 +32,17 @@ Create the cluster-resident webapp service that serves the browser UI in every s
 - `curl http://127.0.0.1:<port>/` returns the frontend entrypoint
 - the same route works whether the Haskell daemon is cluster-resident or host-native
 
+### Remaining Work
+
+- move the current static browser workbench into its own runtime image and deployment surface
+- close the remaining cluster-resident hosting rules once the Kind and Helm path lands
+
 ---
 
-## Sprint 5.2: Haskell-Owned Frontend Contract and Build-Time Generation [Blocked]
+## Sprint 5.2: Haskell-Owned Frontend Contract and Build-Time Generation [Active]
 
-**Status**: Blocked
-**Blocked by**: `0.1-0.4`, `1.1-1.4`, `2.1-2.5`, `3.1-3.5`, `4.1-4.5`
+**Status**: Active
+**Implementation**: `src/Infernix/CLI.hs`, `web/build.mjs`, `web/generated/`
 **Docs to update**: `documents/architecture/web_ui_architecture.md`, `documents/development/frontend_contracts.md`
 
 ### Objective
@@ -59,12 +64,17 @@ hand-maintained duplicates.
 - `infernix test unit` fails if the webapp build or frontend tests detect drift from the Haskell source
 - PureScript compilation succeeds using only the build-generated contract modules for shared types
 
+### Remaining Work
+
+- extend the current generated JavaScript contract module into the planned frontend language-specific binding set
+- keep the generation entrypoint hidden behind the build flow rather than promoting it to a public CLI surface
+
 ---
 
-## Sprint 5.3: `purescript-spec` Contract and View-Level Coverage [Blocked]
+## Sprint 5.3: `purescript-spec` Contract and View-Level Coverage [Active]
 
-**Status**: Blocked
-**Blocked by**: `0.1-0.4`, `1.1-1.4`, `2.1-2.5`, `3.1-3.5`, `4.1-4.5`
+**Status**: Active
+**Implementation**: `web/test/contracts.test.mjs`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/development/frontend_contracts.md`
 
 ### Objective
@@ -85,12 +95,17 @@ manual inference UI behaves predictably.
 - contract tests fail when request or response shapes drift
 - view-level specs cover model selection and result rendering states
 
+### Remaining Work
+
+- migrate the current generated-contract and view smoke tests into the planned frontend-native spec stack
+- deepen browser-independent coverage for request-shape rendering and result-state transitions
+
 ---
 
-## Sprint 5.4: Manual Inference Workbench For Any Registered Model [Blocked]
+## Sprint 5.4: Manual Inference Workbench For Any Registered Model [Done]
 
-**Status**: Blocked
-**Blocked by**: `0.1-0.4`, `1.1-1.4`, `2.1-2.5`, `3.1-3.5`, `4.1-4.5`
+**Status**: Done
+**Implementation**: `web/src/app.js`, `web/src/index.html`
 **Docs to update**: `documents/reference/web_portal_surface.md`, `documents/architecture/web_ui_architecture.md`
 
 ### Objective
@@ -112,10 +127,10 @@ Deliver the browser workbench the user asked for: manual inference against any m
 
 ---
 
-## Sprint 5.5: Web Image Owns Playwright Dependencies [Blocked]
+## Sprint 5.5: Web Image Owns Playwright Dependencies [Active]
 
-**Status**: Blocked
-**Blocked by**: `0.1-0.4`, `1.1-1.4`, `2.1-2.5`, `3.1-3.5`, `4.1-4.5`
+**Status**: Active
+**Implementation**: `web/package.json`, `web/playwright.config.js`, `web/playwright/`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/architecture/web_ui_architecture.md`
 
 ### Objective
@@ -136,6 +151,11 @@ Prepare the web image to be both the UI host and the E2E execution environment.
 - the built web image can serve the UI and launch Playwright browsers
 - `infernix test e2e` can execute inside the web image without extra host browser setup
 - the repository does not maintain a second dedicated Playwright-only image
+
+### Remaining Work
+
+- move the current local Playwright dependency path into the eventual web runtime image
+- validate E2E execution from that same runtime image on the outer-container path
 
 ## Documentation Requirements
 

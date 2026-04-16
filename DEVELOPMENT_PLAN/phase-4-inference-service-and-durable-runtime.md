@@ -6,10 +6,10 @@
 > **Purpose**: Define the Haskell service runtime, the model and artifact contracts, and the
 > stable API surface that both automation and the web UI depend on.
 
-## Sprint 4.1: Typed Configuration, Model Catalog, and Runtime Contracts [Blocked]
+## Sprint 4.1: Typed Configuration, Model Catalog, and Runtime Contracts [Done]
 
-**Status**: Blocked
-**Blocked by**: `0.1-0.4`, `1.1-1.4`, `2.1-2.5`, `3.1-3.5`
+**Status**: Done
+**Implementation**: `src/Infernix/Types.hs`, `src/Infernix/Models.hs`
 **Docs to update**: `documents/architecture/runtime_modes.md`, `documents/architecture/model_catalog.md`
 
 ### Objective
@@ -30,10 +30,10 @@ Make the service runtime strongly typed before the transport and UI surfaces acc
 
 ---
 
-## Sprint 4.2: Inference Request Pipeline Over Pulsar and MinIO [Blocked]
+## Sprint 4.2: Inference Request Pipeline Over Pulsar and MinIO [Active]
 
-**Status**: Blocked
-**Blocked by**: `0.1-0.4`, `1.1-1.4`, `2.1-2.5`, `3.1-3.5`
+**Status**: Active
+**Implementation**: `src/Infernix/Runtime.hs`, `tools/service_server.py`
 **Docs to update**: `documents/architecture/runtime_modes.md`, `documents/engineering/model_lifecycle.md`
 
 ### Objective
@@ -54,12 +54,17 @@ derived local cache state become authoritative.
 - repeated artifact materialization does not corrupt or duplicate local cache state
 - deleting local cache state does not destroy authoritative MinIO state
 
+### Remaining Work
+
+- replace the current repo-local filesystem transport with real Pulsar and object-store backends
+- preserve the current typed request and result semantics across that backend swap
+
 ---
 
-## Sprint 4.3: Host-Native Apple Runtime and Cluster Runtime Parity [Blocked]
+## Sprint 4.3: Host-Native Apple Runtime and Cluster Runtime Parity [Active]
 
-**Status**: Blocked
-**Blocked by**: `0.1-0.4`, `1.1-1.4`, `2.1-2.5`, `3.1-3.5`
+**Status**: Active
+**Implementation**: `src/Infernix/Service.hs`, `src/Infernix/Config.hs`
 **Docs to update**: `documents/architecture/runtime_modes.md`, `documents/operations/apple_silicon_runbook.md`
 
 ### Objective
@@ -80,12 +85,17 @@ cluster-resident execution to coexist.
 - cluster-resident `infernix service` can reach MinIO and Pulsar through cluster-local networking
 - the web UI continues to work against `/api` in both modes
 
+### Remaining Work
+
+- add the cluster-resident runtime variant
+- validate runtime mode switching against a real routed platform substrate
+
 ---
 
-## Sprint 4.4: Manual Inference API Surface [Blocked]
+## Sprint 4.4: Manual Inference API Surface [Done]
 
-**Status**: Blocked
-**Blocked by**: `0.1-0.4`, `1.1-1.4`, `2.1-2.5`, `3.1-3.5`
+**Status**: Done
+**Implementation**: `tools/service_server.py`
 **Docs to update**: `documents/reference/api_surface.md`, `documents/reference/web_portal_surface.md`
 
 ### Objective
@@ -106,10 +116,10 @@ Expose a stable API for listing models and submitting manual inference requests 
 
 ---
 
-## Sprint 4.5: Durable Service Cache and Reconcile Semantics [Blocked]
+## Sprint 4.5: Durable Service Cache and Reconcile Semantics [Active]
 
-**Status**: Blocked
-**Blocked by**: `0.1-0.4`, `1.1-1.4`, `2.1-2.5`, `3.1-3.5`
+**Status**: Active
+**Implementation**: `src/Infernix/Runtime.hs`, `tools/service_server.py`
 **Docs to update**: `documents/engineering/model_lifecycle.md`, `documents/engineering/storage_and_state.md`
 
 ### Objective
@@ -128,6 +138,11 @@ Make derived runtime state reproducible from durable sources and keep lifecycle 
 - deleting a local runtime cache followed by service startup reconstructs it without data loss
 - `infernix test integration` proves the service can recover from cache loss using only durable sources
 - status reporting distinguishes durable state from derived cache state
+
+### Remaining Work
+
+- surface cache and durable-state reporting through richer status commands
+- replace local filesystem durability with the planned object-store-backed sources
 
 ## Documentation Requirements
 

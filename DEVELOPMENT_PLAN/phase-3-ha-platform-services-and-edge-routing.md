@@ -15,7 +15,7 @@
 ## Sprint 3.1: HA MinIO Deployment [Blocked]
 
 **Status**: Blocked
-**Blocked by**: `0.1-0.4`, `1.1-1.4`, `2.1-2.5`
+**Blocked by**: `1.1-1.4`, `2.1-2.5`
 **Docs to update**: `documents/engineering/object_storage.md`, `documents/tools/minio.md`
 
 ### Objective
@@ -43,7 +43,7 @@ Make MinIO the durable object store for manifests, artifacts, large outputs, and
 ## Sprint 3.2: HA Pulsar Deployment [Blocked]
 
 **Status**: Blocked
-**Blocked by**: `0.1-0.4`, `1.1-1.4`, `2.1-2.5`
+**Blocked by**: `1.1-1.4`, `2.1-2.5`
 **Docs to update**: `documents/architecture/runtime_modes.md`, `documents/tools/pulsar.md`
 
 ### Objective
@@ -73,7 +73,7 @@ Provide the durable event transport for inference requests, results, and service
 ## Sprint 3.3: HA Harbor Deployment [Blocked]
 
 **Status**: Blocked
-**Blocked by**: `0.1-0.4`, `1.1-1.4`, `2.1-2.5`
+**Blocked by**: `1.1-1.4`, `2.1-2.5`
 **Docs to update**: `documents/engineering/k8s_native_dev_policy.md`, `documents/tools/harbor.md`
 
 ### Objective
@@ -102,10 +102,10 @@ Provide the mandatory local HA image registry and browser portal for cluster ima
 
 ---
 
-## Sprint 3.4: Unified Edge Proxy and Localhost Port Allocation [Blocked]
+## Sprint 3.4: Unified Edge Proxy and Localhost Port Allocation [Active]
 
-**Status**: Blocked
-**Blocked by**: `0.1-0.4`, `1.1-1.4`, `2.1-2.5`
+**Status**: Active
+**Implementation**: `src/Infernix/Cluster.hs`, `tools/service_server.py`
 **Docs to update**: `documents/engineering/edge_routing.md`, `documents/reference/web_portal_surface.md`
 
 ### Objective
@@ -136,12 +136,17 @@ Route every browser-visible portal and host-consumed service path through one ch
 - all browser portals load through the same localhost port
 - Apple host-native `infernix service` can reach MinIO and Pulsar through the edge routes on that port
 
+### Remaining Work
+
+- split the current single-process compatibility surface into a dedicated edge proxy plus upstream services
+- validate route behavior against real Harbor, MinIO, and Pulsar workloads
+
 ---
 
-## Sprint 3.5: Cluster-Resident Webapp Service and Apple Host Bridge [Blocked]
+## Sprint 3.5: Cluster-Resident Webapp Service and Apple Host Bridge [Active]
 
-**Status**: Blocked
-**Blocked by**: `0.1-0.4`, `1.1-1.4`, `2.1-2.5`
+**Status**: Active
+**Implementation**: `web/src/`, `web/build.mjs`, `tools/service_server.py`
 **Docs to update**: `documents/architecture/web_ui_architecture.md`, `documents/operations/apple_silicon_runbook.md`
 
 ### Objective
@@ -161,6 +166,11 @@ daemon runs on the host.
 - the UI loads from the cluster on both Apple and Linux-supported development paths
 - a manual inference request from the UI reaches the active daemon location without the browser changing its base URL
 - switching between host-daemon and cluster-daemon modes does not require changing the documented browser entrypoint
+
+### Remaining Work
+
+- separate the browser host from the API process so the web surface is not served from the same local runtime
+- reintroduce the host-bridge behavior once a real cluster-resident service path exists
 
 ## Documentation Requirements
 

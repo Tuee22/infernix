@@ -1,0 +1,62 @@
+cabal-version:      3.8
+name:               infernix
+version:            0.1.0.0
+license:            MIT
+license-file:       LICENSE
+author:             Infernix
+maintainer:         noreply@example.com
+category:           Development
+build-type:         Simple
+extra-source-files:
+  README.md
+
+common shared-warnings
+  default-language: GHC2021
+  ghc-options:
+    -Wall
+    -Werror
+  build-depends:
+    , base >=4.21 && <4.23
+    , bytestring >=0.12 && <0.13
+    , containers >=0.8 && <0.9
+    , directory >=1.3 && <1.4
+    , filepath >=1.4 && <1.6
+    , process >=1.6 && <1.7
+    , text >=2.0 && <2.2
+    , time >=1.12 && <1.16
+
+library
+  import:           shared-warnings
+  hs-source-dirs:   src
+  exposed-modules:
+      Infernix.CLI
+    , Infernix.Cluster
+    , Infernix.Config
+    , Infernix.Models
+    , Infernix.Runtime
+    , Infernix.Service
+    , Infernix.Storage
+    , Infernix.Types
+
+executable infernix
+  import:           shared-warnings
+  hs-source-dirs:   app
+  main-is:          Main.hs
+  build-depends:
+      infernix
+
+test-suite infernix-unit
+  import:           shared-warnings
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test/unit
+  main-is:          Spec.hs
+  build-depends:
+      infernix
+
+test-suite infernix-integration
+  import:           shared-warnings
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test/integration
+  main-is:          Spec.hs
+  build-depends:
+      infernix

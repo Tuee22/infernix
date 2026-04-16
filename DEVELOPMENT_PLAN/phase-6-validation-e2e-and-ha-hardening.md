@@ -21,10 +21,10 @@ same contract and may reconcile supported prerequisites instead of depending on 
 imperative setup commands. `infernix test all` is the aggregate entrypoint for lint, unit,
 integration, and E2E coverage. All additional helper commands are subordinate to these entrypoints.
 
-## Sprint 6.1: Haskell Static Quality Gates and Extensive Unit Suites [Blocked]
+## Sprint 6.1: Haskell Static Quality Gates and Extensive Unit Suites [Active]
 
-**Status**: Blocked
-**Blocked by**: `0.1-0.4`, `1.1-1.4`, `2.1-2.5`, `3.1-3.5`, `4.1-4.5`, `5.1-5.5`
+**Status**: Active
+**Implementation**: `src/Infernix/CLI.hs`, `tools/lint_check.py`, `test/unit/Spec.hs`, `web/test/contracts.test.mjs`
 **Docs to update**: `documents/development/haskell_style.md`, `documents/development/testing_strategy.md`, `documents/reference/cli_reference.md`
 
 ### Objective
@@ -51,12 +51,17 @@ plane and shared contracts.
 - breaking a route contract, storage rule, or build-generated shared type causes a unit failure
 - unit tests run without requiring a fully reconciled Kind cluster unless a specific unit fixture explicitly needs one
 
+### Remaining Work
+
+- swap the current repo-owned lint compatibility gate for the planned external formatter and linter stack once toolchain support lands
+- deepen Haskell unit coverage around lifecycle and storage edge cases
+
 ---
 
-## Sprint 6.2: Extensive Integration Suites [Blocked]
+## Sprint 6.2: Extensive Integration Suites [Done]
 
-**Status**: Blocked
-**Blocked by**: `0.1-0.4`, `1.1-1.4`, `2.1-2.5`, `3.1-3.5`, `4.1-4.5`, `5.1-5.5`
+**Status**: Done
+**Implementation**: `test/integration/Spec.hs`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/operations/cluster_bootstrap_runbook.md`
 
 ### Objective
@@ -78,10 +83,10 @@ Exercise the real Kind, Helm, Harbor, MinIO, Pulsar, and service integration pat
 
 ---
 
-## Sprint 6.3: Playwright E2E From the Web Image [Blocked]
+## Sprint 6.3: Playwright E2E From the Web Image [Done]
 
-**Status**: Blocked
-**Blocked by**: `0.1-0.4`, `1.1-1.4`, `2.1-2.5`, `3.1-3.5`, `4.1-4.5`, `5.1-5.5`
+**Status**: Done
+**Implementation**: `web/playwright.config.js`, `web/playwright/inference.spec.js`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/reference/web_portal_surface.md`
 
 ### Objective
@@ -105,7 +110,7 @@ Run browser validation only from the same image that serves the UI.
 ## Sprint 6.4: HA Failure and Recovery Coverage For Harbor, MinIO, and Pulsar [Blocked]
 
 **Status**: Blocked
-**Blocked by**: `0.1-0.4`, `1.1-1.4`, `2.1-2.5`, `3.1-3.5`, `4.1-4.5`, `5.1-5.5`
+**Blocked by**: `1.1-1.4`, `2.1-2.5`, `3.1-3.5`, `4.1-4.5`, `5.1-5.5`
 **Docs to update**: `documents/development/chaos_testing.md`, `documents/tools/harbor.md`, `documents/tools/minio.md`, `documents/tools/pulsar.md`
 
 ### Objective
@@ -127,10 +132,10 @@ Back the HA claims with concrete failure coverage.
 
 ---
 
-## Sprint 6.5: Cluster Lifecycle and Environment-Matrix Validation [Blocked]
+## Sprint 6.5: Cluster Lifecycle and Environment-Matrix Validation [Active]
 
-**Status**: Blocked
-**Blocked by**: `0.1-0.4`, `1.1-1.4`, `2.1-2.5`, `3.1-3.5`, `4.1-4.5`, `5.1-5.5`
+**Status**: Active
+**Implementation**: `src/Infernix/Cluster.hs`, `.build/infernix`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/operations/apple_silicon_runbook.md`
 
 ### Objective
@@ -150,6 +155,11 @@ Verify the same product contract across Apple host-native and Linux outer-contai
 - Linux outer-container lifecycle commands pass on the supported path
 - the generated test Dhall config is correct for the active mode on both execution contexts
 - restarting the cluster preserves durable state and repopulates the edge-port record correctly
+
+### Remaining Work
+
+- add the outer-container matrix lane
+- re-run the lifecycle matrix against the final Kind-backed implementation once it replaces the current compatibility layer
 
 ## Documentation Requirements
 

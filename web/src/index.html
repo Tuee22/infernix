@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Infernix</title>
+    <style>
+      :root {
+        --bg: #f7f1e8;
+        --ink: #1e2b26;
+        --panel: rgba(255, 255, 255, 0.78);
+        --accent: #b2412f;
+        --accent-soft: #ffd7c7;
+        --line: rgba(30, 43, 38, 0.15);
+        --success: #285f42;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: Georgia, "Times New Roman", serif;
+        color: var(--ink);
+        background:
+          radial-gradient(circle at top left, rgba(178, 65, 47, 0.18), transparent 28%),
+          radial-gradient(circle at right center, rgba(40, 95, 66, 0.16), transparent 30%),
+          linear-gradient(135deg, #f7f1e8, #efe4d5);
+      }
+
+      main {
+        max-width: 1080px;
+        margin: 0 auto;
+        padding: 32px 20px 64px;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: clamp(2.4rem, 6vw, 4.8rem);
+        line-height: 0.95;
+      }
+
+      p.lead {
+        max-width: 48rem;
+        font-size: 1.05rem;
+      }
+
+      .layout {
+        display: grid;
+        gap: 20px;
+        grid-template-columns: 1fr;
+      }
+
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 22px;
+        padding: 20px;
+        box-shadow: 0 18px 40px rgba(33, 25, 17, 0.08);
+        backdrop-filter: blur(6px);
+      }
+
+      .catalog-list {
+        display: grid;
+        gap: 12px;
+      }
+
+      .catalog-item {
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        padding: 12px 14px;
+        background: rgba(255, 255, 255, 0.7);
+        cursor: pointer;
+      }
+
+      .catalog-item.active {
+        border-color: var(--accent);
+        background: var(--accent-soft);
+      }
+
+      label {
+        display: block;
+        font-size: 0.92rem;
+        margin-bottom: 6px;
+      }
+
+      input,
+      textarea,
+      button,
+      select {
+        width: 100%;
+        font: inherit;
+      }
+
+      input,
+      textarea {
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 12px;
+        background: rgba(255, 255, 255, 0.84);
+      }
+
+      textarea {
+        min-height: 180px;
+        resize: vertical;
+      }
+
+      button {
+        border: none;
+        border-radius: 999px;
+        padding: 14px 20px;
+        background: var(--accent);
+        color: white;
+        cursor: pointer;
+      }
+
+      .muted {
+        color: rgba(30, 43, 38, 0.7);
+      }
+
+      .status {
+        min-height: 1.5rem;
+        font-weight: 600;
+      }
+
+      .status.error {
+        color: var(--accent);
+      }
+
+      .status.success {
+        color: var(--success);
+      }
+
+      pre {
+        overflow: auto;
+        padding: 14px;
+        border-radius: 16px;
+        background: rgba(30, 43, 38, 0.08);
+      }
+
+      @media (min-width: 900px) {
+        .layout {
+          grid-template-columns: 0.95fr 1.05fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header class="panel">
+        <p class="muted">Local inference control plane</p>
+        <h1>Infernix</h1>
+        <p class="lead">
+          Browse the generated model catalog, submit a manual inference request, and inspect typed
+          results through the same routed surface used by the service API.
+        </p>
+      </header>
+      <section class="layout">
+        <aside class="panel">
+          <label for="search">Filter models</label>
+          <input id="search" name="search" placeholder="Search models" />
+          <div id="catalog" class="catalog-list" aria-live="polite"></div>
+        </aside>
+        <section class="panel">
+          <form id="inference-form">
+            <div class="status muted" id="selection-status">Loading model catalog…</div>
+            <label for="inputText">Input Text</label>
+            <textarea id="inputText" name="inputText" placeholder="Type a request payload"></textarea>
+            <div style="height: 12px"></div>
+            <button id="submit-button" type="submit">Run Inference</button>
+          </form>
+          <div style="height: 20px"></div>
+          <section>
+            <div id="request-status" class="status muted"></div>
+            <pre id="result-output">No result yet.</pre>
+            <p id="object-link-container"></p>
+          </section>
+        </section>
+      </section>
+    </main>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

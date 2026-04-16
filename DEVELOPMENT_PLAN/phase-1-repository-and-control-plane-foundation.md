@@ -6,10 +6,10 @@
 > **Purpose**: Establish the canonical repository scaffold, the single `infernix` Haskell
 > executable, and the supported host or container operator modes that all later phases build on.
 
-## Sprint 1.1: Canonical Repository Scaffold [Blocked]
+## Sprint 1.1: Canonical Repository Scaffold [Active]
 
-**Status**: Blocked
-**Blocked by**: `0.1-0.4`
+**Status**: Active
+**Implementation**: `infernix.cabal`, `cabal.project`, `app/Main.hs`, `src/Infernix/`
 **Docs to update**: `README.md`, `documents/README.md`, `documents/architecture/overview.md`
 
 ### Objective
@@ -34,12 +34,17 @@ Create the repository skeleton described in [00-overview.md](00-overview.md).
   `./.build/infernix` via the repo-owned `cabal.project`
 - `docker compose run --rm infernix cabal build exe:infernix --builddir=/opt/build/infernix` succeeds on the Linux outer-container path
 
+### Remaining Work
+
+- wire the Linux outer-container path into a validated `docker compose run --rm infernix ...` workflow
+- move host-side build artifact placement from wrapper-based `.build/infernix` execution to a repo-owned build-root doctrine that does not rely on unsupported Cabal config
+
 ---
 
-## Sprint 1.2: Single Haskell Binary and CLI Contract [Blocked]
+## Sprint 1.2: Single Haskell Binary and CLI Contract [Done]
 
-**Status**: Blocked
-**Blocked by**: `0.1-0.4`
+**Status**: Done
+**Implementation**: `app/Main.hs`, `src/Infernix/CLI.hs`
 **Docs to update**: `README.md`, `documents/reference/cli_reference.md`, `documents/reference/cli_surface.md`
 
 ### Objective
@@ -91,10 +96,10 @@ Additional rules:
 
 ---
 
-## Sprint 1.3: Dual Operator Execution Contexts [Blocked]
+## Sprint 1.3: Dual Operator Execution Contexts [Active]
 
-**Status**: Blocked
-**Blocked by**: `0.1-0.4`
+**Status**: Active
+**Implementation**: `.build/infernix`, `src/Infernix/Config.hs`, `src/Infernix/Service.hs`
 **Docs to update**: `README.md`, `documents/development/local_dev.md`, `documents/engineering/docker_policy.md`
 
 ### Objective
@@ -130,12 +135,17 @@ different control-plane products.
   `KUBECONFIG`
 - the Linux launcher container sees the Docker socket and the repo-mounted `./.data/` root
 
+### Remaining Work
+
+- add and validate the outer-container Compose launcher
+- keep path discovery and repo-root resolution aligned between repo-root and nested working-directory launches
+
 ---
 
-## Sprint 1.4: Build Artifact Isolation, Haskell Quality Gates, and Web Build Generation Path [Blocked]
+## Sprint 1.4: Build Artifact Isolation, Haskell Quality Gates, and Web Build Generation Path [Active]
 
-**Status**: Blocked
-**Blocked by**: `0.1-0.4`
+**Status**: Active
+**Implementation**: `src/Infernix/CLI.hs`, `tools/lint_check.py`, `web/build.mjs`
 **Docs to update**: `documents/development/haskell_style.md`, `documents/development/local_dev.md`, `documents/development/testing_strategy.md`, `documents/engineering/build_artifacts.md`
 
 ### Objective
@@ -193,6 +203,11 @@ formatting, linting, and compiler hygiene enforceable through one canonical vali
   artifacts into the tracked repo tree
 - `infernix test unit` fails when Haskell and frontend contract expectations are intentionally made
   stale
+
+### Remaining Work
+
+- replace wrapper-based host builds with a first-class repo-owned build-root configuration once the local Cabal toolchain supports it
+- adopt external Haskell formatting and lint tooling once compatible releases exist for the supported compiler
 
 ## Documentation Requirements
 
