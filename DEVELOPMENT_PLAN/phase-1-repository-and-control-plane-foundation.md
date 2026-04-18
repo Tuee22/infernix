@@ -107,8 +107,8 @@ Additional rules:
 - `cluster up` is the only supported cluster reconcile entrypoint
 - `cluster down` is the only supported cluster teardown entrypoint
 - `cluster status` is read-only and never performs reconciliation side effects
-- `infernix kubectl ...` is the supported Kubernetes-access wrapper; the current implementation
-  exposes a limited compatibility subset while preserving the later repo-local kubeconfig contract
+- `infernix kubectl ...` is the supported Kubernetes-access wrapper; it preserves the repo-local
+  kubeconfig contract while delegating the remaining arguments to upstream `kubectl`
 - test and docs flows do not introduce parallel imperative setup command families outside this
   surface
 
@@ -118,7 +118,7 @@ Additional rules:
 - `infernix test --help` and `infernix cluster --help` document the supported subcommand families
 - CLI help and reference docs describe the declarative semantics of `cluster up`, `cluster down`,
   `cluster status`, `test ...`, and `docs check`, plus the repo-local kubeconfig behavior and
-  current compatibility scope of `infernix kubectl ...`
+  pass-through scope of `infernix kubectl ...`
 
 ### Remaining Work
 
@@ -139,9 +139,8 @@ different control-plane products.
 
 ### Deliverables
 
-- Apple Silicon runs `./.build/infernix` directly on the host; the final closure shells out to
-  host-installed `kind`, `kubectl`, `helm`, and Docker while the current compatibility layer keeps
-  the same CLI surface
+- Apple Silicon runs `./.build/infernix` directly on the host and shells out to host-installed
+  `kind`, `kubectl`, `helm`, and Docker without changing the supported CLI surface
 - on Apple Silicon, `cluster up` writes `./.build/infernix.kubeconfig` and does not mutate
   `$HOME/.kube/config` or the user's global current context
 - `infernix kubectl ...` automatically targets `./.build/infernix.kubeconfig` on Apple host mode and

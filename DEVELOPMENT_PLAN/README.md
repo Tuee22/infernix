@@ -63,8 +63,12 @@ implementation than the plan previously recorded.
   build-root-isolated frontend contract staging, Apple host prerequisite detection for repo-owned
   Python manifests, the repo-owned `./cabalw` host build wrapper, repo-owned `ormolu` or `hlint`
   or `cabal format` checks, Harbor-first image publication, GPU-enabled `linux-cuda` Kind
-  reconciliation, and exhaustive lint, unit, integration, plus routed E2E coverage across Apple,
-  Linux CPU, and Linux CUDA on the validated compatibility matrix
+  reconciliation, node-reachable Kind registry mirror configuration for Harbor-backed pulls, a
+  repo-built bootstrap registry for pre-Harbor MinIO and Pulsar image pulls, and a host-native
+  Kind bootstrap path that no longer depends on Kind's brittle boot-log wait; `infernix test
+  lint`, `infernix test unit`, `infernix test integration`, and `infernix test e2e` now pass
+  again on the supported host-native and outer-container validation lanes, including the default
+  runtime-mode matrix
 - `compose.yaml` and `docker/infernix.Dockerfile` now close the documented outer-container
   compatibility launcher, while `web/Dockerfile`, `chart/`, `kind/`, and `proto/` now back the
   validated Kind or Helm or Harbor or MinIO or Pulsar substrate on the Apple host-native lane

@@ -8,9 +8,7 @@
 
 ## Pending Removal
 
-| Location | Why it is slated for removal | Owning phase or sprint |
-|----------|------------------------------|------------------------|
-| `tools/service_server.py` single-process compatibility server | the repo target is a real edge proxy plus service runtime and mode-aware deployment topology, not a single-process compatibility shim | Phase 3, Sprint 3.4; Phase 4, Sprint 4.2 |
+None.
 
 ## Completed
 

@@ -122,9 +122,9 @@ runRuntimeModeE2E paths runtimeMode =
       if controlPlaneContext paths == "host-native"
         then
           withHostBridgeService runtimeMode edgePort $
-            runPlaywrightImage runtimeMode edgePort "control-plane-host" "host-daemon-bridge"
+            runPlaywrightImage runtimeMode "127.0.0.1" edgePort "control-plane-host" "host-daemon-bridge"
         else
-          runPlaywrightImage runtimeMode edgePort "cluster-pod" "cluster-service"
+          runPlaywrightImage runtimeMode "host.docker.internal" edgePort "cluster-pod" "cluster-service"
   )
     `finally` clusterDown (Just runtimeMode)
 
@@ -170,10 +170,11 @@ withHostBridgeService runtimeMode edgePort action = do
       restoreClusterServiceRoute paths
       waitForPublication edgePort "cluster-pod" "cluster-service"
 
-runPlaywrightImage :: RuntimeMode -> Int -> String -> String -> IO ()
-runPlaywrightImage runtimeMode edgePort expectedDaemonLocation expectedApiUpstreamMode = do
+runPlaywrightImage :: RuntimeMode -> String -> Int -> String -> String -> IO ()
+runPlaywrightImage runtimeMode routeProbeHost edgePort expectedDaemonLocation expectedApiUpstreamMode = do
   paths <- discoverPaths
   imageRef <- resolvePlaywrightImage paths runtimeMode
+  waitForPlaywrightSurface routeProbeHost edgePort expectedDaemonLocation expectedApiUpstreamMode
   runCommand
     (Just runtimeMode)
     "docker"
@@ -284,6 +285,72 @@ waitForPublication edgePort expectedDaemonLocation expectedApiUpstreamMode = go 
                     "    else:",
                     "        print('pending')"
                   ],
+                show edgePort,
+                expectedDaemonLocation,
+                expectedApiUpstreamMode
+              ]
+              ""
+          if "ready" `elem` words output
+            then pure ()
+            else do
+              threadDelay 1000000
+              go (remainingAttempts - 1)
+
+waitForPlaywrightSurface :: String -> Int -> String -> String -> IO ()
+waitForPlaywrightSurface host edgePort expectedDaemonLocation expectedApiUpstreamMode = go (60 :: Int)
+  where
+    go remainingAttempts
+      | remainingAttempts <= 0 =
+          ioError
+            ( userError
+                ( "timed out waiting for routed surface at "
+                    <> host
+                    <> ":"
+                    <> show edgePort
+                    <> " to serve publication, demo-config, and inference traffic"
+                )
+            )
+      | otherwise = do
+          output <-
+            readProcess
+              "python3"
+              [ "-c",
+                unlines
+                  [ "import json",
+                    "import sys",
+                    "import urllib.request",
+                    "base_url = f'http://{sys.argv[1]}:{sys.argv[2]}'",
+                    "expected_daemon = sys.argv[3]",
+                    "expected_mode = sys.argv[4]",
+                    "def load_json(path, timeout=5, data=None):",
+                    "    request = urllib.request.Request(base_url + path, data=data)",
+                    "    request.add_header('Content-Type', 'application/json') if data is not None else None",
+                    "    with urllib.request.urlopen(request, timeout=timeout) as response:",
+                    "        return json.load(response)",
+                    "try:",
+                    "    publication = load_json('/api/publication')",
+                    "    demo_config = load_json('/api/demo-config')",
+                    "    with urllib.request.urlopen(base_url + '/', timeout=5) as response:",
+                    "        home = response.read().decode('utf-8', errors='replace')",
+                    "    models = demo_config.get('models') or []",
+                    "    if not models:",
+                    "        raise ValueError('demo config did not publish any models')",
+                    "    probe_payload = json.dumps({",
+                    "        'requestModelId': models[0]['modelId'],",
+                    "        'inputText': 'playwright readiness probe'",
+                    "    }).encode('utf-8')",
+                    "    inference = load_json('/api/inference', timeout=15, data=probe_payload)",
+                    "except Exception:",
+                    "    print('pending')",
+                    "else:",
+                    "    daemon = publication.get('daemonLocation')",
+                    "    upstream_mode = (publication.get('apiUpstream') or {}).get('mode')",
+                    "    if daemon == expected_daemon and upstream_mode == expected_mode and 'Infernix' in home and inference.get('resultModelId') == models[0].get('modelId'):",
+                    "        print('ready')",
+                    "    else:",
+                    "        print('pending')"
+                  ],
+                host,
                 show edgePort,
                 expectedDaemonLocation,
                 expectedApiUpstreamMode

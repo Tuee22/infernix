@@ -23,8 +23,8 @@ renders family-aware request guidance and result framing for every generated ent
 This phase owns the browser-side interpretation of the generated demo catalog.
 
 - the demo UI catalog comes only from the active runtime mode's generated demo catalog; the current
-  path proves this through generated staging plus the ConfigMap compatibility mirror, and the final
-  path proves it through the mounted ConfigMap-backed `.dhall`
+  supported path proves this through generated staging, the repo-local publication mirror, and the
+  mounted ConfigMap-backed `.dhall`
 - the UI does not maintain a hidden hard-coded allowlist on the supported path
 - the browser workbench must expose every model or workload entry present in that generated file
 - mode changes alter the catalog content without changing the route structure
@@ -37,28 +37,27 @@ This phase owns the browser-side interpretation of the generated demo catalog.
 
 ### Objective
 
-Close the web hosting contract while keeping one stable browser entrypoint across the current
-compatibility host and the final cluster-resident webapp service.
+Close the web hosting contract while keeping one stable browser entrypoint across the
+cluster-resident webapp service and the Apple host bridge.
 
 ### Deliverables
 
 - repo-owned browser application code lives under `web/src/`; the current implementation is a
-  JavaScript compatibility workbench and later closure may replace or recompile that surface
-- a cluster-resident webapp image, built via `web/Dockerfile`, ultimately serves the built frontend
+  JavaScript workbench built from generated contracts
+- a cluster-resident webapp image, built via `web/Dockerfile`, serves the built frontend on the
+  supported Kind path
 - the webapp service deployment is owned by repo Helm chart templates and values
 - in containerized execution contexts, the webapp workload mounts
   `ConfigMap/infernix-demo-config` read-only at `/opt/build/` and reads the active-mode `.dhall`
   from that watched runtime directory
-- the final supported path does not depend on a host-only webserver, even though the current
-  compatibility host temporarily serves `/`
+- the supported path does not depend on a host-only webserver for `/`
 - the edge proxy routes `/` to this service on every supported path
 
 ### Validation
 
-- `curl http://127.0.0.1:<port>/` returns the frontend entrypoint on the current routed compatibility path
+- `curl http://127.0.0.1:<port>/` returns the frontend entrypoint on the routed cluster-resident path
 - the browser workbench loads through the routed surface and consumes the active generated catalog
-- final closure requires `infernix cluster up` to deploy the webapp service through Helm and serve
-  that same route from the cluster
+- `infernix cluster up` deploys the webapp service through Helm and serves that same route from the cluster
 
 ### Remaining Work
 
@@ -157,11 +156,11 @@ Deliver the browser workbench the user asked for: manual inference against any m
 - routed Playwright coverage proves the workbench can render object-reference result links for
   large outputs
 - every registered model remains manually callable through the same `/api` surface, while richer
-  per-family browser flows stay tracked in Sprint 5.6
+  per-family browser flows close in Sprint 5.6
 
 ### Remaining Work
 
-None. Active-mode exhaustive catalog parity is tracked in Sprint 5.6.
+None. Active-mode exhaustive catalog parity is closed in Sprint 5.6.
 
 ---
 
@@ -220,8 +219,8 @@ Make the browser workbench a faithful reflection of the generated catalog for th
 
 ### Validation
 
-- browser-visible catalog entries match the active generated demo config exactly on the current
-  compatibility path and later through the mounted ConfigMap-backed runtime path
+- browser-visible catalog entries match the active generated demo config exactly across the
+  repo-local publication mirror and the mounted ConfigMap-backed runtime path
 - removing an entry from the generated mode config removes it from the UI without extra frontend edits
 - switching from Apple to Linux CPU to Linux CUDA changes the catalog and engine metadata in the expected way
 - frontend unit and Playwright coverage prove the workbench renders family-aware request guidance,

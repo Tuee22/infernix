@@ -171,6 +171,9 @@ automatically during `cluster up`.
 - `infernix cluster up` mirrors all non-Harbor third-party images into Harbor and builds then
   publishes repo-owned images to Harbor before Helm rollout
 - `infernix cluster up` builds the separate webapp image through `web/Dockerfile` and uploads it to Harbor
+- before Harbor is ready, `cluster up` now also mirrors the MinIO and Pulsar bootstrap images into
+  a repo-built bootstrap registry on `localhost:30001`, and Kind registry-host config rewrites that
+  namespace to the helper registry on the Kind network
 - Helm values reference Harbor image coordinates for every cluster pod except Harbor's own bootstrap path
 - publication is idempotent and compares local versus remote digests where possible
 - interrupted Harbor bootstrap state is repaired during repeat `cluster up` runs before the final
@@ -230,6 +233,7 @@ None.
 ## Sprint 2.6: Mode-Aware `cluster up` Demo Config Staging and ConfigMap Publication [Done]
 
 **Status**: Done
+**Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Config.hs`, `src/Infernix/Models.hs`, `chart/templates/configmap-demo-catalog.yaml`, `chart/templates/deployment-service.yaml`, `chart/templates/deployment-web.yaml`, `test/integration/Spec.hs`
 **Docs to update**: `documents/engineering/build_artifacts.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/development/testing_strategy.md`
 
 ### Objective

@@ -169,6 +169,42 @@ def validate_phase_docs() -> None:
         text = read_text(full_path)
         if "## Documentation Requirements" not in text:
             fail(f"{relative_path} is missing the Documentation Requirements section")
+        validate_phase_doc_structure(relative_path, text)
+
+
+def validate_phase_doc_structure(relative_path: Path, text: str) -> None:
+    sprint_re = re.compile(r"^## Sprint .+$", re.MULTILINE)
+    status_re = re.compile(r"^\*\*Status\*\*: (Done|Active|Planned|Blocked)$", re.MULTILINE)
+    sprint_matches = list(sprint_re.finditer(text))
+    if not sprint_matches:
+        fail(f"{relative_path} must contain at least one sprint section")
+
+    for index, sprint_match in enumerate(sprint_matches):
+        sprint_heading = sprint_match.group(0)
+        sprint_start = sprint_match.start()
+        sprint_end = sprint_matches[index + 1].start() if index + 1 < len(sprint_matches) else len(text)
+        sprint_block = text[sprint_start:sprint_end]
+        status_match = status_re.search(sprint_block)
+
+        if status_match is None:
+            fail(f"{relative_path} has a sprint without a valid status line: {sprint_heading}")
+
+        status = status_match.group(1)
+        if "**Docs to update**:" not in sprint_block:
+            fail(f"{relative_path} is missing **Docs to update** in {sprint_heading}")
+        if status in {"Done", "Active"} and "**Implementation**:" not in sprint_block:
+            fail(f"{relative_path} is missing **Implementation** in {sprint_heading}")
+        if status == "Blocked" and "**Blocked by**:" not in sprint_block:
+            fail(f"{relative_path} is missing **Blocked by** in {sprint_heading}")
+
+        for required_section in (
+            "### Objective",
+            "### Deliverables",
+            "### Validation",
+            "### Remaining Work",
+        ):
+            if required_section not in sprint_block:
+                fail(f"{relative_path} is missing {required_section} in {sprint_heading}")
 
 
 def validate_required_phrases() -> None:

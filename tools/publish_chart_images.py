@@ -51,9 +51,9 @@ def maybe_run(command: list[str]) -> bool:
     return result.returncode == 0
 
 
-def registry_ready(harbor_host: str) -> bool:
+def registry_ready(harbor_api_host: str) -> bool:
     try:
-        with urllib.request.urlopen(f"http://{harbor_host}/v2/", timeout=5) as response:
+        with urllib.request.urlopen(f"http://{harbor_api_host}/v2/", timeout=5) as response:
             return response.status in {200, 401, 403}
     except urllib.error.HTTPError as exc:
         return exc.code in {200, 401, 403}
@@ -61,13 +61,13 @@ def registry_ready(harbor_host: str) -> bool:
         return False
 
 
-def wait_for_registry(harbor_host: str) -> None:
+def wait_for_registry(harbor_api_host: str) -> None:
     for attempt in range(1, REGISTRY_READY_ATTEMPTS + 1):
-        if registry_ready(harbor_host):
+        if registry_ready(harbor_api_host):
             return
         if attempt < REGISTRY_READY_ATTEMPTS:
             time.sleep(min(attempt, 5))
-    fail(f"Harbor registry at {harbor_host} never became ready for docker login")
+    fail(f"Harbor registry at {harbor_api_host} never became ready for docker login")
 
 
 def harbor_api_headers(harbor_user: str, harbor_password: str) -> dict[str, str]:
@@ -82,17 +82,18 @@ def harbor_repository_path(target_repository: str, harbor_host: str, harbor_proj
     return target_repository[len(prefix) :]
 
 
-def harbor_repository_url(harbor_host: str, harbor_project: str, repository_path: str) -> str:
+def harbor_repository_url(harbor_api_host: str, harbor_project: str, repository_path: str) -> str:
     encoded_project = urllib.parse.quote(harbor_project, safe="")
     encoded_repository = urllib.parse.quote(urllib.parse.quote(repository_path, safe=""), safe="")
     return (
-        f"http://{harbor_host}/api/v2.0/projects/{encoded_project}/repositories/"
+        f"http://{harbor_api_host}/api/v2.0/projects/{encoded_project}/repositories/"
         f"{encoded_repository}/artifacts?page_size=100&with_tag=true"
     )
 
 
 def harbor_tag_exists(
     harbor_host: str,
+    harbor_api_host: str,
     harbor_project: str,
     harbor_user: str,
     harbor_password: str,
@@ -100,7 +101,7 @@ def harbor_tag_exists(
     target_tag: str,
 ) -> bool:
     repository_path = harbor_repository_path(target_repository, harbor_host, harbor_project)
-    request = urllib.request.Request(harbor_repository_url(harbor_host, harbor_project, repository_path))
+    request = urllib.request.Request(harbor_repository_url(harbor_api_host, harbor_project, repository_path))
     for header, value in harbor_api_headers(harbor_user, harbor_password).items():
         request.add_header(header, value)
     try:
@@ -122,8 +123,10 @@ def harbor_tag_exists(
     return False
 
 
-def login_harbor_with_retries(harbor_host: str, harbor_user: str, harbor_password: str) -> None:
-    wait_for_registry(harbor_host)
+def login_harbor_with_retries(
+    harbor_host: str, harbor_api_host: str, harbor_user: str, harbor_password: str
+) -> None:
+    wait_for_registry(harbor_api_host)
     last_failure = ""
     for attempt in range(1, LOGIN_ATTEMPTS + 1):
         result = subprocess.run(
@@ -137,11 +140,11 @@ def login_harbor_with_retries(harbor_host: str, harbor_user: str, harbor_passwor
         if result.returncode == 0:
             return
         last_failure = f"{result.stdout}{result.stderr}".strip() or f"docker login exited with status {result.returncode}"
-        if registry_ready(harbor_host) and attempt < LOGIN_ATTEMPTS:
+        if registry_ready(harbor_api_host) and attempt < LOGIN_ATTEMPTS:
             time.sleep(attempt * 2)
             continue
         if attempt < LOGIN_ATTEMPTS:
-            wait_for_registry(harbor_host)
+            wait_for_registry(harbor_api_host)
     fail(f"docker login failed for {harbor_host}\n{last_failure}")
 
 
@@ -243,20 +246,24 @@ def publish_if_needed(
     target_repository: str,
     target_tag: str,
     harbor_host: str,
+    harbor_api_host: str,
     harbor_project: str,
     harbor_user: str,
     harbor_password: str,
 ) -> None:
     target_ref = f"{target_repository}:{target_tag}"
-    if harbor_tag_exists(harbor_host, harbor_project, harbor_user, harbor_password, target_repository, target_tag):
+    if harbor_tag_exists(
+        harbor_host, harbor_api_host, harbor_project, harbor_user, harbor_password, target_repository, target_tag
+    ):
         return
     run(["docker", "tag", source_image, target_ref])
-    push_image_with_retries(target_ref, harbor_host, harbor_project, harbor_user, harbor_password)
+    push_image_with_retries(target_ref, harbor_host, harbor_api_host, harbor_project, harbor_user, harbor_password)
 
 
 def push_image_with_retries(
     target_ref: str,
     harbor_host: str,
+    harbor_api_host: str,
     harbor_project: str,
     harbor_user: str,
     harbor_password: str,
@@ -276,7 +283,9 @@ def push_image_with_retries(
                 timeout=DOCKER_PUSH_TIMEOUT_SECONDS,
             )
         except subprocess.TimeoutExpired as exc:
-            if harbor_tag_exists(harbor_host, harbor_project, harbor_user, harbor_password, target_repository, target_tag):
+            if harbor_tag_exists(
+                harbor_host, harbor_api_host, harbor_project, harbor_user, harbor_password, target_repository, target_tag
+            ):
                 return
             combined_output = f"{exc.stdout or ''}{exc.stderr or ''}".strip()
             last_failure = (
@@ -286,7 +295,9 @@ def push_image_with_retries(
         else:
             if result.returncode == 0:
                 return
-            if harbor_tag_exists(harbor_host, harbor_project, harbor_user, harbor_password, target_repository, target_tag):
+            if harbor_tag_exists(
+                harbor_host, harbor_api_host, harbor_project, harbor_user, harbor_password, target_repository, target_tag
+            ):
                 return
 
             combined_output = f"{result.stdout}{result.stderr}".strip()
@@ -380,6 +391,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("rendered_chart")
     parser.add_argument("output")
     parser.add_argument("--harbor-host", default="localhost:30002")
+    parser.add_argument("--harbor-api-host")
     parser.add_argument("--harbor-project", default="library")
     parser.add_argument("--harbor-user", default="admin")
     parser.add_argument("--harbor-password", default="Harbor12345")
@@ -390,6 +402,7 @@ def main() -> int:
     args = parse_args()
     rendered_chart_path = Path(args.rendered_chart)
     output_path = Path(args.output)
+    harbor_api_host = args.harbor_api_host or args.harbor_host
 
     images = load_images(rendered_chart_path)
     publishable_images = [image for image in images if not is_harbor_image(image)]
@@ -397,7 +410,7 @@ def main() -> int:
         if required_image not in publishable_images:
             fail(f"required repo-owned image {required_image} was not present in the rendered chart")
 
-    login_harbor_with_retries(args.harbor_host, args.harbor_user, args.harbor_password)
+    login_harbor_with_retries(args.harbor_host, harbor_api_host, args.harbor_user, args.harbor_password)
 
     published_images: dict[str, tuple[str, str]] = {}
     for image in publishable_images:
@@ -408,6 +421,7 @@ def main() -> int:
             target_repository,
             target_tag,
             args.harbor_host,
+            harbor_api_host,
             args.harbor_project,
             args.harbor_user,
             args.harbor_password,

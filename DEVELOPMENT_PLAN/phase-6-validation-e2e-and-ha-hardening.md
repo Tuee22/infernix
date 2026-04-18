@@ -9,19 +9,20 @@
 
 ## Current Repo Assessment
 
-The repository already has lint, unit, integration, and Playwright entrypoints. Those surfaces now
-pass on the host-native and outer-container control-plane lanes for the validated repo-owned Kind
-and Helm substrate, and routed Playwright now drives the real edge, web, and service workloads
-instead of a host-side compatibility server. Integration now also proves routed cache lifecycle
-semantics through the service API, and the host-native validation lane now also proves that the
-browser entrypoint stays stable while `/api` moves between the cluster-resident service and the
-Apple host bridge. The current compatibility matrix passes integration and E2E exhaustively across
-`apple-silicon`, `linux-cpu`, and `linux-cuda` on the supported host-native control-plane context,
-and the updated routed E2E contract also remains validated on the outer-container lane. The
-Apple host-native final-substrate lane now also passes lint, unit, integration, and routed E2E
-coverage on the real Harbor, MinIO, and Pulsar stack, including HA recovery, GPU-aware
-`linux-cuda` substrate assertions, and same-image Playwright execution from the Harbor-published
-web runtime across the runtime matrix. This phase is now closed.
+The repository already has lint, unit, integration, and Playwright entrypoints. Those surfaces
+remain the canonical validation contract, and the current host-native plus outer-container reruns
+now reconfirm the full matrix.
+
+- `infernix test lint` and `infernix test unit` pass on the current host-native lane after the
+  repo-owned `ormolu` bootstrap fix
+- the default host-native `apple-silicon` `cluster up` path and routed smoke pass again after
+  switching the Kind registry mirror for Harbor-backed pulls away from node-local `localhost`,
+  removing Kind's brittle built-in boot wait, and adding the repo-built bootstrap registry path
+  used before Harbor is ready
+- the exhaustive `infernix test integration` and `infernix test e2e` reruns now pass across
+  `apple-silicon`, `linux-cpu`, `linux-cuda`, and the outer-container lane, and the outer routed
+  Playwright path now waits for routed publication or demo-config or inference readiness before it
+  launches the browser suite
 
 ## Validation Surface
 
@@ -114,8 +115,8 @@ forward onto the final Kind, Helm, Harbor, MinIO, and Pulsar substrate.
   remains owned by Phase 6.3 Playwright
 - integration coverage enumerates every generated catalog entry for the active runtime mode
 - integration coverage that the active mode's generated demo `.dhall` is published into
-  `ConfigMap/infernix-demo-config` and mirrored byte-for-byte through the current compatibility path
-- integration coverage that compatibility publication state is written for routed consumers
+  `ConfigMap/infernix-demo-config` and mirrored byte-for-byte through the repo-local publication mirror
+- integration coverage that publication state is written for routed consumers
 - host-native integration coverage proves the routed API can move to the Apple host bridge without
   changing the browser-visible edge entrypoint
 - dedicated `linux-cuda` integration coverage proves GPU resource advertising, `RuntimeClass/nvidia`,
@@ -145,14 +146,14 @@ None.
 
 ### Objective
 
-Keep routed Playwright validation under the web-owned test surface while moving from the current
-locally built web image to the final Harbor-published web runtime.
+Keep routed Playwright validation under the web-owned test surface while exercising the built web
+image and the Harbor-published host-native runtime image.
 
 ### Deliverables
 
 - Playwright suites live under `web/playwright/` or an equivalent UI-owned path
-- the current `infernix test e2e` path exercises the routed surface through Playwright-owned HTTP
-  coverage and browser UI interaction coverage launched from the built web image
+- `infernix test e2e` exercises the routed surface through Playwright-owned HTTP coverage and
+  browser UI interaction coverage launched from the built web image
 - the host-native final-substrate path reuses the Harbor-published web image across
   `apple-silicon`, `linux-cpu`, and `linux-cuda`
 - E2E covers the routed UI contract, model selection, manual inference submission, and result rendering
@@ -160,10 +161,10 @@ locally built web image to the final Harbor-published web runtime.
 ### Validation
 
 - `infernix test e2e` hits the routed path rather than bypassing the edge
-- the current compatibility suite fails if any active-mode catalog entry is skipped
-- the current compatibility suite fails if the browser workbench cannot render publication details,
+- the routed Playwright suite fails if any active-mode catalog entry is skipped
+- the routed Playwright suite fails if the browser workbench cannot render publication details,
   select a model, submit a request, or render an object-reference result state
-- the current host-native compatibility suite also fails if `/api` cannot move to the Apple host
+- the host-native routed suite also fails if `/api` cannot move to the Apple host
   bridge while the browser stays on the same edge base URL
 - `./.build/infernix --runtime-mode apple-silicon test e2e` launches Chromium, WebKit, and Firefox from the built web image without depending on host-installed Playwright or host browser binaries
 - `./.build/infernix --runtime-mode linux-cpu test e2e` and
@@ -221,16 +222,16 @@ Verify the same product contract across Apple host-native and Linux outer-contai
 - the codebase now exposes `cluster up`, `cluster status`, and `cluster down` through both the
   Apple host-native and Linux outer-container launcher surfaces
 - current automated coverage proves `cluster up` creates the repo-local kubeconfig, generated demo
-  `.dhall`, ConfigMap compatibility mirror, and publication state for the active runtime mode
+  `.dhall`, repo-local ConfigMap publication mirror, and publication state for the active runtime mode
 - `cluster status` reports the active runtime mode, build-root or data-root paths, generated
   demo-config publication details, chosen edge port, publication state path, and cache or object
   inventory from repo-local state without mutation
-- the current compatibility lifecycle remains the basis for later outer-container and final
-  Kind-backed matrix validation
+- the same lifecycle closes the host-native and outer-container Kind-backed matrix validation
+  contract
 
 ### Validation
 
-- `infernix test integration` proves the host-lane compatibility path creates the generated demo
+- `infernix test integration` proves the host-native lane creates the generated demo
   `.dhall`, published ConfigMap mirror, repo-local kubeconfig, and publication state for the active
   runtime mode
 - `docker compose run --rm infernix infernix test integration` proves the same lifecycle and
@@ -250,7 +251,7 @@ None.
 ## Sprint 6.6: Per-Mode Exhaustive Integration and E2E Coverage [Done]
 
 **Status**: Done
-**Implementation**: `test/integration/Spec.hs`, `web/playwright/inference.spec.js`, `web/test/contracts.test.mjs`, `web/test/run_playwright_matrix.mjs`
+**Implementation**: `src/Infernix/CLI.hs`, `test/integration/Spec.hs`, `web/playwright/inference.spec.js`, `web/test/contracts.test.mjs`, `web/test/run_playwright_matrix.mjs`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/reference/web_portal_surface.md`, `documents/reference/cli_reference.md`
 
 ### Objective
@@ -266,7 +267,7 @@ validation cover every generated catalog entry using the engine binding selected
 - `infernix test e2e` exercises every demo-visible entry from the routed `/api/models` surface,
   cross-checks that routed catalog against the serialized generated demo config reported through
   `/api/publication`, and pairs that exhaustive HTTP coverage with browser UI interaction coverage
-- the current compatibility matrix runs those exhaustive integration and E2E paths across
+- the default validation matrix runs those exhaustive integration and E2E paths across
   `apple-silicon`, `linux-cpu`, and `linux-cuda` by default when no explicit runtime-mode override
   is supplied on both the Apple host-native and Linux outer-container control-plane surfaces
 - `linux-cuda` exhaustive coverage now asserts the generated catalog, routed publication state, and
@@ -277,9 +278,9 @@ validation cover every generated catalog entry using the engine binding selected
 
 - changing the active runtime mode changes the exercised catalog and engine assertions automatically
 - integration or E2E fails if any generated catalog entry for the active mode is skipped
-- the current compatibility coverage fails if publication or selected-engine metadata regress on the
+- the default validation coverage fails if publication or selected-engine metadata regress on the
   routed catalog surfaces it consumes
-- the current compatibility coverage passes Apple, Linux CPU, and Linux CUDA exhaustive suites
+- the default validation coverage passes Apple, Linux CPU, and Linux CUDA exhaustive suites
   against the generated serialized catalogs by default when no explicit runtime-mode override is
   supplied on both supported control-plane execution contexts
 - the host-native final-substrate routed E2E path also passes Apple, Linux CPU, and Linux CUDA

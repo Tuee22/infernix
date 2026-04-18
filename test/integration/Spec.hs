@@ -656,25 +656,35 @@ validateDurableBackends paths runtimeMode baseUrl modelIdText requestIdText mayb
       assert largeOutputExists "MinIO stores large-output object payloads for the routed service path"
 
 minioObjectExists :: Paths -> String -> String -> IO Bool
-minioObjectExists paths bucketName objectKey = do
-  let script =
-        unlines
-          [ "import sys",
-            "from minio import Minio",
-            "from minio.error import S3Error",
-            "client = Minio(sys.argv[1], access_key='minioadmin', secret_key='minioadmin123', secure=False)",
-            "try:",
-            "    client.stat_object(sys.argv[2], sys.argv[3])",
-            "except S3Error as exc:",
-            "    if exc.code == 'NoSuchKey':",
-            "        print('false')",
-            "    else:",
-            "        raise",
-            "else:",
-            "    print('true')"
-          ]
-  output <- readProcess "python3" ["-c", script, runtimeHost paths <> ":30011", bucketName, objectKey] ""
-  pure (output == "true\n")
+minioObjectExists paths bucketName objectKey = waitForObject (20 :: Int)
+  where
+    waitForObject attempts = do
+      objectExists <- probeObject
+      if objectExists || attempts <= 1
+        then pure objectExists
+        else do
+          threadDelay 500000
+          waitForObject (attempts - 1)
+
+    probeObject = do
+      let script =
+            unlines
+              [ "import sys",
+                "from minio import Minio",
+                "from minio.error import S3Error",
+                "client = Minio(sys.argv[1], access_key='minioadmin', secret_key='minioadmin123', secure=False)",
+                "try:",
+                "    client.stat_object(sys.argv[2], sys.argv[3])",
+                "except S3Error as exc:",
+                "    if exc.code == 'NoSuchKey':",
+                "        print('false')",
+                "    else:",
+                "        raise",
+                "else:",
+                "    print('true')"
+              ]
+      output <- readProcess "python3" ["-c", script, runtimeHost paths <> ":30011", bucketName, objectKey] ""
+      pure (output == "true\n")
 
 trim :: String -> String
 trim = reverse . dropWhile (== '\n') . dropWhile (== ' ') . reverse . dropWhile (== ' ')

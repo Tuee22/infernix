@@ -79,11 +79,20 @@ def download(url: str, target: Path) -> None:
 
 
 def extract_ormolu(archive_path: Path, output_path: Path) -> None:
-    if output_path.exists():
-        return
     ensure_directory(output_path.parent)
     with zipfile.ZipFile(archive_path) as archive:
-        archive.extract("ormolu", output_path.parent)
+        extracted_members = {
+            member
+            for member in archive.namelist()
+            if member == "ormolu" or member.endswith(".dylib")
+        }
+        missing_members = [
+            member for member in extracted_members if not (output_path.parent / member).exists()
+        ]
+        if not missing_members:
+            return
+        for member in missing_members:
+            archive.extract(member, output_path.parent)
     output_path.chmod(0o755)
 
 

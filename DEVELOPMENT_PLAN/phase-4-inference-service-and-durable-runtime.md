@@ -158,13 +158,14 @@ Expose a stable API for listing models and submitting manual inference requests 
 - `infernix test e2e` proves routed model listing and manual inference submission through the same
   `/api` surface the workbench uses
 - direct API calls to `/api/models/<id>` and `/api/inference/<id>` return typed model metadata and
-  stored results on the current compatibility path
+  stored results on the supported routed service path
 - invalid requests are rejected with typed user-facing errors rather than transport-level crashes
-- at least one end-to-end path exercises browser submission through the same service API later used by Phase 6 Playwright coverage
+- at least one end-to-end path exercises browser submission through the same service API used by
+  the browser and Playwright coverage
 
 ### Remaining Work
 
-None. Mode-scale catalog expansion is tracked in Sprint 4.6.
+None. Mode-scale catalog expansion is closed in Sprint 4.6.
 
 ---
 
@@ -182,14 +183,14 @@ Make derived runtime state reproducible from durable sources and keep lifecycle 
 
 - local service cache roots live under `./.data/runtime/`
 - cache directories are keyed by model identity and runtime mode
-- the current compatibility path materializes cache on demand from inference execution and keeps it
+- the current service path materializes cache on demand from inference execution and keeps it
   derived rather than authoritative
-- the current compatibility runtime writes durable cache manifests under
+- the current service runtime writes durable cache manifests under
   `./.data/object-store/manifests/` and treats those manifests as the rebuild source for derived
   cache directories
 - `infernix cache status`, `infernix cache evict`, and `infernix cache rebuild` provide explicit
   operator cache lifecycle flows without mutating unrelated runtime state
-- the routed compatibility API now exposes `GET /api/cache`, `POST /api/cache/evict`, and
+- the routed service API exposes `GET /api/cache`, `POST /api/cache/evict`, and
   `POST /api/cache/rebuild` so service-path cache semantics are testable through the same routed
   surface used by the browser and integration layers
 
@@ -207,7 +208,7 @@ Make derived runtime state reproducible from durable sources and keep lifecycle 
 
 ### Remaining Work
 
-None. The final MinIO-backed durability swap remains tracked in Sprint 4.2.
+None. MinIO-backed routed durability is closed in Sprint 4.2.
 
 ---
 

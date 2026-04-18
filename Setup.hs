@@ -1,8 +1,8 @@
 import Data.List (isPrefixOf)
 import Data.ProtoLens.Setup (defaultMainGeneratingProtos)
-import System.Directory (createDirectoryIfMissing, doesFileExist, findExecutable, getCurrentDirectory)
+import System.Directory (createDirectoryIfMissing, doesFileExist, doesPathExist, findExecutable, getCurrentDirectory)
 import System.Environment (getEnv, lookupEnv, setEnv)
-import System.FilePath ((</>))
+import System.FilePath (isAbsolute, takeDirectory, (</>))
 import System.Process (callProcess)
 
 protoLensAllowNewer :: [String]
@@ -19,7 +19,8 @@ protoLensAllowNewer =
 main :: IO ()
 main = do
   repoRoot <- getCurrentDirectory
-  let toolRoot = repoRoot </> ".build" </> "proto-tools"
+  buildRoot <- resolveBuildRoot repoRoot
+  let toolRoot = buildRoot </> "proto-tools"
       toolBinDir = toolRoot </> "bin"
       toolBuildDir = toolRoot </> "cabal"
       toolBinary = toolBinDir </> "proto-lens-protoc"
@@ -74,3 +75,28 @@ ensureToolVisible expectedPath = do
             <> " to be visible in PATH="
             <> pathValue
         )
+
+resolveBuildRoot :: FilePath -> IO FilePath
+resolveBuildRoot cwd = do
+  repoRoot <- findRepoRoot cwd
+  maybeBuildRoot <- lookupEnv "INFERNIX_BUILD_ROOT"
+  pure $
+    case maybeBuildRoot of
+      Nothing -> repoRoot </> ".build"
+      Just value
+        | isAbsolute value -> value
+        | otherwise -> cwd </> value
+
+findRepoRoot :: FilePath -> IO FilePath
+findRepoRoot start = go start
+  where
+    go current = do
+      hasPlan <- doesPathExist (current </> "DEVELOPMENT_PLAN" </> "README.md")
+      hasGit <- doesPathExist (current </> ".git")
+      if hasPlan || hasGit
+        then pure current
+        else
+          let parent = takeDirectory current
+           in if parent == current
+                then pure start
+                else go parent

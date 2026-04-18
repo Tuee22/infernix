@@ -203,15 +203,14 @@ None.
 
 ### Objective
 
-Keep the browser entrypoint stable while the current compatibility host stands in for the eventual
-cluster-resident webapp service and Apple host bridge split.
+Keep the browser entrypoint stable across the cluster-resident webapp service and the Apple host
+bridge split.
 
 ### Deliverables
 
-- the browser workbench continues to load from `/` while the current compatibility host preserves
-  the final route contract
-- the eventual cluster-resident webapp service, built separately from `infernix`, deploys in the
-  Kind cluster once the Helm path closes
+- the browser workbench loads from `/` through the cluster-resident webapp service on the supported path
+- the cluster-resident webapp service, built separately from `infernix`, deploys in the Kind
+  cluster through the repo-owned Helm path
 - `/api` points at the cluster-resident Haskell service when the service runs in cluster mode
 - `/api` points at a host bridge when the Haskell daemon runs host-native on Apple Silicon
 - the browser continues to use the same edge route in both cases
@@ -220,9 +219,9 @@ cluster-resident webapp service and Apple host bridge split.
 
 ### Validation
 
-- the current browser workbench loads from the routed compatibility surface on the supported Apple path
+- the browser workbench loads from the routed cluster-resident surface on the supported Apple path
 - a manual inference request from the UI reaches the active daemon location without the browser changing its base URL
-- switching between host-daemon and later cluster-daemon modes does not require changing the documented browser entrypoint
+- switching between host-daemon and cluster-daemon modes does not require changing the documented browser entrypoint
 - switching runtime modes changes the active catalog content without changing the browser route structure
 
 ### Remaining Work
@@ -248,7 +247,7 @@ operators and browser clients keep one stable mode-aware entrypoint.
 - route publication keeps the same browser-visible prefix inventory regardless of the active
   runtime mode or whether `/api` resolves through the Apple host bridge or the cluster-resident
   service
-- the current compatibility path writes `./.data/runtime/publication.json` and exposes the same
+- the supported reconcile path writes `./.data/runtime/publication.json` and exposes the same
   publication details through `/api/publication`
 - the service startup path reports control-plane context, daemon location, and catalog source in
   host-versus-container terms rather than only by selected demo-config path

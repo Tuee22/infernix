@@ -8,19 +8,19 @@
 
 ## Current Repo Assessment
 
-The repository now closes the implementation work tracked by the phase documents and aligns that
-current-state contract with the updated root README.
+The repository materially closes the implementation work tracked by the phase documents and aligns
+that current-state contract with the updated root README.
 
 | Area | Current state | Gap against target |
 |------|---------------|--------------------|
 | Development plan and docs suite | present | none in the current supported contract; docs realignment and validator coverage match the runtime-mode and generated-demo-config contract |
 | Service command and API host | present | none in the current supported contract; `infernix service` resolves the active runtime mode and demo-config source, launches `tools/service_server.py`, exposes routed publication metadata through `/api/publication`, supports routed cache status or eviction or rebuild flows through `/api/cache`, and can repoint `/api` through a host-native Apple daemon bridge without changing the routed browser entrypoint |
-| Kind and Helm assets | present | none in the current supported contract; `cluster up` creates real Kind clusters, writes repo-local kubeconfigs, resets StorageClasses, reconciles chart-owned PVs, publishes Harbor-backed image overrides, deploys the repo-owned edge or web or service or Harbor or MinIO or Pulsar portal workloads through Helm on both control-plane execution contexts, and reconciles GPU-enabled `linux-cuda` support |
+| Kind and Helm assets | present | none in the current supported contract; the Harbor-backed final rollout, node-reachable registry-mirror config, pre-Harbor bootstrap registry path, and host-native plus outer-container lifecycle validation are reconfirmed across the supported runtime-mode matrix |
 | Scaffold surfaces | present | none in the current supported contract; `compose.yaml`, `docker/infernix.Dockerfile`, `web/Dockerfile`, `chart/`, `kind/`, and `proto/` drive the validated outer-container launcher, the cluster web or service images, repo-owned Kind configs, and schema files |
 | Runtime-mode matrix | present | none in the current supported contract; the full README-scale model, format, and engine matrix drives the generated source of truth |
 | Generated demo config | present | none in the current supported contract; `cluster up` emits mode-specific `infernix-demo-<mode>.dhall`, publishes a real `ConfigMap/infernix-demo-config`, and mounts that ConfigMap into the cluster-resident service and web workloads |
 | Web app | present | none in the current supported contract; the workbench consumes the active generated catalog and generated JavaScript contracts, `/` is served by the cluster-resident web workload through the routed edge on the validated Kind path, and the host-native final-substrate routed E2E path reuses the Harbor-published web image across the runtime matrix |
-| Tests | present | none in the current supported contract; lint, unit, integration, and routed E2E entrypoints cover the validated host-native and outer-container control-plane lanes, Playwright drives the real routed cluster edge from the built web image instead of the old host-side compatibility server, and the host-native final-substrate routed E2E plus CUDA substrate assertions close the remaining matrix gaps |
+| Tests | present | none in the current supported contract; lint, unit, exhaustive integration, and routed E2E validation now pass across `apple-silicon`, `linux-cpu`, and `linux-cuda` on the supported host-native and outer-container control-plane lanes |
 
 ## Target Outcome
 
@@ -53,10 +53,10 @@ current-state contract with the updated root README.
 
 ## Topology Baseline
 
-The target closure topology is below. The current implementation now deploys the edge proxy, web
-service, service API, and the current Harbor or MinIO or Pulsar portal workloads on the real Kind
-and Helm substrate while still using repo-local publication or object-store compatibility state in
-place of the final Harbor, MinIO, and Pulsar backends.
+The supported topology is below. The current implementation deploys the edge proxy, web service,
+service API, and the Harbor or MinIO or Pulsar portal workloads on the real Kind and Helm
+substrate, and the routed service path now uses the chart-managed Harbor, MinIO, and Pulsar
+backends while retaining repo-local mirrors for inspection and host-side state reporting.
 
 ```mermaid
 flowchart TB
@@ -399,23 +399,22 @@ The canonical supported CLI surface is:
 
 | Command | Contract |
 |---------|----------|
-| `infernix service` | long-running daemon entrypoint owned by the Haskell CLI; the current compatibility lane launches `tools/service_server.py` for routed HTTP handling, and the command family is the only supported surface that is not idempotent by design |
-| `infernix cluster up` | declaratively reconcile the supported cluster contract, including the current compatibility substrate and the later Kind, Helm, HA, image-flow, and active-mode demo-config target behaviors |
+| `infernix service` | long-running daemon entrypoint owned by the Haskell CLI; the supported runtime currently launches `tools/service_server.py` for routed HTTP handling, and the command family is the only supported surface that is not idempotent by design |
+| `infernix cluster up` | declaratively reconcile the supported Kind, Helm, HA, image-flow, and active-mode demo-config contract |
 | `infernix cluster down` | declaratively reconcile cluster absence while preserving authoritative repo data under `./.data/` |
 | `infernix cluster status` | read-only status and route report, including chosen edge port and demo-config publication details; never mutates cluster or repo state |
-| `infernix kubectl ...` | Kubernetes-access wrapper that preserves the repo-local kubeconfig contract while the current implementation serves a limited compatibility subset from repo-local cluster state |
+| `infernix kubectl ...` | Kubernetes-access wrapper that preserves the repo-local kubeconfig contract while delegating the remaining arguments to upstream `kubectl` |
 | `infernix test lint` | declaratively execute the canonical lint, docs, Helm chart, and compiler-warning checks |
 | `infernix test unit` | declaratively execute unit validation |
 | `infernix test integration` | declaratively execute integration validation for the active runtime mode, reusing or reconciling supported prerequisites as needed |
-| `infernix test e2e` | declaratively execute routed Playwright validation for the active runtime mode through the built web image, with Harbor-published image reuse remaining the target closure |
+| `infernix test e2e` | declaratively execute routed Playwright validation for the active runtime mode through the built web image, including Harbor-published image reuse on the host-native final-substrate lane |
 | `infernix test all` | declaratively execute the full supported validation stack for the active runtime mode, aggregating lint, unit, integration, and E2E checks |
 | `infernix docs check` | declaratively validate the documentation suite and development-plan cross-references |
 
 Every supported lifecycle, validation, and docs command except `infernix service` is declarative
-and idempotent. `infernix kubectl ...` is a scoped Kubernetes-access wrapper; the current
-implementation exposes only a limited compatibility subset rather than a full upstream
-pass-through, and it is not a parallel lifecycle command family. The plan does not introduce
-alternate imperative helper command families for storage, image preparation, or test setup.
+and idempotent. `infernix kubectl ...` is a scoped Kubernetes-access wrapper around upstream
+`kubectl`, and it is not a parallel lifecycle command family. The plan does not introduce alternate
+imperative helper command families for storage, image preparation, or test setup.
 
 ## Completion Rules
 
