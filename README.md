@@ -32,7 +32,7 @@ This repository serves two aligned purposes:
   containers
 - one validation surface spanning repo-owned `ormolu`, `cabal format`, `hlint`, unit tests,
   integration tests, generated-contract or view tests, and Playwright, with the current
-  compatibility implementation now exercising Apple, Linux CPU, and Linux CUDA catalog coverage
+  engine-aware managed-worker implementation now exercising Apple, Linux CPU, and Linux CUDA catalog coverage
   through the demo webapp and test suite
 
 ## What Infernix Does
@@ -106,7 +106,7 @@ then tear it down:
 ./.build/infernix cluster status
 # Query the cluster through the repo-local kubeconfig wrapper.
 ./.build/infernix kubectl get pods -A
-# Run lint, unit, integration, and E2E validation across the current compatibility matrix.
+# Run lint, unit, integration, and E2E validation across the current runtime-worker matrix.
 ./.build/infernix test all
 # Tear down the Kind cluster while preserving authoritative data under ./.data.
 ./.build/infernix cluster down

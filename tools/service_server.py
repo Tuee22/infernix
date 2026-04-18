@@ -6,9 +6,7 @@ import argparse
 import json
 import os
 import pathlib
-import shutil
 import sys
-import time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import unquote, urlparse
@@ -83,71 +81,6 @@ def enrich_publication_state(
     return payload
 
 
-def cache_root(paths: dict[str, pathlib.Path], runtime_mode: str, model_id: str) -> pathlib.Path:
-    return paths["model_cache_root"] / runtime_mode / model_id / "default"
-
-
-def cache_manifest_path(paths: dict[str, pathlib.Path], runtime_mode: str, model_id: str) -> pathlib.Path:
-    return paths["object_store_root"] / "manifests" / runtime_mode / model_id / "default.json"
-
-
-def materialize_cache(paths: dict[str, pathlib.Path], runtime_mode: str, model: dict) -> dict:
-    model_id = model["modelId"]
-    cache_dir = cache_root(paths, runtime_mode, model_id)
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    (cache_dir / "materialized.txt").write_text(
-        f"materialized from {model['downloadUrl']} via {model['selectedEngine']}\n"
-    )
-    manifest = {
-        "runtimeMode": runtime_mode,
-        "modelId": model_id,
-        "selectedEngine": model["selectedEngine"],
-        "durableSourceUri": model["downloadUrl"],
-        "cacheKey": "default",
-    }
-    manifest_path = cache_manifest_path(paths, runtime_mode, model_id)
-    manifest_path.parent.mkdir(parents=True, exist_ok=True)
-    manifest_path.write_text(json.dumps(manifest))
-    return manifest
-
-
-def load_cache_entries(paths: dict[str, pathlib.Path], runtime_mode: str) -> list[dict]:
-    manifest_root = paths["object_store_root"] / "manifests" / runtime_mode
-    if not manifest_root.exists():
-        return []
-    entries: list[dict] = []
-    for model_dir in sorted(path for path in manifest_root.iterdir() if path.is_dir()):
-        manifest_path = model_dir / "default.json"
-        if not manifest_path.exists():
-            continue
-        payload = json.loads(manifest_path.read_text())
-        payload["cachePath"] = str(cache_root(paths, runtime_mode, payload["modelId"]))
-        payload["materialized"] = (cache_root(paths, runtime_mode, payload["modelId"]) / "materialized.txt").exists()
-        entries.append(payload)
-    return entries
-
-
-def evict_cache(paths: dict[str, pathlib.Path], runtime_mode: str, model_id: str | None) -> list[dict]:
-    entries = load_cache_entries(paths, runtime_mode)
-    targets = [entry for entry in entries if model_id is None or entry["modelId"] == model_id]
-    for entry in targets:
-        shutil.rmtree(cache_root(paths, runtime_mode, entry["modelId"]), ignore_errors=True)
-    return targets
-
-
-def rebuild_cache(paths: dict[str, pathlib.Path], runtime_mode: str, catalog: list[dict], model_id: str | None) -> list[dict]:
-    catalog_by_id = {model["modelId"]: model for model in catalog}
-    entries = load_cache_entries(paths, runtime_mode)
-    targets = [entry for entry in entries if model_id is None or entry["modelId"] == model_id]
-    rebuilt: list[dict] = []
-    for entry in targets:
-        model = catalog_by_id.get(entry["modelId"])
-        if model is None:
-            continue
-        rebuilt.append(materialize_cache(paths, runtime_mode, model))
-    return rebuilt
-
-
 def model_lookup(model_id: str, catalog: list[dict]) -> dict | None:
     return next((model for model in catalog if model["modelId"] == model_id), None)
 
@@ -181,6 +114,9 @@ class InfernixHandler(BaseHTTPRequestHandler):
                     "daemonLocation": self.daemon_location,
                     "catalogSource": self.catalog_source,
                     "durableBackendAccessMode": self.runtime_backend.backend_access_mode,
+                    "workerExecutionMode": self.runtime_backend.worker_execution_mode,
+                    "workerAdapterMode": self.runtime_backend.worker_adapter_mode,
+                    "artifactAcquisitionMode": self.runtime_backend.artifact_acquisition_mode,
                     "demoConfigPath": str(self.paths["demo_config_path"]),
                     "mountedDemoConfigPath": str(self.paths["mounted_demo_config_path"]),
                 },
@@ -197,6 +133,9 @@ class InfernixHandler(BaseHTTPRequestHandler):
                     "daemonLocation": self.daemon_location,
                     "catalogSource": self.catalog_source,
                     "durableBackendAccessMode": self.runtime_backend.backend_access_mode,
+                    "workerExecutionMode": self.runtime_backend.worker_execution_mode,
+                    "workerAdapterMode": self.runtime_backend.worker_adapter_mode,
+                    "artifactAcquisitionMode": self.runtime_backend.artifact_acquisition_mode,
                     "demoConfigPath": str(self.paths["demo_config_path"]),
                     "mountedDemoConfigPath": str(self.paths["mounted_demo_config_path"]),
                 }
@@ -446,22 +385,6 @@ class InfernixHTTPServer(HTTPServer):
         self.server_address = self.socket.getsockname()
         self.server_name = self.server_address[0]
         self.server_port = self.server_address[1]
-
-
-def run_model(model: dict, input_text: str) -> str:
-    family = model["family"]
-    engine = model["selectedEngine"]
-    if family == "llm":
-        return f"{engine} generated: {input_text}"
-    if family == "speech":
-        return f"Transcript via {engine}: {input_text}"
-    if family in {"audio", "music"}:
-        return f"Audio workflow via {engine}: {input_text}"
-    if family == "image":
-        return f"Image prompt accepted by {engine}: {input_text}"
-    if family == "video":
-        return f"Video prompt accepted by {engine}: {input_text}"
-    return f"Tool workflow via {engine}: {input_text}"
 
 
 def guess_content_type(path: pathlib.Path) -> str:

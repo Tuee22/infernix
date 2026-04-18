@@ -11,21 +11,21 @@
 | Component | Technology | Deployment | Purpose | Durable State |
 |-----------|------------|------------|---------|---------------|
 | Apple host control plane | `./.build/infernix` plus the repo-owned `./cabalw` wrapper and host prerequisite detection | host-native | canonical current operator surface on Apple, including repo-owned Python prerequisite installation when manifests require it | `./.build/` plus `./.data/` |
-| Linux outer control plane | `docker compose run --rm infernix infernix ...` plus the repo-owned `docker/infernix` wrapper | outer container | validated outer-container compatibility entrypoint that reuses the single Haskell CLI from a Linux container | bind-mounted repo plus `./.data/` and `/opt/build/infernix` |
+| Linux outer control plane | `docker compose run --rm infernix infernix ...` plus the repo-owned `docker/infernix` wrapper | outer container | validated outer-container launcher entrypoint that reuses the single Haskell CLI from a Linux container | bind-mounted repo plus `./.data/` and `/opt/build/infernix` |
 | Runtime-mode selector | CLI flag or `INFERNIX_RUNTIME_MODE` | host or outer container | resolve `apple-silicon`, `linux-cpu`, or `linux-cuda` independently of execution context | build-root config artifacts only |
 | Matrix registry and demo-config generator | Haskell-owned README matrix registry plus JSON-shaped `.dhall` renderer | host or outer container during `cluster up` | select the active-mode engine bindings and generate `infernix-demo-<mode>.dhall` | transient staging files in the active build root |
 | Frontend contract generator | `infernix internal generate-web-contracts` plus `web/build.mjs` | host or outer container during web build | emit the build-generated JavaScript contract module consumed by the current browser workbench, stage it under the active build root, and copy it into the built web bundle | active build-root staging plus `web/dist/` |
 | Repo-local durable root | local filesystem | repo root | authoritative home for cluster state, host-side cache state, ConfigMap publication mirrors, and test artifacts | `./.data/` |
 | Build artifact root | repo-owned host wrapper or explicit container builddir plus generated artifacts | host or outer container | keep compiled output and generated demo-config files out of tracked source paths | `./.build/` on host; `/opt/build/infernix` on the outer-container path |
 
-## Scaffold Components
+## Repository Asset Components
 
 | Component | Current content | Purpose | Gap |
 |-----------|-----------------|---------|-----|
-| Web runtime scaffold | `web/Dockerfile` | build and serve the separate web image path while carrying Playwright browser dependencies in the same image and acting as the E2E executor | none |
-| Helm chart scaffold | `chart/Chart.yaml`, `chart/Chart.lock`, `chart/values.yaml`, `chart/templates/` | hold the repo-owned service, web, edge-route, publication, and platform gateway workloads deployed through Helm on the supported Kind path, with locked Harbor or Pulsar or MinIO or ingress-nginx dependencies bootstrapped on demand | none |
-| Kind asset scaffold | `kind/cluster-apple-silicon.yaml`, `kind/cluster-linux-cpu.yaml`, `kind/cluster-linux-cuda.yaml` | hold the per-mode Kind shapes, including GPU-runtime patches for `linux-cuda`, that `cluster up` renders into real Kind clusters | none |
-| Protobuf scaffold | `proto/infernix/...`, `tools/generated_proto/`, and `tools/proto_check.py` | define canonical runtime, manifest, and API schema names under repo ownership and validate their presence across Haskell and Python helpers | none |
+| Web runtime image asset | `web/Dockerfile` | build and serve the separate web image path while carrying Playwright browser dependencies in the same image and acting as the E2E executor | none |
+| Helm deployment assets | `chart/Chart.yaml`, `chart/Chart.lock`, `chart/values.yaml`, `chart/templates/` | hold the repo-owned service, web, edge-route, publication, and platform gateway workloads deployed through Helm on the supported Kind path, with locked Harbor or Pulsar or MinIO or ingress-nginx dependencies bootstrapped on demand | none |
+| Kind topology assets | `kind/cluster-apple-silicon.yaml`, `kind/cluster-linux-cpu.yaml`, `kind/cluster-linux-cuda.yaml` | hold the per-mode Kind shapes, including GPU-runtime patches for `linux-cuda`, that `cluster up` renders into real Kind clusters | none |
+| Protobuf contract assets | `proto/infernix/...`, `tools/generated_proto/`, and `tools/proto_check.py` | define canonical runtime, manifest, and API schema names under repo ownership and validate their presence across Haskell and Python helpers | none |
 
 ## Cluster and Publication Components
 
@@ -39,7 +39,7 @@
 | MinIO gateway workload | repo-owned Python gateway in the service image | Kind cluster | expose the routed MinIO console and S3 API by proxying the chart-managed MinIO service through the shared edge | none |
 | Pulsar gateway workload | repo-owned Python gateway in the service image | Kind cluster | expose the routed Pulsar admin and WebSocket surfaces by proxying the chart-managed Pulsar service through the shared edge | none |
 | Demo config publication | real `ConfigMap/infernix-demo-config` plus repo-local mirror and rendered manifest | Kind cluster plus repo-local state files | publish the generated active-mode demo catalog to cluster workloads while keeping a repo-local inspection mirror | `./.data/runtime/configmaps/infernix-demo-config/` |
-| Service runtime host | Python HTTP server launched by `infernix service` through the Haskell CLI | host process or service pod | serve the API, routed publication metadata, and large-object references using the active generated demo catalog, and repoint `/api` through the Apple host bridge when the daemon runs host-native | runtime cache under `./.data/runtime/` |
+| Service runtime host | Python HTTP server launched by `infernix service` through the Haskell CLI | host process or service pod | serve the API, routed publication metadata, and large-object references using the active generated demo catalog, repoint `/api` through the Apple host bridge when the daemon runs host-native, supervise the current engine-aware managed subprocess workers, and materialize durable runtime artifact bundles plus source-artifact manifests into the runtime bucket | runtime cache under `./.data/runtime/` |
 | Web runtime host | static bundle from `web/dist/` served by `web/Dockerfile` image | web pod on the supported cluster path | expose the manual workbench through the cluster-resident web workload | none |
 
 ## Runtime and Validation Components
@@ -53,15 +53,15 @@
 | Service runtime | `infernix service` | resolve the active generated-catalog source and launch the Python HTTP host used directly on Apple or inside the service pod on the cluster path |
 | Frontend contract generation | `infernix internal generate-web-contracts <dir>` | generate the active-mode contract module used by the web build |
 | Unit validation | `infernix test unit` | validate Haskell runtime behavior plus generated JavaScript contracts and catalog rendering logic |
-| Integration validation | `infernix test integration` | exercise every generated catalog entry for the active runtime mode and verify generated demo-config publication, routed publication metadata, and the real in-cluster ConfigMap |
-| Routed E2E validation | `infernix test e2e` | exercise every generated catalog entry through the real routed cluster edge using Playwright launched from the same web image that serves the UI, including browser UI interaction and object-reference result rendering |
+| Integration validation | `infernix test integration` | exercise every generated catalog entry for the active runtime mode and verify generated demo-config publication, routed publication metadata, the real in-cluster ConfigMap, engine-aware managed worker execution, and durable runtime artifact plus source-artifact persistence |
+| Routed E2E validation | `infernix test e2e` | exercise every generated catalog entry through the real routed cluster edge using Playwright launched from the same web image that serves the UI, including browser UI interaction, object-reference result rendering, and the current engine-aware managed-worker runtime contract |
 
 ## Browser and API Surface
 
 | Route | Upstream | Purpose | Notes |
 |-------|----------|---------|-------|
 | `/` | cluster-resident web workload through the edge proxy | browser UI | manual inference workbench |
-| `/api/publication` | service pod or host-native service bridge through the edge proxy | routed publication metadata | reports control-plane context, daemon location, catalog source, API-upstream mode, routed-upstream health, durable-backend state, and routes |
+| `/api/publication` | service pod or host-native service bridge through the edge proxy | routed publication metadata | reports control-plane context, daemon location, catalog source, API-upstream mode, worker-execution mode, worker-adapter mode, artifact-acquisition mode, routed-upstream health, durable-backend state, and routes |
 | `/api` | service pod or host-native service bridge through the edge proxy | typed API for model listing and manual inference | reports the active runtime mode and selected engine while preserving one browser-visible entrypoint |
 | `/api/cache` | service pod through the edge proxy | cache status and lifecycle API | reports manifest-backed cache entries and supports eviction or rebuild flows |
 | `/harbor` | cluster-resident Harbor gateway workload through the edge proxy | Harbor portal surface | proxies the chart-managed Harbor service |
@@ -74,9 +74,9 @@
 
 | Runtime mode | Canonical mode id | Current implementation status | Demo catalog rule |
 |--------------|-------------------|-------------------------------|-------------------|
-| Apple Silicon / Metal | `apple-silicon` | active Kind-backed lane on the host-native control plane | generated catalog includes every README matrix row whose Apple column names a supported engine |
-| Ubuntu 24.04 / CPU | `linux-cpu` | active Kind-backed lane on the host-native and outer-container control planes | generated catalog includes every README matrix row whose Linux CPU column names a supported engine |
-| Ubuntu 24.04 / NVIDIA CUDA Container | `linux-cuda` | active Kind-backed cluster lane with reconciled GPU runtime support, allocatable `nvidia.com/gpu`, `RuntimeClass/nvidia`, and GPU-requesting service deployment | generated catalog includes every README matrix row whose Linux CUDA column names a supported engine and marks GPU-bound lanes |
+| Apple Silicon / Metal | `apple-silicon` | active host-native and Kind-backed catalog lane; request execution uses repo-owned engine-aware managed subprocess workers, durable runtime bundles, and source-artifact manifests, but not the final Apple-specific engine kernels | generated catalog includes every README matrix row whose Apple column names a supported engine |
+| Ubuntu 24.04 / CPU | `linux-cpu` | active Kind-backed catalog lane on the host-native and outer-container control planes; request execution uses repo-owned engine-aware managed subprocess workers, durable runtime bundles, and source-artifact manifests, but not the final Linux CPU engine kernels | generated catalog includes every README matrix row whose Linux CPU column names a supported engine |
+| Ubuntu 24.04 / NVIDIA CUDA Container | `linux-cuda` | active Kind-backed catalog lane with runtimeClass and resource-request scaffolding; request execution uses repo-owned engine-aware managed subprocess workers, durable runtime bundles, and source-artifact manifests, while the substrate still simulates GPU advertisement instead of exposing real NVIDIA runtime support inside Kind | generated catalog includes every README matrix row whose Linux CUDA column names a supported engine and marks GPU-bound lanes |
 
 ## Serialization Boundaries
 
@@ -95,13 +95,15 @@
 | Generated host demo config staging | `cluster up` | `./.build/infernix-demo-<mode>.dhall` | active-mode catalog staged under the host build root |
 | Generated host kubeconfig | `cluster up` | `./.build/infernix.kubeconfig` | repo-local kubeconfig used by `infernix kubectl` |
 | Kind registry mirror config | `cluster up` | `./.build/kind/registry/localhost:30001/hosts.toml` plus `./.build/kind/registry/localhost:30002/hosts.toml` | rewrites the `localhost:30001` bootstrap-registry namespace to the helper registry on the Kind network and the `localhost:30002` Harbor namespace to the active Kind control-plane node endpoint so cluster workloads can pull both bootstrap and Harbor-backed images |
+| Durable runtime artifact bundles | service runtime and cache materialization | `./.data/object-store/artifacts/<runtime-mode>/<model-id>/bundle.json` | repo-owned durable worker input staged locally and mirrored into the runtime bucket |
+| Durable source-artifact manifests | service runtime and cache materialization | `./.data/object-store/source-artifacts/<runtime-mode>/<model-id>/source.json` plus optional `payload.bin` | durable metadata for local-file copies or opt-in remote previews that the bundle points at |
 | Publication state | `cluster up`, `cluster down`, `infernix service` host-bridge activation | `./.data/runtime/publication.json` | active runtime mode, published edge routes, API-upstream mode, and publication details for routed consumers |
 | Generated frontend contract staging | web build | `./.build/web-generated/Generated/contracts.js` on host; `/opt/build/infernix/web-generated/Generated/contracts.js` in the outer container | build-root staging module copied into `web/dist/generated/contracts.js` for runtime use |
 | Generated frontend dist | web build | `web/dist/` | ignored static build output served by the web runtime image |
 | ConfigMap publication mirror | `cluster up` | `./.data/runtime/configmaps/infernix-demo-config/` | mirrored `infernix-demo-<mode>.dhall` plus rendered YAML |
 | Chosen edge port record | cluster lifecycle | `./.data/runtime/edge-port.json` | records the `9090`-first chosen port |
 | Service model cache | service runtime | `./.data/runtime/model-cache/<runtime-mode>/<model-id>/default/` | derived cache keyed by runtime mode and model id |
-| Host-side cache durability manifests | service runtime and unit helpers | `./.data/object-store/manifests/<runtime-mode>/<model-id>/default.state` | protobuf manifest-backed rebuild source for the host-side cache lifecycle helpers |
+| Host-side cache durability manifests | service runtime and unit helpers | `./.data/object-store/manifests/<runtime-mode>/<model-id>/default.pb` | protobuf manifest-backed rebuild source for the host-side cache lifecycle helpers |
 | Host-side large-output fixtures | service runtime and unit helpers | `./.data/object-store/results/` | local object-reference fixture root used by host-side helpers and tests |
 | Playwright and test artifacts | validation flows | `./.data/` or Playwright defaults | repo-local test output location |
 

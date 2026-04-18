@@ -185,6 +185,9 @@ validateRoutedSurface paths runtimeMode serializedEntries = do
   assert ("\"daemonLocation\": \"cluster-pod\"" `isInfixOf` publicationResponse) "routed publication reports the cluster-resident daemon"
   assert ("\"mode\": \"cluster-service\"" `isInfixOf` publicationResponse) "routed publication reports the cluster service as the active API upstream"
   assert ("\"durableBackendAccessMode\": \"cluster-local\"" `isInfixOf` publicationResponse) "cluster-resident service reports cluster-local durable backend access"
+  assert ("\"workerExecutionMode\": \"managed-subprocess-workers\"" `isInfixOf` publicationResponse) "cluster-resident service reports managed subprocess workers through the routed publication surface"
+  assert ("\"workerAdapterMode\": \"engine-aware\"" `isInfixOf` publicationResponse) "cluster-resident service reports engine-aware worker adapters through the routed publication surface"
+  assert ("\"artifactAcquisitionMode\": \"local-copy-and-opt-in-remote-fetch\"" `isInfixOf` publicationResponse || "\"artifactAcquisitionMode\": \"local-copy-and-remote-fetch\"" `isInfixOf` publicationResponse) "cluster-resident service reports the source-artifact acquisition contract through the routed publication surface"
   assert ("\"id\": \"minio\"" `isInfixOf` publicationResponse && "\"durableBackendState\": \"minio-backed chart deployment\"" `isInfixOf` publicationResponse) "routed publication reports MinIO upstream backing state"
   assert ("\"id\": \"pulsar\"" `isInfixOf` publicationResponse && "\"durableBackendState\": \"pulsar-backed chart deployment\"" `isInfixOf` publicationResponse) "routed publication reports Pulsar upstream backing state"
   assert ("Harbor Gateway" `isInfixOf` harborResponse || "Harbor" `isInfixOf` harborResponse) "routed Harbor portal resolves through the cluster gateway"
@@ -231,6 +234,8 @@ validateHostBridgeService paths runtimeMode serializedEntries = do
   assert ("\"daemonLocation\": \"control-plane-host\"" `isInfixOf` publicationResponse) "host bridge publishes the host daemon location through the routed API"
   assert ("\"mode\": \"host-daemon-bridge\"" `isInfixOf` publicationResponse) "host bridge publishes the host-daemon API upstream"
   assert ("\"durableBackendAccessMode\": \"edge-route-bridge\"" `isInfixOf` publicationResponse) "host bridge publishes edge-routed durable backend access"
+  assert ("\"workerExecutionMode\": \"managed-subprocess-workers\"" `isInfixOf` publicationResponse) "host bridge preserves managed subprocess workers through the routed publication surface"
+  assert ("\"workerAdapterMode\": \"engine-aware\"" `isInfixOf` publicationResponse) "host bridge preserves engine-aware worker adapters through the routed publication surface"
   assert ("\"id\": \"harbor\"" `isInfixOf` publicationResponse && "\"healthStatus\": \"ready\"" `isInfixOf` publicationResponse) "host-native service publication reports routed Harbor health"
   mapM_
     (\entry -> assert (Text.unpack (entryModelId entry) `isInfixOf` modelsResponse) "host bridge preserves routed catalog listing through the same edge entrypoint")
@@ -266,6 +271,11 @@ validateServiceCacheLifecycle paths runtimeMode baseUrl entry = do
   cacheAfterInference <- httpGetWithRetry 20 (baseUrl <> "/api/cache")
   assert (("\"modelId\": \"" <> modelIdText <> "\"") `isInfixOf` cacheAfterInference) "service cache status lists the materialized model"
   assert ("\"materialized\": true" `isInfixOf` cacheAfterInference) "service cache status records materialized cache entries"
+  assert
+    (("\"durableSourceUri\": \"s3://infernix-runtime/artifacts/" <> showRuntimeMode runtimeMode <> "/" <> modelIdText <> "/bundle.json\"") `isInfixOf` cacheAfterInference)
+    "service cache status reports the durable runtime artifact bundle stored in MinIO"
+  assert ("\"engineAdapterId\": \"" `isInfixOf` cacheAfterInference) "service cache status reports engine-aware adapter metadata"
+  assert ("\"sourceArtifactManifestUri\": \"s3://infernix-runtime/source-artifacts/" `isInfixOf` cacheAfterInference) "service cache status reports the durable source-artifact manifest stored in MinIO"
   evictResponse <- httpPostJsonWithRetry 20 (baseUrl <> "/api/cache/evict") cacheBody
   assert ("\"evictedCount\": 1" `isInfixOf` evictResponse) "service cache eviction reports one evicted entry"
   cacheAfterEvict <- httpGetWithRetry 20 (baseUrl <> "/api/cache")
@@ -323,7 +333,9 @@ validateMinioRecovery paths state runtimeMode modelIdText requestIdText maybeObj
       largeOutputExists <- minioObjectExists paths "infernix-results" objectRefText
       assert largeOutputExists "MinIO large-output objects survive single MinIO pod replacement"
   manifestExists <- minioObjectExists paths "infernix-runtime" ("manifests/" <> showRuntimeMode runtimeMode <> "/" <> modelIdText <> "/default.pb")
+  artifactExists <- minioObjectExists paths "infernix-runtime" ("artifacts/" <> showRuntimeMode runtimeMode <> "/" <> modelIdText <> "/bundle.json")
   assert manifestExists "MinIO protobuf cache manifests survive single MinIO pod replacement"
+  assert artifactExists "MinIO durable runtime artifact bundles survive single MinIO pod replacement"
 
 validatePulsarRecovery :: Paths -> RuntimeMode -> ClusterState -> String -> String -> IO ()
 validatePulsarRecovery paths runtimeMode state baseUrl modelIdText = do
@@ -647,8 +659,10 @@ validateDurableBackends paths runtimeMode baseUrl modelIdText requestIdText mayb
   assert (protobufSchemaPublished coordinationSchema "RuntimeManifest") "Pulsar coordination topic publishes the protobuf manifest schema"
   runtimeResultExists <- minioObjectExists paths "infernix-runtime" ("results/" <> requestIdText <> ".pb")
   manifestExists <- minioObjectExists paths "infernix-runtime" ("manifests/" <> showRuntimeMode runtimeMode <> "/" <> modelIdText <> "/default.pb")
+  artifactExists <- minioObjectExists paths "infernix-runtime" ("artifacts/" <> showRuntimeMode runtimeMode <> "/" <> modelIdText <> "/bundle.json")
   assert runtimeResultExists "MinIO stores protobuf inference results for the routed service path"
   assert manifestExists "MinIO stores protobuf cache manifests for the routed service path"
+  assert artifactExists "MinIO stores the durable runtime artifact bundle for the routed service path"
   case maybeObjectRef of
     Nothing -> pure ()
     Just objectRefText -> do

@@ -9,13 +9,13 @@
 
 ## Current Repo Assessment
 
-The repository now has a Haskell project, a single executable, repo-local build and data roots,
+The repository has a Haskell project, a single executable, repo-local build and data roots,
 explicit runtime-mode selection, generated mode-specific demo-config staging, Apple host
 prerequisite detection for repo-owned Python manifests, a repo-owned `./cabalw` wrapper that keeps
 host Cabal output under `./.build/cabal`, build-root-isolated frontend contract staging, and a
 repo-owned `ormolu` or `hlint` or `cabal format` style gate wired into `infernix test lint`. The
 outer-container launcher, `/opt/build/infernix` artifact doctrine, and frontend contract artifact
-isolation are validated, so this phase is now closed.
+isolation are validated, so this phase is closed.
 
 ## Runtime-Mode Foundation
 
@@ -129,7 +129,7 @@ None. Runtime-mode selection and generated demo-config semantics are expanded in
 ## Sprint 1.3: Dual Operator Execution Contexts [Done]
 
 **Status**: Done
-**Implementation**: `.build/infernix`, `compose.yaml`, `docker/infernix.Dockerfile`, `docker/infernix`, `src/Infernix/CLI.hs`, `src/Infernix/Config.hs`, `src/Infernix/Service.hs`
+**Implementation**: `cabalw`, `compose.yaml`, `docker/infernix.Dockerfile`, `docker/infernix`, `src/Infernix/CLI.hs`, `src/Infernix/Config.hs`, `src/Infernix/Service.hs`
 **Docs to update**: `README.md`, `documents/development/local_dev.md`, `documents/engineering/docker_policy.md`
 
 ### Objective
@@ -147,7 +147,7 @@ different control-plane products.
   the active build-root kubeconfig on other supported paths
 - on Apple Silicon, `infernix` may install missing supported host prerequisites including
   Homebrew-installed `poetry` and other required Python dependencies for repo-owned runtime flows;
-  the current implementation now detects repo-owned Python manifests, installs `poetry` through
+  the current implementation detects repo-owned Python manifests, installs `poetry` through
   Homebrew when those manifests require it, and installs the declared dependencies on the
   supported Apple host path
 - Linux uses Compose only as a one-command launcher:
@@ -206,13 +206,13 @@ quality and compiler hygiene enforceable through one canonical validation path.
   watches it there for changes
 - `cluster up` writes `./.build/infernix.kubeconfig` on Apple and reserves
   `/opt/build/infernix/infernix.kubeconfig` for the outer-container path, which the validated
-  Compose launcher now materializes
+  Compose launcher materializes
 - the generated demo config enables every README-matrix row appropriate for the active runtime mode
 - the supported web build stages generated JavaScript contracts under the active build root
   (`./.build/web-generated/` on the host and `/opt/build/infernix/web-generated/` in the
   outer-container lane) and copies the runtime asset into `web/dist/generated/contracts.js`
 - repo-owned Haskell validation enables strict compiler warnings and treats warnings as errors
-- `infernix test lint` now runs `tools/lint_check.py`, `tools/docs_check.py`, the repo-owned
+- `infernix test lint` runs `tools/lint_check.py`, `tools/docs_check.py`, the repo-owned
   `tools/haskell_style_check.py` gate for `ormolu` or `hlint` or `cabal format`, and the
   compiler-warning gate through `cabal --builddir=.build/cabal build all`
 - `web/Dockerfile` is the canonical build entrypoint for the separate webapp image scaffold

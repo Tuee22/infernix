@@ -39,6 +39,7 @@ web/.parcel-cache/
 web/playwright-report/
 web/test-results/
 chart/charts/
+chart/Chart.lock
 
 # Logs and temporary files
 *.log

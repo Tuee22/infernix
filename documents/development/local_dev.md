@@ -29,7 +29,7 @@ docker compose run --rm infernix infernix cluster down
 ## Rules
 
 - runtime mode is selected independently of control-plane execution context
-- on the Apple host path, `infernix` now detects repo-owned Python manifests, installs missing
+- on the Apple host path, `infernix` detects repo-owned Python manifests, installs missing
   Homebrew `poetry` when those manifests require it, and installs the declared dependencies on the
   supported path
 - `./cabalw` is the supported Apple host build wrapper and injects the repo-owned Cabal build root

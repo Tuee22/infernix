@@ -11,12 +11,19 @@
 
 The repository already has typed request or response shapes, typed runtime result metadata, a
 README-matrix-backed generated catalog, and a manual inference API path served by
-`tools/service_server.py` behind the Haskell CLI. The cluster-resident service path now mounts the
+`tools/service_server.py` behind the Haskell CLI. The cluster-resident service path mounts the
 real `ConfigMap/infernix-demo-config` and publication ConfigMap on the Kind substrate, stores
 protobuf manifests and results in MinIO, registers Pulsar protobuf schemas for request or result
 or coordination topics, exposes explicit cache status or eviction or rebuild flows through both the
 CLI and routed API, and can run host-native on the Apple control-plane path while the routed edge
-keeps `/api` stable through the host bridge.
+keeps `/api` stable through the host bridge. The current routed runtime now supervises repo-owned
+engine-aware managed subprocess workers, round-trips request or result payloads through Pulsar on both the
+cluster-resident and host-bridge paths, materializes durable runtime artifact bundles into the
+runtime bucket and local cache roots, and now stages durable source-artifact manifests plus
+local-file copies or opt-in remote previews under `source-artifacts/`. The remaining gap is final
+engine integration: those engine-aware workers do not yet launch the third-party engine kernels
+named by the README matrix, map every matrix row to a direct upstream artifact acquisition path, or
+provide direct Apple-host model execution.
 
 ## Matrix Ownership Contract
 
@@ -47,7 +54,7 @@ Make the service runtime strongly typed before the transport and UI surfaces acc
 - explicit distinction between authoritative durable metadata and derived local cache state
 - the supported web build derives frontend contract modules from those Haskell-owned types rather
   than maintaining duplicate DTO definitions
-- repo-owned `.proto` schemas under `proto/` now define the canonical durable runtime-manifest,
+- repo-owned `.proto` schemas under `proto/` define the canonical durable runtime-manifest,
   inference-payload, and service-RPC message names
 - generated `proto-lens` modules are the supported Haskell boundary for those protobuf contracts
 
@@ -57,7 +64,7 @@ Make the service runtime strongly typed before the transport and UI surfaces acc
   omission, generated demo-config rendering, invalid generated-catalog startup handling, and
   protobuf runtime-manifest round-trip coverage
 - `infernix test lint` passes `tools/proto_check.py` against the repo-owned `.proto` contract set
-- the current compatibility runtime rejects unsupported runtime modes and invalid request payloads
+- the service runtime rejects unsupported runtime modes and invalid request payloads
   with typed errors
 - the supported web build can derive frontend contract modules from the Haskell SSOT without hand patches
 
@@ -67,9 +74,9 @@ None.
 
 ---
 
-## Sprint 4.2: Inference Request Pipeline Over Pulsar and MinIO [Done]
+## Sprint 4.2: Inference Request Pipeline Over Pulsar and MinIO [Active]
 
-**Status**: Done
+**Status**: Active
 **Implementation**: `src/Infernix/Runtime.hs`, `src/Infernix/Storage.hs`, `tools/runtime_backend.py`, `tools/service_server.py`, `test/integration/Spec.hs`, `test/unit/Spec.hs`
 **Docs to update**: `documents/architecture/runtime_modes.md`, `documents/engineering/model_lifecycle.md`
 
@@ -99,13 +106,19 @@ authoritative.
 
 ### Remaining Work
 
-None.
+- replace the current engine-aware managed worker subprocesses with the final third-party engine
+  processes selected by the README matrix
+- replace the current source-artifact manifests or local-file copies or opt-in remote previews with
+  matrix-wide direct upstream artifact acquisition into MinIO, then treat those fetched external
+  artifacts as the authoritative durable runtime input instead of the current repo-owned runtime
+  bundles
+- validate the routed service path against those final engine workers on the supported modes
 
 ---
 
-## Sprint 4.3: Host-Native Apple Runtime and Cluster Runtime Parity [Done]
+## Sprint 4.3: Host-Native Apple Runtime and Cluster Runtime Parity [Active]
 
-**Status**: Done
+**Status**: Active
 **Implementation**: `src/Infernix/Service.hs`, `src/Infernix/CLI.hs`, `tools/service_server.py`, `test/integration/Spec.hs`, `web/playwright/inference.spec.js`
 **Docs to update**: `documents/architecture/runtime_modes.md`, `documents/operations/apple_silicon_runbook.md`
 
@@ -133,7 +146,12 @@ cluster-resident execution to coexist.
 
 ### Remaining Work
 
-None.
+- connect the host-native Apple daemon path to real local Apple engines rather than the current
+  engine-aware managed worker layer
+- keep host-native and cluster-resident execution on the same request or result contract once the
+  final engine workers land
+- extend parity validation from route stability, backend reachability, and source-artifact manifest
+  parity to actual Apple-engine execution and direct artifact access on the supported host path
 
 ---
 
@@ -208,7 +226,7 @@ Make derived runtime state reproducible from durable sources and keep lifecycle 
 
 ### Remaining Work
 
-None. MinIO-backed routed durability is closed in Sprint 4.2.
+None. Additional runtime-execution work remains tracked in Sprint 4.2.
 
 ---
 

@@ -15,6 +15,8 @@
 - [operations/cluster_bootstrap_runbook.md](operations/cluster_bootstrap_runbook.md) describes the
   supported cluster bring-up and teardown path
 - [reference/cli_reference.md](reference/cli_reference.md) records the canonical CLI surface
+- [research/README.md](research/README.md) reserves the non-authoritative research subtree used for
+  exploratory notes
 
 ## Taxonomy
 

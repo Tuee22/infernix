@@ -10,13 +10,20 @@
 
 - MinIO is the authoritative home for durable artifacts, protobuf runtime manifests, runtime
   results, and large outputs on the routed service path
+- the routed worker layer stores engine-aware runtime artifact bundles under
+  `artifacts/<runtime-mode>/<model-id>/bundle.json` in the runtime bucket and uses those bundles
+  to point at durable source-artifact manifests under
+  `source-artifacts/<runtime-mode>/<model-id>/source.json`
+- when the source URL is a local file, the routed worker layer also copies the payload into
+  `source-artifacts/<runtime-mode>/<model-id>/payload.bin`; remote HTTP preview fetch is available
+  only when explicitly enabled so ordinary local validation stays deterministic
 - repo-owned `.proto` schemas define the contract for durable manifests and Pulsar payloads
 - the routed service path registers protobuf schemas on Pulsar topics for requests, results, and
   coordination messages
 - derived cache state is keyed by runtime mode and model identity and is always rebuildable
 - the routed `/api/cache` surface operates on the manifest-backed durable contract exposed by the
-  service runtime
-- the host-side CLI cache helpers still keep protobuf manifest fixtures under
+  service runtime, including engine-adapter and source-artifact metadata derived from the durable bundle
+- the host-side CLI cache helpers keep protobuf manifest fixtures under
   `./.data/object-store/manifests/` for local rebuild or unit coverage
 - the service returns typed object references when outputs exceed inline limits
 

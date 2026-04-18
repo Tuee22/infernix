@@ -31,8 +31,8 @@
   coverage against the real cluster edge and separately exercises browser UI interaction for
   publication-detail rendering, model selection, submission, object-reference results, and the
   host-bridge-versus-cluster-service daemon-location switch on the supported Apple host path
-- the current host-native and outer-container validation paths launch that Playwright suite from
-  the same built web image that serves the UI, and the host-native final-substrate lane now serves
+- the host-native and outer-container validation paths launch that Playwright suite from the same
+  built web image that serves the UI, and the host-native final-substrate lane serves
   that UI from the Harbor-published web runtime image across `apple-silicon`, `linux-cpu`, and
   `linux-cuda`
 

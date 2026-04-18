@@ -15,16 +15,16 @@ This phase closes before later phases can close.
 
 ## Current Repo Assessment
 
-The repository has a governed docs suite, and the current implementation now keeps the governed
-docs aligned with the runtime-mode and generated-demo-config contract.
+The repository has a governed docs suite, and the governed docs align with the runtime-mode and
+generated-demo-config contract.
 
-- the docs suite now distinguishes control-plane execution context from runtime mode
-- the docs suite now carries the README-scale model or format or engine matrix as a first-class
+- the docs suite distinguishes control-plane execution context from runtime mode
+- the docs suite carries the README-scale model or format or engine matrix as a first-class
   planning and validation contract
-- the docs suite now documents generated mode-specific demo `.dhall` staging, ConfigMap-backed
+- the docs suite documents generated mode-specific demo `.dhall` staging, ConfigMap-backed
   publication, `/opt/build/`, protobuf target contracts, `9090`-first edge-port selection, and
   active-mode exhaustive integration and E2E coverage
-- `tools/docs_check.py` now validates those phrases directly so later drift is caught early
+- `tools/docs_check.py` validates those phrases directly so later drift is caught early
 
 ## Sprint 0.1: `documents/` Suite Scaffold [Done]
 

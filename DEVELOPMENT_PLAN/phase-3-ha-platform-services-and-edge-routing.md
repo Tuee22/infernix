@@ -25,17 +25,16 @@ This phase owns the rule that runtime-mode changes do not fork the browser entry
 
 ## Current Repo Assessment
 
-The repository now serves `/`, `/api`, and `/api/publication` from the real Kind and Helm
-substrate through a cluster-resident repo-owned Python edge proxy, web workload, and service pod.
-On the Apple host-native control-plane path, `infernix service` can now repoint `/api` through a
-host daemon bridge without changing the browser entrypoint, while publication metadata continues to
-originate from `./.data/runtime/publication.json` and now reports API-upstream mode plus routed
-upstream health and backing-state details. Harbor, MinIO, and Pulsar now route through
-cluster-resident gateway workloads that target the live chart-managed Harbor, MinIO, and Pulsar
-services rather than placeholder HTML-only portal deployments. The Apple host-native validation
-lane now exercises Harbor-first image publication, MinIO-backed durable artifacts, Pulsar-backed
-request or result transport, and HA recovery for all three platform services on the final Kind and
-Helm substrate.
+The repository serves `/`, `/api`, and `/api/publication` from the real Kind and Helm substrate
+through a cluster-resident repo-owned Python edge proxy, web workload, and service pod. On the
+Apple host-native control-plane path, `infernix service` can repoint `/api` through a host daemon
+bridge without changing the browser entrypoint, while publication metadata continues to originate
+from `./.data/runtime/publication.json` and reports API-upstream mode plus routed upstream health
+and backing-state details. Harbor, MinIO, and Pulsar route through cluster-resident gateway
+workloads that target the live chart-managed Harbor, MinIO, and Pulsar services. The Apple
+host-native validation lane exercises Harbor-first image publication, MinIO-backed durable
+artifacts, Pulsar-backed request or result transport, and HA recovery for all three platform
+services on the Kind and Helm substrate.
 
 ## Sprint 3.1: HA MinIO Deployment [Done]
 

@@ -8,19 +8,19 @@
 
 ## Current Repo Assessment
 
-The repository materially closes the implementation work tracked by the phase documents and aligns
-that current-state contract with the updated root README.
+The repository closes the documentation and control-plane foundation, but the runtime and full
+validation story remain partial relative to the target platform contract.
 
 | Area | Current state | Gap against target |
 |------|---------------|--------------------|
 | Development plan and docs suite | present | none in the current supported contract; docs realignment and validator coverage match the runtime-mode and generated-demo-config contract |
-| Service command and API host | present | none in the current supported contract; `infernix service` resolves the active runtime mode and demo-config source, launches `tools/service_server.py`, exposes routed publication metadata through `/api/publication`, supports routed cache status or eviction or rebuild flows through `/api/cache`, and can repoint `/api` through a host-native Apple daemon bridge without changing the routed browser entrypoint |
-| Kind and Helm assets | present | none in the current supported contract; the Harbor-backed final rollout, node-reachable registry-mirror config, pre-Harbor bootstrap registry path, and host-native plus outer-container lifecycle validation are reconfirmed across the supported runtime-mode matrix |
-| Scaffold surfaces | present | none in the current supported contract; `compose.yaml`, `docker/infernix.Dockerfile`, `web/Dockerfile`, `chart/`, `kind/`, and `proto/` drive the validated outer-container launcher, the cluster web or service images, repo-owned Kind configs, and schema files |
-| Runtime-mode matrix | present | none in the current supported contract; the full README-scale model, format, and engine matrix drives the generated source of truth |
+| Service command and API host | present | the routed API and publication contract are implemented, and request execution now runs through repo-owned engine-aware managed subprocess workers backed by durable runtime artifact bundles and source-artifact manifests, but the final third-party engine kernels and direct upstream artifact acquisition path are still open |
+| Kind and Helm assets | present | the Kind or Helm substrate, Harbor-backed rollout, node-reachable registry-mirror config, and pre-Harbor bootstrap registry path are implemented, but the `linux-cuda` lane still relies on a runtime shim and synthetic `nvidia.com/gpu` advertising rather than a real NVIDIA-backed Kind substrate |
+| Launch and schema assets | present | none in the current supported contract; `compose.yaml`, `docker/infernix.Dockerfile`, `web/Dockerfile`, `chart/`, `kind/`, and `proto/` drive the outer-container launcher, the cluster web or service images, repo-owned Kind configs, and schema files |
+| Runtime-mode matrix | present | the full README-scale model, format, and engine matrix drives the generated source of truth, and the current worker layer consumes the selected engine metadata plus engine-adapter or source-artifact metadata, but those engine labels still map to repo-owned runtime bundles rather than the final external kernels |
 | Generated demo config | present | none in the current supported contract; `cluster up` emits mode-specific `infernix-demo-<mode>.dhall`, publishes a real `ConfigMap/infernix-demo-config`, and mounts that ConfigMap into the cluster-resident service and web workloads |
-| Web app | present | none in the current supported contract; the workbench consumes the active generated catalog and generated JavaScript contracts, `/` is served by the cluster-resident web workload through the routed edge on the validated Kind path, and the host-native final-substrate routed E2E path reuses the Harbor-published web image across the runtime matrix |
-| Tests | present | none in the current supported contract; lint, unit, exhaustive integration, and routed E2E validation now pass across `apple-silicon`, `linux-cpu`, and `linux-cuda` on the supported host-native and outer-container control-plane lanes |
+| Web app | present | no phase-5 gap is open in the browser surface itself; the remaining gap is backend-side, because the workbench still fronts the repo-owned engine-aware managed worker runtime tracked in Phase 4 rather than the final external engines |
+| Tests | present | lint, unit, exhaustive integration, and routed E2E entrypoints exist, and they now validate engine-aware managed workers plus durable runtime bundles and source-artifact manifests, but final closure remains open because they still do not exercise final engine execution on a real GPU-backed substrate |
 
 ## Target Outcome
 
@@ -55,8 +55,8 @@ that current-state contract with the updated root README.
 
 The supported topology is below. The current implementation deploys the edge proxy, web service,
 service API, and the Harbor or MinIO or Pulsar portal workloads on the real Kind and Helm
-substrate, and the routed service path now uses the chart-managed Harbor, MinIO, and Pulsar
-backends while retaining repo-local mirrors for inspection and host-side state reporting.
+substrate, and the routed service path uses the chart-managed Harbor, MinIO, and Pulsar backends
+while retaining repo-local mirrors for inspection and host-side state reporting.
 
 ```mermaid
 flowchart TB
@@ -187,8 +187,8 @@ The repo ships one Haskell executable, `infernix`.
 The supported local operator surface is platform-sensitive:
 
 - Apple Silicon: `./.build/infernix` is the canonical host-native operator surface. The final
-  closure shells out to host-installed `kind`, `kubectl`, `helm`, and Docker, while the current
-  implementation now uses those tools directly for the real Kind and Helm lifecycle.
+  closure shells out to host-installed `kind`, `kubectl`, `helm`, and Docker, and the current
+  implementation uses those tools directly for the real Kind and Helm lifecycle.
 - Apple Silicon host builds place the compiled binary and other generated build artifacts under
   `./.build/`.
 - On Apple Silicon, `cluster up` writes the repo-local kubeconfig to `./.build/infernix.kubeconfig`
@@ -363,7 +363,7 @@ At closure, Playwright is installed in the same container image that serves the 
 - Chromium, WebKit, and Firefox are provisioned there.
 - The current implementation already runs `infernix test e2e` from that same built web image on
   both the host-native and validated outer-container control-plane paths.
-- The host-native final-substrate runtime matrix now reuses the Harbor-published web image for
+- The host-native final-substrate runtime matrix reuses the Harbor-published web image for
   that same E2E executor path.
 
 ### 11. Container Build Output Stays Under `/opt/build`

@@ -14,17 +14,18 @@
 
 ## Rules
 
-- on the Apple host path, `infernix` now detects repo-owned Python manifests, installs missing
+- on the Apple host path, `infernix` detects repo-owned Python manifests, installs missing
   Homebrew `poetry` when those manifests require it, and installs the declared dependencies before
   running the supported command surface
 - `./cabalw` is the supported host build wrapper and keeps Cabal output under `./.build/cabal`
 - `cluster up` writes `./.build/infernix.kubeconfig`
 - supported flows do not mutate `$HOME/.kube/config`
-- `cluster up` and `cluster status` keep the compatibility publication inventory under `./.data/runtime/publication.json`
+- `cluster up` and `cluster status` keep the publication inventory under `./.data/runtime/publication.json`
 - host-native service mode repoints `/api` through the same routed edge entrypoint instead of changing the browser base URL
 - when the host bridge is active, the host-native service listens on a bridge port behind the edge and the publication payload reports `apiUpstream.mode = host-daemon-bridge`
 - host-native service mode reaches MinIO and Pulsar through that shared edge inventory rather than separate host-only ports
-- `test integration`, `test e2e`, and `test all` currently repeat the compatibility suites across
+- host-native service mode uses the same engine-aware managed subprocess worker contract as the cluster-resident service while retrieving durable artifacts and source-artifact manifests through the routed MinIO or Pulsar bridge surfaces
+- `test integration`, `test e2e`, and `test all` repeat the default validation suites across
   `apple-silicon`, `linux-cpu`, and `linux-cuda` when no explicit runtime-mode override is supplied
 
 ## Cross-References

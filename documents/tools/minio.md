@@ -9,8 +9,9 @@
 
 - MinIO is the authoritative object store
 - MinIO runs as a four-node distributed cluster on the supported Kind path
-- the routed service runtime stores protobuf manifests and runtime results in MinIO buckets
-  `infernix-runtime` and `infernix-results`
+- the routed service runtime stores runtime artifact bundles, source-artifact manifests or payload
+  previews, and protobuf manifests in the `infernix-runtime` bucket and stores runtime results in
+  the `infernix-results` bucket
 - the MinIO console is exposed through `/minio/console`
 - the MinIO S3 API is exposed through `/minio/s3`
 

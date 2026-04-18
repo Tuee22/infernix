@@ -16,8 +16,12 @@
 - `cluster up` uses Harbor as the image authority for every non-Harbor pod, mirrors required
   third-party images there, and publishes the repo-owned service and web images before the final
   Helm rollout
-- the `linux-cuda` Kind path now reconciles the NVIDIA runtime shim, GPU node labels,
+- the plan contract for the `linux-cuda` Kind path requires NVIDIA container runtime support inside
+  Kind plus usable `nvidia.com/gpu` resources for scheduled workloads
+- the current implementation still reconciles a shim-backed path with GPU node labels, synthetic
   allocatable `nvidia.com/gpu`, `RuntimeClass/nvidia`, and GPU-requesting repo-owned workloads
+  while the real device-backed Kind substrate remains open in
+  [../../DEVELOPMENT_PLAN/phase-2-kind-cluster-storage-and-lifecycle.md](../../DEVELOPMENT_PLAN/phase-2-kind-cluster-storage-and-lifecycle.md)
 - `infernix test lint` is the canonical chart gate and proves Helm dependency resolution, `helm lint`, `helm template`, and durable-claim discovery
 
 ## Cross-References

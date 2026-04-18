@@ -10,13 +10,13 @@
 ## Current Repo Assessment
 
 The repository already has a browser workbench, build-generated JavaScript frontend contracts, and
-routed Playwright coverage. The current browser workbench now loads from the cluster-resident web
-workload on the supported Kind path, build-root frontend contract staging is closed, and both
+routed Playwright coverage. The browser workbench loads from the cluster-resident web workload on
+the supported Kind path, build-root frontend contract staging is closed, and both
 browser-independent and browser-driven coverage prove catalog parity, publication-detail rendering,
-and result rendering through the routed cluster edge. Same-image browser execution now passes from
-the built web image on both current control-plane lanes, and the Apple host-native final-substrate
-lane now also passes while serving the UI from the Harbor-published web image. The workbench now
-renders family-aware request guidance and result framing for every generated entry.
+and result rendering through the routed cluster edge. Same-image browser execution uses the built
+web image on both supported control-plane lanes, and the Apple host-native final-substrate lane
+serves the UI from the Harbor-published web image. The workbench renders family-aware request
+guidance and result framing for every generated entry.
 
 ## Demo Catalog Contract
 
@@ -32,7 +32,7 @@ This phase owns the browser-side interpretation of the generated demo catalog.
 ## Sprint 5.1: Web Application Host and Cluster Webapp Service [Done]
 
 **Status**: Done
-**Implementation**: `web/src/`, `web/dist/`, `tools/service_server.py`, `web/Dockerfile`
+**Implementation**: `web/src/`, `web/build.mjs`, `tools/service_server.py`, `web/Dockerfile`
 **Docs to update**: `documents/architecture/web_ui_architecture.md`, `documents/reference/web_portal_surface.md`
 
 ### Objective
@@ -176,11 +176,11 @@ Prepare the web image to be both the UI host and the E2E execution environment.
 
 ### Deliverables
 
-- `infernix cluster up` now builds the webapp image through `web/Dockerfile` as part of the canonical deploy flow
+- `infernix cluster up` builds the webapp image through `web/Dockerfile` as part of the canonical deploy flow
 - the built webapp image is uploaded to Harbor before Helm rollout
 - the current `web/Dockerfile` installs Chromium, WebKit, and Firefox dependencies for Playwright
 - browser binaries live in the same image that serves the UI
-- `infernix test e2e` now targets that same web image rather than a separate ad hoc browser image
+- `infernix test e2e` targets that same web image rather than a separate ad hoc browser image
 - the outer-container control-plane image no longer carries a duplicate Playwright browser installation
 
 ### Validation

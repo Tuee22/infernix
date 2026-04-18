@@ -23,7 +23,11 @@
 - confirm non-Harbor workloads are pulling Harbor-published image references with
   `infernix kubectl get pods -A -o jsonpath=...`
 - confirm `curl http://127.0.0.1:<port>/` reaches the routed workbench on the host-native path or use `host.docker.internal` from the outer-container control plane
-- for `linux-cuda`, confirm `infernix kubectl get nodes -l infernix.runtime/gpu=true -o jsonpath='{range .items[*]}{.status.allocatable.nvidia\.com/gpu}{"\n"}{end}'` reports `1` and that `infernix kubectl get deployment -n platform infernix-service -o jsonpath='{.spec.template.spec.runtimeClassName}'` reports `nvidia`
+- for `linux-cuda`, confirm `infernix kubectl get nodes -l infernix.runtime/gpu=true -o jsonpath='{range .items[*]}{.status.allocatable.nvidia\.com/gpu}{"\n"}{end}'` reports `1` and `infernix kubectl get deployment -n platform infernix-service -o jsonpath='{.spec.template.spec.runtimeClassName}'` reports `nvidia`
+- those checks validate the current implementation's scheduling metadata and workload placement on
+  the shim-backed CUDA lane; the remaining requirement for real device-backed NVIDIA execution
+  inside Kind stays open in
+  [../../DEVELOPMENT_PLAN/phase-2-kind-cluster-storage-and-lifecycle.md](../../DEVELOPMENT_PLAN/phase-2-kind-cluster-storage-and-lifecycle.md)
 
 ## Teardown
 

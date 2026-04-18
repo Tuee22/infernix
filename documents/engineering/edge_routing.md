@@ -14,7 +14,7 @@
 - `/api` routes to the cluster-resident service workload by default and can be repointed to the Apple host bridge when `infernix service` runs host-native on the supported Apple path
 - `/harbor`, `/minio/...`, and `/pulsar/...` route through dedicated cluster-resident gateway
   workloads that proxy the live chart-managed Harbor, MinIO, and Pulsar services
-- `/api/publication` now reports API-upstream mode plus routed-upstream health and durable-backing-state details so the browser can surface whether `/api` is currently backed by the cluster service or the Apple host bridge
+- `/api/publication` reports API-upstream mode plus routed-upstream health and durable-backing-state details so the browser can surface whether `/api` is backed by the cluster service or the Apple host bridge
 
 ## Port Selection Rules
 

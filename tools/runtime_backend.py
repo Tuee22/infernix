@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import base64
+import importlib.util
 import io
 import json
+import mimetypes
 import os
 import pathlib
 import shutil
+import subprocess
 import time
 import urllib.error
 import urllib.parse
@@ -31,6 +34,7 @@ from infernix.runtime import inference_pb2
 REQUEST_TOPIC = "infernix-inference-requests"
 RESULT_TOPIC = "infernix-inference-results"
 COORDINATION_TOPIC = "infernix-runtime-manifests"
+ARTIFACT_BUNDLE_NAME = "bundle.json"
 
 
 @dataclass(frozen=True)
@@ -45,6 +49,35 @@ class ExternalBackendConfig:
     pulsar_tenant: str
     pulsar_namespace: str
     edge_bridge_base_url: str | None = None
+
+
+@dataclass(frozen=True)
+class RuntimeArtifact:
+    object_key: str
+    local_object_path: pathlib.Path
+    durable_source_uri: str
+    bundle_metadata: dict[str, object]
+
+
+@dataclass(frozen=True)
+class SourceArtifact:
+    payload_object_key: str | None
+    payload_local_path: pathlib.Path | None
+    payload_uri: str
+    manifest_object_key: str
+    manifest_local_path: pathlib.Path
+    manifest_uri: str
+    acquisition_mode: str
+    fetch_status: str
+    resolved_url: str
+    content_type: str
+    error: str
+
+
+@dataclass
+class WorkerHandle:
+    artifact_bundle_path: pathlib.Path
+    process: subprocess.Popen[str]
 
 
 class RuntimeBackend:
@@ -74,10 +107,22 @@ class RuntimeBackend:
         self.request_consumer: pulsar.Consumer | None = None
         self.result_consumer: pulsar.Consumer | None = None
         self.backend_access_mode = "filesystem-fallback"
+        self.worker_execution_mode = "managed-subprocess-workers"
+        self.worker_adapter_mode = "engine-aware"
+        self.remote_source_fetch_enabled = remote_source_fetch_enabled()
+        self.artifact_acquisition_mode = (
+            "local-copy-and-opt-in-remote-fetch"
+            if not self.remote_source_fetch_enabled
+            else "local-copy-and-remote-fetch"
+        )
+        self.worker_handles: dict[tuple[str, str, str], WorkerHandle] = {}
         if self.external_config is not None:
             self._initialize_external_backends(self.external_config)
 
     def close(self) -> None:
+        for worker_handle in self.worker_handles.values():
+            self._terminate_worker(worker_handle)
+        self.worker_handles.clear()
         if self.request_consumer is not None:
             self.request_consumer.close()
         if self.result_consumer is not None:
@@ -100,15 +145,27 @@ class RuntimeBackend:
             cache_entry = manifest.cache_entries[0]
             materialization = manifest.materializations[0] if manifest.materializations else None
             local_cache_path = self.paths["model_cache_root"] / self.runtime_mode / cache_entry.model_id / cache_entry.cache_key
+            durable_source_uri = materialization.durable_source_uri if materialization is not None else ""
+            bundle_metadata = self._load_bundle_metadata(durable_source_uri, local_cache_path)
             entries.append(
                 {
                     "runtimeMode": cache_entry.runtime_mode or self.runtime_mode,
                     "modelId": cache_entry.model_id,
                     "selectedEngine": materialization.selected_engine if materialization is not None else "",
-                    "durableSourceUri": materialization.durable_source_uri if materialization is not None else "",
+                    "durableSourceUri": durable_source_uri,
                     "cacheKey": cache_entry.cache_key,
                     "cachePath": str(local_cache_path),
                     "materialized": (local_cache_path / "materialized.txt").exists(),
+                    "workerProfile": bundle_string(bundle_metadata, "workerProfile"),
+                    "engineAdapterId": bundle_string(bundle_metadata, "engineAdapterId"),
+                    "engineAdapterType": bundle_string(bundle_metadata, "engineAdapterType"),
+                    "engineAdapterLocator": bundle_string(bundle_metadata, "engineAdapterLocator"),
+                    "engineAdapterAvailability": bundle_string(bundle_metadata, "engineAdapterAvailability"),
+                    "artifactAcquisitionMode": bundle_string(bundle_metadata, "artifactAcquisitionMode"),
+                    "sourceArtifactUri": bundle_string(bundle_metadata, "sourceArtifactUri"),
+                    "sourceArtifactManifestUri": bundle_string(bundle_metadata, "sourceArtifactManifestUri"),
+                    "sourceArtifactFetchStatus": bundle_string(bundle_metadata, "sourceArtifactFetchStatus"),
+                    "sourceArtifactContentType": bundle_string(bundle_metadata, "sourceArtifactContentType"),
                 }
             )
         return entries
@@ -144,7 +201,7 @@ class RuntimeBackend:
         )
         inbound_request = self._publish_and_receive_request(request_message)
         self.materialize_cache(model)
-        output_text = run_model(model, inbound_request.input_text)
+        output_text = self._execute_worker(model, inbound_request.request_id, inbound_request.input_text)
         payload = inference_pb2.ResultPayload()
         object_ref: str | None = None
         if len(output_text) > 80:
@@ -201,8 +258,14 @@ class RuntimeBackend:
     def materialize_cache(self, model: dict) -> dict:
         cache_dir = self.paths["model_cache_root"] / self.runtime_mode / model["modelId"] / "default"
         cache_dir.mkdir(parents=True, exist_ok=True)
+        artifact = self._ensure_runtime_artifact(model)
+        artifact_payload = self._load_runtime_object(artifact.object_key)
+        if artifact_payload is None:
+            raise RuntimeError(f"runtime artifact is missing after materialization: {artifact.object_key}")
+        cache_bundle_path = cache_dir / "artifact-bundle.json"
+        cache_bundle_path.write_bytes(artifact_payload)
         (cache_dir / "materialized.txt").write_text(
-            f"materialized from {model['downloadUrl']} via {model['selectedEngine']}\n",
+            f"materialized from {artifact.durable_source_uri} via {model['selectedEngine']}\n",
             encoding="utf-8",
         )
         manifest = runtime_manifest_pb2.RuntimeManifest(
@@ -214,7 +277,7 @@ class RuntimeBackend:
             runtime_mode=self.runtime_mode,
             model_id=model["modelId"],
             selected_engine=model["selectedEngine"],
-            durable_source_uri=model["downloadUrl"],
+            durable_source_uri=artifact.durable_source_uri,
             materialized_cache_path=str(cache_dir),
         )
         manifest.cache_entries.add(
@@ -240,10 +303,20 @@ class RuntimeBackend:
             "runtimeMode": self.runtime_mode,
             "modelId": model["modelId"],
             "selectedEngine": model["selectedEngine"],
-            "durableSourceUri": model["downloadUrl"],
+            "durableSourceUri": artifact.durable_source_uri,
             "cacheKey": "default",
             "cachePath": str(cache_dir),
             "materialized": True,
+            "workerProfile": bundle_string(artifact.bundle_metadata, "workerProfile"),
+            "engineAdapterId": bundle_string(artifact.bundle_metadata, "engineAdapterId"),
+            "engineAdapterType": bundle_string(artifact.bundle_metadata, "engineAdapterType"),
+            "engineAdapterLocator": bundle_string(artifact.bundle_metadata, "engineAdapterLocator"),
+            "engineAdapterAvailability": bundle_string(artifact.bundle_metadata, "engineAdapterAvailability"),
+            "artifactAcquisitionMode": bundle_string(artifact.bundle_metadata, "artifactAcquisitionMode"),
+            "sourceArtifactUri": bundle_string(artifact.bundle_metadata, "sourceArtifactUri"),
+            "sourceArtifactManifestUri": bundle_string(artifact.bundle_metadata, "sourceArtifactManifestUri"),
+            "sourceArtifactFetchStatus": bundle_string(artifact.bundle_metadata, "sourceArtifactFetchStatus"),
+            "sourceArtifactContentType": bundle_string(artifact.bundle_metadata, "sourceArtifactContentType"),
         }
 
     def _initialize_external_backends(self, config: ExternalBackendConfig) -> None:
@@ -359,7 +432,15 @@ class RuntimeBackend:
                     "modelId": request_message.request_model_id,
                 },
             )
-            return request_message
+            payload = bridge_receive_message(
+                self.external_config,
+                REQUEST_TOPIC,
+                f"infernix-service-{self.daemon_location}-requests",
+                request_message.request_id,
+            )
+            received_request = inference_pb2.InferenceRequest()
+            received_request.ParseFromString(payload)
+            return received_request
         if self.request_producer is None or self.request_consumer is None:
             return request_message
         self.request_producer.send(
@@ -386,7 +467,15 @@ class RuntimeBackend:
                     "modelId": result_message.result_model_id,
                 },
             )
-            return result_message
+            payload = bridge_receive_message(
+                self.external_config,
+                RESULT_TOPIC,
+                f"infernix-service-{self.daemon_location}-results",
+                result_message.request_id,
+            )
+            received_result = inference_pb2.InferenceResult()
+            received_result.ParseFromString(payload)
+            return received_result
         if self.result_producer is None or self.result_consumer is None:
             return None
         self.result_producer.send(
@@ -500,6 +589,248 @@ class RuntimeBackend:
         local_path = self.paths["object_store_root"] / key
         local_path.parent.mkdir(parents=True, exist_ok=True)
         local_path.write_bytes(payload)
+
+    def _load_runtime_object(self, key: str, *, local_root: pathlib.Path | None = None) -> bytes | None:
+        if self.edge_bridge_base_url is not None and self.runtime_bucket is not None:
+            payload = bridge_get_object(self.external_config, self.runtime_bucket, key)
+            if payload is not None:
+                return payload
+        if self.minio is not None and self.runtime_bucket is not None:
+            try:
+                response = self.minio.get_object(self.runtime_bucket, key)
+                try:
+                    return response.read()
+                finally:
+                    response.close()
+                    response.release_conn()
+            except S3Error as exc:
+                if exc.code != "NoSuchKey":
+                    raise
+        local_path = (local_root or self.paths["object_store_root"]) / key
+        if local_path.exists():
+            return local_path.read_bytes()
+        return None
+
+    def _ensure_runtime_artifact(self, model: dict) -> RuntimeArtifact:
+        object_key = f"artifacts/{self.runtime_mode}/{model['modelId']}/{ARTIFACT_BUNDLE_NAME}"
+        local_object_path = self.paths["object_store_root"] / object_key
+        source_artifact = self._ensure_source_artifact(model)
+        bundle_metadata = build_artifact_bundle(
+            model,
+            self.runtime_mode,
+            source_artifact=source_artifact,
+        )
+        payload = json.dumps(bundle_metadata, indent=2, sort_keys=True).encode("utf-8")
+        current_payload = local_object_path.read_bytes() if local_object_path.exists() else None
+        if current_payload != payload:
+            self._store_runtime_object(object_key, payload)
+        if self.runtime_bucket is not None:
+            durable_source_uri = f"s3://{self.runtime_bucket}/{object_key}"
+        else:
+            durable_source_uri = local_object_path.resolve().as_uri()
+        return RuntimeArtifact(
+            object_key=object_key,
+            local_object_path=local_object_path,
+            durable_source_uri=durable_source_uri,
+            bundle_metadata=bundle_metadata,
+        )
+
+    def _ensure_source_artifact(self, model: dict) -> SourceArtifact:
+        source_url = model["downloadUrl"]
+        prefix = f"source-artifacts/{self.runtime_mode}/{model['modelId']}"
+        manifest_object_key = f"{prefix}/source.json"
+        manifest_local_path = self.paths["object_store_root"] / manifest_object_key
+        payload_object_key: str | None = None
+        payload_local_path: pathlib.Path | None = None
+        payload_uri = ""
+        resolved_url = source_url
+        content_type = ""
+        error = ""
+        payload_bytes: bytes | None = None
+
+        local_source_path = local_source_artifact_path(source_url)
+        if local_source_path is not None:
+            acquisition_mode = "local-file-copy"
+            resolved_url = local_source_path.resolve().as_uri()
+            content_type = mimetypes.guess_type(local_source_path.name)[0] or "application/octet-stream"
+            try:
+                payload_bytes = local_source_path.read_bytes()
+                fetch_status = "materialized"
+            except OSError as exc:
+                fetch_status = "unavailable"
+                error = str(exc)
+        elif self.remote_source_fetch_enabled:
+            acquisition_mode = "remote-http-preview"
+            try:
+                request = urllib.request.Request(
+                    source_url,
+                    headers={"User-Agent": "infernix-runtime/0.1"},
+                    method="GET",
+                )
+                with urllib.request.urlopen(request, timeout=20) as response:
+                    resolved_url = response.geturl()
+                    content_type = response.headers.get_content_type() or "application/octet-stream"
+                    max_bytes = remote_source_fetch_max_bytes()
+                    preview = response.read(max_bytes + 1)
+                    payload_bytes = preview[:max_bytes]
+                    fetch_status = "truncated" if len(preview) > max_bytes else "materialized"
+            except (urllib.error.URLError, OSError, ValueError) as exc:
+                fetch_status = "unavailable"
+                error = str(exc)
+        else:
+            acquisition_mode = "remote-fetch-disabled"
+            fetch_status = "unfetched"
+
+        if payload_bytes is not None:
+            payload_object_key = f"{prefix}/payload.bin"
+            payload_local_path = self.paths["object_store_root"] / payload_object_key
+            self._store_runtime_object(payload_object_key, payload_bytes)
+            if self.runtime_bucket is not None:
+                payload_uri = f"s3://{self.runtime_bucket}/{payload_object_key}"
+            else:
+                payload_uri = payload_local_path.resolve().as_uri()
+
+        manifest_payload = json.dumps(
+            {
+                "artifactKind": "infernix-source-artifact",
+                "schemaVersion": 1,
+                "runtimeMode": self.runtime_mode,
+                "modelId": model["modelId"],
+                "sourceDownloadUrl": source_url,
+                "resolvedSourceUrl": resolved_url,
+                "acquisitionMode": acquisition_mode,
+                "fetchStatus": fetch_status,
+                "contentType": content_type,
+                "payloadObjectKey": payload_object_key or "",
+                "payloadUri": payload_uri,
+                "error": error,
+            },
+            indent=2,
+            sort_keys=True,
+        ).encode("utf-8")
+        self._store_runtime_object(manifest_object_key, manifest_payload)
+        if self.runtime_bucket is not None:
+            manifest_uri = f"s3://{self.runtime_bucket}/{manifest_object_key}"
+        else:
+            manifest_uri = manifest_local_path.resolve().as_uri()
+        return SourceArtifact(
+            payload_object_key=payload_object_key,
+            payload_local_path=payload_local_path,
+            payload_uri=payload_uri,
+            manifest_object_key=manifest_object_key,
+            manifest_local_path=manifest_local_path,
+            manifest_uri=manifest_uri,
+            acquisition_mode=acquisition_mode,
+            fetch_status=fetch_status,
+            resolved_url=resolved_url,
+            content_type=content_type,
+            error=error,
+        )
+
+    def _load_bundle_metadata(self, durable_source_uri: str, cache_dir: pathlib.Path) -> dict[str, object]:
+        cache_bundle_path = cache_dir / "artifact-bundle.json"
+        if cache_bundle_path.exists():
+            try:
+                return json.loads(cache_bundle_path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                return {}
+        bundle_payload = self._load_runtime_object_for_uri(durable_source_uri)
+        if bundle_payload is None:
+            return {}
+        try:
+            payload = json.loads(bundle_payload.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    def _load_runtime_object_for_uri(self, durable_source_uri: str) -> bytes | None:
+        if durable_source_uri.startswith("s3://"):
+            parsed = urllib.parse.urlparse(durable_source_uri)
+            bucket_name = parsed.netloc
+            object_key = parsed.path.lstrip("/")
+            if bucket_name != (self.runtime_bucket or bucket_name):
+                return None
+            return self._load_runtime_object(object_key)
+        if durable_source_uri.startswith("file://"):
+            local_path = pathlib.Path(urllib.parse.unquote(urllib.parse.urlparse(durable_source_uri).path))
+            if local_path.exists():
+                return local_path.read_bytes()
+            return None
+        local_path = pathlib.Path(durable_source_uri)
+        if local_path.exists():
+            return local_path.read_bytes()
+        return None
+
+    def _execute_worker(self, model: dict, request_id: str, input_text: str) -> str:
+        payload = json.dumps(
+            {
+                "requestId": request_id,
+                "requestModelId": model["modelId"],
+                "runtimeMode": self.runtime_mode,
+                "inputText": input_text,
+            }
+        )
+        try:
+            return self._execute_worker_once(model, request_id, payload)
+        except (BrokenPipeError, OSError, RuntimeError, json.JSONDecodeError):
+            self._restart_worker(model)
+            return self._execute_worker_once(model, request_id, payload)
+
+    def _execute_worker_once(self, model: dict, request_id: str, payload: str) -> str:
+        worker_handle = self._ensure_worker(model)
+        stdin = worker_handle.process.stdin
+        stdout = worker_handle.process.stdout
+        if stdin is None or stdout is None:
+            raise RuntimeError("worker process did not expose stdio pipes")
+        stdin.write(payload + "\n")
+        stdin.flush()
+        response_line = stdout.readline()
+        if response_line == "":
+            raise RuntimeError(f"worker exited before responding for {model['modelId']}")
+        response = json.loads(response_line)
+        if response.get("requestId") != request_id:
+            raise RuntimeError(f"worker returned a mismatched request id for {model['modelId']}")
+        output_text = response.get("outputText")
+        if not isinstance(output_text, str):
+            raise RuntimeError(f"worker returned an invalid payload for {model['modelId']}")
+        return output_text
+
+    def _ensure_worker(self, model: dict) -> WorkerHandle:
+        key = (self.runtime_mode, model["modelId"], model["selectedEngine"])
+        artifact_bundle_path = self.paths["model_cache_root"] / self.runtime_mode / model["modelId"] / "default" / "artifact-bundle.json"
+        existing = self.worker_handles.get(key)
+        if existing is not None and existing.process.poll() is None and existing.artifact_bundle_path == artifact_bundle_path:
+            return existing
+        if existing is not None:
+            self._terminate_worker(existing)
+        worker_script = pathlib.Path(__file__).resolve().parent / "runtime_worker.py"
+        process = subprocess.Popen(
+            [os.sys.executable, str(worker_script), "--artifact-bundle", str(artifact_bundle_path)],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=None,
+            text=True,
+            bufsize=1,
+        )
+        worker_handle = WorkerHandle(artifact_bundle_path=artifact_bundle_path, process=process)
+        self.worker_handles[key] = worker_handle
+        return worker_handle
+
+    def _restart_worker(self, model: dict) -> None:
+        key = (self.runtime_mode, model["modelId"], model["selectedEngine"])
+        existing = self.worker_handles.pop(key, None)
+        if existing is not None:
+            self._terminate_worker(existing)
+
+    def _terminate_worker(self, worker_handle: WorkerHandle) -> None:
+        if worker_handle.process.poll() is not None:
+            return
+        worker_handle.process.terminate()
+        try:
+            worker_handle.process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            worker_handle.process.kill()
+            worker_handle.process.wait(timeout=5)
 
 
 def resolve_external_backend_config(publication_state: dict, daemon_location: str) -> ExternalBackendConfig | None:
@@ -838,17 +1169,148 @@ def inference_result_to_json(message: inference_pb2.InferenceResult) -> dict:
     }
 
 
-def run_model(model: dict, input_text: str) -> str:
+def build_artifact_bundle(
+    model: dict,
+    runtime_mode: str,
+    *,
+    source_artifact: SourceArtifact | None = None,
+) -> dict[str, object]:
+    engine_adapter = engine_adapter_for(model["selectedEngine"], runtime_mode)
+    source_artifact = source_artifact or SourceArtifact(
+        payload_object_key=None,
+        payload_local_path=None,
+        payload_uri="",
+        manifest_object_key="",
+        manifest_local_path=pathlib.Path(),
+        manifest_uri="",
+        acquisition_mode="unknown",
+        fetch_status="unfetched",
+        resolved_url=model["downloadUrl"],
+        content_type="",
+        error="",
+    )
+    return {
+        "artifactKind": "infernix-runtime-bundle",
+        "schemaVersion": 1,
+        "runtimeMode": runtime_mode,
+        "matrixRowId": model["matrixRowId"],
+        "modelId": model["modelId"],
+        "displayName": model["displayName"],
+        "family": model["family"],
+        "artifactType": model["artifactType"],
+        "referenceModel": model["referenceModel"],
+        "selectedEngine": model["selectedEngine"],
+        "runtimeLane": model["runtimeLane"],
+        "sourceDownloadUrl": model["downloadUrl"],
+        "workerProfile": worker_profile_for(model),
+        "engineAdapterId": engine_adapter["engineAdapterId"],
+        "engineAdapterType": engine_adapter["engineAdapterType"],
+        "engineAdapterLocator": engine_adapter["engineAdapterLocator"],
+        "engineAdapterAvailable": engine_adapter["engineAdapterAvailable"],
+        "engineAdapterAvailability": engine_adapter["engineAdapterAvailability"],
+        "artifactAcquisitionMode": source_artifact.acquisition_mode,
+        "sourceArtifactUri": source_artifact.payload_uri,
+        "sourceArtifactManifestUri": source_artifact.manifest_uri,
+        "sourceArtifactLocalPath": str(source_artifact.payload_local_path) if source_artifact.payload_local_path is not None else "",
+        "sourceArtifactManifestPath": str(source_artifact.manifest_local_path),
+        "sourceArtifactFetchStatus": source_artifact.fetch_status,
+        "sourceArtifactResolvedUrl": source_artifact.resolved_url,
+        "sourceArtifactContentType": source_artifact.content_type,
+        "sourceArtifactError": source_artifact.error,
+    }
+
+
+def worker_profile_for(model: dict) -> str:
     family = model["family"]
-    engine = model["selectedEngine"]
     if family == "llm":
-        return f"{engine} generated: {input_text}"
+        return "text-generation"
     if family == "speech":
-        return f"Transcript via {engine}: {input_text}"
-    if family in {"audio", "music"}:
-        return f"Audio workflow via {engine}: {input_text}"
+        return "speech-transcription"
+    if family == "audio":
+        return "audio-processing"
+    if family == "music":
+        return "music-transcription"
     if family == "image":
-        return f"Image prompt accepted by {engine}: {input_text}"
+        return "image-generation"
     if family == "video":
-        return f"Video prompt accepted by {engine}: {input_text}"
-    return f"Tool workflow via {engine}: {input_text}"
+        return "video-generation"
+    return "tool-execution"
+
+
+def engine_adapter_for(selected_engine: str, runtime_mode: str) -> dict[str, object]:
+    normalized = selected_engine.lower()
+    if "llama.cpp" in normalized:
+        return command_adapter("llama-cpp-cli", ["llama-cli", "main"])
+    if "whisper.cpp" in normalized:
+        return command_adapter("whisper-cpp-cli", ["whisper-cli", "main"])
+    if "ctranslate2" in normalized:
+        return module_adapter("ctranslate2-python", "ctranslate2")
+    if "vllm" in normalized:
+        return module_adapter("vllm-python", "vllm")
+    if "mlx" in normalized:
+        return module_adapter("mlx-python", "mlx")
+    if "tensorflow" in normalized:
+        return module_adapter("tensorflow-python", "tensorflow")
+    if "core ml" in normalized:
+        return module_adapter("coreml-python", "coremltools")
+    if "jax" in normalized:
+        return module_adapter("jax-python", "jax")
+    if "pytorch" in normalized or "transformers" in normalized:
+        module_name = "torch" if runtime_mode == "linux-cuda" else "transformers"
+        return module_adapter("pytorch-python", module_name)
+    return {
+        "engineAdapterId": "fallback-template",
+        "engineAdapterType": "builtin-fallback",
+        "engineAdapterLocator": "",
+        "engineAdapterAvailable": True,
+        "engineAdapterAvailability": "built-in fallback renderer",
+    }
+
+
+def command_adapter(adapter_id: str, command_names: list[str]) -> dict[str, object]:
+    command_name = next((name for name in command_names if shutil.which(name) is not None), "")
+    return {
+        "engineAdapterId": adapter_id,
+        "engineAdapterType": "external-command",
+        "engineAdapterLocator": command_name or command_names[0],
+        "engineAdapterAvailable": command_name != "",
+        "engineAdapterAvailability": "command available" if command_name != "" else "command not installed",
+    }
+
+
+def module_adapter(adapter_id: str, module_name: str) -> dict[str, object]:
+    available = importlib.util.find_spec(module_name) is not None
+    return {
+        "engineAdapterId": adapter_id,
+        "engineAdapterType": "python-module",
+        "engineAdapterLocator": module_name,
+        "engineAdapterAvailable": available,
+        "engineAdapterAvailability": "module importable" if available else "module not installed",
+    }
+
+
+def remote_source_fetch_enabled() -> bool:
+    return os.environ.get("INFERNIX_ENABLE_REMOTE_SOURCE_FETCH", "0") == "1"
+
+
+def remote_source_fetch_max_bytes() -> int:
+    raw_value = os.environ.get("INFERNIX_REMOTE_SOURCE_FETCH_MAX_BYTES", "1048576")
+    try:
+        parsed = int(raw_value)
+    except ValueError:
+        return 1048576
+    return max(parsed, 1024)
+
+
+def local_source_artifact_path(source_url: str) -> pathlib.Path | None:
+    parsed = urllib.parse.urlparse(source_url)
+    if parsed.scheme == "file":
+        return pathlib.Path(urllib.parse.unquote(parsed.path))
+    if parsed.scheme == "" and pathlib.Path(source_url).exists():
+        return pathlib.Path(source_url)
+    return None
+
+
+def bundle_string(payload: dict[str, object], field_name: str) -> str:
+    value = payload.get(field_name)
+    return value if isinstance(value, str) else ""

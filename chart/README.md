@@ -1,16 +1,20 @@
-# Infernix Helm Chart Scaffold
+# Infernix Helm Chart
 
-This directory contains the repo-owned Helm chart scaffold for the final Kind-backed deployment
-path.
+This directory contains the repo-owned Helm deployment assets used by `infernix cluster up` on the
+supported Kind path.
 
 Current scope:
 
-- repo-owned service, web, edge-route, and generated-demo-config templates
-- shared values for runtime mode, route publication, and the mandatory local HA replica targets
-- stable mount-path contract for `ConfigMap/infernix-demo-config` at `/opt/build/`
+- repo-owned templates for the edge proxy, web workload, service workload, publication state,
+  generated demo-config, service PVC, and Harbor or MinIO or Pulsar gateway workloads
+- locked Harbor, MinIO, Pulsar, and ingress-nginx dependencies in `Chart.yaml` and `Chart.lock`
+- shared values for runtime mode, route publication, Harbor-backed image coordinates, mandatory
+  local HA replica targets, and the manual `infernix-manual` storage contract
 
-Still open:
+Runtime contract:
 
-- wiring external Harbor, MinIO, Pulsar, and ingress-nginx chart dependencies
-- driving `infernix cluster up` from Helm rather than the current compatibility layer
-- validating the rendered chart on the final Kind substrate
+- `infernix cluster up` bootstraps the declared Helm repositories, renders this chart, and deploys
+  it on the active Kind cluster
+- cluster-resident service and web workloads mount `ConfigMap/infernix-demo-config` read-only at
+  `/opt/build/`
+- non-Harbor workloads pull Harbor-published image references selected through chart values

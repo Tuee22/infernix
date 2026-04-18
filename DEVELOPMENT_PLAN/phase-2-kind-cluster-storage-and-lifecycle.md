@@ -35,6 +35,14 @@ This phase also owns the rule that `cluster up` prepares the active runtime mode
 - the mounted ConfigMap-backed file becomes the source of truth for the demo-visible catalog and
   later integration or E2E enumeration
 
+## Current Repo Assessment
+
+The storage doctrine, Helm rollout, Harbor-backed image publication, and generated demo-config
+publication are implemented on the current Kind path. The remaining gap in this phase is the
+`linux-cuda` lane: the current code labels GPU nodes, patches `nvidia.com/gpu` into node status,
+and wires `nvidia-container-runtime` to `runc`, but it does not yet expose a real NVIDIA-backed
+Kind substrate with usable GPU devices.
+
 ## Sprint 2.1: Kind Bootstrap and StorageClass Reset [Done]
 
 **Status**: Done
@@ -129,7 +137,7 @@ Put repo-owned and third-party workloads behind one Helm deployment model.
 ### Deliverables
 
 - one umbrella chart under `chart/`
-- repo-owned workloads for the Haskell service, the webapp service, the edge-routing configuration, and the current Harbor or MinIO or Pulsar portal surfaces now exist as chart templates and values
+- repo-owned workloads for the Haskell service, the webapp service, the edge-routing configuration, and the current Harbor or MinIO or Pulsar portal surfaces exist as chart templates and values
 - chart dependencies for Harbor, MinIO, Pulsar, and ingress-nginx
 - the webapp service is deployed through repo-owned Helm chart templates and values, not ad hoc manifests
 - repo-owned workloads mount `ConfigMap/infernix-demo-config` in the watched runtime directory used by the daemon and UI
@@ -171,7 +179,7 @@ automatically during `cluster up`.
 - `infernix cluster up` mirrors all non-Harbor third-party images into Harbor and builds then
   publishes repo-owned images to Harbor before Helm rollout
 - `infernix cluster up` builds the separate webapp image through `web/Dockerfile` and uploads it to Harbor
-- before Harbor is ready, `cluster up` now also mirrors the MinIO and Pulsar bootstrap images into
+- before Harbor is ready, `cluster up` also mirrors the MinIO and Pulsar bootstrap images into
   a repo-built bootstrap registry on `localhost:30001`, and Kind registry-host config rewrites that
   namespace to the helper registry on the Kind network
 - Helm values reference Harbor image coordinates for every cluster pod except Harbor's own bootstrap path
@@ -197,7 +205,7 @@ None.
 ## Sprint 2.5: Kind Lifecycle Idempotency and Status Surface [Done]
 
 **Status**: Done
-**Implementation**: `src/Infernix/Cluster.hs`, `.build/infernix`
+**Implementation**: `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `test/integration/Spec.hs`
 **Docs to update**: `README.md`, `documents/reference/cli_reference.md`, `documents/operations/cluster_bootstrap_runbook.md`
 
 ### Objective
@@ -266,9 +274,9 @@ None.
 
 ---
 
-## Sprint 2.7: GPU-Enabled Kind Runtime For `linux-cuda` [Done]
+## Sprint 2.7: GPU-Enabled Kind Runtime For `linux-cuda` [Active]
 
-**Status**: Done
+**Status**: Active
 **Implementation**: `kind/cluster-linux-cuda.yaml`, `src/Infernix/Cluster.hs`, `chart/templates/deployment-service.yaml`, `chart/templates/runtimeclass-nvidia.yaml`, `test/integration/Spec.hs`, `tools/platform_asset_check.py`
 **Docs to update**: `documents/engineering/k8s_native_dev_policy.md`, `documents/architecture/runtime_modes.md`, `documents/development/testing_strategy.md`
 
@@ -303,7 +311,12 @@ Make `linux-cuda` a real GPU-backed cluster mode rather than a nominal matrix co
 
 ### Remaining Work
 
-None.
+- replace the current runtime shim and node-status patching with real NVIDIA container runtime
+  integration inside the Kind node containers
+- surface genuine `nvidia.com/gpu` resources from the host through Kubernetes rather than
+  synthetic status updates
+- validate CUDA workload execution on the Kind substrate, not only scheduling metadata, resource
+  requests, and routed demo traffic
 
 ## Documentation Requirements
 

@@ -10,19 +10,19 @@
 ## Current Repo Assessment
 
 The repository already has lint, unit, integration, and Playwright entrypoints. Those surfaces
-remain the canonical validation contract, and the current host-native plus outer-container reruns
-now reconfirm the full matrix.
+remain the canonical validation contract across the supported host-native and outer-container
+control-plane lanes, and they now validate the engine-aware managed subprocess worker contract plus
+durable runtime artifact bundles and source-artifact manifests, but they still validate a simulated
+CUDA lane rather than final engine execution on a real GPU-backed substrate.
 
-- `infernix test lint` and `infernix test unit` pass on the current host-native lane after the
-  repo-owned `ormolu` bootstrap fix
-- the default host-native `apple-silicon` `cluster up` path and routed smoke pass again after
-  switching the Kind registry mirror for Harbor-backed pulls away from node-local `localhost`,
-  removing Kind's brittle built-in boot wait, and adding the repo-built bootstrap registry path
-  used before Harbor is ready
-- the exhaustive `infernix test integration` and `infernix test e2e` reruns now pass across
-  `apple-silicon`, `linux-cpu`, `linux-cuda`, and the outer-container lane, and the outer routed
-  Playwright path now waits for routed publication or demo-config or inference readiness before it
-  launches the browser suite
+- `infernix test lint` and `infernix test unit` are the canonical host-side static-quality and
+  unit gates
+- `infernix test integration` and `infernix test e2e` exercise `apple-silicon`, `linux-cpu`, and
+  `linux-cuda` when no explicit runtime-mode override is supplied
+- the routed Playwright path waits for routed publication, demo-config, and inference readiness
+  before it launches the browser suite
+- final closure remains open until those same suites run against real runtime workers and a real
+  NVIDIA-backed `linux-cuda` substrate
 
 ## Validation Surface
 
@@ -67,9 +67,9 @@ plane, shared contracts, and matrix-rendering logic.
 
 - `infernix test lint` as the canonical static-quality entrypoint for repo-owned Haskell code
 - the current repo-owned lint layer enforces whitespace, newline, and tab discipline for tracked sources
-- `infernix test lint` also validates the repo-owned chart, Kind, and `.proto` scaffold inventory
+- `infernix test lint` also validates the repo-owned chart, Kind, and `.proto` asset inventory
 - `infernix docs check` remains part of the canonical static-quality gate
-- the repo-owned Haskell style stack now bootstraps `ormolu` and `hlint` binaries under
+- the repo-owned Haskell style stack bootstraps `ormolu` and `hlint` binaries under
   `./.build/haskell-style-tools/` and checks `infernix.cabal` with `cabal format`
 - strict compiler-warning validation with warnings treated as errors on supported paths
 - Haskell unit coverage for runtime-mode resolution, model catalog logic, generated demo-config
@@ -95,22 +95,22 @@ None.
 
 ---
 
-## Sprint 6.2: Extensive Integration Suites [Done]
+## Sprint 6.2: Extensive Integration Suites [Active]
 
-**Status**: Done
+**Status**: Active
 **Implementation**: `src/Infernix/Cluster.hs`, `test/integration/Spec.hs`, `tools/runtime_backend.py`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/operations/cluster_bootstrap_runbook.md`
 
 ### Objective
 
-Exercise the generated demo-config and service integration path now, and carry that coverage
+Exercise the generated demo-config and service integration path, and carry that coverage
 forward onto the final Kind, Helm, Harbor, MinIO, and Pulsar substrate.
 
 ### Deliverables
 
 - integration coverage for `cluster up` reconciliation, repo-local kubeconfig and publication
   artifact creation, generated demo-config publication, and per-entry inference request execution
-- the Haskell integration suite now also proves the routed Harbor, MinIO, and Pulsar gateway
+- the Haskell integration suite also proves the routed Harbor, MinIO, and Pulsar gateway
   surfaces resolve through the cluster-resident edge topology while browser-interaction coverage
   remains owned by Phase 6.3 Playwright
 - integration coverage enumerates every generated catalog entry for the active runtime mode
@@ -134,7 +134,12 @@ forward onto the final Kind, Helm, Harbor, MinIO, and Pulsar substrate.
 
 ### Remaining Work
 
-None.
+- replace engine-aware managed-worker assertions with validations against the final engine workers,
+  direct upstream artifact acquisition, and durable runtime state
+- close the `linux-cuda` coverage on a real NVIDIA-backed Kind substrate instead of patched node
+  status and runtime shims
+- keep the current Harbor, MinIO, and Pulsar HA assertions while extending runtime execution
+  checks beyond the current repo-owned worker layer
 
 ---
 
@@ -219,7 +224,7 @@ Verify the same product contract across Apple host-native and Linux outer-contai
 
 ### Deliverables
 
-- the codebase now exposes `cluster up`, `cluster status`, and `cluster down` through both the
+- the codebase exposes `cluster up`, `cluster status`, and `cluster down` through both the
   Apple host-native and Linux outer-container launcher surfaces
 - current automated coverage proves `cluster up` creates the repo-local kubeconfig, generated demo
   `.dhall`, repo-local ConfigMap publication mirror, and publication state for the active runtime mode
@@ -248,9 +253,9 @@ None.
 
 ---
 
-## Sprint 6.6: Per-Mode Exhaustive Integration and E2E Coverage [Done]
+## Sprint 6.6: Per-Mode Exhaustive Integration and E2E Coverage [Active]
 
-**Status**: Done
+**Status**: Active
 **Implementation**: `src/Infernix/CLI.hs`, `test/integration/Spec.hs`, `web/playwright/inference.spec.js`, `web/test/contracts.test.mjs`, `web/test/run_playwright_matrix.mjs`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/reference/web_portal_surface.md`, `documents/reference/cli_reference.md`
 
@@ -270,7 +275,7 @@ validation cover every generated catalog entry using the engine binding selected
 - the default validation matrix runs those exhaustive integration and E2E paths across
   `apple-silicon`, `linux-cpu`, and `linux-cuda` by default when no explicit runtime-mode override
   is supplied on both the Apple host-native and Linux outer-container control-plane surfaces
-- `linux-cuda` exhaustive coverage now asserts the generated catalog, routed publication state, and
+- `linux-cuda` exhaustive coverage asserts the generated catalog, routed publication state, and
   GPU-backed service deployment stay aligned on the Kind-backed CUDA lane
 - `infernix test all` for a runtime mode aggregates lint, unit, integration, and E2E without silently dropping generated catalog entries
 
@@ -288,7 +293,12 @@ validation cover every generated catalog entry using the engine binding selected
 
 ### Remaining Work
 
-None.
+- keep exhaustive catalog enumeration while replacing repo-owned engine-aware managed-worker
+  assertions with checks against final engine execution and direct upstream artifact behavior
+- rerun the default matrix against a real `linux-cuda` substrate that exposes actual NVIDIA
+  runtime support and usable GPU resources
+- close the Harbor-backed host-native routed E2E lane on top of the final runtime workers rather
+  than the current repo-owned worker layer
 
 ## Documentation Requirements
 

@@ -11,6 +11,9 @@
 - MinIO objects
 - Pulsar ledger state
 - Harbor metadata and registry content
+- host-side runtime artifact bundles under `./.data/object-store/artifacts/`
+- host-side source-artifact manifests and copied payload previews under
+  `./.data/object-store/source-artifacts/`
 - host-side cache manifests under `./.data/object-store/manifests/`
 
 ## Derived State

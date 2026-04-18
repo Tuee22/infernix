@@ -7,7 +7,8 @@
 
 ## Rules
 
-- MinIO is the durable object authority for manifests, model artifacts, and large outputs
+- MinIO is the durable object authority for runtime artifact bundles, source-artifact manifests or
+  payload previews, protobuf manifests, and large outputs
 - Apple host-native runtime flows use the edge-routed `/minio/s3` path
 - cluster workloads use the routed surface or cluster-local addressing selected by runtime mode
 

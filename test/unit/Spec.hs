@@ -4,7 +4,7 @@ module Main (main) where
 
 import Control.Exception (finally)
 import Data.ByteString.Lazy.Char8 qualified as LazyChar8
-import Data.List (isInfixOf, nub)
+import Data.List (find, isInfixOf, nub)
 import Data.Maybe (fromMaybe, isJust, isNothing)
 import Data.Text qualified as Text
 import Infernix.CLI (extractRuntimeMode)
@@ -99,6 +99,17 @@ main = do
           doesFileExist
             (modelCacheRoot paths </> "apple-silicon" </> "llm-qwen25-safetensors" </> "default" </> "materialized.txt")
         assert cacheExists "runtime cache is keyed by runtime mode and model id"
+        let durableArtifactPath =
+              objectStoreRoot paths </> "artifacts" </> "apple-silicon" </> "llm-qwen25-safetensors" </> "bundle.json"
+        durableArtifactExists <- doesFileExist durableArtifactPath
+        assert durableArtifactExists "inference execution materializes a durable artifact bundle for the selected model"
+        durableArtifactContents <- readFile durableArtifactPath
+        assert ("\"engineAdapterId\": \"pytorch-python\"" `isInfixOf` durableArtifactContents) "durable artifact bundles record the selected engine adapter id"
+        assert ("\"artifactAcquisitionMode\": \"local-bundle-only\"" `isInfixOf` durableArtifactContents) "host-side durable artifact bundles record the local acquisition mode"
+        cacheBundleExists <-
+          doesFileExist
+            (modelCacheRoot paths </> "apple-silicon" </> "llm-qwen25-safetensors" </> "default" </> "artifact-bundle.json")
+        assert cacheBundleExists "runtime cache materialization copies the durable artifact bundle into the derived cache root"
         manifestProtoExists <-
           doesFileExist
             (objectStoreRoot paths </> "manifests" </> "apple-silicon" </> "llm-qwen25-safetensors" </> "default.pb")
@@ -108,7 +119,8 @@ main = do
         assert manifestProtoExists "cache materialization persists protobuf manifests"
         assert (not legacyManifestExists) "cache materialization no longer writes legacy state manifests"
         manifests <- listCacheManifests paths AppleSilicon
-        assert (any ((== "llm-qwen25-safetensors") . cacheModelId) manifests) "cache materialization writes a durable manifest"
+        let maybeManifest = find ((== "llm-qwen25-safetensors") . cacheModelId) manifests
+        assert (maybe False ((== Text.pack durableArtifactPath) . cacheDurableSourceUri) maybeManifest) "cache manifests point at the durable artifact bundle rather than the upstream download URL"
         evictedCount <- evictCache paths AppleSilicon (Just "llm-qwen25-safetensors")
         assert (evictedCount == 1) "cache eviction removes the requested derived cache entry"
         cachePresentAfterEvict <-
@@ -121,6 +133,51 @@ main = do
           doesFileExist
             (modelCacheRoot paths </> "apple-silicon" </> "llm-qwen25-safetensors" </> "default" </> "materialized.txt")
         assert cachePresentAfterRebuild "cache rebuild restores the materialized cache marker"
+        cacheBundleExistsAfterRebuild <-
+          doesFileExist
+            (modelCacheRoot paths </> "apple-silicon" </> "llm-qwen25-safetensors" </> "default" </> "artifact-bundle.json")
+        assert cacheBundleExistsAfterRebuild "cache rebuild restores the durable artifact bundle into the derived cache root"
+    writeFile "source-fixture.txt" "local source fixture\n"
+    let runtimeBackendScript =
+          unlines
+            [ "import json",
+              "import pathlib",
+              "import sys",
+              "sys.path.insert(0, str(pathlib.Path(sys.argv[1]) / 'tools'))",
+              "from runtime_backend import RuntimeBackend",
+              "repo_root = pathlib.Path(sys.argv[1])",
+              "data_root = pathlib.Path(sys.argv[2])",
+              "paths = {",
+              "  'results_root': data_root / 'runtime' / 'results',",
+              "  'object_store_root': data_root / 'object-store',",
+              "  'model_cache_root': data_root / 'runtime' / 'model-cache',",
+              "}",
+              "for path in paths.values():",
+              "  path.mkdir(parents=True, exist_ok=True)",
+              "backend = RuntimeBackend(paths=paths, runtime_mode='linux-cpu', control_plane_context='host-native', daemon_location='control-plane-host', publication_state={'routes': []})",
+              "entry = backend.materialize_cache({",
+              "  'matrixRowId': 'fixture-row',",
+              "  'modelId': 'fixture-model',",
+              "  'displayName': 'Fixture Model',",
+              "  'family': 'llm',",
+              "  'artifactType': 'fixture',",
+              "  'referenceModel': 'fixture',",
+              "  'selectedEngine': 'llama.cpp',",
+              "  'runtimeLane': 'kind-linux-cpu',",
+              "  'downloadUrl': pathlib.Path('source-fixture.txt').resolve().as_uri(),",
+              "})",
+              "print(json.dumps(entry, sort_keys=True))",
+              "backend.close()"
+            ]
+    (backendExitCode, backendStdout, backendStderr) <-
+      readProcessWithExitCode
+        "python3"
+        ["-c", runtimeBackendScript, repoRoot paths, cwd </> ".data"]
+        ""
+    assert (backendExitCode == ExitSuccess) ("runtime backend local source materialization succeeds: " <> backendStderr)
+    assert ("\"artifactAcquisitionMode\": \"local-file-copy\"" `isInfixOf` backendStdout) "runtime backend records local-file source acquisition in cache status"
+    assert ("\"engineAdapterId\": \"llama-cpp-cli\"" `isInfixOf` backendStdout) "runtime backend cache status records engine-aware adapter metadata"
+    assert ("\"sourceArtifactFetchStatus\": \"materialized\"" `isInfixOf` backendStdout) "runtime backend cache status records materialized source-artifact state"
     writeFile "invalid-demo-config.dhall" "{\"runtimeMode\":\"apple-silicon\",\"models\":[{\"modelId\":\"missing-fields\"}]}\n"
     (exitCode, _, stderrOutput) <-
       readProcessWithExitCode

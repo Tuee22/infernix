@@ -48,38 +48,26 @@ A phase or sprint can move to `Done` only when all of the following are true:
 
 ## Current Repo Assessment
 
-The repository has a governed `documents/` suite and a materially broader final-substrate
-implementation than the plan previously recorded.
+The repository has a governed `documents/` suite and a partially closed implementation baseline
+across the tracked phases.
 
-- Phase 0 documentation realignment is closed: the governed docs now distinguish execution context
-  from runtime mode, document `infernix-demo-<mode>.dhall`, `ConfigMap/infernix-demo-config`,
-  `/opt/build/`, `9090`-first edge-port selection, and active-mode exhaustive validation, and the
-  docs validator enforces those phrases directly
-- the current implementation now includes explicit runtime-mode selection, a comprehensive
-  README-matrix-backed catalog registry, mode-specific generated demo-config staging, a real
-  ConfigMap publication plus repo-local inspection mirror, a Haskell-owned service launcher that
-  selects the active demo-config source before delegating routed HTTP handling to
-  `tools/service_server.py`, publication state plus a routed `/api/publication` surface,
-  build-root-isolated frontend contract staging, Apple host prerequisite detection for repo-owned
-  Python manifests, the repo-owned `./cabalw` host build wrapper, repo-owned `ormolu` or `hlint`
-  or `cabal format` checks, Harbor-first image publication, GPU-enabled `linux-cuda` Kind
-  reconciliation, node-reachable Kind registry mirror configuration for Harbor-backed pulls, a
-  repo-built bootstrap registry for pre-Harbor MinIO and Pulsar image pulls, and a host-native
-  Kind bootstrap path that no longer depends on Kind's brittle boot-log wait; `infernix test
-  lint`, `infernix test unit`, `infernix test integration`, and `infernix test e2e` now pass
-  again on the supported host-native and outer-container validation lanes, including the default
-  runtime-mode matrix
-- `compose.yaml` and `docker/infernix.Dockerfile` now close the documented outer-container
-  compatibility launcher, while `web/Dockerfile`, `chart/`, `kind/`, and `proto/` now back the
-  validated Kind or Helm or Harbor or MinIO or Pulsar substrate on the Apple host-native lane
-- the web build now stages generated JavaScript contract output under the active build root
-  (`./.build/web-generated/` on the host, `/opt/build/infernix/web-generated/` in the
-  outer-container path) before copying the runtime asset into `web/dist/` through atomic staging,
-  so tracked-path frontend contract artifact isolation is closed and concurrent web builds no
-  longer expose partial `dist/` output
-- the host-native final-substrate lane now also reuses the Harbor-published web runtime image
-  across `apple-silicon`, `linux-cpu`, and `linux-cuda`, and the remaining compatibility
-  distinctions are intentional current-state contracts rather than open phase work
+- the documentation, repository shape, CLI surface, Kind or Helm substrate, generated demo-config
+  publication, routed browser workbench, and outer-container launcher are materially implemented
+  and aligned with the current plan
+- the `linux-cuda` lane remains open: the current code labels GPU nodes, patches
+  `nvidia.com/gpu` into node status, and wires `nvidia-container-runtime` to `runc`, but it does
+  not yet expose a real NVIDIA-backed Kind substrate with usable GPU devices
+- the routed service path remains open: `tools/service_server.py` and `tools/runtime_backend.py`
+  now supervise repo-owned engine-aware managed subprocess workers, round-trip request or result
+  payloads through Pulsar, materialize durable runtime artifact bundles into the MinIO-backed
+  runtime bucket, and stage source-artifact manifests plus local-file copies or opt-in remote
+  previews, but they do not yet launch the final third-party engine kernels or acquire direct
+  upstream model artifacts for every matrix row into that durable store
+- exhaustive integration and E2E validation remain open at final-closure level: the suites cover
+  every generated catalog entry today and now validate the engine-aware managed-worker plus
+  durable-artifact or source-artifact contract, but they are still not exercising final engine
+  execution on a real GPU-backed
+  substrate across the full matrix
 
 ## Execution Contexts and Runtime Modes
 
@@ -96,11 +84,11 @@ The plan uses two separate concepts and keeps them distinct:
 |-------|------|--------|----------|
 | 0 | Documentation and Governance | Done | [phase-0-documentation-and-governance.md](phase-0-documentation-and-governance.md) |
 | 1 | Repository and Control-Plane Foundation | Done | [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md) |
-| 2 | Kind Cluster Storage and Lifecycle | Done | [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md) |
+| 2 | Kind Cluster Storage and Lifecycle | Active | [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md) |
 | 3 | HA Platform Services and Edge Routing | Done | [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md) |
-| 4 | Inference Service and Durable Runtime | Done | [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) |
+| 4 | Inference Service and Durable Runtime | Active | [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) |
 | 5 | Web UI and Shared Types | Done | [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md) |
-| 6 | Validation, E2E, and HA Hardening | Done | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) |
+| 6 | Validation, E2E, and HA Hardening | Active | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) |
 
 ## Canonical Outcome
 
