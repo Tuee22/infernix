@@ -45,6 +45,53 @@ METADATA_LINES = [
     re.compile(r"^\*\*Referenced by\*\*: .+"),
 ]
 LINK_RE = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
+REQUIRED_PHRASES = {
+    Path("documents/architecture/runtime_modes.md"): [
+        "apple-silicon",
+        "linux-cpu",
+        "linux-cuda",
+        "ConfigMap/infernix-demo-config",
+        "/opt/build/",
+        "nvidia.com/gpu",
+    ],
+    Path("documents/architecture/model_catalog.md"): [
+        "README matrix",
+        "selected engine",
+        "infernix-demo-<mode>.dhall",
+        "ConfigMap/infernix-demo-config",
+    ],
+    Path("documents/development/testing_strategy.md"): [
+        "active runtime mode",
+        "every generated catalog entry",
+        "test integration",
+        "test e2e",
+    ],
+    Path("documents/engineering/build_artifacts.md"): [
+        "./.build/infernix",
+        "infernix-demo-<mode>.dhall",
+        "infernix.kubeconfig",
+        "/opt/build/",
+    ],
+    Path("documents/engineering/model_lifecycle.md"): [
+        ".proto",
+        "Pulsar",
+        "MinIO",
+        "derived cache",
+    ],
+    Path("documents/engineering/edge_routing.md"): [
+        "9090",
+        "edge-port.json",
+    ],
+    Path("documents/tools/pulsar.md"): [
+        ".proto",
+        "protobuf",
+    ],
+    Path("documents/reference/web_portal_surface.md"): [
+        "generated demo catalog",
+        "runtime mode",
+        "selected engine",
+    ],
+}
 
 
 def read_text(path: Path) -> str:
@@ -124,6 +171,14 @@ def validate_phase_docs() -> None:
             fail(f"{relative_path} is missing the Documentation Requirements section")
 
 
+def validate_required_phrases() -> None:
+    for relative_path, phrases in REQUIRED_PHRASES.items():
+        text = read_text(REPO_ROOT / relative_path)
+        for phrase in phrases:
+            if phrase not in text:
+                fail(f"{relative_path} is missing required phrase: {phrase}")
+
+
 def iter_governed_markdown() -> list[Path]:
     doc_paths = sorted((REPO_ROOT / "documents").rglob("*.md"))
     plan_paths = [REPO_ROOT / path for path in PHASE_DOCS]
@@ -143,6 +198,7 @@ def main() -> None:
     validate_required_docs()
     validate_readme()
     validate_phase_docs()
+    validate_required_phrases()
 
     for path in iter_governed_markdown():
         if path.suffix not in MARKDOWN_EXTENSIONS:

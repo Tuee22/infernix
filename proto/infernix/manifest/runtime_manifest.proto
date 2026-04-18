@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+package infernix.manifest;
+
+message ModelMaterialization {
+  string runtime_mode = 1;
+  string model_id = 2;
+  string selected_engine = 3;
+  string durable_source_uri = 4;
+  string materialized_cache_path = 5;
+}
+
+message RuntimeCacheEntry {
+  string runtime_mode = 1;
+  string model_id = 2;
+  string cache_key = 3;
+  string cache_path = 4;
+  bool materialized = 5;
+}
+
+message RuntimeManifest {
+  string manifest_id = 1;
+  string runtime_mode = 2;
+  repeated ModelMaterialization materializations = 3;
+  repeated RuntimeCacheEntry cache_entries = 4;
+  string durable_results_prefix = 5;
+}

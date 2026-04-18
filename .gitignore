@@ -3,8 +3,10 @@
 .claude/
 .build/
 .build/*.dhall
+.build/infernix-demo-*.dhall
 build/
 build/*.dhall
+build/infernix-demo-*.dhall
 
 # Haskell build artifacts
 dist-newstyle/
@@ -36,6 +38,7 @@ web/.spago/
 web/.parcel-cache/
 web/playwright-report/
 web/test-results/
+chart/charts/
 
 # Logs and temporary files
 *.log

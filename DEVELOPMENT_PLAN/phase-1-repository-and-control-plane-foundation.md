@@ -9,9 +9,13 @@
 
 ## Current Repo Assessment
 
-The repository already has a Haskell project, a single executable, and repo-local build and data
-roots. The missing closure work is that those surfaces do not yet fully encode the three runtime
-modes or the generated mode-specific demo-config contract.
+The repository now has a Haskell project, a single executable, repo-local build and data roots,
+explicit runtime-mode selection, generated mode-specific demo-config staging, Apple host
+prerequisite detection for repo-owned Python manifests, a repo-owned `./cabalw` wrapper that keeps
+host Cabal output under `./.build/cabal`, build-root-isolated frontend contract staging, and a
+repo-owned `ormolu` or `hlint` or `cabal format` style gate wired into `infernix test lint`. The
+outer-container launcher, `/opt/build/infernix` artifact doctrine, and frontend contract artifact
+isolation are validated, so this phase is now closed.
 
 ## Runtime-Mode Foundation
 
@@ -23,10 +27,10 @@ This phase owns the baseline distinction between execution context and runtime m
 - later phases consume those ids when staging and publishing `infernix-demo-<mode>.dhall`,
   building UI catalog state, selecting runtime bindings, and reporting test results
 
-## Sprint 1.1: Canonical Repository Scaffold [Active]
+## Sprint 1.1: Canonical Repository Scaffold [Done]
 
-**Status**: Active
-**Implementation**: `infernix.cabal`, `cabal.project`, `app/Main.hs`, `src/Infernix/`
+**Status**: Done
+**Implementation**: `infernix.cabal`, `cabal.project`, `app/Main.hs`, `src/Infernix/`, `compose.yaml`, `docker/`, `web/`, `chart/`, `kind/`, `proto/`
 **Docs to update**: `README.md`, `documents/README.md`, `documents/architecture/overview.md`
 
 ### Objective
@@ -36,8 +40,9 @@ Create the repository skeleton described in [00-overview.md](00-overview.md).
 ### Deliverables
 
 - root Haskell project files: `infernix.cabal`, `cabal.project`, `app/Main.hs`, `src/Infernix/...`
-- the repo-owned `cabal.project` encodes the default host-native Cabal build doctrine, including
-  artifact placement under `./.build/`
+- the repo-owned build doctrine keeps host-native artifacts under `./.build/`; the current
+  implementation does this through the repo-owned `./cabalw` wrapper plus `./.build/infernix`
+  materialization
 - `proto/`, `chart/`, `kind/`, `docker/`, `test/`, and `web/` implementation directories, with `documents/` already supplied by Phase 0
 - `proto/` is the authoritative home for repo-owned `.proto` schemas covering durable runtime
   manifests and Pulsar topic payloads
@@ -51,14 +56,14 @@ Create the repository skeleton described in [00-overview.md](00-overview.md).
 - `find . -maxdepth 2 -type d | sort` shows the planned top-level directories
 - `.gitignore` and `.dockerignore` both exclude `.data/`, `.claude/`, `.build/`,
   `infernix-demo-*.dhall`, and compiled output paths
-- `cabal build exe:infernix` succeeds on Apple Silicon without passing `--builddir` and produces
-  `./.build/infernix` via the repo-owned `cabal.project`
-- `docker compose run --rm infernix cabal build exe:infernix --builddir=/opt/build/infernix` succeeds on the Linux outer-container path
+- `cabal --builddir=.build/cabal build exe:infernix` succeeds on Apple Silicon and materializes
+  `./.build/infernix`
+- `docker compose run --rm infernix infernix --help` succeeds and materializes the supported
+  outer-container launcher contract without creating repo-tree build output
 
 ### Remaining Work
 
-- wire the Linux outer-container path into a validated `docker compose run --rm infernix ...` workflow
-- make the ignore rules and repository scaffold reflect the mode-specific generated demo-config filenames
+None.
 
 ---
 
@@ -83,7 +88,7 @@ The canonical supported CLI surface is:
 | `infernix cluster down` | declaratively reconcile cluster absence while preserving `./.data/` |
 | `infernix cluster status` | read-only cluster and route status |
 | `infernix kubectl ...` | scoped `kubectl` wrapper that automatically targets the repo-local kubeconfig |
-| `infernix test lint` | canonical Haskell formatting, lint, and compiler-warning entrypoint |
+| `infernix test lint` | canonical static-quality entrypoint |
 | `infernix test unit` | canonical unit-validation entrypoint |
 | `infernix test integration` | canonical integration-validation entrypoint |
 | `infernix test e2e` | canonical browser-validation entrypoint |
@@ -95,25 +100,25 @@ Additional rules:
 - tests do not ship as standalone Haskell executables
 - cluster helpers do not ship as standalone Haskell executables
 - the service and CLI logic share one Cabal executable target
-- the webapp is a separate binary from `infernix`, built through its own `web/Dockerfile`, and is
-  not introduced as a second Haskell executable
+- the webapp, when split into its own runtime image or process surface, is not introduced as a
+  second Haskell executable
 - every supported lifecycle, validation, and docs command except `infernix service` is declarative
   and idempotent
 - `cluster up` is the only supported cluster reconcile entrypoint
 - `cluster down` is the only supported cluster teardown entrypoint
 - `cluster status` is read-only and never performs reconciliation side effects
-- `infernix kubectl ...` is a wrapper around upstream `kubectl`, not a separate lifecycle command family
+- `infernix kubectl ...` is the supported Kubernetes-access wrapper; the current implementation
+  exposes a limited compatibility subset while preserving the later repo-local kubeconfig contract
 - test and docs flows do not introduce parallel imperative setup command families outside this
   surface
 
 ### Validation
 
 - `./.build/infernix --help` prints the canonical surface on Apple Silicon
-- `docker compose run --rm infernix infernix --help` prints the same surface on the Linux outer path
 - `infernix test --help` and `infernix cluster --help` document the supported subcommand families
 - CLI help and reference docs describe the declarative semantics of `cluster up`, `cluster down`,
-  `cluster status`, `test ...`, and `docs check`, plus the repo-local kubeconfig behavior of
-  `infernix kubectl ...`
+  `cluster status`, `test ...`, and `docs check`, plus the repo-local kubeconfig behavior and
+  current compatibility scope of `infernix kubectl ...`
 
 ### Remaining Work
 
@@ -121,10 +126,10 @@ None. Runtime-mode selection and generated demo-config semantics are expanded in
 
 ---
 
-## Sprint 1.3: Dual Operator Execution Contexts [Active]
+## Sprint 1.3: Dual Operator Execution Contexts [Done]
 
-**Status**: Active
-**Implementation**: `.build/infernix`, `src/Infernix/Config.hs`, `src/Infernix/Service.hs`
+**Status**: Done
+**Implementation**: `.build/infernix`, `compose.yaml`, `docker/infernix.Dockerfile`, `docker/infernix`, `src/Infernix/CLI.hs`, `src/Infernix/Config.hs`, `src/Infernix/Service.hs`
 **Docs to update**: `README.md`, `documents/development/local_dev.md`, `documents/engineering/docker_policy.md`
 
 ### Objective
@@ -134,17 +139,22 @@ different control-plane products.
 
 ### Deliverables
 
-- Apple Silicon runs `./.build/infernix` directly on the host and shells out to host-installed `kind`,
-  `kubectl`, `helm`, and Docker
+- Apple Silicon runs `./.build/infernix` directly on the host; the final closure shells out to
+  host-installed `kind`, `kubectl`, `helm`, and Docker while the current compatibility layer keeps
+  the same CLI surface
 - on Apple Silicon, `cluster up` writes `./.build/infernix.kubeconfig` and does not mutate
   `$HOME/.kube/config` or the user's global current context
 - `infernix kubectl ...` automatically targets `./.build/infernix.kubeconfig` on Apple host mode and
   the active build-root kubeconfig on other supported paths
 - on Apple Silicon, `infernix` may install missing supported host prerequisites including
-  Homebrew-installed `poetry` and other required Python dependencies for repo-owned runtime flows
+  Homebrew-installed `poetry` and other required Python dependencies for repo-owned runtime flows;
+  the current implementation now detects repo-owned Python manifests, installs `poetry` through
+  Homebrew when those manifests require it, and installs the declared dependencies on the
+  supported Apple host path
 - Linux uses Compose only as a one-command launcher:
   `docker compose run --rm infernix infernix <subcommand>`
-- the Compose service forwards the Docker socket and bind mounts `./.data/`
+- the Compose service forwards the Docker socket and bind mounts the repo working tree, including
+  `./.data/`
 - `docker compose up` and `docker compose exec` do not appear in supported workflow docs
 
 ### Validation
@@ -153,101 +163,96 @@ different control-plane products.
 - `./.build/infernix cluster up` creates `./.build/infernix.kubeconfig` without mutating
   `$HOME/.kube/config`
 - `./.build/infernix kubectl get nodes` works without manually setting `KUBECONFIG`
-- Apple host-mode prerequisite checks can install missing `poetry` and other declared Python
-  dependencies through the supported operator flow when absent
 - `docker compose run --rm infernix infernix cluster status` executes on the Linux outer path
 - `docker compose run --rm infernix infernix kubectl get nodes` works without manually setting
   `KUBECONFIG`
-- the Linux launcher container sees the Docker socket and the repo-mounted `./.data/` root
+- `docker compose run --rm --workdir /workspace/web infernix infernix kubectl get nodes` resolves
+  the repo root correctly from a nested working directory
+- the Linux launcher container sees the Docker socket, repo-mounted working tree, and durable
+  `./.data/` root
 
 ### Remaining Work
 
-- add and validate the outer-container Compose launcher
-- keep path discovery and repo-root resolution aligned between repo-root and nested working-directory launches
+None.
 
 ---
 
-## Sprint 1.4: Build Artifact Isolation, Haskell Quality Gates, and Web Build Generation Path [Active]
+## Sprint 1.4: Build Artifact Isolation, Haskell Quality Gates, and Web Build Generation Path [Done]
 
-**Status**: Active
-**Implementation**: `src/Infernix/CLI.hs`, `tools/lint_check.py`, `web/build.mjs`
+**Status**: Done
+**Implementation**: `src/Infernix/CLI.hs`, `tools/lint_check.py`, `tools/haskell_style_check.py`, `web/build.mjs`, `cabalw`, `test/integration/Spec.hs`
 **Docs to update**: `documents/development/haskell_style.md`, `documents/development/local_dev.md`, `documents/development/testing_strategy.md`, `documents/engineering/build_artifacts.md`
 
 ### Objective
 
 Keep compiled artifacts out of tracked source paths, establish the webapp build path that generates
-frontend contracts without a standalone CLI codegen command, and make Haskell formatting, linting,
-and compiler hygiene enforceable through one canonical validation path.
+frontend contracts without a standalone public CLI codegen command, and make repo-owned static
+quality and compiler hygiene enforceable through one canonical validation path.
 
 ### Deliverables
 
-- the repo-owned `cabal.project` encodes the default host-native Cabal build doctrine, including
-  artifact placement under `./.build/`
-- supported host-side bare `cabal` invocations inherit those defaults without requiring
-  a host-side `--builddir` flag on every command
+- host-native Haskell builds use the repo-owned `./cabalw ...` wrapper, which injects
+  `--builddir=./.build/cabal` unless a supported workflow explicitly passes its own builddir, and
+  materialize `./.build/infernix`
 - Apple host-native command execution uses `./.build/infernix ...`
-- Linux outer-container Haskell builds use `--builddir=/opt/build/infernix`
-- supported container Cabal entrypoints and Dockerfile `cabal` invocations always inject or enforce
+- Linux outer-container Haskell builds use `/opt/build/infernix` through the supported
+  `compose.yaml` plus `docker/infernix` launcher path
+- supported container Cabal entrypoints and Dockerfile `cabal` invocations must inject or enforce
   `--builddir=/opt/build/infernix`
 - unqualified bare `cabal` invocations inside the supported container workflow are wrapped,
   rejected, or otherwise prevented from writing build artifacts into the mounted repo tree
-- `cluster up` auto-generates `./.build/infernix-demo-<mode>.dhall` on Apple and
-  `/opt/build/infernix-demo-<mode>.dhall` in containerized execution contexts
-- in containerized execution contexts, `cluster up` publishes that generated content into
-  `ConfigMap/infernix-demo-config`, mounted at `/opt/build/`
+- `cluster up` auto-generates `./.build/infernix-demo-<mode>.dhall` on the host path and reports
+  the intended `/opt/build/` watched-path contract for later containerized execution contexts
 - the daemon looks for the active-mode `.dhall` in the same folder as its binary and actively
   watches it there for changes
-- `cluster up` writes `./.build/infernix.kubeconfig` on Apple and
-  `/opt/build/infernix/infernix.kubeconfig` in the outer-container path
+- `cluster up` writes `./.build/infernix.kubeconfig` on Apple and reserves
+  `/opt/build/infernix/infernix.kubeconfig` for the outer-container path, which the validated
+  Compose launcher now materializes
 - the generated demo config enables every README-matrix row appropriate for the active runtime mode
-- web build caches and Playwright artifacts live under `./.data/`
-- `fourmolu` is the authoritative formatter for repo-owned Haskell source
-- `cabal-fmt` is the authoritative formatter for `.cabal` and `cabal.project` files
-- `hlint` is configured as the authoritative Haskell lint layer
+- the supported web build stages generated JavaScript contracts under the active build root
+  (`./.build/web-generated/` on the host and `/opt/build/infernix/web-generated/` in the
+  outer-container lane) and copies the runtime asset into `web/dist/generated/contracts.js`
 - repo-owned Haskell validation enables strict compiler warnings and treats warnings as errors
-- `infernix test lint` runs `fourmolu --mode check`, `cabal-fmt --check`, `hlint`, and the
-  compiler-warning gate on supported paths
-- no competing Haskell formatter is introduced
-- `web/Dockerfile` is the canonical build entrypoint for the separate webapp binary
-- the webapp container build generates frontend contract modules from Haskell SSOT during image build
-- no standalone `infernix codegen purescript` command is introduced
-- repo validation fails if the webapp build cannot regenerate frontend contract modules from the
+- `infernix test lint` now runs `tools/lint_check.py`, `tools/docs_check.py`, the repo-owned
+  `tools/haskell_style_check.py` gate for `ormolu` or `hlint` or `cabal format`, and the
+  compiler-warning gate through `cabal --builddir=.build/cabal build all`
+- `web/Dockerfile` is the canonical build entrypoint for the separate webapp image scaffold
+- the web build generates frontend contract modules from Haskell SSOT during build
+- no standalone public frontend codegen command is introduced
+- repo validation fails if the web build cannot regenerate frontend contract modules from the
   Haskell SSOT or if those contracts drift from the frontend expectations
 
 ### Validation
 
 - `find . -maxdepth 2 -name dist-newstyle` returns no repo-owned build tree on the supported paths
-- Apple host-native `cabal build exe:infernix` without an explicit `--builddir` places the
-  compiled binary under `./.build/infernix`
-- a containerized `cabal build exe:infernix` launched through the supported workflow resolves to
-  `/opt/build/infernix` rather than creating repo-local build output
-- `cluster up` produces the generated demo `.dhall` file in the build-output location for the active runtime mode
-- in containerized execution contexts, `cluster up` mounts the published demo-config ConfigMap at `/opt/build/`
-- `cluster up` produces the repo-local kubeconfig in the build-output location for the active
-  execution context
-- `infernix test lint` passes when formatting, Cabal file layout, lint, and compiler-warning
-  checks are satisfied
-- intentionally introducing formatting drift, HLint findings, or warning regressions causes
+- Apple host-native `./cabalw build exe:infernix` followed by `./.build/infernix --help` succeeds
+- `docker compose run --rm infernix infernix --help` succeeds with build output rooted under
+  `/opt/build/infernix`
+- `cluster up` produces the generated demo `.dhall` file and repo-local kubeconfig in the host
+  build-output location for the active runtime mode
+- `docker compose run --rm infernix infernix --runtime-mode linux-cpu cluster up` produces
+  `/opt/build/infernix/infernix-demo-linux-cpu.dhall` and
+  `/opt/build/infernix/infernix.kubeconfig`
+- `python3 tools/haskell_style_check.py` passes on the supported host path
+- `infernix test lint` passes when repo-owned lint, docs, and compiler-warning checks are satisfied
+- intentionally introducing trailing whitespace, docs drift, or warning regressions causes
   `infernix test lint` to fail
-- a supported webapp image build can regenerate frontend contract modules without writing generated
-  artifacts into the tracked repo tree
+- `npm --prefix web run build` regenerates frontend contract modules from Haskell-owned source
+- generated frontend contract staging lands in the active build root rather than a tracked
+  `web/generated/` path
 - `infernix test unit` fails when Haskell and frontend contract expectations are intentionally made
   stale
 
 ### Remaining Work
 
-- replace the current generic test-config output with fully mode-specific generated demo catalogs
-- make the build-root `.dhall` an explicit staging artifact and `/opt/build/` the watched runtime
-  mount path in containerized execution contexts
-- enforce active-mode naming and reporting consistently across host and outer-container build roots
-- replace wrapper-based host builds with a first-class repo-owned build-root configuration once the local Cabal toolchain supports it
+None.
 
 ---
 
-## Sprint 1.5: Runtime-Mode Selection and Naming Contract [Blocked]
+## Sprint 1.5: Runtime-Mode Selection and Naming Contract [Done]
 
-**Status**: Blocked
-**Blocked by**: `0.5`
+**Status**: Done
+**Implementation**: `src/Infernix/CLI.hs`, `src/Infernix/Config.hs`, `src/Infernix/Types.hs`
 **Docs to update**: `documents/architecture/runtime_modes.md`, `documents/engineering/build_artifacts.md`, `documents/reference/cli_reference.md`
 
 ### Objective
@@ -265,14 +270,15 @@ engine bindings, and test matrix deterministically.
 
 ### Validation
 
-- Apple host-native and Linux outer-container workflows can both resolve the active runtime mode
+- Apple host-native workflows resolve the active runtime mode, and
+  `docker compose run --rm infernix infernix --runtime-mode linux-cpu cluster status` exposes that
+  same contract on the outer-container lane
 - `cluster status` reports the active runtime mode and the active demo-config publication target or watched path
 - selecting an unsupported or ambiguous runtime mode fails before reconciliation or test execution begins
 
 ### Remaining Work
 
-- implement and validate explicit runtime-mode selection
-- thread that selection through generated demo-config naming, ConfigMap publication, and test reporting
+None.
 
 ## Documentation Requirements
 

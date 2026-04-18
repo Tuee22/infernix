@@ -7,9 +7,14 @@
 
 ## Supported Usage
 
+- `docker compose build infernix` refreshes the supported outer-container control-plane image
 - `docker compose run --rm infernix infernix ...` is the supported Linux outer control-plane entrypoint
 - the launcher container forwards the Docker socket
 - the launcher container bind mounts repo state and `./.data/`
+- the launcher container sets `/opt/build/infernix` as the supported outer build root
+- the launcher image carries the repo-owned runtime and validation dependencies needed to compile and launch the control plane, including Node, Python, and `protoc`
+- routed Playwright execution is delegated to the built web image rather than carrying duplicate browser binaries in the launcher image
+- repo-root discovery works from the repo root and from nested working directories inside the bind-mounted workspace
 
 ## Unsupported Usage
 

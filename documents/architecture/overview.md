@@ -24,7 +24,8 @@ major roots:
 
 - `app/` and `src/` for the Haskell control plane
 - `web/` for the web application and E2E assets
-- `chart/` and `kind/` for cluster reconciliation inputs
+- `chart/` and `kind/` for cluster reconciliation inputs, including the locked Harbor, Pulsar,
+  Bitnami MinIO, and ingress-nginx Helm dependency declarations
 - `test/` for repository-owned validation
 - `documents/` for governed documentation
 

@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.publication.name }}
+  namespace: platform
+data:
+  {{ .Values.publication.fileName }}: |
+{{ .Values.publication.payloadJson | nindent 4 }}

@@ -10,33 +10,21 @@
 
 This phase closes before later phases can close.
 
-- Phases 1-6 remain phase-level blocked until the docs suite and plan fully reflect the updated
-  three-mode, matrix-driven product contract.
+- Phases 1-6 are no longer phase-level blocked by documentation realignment.
 - The repo writes and maintains the docs suite before more implementation-closure claims continue.
 
 ## Current Repo Assessment
 
-The repository already has a governed docs suite and a docs validator. The gap is not the existence
-of documentation infrastructure; it is that the updated README direction now requires stronger
-coverage across the governed docs.
+The repository has a governed docs suite, and the current implementation now keeps the governed
+docs aligned with the runtime-mode and generated-demo-config contract.
 
-- the docs suite does not yet consistently distinguish control-plane execution context from runtime mode
-- the docs suite does not yet carry the README-scale model or format or engine matrix as a
-  first-class planning and validation contract
-- the docs suite does not yet state clearly enough that generated mode-specific demo `.dhall` files
-  are staged and then published through `ConfigMap/infernix-demo-config` for cluster-resident
-  consumers
-- the docs suite does not yet state clearly enough that, in containerized execution contexts, the
-  mounted `.dhall` lives at `/opt/build/` because the daemon watches the file next to its binary
-- the docs suite does not yet state clearly enough that durable runtime manifests and Pulsar topic
-  payloads come from repo-owned `.proto` schemas, using `proto-lens` on the Haskell side and
-  Pulsar's built-in protobuf schema support on the broker side
-- the docs suite does not yet state clearly enough that `linux-cuda` requires a GPU-enabled Kind
-  cluster path with NVIDIA container runtime support
-- the docs suite does not yet state clearly enough that integration and E2E cover every generated
-  catalog entry for the active mode
-- the docs suite does not yet capture the `9090`-first edge-port selection rule or that `cluster up`
-  prints the chosen port during bring-up
+- the docs suite now distinguishes control-plane execution context from runtime mode
+- the docs suite now carries the README-scale model or format or engine matrix as a first-class
+  planning and validation contract
+- the docs suite now documents generated mode-specific demo `.dhall` staging, ConfigMap-backed
+  publication, `/opt/build/`, protobuf target contracts, `9090`-first edge-port selection, and
+  active-mode exhaustive integration and E2E coverage
+- `tools/docs_check.py` now validates those phrases directly so later drift is caught early
 
 ## Sprint 0.1: `documents/` Suite Scaffold [Done]
 
@@ -169,9 +157,9 @@ None. Runtime-mode matrix and generated-demo-config expansion lives in Sprint 0.
 
 ---
 
-## Sprint 0.5: Runtime-Mode Matrix Documentation Realignment [Active]
+## Sprint 0.5: Runtime-Mode Matrix Documentation Realignment [Done]
 
-**Status**: Active
+**Status**: Done
 **Implementation**: `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/00-overview.md`, `DEVELOPMENT_PLAN/system-components.md`, `documents/architecture/runtime_modes.md`, `documents/architecture/model_catalog.md`, `documents/development/testing_strategy.md`, `documents/engineering/build_artifacts.md`
 **Docs to update**: `README.md`, `documents/architecture/runtime_modes.md`, `documents/architecture/model_catalog.md`, `documents/development/testing_strategy.md`, `documents/engineering/build_artifacts.md`, `documents/engineering/model_lifecycle.md`, `documents/tools/pulsar.md`, `documents/reference/web_portal_surface.md`
 
@@ -214,13 +202,7 @@ closure claims continue.
 
 ### Remaining Work
 
-- update the governed docs so the three runtime modes, generated demo `.dhall`, and exhaustive
-  active-mode test semantics are all documented in the canonical docs suite
-- update the governed docs so ConfigMap-backed publication, the watched `/opt/build/` mount path,
-  GPU-enabled Kind for `linux-cuda`, the protobuf manifest and Pulsar payload contract, and
-  `9090`-first edge-port selection are documented in the owning docs
-- extend docs validation where needed so future README or plan changes cannot drift away from the
-  owning docs silently
+None.
 
 ## Documentation Requirements
 

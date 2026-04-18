@@ -4,8 +4,10 @@
 .claude
 .build
 .build/*.dhall
+.build/infernix-demo-*.dhall
 build
 build/*.dhall
+build/infernix-demo-*.dhall
 
 # Haskell build artifacts
 dist-newstyle
@@ -31,12 +33,12 @@ test-results
 # Frontend build artifacts
 node_modules
 web/node_modules
-web/dist
 web/output
 web/.spago
 web/.parcel-cache
 web/playwright-report
 web/test-results
+chart/charts
 
 # Temporary files
 *.log

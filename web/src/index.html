@@ -80,6 +80,29 @@
         background: var(--accent-soft);
       }
 
+      .meta-grid {
+        display: grid;
+        gap: 12px;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        margin: 16px 0;
+      }
+
+      .meta-card {
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        padding: 12px 14px;
+        background: rgba(255, 255, 255, 0.72);
+      }
+
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        border-radius: 999px;
+        padding: 6px 10px;
+        background: rgba(30, 43, 38, 0.08);
+        font-size: 0.86rem;
+      }
+
       label {
         display: block;
         font-size: 0.92rem;
@@ -156,17 +179,93 @@
           Browse the generated model catalog, submit a manual inference request, and inspect typed
           results through the same routed surface used by the service API.
         </p>
+        <div class="meta-grid">
+          <div class="meta-card">
+            <div class="muted">Runtime mode</div>
+            <strong id="runtime-mode">loading…</strong>
+          </div>
+          <div class="meta-card">
+            <div class="muted">Catalog coverage</div>
+            <strong id="catalog-count">loading…</strong>
+          </div>
+          <div class="meta-card">
+            <div class="muted">Control plane</div>
+            <strong id="control-plane-context">loading…</strong>
+          </div>
+          <div class="meta-card">
+            <div class="muted">Daemon location</div>
+            <strong id="daemon-location">loading…</strong>
+          </div>
+        </div>
       </header>
       <section class="layout">
         <aside class="panel">
           <label for="search">Filter models</label>
           <input id="search" name="search" placeholder="Search models" />
+          <div style="height: 16px"></div>
+          <div class="meta-card">
+            <div class="muted">Catalog source</div>
+            <strong id="catalog-source">loading…</strong>
+          </div>
+          <div style="height: 12px"></div>
+          <div class="meta-card">
+            <div class="muted">Edge port</div>
+            <strong id="edge-port">loading…</strong>
+          </div>
+          <div style="height: 12px"></div>
+          <div class="meta-card">
+            <div class="muted">API upstream mode</div>
+            <strong id="api-upstream-mode">loading…</strong>
+          </div>
+          <div style="height: 12px"></div>
+          <div class="meta-card">
+            <div class="muted">Demo config path</div>
+            <p id="demo-config-path" class="muted">loading…</p>
+          </div>
+          <div style="height: 12px"></div>
+          <div class="meta-card">
+            <div class="muted">Published routes</div>
+            <ul id="route-list"></ul>
+          </div>
+          <div style="height: 12px"></div>
+          <div class="meta-card">
+            <div class="muted">Published upstreams</div>
+            <ul id="upstream-list"></ul>
+          </div>
+          <div style="height: 16px"></div>
           <div id="catalog" class="catalog-list" aria-live="polite"></div>
         </aside>
         <section class="panel">
           <form id="inference-form">
             <div class="status muted" id="selection-status">Loading model catalog…</div>
-            <label for="inputText">Input Text</label>
+            <div class="meta-grid">
+              <div class="meta-card">
+                <div class="muted">Selected model</div>
+                <strong id="selected-model-name">Loading…</strong>
+              </div>
+              <div class="meta-card">
+                <div class="muted">Engine</div>
+                <strong id="selected-engine">Loading…</strong>
+              </div>
+              <div class="meta-card">
+                <div class="muted">Runtime lane</div>
+                <strong id="selected-lane">Loading…</strong>
+              </div>
+              <div class="meta-card">
+                <div class="muted">Workload family</div>
+                <strong id="selected-family">Loading…</strong>
+              </div>
+              <div class="meta-card">
+                <div class="muted">Artifact type</div>
+                <strong id="selected-artifact-type">Loading…</strong>
+              </div>
+            </div>
+            <p class="badge" id="selected-notes">Loading…</p>
+            <div style="height: 12px"></div>
+            <p id="request-guidance" class="muted">
+              Select a model to load family-specific request guidance.
+            </p>
+            <label id="input-label" for="inputText">Input Text</label>
             <textarea id="inputText" name="inputText" placeholder="Type a request payload"></textarea>
             <div style="height: 12px"></div>
             <button id="submit-button" type="submit">Run Inference</button>
@@ -174,6 +273,7 @@
           <div style="height: 20px"></div>
           <section>
             <div id="request-status" class="status muted"></div>
+            <div class="muted" id="result-label">Result payload</div>
             <pre id="result-output">No result yet.</pre>
             <p id="object-link-container"></p>
           </section>

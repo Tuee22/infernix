@@ -20,6 +20,9 @@ These actions belong to the user only.
 - Keep `DEVELOPMENT_PLAN/` truthful as implementation status changes.
 - Treat `documents/` as the canonical home for architecture and operator guidance.
 - Update `README.md`, `AGENTS.md`, and `CLAUDE.md` together when root workflow guidance changes.
+- Use the repo-owned `./cabalw ...` wrapper on the Apple host path so Cabal output stays under
+  `./.build/cabal`; only pass explicit `--builddir` overrides when a supported workflow requires
+  them.
 - Preserve the distinction between current implementation state and target platform contract in root
   docs.
 - Keep the three-runtime build direction and the Kind HA testing or demo-ground direction aligned.

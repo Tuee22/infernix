@@ -13,11 +13,8 @@ The control-plane execution context answers where `infernix` runs.
 - Apple host-native execution context runs `./.build/infernix` directly on the host
 - Linux outer-container execution context runs `docker compose run --rm infernix infernix ...`
 
-Both execution contexts use:
-
-- one Kind cluster
-- one repo-local kubeconfig in the active build root
-- one repo-local durable state root under `./.data/`
+Both execution contexts use the same runtime-mode ids, generated demo-config contract, and
+repo-local durable state root under `./.data/`.
 
 ## Runtime Modes
 
@@ -30,19 +27,42 @@ demo catalog entries, service binding, and validation.
 | Ubuntu 24.04 / CPU | `linux-cpu` | `Best Linux CPU engine` |
 | Ubuntu 24.04 / NVIDIA CUDA Container | `linux-cuda` | `Best Linux CUDA engine` |
 
-`cluster up` generates `infernix-demo-<mode>.dhall` for the active runtime mode in the active
-build root. That generated file is the source of truth for:
+`cluster up` resolves the active runtime mode before cluster-side reconciliation begins, renders
+`infernix-demo-<mode>.dhall`, and publishes that exact content into
+`ConfigMap/infernix-demo-config`.
 
-- which demo-visible models or workloads appear in the UI for that mode
-- which engine binding each entry uses for that mode
-- which catalog entries `infernix test integration` and `infernix test e2e` must exercise for that mode
+## Generated Demo Config Contract
+
+The generated demo catalog is the source of truth for the active runtime mode.
+
+- `infernix-demo-<mode>.dhall` records every README matrix row supported by that mode and omits
+  rows whose selected engine is `Not recommended`
+- each generated entry records the selected engine, request shape, runtime lane, and workload metadata
+- in containerized execution contexts, `ConfigMap/infernix-demo-config` is mounted read-only at
+  `/opt/build/`, and the watched file lives at `/opt/build/infernix-demo-<mode>.dhall`
+- `infernix test integration` and `infernix test e2e` enumerate every generated catalog entry for
+  the active runtime mode rather than using a smoke subset
+
+## GPU-Enabled `linux-cuda`
+
+`linux-cuda` is a distinct runtime mode, not a generic alias for "Linux".
+
+- `cluster up` now reconciles a GPU-enabled Kind path that installs the NVIDIA runtime shim inside
+  Kind nodes, labels the GPU worker, and advertises allocatable `nvidia.com/gpu`
+- the cluster deploys `RuntimeClass/nvidia` and the CUDA service workload requests
+  `nvidia.com/gpu: 1` while selecting the GPU-labeled node
+- CUDA-bound generated catalog rows carry runtime-lane metadata that later phases use for placement
+- switching from `linux-cpu` to `linux-cuda` changes the selected engine bindings and may change
+  the generated entry set
 
 ## Service Placement
 
 Service placement is a separate concept from runtime mode.
 
-- Apple host-native service placement runs `infernix service` on the host and reaches cluster services through the edge proxy
-- cluster-resident service placement runs the same executable in a cluster workload and reaches dependent services over cluster networking
+- Apple host-native service placement runs `infernix service` on the host and repoints the routed
+  `/api` surface through the Apple host bridge while the browser stays on the shared edge URL
+- cluster-resident service placement consumes the same active runtime mode and the same generated
+  demo catalog from `/opt/build/`
 
 Service placement changes where the daemon runs. It does not redefine the three runtime modes.
 

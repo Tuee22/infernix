@@ -20,6 +20,9 @@ Those actions are reserved for the user.
 - Keep `DEVELOPMENT_PLAN/` aligned with the current implementation state.
 - Use `documents/` for canonical architecture, development, engineering, operations, and reference guidance.
 - Review `README.md`, `AGENTS.md`, and `CLAUDE.md` together when repository workflow guidance changes.
+- Use the repo-owned `./cabalw ...` wrapper on the Apple host path so Cabal output stays under
+  `./.build/cabal`; only pass explicit `--builddir` overrides when a supported workflow requires
+  them.
 - Keep root docs explicit about what is implemented today versus what remains target-state intent.
 - Keep the three-runtime build direction and the Kind HA testing or demo-ground direction aligned.
 - Treat the cluster-resident webapp as a demo surface while retaining the three-runtime and

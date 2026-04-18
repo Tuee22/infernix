@@ -185,7 +185,9 @@ docker compose run --rm infernix infernix test integration
 
 Rules:
 
-- Apple Silicon calls `kind`, `kubectl`, `helm`, and Docker directly from the host environment.
+- Apple Silicon host-native control plane is the canonical operator surface. Final closure calls
+  `kind`, `kubectl`, `helm`, and Docker directly from the host environment, and active phase docs
+  must call out compatibility layers explicitly until that is true.
 - Apple Silicon host builds place the compiled `infernix` binary and other generated build
   artifacts under `./.build/`, and supported host-native command examples use `./.build/infernix`.
 - On Apple Silicon, `cluster up` writes the repo-local kubeconfig to `./.build/infernix.kubeconfig`
@@ -196,7 +198,8 @@ Rules:
   runtime, including Homebrew-installed `poetry` when it is absent and other declared Python
   dependencies required by repo-owned runtime flows.
 - Containerized Linux uses Compose only as a one-command launcher with the Docker socket forwarded
-  and `./.data/` bind mounted.
+  and `./.data/` bind mounted once that lane is closed; until then, the plan must call scaffold-only
+  launcher surfaces out explicitly.
 - `docker compose up` and `docker compose exec` are not supported outer-control-plane workflows.
 
 ### L. Runtime Mode Matrix Contract
@@ -316,9 +319,9 @@ Mode-aware validation is explicit.
 
 - `infernix test integration` for a given active runtime mode exercises every model or workload
   entry present in that mode's ConfigMap-backed mounted demo `.dhall` catalog.
-- `infernix test e2e` for a given active runtime mode drives the browser against every demo-visible
-  catalog entry present in that same generated file unless a narrower exception is called out
-  explicitly in the owning phase document.
+- `infernix test e2e` for a given active runtime mode exercises every demo-visible catalog entry
+  present in that same generated file through the routed web surface unless a narrower exception is
+  called out explicitly in the owning phase document.
 - Integration and E2E checks use the engine binding encoded in the mounted ConfigMap-backed demo
   `.dhall`, which must match the appropriate mode column from the README matrix.
 - `infernix test all` aggregates lint, unit, integration, and E2E for the active runtime mode; the
@@ -327,12 +330,13 @@ Mode-aware validation is explicit.
 
 ### Q. Haskell Quality Gate Contract
 
-Haskell formatting, linting, and compiler hygiene are first-class repository requirements.
+Static quality and compiler hygiene are first-class repository requirements.
 
 - `infernix test lint` is the canonical static-quality entrypoint.
-- `fourmolu` is the authoritative formatter for repo-owned Haskell source modules.
-- `cabal-fmt` is the authoritative formatter for `.cabal` and `cabal.project` files.
-- `hlint` is the authoritative linting layer for stylistic and simplification checks.
+- The plan must describe the actual lint, docs, formatting, or compiler-warning checks the
+  repository enforces today rather than naming aspirational external tools as if they are already
+  active.
 - Repo-owned validation enables strict compiler warnings and treats warnings as errors on supported
   paths.
-- No second Haskell formatter or competing style authority is introduced.
+- If the repository later adopts external formatters or linters, the plan must be updated
+  atomically with that implementation change so the named tools match reality.

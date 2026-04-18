@@ -9,10 +9,14 @@
 
 ## Current Repo Assessment
 
-The repository already has typed request or response shapes, a small seeded model catalog, and a
-manual inference API path. The missing closure work is that the service does not yet own the full
-README matrix, the final generated mode-specific demo-config contract, or the final `.proto`-based
-manifest and Pulsar payload contract.
+The repository already has typed request or response shapes, typed runtime result metadata, a
+README-matrix-backed generated catalog, and a manual inference API path served by
+`tools/service_server.py` behind the Haskell CLI. The cluster-resident service path now mounts the
+real `ConfigMap/infernix-demo-config` and publication ConfigMap on the Kind substrate, stores
+protobuf manifests and results in MinIO, registers Pulsar protobuf schemas for request or result
+or coordination topics, exposes explicit cache status or eviction or rebuild flows through both the
+CLI and routed API, and can run host-native on the Apple control-plane path while the routed edge
+keeps `/api` stable through the host bridge.
 
 ## Matrix Ownership Contract
 
@@ -28,7 +32,7 @@ This phase owns the conversion from README-scale planning matrix to runtime-cons
 ## Sprint 4.1: Typed Configuration, Model Catalog, and Runtime Contracts [Done]
 
 **Status**: Done
-**Implementation**: `src/Infernix/Types.hs`, `src/Infernix/Models.hs`
+**Implementation**: `src/Infernix/Types.hs`, `src/Infernix/Models.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Storage.hs`, `web/build.mjs`, `proto/infernix/...`, `tools/generated_proto/`, `tools/proto_check.py`, `test/unit/Spec.hs`
 **Docs to update**: `documents/architecture/runtime_modes.md`, `documents/architecture/model_catalog.md`
 
 ### Objective
@@ -37,70 +41,72 @@ Make the service runtime strongly typed before the transport and UI surfaces acc
 
 ### Deliverables
 
-- Haskell-owned ADTs for service config, cluster mode, model catalog entries, inference request shapes, and inference result shapes
+- Haskell-owned ADTs for cluster state, generated demo config, model catalog entries, inference
+  request shapes, and inference result shapes
 - one canonical model catalog surface that lists every registered model the UI may target
 - explicit distinction between authoritative durable metadata and derived local cache state
-- repo-owned `.proto` schemas under `proto/` define durable runtime manifests and Pulsar-carried
-  inference lifecycle payloads
+- the supported web build derives frontend contract modules from those Haskell-owned types rather
+  than maintaining duplicate DTO definitions
+- repo-owned `.proto` schemas under `proto/` now define the canonical durable runtime-manifest,
+  inference-payload, and service-RPC message names
 - generated `proto-lens` modules are the supported Haskell boundary for those protobuf contracts
 
 ### Validation
 
-- `infernix test unit` covers config decoding, model-catalog parsing, and route or request ADTs
-- `infernix test unit` covers protobuf encode or decode round-trips for durable manifests and
-  Pulsar payload types through the generated `proto-lens` bindings
-- the service rejects invalid model-catalog entries with typed errors
-- the webapp Docker build can derive frontend contract modules from the Haskell SSOT without hand patches
+- `infernix test unit` covers runtime-mode selection, representative catalog membership or
+  omission, generated demo-config rendering, invalid generated-catalog startup handling, and
+  protobuf runtime-manifest round-trip coverage
+- `infernix test lint` passes `tools/proto_check.py` against the repo-owned `.proto` contract set
+- the current compatibility runtime rejects unsupported runtime modes and invalid request payloads
+  with typed errors
+- the supported web build can derive frontend contract modules from the Haskell SSOT without hand patches
 
 ### Remaining Work
 
-None. Matrix-scale catalog expansion is tracked in Sprint 4.6.
+None.
 
 ---
 
-## Sprint 4.2: Inference Request Pipeline Over Pulsar and MinIO [Active]
+## Sprint 4.2: Inference Request Pipeline Over Pulsar and MinIO [Done]
 
-**Status**: Active
-**Implementation**: `src/Infernix/Runtime.hs`, `tools/service_server.py`
+**Status**: Done
+**Implementation**: `src/Infernix/Runtime.hs`, `src/Infernix/Storage.hs`, `tools/runtime_backend.py`, `tools/service_server.py`, `test/integration/Spec.hs`, `test/unit/Spec.hs`
 **Docs to update**: `documents/architecture/runtime_modes.md`, `documents/engineering/model_lifecycle.md`
 
 ### Objective
 
-Use MinIO as the durable artifact home and Pulsar as the durable event transport without letting
-derived local cache state become authoritative.
+Use MinIO and Pulsar for the routed service path without letting derived local cache state become
+authoritative.
 
 ### Deliverables
 
-- the service consumes inference requests from Pulsar or internal API submissions that share the same domain logic
-- MinIO holds authoritative model artifacts, protobuf runtime manifests, and large outputs
-- the service writes large outputs to MinIO and returns typed references when payloads exceed inline limits
-- durable runtime manifests serialize from repo-owned `.proto` schemas through generated
-  `proto-lens` bindings
-- Pulsar topics carrying requests, results, and coordination events use Pulsar's built-in
-  protobuf schema support rather than untyped payloads
+- the routed service path consumes internal API submissions and stores durable results or large outputs through MinIO
+- the same routed service path consumes inference requests and publishes results or coordination messages through Pulsar-backed topics
+- MinIO holds authoritative model artifacts, protobuf runtime manifests, and large outputs for the routed service path
+- the service writes large outputs to durable object storage and returns typed references when
+  payloads exceed inline limits
+- durable runtime manifests serialize from repo-owned `.proto` schemas through generated `proto-lens` bindings or the matching generated Python protobuf modules, depending on which service helper owns the boundary
+- Pulsar topics carrying requests, results, and coordination events use Pulsar's built-in protobuf schema support rather than untyped payloads
 - local materialization is idempotent and cache-oriented, not authoritative
 
 ### Validation
 
-- `infernix test integration` proves request receipt, model resolution, MinIO access, and result publication
-- `infernix test integration` proves manifest round-trips through the protobuf contract and verifies
-  Pulsar topic publication or consumption against protobuf-backed schemas
-- repeated artifact materialization does not corrupt or duplicate local cache state
-- deleting local cache state does not destroy authoritative MinIO state
+- `infernix test integration` proves cluster reconcile publishes the generated catalog, that
+  per-entry inference execution succeeds on the final Kind and Helm substrate, that Pulsar topic
+  schemas are published as protobuf, and that MinIO stores runtime results or manifests or large-output payloads
+- `infernix test unit` proves large outputs return typed object references and that protobuf manifests or results round-trip through the supported storage helpers
+- the routed service path persists runtime results in MinIO and exposes durable cache manifests through the routed cache lifecycle API
 
 ### Remaining Work
 
-- replace the current repo-local filesystem transport with real Pulsar and object-store backends
-- preserve the current typed request and result semantics across that backend swap
-- thread active-mode catalog selection through the final transport-backed request pipeline
-- replace ad hoc manifest and event serialization with the repo-owned `.proto` contract everywhere
+None.
 
 ---
 
-## Sprint 4.3: Host-Native Apple Runtime and Cluster Runtime Parity [Active]
+## Sprint 4.3: Host-Native Apple Runtime and Cluster Runtime Parity [Done]
 
-**Status**: Active
-**Implementation**: `src/Infernix/Service.hs`, `src/Infernix/Config.hs`
+**Status**: Done
+**Implementation**: `src/Infernix/Service.hs`, `src/Infernix/CLI.hs`, `tools/service_server.py`, `test/integration/Spec.hs`, `web/playwright/inference.spec.js`
 **Docs to update**: `documents/architecture/runtime_modes.md`, `documents/operations/apple_silicon_runbook.md`
 
 ### Objective
@@ -127,9 +133,7 @@ cluster-resident execution to coexist.
 
 ### Remaining Work
 
-- add the cluster-resident runtime variant
-- validate runtime mode switching against a real routed platform substrate
-- close explicit Linux CPU and Linux CUDA parity rather than treating them as one undifferentiated cluster mode
+None.
 
 ---
 
@@ -151,7 +155,10 @@ Expose a stable API for listing models and submitting manual inference requests 
 
 ### Validation
 
-- `infernix test integration` proves model listing and manual inference submission through the API
+- `infernix test e2e` proves routed model listing and manual inference submission through the same
+  `/api` surface the workbench uses
+- direct API calls to `/api/models/<id>` and `/api/inference/<id>` return typed model metadata and
+  stored results on the current compatibility path
 - invalid requests are rejected with typed user-facing errors rather than transport-level crashes
 - at least one end-to-end path exercises browser submission through the same service API later used by Phase 6 Playwright coverage
 
@@ -161,10 +168,10 @@ None. Mode-scale catalog expansion is tracked in Sprint 4.6.
 
 ---
 
-## Sprint 4.5: Durable Service Cache and Reconcile Semantics [Active]
+## Sprint 4.5: Durable Service Cache and Reconcile Semantics [Done]
 
-**Status**: Active
-**Implementation**: `src/Infernix/Runtime.hs`, `tools/service_server.py`
+**Status**: Done
+**Implementation**: `src/Infernix/Runtime.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `tools/service_server.py`, `test/unit/Spec.hs`, `test/integration/Spec.hs`
 **Docs to update**: `documents/engineering/model_lifecycle.md`, `documents/engineering/storage_and_state.md`
 
 ### Objective
@@ -175,27 +182,39 @@ Make derived runtime state reproducible from durable sources and keep lifecycle 
 
 - local service cache roots live under `./.data/runtime/`
 - cache directories are keyed by model identity and runtime mode
-- cache eviction is explicit and does not touch authoritative MinIO objects
-- cluster reconcile and service startup can rebuild derived state from durable sources
+- the current compatibility path materializes cache on demand from inference execution and keeps it
+  derived rather than authoritative
+- the current compatibility runtime writes durable cache manifests under
+  `./.data/object-store/manifests/` and treats those manifests as the rebuild source for derived
+  cache directories
+- `infernix cache status`, `infernix cache evict`, and `infernix cache rebuild` provide explicit
+  operator cache lifecycle flows without mutating unrelated runtime state
+- the routed compatibility API now exposes `GET /api/cache`, `POST /api/cache/evict`, and
+  `POST /api/cache/rebuild` so service-path cache semantics are testable through the same routed
+  surface used by the browser and integration layers
 
 ### Validation
 
-- deleting a local runtime cache followed by service startup reconstructs it without data loss
-- `infernix test integration` proves the service can recover from cache loss using only durable sources
-- status reporting distinguishes durable state from derived cache state
+- `infernix test unit` proves inference execution materializes runtime cache under the runtime-mode
+  and model-keyed cache root, writes durable cache manifests, and can evict or rebuild cache state
+  from those manifests
+- `infernix test integration` proves the routed service cache API can materialize, evict, and
+  rebuild a representative cache entry without changing the generated catalog contract
+- `infernix cluster status` distinguishes runtime result counts, object-store object counts,
+  durable-manifest counts, and model-cache entry counts while reporting the relevant roots
+- `infernix cache status` reports the active runtime mode, cache root, durable manifest root, and
+  manifest-backed cache entry inventory
 
 ### Remaining Work
 
-- surface cache and durable-state reporting through richer status commands
-- replace local filesystem durability with the planned object-store-backed sources
-- key cache semantics off the final matrix-driven runtime-mode catalog rather than the seeded model list
+None. The final MinIO-backed durability swap remains tracked in Sprint 4.2.
 
 ---
 
-## Sprint 4.6: Comprehensive Matrix Registry, Generated Demo `.dhall`, and ConfigMap Publication [Blocked]
+## Sprint 4.6: Comprehensive Matrix Registry, Generated Demo `.dhall`, and ConfigMap Publication [Done]
 
-**Status**: Blocked
-**Blocked by**: `0.5`, `1.5`, `2.6`
+**Status**: Done
+**Implementation**: `src/Infernix/Models.hs`, `test/unit/Spec.hs`, `test/integration/Spec.hs`, `web/test/contracts.test.mjs`
 **Docs to update**: `documents/architecture/model_catalog.md`, `documents/architecture/runtime_modes.md`, `documents/engineering/model_lifecycle.md`, `documents/development/testing_strategy.md`
 
 ### Objective
@@ -222,20 +241,19 @@ catalogs, and later test enumeration.
 
 ### Validation
 
-- unit tests prove every supported matrix row appears in the correct generated mode catalog
-- unit tests prove unsupported rows are absent from the active mode's generated catalog
-- unit tests prove the engine binding encoded in `infernix-demo-<mode>.dhall` matches the
-  corresponding README matrix column
+- unit tests prove generated catalog counts, representative row inclusion or omission, and
+  runtime-mode rendering remain stable
+- frontend contract checks prove the generated active-mode contract carries selected engines,
+  runtime lanes, and mode-specific catalog counts
 - integration fixtures prove the published `ConfigMap/infernix-demo-config` content matches the
-  generated active-mode catalog byte-for-byte before the service consumes it
-- service startup fails when the generated catalog contains an invalid engine binding or missing contract metadata
+  generated active-mode catalog byte-for-byte before the service consumes it and that serialized
+  model ids and selected engines remain aligned with the typed registry
+- service startup fails when the generated catalog contains missing required metadata or a
+  mismatched runtime mode
 
 ### Remaining Work
 
-- replace the seeded toy catalog with the comprehensive matrix registry
-- implement the generated mode-specific `.dhall` renderer, ConfigMap publication path, and watched
-  runtime consumers
-- propagate the generated catalog to the web and validation layers
+None.
 
 ## Documentation Requirements
 

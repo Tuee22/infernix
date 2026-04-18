@@ -9,6 +9,7 @@
 
 - `service` starts the Haskell service runtime
 - `cluster` reconciles or reports cluster state
+- `cache` inspects or clears or rebuilds manifest-backed derived cache state
 - `kubectl` proxies Kubernetes access through the repo-local kubeconfig
 - `test` runs repository validation
 - `docs` validates governed documentation

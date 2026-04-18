@@ -1,6 +1,6 @@
 module Main (main) where
 
-import qualified Infernix.CLI as CLI
+import Infernix.CLI qualified as CLI
 
 main :: IO ()
 main = CLI.main

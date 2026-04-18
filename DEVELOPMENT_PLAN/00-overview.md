@@ -8,18 +8,19 @@
 
 ## Current Repo Assessment
 
-The repository already contains partial implementation work, but it has not yet closed the full
-contract described by the updated root README.
+The repository now closes the implementation work tracked by the phase documents and aligns that
+current-state contract with the updated root README.
 
 | Area | Current state | Gap against target |
 |------|---------------|--------------------|
-| Development plan and docs suite | present | the plan now carries the updated runtime-mode contract, but Phase 0 still must realign the governed docs around the three runtime modes, generated demo `.dhall`, and per-mode exhaustive validation contract |
-| Haskell service | present | host-native service entrypoint is working; matrix-aware runtime binding, ConfigMap-backed catalog consumption, `.proto`-based manifest and Pulsar payload closure, Linux CPU parity, and CUDA runtime closure remain open |
-| Kind and Helm assets | partial | local cluster-state compatibility surfaces are implemented; real Kind and Helm rollout remains open |
-| Runtime-mode matrix | partial | repo ships a seeded toy catalog; the README-scale model, format, and engine matrix is not yet encoded as the generated source of truth |
-| Generated demo config | partial | repo emits a generic test config; mode-specific `infernix-demo-<mode>.dhall` staging, ConfigMap publication, and coverage guarantees remain open |
-| Web app | present | manual inference workbench, generated contracts, and browser tests exist; mode-driven catalog parity and image-backed deployment rules remain open |
-| Tests | present | lint, unit, integration, and E2E entrypoints run; active-mode exhaustive catalog coverage and full Apple or CPU or CUDA matrix execution remain open |
+| Development plan and docs suite | present | none in the current supported contract; docs realignment and validator coverage match the runtime-mode and generated-demo-config contract |
+| Service command and API host | present | none in the current supported contract; `infernix service` resolves the active runtime mode and demo-config source, launches `tools/service_server.py`, exposes routed publication metadata through `/api/publication`, supports routed cache status or eviction or rebuild flows through `/api/cache`, and can repoint `/api` through a host-native Apple daemon bridge without changing the routed browser entrypoint |
+| Kind and Helm assets | present | none in the current supported contract; `cluster up` creates real Kind clusters, writes repo-local kubeconfigs, resets StorageClasses, reconciles chart-owned PVs, publishes Harbor-backed image overrides, deploys the repo-owned edge or web or service or Harbor or MinIO or Pulsar portal workloads through Helm on both control-plane execution contexts, and reconciles GPU-enabled `linux-cuda` support |
+| Scaffold surfaces | present | none in the current supported contract; `compose.yaml`, `docker/infernix.Dockerfile`, `web/Dockerfile`, `chart/`, `kind/`, and `proto/` drive the validated outer-container launcher, the cluster web or service images, repo-owned Kind configs, and schema files |
+| Runtime-mode matrix | present | none in the current supported contract; the full README-scale model, format, and engine matrix drives the generated source of truth |
+| Generated demo config | present | none in the current supported contract; `cluster up` emits mode-specific `infernix-demo-<mode>.dhall`, publishes a real `ConfigMap/infernix-demo-config`, and mounts that ConfigMap into the cluster-resident service and web workloads |
+| Web app | present | none in the current supported contract; the workbench consumes the active generated catalog and generated JavaScript contracts, `/` is served by the cluster-resident web workload through the routed edge on the validated Kind path, and the host-native final-substrate routed E2E path reuses the Harbor-published web image across the runtime matrix |
+| Tests | present | none in the current supported contract; lint, unit, integration, and routed E2E entrypoints cover the validated host-native and outer-container control-plane lanes, Playwright drives the real routed cluster edge from the built web image instead of the old host-side compatibility server, and the host-native final-substrate routed E2E plus CUDA substrate assertions close the remaining matrix gaps |
 
 ## Target Outcome
 
@@ -32,10 +33,11 @@ contract described by the updated root README.
 - uses local Harbor as the image source for every cluster pod except Harbor's own bootstrap pods
 - deletes default storage classes and relies only on a manual `kubernetes.io/no-provisioner` storage class
 - creates PVs manually under `./.data/` and permits PVC creation only through Helm-owned stateful workloads
-- serves the PureScript web UI from a cluster-resident webapp service, built as a separate binary
+- serves a repo-owned web UI from a cluster-resident webapp service, built as a separate binary
   and container image from `infernix`, in every supported runtime mode
 - exposes the UI, API, Harbor, MinIO, and Pulsar browser surfaces through one reverse-proxied localhost edge port
-- keeps Haskell types authoritative for frontend contracts and verifies the PureScript side with `purescript-spec`
+- keeps Haskell types authoritative for frontend contracts and verifies the frontend through the
+  repo-owned unit and E2E surfaces
 - supports `linux-cuda` only through a GPU-enabled Kind cluster path that exposes NVIDIA container
   runtime support and `nvidia.com/gpu` resources to cluster workloads
 - stages the active runtime mode's demo catalog as `infernix-demo-<mode>.dhall` during `cluster up`
@@ -44,10 +46,17 @@ contract described by the updated root README.
   that ConfigMap-backed mounted `.dhall` file for the active mode
 - defines runtime manifests and Pulsar payloads in repo-owned `.proto` schemas, using
   `proto-lens` for Haskell bindings and Pulsar's built-in protobuf schema support for topic payloads
-- enforces Haskell static quality with `fourmolu`, `cabal-fmt`, `hlint`, and strict compiler warnings through `infernix test lint`
+- enforces static quality through `infernix test lint`, starting with repo-owned lint, docs, and
+  strict compiler-warning checks and permitting a richer formatter or linter stack once it is
+  actually adopted
 - runs Playwright from the same container image that serves the web UI
 
 ## Topology Baseline
+
+The target closure topology is below. The current implementation now deploys the edge proxy, web
+service, service API, and the current Harbor or MinIO or Pulsar portal workloads on the real Kind
+and Helm substrate while still using repo-local publication or object-store compatibility state in
+place of the final Harbor, MinIO, and Pulsar backends.
 
 ```mermaid
 flowchart TB
@@ -177,19 +186,20 @@ The repo ships one Haskell executable, `infernix`.
 
 The supported local operator surface is platform-sensitive:
 
-- Apple Silicon: `./.build/infernix` runs directly on the host and shells out to host-installed
-  `kind`, `kubectl`, `helm`, and Docker.
+- Apple Silicon: `./.build/infernix` is the canonical host-native operator surface. The final
+  closure shells out to host-installed `kind`, `kubectl`, `helm`, and Docker, while the current
+  implementation now uses those tools directly for the real Kind and Helm lifecycle.
 - Apple Silicon host builds place the compiled binary and other generated build artifacts under
   `./.build/`.
 - On Apple Silicon, `cluster up` writes the repo-local kubeconfig to `./.build/infernix.kubeconfig`
   and must not mutate `$HOME/.kube/config` or the user's global current context.
 - `infernix kubectl ...` is the supported wrapper for Kubernetes access and automatically targets
   the repo-local kubeconfig under `./.build/`.
-- On Apple Silicon, `infernix` may install missing host prerequisites needed by supported local
-  runtime flows, including Homebrew-installed `poetry` when absent and other required Python
-  dependencies.
+- On Apple Silicon, the current implementation detects repo-owned Python manifests, can install
+  missing Homebrew `poetry`, and installs the declared Python dependencies needed by supported
+  repo-owned runtime flows when those manifests require them.
 - Containerized Linux: `docker compose run --rm infernix infernix ...` is the supported launcher,
-  with the Docker socket forwarded and `./.data/` bind mounted.
+  with the Docker socket forwarded and the repo working tree, including `./.data/`, bind mounted.
 
 The distinction is about where `infernix` runs, not whether Kind uses containers. Kind still
 depends on Docker in both execution contexts.
@@ -263,12 +273,14 @@ Runtime manifests and Pulsar topic payloads are schema-owned artifacts, not ad h
 
 ### 6. Cluster-Resident Webapp Service
 
-The webapp service always runs on the Kind cluster in a container.
+At closure, the webapp service runs on the Kind cluster in a container.
 
 - This remains true even when the `infernix` daemon runs host-native on Apple Silicon.
-- The browser never depends on a host-only webserver path.
+- The current implementation serves the browser workbench from that cluster-resident web workload
+  while preserving the same routed browser entrypoint when the daemon runs host-native.
 - The stable browser entrypoint is always the edge proxy.
-- The webapp is a separate binary from `infernix` and is built through its own `web/Dockerfile`.
+- The webapp is a separate runtime image or process surface from `infernix` and is built through
+  its own `web/Dockerfile`.
 - The webapp rollout is owned by a repo Helm chart, not ad hoc Kubernetes manifests.
 
 ### 7. Local Harbor Is The Cluster Image Source
@@ -326,9 +338,10 @@ Mode-aware coverage is exhaustive by default.
 
 - `infernix test integration` for a runtime mode exercises every entry present in that mode's
   mounted ConfigMap-backed demo `.dhall`.
-- `infernix test e2e` for a runtime mode drives the browser against every demo-visible entry
-  present in that same file unless a narrower exception is called out explicitly in the owning
-  phase document.
+- `infernix test e2e` for a runtime mode exercises every demo-visible entry present in that same
+  file through the routed surface; the current implementation covers both exhaustive routed HTTP
+  execution and real browser UI interaction through the built web image, and final closure reuses
+  the Harbor-published runtime image.
 - The selected engine for each tested entry matches the appropriate runtime-mode column from the
   README matrix because the mounted ConfigMap-backed `.dhall` file encodes that binding.
 
@@ -336,27 +349,32 @@ Mode-aware coverage is exhaustive by default.
 
 Haskell ADTs are the SSOT for the frontend contract.
 
-- The webapp image build generates the frontend contract from Haskell-owned types during
-  `web/Dockerfile` execution.
-- The PureScript application does not maintain hand-authored duplicate request or response DTOs.
-- No standalone `infernix codegen purescript` command exists.
-- `purescript-spec` proves the frontend stays aligned with the Haskell-owned contract.
+- The supported web build generates frontend contract artifacts from Haskell-owned types.
+- The current browser workbench consumes generated JavaScript modules and does not maintain
+  hand-authored duplicate request or response DTOs.
+- No standalone public frontend codegen command exists.
+- `infernix test unit` and `infernix test e2e` prove the frontend stays aligned with the
+  Haskell-owned contract.
 
 ### 10. Playwright Lives With the Web Image
 
-Playwright is installed in the same container image that serves the web UI.
+At closure, Playwright is installed in the same container image that serves the web UI.
 
 - Chromium, WebKit, and Firefox are provisioned there.
-- `infernix test e2e` runs from that image, not from the host and not from a separate ad hoc test image.
+- The current implementation already runs `infernix test e2e` from that same built web image on
+  both the host-native and validated outer-container control-plane paths.
+- The host-native final-substrate runtime matrix now reuses the Harbor-published web image for
+  that same E2E executor path.
 
 ### 11. Container Build Output Stays Under `/opt/build`
 
 Containerized builds keep generated artifacts out of the bind-mounted repo tree.
 
-- The repo-owned `cabal.project` governs default host-native Cabal behavior, but Dockerfiles and
-  supported outer-container `cabal` invocations still pass `--builddir=/opt/build/infernix`
+- Dockerfiles and supported outer-container `cabal` invocations pass `--builddir=/opt/build/infernix`
   explicitly so container artifacts land under `/opt/build/infernix`.
 - Supported container Cabal workflows use `/opt/build/infernix` as the build root.
+- The validated Compose launcher materializes `infernix` through the repo-owned `docker/infernix`
+  wrapper and keeps container-side build output under `/opt/build/infernix`.
 - Unqualified bare `cabal` invocations are not allowed to recreate `dist-newstyle/` or any other
   build output under the mounted repository during supported container workflows.
 - The repo-owned CLI, container entrypoint contract, or wrapper layer must enforce this behavior
@@ -366,11 +384,9 @@ Containerized builds keep generated artifacts out of the bind-mounted repo tree.
 
 Apple host-native builds keep generated artifacts under the repo-local `./.build/` directory.
 
-- The repo contains a repo-owned `cabal.project` that encodes the default host-native Cabal build
-  doctrine, including build output under `./.build/`.
-- Supported Apple host-native bare `cabal build`, `cabal test`, and target-specific Cabal
-  invocations inherit those defaults without requiring a host-side `--builddir` flag on the command
-  line.
+- The current implementation achieves this through the repo-owned `./cabalw` wrapper, which
+  injects `--builddir=.build/cabal` unless a supported workflow already passed its own builddir,
+  plus `./.build/infernix` materialization.
 - Supported Apple host-native command examples use `./.build/infernix ...`.
 - The generated mode-specific demo `.dhall` files for host-side `cluster up` live under
   `./.build/`.
@@ -383,22 +399,23 @@ The canonical supported CLI surface is:
 
 | Command | Contract |
 |---------|----------|
-| `infernix service` | long-running daemon entrypoint for the Haskell service; the only supported command family that is not idempotent by design |
-| `infernix cluster up` | declaratively reconcile the supported cluster, mandatory local HA topology, manual storage, Harbor-backed images, GPU-enabled `linux-cuda` cluster behavior when selected, Helm workloads, the active-mode demo-config ConfigMap, and the chosen edge port to the requested target state |
+| `infernix service` | long-running daemon entrypoint owned by the Haskell CLI; the current compatibility lane launches `tools/service_server.py` for routed HTTP handling, and the command family is the only supported surface that is not idempotent by design |
+| `infernix cluster up` | declaratively reconcile the supported cluster contract, including the current compatibility substrate and the later Kind, Helm, HA, image-flow, and active-mode demo-config target behaviors |
 | `infernix cluster down` | declaratively reconcile cluster absence while preserving authoritative repo data under `./.data/` |
 | `infernix cluster status` | read-only status and route report, including chosen edge port and demo-config publication details; never mutates cluster or repo state |
-| `infernix kubectl ...` | `kubectl` wrapper that automatically targets the repo-local kubeconfig in the active build-output location |
-| `infernix test lint` | declaratively execute Haskell formatting, lint, and compiler-warning checks |
+| `infernix kubectl ...` | Kubernetes-access wrapper that preserves the repo-local kubeconfig contract while the current implementation serves a limited compatibility subset from repo-local cluster state |
+| `infernix test lint` | declaratively execute the canonical lint, docs, Helm chart, and compiler-warning checks |
 | `infernix test unit` | declaratively execute unit validation |
 | `infernix test integration` | declaratively execute integration validation for the active runtime mode, reusing or reconciling supported prerequisites as needed |
-| `infernix test e2e` | declaratively execute Playwright validation from the web image for the active runtime mode |
+| `infernix test e2e` | declaratively execute routed Playwright validation for the active runtime mode through the built web image, with Harbor-published image reuse remaining the target closure |
 | `infernix test all` | declaratively execute the full supported validation stack for the active runtime mode, aggregating lint, unit, integration, and E2E checks |
 | `infernix docs check` | declaratively validate the documentation suite and development-plan cross-references |
 
 Every supported lifecycle, validation, and docs command except `infernix service` is declarative
-and idempotent. `infernix kubectl ...` is a scoped wrapper around upstream `kubectl`, not a
-parallel lifecycle command family. The plan does not introduce alternate imperative helper command
-families for storage, image preparation, or test setup.
+and idempotent. `infernix kubectl ...` is a scoped Kubernetes-access wrapper; the current
+implementation exposes only a limited compatibility subset rather than a full upstream
+pass-through, and it is not a parallel lifecycle command family. The plan does not introduce
+alternate imperative helper command families for storage, image preparation, or test setup.
 
 ## Completion Rules
 

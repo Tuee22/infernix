@@ -7,24 +7,32 @@
 
 ## Contract
 
-The model catalog is Haskell-owned typed configuration that lists every registered model the user
-may target through the API or web UI.
+The model catalog is Haskell-owned typed configuration derived from the README matrix.
 
-Each entry includes:
+- the service registry owns one entry for every README matrix row
+- `cluster up` selects the active runtime mode, chooses the selected engine for each supported row,
+  and emits `infernix-demo-<mode>.dhall`
+- the generated file is then published into `ConfigMap/infernix-demo-config` for cluster-resident consumers
 
+## Entry Shape
+
+Each generated entry includes:
+
+- matrix-row identity
 - stable model identifier
-- display label
-- model family
-- request schema identifier
-- response schema identifier
-- artifact manifest location
-- runtime execution mode
+- display label and workload family
+- artifact or format type
+- reference model metadata and download URL
+- selected engine for the active runtime mode
+- request shape metadata used by the API, UI, and tests
+- runtime-lane metadata such as GPU requirement and lane identifier
 
 ## Rules
 
-- the service rejects invalid catalog entries during startup
-- the browser never carries a hand-maintained duplicate catalog schema
-- runtime-local caches derive from catalog and durable artifact metadata
+- the generated catalog, not a hidden UI-only allowlist, is the source of truth for the browser-visible catalog
+- the generated catalog records the selected engine exactly as chosen from the README matrix
+- runtime-local caches derive from generated catalog and durable artifact metadata
+- switching runtime modes changes the generated catalog and selected engine bindings without changing route structure
 
 ## Cross-References
 

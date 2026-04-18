@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+package infernix.api;
+
+import "infernix/runtime/inference.proto";
+
+message ListCatalogRequest {
+  string runtime_mode = 1;
+}
+
+message ListCatalogResponse {
+  repeated infernix.runtime.CatalogEntry models = 1;
+}
+
+message GetModelRequest {
+  string model_id = 1;
+}
+
+message SubmitInferenceRequest {
+  infernix.runtime.InferenceRequest request = 1;
+}
+
+message GetInferenceResultRequest {
+  string request_id = 1;
+}
+
+service InferenceService {
+  rpc ListCatalog(ListCatalogRequest) returns (ListCatalogResponse);
+  rpc GetModel(GetModelRequest) returns (infernix.runtime.CatalogEntry);
+  rpc SubmitInference(SubmitInferenceRequest) returns (infernix.runtime.InferenceResult);
+  rpc GetInferenceResult(GetInferenceResultRequest) returns (infernix.runtime.InferenceResult);
+}

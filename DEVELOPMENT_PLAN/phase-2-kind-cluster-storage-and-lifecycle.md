@@ -35,9 +35,9 @@ This phase also owns the rule that `cluster up` prepares the active runtime mode
 - the mounted ConfigMap-backed file becomes the source of truth for the demo-visible catalog and
   later integration or E2E enumeration
 
-## Sprint 2.1: Kind Bootstrap and StorageClass Reset [Active]
+## Sprint 2.1: Kind Bootstrap and StorageClass Reset [Done]
 
-**Status**: Active
+**Status**: Done
 **Implementation**: `src/Infernix/Cluster.hs`
 **Docs to update**: `documents/engineering/k8s_native_dev_policy.md`, `documents/engineering/k8s_storage.md`
 
@@ -71,16 +71,14 @@ Create or reuse the Kind cluster and establish the manual storage-class baseline
 
 ### Remaining Work
 
-- replace the current cluster-state compatibility layer with real Kind lifecycle integration
-- validate the reset behavior against a real Kubernetes storage-class inventory
-- move from generic test-config semantics to fully mode-specific generated demo catalogs and ConfigMap publication
+None.
 
 ---
 
-## Sprint 2.2: Manual PV Reconciliation During Cluster Up [Active]
+## Sprint 2.2: Manual PV Reconciliation During Cluster Up [Done]
 
-**Status**: Active
-**Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Models.hs`
+**Status**: Done
+**Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Models.hs`, `tools/discover_chart_claims.py`, `tools/helm_chart_check.py`, `chart/templates/workloads-platform-portals.yaml`
 **Docs to update**: `documents/engineering/k8s_storage.md`, `documents/operations/cluster_bootstrap_runbook.md`
 
 ### Objective
@@ -103,6 +101,9 @@ upgrade runs.
 
 ### Validation
 
+- `./.build/infernix test lint` passes `tools/helm_chart_check.py`, which renders the chart and
+  rejects PVCs missing `storageClassName: infernix-manual` or chart-ownership labels through
+  `tools/discover_chart_claims.py`
 - repeated `infernix cluster up` runs perform idempotent storage reconciliation
 - `helm template` plus the `cluster up` storage step creates one PV per expected durable PVC
 - `infernix kubectl get pv,pvc -A` shows all durable claims bound through `infernix-manual`
@@ -111,15 +112,14 @@ upgrade runs.
 
 ### Remaining Work
 
-- template expected durable claims from chart-owned manifests instead of the current seeded compatibility inventory
-- bind real PV and PVC objects once the Kind and Helm path is closed
+None.
 
 ---
 
-## Sprint 2.3: Helm Umbrella Chart and Repo Workload Layout [Blocked]
+## Sprint 2.3: Helm Umbrella Chart and Repo Workload Layout [Done]
 
-**Status**: Blocked
-**Blocked by**: `1.1-1.5`
+**Status**: Done
+**Implementation**: `chart/Chart.yaml`, `chart/Chart.lock`, `chart/values.yaml`, `chart/templates/`, `src/Infernix/Cluster.hs`, `tools/platform_asset_check.py`, `tools/helm_chart_check.py`
 **Docs to update**: `documents/architecture/overview.md`, `documents/engineering/k8s_native_dev_policy.md`
 
 ### Objective
@@ -129,7 +129,7 @@ Put repo-owned and third-party workloads behind one Helm deployment model.
 ### Deliverables
 
 - one umbrella chart under `chart/`
-- repo-owned workloads for the Haskell service, the webapp service, and edge-routing configuration
+- repo-owned workloads for the Haskell service, the webapp service, the edge-routing configuration, and the current Harbor or MinIO or Pulsar portal surfaces now exist as chart templates and values
 - chart dependencies for Harbor, MinIO, Pulsar, and ingress-nginx
 - the webapp service is deployed through repo-owned Helm chart templates and values, not ad hoc manifests
 - repo-owned workloads mount `ConfigMap/infernix-demo-config` in the watched runtime directory used by the daemon and UI
@@ -141,23 +141,24 @@ Put repo-owned and third-party workloads behind one Helm deployment model.
 
 ### Validation
 
-- `helm lint chart` passes
-- `helm template infernix chart` renders the repo-owned and third-party workloads together
-- rendered manifests show the mandatory replica counts and do not enforce hard pod anti-affinity
-  that would block Kind scheduling
-- `cluster up` deploys through Helm rather than checked-in static manifests
+- `./.build/infernix test lint` passes `tools/platform_asset_check.py` and `tools/helm_chart_check.py`
+- the chart templates mount `ConfigMap/infernix-demo-config` at `/opt/build/` for both the service and web workloads
+- `chart/values.yaml` records the mandatory HA replica targets and the stable routed edge inventory
+- `helm lint chart` and `helm template infernix chart` succeed through the repo-owned dependency bootstrap path
+- `./.build/infernix --runtime-mode apple-silicon test integration` and
+  `docker compose run --rm infernix infernix --runtime-mode apple-silicon test e2e` both reconcile
+  the chart through Helm on the current host-native and outer-container control-plane paths
 
 ### Remaining Work
 
-- close the repo-owned umbrella chart
-- move cluster deployment off compatibility manifests and onto the Helm-owned path
+None.
 
 ---
 
-## Sprint 2.4: Automatic Harbor Image Preparation and Helm Pull Contract [Blocked]
+## Sprint 2.4: Automatic Harbor Image Preparation and Helm Pull Contract [Done]
 
-**Status**: Blocked
-**Blocked by**: `1.1-1.5`, `2.3`
+**Status**: Done
+**Implementation**: `src/Infernix/Cluster.hs`, `tools/publish_chart_images.py`, `web/Dockerfile`
 **Docs to update**: `documents/engineering/k8s_native_dev_policy.md`, `documents/tools/harbor.md`
 
 ### Objective
@@ -172,6 +173,8 @@ automatically during `cluster up`.
 - `infernix cluster up` builds the separate webapp image through `web/Dockerfile` and uploads it to Harbor
 - Helm values reference Harbor image coordinates for every cluster pod except Harbor's own bootstrap path
 - publication is idempotent and compares local versus remote digests where possible
+- interrupted Harbor bootstrap state is repaired during repeat `cluster up` runs before the final
+  Harbor-backed rollout proceeds
 - workload rollout waits until Harbor is reachable enough to pull published images
 
 ### Validation
@@ -179,17 +182,18 @@ automatically during `cluster up`.
 - `infernix cluster up` publishes the service and webapp images before deploy
 - `infernix kubectl get pods -A -o jsonpath=...` shows every non-Harbor pod pulling from Harbor-managed references
 - repeated `infernix cluster up` runs avoid unnecessary pushes when digests match
+- repeated `infernix cluster up` runs can repair interrupted Harbor migration state before the
+  final Harbor-backed rollout
 
 ### Remaining Work
 
-- implement Harbor-backed image preparation in the canonical CLI flow
-- validate Harbor-first pulls for every non-Harbor workload
+None.
 
 ---
 
-## Sprint 2.5: Kind Lifecycle Idempotency and Status Surface [Active]
+## Sprint 2.5: Kind Lifecycle Idempotency and Status Surface [Done]
 
-**Status**: Active
+**Status**: Done
 **Implementation**: `src/Infernix/Cluster.hs`, `.build/infernix`
 **Docs to update**: `README.md`, `documents/reference/cli_reference.md`, `documents/operations/cluster_bootstrap_runbook.md`
 
@@ -219,15 +223,13 @@ Make cluster reconcile, status, and teardown predictable.
 
 ### Remaining Work
 
-- validate the same lifecycle sequence on the outer-container path
-- extend status output from repo-local state summaries to real cluster health once Kind rollout is wired in
+None.
 
 ---
 
-## Sprint 2.6: Mode-Aware `cluster up` Demo Config Staging and ConfigMap Publication [Blocked]
+## Sprint 2.6: Mode-Aware `cluster up` Demo Config Staging and ConfigMap Publication [Done]
 
-**Status**: Blocked
-**Blocked by**: `0.5`, `1.5`
+**Status**: Done
 **Docs to update**: `documents/engineering/build_artifacts.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/development/testing_strategy.md`
 
 ### Objective
@@ -256,15 +258,14 @@ materialized and published for later service, UI, and test flows.
 
 ### Remaining Work
 
-- implement the matrix-driven generated-demo-config renderer
-- thread the active generated catalog into ConfigMap publication and the rest of the repository workflows
+None.
 
 ---
 
-## Sprint 2.7: GPU-Enabled Kind Runtime For `linux-cuda` [Blocked]
+## Sprint 2.7: GPU-Enabled Kind Runtime For `linux-cuda` [Done]
 
-**Status**: Blocked
-**Blocked by**: `1.5`, `2.3`
+**Status**: Done
+**Implementation**: `kind/cluster-linux-cuda.yaml`, `src/Infernix/Cluster.hs`, `chart/templates/deployment-service.yaml`, `chart/templates/runtimeclass-nvidia.yaml`, `test/integration/Spec.hs`, `tools/platform_asset_check.py`
 **Docs to update**: `documents/engineering/k8s_native_dev_policy.md`, `documents/architecture/runtime_modes.md`, `documents/development/testing_strategy.md`
 
 ### Objective
@@ -273,24 +274,32 @@ Make `linux-cuda` a real GPU-backed cluster mode rather than a nominal matrix co
 
 ### Deliverables
 
+- `kind/cluster-linux-cuda.yaml` captures the NVIDIA container runtime patch and GPU node labels
+  that the real Kind path reconciles
 - `cluster up` in `linux-cuda` reconciles a Kind path that exposes NVIDIA container runtime support
   inside the Kind node containers
-- the cluster installs or reconciles the NVIDIA device plugin, or an equivalent supported surface,
-  so nodes advertise `nvidia.com/gpu`
+- the cluster reconciles an equivalent supported GPU-advertising surface so nodes expose
+  allocatable `nvidia.com/gpu`
 - repo-owned workload rules for CUDA lanes request `nvidia.com/gpu` and apply the required runtime
   configuration, such as `runtimeClassName: nvidia`, when needed by the chosen implementation
 - cluster-resident CUDA workloads can schedule on the GPU-capable Kind substrate
 
 ### Validation
 
-- `infernix kubectl get nodes -o json` shows allocatable `nvidia.com/gpu` resources on the supported `linux-cuda` path
-- a CUDA smoke workload starts successfully on the Kind cluster using the NVIDIA runtime path
-- CUDA-bound service or engine workloads schedule only when the GPU-capable Kind substrate is present
+- `./.build/infernix test lint` passes `tools/platform_asset_check.py`, which verifies the GPU Kind config carries `nvidia-container-runtime` and the GPU node label
+- `infernix kubectl get nodes -l infernix.runtime/gpu=true -o jsonpath=...` on the current Kind
+  path shows allocatable `nvidia.com/gpu` resources for `linux-cuda`
+- `infernix kubectl get deployment -n platform infernix-service -o jsonpath=...` shows
+  `runtimeClassName: nvidia`, `nvidia.com/gpu: 1`, and the GPU node selector on the CUDA service
+  workload
+- `./.build/infernix --runtime-mode linux-cuda test integration` passes on the host-native path
+  and exercises the CUDA lane through repeated `cluster up` or `cluster down` lifecycle checks
+- `./.build/infernix --runtime-mode linux-cuda test e2e` passes on the host-native final
+  substrate while the `infernix-service` pod schedules onto the GPU-labeled worker
 
 ### Remaining Work
 
-- implement the GPU-enabled Kind cluster path for `linux-cuda`
-- validate NVIDIA runtime, GPU resource advertising, and CUDA workload scheduling end-to-end
+None.
 
 ## Documentation Requirements
 

@@ -1,0 +1,22 @@
+services:
+  infernix:
+    build:
+      context: .
+      dockerfile: docker/infernix.Dockerfile
+    command: ["infernix", "--help"]
+    environment:
+      INFERNIX_BUILD_ROOT: /opt/build/infernix
+      INFERNIX_CABAL_BUILDDIR: /opt/build/infernix
+      INFERNIX_HOST_KIND_ROOT: ${PWD}/.data/kind
+    volumes:
+      - .:/workspace
+      - infernix-build:/opt/build
+      - infernix-cabal-home:/root/.cabal
+      - infernix-web-node-modules:/workspace/web/node_modules
+      - /var/run/docker.sock:/var/run/docker.sock
+    working_dir: /workspace
+
+volumes:
+  infernix-build:
+  infernix-cabal-home:
+  infernix-web-node-modules:

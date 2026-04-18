@@ -11,7 +11,14 @@
 - `infernix cluster up` is the only supported cluster reconcile entrypoint
 - `infernix cluster down` is the only supported teardown entrypoint
 - `infernix cluster status` is read-only
-- repo-owned Helm charts and values drive cluster deployment
+- repo-owned Kind configs live under `kind/` and define the Apple, CPU, and CUDA cluster shapes that `cluster up` renders into the supported local Kind clusters
+- repo-owned Helm charts and values live under `chart/`, self-bootstrap the declared Helm repositories, and deploy the repo-owned edge, web, service, publication, and PVC workloads on that cluster path
+- `cluster up` uses Harbor as the image authority for every non-Harbor pod, mirrors required
+  third-party images there, and publishes the repo-owned service and web images before the final
+  Helm rollout
+- the `linux-cuda` Kind path now reconciles the NVIDIA runtime shim, GPU node labels,
+  allocatable `nvidia.com/gpu`, `RuntimeClass/nvidia`, and GPU-requesting repo-owned workloads
+- `infernix test lint` is the canonical chart gate and proves Helm dependency resolution, `helm lint`, `helm template`, and durable-claim discovery
 
 ## Cross-References
 

@@ -1,0 +1,163 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: infernix-harbor-gateway
+  namespace: platform
+spec:
+  replicas: {{ .Values.platformPortals.harbor.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: infernix-harbor-gateway
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: infernix-harbor-gateway
+    spec:
+      containers:
+        - name: infernix-harbor-gateway
+          image: "{{ .Values.service.image.repository }}:{{ .Values.service.image.tag }}"
+          imagePullPolicy: {{ .Values.service.image.pullPolicy }}
+          command:
+            - python3
+          args:
+            - tools/portal_surface.py
+          env:
+            - name: INFERNIX_BIND_HOST
+              value: "0.0.0.0"
+            - name: INFERNIX_PORT
+              value: "8080"
+            - name: INFERNIX_PORTAL_SURFACE
+              value: harbor
+            - name: INFERNIX_HARBOR_BACKEND_URL
+              value: {{ .Values.platformPortals.harbor.backendUrl | quote }}
+            - name: INFERNIX_HARBOR_API_URL
+              value: {{ .Values.platformPortals.harbor.apiUrl | quote }}
+            - name: INFERNIX_HARBOR_ADMIN_USER
+              value: {{ .Values.platformPortals.harbor.adminUser | quote }}
+            - name: INFERNIX_HARBOR_ADMIN_PASSWORD
+              value: {{ .Values.harbor.harborAdminPassword | quote }}
+          ports:
+            - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: infernix-harbor
+  namespace: platform
+spec:
+  selector:
+    app.kubernetes.io/name: infernix-harbor-gateway
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: infernix-minio-gateway
+  namespace: platform
+spec:
+  replicas: {{ .Values.platformPortals.minio.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: infernix-minio-gateway
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: infernix-minio-gateway
+    spec:
+      containers:
+        - name: infernix-minio-gateway
+          image: "{{ .Values.service.image.repository }}:{{ .Values.service.image.tag }}"
+          imagePullPolicy: {{ .Values.service.image.pullPolicy }}
+          command:
+            - python3
+          args:
+            - tools/portal_surface.py
+          env:
+            - name: INFERNIX_BIND_HOST
+              value: "0.0.0.0"
+            - name: INFERNIX_PORT
+              value: "8080"
+            - name: INFERNIX_PORTAL_SURFACE
+              value: minio
+            - name: INFERNIX_MINIO_S3_ENDPOINT
+              value: {{ .Values.platformPortals.minio.s3Endpoint | quote }}
+            - name: INFERNIX_MINIO_CONSOLE_ENDPOINT
+              value: {{ .Values.platformPortals.minio.consoleEndpoint | quote }}
+            - name: INFERNIX_MINIO_ACCESS_KEY
+              value: {{ .Values.minio.auth.rootUser | quote }}
+            - name: INFERNIX_MINIO_SECRET_KEY
+              value: {{ .Values.minio.auth.rootPassword | quote }}
+          ports:
+            - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: infernix-minio-gateway
+  namespace: platform
+spec:
+  selector:
+    app.kubernetes.io/name: infernix-minio-gateway
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: infernix-pulsar-gateway
+  namespace: platform
+spec:
+  replicas: {{ .Values.platformPortals.pulsar.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: infernix-pulsar-gateway
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: infernix-pulsar-gateway
+    spec:
+      containers:
+        - name: infernix-pulsar-gateway
+          image: "{{ .Values.service.image.repository }}:{{ .Values.service.image.tag }}"
+          imagePullPolicy: {{ .Values.service.image.pullPolicy }}
+          command:
+            - python3
+          args:
+            - tools/portal_surface.py
+          env:
+            - name: INFERNIX_BIND_HOST
+              value: "0.0.0.0"
+            - name: INFERNIX_PORT
+              value: "8080"
+            - name: INFERNIX_PORTAL_SURFACE
+              value: pulsar
+            - name: INFERNIX_PULSAR_ADMIN_URL
+              value: {{ .Values.platformPortals.pulsar.adminUrl | quote }}
+            - name: INFERNIX_PULSAR_HTTP_BASE_URL
+              value: {{ .Values.platformPortals.pulsar.httpBaseUrl | quote }}
+            - name: INFERNIX_PULSAR_SERVICE_URL
+              value: {{ .Values.service.pulsar.serviceUrl | quote }}
+            - name: INFERNIX_PULSAR_TENANT
+              value: {{ .Values.service.pulsar.tenant | quote }}
+            - name: INFERNIX_PULSAR_NAMESPACE
+              value: {{ .Values.service.pulsar.namespace | quote }}
+          ports:
+            - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: infernix-pulsar
+  namespace: platform
+spec:
+  selector:
+    app.kubernetes.io/name: infernix-pulsar-gateway
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080

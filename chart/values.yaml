@@ -1,0 +1,273 @@
+runtimeMode: apple-silicon
+controlPlaneContext: host-native
+
+global:
+  security:
+    allowInsecureImages: true
+
+upstreamCharts:
+  harbor:
+    enabled: true
+  minio:
+    enabled: true
+  pulsar:
+    enabled: true
+  ingressNginx:
+    enabled: false
+
+edge:
+  port: 9090
+  nodePort: 30090
+  replicaCount: 1
+  routes:
+    - path: /
+      purpose: Web workbench
+    - path: /api
+      purpose: Service API
+    - path: /harbor
+      purpose: Harbor portal
+    - path: /minio/console
+      purpose: MinIO console
+    - path: /minio/s3
+      purpose: MinIO S3 API
+    - path: /pulsar/admin
+      purpose: Pulsar admin surface
+    - path: /pulsar/ws
+      purpose: Pulsar websocket surface
+
+demoConfig:
+  name: infernix-demo-config
+  mountPath: /opt/build
+  fileName: infernix-demo-apple-silicon.dhall
+  catalogPayload: |
+    {"runtimeMode":"apple-silicon","models":[{"matrixRowId":"llm-general-text-qwen25","modelId":"llm-qwen25-safetensors","displayName":"Qwen2.5-1.5B Instruct","family":"llm","description":"General text generation over the canonical safetensors checkpoint family.","artifactType":"HF safetensors","referenceModel":"Qwen2.5-1.5B-Instruct","downloadUrl":"https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct","selectedEngine":"Transformers + PyTorch MPS","requestShape":[{"name":"inputText","label":"Prompt","fieldType":"text"}],"runtimeMode":"apple-silicon","runtimeLane":"apple-silicon-host","requiresGpu":false,"notes":"Canonical source format for many open-weight LLMs."}]}
+
+publication:
+  name: infernix-publication-state
+  fileName: publication.json
+  payloadJson: |
+    {"clusterPresent":false,"controlPlaneContext":"host-native","runtimeMode":"apple-silicon","routes":[{"path":"/","purpose":"Web workbench"},{"path":"/api","purpose":"Service API"},{"path":"/harbor","purpose":"Harbor portal"},{"path":"/minio/console","purpose":"MinIO console"},{"path":"/minio/s3","purpose":"MinIO S3 API"},{"path":"/pulsar/admin","purpose":"Pulsar admin surface"},{"path":"/pulsar/ws","purpose":"Pulsar websocket surface"}]}
+
+service:
+  image:
+    repository: infernix-service
+    tag: local
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  port: 8080
+  command:
+    - infernix
+  args:
+    - service
+    - --port
+    - "8080"
+  dataPvc:
+    name: infernix-service-0-data
+    size: 5Gi
+    storageClassName: infernix-manual
+  minio:
+    endpoint: http://infernix-minio.platform.svc.cluster.local:9000
+    accessKey: minioadmin
+    secretKey: minioadmin123
+    runtimeBucket: infernix-runtime
+    resultsBucket: infernix-results
+  pulsar:
+    adminUrl: http://infernix-infernix-pulsar-proxy.platform.svc.cluster.local/admin/v2
+    httpBaseUrl: http://infernix-infernix-pulsar-proxy.platform.svc.cluster.local
+    webSocketBaseUrl: ws://infernix-infernix-pulsar-proxy.platform.svc.cluster.local/ws/v2
+    serviceUrl: pulsar://infernix-infernix-pulsar-proxy.platform.svc.cluster.local:6650
+    tenant: public
+    namespace: default
+
+web:
+  image:
+    repository: infernix-web
+    tag: local
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  port: 8080
+
+platformPortals:
+  harbor:
+    replicaCount: 1
+    backendUrl: http://harbor.platform.svc.cluster.local
+    apiUrl: http://infernix-harbor-core.platform.svc.cluster.local
+    adminUser: admin
+  minio:
+    replicaCount: 1
+    s3Endpoint: http://infernix-minio.platform.svc.cluster.local:9000
+    consoleEndpoint: http://infernix-minio-console.platform.svc.cluster.local:9090
+  pulsar:
+    replicaCount: 1
+    adminUrl: http://infernix-infernix-pulsar-proxy.platform.svc.cluster.local/admin/v2
+    httpBaseUrl: http://infernix-infernix-pulsar-proxy.platform.svc.cluster.local
+
+minio:
+  mode: distributed
+  fullnameOverride: infernix-minio
+  image:
+    registry: docker.io
+    repository: bitnamilegacy/minio
+  clientImage:
+    registry: docker.io
+    repository: bitnamilegacy/minio-client
+  defaultInitContainers:
+    volumePermissions:
+      image:
+        registry: docker.io
+        repository: bitnamilegacy/os-shell
+  auth:
+    rootUser: minioadmin
+    rootPassword: minioadmin123
+  service:
+    type: NodePort
+    nodePorts:
+      api: "30011"
+  persistence:
+    storageClass: infernix-manual
+    size: 5Gi
+  statefulset:
+    replicaCount: 4
+    zones: 1
+    drivesPerNode: 1
+  console:
+    enabled: true
+    replicaCount: 1
+    image:
+      registry: docker.io
+      repository: bitnamilegacy/minio-object-browser
+    service:
+      type: ClusterIP
+    ingress:
+      enabled: false
+  provisioning:
+    enabled: true
+    buckets:
+      - name: harbor-registry
+        versioning: Unchanged
+      - name: infernix-runtime
+        versioning: Unchanged
+      - name: infernix-results
+        versioning: Unchanged
+
+harbor:
+  expose:
+    type: nodePort
+    tls:
+      enabled: false
+      certSource: none
+    nodePort:
+      name: harbor
+      ports:
+        http:
+          port: 80
+          nodePort: 30002
+  externalURL: http://localhost:30002
+  harborAdminPassword: Harbor12345
+  persistence:
+    enabled: true
+    resourcePolicy: keep
+    persistentVolumeClaim:
+      registry:
+        storageClass: infernix-manual
+        size: 5Gi
+      jobservice:
+        jobLog:
+          storageClass: infernix-manual
+          size: 1Gi
+      database:
+        storageClass: infernix-manual
+        size: 1Gi
+      redis:
+        storageClass: infernix-manual
+        size: 1Gi
+      trivy:
+        storageClass: infernix-manual
+        size: 5Gi
+    imageChartStorage:
+      type: s3
+      disableredirect: true
+      s3:
+        region: us-east-1
+        bucket: harbor-registry
+        regionendpoint: http://infernix-minio.platform.svc.cluster.local:9000
+        accesskey: minioadmin
+        secretkey: minioadmin123
+        secure: false
+        v4auth: true
+        chunksize: "134217728"
+        multipartcopychunksize: "134217728"
+        multipartcopymaxconcurrency: 4
+        multipartcopythresholdsize: "134217728"
+  portal:
+    replicas: 3
+  core:
+    replicas: 3
+  jobservice:
+    replicas: 3
+  registry:
+    replicas: 3
+  trivy:
+    replicas: 3
+
+pulsar:
+  nameOverride: infernix-pulsar
+  components:
+    zookeeper: true
+    bookkeeper: true
+    autorecovery: true
+    broker: true
+    proxy: true
+    toolset: true
+    pulsar_manager: false
+    functions: false
+    oxia: false
+  affinity:
+    anti_affinity: false
+    type: preferredDuringSchedulingIgnoredDuringExecution
+  zookeeper:
+    replicaCount: 3
+    podMonitor:
+      enabled: false
+    affinity:
+      anti_affinity: false
+    volumes:
+      data:
+        storageClassName: infernix-manual
+        size: 5Gi
+  bookkeeper:
+    replicaCount: 3
+    podMonitor:
+      enabled: false
+    affinity:
+      anti_affinity: false
+    volumes:
+      journal:
+        storageClassName: infernix-manual
+        size: 5Gi
+      ledgers:
+        storageClassName: infernix-manual
+        size: 5Gi
+  broker:
+    replicaCount: 3
+    podMonitor:
+      enabled: false
+    affinity:
+      anti_affinity: false
+  proxy:
+    replicaCount: 3
+    podMonitor:
+      enabled: false
+    affinity:
+      anti_affinity: false
+    service:
+      type: NodePort
+      nodePorts:
+        http: "30080"
+        pulsar: "30650"
+  autorecovery:
+    replicaCount: 3
+    podMonitor:
+      enabled: false
+  victoria-metrics-k8s-stack:
+    enabled: false

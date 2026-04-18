@@ -7,9 +7,9 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-CHECK_SUFFIXES = {".hs", ".md", ".js", ".mjs", ".py", ".cabal"}
+CHECK_SUFFIXES = {".cabal", ".hs", ".js", ".md", ".mjs", ".proto", ".py", ".yaml", ".yml"}
 CHECK_FILES = {"cabal.project", "AGENTS.md", "CLAUDE.md", "README.md"}
-SKIP_PARTS = {"node_modules", ".git", ".data", ".build", "dist-newstyle"}
+SKIP_PARTS = {"node_modules", ".git", ".data", ".build", ".tmp", "dist-newstyle"}
 
 
 def should_check(path: Path) -> bool:

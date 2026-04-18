@@ -1,0 +1,99 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: infernix-service
+  namespace: platform
+spec:
+  replicas: {{ .Values.service.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: infernix-service
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: infernix-service
+    spec:
+{{- if eq .Values.runtimeMode "linux-cuda" }}
+      runtimeClassName: nvidia
+      nodeSelector:
+        infernix.runtime/gpu: "true"
+{{- end }}
+      containers:
+        - name: infernix-service
+          image: "{{ .Values.service.image.repository }}:{{ .Values.service.image.tag }}"
+          imagePullPolicy: {{ .Values.service.image.pullPolicy }}
+          command:
+{{ toYaml .Values.service.command | nindent 12 }}
+          args:
+{{ toYaml .Values.service.args | nindent 12 }}
+          env:
+            - name: INFERNIX_RUNTIME_MODE
+              value: {{ .Values.runtimeMode | quote }}
+            - name: INFERNIX_CONTROL_PLANE_CONTEXT
+              value: {{ .Values.controlPlaneContext | quote }}
+            - name: INFERNIX_DAEMON_LOCATION
+              value: "cluster-pod"
+            - name: INFERNIX_CATALOG_SOURCE
+              value: "mounted-configmap"
+            - name: INFERNIX_DEMO_CONFIG_PATH
+              value: "{{ .Values.demoConfig.mountPath }}/{{ .Values.demoConfig.fileName }}"
+            - name: INFERNIX_PUBLICATION_STATE_PATH
+              value: "{{ .Values.demoConfig.mountPath }}/{{ .Values.publication.fileName }}"
+            - name: INFERNIX_ROUTE_PROBE_BASE_URL
+              value: "http://infernix-edge.platform.svc.cluster.local"
+            - name: INFERNIX_BIND_HOST
+              value: "0.0.0.0"
+            - name: INFERNIX_DATA_ROOT
+              value: "/srv/infernix/.data"
+            - name: INFERNIX_MINIO_ENDPOINT
+              value: {{ .Values.service.minio.endpoint | quote }}
+            - name: INFERNIX_MINIO_ACCESS_KEY
+              value: {{ .Values.service.minio.accessKey | quote }}
+            - name: INFERNIX_MINIO_SECRET_KEY
+              value: {{ .Values.service.minio.secretKey | quote }}
+            - name: INFERNIX_MINIO_RUNTIME_BUCKET
+              value: {{ .Values.service.minio.runtimeBucket | quote }}
+            - name: INFERNIX_MINIO_RESULTS_BUCKET
+              value: {{ .Values.service.minio.resultsBucket | quote }}
+            - name: INFERNIX_PULSAR_ADMIN_URL
+              value: {{ .Values.service.pulsar.adminUrl | quote }}
+            - name: INFERNIX_PULSAR_HTTP_BASE_URL
+              value: {{ .Values.service.pulsar.httpBaseUrl | quote }}
+            - name: INFERNIX_PULSAR_WS_BASE_URL
+              value: {{ .Values.service.pulsar.webSocketBaseUrl | quote }}
+            - name: INFERNIX_PULSAR_SERVICE_URL
+              value: {{ .Values.service.pulsar.serviceUrl | quote }}
+            - name: INFERNIX_PULSAR_TENANT
+              value: {{ .Values.service.pulsar.tenant | quote }}
+            - name: INFERNIX_PULSAR_NAMESPACE
+              value: {{ .Values.service.pulsar.namespace | quote }}
+{{- if eq .Values.runtimeMode "linux-cuda" }}
+          resources:
+            limits:
+              nvidia.com/gpu: "1"
+            requests:
+              nvidia.com/gpu: "1"
+{{- end }}
+          ports:
+            - containerPort: {{ .Values.service.port }}
+          volumeMounts:
+            - name: demo-config
+              mountPath: "{{ .Values.demoConfig.mountPath }}/{{ .Values.demoConfig.fileName }}"
+              subPath: {{ .Values.demoConfig.fileName }}
+              readOnly: true
+            - name: publication-state
+              mountPath: "{{ .Values.demoConfig.mountPath }}/{{ .Values.publication.fileName }}"
+              subPath: {{ .Values.publication.fileName }}
+              readOnly: true
+            - name: service-data
+              mountPath: /srv/infernix/.data
+      volumes:
+        - name: demo-config
+          configMap:
+            name: {{ .Values.demoConfig.name }}
+        - name: publication-state
+          configMap:
+            name: {{ .Values.publication.name }}
+        - name: service-data
+          persistentVolumeClaim:
+            claimName: {{ .Values.service.dataPvc.name }}

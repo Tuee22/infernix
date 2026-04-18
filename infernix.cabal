@@ -3,60 +3,123 @@ name:               infernix
 version:            0.1.0.0
 license:            MIT
 license-file:       LICENSE
-author:             Infernix
 maintainer:         noreply@example.com
+author:             Infernix
 category:           Development
-build-type:         Simple
+build-type:         Custom
 extra-source-files:
-  README.md
+    README.md
+    proto/infernix/runtime/inference.proto
+    proto/infernix/manifest/runtime_manifest.proto
+    proto/infernix/api/inference_service.proto
 
-common shared-warnings
-  default-language: GHC2021
-  ghc-options:
-    -Wall
-    -Werror
-  build-depends:
-    , base >=4.21 && <4.23
-    , bytestring >=0.12 && <0.13
-    , containers >=0.8 && <0.9
-    , directory >=1.3 && <1.4
-    , filepath >=1.4 && <1.6
-    , process >=1.6 && <1.7
-    , text >=2.0 && <2.2
-    , time >=1.12 && <1.16
+custom-setup
+    setup-depends:
+        base,
+        Cabal,
+        directory,
+        filepath,
+        process,
+        proto-lens-setup
 
 library
-  import:           shared-warnings
-  hs-source-dirs:   src
-  exposed-modules:
-      Infernix.CLI
-    , Infernix.Cluster
-    , Infernix.Config
-    , Infernix.Models
-    , Infernix.Runtime
-    , Infernix.Service
-    , Infernix.Storage
-    , Infernix.Types
+    exposed-modules:
+        Infernix.CLI
+        Infernix.Cluster
+        Infernix.Config
+        Infernix.Models
+        Infernix.Runtime
+        Infernix.Service
+        Infernix.Storage
+        Infernix.Types
+
+    hs-source-dirs:   src
+    other-modules:
+        Proto.Infernix.Api.InferenceService
+        Proto.Infernix.Api.InferenceService_Fields
+        Proto.Infernix.Manifest.RuntimeManifest
+        Proto.Infernix.Manifest.RuntimeManifest_Fields
+        Proto.Infernix.Runtime.Inference
+        Proto.Infernix.Runtime.Inference_Fields
+
+    autogen-modules:
+        Proto.Infernix.Api.InferenceService
+        Proto.Infernix.Api.InferenceService_Fields
+        Proto.Infernix.Manifest.RuntimeManifest
+        Proto.Infernix.Manifest.RuntimeManifest_Fields
+        Proto.Infernix.Runtime.Inference
+        Proto.Infernix.Runtime.Inference_Fields
+
+    default-language: GHC2021
+    ghc-options:      -Wall -Werror
+    build-depends:
+        base >=4.21 && <4.23,
+        bytestring >=0.12 && <0.13,
+        containers >=0.8 && <0.9,
+        directory >=1.3 && <1.4,
+        filepath >=1.4 && <1.6,
+        lens-family >=1.2 && <2.2,
+        process >=1.6 && <1.7,
+        proto-lens >=0.7 && <0.8,
+        proto-lens-runtime >=0.7 && <0.8,
+        text >=2.0 && <2.2,
+        time >=1.12 && <1.16
 
 executable infernix
-  import:           shared-warnings
-  hs-source-dirs:   app
-  main-is:          Main.hs
-  build-depends:
-      infernix
+    main-is:          Main.hs
+    hs-source-dirs:   app
+    default-language: GHC2021
+    ghc-options:      -Wall -Werror
+    build-depends:
+        base >=4.21 && <4.23,
+        bytestring >=0.12 && <0.13,
+        containers >=0.8 && <0.9,
+        directory >=1.3 && <1.4,
+        filepath >=1.4 && <1.6,
+        lens-family >=1.2 && <2.2,
+        process >=1.6 && <1.7,
+        proto-lens >=0.7 && <0.8,
+        proto-lens-runtime >=0.7 && <0.8,
+        text >=2.0 && <2.2,
+        time >=1.12 && <1.16,
+        infernix
 
 test-suite infernix-unit
-  import:           shared-warnings
-  type:             exitcode-stdio-1.0
-  hs-source-dirs:   test/unit
-  main-is:          Spec.hs
-  build-depends:
-      infernix
+    type:             exitcode-stdio-1.0
+    main-is:          Spec.hs
+    hs-source-dirs:   test/unit
+    default-language: GHC2021
+    ghc-options:      -Wall -Werror
+    build-depends:
+        base >=4.21 && <4.23,
+        bytestring >=0.12 && <0.13,
+        containers >=0.8 && <0.9,
+        directory >=1.3 && <1.4,
+        filepath >=1.4 && <1.6,
+        lens-family >=1.2 && <2.2,
+        process >=1.6 && <1.7,
+        proto-lens >=0.7 && <0.8,
+        proto-lens-runtime >=0.7 && <0.8,
+        text >=2.0 && <2.2,
+        time >=1.12 && <1.16,
+        infernix
 
 test-suite infernix-integration
-  import:           shared-warnings
-  type:             exitcode-stdio-1.0
-  hs-source-dirs:   test/integration
-  main-is:          Spec.hs
-  build-depends:
-      infernix
+    type:             exitcode-stdio-1.0
+    main-is:          Spec.hs
+    hs-source-dirs:   test/integration
+    default-language: GHC2021
+    ghc-options:      -Wall -Werror
+    build-depends:
+        base >=4.21 && <4.23,
+        bytestring >=0.12 && <0.13,
+        containers >=0.8 && <0.9,
+        directory >=1.3 && <1.4,
+        filepath >=1.4 && <1.6,
+        lens-family >=1.2 && <2.2,
+        process >=1.6 && <1.7,
+        proto-lens >=0.7 && <0.8,
+        proto-lens-runtime >=0.7 && <0.8,
+        text >=2.0 && <2.2,
+        time >=1.12 && <1.16,
+        infernix

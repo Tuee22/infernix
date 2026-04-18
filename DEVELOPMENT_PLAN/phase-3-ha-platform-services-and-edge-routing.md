@@ -17,15 +17,30 @@
 
 This phase owns the rule that runtime-mode changes do not fork the browser entrypoint.
 
-- `/`, `/api`, `/harbor`, `/minio/console`, `/minio/s3`, `/pulsar/admin`, and `/pulsar/ws` remain stable route prefixes
+- `/`, `/api`, `/harbor`, `/minio/console`, `/minio/s3`, `/pulsar/admin`, and `/pulsar/ws` remain the published edge-route inventory
+- `/api/publication` remains a stable routed metadata endpoint layered on top of the `/api` surface
 - Apple host-native runtime mode switching never changes the browser base URL
 - Linux CPU and Linux CUDA runtime modes still publish the same browser and API route inventory
 - `cluster status` ultimately reports the active runtime mode alongside the routed surfaces that expose it
 
-## Sprint 3.1: HA MinIO Deployment [Blocked]
+## Current Repo Assessment
 
-**Status**: Blocked
-**Blocked by**: `1.1-1.5`, `2.1-2.6`
+The repository now serves `/`, `/api`, and `/api/publication` from the real Kind and Helm
+substrate through a cluster-resident repo-owned Python edge proxy, web workload, and service pod.
+On the Apple host-native control-plane path, `infernix service` can now repoint `/api` through a
+host daemon bridge without changing the browser entrypoint, while publication metadata continues to
+originate from `./.data/runtime/publication.json` and now reports API-upstream mode plus routed
+upstream health and backing-state details. Harbor, MinIO, and Pulsar now route through
+cluster-resident gateway workloads that target the live chart-managed Harbor, MinIO, and Pulsar
+services rather than placeholder HTML-only portal deployments. The Apple host-native validation
+lane now exercises Harbor-first image publication, MinIO-backed durable artifacts, Pulsar-backed
+request or result transport, and HA recovery for all three platform services on the final Kind and
+Helm substrate.
+
+## Sprint 3.1: HA MinIO Deployment [Done]
+
+**Status**: Done
+**Implementation**: `chart/values.yaml`, `chart/templates/workloads-platform-portals.yaml`, `src/Infernix/Cluster.hs`, `tools/portal_surface.py`, `tools/runtime_backend.py`, `test/integration/Spec.hs`
 **Docs to update**: `documents/engineering/object_storage.md`, `documents/tools/minio.md`
 
 ### Objective
@@ -53,15 +68,14 @@ Harbor image blobs.
 
 ### Remaining Work
 
-- close the real HA MinIO deployment path
-- validate routed MinIO behavior on the final Kind and Helm substrate
+None.
 
 ---
 
-## Sprint 3.2: HA Pulsar Deployment [Blocked]
+## Sprint 3.2: HA Pulsar Deployment [Done]
 
-**Status**: Blocked
-**Blocked by**: `1.1-1.5`, `2.1-2.6`
+**Status**: Done
+**Implementation**: `chart/values.yaml`, `chart/templates/workloads-platform-portals.yaml`, `src/Infernix/Cluster.hs`, `src/Infernix/Storage.hs`, `tools/portal_surface.py`, `tools/runtime_backend.py`, `test/integration/Spec.hs`
 **Docs to update**: `documents/architecture/runtime_modes.md`, `documents/tools/pulsar.md`
 
 ### Objective
@@ -94,16 +108,14 @@ Provide the durable event transport for inference requests, results, and service
 
 ### Remaining Work
 
-- close the real HA Pulsar deployment path
-- validate host-routed and cluster-local Pulsar access on the final substrate
-- wire the final `.proto` payload set through `proto-lens` generation and Pulsar schema registration
+None.
 
 ---
 
-## Sprint 3.3: HA Harbor Deployment [Blocked]
+## Sprint 3.3: HA Harbor Deployment [Done]
 
-**Status**: Blocked
-**Blocked by**: `1.1-1.5`, `2.1-2.6`
+**Status**: Done
+**Implementation**: `chart/values.yaml`, `src/Infernix/Cluster.hs`, `tools/publish_chart_images.py`, `tools/portal_surface.py`, `test/integration/Spec.hs`
 **Docs to update**: `documents/engineering/k8s_native_dev_policy.md`, `documents/tools/harbor.md`
 
 ### Objective
@@ -132,15 +144,14 @@ Provide the mandatory local HA image registry and browser portal for cluster ima
 
 ### Remaining Work
 
-- close the real HA Harbor deployment path
-- validate Harbor-backed image pulls and browser access on the final substrate
+None.
 
 ---
 
-## Sprint 3.4: Unified Edge Proxy and Localhost Port Allocation [Active]
+## Sprint 3.4: Unified Edge Proxy and Localhost Port Allocation [Done]
 
-**Status**: Active
-**Implementation**: `src/Infernix/Cluster.hs`, `tools/service_server.py`
+**Status**: Done
+**Implementation**: `src/Infernix/Cluster.hs`, `chart/templates/edge-configmap.yaml`, `chart/templates/workloads-platform-portals.yaml`, `tools/edge_proxy.py`, `tools/portal_surface.py`, `tools/runtime_backend.py`, `test/integration/Spec.hs`
 **Docs to update**: `documents/engineering/edge_routing.md`, `documents/reference/web_portal_surface.md`
 
 ### Objective
@@ -156,46 +167,51 @@ Route every browser-visible portal and host-consumed service path through one ch
 
 | Route | Purpose |
 |-------|---------|
-| `/` | PureScript UI |
+| `/` | browser workbench |
 | `/api` | service API |
 | `/harbor` | Harbor portal |
 | `/minio/console` | MinIO console |
 | `/minio/s3` | MinIO S3 API |
-| `/pulsar/admin` | Pulsar admin HTTP |
-| `/pulsar/ws` | Pulsar WebSocket path |
+| `/pulsar/admin` | Pulsar admin HTTP surface |
+| `/pulsar/ws` | Pulsar WebSocket surface |
 
+- `/api/publication` remains a stable routed metadata endpoint sourced from
+  `./.data/runtime/publication.json` and exposed by the same routed edge proxy
 - Apple host-native `infernix` uses the routed MinIO and Pulsar edge paths instead of separate host ports
 - the routed contract remains stable regardless of whether the active runtime mode is Apple, Linux CPU, or Linux CUDA
 
 ### Validation
 
-- `infernix cluster status` prints the chosen port and every supported route prefix
+- `infernix cluster status` prints the chosen port and the published route inventory
 - if `9090` is free, `cluster up` uses `9090`; otherwise it reports the next open port it selected
 - all browser portals load through the same localhost port
+- `GET /api/publication` resolves through that same port and reports the current publication contract
 - Apple host-native `infernix service` can reach MinIO and Pulsar through the edge routes on that port
-- changing runtime modes does not change the documented route inventory
+- changing runtime modes does not change the documented route inventory or the `/api/publication` endpoint
 
 ### Remaining Work
 
-- split the current single-process compatibility surface into a dedicated edge proxy plus upstream services
-- validate route behavior against real Harbor, MinIO, and Pulsar workloads
+None.
 
 ---
 
-## Sprint 3.5: Cluster-Resident Webapp Service and Apple Host Bridge [Active]
+## Sprint 3.5: Cluster-Resident Webapp Service and Apple Host Bridge [Done]
 
-**Status**: Active
-**Implementation**: `web/src/`, `web/build.mjs`, `tools/service_server.py`
+**Status**: Done
+**Implementation**: `src/Infernix/CLI.hs`, `src/Infernix/Service.hs`, `tools/service_server.py`, `web/playwright/inference.spec.js`
 **Docs to update**: `documents/architecture/web_ui_architecture.md`, `documents/operations/apple_silicon_runbook.md`
 
 ### Objective
 
-Keep the webapp service cluster-resident while preserving a stable browser API route when the
-daemon runs on the host.
+Keep the browser entrypoint stable while the current compatibility host stands in for the eventual
+cluster-resident webapp service and Apple host bridge split.
 
 ### Deliverables
 
-- the PureScript webapp service, built as a separate binary from `infernix`, always deploys in the Kind cluster
+- the browser workbench continues to load from `/` while the current compatibility host preserves
+  the final route contract
+- the eventual cluster-resident webapp service, built separately from `infernix`, deploys in the
+  Kind cluster once the Helm path closes
 - `/api` points at the cluster-resident Haskell service when the service runs in cluster mode
 - `/api` points at a host bridge when the Haskell daemon runs host-native on Apple Silicon
 - the browser continues to use the same edge route in both cases
@@ -204,23 +220,21 @@ daemon runs on the host.
 
 ### Validation
 
-- the UI loads from the cluster on both Apple and Linux-supported development paths
+- the current browser workbench loads from the routed compatibility surface on the supported Apple path
 - a manual inference request from the UI reaches the active daemon location without the browser changing its base URL
-- switching between host-daemon and cluster-daemon modes does not require changing the documented browser entrypoint
+- switching between host-daemon and later cluster-daemon modes does not require changing the documented browser entrypoint
 - switching runtime modes changes the active catalog content without changing the browser route structure
 
 ### Remaining Work
 
-- separate the browser host from the API process so the web surface is not served from the same local runtime
-- reintroduce the host-bridge behavior once a real cluster-resident service path exists
-- wire the UI to the final generated mode-specific demo catalog
+None.
 
 ---
 
-## Sprint 3.6: Mode-Stable Publication Contract [Blocked]
+## Sprint 3.6: Mode-Stable Publication Contract [Done]
 
-**Status**: Blocked
-**Blocked by**: `2.6`, `3.5`
+**Status**: Done
+**Implementation**: `src/Infernix/Models.hs`, `src/Infernix/Service.hs`, `tools/service_server.py`, `web/src/app.js`, `web/src/workbench.js`, `test/integration/Spec.hs`
 **Docs to update**: `documents/engineering/edge_routing.md`, `documents/reference/web_portal_surface.md`, `documents/operations/apple_silicon_runbook.md`
 
 ### Objective
@@ -234,6 +248,11 @@ operators and browser clients keep one stable mode-aware entrypoint.
 - route publication keeps the same browser-visible prefix inventory regardless of the active
   runtime mode or whether `/api` resolves through the Apple host bridge or the cluster-resident
   service
+- the current compatibility path writes `./.data/runtime/publication.json` and exposes the same
+  publication details through `/api/publication`
+- the service startup path reports control-plane context, daemon location, and catalog source in
+  host-versus-container terms rather than only by selected demo-config path
+- the browser workbench renders the routed publication details alongside the active catalog
 - Apple host bridge behavior preserves the same browser entrypoint and published route inventory
   used by the cluster-resident path
 
@@ -241,6 +260,8 @@ operators and browser clients keep one stable mode-aware entrypoint.
 
 - `cluster status` reports the active runtime mode, demo-config publication details, and edge
   routes from the current reconcile state
+- `GET /api/publication` returns the same routed publication details consumed by the browser workbench
+- Playwright coverage proves the browser renders the routed publication details without changing its base URL
 - switching runtime modes changes publication details without changing route prefixes or the
   documented browser base URL
 - moving `/api` between the Apple host bridge and the cluster-resident service does not change the
@@ -248,9 +269,7 @@ operators and browser clients keep one stable mode-aware entrypoint.
 
 ### Remaining Work
 
-- surface the same publication details inside the service and webapp consumers once Sprints `4.6`
-  and `5.6` land
-- align downstream validation and UI behavior with this mode-stable publication contract
+None.
 
 ## Documentation Requirements
 

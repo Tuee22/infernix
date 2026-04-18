@@ -1,0 +1,65 @@
+syntax = "proto3";
+
+package infernix.runtime;
+
+message RequestField {
+  string name = 1;
+  string label = 2;
+  string field_type = 3;
+}
+
+message CatalogEntry {
+  string matrix_row_id = 1;
+  string model_id = 2;
+  string display_name = 3;
+  string family = 4;
+  string description = 5;
+  string artifact_type = 6;
+  string reference_model = 7;
+  string download_url = 8;
+  string selected_engine = 9;
+  repeated RequestField request_shape = 10;
+  string runtime_mode = 11;
+  string runtime_lane = 12;
+  bool requires_gpu = 13;
+  string notes = 14;
+}
+
+message GeneratedCatalog {
+  string runtime_mode = 1;
+  int32 edge_port = 2;
+  string config_map_name = 3;
+  string generated_path = 4;
+  string mounted_path = 5;
+  repeated CatalogEntry models = 6;
+}
+
+message InferenceRequest {
+  string request_id = 1;
+  string request_model_id = 2;
+  string input_text = 3;
+  string runtime_mode = 4;
+}
+
+message ResultPayload {
+  oneof output {
+    string inline_output = 1;
+    string object_ref = 2;
+  }
+}
+
+message InferenceResult {
+  string request_id = 1;
+  string result_model_id = 2;
+  string matrix_row_id = 3;
+  string runtime_mode = 4;
+  string selected_engine = 5;
+  string status = 6;
+  ResultPayload payload = 7;
+  string created_at = 8;
+}
+
+message ErrorResponse {
+  string error_code = 1;
+  string message = 2;
+}

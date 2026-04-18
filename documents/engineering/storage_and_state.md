@@ -11,6 +11,7 @@
 - MinIO objects
 - Pulsar ledger state
 - Harbor metadata and registry content
+- host-side cache manifests under `./.data/object-store/manifests/`
 
 ## Derived State
 

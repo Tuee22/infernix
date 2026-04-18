@@ -1,0 +1,7 @@
+#!/bin/sh
+set -eu
+
+export INFERNIX_BUILD_ROOT="${INFERNIX_BUILD_ROOT:-/opt/build/infernix}"
+export INFERNIX_CABAL_BUILDDIR="${INFERNIX_CABAL_BUILDDIR:-${INFERNIX_BUILD_ROOT}}"
+
+exec cabal run --builddir="${INFERNIX_CABAL_BUILDDIR}" exe:infernix -- "$@"

@@ -7,16 +7,24 @@
 
 ## Endpoints
 
-- `GET /api/models` lists registered models
-- `GET /api/models/:modelId` returns model metadata and request-shape information
+- `GET /api/publication` returns the active runtime mode, control-plane context, daemon location, catalog source, API-upstream mode, routed-upstream health or backing-state details, and published route inventory
+- `GET /api/models` lists generated catalog entries for the active runtime mode
+- `GET /api/models/:modelId` returns model metadata, selected engine, and request-shape information
 - `POST /api/inference` submits a manual inference request
-- `GET /api/inference/:requestId` returns the latest result
+- `GET /api/inference/:requestId` returns the latest result, including the active runtime mode and selected engine
+- `GET /api/cache` returns manifest-backed cache status for the active runtime mode
+- `POST /api/cache/evict` removes derived cache directories while retaining the compatibility durable manifest
+- `POST /api/cache/rebuild` rebuilds derived cache directories from the compatibility durable manifest set
 
 ## Rules
 
 - request validation uses Haskell-owned model metadata
 - invalid requests return typed user-facing errors
 - large outputs are returned as typed object references
+- cache-eviction and cache-rebuild flows only affect derived cache state; they do not rewrite the generated catalog or publication contract
+- publication details stay mode-stable even though the implementation still sources them from the repo-local publication-state file
+- `/api` remains stable even when the active upstream changes between the cluster-resident service and the Apple host bridge
+- the API surface is stable even when switching runtime modes because only the generated catalog content changes
 
 ## Cross-References
 

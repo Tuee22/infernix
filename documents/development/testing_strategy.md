@@ -7,19 +7,27 @@
 
 ## Validation Layers
 
-- `infernix docs check` validates governed docs and plan cross-links
-- `infernix test lint` validates formatting, linting, and warning policy
-- `infernix test unit` validates Haskell and PureScript units
-- `infernix test integration` validates lifecycle, storage, and service integration behavior
-- `infernix test e2e` validates the browser surface
-- `infernix test all` runs the complete repository suite
+- `infernix docs check` validates governed docs, plan metadata, and required cross-document phrases
+- `infernix test lint` validates repository hygiene, chart or Kind or `.proto` asset presence, Helm dependency or lint or render or claim-discovery closure, the repo-owned Haskell style stack, and the Haskell build path
+- `infernix test unit` validates matrix rendering, generated frontend contracts, deterministic runtime behavior, and protobuf schema round-trip coverage
+- `infernix test integration` validates lifecycle, generated demo-config publication, serialized-catalog execution, routed publication metadata, service-path cache lifecycle, Pulsar schema publication, MinIO durability, HA recovery, and edge-port rediscovery
+- `infernix test e2e` validates the routed browser-facing surface through exhaustive catalog coverage, serialized-catalog cross-checks, and browser UI interaction against the real cluster edge while launching Playwright from the same web image that serves the UI
+- `infernix test all` runs the complete repository suite; the compatibility matrix still exercises Apple, Linux CPU, and Linux CUDA when no explicit runtime-mode override is supplied on both the Apple host-native and Linux outer-container control-plane surfaces, while the host-native final-substrate lane is now separately validated on the real Harbor or MinIO or Pulsar stack and reuses the Harbor-published web runtime image across the runtime matrix
 
-## Rules
+## Active-Mode Coverage Rules
 
-- the CLI owns the supported validation entrypoints
-- unit coverage protects typed contracts and deterministic logic
-- integration coverage protects lifecycle and durable-state behavior
-- E2E coverage runs from the same image that serves the web UI
+- unit coverage proves the generated catalog shape, selected engine bindings, request-shape rendering, publication-summary rendering, and object-reference result formatting for the active runtime mode
+- `infernix test integration` exercises every generated catalog entry from the serialized generated demo config for the active runtime mode, validates the in-cluster `ConfigMap`, and separately validates `cluster status`, `cluster down`, repeated `cluster up`, and `9090`-first edge-port rediscovery on both supported control-plane contexts
+- `infernix test integration` also validates the routed `GET /api/cache`, `POST /api/cache/evict`, and `POST /api/cache/rebuild` contract against manifest-backed durable state
+- `infernix test integration` also validates that `/harbor`, `/minio/s3`, and `/pulsar/ws` resolve through the current cluster-resident gateway workloads on the shared edge port
+- the host-native integration lane also validates that `/api` can move to the Apple host bridge without changing the browser-visible edge entrypoint
+- `infernix test integration` on the Apple host-native final substrate now also validates Pulsar protobuf schema registration, MinIO-persisted runtime results or manifests, and Harbor or MinIO or Pulsar HA recovery
+- `infernix test e2e` exercises every generated catalog entry exposed through the routed surface for the active runtime mode, compares `/api/models` against the serialized generated catalog reported through `/api/publication`, and fails if the browser workbench cannot render publication details, select a model, or submit one of those entries through the routed cluster edge
+- the host-native routed E2E lane also fails if the workbench cannot stay on the same base URL while `/api` resolves through the Apple host bridge
+- the current host-native and outer-container control-plane paths both delegate `infernix test e2e` browser execution to the same web image that serves `/` rather than the control-plane image, and the host-native final-substrate lane now reuses the Harbor-published web runtime image for that browser execution path across `apple-silicon`, `linux-cpu`, and `linux-cuda`
+- changing the active runtime mode changes the generated catalog and therefore the exercised entry set automatically
+- when no explicit runtime-mode override is supplied, the current compatibility implementation repeats the exhaustive integration and E2E path across `apple-silicon`, `linux-cpu`, and `linux-cuda` on both the Apple host-native and Linux outer-container control-plane surfaces
+- full closure still requires repeating that same exhaustive coverage on the final Harbor, MinIO, and Pulsar substrate across the full runtime matrix and the outer-container control-plane lane
 
 ## Cross-References
 

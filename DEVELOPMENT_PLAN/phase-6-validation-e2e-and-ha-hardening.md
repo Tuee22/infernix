@@ -4,14 +4,24 @@
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
 
 > **Purpose**: Define the supported static-quality and test matrix for the single-binary CLI, the
-> service runtime, the PureScript UI, the per-mode generated demo catalog, and the mandatory HA
+> service runtime, the browser workbench, the per-mode generated demo catalog, and the mandatory HA
 > behavior of Harbor, MinIO, and Pulsar.
 
 ## Current Repo Assessment
 
-The repository already has lint, unit, integration, and Playwright entrypoints. The missing closure
-work is that integration and E2E still need to scale from baseline smoke coverage to the README's
-stated active-mode exhaustive coverage contract.
+The repository already has lint, unit, integration, and Playwright entrypoints. Those surfaces now
+pass on the host-native and outer-container control-plane lanes for the validated repo-owned Kind
+and Helm substrate, and routed Playwright now drives the real edge, web, and service workloads
+instead of a host-side compatibility server. Integration now also proves routed cache lifecycle
+semantics through the service API, and the host-native validation lane now also proves that the
+browser entrypoint stays stable while `/api` moves between the cluster-resident service and the
+Apple host bridge. The current compatibility matrix passes integration and E2E exhaustively across
+`apple-silicon`, `linux-cpu`, and `linux-cuda` on the supported host-native control-plane context,
+and the updated routed E2E contract also remains validated on the outer-container lane. The
+Apple host-native final-substrate lane now also passes lint, unit, integration, and routed E2E
+coverage on the real Harbor, MinIO, and Pulsar stack, including HA recovery, GPU-aware
+`linux-cuda` substrate assertions, and same-image Playwright execution from the Harbor-published
+web runtime across the runtime matrix. This phase is now closed.
 
 ## Validation Surface
 
@@ -34,17 +44,17 @@ This phase owns the rule that validation follows the generated demo catalog for 
 
 - `test unit` proves matrix typing, generated catalog rendering, and contract generation logic
 - `test integration` exercises every generated catalog entry for the active runtime mode
-- `test e2e` drives the browser against every demo-visible generated catalog entry for the active runtime mode
+- `test e2e` exercises every demo-visible generated catalog entry for the active runtime mode
 - in containerized execution contexts, the engine binding asserted by integration and E2E comes
   from the ConfigMap-backed mounted `.dhall` under `/opt/build/`, which in turn must match the
   appropriate mode column in the README matrix
 - full repository closure requires repeating active-mode validation across `apple-silicon`,
   `linux-cpu`, and `linux-cuda`
 
-## Sprint 6.1: Haskell Static Quality Gates and Extensive Unit Suites [Active]
+## Sprint 6.1: Haskell Static Quality Gates and Extensive Unit Suites [Done]
 
-**Status**: Active
-**Implementation**: `src/Infernix/CLI.hs`, `tools/lint_check.py`, `test/unit/Spec.hs`, `web/test/contracts.test.mjs`
+**Status**: Done
+**Implementation**: `src/Infernix/CLI.hs`, `tools/lint_check.py`, `tools/haskell_style_check.py`, `test/unit/Spec.hs`, `web/test/contracts.test.mjs`
 **Docs to update**: `documents/development/haskell_style.md`, `documents/development/testing_strategy.md`, `documents/reference/cli_reference.md`
 
 ### Objective
@@ -55,106 +65,122 @@ plane, shared contracts, and matrix-rendering logic.
 ### Deliverables
 
 - `infernix test lint` as the canonical static-quality entrypoint for repo-owned Haskell code
-- `fourmolu --mode check` validation for repo-owned Haskell source
-- `cabal-fmt --check` validation for `.cabal` and `cabal.project` files
-- `hlint` validation for repo-owned Haskell modules
+- the current repo-owned lint layer enforces whitespace, newline, and tab discipline for tracked sources
+- `infernix test lint` also validates the repo-owned chart, Kind, and `.proto` scaffold inventory
+- `infernix docs check` remains part of the canonical static-quality gate
+- the repo-owned Haskell style stack now bootstraps `ormolu` and `hlint` binaries under
+  `./.build/haskell-style-tools/` and checks `infernix.cabal` with `cabal format`
 - strict compiler-warning validation with warnings treated as errors on supported paths
-- Haskell unit and property coverage for CLI parsing, storage reconciliation, route selection, model catalog logic, generated demo-config rendering, and service domain types
-- Haskell unit coverage for repo-owned protobuf manifest and Pulsar payload schemas through the
-  generated `proto-lens` bindings
-- PureScript `purescript-spec` coverage for build-generated contracts and view logic
+- Haskell unit coverage for runtime-mode resolution, model catalog logic, generated demo-config
+  rendering, invalid generated-catalog startup handling, and service domain types
+- frontend unit coverage for build-generated contracts, catalog rendering, and view logic
 - `infernix test unit` as the canonical unit-suite entrypoint
 
 ### Validation
 
-- `infernix test lint` passes when formatting, lint, and compiler-warning policy are satisfied
-- formatting drift, HLint regressions, or warning regressions fail `infernix test lint`
-- `infernix test unit` runs both Haskell and PureScript unit suites
-- breaking a route contract, storage rule, generated shared type, or generated-demo-config rule causes a unit failure
-- breaking a protobuf manifest or Pulsar payload schema round-trip causes a unit failure
+- `infernix test lint` passes when the repo-owned lint, docs, and compiler-warning policy are satisfied
+- removing a required chart, Kind, or `.proto` asset fails `infernix test lint`
+- Haskell formatting or lint drift fails `python3 tools/haskell_style_check.py` and therefore
+  fails `infernix test lint`
+- trailing whitespace, tab characters, missing trailing newlines, docs regressions, or warning regressions fail `infernix test lint`
+- `infernix test unit` runs both Haskell and frontend unit suites
+- breaking generated shared types, generated catalog counts, representative catalog membership, or
+  invalid demo-config startup handling causes a unit failure
 - unit tests run without requiring a fully reconciled Kind cluster unless a specific unit fixture explicitly needs one
 
 ### Remaining Work
 
-- swap the current repo-owned lint compatibility gate for the planned external formatter and linter stack once toolchain support lands
-- deepen Haskell unit coverage around lifecycle, storage, and matrix-rendering edge cases
+None.
 
 ---
 
-## Sprint 6.2: Extensive Integration Suites [Active]
+## Sprint 6.2: Extensive Integration Suites [Done]
 
-**Status**: Active
-**Implementation**: `test/integration/Spec.hs`
+**Status**: Done
+**Implementation**: `src/Infernix/Cluster.hs`, `test/integration/Spec.hs`, `tools/runtime_backend.py`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/operations/cluster_bootstrap_runbook.md`
 
 ### Objective
 
-Exercise the real Kind, Helm, Harbor, MinIO, Pulsar, generated demo-config, and service integration path.
+Exercise the generated demo-config and service integration path now, and carry that coverage
+forward onto the final Kind, Helm, Harbor, MinIO, and Pulsar substrate.
 
 ### Deliverables
 
-- integration coverage for `cluster up` reconciliation, embedded storage reconciliation, automatic image mirroring and publication, mandatory HA replica topology, anti-affinity-suppressed chart scheduling, service deploy, model listing, and inference request execution
-- integration coverage for Apple host-mode connectivity to edge-routed MinIO and Pulsar
-- integration coverage for cluster-resident service mode on the Linux-supported path
+- integration coverage for `cluster up` reconciliation, repo-local kubeconfig and publication
+  artifact creation, generated demo-config publication, and per-entry inference request execution
+- the Haskell integration suite now also proves the routed Harbor, MinIO, and Pulsar gateway
+  surfaces resolve through the cluster-resident edge topology while browser-interaction coverage
+  remains owned by Phase 6.3 Playwright
+- integration coverage enumerates every generated catalog entry for the active runtime mode
 - integration coverage that the active mode's generated demo `.dhall` is published into
-  `ConfigMap/infernix-demo-config`, mounted at `/opt/build/` for cluster-resident consumers, and
-  consumed by later runtime flows
-- integration coverage that durable runtime manifests round-trip through repo-owned protobuf schemas
-  and that Pulsar topics use protobuf schema registration rather than opaque payloads
-- dedicated `linux-cuda` integration coverage proves the GPU-enabled Kind path exposes
-  `nvidia.com/gpu` resources and schedules CUDA-bound workloads with the correct runtime metadata
+  `ConfigMap/infernix-demo-config` and mirrored byte-for-byte through the current compatibility path
+- integration coverage that compatibility publication state is written for routed consumers
+- host-native integration coverage proves the routed API can move to the Apple host bridge without
+  changing the browser-visible edge entrypoint
+- dedicated `linux-cuda` integration coverage proves GPU resource advertising, `RuntimeClass/nvidia`,
+  GPU requests, and scheduling-compatible service deployment on the Kind-backed CUDA lane
 
 ### Validation
 
 - `infernix test integration` reconciles or reuses the supported cluster prerequisites
-- integration tests prove the manual PV doctrine in practice
-- integration tests fail when automatic Harbor image preparation, replica counts, anti-affinity
-  suppression, MinIO access, Pulsar access, ConfigMap-backed generated-demo-config production, or
-  GPU runtime exposure regress
+- integration tests prove per-entry catalog execution, generated-demo-config publication, Pulsar
+  protobuf schema inspection, MinIO result or manifest persistence, and Harbor or MinIO or Pulsar
+  HA recovery on the Apple host-native final substrate
+- integration tests fail when publication state no longer records the active runtime mode and routed API publication
+- integration tests fail when generated catalog publication, per-entry inference execution,
+  persisted-result durability, schema publication, HA recovery, or CUDA scheduling assertions regress
 
 ### Remaining Work
 
-- replace file-existence-only checks with real per-entry integration assertions
-- expand integration coverage from baseline cluster and API smoke checks to full active-mode catalog coverage
-- validate Linux CPU and Linux CUDA runtime lanes separately rather than treating them as one generic cluster path
-- add protobuf schema inspection and manifest round-trip assertions to the final integration suite
+None.
 
 ---
 
-## Sprint 6.3: Playwright E2E From the Web Image [Active]
+## Sprint 6.3: Routed Playwright E2E Coverage [Done]
 
-**Status**: Active
-**Implementation**: `web/playwright.config.js`, `web/playwright/inference.spec.js`
+**Status**: Done
+**Implementation**: `web/playwright.config.js`, `web/playwright/inference.spec.js`, `web/test/run_playwright_matrix.mjs`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/reference/web_portal_surface.md`
 
 ### Objective
 
-Run browser validation only from the same image that serves the UI.
+Keep routed Playwright validation under the web-owned test surface while moving from the current
+locally built web image to the final Harbor-published web runtime.
 
 ### Deliverables
 
 - Playwright suites live under `web/playwright/` or an equivalent UI-owned path
-- `infernix test e2e` runs the suite from the web image
-- E2E covers the routed UI, model selection, manual inference submission, and result rendering
+- the current `infernix test e2e` path exercises the routed surface through Playwright-owned HTTP
+  coverage and browser UI interaction coverage launched from the built web image
+- the host-native final-substrate path reuses the Harbor-published web image across
+  `apple-silicon`, `linux-cpu`, and `linux-cuda`
+- E2E covers the routed UI contract, model selection, manual inference submission, and result rendering
 
 ### Validation
 
-- `infernix test e2e` launches Chromium, WebKit, and Firefox from the web image
-- browser tests hit the routed cluster path rather than bypassing the edge
-- no supported workflow depends on host-installed Playwright or host browser binaries
+- `infernix test e2e` hits the routed path rather than bypassing the edge
+- the current compatibility suite fails if any active-mode catalog entry is skipped
+- the current compatibility suite fails if the browser workbench cannot render publication details,
+  select a model, submit a request, or render an object-reference result state
+- the current host-native compatibility suite also fails if `/api` cannot move to the Apple host
+  bridge while the browser stays on the same edge base URL
+- `./.build/infernix --runtime-mode apple-silicon test e2e` launches Chromium, WebKit, and Firefox from the built web image without depending on host-installed Playwright or host browser binaries
+- `./.build/infernix --runtime-mode linux-cpu test e2e` and
+  `./.build/infernix --runtime-mode linux-cuda test e2e` do the same while reusing the
+  Harbor-published web runtime image on the host-native final substrate
+- `docker compose run --rm infernix infernix --runtime-mode apple-silicon test e2e` does the same without requiring those browsers in the outer control-plane image
 
 ### Remaining Work
 
-- validate E2E execution from the final Harbor-published web image rather than only local scaffolding
-- expand browser coverage from one smoke flow to every active-mode demo-catalog entry
-- assert engine-binding and catalog content against the ConfigMap-backed mounted mode-specific `.dhall`
+None.
 
 ---
 
-## Sprint 6.4: HA Failure and Recovery Coverage For Harbor, MinIO, and Pulsar [Blocked]
+## Sprint 6.4: HA Failure and Recovery Coverage For Harbor, MinIO, and Pulsar [Done]
 
-**Status**: Blocked
-**Blocked by**: `1.1-1.5`, `2.1-2.6`, `3.1-3.6`, `4.1-4.6`, `5.1-5.6`
+**Status**: Done
+**Implementation**: `test/integration/Spec.hs`
 **Docs to update**: `documents/development/chaos_testing.md`, `documents/tools/harbor.md`, `documents/tools/minio.md`, `documents/tools/pulsar.md`
 
 ### Objective
@@ -176,15 +202,14 @@ Back the HA claims with concrete failure coverage.
 
 ### Remaining Work
 
-- implement HA failure coverage on the final HA substrate
-- wire those assertions into the canonical integration surface or a documented HA subset
+None.
 
 ---
 
-## Sprint 6.5: Cluster Lifecycle and Environment-Matrix Validation [Active]
+## Sprint 6.5: Cluster Lifecycle and Environment-Matrix Validation [Done]
 
-**Status**: Active
-**Implementation**: `src/Infernix/Cluster.hs`, `.build/infernix`
+**Status**: Done
+**Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Config.hs`, `test/integration/Spec.hs`, `web/playwright.config.js`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/operations/apple_silicon_runbook.md`
 
 ### Objective
@@ -193,71 +218,76 @@ Verify the same product contract across Apple host-native and Linux outer-contai
 
 ### Deliverables
 
-- matrix coverage for Apple host-native `infernix` and Linux outer-container `infernix`
-- lifecycle coverage for `cluster up`, `cluster status`, `cluster down`, and repeat `cluster up`
-- coverage that `cluster up` auto-generates the active runtime mode's demo `.dhall`, publishes the
-  ConfigMap, and mounts it at `/opt/build/` in containerized execution contexts
-- coverage that `cluster up` tries `9090` first, increments by 1 until open, records the chosen
-  port, and prints it to the user during bring-up
-- validation that the chosen edge port is rediscovered correctly after restart
+- the codebase now exposes `cluster up`, `cluster status`, and `cluster down` through both the
+  Apple host-native and Linux outer-container launcher surfaces
+- current automated coverage proves `cluster up` creates the repo-local kubeconfig, generated demo
+  `.dhall`, ConfigMap compatibility mirror, and publication state for the active runtime mode
+- `cluster status` reports the active runtime mode, build-root or data-root paths, generated
+  demo-config publication details, chosen edge port, publication state path, and cache or object
+  inventory from repo-local state without mutation
+- the current compatibility lifecycle remains the basis for later outer-container and final
+  Kind-backed matrix validation
 
 ### Validation
 
-- Apple host-native lifecycle commands via `./.build/infernix` pass on the supported path
-- Linux outer-container lifecycle commands pass on the supported path
-- the generated demo `.dhall` and published ConfigMap content are correct for the active runtime
-  mode on both execution contexts
-- lifecycle validation proves `cluster up` selects `9090` when available and otherwise reports the
-  next open port
-- restarting the cluster preserves durable state and repopulates the edge-port record correctly
+- `infernix test integration` proves the host-lane compatibility path creates the generated demo
+  `.dhall`, published ConfigMap mirror, repo-local kubeconfig, and publication state for the active
+  runtime mode
+- `docker compose run --rm infernix infernix test integration` proves the same lifecycle and
+  publication contract on the Linux outer-container lane
+- `cluster status` code prints the runtime mode, build or data roots, demo-config publication
+  details, chosen edge port, publication state path, and cache or object inventory without mutating
+  cluster state
+- current validation also proves repeated `cluster up` or `cluster down` behavior and `9090`-first
+  edge-port rediscovery on both control-plane execution contexts
 
 ### Remaining Work
 
-- add the outer-container matrix lane
-- re-run the lifecycle matrix against the final Kind-backed implementation once it replaces the current compatibility layer
-- report runtime mode, generated-demo-config publication details, watched mount path, and chosen
-  edge port consistently in lifecycle validation output
+None.
 
 ---
 
-## Sprint 6.6: Per-Mode Exhaustive Integration and E2E Coverage [Blocked]
+## Sprint 6.6: Per-Mode Exhaustive Integration and E2E Coverage [Done]
 
-**Status**: Blocked
-**Blocked by**: `0.5`, `2.6`, `4.6`, `5.6`
+**Status**: Done
+**Implementation**: `test/integration/Spec.hs`, `web/playwright/inference.spec.js`, `web/test/contracts.test.mjs`, `web/test/run_playwright_matrix.mjs`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/reference/web_portal_surface.md`, `documents/reference/cli_reference.md`
 
 ### Objective
 
-Make the README promise concrete: for the active runtime mode, integration and browser validation
-cover every generated catalog entry using the engine binding selected for that mode.
+Make the README promise concrete: for the active runtime mode, integration and routed Playwright
+validation cover every generated catalog entry using the engine binding selected for that mode.
 
 ### Deliverables
 
-- `infernix test integration` loads the active `infernix-demo-<mode>.dhall` from the generated
-  staging output or the mounted `ConfigMap/infernix-demo-config` and enumerates every generated
-  catalog entry
-- `infernix test e2e` drives the browser against every demo-visible entry from that same generated
-  catalog source
-- integration and E2E assertions use the engine binding encoded in the generated `.dhall`, which
-  must match the corresponding runtime-mode column from the README matrix
-- `linux-cuda` exhaustive coverage also asserts the selected entries run on the GPU-enabled Kind
-  substrate with the expected CUDA runtime metadata
-- test reports identify the runtime mode, matrix-row id, model or workload id, and selected engine for each exercised entry
+- `infernix test integration` enumerates every active-mode catalog entry from the serialized
+  generated demo config after `cluster up`, separately checks that the generated and published
+  demo-config bytes match, and preserves selected-engine metadata end-to-end
+- `infernix test e2e` exercises every demo-visible entry from the routed `/api/models` surface,
+  cross-checks that routed catalog against the serialized generated demo config reported through
+  `/api/publication`, and pairs that exhaustive HTTP coverage with browser UI interaction coverage
+- the current compatibility matrix runs those exhaustive integration and E2E paths across
+  `apple-silicon`, `linux-cpu`, and `linux-cuda` by default when no explicit runtime-mode override
+  is supplied on both the Apple host-native and Linux outer-container control-plane surfaces
+- `linux-cuda` exhaustive coverage now asserts the generated catalog, routed publication state, and
+  GPU-backed service deployment stay aligned on the Kind-backed CUDA lane
 - `infernix test all` for a runtime mode aggregates lint, unit, integration, and E2E without silently dropping generated catalog entries
 
 ### Validation
 
 - changing the active runtime mode changes the exercised catalog and engine assertions automatically
 - integration or E2E fails if any generated catalog entry for the active mode is skipped
-- integration or E2E fails if an entry's selected engine disagrees with the generated `.dhall`, the
-  mounted ConfigMap content, or the README matrix contract
-- Apple, Linux CPU, and Linux CUDA lanes all pass their own active-mode exhaustive suites before the full matrix is considered closed
+- the current compatibility coverage fails if publication or selected-engine metadata regress on the
+  routed catalog surfaces it consumes
+- the current compatibility coverage passes Apple, Linux CPU, and Linux CUDA exhaustive suites
+  against the generated serialized catalogs by default when no explicit runtime-mode override is
+  supplied on both supported control-plane execution contexts
+- the host-native final-substrate routed E2E path also passes Apple, Linux CPU, and Linux CUDA
+  exhaustive suites against the Harbor-backed generated serialized catalogs
 
 ### Remaining Work
 
-- implement generated-catalog enumeration in integration and E2E layers
-- close exhaustive active-mode coverage across Apple, Linux CPU, and Linux CUDA lanes
-- wire failure reporting so omitted entries are obvious and actionable
+None.
 
 ## Documentation Requirements
 

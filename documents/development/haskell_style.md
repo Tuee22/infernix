@@ -7,10 +7,12 @@
 
 ## Policy
 
-- `fourmolu` is the formatter for repo-owned Haskell source
-- `cabal-fmt` formats `.cabal` and `cabal.project`
+- `ormolu` is the formatter for repo-owned Haskell source
+- `cabal format` is the formatter for `infernix.cabal`
 - `hlint` provides lint checks
 - strict compiler warnings are enabled and treated as errors in repository validation
+- `infernix test lint` bootstraps the repo-owned formatter and linter binaries through
+  `tools/haskell_style_check.py` under `./.build/haskell-style-tools/`
 
 ## Entry Point
 

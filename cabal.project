@@ -1,2 +1,11 @@
 packages: .
 write-ghc-environment-files: never
+
+allow-newer:
+    binary:containers
+  , lens-family:base
+  , lens-family:containers
+  , lens-family:lens-family-core
+  , lens-family-core:containers
+  , proto-lens:lens-family
+  , proto-lens-setup:Cabal

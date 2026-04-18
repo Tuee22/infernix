@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: infernix-edge-routes
+  namespace: platform
+data:
+  edge-port: {{ .Values.edge.port | quote }}
+  routes.yaml: |
+{{ toYaml .Values.edge.routes | nindent 4 }}

@@ -8,6 +8,9 @@
 ## Rules
 
 - MinIO is the authoritative object store
+- MinIO runs as a four-node distributed cluster on the supported Kind path
+- the routed service runtime stores protobuf manifests and runtime results in MinIO buckets
+  `infernix-runtime` and `infernix-results`
 - the MinIO console is exposed through `/minio/console`
 - the MinIO S3 API is exposed through `/minio/s3`
 

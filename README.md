@@ -26,13 +26,14 @@ This repository serves two aligned purposes:
 - one mandatory local HA topology: Harbor, MinIO, and Pulsar on Kind
 - one local Harbor registry as the image source for every non-Harbor pod
 - one manual persistent-storage doctrine rooted at `./.data/`
-- one PureScript demo webapp, deployed through Helm, with Haskell-owned frontend contracts
+- one repo-owned demo webapp, deployed through Helm, with Haskell-owned frontend contracts
 - one browser-based manual inference demo workbench for any registered model
 - three runtime targets: Apple Silicon or Metal, Ubuntu 24.04 CPU, and Ubuntu 24.04 NVIDIA CUDA
   containers
-- one validation surface spanning `fourmolu`, `cabal-fmt`, `hlint`, unit tests, integration tests,
-  `purescript-spec`, and Playwright, with coverage expected to grow until the full runtime matrix is
-  exercised through the demo webapp and test suite
+- one validation surface spanning repo-owned `ormolu`, `cabal format`, `hlint`, unit tests,
+  integration tests, generated-contract or view tests, and Playwright, with the current
+  compatibility implementation now exercising Apple, Linux CPU, and Linux CUDA catalog coverage
+  through the demo webapp and test suite
 
 ## What Infernix Does
 
@@ -78,7 +79,7 @@ The supported local platform is built around:
 - one local Harbor registry used by every cluster pod except Harbor's own bootstrap path
 - one cluster-resident demo webapp image, built from a separate webapp binary via `web/Dockerfile`,
   that also owns Playwright browser dependencies
-- one repo-owned `cabal.project` that keeps host-native Cabal artifacts under `./.build/`
+- one repo-owned `./cabalw` wrapper that keeps host-native Cabal artifacts under `./.build/`
 - one repo-local kubeconfig managed under the active build-output location rather than the user's
   global kubeconfig
 
@@ -97,24 +98,25 @@ Build the binary with the repo-owned Cabal defaults, bring up the test cluster, 
 then tear it down:
 
 ```bash
-# Build the infernix binary using the repo-owned Cabal defaults.
-cabal build infernix
+# Build the infernix binary using the supported repo-owned host wrapper.
+./cabalw build exe:infernix
 # Reconcile the Kind test cluster, storage, images, and Helm workloads.
 ./.build/infernix cluster up
 # Report cluster health, edge routing, and durable-state status.
 ./.build/infernix cluster status
 # Query the cluster through the repo-local kubeconfig wrapper.
 ./.build/infernix kubectl get pods -A
-# Run lint, unit, integration, and E2E validation.
+# Run lint, unit, integration, and E2E validation across the current compatibility matrix.
 ./.build/infernix test all
 # Tear down the Kind cluster while preserving authoritative data under ./.data.
 ./.build/infernix cluster down
 ```
 
-The repo-owned `cabal.project` keeps generated host-native artifacts under `./.build/`. `cluster
-up` auto-generates the mode-specific demo Dhall config for the active Apple mode, writes the
-repo-local kubeconfig to
-`./.build/infernix.kubeconfig`, and does not mutate `$HOME/.kube/config`.
+The repo-owned `./cabalw` wrapper injects `--builddir=./.build/cabal` unless a supported command
+passes its own builddir explicitly, so generated host-native artifacts stay under `./.build/`.
+`cluster up` auto-generates the mode-specific demo Dhall config for the active Apple mode, writes
+the repo-local kubeconfig to `./.build/infernix.kubeconfig`, and does not mutate
+`$HOME/.kube/config`.
 
 ### From Outer Container
 
@@ -233,7 +235,7 @@ rebuildable.
 
 ## Web UI and Testing
 
-The browser surface is a PureScript demo application with Haskell-generated shared contracts.
+The browser surface is a repo-owned demo application with Haskell-generated shared contracts.
 
 - Haskell types remain the source of truth for the frontend contract
 - the demo webapp is a separate binary from `infernix` and is built through `web/Dockerfile`
@@ -241,7 +243,7 @@ The browser surface is a PureScript demo application with Haskell-generated shar
 - the demo webapp is deployed through repo-owned Helm chart templates and values
 - the demo UI catalog is derived from the generated mode-specific demo `.dhall` file for the active
   mode
-- `purescript-spec` covers contract and view behavior
+- repo-owned unit tests cover generated contracts, publication rendering, and view behavior
 - Playwright runs from the same image that serves the demo web UI
 - the demo UI can submit manual inference requests against any registered model
 - the demo UI, API surface, generated contracts, and validation suites must expand until every supported

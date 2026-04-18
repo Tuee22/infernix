@@ -5,7 +5,8 @@
   "scripts": {
     "build": "node ./build.mjs",
     "test:unit": "npm run build && node ./test/contracts.test.mjs",
-    "test:e2e": "npm run build && playwright test"
+    "test:e2e": "node ./test/run_playwright_matrix.mjs",
+    "test:e2e:image": "npx playwright test"
   },
   "devDependencies": {
     "playwright": "1.57.0"
