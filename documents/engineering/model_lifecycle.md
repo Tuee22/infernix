@@ -15,16 +15,19 @@
   to point at durable source-artifact manifests under
   `source-artifacts/<runtime-mode>/<model-id>/source.json`
 - when the source URL is a local file, the routed worker layer also copies the payload into
-  `source-artifacts/<runtime-mode>/<model-id>/payload.bin`; remote HTTP preview fetch is available
-  only when explicitly enabled so ordinary local validation stays deterministic
+  `source-artifacts/<runtime-mode>/<model-id>/payload.bin`; when the source URL is remote, the
+  routed worker layer materializes direct upstream payloads or provider metadata into the same
+  durable prefix through direct HTTP downloads or Hugging Face or GitHub metadata fetches
 - repo-owned `.proto` schemas define the contract for durable manifests and Pulsar payloads
 - the routed service path registers protobuf schemas on Pulsar topics for requests, results, and
   coordination messages
 - derived cache state is keyed by runtime mode and model identity and is always rebuildable
 - the routed `/api/cache` surface operates on the manifest-backed durable contract exposed by the
   service runtime, including engine-adapter and source-artifact metadata derived from the durable bundle
-- the host-side CLI cache helpers keep protobuf manifest fixtures under
-  `./.data/object-store/manifests/` for local rebuild or unit coverage
+- the host-side CLI or unit helpers keep protobuf manifest fixtures under
+  `./.data/object-store/manifests/` for local rebuild or unit coverage, and they now materialize
+  the same durable bundle plus source-artifact-manifest contract through an explicit local
+  fixture helper rather than writing placeholder bundle metadata
 - the service returns typed object references when outputs exceed inline limits
 
 ## Cross-References

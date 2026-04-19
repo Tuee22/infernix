@@ -24,7 +24,7 @@
 - the workbench surfaces the active runtime mode, control-plane context, daemon location, catalog source, chosen edge port, demo-config path, API-upstream mode, and routed publication inventory through `/api/publication`
 - the workbench also renders routed-upstream health and durable-backing-state details for the Harbor, MinIO, and Pulsar route surfaces
 - the user can browse any generated model entry, inspect its selected engine and request shape, and submit a manual inference request through `/api`
-- manual inference requests execute through the repo-owned engine-aware managed subprocess worker layer backed by durable runtime artifact bundles and source-artifact manifests rather than browser-only placeholders
+- manual inference requests execute through process-isolated engine-worker adapters backed by durable runtime artifact bundles and direct-upstream source-artifact manifests; automated validation injects the repo-owned engine fixture command while supported-host third-party engine validation remains open
 - the workbench renders family-aware request guidance, artifact metadata, submit labels, and result framing without introducing a browser-only catalog
 - large outputs surface as object-reference results with browser-visible links
 - switching runtime modes changes the generated catalog and selected engine bindings without changing the browser route structure

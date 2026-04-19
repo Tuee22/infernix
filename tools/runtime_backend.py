@@ -89,13 +89,16 @@ class RuntimeBackend:
         control_plane_context: str,
         daemon_location: str,
         publication_state: dict,
+        allow_filesystem_fallback: bool = False,
     ) -> None:
         self.paths = paths
         self.runtime_mode = runtime_mode
         self.control_plane_context = control_plane_context
         self.daemon_location = daemon_location
         self.publication_state = publication_state
+        self.allow_filesystem_fallback = allow_filesystem_fallback
         self.external_config = resolve_external_backend_config(publication_state, daemon_location)
+        self.source_artifact_overrides = parse_source_artifact_overrides()
         self.minio: Minio | None = None
         self.runtime_bucket: str | None = None
         self.results_bucket: str | None = None
@@ -106,18 +109,18 @@ class RuntimeBackend:
         self.coordination_producer: pulsar.Producer | None = None
         self.request_consumer: pulsar.Consumer | None = None
         self.result_consumer: pulsar.Consumer | None = None
-        self.backend_access_mode = "filesystem-fallback"
-        self.worker_execution_mode = "managed-subprocess-workers"
-        self.worker_adapter_mode = "engine-aware"
-        self.remote_source_fetch_enabled = remote_source_fetch_enabled()
-        self.artifact_acquisition_mode = (
-            "local-copy-and-opt-in-remote-fetch"
-            if not self.remote_source_fetch_enabled
-            else "local-copy-and-remote-fetch"
-        )
+        self.backend_access_mode = "filesystem-fixture"
+        self.worker_execution_mode = "process-isolated-engine-workers"
+        self.worker_adapter_mode = "configured-engine-processes"
+        self.artifact_acquisition_mode = "direct-upstream-fetch"
         self.worker_handles: dict[tuple[str, str, str], WorkerHandle] = {}
         if self.external_config is not None:
             self._initialize_external_backends(self.external_config)
+        elif not self.allow_filesystem_fallback:
+            raise RuntimeError(
+                "service runtime requires a MinIO and Pulsar backend; "
+                "filesystem-fixture mode must be enabled explicitly for local fixture ownership"
+            )
 
     def close(self) -> None:
         for worker_handle in self.worker_handles.values():
@@ -636,7 +639,7 @@ class RuntimeBackend:
         )
 
     def _ensure_source_artifact(self, model: dict) -> SourceArtifact:
-        source_url = model["downloadUrl"]
+        source_url = source_artifact_url_for(self.source_artifact_overrides, model)
         prefix = f"source-artifacts/{self.runtime_mode}/{model['modelId']}"
         manifest_object_key = f"{prefix}/source.json"
         manifest_local_path = self.paths["object_store_root"] / manifest_object_key
@@ -659,27 +662,20 @@ class RuntimeBackend:
             except OSError as exc:
                 fetch_status = "unavailable"
                 error = str(exc)
-        elif self.remote_source_fetch_enabled:
-            acquisition_mode = "remote-http-preview"
+        else:
             try:
-                request = urllib.request.Request(
-                    source_url,
-                    headers={"User-Agent": "infernix-runtime/0.1"},
-                    method="GET",
-                )
-                with urllib.request.urlopen(request, timeout=20) as response:
-                    resolved_url = response.geturl()
-                    content_type = response.headers.get_content_type() or "application/octet-stream"
-                    max_bytes = remote_source_fetch_max_bytes()
-                    preview = response.read(max_bytes + 1)
-                    payload_bytes = preview[:max_bytes]
-                    fetch_status = "truncated" if len(preview) > max_bytes else "materialized"
-            except (urllib.error.URLError, OSError, ValueError) as exc:
+                (
+                    acquisition_mode,
+                    fetch_status,
+                    resolved_url,
+                    content_type,
+                    error,
+                    payload_bytes,
+                ) = fetch_remote_source_artifact(source_url)
+            except (urllib.error.URLError, OSError, ValueError, json.JSONDecodeError) as exc:
+                acquisition_mode = "direct-upstream-fetch"
                 fetch_status = "unavailable"
                 error = str(exc)
-        else:
-            acquisition_mode = "remote-fetch-disabled"
-            fetch_status = "unfetched"
 
         if payload_bytes is not None:
             payload_object_key = f"{prefix}/payload.bin"
@@ -696,7 +692,7 @@ class RuntimeBackend:
                 "schemaVersion": 1,
                 "runtimeMode": self.runtime_mode,
                 "modelId": model["modelId"],
-                "sourceDownloadUrl": source_url,
+                "sourceDownloadUrl": model["downloadUrl"],
                 "resolvedSourceUrl": resolved_url,
                 "acquisitionMode": acquisition_mode,
                 "fetchStatus": fetch_status,
@@ -790,6 +786,9 @@ class RuntimeBackend:
         response = json.loads(response_line)
         if response.get("requestId") != request_id:
             raise RuntimeError(f"worker returned a mismatched request id for {model['modelId']}")
+        error_message = response.get("error")
+        if isinstance(error_message, str) and error_message:
+            raise RuntimeError(error_message)
         output_text = response.get("outputText")
         if not isinstance(output_text, str):
             raise RuntimeError(f"worker returned an invalid payload for {model['modelId']}")
@@ -1243,12 +1242,18 @@ def engine_adapter_for(selected_engine: str, runtime_mode: str) -> dict[str, obj
         return command_adapter("llama-cpp-cli", ["llama-cli", "main"])
     if "whisper.cpp" in normalized:
         return command_adapter("whisper-cpp-cli", ["whisper-cli", "main"])
+    if "jvm" in normalized:
+        return command_adapter("jvm-cli", ["java"])
     if "ctranslate2" in normalized:
         return module_adapter("ctranslate2-python", "ctranslate2")
+    if "onnx runtime" in normalized:
+        return module_adapter("onnxruntime-python", "onnxruntime")
     if "vllm" in normalized:
         return module_adapter("vllm-python", "vllm")
     if "mlx" in normalized:
         return module_adapter("mlx-python", "mlx")
+    if "diffusers" in normalized or "comfyui" in normalized:
+        return module_adapter("diffusers-python", "diffusers")
     if "tensorflow" in normalized:
         return module_adapter("tensorflow-python", "tensorflow")
     if "core ml" in normalized:
@@ -1258,13 +1263,7 @@ def engine_adapter_for(selected_engine: str, runtime_mode: str) -> dict[str, obj
     if "pytorch" in normalized or "transformers" in normalized:
         module_name = "torch" if runtime_mode == "linux-cuda" else "transformers"
         return module_adapter("pytorch-python", module_name)
-    return {
-        "engineAdapterId": "fallback-template",
-        "engineAdapterType": "builtin-fallback",
-        "engineAdapterLocator": "",
-        "engineAdapterAvailable": True,
-        "engineAdapterAvailability": "built-in fallback renderer",
-    }
+    raise ValueError(f"unsupported selected engine mapping: {selected_engine}")
 
 
 def command_adapter(adapter_id: str, command_names: list[str]) -> dict[str, object]:
@@ -1289,8 +1288,12 @@ def module_adapter(adapter_id: str, module_name: str) -> dict[str, object]:
     }
 
 
-def remote_source_fetch_enabled() -> bool:
-    return os.environ.get("INFERNIX_ENABLE_REMOTE_SOURCE_FETCH", "0") == "1"
+def fetch_remote_source_artifact(source_url: str) -> tuple[str, str, str, str, str, bytes | None]:
+    if is_huggingface_model_url(source_url):
+        return fetch_huggingface_source_artifact(source_url)
+    if is_github_repository_url(source_url):
+        return fetch_github_source_artifact(source_url)
+    return fetch_http_source_artifact(source_url)
 
 
 def remote_source_fetch_max_bytes() -> int:
@@ -1309,6 +1312,179 @@ def local_source_artifact_path(source_url: str) -> pathlib.Path | None:
     if parsed.scheme == "" and pathlib.Path(source_url).exists():
         return pathlib.Path(source_url)
     return None
+
+
+def parse_source_artifact_overrides() -> dict[str, str]:
+    raw_value = os.environ.get("INFERNIX_SOURCE_ARTIFACT_OVERRIDES", "")
+    if raw_value == "":
+        return {}
+    payload = json.loads(raw_value)
+    if not isinstance(payload, dict):
+        raise ValueError("INFERNIX_SOURCE_ARTIFACT_OVERRIDES must be a JSON object")
+    overrides: dict[str, str] = {}
+    for key, value in payload.items():
+        if isinstance(key, str) and isinstance(value, str) and value != "":
+            overrides[key] = value
+    return overrides
+
+
+def source_artifact_url_for(overrides: dict[str, str], model: dict[str, object]) -> str:
+    model_id = model.get("modelId")
+    if isinstance(model_id, str):
+        override = overrides.get(model_id)
+        if override is not None:
+            return override
+    source_url = model.get("downloadUrl")
+    if not isinstance(source_url, str) or source_url == "":
+        raise ValueError("model downloadUrl must be a non-empty string")
+    return source_url
+
+
+def is_huggingface_model_url(source_url: str) -> bool:
+    parsed = urllib.parse.urlparse(source_url)
+    return parsed.scheme in {"http", "https"} and parsed.netloc == "huggingface.co"
+
+
+def is_github_repository_url(source_url: str) -> bool:
+    parsed = urllib.parse.urlparse(source_url)
+    return parsed.scheme in {"http", "https"} and parsed.netloc == "github.com"
+
+
+def fetch_huggingface_source_artifact(source_url: str) -> tuple[str, str, str, str, str, bytes]:
+    repo_id = parse_huggingface_repo_id(source_url)
+    api_url = f"https://huggingface.co/api/models/{repo_id}"
+    metadata = fetch_json_url(api_url)
+    payload: dict[str, object] = {
+        "provider": "huggingface",
+        "modelId": repo_id,
+        "apiUrl": api_url,
+        "metadata": {
+            "id": metadata.get("id"),
+            "sha": metadata.get("sha"),
+            "pipeline_tag": metadata.get("pipeline_tag"),
+            "library_name": metadata.get("library_name"),
+            "downloads": metadata.get("downloads"),
+            "likes": metadata.get("likes"),
+            "tags": metadata.get("tags", [])[:32] if isinstance(metadata.get("tags"), list) else [],
+            "siblings": [
+                sibling.get("rfilename")
+                for sibling in metadata.get("siblings", [])[:128]
+                if isinstance(sibling, dict) and isinstance(sibling.get("rfilename"), str)
+            ],
+        },
+    }
+    readme_text = fetch_optional_text(f"https://huggingface.co/{repo_id}/resolve/main/README.md", remote_source_fetch_max_bytes() // 2)
+    if readme_text:
+        payload["readme"] = readme_text
+    return (
+        "huggingface-model-metadata",
+        "materialized",
+        api_url,
+        "application/json",
+        "",
+        json.dumps(payload, indent=2, sort_keys=True).encode("utf-8"),
+    )
+
+
+def fetch_github_source_artifact(source_url: str) -> tuple[str, str, str, str, str, bytes]:
+    owner, repo = parse_github_repo(source_url)
+    api_url = f"https://api.github.com/repos/{owner}/{repo}"
+    metadata = fetch_json_url(api_url)
+    payload: dict[str, object] = {
+        "provider": "github",
+        "repository": f"{owner}/{repo}",
+        "apiUrl": api_url,
+        "metadata": {
+            "full_name": metadata.get("full_name"),
+            "default_branch": metadata.get("default_branch"),
+            "description": metadata.get("description"),
+            "stargazers_count": metadata.get("stargazers_count"),
+            "forks_count": metadata.get("forks_count"),
+            "open_issues_count": metadata.get("open_issues_count"),
+            "html_url": metadata.get("html_url"),
+        },
+    }
+    default_branch = metadata.get("default_branch")
+    if isinstance(default_branch, str) and default_branch:
+        readme_url = f"https://raw.githubusercontent.com/{owner}/{repo}/{default_branch}/README.md"
+        readme_text = fetch_optional_text(readme_url, remote_source_fetch_max_bytes() // 2)
+        if readme_text:
+            payload["readme"] = readme_text
+    return (
+        "github-repository-metadata",
+        "materialized",
+        api_url,
+        "application/json",
+        "",
+        json.dumps(payload, indent=2, sort_keys=True).encode("utf-8"),
+    )
+
+
+def fetch_http_source_artifact(source_url: str) -> tuple[str, str, str, str, str, bytes]:
+    request = urllib.request.Request(
+        source_url,
+        headers={"User-Agent": "infernix-runtime/0.1"},
+        method="GET",
+    )
+    with urllib.request.urlopen(request, timeout=20) as response:
+        resolved_url = response.geturl()
+        content_type = response.headers.get_content_type() or "application/octet-stream"
+        max_bytes = remote_source_fetch_max_bytes()
+        payload = response.read(max_bytes + 1)
+        fetch_status = "truncated" if len(payload) > max_bytes else "materialized"
+        return (
+            "direct-http-download",
+            fetch_status,
+            resolved_url,
+            content_type,
+            "",
+            payload[:max_bytes],
+        )
+
+
+def parse_huggingface_repo_id(source_url: str) -> str:
+    parsed = urllib.parse.urlparse(source_url)
+    segments = [segment for segment in parsed.path.split("/") if segment]
+    if len(segments) < 2:
+        raise ValueError(f"unsupported Hugging Face model URL: {source_url}")
+    return "/".join(segments[:2])
+
+
+def parse_github_repo(source_url: str) -> tuple[str, str]:
+    parsed = urllib.parse.urlparse(source_url)
+    segments = [segment for segment in parsed.path.split("/") if segment]
+    if len(segments) < 2:
+        raise ValueError(f"unsupported GitHub repository URL: {source_url}")
+    return segments[0], segments[1]
+
+
+def fetch_json_url(url: str) -> dict[str, object]:
+    request = urllib.request.Request(
+        url,
+        headers={"User-Agent": "infernix-runtime/0.1", "Accept": "application/json"},
+        method="GET",
+    )
+    with urllib.request.urlopen(request, timeout=20) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"expected JSON object from {url}")
+    return payload
+
+
+def fetch_optional_text(url: str, max_bytes: int) -> str:
+    request = urllib.request.Request(
+        url,
+        headers={"User-Agent": "infernix-runtime/0.1"},
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            payload = response.read(max_bytes + 1)
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return ""
+        raise
+    return payload[:max_bytes].decode("utf-8", errors="replace")
 
 
 def bundle_string(payload: dict[str, object], field_name: str) -> str:

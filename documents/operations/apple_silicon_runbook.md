@@ -24,9 +24,13 @@
 - host-native service mode repoints `/api` through the same routed edge entrypoint instead of changing the browser base URL
 - when the host bridge is active, the host-native service listens on a bridge port behind the edge and the publication payload reports `apiUpstream.mode = host-daemon-bridge`
 - host-native service mode reaches MinIO and Pulsar through that shared edge inventory rather than separate host-only ports
-- host-native service mode uses the same engine-aware managed subprocess worker contract as the cluster-resident service while retrieving durable artifacts and source-artifact manifests through the routed MinIO or Pulsar bridge surfaces
+- host-native service mode is not supported as an implicit filesystem-backed daemon; it requires
+  the routed MinIO or Pulsar bridge contract or explicit backend overrides, while filesystem-backed
+  materialization remains fixture-only for local unit coverage
+- host-native service mode uses the same process-isolated engine-worker adapter contract as the cluster-resident service while retrieving durable artifacts and direct-upstream source-artifact manifests through the routed MinIO or Pulsar bridge surfaces; automated validation injects the repo-owned engine fixture command while supported-host Apple engine validation remains open
 - `test integration`, `test e2e`, and `test all` repeat the default validation suites across
-  `apple-silicon`, `linux-cpu`, and `linux-cuda` when no explicit runtime-mode override is supplied
+  `apple-silicon` and `linux-cpu` when no explicit runtime-mode override is supplied; the same
+  commands auto-include `linux-cuda` only on hosts that satisfy the NVIDIA preflight contract
 
 ## Cross-References
 

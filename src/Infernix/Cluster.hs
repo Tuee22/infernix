@@ -4,12 +4,14 @@ module Infernix.Cluster
   ( clusterDown,
     clusterStatus,
     clusterUp,
+    linuxCudaSupportedOnHost,
     loadClusterState,
     runKubectlCompat,
   )
 where
 
 import Control.Concurrent (threadDelay)
+import Control.Exception (IOException, try)
 import Control.Monad (forM_, unless, when)
 import Data.ByteString.Lazy qualified as Lazy
 import Data.ByteString.Lazy.Char8 qualified as LazyChar8
@@ -49,7 +51,8 @@ helmRepositories =
   [ ("goharbor", "https://helm.goharbor.io"),
     ("apachepulsar", "https://pulsar.apache.org/charts"),
     ("bitnami", "https://charts.bitnami.com/bitnami"),
-    ("ingress-nginx", "https://kubernetes.github.io/ingress-nginx")
+    ("ingress-nginx", "https://kubernetes.github.io/ingress-nginx"),
+    ("nvdp", "https://nvidia.github.io/k8s-device-plugin")
   ]
 
 helmDependencyArchives :: [FilePath]
@@ -90,6 +93,12 @@ finalPhaseStatefulSets =
     "statefulset/infernix-minio"
   ]
 
+nvidiaDevicePluginVersion :: String
+nvidiaDevicePluginVersion = "0.17.1"
+
+nvkindGoInstallTarget :: String
+nvkindGoInstallTarget = "github.com/NVIDIA/nvkind/cmd/nvkind@8bce71ec58cf12b4003758eb4e49adac53cc40f2"
+
 data HelmDeployPhase
   = WarmupPhase
   | BootstrapPhase
@@ -107,6 +116,37 @@ clusterUp maybeRuntimeMode = do
   runtimeMode <- Config.resolveRuntimeMode maybeRuntimeMode
   let controlPlane = Config.controlPlaneContext paths
   requestedPort <- chooseEdgePort paths
+  let requestedDemoConfig =
+        DemoConfig
+          { configRuntimeMode = runtimeMode,
+            configEdgePort = requestedPort,
+            configMapName = "infernix-demo-config",
+            generatedPath = Config.generatedDemoConfigPath paths runtimeMode,
+            mountedPath = Config.watchedDemoConfigPath runtimeMode,
+            models = catalogForMode runtimeMode
+          }
+      requestedPayload = encodeDemoConfig requestedDemoConfig
+  createDirectoryIfMissing True (buildRoot paths)
+  claimDiscoveryTime <- getCurrentTime
+  let claimDiscoveryState =
+        ClusterState
+          { clusterPresent = True,
+            edgePort = requestedPort,
+            routes = routeInventory,
+            storageClass = "infernix-manual",
+            claims = seedClaims,
+            clusterRuntimeMode = runtimeMode,
+            kubeconfigPath = Config.generatedKubeconfigPath paths,
+            generatedDemoConfigPath = Config.generatedDemoConfigPath paths runtimeMode,
+            publishedDemoConfigPath = Config.publishedConfigMapCatalogPath paths runtimeMode,
+            publishedConfigMapManifestPath = Config.publishedConfigMapManifestPath paths,
+            mountedDemoConfigPath = Config.watchedDemoConfigPath runtimeMode,
+            updatedAt = claimDiscoveryTime
+          }
+  claimDiscoveryValuesPath <- writeHelmValuesFile paths controlPlane claimDiscoveryState requestedPayload FinalPhase
+  claimDiscoveryRenderedChartPath <- renderHelmChart paths runtimeMode [claimDiscoveryValuesPath]
+  discoveredClaims <- discoverPersistentClaims paths claimDiscoveryRenderedChartPath
+  mapM_ (createDirectoryIfMissing True . claimDirectory paths) discoveredClaims
   (edgePortValue, kubeconfigContents) <- ensureKindCluster paths runtimeMode requestedPort
   writeFile (edgePortPath paths) (show edgePortValue)
   writeTextFile (Config.generatedKubeconfigPath paths) (Text.pack kubeconfigContents)
@@ -155,8 +195,6 @@ clusterUp maybeRuntimeMode = do
   bootstrapValuesPath <- writeHelmValuesFile paths controlPlane seedState payload BootstrapPhase
   finalValuesPath <- writeHelmValuesFile paths controlPlane seedState payload FinalPhase
   renderedChartPath <- renderHelmChart paths runtimeMode [finalValuesPath]
-  discoveredClaims <- discoverPersistentClaims paths renderedChartPath
-  mapM_ (createDirectoryIfMissing True . claimDirectory paths) discoveredClaims
   applyBootstrapState paths runtimeMode discoveredClaims
   let state = seedState {claims = discoveredClaims}
   writeFile publicationPath (renderPublicationState controlPlane state)
@@ -370,7 +408,9 @@ ensureKindCluster paths runtimeMode requestedPort = do
             )
 
 createKindCluster :: Paths -> RuntimeMode -> Int -> IO Int
-createKindCluster paths runtimeMode = go
+createKindCluster paths runtimeMode = case runtimeMode of
+  LinuxCuda -> createLinuxCudaCluster paths
+  _ -> go
   where
     go candidatePort = do
       configPath <- writeGeneratedKindConfig paths runtimeMode candidatePort
@@ -388,6 +428,122 @@ createKindCluster paths runtimeMode = go
           | otherwise ->
               ioError
                 (userError ("kind create cluster failed for " <> kindClusterName paths runtimeMode <> ":\n" <> err))
+
+createLinuxCudaCluster :: Paths -> Int -> IO Int
+createLinuxCudaCluster paths = go
+  where
+    go candidatePort = do
+      ensureLinuxCudaHostPrerequisites
+      nvkindBinary <- ensureNvkindBinary paths
+      configPath <- writeGeneratedKindConfig paths LinuxCuda candidatePort
+      result <-
+        tryCommand
+          Nothing
+          [("KUBECONFIG", Config.generatedKubeconfigPath paths)]
+          nvkindBinary
+          [ "cluster",
+            "create",
+            "--name",
+            kindClusterName paths LinuxCuda,
+            "--config-template",
+            configPath,
+            "--kubeconfig",
+            Config.generatedKubeconfigPath paths,
+            "--wait",
+            "5m"
+          ]
+      case result of
+        Right _ -> pure candidatePort
+        Left err
+          | "address already in use" `List.isInfixOf` err ->
+              go (candidatePort + 1)
+          | otherwise ->
+              ioError
+                (userError ("nvkind cluster create failed for " <> kindClusterName paths LinuxCuda <> ":\n" <> err))
+
+ensureLinuxCudaHostPrerequisites :: IO ()
+ensureLinuxCudaHostPrerequisites = do
+  supported <- linuxCudaSupportedOnHost
+  unless supported $ do
+    failureReport <- linuxCudaHostFailureReport
+    ioError (userError failureReport)
+
+linuxCudaSupportedOnHost :: IO Bool
+linuxCudaSupportedOnHost = do
+  hostGpuResult <- tryCommand Nothing [] "nvidia-smi" ["-L"]
+  dockerRuntimeResult <- tryCommand Nothing [] "docker" ["run", "--rm", "--runtime=nvidia", "-e", "NVIDIA_VISIBLE_DEVICES=all", "ubuntu:22.04", "nvidia-smi", "-L"]
+  dockerVolumeMountResult <- tryCommand Nothing [] "docker" ["run", "--rm", "-v", "/dev/null:/var/run/nvidia-container-devices/all", "ubuntu:22.04", "nvidia-smi", "-L"]
+  pure
+    ( case (hostGpuResult, dockerRuntimeResult, dockerVolumeMountResult) of
+        (Right _, Right _, Right _) -> True
+        _ -> False
+    )
+
+linuxCudaHostFailureReport :: IO String
+linuxCudaHostFailureReport = do
+  hostGpuResult <- tryCommand Nothing [] "nvidia-smi" ["-L"]
+  dockerRuntimeResult <- tryCommand Nothing [] "docker" ["run", "--rm", "--runtime=nvidia", "-e", "NVIDIA_VISIBLE_DEVICES=all", "ubuntu:22.04", "nvidia-smi", "-L"]
+  dockerVolumeMountResult <- tryCommand Nothing [] "docker" ["run", "--rm", "-v", "/dev/null:/var/run/nvidia-container-devices/all", "ubuntu:22.04", "nvidia-smi", "-L"]
+  pure
+    ( unlines
+        [ "linux-cuda requires a host with real NVIDIA GPUs plus a Docker engine configured for the NVIDIA container toolkit.",
+          "",
+          "Required preflight commands:",
+          "  nvidia-smi -L",
+          "  docker run --rm --runtime=nvidia -e NVIDIA_VISIBLE_DEVICES=all ubuntu:22.04 nvidia-smi -L",
+          "  docker run --rm -v /dev/null:/var/run/nvidia-container-devices/all ubuntu:22.04 nvidia-smi -L",
+          "",
+          "If Docker is not configured yet, follow the NVIDIA toolkit setup sequence:",
+          "  sudo nvidia-ctk runtime configure --runtime=docker --set-as-default --cdi.enabled",
+          "  sudo nvidia-ctk config --set accept-nvidia-visible-devices-as-volume-mounts=true --in-place",
+          "  sudo systemctl restart docker",
+          "",
+          "Observed failures:",
+          "host nvidia-smi:",
+          renderCommandOutcome hostGpuResult,
+          "docker --runtime=nvidia:",
+          renderCommandOutcome dockerRuntimeResult,
+          "docker NVIDIA device mount:",
+          renderCommandOutcome dockerVolumeMountResult
+        ]
+    )
+  where
+    renderCommandOutcome result = case result of
+      Right output -> output
+      Left err -> err
+
+ensureNvkindBinary :: Paths -> IO FilePath
+ensureNvkindBinary paths = do
+  let binaryPath = buildRoot paths </> "tools" </> "nvkind"
+      binaryDirectory = takeDirectory binaryPath
+  binaryExists <- doesFileExist binaryPath
+  if binaryExists
+    then pure binaryPath
+    else do
+      createDirectoryIfMissing True binaryDirectory
+      goResult <- tryCommand Nothing [] "go" ["version"]
+      case goResult of
+        Right _ ->
+          runCommand
+            Nothing
+            [("GOBIN", binaryDirectory)]
+            "go"
+            ["install", nvkindGoInstallTarget]
+        Left _ ->
+          runCommand
+            Nothing
+            []
+            "docker"
+            [ "run",
+              "--rm",
+              "-v",
+              binaryDirectory <> ":/go/bin",
+              "golang:1.23",
+              "go",
+              "install",
+              nvkindGoInstallTarget
+            ]
+      pure binaryPath
 
 waitForKindKubeconfig :: Paths -> RuntimeMode -> IO (Either String String)
 waitForKindKubeconfig paths runtimeMode =
@@ -445,62 +601,33 @@ configureRuntimeModeCluster paths runtimeMode =
     _ -> pure ()
 
 configureLinuxCudaCluster :: Paths -> RuntimeMode -> IO ()
-configureLinuxCudaCluster paths runtimeMode = do
+configureLinuxCudaCluster paths _runtimeMode = do
   putStrLn "configuring linux-cuda runtime support"
-  installLinuxCudaRuntimeShim paths runtimeMode
-  advertiseLinuxCudaResources paths
+  installLinuxCudaDevicePlugin paths
   waitForLinuxCudaResources paths
 
-installLinuxCudaRuntimeShim :: Paths -> RuntimeMode -> IO ()
-installLinuxCudaRuntimeShim paths runtimeMode =
-  forM_ nodeContainerNames installIntoNode
-  where
-    nodeContainerNames =
-      [ kindClusterName paths runtimeMode <> "-control-plane",
-        kindClusterName paths runtimeMode <> "-worker"
-      ]
-    installIntoNode nodeContainerName =
-      runCommand
-        Nothing
-        []
-        "docker"
-        [ "exec",
-          nodeContainerName,
-          "sh",
-          "-lc",
-          unlines
-            [ "set -eu",
-              "if command -v nvidia-container-runtime >/dev/null 2>&1; then",
-              "  exit 0",
-              "fi",
-              "runtime_path=$(command -v runc)",
-              "ln -sf \"$runtime_path\" /usr/bin/nvidia-container-runtime"
-            ]
-        ]
-
-advertiseLinuxCudaResources :: Paths -> IO ()
-advertiseLinuxCudaResources paths = do
-  gpuNodes <- linuxCudaNodeNames paths
-  when (null gpuNodes) $
-    ioError (userError "linux-cuda cluster did not expose any infernix.runtime/gpu=true nodes")
-  forM_
-    gpuNodes
-    ( \nodeName ->
-        runCommand
-          Nothing
-          []
-          "kubectl"
-          [ "--kubeconfig",
-            Config.generatedKubeconfigPath paths,
-            "patch",
-            "node",
-            nodeName,
-            "--subresource=status",
-            "--type=merge",
-            "-p",
-            "{\"status\":{\"capacity\":{\"nvidia.com/gpu\":\"1\"},\"allocatable\":{\"nvidia.com/gpu\":\"1\"}}}"
-          ]
-    )
+installLinuxCudaDevicePlugin :: Paths -> IO ()
+installLinuxCudaDevicePlugin paths = do
+  ensureHelmRepositoryDefinitions paths
+  runCommand
+    Nothing
+    (("KUBECONFIG", Config.generatedKubeconfigPath paths) : Config.helmEnvironment paths)
+    "helm"
+    [ "upgrade",
+      "-i",
+      "nvidia-device-plugin",
+      "nvdp/nvidia-device-plugin",
+      "--namespace",
+      "nvidia",
+      "--create-namespace",
+      "--version",
+      nvidiaDevicePluginVersion,
+      "--set",
+      "runtimeClassName=nvidia",
+      "--wait",
+      "--timeout",
+      "10m"
+    ]
 
 waitForLinuxCudaResources :: Paths -> IO ()
 waitForLinuxCudaResources paths = go (30 :: Int)
@@ -510,28 +637,15 @@ waitForLinuxCudaResources paths = go (30 :: Int)
           ioError (userError "linux-cuda nodes never reported allocatable nvidia.com/gpu resources")
       | otherwise = do
           allocatableValues <- linuxCudaAllocatableValues paths
-          if not (null allocatableValues) && not (any null allocatableValues) && "<no value>" `notElem` allocatableValues
+          if any isPositiveGpuCount allocatableValues
             then pure ()
             else do
               threadDelay 1000000
               go (remainingAttempts - 1)
-
-linuxCudaNodeNames :: Paths -> IO [String]
-linuxCudaNodeNames paths =
-  filter (not . null) . lines
-    <$> captureCommand
-      Nothing
-      []
-      "kubectl"
-      [ "--kubeconfig",
-        Config.generatedKubeconfigPath paths,
-        "get",
-        "nodes",
-        "-l",
-        "infernix.runtime/gpu=true",
-        "-o",
-        "jsonpath={range .items[*]}{.metadata.name}{\"\\n\"}{end}"
-      ]
+    isPositiveGpuCount value =
+      case readMaybe value of
+        Just parsedCount -> parsedCount > (0 :: Int)
+        Nothing -> False
 
 linuxCudaAllocatableValues :: Paths -> IO [String]
 linuxCudaAllocatableValues paths =
@@ -1196,12 +1310,16 @@ ensureHelmDependencies paths = do
       case result of
         Right _ -> pure ()
         Left err
-          | "no repository definition" `List.isInfixOf` err ->
+          | missingHelmRepoMetadata err ->
               do
                 ensureHelmRepositoryDefinitions paths
                 runCommand (Just (repoRoot paths)) (Config.helmEnvironment paths) "helm" ["dependency", "build", "chart"]
           | otherwise ->
               ioError (userError ("command failed: helm dependency build --skip-refresh chart\n" <> err))
+  where
+    missingHelmRepoMetadata err =
+      "no repository definition" `List.isInfixOf` err
+        || "no cached repository" `List.isInfixOf` err
 
 ensureHelmRepositoryDefinitions :: Paths -> IO ()
 ensureHelmRepositoryDefinitions paths =
@@ -1300,19 +1418,6 @@ renderKindConfig paths runtimeMode edgePortValue hostKindRoot registryHostsDirec
         "apiVersion: kind.x-k8s.io/v1alpha4",
         "name: " <> kindClusterName paths runtimeMode
       ]
-        <> cudaRuntimePatch
-    cudaRuntimePatch =
-      case runtimeMode of
-        LinuxCuda ->
-          [ "containerdConfigPatches:",
-            "  - |-",
-            "    [plugins.\"io.containerd.grpc.v1.cri\".containerd.runtimes.nvidia]",
-            "      privileged_without_host_devices = false",
-            "      runtime_type = \"io.containerd.runc.v2\"",
-            "    [plugins.\"io.containerd.grpc.v1.cri\".containerd.runtimes.nvidia.options]",
-            "      BinaryName = \"/usr/bin/nvidia-container-runtime\""
-          ]
-        _ -> []
     initLabels = controlPlaneRuntimeModeLabels runtimeMode
     workerLabels = runtimeModeLabels runtimeMode
     edgePortLines =
@@ -1337,8 +1442,10 @@ renderKindConfig paths runtimeMode edgePortValue hostKindRoot registryHostsDirec
       [ "  - role: " <> role
       ]
         <> extraLines
-        <> [ "    extraMounts:",
-             "      - hostPath: " <> hostKindRoot,
+        <> [ "    extraMounts:"
+           ]
+        <> linuxCudaMounts role
+        <> [ "      - hostPath: " <> hostKindRoot,
              "        containerPath: " <> nodeMountedKindRoot,
              "      - hostPath: " <> registryHostsDirectory,
              "        containerPath: /etc/containerd/certs.d",
@@ -1349,6 +1456,12 @@ renderKindConfig paths runtimeMode edgePortValue hostKindRoot registryHostsDirec
              "          kubeletExtraArgs:",
              "            node-labels: " <> show labels
            ]
+    linuxCudaMounts role = case (runtimeMode, role) of
+      (LinuxCuda, "worker") ->
+        [ "      - hostPath: /dev/null",
+          "        containerPath: /var/run/nvidia-container-devices/all"
+        ]
+      _ -> []
     kubeConfiguration role
       | role == "control-plane" = "InitConfiguration"
       | otherwise = "JoinConfiguration"
@@ -1393,16 +1506,30 @@ currentKindEdgePort paths runtimeMode = do
 
 writeHelmValuesFile :: Paths -> String -> ClusterState -> Lazy.ByteString -> HelmDeployPhase -> IO FilePath
 writeHelmValuesFile paths controlPlane state demoConfigPayload deployPhase = do
+  maybeEngineFixtureCommand <- lookupEnv "INFERNIX_ENGINE_FIXTURE_COMMAND_CONTAINER"
+  engineCommandOverrides <- engineCommandOverridesFromEnvironment
   let outputPath =
         buildRoot paths
           </> ("helm-values-" <> phaseSuffix deployPhase <> "-" <> Text.unpack (runtimeModeId (clusterRuntimeMode state)) <> ".yaml")
-  writeFile outputPath (renderHelmValues controlPlane state demoConfigPayload deployPhase)
+  writeFile outputPath (renderHelmValues controlPlane state demoConfigPayload deployPhase maybeEngineFixtureCommand engineCommandOverrides)
   pure outputPath
   where
     phaseSuffix phaseValue = case phaseValue of
       WarmupPhase -> "warmup"
       BootstrapPhase -> "bootstrap"
       FinalPhase -> "final"
+
+engineCommandOverridesFromEnvironment :: IO [(String, String)]
+engineCommandOverridesFromEnvironment = do
+  environment <- getEnvironment
+  pure
+    ( List.sortOn fst
+        [ (name, value)
+          | (name, value) <- environment,
+            "INFERNIX_ENGINE_COMMAND_" `List.isPrefixOf` name,
+            not (null value)
+        ]
+    )
 
 renderHelmChart :: Paths -> RuntimeMode -> [FilePath] -> IO FilePath
 renderHelmChart paths runtimeMode valuesPaths = do
@@ -1464,8 +1591,8 @@ discoverPersistentClaims paths renderedChartPath = do
         _ ->
           ioError (userError ("rendered chart claim line was malformed: " <> lineValue))
 
-renderHelmValues :: String -> ClusterState -> Lazy.ByteString -> HelmDeployPhase -> String
-renderHelmValues controlPlane state demoConfigPayload deployPhase =
+renderHelmValues :: String -> ClusterState -> Lazy.ByteString -> HelmDeployPhase -> Maybe String -> [(String, String)] -> String
+renderHelmValues controlPlane state demoConfigPayload deployPhase maybeEngineFixtureCommand engineCommandOverrides =
   unlines
     ( [ "runtimeMode: " <> Text.unpack (runtimeModeId (clusterRuntimeMode state)),
         "controlPlaneContext: " <> show controlPlane,
@@ -1486,21 +1613,23 @@ renderHelmValues controlPlane state demoConfigPayload deployPhase =
         "  image:",
         "    repository: infernix-service",
         "    tag: local",
-        "    pullPolicy: IfNotPresent",
-        "web:",
-        "  replicaCount: " <> show (repoWorkloadReplicaCount deployPhase),
-        "  image:",
-        "    repository: infernix-web",
-        "    tag: local",
-        "    pullPolicy: IfNotPresent",
-        "platformPortals:",
-        "  harbor:",
-        "    replicaCount: " <> show (repoWorkloadReplicaCount deployPhase),
-        "  minio:",
-        "    replicaCount: " <> show (repoWorkloadReplicaCount deployPhase),
-        "  pulsar:",
-        "    replicaCount: " <> show (repoWorkloadReplicaCount deployPhase)
+        "    pullPolicy: IfNotPresent"
       ]
+        <> serviceEngineAdapterOverrides
+        <> [ "web:",
+             "  replicaCount: " <> show (repoWorkloadReplicaCount deployPhase),
+             "  image:",
+             "    repository: infernix-web",
+             "    tag: local",
+             "    pullPolicy: IfNotPresent",
+             "platformPortals:",
+             "  harbor:",
+             "    replicaCount: " <> show (repoWorkloadReplicaCount deployPhase),
+             "  minio:",
+             "    replicaCount: " <> show (repoWorkloadReplicaCount deployPhase),
+             "  pulsar:",
+             "    replicaCount: " <> show (repoWorkloadReplicaCount deployPhase)
+           ]
         <> bootstrapRegistryOverrides deployPhase
         <> bootstrapHarborOverrides deployPhase
     )
@@ -1510,6 +1639,17 @@ renderHelmValues controlPlane state demoConfigPayload deployPhase =
       WarmupPhase -> 0
       BootstrapPhase -> 0
       FinalPhase -> 1
+    serviceEngineAdapterOverrides
+      | maybeEngineFixtureCommand == Nothing && null engineCommandOverrides = []
+      | otherwise =
+          [ "  engineAdapters:" ]
+            <> maybe [] (\engineFixtureCommand -> ["    fixtureCommand: " <> show engineFixtureCommand]) maybeEngineFixtureCommand
+            <> commandOverrideLines
+    commandOverrideLines
+      | null engineCommandOverrides = []
+      | otherwise =
+          [ "    commandEnv:" ]
+            <> map (\(name, value) -> "      " <> name <> ": " <> show value) engineCommandOverrides
     bootstrapRegistryOverrides phaseValue = case phaseValue of
       WarmupPhase -> bootstrapRegistryMinioOverrides <> bootstrapRegistryPulsarOverrides
       BootstrapPhase -> bootstrapRegistryMinioOverrides <> bootstrapRegistryPulsarOverrides
@@ -1673,16 +1813,22 @@ tryCommand :: Maybe FilePath -> [(String, String)] -> FilePath -> [String] -> IO
 tryCommand maybeWorkingDirectory envOverrides command args = do
   baseEnv <- getEnvironment
   let mergedEnv = mergeEnvironment baseEnv envOverrides
-  (exitCode, stdoutOutput, stderrOutput) <-
-    readCreateProcessWithExitCode
-      (proc command args)
-        { cwd = maybeWorkingDirectory,
-          env = Just mergedEnv
-        }
-      ""
-  case exitCode of
-    ExitSuccess -> pure (Right stdoutOutput)
-    _ -> pure (Left (stdoutOutput <> stderrOutput))
+  processResult <-
+    try
+      ( readCreateProcessWithExitCode
+          (proc command args)
+            { cwd = maybeWorkingDirectory,
+              env = Just mergedEnv
+            }
+          ""
+      ) ::
+      IO (Either IOException (ExitCode, String, String))
+  case processResult of
+    Left err -> pure (Left (show err))
+    Right (exitCode, stdoutOutput, stderrOutput) ->
+      case exitCode of
+        ExitSuccess -> pure (Right stdoutOutput)
+        _ -> pure (Left (stdoutOutput <> stderrOutput))
 
 captureCommand :: Maybe FilePath -> [(String, String)] -> FilePath -> [String] -> IO String
 captureCommand maybeWorkingDirectory envOverrides command args = do

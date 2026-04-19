@@ -11,14 +11,18 @@
 
 The repository already has lint, unit, integration, and Playwright entrypoints. Those surfaces
 remain the canonical validation contract across the supported host-native and outer-container
-control-plane lanes, and they now validate the engine-aware managed subprocess worker contract plus
-durable runtime artifact bundles and source-artifact manifests, but they still validate a simulated
-CUDA lane rather than final engine execution on a real GPU-backed substrate.
+control-plane lanes, and they now validate the process-isolated engine-worker adapter contract plus
+durable runtime artifact bundles and direct-upstream source-artifact manifests, with the repo-owned
+engine fixture command injected for automated validation. The default validation matrix now
+auto-includes `linux-cuda` only when the current host passes the NVIDIA preflight contract, but
+final closure still requires those same suites to validate supported-host final engine workers and
+the supported-host GPU matrix.
 
 - `infernix test lint` and `infernix test unit` are the canonical host-side static-quality and
   unit gates
 - `infernix test integration` and `infernix test e2e` exercise `apple-silicon`, `linux-cpu`, and
-  `linux-cuda` when no explicit runtime-mode override is supplied
+  automatically include `linux-cuda` when no explicit runtime-mode override is supplied and the
+  current host passes the NVIDIA preflight contract
 - the routed Playwright path waits for routed publication, demo-config, and inference readiness
   before it launches the browser suite
 - final closure remains open until those same suites run against real runtime workers and a real
@@ -119,8 +123,9 @@ forward onto the final Kind, Helm, Harbor, MinIO, and Pulsar substrate.
 - integration coverage that publication state is written for routed consumers
 - host-native integration coverage proves the routed API can move to the Apple host bridge without
   changing the browser-visible edge entrypoint
-- dedicated `linux-cuda` integration coverage proves GPU resource advertising, `RuntimeClass/nvidia`,
-  GPU requests, and scheduling-compatible service deployment on the Kind-backed CUDA lane
+- dedicated `linux-cuda` integration coverage proves NVIDIA device-plugin rollout, positive
+  `nvidia.com/gpu` allocatable resources, `RuntimeClass/nvidia`, GPU requests, and
+  `nvidia-smi -L` visibility from the service deployment on the Kind-backed CUDA lane
 
 ### Validation
 
@@ -134,10 +139,11 @@ forward onto the final Kind, Helm, Harbor, MinIO, and Pulsar substrate.
 
 ### Remaining Work
 
-- replace engine-aware managed-worker assertions with validations against the final engine workers,
-  direct upstream artifact acquisition, and durable runtime state
-- close the `linux-cuda` coverage on a real NVIDIA-backed Kind substrate instead of patched node
-  status and runtime shims
+- replace the current fixture-command adapter assertions with validations against supported-host
+  final engine workers, the final engine-ready direct-upstream artifact contract, and durable
+  runtime state
+- rerun the `linux-cuda` coverage on a supported NVIDIA-backed Kind substrate so this sprint closes
+  with supported-host validation rather than host-gated implementation only
 - keep the current Harbor, MinIO, and Pulsar HA assertions while extending runtime execution
   checks beyond the current repo-owned worker layer
 
@@ -273,8 +279,9 @@ validation cover every generated catalog entry using the engine binding selected
   cross-checks that routed catalog against the serialized generated demo config reported through
   `/api/publication`, and pairs that exhaustive HTTP coverage with browser UI interaction coverage
 - the default validation matrix runs those exhaustive integration and E2E paths across
-  `apple-silicon`, `linux-cpu`, and `linux-cuda` by default when no explicit runtime-mode override
-  is supplied on both the Apple host-native and Linux outer-container control-plane surfaces
+  `apple-silicon` and `linux-cpu` by default and auto-includes `linux-cuda` when no explicit
+  runtime-mode override is supplied and the current host passes the NVIDIA preflight contract on
+  both the Apple host-native and Linux outer-container control-plane surfaces
 - `linux-cuda` exhaustive coverage asserts the generated catalog, routed publication state, and
   GPU-backed service deployment stay aligned on the Kind-backed CUDA lane
 - `infernix test all` for a runtime mode aggregates lint, unit, integration, and E2E without silently dropping generated catalog entries
@@ -285,17 +292,19 @@ validation cover every generated catalog entry using the engine binding selected
 - integration or E2E fails if any generated catalog entry for the active mode is skipped
 - the default validation coverage fails if publication or selected-engine metadata regress on the
   routed catalog surfaces it consumes
-- the default validation coverage passes Apple, Linux CPU, and Linux CUDA exhaustive suites
-  against the generated serialized catalogs by default when no explicit runtime-mode override is
-  supplied on both supported control-plane execution contexts
+- the default validation coverage passes Apple and Linux CPU exhaustive suites and auto-includes
+  Linux CUDA against the generated serialized catalogs when no explicit runtime-mode override is
+  supplied on a host that satisfies the NVIDIA preflight contract on both supported control-plane
+  execution contexts
 - the host-native final-substrate routed E2E path also passes Apple, Linux CPU, and Linux CUDA
   exhaustive suites against the Harbor-backed generated serialized catalogs
 
 ### Remaining Work
 
-- keep exhaustive catalog enumeration while replacing repo-owned engine-aware managed-worker
-  assertions with checks against final engine execution and direct upstream artifact behavior
-- rerun the default matrix against a real `linux-cuda` substrate that exposes actual NVIDIA
+- keep exhaustive catalog enumeration while replacing the current fixture-command adapter
+  assertions with checks against supported-host final engine execution and the final engine-ready
+  direct-upstream artifact behavior
+- rerun the default matrix against a supported `linux-cuda` substrate that exposes actual NVIDIA
   runtime support and usable GPU resources
 - close the Harbor-backed host-native routed E2E lane on top of the final runtime workers rather
   than the current repo-owned worker layer

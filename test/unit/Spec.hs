@@ -58,86 +58,146 @@ main = do
   withTestRoot ".tmp/unit" $ do
     cwd <- getCurrentDirectory
     paths <- discoverPaths
-    ensureRepoLayout paths
-    maybeBuildRootEnv <- lookupEnv "INFERNIX_BUILD_ROOT"
-    let expectedBuildRoot = fromMaybe (repoRoot paths </> ".build") maybeBuildRootEnv
-    assert (repoRoot paths /= cwd) "discoverPaths climbs from nested working directories back to the repo root"
-    assert (buildRoot paths == expectedBuildRoot) "discoverPaths keeps build artifacts in the active build root"
-    result <-
-      executeInference
-        paths
-        AppleSilicon
-        InferenceRequest
-          { requestModelId = "llm-qwen25-safetensors",
-            inputText = Text.replicate 81 "x"
-          }
-    case result of
-      Left err -> fail ("unexpected error: " <> show err)
-      Right inferenceResult -> do
-        assert (isJust (objectRef (payload inferenceResult))) "large outputs use the object store"
-        case objectRef (payload inferenceResult) of
-          Nothing -> pure ()
-          Just ref -> do
-            exists <- doesFileExist (objectStoreRoot paths </> Text.unpack ref)
-            assert exists "stored object reference points at a real file"
-        resultProtoExists <-
-          doesFileExist
-            (resultsRoot paths </> Text.unpack (requestId inferenceResult) <> ".pb")
-        legacyResultExists <-
-          doesFileExist
-            (resultsRoot paths </> Text.unpack (requestId inferenceResult) <> ".state")
-        assert resultProtoExists "inference execution persists protobuf result files"
-        assert (not legacyResultExists) "inference execution no longer writes legacy state result files"
-        maybeLoadedResult <- loadInferenceResult paths (requestId inferenceResult)
-        case maybeLoadedResult of
-          Nothing -> fail "loadInferenceResult must decode the persisted protobuf result"
-          Just loadedResult -> do
-            assert (requestId loadedResult == requestId inferenceResult) "protobuf result reload preserves request ids"
-            assert (resultModelId loadedResult == resultModelId inferenceResult) "protobuf result reload preserves model ids"
-            assert (payload loadedResult == payload inferenceResult) "protobuf result reload preserves payload encoding"
-        cacheExists <-
-          doesFileExist
-            (modelCacheRoot paths </> "apple-silicon" </> "llm-qwen25-safetensors" </> "default" </> "materialized.txt")
-        assert cacheExists "runtime cache is keyed by runtime mode and model id"
-        let durableArtifactPath =
-              objectStoreRoot paths </> "artifacts" </> "apple-silicon" </> "llm-qwen25-safetensors" </> "bundle.json"
-        durableArtifactExists <- doesFileExist durableArtifactPath
-        assert durableArtifactExists "inference execution materializes a durable artifact bundle for the selected model"
-        durableArtifactContents <- readFile durableArtifactPath
-        assert ("\"engineAdapterId\": \"pytorch-python\"" `isInfixOf` durableArtifactContents) "durable artifact bundles record the selected engine adapter id"
-        assert ("\"artifactAcquisitionMode\": \"local-bundle-only\"" `isInfixOf` durableArtifactContents) "host-side durable artifact bundles record the local acquisition mode"
-        cacheBundleExists <-
-          doesFileExist
-            (modelCacheRoot paths </> "apple-silicon" </> "llm-qwen25-safetensors" </> "default" </> "artifact-bundle.json")
-        assert cacheBundleExists "runtime cache materialization copies the durable artifact bundle into the derived cache root"
-        manifestProtoExists <-
-          doesFileExist
-            (objectStoreRoot paths </> "manifests" </> "apple-silicon" </> "llm-qwen25-safetensors" </> "default.pb")
-        legacyManifestExists <-
-          doesFileExist
-            (objectStoreRoot paths </> "manifests" </> "apple-silicon" </> "llm-qwen25-safetensors" </> "default.state")
-        assert manifestProtoExists "cache materialization persists protobuf manifests"
-        assert (not legacyManifestExists) "cache materialization no longer writes legacy state manifests"
-        manifests <- listCacheManifests paths AppleSilicon
-        let maybeManifest = find ((== "llm-qwen25-safetensors") . cacheModelId) manifests
-        assert (maybe False ((== Text.pack durableArtifactPath) . cacheDurableSourceUri) maybeManifest) "cache manifests point at the durable artifact bundle rather than the upstream download URL"
-        evictedCount <- evictCache paths AppleSilicon (Just "llm-qwen25-safetensors")
-        assert (evictedCount == 1) "cache eviction removes the requested derived cache entry"
-        cachePresentAfterEvict <-
-          doesFileExist
-            (modelCacheRoot paths </> "apple-silicon" </> "llm-qwen25-safetensors" </> "default" </> "materialized.txt")
-        assert (not cachePresentAfterEvict) "cache eviction removes the materialized cache marker"
-        rebuiltEntries <- rebuildCache paths AppleSilicon (Just "llm-qwen25-safetensors")
-        assert (length rebuiltEntries == 1) "cache rebuild restores a manifest-backed cache entry"
-        cachePresentAfterRebuild <-
-          doesFileExist
-            (modelCacheRoot paths </> "apple-silicon" </> "llm-qwen25-safetensors" </> "default" </> "materialized.txt")
-        assert cachePresentAfterRebuild "cache rebuild restores the materialized cache marker"
-        cacheBundleExistsAfterRebuild <-
-          doesFileExist
-            (modelCacheRoot paths </> "apple-silicon" </> "llm-qwen25-safetensors" </> "default" </> "artifact-bundle.json")
-        assert cacheBundleExistsAfterRebuild "cache rebuild restores the durable artifact bundle into the derived cache root"
-    writeFile "source-fixture.txt" "local source fixture\n"
+    let runWithFixtures = do
+          ensureRepoLayout paths
+          maybeBuildRootEnv <- lookupEnv "INFERNIX_BUILD_ROOT"
+          let expectedBuildRoot = fromMaybe (repoRoot paths </> ".build") maybeBuildRootEnv
+              request =
+                InferenceRequest
+                  { requestModelId = "llm-qwen25-safetensors",
+                    inputText = Text.replicate 81 "x"
+                  }
+              validateLoadedResult inferenceResult loadedResult = do
+                assert (requestId loadedResult == requestId inferenceResult) "protobuf result reload preserves request ids"
+                assert (resultModelId loadedResult == resultModelId inferenceResult) "protobuf result reload preserves model ids"
+                assert (payload loadedResult == payload inferenceResult) "protobuf result reload preserves payload encoding"
+              failUnexpected err = fail ("unexpected error: " <> show err)
+              validateInferenceResult inferenceResult = do
+                let maybeObjectRef = objectRef (payload inferenceResult)
+                    checkObjectRef ref = do
+                      exists <- doesFileExist (objectStoreRoot paths </> Text.unpack ref)
+                      assert exists "stored object reference points at a real file"
+                assert (isJust maybeObjectRef) "large outputs use the object store"
+                maybe (pure ()) checkObjectRef maybeObjectRef
+                resultProtoExists <-
+                  doesFileExist
+                    (resultsRoot paths </> Text.unpack (requestId inferenceResult) <> ".pb")
+                legacyResultExists <-
+                  doesFileExist
+                    (resultsRoot paths </> Text.unpack (requestId inferenceResult) <> ".state")
+                assert resultProtoExists "inference execution persists protobuf result files"
+                assert (not legacyResultExists) "inference execution no longer writes legacy state result files"
+                maybeLoadedResult <- loadInferenceResult paths (requestId inferenceResult)
+                maybe
+                  (fail "loadInferenceResult must decode the persisted protobuf result")
+                  (validateLoadedResult inferenceResult)
+                  maybeLoadedResult
+                cacheExists <-
+                  doesFileExist
+                    (modelCacheRoot paths </> "apple-silicon" </> "llm-qwen25-safetensors" </> "default" </> "materialized.txt")
+                assert cacheExists "runtime cache is keyed by runtime mode and model id"
+                let durableArtifactPath =
+                      objectStoreRoot paths </> "artifacts" </> "apple-silicon" </> "llm-qwen25-safetensors" </> "bundle.json"
+                durableArtifactExists <- doesFileExist durableArtifactPath
+                assert durableArtifactExists "inference execution materializes a durable artifact bundle for the selected model"
+                durableArtifactContents <- readFile durableArtifactPath
+                assert ("\"engineAdapterId\": \"pytorch-python\"" `isInfixOf` durableArtifactContents) "durable artifact bundles record the selected engine adapter id"
+                assert ("\"artifactAcquisitionMode\": \"local-file-copy\"" `isInfixOf` durableArtifactContents) "host-side durable artifact bundles use explicit local source-artifact copies under fixture overrides"
+                assert ("\"sourceArtifactFetchStatus\": \"materialized\"" `isInfixOf` durableArtifactContents) "host-side durable artifact bundles record materialized source-artifact state"
+                assert ("source-artifacts/apple-silicon/llm-qwen25-safetensors/source.json" `isInfixOf` durableArtifactContents) "host-side durable artifact bundles point at the durable source-artifact manifest"
+                cacheBundleExists <-
+                  doesFileExist
+                    (modelCacheRoot paths </> "apple-silicon" </> "llm-qwen25-safetensors" </> "default" </> "artifact-bundle.json")
+                assert cacheBundleExists "runtime cache materialization copies the durable artifact bundle into the derived cache root"
+                sourceManifestExists <-
+                  doesFileExist
+                    (objectStoreRoot paths </> "source-artifacts" </> "apple-silicon" </> "llm-qwen25-safetensors" </> "source.json")
+                assert sourceManifestExists "host-side materialization persists the durable source-artifact manifest"
+                manifestProtoExists <-
+                  doesFileExist
+                    (objectStoreRoot paths </> "manifests" </> "apple-silicon" </> "llm-qwen25-safetensors" </> "default.pb")
+                legacyManifestExists <-
+                  doesFileExist
+                    (objectStoreRoot paths </> "manifests" </> "apple-silicon" </> "llm-qwen25-safetensors" </> "default.state")
+                assert manifestProtoExists "cache materialization persists protobuf manifests"
+                assert (not legacyManifestExists) "cache materialization no longer writes legacy state manifests"
+                manifests <- listCacheManifests paths AppleSilicon
+                let maybeManifest = find ((== "llm-qwen25-safetensors") . cacheModelId) manifests
+                assert (maybe False (("artifacts/apple-silicon/llm-qwen25-safetensors/bundle.json" `isInfixOf`) . Text.unpack . cacheDurableSourceUri) maybeManifest) "cache manifests point at the durable artifact bundle rather than the upstream download URL"
+                evictedCount <- evictCache paths AppleSilicon (Just "llm-qwen25-safetensors")
+                assert (evictedCount == 1) "cache eviction removes the requested derived cache entry"
+                cachePresentAfterEvict <-
+                  doesFileExist
+                    (modelCacheRoot paths </> "apple-silicon" </> "llm-qwen25-safetensors" </> "default" </> "materialized.txt")
+                assert (not cachePresentAfterEvict) "cache eviction removes the materialized cache marker"
+                rebuiltEntries <- rebuildCache paths AppleSilicon (Just "llm-qwen25-safetensors")
+                assert (length rebuiltEntries == 1) "cache rebuild restores a manifest-backed cache entry"
+                cachePresentAfterRebuild <-
+                  doesFileExist
+                    (modelCacheRoot paths </> "apple-silicon" </> "llm-qwen25-safetensors" </> "default" </> "materialized.txt")
+                assert cachePresentAfterRebuild "cache rebuild restores the materialized cache marker"
+                cacheBundleExistsAfterRebuild <-
+                  doesFileExist
+                    (modelCacheRoot paths </> "apple-silicon" </> "llm-qwen25-safetensors" </> "default" </> "artifact-bundle.json")
+                assert cacheBundleExistsAfterRebuild "cache rebuild restores the durable artifact bundle into the derived cache root"
+              validateJaxArtifactBundle = do
+                let jaxRequest =
+                      InferenceRequest
+                        { requestModelId = "music-mt3-jax",
+                          inputText = "jax adapter coverage"
+                        }
+                    jaxArtifactPath =
+                      objectStoreRoot paths </> "artifacts" </> "apple-silicon" </> "music-mt3-jax" </> "bundle.json"
+                jaxResult <- executeInference paths AppleSilicon jaxRequest
+                case jaxResult of
+                  Left err -> fail ("unexpected jax inference error: " <> show err)
+                  Right _ -> pure ()
+                jaxArtifactContents <- readFile jaxArtifactPath
+                assert ("\"engineAdapterId\": \"jax-python\"" `isInfixOf` jaxArtifactContents) "durable artifact bundles map jax-metal to the explicit jax adapter"
+                assert ("\"artifactAcquisitionMode\": \"local-file-copy\"" `isInfixOf` jaxArtifactContents) "host-side durable artifact bundles reuse the explicit source-artifact materialization helper for jax coverage"
+          assert (repoRoot paths /= cwd) "discoverPaths climbs from nested working directories back to the repo root"
+          assert (buildRoot paths == expectedBuildRoot) "discoverPaths keeps build artifacts in the active build root"
+          let qwenSourceFixture = cwd </> "source-fixture.txt"
+              jaxSourceFixture = cwd </> "source-fixture-jax.txt"
+          writeFile qwenSourceFixture "local source fixture\n"
+          writeFile jaxSourceFixture "local jax source fixture\n"
+          withSourceArtifactOverrides
+            [ ("llm-qwen25-safetensors", "file://" <> qwenSourceFixture),
+              ("music-mt3-jax", "file://" <> jaxSourceFixture)
+            ]
+            $ do
+              result <- executeInference paths AppleSilicon request
+              either failUnexpected validateInferenceResult result
+              validateJaxArtifactBundle
+    withEngineFixtures paths runWithFixtures
+    let runtimeBackendFixtureModeScript =
+          unlines
+            [ "import pathlib",
+              "import sys",
+              "sys.path.insert(0, str(pathlib.Path(sys.argv[1]) / 'tools'))",
+              "from runtime_backend import RuntimeBackend",
+              "data_root = pathlib.Path(sys.argv[2])",
+              "paths = {",
+              "  'results_root': data_root / 'runtime' / 'results',",
+              "  'object_store_root': data_root / 'object-store',",
+              "  'model_cache_root': data_root / 'runtime' / 'model-cache',",
+              "}",
+              "for path in paths.values():",
+              "  path.mkdir(parents=True, exist_ok=True)",
+              "try:",
+              "  RuntimeBackend(paths=paths, runtime_mode='linux-cpu', control_plane_context='host-native', daemon_location='control-plane-host', publication_state={'routes': []})",
+              "except RuntimeError as exc:",
+              "  print(str(exc))",
+              "else:",
+              "  raise SystemExit('runtime backend unexpectedly allowed filesystem mode without explicit fixture ownership')"
+            ]
+    (fixtureModeExitCode, fixtureModeStdout, fixtureModeStderr) <-
+      readProcessWithExitCode
+        "python3"
+        ["-c", runtimeBackendFixtureModeScript, repoRoot paths, cwd </> ".data"]
+        ""
+    assert (fixtureModeExitCode == ExitSuccess) ("runtime backend explicit fixture-mode requirement is observable: " <> fixtureModeStderr)
+    assert ("filesystem-fixture mode must be enabled explicitly" `isInfixOf` fixtureModeStdout) "runtime backend refuses implicit filesystem fallback"
     let runtimeBackendScript =
           unlines
             [ "import json",
@@ -154,7 +214,7 @@ main = do
               "}",
               "for path in paths.values():",
               "  path.mkdir(parents=True, exist_ok=True)",
-              "backend = RuntimeBackend(paths=paths, runtime_mode='linux-cpu', control_plane_context='host-native', daemon_location='control-plane-host', publication_state={'routes': []})",
+              "backend = RuntimeBackend(paths=paths, runtime_mode='linux-cpu', control_plane_context='host-native', daemon_location='control-plane-host', publication_state={'routes': []}, allow_filesystem_fallback=True)",
               "entry = backend.materialize_cache({",
               "  'matrixRowId': 'fixture-row',",
               "  'modelId': 'fixture-model',",
@@ -178,6 +238,58 @@ main = do
     assert ("\"artifactAcquisitionMode\": \"local-file-copy\"" `isInfixOf` backendStdout) "runtime backend records local-file source acquisition in cache status"
     assert ("\"engineAdapterId\": \"llama-cpp-cli\"" `isInfixOf` backendStdout) "runtime backend cache status records engine-aware adapter metadata"
     assert ("\"sourceArtifactFetchStatus\": \"materialized\"" `isInfixOf` backendStdout) "runtime backend cache status records materialized source-artifact state"
+    writeFile "remote-fixture.txt" "remote source fixture\n"
+    let remoteRuntimeBackendScript =
+          unlines
+            [ "import functools",
+              "import http.server",
+              "import json",
+              "import pathlib",
+              "import sys",
+              "import threading",
+              "sys.path.insert(0, str(pathlib.Path(sys.argv[1]) / 'tools'))",
+              "from runtime_backend import RuntimeBackend",
+              "repo_root = pathlib.Path(sys.argv[1])",
+              "data_root = pathlib.Path(sys.argv[2])",
+              "handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(pathlib.Path.cwd()))",
+              "server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), handler)",
+              "thread = threading.Thread(target=server.serve_forever, daemon=True)",
+              "thread.start()",
+              "port = server.server_address[1]",
+              "paths = {",
+              "  'results_root': data_root / 'runtime' / 'results',",
+              "  'object_store_root': data_root / 'object-store',",
+              "  'model_cache_root': data_root / 'runtime' / 'model-cache',",
+              "}",
+              "for path in paths.values():",
+              "  path.mkdir(parents=True, exist_ok=True)",
+              "backend = RuntimeBackend(paths=paths, runtime_mode='linux-cpu', control_plane_context='host-native', daemon_location='control-plane-host', publication_state={'routes': []}, allow_filesystem_fallback=True)",
+              "try:",
+              "  entry = backend.materialize_cache({",
+              "    'matrixRowId': 'remote-row',",
+              "    'modelId': 'remote-model',",
+              "    'displayName': 'Remote Model',",
+              "    'family': 'llm',",
+              "    'artifactType': 'fixture',",
+              "    'referenceModel': 'remote',",
+              "    'selectedEngine': 'llama.cpp',",
+              "    'runtimeLane': 'kind-linux-cpu',",
+              "    'downloadUrl': f'http://127.0.0.1:{port}/remote-fixture.txt',",
+              "  })",
+              "  print(json.dumps(entry, sort_keys=True))",
+              "finally:",
+              "  backend.close()",
+              "  server.shutdown()",
+              "  server.server_close()"
+            ]
+    (remoteExitCode, remoteStdout, remoteStderr) <-
+      readProcessWithExitCode
+        "python3"
+        ["-c", remoteRuntimeBackendScript, repoRoot paths, cwd </> ".data"]
+        ""
+    assert (remoteExitCode == ExitSuccess) ("runtime backend remote source materialization succeeds: " <> remoteStderr)
+    assert ("\"artifactAcquisitionMode\": \"direct-http-download\"" `isInfixOf` remoteStdout) "runtime backend records direct upstream HTTP acquisition in cache status"
+    assert ("\"sourceArtifactFetchStatus\": \"materialized\"" `isInfixOf` remoteStdout) "runtime backend records materialized direct upstream source state"
     writeFile "invalid-demo-config.dhall" "{\"runtimeMode\":\"apple-silicon\",\"models\":[{\"modelId\":\"missing-fields\"}]}\n"
     (exitCode, _, stderrOutput) <-
       readProcessWithExitCode
@@ -207,6 +319,32 @@ main = do
     assert ("invalid demo config" `isInfixOf` stderrOutput) "service startup reports invalid demo config failures clearly"
   putStrLn "unit tests passed"
 
+withEngineFixtures :: Paths -> IO () -> IO ()
+withEngineFixtures paths action = do
+  previousHostFixture <- lookupEnv "INFERNIX_ENGINE_FIXTURE_COMMAND"
+  previousContainerFixture <- lookupEnv "INFERNIX_ENGINE_FIXTURE_COMMAND_CONTAINER"
+  setEnv "INFERNIX_ENGINE_FIXTURE_COMMAND" ("python3 " <> repoRoot paths </> "tools" </> "engine_fixture.py")
+  setEnv "INFERNIX_ENGINE_FIXTURE_COMMAND_CONTAINER" "python3 /srv/infernix/tools/engine_fixture.py"
+  action `finally` restoreEnv previousHostFixture previousContainerFixture
+  where
+    restoreEnv previousHostFixture previousContainerFixture = do
+      restoreVar "INFERNIX_ENGINE_FIXTURE_COMMAND" previousHostFixture
+      restoreVar "INFERNIX_ENGINE_FIXTURE_COMMAND_CONTAINER" previousContainerFixture
+    restoreVar name maybeValue =
+      case maybeValue of
+        Just value -> setEnv name value
+        Nothing -> unsetEnv name
+
+withSourceArtifactOverrides :: [(String, String)] -> IO () -> IO ()
+withSourceArtifactOverrides overrides action = do
+  previousOverrides <- lookupEnv "INFERNIX_SOURCE_ARTIFACT_OVERRIDES"
+  let renderedOverrides =
+        "{"
+          <> unwordsWith ", " [show modelId <> ": " <> show sourceUrl | (modelId, sourceUrl) <- overrides]
+          <> "}"
+  setEnv "INFERNIX_SOURCE_ARTIFACT_OVERRIDES" renderedOverrides
+  action `finally` maybe (unsetEnv "INFERNIX_SOURCE_ARTIFACT_OVERRIDES") (setEnv "INFERNIX_SOURCE_ARTIFACT_OVERRIDES") previousOverrides
+
 withTestRoot :: FilePath -> IO a -> IO a
 withTestRoot root action = do
   catchIOError (removePathForcibly root) ignoreMissing
@@ -223,6 +361,10 @@ withTestRoot root action = do
 assert :: Bool -> String -> IO ()
 assert True _ = pure ()
 assert False message = fail message
+
+unwordsWith :: String -> [String] -> String
+unwordsWith _ [] = ""
+unwordsWith separator values = foldr1 (\left right -> left <> separator <> right) values
 
 assertUniqueModelIds :: RuntimeMode -> IO ()
 assertUniqueModelIds mode = do

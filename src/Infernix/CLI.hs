@@ -20,9 +20,9 @@ import Infernix.Service
 import Infernix.Storage (readEdgePortMaybe)
 import Infernix.Types
   ( CacheManifest (..),
+    RuntimeMode (LinuxCuda),
     ModelDescriptor (..),
     RequestField (..),
-    RuntimeMode,
     allRuntimeModes,
     parseRuntimeMode,
     runtimeModeId,
@@ -36,7 +36,7 @@ import System.Directory
     getPermissions,
     setPermissions,
   )
-import System.Environment (getArgs, getEnvironment, getExecutablePath)
+import System.Environment (getArgs, getEnvironment, getExecutablePath, lookupEnv, setEnv, unsetEnv)
 import System.Exit (ExitCode (ExitSuccess), exitFailure, exitWith)
 import System.FilePath (takeDirectory, (</>))
 import System.Info (os)
@@ -107,8 +107,31 @@ runLint maybeRuntimeMode = do
 runEndToEnd :: Maybe RuntimeMode -> IO ()
 runEndToEnd maybeRuntimeMode = do
   paths <- discoverPaths
-  let runtimeModes = maybe allRuntimeModes pure maybeRuntimeMode
-  mapM_ (runRuntimeModeE2E paths) runtimeModes
+  let runWithFixtures = do
+        runtimeModes <-
+          case maybeRuntimeMode of
+            Just runtimeMode -> pure [runtimeMode]
+            Nothing -> do
+              cudaSupported <- linuxCudaSupportedOnHost
+              pure (filter (\runtimeMode -> runtimeMode /= LinuxCuda || cudaSupported) allRuntimeModes)
+        mapM_ (runRuntimeModeE2E paths) runtimeModes
+  withEngineFixtureCommands paths runWithFixtures
+
+withEngineFixtureCommands :: Paths -> IO () -> IO ()
+withEngineFixtureCommands paths action = do
+  previousHostFixture <- lookupEnv "INFERNIX_ENGINE_FIXTURE_COMMAND"
+  previousContainerFixture <- lookupEnv "INFERNIX_ENGINE_FIXTURE_COMMAND_CONTAINER"
+  setEnv "INFERNIX_ENGINE_FIXTURE_COMMAND" ("python3 " <> repoRoot paths </> "tools" </> "engine_fixture.py")
+  setEnv "INFERNIX_ENGINE_FIXTURE_COMMAND_CONTAINER" "python3 /srv/infernix/tools/engine_fixture.py"
+  action `finally` restoreEnv previousHostFixture previousContainerFixture
+  where
+    restoreEnv previousHostFixture previousContainerFixture = do
+      restoreVar "INFERNIX_ENGINE_FIXTURE_COMMAND" previousHostFixture
+      restoreVar "INFERNIX_ENGINE_FIXTURE_COMMAND_CONTAINER" previousContainerFixture
+    restoreVar name maybeValue =
+      case maybeValue of
+        Just value -> setEnv name value
+        Nothing -> unsetEnv name
 
 runRuntimeModeE2E :: Paths -> RuntimeMode -> IO ()
 runRuntimeModeE2E paths runtimeMode =

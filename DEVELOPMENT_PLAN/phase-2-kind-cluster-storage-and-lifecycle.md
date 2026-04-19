@@ -39,9 +39,10 @@ This phase also owns the rule that `cluster up` prepares the active runtime mode
 
 The storage doctrine, Helm rollout, Harbor-backed image publication, and generated demo-config
 publication are implemented on the current Kind path. The remaining gap in this phase is the
-`linux-cuda` lane: the current code labels GPU nodes, patches `nvidia.com/gpu` into node status,
-and wires `nvidia-container-runtime` to `runc`, but it does not yet expose a real NVIDIA-backed
-Kind substrate with usable GPU devices.
+`linux-cuda` closure validation: the current code now uses host NVIDIA preflight checks,
+`nvkind`-backed Kind creation, a Helm-installed NVIDIA device plugin, and real allocatable
+`nvidia.com/gpu` resources, but this repository has not yet rerun the full CUDA lane on a
+supported NVIDIA host through the final integration and E2E matrix.
 
 ## Sprint 2.1: Kind Bootstrap and StorageClass Reset [Done]
 
@@ -286,24 +287,32 @@ Make `linux-cuda` a real GPU-backed cluster mode rather than a nominal matrix co
 
 ### Deliverables
 
-- `kind/cluster-linux-cuda.yaml` captures the NVIDIA container runtime patch and GPU node labels
-  that the real Kind path reconciles
-- `cluster up` in `linux-cuda` reconciles a Kind path that exposes NVIDIA container runtime support
-  inside the Kind node containers
-- the cluster reconciles an equivalent supported GPU-advertising surface so nodes expose
-  allocatable `nvidia.com/gpu`
+- `kind/cluster-linux-cuda.yaml` captures the GPU worker labels and the CDI device mount consumed
+  by the supported `nvkind`-backed Kind path
+- `cluster up` in `linux-cuda` fails fast unless the host passes the NVIDIA preflight contract for
+  `nvidia-smi`, Docker `--runtime=nvidia`, and the Kind worker device mount
+- `cluster up` in `linux-cuda` reconciles the Kind cluster through `nvkind`, preserving the
+  repo-local kubeconfig contract while exposing NVIDIA runtime support inside the Kind node containers
+- the cluster installs the NVIDIA device plugin so nodes expose allocatable `nvidia.com/gpu`
+  through the real Kubernetes resource inventory rather than synthetic status patching
 - repo-owned workload rules for CUDA lanes request `nvidia.com/gpu` and apply the required runtime
   configuration, such as `runtimeClassName: nvidia`, when needed by the chosen implementation
-- cluster-resident CUDA workloads can schedule on the GPU-capable Kind substrate
+- cluster-resident CUDA workloads can schedule on the GPU-capable Kind substrate and run
+  `nvidia-smi -L` inside the service deployment on supported hosts
 
 ### Validation
 
-- `./.build/infernix test lint` passes `tools/platform_asset_check.py`, which verifies the GPU Kind config carries `nvidia-container-runtime` and the GPU node label
+- `./.build/infernix test lint` passes `tools/platform_asset_check.py`, which verifies the GPU
+  Kind config carries the CDI device mount and the GPU node label
 - `infernix kubectl get nodes -l infernix.runtime/gpu=true -o jsonpath=...` on the current Kind
-  path shows allocatable `nvidia.com/gpu` resources for `linux-cuda`
+  path shows positive allocatable `nvidia.com/gpu` resources for `linux-cuda`
+- `infernix kubectl -n nvidia get daemonset nvidia-device-plugin-daemonset -o jsonpath=...`
+  shows the NVIDIA device plugin rollout is ready on the GPU-capable nodes
 - `infernix kubectl get deployment -n platform infernix-service -o jsonpath=...` shows
   `runtimeClassName: nvidia`, `nvidia.com/gpu: 1`, and the GPU node selector on the CUDA service
   workload
+- `infernix kubectl -n platform exec deployment/infernix-service -- nvidia-smi -L` reports at
+  least one visible GPU on a supported NVIDIA host
 - `./.build/infernix --runtime-mode linux-cuda test integration` passes on the host-native path
   and exercises the CUDA lane through repeated `cluster up` or `cluster down` lifecycle checks
 - `./.build/infernix --runtime-mode linux-cuda test e2e` passes on the host-native final
@@ -311,12 +320,9 @@ Make `linux-cuda` a real GPU-backed cluster mode rather than a nominal matrix co
 
 ### Remaining Work
 
-- replace the current runtime shim and node-status patching with real NVIDIA container runtime
-  integration inside the Kind node containers
-- surface genuine `nvidia.com/gpu` resources from the host through Kubernetes rather than
-  synthetic status updates
-- validate CUDA workload execution on the Kind substrate, not only scheduling metadata, resource
-  requests, and routed demo traffic
+- rerun the `linux-cuda` integration and E2E suites on a supported NVIDIA host that satisfies the
+  documented preflight contract so this sprint can close with supported-host validation rather than
+  host-gated implementation work alone
 
 ## Documentation Requirements
 

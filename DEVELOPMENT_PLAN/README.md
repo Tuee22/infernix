@@ -54,20 +54,26 @@ across the tracked phases.
 - the documentation, repository shape, CLI surface, Kind or Helm substrate, generated demo-config
   publication, routed browser workbench, and outer-container launcher are materially implemented
   and aligned with the current plan
-- the `linux-cuda` lane remains open: the current code labels GPU nodes, patches
-  `nvidia.com/gpu` into node status, and wires `nvidia-container-runtime` to `runc`, but it does
-  not yet expose a real NVIDIA-backed Kind substrate with usable GPU devices
+- the `linux-cuda` lane now reconciles a real NVIDIA-backed Kind path on supported hosts: the
+  current code fails fast unless the NVIDIA host and Docker toolkit preflight commands pass, uses
+  `nvkind` to create the cluster, mounts the CDI device path into the GPU worker, and installs the
+  NVIDIA device plugin so Kubernetes advertises real allocatable `nvidia.com/gpu` resources;
+  final closure remains open until that path is revalidated on a supported NVIDIA host through the
+  full integration and E2E matrix
 - the routed service path remains open: `tools/service_server.py` and `tools/runtime_backend.py`
-  now supervise repo-owned engine-aware managed subprocess workers, round-trip request or result
-  payloads through Pulsar, materialize durable runtime artifact bundles into the MinIO-backed
-  runtime bucket, and stage source-artifact manifests plus local-file copies or opt-in remote
-  previews, but they do not yet launch the final third-party engine kernels or acquire direct
-  upstream model artifacts for every matrix row into that durable store
+  now launch process-isolated engine-worker adapters through configured command prefixes, round-trip
+  request or result payloads through Pulsar, materialize durable runtime artifact bundles into the
+  MinIO-backed runtime bucket, stage source-artifact manifests plus direct upstream local-file or
+  HTTP or Hugging Face or GitHub acquisitions, and inject the repo-owned engine fixture command in
+  automated validation, but they do not yet validate the final supported-host third-party engine
+  binaries or modules or acquire the authoritative engine-ready model artifacts for every matrix
+  row into that durable store
 - exhaustive integration and E2E validation remain open at final-closure level: the suites cover
-  every generated catalog entry today and now validate the engine-aware managed-worker plus
-  durable-artifact or source-artifact contract, but they are still not exercising final engine
-  execution on a real GPU-backed
-  substrate across the full matrix
+  every generated catalog entry today and now validate the process-isolated engine-worker adapter
+  path plus the durable-artifact or direct-upstream source-artifact contract; by default they
+  auto-include `linux-cuda` only when the current host passes the NVIDIA preflight contract, but
+  they are still not exercising final engine execution across the full supported matrix on
+  supported hosts
 
 ## Execution Contexts and Runtime Modes
 

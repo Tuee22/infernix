@@ -1,13 +1,6 @@
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 name: infernix-linux-cuda
-containerdConfigPatches:
-  - |-
-    [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.nvidia]
-      privileged_without_host_devices = false
-      runtime_type = "io.containerd.runc.v2"
-    [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.nvidia.options]
-      BinaryName = "/usr/bin/nvidia-container-runtime"
 nodes:
   - role: control-plane
     extraPortMappings:
@@ -37,6 +30,8 @@ nodes:
             node-labels: "infernix.runtime/mode=linux-cuda"
   - role: worker
     extraMounts:
+      - hostPath: /dev/null
+        containerPath: /var/run/nvidia-container-devices/all
       - hostPath: ./.build/kind/registry
         containerPath: /etc/containerd/certs.d
     kubeadmConfigPatches:

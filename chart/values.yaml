@@ -78,6 +78,9 @@ service:
     serviceUrl: pulsar://infernix-infernix-pulsar-proxy.platform.svc.cluster.local:6650
     tenant: public
     namespace: default
+  engineAdapters:
+    fixtureCommand: ""
+    commandEnv: {}
 
 web:
   image:

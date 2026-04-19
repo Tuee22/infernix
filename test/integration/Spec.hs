@@ -6,6 +6,7 @@ import Control.Concurrent (threadDelay)
 import Control.Exception (finally)
 import Data.ByteString.Lazy qualified as Lazy
 import Data.List (isInfixOf, isPrefixOf, tails)
+import Data.Maybe (mapMaybe)
 import Data.Text qualified as Text
 import Data.Text.IO qualified as TextIO
 import Infernix.Cluster
@@ -31,6 +32,7 @@ import System.Process
     terminateProcess,
     waitForProcess,
   )
+import Text.Read (readMaybe)
 
 data SerializedCatalogEntry = SerializedCatalogEntry
   { entryMatrixRowId :: Text.Text,
@@ -43,15 +45,35 @@ data SerializedCatalogEntry = SerializedCatalogEntry
 main :: IO ()
 main = withTestRoot ".tmp/integration" $ do
   paths <- Config.discoverPaths
-  maybeRequestedMode <- lookupEnv "INFERNIX_RUNTIME_MODE"
-  runtimeModes <- case maybeRequestedMode >>= (parseRuntimeMode . Text.pack) of
-    Just runtimeMode -> pure [runtimeMode]
-    Nothing -> pure allRuntimeModes
-  mapM_ (exerciseRuntimeMode paths) runtimeModes
-  case runtimeModes of
-    runtimeMode : _ -> validateEdgePortConflictAndRediscovery paths runtimeMode
-    [] -> fail "integration suite requires at least one runtime mode"
-  putStrLn "integration tests passed"
+  let runWithFixtures = do
+        maybeRequestedMode <- lookupEnv "INFERNIX_RUNTIME_MODE"
+        runtimeModes <- case maybeRequestedMode >>= (parseRuntimeMode . Text.pack) of
+          Just runtimeMode -> pure [runtimeMode]
+          Nothing -> do
+            cudaSupported <- linuxCudaSupportedOnHost
+            pure (filter (\runtimeMode -> runtimeMode /= LinuxCuda || cudaSupported) allRuntimeModes)
+        mapM_ (exerciseRuntimeMode paths) runtimeModes
+        case runtimeModes of
+          runtimeMode : _ -> validateEdgePortConflictAndRediscovery paths runtimeMode
+          [] -> fail "integration suite requires at least one runtime mode"
+        putStrLn "integration tests passed"
+  withEngineFixtures paths runWithFixtures
+
+withEngineFixtures :: Paths -> IO () -> IO ()
+withEngineFixtures paths action = do
+  previousHostFixture <- lookupEnv "INFERNIX_ENGINE_FIXTURE_COMMAND"
+  previousContainerFixture <- lookupEnv "INFERNIX_ENGINE_FIXTURE_COMMAND_CONTAINER"
+  setEnv "INFERNIX_ENGINE_FIXTURE_COMMAND" ("python3 " <> repoRoot paths </> "tools" </> "engine_fixture.py")
+  setEnv "INFERNIX_ENGINE_FIXTURE_COMMAND_CONTAINER" "python3 /srv/infernix/tools/engine_fixture.py"
+  action `finally` restoreEnv previousHostFixture previousContainerFixture
+  where
+    restoreEnv previousHostFixture previousContainerFixture = do
+      restoreVar "INFERNIX_ENGINE_FIXTURE_COMMAND" previousHostFixture
+      restoreVar "INFERNIX_ENGINE_FIXTURE_COMMAND_CONTAINER" previousContainerFixture
+    restoreVar name maybeValue =
+      case maybeValue of
+        Just value -> setEnv name value
+        Nothing -> unsetEnv name
 
 exerciseRuntimeMode :: Paths -> RuntimeMode -> IO ()
 exerciseRuntimeMode paths runtimeMode = do
@@ -148,14 +170,24 @@ validateClusterStatusOutput paths runtimeMode = do
 
 validateLinuxCudaCluster :: Paths -> RuntimeMode -> IO ()
 validateLinuxCudaCluster paths runtimeMode = do
+  devicePluginRollout <-
+    captureInfernixOutput
+      paths
+      runtimeMode
+      ["kubectl", "-n", "nvidia", "get", "daemonset", "nvidia-device-plugin-daemonset", "-o", "jsonpath={.status.numberReady}:{.status.desiredNumberScheduled}"]
+  let (readyPods, desiredPods) =
+        case break (== ':') (trim devicePluginRollout) of
+          (readyValue, ':' : desiredValue) -> (readMaybe readyValue :: Maybe Int, readMaybe desiredValue :: Maybe Int)
+          _ -> (Nothing, Nothing)
+  assert (readyPods == desiredPods && maybe False (> 0) readyPods) "linux-cuda deploys the real NVIDIA device plugin"
   allocatableOutput <-
     captureInfernixOutput
       paths
       runtimeMode
       ["kubectl", "get", "nodes", "-l", "infernix.runtime/gpu=true", "-o", "jsonpath={range .items[*]}{.status.allocatable.nvidia\\.com/gpu}{\"\\n\"}{end}"]
-  let allocatableValues = filter (`elem` ["0", "1"]) (map trim (lines allocatableOutput))
-  assert (not (null allocatableValues)) "linux-cuda nodes advertise at least one GPU allocatable value"
-  assert (all (== "1") allocatableValues) "linux-cuda nodes advertise nvidia.com/gpu allocatable values"
+  let allocatableCounts = mapMaybe readMaybe (filter (not . null) (map trim (lines allocatableOutput))) :: [Int]
+  assert (not (null allocatableCounts)) "linux-cuda nodes advertise at least one GPU allocatable value"
+  assert (all (> 0) allocatableCounts) "linux-cuda nodes advertise real nvidia.com/gpu allocatable values"
   runtimeClassName <-
     captureInfernixOutput
       paths
@@ -168,6 +200,12 @@ validateLinuxCudaCluster paths runtimeMode = do
       runtimeMode
       ["kubectl", "-n", "platform", "get", "deployment", "infernix-service", "-o", "jsonpath={.spec.template.spec.containers[0].resources.requests.nvidia\\.com/gpu}"]
   assert (trim gpuRequest == "1") "linux-cuda service pods request nvidia.com/gpu"
+  serviceGpuInventory <-
+    captureInfernixOutput
+      paths
+      runtimeMode
+      ["kubectl", "-n", "platform", "exec", "deployment/infernix-service", "--", "nvidia-smi", "-L"]
+  assert ("GPU " `isInfixOf` serviceGpuInventory) "linux-cuda service deployment can see real NVIDIA GPUs"
 
 validateRoutedSurface :: Paths -> RuntimeMode -> [SerializedCatalogEntry] -> IO ()
 validateRoutedSurface paths runtimeMode serializedEntries = do
@@ -185,9 +223,9 @@ validateRoutedSurface paths runtimeMode serializedEntries = do
   assert ("\"daemonLocation\": \"cluster-pod\"" `isInfixOf` publicationResponse) "routed publication reports the cluster-resident daemon"
   assert ("\"mode\": \"cluster-service\"" `isInfixOf` publicationResponse) "routed publication reports the cluster service as the active API upstream"
   assert ("\"durableBackendAccessMode\": \"cluster-local\"" `isInfixOf` publicationResponse) "cluster-resident service reports cluster-local durable backend access"
-  assert ("\"workerExecutionMode\": \"managed-subprocess-workers\"" `isInfixOf` publicationResponse) "cluster-resident service reports managed subprocess workers through the routed publication surface"
-  assert ("\"workerAdapterMode\": \"engine-aware\"" `isInfixOf` publicationResponse) "cluster-resident service reports engine-aware worker adapters through the routed publication surface"
-  assert ("\"artifactAcquisitionMode\": \"local-copy-and-opt-in-remote-fetch\"" `isInfixOf` publicationResponse || "\"artifactAcquisitionMode\": \"local-copy-and-remote-fetch\"" `isInfixOf` publicationResponse) "cluster-resident service reports the source-artifact acquisition contract through the routed publication surface"
+  assert ("\"workerExecutionMode\": \"process-isolated-engine-workers\"" `isInfixOf` publicationResponse) "cluster-resident service reports process-isolated engine workers through the routed publication surface"
+  assert ("\"workerAdapterMode\": \"configured-engine-processes\"" `isInfixOf` publicationResponse) "cluster-resident service reports configured engine adapter processes through the routed publication surface"
+  assert ("\"artifactAcquisitionMode\": \"direct-upstream-fetch\"" `isInfixOf` publicationResponse) "cluster-resident service reports the direct upstream source-artifact acquisition contract through the routed publication surface"
   assert ("\"id\": \"minio\"" `isInfixOf` publicationResponse && "\"durableBackendState\": \"minio-backed chart deployment\"" `isInfixOf` publicationResponse) "routed publication reports MinIO upstream backing state"
   assert ("\"id\": \"pulsar\"" `isInfixOf` publicationResponse && "\"durableBackendState\": \"pulsar-backed chart deployment\"" `isInfixOf` publicationResponse) "routed publication reports Pulsar upstream backing state"
   assert ("Harbor Gateway" `isInfixOf` harborResponse || "Harbor" `isInfixOf` harborResponse) "routed Harbor portal resolves through the cluster gateway"
@@ -234,8 +272,8 @@ validateHostBridgeService paths runtimeMode serializedEntries = do
   assert ("\"daemonLocation\": \"control-plane-host\"" `isInfixOf` publicationResponse) "host bridge publishes the host daemon location through the routed API"
   assert ("\"mode\": \"host-daemon-bridge\"" `isInfixOf` publicationResponse) "host bridge publishes the host-daemon API upstream"
   assert ("\"durableBackendAccessMode\": \"edge-route-bridge\"" `isInfixOf` publicationResponse) "host bridge publishes edge-routed durable backend access"
-  assert ("\"workerExecutionMode\": \"managed-subprocess-workers\"" `isInfixOf` publicationResponse) "host bridge preserves managed subprocess workers through the routed publication surface"
-  assert ("\"workerAdapterMode\": \"engine-aware\"" `isInfixOf` publicationResponse) "host bridge preserves engine-aware worker adapters through the routed publication surface"
+  assert ("\"workerExecutionMode\": \"process-isolated-engine-workers\"" `isInfixOf` publicationResponse) "host bridge preserves process-isolated engine workers through the routed publication surface"
+  assert ("\"workerAdapterMode\": \"configured-engine-processes\"" `isInfixOf` publicationResponse) "host bridge preserves configured engine adapter processes through the routed publication surface"
   assert ("\"id\": \"harbor\"" `isInfixOf` publicationResponse && "\"healthStatus\": \"ready\"" `isInfixOf` publicationResponse) "host-native service publication reports routed Harbor health"
   mapM_
     (\entry -> assert (Text.unpack (entryModelId entry) `isInfixOf` modelsResponse) "host bridge preserves routed catalog listing through the same edge entrypoint")

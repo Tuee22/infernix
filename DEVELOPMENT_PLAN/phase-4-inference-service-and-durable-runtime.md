@@ -16,14 +16,19 @@ real `ConfigMap/infernix-demo-config` and publication ConfigMap on the Kind subs
 protobuf manifests and results in MinIO, registers Pulsar protobuf schemas for request or result
 or coordination topics, exposes explicit cache status or eviction or rebuild flows through both the
 CLI and routed API, and can run host-native on the Apple control-plane path while the routed edge
-keeps `/api` stable through the host bridge. The current routed runtime now supervises repo-owned
-engine-aware managed subprocess workers, round-trips request or result payloads through Pulsar on both the
-cluster-resident and host-bridge paths, materializes durable runtime artifact bundles into the
-runtime bucket and local cache roots, and now stages durable source-artifact manifests plus
-local-file copies or opt-in remote previews under `source-artifacts/`. The remaining gap is final
-engine integration: those engine-aware workers do not yet launch the third-party engine kernels
-named by the README matrix, map every matrix row to a direct upstream artifact acquisition path, or
-provide direct Apple-host model execution.
+keeps `/api` stable through the host bridge. The current routed runtime now launches
+process-isolated engine-worker adapters through configured command prefixes, round-trips request or
+result payloads through Pulsar on both the cluster-resident and host-bridge paths, materializes
+durable runtime artifact bundles into the runtime bucket and local cache roots, stages durable
+source-artifact manifests plus local-file copies, direct HTTP downloads, and provider metadata
+fetches under `source-artifacts/`, exposes adapter-specific engine command prefixes to the cluster
+service deployment through `INFERNIX_ENGINE_COMMAND_*`, and injects the repo-owned engine fixture
+command in automated validation. The host-side unit helper path now reuses that same durable bundle
+plus source-artifact-manifest contract through an explicit filesystem-fixture helper instead of
+writing placeholder bundle metadata. The remaining gap is supported-host final engine integration:
+those adapter workers do not yet validate the final third-party engine binaries or modules named by
+the README matrix, acquire the authoritative engine-ready model artifacts for every matrix row, or
+provide validated direct Apple-host model execution.
 
 ## Matrix Ownership Contract
 
@@ -101,18 +106,23 @@ authoritative.
 - `infernix test integration` proves cluster reconcile publishes the generated catalog, that
   per-entry inference execution succeeds on the final Kind and Helm substrate, that Pulsar topic
   schemas are published as protobuf, and that MinIO stores runtime results or manifests or large-output payloads
-- `infernix test unit` proves large outputs return typed object references and that protobuf manifests or results round-trip through the supported storage helpers
+- `infernix test unit` proves large outputs return typed object references, that protobuf
+  manifests or results round-trip through the supported storage helpers, and that local-file plus
+  direct-upstream HTTP source artifacts materialize through the durable object-store contract
 - the routed service path persists runtime results in MinIO and exposes durable cache manifests through the routed cache lifecycle API
 
 ### Remaining Work
 
-- replace the current engine-aware managed worker subprocesses with the final third-party engine
-  processes selected by the README matrix
-- replace the current source-artifact manifests or local-file copies or opt-in remote previews with
-  matrix-wide direct upstream artifact acquisition into MinIO, then treat those fetched external
+- validate the configured engine-command path against the supported-host third-party engines
+  selected by the README matrix instead of the repo-owned engine fixture command used in automated
+  validation
+- extend the current direct-upstream source-artifact acquisition path from generic local-file,
+  HTTP, Hugging Face, and GitHub materialization to the matrix-wide engine-ready artifact
+  acquisition required by the supported-host runtime workers, then treat those fetched external
   artifacts as the authoritative durable runtime input instead of the current repo-owned runtime
   bundles
-- validate the routed service path against those final engine workers on the supported modes
+- validate the routed service path against those supported-host final engine workers on the
+  supported modes
 
 ---
 
@@ -146,12 +156,12 @@ cluster-resident execution to coexist.
 
 ### Remaining Work
 
-- connect the host-native Apple daemon path to real local Apple engines rather than the current
-  engine-aware managed worker layer
+- connect the host-native Apple daemon path to supported-host Apple engines rather than the
+  configured adapter plus fixture-command validation path used today
 - keep host-native and cluster-resident execution on the same request or result contract once the
-  final engine workers land
-- extend parity validation from route stability, backend reachability, and source-artifact manifest
-  parity to actual Apple-engine execution and direct artifact access on the supported host path
+  supported-host final engine workers land
+- extend parity validation from route stability, backend reachability, and direct-upstream
+  source-artifact parity to actual Apple-engine execution on the supported host path
 
 ---
 

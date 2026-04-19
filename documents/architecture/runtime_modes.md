@@ -50,16 +50,17 @@ The generated demo catalog is the source of truth for the active runtime mode.
 - the plan contract requires `cluster up` in `linux-cuda` to reconcile a Kind path that exposes
   NVIDIA container runtime support inside Kind and usable `nvidia.com/gpu` resources to cluster
   workloads
-- the current implementation still uses a shim-backed CUDA Kind path that labels the GPU worker,
-  installs the NVIDIA runtime shim inside Kind nodes, and synthetically advertises allocatable
-  `nvidia.com/gpu`; the remaining real-device gap stays tracked in
+- the current implementation enforces a host-side NVIDIA preflight contract, creates the cluster
+  through `nvkind`, mounts the CDI device path into the GPU worker, and installs the NVIDIA device
+  plugin so Kubernetes advertises real allocatable `nvidia.com/gpu`; the remaining supported-host
+  validation gap stays tracked in
   [../../DEVELOPMENT_PLAN/phase-2-kind-cluster-storage-and-lifecycle.md](../../DEVELOPMENT_PLAN/phase-2-kind-cluster-storage-and-lifecycle.md)
 - the cluster deploys `RuntimeClass/nvidia`, and the CUDA service workload requests
   `nvidia.com/gpu: 1` while selecting the GPU-labeled node
 - CUDA-bound generated catalog rows carry runtime-lane metadata that the service and test surfaces
   consume for placement and scheduling assertions
 - real device-backed NVIDIA execution inside Kind remains required for final plan closure even
-  though the current implementation has not closed that gap yet
+  though the repository still needs supported-host validation for that implemented path
 - switching from `linux-cpu` to `linux-cuda` changes the selected engine bindings and may change
   the generated entry set
 
@@ -69,9 +70,13 @@ Service placement is a separate concept from runtime mode.
 
 - Apple host-native service placement runs `infernix service` on the host and repoints the routed
   `/api` surface through the Apple host bridge while the browser stays on the shared edge URL
-- the host-native and cluster-resident service placements both supervise the same engine-aware
-  managed subprocess worker contract and consume durable runtime artifact bundles plus
-  durable source-artifact manifests through their respective MinIO or Pulsar access path
+- the host-native and cluster-resident service placements both launch the same process-isolated
+  engine-worker adapter contract, consume durable runtime artifact bundles plus direct-upstream
+  source-artifact manifests, and can inject the repo-owned engine fixture command during automated
+  validation while supported-host third-party engine validation remains open
+- local host-side fixture helpers may still use an explicit `filesystem-fixture` ownership mode for
+  unit coverage, but the supported `infernix service` surface itself requires the routed durable
+  backend contract or explicit backend configuration
 - cluster-resident service placement consumes the same active runtime mode and the same generated
   demo catalog from `/opt/build/`
 

@@ -455,13 +455,17 @@ def main() -> int:
             continue
         path.mkdir(parents=True, exist_ok=True)
 
-    runtime_backend = RuntimeBackend(
-        paths=paths,
-        runtime_mode=args.runtime_mode,
-        control_plane_context=args.control_plane_context,
-        daemon_location=args.daemon_location,
-        publication_state=publication_state,
-    )
+    try:
+        runtime_backend = RuntimeBackend(
+            paths=paths,
+            runtime_mode=args.runtime_mode,
+            control_plane_context=args.control_plane_context,
+            daemon_location=args.daemon_location,
+            publication_state=publication_state,
+        )
+    except (RuntimeError, ValueError) as exc:
+        print(f"infernix service error: {exc}", file=sys.stderr)
+        return 1
     server = InfernixHTTPServer((args.host, args.port), InfernixHandler)
     server.paths = paths  # type: ignore[attr-defined]
     server.runtime_backend = runtime_backend  # type: ignore[attr-defined]
