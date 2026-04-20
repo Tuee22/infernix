@@ -4,6 +4,7 @@ module Infernix.Cluster
   ( clusterDown,
     clusterStatus,
     clusterUp,
+    kindControlPlaneNodeName,
     linuxCudaSupportedOnHost,
     loadClusterState,
     runKubectlCompat,
@@ -105,6 +106,9 @@ harborFinalPhaseStatefulSets =
 nvidiaDevicePluginVersion :: String
 nvidiaDevicePluginVersion = "0.17.1"
 
+kindNodeImage :: String
+kindNodeImage = "kindest/node:v1.34.0"
+
 nvkindGoInstallTarget :: String
 nvkindGoInstallTarget = "github.com/NVIDIA/nvkind/cmd/nvkind@8bce71ec58cf12b4003758eb4e49adac53cc40f2"
 
@@ -158,9 +162,12 @@ clusterUp maybeRuntimeMode = do
   claimDiscoveryRenderedChartPath <- renderHelmChart paths runtimeMode [claimDiscoveryValuesPath]
   discoveredClaims <- discoverPersistentClaims paths claimDiscoveryRenderedChartPath
   mapM_ (createDirectoryIfMissing True . claimDirectory paths) discoveredClaims
-  (edgePortValue, kubeconfigContents) <- ensureKindCluster paths runtimeMode requestedPort
+  (edgePortValue, kubeconfigContents, clusterCreated) <- ensureKindCluster paths runtimeMode requestedPort
+  when (clusterCreated && not (kindUsesHostBindMounts paths)) $
+    prepareKindNodeRuntimePaths paths runtimeMode
   writeFile (edgePortPath paths) (show edgePortValue)
   writeTextFile (Config.generatedKubeconfigPath paths) (Text.pack kubeconfigContents)
+  ensureOuterContainerKindNetworkAccess paths runtimeMode
   waitForKubernetesApi paths runtimeMode
   configureRuntimeModeCluster paths runtimeMode
   let demoConfigPath = Config.generatedDemoConfigPath paths runtimeMode
@@ -243,7 +250,9 @@ clusterDown maybeRuntimeMode = do
           Just state -> pure (clusterRuntimeMode state)
           Nothing -> Config.resolveRuntimeMode Nothing
   clusterExists <- kindClusterExists paths runtimeMode
-  when clusterExists $
+  when clusterExists $ do
+    unless (kindUsesHostBindMounts paths) $
+      syncKindNodeRuntimePathsToHost paths runtimeMode
     runCommand
       Nothing
       [("KUBECONFIG", Config.generatedKubeconfigPath paths)]
@@ -282,6 +291,8 @@ clusterStatus maybeRuntimeMode = do
       putStrLn ("expectedMountedDemoConfigPath: " <> Config.watchedDemoConfigPath runtimeMode)
     Just state -> do
       actualPresent <- kindClusterExists paths (clusterRuntimeMode state)
+      when actualPresent $
+        ensureOuterContainerKindNetworkAccess paths (clusterRuntimeMode state)
       cacheEntries <- countLeafEntries (modelCacheRoot paths)
       resultCount <- countLeafEntries (resultsRoot paths)
       objectCount <- countLeafEntries (objectStoreRoot paths)
@@ -335,7 +346,9 @@ runKubectlCompat args = do
     Nothing -> putStrLn "No cluster state is available. Run `infernix cluster up` first."
     Just state
       | not (clusterPresent state) -> putStrLn "Cluster is currently absent."
-      | otherwise -> putStr =<< captureCommand Nothing [] "kubectl" (kubeconfigArgs state <> args)
+      | otherwise -> do
+          ensureOuterContainerKindNetworkAccess paths (clusterRuntimeMode state)
+          putStr =<< captureCommand Nothing [] "kubectl" (kubeconfigArgs state <> args)
 
 chooseEdgePort :: Paths -> IO Int
 chooseEdgePort paths = do
@@ -392,25 +405,27 @@ claimDirectory paths persistentClaim =
     </> show (ordinal persistentClaim)
     </> Text.unpack (claim persistentClaim)
 
-ensureKindCluster :: Paths -> RuntimeMode -> Int -> IO (Int, String)
+ensureKindCluster :: Paths -> RuntimeMode -> Int -> IO (Int, String, Bool)
 ensureKindCluster paths runtimeMode requestedPort = do
   clusterExists <- kindClusterExists paths runtimeMode
-  selectedPort <-
+  (selectedPort, clusterCreated) <-
     if clusterExists
       then do
         maybeExistingPort <- currentKindEdgePort paths runtimeMode
-        pure (fromMaybe requestedPort maybeExistingPort)
-      else createKindCluster paths runtimeMode requestedPort
+        pure (fromMaybe requestedPort maybeExistingPort, False)
+      else do
+        createdPort <- createKindCluster paths runtimeMode requestedPort
+        pure (createdPort, True)
   kubeconfigResult <- waitForKindKubeconfig paths runtimeMode
   case kubeconfigResult of
     Right kubeconfigContents ->
-      pure (selectedPort, normalizeKubeconfigServer (Config.controlPlaneContext paths) kubeconfigContents)
+      pure (selectedPort, normalizeKubeconfigServer (Config.controlPlaneContext paths) kubeconfigContents, clusterCreated)
     Left err
       | clusterExists -> do
           runCommand Nothing [] "kind" ["delete", "cluster", "--name", kindClusterName paths runtimeMode]
           recreatedPort <- createKindCluster paths runtimeMode requestedPort
           recreatedKubeconfig <- waitForKindKubeconfigOrFail paths runtimeMode
-          pure (recreatedPort, normalizeKubeconfigServer (Config.controlPlaneContext paths) recreatedKubeconfig)
+          pure (recreatedPort, normalizeKubeconfigServer (Config.controlPlaneContext paths) recreatedKubeconfig, True)
       | otherwise ->
           ioError
             ( userError
@@ -485,8 +500,8 @@ ensureLinuxCudaHostPrerequisites = do
 linuxCudaSupportedOnHost :: IO Bool
 linuxCudaSupportedOnHost = do
   hostGpuResult <- tryCommand Nothing [] "nvidia-smi" ["-L"]
-  dockerRuntimeResult <- tryCommand Nothing [] "docker" ["run", "--rm", "--runtime=nvidia", "-e", "NVIDIA_VISIBLE_DEVICES=all", "ubuntu:22.04", "nvidia-smi", "-L"]
-  dockerVolumeMountResult <- tryCommand Nothing [] "docker" ["run", "--rm", "-v", "/dev/null:/var/run/nvidia-container-devices/all", "ubuntu:22.04", "nvidia-smi", "-L"]
+  dockerRuntimeResult <- tryCommand Nothing [] "docker" dockerGpuProbeCommand
+  dockerVolumeMountResult <- tryCommand Nothing [] "docker" dockerCdiProbeCommand
   pure
     ( case (hostGpuResult, dockerRuntimeResult, dockerVolumeMountResult) of
         (Right _, Right _, Right _) -> True
@@ -496,16 +511,16 @@ linuxCudaSupportedOnHost = do
 linuxCudaHostFailureReport :: IO String
 linuxCudaHostFailureReport = do
   hostGpuResult <- tryCommand Nothing [] "nvidia-smi" ["-L"]
-  dockerRuntimeResult <- tryCommand Nothing [] "docker" ["run", "--rm", "--runtime=nvidia", "-e", "NVIDIA_VISIBLE_DEVICES=all", "ubuntu:22.04", "nvidia-smi", "-L"]
-  dockerVolumeMountResult <- tryCommand Nothing [] "docker" ["run", "--rm", "-v", "/dev/null:/var/run/nvidia-container-devices/all", "ubuntu:22.04", "nvidia-smi", "-L"]
+  dockerRuntimeResult <- tryCommand Nothing [] "docker" dockerGpuProbeCommand
+  dockerVolumeMountResult <- tryCommand Nothing [] "docker" dockerCdiProbeCommand
   pure
     ( unlines
-        [ "linux-cuda requires a host with real NVIDIA GPUs plus a Docker engine configured for the NVIDIA container toolkit.",
+        [ "linux-cuda requires a host with real NVIDIA GPUs plus a Docker engine configured for GPU and CDI-capable NVIDIA containers.",
           "",
           "Required preflight commands:",
           "  nvidia-smi -L",
-          "  docker run --rm --runtime=nvidia -e NVIDIA_VISIBLE_DEVICES=all ubuntu:22.04 nvidia-smi -L",
-          "  docker run --rm -v /dev/null:/var/run/nvidia-container-devices/all ubuntu:22.04 nvidia-smi -L",
+          "  docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi -L",
+          "  docker run --rm --gpus all -v /dev/null:/var/run/nvidia-container-devices/all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi -L",
           "",
           "If Docker is not configured yet, follow the NVIDIA toolkit setup sequence:",
           "  sudo nvidia-ctk runtime configure --runtime=docker --set-as-default --cdi.enabled",
@@ -515,9 +530,9 @@ linuxCudaHostFailureReport = do
           "Observed failures:",
           "host nvidia-smi:",
           renderCommandOutcome hostGpuResult,
-          "docker --runtime=nvidia:",
+          "docker --gpus all:",
           renderCommandOutcome dockerRuntimeResult,
-          "docker NVIDIA device mount:",
+          "docker --gpus all with NVIDIA device mount:",
           renderCommandOutcome dockerVolumeMountResult
         ]
     )
@@ -525,6 +540,30 @@ linuxCudaHostFailureReport = do
     renderCommandOutcome result = case result of
       Right output -> output
       Left err -> err
+
+dockerGpuProbeCommand :: [String]
+dockerGpuProbeCommand =
+  [ "run",
+    "--rm",
+    "--gpus",
+    "all",
+    "nvidia/cuda:12.4.1-base-ubuntu22.04",
+    "nvidia-smi",
+    "-L"
+  ]
+
+dockerCdiProbeCommand :: [String]
+dockerCdiProbeCommand =
+  [ "run",
+    "--rm",
+    "--gpus",
+    "all",
+    "-v",
+    "/dev/null:/var/run/nvidia-container-devices/all",
+    "nvidia/cuda:12.4.1-base-ubuntu22.04",
+    "nvidia-smi",
+    "-L"
+  ]
 
 ensureNvkindBinary :: Paths -> IO FilePath
 ensureNvkindBinary paths = do
@@ -560,12 +599,16 @@ ensureNvkindBinary paths = do
       pure binaryPath
 
 waitForKindKubeconfig :: Paths -> RuntimeMode -> IO (Either String String)
-waitForKindKubeconfig paths runtimeMode =
+waitForKindKubeconfig paths runtimeMode = do
+  let internalFlag
+        | Config.controlPlaneContext paths == "outer-container" = ["--internal"]
+        | otherwise = []
+      commandArgs = ["get", "kubeconfig", "--name", kindClusterName paths runtimeMode] <> internalFlag
   retryCommandOutput
     30
     1000000
-    ("kind get kubeconfig --name " <> kindClusterName paths runtimeMode)
-    (tryCommand Nothing [] "kind" ["get", "kubeconfig", "--name", kindClusterName paths runtimeMode])
+    ("kind " <> unwords commandArgs)
+    (tryCommand Nothing [] "kind" commandArgs)
 
 waitForKindKubeconfigOrFail :: Paths -> RuntimeMode -> IO String
 waitForKindKubeconfigOrFail paths runtimeMode = do
@@ -777,7 +820,7 @@ publishClusterImages paths renderedChartPath runtimeMode = do
       renderedChartPath,
       outputPath,
       "--harbor-api-host",
-      harborApiHost paths
+      harborApiHost paths runtimeMode
     ]
   pure outputPath
 
@@ -835,18 +878,18 @@ preloadHarborImageOnNode nodeContainer imageRef = do
             )
         )
 
-waitForHarborRegistry :: Paths -> IO ()
-waitForHarborRegistry paths = do
-  result <- waitForHarborRegistryResult paths 60 5000000
+waitForHarborRegistry :: Paths -> RuntimeMode -> IO ()
+waitForHarborRegistry paths runtimeMode = do
+  result <- waitForHarborRegistryResult paths runtimeMode 60 5000000
   case result of
     Right _ -> pure ()
     Left err ->
       ioError
         (userError ("Harbor registry never became ready enough for image publication:\n" <> err))
 
-waitForHarborRegistryResult :: Paths -> Int -> Int -> IO (Either String String)
-waitForHarborRegistryResult paths attempts delayMicros = do
-  let registryApiUrl = "http://" <> harborApiHost paths <> "/api/v2.0/health"
+waitForHarborRegistryResult :: Paths -> RuntimeMode -> Int -> Int -> IO (Either String String)
+waitForHarborRegistryResult paths runtimeMode attempts delayMicros = do
+  let registryApiUrl = "http://" <> harborApiHost paths runtimeMode <> "/api/v2.0/health"
       probeCommand =
         tryCommand
           Nothing
@@ -888,7 +931,7 @@ bootstrapHarborWithRepair paths state valuesPaths = go (3 :: Int)
                   go (remainingAttempts - 1)
               | otherwise -> do
                   repairHarborBootstrapState paths state Nothing
-                  waitForHarborRegistry paths
+                  waitForHarborRegistry paths (clusterRuntimeMode state)
             HarborBootstrapTimedOut err
               | remainingAttempts > 1 -> do
                   repairHarborBootstrapState paths state (Just err)
@@ -971,7 +1014,7 @@ waitForHarborRegistryOrDirty :: Paths -> ClusterState -> IO HarborBootstrapOutco
 waitForHarborRegistryOrDirty paths state = go (24 :: Int) ""
   where
     go remainingAttempts lastError = do
-      registryResult <- waitForHarborRegistryResult paths 1 0
+      registryResult <- waitForHarborRegistryResult paths (clusterRuntimeMode state) 1 0
       case registryResult of
         Right _ -> pure HarborRegistryReady
         Left err -> do
@@ -1352,7 +1395,9 @@ renderKindConfig paths runtimeMode edgePortValue hostKindRoot registryHostsDirec
     preamble =
       [ "kind: Cluster",
         "apiVersion: kind.x-k8s.io/v1alpha4",
-        "name: " <> kindClusterName paths runtimeMode
+        "name: " <> kindClusterName paths runtimeMode,
+        "networking:",
+        "  apiServerAddress: \"127.0.0.1\""
       ]
     initLabels = controlPlaneRuntimeModeLabels runtimeMode
     workerLabels = runtimeModeLabels runtimeMode
@@ -1360,38 +1405,51 @@ renderKindConfig paths runtimeMode edgePortValue hostKindRoot registryHostsDirec
       [ "    extraPortMappings:",
         "      - containerPort: 30090",
         "        hostPort: " <> show edgePortValue,
+        "        listenAddress: \"127.0.0.1\"",
         "        protocol: TCP",
         "      - containerPort: 30002",
         "        hostPort: 30002",
+        "        listenAddress: \"127.0.0.1\"",
         "        protocol: TCP",
         "      - containerPort: 30011",
         "        hostPort: 30011",
+        "        listenAddress: \"127.0.0.1\"",
         "        protocol: TCP",
         "      - containerPort: 30080",
         "        hostPort: 30080",
+        "        listenAddress: \"127.0.0.1\"",
         "        protocol: TCP",
         "      - containerPort: 30650",
         "        hostPort: 30650",
+        "        listenAddress: \"127.0.0.1\"",
         "        protocol: TCP"
       ]
     nodeBlock role labels extraLines =
-      [ "  - role: " <> role
+      [ "  - role: " <> role,
+        "    image: " <> kindNodeImage
       ]
         <> extraLines
-        <> [ "    extraMounts:"
-           ]
-        <> linuxCudaMounts role
-        <> [ "      - hostPath: " <> hostKindRoot,
-             "        containerPath: " <> nodeMountedKindRoot,
-             "      - hostPath: " <> registryHostsDirectory,
-             "        containerPath: /etc/containerd/certs.d",
-             "    kubeadmConfigPatches:",
+        <> extraMountLines role
+        <> [ "    kubeadmConfigPatches:",
              "      - |",
              "        kind: " <> kubeConfiguration role,
              "        nodeRegistration:",
              "          kubeletExtraArgs:",
              "            node-labels: " <> show labels
            ]
+    extraMountLines role
+      | null nodeExtraMounts = []
+      | otherwise = ["    extraMounts:"] <> nodeExtraMounts
+      where
+        nodeExtraMounts = linuxCudaMounts role <> hostBindMounts
+    hostBindMounts
+      | kindUsesHostBindMounts paths =
+          [ "      - hostPath: " <> hostKindRoot,
+            "        containerPath: " <> nodeMountedKindRoot,
+            "      - hostPath: " <> registryHostsDirectory,
+            "        containerPath: /etc/containerd/certs.d"
+          ]
+      | otherwise = []
     linuxCudaMounts role = case (runtimeMode, role) of
       (LinuxCuda, "worker") ->
         [ "      - hostPath: /dev/null",
@@ -1401,6 +1459,80 @@ renderKindConfig paths runtimeMode edgePortValue hostKindRoot registryHostsDirec
     kubeConfiguration role
       | role == "control-plane" = "InitConfiguration"
       | otherwise = "JoinConfiguration"
+
+kindUsesHostBindMounts :: Paths -> Bool
+kindUsesHostBindMounts paths =
+  Config.controlPlaneContext paths /= "outer-container"
+
+prepareKindNodeRuntimePaths :: Paths -> RuntimeMode -> IO ()
+prepareKindNodeRuntimePaths paths runtimeMode = do
+  let localKindRoot = kindRoot paths
+      localRegistryHostsRoot = repoRoot paths </> ".build" </> "kind" </> "registry"
+      registryDirectoryInNode = "/etc/containerd/certs.d/localhost:30002"
+      registryHostsPath = localRegistryHostsRoot </> "localhost:30002" </> "hosts.toml"
+  createDirectoryIfMissing True localKindRoot
+  registryHostsContents <- readFile registryHostsPath
+  nodeNames <- kindNodeNames paths runtimeMode
+  mapM_ (primeNode localKindRoot registryDirectoryInNode registryHostsContents) nodeNames
+  where
+    primeNode localKindRoot registryDirectoryInNode registryHostsContents nodeName = do
+      runCommand Nothing [] "docker" ["exec", nodeName, "mkdir", "-p", nodeMountedKindRoot]
+      copyDirectoryContentsToContainer localKindRoot nodeName nodeMountedKindRoot
+      runCommand Nothing [] "docker" ["exec", nodeName, "mkdir", "-p", registryDirectoryInNode]
+      runCommandWithInput
+        Nothing
+        []
+        "docker"
+        ["exec", "-i", nodeName, "cp", "/dev/stdin", registryDirectoryInNode </> "hosts.toml"]
+        registryHostsContents
+
+syncKindNodeRuntimePathsToHost :: Paths -> RuntimeMode -> IO ()
+syncKindNodeRuntimePathsToHost paths runtimeMode = do
+  let localKindRoot = kindRoot paths
+  createDirectoryIfMissing True localKindRoot
+  nodeNames <- kindNodeNames paths runtimeMode
+  mapM_ (\nodeName -> copyDirectoryContentsFromContainer nodeName nodeMountedKindRoot localKindRoot) nodeNames
+
+kindNodeNames :: Paths -> RuntimeMode -> IO [String]
+kindNodeNames paths runtimeMode =
+  filter (not . null) . lines
+    <$> captureCommand Nothing [] "kind" ["get", "nodes", "--name", kindClusterName paths runtimeMode]
+
+copyDirectoryContentsToContainer :: FilePath -> String -> FilePath -> IO ()
+copyDirectoryContentsToContainer localDirectory nodeName containerDirectory = do
+  hasEntries <- directoryHasEntries localDirectory
+  when hasEntries $
+    runCommand
+      Nothing
+      []
+      "docker"
+      ["cp", localDirectory </> ".", nodeName <> ":" <> containerDirectory]
+
+copyDirectoryContentsFromContainer :: String -> FilePath -> FilePath -> IO ()
+copyDirectoryContentsFromContainer nodeName containerDirectory localDirectory = do
+  hasEntries <- containerDirectoryHasEntries nodeName containerDirectory
+  when hasEntries $
+    runCommand
+      Nothing
+      []
+      "docker"
+      ["cp", (nodeName <> ":" <> containerDirectory) </> ".", localDirectory]
+
+directoryHasEntries :: FilePath -> IO Bool
+directoryHasEntries directory = do
+  exists <- doesDirectoryExist directory
+  if exists
+    then not . null <$> listDirectory directory
+    else pure False
+
+containerDirectoryHasEntries :: String -> FilePath -> IO Bool
+containerDirectoryHasEntries nodeName directory = do
+  result <- tryCommand Nothing [] "docker" ["exec", nodeName, "sh", "-lc", "ls -A " <> directory]
+  pure
+    ( case result of
+        Left _ -> False
+        Right output -> not (all (all isSpace) (lines output))
+    )
 
 runtimeModeLabels :: RuntimeMode -> String
 runtimeModeLabels runtimeMode = case runtimeMode of
@@ -1419,6 +1551,9 @@ kindClusterName paths runtimeMode =
    in if dataRoot paths == repoRoot paths </> ".data"
         then baseName
         else baseName <> "-" <> show (clusterNameHash (dataRoot paths))
+
+kindControlPlaneNodeName :: Paths -> RuntimeMode -> String
+kindControlPlaneNodeName paths runtimeMode = kindClusterName paths runtimeMode <> "-control-plane"
 
 clusterNameHash :: FilePath -> Int
 clusterNameHash =
@@ -1442,12 +1577,11 @@ currentKindEdgePort paths runtimeMode = do
 
 writeHelmValuesFile :: Paths -> String -> ClusterState -> Lazy.ByteString -> HelmDeployPhase -> IO FilePath
 writeHelmValuesFile paths controlPlane state demoConfigPayload deployPhase = do
-  maybeEngineFixtureCommand <- lookupEnv "INFERNIX_ENGINE_FIXTURE_COMMAND_CONTAINER"
   engineCommandOverrides <- engineCommandOverridesFromEnvironment
   let outputPath =
         buildRoot paths
           </> ("helm-values-" <> phaseSuffix deployPhase <> "-" <> Text.unpack (runtimeModeId (clusterRuntimeMode state)) <> ".yaml")
-  writeFile outputPath (renderHelmValues controlPlane state demoConfigPayload deployPhase maybeEngineFixtureCommand engineCommandOverrides)
+  writeFile outputPath (renderHelmValues controlPlane state demoConfigPayload deployPhase engineCommandOverrides)
   pure outputPath
   where
     phaseSuffix phaseValue = case phaseValue of
@@ -1460,11 +1594,12 @@ engineCommandOverridesFromEnvironment :: IO [(String, String)]
 engineCommandOverridesFromEnvironment = do
   environment <- getEnvironment
   pure
-    ( List.sortOn fst
+    ( List.sortOn
+        fst
         [ (name, value)
-          | (name, value) <- environment,
-            "INFERNIX_ENGINE_COMMAND_" `List.isPrefixOf` name,
-            not (null value)
+        | (name, value) <- environment,
+          "INFERNIX_ENGINE_COMMAND_" `List.isPrefixOf` name,
+          not (null value)
         ]
     )
 
@@ -1528,8 +1663,8 @@ discoverPersistentClaims paths renderedChartPath = do
         _ ->
           ioError (userError ("rendered chart claim line was malformed: " <> lineValue))
 
-renderHelmValues :: String -> ClusterState -> Lazy.ByteString -> HelmDeployPhase -> Maybe String -> [(String, String)] -> String
-renderHelmValues controlPlane state demoConfigPayload deployPhase maybeEngineFixtureCommand engineCommandOverrides =
+renderHelmValues :: String -> ClusterState -> Lazy.ByteString -> HelmDeployPhase -> [(String, String)] -> String
+renderHelmValues controlPlane state demoConfigPayload deployPhase engineCommandOverrides =
   unlines
     ( [ "runtimeMode: " <> Text.unpack (runtimeModeId (clusterRuntimeMode state)),
         "controlPlaneContext: " <> show controlPlane,
@@ -1578,15 +1713,13 @@ renderHelmValues controlPlane state demoConfigPayload deployPhase maybeEngineFix
       HarborFinalPhase -> 0
       FinalPhase -> 1
     serviceEngineAdapterOverrides
-      | maybeEngineFixtureCommand == Nothing && null engineCommandOverrides = []
+      | null engineCommandOverrides = []
       | otherwise =
-          [ "  engineAdapters:" ]
-            <> maybe [] (\engineFixtureCommand -> ["    fixtureCommand: " <> show engineFixtureCommand]) maybeEngineFixtureCommand
-            <> commandOverrideLines
+          ["  engineAdapters:"] <> commandOverrideLines
     commandOverrideLines
       | null engineCommandOverrides = []
       | otherwise =
-          [ "    commandEnv:" ]
+          ["    commandEnv:"]
             <> map (\(name, value) -> "      " <> name <> ": " <> show value) engineCommandOverrides
     phaseChartOverrides phaseValue = case phaseValue of
       WarmupPhase -> harborBootstrapChartOverrides
@@ -1655,9 +1788,9 @@ renderRoutesYaml =
           ]
     )
 
-harborApiHost :: Paths -> String
-harborApiHost paths
-  | Config.controlPlaneContext paths == "outer-container" = "host.docker.internal:30002"
+harborApiHost :: Paths -> RuntimeMode -> String
+harborApiHost paths runtimeMode
+  | Config.controlPlaneContext paths == "outer-container" = kindControlPlaneNodeName paths runtimeMode <> ":30002"
   | otherwise = "127.0.0.1:30002"
 
 harborAdminUser :: String
@@ -1770,23 +1903,39 @@ mergeEnvironment baseEnv overrides =
   overrides <> filter (\(key, _) -> key `notElem` map fst overrides) baseEnv
 
 normalizeKubeconfigServer :: String -> String -> String
-normalizeKubeconfigServer controlPlane kubeconfigContents
-  | controlPlane == "outer-container" =
-      let rewrittenServers =
-            Text.replace
-              "https://127.0.0.1:"
-              "https://host.docker.internal:"
-              (Text.replace "https://localhost:" "https://host.docker.internal:" (Text.pack kubeconfigContents))
-          serverLine = "    server: https://host.docker.internal:"
-          tlsServerNameLine = "    tls-server-name: localhost"
-          injectTlsServerName line
-            | Text.isPrefixOf serverLine line = [line, tlsServerNameLine]
-            | otherwise = [line]
-          withTlsServerName
-            | Text.isInfixOf tlsServerNameLine rewrittenServers = rewrittenServers
-            | otherwise = Text.unlines (concatMap injectTlsServerName (Text.lines rewrittenServers))
-       in Text.unpack withTlsServerName
-  | otherwise = kubeconfigContents
+normalizeKubeconfigServer _controlPlane kubeconfigContents = kubeconfigContents
+
+ensureOuterContainerKindNetworkAccess :: Paths -> RuntimeMode -> IO ()
+ensureOuterContainerKindNetworkAccess paths _runtimeMode
+  | Config.controlPlaneContext paths /= "outer-container" = pure ()
+  | otherwise = do
+      launcherContainer <- currentLauncherContainerName
+      connectResult <- tryCommand Nothing [] "docker" ["network", "connect", "kind", launcherContainer]
+      case connectResult of
+        Right _ -> pure ()
+        Left err
+          | "already exists" `List.isInfixOf` err -> pure ()
+          | "endpoint with name" `List.isInfixOf` err -> pure ()
+          | otherwise ->
+              ioError
+                ( userError
+                    ( "linux outer-container control plane could not join the private Kind network:\n"
+                        <> err
+                    )
+                )
+
+currentLauncherContainerName :: IO String
+currentLauncherContainerName = do
+  maybeHostname <- lookupEnv "HOSTNAME"
+  let envHostname = maybe "" trim maybeHostname
+  if not (null envHostname)
+    then pure envHostname
+    else do
+      hostnameOutput <- captureCommand Nothing [] "hostname" []
+      let hostnameValue = trim hostnameOutput
+      if null hostnameValue
+        then ioError (userError "linux outer-container control plane could not determine its container id")
+        else pure hostnameValue
 
 indentBlock :: Int -> String -> String
 indentBlock indentWidth contents =

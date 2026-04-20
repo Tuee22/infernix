@@ -13,7 +13,7 @@ The repository already has lint, unit, integration, and Playwright entrypoints. 
 remain the canonical validation contract across the supported host-native and outer-container
 control-plane lanes, and they now validate the process-isolated engine-worker adapter contract plus
 durable runtime artifact bundles and direct-upstream source-artifact manifests, with the repo-owned
-engine fixture command injected for automated validation. The default validation matrix now
+default engine probe path exercised whenever no adapter-specific override is configured. The default validation matrix now
 auto-includes `linux-cuda` only when the current host passes the NVIDIA preflight contract, but
 final closure still requires those same suites to validate supported-host final engine workers and
 the supported-host GPU matrix.
@@ -146,6 +146,9 @@ forward onto the final Kind, Helm, Harbor, MinIO, and Pulsar substrate.
   with supported-host validation rather than host-gated implementation only
 - keep the current Harbor, MinIO, and Pulsar HA assertions while extending runtime execution
   checks beyond the current repo-owned worker layer
+- the current Linux outer-container host still blocks completion of the Kind-backed integration lane
+  because clean two-node Kind creation now stops during worker `kubeadm join` while waiting for
+  worker kubelet health, before the routed assertions can begin
 
 ---
 
@@ -218,10 +221,10 @@ None.
 
 ---
 
-## Sprint 6.5: Cluster Lifecycle and Environment-Matrix Validation [Done]
+## Sprint 6.5: Cluster Lifecycle and Environment-Matrix Validation [Active]
 
-**Status**: Done
-**Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Config.hs`, `test/integration/Spec.hs`, `web/playwright.config.js`
+**Status**: Active
+**Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Config.hs`, `src/Infernix/CLI.hs`, `compose.yaml`, `kind/cluster-apple-silicon.yaml`, `kind/cluster-linux-cpu.yaml`, `kind/cluster-linux-cuda.yaml`, `test/integration/Spec.hs`, `web/playwright.config.js`, `web/test/run_playwright_matrix.mjs`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/operations/apple_silicon_runbook.md`
 
 ### Objective
@@ -239,14 +242,18 @@ Verify the same product contract across Apple host-native and Linux outer-contai
   inventory from repo-local state without mutation
 - the same lifecycle closes the host-native and outer-container Kind-backed matrix validation
   contract
+- on the Linux outer-container lane, cluster-backed validation keeps host-published Kind API and
+  routed edge ports on `127.0.0.1` while the launcher joins the private Docker `kind` network and
+  uses the repo-local kubeconfig produced from `kind get kubeconfig --internal`
 
 ### Validation
 
 - `infernix test integration` proves the host-native lane creates the generated demo
   `.dhall`, published ConfigMap mirror, repo-local kubeconfig, and publication state for the active
   runtime mode
-- `docker compose run --rm infernix infernix test integration` proves the same lifecycle and
-  publication contract on the Linux outer-container lane
+- `python3 tools/platform_asset_check.py` plus a clean outer-container Kind probe prove the
+  loopback-only host-bind contract, the internal-kubeconfig control-plane endpoint, and the
+  private `kind` network access path on the Linux outer-container lane
 - `cluster status` code prints the runtime mode, build or data roots, demo-config publication
   details, chosen edge port, publication state path, and cache or object inventory without mutating
   cluster state
@@ -255,7 +262,10 @@ Verify the same product contract across Apple host-native and Linux outer-contai
 
 ### Remaining Work
 
-None.
+- rerun `docker compose run --rm infernix infernix test integration` on a Docker or Kind
+  substrate that can complete clean two-node worker bootstrap on the current Ubuntu host
+- keep the loopback-only host bindings, private `kind` network path, and internal-kubeconfig
+  contract intact while restoring full Linux outer-container lifecycle validation closure
 
 ---
 
@@ -308,6 +318,10 @@ validation cover every generated catalog entry using the engine binding selected
   runtime support and usable GPU resources
 - close the Harbor-backed host-native routed E2E lane on top of the final runtime workers rather
   than the current repo-owned worker layer
+- rerun the Linux outer-container exhaustive matrix on a Docker or Kind substrate that can complete
+  clean two-node worker bootstrap; on the current Ubuntu host the loopback-only host-bind and
+  private `kind` network access path are in place, but Kind creation still stops during worker
+  kubelet bootstrap before the routed exhaustive assertions can begin
 
 ## Documentation Requirements
 

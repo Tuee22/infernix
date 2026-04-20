@@ -9,6 +9,7 @@ module Infernix.Runtime
   )
 where
 
+import Control.Monad (when)
 import Data.Char (isSpace)
 import Data.Maybe (catMaybes)
 import Data.Text (Text)
@@ -160,9 +161,7 @@ copyDurableArtifactToCache cacheRoot durableSourceUriValue = do
   let durableArtifactPath = localPathFromUri durableSourceUriValue
       cacheBundleFilePath = cacheRoot </> "artifact-bundle.json"
   artifactExists <- doesFileExist durableArtifactPath
-  if artifactExists
-    then copyFile durableArtifactPath cacheBundleFilePath
-    else pure ()
+  when artifactExists (copyFile durableArtifactPath cacheBundleFilePath)
 
 buildPayload :: Paths -> Text -> Text -> IO ResultPayload
 buildPayload paths requestIdValue outputText

@@ -111,7 +111,7 @@ class RuntimeBackend:
         self.result_consumer: pulsar.Consumer | None = None
         self.backend_access_mode = "filesystem-fixture"
         self.worker_execution_mode = "process-isolated-engine-workers"
-        self.worker_adapter_mode = "configured-engine-processes"
+        self.worker_adapter_mode = "repo-owned-probe-with-command-overrides"
         self.artifact_acquisition_mode = "direct-upstream-fetch"
         self.worker_handles: dict[tuple[str, str, str], WorkerHandle] = {}
         if self.external_config is not None:

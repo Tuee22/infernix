@@ -27,8 +27,8 @@ REQUIRED_FILES = [
     Path("kind/cluster-linux-cuda.yaml"),
 ]
 REQUIRED_PHRASES = {
-    Path("chart/values.yaml"): ["runtimeMode:", "upstreamCharts:", "harbor:", "minio:", "pulsar:", "platformPortals:", "catalogPayload:", "publication:", "engineAdapters:", "fixtureCommand:", "commandEnv:", "30002", "30011", "30080", "30650", "/api", "/harbor", "/minio/console", "/pulsar/admin", "storageClass: infernix-manual", "storageClassName: infernix-manual"],
-    Path("chart/templates/deployment-service.yaml"): ["demoConfig.mountPath", "INFERNIX_DEMO_CONFIG_PATH", "INFERNIX_PUBLICATION_STATE_PATH", "INFERNIX_ROUTE_PROBE_BASE_URL", "INFERNIX_MINIO_ENDPOINT", "INFERNIX_PULSAR_ADMIN_URL", "INFERNIX_PULSAR_WS_BASE_URL", "INFERNIX_ENGINE_FIXTURE_COMMAND", "runtimeClassName: nvidia", "infernix.runtime/gpu", "nvidia.com/gpu"],
+    Path("chart/values.yaml"): ["runtimeMode:", "upstreamCharts:", "harbor:", "minio:", "pulsar:", "platformPortals:", "catalogPayload:", "publication:", "engineAdapters:", "commandEnv:", "30002", "30011", "30080", "30650", "/api", "/harbor", "/minio/console", "/pulsar/admin", "storageClass: infernix-manual", "storageClassName: infernix-manual"],
+    Path("chart/templates/deployment-service.yaml"): ["demoConfig.mountPath", "INFERNIX_DEMO_CONFIG_PATH", "INFERNIX_PUBLICATION_STATE_PATH", "INFERNIX_ROUTE_PROBE_BASE_URL", "INFERNIX_MINIO_ENDPOINT", "INFERNIX_PULSAR_ADMIN_URL", "INFERNIX_PULSAR_WS_BASE_URL", ".Values.service.engineAdapters.commandEnv", "runtimeClassName: nvidia", "infernix.runtime/gpu", "nvidia.com/gpu"],
     Path("chart/templates/deployment-web.yaml"): ["demoConfig.mountPath", "demoConfig.name"],
     Path("chart/templates/edge-configmap.yaml"): ["edge-port", "routes.yaml", ".Values.edge.routes"],
     Path("chart/templates/deployment-edge.yaml"): ["tools/edge_proxy.py", "INFERNIX_SERVICE_UPSTREAM", "INFERNIX_WEB_UPSTREAM", "INFERNIX_HARBOR_UPSTREAM", "INFERNIX_MINIO_UPSTREAM", "INFERNIX_PULSAR_UPSTREAM"],
@@ -36,9 +36,9 @@ REQUIRED_PHRASES = {
     Path("chart/templates/runtimeclass-nvidia.yaml"): ["RuntimeClass", "name: nvidia", "handler: nvidia", ".Values.runtimeMode", "linux-cuda"],
     Path("chart/templates/workloads-platform-portals.yaml"): ["infernix-harbor-gateway", "infernix-minio-gateway", "infernix-pulsar-gateway", "INFERNIX_HARBOR_BACKEND_URL", "INFERNIX_MINIO_S3_ENDPOINT", "INFERNIX_PULSAR_ADMIN_URL"],
     Path("chart/templates/service-edge.yaml"): ["type: NodePort", "nodePort:"],
-    Path("kind/cluster-linux-cuda.yaml"): ["/var/run/nvidia-container-devices/all", "infernix.runtime/gpu=true", "/etc/containerd/certs.d", "./.build/kind/registry", "containerPort: 30080", "containerPort: 30650"],
-    Path("kind/cluster-apple-silicon.yaml"): ["/etc/containerd/certs.d", "./.build/kind/registry", "containerPort: 30011", "containerPort: 30080", "containerPort: 30650"],
-    Path("kind/cluster-linux-cpu.yaml"): ["/etc/containerd/certs.d", "./.build/kind/registry", "containerPort: 30011", "containerPort: 30080", "containerPort: 30650"],
+    Path("kind/cluster-linux-cuda.yaml"): ["/var/run/nvidia-container-devices/all", "kindest/node:v1.34.0", "infernix.runtime/gpu=true", "/etc/containerd/certs.d", "./.build/kind/registry", "apiServerAddress: \"127.0.0.1\"", "listenAddress: \"127.0.0.1\"", "containerPort: 30080", "containerPort: 30650"],
+    Path("kind/cluster-apple-silicon.yaml"): ["kindest/node:v1.34.0", "/etc/containerd/certs.d", "./.build/kind/registry", "apiServerAddress: \"127.0.0.1\"", "listenAddress: \"127.0.0.1\"", "containerPort: 30011", "containerPort: 30080", "containerPort: 30650"],
+    Path("kind/cluster-linux-cpu.yaml"): ["kindest/node:v1.34.0", "/etc/containerd/certs.d", "./.build/kind/registry", "apiServerAddress: \"127.0.0.1\"", "listenAddress: \"127.0.0.1\"", "containerPort: 30011", "containerPort: 30080", "containerPort: 30650"],
 }
 
 

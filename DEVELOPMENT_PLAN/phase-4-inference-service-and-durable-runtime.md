@@ -22,10 +22,11 @@ result payloads through Pulsar on both the cluster-resident and host-bridge path
 durable runtime artifact bundles into the runtime bucket and local cache roots, stages durable
 source-artifact manifests plus local-file copies, direct HTTP downloads, and provider metadata
 fetches under `source-artifacts/`, exposes adapter-specific engine command prefixes to the cluster
-service deployment through `INFERNIX_ENGINE_COMMAND_*`, and injects the repo-owned engine fixture
-command in automated validation. The host-side unit helper path now reuses that same durable bundle
-plus source-artifact-manifest contract through an explicit filesystem-fixture helper instead of
-writing placeholder bundle metadata. The remaining gap is supported-host final engine integration:
+service deployment through `INFERNIX_ENGINE_COMMAND_*`, and defaults to the repo-owned engine
+probe command when no adapter-specific override is configured. The host-side unit helper path now
+reuses that same durable bundle plus source-artifact-manifest contract through an explicit
+filesystem-fixture helper instead of writing placeholder bundle metadata. The remaining gap is
+supported-host final engine integration:
 those adapter workers do not yet validate the final third-party engine binaries or modules named by
 the README matrix, acquire the authoritative engine-ready model artifacts for every matrix row, or
 provide validated direct Apple-host model execution.
@@ -113,9 +114,9 @@ authoritative.
 
 ### Remaining Work
 
-- validate the configured engine-command path against the supported-host third-party engines
-  selected by the README matrix instead of the repo-owned engine fixture command used in automated
-  validation
+- validate adapter-specific command prefixes against the supported-host third-party engines
+  selected by the README matrix instead of the repo-owned default engine probe command used in
+  automated validation today
 - extend the current direct-upstream source-artifact acquisition path from generic local-file,
   HTTP, Hugging Face, and GitHub materialization to the matrix-wide engine-ready artifact
   acquisition required by the supported-host runtime workers, then treat those fetched external

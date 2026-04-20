@@ -8,7 +8,7 @@
 ## Bring-Up
 
 - run `infernix cluster up`
-- for `linux-cuda`, confirm the host preflight commands `nvidia-smi -L`, `docker run --rm --runtime=nvidia -e NVIDIA_VISIBLE_DEVICES=all ubuntu:22.04 nvidia-smi -L`, and `docker run --rm -v /dev/null:/var/run/nvidia-container-devices/all ubuntu:22.04 nvidia-smi -L` all succeed before cluster creation
+- for `linux-cuda`, confirm the host preflight commands `nvidia-smi -L`, `docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi -L`, and `docker run --rm --gpus all -v /dev/null:/var/run/nvidia-container-devices/all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi -L` all succeed before cluster creation
 - confirm that the chosen edge port, active runtime mode, generated demo-config paths, and build-root publication details are printed
 - confirm that Harbor and its required bootstrap storage or support services reconcile first, and
   that the remaining non-Harbor workloads do not appear until Harbor is ready for image pulls
@@ -36,7 +36,12 @@
 - on a repeat `cluster up`, confirm the same Harbor-backed final rollout completes without a helper
   registry container reappearing and without the MinIO StatefulSet recording the old transient
   first-pull Harbor `502 Bad Gateway`
-- confirm `curl http://127.0.0.1:<port>/` reaches the routed workbench on the host-native path or use `host.docker.internal` from the outer-container control plane
+- confirm `docker port <kind-control-plane> 6443/tcp` and `docker port <kind-control-plane> 30090/tcp`
+  report `127.0.0.1:...` bindings rather than `0.0.0.0:...`
+- confirm `curl http://127.0.0.1:<port>/` reaches the routed workbench from the host
+- on the outer-container control-plane path, confirm `cluster up`, `cluster status`, `infernix kubectl ...`,
+  and routed browser validation reach the cluster through the private Docker `kind` network plus
+  `kind get kubeconfig --internal` rather than through `host.docker.internal`
 - for `linux-cuda`, confirm `infernix kubectl -n nvidia get daemonset nvidia-device-plugin-daemonset -o jsonpath='{.status.numberReady}:{.status.desiredNumberScheduled}'` reports a ready rollout, `infernix kubectl get nodes -l infernix.runtime/gpu=true -o jsonpath='{range .items[*]}{.status.allocatable.nvidia\.com/gpu}{"\n"}{end}'` reports positive values, `infernix kubectl get deployment -n platform infernix-service -o jsonpath='{.spec.template.spec.runtimeClassName}'` reports `nvidia`, and `infernix kubectl -n platform exec deployment/infernix-service -- nvidia-smi -L` reports visible GPUs
 - those checks validate the current implementation's real NVIDIA-backed CUDA lane on supported
   hosts; the remaining work is to close the full validation matrix on supported hardware, as

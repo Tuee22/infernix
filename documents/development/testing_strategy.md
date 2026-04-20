@@ -15,9 +15,9 @@
 - `infernix test e2e` validates the routed browser-facing surface through exhaustive catalog coverage, serialized-catalog cross-checks, and browser UI interaction against the real cluster edge while launching Playwright from the same web image that serves the UI
 - `infernix test all` runs the complete repository suite; the default validation matrix exercises Apple and Linux CPU when no explicit runtime-mode override is supplied and auto-includes Linux CUDA when the current host passes the NVIDIA preflight contract on both the Apple host-native and Linux outer-container control-plane surfaces, while the host-native final-substrate lane reuses the Harbor-published web runtime image across the runtime matrix
 - the current implementation's validation contract covers the process-isolated engine-worker
-  adapter layer, repo-owned engine fixture command injection for automated validation, durable
-  runtime bundles, direct-upstream source-artifact manifests, and the real `linux-cuda` Kind path
-  on supported NVIDIA hosts
+  adapter layer, the repo-owned default engine probe plus any adapter-specific command overrides,
+  durable runtime bundles, direct-upstream source-artifact manifests, and the real `linux-cuda`
+  Kind path on supported NVIDIA hosts
 - final Phase 4 and Phase 6 closure still require those same suites to validate the final
   third-party engine execution path plus a real NVIDIA-backed Kind substrate, as tracked in
   [../../DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md](../../DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md)
@@ -30,13 +30,17 @@
 - `infernix test integration` exercises every generated catalog entry from the serialized generated demo config for the active runtime mode, validates the in-cluster `ConfigMap`, and separately validates `cluster status`, `cluster down`, repeated `cluster up`, and `9090`-first edge-port rediscovery on both supported control-plane contexts
 - `infernix test integration` also validates the routed `GET /api/cache`, `POST /api/cache/evict`, and `POST /api/cache/rebuild` contract against manifest-backed durable state
 - `infernix test integration` also validates that `/harbor`, `/minio/s3`, and `/pulsar/ws` resolve through the current cluster-resident gateway workloads on the shared edge port
-- `infernix test integration` also validates that `/api/publication` reports `workerExecutionMode = process-isolated-engine-workers`, `workerAdapterMode = configured-engine-processes`, and that `/api/cache` exposes durable artifact-bundle URIs plus durable source-artifact manifest URIs rooted in the runtime bucket
+- `infernix test integration` also validates that `/api/publication` reports `workerExecutionMode = process-isolated-engine-workers`, `workerAdapterMode = repo-owned-probe-with-command-overrides`, and that `/api/cache` exposes durable artifact-bundle URIs plus durable source-artifact manifest URIs rooted in the runtime bucket
 - the host-native integration lane also validates that `/api` can move to the Apple host bridge without changing the browser-visible edge entrypoint
+- the outer-container integration lane keeps host-published Kind and edge ports on `127.0.0.1`
+  while reaching the cluster through the private Docker `kind` network and the internal kubeconfig
 - `infernix test integration` on the Apple host-native final substrate validates Pulsar protobuf schema registration, MinIO-persisted runtime results or manifests, and Harbor or MinIO or Pulsar HA recovery
 - `infernix test e2e` exercises every generated catalog entry exposed through the routed surface for the active runtime mode, compares `/api/models` against the serialized generated catalog reported through `/api/publication`, and fails if the browser workbench cannot render publication details, select a model, or submit one of those entries through the routed cluster edge
 - the host-native routed E2E lane also fails if the workbench cannot stay on the same base URL while `/api` resolves through the Apple host bridge
 - the host-native and outer-container control-plane paths both delegate `infernix test e2e` browser execution to the same web image that serves `/` rather than the control-plane image, and the host-native final-substrate lane reuses the Harbor-published web runtime image for that browser execution path across `apple-silicon`, `linux-cpu`, and `linux-cuda`
-- the automated unit, integration, and E2E entrypoints inject the repo-owned engine fixture command so the process-isolated adapter contract is exercised even when the supported host does not carry every final third-party engine binary or module
+- on the outer-container E2E lane, that web image runs on the private Docker `kind` network and
+  targets the control-plane node's routed edge port `30090` instead of a host-gateway alias
+- the automated unit, integration, and E2E entrypoints exercise the repo-owned default engine probe command when no adapter-specific override is configured, and they can still forward `INFERNIX_ENGINE_COMMAND_*` overrides when validating supported-host third-party engine installations
 - changing the active runtime mode changes the generated catalog and therefore the exercised entry set automatically
 - when no explicit runtime-mode override is supplied, the default validation path repeats the exhaustive integration and E2E path across `apple-silicon` and `linux-cpu` and auto-includes `linux-cuda` on hosts that satisfy the NVIDIA preflight contract on both the Apple host-native and Linux outer-container control-plane surfaces
 - the supported host-native final-substrate and outer-container control-plane lanes reuse that same exhaustive coverage contract rather than a reduced smoke subset

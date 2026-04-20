@@ -79,7 +79,6 @@ service:
     tenant: public
     namespace: default
   engineAdapters:
-    fixtureCommand: ""
     commandEnv: {}
 
 web:

@@ -67,10 +67,6 @@ spec:
               value: {{ .Values.service.pulsar.tenant | quote }}
             - name: INFERNIX_PULSAR_NAMESPACE
               value: {{ .Values.service.pulsar.namespace | quote }}
-{{- if .Values.service.engineAdapters.fixtureCommand }}
-            - name: INFERNIX_ENGINE_FIXTURE_COMMAND
-              value: {{ .Values.service.engineAdapters.fixtureCommand | quote }}
-{{- end }}
 {{- range $name, $value := .Values.service.engineAdapters.commandEnv }}
             - name: {{ $name }}
               value: {{ $value | quote }}

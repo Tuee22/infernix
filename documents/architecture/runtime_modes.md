@@ -16,6 +16,10 @@ The control-plane execution context answers where `infernix` runs.
 Both execution contexts use the same runtime-mode ids, generated demo-config contract, and
 repo-local durable state root under `./.data/`.
 
+- on the Linux outer-container cluster path, the launcher reaches Kubernetes over the private
+  Docker `kind` network with an internal kubeconfig while host-published cluster ports remain
+  loopback-only on `127.0.0.1`
+
 ## Runtime Modes
 
 The runtime mode answers which engine column from the root README matrix is active for generated
@@ -72,8 +76,8 @@ Service placement is a separate concept from runtime mode.
   `/api` surface through the Apple host bridge while the browser stays on the shared edge URL
 - the host-native and cluster-resident service placements both launch the same process-isolated
   engine-worker adapter contract, consume durable runtime artifact bundles plus direct-upstream
-  source-artifact manifests, and can inject the repo-owned engine fixture command during automated
-  validation while supported-host third-party engine validation remains open
+  source-artifact manifests, and default to the repo-owned engine probe command while still
+  honoring adapter-specific command overrides during supported-host third-party engine validation
 - local host-side fixture helpers may still use an explicit `filesystem-fixture` ownership mode for
   unit coverage, but the supported `infernix service` surface itself requires the routed durable
   backend contract or explicit backend configuration

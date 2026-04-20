@@ -12,6 +12,8 @@
 - the launcher container forwards the Docker socket
 - the launcher container bind mounts repo state and `./.data/`
 - the launcher container sets `/opt/build/infernix` as the supported outer build root
+- cluster-backed outer-container commands keep host-published Kind API, edge, Harbor, MinIO, and Pulsar ports on `127.0.0.1`
+- cluster-backed outer-container commands join the private Docker `kind` network and use `kind get kubeconfig --internal` plus control-plane container DNS for Kubernetes access instead of `host.docker.internal`
 - the launcher image carries the repo-owned runtime and validation dependencies needed to compile and launch the control plane, including Node, Python, and `protoc`
 - routed Playwright execution is delegated to the built web image rather than carrying duplicate browser binaries in the launcher image
 - repo-root discovery works from the repo root and from nested working directories inside the bind-mounted workspace

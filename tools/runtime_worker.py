@@ -100,14 +100,8 @@ def resolve_command_prefix(bundle: dict[str, object]) -> tuple[list[str], str]:
     if adapter_override:
         return parse_command_prefix(adapter_override), "adapter-specific command override"
 
-    fixture_command = os.environ.get("INFERNIX_ENGINE_FIXTURE_COMMAND")
-    if fixture_command:
-        return parse_command_prefix(fixture_command), "engine fixture command"
-
-    raise RuntimeError(
-        "no engine command is configured for "
-        f"{adapter_id}; set {adapter_env_var_name(adapter_id)} or INFERNIX_ENGINE_FIXTURE_COMMAND"
-    )
+    probe_script = pathlib.Path(__file__).resolve().parent / "engine_probe.py"
+    return [sys.executable, str(probe_script)], "repo-owned engine probe"
 
 
 def execute_engine_command(

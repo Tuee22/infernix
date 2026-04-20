@@ -11,9 +11,7 @@ const runtimeModes = process.env.INFERNIX_RUNTIME_MODE
 const infernixCommand =
   process.env.INFERNIX_PLAYWRIGHT_INFERNIX ??
   (process.env.INFERNIX_BUILD_ROOT ? "infernix" : "../.build/infernix");
-const playwrightHost =
-  process.env.INFERNIX_PLAYWRIGHT_HOST ??
-  (String(process.env.INFERNIX_BUILD_ROOT ?? "").startsWith("/opt/build") ? "host.docker.internal" : "127.0.0.1");
+const playwrightHost = process.env.INFERNIX_PLAYWRIGHT_HOST ?? "127.0.0.1";
 
 function runInfernix(runtimeMode, args) {
   const result = spawnSync(infernixCommand, ["--runtime-mode", runtimeMode, ...args], {

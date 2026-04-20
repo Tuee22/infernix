@@ -54,6 +54,13 @@ across the tracked phases.
 - the documentation, repository shape, CLI surface, Kind or Helm substrate, generated demo-config
   publication, routed browser workbench, and outer-container launcher are materially implemented
   and aligned with the current plan
+- the Linux outer-container launcher now keeps the Kind API server and routed host-port mappings
+  on `127.0.0.1`, joins the private Docker `kind` network for cluster-backed commands, writes the
+  repo-local kubeconfig from `kind get kubeconfig --internal`, pins Kind nodes to
+  `kindest/node:v1.34.0`, and primes Kind node-local registry or storage state after cluster
+  creation instead of bind-mounting repo-owned Kind paths into those nodes; closure on this
+  Ubuntu host remains blocked because clean two-node Kind creation still stops during worker
+  `kubeadm join` while waiting for worker kubelet health
 - the Harbor-first cluster image flow is closed on the supported Apple lane: Harbor bootstrap and
   only the storage or support services Harbor needs pull from upstream before Harbor is ready, the
   helper registry is gone, the Kind registry mirror only rewrites `localhost:30002`, the final
@@ -69,8 +76,8 @@ across the tracked phases.
   now launch process-isolated engine-worker adapters through configured command prefixes, round-trip
   request or result payloads through Pulsar, materialize durable runtime artifact bundles into the
   MinIO-backed runtime bucket, stage source-artifact manifests plus direct upstream local-file or
-  HTTP or Hugging Face or GitHub acquisitions, and inject the repo-owned engine fixture command in
-  automated validation, but they do not yet validate the final supported-host third-party engine
+  HTTP or Hugging Face or GitHub acquisitions, and default to the repo-owned engine probe command
+  when no adapter-specific override is configured, but they do not yet validate the final supported-host third-party engine
   binaries or modules or acquire the authoritative engine-ready model artifacts for every matrix
   row into that durable store
 - exhaustive integration and E2E validation remain open at final-closure level: the suites cover

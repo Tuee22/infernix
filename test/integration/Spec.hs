@@ -45,35 +45,17 @@ data SerializedCatalogEntry = SerializedCatalogEntry
 main :: IO ()
 main = withTestRoot ".tmp/integration" $ do
   paths <- Config.discoverPaths
-  let runWithFixtures = do
-        maybeRequestedMode <- lookupEnv "INFERNIX_RUNTIME_MODE"
-        runtimeModes <- case maybeRequestedMode >>= (parseRuntimeMode . Text.pack) of
-          Just runtimeMode -> pure [runtimeMode]
-          Nothing -> do
-            cudaSupported <- linuxCudaSupportedOnHost
-            pure (filter (\runtimeMode -> runtimeMode /= LinuxCuda || cudaSupported) allRuntimeModes)
-        mapM_ (exerciseRuntimeMode paths) runtimeModes
-        case runtimeModes of
-          runtimeMode : _ -> validateEdgePortConflictAndRediscovery paths runtimeMode
-          [] -> fail "integration suite requires at least one runtime mode"
-        putStrLn "integration tests passed"
-  withEngineFixtures paths runWithFixtures
-
-withEngineFixtures :: Paths -> IO () -> IO ()
-withEngineFixtures paths action = do
-  previousHostFixture <- lookupEnv "INFERNIX_ENGINE_FIXTURE_COMMAND"
-  previousContainerFixture <- lookupEnv "INFERNIX_ENGINE_FIXTURE_COMMAND_CONTAINER"
-  setEnv "INFERNIX_ENGINE_FIXTURE_COMMAND" ("python3 " <> repoRoot paths </> "tools" </> "engine_fixture.py")
-  setEnv "INFERNIX_ENGINE_FIXTURE_COMMAND_CONTAINER" "python3 /srv/infernix/tools/engine_fixture.py"
-  action `finally` restoreEnv previousHostFixture previousContainerFixture
-  where
-    restoreEnv previousHostFixture previousContainerFixture = do
-      restoreVar "INFERNIX_ENGINE_FIXTURE_COMMAND" previousHostFixture
-      restoreVar "INFERNIX_ENGINE_FIXTURE_COMMAND_CONTAINER" previousContainerFixture
-    restoreVar name maybeValue =
-      case maybeValue of
-        Just value -> setEnv name value
-        Nothing -> unsetEnv name
+  maybeRequestedMode <- lookupEnv "INFERNIX_RUNTIME_MODE"
+  runtimeModes <- case maybeRequestedMode >>= (parseRuntimeMode . Text.pack) of
+    Just runtimeMode -> pure [runtimeMode]
+    Nothing -> do
+      cudaSupported <- linuxCudaSupportedOnHost
+      pure (filter (\runtimeMode -> runtimeMode /= LinuxCuda || cudaSupported) allRuntimeModes)
+  mapM_ (exerciseRuntimeMode paths) runtimeModes
+  case runtimeModes of
+    runtimeMode : _ -> validateEdgePortConflictAndRediscovery paths runtimeMode
+    [] -> fail "integration suite requires at least one runtime mode"
+  putStrLn "integration tests passed"
 
 exerciseRuntimeMode :: Paths -> RuntimeMode -> IO ()
 exerciseRuntimeMode paths runtimeMode = do
@@ -82,7 +64,7 @@ exerciseRuntimeMode paths runtimeMode = do
   validateClusterStatusOutput paths runtimeMode
   maybeState <- loadClusterState paths
   state <- maybe (fail "cluster state was not available after cluster up") pure maybeState
-  let baseUrl = edgeBaseUrl paths (edgePort state)
+  let baseUrl = edgeBaseUrl paths runtimeMode (edgePort state)
   serializedEntries <- loadSerializedCatalogEntries paths runtimeMode
   assert (not (null serializedEntries)) ("serialized catalog is non-empty for " <> showRuntimeMode runtimeMode)
   let typedCatalog = catalogForMode runtimeMode
@@ -211,7 +193,7 @@ validateRoutedSurface :: Paths -> RuntimeMode -> [SerializedCatalogEntry] -> IO 
 validateRoutedSurface paths runtimeMode serializedEntries = do
   maybeState <- loadClusterState paths
   state <- maybe (fail "cluster state was not available after cluster up") pure maybeState
-  let baseUrl = edgeBaseUrl paths (edgePort state)
+  let baseUrl = edgeBaseUrl paths runtimeMode (edgePort state)
   homeResponse <- httpGetWithRetry 60 (baseUrl <> "/")
   publicationResponse <- httpGetWithRetry 60 (baseUrl <> "/api/publication")
   modelsResponse <- httpGetWithRetry 60 (baseUrl <> "/api/models")
@@ -224,7 +206,7 @@ validateRoutedSurface paths runtimeMode serializedEntries = do
   assert ("\"mode\": \"cluster-service\"" `isInfixOf` publicationResponse) "routed publication reports the cluster service as the active API upstream"
   assert ("\"durableBackendAccessMode\": \"cluster-local\"" `isInfixOf` publicationResponse) "cluster-resident service reports cluster-local durable backend access"
   assert ("\"workerExecutionMode\": \"process-isolated-engine-workers\"" `isInfixOf` publicationResponse) "cluster-resident service reports process-isolated engine workers through the routed publication surface"
-  assert ("\"workerAdapterMode\": \"configured-engine-processes\"" `isInfixOf` publicationResponse) "cluster-resident service reports configured engine adapter processes through the routed publication surface"
+  assert ("\"workerAdapterMode\": \"repo-owned-probe-with-command-overrides\"" `isInfixOf` publicationResponse) "cluster-resident service reports the repo-owned engine probe worker mode through the routed publication surface"
   assert ("\"artifactAcquisitionMode\": \"direct-upstream-fetch\"" `isInfixOf` publicationResponse) "cluster-resident service reports the direct upstream source-artifact acquisition contract through the routed publication surface"
   assert ("\"id\": \"minio\"" `isInfixOf` publicationResponse && "\"durableBackendState\": \"minio-backed chart deployment\"" `isInfixOf` publicationResponse) "routed publication reports MinIO upstream backing state"
   assert ("\"id\": \"pulsar\"" `isInfixOf` publicationResponse && "\"durableBackendState\": \"pulsar-backed chart deployment\"" `isInfixOf` publicationResponse) "routed publication reports Pulsar upstream backing state"
@@ -239,7 +221,7 @@ validateHostBridgeService :: Paths -> RuntimeMode -> [SerializedCatalogEntry] ->
 validateHostBridgeService paths runtimeMode serializedEntries = do
   maybeState <- loadClusterState paths
   state <- maybe (fail "cluster state was not available before host-bridge validation") pure maybeState
-  let baseUrl = edgeBaseUrl paths (edgePort state)
+  let baseUrl = edgeBaseUrl paths runtimeMode (edgePort state)
   activateHostBridgeRoute paths runtimeMode 18081
   let processArgs =
         [ repoRoot paths </> "tools" </> "service_server.py",
@@ -273,7 +255,7 @@ validateHostBridgeService paths runtimeMode serializedEntries = do
   assert ("\"mode\": \"host-daemon-bridge\"" `isInfixOf` publicationResponse) "host bridge publishes the host-daemon API upstream"
   assert ("\"durableBackendAccessMode\": \"edge-route-bridge\"" `isInfixOf` publicationResponse) "host bridge publishes edge-routed durable backend access"
   assert ("\"workerExecutionMode\": \"process-isolated-engine-workers\"" `isInfixOf` publicationResponse) "host bridge preserves process-isolated engine workers through the routed publication surface"
-  assert ("\"workerAdapterMode\": \"configured-engine-processes\"" `isInfixOf` publicationResponse) "host bridge preserves configured engine adapter processes through the routed publication surface"
+  assert ("\"workerAdapterMode\": \"repo-owned-probe-with-command-overrides\"" `isInfixOf` publicationResponse) "host bridge preserves the repo-owned engine probe worker mode through the routed publication surface"
   assert ("\"id\": \"harbor\"" `isInfixOf` publicationResponse && "\"healthStatus\": \"ready\"" `isInfixOf` publicationResponse) "host-native service publication reports routed Harbor health"
   mapM_
     (\entry -> assert (Text.unpack (entryModelId entry) `isInfixOf` modelsResponse) "host bridge preserves routed catalog listing through the same edge entrypoint")
@@ -363,15 +345,15 @@ validateMinioRecovery :: Paths -> ClusterState -> RuntimeMode -> String -> Strin
 validateMinioRecovery paths state runtimeMode modelIdText requestIdText maybeObjectRef = do
   runKubectlForState state ["-n", "platform", "delete", "pod", "infernix-minio-0", "--wait=true"]
   waitForRollout state "statefulset/infernix-minio" 300
-  runtimeResultExists <- minioObjectExists paths "infernix-runtime" ("results/" <> requestIdText <> ".pb")
+  runtimeResultExists <- minioObjectExists paths runtimeMode "infernix-runtime" ("results/" <> requestIdText <> ".pb")
   assert runtimeResultExists "MinIO runtime results survive single MinIO pod replacement"
   case maybeObjectRef of
     Nothing -> pure ()
     Just objectRefText -> do
-      largeOutputExists <- minioObjectExists paths "infernix-results" objectRefText
+      largeOutputExists <- minioObjectExists paths runtimeMode "infernix-results" objectRefText
       assert largeOutputExists "MinIO large-output objects survive single MinIO pod replacement"
-  manifestExists <- minioObjectExists paths "infernix-runtime" ("manifests/" <> showRuntimeMode runtimeMode <> "/" <> modelIdText <> "/default.pb")
-  artifactExists <- minioObjectExists paths "infernix-runtime" ("artifacts/" <> showRuntimeMode runtimeMode <> "/" <> modelIdText <> "/bundle.json")
+  manifestExists <- minioObjectExists paths runtimeMode "infernix-runtime" ("manifests/" <> showRuntimeMode runtimeMode <> "/" <> modelIdText <> "/default.pb")
+  artifactExists <- minioObjectExists paths runtimeMode "infernix-runtime" ("artifacts/" <> showRuntimeMode runtimeMode <> "/" <> modelIdText <> "/bundle.json")
   assert manifestExists "MinIO protobuf cache manifests survive single MinIO pod replacement"
   assert artifactExists "MinIO durable runtime artifact bundles survive single MinIO pod replacement"
 
@@ -542,17 +524,22 @@ assert False message = fail message
 showRuntimeMode :: RuntimeMode -> String
 showRuntimeMode = Text.unpack . runtimeModeId
 
-edgeBaseUrl :: Paths -> Int -> String
-edgeBaseUrl paths port =
+edgeBaseUrl :: Paths -> RuntimeMode -> Int -> String
+edgeBaseUrl paths runtimeMode port =
   "http://"
-    <> runtimeHost paths
+    <> runtimeHost paths runtimeMode
     <> ":"
-    <> show port
+    <> show (runtimeEdgePort paths port)
 
-runtimeHost :: Paths -> String
-runtimeHost paths
-  | Config.controlPlaneContext paths == "outer-container" = "host.docker.internal"
+runtimeHost :: Paths -> RuntimeMode -> String
+runtimeHost paths runtimeMode
+  | Config.controlPlaneContext paths == "outer-container" = kindControlPlaneNodeName paths runtimeMode
   | otherwise = "127.0.0.1"
+
+runtimeEdgePort :: Paths -> Int -> Int
+runtimeEdgePort paths publishedPort
+  | Config.controlPlaneContext paths == "outer-container" = 30090
+  | otherwise = publishedPort
 
 kubectlOutputForState :: ClusterState -> [String] -> IO String
 kubectlOutputForState state args =
@@ -695,20 +682,20 @@ validateDurableBackends paths runtimeMode baseUrl modelIdText requestIdText mayb
   assert (protobufSchemaPublished requestSchema "InferenceRequest") "Pulsar request topic publishes the protobuf request schema"
   assert (protobufSchemaPublished resultSchema "InferenceResult") "Pulsar result topic publishes the protobuf result schema"
   assert (protobufSchemaPublished coordinationSchema "RuntimeManifest") "Pulsar coordination topic publishes the protobuf manifest schema"
-  runtimeResultExists <- minioObjectExists paths "infernix-runtime" ("results/" <> requestIdText <> ".pb")
-  manifestExists <- minioObjectExists paths "infernix-runtime" ("manifests/" <> showRuntimeMode runtimeMode <> "/" <> modelIdText <> "/default.pb")
-  artifactExists <- minioObjectExists paths "infernix-runtime" ("artifacts/" <> showRuntimeMode runtimeMode <> "/" <> modelIdText <> "/bundle.json")
+  runtimeResultExists <- minioObjectExists paths runtimeMode "infernix-runtime" ("results/" <> requestIdText <> ".pb")
+  manifestExists <- minioObjectExists paths runtimeMode "infernix-runtime" ("manifests/" <> showRuntimeMode runtimeMode <> "/" <> modelIdText <> "/default.pb")
+  artifactExists <- minioObjectExists paths runtimeMode "infernix-runtime" ("artifacts/" <> showRuntimeMode runtimeMode <> "/" <> modelIdText <> "/bundle.json")
   assert runtimeResultExists "MinIO stores protobuf inference results for the routed service path"
   assert manifestExists "MinIO stores protobuf cache manifests for the routed service path"
   assert artifactExists "MinIO stores the durable runtime artifact bundle for the routed service path"
   case maybeObjectRef of
     Nothing -> pure ()
     Just objectRefText -> do
-      largeOutputExists <- minioObjectExists paths "infernix-results" objectRefText
+      largeOutputExists <- minioObjectExists paths runtimeMode "infernix-results" objectRefText
       assert largeOutputExists "MinIO stores large-output object payloads for the routed service path"
 
-minioObjectExists :: Paths -> String -> String -> IO Bool
-minioObjectExists paths bucketName objectKey = waitForObject (20 :: Int)
+minioObjectExists :: Paths -> RuntimeMode -> String -> String -> IO Bool
+minioObjectExists paths runtimeMode bucketName objectKey = waitForObject (20 :: Int)
   where
     waitForObject attempts = do
       objectExists <- probeObject
@@ -735,7 +722,7 @@ minioObjectExists paths bucketName objectKey = waitForObject (20 :: Int)
                 "else:",
                 "    print('true')"
               ]
-      output <- readProcess "python3" ["-c", script, runtimeHost paths <> ":30011", bucketName, objectKey] ""
+      output <- readProcess "python3" ["-c", script, runtimeHost paths runtimeMode <> ":30011", bucketName, objectKey] ""
       pure (output == "true\n")
 
 trim :: String -> String

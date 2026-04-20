@@ -1,23 +1,31 @@
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 name: infernix-linux-cpu
+networking:
+  apiServerAddress: "127.0.0.1"
 nodes:
   - role: control-plane
+    image: kindest/node:v1.34.0
     extraPortMappings:
       - containerPort: 30090
         hostPort: 9090
+        listenAddress: "127.0.0.1"
         protocol: TCP
       - containerPort: 30002
         hostPort: 30002
+        listenAddress: "127.0.0.1"
         protocol: TCP
       - containerPort: 30011
         hostPort: 30011
+        listenAddress: "127.0.0.1"
         protocol: TCP
       - containerPort: 30080
         hostPort: 30080
+        listenAddress: "127.0.0.1"
         protocol: TCP
       - containerPort: 30650
         hostPort: 30650
+        listenAddress: "127.0.0.1"
         protocol: TCP
     extraMounts:
       - hostPath: ./.build/kind/registry
@@ -29,6 +37,7 @@ nodes:
           kubeletExtraArgs:
             node-labels: "infernix.runtime/mode=linux-cpu"
   - role: worker
+    image: kindest/node:v1.34.0
     extraMounts:
       - hostPath: ./.build/kind/registry
         containerPath: /etc/containerd/certs.d

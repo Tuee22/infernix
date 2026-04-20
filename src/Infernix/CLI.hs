@@ -20,9 +20,9 @@ import Infernix.Service
 import Infernix.Storage (readEdgePortMaybe)
 import Infernix.Types
   ( CacheManifest (..),
-    RuntimeMode (LinuxCuda),
     ModelDescriptor (..),
     RequestField (..),
+    RuntimeMode (LinuxCuda),
     allRuntimeModes,
     parseRuntimeMode,
     runtimeModeId,
@@ -36,7 +36,7 @@ import System.Directory
     getPermissions,
     setPermissions,
   )
-import System.Environment (getArgs, getEnvironment, getExecutablePath, lookupEnv, setEnv, unsetEnv)
+import System.Environment (getArgs, getEnvironment, getExecutablePath)
 import System.Exit (ExitCode (ExitSuccess), exitFailure, exitWith)
 import System.FilePath (takeDirectory, (</>))
 import System.Info (os)
@@ -107,31 +107,13 @@ runLint maybeRuntimeMode = do
 runEndToEnd :: Maybe RuntimeMode -> IO ()
 runEndToEnd maybeRuntimeMode = do
   paths <- discoverPaths
-  let runWithFixtures = do
-        runtimeModes <-
-          case maybeRuntimeMode of
-            Just runtimeMode -> pure [runtimeMode]
-            Nothing -> do
-              cudaSupported <- linuxCudaSupportedOnHost
-              pure (filter (\runtimeMode -> runtimeMode /= LinuxCuda || cudaSupported) allRuntimeModes)
-        mapM_ (runRuntimeModeE2E paths) runtimeModes
-  withEngineFixtureCommands paths runWithFixtures
-
-withEngineFixtureCommands :: Paths -> IO () -> IO ()
-withEngineFixtureCommands paths action = do
-  previousHostFixture <- lookupEnv "INFERNIX_ENGINE_FIXTURE_COMMAND"
-  previousContainerFixture <- lookupEnv "INFERNIX_ENGINE_FIXTURE_COMMAND_CONTAINER"
-  setEnv "INFERNIX_ENGINE_FIXTURE_COMMAND" ("python3 " <> repoRoot paths </> "tools" </> "engine_fixture.py")
-  setEnv "INFERNIX_ENGINE_FIXTURE_COMMAND_CONTAINER" "python3 /srv/infernix/tools/engine_fixture.py"
-  action `finally` restoreEnv previousHostFixture previousContainerFixture
-  where
-    restoreEnv previousHostFixture previousContainerFixture = do
-      restoreVar "INFERNIX_ENGINE_FIXTURE_COMMAND" previousHostFixture
-      restoreVar "INFERNIX_ENGINE_FIXTURE_COMMAND_CONTAINER" previousContainerFixture
-    restoreVar name maybeValue =
-      case maybeValue of
-        Just value -> setEnv name value
-        Nothing -> unsetEnv name
+  runtimeModes <-
+    case maybeRuntimeMode of
+      Just runtimeMode -> pure [runtimeMode]
+      Nothing -> do
+        cudaSupported <- linuxCudaSupportedOnHost
+        pure (filter (\runtimeMode -> runtimeMode /= LinuxCuda || cudaSupported) allRuntimeModes)
+  mapM_ (runRuntimeModeE2E paths) runtimeModes
 
 runRuntimeModeE2E :: Paths -> RuntimeMode -> IO ()
 runRuntimeModeE2E paths runtimeMode =
@@ -145,9 +127,15 @@ runRuntimeModeE2E paths runtimeMode =
       if controlPlaneContext paths == "host-native"
         then
           withHostBridgeService runtimeMode edgePort $
-            runPlaywrightImage runtimeMode "127.0.0.1" edgePort "control-plane-host" "host-daemon-bridge"
+            runPlaywrightImage runtimeMode Nothing "127.0.0.1" edgePort "control-plane-host" "host-daemon-bridge"
         else
-          runPlaywrightImage runtimeMode "host.docker.internal" edgePort "cluster-pod" "cluster-service"
+          runPlaywrightImage
+            runtimeMode
+            (Just "kind")
+            (kindControlPlaneNodeName paths runtimeMode)
+            30090
+            "cluster-pod"
+            "cluster-service"
   )
     `finally` clusterDown (Just runtimeMode)
 
@@ -193,33 +181,34 @@ withHostBridgeService runtimeMode edgePort action = do
       restoreClusterServiceRoute paths
       waitForPublication edgePort "cluster-pod" "cluster-service"
 
-runPlaywrightImage :: RuntimeMode -> String -> Int -> String -> String -> IO ()
-runPlaywrightImage runtimeMode routeProbeHost edgePort expectedDaemonLocation expectedApiUpstreamMode = do
+runPlaywrightImage :: RuntimeMode -> Maybe String -> String -> Int -> String -> String -> IO ()
+runPlaywrightImage runtimeMode maybeNetwork routeProbeHost edgePort expectedDaemonLocation expectedApiUpstreamMode = do
   paths <- discoverPaths
   imageRef <- resolvePlaywrightImage paths runtimeMode
   waitForPlaywrightSurface routeProbeHost edgePort expectedDaemonLocation expectedApiUpstreamMode
   runCommand
     (Just runtimeMode)
     "docker"
-    [ "run",
-      "--rm",
-      "--add-host",
-      "host.docker.internal:host-gateway",
-      "-e",
-      "INFERNIX_RUNTIME_MODE=" <> Text.unpack (runtimeModeId runtimeMode),
-      "-e",
-      "INFERNIX_EDGE_PORT=" <> show edgePort,
-      "-e",
-      "INFERNIX_PLAYWRIGHT_HOST=host.docker.internal",
-      "-e",
-      "INFERNIX_EXPECT_DAEMON_LOCATION=" <> expectedDaemonLocation,
-      "-e",
-      "INFERNIX_EXPECT_API_UPSTREAM_MODE=" <> expectedApiUpstreamMode,
-      imageRef,
-      "npm",
-      "run",
-      "test:e2e:image"
-    ]
+    ( [ "run",
+        "--rm"
+      ]
+        <> maybe [] (\networkName -> ["--network", networkName]) maybeNetwork
+        <> [ "-e",
+             "INFERNIX_RUNTIME_MODE=" <> Text.unpack (runtimeModeId runtimeMode),
+             "-e",
+             "INFERNIX_EDGE_PORT=" <> show edgePort,
+             "-e",
+             "INFERNIX_PLAYWRIGHT_HOST=" <> routeProbeHost,
+             "-e",
+             "INFERNIX_EXPECT_DAEMON_LOCATION=" <> expectedDaemonLocation,
+             "-e",
+             "INFERNIX_EXPECT_API_UPSTREAM_MODE=" <> expectedApiUpstreamMode,
+             imageRef,
+             "npm",
+             "run",
+             "test:e2e:image"
+           ]
+    )
 
 resolvePlaywrightImage :: Paths -> RuntimeMode -> IO String
 resolvePlaywrightImage paths runtimeMode = do

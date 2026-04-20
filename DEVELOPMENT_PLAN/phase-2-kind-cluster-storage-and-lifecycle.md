@@ -45,11 +45,14 @@ secret material and registry credentials that must remain stable across the `har
 `final` phases, the Kind registry-host config now only rewrites `localhost:30002`, `cluster up`
 preloads the Harbor-backed final image refs onto the Kind worker before the final non-Harbor
 rollout begins, and both clean and repeat Apple reruns complete without the old transient MinIO
-first-pull `502 Bad Gateway`. The remaining gap in this phase is the `linux-cuda` closure
-validation: although the current code now uses host NVIDIA preflight checks, `nvkind`-backed Kind
-creation, a Helm-installed NVIDIA device plugin, and real allocatable `nvidia.com/gpu` resources,
-this repository has not yet rerun the full CUDA lane on a supported NVIDIA host through the final
-integration and E2E matrix.
+first-pull `502 Bad Gateway`. The Linux outer-container path now keeps the Kind API server and
+routed host-port mappings on `127.0.0.1`, joins the private Docker `kind` network for
+cluster-backed commands, writes the repo-local kubeconfig from `kind get kubeconfig --internal`,
+pins Kind nodes to `kindest/node:v1.34.0`, and primes Kind node-local registry or storage state
+after cluster creation instead of bind-mounting repo-owned Kind paths into those nodes. The
+remaining gaps in this phase are the `linux-cuda` closure validation and a Docker or Kind
+substrate on the current Ubuntu host that can complete clean two-node worker kubelet bootstrap on
+the outer-container lane.
 
 ## Sprint 2.1: Kind Bootstrap and StorageClass Reset [Done]
 
@@ -228,10 +231,10 @@ None.
 
 ---
 
-## Sprint 2.5: Kind Lifecycle Idempotency and Status Surface [Done]
+## Sprint 2.5: Kind Lifecycle Idempotency and Status Surface [Active]
 
-**Status**: Done
-**Implementation**: `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `test/integration/Spec.hs`
+**Status**: Active
+**Implementation**: `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `compose.yaml`, `kind/cluster-apple-silicon.yaml`, `kind/cluster-linux-cpu.yaml`, `kind/cluster-linux-cuda.yaml`, `test/integration/Spec.hs`, `tools/platform_asset_check.py`
 **Docs to update**: `README.md`, `documents/reference/cli_reference.md`, `documents/operations/cluster_bootstrap_runbook.md`
 
 ### Objective
@@ -246,13 +249,23 @@ Make cluster reconcile, status, and teardown predictable.
   runtime mode, demo-config publication details, and storage-health summary without side effects
 - `infernix cluster down` declaratively tears down Kind while never deleting or mutating `./.data/`
 - explicit destructive cleanup, if later added, is opt-in and separate from ordinary teardown
+- on the Linux outer-container lane, cluster-backed commands keep host-published Kind API and
+  routed edge ports on `127.0.0.1` while the launcher reaches the cluster through the private
+  Docker `kind` network and the repo-local kubeconfig generated from
+  `kind get kubeconfig --internal`
+- the repo-owned Kind configs pin `kindest/node:v1.34.0` across the static asset set and the
+  rendered cluster lifecycle path
 
 ### Validation
 
 - `./.build/infernix cluster up`, `./.build/infernix cluster status`, `./.build/infernix cluster down`, and repeat `./.build/infernix cluster up` work in sequence on Apple without manual cleanup
 - repeated `./.build/infernix cluster down` succeeds without requiring manual cluster cleanup
-- `docker compose run --rm infernix infernix cluster up`, `cluster status`, `cluster down`, and repeat `cluster up` work in sequence on the Linux outer path without manual cleanup
-- repeated `docker compose run --rm infernix infernix cluster down` succeeds without requiring manual cluster cleanup
+- `python3 tools/platform_asset_check.py` passes and enforces the loopback-only Kind config plus
+  pinned `kindest/node:v1.34.0` node images across the repo-owned Kind asset set
+- a clean outer-container Kind probe shows `docker port <control-plane>` reports
+  `127.0.0.1:...` host bindings, `kind get kubeconfig --internal` records the internal
+  `<cluster>-control-plane:6443` endpoint, and `kubectl --kubeconfig ... get nodes` succeeds
+  after the launcher container joins the private Docker `kind` network
 - durable volumes rebind to the same `./.data/` paths after teardown and redeploy
 - `cluster up` output displays the chosen localhost port
 - if `9090` is free, `cluster up` chooses `9090`; if not, it chooses the next open port by incrementing by 1
@@ -260,7 +273,11 @@ Make cluster reconcile, status, and teardown predictable.
 
 ### Remaining Work
 
-None.
+- rerun `docker compose run --rm infernix infernix cluster up`, `cluster status`, `cluster down`,
+  and repeat `cluster up` on a Docker or Kind substrate that can complete clean two-node worker
+  kubelet bootstrap on the current Ubuntu host
+- keep the loopback-only host bindings, private `kind` network access path, and internal-kubeconfig
+  contract intact while restoring full outer-container lifecycle closure
 
 ---
 
@@ -315,7 +332,7 @@ Make `linux-cuda` a real GPU-backed cluster mode rather than a nominal matrix co
 - `kind/cluster-linux-cuda.yaml` captures the GPU worker labels and the CDI device mount consumed
   by the supported `nvkind`-backed Kind path
 - `cluster up` in `linux-cuda` fails fast unless the host passes the NVIDIA preflight contract for
-  `nvidia-smi`, Docker `--runtime=nvidia`, and the Kind worker device mount
+  `nvidia-smi`, Docker `--gpus all`, and the Kind worker device mount
 - `cluster up` in `linux-cuda` reconciles the Kind cluster through `nvkind`, preserving the
   repo-local kubeconfig contract while exposing NVIDIA runtime support inside the Kind node containers
 - the cluster installs the NVIDIA device plugin so nodes expose allocatable `nvidia.com/gpu`
@@ -348,6 +365,11 @@ Make `linux-cuda` a real GPU-backed cluster mode rather than a nominal matrix co
 - rerun the `linux-cuda` integration and E2E suites on a supported NVIDIA host that satisfies the
   documented preflight contract so this sprint can close with supported-host validation rather than
   host-gated implementation work alone
+- the current Ubuntu outer-container host still cannot boot Kind nodes that carry any extra mount,
+  including the required NVIDIA CDI device mount, because node startup fails with
+  `Failed to create control group inotify object: Too many open files`; closing the outer-container
+  `linux-cuda` lane therefore also depends on a Docker or Kind substrate whose open-file limits do
+  not break mount-bearing Kind nodes
 
 ## Documentation Requirements
 
