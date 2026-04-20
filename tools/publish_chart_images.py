@@ -22,8 +22,10 @@ REQUIRED_IMAGES = {
     "web": "infernix-web:local",
 }
 DOCKER_PUSH_TIMEOUT_SECONDS = 900
+DOCKER_PULL_VERIFY_TIMEOUT_SECONDS = 900
 REGISTRY_READY_ATTEMPTS = 24
 LOGIN_ATTEMPTS = 6
+PULL_VERIFY_ATTEMPTS = 6
 
 
 def fail(message: str) -> None:
@@ -252,12 +254,14 @@ def publish_if_needed(
     harbor_password: str,
 ) -> None:
     target_ref = f"{target_repository}:{target_tag}"
+    run(["docker", "tag", source_image, target_ref])
     if harbor_tag_exists(
         harbor_host, harbor_api_host, harbor_project, harbor_user, harbor_password, target_repository, target_tag
     ):
+        verify_registry_pull(target_ref, harbor_api_host)
         return
-    run(["docker", "tag", source_image, target_ref])
     push_image_with_retries(target_ref, harbor_host, harbor_api_host, harbor_project, harbor_user, harbor_password)
+    verify_registry_pull(target_ref, harbor_api_host)
 
 
 def push_image_with_retries(
@@ -314,6 +318,39 @@ def push_image_with_retries(
             time.sleep(retry_delay_seconds)
 
     fail(f"docker push failed for {target_ref}\n{last_failure}")
+
+
+def verify_registry_pull(target_ref: str, harbor_api_host: str, *, attempts: int = PULL_VERIFY_ATTEMPTS) -> None:
+    wait_for_registry(harbor_api_host)
+    last_failure = ""
+    for attempt in range(1, attempts + 1):
+        try:
+            result = subprocess.run(
+                ["docker", "pull", target_ref],
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=DOCKER_PULL_VERIFY_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired as exc:
+            combined_output = f"{exc.stdout or ''}{exc.stderr or ''}".strip()
+            last_failure = (
+                f"docker pull timed out after {DOCKER_PULL_VERIFY_TIMEOUT_SECONDS} seconds"
+                + (f"\n{combined_output}" if combined_output else "")
+            )
+        else:
+            if result.returncode == 0:
+                return
+            combined_output = f"{result.stdout}{result.stderr}".strip()
+            last_failure = combined_output or f"docker pull exited with status {result.returncode}"
+        if attempt < attempts:
+            if registry_ready(harbor_api_host):
+                time.sleep(attempt * 2)
+            else:
+                wait_for_registry(harbor_api_host)
+
+    fail(f"docker pull verification failed for {target_ref}\n{last_failure}")
 
 
 def emit_overlay(published_images: dict[str, tuple[str, str]], output_path: Path) -> None:

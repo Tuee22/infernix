@@ -20,7 +20,7 @@ govern this plan.
 | [system-components.md](system-components.md) | Authoritative component inventory and state-location map |
 | [phase-0-documentation-and-governance.md](phase-0-documentation-and-governance.md) | `documents/` suite creation, documentation standards, and docs-suite alignment with the three-mode matrix |
 | [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md) | Repository scaffold, single-binary CLI, Cabal build doctrine and container artifact isolation, execution-context contract, and runtime-mode selection baseline |
-| [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md) | Kind bootstrap, manual PV doctrine, Helm lifecycle, Harbor-backed image flow, GPU-enabled `linux-cuda` cluster reconcile, and mode-aware ConfigMap-backed demo-config generation |
+| [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md) | Kind bootstrap, manual PV doctrine, Helm lifecycle, Harbor bootstrap-first and post-bootstrap Harbor-backed image flow, GPU-enabled `linux-cuda` cluster reconcile, and mode-aware ConfigMap-backed demo-config generation |
 | [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md) | Mandatory local HA Harbor, MinIO, Pulsar, unified edge routing, and mode-stable browser and API publication |
 | [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) | Haskell service runtime, comprehensive matrix registry, protobuf manifest and Pulsar payload contracts, ConfigMap-backed generated demo `.dhall`, and durable artifact lifecycle |
 | [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md) | Browser workbench target, Haskell-owned frontend contracts, and mode-driven manual inference UI |
@@ -54,6 +54,11 @@ across the tracked phases.
 - the documentation, repository shape, CLI surface, Kind or Helm substrate, generated demo-config
   publication, routed browser workbench, and outer-container launcher are materially implemented
   and aligned with the current plan
+- the Harbor-first cluster image flow is closed on the supported Apple lane: Harbor bootstrap and
+  only the storage or support services Harbor needs pull from upstream before Harbor is ready, the
+  helper registry is gone, the Kind registry mirror only rewrites `localhost:30002`, the final
+  Harbor-backed image refs are preloaded onto the Kind worker, and clean plus repeat Apple
+  `cluster up` runs complete with the final non-Harbor workloads pulling from Harbor-backed refs
 - the `linux-cuda` lane now reconciles a real NVIDIA-backed Kind path on supported hosts: the
   current code fails fast unless the NVIDIA host and Docker toolkit preflight commands pass, uses
   `nvkind` to create the cluster, mounts the CDI device path into the GPU worker, and installs the
@@ -103,6 +108,9 @@ At closure, `infernix` is constructed around these non-negotiable rules:
 - one repo-owned Haskell executable named `infernix`, used for service runtime, tests, and Kind lifecycle
 - one governed `documents/` suite that stays aligned with the plan and the updated root README
 - one Kind-backed deployment path using Helm, including GPU-enabled Kind behavior for `linux-cuda`
+- one Harbor-first cluster bootstrap that lets Harbor and the storage or support services Harbor
+  needs pull from their declared upstream image registries until Harbor is ready, then requires
+  every remaining cluster workload to pull from Harbor
 - one mandatory local HA topology: 3x Harbor and Pulsar replicas plus 4x MinIO replicas, with hard pod anti-affinity suppressed for Kind scheduling
 - one manual local persistence doctrine rooted at `./.data/`
 - one repo-owned build-artifact doctrine that keeps host-native Cabal output under `./.build/`,

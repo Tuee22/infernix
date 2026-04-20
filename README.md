@@ -76,7 +76,7 @@ The supported local platform is built around:
   and the demo webapp
 - one reverse-proxied localhost edge port for the demo UI, API, Harbor, MinIO, and Pulsar browser surfaces
 - one manual storage class backed by repo-owned PVs under `./.data/`
-- one local Harbor registry used by every cluster pod except Harbor's own bootstrap path
+- one local Harbor registry used by every non-Harbor cluster pod after Harbor bootstrap completes
 - one cluster-resident demo webapp image, built from a separate webapp binary via `web/Dockerfile`,
   that also owns Playwright browser dependencies
 - one repo-owned `./cabalw` wrapper that keeps host-native Cabal artifacts under `./.build/`
@@ -169,11 +169,15 @@ not a parallel lifecycle surface.
   repo-local kubeconfig, and generated mode-specific demo configuration
 - `cluster up` generates the mode-specific demo `.dhall` file that defines the demo catalog and the
   engine binding for each demo-visible model on the active mode
-- `cluster up` mirrors required third-party images into Harbor before deploying non-Harbor workloads
+- `cluster up` bootstraps Harbor first through Helm and allows Harbor plus only the storage or
+  support services Harbor needs during bootstrap to pull from declared upstream registries
+- `cluster up` mirrors required third-party images into Harbor before deploying the remaining
+  non-Harbor workloads
 - `cluster up` builds repo-owned images, including the demo webapp image through `web/Dockerfile`,
   and publishes them to Harbor before Helm rollout
 - every non-Harbor pod pulls from local Harbor
-- Harbor is the only allowed direct-upstream bootstrap exception
+- Harbor and only the storage or support services Harbor needs are the allowed direct-upstream
+  bootstrap exception before the Harbor-backed pull contract takes over
 - `cluster up` always deploys the mandatory local HA topology: 3x Harbor application-plane services
   where the selected chart supports them, 4x MinIO, and 3x Pulsar HA surfaces where the selected
   chart supports them

@@ -13,9 +13,19 @@
 - `infernix cluster status` is read-only
 - repo-owned Kind configs live under `kind/` and define the Apple, CPU, and CUDA cluster shapes that `cluster up` renders into the supported local Kind clusters
 - repo-owned Helm charts and values live under `chart/`, self-bootstrap the declared Helm repositories, and deploy the repo-owned edge, web, service, publication, and PVC workloads on that cluster path
-- `cluster up` uses Harbor as the image authority for every non-Harbor pod, mirrors required
-  third-party images there, and publishes the repo-owned service and web images before the final
-  Helm rollout
+- `cluster up` bootstraps Harbor first through Helm, allowing Harbor and only the storage or
+  support services Harbor needs during bootstrap to pull from their declared upstream registries
+- the Harbor bootstrap and final Helm phases preserve stable Harbor-generated secret material and
+  registry credentials so repeat `cluster up` runs do not invalidate Harbor login or image
+  publication state
+- after Harbor is ready, `cluster up` uses Harbor as the image authority for every remaining
+  non-Harbor pod, mirrors required third-party images there, and publishes the repo-owned service
+  and web images before the final Helm rollout
+- after Harbor reaches its final rollout shape, `cluster up` preloads the Harbor-backed final
+  image refs onto the Kind worker before the remaining non-Harbor workloads are scaled
+- because Pulsar is first enabled in the final Harbor-backed Helm phase, `cluster up` forces the
+  upstream Pulsar initialization jobs there before the final broker or proxy readiness gates are
+  allowed to close
 - `cluster up` forwards any `INFERNIX_ENGINE_COMMAND_*` environment variables from the control
   plane into the service deployment so adapter-specific engine command prefixes can be supplied on
   the cluster path without rebuilding the runtime image

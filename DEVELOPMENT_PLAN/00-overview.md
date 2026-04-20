@@ -15,7 +15,7 @@ validation story remain partial relative to the target platform contract.
 |------|---------------|--------------------|
 | Development plan and docs suite | present | none in the current supported contract; docs realignment and validator coverage match the runtime-mode and generated-demo-config contract |
 | Service command and API host | present | the routed API and publication contract are implemented, and request execution now runs through process-isolated engine-worker adapters backed by durable runtime artifact bundles and direct-upstream source-artifact manifests, with repo-owned engine fixture command injection in automated validation, but supported-host third-party engine validation and engine-ready artifact acquisition remain open |
-| Kind and Helm assets | present | the Kind or Helm substrate, Harbor-backed rollout, node-reachable registry-mirror config, pre-Harbor bootstrap registry path, and real NVIDIA-backed `linux-cuda` reconcile path are implemented, but final closure still requires supported-host validation of the `nvkind` plus device-plugin GPU lane |
+| Kind and Helm assets | present | the Kind or Helm substrate, Harbor-first bootstrap sequencing, stable Harbor bootstrap and final render material, node-reachable `localhost:30002` registry-mirror config, Kind-worker prefetch of Harbor-backed final image refs, and final-phase Pulsar initialization are implemented; the remaining gap is supported-host validation of the `nvkind` plus device-plugin GPU lane |
 | Launch and schema assets | present | none in the current supported contract; `compose.yaml`, `docker/infernix.Dockerfile`, `web/Dockerfile`, `chart/`, `kind/`, and `proto/` drive the outer-container launcher, the cluster web or service images, repo-owned Kind configs, and schema files |
 | Runtime-mode matrix | present | the full README-scale model, format, and engine matrix drives the generated source of truth, and the current worker layer consumes the selected engine metadata plus engine-adapter or source-artifact metadata, but those engine labels still map to repo-owned runtime bundles rather than the final external kernels |
 | Generated demo config | present | none in the current supported contract; `cluster up` emits mode-specific `infernix-demo-<mode>.dhall`, publishes a real `ConfigMap/infernix-demo-config`, and mounts that ConfigMap into the cluster-resident service and web workloads |
@@ -30,7 +30,10 @@ validation story remain partial relative to the target platform contract.
 - uses one Kind cluster as the supported local substrate
 - deploys Harbor, MinIO, and Pulsar through Helm with one mandatory local HA topology: 3x Harbor,
   4x MinIO, and 3x Pulsar replicas where the chosen charts expose those replica surfaces
-- uses local Harbor as the image source for every cluster pod except Harbor's own bootstrap pods
+- deploys Harbor first through Helm, letting Harbor and the storage or support services Harbor
+  needs during bootstrap pull from their declared upstream image registries while Harbor is not yet running
+- waits to roll out every remaining non-Harbor workload until Harbor is reachable enough to serve pulls
+- uses local Harbor as the image source for every non-Harbor cluster pod after Harbor bootstrap completes
 - deletes default storage classes and relies only on a manual `kubernetes.io/no-provisioner` storage class
 - creates PVs manually under `./.data/` and permits PVC creation only through Helm-owned stateful workloads
 - serves a repo-owned web UI from a cluster-resident webapp service, built as a separate binary
@@ -287,13 +290,16 @@ At closure, the webapp service runs on the Kind cluster in a container.
 
 ### 7. Local Harbor Is The Cluster Image Source
 
-Local Harbor is the required image authority for cluster workloads.
+Local Harbor becomes the required image authority once Harbor bootstrap completes.
 
-- Every pod deployed to the Kind cluster pulls from local Harbor.
-- The only exception is Harbor's own bootstrap path, which may pull directly from Docker Hub or
-  another upstream registry while Harbor is not running yet.
-- `infernix cluster up` mirrors required third-party images, builds repo-owned images, including
-  the webapp image via `web/Dockerfile`, and publishes them to Harbor before Helm rollout begins.
+- `infernix cluster up` installs Harbor through Helm first, and Harbor plus the storage or support
+  services Harbor needs during bootstrap may pull directly from Docker Hub or another declared
+  upstream registry while Harbor is not running yet.
+- No remaining non-Harbor workload rolls out before Harbor is reachable enough to serve pulls.
+- Once Harbor is ready, every remaining cluster pod pulls from local Harbor.
+- `infernix cluster up` mirrors required non-Harbor third-party images, builds repo-owned images,
+  including the webapp image via `web/Dockerfile`, and publishes them to Harbor before the final
+  non-Harbor Helm rollout begins.
 
 ### 7a. Mandatory Local HA Service Topology
 

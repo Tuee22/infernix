@@ -4,8 +4,8 @@
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
 
 > **Purpose**: Define the supported Kind bootstrap path, the manual storage doctrine, the Helm
-> umbrella deployment model, the Harbor-backed image preparation flow embedded in `cluster up`, and
-> the mode-aware generated-demo-config behavior tied to cluster reconcile.
+> umbrella deployment model, the Harbor bootstrap and Harbor-backed image preparation flow embedded
+> in `cluster up`, and the mode-aware generated-demo-config behavior tied to cluster reconcile.
 
 ## Storage Doctrine
 
@@ -37,12 +37,19 @@ This phase also owns the rule that `cluster up` prepares the active runtime mode
 
 ## Current Repo Assessment
 
-The storage doctrine, Helm rollout, Harbor-backed image publication, and generated demo-config
-publication are implemented on the current Kind path. The remaining gap in this phase is the
-`linux-cuda` closure validation: the current code now uses host NVIDIA preflight checks,
-`nvkind`-backed Kind creation, a Helm-installed NVIDIA device plugin, and real allocatable
-`nvidia.com/gpu` resources, but this repository has not yet rerun the full CUDA lane on a
-supported NVIDIA host through the final integration and E2E matrix.
+The storage doctrine, Helm rollout, and generated demo-config publication are implemented on the
+current Kind path. The Harbor image-flow contract is now closed on the supported Apple lane: the
+bootstrap-registry helper is gone, warmup and bootstrap only bring up Harbor and the support or
+storage services Harbor needs before readiness, the Harbor chart values pin the chart-generated
+secret material and registry credentials that must remain stable across the `harbor-final` and
+`final` phases, the Kind registry-host config now only rewrites `localhost:30002`, `cluster up`
+preloads the Harbor-backed final image refs onto the Kind worker before the final non-Harbor
+rollout begins, and both clean and repeat Apple reruns complete without the old transient MinIO
+first-pull `502 Bad Gateway`. The remaining gap in this phase is the `linux-cuda` closure
+validation: although the current code now uses host NVIDIA preflight checks, `nvkind`-backed Kind
+creation, a Helm-installed NVIDIA device plugin, and real allocatable `nvidia.com/gpu` resources,
+this repository has not yet rerun the full CUDA lane on a supported NVIDIA host through the final
+integration and E2E matrix.
 
 ## Sprint 2.1: Kind Bootstrap and StorageClass Reset [Done]
 
@@ -167,35 +174,53 @@ None.
 ## Sprint 2.4: Automatic Harbor Image Preparation and Helm Pull Contract [Done]
 
 **Status**: Done
-**Implementation**: `src/Infernix/Cluster.hs`, `tools/publish_chart_images.py`, `web/Dockerfile`
-**Docs to update**: `documents/engineering/k8s_native_dev_policy.md`, `documents/tools/harbor.md`
+**Implementation**: `src/Infernix/Cluster.hs`, `chart/values.yaml`, `tools/publish_chart_images.py`, `tools/list_harbor_overlay_images.py`, `web/Dockerfile`
+**Docs to update**: `documents/engineering/k8s_native_dev_policy.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/tools/harbor.md`
 
 ### Objective
 
-Use Harbor as the source of truth for cluster image pulls, with image preparation handled
-automatically during `cluster up`.
+Use Harbor as the source of truth for post-bootstrap cluster image pulls, with Harbor bootstrap and
+image preparation handled automatically during `cluster up`.
 
 ### Deliverables
 
-- `infernix cluster up` mirrors all non-Harbor third-party images into Harbor and builds then
-  publishes repo-owned images to Harbor before Helm rollout
+- `infernix cluster up` deploys Harbor itself through the Helm chart before the post-bootstrap
+  Harbor-backed rollout begins
+- the Harbor bootstrap slice, including Harbor's required storage and supporting services, pulls
+  from the chart's declared upstream image registries while Harbor is not yet available
+- Harbor's chart-generated secret material and registry credentials remain stable across the
+  `harbor-final` and `final` Helm phases so repeat `cluster up` runs do not invalidate Harbor
+  login or image publication state
+- no repo-owned workload and no non-Harbor platform workload that is not required for Harbor
+  bootstrap rolls out before Harbor is reachable enough to serve pulls
+- once Harbor is ready, `infernix cluster up` mirrors all non-Harbor third-party images into
+  Harbor and builds then publishes repo-owned images to Harbor before the final Helm rollout
 - `infernix cluster up` builds the separate webapp image through `web/Dockerfile` and uploads it to Harbor
-- before Harbor is ready, `cluster up` also mirrors the MinIO and Pulsar bootstrap images into
-  a repo-built bootstrap registry on `localhost:30001`, and Kind registry-host config rewrites that
-  namespace to the helper registry on the Kind network
-- Helm values reference Harbor image coordinates for every cluster pod except Harbor's own bootstrap path
+- Helm values reference Harbor image coordinates for every non-Harbor cluster pod in the final rollout
+- after Harbor reaches its final rollout shape, `cluster up` preloads the Harbor-backed final image
+  refs onto the Kind worker before the remaining non-Harbor workloads are scaled
 - publication is idempotent and compares local versus remote digests where possible
 - interrupted Harbor bootstrap state is repaired during repeat `cluster up` runs before the final
   Harbor-backed rollout proceeds
-- workload rollout waits until Harbor is reachable enough to pull published images
+- no compatibility bootstrap registry remains for MinIO or Pulsar or other non-Harbor workloads
 
 ### Validation
 
-- `infernix cluster up` publishes the service and webapp images before deploy
-- `infernix kubectl get pods -A -o jsonpath=...` shows every non-Harbor pod pulling from Harbor-managed references
+- `infernix cluster up` first produces a healthy Harbor bootstrap slice through Helm using upstream
+  image references for Harbor and the services Harbor needs during bootstrap
+- `infernix cluster up` does not begin the remaining non-Harbor rollout until Harbor is reachable
+  enough for image publication and pulls
+- `infernix cluster up` publishes the service and webapp images before the final non-Harbor deploy
+- `infernix kubectl get pods -A -o jsonpath=...` shows every post-bootstrap non-Harbor pod pulling
+  from Harbor-managed references
+- clean and repeat Apple-host reruns show the Kind worker image store contains the Harbor-backed
+  final image refs before the remaining non-Harbor workloads begin their final rollout
+- clean and repeat Apple-host reruns show the Harbor-retagged MinIO StatefulSet transition
+  completes from Harbor-backed refs without a transient first-pull `502 Bad Gateway`
 - repeated `infernix cluster up` runs avoid unnecessary pushes when digests match
 - repeated `infernix cluster up` runs can repair interrupted Harbor migration state before the
   final Harbor-backed rollout
+- the generated Kind registry-host config no longer needs a `localhost:30001` helper-registry namespace
 
 ### Remaining Work
 

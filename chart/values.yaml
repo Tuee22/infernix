@@ -167,6 +167,8 @@ harbor:
           nodePort: 30002
   externalURL: http://localhost:30002
   harborAdminPassword: Harbor12345
+  # Pin Harbor's internal secrets so bootstrap and final phases render the same Harbor resources.
+  secretKey: "0123456789abcdef"
   persistence:
     enabled: true
     resourcePolicy: keep
@@ -206,14 +208,72 @@ harbor:
     replicas: 3
   core:
     replicas: 3
+    secret: "fedcba9876543210"
+    tokenKey: |
+      -----BEGIN RSA PRIVATE KEY-----
+      MIIEpAIBAAKCAQEAn4EAXJsf582OSveZAdLnOaZaI2ZMwaN6Z1qkGtJS96p/Fvzt
+      KvKCU7M/GVu5h/fQHpC3Vgb+Mv7BkEIEpWdL4f+O2yDn5CYxwW8L1Zd77SD3/TWt
+      8nopU2Tv6qi/gsrkDRUiiqxbou2fWeVZjlCyVghxq81mSb+/AmRiopGA41E46K5G
+      0smTKwy7jry2RdTwHF0xEEPNESfDu46iUm/oRQTGE+d8O32RujxssTzzKRotx+JW
+      zFuGkNZF87X7AasFxFY1zV8k/A69IimK6rsSTOV45hYHtDWyuXfyGIyNqbvwlinp
+      JOZ6vTFQTJm4PokdLjlh5EYf434DvVOK2v7NeQIDAQABAoIBAAPxeZ+weUBpm1RU
+      t3MdTTiGbtlL8XHClRdlHQ7phvdRlIjYvyjGBs04roKgcG9mo8io/tKpGNj20HR8
+      wKu8UxAO5DpcNNtrNc+bS2gQBwvAr5zSZPQ3C1qWUYeZZ9BSbC2mHtIzQA82D8Ur
+      oj7eVXBYJFjxL/o6sTH8ZxivifJksPC2wGrbngjaT6lMaWoQj3Slty5aI/nNP+oW
+      wYRUzfkcwSFh52+zVjGw6m2qJXu0p0ca1F4HVMduYLujYbuPex5hZYmWanIOI6bG
+      J7MJs0ZsCdTb7OR5Y0/dFaaebywWUVaZdldjiWj8Im7GgBBoOOTjMflE48izvj1C
+      GNjFhjECgYEA1m7ZOkjWJO4/g5ForBWgLe9so5EZLWyuwwW6hQl2ghv5DWW161Ww
+      fZl3tzhrL7D9LvRCsp3y3UuIrqN5XJBR3yCK0af16uicwP1rbWmtnageRWaZyCI1
+      kABtBIjxPJQtm2mUUfRveO5f2ztRugS/g+GhjAqbVmUbHrVVbmnMdmkCgYEAvmxR
+      oLrLi3/W8Lm16o041JpYA3Fh6a7nozQqaFYmUq3/MbJeY4260cZivY6V+ZvrTj+2
+      7NAzReCfeHyjPKCfpt59nrPR4uiAMUKGLDh/kihx6vGwQgJIvwCHmQQnhqTwoToS
+      kyab3fUMVxFHVXBkWyPadnRFB8x5xmk8vJZSXJECgYEAq6238XgbKxosc7PZb90o
+      j15fRl2HIN0g1jch7B11ahnnPhium6nRUd2rAWAEQPyc2BjrxYG7zf0Jg3iSU8+g
+      HNo7CjxFITv3NHQwrDqtq8nL4piQirEI3S/aGIVjTrL8CK9w9mSTUujWiflmJ15h
+      zr64zhw33eW43s8jhPDjp/ECgYEAkqr/nFsD1+iZd0SzF3u6oBZZYB1+muz6wTu2
+      xjJExj36Zx7JkMhjcpvpBbPDVESB0v1EOdaLB3Fhov3tBQ96qJ6KByjdqnYF9usU
+      SQ8jQ0IfrCSH6++ydFtGFdebUhvMs4H1OJ3uQ+EwpgdK+EXfJkvRQpd/a+hUizwX
+      afImceECgYAyqvXkyC1pihPiVLRWHmzBB2us8JHFEiVXDop8pQVphTroRd4JQ797
+      9whXenDJdOs9JVlbrvEYIF8mhKt2x36ONPOGnCrgRJhv3Thuxw/Wq/fRdV+nHCsd
+      YieWMg8OtYhkz7b+qVD33Q0v4QjKFeBUz61gDYxWAhiISanycwNCDg==
+      -----END RSA PRIVATE KEY-----
+    tokenCert: |
+      -----BEGIN CERTIFICATE-----
+      MIIDITCCAgmgAwIBAgIUETaxuIEC5DnxSWN1JoaYeOApZ6cwDQYJKoZIhvcNAQEL
+      BQAwIDEeMBwGA1UEAwwVaW5mZXJuaXgtaGFyYm9yLXRva2VuMB4XDTI2MDQyMDEz
+      MjczN1oXDTM2MDQxNzEzMjczN1owIDEeMBwGA1UEAwwVaW5mZXJuaXgtaGFyYm9y
+      LXRva2VuMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAn4EAXJsf582O
+      SveZAdLnOaZaI2ZMwaN6Z1qkGtJS96p/FvztKvKCU7M/GVu5h/fQHpC3Vgb+Mv7B
+      kEIEpWdL4f+O2yDn5CYxwW8L1Zd77SD3/TWt8nopU2Tv6qi/gsrkDRUiiqxbou2f
+      WeVZjlCyVghxq81mSb+/AmRiopGA41E46K5G0smTKwy7jry2RdTwHF0xEEPNESfD
+      u46iUm/oRQTGE+d8O32RujxssTzzKRotx+JWzFuGkNZF87X7AasFxFY1zV8k/A69
+      IimK6rsSTOV45hYHtDWyuXfyGIyNqbvwlinpJOZ6vTFQTJm4PokdLjlh5EYf434D
+      vVOK2v7NeQIDAQABo1MwUTAdBgNVHQ4EFgQUC9oI1qxXiE7qH9i7ubH0vB0nahEw
+      HwYDVR0jBBgwFoAUC9oI1qxXiE7qH9i7ubH0vB0nahEwDwYDVR0TAQH/BAUwAwEB
+      /zANBgkqhkiG9w0BAQsFAAOCAQEAUG4DDBG/dgRbcwdC6MkiyoSEZysJcWOReACt
+      uiMQMfeeAcHktivI7qxCyDPFpF1Odj3jpmIrUmyigOd6sm0FHtNbvZnEsyE1eqMN
+      NvGH9wOq5rT1A0dMtIdejry13xIe7kQprPEjijv5jJx0frYAMeAFYNpF7IpLRctV
+      m7rMpavWPLgovJmj3Ftfr5Wl12SQaUIbQ3HySQb3R3I9T+2PqnCNX9mKYMKouLjm
+      ig252/725mwI4HmGXOR5/xw+prVcFRSC/1lq3/LyJCiqwdSFhcCvVnm3B7kSg7th
+      yqyAM9J51S3RMje5g3n73f6Zs5RVCgYW9UA6bIV6yFTbaLVwjA==
+      -----END CERTIFICATE-----
+    xsrfKey: "0123456789abcdef0123456789abcdef"
   jobservice:
     replicas: 3
+    secret: "0011223344556677"
   registry:
     replicas: 3
+    secret: "8899aabbccddeeff"
+    credentials:
+      username: "harbor_registry_user"
+      password: "harbor_registry_password"
+      htpasswdString: "harbor_registry_user:$2a$10$4sf.czgjL/xrrR0TipkLzOcrg82zXOFIPmku9jvCosb3t6vH4.Ml2"
   trivy:
     replicas: 3
 
 pulsar:
+  # Pulsar is only enabled in the final Helm phase, so force the upstream init jobs to run there.
+  initialize: true
   nameOverride: infernix-pulsar
   components:
     zookeeper: true

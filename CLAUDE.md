@@ -24,6 +24,9 @@ Those actions are reserved for the user.
   `./.build/cabal`; only pass explicit `--builddir` overrides when a supported workflow requires
   them.
 - Keep root docs explicit about what is implemented today versus what remains target-state intent.
+- Keep the Harbor-first bootstrap narrative aligned across `README.md`, `DEVELOPMENT_PLAN/`, and
+  `documents/`: Harbor and only Harbor-required bootstrap support services may pull upstream before
+  readiness, and every remaining non-Harbor workload pulls from Harbor afterward.
 - Keep the three-runtime build direction and the Kind HA testing or demo-ground direction aligned.
 - Treat the cluster-resident webapp as a demo surface while retaining the three-runtime and
   matrix-coverage intent.

@@ -8,9 +8,16 @@
 ## Rules
 
 - Harbor is the local image authority for every non-Harbor cluster workload
-- Harbor may bootstrap from upstream before the local registry is available
-- `cluster up` mirrors third-party images and publishes repo-owned service and web images into
-  Harbor before the final Helm rollout
+- `cluster up` deploys Harbor first through Helm and allows Harbor plus only the storage or support
+  services Harbor needs during bootstrap to pull from declared upstream registries while Harbor is
+  not yet available
+- the Harbor bootstrap and final Helm phases keep the chart-generated Harbor secret material and
+  registry credentials stable so repeat `cluster up` runs do not invalidate Harbor login or image
+  publication state
+- once Harbor is ready, `cluster up` mirrors third-party images and publishes repo-owned service
+  and web images into Harbor before the final non-Harbor Helm rollout
+- after Harbor reaches its final rollout shape, `cluster up` preloads the Harbor-backed final
+  image refs onto the Kind worker before the remaining non-Harbor workloads are scaled
 - repeated `cluster up` runs compare local and remote digests where available and skip unnecessary
   pushes
 - `cluster up` waits for Harbor to be pull-ready before final non-Harbor rollout continues

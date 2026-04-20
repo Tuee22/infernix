@@ -12,6 +12,9 @@
 - Pulsar topic payloads use protobuf schema support rather than opaque byte arrays
 - the routed service path uses cluster-local Pulsar networking in cluster mode and edge-routed
   access in the Apple host-bridge mode
+- because Pulsar is first enabled in the final Harbor-backed Helm phase, `cluster up` forces the
+  upstream bookkeeper and cluster-initialization jobs there so the required metadata exists before
+  broker and proxy readiness gates apply on clean or repeat reconciles
 - the admin surface is exposed through `/pulsar/admin`
 - the WebSocket surface is exposed through `/pulsar/ws`
 

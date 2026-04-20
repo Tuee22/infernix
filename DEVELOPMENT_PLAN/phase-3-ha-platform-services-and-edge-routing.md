@@ -34,7 +34,10 @@ and backing-state details. Harbor, MinIO, and Pulsar route through cluster-resid
 workloads that target the live chart-managed Harbor, MinIO, and Pulsar services. The Apple
 host-native validation lane exercises Harbor-first image publication, MinIO-backed durable
 artifacts, Pulsar-backed request or result transport, and HA recovery for all three platform
-services on the Kind and Helm substrate.
+services on the Kind and Helm substrate. Because Pulsar is first enabled during the final
+Harbor-backed Helm phase, the supported chart values force the upstream Pulsar initialization jobs
+there so clean and repeat `cluster up` runs still create the required BookKeeper and cluster
+metadata before the proxy and broker readiness gates apply.
 
 ## Sprint 3.1: HA MinIO Deployment [Done]
 
@@ -94,6 +97,9 @@ Provide the durable event transport for inference requests, results, and service
 - the Haskell runtime consumes those payloads through `proto-lens`-generated modules rather than
   handwritten encoders or decoders
 - the service can use cluster-local Pulsar networking in cluster mode and edge-routed access in Apple host mode
+- because Pulsar first becomes enabled in the final Harbor-backed Helm phase, the supported chart
+  values force the upstream bookkeeper and cluster-initialization jobs there so BookKeeper or
+  broker or proxy startup does not race missing metadata on clean or repeat `cluster up` runs
 
 ### Validation
 
@@ -101,6 +107,9 @@ Provide the durable event transport for inference requests, results, and service
 - Pulsar PVCs bind through `infernix-manual`
 - the rendered Pulsar manifests show the required replica counts and no hard pod anti-affinity that
   would block local Kind scheduling
+- clean and repeat `infernix cluster up` runs show `infernix-infernix-pulsar-bookie-init` and
+  `infernix-infernix-pulsar-pulsar-init` completing before the final Pulsar proxy or broker
+  readiness gates are satisfied
 - topic or schema inspection shows the supported inference payload topics are using protobuf schema
   registration rather than opaque bytes
 - `curl http://127.0.0.1:<port>/pulsar/admin/` reaches the routed Pulsar admin surface
@@ -130,7 +139,8 @@ Provide the mandatory local HA image registry and browser portal for cluster ima
 - repo-owned Helm values suppress hard pod anti-affinity and equivalent hard scheduling constraints
   so the replicated Harbor workloads can schedule on local Kind
 - the Harbor portal is exposed through the edge proxy on the shared localhost port
-- Harbor is the only supported workload allowed to bootstrap directly from Docker Hub or another upstream registry
+- Harbor and only the storage or support services Harbor needs during bootstrap are the supported
+  upstream-pull exception before the Harbor-backed pull contract from Phase 2 takes over
 
 ### Validation
 

@@ -12,7 +12,7 @@ where
 
 import Control.Concurrent (threadDelay)
 import Control.Exception (IOException, try)
-import Control.Monad (forM_, unless, when)
+import Control.Monad (unless, when)
 import Data.ByteString.Lazy qualified as Lazy
 import Data.ByteString.Lazy.Char8 qualified as LazyChar8
 import Data.Char (isSpace)
@@ -28,7 +28,7 @@ import Infernix.Types
 import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, listDirectory, removePathForcibly)
 import System.Environment (getEnvironment, lookupEnv)
 import System.Exit (ExitCode (..))
-import System.FilePath (takeDirectory, takeFileName, (</>))
+import System.FilePath (takeDirectory, (</>))
 import System.Process
   ( CreateProcess (cwd, env),
     proc,
@@ -66,12 +66,7 @@ helmDependencyArchives =
 finalPhaseDeployments :: [String]
 finalPhaseDeployments =
   [ "deployment/infernix-edge",
-    "deployment/infernix-harbor-core",
     "deployment/infernix-harbor-gateway",
-    "deployment/infernix-harbor-jobservice",
-    "deployment/infernix-harbor-nginx",
-    "deployment/infernix-harbor-portal",
-    "deployment/infernix-harbor-registry",
     "deployment/infernix-minio-console",
     "deployment/infernix-minio-gateway",
     "deployment/infernix-pulsar-gateway",
@@ -81,15 +76,29 @@ finalPhaseDeployments =
 
 finalPhaseStatefulSets :: [String]
 finalPhaseStatefulSets =
-  [ "statefulset/infernix-harbor-database",
-    "statefulset/infernix-harbor-redis",
-    "statefulset/infernix-harbor-trivy",
-    "statefulset/infernix-infernix-pulsar-bookie",
+  [ "statefulset/infernix-infernix-pulsar-bookie",
     "statefulset/infernix-infernix-pulsar-broker",
     "statefulset/infernix-infernix-pulsar-proxy",
     "statefulset/infernix-infernix-pulsar-recovery",
     "statefulset/infernix-infernix-pulsar-toolset",
     "statefulset/infernix-infernix-pulsar-zookeeper",
+    "statefulset/infernix-minio"
+  ]
+
+harborFinalPhaseDeployments :: [String]
+harborFinalPhaseDeployments =
+  [ "deployment/infernix-harbor-core",
+    "deployment/infernix-harbor-jobservice",
+    "deployment/infernix-harbor-nginx",
+    "deployment/infernix-harbor-portal",
+    "deployment/infernix-harbor-registry"
+  ]
+
+harborFinalPhaseStatefulSets :: [String]
+harborFinalPhaseStatefulSets =
+  [ "statefulset/infernix-harbor-database",
+    "statefulset/infernix-harbor-redis",
+    "statefulset/infernix-harbor-trivy",
     "statefulset/infernix-minio"
   ]
 
@@ -102,6 +111,7 @@ nvkindGoInstallTarget = "github.com/NVIDIA/nvkind/cmd/nvkind@8bce71ec58cf12b4003
 data HelmDeployPhase
   = WarmupPhase
   | BootstrapPhase
+  | HarborFinalPhase
   | FinalPhase
 
 data HarborBootstrapOutcome
@@ -113,6 +123,7 @@ clusterUp :: Maybe RuntimeMode -> IO ()
 clusterUp maybeRuntimeMode = do
   paths <- Config.discoverPaths
   Config.ensureRepoLayout paths
+  cleanupLegacyBootstrapRegistry
   runtimeMode <- Config.resolveRuntimeMode maybeRuntimeMode
   let controlPlane = Config.controlPlaneContext paths
   requestedPort <- chooseEdgePort paths
@@ -193,6 +204,7 @@ clusterUp maybeRuntimeMode = do
           }
   warmupValuesPath <- writeHelmValuesFile paths controlPlane seedState payload WarmupPhase
   bootstrapValuesPath <- writeHelmValuesFile paths controlPlane seedState payload BootstrapPhase
+  harborFinalValuesPath <- writeHelmValuesFile paths controlPlane seedState payload HarborFinalPhase
   finalValuesPath <- writeHelmValuesFile paths controlPlane seedState payload FinalPhase
   renderedChartPath <- renderHelmChart paths runtimeMode [finalValuesPath]
   applyBootstrapState paths runtimeMode discoveredClaims
@@ -200,12 +212,14 @@ clusterUp maybeRuntimeMode = do
   writeFile publicationPath (renderPublicationState controlPlane state)
   reconcilePersistentVolumes state
   repairHarborDatabaseStorageState paths state
-  publishBootstrapRegistryImages paths renderedChartPath
   deployChart paths state [warmupValuesPath] False
   repairHarborDatabaseMigrationState paths state
   bootstrapHarborWithRepair paths state [bootstrapValuesPath]
   buildClusterImages paths runtimeMode
   imageOverridesPath <- publishClusterImages paths renderedChartPath runtimeMode
+  deployChart paths state [harborFinalValuesPath] True
+  waitForHarborFinalPhaseRollouts state
+  preloadHarborBackedImagesOnKindWorker paths runtimeMode imageOverridesPath
   deployChart paths state [finalValuesPath, imageOverridesPath] True
   waitForFinalPhaseRollouts state
   writeStateFile (clusterStatePath paths) state
@@ -235,7 +249,7 @@ clusterDown maybeRuntimeMode = do
       [("KUBECONFIG", Config.generatedKubeconfigPath paths)]
       "kind"
       ["delete", "cluster", "--name", kindClusterName paths runtimeMode]
-  cleanupBootstrapRegistry
+  cleanupLegacyBootstrapRegistry
   case maybeState of
     Nothing -> putStrLn "cluster already absent"
     Just state
@@ -734,150 +748,10 @@ buildClusterImages paths runtimeMode = do
   runCommand (Just (repoRoot paths)) [] "docker" (dockerBuildArgs "docker/service.Dockerfile" serviceImageRef)
   runCommand (Just (repoRoot paths)) [] "docker" (dockerBuildArgs "web/Dockerfile" webImageRef)
 
-publishBootstrapRegistryImages :: Paths -> FilePath -> IO ()
-publishBootstrapRegistryImages paths renderedChartPath = do
-  ensureBootstrapRegistry paths
-  imageRefs <- discoverChartImages paths renderedChartPath
-  let bootstrapImages = filter isBootstrapImage imageRefs
-  forM_ bootstrapImages $ \imageRef -> do
-    ensureLocalImageAvailable imageRef
-    let targetRef = bootstrapRegistryTarget imageRef
-    runCommand Nothing [] "docker" ["tag", imageRef, targetRef]
-    runCommand Nothing [] "docker" ["push", targetRef]
-  where
-    isBootstrapImage imageRef =
-      imageRef /= serviceImageRef
-        && imageRef /= webImageRef
-        && any (`List.isInfixOf` imageRef) ["bitnamilegacy/", "apachepulsar/"]
-
-discoverChartImages :: Paths -> FilePath -> IO [String]
-discoverChartImages paths renderedChartPath =
-  filter (not . null) . lines
-    <$> captureCommand
-      (Just (repoRoot paths))
-      []
-      "python3"
-      [repoRoot paths </> "tools" </> "discover_chart_images.py", renderedChartPath]
-
-ensureLocalImageAvailable :: String -> IO ()
-ensureLocalImageAvailable imageRef = do
-  inspectionResult <- tryCommand Nothing [] "docker" ["image", "inspect", imageRef]
-  case inspectionResult of
-    Right _ -> pure ()
-    Left _ -> runCommand Nothing [] "docker" ["pull", imageRef]
-
-ensureBootstrapRegistry :: Paths -> IO ()
-ensureBootstrapRegistry paths = do
-  ensureBootstrapRegistryImage paths
-  runningResult <- tryCommand Nothing [] "docker" ["inspect", "-f", "{{.State.Running}}", bootstrapRegistryName]
-  case runningResult of
-    Right output
-      | trim output == "true" -> ensureRegistryConnectedToKindNetwork
-      | trim output == "false" -> do
-          runCommand Nothing [] "docker" ["start", bootstrapRegistryName]
-          ensureRegistryConnectedToKindNetwork
-      | otherwise -> startRegistry
-    Left _ -> startRegistry
-  where
-    startRegistry =
-      do
-        runCommand
-          Nothing
-          []
-          "docker"
-          [ "run",
-            "-d",
-            "--name",
-            bootstrapRegistryName,
-            "--network",
-            "kind",
-            "-p",
-            "30001:5000",
-            bootstrapRegistryImageRef
-          ]
-        ensureRegistryConnectedToKindNetwork
-    ensureRegistryConnectedToKindNetwork = do
-      _ <- tryCommand Nothing [] "docker" ["network", "connect", "kind", bootstrapRegistryName]
-      pure ()
-
-ensureBootstrapRegistryImage :: Paths -> IO ()
-ensureBootstrapRegistryImage paths = do
-  let imageRoot = buildRoot paths </> "kind" </> "bootstrap-registry"
-      binaryPath = imageRoot </> "registry"
-      dockerfilePath = imageRoot </> "Dockerfile"
-      configPath = imageRoot </> "config.yml"
-  createDirectoryIfMissing True imageRoot
-  imageArch <- bootstrapRegistryImageArchitecture
-  binaryPresent <- doesFileExist binaryPath
-  unless binaryPresent $
-    downloadBootstrapRegistryBinary imageRoot imageArch
-  writeFile dockerfilePath (renderBootstrapRegistryDockerfile binaryPath configPath)
-  writeFile configPath renderBootstrapRegistryConfig
-  imageInspection <- tryCommand Nothing [] "docker" ["image", "inspect", bootstrapRegistryImageRef]
-  case imageInspection of
-    Right _ -> pure ()
-    Left _ -> runCommand (Just imageRoot) [] "docker" ["build", "-t", bootstrapRegistryImageRef, "."]
-
-bootstrapRegistryImageArchitecture :: IO String
-bootstrapRegistryImageArchitecture = do
-  dockerArch <- trim <$> captureCommand Nothing [] "docker" ["version", "--format", "{{.Server.Arch}}"]
-  case dockerArch of
-    "amd64" -> pure "amd64"
-    "arm64" -> pure "arm64"
-    "x86_64" -> pure "amd64"
-    "aarch64" -> pure "arm64"
-    _ -> ioError (userError ("unsupported Docker server architecture for bootstrap registry: " <> dockerArch))
-
-downloadBootstrapRegistryBinary :: FilePath -> String -> IO ()
-downloadBootstrapRegistryBinary imageRoot imageArch = do
-  let archiveName = "registry_" <> bootstrapRegistryVersion <> "_linux_" <> imageArch <> ".tar.gz"
-      archivePath = imageRoot </> archiveName
-      archiveUrl = bootstrapRegistryReleaseUrl <> "/" <> archiveName
-  runCommand Nothing [] "curl" ["-fsSL", "--retry", "5", "--retry-all-errors", "-o", archivePath, archiveUrl]
-  runCommand (Just imageRoot) [] "tar" ["-xzf", archiveName]
-
-renderBootstrapRegistryDockerfile :: FilePath -> FilePath -> String
-renderBootstrapRegistryDockerfile binaryPath configPath =
-  unlines
-    [ "FROM scratch",
-      "COPY " <> takeFileName binaryPath <> " /registry",
-      "COPY " <> takeFileName configPath <> " /etc/distribution/config.yml",
-      "EXPOSE 5000",
-      "ENTRYPOINT [\"/registry\", \"serve\", \"/etc/distribution/config.yml\"]"
-    ]
-
-renderBootstrapRegistryConfig :: String
-renderBootstrapRegistryConfig =
-  unlines
-    [ "version: 0.1",
-      "log:",
-      "  level: info",
-      "storage:",
-      "  filesystem:",
-      "    rootdirectory: /var/lib/registry",
-      "http:",
-      "  addr: :5000"
-    ]
-
-cleanupBootstrapRegistry :: IO ()
-cleanupBootstrapRegistry = do
-  _ <- tryCommand Nothing [] "docker" ["rm", "-f", bootstrapRegistryName]
+cleanupLegacyBootstrapRegistry :: IO ()
+cleanupLegacyBootstrapRegistry = do
+  _ <- tryCommand Nothing [] "docker" ["rm", "-f", legacyBootstrapRegistryName]
   pure ()
-
-bootstrapRegistryTarget :: String -> String
-bootstrapRegistryTarget imageRef =
-  bootstrapRegistryHost <> "/library/" <> stripDockerIo repositoryPart <> ":" <> tagPart
-  where
-    reversedImageRef = reverse imageRef
-    (reversedTag, reversedRepositoryWithSeparator) = break (== ':') reversedImageRef
-    (repositoryPart, tagPart) =
-      case reversedRepositoryWithSeparator of
-        ':' : reversedRepository -> (reverse reversedRepository, reverse reversedTag)
-        _ -> (imageRef, "latest")
-
-stripDockerIo :: String -> String
-stripDockerIo value =
-  fromMaybe value (List.stripPrefix "docker.io/" value)
 
 ensureWebBuildDependencies :: Paths -> IO ()
 ensureWebBuildDependencies paths = do
@@ -906,6 +780,60 @@ publishClusterImages paths renderedChartPath runtimeMode = do
       harborApiHost paths
     ]
   pure outputPath
+
+preloadHarborBackedImagesOnKindWorker :: Paths -> RuntimeMode -> FilePath -> IO ()
+preloadHarborBackedImagesOnKindWorker paths runtimeMode imageOverridesPath = do
+  imageRefs <- harborOverlayImageRefs paths imageOverridesPath
+  let workerContainer = kindClusterName paths runtimeMode <> "-worker"
+      uniqueImageRefs = List.nub (filter (not . null) (map trim imageRefs))
+  unless (null uniqueImageRefs) $ do
+    putStrLn "preloading Harbor-backed final images on the Kind worker"
+    mapM_ (preloadHarborImageOnNode workerContainer) uniqueImageRefs
+
+harborOverlayImageRefs :: Paths -> FilePath -> IO [String]
+harborOverlayImageRefs paths imageOverridesPath =
+  filter (not . null) . map trim . lines
+    <$> captureCommand
+      (Just (repoRoot paths))
+      []
+      "python3"
+      [ repoRoot paths </> "tools" </> "list_harbor_overlay_images.py",
+        imageOverridesPath
+      ]
+
+preloadHarborImageOnNode :: String -> String -> IO ()
+preloadHarborImageOnNode nodeContainer imageRef = do
+  result <-
+    retryCommandOutput
+      12
+      5000000
+      ("preload Harbor image " <> imageRef <> " on " <> nodeContainer)
+      ( tryCommand
+          Nothing
+          []
+          "docker"
+          [ "exec",
+            nodeContainer,
+            "crictl",
+            "--runtime-endpoint",
+            "unix:///run/containerd/containerd.sock",
+            "pull",
+            "--creds",
+            harborAdminUser <> ":" <> harborAdminPassword,
+            imageRef
+          ]
+      )
+  case result of
+    Right _ -> pure ()
+    Left err ->
+      ioError
+        ( userError
+            ( "Kind worker could not preload Harbor-backed image "
+                <> imageRef
+                <> ":\n"
+                <> err
+            )
+        )
 
 waitForHarborRegistry :: Paths -> IO ()
 waitForHarborRegistry paths = do
@@ -1277,6 +1205,12 @@ tryDeployChart paths state valuesPaths waitForRollout = do
       | waitForRollout = ["--wait"]
       | otherwise = []
 
+waitForHarborFinalPhaseRollouts :: ClusterState -> IO ()
+waitForHarborFinalPhaseRollouts state = do
+  putStrLn "waiting for final Harbor rollouts"
+  mapM_ (waitForWorkloadRollout state 1200) harborFinalPhaseStatefulSets
+  mapM_ (waitForWorkloadRollout state 900) harborFinalPhaseDeployments
+
 waitForFinalPhaseRollouts :: ClusterState -> IO ()
 waitForFinalPhaseRollouts state = do
   putStrLn "waiting for final platform rollouts"
@@ -1374,7 +1308,9 @@ writeGeneratedKindConfig paths runtimeMode edgePortValue = do
 writeRegistryHostsConfig :: Paths -> RuntimeMode -> IO ()
 writeRegistryHostsConfig paths runtimeMode = do
   let registryRoot = repoRoot paths </> ".build" </> "kind" </> "registry"
-  writeRegistryNamespace "localhost:30001" (bootstrapRegistryName <> ":5000") registryRoot
+      legacyNamespaceDirectory = registryRoot </> "localhost:30001"
+  legacyNamespaceExists <- doesDirectoryExist legacyNamespaceDirectory
+  when legacyNamespaceExists (removePathForcibly legacyNamespaceDirectory)
   writeRegistryNamespace "localhost:30002" (kindClusterName paths runtimeMode <> "-control-plane:30002") registryRoot
   where
     writeRegistryNamespace registryNamespace reachableRegistryHost registryRoot = do
@@ -1517,6 +1453,7 @@ writeHelmValuesFile paths controlPlane state demoConfigPayload deployPhase = do
     phaseSuffix phaseValue = case phaseValue of
       WarmupPhase -> "warmup"
       BootstrapPhase -> "bootstrap"
+      HarborFinalPhase -> "harbor-final"
       FinalPhase -> "final"
 
 engineCommandOverridesFromEnvironment :: IO [(String, String)]
@@ -1630,7 +1567,7 @@ renderHelmValues controlPlane state demoConfigPayload deployPhase maybeEngineFix
              "  pulsar:",
              "    replicaCount: " <> show (repoWorkloadReplicaCount deployPhase)
            ]
-        <> bootstrapRegistryOverrides deployPhase
+        <> phaseChartOverrides deployPhase
         <> bootstrapHarborOverrides deployPhase
     )
   where
@@ -1638,6 +1575,7 @@ renderHelmValues controlPlane state demoConfigPayload deployPhase maybeEngineFix
     repoWorkloadReplicaCount phaseValue = case phaseValue of
       WarmupPhase -> 0
       BootstrapPhase -> 0
+      HarborFinalPhase -> 0
       FinalPhase -> 1
     serviceEngineAdapterOverrides
       | maybeEngineFixtureCommand == Nothing && null engineCommandOverrides = []
@@ -1650,31 +1588,22 @@ renderHelmValues controlPlane state demoConfigPayload deployPhase maybeEngineFix
       | otherwise =
           [ "    commandEnv:" ]
             <> map (\(name, value) -> "      " <> name <> ": " <> show value) engineCommandOverrides
-    bootstrapRegistryOverrides phaseValue = case phaseValue of
-      WarmupPhase -> bootstrapRegistryMinioOverrides <> bootstrapRegistryPulsarOverrides
-      BootstrapPhase -> bootstrapRegistryMinioOverrides <> bootstrapRegistryPulsarOverrides
+    phaseChartOverrides phaseValue = case phaseValue of
+      WarmupPhase -> harborBootstrapChartOverrides
+      BootstrapPhase -> harborBootstrapChartOverrides
+      HarborFinalPhase -> harborBootstrapChartOverrides
       FinalPhase -> []
-    bootstrapRegistryMinioOverrides =
-      [ "minio:",
-        "  image:",
-        "    registry: " <> bootstrapRegistryHost,
-        "    repository: library/bitnamilegacy/minio",
-        "  clientImage:",
-        "    registry: " <> bootstrapRegistryHost,
-        "    repository: library/bitnamilegacy/minio-client",
-        "  defaultInitContainers:",
-        "    volumePermissions:",
-        "      image:",
-        "        registry: " <> bootstrapRegistryHost,
-        "        repository: library/bitnamilegacy/os-shell",
+    harborBootstrapChartOverrides =
+      [ "upstreamCharts:",
+        "  harbor:",
+        "    enabled: true",
+        "  minio:",
+        "    enabled: true",
+        "  pulsar:",
+        "    enabled: false",
+        "minio:",
         "  console:",
-        "    image:",
-        "      registry: " <> bootstrapRegistryHost,
-        "      repository: library/bitnamilegacy/minio-object-browser"
-      ]
-    bootstrapRegistryPulsarOverrides =
-      [ "pulsar:",
-        "  defaultPulsarImageRepository: " <> bootstrapRegistryHost <> "/library/apachepulsar/pulsar-all"
+        "    enabled: false"
       ]
     bootstrapHarborOverrides phaseValue = case phaseValue of
       WarmupPhase ->
@@ -1707,6 +1636,10 @@ renderHelmValues controlPlane state demoConfigPayload deployPhase maybeEngineFix
           "  trivy:",
           "    replicas: 1"
         ]
+      HarborFinalPhase ->
+        [ "harbor:",
+          "  enableMigrateHelmHook: true"
+        ]
       FinalPhase ->
         [ "harbor:",
           "  enableMigrateHelmHook: true"
@@ -1727,20 +1660,14 @@ harborApiHost paths
   | Config.controlPlaneContext paths == "outer-container" = "host.docker.internal:30002"
   | otherwise = "127.0.0.1:30002"
 
-bootstrapRegistryHost :: String
-bootstrapRegistryHost = "localhost:30001"
+harborAdminUser :: String
+harborAdminUser = "admin"
 
-bootstrapRegistryName :: String
-bootstrapRegistryName = "infernix-bootstrap-registry"
+harborAdminPassword :: String
+harborAdminPassword = "Harbor12345"
 
-bootstrapRegistryImageRef :: String
-bootstrapRegistryImageRef = bootstrapRegistryName <> ":" <> bootstrapRegistryVersion
-
-bootstrapRegistryVersion :: String
-bootstrapRegistryVersion = "3.1.0"
-
-bootstrapRegistryReleaseUrl :: String
-bootstrapRegistryReleaseUrl = "https://github.com/distribution/distribution/releases/download/v" <> bootstrapRegistryVersion
+legacyBootstrapRegistryName :: String
+legacyBootstrapRegistryName = "infernix-bootstrap-registry"
 
 persistentVolumeClaimName :: PersistentClaim -> String
 persistentVolumeClaimName persistentClaim =
