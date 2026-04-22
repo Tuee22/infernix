@@ -32,8 +32,8 @@ This repository serves two aligned purposes:
   containers
 - one validation surface spanning repo-owned `ormolu`, `cabal format`, `hlint`, unit tests,
   integration tests, generated-contract or view tests, and Playwright, with the current
-  process-isolated engine-worker adapter path now exercising Apple, Linux CPU, and Linux CUDA catalog coverage
-  through the demo webapp and test suite
+  process-isolated engine-worker runner path now exercising Apple, Linux CPU, and Linux CUDA
+  catalog coverage through the demo webapp and test suite
 
 ## What Infernix Does
 

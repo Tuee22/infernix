@@ -56,7 +56,9 @@ The generated demo catalog is the source of truth for the active runtime mode.
   workloads
 - `cluster up` enforces a host-side NVIDIA preflight contract, creates the cluster through
   `nvkind`, mounts the NVIDIA worker-device path into the GPU worker, creates
-  `RuntimeClass/nvidia` before the device-plugin rollout depends on it, and installs the NVIDIA
+  `RuntimeClass/nvidia` before the device-plugin rollout depends on it, syncs NVIDIA userspace
+  into the Kind worker when the supported host exposes GPUs through the accepted `--gpus all`
+  worker-device contract rather than a Docker default-runtime injection, and installs the NVIDIA
   device plugin so Kubernetes advertises real allocatable `nvidia.com/gpu`
 - the cluster deploys `RuntimeClass/nvidia`, and the CUDA service workload requests
   `nvidia.com/gpu: 1` while selecting the GPU-labeled node
@@ -72,9 +74,10 @@ Service placement is a separate concept from runtime mode.
 - Apple host-native service placement runs `infernix service` on the host and repoints the routed
   `/api` surface through the Apple host bridge while the browser stays on the shared edge URL
 - the host-native and cluster-resident service placements both launch the same process-isolated
-  engine-worker adapter contract, consume durable runtime artifact bundles plus direct-upstream
-  source-artifact manifests, and default to the repo-owned engine probe command while still
-  honoring adapter-specific command overrides during supported-host third-party engine validation
+  engine-worker contract, consume durable runtime artifact bundles plus engine-specific
+  source-artifact manifests, use the engine-specific worker runner by default on the supported
+  path, and still honor adapter-specific command overrides during supported-host third-party
+  engine validation
 - local host-side fixture helpers may still use an explicit `filesystem-fixture` ownership mode for
   unit coverage, but the supported `infernix service` surface itself requires the routed durable
   backend contract or explicit backend configuration

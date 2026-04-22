@@ -100,8 +100,8 @@ def resolve_command_prefix(bundle: dict[str, object]) -> tuple[list[str], str]:
     if adapter_override:
         return parse_command_prefix(adapter_override), "adapter-specific command override"
 
-    probe_script = pathlib.Path(__file__).resolve().parent / "engine_probe.py"
-    return [sys.executable, str(probe_script)], "repo-owned engine probe"
+    runner_script = pathlib.Path(__file__).resolve().parent / "final_engine_runner.py"
+    return [sys.executable, str(runner_script)], "engine-specific worker runner"
 
 
 def execute_engine_command(

@@ -103,8 +103,11 @@ main = do
           assert ("\"engineAdapterId\": \"pytorch-python\"" `isInfixOf` durableArtifactContents) "durable artifact bundles record the selected engine adapter id"
           assert ("\"artifactAcquisitionMode\": \"local-file-copy\"" `isInfixOf` durableArtifactContents) "host-side durable artifact bundles use explicit local source-artifact copies under fixture overrides"
           assert ("\"sourceArtifactFetchStatus\": \"materialized\"" `isInfixOf` durableArtifactContents) "host-side durable artifact bundles record materialized source-artifact state"
+          assert ("\"sourceArtifactSelectionMode\": \"engine-specific-direct-artifact\"" `isInfixOf` durableArtifactContents) "durable artifact bundles record engine-specific source-artifact selection metadata"
           assert ("source-artifacts/apple-silicon/llm-qwen25-safetensors/source.json" `isInfixOf` durableArtifactContents) "host-side durable artifact bundles point at the durable source-artifact manifest"
           assert ("\"sourceArtifactResolvedUrl\": \"file://" `isInfixOf` durableArtifactContents) "durable artifact bundles record the resolved source artifact location"
+          assert ("\"sourceArtifactAuthoritativeUri\": \"file://" `isInfixOf` durableArtifactContents) "durable artifact bundles record the authoritative runtime input location"
+          assert ("\"sourceArtifactSelectedArtifacts\": [" `isInfixOf` durableArtifactContents) "durable artifact bundles record the selected engine-ready artifacts"
           cacheBundleExists <-
             doesFileExist
               (modelCacheRoot paths </> "apple-silicon" </> "llm-qwen25-safetensors" </> "default" </> "artifact-bundle.json")
@@ -155,6 +158,7 @@ main = do
           jaxArtifactContents <- readFile jaxArtifactPath
           assert ("\"engineAdapterId\": \"jax-python\"" `isInfixOf` jaxArtifactContents) "durable artifact bundles map jax-metal to the explicit jax adapter"
           assert ("\"artifactAcquisitionMode\": \"local-file-copy\"" `isInfixOf` jaxArtifactContents) "host-side durable artifact bundles reuse the explicit source-artifact materialization helper for jax coverage"
+          assert ("\"sourceArtifactSelectionMode\": \"engine-specific-direct-artifact\"" `isInfixOf` jaxArtifactContents) "jax artifact bundles record the engine-specific source-artifact selection mode"
     assert (repoRoot paths /= cwd) "discoverPaths climbs from nested working directories back to the repo root"
     assert (buildRoot paths == expectedBuildRoot) "discoverPaths keeps build artifacts in the active build root"
     let qwenSourceFixture = cwd </> "source-fixture.txt"
@@ -235,8 +239,10 @@ main = do
         ""
     assert (backendExitCode == ExitSuccess) ("runtime backend local source materialization succeeds: " <> backendStderr)
     assert ("\"artifactAcquisitionMode\": \"local-file-copy\"" `isInfixOf` backendStdout) "runtime backend records local-file source acquisition in cache status"
-    assert ("\"engineAdapterId\": \"llama-cpp-cli\"" `isInfixOf` backendStdout) "runtime backend cache status records engine-aware adapter metadata"
+    assert ("\"engineAdapterId\": \"llama-cpp-cli\"" `isInfixOf` backendStdout) "runtime backend cache status records engine-specific runner metadata"
     assert ("\"sourceArtifactFetchStatus\": \"materialized\"" `isInfixOf` backendStdout) "runtime backend cache status records materialized source-artifact state"
+    assert ("\"sourceArtifactSelectionMode\": \"engine-specific-direct-artifact\"" `isInfixOf` backendStdout) "runtime backend cache status records engine-specific source-artifact selection"
+    assert ("\"sourceArtifactSelectedArtifacts\": [" `isInfixOf` backendStdout) "runtime backend cache status exposes selected source artifacts for direct materialization"
     writeFile "remote-fixture.txt" "remote source fixture\n"
     let remoteRuntimeBackendScript =
           unlines
@@ -289,6 +295,84 @@ main = do
     assert (remoteExitCode == ExitSuccess) ("runtime backend remote source materialization succeeds: " <> remoteStderr)
     assert ("\"artifactAcquisitionMode\": \"direct-http-download\"" `isInfixOf` remoteStdout) "runtime backend records direct upstream HTTP acquisition in cache status"
     assert ("\"sourceArtifactFetchStatus\": \"materialized\"" `isInfixOf` remoteStdout) "runtime backend records materialized direct upstream source state"
+    assert ("\"sourceArtifactSelectionMode\": \"engine-specific-direct-artifact\"" `isInfixOf` remoteStdout) "runtime backend records engine-specific direct-artifact selection for HTTP inputs"
+    assert ("\"sourceArtifactSelectedArtifacts\": [" `isInfixOf` remoteStdout) "runtime backend cache status exposes selected source artifacts for direct HTTP materialization"
+    let providerSelectionScript =
+          unlines
+            [ "import json",
+              "import pathlib",
+              "import sys",
+              "sys.path.insert(0, str(pathlib.Path(sys.argv[1]) / 'tools'))",
+              "from runtime_backend import select_github_artifacts, select_huggingface_artifacts",
+              "hf = select_huggingface_artifacts(",
+              "  model={",
+              "    'selectedEngine': 'llama.cpp',",
+              "    'artifactType': 'GGUF',",
+              "    'downloadUrl': 'https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF',",
+              "  },",
+              "  payload={",
+              "    'modelId': 'TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF',",
+              "    'metadata': {'siblings': ['tinyllama.Q4_K_M.gguf', 'tokenizer.json', 'README.md']},",
+              "  },",
+              "  payload_uri='file:///tmp/hf-provider.json',",
+              "  resolved_url='https://huggingface.co/api/models/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF',",
+              ")",
+              "gh = select_github_artifacts(",
+              "  model={",
+              "    'selectedEngine': 'whisper.cpp',",
+              "    'artifactType': 'whisper.cpp model set / GGML-style',",
+              "    'downloadUrl': 'https://github.com/ggml-org/whisper.cpp/tree/master/models',",
+              "  },",
+              "  payload={",
+              "    'repository': 'ggml-org/whisper.cpp',",
+              "    'metadata': {'html_url': 'https://github.com/ggml-org/whisper.cpp', 'default_branch': 'master'},",
+              "    'releases': [",
+              "      {'assets': [",
+              "        {'name': 'ggml-small.en.bin', 'browser_download_url': 'https://github.com/ggml-org/whisper.cpp/releases/download/v1/ggml-small.en.bin', 'content_type': 'application/octet-stream'},",
+              "        {'name': 'vocab.json', 'browser_download_url': 'https://github.com/ggml-org/whisper.cpp/releases/download/v1/vocab.json', 'content_type': 'application/json'},",
+              "      ]}",
+              "    ],",
+              "  },",
+              "  payload_uri='file:///tmp/github-provider.json',",
+              "  resolved_url='https://api.github.com/repos/ggml-org/whisper.cpp',",
+              ")",
+              "print(json.dumps({",
+              "  'hfAuthoritativeUri': hf.authoritative_uri,",
+              "  'hfAuthoritativeKind': hf.authoritative_kind,",
+              "  'hfSelectedArtifacts': hf.selected_artifacts,",
+              "  'ghAuthoritativeUri': gh.authoritative_uri,",
+              "  'ghAuthoritativeKind': gh.authoritative_kind,",
+              "  'ghSelectedArtifacts': gh.selected_artifacts,",
+              "}, sort_keys=True))"
+            ]
+    (providerExitCode, providerStdout, providerStderr) <-
+      readProcessWithExitCode
+        "python3"
+        ["-c", providerSelectionScript, repoRoot paths]
+        ""
+    assert (providerExitCode == ExitSuccess) ("provider-backed engine-ready artifact selection succeeds: " <> providerStderr)
+    assert ("\"hfAuthoritativeUri\": \"https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama.Q4_K_M.gguf\"" `isInfixOf` providerStdout) "huggingface selection promotes the required engine-ready artifact to the authoritative URI"
+    assert ("\"hfAuthoritativeKind\": \"gguf-weights\"" `isInfixOf` providerStdout) "huggingface selection records the authoritative artifact kind"
+    assert ("\"ghAuthoritativeUri\": \"https://github.com/ggml-org/whisper.cpp/releases/download/v1/ggml-small.en.bin\"" `isInfixOf` providerStdout) "github selection promotes the required engine-ready artifact to the authoritative URI"
+    assert ("\"ghSelectedArtifacts\": [" `isInfixOf` providerStdout) "github selection records the selected artifact inventory"
+    writeFile "runner-source.json" (unlines ["{", "  \"selectionMode\": \"engine-specific-huggingface-selection\",", "  \"fetchStatus\": \"materialized\",", "  \"acquisitionMode\": \"huggingface-model-metadata\",", "  \"selectedArtifacts\": [", "    {", "      \"artifactId\": \"tinyllama.Q4_K_M.gguf\",", "      \"artifactKind\": \"gguf-weights\",", "      \"uri\": \"file:///tmp/unit-runner.gguf\",", "      \"required\": true", "    }", "  ]", "}"])
+    writeFile "runner-bundle.json" (unlines ["{", "  \"artifactKind\": \"infernix-runtime-bundle\",", "  \"schemaVersion\": 1,", "  \"runtimeMode\": \"linux-cpu\",", "  \"matrixRowId\": \"runner-row\",", "  \"modelId\": \"runner-model\",", "  \"displayName\": \"Runner Model\",", "  \"family\": \"llm\",", "  \"artifactType\": \"GGUF\",", "  \"referenceModel\": \"TinyLlama\",", "  \"selectedEngine\": \"llama.cpp\",", "  \"runtimeLane\": \"kind-linux-cpu\",", "  \"sourceDownloadUrl\": \"https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF\",", "  \"workerProfile\": \"text-generation\",", "  \"engineAdapterId\": \"llama-cpp-cli\",", "  \"engineAdapterType\": \"external-command\",", "  \"engineAdapterLocator\": \"missing-llama-cli\",", "  \"artifactAcquisitionMode\": \"engine-ready-artifact-manifests\",", "  \"sourceArtifactManifestPath\": \"runner-source.json\",", "  \"sourceArtifactSelectionMode\": \"engine-specific-huggingface-selection\",", "  \"sourceArtifactAuthoritativeUri\": \"file:///tmp/unit-runner.gguf\",", "  \"sourceArtifactAuthoritativeKind\": \"gguf-weights\"", "}"])
+    (runnerExitCode, runnerStdout, runnerStderr) <-
+      readProcessWithExitCode
+        "python3"
+        [ repoRoot paths </> "tools" </> "final_engine_runner.py",
+          "--artifact-bundle",
+          "runner-bundle.json",
+          "--input-text",
+          "runner coverage",
+          "--adapter-id",
+          "llama-cpp-cli"
+        ]
+        ""
+    assert (runnerExitCode == ExitSuccess) ("engine-specific worker runner reports authoritative artifact selection: " <> runnerStderr)
+    assert ("authoritative=gguf-weights" `isInfixOf` runnerStdout) "engine-specific worker runner reports the authoritative artifact kind"
+    assert ("artifacts=1:gguf-weights:file:///tmp/unit-runner.gguf" `isInfixOf` runnerStdout) "engine-specific worker runner reports the selected artifact inventory"
+    assert ("selection=engine-specific-huggingface-selection" `isInfixOf` runnerStdout) "engine-specific worker runner reports the manifest selection mode"
     writeFile "invalid-demo-config.dhall" "{\"runtimeMode\":\"apple-silicon\",\"models\":[{\"modelId\":\"missing-fields\"}]}\n"
     (exitCode, _, stderrOutput) <-
       readProcessWithExitCode

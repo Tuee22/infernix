@@ -11,13 +11,13 @@
 
 The repository already has lint, unit, integration, and Playwright entrypoints. Those surfaces
 remain the canonical validation contract across the supported host-native and outer-container
-control-plane lanes, and they now validate the process-isolated engine-worker adapter contract plus
-durable runtime artifact bundles and direct-upstream source-artifact manifests, with the repo-owned
-default engine probe path exercised whenever no adapter-specific override is configured. The default validation matrix now
-auto-includes `linux-cuda` only when the active control-plane surface passes the NVIDIA preflight contract, but
-final closure still requires those same suites to validate supported-host final engine workers and
-the supported-host GPU matrix, including a supported NVIDIA host that satisfies the worker-device
-volume-mount preflight required by the Kind-backed CUDA lane.
+control-plane lanes, and they now validate the process-isolated engine-worker runner contract plus
+durable runtime artifact bundles and engine-specific source-artifact manifests, with the
+engine-specific default runner exercised whenever no adapter-specific override is configured. The
+default validation matrix now auto-includes `linux-cuda` only when the active control-plane
+surface passes the NVIDIA preflight contract, but
+final closure still requires those same suites to validate supported-host final engine workers
+across the already validated runtime matrix.
 
 - `infernix test lint` and `infernix test unit` are the canonical host-side static-quality and
   unit gates
@@ -26,8 +26,8 @@ volume-mount preflight required by the Kind-backed CUDA lane.
   active control-plane surface passes the NVIDIA preflight contract
 - the routed Playwright path waits for routed publication, demo-config, and inference readiness
   before it launches the browser suite
-- final closure remains open until those same suites run against real runtime workers and a real
-  NVIDIA-backed `linux-cuda` substrate
+- final closure remains open until those same suites run against real runtime workers across the
+  already validated runtime matrix
 
 ## Validation Surface
 
@@ -140,13 +140,12 @@ forward onto the final Kind, Helm, Harbor, MinIO, and Pulsar substrate.
 
 ### Remaining Work
 
-- replace the current fixture-command adapter assertions with validations against supported-host
+- replace the current engine-specific runner assertions with validations against supported-host
   final engine workers, the final engine-ready direct-upstream artifact contract, and durable
   runtime state
-- rerun the `linux-cuda` coverage on a supported NVIDIA-backed Kind substrate so this sprint closes
-  with supported-host validation rather than host-gated implementation only
-- keep the current Harbor, MinIO, and Pulsar HA assertions while extending runtime execution
-  checks beyond the current repo-owned worker layer
+- keep the current Harbor, MinIO, and Pulsar HA assertions plus the new authoritative
+  source-artifact-selection checks while extending runtime execution checks beyond the current
+  repo-owned worker layer
 
 ---
 
@@ -305,12 +304,9 @@ validation cover every generated catalog entry using the engine binding selected
 
 ### Remaining Work
 
-- keep exhaustive catalog enumeration while replacing the current fixture-command adapter
-  assertions with checks against supported-host final engine execution and the final engine-ready
-  direct-upstream artifact behavior
-- rerun the default matrix against a supported `linux-cuda` substrate that exposes actual NVIDIA
-  runtime support, usable GPU resources, and the worker-device volume-mount preflight that
-  `nvkind` depends on
+- keep exhaustive catalog enumeration while replacing the current engine-specific runner
+  assertions with checks against supported-host final engine execution and the final
+  engine-ready direct-upstream artifact behavior
 - close the Harbor-backed host-native routed E2E lane on top of the final runtime workers rather
   than the current repo-owned worker layer
 

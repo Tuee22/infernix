@@ -17,17 +17,19 @@ protobuf manifests and results in MinIO, registers Pulsar protobuf schemas for r
 or coordination topics, exposes explicit cache status or eviction or rebuild flows through both the
 CLI and routed API, and can run host-native on the Apple control-plane path while the routed edge
 keeps `/api` stable through the host bridge. The current routed runtime now launches
-process-isolated engine-worker adapters through configured command prefixes, round-trips request or
+process-isolated engine-worker runners through configured command prefixes, round-trips request or
 result payloads through Pulsar on both the cluster-resident and host-bridge paths, materializes
 durable runtime artifact bundles into the runtime bucket and local cache roots, stages durable
-source-artifact manifests plus local-file copies, direct HTTP downloads, and provider metadata
-fetches under `source-artifacts/`, exposes adapter-specific engine command prefixes to the cluster
-service deployment through `INFERNIX_ENGINE_COMMAND_*`, and defaults to the repo-owned engine
-probe command when no adapter-specific override is configured. The host-side unit helper path now
-reuses that same durable bundle plus source-artifact-manifest contract through an explicit
-filesystem-fixture helper instead of writing placeholder bundle metadata. The remaining gap is
-supported-host final engine integration:
-those adapter workers do not yet validate the final third-party engine binaries or modules named by
+engine-specific source-artifact manifests plus local-file copies, direct HTTP downloads, and
+provider metadata fetches under `source-artifacts/`, records authoritative artifact selection in
+those manifests, exposes the selected artifact inventory plus authoritative artifact URI through
+the durable bundle or cache-status surfaces, exposes adapter-specific engine command prefixes to
+the cluster service deployment through `INFERNIX_ENGINE_COMMAND_*`, and defaults to the repo-owned
+engine-specific worker runner when no adapter-specific override is configured. The host-side unit
+helper path now reuses that same durable bundle plus source-artifact-manifest contract through an
+explicit filesystem-fixture helper instead of writing placeholder bundle metadata. The remaining
+gap is supported-host final engine integration:
+those worker runners do not yet validate the final third-party engine binaries or modules named by
 the README matrix, acquire the authoritative engine-ready model artifacts for every matrix row, or
 provide validated direct Apple-host model execution.
 
@@ -114,14 +116,14 @@ authoritative.
 
 ### Remaining Work
 
-- validate adapter-specific command prefixes against the supported-host third-party engines
-  selected by the README matrix instead of the repo-owned default engine probe command used in
-  automated validation today
-- extend the current direct-upstream source-artifact acquisition path from generic local-file,
-  HTTP, Hugging Face, and GitHub materialization to the matrix-wide engine-ready artifact
-  acquisition required by the supported-host runtime workers, then treat those fetched external
-  artifacts as the authoritative durable runtime input instead of the current repo-owned runtime
-  bundles
+- validate the engine-specific default runner and any adapter-specific command prefixes against the
+  supported-host third-party engines selected by the README matrix instead of the repo-owned
+  worker runner used in automated validation today
+- extend the current engine-specific source-artifact manifest path, which now records selected
+  artifact inventory plus authoritative artifact URIs for local-file, HTTP, Hugging Face, and
+  GitHub inputs, to the matrix-wide engine-ready artifact acquisition required by the
+  supported-host runtime workers, then treat those fetched external artifacts as the authoritative
+  durable runtime input instead of the current repo-owned runtime bundles
 - validate the routed service path against those supported-host final engine workers on the
   supported modes
 
@@ -158,7 +160,7 @@ cluster-resident execution to coexist.
 ### Remaining Work
 
 - connect the host-native Apple daemon path to supported-host Apple engines rather than the
-  configured adapter plus fixture-command validation path used today
+  repo-owned engine-specific worker runner used today
 - keep host-native and cluster-resident execution on the same request or result contract once the
   supported-host final engine workers land
 - extend parity validation from route stability, backend reachability, and direct-upstream

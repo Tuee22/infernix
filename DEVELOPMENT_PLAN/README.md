@@ -73,24 +73,27 @@ across the tracked phases.
   creates `RuntimeClass/nvidia` before the device-plugin rollout depends on it, and installs the
   NVIDIA device plugin so Kubernetes advertises real allocatable `nvidia.com/gpu` resources; the
   repo-owned bootstrap also covers the current upstream `nvkind` configmap-persistence bug during
-  post-create node setup;
-  final closure remains open until that path is revalidated on a supported NVIDIA host through the
-  full integration and E2E matrix
+  post-create node setup, and the supported outer-container suite now revalidates that lane on
+  the current NVIDIA host through the full integration and E2E matrix
 - the routed service path remains open: `tools/service_server.py` and `tools/runtime_backend.py`
-  now launch process-isolated engine-worker adapters through configured command prefixes, round-trip
+  now launch process-isolated engine-worker runners through configured command prefixes, round-trip
   request or result payloads through Pulsar, materialize durable runtime artifact bundles into the
-  MinIO-backed runtime bucket, stage source-artifact manifests plus direct upstream local-file or
-  HTTP or Hugging Face or GitHub acquisitions, and default to the repo-owned engine probe command
-  when no adapter-specific override is configured, but they do not yet validate the final supported-host third-party engine
+  MinIO-backed runtime bucket, stage engine-specific source-artifact manifests plus direct
+  upstream local-file or HTTP or Hugging Face or GitHub acquisitions, and default to the
+  engine-specific worker runner when no adapter-specific override is configured; those manifests
+  now record authoritative artifact selection plus selected-artifact inventory and the routed
+  cache-status surface exposes that inventory end-to-end, but they do not yet validate the final
+  supported-host third-party engine
   binaries or modules or acquire the authoritative engine-ready model artifacts for every matrix
   row into that durable store
 - exhaustive integration and E2E validation remain open at final-closure level: the suites cover
-  every generated catalog entry today and now validate the process-isolated engine-worker adapter
-  path plus the durable-artifact or direct-upstream source-artifact contract; by default they
+  every generated catalog entry today and now validate the process-isolated engine-worker runner
+  path plus the durable-artifact or engine-specific source-artifact-manifest contract, including
+  authoritative artifact-selection checks on the durable cache surface; by default they
   auto-include `linux-cuda` only when the active control-plane surface passes the NVIDIA
   preflight contract, but
   they are still not exercising final engine execution across the full supported matrix on
-  supported hosts or revalidating the `linux-cuda` lane on a supported NVIDIA host
+  supported hosts
 
 ## Execution Contexts and Runtime Modes
 
@@ -107,7 +110,7 @@ The plan uses two separate concepts and keeps them distinct:
 |-------|------|--------|----------|
 | 0 | Documentation and Governance | Done | [phase-0-documentation-and-governance.md](phase-0-documentation-and-governance.md) |
 | 1 | Repository and Control-Plane Foundation | Done | [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md) |
-| 2 | Kind Cluster Storage and Lifecycle | Active | [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md) |
+| 2 | Kind Cluster Storage and Lifecycle | Done | [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md) |
 | 3 | HA Platform Services and Edge Routing | Done | [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md) |
 | 4 | Inference Service and Durable Runtime | Active | [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) |
 | 5 | Web UI and Shared Types | Done | [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md) |

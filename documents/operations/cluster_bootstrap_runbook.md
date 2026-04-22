@@ -8,7 +8,11 @@
 ## Bring-Up
 
 - run `infernix cluster up`
-- for `linux-cuda`, confirm the supported NVIDIA host satisfies `nvidia-smi -L`, `docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi -L`, and `docker run --rm -v /dev/null:/var/run/nvidia-container-devices/all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi -L` before cluster creation; on the outer-container control-plane path the launcher directly verifies the two Docker probes because it may not ship the host `nvidia-smi` binary locally
+- for `linux-cuda`, confirm the supported NVIDIA host satisfies `nvidia-smi -L`, `docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi -L`, and either `docker run --rm -v /dev/null:/var/run/nvidia-container-devices/all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi -L` or `docker run --rm --gpus all -v /dev/null:/var/run/nvidia-container-devices/all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi -L` before cluster creation; on the outer-container control-plane path the launcher directly verifies the two Docker probes because it may not ship the host `nvidia-smi` binary locally
+- on the supported outer-container `linux-cuda` path, expect the repo-owned bootstrap to sync
+  NVIDIA userspace into the Kind worker before the device-plugin rollout when the host satisfies
+  the accepted `--gpus all` plus worker-device probe but does not inject driver libraries through a
+  Docker default-runtime configuration
 - on the outer-container control-plane path, confirm the host exposes enough inotify instances for
   mount-bearing Kind nodes; the validated Ubuntu flow uses
   `fs.inotify.max_user_instances >= 1024`

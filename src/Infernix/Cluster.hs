@@ -107,6 +107,9 @@ harborFinalPhaseStatefulSets =
 nvidiaDevicePluginVersion :: String
 nvidiaDevicePluginVersion = "0.17.1"
 
+nvidiaCudaContainerImage :: String
+nvidiaCudaContainerImage = "nvidia/cuda:12.4.1-base-ubuntu22.04"
+
 kindNodeImage :: String
 kindNodeImage = "kindest/node:v1.34.0"
 
@@ -233,6 +236,7 @@ clusterUp maybeRuntimeMode = do
   preloadHarborBackedImagesOnKindWorker paths runtimeMode imageOverridesPath
   deployChart paths state [finalValuesPath, imageOverridesPath] True
   waitForFinalPhaseRollouts state
+  waitForRoutedPublicationSurface paths state
   writeStateFile (clusterStatePath paths) state
   putStrLn "cluster up complete"
   putStrLn ("controlPlaneContext: " <> controlPlane)
@@ -592,7 +596,10 @@ createLinuxCudaCluster paths = go
 
 linuxCudaNvkindConfigMapBug :: String -> Bool
 linuxCudaNvkindConfigMapBug err =
-  "adding config to cluster: %!w(<nil>)" `List.isInfixOf` err
+  "%!w(<nil>)" `List.isInfixOf` err
+    && ( "adding config to cluster" `List.isInfixOf` err
+           || "writing configmap" `List.isInfixOf` err
+       )
 
 completeLinuxCudaNodeBootstrap :: Paths -> IO ()
 completeLinuxCudaNodeBootstrap paths = do
@@ -646,7 +653,12 @@ linuxCudaProbeResults :: IO LinuxCudaProbeResults
 linuxCudaProbeResults = do
   hostGpuResult <- tryCommand Nothing [] "nvidia-smi" ["-L"]
   dockerRuntimeResult <- tryCommand Nothing [] "docker" dockerGpuProbeCommand
-  dockerVolumeMountResult <- tryCommand Nothing [] "docker" dockerVolumeMountProbeCommand
+  defaultRuntimeVolumeMountResult <- tryCommand Nothing [] "docker" dockerVolumeMountProbeCommand
+  gpuVolumeMountResult <- tryCommand Nothing [] "docker" dockerGpuVolumeMountProbeCommand
+  let dockerVolumeMountResult =
+        firstSuccessfulCommand
+          defaultRuntimeVolumeMountResult
+          gpuVolumeMountResult
   pure
     LinuxCudaProbeResults
       { hostGpuResult = hostGpuResult,
@@ -664,6 +676,25 @@ commandSucceeded :: Either String String -> Bool
 commandSucceeded result = case result of
   Right _ -> True
   Left _ -> False
+
+firstSuccessfulCommand :: Either String String -> Either String String -> Either String String
+firstSuccessfulCommand firstResult secondResult =
+  case firstResult of
+    Right _ -> firstResult
+    Left firstErr ->
+      case secondResult of
+        Right secondOutput ->
+          Right ("accepted docker --gpus all + worker-device mount preflight: " <> secondOutput)
+        Left secondErr ->
+          Left
+            ( unlines
+                [ "default runtime worker-device mount probe failed:",
+                  firstErr,
+                  "",
+                  "docker --gpus all plus worker-device mount probe failed:",
+                  secondErr
+                ]
+            )
 
 linuxCudaHostFailureReport :: String -> LinuxCudaProbeResults -> String
 linuxCudaHostFailureReport controlPlane probeResults =
@@ -684,7 +715,7 @@ linuxCudaHostFailureReport controlPlane probeResults =
              renderCommandOutcome (hostGpuResult probeResults),
              "docker --gpus all:",
              renderCommandOutcome (dockerRuntimeResult probeResults),
-             "docker default runtime with NVIDIA worker-device mount:",
+             "docker worker-device mount preflight:",
              renderCommandOutcome (dockerVolumeMountResult probeResults)
            ]
     )
@@ -695,6 +726,7 @@ linuxCudaHostFailureReport controlPlane probeResults =
             "Required preflight commands for the outer-container launcher:",
             "  docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi -L",
             "  docker run --rm -v /dev/null:/var/run/nvidia-container-devices/all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi -L",
+            "  or docker run --rm --gpus all -v /dev/null:/var/run/nvidia-container-devices/all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi -L",
             "",
             "The supported NVIDIA host still needs a working `nvidia-smi -L`, but the launcher container may not ship that binary locally."
           ]
@@ -703,7 +735,8 @@ linuxCudaHostFailureReport controlPlane probeResults =
             "Required preflight commands:",
             "  nvidia-smi -L",
             "  docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi -L",
-            "  docker run --rm -v /dev/null:/var/run/nvidia-container-devices/all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi -L"
+            "  docker run --rm -v /dev/null:/var/run/nvidia-container-devices/all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi -L",
+            "  or docker run --rm --gpus all -v /dev/null:/var/run/nvidia-container-devices/all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi -L"
           ]
     renderCommandOutcome result = case result of
       Right output -> output
@@ -715,7 +748,7 @@ dockerGpuProbeCommand =
     "--rm",
     "--gpus",
     "all",
-    "nvidia/cuda:12.4.1-base-ubuntu22.04",
+    nvidiaCudaContainerImage,
     "nvidia-smi",
     "-L"
   ]
@@ -726,7 +759,20 @@ dockerVolumeMountProbeCommand =
     "--rm",
     "-v",
     "/dev/null:/var/run/nvidia-container-devices/all",
-    "nvidia/cuda:12.4.1-base-ubuntu22.04",
+    nvidiaCudaContainerImage,
+    "nvidia-smi",
+    "-L"
+  ]
+
+dockerGpuVolumeMountProbeCommand :: [String]
+dockerGpuVolumeMountProbeCommand =
+  [ "run",
+    "--rm",
+    "--gpus",
+    "all",
+    "-v",
+    "/dev/null:/var/run/nvidia-container-devices/all",
+    nvidiaCudaContainerImage,
     "nvidia-smi",
     "-L"
   ]
@@ -876,8 +922,56 @@ configureLinuxCudaCluster :: Paths -> RuntimeMode -> IO ()
 configureLinuxCudaCluster paths _runtimeMode = do
   putStrLn "configuring linux-cuda runtime support"
   ensureLinuxCudaRuntimeClass paths
+  ensureLinuxCudaNodeUserspace paths
   installLinuxCudaDevicePlugin paths
   waitForLinuxCudaResources paths
+
+ensureLinuxCudaNodeUserspace :: Paths -> IO ()
+ensureLinuxCudaNodeUserspace paths = do
+  nodeNames <- kindNodeNames paths LinuxCuda
+  let workerNodeNames = filter (/= kindControlPlaneNodeName paths LinuxCuda) nodeNames
+  mapM_ ensureWorkerUserspace workerNodeNames
+  where
+    ensureWorkerUserspace nodeName = do
+      userspaceReady <- linuxCudaNodeUserspaceReady nodeName
+      unless userspaceReady $ do
+        putStrLn ("syncing linux-cuda NVIDIA userspace into " <> nodeName)
+        syncLinuxCudaNodeUserspace nodeName
+        userspaceReadyAfterSync <- linuxCudaNodeUserspaceReady nodeName
+        unless userspaceReadyAfterSync $
+          ioError
+            ( userError
+                ( "linux-cuda worker never exposed usable NVIDIA userspace after repo-owned sync: "
+                    <> nodeName
+                )
+            )
+
+linuxCudaNodeUserspaceReady :: String -> IO Bool
+linuxCudaNodeUserspaceReady nodeName =
+  commandSucceeded
+    <$> tryCommand
+      Nothing
+      []
+      "docker"
+      ["exec", nodeName, "bash", "-lc", "nvidia-container-cli info >/dev/null 2>&1"]
+
+syncLinuxCudaNodeUserspace :: String -> IO ()
+syncLinuxCudaNodeUserspace nodeName =
+  runCommand
+    Nothing
+    []
+    "bash"
+    [ "-lc",
+      unlines
+        [ "set -euo pipefail",
+          "docker run --rm --gpus all "
+            <> nvidiaCudaContainerImage
+            <> " bash -lc 'tar -C / -cf - usr/lib/x86_64-linux-gnu/libnvidia* usr/lib/x86_64-linux-gnu/libcuda* usr/bin/nvidia* 2>/dev/null' | docker exec -i "
+            <> nodeName
+            <> " tar -C / -xf -",
+          "docker exec " <> nodeName <> " bash -lc 'ldconfig'"
+        ]
+    ]
 
 ensureLinuxCudaRuntimeClass :: Paths -> IO ()
 ensureLinuxCudaRuntimeClass paths =
@@ -891,6 +985,11 @@ ensureLinuxCudaRuntimeClass paths =
           "kind: RuntimeClass",
           "metadata:",
           "  name: nvidia",
+          "  annotations:",
+          "    meta.helm.sh/release-name: infernix",
+          "    meta.helm.sh/release-namespace: platform",
+          "  labels:",
+          "    app.kubernetes.io/managed-by: Helm",
           "handler: nvidia"
         ]
     )
@@ -898,7 +997,7 @@ ensureLinuxCudaRuntimeClass paths =
 installLinuxCudaDevicePlugin :: Paths -> IO ()
 installLinuxCudaDevicePlugin paths = do
   ensureHelmRepositoryDefinitions paths
-  runCommand
+  runCommandWithInput
     Nothing
     (("KUBECONFIG", Config.generatedKubeconfigPath paths) : Config.helmEnvironment paths)
     "helm"
@@ -911,11 +1010,28 @@ installLinuxCudaDevicePlugin paths = do
       "--create-namespace",
       "--version",
       nvidiaDevicePluginVersion,
-      "--set",
-      "runtimeClassName=nvidia",
+      "--values",
+      "-",
       "--wait",
       "--timeout",
       "10m"
+    ]
+    linuxCudaDevicePluginValues
+
+linuxCudaDevicePluginValues :: String
+linuxCudaDevicePluginValues =
+  unlines
+    [ "fullnameOverride: nvidia-device-plugin-daemonset",
+      "runtimeClassName: nvidia",
+      "affinity:",
+      "  nodeAffinity:",
+      "    requiredDuringSchedulingIgnoredDuringExecution:",
+      "      nodeSelectorTerms:",
+      "        - matchExpressions:",
+      "            - key: infernix.runtime/gpu",
+      "              operator: In",
+      "              values:",
+      "                - \"true\""
     ]
 
 waitForLinuxCudaResources :: Paths -> IO ()
@@ -1491,6 +1607,40 @@ waitForFinalPhaseRollouts state = do
   putStrLn "waiting for final platform rollouts"
   mapM_ (waitForWorkloadRollout state 1200) finalPhaseStatefulSets
   mapM_ (waitForWorkloadRollout state 900) finalPhaseDeployments
+
+waitForRoutedPublicationSurface :: Paths -> ClusterState -> IO ()
+waitForRoutedPublicationSurface paths state = do
+  let publicationUrl = clusterEdgeBaseUrl paths state <> "/api/publication"
+      expectedRuntimeMode = Text.unpack (runtimeModeId (clusterRuntimeMode state))
+      probeScript =
+        unlines
+          [ "import json",
+            "import sys",
+            "import urllib.request",
+            "url = sys.argv[1]",
+            "expected_runtime_mode = sys.argv[2]",
+            "try:",
+            "    with urllib.request.urlopen(url, timeout=5) as response:",
+            "        payload = json.load(response)",
+            "except Exception as exc:",
+            "    raise SystemExit(str(exc))",
+            "daemon = payload.get('daemonLocation')",
+            "api_upstream = payload.get('apiUpstream') or {}",
+            "if daemon != 'cluster-pod' or api_upstream.get('mode') != 'cluster-service' or payload.get('runtimeMode') != expected_runtime_mode:",
+            "    raise SystemExit('publication route not ready')",
+            "print('ready')"
+          ]
+  result <-
+    retryCommandOutput
+      120
+      1000000
+      ("wait for routed publication surface " <> publicationUrl)
+      (tryCommand Nothing [] "python3" ["-c", probeScript, publicationUrl, expectedRuntimeMode])
+  case result of
+    Right _ -> pure ()
+    Left err ->
+      ioError
+        (userError ("routed publication surface never became ready for " <> expectedRuntimeMode <> ":\n" <> err))
 
 waitForWorkloadRollout :: ClusterState -> Int -> String -> IO ()
 waitForWorkloadRollout state timeoutSeconds workload =
@@ -2134,6 +2284,23 @@ kindClusterExists :: Paths -> RuntimeMode -> IO Bool
 kindClusterExists paths runtimeMode = do
   existingClusters <- lines <$> captureCommand Nothing [] "kind" ["get", "clusters"]
   pure (kindClusterName paths runtimeMode `elem` existingClusters)
+
+clusterEdgeBaseUrl :: Paths -> ClusterState -> String
+clusterEdgeBaseUrl paths state =
+  "http://"
+    <> clusterEdgeHost paths state
+    <> ":"
+    <> show (clusterEdgePort paths state)
+
+clusterEdgeHost :: Paths -> ClusterState -> String
+clusterEdgeHost paths state
+  | Config.controlPlaneContext paths == "outer-container" = kindControlPlaneNodeName paths (clusterRuntimeMode state)
+  | otherwise = "127.0.0.1"
+
+clusterEdgePort :: Paths -> ClusterState -> Int
+clusterEdgePort paths state
+  | Config.controlPlaneContext paths == "outer-container" = 30090
+  | otherwise = edgePort state
 
 kubectlOutput :: ClusterState -> [String] -> IO String
 kubectlOutput state args = captureCommand Nothing [] "kubectl" (kubeconfigArgs state <> args)

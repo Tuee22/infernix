@@ -51,10 +51,10 @@ cluster-backed commands, writes the repo-local kubeconfig from `kind get kubecon
 pins Kind nodes to `kindest/node:v1.34.0`, and primes Kind node-local registry or storage state
 after cluster creation instead of bind-mounting repo-owned Kind paths into those nodes. The
 `linux-cuda` path now creates `RuntimeClass/nvidia` before the device-plugin rollout depends on it
-and carries a repo-owned fallback for the current upstream `nvkind` configmap-persistence bug, but
-the remaining gap in this phase is still `linux-cuda` closure validation on a supported NVIDIA host
-whose Docker runtime satisfies the worker-device volume-mount probe that the Kind worker path
-depends on. The
+and carries a repo-owned fallback for the current upstream `nvkind` configmap-persistence bug. The
+supported outer-container validation lane now revalidates that `linux-cuda` path on the current
+NVIDIA host through the full integration and routed E2E matrix, including repeat reconcile or
+teardown and real `nvidia.com/gpu` visibility. The
 validated Linux outer-container lane also requires host inotify capacity high enough for
 mount-bearing Kind nodes; on the current Ubuntu host, `fs.inotify.max_user_instances >= 1024`
 keeps the repeated worker bootstrap and claim-sync lifecycle stable.
@@ -318,9 +318,9 @@ None.
 
 ---
 
-## Sprint 2.7: GPU-Enabled Kind Runtime For `linux-cuda` [Active]
+## Sprint 2.7: GPU-Enabled Kind Runtime For `linux-cuda` [Done]
 
-**Status**: Active
+**Status**: Done
 **Implementation**: `kind/cluster-linux-cuda.yaml`, `src/Infernix/Cluster.hs`, `chart/templates/deployment-service.yaml`, `chart/templates/runtimeclass-nvidia.yaml`, `test/integration/Spec.hs`, `tools/platform_asset_check.py`
 **Docs to update**: `documents/engineering/k8s_native_dev_policy.md`, `documents/architecture/runtime_modes.md`, `documents/development/testing_strategy.md`
 
@@ -337,8 +337,8 @@ Make `linux-cuda` a real GPU-backed cluster mode rather than a nominal matrix co
 - `cluster up` in `linux-cuda` reconciles the Kind cluster through `nvkind`, preserving the
   repo-local kubeconfig contract while exposing NVIDIA runtime support inside the Kind node
   containers; when the current upstream `nvkind` build hits its late configmap-persistence bug, the
-  repo-owned bootstrap finishes the node-side toolkit and containerd setup itself before the
-  repo-owned device-plugin reconcile runs
+  repo-owned bootstrap finishes the node-side toolkit, containerd setup, and NVIDIA userspace sync
+  itself before the repo-owned device-plugin reconcile runs
 - the cluster installs the NVIDIA device plugin so nodes expose allocatable `nvidia.com/gpu`
   through the real Kubernetes resource inventory rather than synthetic status patching
 - repo-owned workload rules for CUDA lanes request `nvidia.com/gpu` and apply the required runtime
@@ -369,11 +369,7 @@ Make `linux-cuda` a real GPU-backed cluster mode rather than a nominal matrix co
 
 ### Remaining Work
 
-- rerun the `linux-cuda` integration and E2E suites on a supported NVIDIA host that satisfies the
-  documented preflight contract, including `docker run --rm -v /dev/null:/var/run/nvidia-container-devices/all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi -L`, so this sprint can close with supported-host validation rather than host-gated implementation work alone
-- keep the outer-container `linux-cuda` lane gated on a supported NVIDIA host whose Docker or Kind
-  substrate satisfies the documented GPU preflight contract and exposes host inotify capacity high
-  enough for the required worker-device mount-bearing Kind nodes
+None.
 
 ## Documentation Requirements
 

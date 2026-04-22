@@ -24,6 +24,9 @@ test("active mode catalog is fully exercised through the routed HTTP surface", a
   const routedModels = await catalogResponse.json();
   expect(routedModels).toEqual(models);
   expect(publication.runtimeMode).toBe(models[0]?.runtimeMode ?? publication.runtimeMode);
+  expect(publication.workerExecutionMode).toBe("process-isolated-engine-workers");
+  expect(publication.workerAdapterMode).toBe("engine-specific-runner-defaults");
+  expect(publication.artifactAcquisitionMode).toBe("engine-ready-artifact-manifests");
 
   for (const model of models) {
     const inferenceResponse = await request.post("/api/inference", {

@@ -27,7 +27,10 @@
 - host-native service mode is not supported as an implicit filesystem-backed daemon; it requires
   the routed MinIO or Pulsar bridge contract or explicit backend overrides, while filesystem-backed
   materialization remains fixture-only for local unit coverage
-- host-native service mode uses the same process-isolated engine-worker adapter contract as the cluster-resident service while retrieving durable artifacts and direct-upstream source-artifact manifests through the routed MinIO or Pulsar bridge surfaces, and automated validation uses the repo-owned default engine probe command when no adapter-specific override is configured
+- host-native service mode uses the same process-isolated engine-worker contract as the
+  cluster-resident service while retrieving durable artifacts and engine-specific source-artifact
+  manifests through the routed MinIO or Pulsar bridge surfaces, and automated validation uses the
+  engine-specific worker runner when no adapter-specific override is configured
 - `test integration`, `test e2e`, and `test all` repeat the default validation suites across
   `apple-silicon` and `linux-cpu` when no explicit runtime-mode override is supplied; the same
   commands auto-include `linux-cuda` only when the active control-plane surface satisfies the

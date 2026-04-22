@@ -208,8 +208,8 @@ validateRoutedSurface paths runtimeMode serializedEntries = do
   assert ("\"mode\": \"cluster-service\"" `isInfixOf` publicationResponse) "routed publication reports the cluster service as the active API upstream"
   assert ("\"durableBackendAccessMode\": \"cluster-local\"" `isInfixOf` publicationResponse) "cluster-resident service reports cluster-local durable backend access"
   assert ("\"workerExecutionMode\": \"process-isolated-engine-workers\"" `isInfixOf` publicationResponse) "cluster-resident service reports process-isolated engine workers through the routed publication surface"
-  assert ("\"workerAdapterMode\": \"repo-owned-probe-with-command-overrides\"" `isInfixOf` publicationResponse) "cluster-resident service reports the repo-owned engine probe worker mode through the routed publication surface"
-  assert ("\"artifactAcquisitionMode\": \"direct-upstream-fetch\"" `isInfixOf` publicationResponse) "cluster-resident service reports the direct upstream source-artifact acquisition contract through the routed publication surface"
+  assert ("\"workerAdapterMode\": \"engine-specific-runner-defaults\"" `isInfixOf` publicationResponse) "cluster-resident service reports the engine-specific worker mode through the routed publication surface"
+  assert ("\"artifactAcquisitionMode\": \"engine-ready-artifact-manifests\"" `isInfixOf` publicationResponse) "cluster-resident service reports the engine-ready artifact-manifest contract through the routed publication surface"
   assert ("\"id\": \"minio\"" `isInfixOf` publicationResponse && "\"durableBackendState\": \"minio-backed chart deployment\"" `isInfixOf` publicationResponse) "routed publication reports MinIO upstream backing state"
   assert ("\"id\": \"pulsar\"" `isInfixOf` publicationResponse && "\"durableBackendState\": \"pulsar-backed chart deployment\"" `isInfixOf` publicationResponse) "routed publication reports Pulsar upstream backing state"
   assert ("Harbor Gateway" `isInfixOf` harborResponse || "Harbor" `isInfixOf` harborResponse) "routed Harbor portal resolves through the cluster gateway"
@@ -257,7 +257,7 @@ validateHostBridgeService paths runtimeMode serializedEntries = do
   assert ("\"mode\": \"host-daemon-bridge\"" `isInfixOf` publicationResponse) "host bridge publishes the host-daemon API upstream"
   assert ("\"durableBackendAccessMode\": \"edge-route-bridge\"" `isInfixOf` publicationResponse) "host bridge publishes edge-routed durable backend access"
   assert ("\"workerExecutionMode\": \"process-isolated-engine-workers\"" `isInfixOf` publicationResponse) "host bridge preserves process-isolated engine workers through the routed publication surface"
-  assert ("\"workerAdapterMode\": \"repo-owned-probe-with-command-overrides\"" `isInfixOf` publicationResponse) "host bridge preserves the repo-owned engine probe worker mode through the routed publication surface"
+  assert ("\"workerAdapterMode\": \"engine-specific-runner-defaults\"" `isInfixOf` publicationResponse) "host bridge preserves the engine-specific worker mode through the routed publication surface"
   assert ("\"id\": \"harbor\"" `isInfixOf` publicationResponse && "\"healthStatus\": \"ready\"" `isInfixOf` publicationResponse) "host-native service publication reports routed Harbor health"
   mapM_
     (\entry -> assert (Text.unpack (entryModelId entry) `isInfixOf` modelsResponse) "host bridge preserves routed catalog listing through the same edge entrypoint")
@@ -296,8 +296,10 @@ validateServiceCacheLifecycle paths runtimeMode baseUrl entry = do
   assert
     (("\"durableSourceUri\": \"s3://infernix-runtime/artifacts/" <> showRuntimeMode runtimeMode <> "/" <> modelIdText <> "/bundle.json\"") `isInfixOf` cacheAfterInference)
     "service cache status reports the durable runtime artifact bundle stored in MinIO"
-  assert ("\"engineAdapterId\": \"" `isInfixOf` cacheAfterInference) "service cache status reports engine-aware adapter metadata"
+  assert ("\"engineAdapterId\": \"" `isInfixOf` cacheAfterInference) "service cache status reports engine-specific runner metadata"
   assert ("\"sourceArtifactManifestUri\": \"s3://infernix-runtime/source-artifacts/" `isInfixOf` cacheAfterInference) "service cache status reports the durable source-artifact manifest stored in MinIO"
+  assert ("\"sourceArtifactSelectionMode\": \"" `isInfixOf` cacheAfterInference) "service cache status reports engine-specific source-artifact selection metadata"
+  assert ("\"sourceArtifactSelectedArtifacts\": [" `isInfixOf` cacheAfterInference) "service cache status reports the selected engine-ready artifact inventory"
   evictResponse <- httpPostJsonWithRetry 20 (baseUrl <> "/api/cache/evict") cacheBody
   assert ("\"evictedCount\": 1" `isInfixOf` evictResponse) "service cache eviction reports one evicted entry"
   cacheAfterEvict <- httpGetWithRetry 20 (baseUrl <> "/api/cache")

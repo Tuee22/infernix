@@ -60,6 +60,14 @@ class RuntimeArtifact:
 
 
 @dataclass(frozen=True)
+class SourceArtifactSelection:
+    selection_mode: str
+    authoritative_uri: str
+    authoritative_kind: str
+    selected_artifacts: list[dict[str, object]]
+
+
+@dataclass(frozen=True)
 class SourceArtifact:
     payload_object_key: str | None
     payload_local_path: pathlib.Path | None
@@ -72,6 +80,10 @@ class SourceArtifact:
     resolved_url: str
     content_type: str
     error: str
+    selection_mode: str
+    authoritative_uri: str
+    authoritative_kind: str
+    selected_artifacts: list[dict[str, object]]
 
 
 @dataclass
@@ -111,8 +123,8 @@ class RuntimeBackend:
         self.result_consumer: pulsar.Consumer | None = None
         self.backend_access_mode = "filesystem-fixture"
         self.worker_execution_mode = "process-isolated-engine-workers"
-        self.worker_adapter_mode = "repo-owned-probe-with-command-overrides"
-        self.artifact_acquisition_mode = "direct-upstream-fetch"
+        self.worker_adapter_mode = worker_adapter_mode_from_environment()
+        self.artifact_acquisition_mode = "engine-ready-artifact-manifests"
         self.worker_handles: dict[tuple[str, str, str], WorkerHandle] = {}
         if self.external_config is not None:
             self._initialize_external_backends(self.external_config)
@@ -169,6 +181,10 @@ class RuntimeBackend:
                     "sourceArtifactManifestUri": bundle_string(bundle_metadata, "sourceArtifactManifestUri"),
                     "sourceArtifactFetchStatus": bundle_string(bundle_metadata, "sourceArtifactFetchStatus"),
                     "sourceArtifactContentType": bundle_string(bundle_metadata, "sourceArtifactContentType"),
+                    "sourceArtifactSelectionMode": bundle_string(bundle_metadata, "sourceArtifactSelectionMode"),
+                    "sourceArtifactAuthoritativeUri": bundle_string(bundle_metadata, "sourceArtifactAuthoritativeUri"),
+                    "sourceArtifactAuthoritativeKind": bundle_string(bundle_metadata, "sourceArtifactAuthoritativeKind"),
+                    "sourceArtifactSelectedArtifacts": bundle_list(bundle_metadata, "sourceArtifactSelectedArtifacts"),
                 }
             )
         return entries
@@ -320,6 +336,10 @@ class RuntimeBackend:
             "sourceArtifactManifestUri": bundle_string(artifact.bundle_metadata, "sourceArtifactManifestUri"),
             "sourceArtifactFetchStatus": bundle_string(artifact.bundle_metadata, "sourceArtifactFetchStatus"),
             "sourceArtifactContentType": bundle_string(artifact.bundle_metadata, "sourceArtifactContentType"),
+            "sourceArtifactSelectionMode": bundle_string(artifact.bundle_metadata, "sourceArtifactSelectionMode"),
+            "sourceArtifactAuthoritativeUri": bundle_string(artifact.bundle_metadata, "sourceArtifactAuthoritativeUri"),
+            "sourceArtifactAuthoritativeKind": bundle_string(artifact.bundle_metadata, "sourceArtifactAuthoritativeKind"),
+            "sourceArtifactSelectedArtifacts": bundle_list(artifact.bundle_metadata, "sourceArtifactSelectedArtifacts"),
         }
 
     def _initialize_external_backends(self, config: ExternalBackendConfig) -> None:
@@ -643,6 +663,9 @@ class RuntimeBackend:
         prefix = f"source-artifacts/{self.runtime_mode}/{model['modelId']}"
         manifest_object_key = f"{prefix}/source.json"
         manifest_local_path = self.paths["object_store_root"] / manifest_object_key
+        existing_source_artifact = load_existing_source_artifact(manifest_local_path)
+        if existing_source_artifact is not None:
+            return existing_source_artifact
         payload_object_key: str | None = None
         payload_local_path: pathlib.Path | None = None
         payload_uri = ""
@@ -686,6 +709,21 @@ class RuntimeBackend:
             else:
                 payload_uri = payload_local_path.resolve().as_uri()
 
+        selection = select_engine_ready_source_artifacts(
+            model=model,
+            source_url=source_url,
+            resolved_url=resolved_url,
+            acquisition_mode=acquisition_mode,
+            payload_uri=payload_uri,
+            content_type=content_type,
+            payload_bytes=payload_bytes,
+        )
+
+        if self.runtime_bucket is not None:
+            manifest_uri = f"s3://{self.runtime_bucket}/{manifest_object_key}"
+        else:
+            manifest_uri = manifest_local_path.resolve().as_uri()
+
         manifest_payload = json.dumps(
             {
                 "artifactKind": "infernix-source-artifact",
@@ -699,16 +737,18 @@ class RuntimeBackend:
                 "contentType": content_type,
                 "payloadObjectKey": payload_object_key or "",
                 "payloadUri": payload_uri,
+                "manifestObjectKey": manifest_object_key,
+                "manifestUri": manifest_uri,
                 "error": error,
+                "selectionMode": selection.selection_mode,
+                "authoritativeInputUri": selection.authoritative_uri,
+                "authoritativeInputKind": selection.authoritative_kind,
+                "selectedArtifacts": selection.selected_artifacts,
             },
             indent=2,
             sort_keys=True,
         ).encode("utf-8")
         self._store_runtime_object(manifest_object_key, manifest_payload)
-        if self.runtime_bucket is not None:
-            manifest_uri = f"s3://{self.runtime_bucket}/{manifest_object_key}"
-        else:
-            manifest_uri = manifest_local_path.resolve().as_uri()
         return SourceArtifact(
             payload_object_key=payload_object_key,
             payload_local_path=payload_local_path,
@@ -721,6 +761,10 @@ class RuntimeBackend:
             resolved_url=resolved_url,
             content_type=content_type,
             error=error,
+            selection_mode=selection.selection_mode,
+            authoritative_uri=selection.authoritative_uri,
+            authoritative_kind=selection.authoritative_kind,
+            selected_artifacts=selection.selected_artifacts,
         )
 
     def _load_bundle_metadata(self, durable_source_uri: str, cache_dir: pathlib.Path) -> dict[str, object]:
@@ -1187,6 +1231,10 @@ def build_artifact_bundle(
         resolved_url=model["downloadUrl"],
         content_type="",
         error="",
+        selection_mode="unselected",
+        authoritative_uri=model["downloadUrl"],
+        authoritative_kind="upstream-reference",
+        selected_artifacts=[],
     )
     return {
         "artifactKind": "infernix-runtime-bundle",
@@ -1208,6 +1256,7 @@ def build_artifact_bundle(
         "engineAdapterAvailable": engine_adapter["engineAdapterAvailable"],
         "engineAdapterAvailability": engine_adapter["engineAdapterAvailability"],
         "artifactAcquisitionMode": source_artifact.acquisition_mode,
+        "engineWorkerMode": "engine-specific-runner",
         "sourceArtifactUri": source_artifact.payload_uri,
         "sourceArtifactManifestUri": source_artifact.manifest_uri,
         "sourceArtifactLocalPath": str(source_artifact.payload_local_path) if source_artifact.payload_local_path is not None else "",
@@ -1216,6 +1265,10 @@ def build_artifact_bundle(
         "sourceArtifactResolvedUrl": source_artifact.resolved_url,
         "sourceArtifactContentType": source_artifact.content_type,
         "sourceArtifactError": source_artifact.error,
+        "sourceArtifactSelectionMode": source_artifact.selection_mode,
+        "sourceArtifactAuthoritativeUri": source_artifact.authoritative_uri,
+        "sourceArtifactAuthoritativeKind": source_artifact.authoritative_kind,
+        "sourceArtifactSelectedArtifacts": source_artifact.selected_artifacts,
     }
 
 
@@ -1286,6 +1339,337 @@ def module_adapter(adapter_id: str, module_name: str) -> dict[str, object]:
         "engineAdapterAvailable": available,
         "engineAdapterAvailability": "module importable" if available else "module not installed",
     }
+
+
+def worker_adapter_mode_from_environment() -> str:
+    for name, value in os.environ.items():
+        if name.startswith("INFERNIX_ENGINE_COMMAND_") and value:
+            return "engine-specific-command-prefixes"
+    return "engine-specific-runner-defaults"
+
+
+def select_engine_ready_source_artifacts(
+    *,
+    model: dict[str, object],
+    source_url: str,
+    resolved_url: str,
+    acquisition_mode: str,
+    payload_uri: str,
+    content_type: str,
+    payload_bytes: bytes | None,
+) -> SourceArtifactSelection:
+    if acquisition_mode == "huggingface-model-metadata":
+        payload = decode_json_payload(payload_bytes)
+        return select_huggingface_artifacts(model, payload, payload_uri, resolved_url)
+    if acquisition_mode == "github-repository-metadata":
+        payload = decode_json_payload(payload_bytes)
+        return select_github_artifacts(model, payload, payload_uri, resolved_url)
+
+    authoritative_uri = payload_uri or resolved_url or source_url
+    authoritative_kind = "payload-object" if payload_uri else "upstream-reference"
+    artifact_kind = artifact_kind_for_name(str(model.get("artifactType", "")), content_type)
+    selected_artifacts = [
+        artifact_entry(
+            artifact_id="primary",
+            artifact_kind=artifact_kind,
+            uri=authoritative_uri,
+            required=True,
+        )
+    ]
+    return SourceArtifactSelection(
+        selection_mode="engine-specific-direct-artifact",
+        authoritative_uri=authoritative_uri,
+        authoritative_kind=authoritative_kind,
+        selected_artifacts=selected_artifacts,
+    )
+
+
+def decode_json_payload(payload_bytes: bytes | None) -> dict[str, object]:
+    if not payload_bytes:
+        return {}
+    try:
+        payload = json.loads(payload_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def load_existing_source_artifact(manifest_local_path: pathlib.Path) -> SourceArtifact | None:
+    if not manifest_local_path.exists():
+        return None
+    try:
+        payload = json.loads(manifest_local_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    if not isinstance(payload.get("selectionMode"), str) or not payload.get("selectionMode"):
+        return None
+    payload_object_key = payload.get("payloadObjectKey")
+    if not isinstance(payload_object_key, str) or payload_object_key == "":
+        payload_object_key = None
+    payload_local_path = manifest_local_path.parent / "payload.bin" if payload_object_key is not None else None
+    payload_uri = payload.get("payloadUri")
+    manifest_uri = payload.get("manifestUri")
+    return SourceArtifact(
+        payload_object_key=payload_object_key,
+        payload_local_path=payload_local_path if payload_local_path is not None and payload_local_path.exists() else None,
+        payload_uri=payload_uri if isinstance(payload_uri, str) else "",
+        manifest_object_key=str(payload.get("manifestObjectKey") or ""),
+        manifest_local_path=manifest_local_path,
+        manifest_uri=manifest_uri if isinstance(manifest_uri, str) and manifest_uri else manifest_local_path.resolve().as_uri(),
+        acquisition_mode=str(payload.get("acquisitionMode") or "unknown"),
+        fetch_status=str(payload.get("fetchStatus") or "unknown"),
+        resolved_url=str(payload.get("resolvedSourceUrl") or payload.get("sourceDownloadUrl") or ""),
+        content_type=str(payload.get("contentType") or ""),
+        error=str(payload.get("error") or ""),
+        selection_mode=str(payload.get("selectionMode") or "unselected"),
+        authoritative_uri=str(payload.get("authoritativeInputUri") or payload.get("payloadUri") or payload.get("resolvedSourceUrl") or ""),
+        authoritative_kind=str(payload.get("authoritativeInputKind") or "upstream-reference"),
+        selected_artifacts=[entry for entry in payload.get("selectedArtifacts", []) if isinstance(entry, dict)],
+    )
+
+
+def select_huggingface_artifacts(
+    model: dict[str, object],
+    payload: dict[str, object],
+    payload_uri: str,
+    resolved_url: str,
+) -> SourceArtifactSelection:
+    model_id = payload.get("modelId")
+    siblings = ((payload.get("metadata") or {}).get("siblings")) if isinstance(payload.get("metadata"), dict) else []
+    sibling_names = [name for name in siblings if isinstance(name, str)]
+    patterns = engine_artifact_patterns(str(model.get("selectedEngine", "")), str(model.get("artifactType", "")))
+    selected_names = select_matching_names(sibling_names, patterns)
+    if isinstance(model_id, str) and model_id and selected_names:
+        selected_artifacts = [
+            artifact_entry(
+                artifact_id=name.replace("/", "_"),
+                artifact_kind=artifact_kind_for_name(name, ""),
+                uri=f"https://huggingface.co/{model_id}/resolve/main/{urllib.parse.quote(name, safe='/')}",
+                required=index == 0,
+            )
+            for index, name in enumerate(selected_names)
+        ]
+    else:
+        fallback_uri = resolved_url or str(payload.get("apiUrl") or model.get("downloadUrl") or "")
+        selected_artifacts = [
+            artifact_entry(
+                artifact_id="repository",
+                artifact_kind="provider-metadata",
+                uri=fallback_uri,
+                required=True,
+            )
+        ]
+    authoritative_uri, authoritative_kind = authoritative_selection(
+        selected_artifacts,
+        fallback_uri=payload_uri or resolved_url or str(model.get("downloadUrl") or ""),
+        fallback_kind="provider-metadata-manifest",
+    )
+    return SourceArtifactSelection(
+        selection_mode="engine-specific-huggingface-selection",
+        authoritative_uri=authoritative_uri,
+        authoritative_kind=authoritative_kind,
+        selected_artifacts=selected_artifacts,
+    )
+
+
+def select_github_artifacts(
+    model: dict[str, object],
+    payload: dict[str, object],
+    payload_uri: str,
+    resolved_url: str,
+) -> SourceArtifactSelection:
+    patterns = engine_artifact_patterns(str(model.get("selectedEngine", "")), str(model.get("artifactType", "")))
+    selected_artifacts: list[dict[str, object]] = []
+    releases = payload.get("releases")
+    if isinstance(releases, list):
+        for release in releases[:5]:
+            if not isinstance(release, dict):
+                continue
+            assets = release.get("assets")
+            if not isinstance(assets, list):
+                continue
+            asset_names = [asset.get("name") for asset in assets if isinstance(asset, dict)]
+            selected_names = select_matching_names(
+                [name for name in asset_names if isinstance(name, str)],
+                patterns,
+            )
+            for name in selected_names:
+                asset_payload = next(
+                    (
+                        asset
+                        for asset in assets
+                        if isinstance(asset, dict) and asset.get("name") == name
+                    ),
+                    None,
+                )
+                if not isinstance(asset_payload, dict):
+                    continue
+                download_url = asset_payload.get("browser_download_url")
+                if isinstance(download_url, str) and download_url:
+                    selected_artifacts.append(
+                        artifact_entry(
+                            artifact_id=name,
+                            artifact_kind=artifact_kind_for_name(name, str(asset_payload.get("content_type") or "")),
+                            uri=download_url,
+                            required=not selected_artifacts,
+                        )
+                    )
+            if selected_artifacts:
+                break
+
+    if not selected_artifacts:
+        repository = str(payload.get("repository") or "")
+        metadata = payload.get("metadata")
+        html_url = metadata.get("html_url") if isinstance(metadata, dict) else ""
+        fallback_uri = html_url if isinstance(html_url, str) and html_url else resolved_url or str(model.get("downloadUrl") or "")
+        selected_artifacts.append(
+            artifact_entry(
+                artifact_id="repository",
+                artifact_kind="repository-reference",
+                uri=fallback_uri,
+                required=True,
+            )
+        )
+        if repository:
+            selected_artifacts.append(
+                artifact_entry(
+                    artifact_id="source-archive",
+                    artifact_kind="source-archive",
+                    uri=f"https://github.com/{repository}/archive/refs/heads/{default_branch_for_payload(payload)}.tar.gz",
+                    required=False,
+                )
+            )
+
+    authoritative_uri, authoritative_kind = authoritative_selection(
+        selected_artifacts,
+        fallback_uri=payload_uri or resolved_url or str(model.get("downloadUrl") or ""),
+        fallback_kind="provider-metadata-manifest",
+    )
+    return SourceArtifactSelection(
+        selection_mode="engine-specific-github-selection",
+        authoritative_uri=authoritative_uri,
+        authoritative_kind=authoritative_kind,
+        selected_artifacts=selected_artifacts,
+    )
+
+
+def default_branch_for_payload(payload: dict[str, object]) -> str:
+    metadata = payload.get("metadata")
+    if isinstance(metadata, dict):
+        default_branch = metadata.get("default_branch")
+        if isinstance(default_branch, str) and default_branch:
+            return default_branch
+    return "main"
+
+
+def authoritative_selection(
+    selected_artifacts: list[dict[str, object]],
+    *,
+    fallback_uri: str,
+    fallback_kind: str,
+) -> tuple[str, str]:
+    required_artifact = next(
+        (
+            entry
+            for entry in selected_artifacts
+            if isinstance(entry.get("required"), bool) and entry["required"]
+        ),
+        None,
+    )
+    primary_artifact = required_artifact or next(iter(selected_artifacts), None)
+    if isinstance(primary_artifact, dict):
+        primary_uri = primary_artifact.get("uri")
+        primary_kind = primary_artifact.get("artifactKind")
+        if isinstance(primary_uri, str) and primary_uri:
+            resolved_kind = primary_kind if isinstance(primary_kind, str) and primary_kind else fallback_kind
+            return primary_uri, resolved_kind
+    return fallback_uri, fallback_kind
+
+
+def engine_artifact_patterns(selected_engine: str, artifact_type: str) -> list[str]:
+    normalized_engine = selected_engine.lower()
+    normalized_artifact_type = artifact_type.lower()
+    if "llama.cpp" in normalized_engine or "gguf" in normalized_artifact_type:
+        return [".gguf", "tokenizer.model", "tokenizer.json", "config.json"]
+    if "whisper.cpp" in normalized_engine:
+        return [".bin", ".ggml", ".gguf", "filters", "vocab", "tokenizer"]
+    if "ctranslate2" in normalized_engine:
+        return ["model.bin", "config.json", "tokenizer.json", "tokenizer.model", "vocabulary"]
+    if "onnx runtime" in normalized_engine or "onnx" in normalized_artifact_type:
+        return [".onnx", "config.json", "tokenizer.json", "tokenizer.model"]
+    if "tensorflow" in normalized_engine:
+        return ["saved_model.pb", ".pb", ".h5", "config.json"]
+    if "core ml" in normalized_engine:
+        return [".mlpackage", ".mlmodelc", ".mlmodel", "config.json"]
+    if "jax" in normalized_engine:
+        return [".npz", ".ckpt", ".msgpack", "checkpoint", ".gin", "config.json"]
+    if "mlx" in normalized_engine:
+        return [".safetensors", "tokenizer.model", "tokenizer.json", "config.json"]
+    if "diffusers" in normalized_engine or "comfyui" in normalized_engine:
+        return ["model_index.json", ".safetensors", "scheduler", "tokenizer", "vae", "unet", "text_encoder"]
+    if "jvm" in normalized_engine:
+        return [".jar", ".zip", ".tar.gz"]
+    return [
+        ".safetensors",
+        ".bin",
+        "config.json",
+        "generation_config.json",
+        "tokenizer.json",
+        "tokenizer.model",
+        "tokenizer_config.json",
+        "preprocessor_config.json",
+    ]
+
+
+def select_matching_names(names: list[str], patterns: list[str]) -> list[str]:
+    selected: list[str] = []
+    normalized_names = list(dict.fromkeys(names))
+    for pattern in patterns:
+        normalized_pattern = pattern.lower()
+        for name in normalized_names:
+            normalized_name = name.lower()
+            if normalized_pattern.startswith("."):
+                matched = normalized_name.endswith(normalized_pattern)
+            else:
+                matched = normalized_pattern in normalized_name
+            if matched and name not in selected:
+                selected.append(name)
+                if len(selected) >= 8:
+                    return selected
+    return selected
+
+
+def artifact_entry(*, artifact_id: str, artifact_kind: str, uri: str, required: bool) -> dict[str, object]:
+    return {
+        "artifactId": artifact_id,
+        "artifactKind": artifact_kind,
+        "uri": uri,
+        "required": required,
+    }
+
+
+def artifact_kind_for_name(name: str, content_type: str) -> str:
+    normalized_name = name.lower()
+    normalized_content_type = content_type.lower()
+    if normalized_name.endswith(".gguf"):
+        return "gguf-weights"
+    if normalized_name.endswith(".safetensors"):
+        return "safetensors-weights"
+    if normalized_name.endswith(".onnx"):
+        return "onnx-model"
+    if normalized_name.endswith(".h5") or normalized_name.endswith(".pb"):
+        return "tensorflow-model"
+    if normalized_name.endswith(".mlmodel") or normalized_name.endswith(".mlpackage") or normalized_name.endswith(".mlmodelc"):
+        return "coreml-model"
+    if normalized_name.endswith(".jar"):
+        return "jvm-application"
+    if normalized_name.endswith(".json") or "json" in normalized_content_type:
+        return "metadata"
+    if normalized_name.endswith(".tar.gz") or normalized_name.endswith(".zip"):
+        return "source-archive"
+    return "runtime-artifact"
 
 
 def fetch_remote_source_artifact(source_url: str) -> tuple[str, str, str, str, str, bytes | None]:
@@ -1390,6 +1774,8 @@ def fetch_github_source_artifact(source_url: str) -> tuple[str, str, str, str, s
     owner, repo = parse_github_repo(source_url)
     api_url = f"https://api.github.com/repos/{owner}/{repo}"
     metadata = fetch_json_url(api_url)
+    releases_url = f"https://api.github.com/repos/{owner}/{repo}/releases?per_page=5"
+    releases = fetch_json_array_url(releases_url)
     payload: dict[str, object] = {
         "provider": "github",
         "repository": f"{owner}/{repo}",
@@ -1403,6 +1789,23 @@ def fetch_github_source_artifact(source_url: str) -> tuple[str, str, str, str, s
             "open_issues_count": metadata.get("open_issues_count"),
             "html_url": metadata.get("html_url"),
         },
+        "releases": [
+            {
+                "tag_name": release.get("tag_name"),
+                "assets": [
+                    {
+                        "name": asset.get("name"),
+                        "browser_download_url": asset.get("browser_download_url"),
+                        "content_type": asset.get("content_type"),
+                        "size": asset.get("size"),
+                    }
+                    for asset in release.get("assets", [])
+                    if isinstance(asset, dict)
+                ],
+            }
+            for release in releases
+            if isinstance(release, dict)
+        ],
     }
     default_branch = metadata.get("default_branch")
     if isinstance(default_branch, str) and default_branch:
@@ -1471,6 +1874,19 @@ def fetch_json_url(url: str) -> dict[str, object]:
     return payload
 
 
+def fetch_json_array_url(url: str) -> list[object]:
+    request = urllib.request.Request(
+        url,
+        headers={"User-Agent": "infernix-runtime/0.1", "Accept": "application/json"},
+        method="GET",
+    )
+    with urllib.request.urlopen(request, timeout=20) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    if not isinstance(payload, list):
+        raise ValueError(f"expected JSON array from {url}")
+    return payload
+
+
 def fetch_optional_text(url: str, max_bytes: int) -> str:
     request = urllib.request.Request(
         url,
@@ -1490,3 +1906,10 @@ def fetch_optional_text(url: str, max_bytes: int) -> str:
 def bundle_string(payload: dict[str, object], field_name: str) -> str:
     value = payload.get(field_name)
     return value if isinstance(value, str) else ""
+
+
+def bundle_list(payload: dict[str, object], field_name: str) -> list[dict[str, object]]:
+    value = payload.get(field_name)
+    if not isinstance(value, list):
+        return []
+    return [entry for entry in value if isinstance(entry, dict)]

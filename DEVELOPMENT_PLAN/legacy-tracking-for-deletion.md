@@ -17,24 +17,22 @@
 
 | Location | Why it is slated for removal | Owning phase or sprint |
 |----------|-------------------------------|------------------------|
-| `tools/engine_probe.py`, `tools/runtime_worker.py`, `tools/runtime_backend.py`, `src/Infernix/Runtime.hs`, `test/integration/Spec.hs` repo-owned default engine probe path | the supported runtime now launches process-isolated engine workers through configured command prefixes and falls back to `tools/engine_probe.py` when no adapter-specific override is configured; this repo-owned probe path remains transitional until supported-host validation lands for the real engines selected by the README matrix, and the routed publication plus integration surfaces currently assert `workerExecutionMode = process-isolated-engine-workers` and `workerAdapterMode = repo-owned-probe-with-command-overrides` | Phase 4, Sprint 4.2; Phase 4, Sprint 4.3; Phase 6, Sprint 6.2; Phase 6, Sprint 6.6 |
+| `tools/final_engine_runner.py`, `tools/runtime_worker.py`, `tools/runtime_backend.py`, `src/Infernix/Runtime.hs`, `test/integration/Spec.hs` engine-specific default runner | the supported runtime now launches process-isolated engine workers through configured command prefixes and otherwise falls back to the repo-owned engine-specific worker runner; that runner remains transitional until supported-host final engine execution and engine-ready artifact validation land across the README matrix, and the routed publication plus integration surfaces currently assert `workerExecutionMode = process-isolated-engine-workers`, `workerAdapterMode = engine-specific-runner-defaults`, and `artifactAcquisitionMode = engine-ready-artifact-manifests` | Phase 4, Sprint 4.2; Phase 4, Sprint 4.3; Phase 6, Sprint 6.2; Phase 6, Sprint 6.6 |
 
 ## Pending Removal Details
 
-### Repo-Owned Default Engine Probe Placeholder
+### Engine-Specific Default Runner
 
-- `tools/runtime_worker.py` now shells into configured engine command prefixes and falls back to
-  `tools/engine_probe.py` when no adapter-specific override is configured so the process-isolated
-  adapter contract is still exercised without requiring every final engine binary or module on the
-  current host
-- `tools/runtime_backend.py` supervises those workers and reports the transitional contract through
-  `workerExecutionMode = process-isolated-engine-workers` and
-  `workerAdapterMode = repo-owned-probe-with-command-overrides`
+- `tools/runtime_worker.py` now shells into configured engine command prefixes and otherwise uses
+  the repo-owned `tools/final_engine_runner.py` runner so the process-isolated worker contract
+  stays engine-specific without hard-coding a single generic probe path
+- `tools/runtime_backend.py` supervises those workers and reports the supported routed contract
+  through `workerExecutionMode = process-isolated-engine-workers` and
+  `workerAdapterMode = engine-specific-runner-defaults`
 - `src/Infernix/Runtime.hs` still shells directly into that worker script for host-native request
   execution instead of proving supported-host Apple engine execution
-- `test/integration/Spec.hs` currently treats the repo-owned probe-plus-override contract as the
-  expected routed publication surface, so those assertions will need to narrow once the
-  supported-host final-engine path closes
+- `test/integration/Spec.hs` now treats the engine-specific runner surface as the expected routed
+  publication contract while the supported-host final-engine matrix stays open
 
 ## Completed
 
@@ -51,8 +49,9 @@
 | `src/Infernix/Runtime.hs`, `tools/runtime_backend.py`, `tools/runtime_worker.py` unknown-engine `fallback-template` or `builtin-fallback` adapter path | the runtime no longer synthesizes fallback adapter ids for unmatched engines; it now maps the current catalog case-insensitively and fails fast on unsupported engine labels instead of hiding missing ownership behind synthetic success output | Phase 4, Sprint 4.1; Phase 4, Sprint 4.2 |
 | `src/Infernix/Runtime.hs`, `test/unit/Spec.hs` host-native `bundle.json` placeholder metadata | the host-side unit helper path no longer writes metadata-only bundles; it now materializes the same durable bundle plus source-artifact-manifest contract through `tools/runtime_fixture_backend.py`, and the unit suite asserts explicit source-artifact materialization instead of `local-bundle-only` placeholder markers | Phase 4, Sprint 4.2; Phase 4, Sprint 4.3 |
 | `tools/runtime_backend.py`, `tools/service_server.py` implicit filesystem fallback backend mode | the supported service surface no longer drops into an implicit filesystem backend when no MinIO or Pulsar or bridge configuration is present; `RuntimeBackend` now requires explicit fixture ownership for `filesystem-fixture` mode, and `tools/service_server.py` exits with a user-facing error instead of publishing that fallback as a supported runtime state | Phase 4, Sprint 4.2; Phase 4, Sprint 4.3 |
+| `tools/engine_adapter.py` transitional engine probe path | the generic engine-adapter probe entrypoint has been removed; the supported runtime now defaults to `tools/final_engine_runner.py`, which keeps engine-specific runner metadata and source-artifact selection semantics in one place | Phase 4, Sprint 4.2; Phase 6, Sprint 6.2 |
 | `src/Infernix/Cluster.hs`, `tools/publish_chart_images.py`, `./.build/kind/registry/localhost:30001/hosts.toml` bootstrap-registry helper path | `cluster up` no longer mirrors MinIO or Pulsar through a helper registry on `localhost:30001`; the supported path now bootstraps Harbor and only the services Harbor needs from upstream image coordinates, rewrites only `localhost:30002`, and preloads Harbor-backed final image refs onto the Kind worker before the remaining non-Harbor rollout | Phase 2, Sprint 2.4 |
-| `tools/engine_fixture.py`, `src/Infernix/CLI.hs`, `test/unit/Spec.hs`, `test/integration/Spec.hs`, `chart/templates/deployment-service.yaml` global engine-fixture command path | the runtime and validation flows no longer inject a single global fixture command; they now default to the repo-owned engine probe path and only forward adapter-specific `INFERNIX_ENGINE_COMMAND_*` overrides when explicitly configured | Phase 4, Sprint 4.2; Phase 6, Sprint 6.2 |
+| `tools/engine_fixture.py`, `src/Infernix/CLI.hs`, `test/unit/Spec.hs`, `test/integration/Spec.hs`, `chart/templates/deployment-service.yaml` global engine-fixture command path | the runtime and validation flows no longer inject a single global fixture command; they now default to the engine-specific runner and only forward adapter-specific `INFERNIX_ENGINE_COMMAND_*` overrides when explicitly configured | Phase 4, Sprint 4.2; Phase 6, Sprint 6.2 |
 
 ## Cross-References
 

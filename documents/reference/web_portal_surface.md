@@ -29,7 +29,7 @@
 - the workbench also renders routed-upstream health and durable-backing-state details for the Harbor, MinIO, and Pulsar route surfaces
 - the user can browse any generated model entry, inspect its selected engine and request shape, and submit a manual inference request through `/api`
 - the workbench treats routed catalog or publication failures as unavailable live state rather than synthesizing a browser-only fallback catalog or publication summary
-- manual inference requests execute through process-isolated engine-worker adapters backed by durable runtime artifact bundles and direct-upstream source-artifact manifests
+- manual inference requests execute through process-isolated engine-worker runners backed by durable runtime artifact bundles and engine-specific source-artifact manifests that record the selected engine-ready artifact inventory
 - the workbench renders family-aware request guidance, artifact metadata, submit labels, and result framing without introducing a browser-only catalog
 - large outputs surface as object-reference results with browser-visible links that resolve through `GET /objects/:objectRef`
 - switching runtime modes changes the generated catalog and selected engine bindings without changing the browser route structure
