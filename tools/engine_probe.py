@@ -34,7 +34,10 @@ def string_field(bundle: dict[str, object], field_name: str) -> str:
 
 
 def run_command(command: list[str]) -> tuple[bool, str]:
-    completed = subprocess.run(command, capture_output=True, text=True, check=False)
+    try:
+        completed = subprocess.run(command, capture_output=True, text=True, check=False)
+    except FileNotFoundError as exc:
+        return False, str(exc)
     output = (completed.stdout or completed.stderr).strip()
     if completed.returncode == 0:
         first_line = output.splitlines()[0] if output else ""

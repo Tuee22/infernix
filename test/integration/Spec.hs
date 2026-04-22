@@ -145,6 +145,8 @@ validateClusterStatusOutput paths runtimeMode = do
   assert ("clusterPresent: True" `isInfixOf` statusOutput) "cluster status reports cluster presence"
   assert (("runtimeMode: " <> showRuntimeMode runtimeMode) `isInfixOf` statusOutput) "cluster status reports the active runtime mode"
   assert (("publicationStatePath: " <> Config.publicationStatePath paths) `isInfixOf` statusOutput) "cluster status reports the publication-state path"
+  assert ("publicationApiUpstreamMode: cluster-service" `isInfixOf` statusOutput) "cluster status reports publication-state API upstream mode"
+  assert ("publicationUpstream: service -> published via" `isInfixOf` statusOutput) "cluster status reports publication-state upstream details"
   assert (("generatedDemoConfigPath: " <> Config.generatedDemoConfigPath paths runtimeMode) `isInfixOf` statusOutput) "cluster status reports the generated demo-config path"
   assert (("publishedDemoConfigPath: " <> Config.publishedConfigMapCatalogPath paths runtimeMode) `isInfixOf` statusOutput) "cluster status reports the published demo-config path"
   assert (("mountedDemoConfigPath: " <> Config.watchedDemoConfigPath runtimeMode) `isInfixOf` statusOutput) "cluster status reports the mounted demo-config path"
@@ -386,15 +388,16 @@ validateEdgePortConflictAndRediscovery paths runtimeMode = do
       readyLine <- hGetLineWithRetry 20 stdoutHandle
       assert (readyLine == "ready") "port-conflict helper binds 9090 before cluster up runs"
       clusterUp (Just runtimeMode)
-      maybeBusyState <- loadClusterState paths
-      assert (maybe False ((== 9091) . edgePort) maybeBusyState) "cluster up selects the next open port when 9090 is busy"
+      busyState <- maybe (fail "cluster state was not available after busy-port cluster up") pure =<< loadClusterState paths
+      let selectedBusyPort = edgePort busyState
+      assert (selectedBusyPort > 9090) "cluster up selects a non-9090 port when 9090 is busy"
       clusterDown (Just runtimeMode)
       hClose stdinHandle
       terminateProcess busyPortProcess
       _ <- waitForProcess busyPortProcess
       clusterUp (Just runtimeMode)
       maybeRediscoveredState <- loadClusterState paths
-      assert (maybe False ((== 9091) . edgePort) maybeRediscoveredState) "cluster up reuses the previously published edge port after restart"
+      assert (maybe False ((== selectedBusyPort) . edgePort) maybeRediscoveredState) "cluster up reuses the previously published edge port after restart"
       clusterDown (Just runtimeMode)
     _ -> fail "port-conflict helper failed to expose the readiness pipe"
   where

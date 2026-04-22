@@ -7,7 +7,7 @@
 
 ## Families
 
-- `service` starts the Haskell service runtime
+- `service` starts the long-running routed service runtime owned by the Haskell CLI
 - `cluster` reconciles or reports cluster state
 - `cache` inspects or clears or rebuilds manifest-backed derived cache state
 - `kubectl` proxies Kubernetes access through the repo-local kubeconfig

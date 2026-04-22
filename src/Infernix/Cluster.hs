@@ -18,7 +18,8 @@ import Data.ByteString.Lazy qualified as Lazy
 import Data.ByteString.Lazy.Char8 qualified as LazyChar8
 import Data.Char (isSpace)
 import Data.List qualified as List
-import Data.Maybe (fromMaybe)
+import Data.Map.Strict qualified as Map
+import Data.Maybe (fromMaybe, mapMaybe)
 import Data.Text qualified as Text
 import Data.Time (getCurrentTime)
 import Infernix.Config (Paths (..))
@@ -26,7 +27,7 @@ import Infernix.Config qualified as Config
 import Infernix.Models
 import Infernix.Storage
 import Infernix.Types
-import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, listDirectory, removePathForcibly)
+import System.Directory (copyFile, createDirectoryIfMissing, doesDirectoryExist, doesFileExist, listDirectory, removePathForcibly)
 import System.Environment (getEnvironment, lookupEnv)
 import System.Exit (ExitCode (..))
 import System.FilePath (takeDirectory, (</>))
@@ -112,6 +113,9 @@ kindNodeImage = "kindest/node:v1.34.0"
 nvkindGoInstallTarget :: String
 nvkindGoInstallTarget = "github.com/NVIDIA/nvkind/cmd/nvkind@8bce71ec58cf12b4003758eb4e49adac53cc40f2"
 
+nvkindGoBuilderImage :: String
+nvkindGoBuilderImage = "golang:1.24"
+
 data HelmDeployPhase
   = WarmupPhase
   | BootstrapPhase
@@ -161,7 +165,7 @@ clusterUp maybeRuntimeMode = do
   claimDiscoveryValuesPath <- writeHelmValuesFile paths controlPlane claimDiscoveryState requestedPayload FinalPhase
   claimDiscoveryRenderedChartPath <- renderHelmChart paths runtimeMode [claimDiscoveryValuesPath]
   discoveredClaims <- discoverPersistentClaims paths claimDiscoveryRenderedChartPath
-  mapM_ (createDirectoryIfMissing True . claimDirectory paths) discoveredClaims
+  mapM_ (ensureClaimDirectoryReady paths) discoveredClaims
   (edgePortValue, kubeconfigContents, clusterCreated) <- ensureKindCluster paths runtimeMode requestedPort
   when (clusterCreated && not (kindUsesHostBindMounts paths)) $
     prepareKindNodeRuntimePaths paths runtimeMode
@@ -252,7 +256,7 @@ clusterDown maybeRuntimeMode = do
   clusterExists <- kindClusterExists paths runtimeMode
   when clusterExists $ do
     unless (kindUsesHostBindMounts paths) $
-      syncKindNodeRuntimePathsToHost paths runtimeMode
+      syncKindNodeRuntimePathsToHost paths runtimeMode maybeState
     runCommand
       Nothing
       [("KUBECONFIG", Config.generatedKubeconfigPath paths)]
@@ -321,12 +325,14 @@ clusterStatus maybeRuntimeMode = do
       putStrLn ("modelCacheRoot: " <> modelCacheRoot paths)
       putStrLn ("durableManifestRoot: " <> objectStoreRoot paths </> "manifests")
       putStrLn ("storageHealth: " <> show (length (claims state)) <> " chart-owned claim roots prepared")
+      publicationSummaryLines <- publicationStateSummaryLines (Config.publicationStatePath paths)
       putStrLn ("kubernetesNodeCount: " <> show nodeCount)
       putStrLn ("kubernetesPodCount: " <> show podCount)
       putStrLn ("runtimeResultCount: " <> show resultCount)
       putStrLn ("objectStoreObjectCount: " <> show objectCount)
       putStrLn ("modelCacheEntryCount: " <> show cacheEntries)
       putStrLn ("durableManifestCount: " <> show durableManifestCount)
+      mapM_ putStrLn publicationSummaryLines
       mapM_
         (\route -> putStrLn ("route: " <> Text.unpack (path route) <> " -> " <> Text.unpack (purpose route)))
         (routes state)
@@ -349,6 +355,75 @@ runKubectlCompat args = do
       | otherwise -> do
           ensureOuterContainerKindNetworkAccess paths (clusterRuntimeMode state)
           putStr =<< captureCommand Nothing [] "kubectl" (kubeconfigArgs state <> args)
+
+publicationStateSummaryLines :: FilePath -> IO [String]
+publicationStateSummaryLines publicationPath = do
+  publicationExists <- doesFileExist publicationPath
+  if not publicationExists
+    then pure []
+    else do
+      contents <- readFile publicationPath
+      pure
+        ( maybe [] (\mode -> ["publicationApiUpstreamMode: " <> mode]) (publicationApiUpstreamMode contents)
+            <> publicationUpstreamLines contents
+        )
+
+publicationApiUpstreamMode :: String -> Maybe String
+publicationApiUpstreamMode contents =
+  firstJsonStringField
+    "\"apiUpstream\": {"
+    "mode"
+    (lines contents)
+
+publicationUpstreamLines :: String -> [String]
+publicationUpstreamLines contents =
+  foldr collect [] (lines contents)
+  where
+    collect lineValue acc =
+      case publicationUpstreamLine lineValue of
+        Just renderedLine -> renderedLine : acc
+        Nothing -> acc
+
+publicationUpstreamLine :: String -> Maybe String
+publicationUpstreamLine lineValue = do
+  upstreamId <- jsonStringField "id" lineValue
+  healthStatusValue <- jsonStringField "healthStatus" lineValue
+  targetSurfaceValue <- jsonStringField "targetSurface" lineValue
+  durableBackendStateValue <- jsonStringField "durableBackendState" lineValue
+  pure
+    ( "publicationUpstream: "
+        <> upstreamId
+        <> " -> "
+        <> healthStatusValue
+        <> " via "
+        <> targetSurfaceValue
+        <> " ("
+        <> durableBackendStateValue
+        <> ")"
+    )
+
+firstJsonStringField :: String -> String -> [String] -> Maybe String
+firstJsonStringField marker fieldName =
+  go
+  where
+    go [] = Nothing
+    go (lineValue : remaining)
+      | marker `List.isInfixOf` lineValue = jsonStringField fieldName lineValue
+      | otherwise = go remaining
+
+jsonStringField :: String -> String -> Maybe String
+jsonStringField fieldName lineValue =
+  case dropWhile (not . List.isPrefixOf marker) (List.tails lineValue) of
+    matched : _ -> readQuotedValue (drop (length marker) matched)
+    [] -> Nothing
+  where
+    marker = "\"" <> fieldName <> "\": "
+
+readQuotedValue :: String -> Maybe String
+readQuotedValue value =
+  case value of
+    '"' : rest -> Just (takeWhile (/= '"') rest)
+    _ -> Nothing
 
 chooseEdgePort :: Paths -> IO Int
 chooseEdgePort paths = do
@@ -404,6 +479,21 @@ claimDirectory paths persistentClaim =
     </> Text.unpack (workload persistentClaim)
     </> show (ordinal persistentClaim)
     </> Text.unpack (claim persistentClaim)
+
+ensureClaimDirectoryReady :: Paths -> PersistentClaim -> IO ()
+ensureClaimDirectoryReady paths persistentClaim = do
+  let directoryPath = claimDirectory paths persistentClaim
+  createDirectoryIfMissing True directoryPath
+  -- Harbor and MinIO reuse these persisted hostPath trees as non-root users on Linux.
+  runCommand Nothing [] "chmod" ["-R", "a+rwX", directoryPath]
+  case claimOwner persistentClaim of
+    Nothing -> pure ()
+    Just owner -> runCommand Nothing [] "chown" ["-R", owner, directoryPath]
+  where
+    claimOwner claimSpec
+      | workload claimSpec == "harbor-database" && claim claimSpec == "data" = Just "999:999"
+      | workload claimSpec == "minio" && claim claimSpec == "data" = Just "1001:1001"
+      | otherwise = Nothing
 
 ensureKindCluster :: Paths -> RuntimeMode -> Int -> IO (Int, String, Bool)
 ensureKindCluster paths runtimeMode requestedPort = do
@@ -462,7 +552,7 @@ createLinuxCudaCluster :: Paths -> Int -> IO Int
 createLinuxCudaCluster paths = go
   where
     go candidatePort = do
-      ensureLinuxCudaHostPrerequisites
+      ensureLinuxCudaHostPrerequisites paths
       nvkindBinary <- ensureNvkindBinary paths
       configPath <- writeGeneratedKindConfig paths LinuxCuda candidatePort
       result <-
@@ -486,57 +576,135 @@ createLinuxCudaCluster paths = go
         Left err
           | "address already in use" `List.isInfixOf` err ->
               go (candidatePort + 1)
+          | linuxCudaNvkindConfigMapBug err -> do
+              clusterCreated <- kindClusterExists paths LinuxCuda
+              if clusterCreated
+                then do
+                  putStrLn "nvkind hit its known configmap persistence bug; continuing with repo-owned linux-cuda node setup"
+                  completeLinuxCudaNodeBootstrap paths
+                  pure candidatePort
+                else
+                  ioError
+                    (userError ("nvkind cluster create failed for " <> kindClusterName paths LinuxCuda <> ":\n" <> err))
           | otherwise ->
               ioError
                 (userError ("nvkind cluster create failed for " <> kindClusterName paths LinuxCuda <> ":\n" <> err))
 
-ensureLinuxCudaHostPrerequisites :: IO ()
-ensureLinuxCudaHostPrerequisites = do
-  supported <- linuxCudaSupportedOnHost
-  unless supported $ do
-    failureReport <- linuxCudaHostFailureReport
+linuxCudaNvkindConfigMapBug :: String -> Bool
+linuxCudaNvkindConfigMapBug err =
+  "adding config to cluster: %!w(<nil>)" `List.isInfixOf` err
+
+completeLinuxCudaNodeBootstrap :: Paths -> IO ()
+completeLinuxCudaNodeBootstrap paths = do
+  nodeNames <- kindNodeNames paths LinuxCuda
+  let workerNodeNames = filter (/= kindControlPlaneNodeName paths LinuxCuda) nodeNames
+  mapM_ bootstrapWorkerNode workerNodeNames
+  where
+    bootstrapWorkerNode nodeName =
+      runDockerNodeScript
+        nodeName
+        ( unlines
+            [ "set -euo pipefail",
+              "apt-get update",
+              "apt-get install -y gpg curl",
+              "curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg",
+              "curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | tee /etc/apt/sources.list.d/nvidia-container-toolkit.list",
+              "apt-get update",
+              "apt-get install -y nvidia-container-toolkit",
+              "nvidia-ctk runtime configure --runtime=containerd --config-source=command",
+              "systemctl restart containerd",
+              "umount -R /proc/driver/nvidia || true",
+              "cp /proc/driver/nvidia/params /root/gpu-params",
+              "sed -i 's/^ModifyDeviceFiles: 1$/ModifyDeviceFiles: 0/' /root/gpu-params",
+              "mount --bind /root/gpu-params /proc/driver/nvidia/params"
+            ]
+        )
+
+runDockerNodeScript :: String -> String -> IO ()
+runDockerNodeScript nodeName script =
+  runCommand Nothing [] "docker" ["exec", nodeName, "bash", "-c", script]
+
+data LinuxCudaProbeResults = LinuxCudaProbeResults
+  { hostGpuResult :: Either String String,
+    dockerRuntimeResult :: Either String String,
+    dockerVolumeMountResult :: Either String String
+  }
+
+ensureLinuxCudaHostPrerequisites :: Paths -> IO ()
+ensureLinuxCudaHostPrerequisites paths = do
+  probeResults <- linuxCudaProbeResults
+  unless (linuxCudaPreflightSatisfied (Config.controlPlaneContext paths) probeResults) $ do
+    let failureReport = linuxCudaHostFailureReport (Config.controlPlaneContext paths) probeResults
     ioError (userError failureReport)
 
 linuxCudaSupportedOnHost :: IO Bool
 linuxCudaSupportedOnHost = do
-  hostGpuResult <- tryCommand Nothing [] "nvidia-smi" ["-L"]
-  dockerRuntimeResult <- tryCommand Nothing [] "docker" dockerGpuProbeCommand
-  dockerVolumeMountResult <- tryCommand Nothing [] "docker" dockerCdiProbeCommand
-  pure
-    ( case (hostGpuResult, dockerRuntimeResult, dockerVolumeMountResult) of
-        (Right _, Right _, Right _) -> True
-        _ -> False
-    )
+  paths <- Config.discoverPaths
+  linuxCudaPreflightSatisfied (Config.controlPlaneContext paths) <$> linuxCudaProbeResults
 
-linuxCudaHostFailureReport :: IO String
-linuxCudaHostFailureReport = do
+linuxCudaProbeResults :: IO LinuxCudaProbeResults
+linuxCudaProbeResults = do
   hostGpuResult <- tryCommand Nothing [] "nvidia-smi" ["-L"]
   dockerRuntimeResult <- tryCommand Nothing [] "docker" dockerGpuProbeCommand
-  dockerVolumeMountResult <- tryCommand Nothing [] "docker" dockerCdiProbeCommand
+  dockerVolumeMountResult <- tryCommand Nothing [] "docker" dockerVolumeMountProbeCommand
   pure
-    ( unlines
-        [ "linux-cuda requires a host with real NVIDIA GPUs plus a Docker engine configured for GPU and CDI-capable NVIDIA containers.",
-          "",
-          "Required preflight commands:",
-          "  nvidia-smi -L",
-          "  docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi -L",
-          "  docker run --rm --gpus all -v /dev/null:/var/run/nvidia-container-devices/all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi -L",
-          "",
-          "If Docker is not configured yet, follow the NVIDIA toolkit setup sequence:",
-          "  sudo nvidia-ctk runtime configure --runtime=docker --set-as-default --cdi.enabled",
-          "  sudo nvidia-ctk config --set accept-nvidia-visible-devices-as-volume-mounts=true --in-place",
-          "  sudo systemctl restart docker",
-          "",
-          "Observed failures:",
-          "host nvidia-smi:",
-          renderCommandOutcome hostGpuResult,
-          "docker --gpus all:",
-          renderCommandOutcome dockerRuntimeResult,
-          "docker --gpus all with NVIDIA device mount:",
-          renderCommandOutcome dockerVolumeMountResult
-        ]
+    LinuxCudaProbeResults
+      { hostGpuResult = hostGpuResult,
+        dockerRuntimeResult = dockerRuntimeResult,
+        dockerVolumeMountResult = dockerVolumeMountResult
+      }
+
+linuxCudaPreflightSatisfied :: String -> LinuxCudaProbeResults -> Bool
+linuxCudaPreflightSatisfied controlPlane probeResults =
+  commandSucceeded (dockerRuntimeResult probeResults)
+    && commandSucceeded (dockerVolumeMountResult probeResults)
+    && (controlPlane == "outer-container" || commandSucceeded (hostGpuResult probeResults))
+
+commandSucceeded :: Either String String -> Bool
+commandSucceeded result = case result of
+  Right _ -> True
+  Left _ -> False
+
+linuxCudaHostFailureReport :: String -> LinuxCudaProbeResults -> String
+linuxCudaHostFailureReport controlPlane probeResults =
+  unlines
+    ( [ "linux-cuda requires a real NVIDIA host plus a Docker engine configured for GPU and the NVIDIA volume-mount worker-device contract that nvkind uses for Kind workers.",
+        "",
+        "Active control-plane context: " <> controlPlane
+      ]
+        <> requiredPreflightLines
+        <> [ "",
+             "If Docker is not configured yet, follow the NVIDIA toolkit setup sequence:",
+             "  sudo nvidia-ctk runtime configure --runtime=docker --set-as-default --cdi.enabled",
+             "  sudo nvidia-ctk config --set accept-nvidia-visible-devices-as-volume-mounts=true --in-place",
+             "  sudo systemctl restart docker",
+             "",
+             "Observed failures:",
+             "launcher-local nvidia-smi:",
+             renderCommandOutcome (hostGpuResult probeResults),
+             "docker --gpus all:",
+             renderCommandOutcome (dockerRuntimeResult probeResults),
+             "docker default runtime with NVIDIA worker-device mount:",
+             renderCommandOutcome (dockerVolumeMountResult probeResults)
+           ]
     )
   where
+    requiredPreflightLines
+      | controlPlane == "outer-container" =
+          [ "",
+            "Required preflight commands for the outer-container launcher:",
+            "  docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi -L",
+            "  docker run --rm -v /dev/null:/var/run/nvidia-container-devices/all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi -L",
+            "",
+            "The supported NVIDIA host still needs a working `nvidia-smi -L`, but the launcher container may not ship that binary locally."
+          ]
+      | otherwise =
+          [ "",
+            "Required preflight commands:",
+            "  nvidia-smi -L",
+            "  docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi -L",
+            "  docker run --rm -v /dev/null:/var/run/nvidia-container-devices/all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi -L"
+          ]
     renderCommandOutcome result = case result of
       Right output -> output
       Left err -> err
@@ -552,12 +720,10 @@ dockerGpuProbeCommand =
     "-L"
   ]
 
-dockerCdiProbeCommand :: [String]
-dockerCdiProbeCommand =
+dockerVolumeMountProbeCommand :: [String]
+dockerVolumeMountProbeCommand =
   [ "run",
     "--rm",
-    "--gpus",
-    "all",
     "-v",
     "/dev/null:/var/run/nvidia-container-devices/all",
     "nvidia/cuda:12.4.1-base-ubuntu22.04",
@@ -569,34 +735,83 @@ ensureNvkindBinary :: Paths -> IO FilePath
 ensureNvkindBinary paths = do
   let binaryPath = buildRoot paths </> "tools" </> "nvkind"
       binaryDirectory = takeDirectory binaryPath
+  outerContainerBinaryPath <- resolveOuterContainerNvkindPath paths
   binaryExists <- doesFileExist binaryPath
   if binaryExists
     then pure binaryPath
     else do
       createDirectoryIfMissing True binaryDirectory
-      goResult <- tryCommand Nothing [] "go" ["version"]
-      case goResult of
-        Right _ ->
-          runCommand
-            Nothing
-            [("GOBIN", binaryDirectory)]
-            "go"
-            ["install", nvkindGoInstallTarget]
-        Left _ ->
-          runCommand
-            Nothing
-            []
-            "docker"
-            [ "run",
-              "--rm",
-              "-v",
-              binaryDirectory <> ":/go/bin",
-              "golang:1.23",
-              "go",
-              "install",
-              nvkindGoInstallTarget
-            ]
-      pure binaryPath
+      syncOuterContainerNvkindBinary outerContainerBinaryPath binaryPath
+      copiedBinaryExists <- doesFileExist binaryPath
+      if copiedBinaryExists
+        then pure binaryPath
+        else do
+          builderBinaryDirectory <- resolveNvkindBuilderDirectory paths
+          goResult <- tryCommand Nothing [] "go" ["version"]
+          case goResult of
+            Right output
+              | hostGoSupportsNvkind output ->
+                  runCommand
+                    Nothing
+                    [("GOBIN", binaryDirectory)]
+                    "go"
+                    ["install", nvkindGoInstallTarget]
+            _ ->
+              runCommand
+                Nothing
+                []
+                "docker"
+                [ "run",
+                  "--rm",
+                  "-v",
+                  builderBinaryDirectory <> ":/go/bin",
+                  nvkindGoBuilderImage,
+                  "go",
+                  "install",
+                  nvkindGoInstallTarget
+                ]
+          syncOuterContainerNvkindBinary outerContainerBinaryPath binaryPath
+          pure binaryPath
+  where
+    syncOuterContainerNvkindBinary maybeSourcePath targetPath =
+      case maybeSourcePath of
+        Just sourcePath -> do
+          sourceExists <- doesFileExist sourcePath
+          when sourceExists (copyFile sourcePath targetPath)
+        Nothing -> pure ()
+
+resolveNvkindBuilderDirectory :: Paths -> IO FilePath
+resolveNvkindBuilderDirectory paths
+  | Config.controlPlaneContext paths == "outer-container" = resolveOuterContainerNvkindHostDirectory paths
+  | otherwise = pure (buildRoot paths </> "tools")
+
+resolveOuterContainerNvkindPath :: Paths -> IO (Maybe FilePath)
+resolveOuterContainerNvkindPath paths
+  | Config.controlPlaneContext paths == "outer-container" = pure (Just (repoRoot paths </> ".build" </> "tools" </> "nvkind"))
+  | otherwise = pure Nothing
+
+resolveOuterContainerNvkindHostDirectory :: Paths -> IO FilePath
+resolveOuterContainerNvkindHostDirectory _paths = do
+  maybeHostKindRoot <- lookupEnv "INFERNIX_HOST_KIND_ROOT"
+  case maybeHostKindRoot of
+    Just hostKindRoot -> pure (takeDirectory (takeDirectory hostKindRoot) </> ".build" </> "tools")
+    Nothing ->
+      ioError
+        (userError "outer-container nvkind bootstrap requires INFERNIX_HOST_KIND_ROOT so Docker can write the helper binary to a host-visible repo path")
+
+hostGoSupportsNvkind :: String -> Bool
+hostGoSupportsNvkind versionOutput =
+  maybe False (>= minimumVersion) (parseGoVersion =<< findGoVersionToken (words versionOutput))
+  where
+    minimumVersion :: (Int, Int)
+    minimumVersion = (1, 24)
+    findGoVersionToken = List.find (List.isPrefixOf "go")
+    parseGoVersion token =
+      case break (== '.') (drop 2 token) of
+        (majorDigits, '.' : rest) ->
+          let (minorDigits, _) = span (`elem` ['0' .. '9']) rest
+           in (,) <$> readMaybe majorDigits <*> readMaybe minorDigits
+        _ -> Nothing
 
 waitForKindKubeconfig :: Paths -> RuntimeMode -> IO (Either String String)
 waitForKindKubeconfig paths runtimeMode = do
@@ -660,8 +875,25 @@ configureRuntimeModeCluster paths runtimeMode =
 configureLinuxCudaCluster :: Paths -> RuntimeMode -> IO ()
 configureLinuxCudaCluster paths _runtimeMode = do
   putStrLn "configuring linux-cuda runtime support"
+  ensureLinuxCudaRuntimeClass paths
   installLinuxCudaDevicePlugin paths
   waitForLinuxCudaResources paths
+
+ensureLinuxCudaRuntimeClass :: Paths -> IO ()
+ensureLinuxCudaRuntimeClass paths =
+  runCommandWithInput
+    Nothing
+    [("KUBECONFIG", Config.generatedKubeconfigPath paths)]
+    "kubectl"
+    ["apply", "-f", "-"]
+    ( unlines
+        [ "apiVersion: node.k8s.io/v1",
+          "kind: RuntimeClass",
+          "metadata:",
+          "  name: nvidia",
+          "handler: nvidia"
+        ]
+    )
 
 installLinuxCudaDevicePlugin :: Paths -> IO ()
 installLinuxCudaDevicePlugin paths = do
@@ -1077,7 +1309,7 @@ repairHarborDatabaseStorageState paths state =
       versionFileExists <- doesFileExist versionFile
       when (postgresRootExists && not versionFileExists) $ do
         removePathForcibly postgresRoot
-        createDirectoryIfMissing True (claimDirectory paths persistentClaim)
+        ensureClaimDirectoryReady paths persistentClaim
         _ <-
           tryCommand
             Nothing
@@ -1109,7 +1341,7 @@ resetHarborDatabaseStorageState paths state =
       let postgresRoot = claimDirectory paths persistentClaim </> "pgdata"
       postgresRootExists <- doesDirectoryExist postgresRoot
       when postgresRootExists (removePathForcibly postgresRoot)
-      createDirectoryIfMissing True (claimDirectory paths persistentClaim)
+      ensureClaimDirectoryReady paths persistentClaim
       _ <-
         tryCommand
           Nothing
@@ -1486,12 +1718,74 @@ prepareKindNodeRuntimePaths paths runtimeMode = do
         ["exec", "-i", nodeName, "cp", "/dev/stdin", registryDirectoryInNode </> "hosts.toml"]
         registryHostsContents
 
-syncKindNodeRuntimePathsToHost :: Paths -> RuntimeMode -> IO ()
-syncKindNodeRuntimePathsToHost paths runtimeMode = do
+syncKindNodeRuntimePathsToHost :: Paths -> RuntimeMode -> Maybe ClusterState -> IO ()
+syncKindNodeRuntimePathsToHost paths runtimeMode maybeState = do
   let localKindRoot = kindRoot paths
   createDirectoryIfMissing True localKindRoot
-  nodeNames <- kindNodeNames paths runtimeMode
-  mapM_ (\nodeName -> copyDirectoryContentsFromContainer nodeName nodeMountedKindRoot localKindRoot) nodeNames
+  syncedClaims <- case maybeState of
+    Just state | not (null (claims state)) -> syncClaimDirectoriesFromOwningNodes paths state
+    _ -> pure False
+  unless syncedClaims $ do
+    nodeNames <- kindNodeNames paths runtimeMode
+    mapM_ (\nodeName -> copyDirectoryContentsFromContainer nodeName nodeMountedKindRoot localKindRoot) nodeNames
+
+syncClaimDirectoriesFromOwningNodes :: Paths -> ClusterState -> IO Bool
+syncClaimDirectoriesFromOwningNodes paths state = do
+  claimNodeBindings <- discoverClaimNodeBindings state
+  claimSyncResults <-
+    mapM
+      (\persistentClaim -> syncClaimDirectoryFromOwningNode paths persistentClaim claimNodeBindings)
+      (claims state)
+  pure (or claimSyncResults)
+
+discoverClaimNodeBindings :: ClusterState -> IO (Map.Map String String)
+discoverClaimNodeBindings state = do
+  result <-
+    tryCommand
+      Nothing
+      []
+      "kubectl"
+      ( kubeconfigArgs state
+          <> [ "get",
+               "pods",
+               "-A",
+               "-o",
+               claimNodeBindingsTemplate
+             ]
+      )
+  pure
+    ( case result of
+        Left _ -> Map.empty
+        Right output -> Map.fromList (mapMaybe parseClaimNodeBindingLine (lines output))
+    )
+  where
+    claimNodeBindingsTemplate =
+      "go-template={{range .items}}{{ $node := .spec.nodeName }}{{range .spec.volumes}}{{if .persistentVolumeClaim}}{{printf \"%s\\t%s\\n\" .persistentVolumeClaim.claimName $node}}{{end}}{{end}}{{end}}"
+
+syncClaimDirectoryFromOwningNode :: Paths -> PersistentClaim -> Map.Map String String -> IO Bool
+syncClaimDirectoryFromOwningNode paths persistentClaim claimNodeBindings =
+  case Map.lookup (persistentVolumeClaimName persistentClaim) claimNodeBindings of
+    Nothing -> pure False
+    Just nodeName -> do
+      let containerDirectory = nodeMountedClaimPath persistentClaim
+          localDirectory = claimDirectory paths persistentClaim
+      containerExists <- containerDirectoryExists nodeName containerDirectory
+      if containerExists
+        then do
+          localDirectoryExists <- doesDirectoryExist localDirectory
+          when localDirectoryExists (removePathForcibly localDirectory)
+          createDirectoryIfMissing True localDirectory
+          copyDirectoryContentsFromContainer nodeName containerDirectory localDirectory
+          pure True
+        else pure False
+
+parseClaimNodeBindingLine :: String -> Maybe (String, String)
+parseClaimNodeBindingLine lineValue =
+  case splitTabs lineValue of
+    [claimNameValue, nodeNameValue]
+      | not (null claimNameValue) && not (null nodeNameValue) ->
+          Just (claimNameValue, nodeNameValue)
+    _ -> Nothing
 
 kindNodeNames :: Paths -> RuntimeMode -> IO [String]
 kindNodeNames paths runtimeMode =
@@ -1532,6 +1826,15 @@ containerDirectoryHasEntries nodeName directory = do
     ( case result of
         Left _ -> False
         Right output -> not (all (all isSpace) (lines output))
+    )
+
+containerDirectoryExists :: String -> FilePath -> IO Bool
+containerDirectoryExists nodeName directory = do
+  result <- tryCommand Nothing [] "docker" ["exec", nodeName, "sh", "-lc", "test -d " <> directory]
+  pure
+    ( case result of
+        Left _ -> False
+        Right _ -> True
     )
 
 runtimeModeLabels :: RuntimeMode -> String

@@ -48,6 +48,17 @@ assert.deepEqual(
     upstreams: [{ id: "service", healthStatus: "ready", targetSurface: "host-native daemon bridge", durableBackendState: "pulsar-transport and minio-durable-state" }],
   },
 );
+assert.deepEqual(publicationSummary(null, runtimeMode), {
+  runtimeMode,
+  controlPlaneContext: "Unavailable",
+  daemonLocation: "Unavailable",
+  catalogSource: "Unavailable",
+  edgePort: "Not published",
+  apiUpstreamMode: "Unavailable",
+  demoConfigPath: "Unavailable",
+  routes: [],
+  upstreams: [],
+});
 assert.equal(selectionSummary(models[0]).artifactType, models[0].artifactType);
 assert.equal(typeof selectionSummary(models[0]).familyLabel, "string");
 assert.equal(typeof selectionSummary(models[0]).submitLabel, "string");

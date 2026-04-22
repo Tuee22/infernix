@@ -1,4 +1,4 @@
-import { apiBasePath, runtimeMode as generatedRuntimeMode, models as generatedModels } from "./generated/contracts.js";
+import { apiBasePath, runtimeMode as generatedRuntimeMode } from "./generated/contracts.js";
 import {
   catalogCards,
   describeCompletedRequest,
@@ -8,10 +8,10 @@ import {
 } from "./workbench.js";
 
 const state = {
-  models: generatedModels,
+  models: [],
   publication: null,
   runtimeMode: generatedRuntimeMode,
-  selectedModelId: generatedModels[0]?.modelId ?? null,
+  selectedModelId: null,
 };
 
 const catalogEl = document.querySelector("#catalog");
@@ -67,7 +67,9 @@ function renderCatalog() {
   catalogEl.innerHTML = "";
 
   if (visibleModels.length === 0) {
-    catalogEl.innerHTML = `<p class="muted">No models match “${query}”.</p>`;
+    catalogEl.innerHTML = `<p class="muted">${
+      state.models.length === 0 && !query ? "Live catalog unavailable." : `No models match “${query}”.`
+    }</p>`;
     renderSelectionDetails();
     return;
   }
@@ -133,8 +135,10 @@ async function loadCatalog() {
     selectionStatusEl.textContent = `Model catalog loaded for ${state.runtimeMode}`;
     selectionStatusEl.className = "status success";
   } catch (error) {
-    selectionStatusEl.textContent = `Using generated catalog fallback: ${error.message}`;
-    selectionStatusEl.className = "status muted";
+    state.models = [];
+    state.selectedModelId = null;
+    selectionStatusEl.textContent = error.message;
+    selectionStatusEl.className = "status error";
   }
   renderCatalog();
   renderPublication();

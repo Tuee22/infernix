@@ -31,11 +31,10 @@
   the cluster path without rebuilding the runtime image
 - the plan contract for the `linux-cuda` Kind path requires NVIDIA container runtime support inside
   Kind plus usable `nvidia.com/gpu` resources for scheduled workloads
-- the current implementation enforces host-side NVIDIA preflight checks, creates the CUDA cluster
-  through `nvkind`, mounts `/var/run/nvidia-container-devices/all` into the GPU worker template,
-  installs the NVIDIA device plugin through Helm, and deploys `RuntimeClass/nvidia` plus
-  GPU-requesting repo-owned workloads; the remaining supported-host validation work stays open in
-  [../../DEVELOPMENT_PLAN/phase-2-kind-cluster-storage-and-lifecycle.md](../../DEVELOPMENT_PLAN/phase-2-kind-cluster-storage-and-lifecycle.md)
+- `cluster up` enforces host-side NVIDIA preflight checks, creates the CUDA cluster through
+  `nvkind`, mounts `/var/run/nvidia-container-devices/all` into the GPU worker template, creates
+  `RuntimeClass/nvidia` before the device-plugin rollout depends on it, installs the NVIDIA device
+  plugin through Helm, and deploys GPU-requesting repo-owned workloads
 - `infernix test lint` is the canonical chart gate and proves Helm dependency resolution, `helm lint`, `helm template`, and durable-claim discovery
 
 ## Cross-References

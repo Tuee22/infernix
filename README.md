@@ -150,6 +150,9 @@ The canonical supported CLI surface is:
 - `infernix cluster up`
 - `infernix cluster down`
 - `infernix cluster status`
+- `infernix cache status`
+- `infernix cache evict`
+- `infernix cache rebuild`
 - `infernix kubectl ...`
 - `infernix test lint`
 - `infernix test unit`
@@ -158,7 +161,7 @@ The canonical supported CLI surface is:
 - `infernix test all`
 - `infernix docs check`
 
-Every repo-owned lifecycle, validation, and docs command other than `infernix service` is
+Every repo-owned lifecycle, cache, validation, and docs command other than `infernix service` is
 declarative and idempotent. `infernix kubectl ...` is a scoped wrapper around upstream `kubectl`,
 not a parallel lifecycle surface.
 

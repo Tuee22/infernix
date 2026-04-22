@@ -190,25 +190,6 @@ class InfernixHandler(BaseHTTPRequestHandler):
                 self.respond_json(HTTPStatus.NOT_FOUND, {"errorCode": "not_found", "message": "Object not found."})
             return
 
-        if normalized_path in {"/harbor", "/minio/console", "/pulsar/admin"}:
-            self.respond_html(
-                HTTPStatus.OK,
-                (
-                    "<html><body><h1>"
-                    f"{normalized_path}"
-                    "</h1><p>Compatibility portal surface.</p>"
-                    f"<p>Runtime mode: {self.runtime_mode}</p></body></html>"
-                ),
-            )
-            return
-
-        if normalized_path in {"/minio/s3", "/pulsar/ws"}:
-            self.respond_json(
-                HTTPStatus.OK,
-                {"path": normalized_path, "status": "ready", "runtimeMode": self.runtime_mode},
-            )
-            return
-
         self.serve_static(path)
 
     def do_POST(self) -> None:

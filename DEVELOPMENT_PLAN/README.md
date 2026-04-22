@@ -57,10 +57,11 @@ across the tracked phases.
 - the Linux outer-container launcher now keeps the Kind API server and routed host-port mappings
   on `127.0.0.1`, joins the private Docker `kind` network for cluster-backed commands, writes the
   repo-local kubeconfig from `kind get kubeconfig --internal`, pins Kind nodes to
-  `kindest/node:v1.34.0`, and primes Kind node-local registry or storage state after cluster
-  creation instead of bind-mounting repo-owned Kind paths into those nodes; closure on this
-  Ubuntu host remains blocked because clean two-node Kind creation still stops during worker
-  `kubeadm join` while waiting for worker kubelet health
+  `kindest/node:v1.34.0`, primes Kind node-local registry or storage state after cluster
+  creation instead of bind-mounting repo-owned Kind paths into those nodes, and now syncs durable
+  claim directories back from the owning Kind node during teardown; the validated Ubuntu
+  outer-container lane also requires host inotify capacity high enough for mount-bearing Kind
+  nodes, with `fs.inotify.max_user_instances >= 1024` keeping repeated worker bootstrap stable
 - the Harbor-first cluster image flow is closed on the supported Apple lane: Harbor bootstrap and
   only the storage or support services Harbor needs pull from upstream before Harbor is ready, the
   helper registry is gone, the Kind registry mirror only rewrites `localhost:30002`, the final
@@ -68,8 +69,11 @@ across the tracked phases.
   `cluster up` runs complete with the final non-Harbor workloads pulling from Harbor-backed refs
 - the `linux-cuda` lane now reconciles a real NVIDIA-backed Kind path on supported hosts: the
   current code fails fast unless the NVIDIA host and Docker toolkit preflight commands pass, uses
-  `nvkind` to create the cluster, mounts the CDI device path into the GPU worker, and installs the
-  NVIDIA device plugin so Kubernetes advertises real allocatable `nvidia.com/gpu` resources;
+  `nvkind` to create the cluster, mounts the NVIDIA worker-device path into the GPU worker,
+  creates `RuntimeClass/nvidia` before the device-plugin rollout depends on it, and installs the
+  NVIDIA device plugin so Kubernetes advertises real allocatable `nvidia.com/gpu` resources; the
+  repo-owned bootstrap also covers the current upstream `nvkind` configmap-persistence bug during
+  post-create node setup;
   final closure remains open until that path is revalidated on a supported NVIDIA host through the
   full integration and E2E matrix
 - the routed service path remains open: `tools/service_server.py` and `tools/runtime_backend.py`
@@ -83,9 +87,10 @@ across the tracked phases.
 - exhaustive integration and E2E validation remain open at final-closure level: the suites cover
   every generated catalog entry today and now validate the process-isolated engine-worker adapter
   path plus the durable-artifact or direct-upstream source-artifact contract; by default they
-  auto-include `linux-cuda` only when the current host passes the NVIDIA preflight contract, but
+  auto-include `linux-cuda` only when the active control-plane surface passes the NVIDIA
+  preflight contract, but
   they are still not exercising final engine execution across the full supported matrix on
-  supported hosts
+  supported hosts or revalidating the `linux-cuda` lane on a supported NVIDIA host
 
 ## Execution Contexts and Runtime Modes
 

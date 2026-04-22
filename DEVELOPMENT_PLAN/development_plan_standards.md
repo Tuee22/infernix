@@ -282,6 +282,9 @@ The canonical command surface is:
 - `infernix cluster up`
 - `infernix cluster down`
 - `infernix cluster status`
+- `infernix cache status`
+- `infernix cache evict`
+- `infernix cache rebuild`
 - `infernix kubectl ...`
 - `infernix test lint`
 - `infernix test unit`
@@ -305,6 +308,9 @@ Rules:
 - `infernix cluster down` reconciles cluster absence while preserving authoritative repo data under
   `./.data/`.
 - `infernix cluster status` is read-only and never mutates cluster or repo state.
+- `infernix cache status`, `infernix cache evict`, and `infernix cache rebuild` operate only on
+  manifest-backed derived cache state and do not rewrite the generated catalog or publication
+  contract.
 - `infernix kubectl ...` is a scoped wrapper around upstream `kubectl`, automatically injecting the
   repo-local kubeconfig from the active build-output location; it is not a separate lifecycle
   orchestration surface.

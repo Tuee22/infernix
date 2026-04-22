@@ -50,9 +50,14 @@ routed host-port mappings on `127.0.0.1`, joins the private Docker `kind` networ
 cluster-backed commands, writes the repo-local kubeconfig from `kind get kubeconfig --internal`,
 pins Kind nodes to `kindest/node:v1.34.0`, and primes Kind node-local registry or storage state
 after cluster creation instead of bind-mounting repo-owned Kind paths into those nodes. The
-remaining gaps in this phase are the `linux-cuda` closure validation and a Docker or Kind
-substrate on the current Ubuntu host that can complete clean two-node worker kubelet bootstrap on
-the outer-container lane.
+`linux-cuda` path now creates `RuntimeClass/nvidia` before the device-plugin rollout depends on it
+and carries a repo-owned fallback for the current upstream `nvkind` configmap-persistence bug, but
+the remaining gap in this phase is still `linux-cuda` closure validation on a supported NVIDIA host
+whose Docker runtime satisfies the worker-device volume-mount probe that the Kind worker path
+depends on. The
+validated Linux outer-container lane also requires host inotify capacity high enough for
+mount-bearing Kind nodes; on the current Ubuntu host, `fs.inotify.max_user_instances >= 1024`
+keeps the repeated worker bootstrap and claim-sync lifecycle stable.
 
 ## Sprint 2.1: Kind Bootstrap and StorageClass Reset [Done]
 
@@ -231,9 +236,9 @@ None.
 
 ---
 
-## Sprint 2.5: Kind Lifecycle Idempotency and Status Surface [Active]
+## Sprint 2.5: Kind Lifecycle Idempotency and Status Surface [Done]
 
-**Status**: Active
+**Status**: Done
 **Implementation**: `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `compose.yaml`, `kind/cluster-apple-silicon.yaml`, `kind/cluster-linux-cpu.yaml`, `kind/cluster-linux-cuda.yaml`, `test/integration/Spec.hs`, `tools/platform_asset_check.py`
 **Docs to update**: `README.md`, `documents/reference/cli_reference.md`, `documents/operations/cluster_bootstrap_runbook.md`
 
@@ -273,11 +278,7 @@ Make cluster reconcile, status, and teardown predictable.
 
 ### Remaining Work
 
-- rerun `docker compose run --rm infernix infernix cluster up`, `cluster status`, `cluster down`,
-  and repeat `cluster up` on a Docker or Kind substrate that can complete clean two-node worker
-  kubelet bootstrap on the current Ubuntu host
-- keep the loopback-only host bindings, private `kind` network access path, and internal-kubeconfig
-  contract intact while restoring full outer-container lifecycle closure
+None.
 
 ---
 
@@ -329,23 +330,27 @@ Make `linux-cuda` a real GPU-backed cluster mode rather than a nominal matrix co
 
 ### Deliverables
 
-- `kind/cluster-linux-cuda.yaml` captures the GPU worker labels and the CDI device mount consumed
-  by the supported `nvkind`-backed Kind path
+- `kind/cluster-linux-cuda.yaml` captures the GPU worker labels and the NVIDIA worker-device
+  volume-mount path consumed by the supported `nvkind`-backed Kind path
 - `cluster up` in `linux-cuda` fails fast unless the host passes the NVIDIA preflight contract for
-  `nvidia-smi`, Docker `--gpus all`, and the Kind worker device mount
+  `nvidia-smi`, Docker `--gpus all`, and the Kind worker device-mount probe
 - `cluster up` in `linux-cuda` reconciles the Kind cluster through `nvkind`, preserving the
-  repo-local kubeconfig contract while exposing NVIDIA runtime support inside the Kind node containers
+  repo-local kubeconfig contract while exposing NVIDIA runtime support inside the Kind node
+  containers; when the current upstream `nvkind` build hits its late configmap-persistence bug, the
+  repo-owned bootstrap finishes the node-side toolkit and containerd setup itself before the
+  repo-owned device-plugin reconcile runs
 - the cluster installs the NVIDIA device plugin so nodes expose allocatable `nvidia.com/gpu`
   through the real Kubernetes resource inventory rather than synthetic status patching
 - repo-owned workload rules for CUDA lanes request `nvidia.com/gpu` and apply the required runtime
-  configuration, such as `runtimeClassName: nvidia`, when needed by the chosen implementation
+  configuration, such as `runtimeClassName: nvidia`, when needed by the chosen implementation, and
+  the repo-owned bootstrap creates `RuntimeClass/nvidia` before the device-plugin rollout depends on it
 - cluster-resident CUDA workloads can schedule on the GPU-capable Kind substrate and run
   `nvidia-smi -L` inside the service deployment on supported hosts
 
 ### Validation
 
 - `./.build/infernix test lint` passes `tools/platform_asset_check.py`, which verifies the GPU
-  Kind config carries the CDI device mount and the GPU node label
+  Kind config carries the worker-device volume mount and the GPU node label
 - `infernix kubectl get nodes -l infernix.runtime/gpu=true -o jsonpath=...` on the current Kind
   path shows positive allocatable `nvidia.com/gpu` resources for `linux-cuda`
 - `infernix kubectl -n nvidia get daemonset nvidia-device-plugin-daemonset -o jsonpath=...`
@@ -355,21 +360,20 @@ Make `linux-cuda` a real GPU-backed cluster mode rather than a nominal matrix co
   workload
 - `infernix kubectl -n platform exec deployment/infernix-service -- nvidia-smi -L` reports at
   least one visible GPU on a supported NVIDIA host
-- `./.build/infernix --runtime-mode linux-cuda test integration` passes on the host-native path
-  and exercises the CUDA lane through repeated `cluster up` or `cluster down` lifecycle checks
-- `./.build/infernix --runtime-mode linux-cuda test e2e` passes on the host-native final
-  substrate while the `infernix-service` pod schedules onto the GPU-labeled worker
+- `docker compose run --rm infernix infernix --runtime-mode linux-cuda test integration` passes on
+  the supported NVIDIA-backed outer-container path and exercises the CUDA lane through repeated
+  `cluster up` or `cluster down` lifecycle checks
+- `docker compose run --rm infernix infernix --runtime-mode linux-cuda test e2e` passes on the
+  supported NVIDIA-backed outer-container final substrate while the `infernix-service` pod
+  schedules onto the GPU-labeled worker
 
 ### Remaining Work
 
 - rerun the `linux-cuda` integration and E2E suites on a supported NVIDIA host that satisfies the
-  documented preflight contract so this sprint can close with supported-host validation rather than
-  host-gated implementation work alone
-- the current Ubuntu outer-container host still cannot boot Kind nodes that carry any extra mount,
-  including the required NVIDIA CDI device mount, because node startup fails with
-  `Failed to create control group inotify object: Too many open files`; closing the outer-container
-  `linux-cuda` lane therefore also depends on a Docker or Kind substrate whose open-file limits do
-  not break mount-bearing Kind nodes
+  documented preflight contract, including `docker run --rm -v /dev/null:/var/run/nvidia-container-devices/all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi -L`, so this sprint can close with supported-host validation rather than host-gated implementation work alone
+- keep the outer-container `linux-cuda` lane gated on a supported NVIDIA host whose Docker or Kind
+  substrate satisfies the documented GPU preflight contract and exposes host inotify capacity high
+  enough for the required worker-device mount-bearing Kind nodes
 
 ## Documentation Requirements
 

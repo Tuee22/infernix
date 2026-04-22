@@ -22,6 +22,7 @@
 - `infernix test unit` runs the generated-contract, catalog-parity, request-shape, and result-state tests
 - the web build fails when generated contracts drift from Haskell-owned source
 - generated contracts expose the active runtime mode and every generated catalog entry for that mode
+- catalog loading uses routed `/api/models` data rather than a generated browser-only fallback catalog
 - publication-summary rendering uses the routed `/api/publication` payload rather than a hidden browser-only publication model
 - host-native and outer-container build flows both regenerate the same contract module deterministically
 

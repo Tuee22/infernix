@@ -8,7 +8,10 @@
 ## Bring-Up
 
 - run `infernix cluster up`
-- for `linux-cuda`, confirm the host preflight commands `nvidia-smi -L`, `docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi -L`, and `docker run --rm --gpus all -v /dev/null:/var/run/nvidia-container-devices/all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi -L` all succeed before cluster creation
+- for `linux-cuda`, confirm the supported NVIDIA host satisfies `nvidia-smi -L`, `docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi -L`, and `docker run --rm -v /dev/null:/var/run/nvidia-container-devices/all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi -L` before cluster creation; on the outer-container control-plane path the launcher directly verifies the two Docker probes because it may not ship the host `nvidia-smi` binary locally
+- on the outer-container control-plane path, confirm the host exposes enough inotify instances for
+  mount-bearing Kind nodes; the validated Ubuntu flow uses
+  `fs.inotify.max_user_instances >= 1024`
 - confirm that the chosen edge port, active runtime mode, generated demo-config paths, and build-root publication details are printed
 - confirm that Harbor and its required bootstrap storage or support services reconcile first, and
   that the remaining non-Harbor workloads do not appear until Harbor is ready for image pulls
@@ -43,10 +46,6 @@
   and routed browser validation reach the cluster through the private Docker `kind` network plus
   `kind get kubeconfig --internal` rather than through `host.docker.internal`
 - for `linux-cuda`, confirm `infernix kubectl -n nvidia get daemonset nvidia-device-plugin-daemonset -o jsonpath='{.status.numberReady}:{.status.desiredNumberScheduled}'` reports a ready rollout, `infernix kubectl get nodes -l infernix.runtime/gpu=true -o jsonpath='{range .items[*]}{.status.allocatable.nvidia\.com/gpu}{"\n"}{end}'` reports positive values, `infernix kubectl get deployment -n platform infernix-service -o jsonpath='{.spec.template.spec.runtimeClassName}'` reports `nvidia`, and `infernix kubectl -n platform exec deployment/infernix-service -- nvidia-smi -L` reports visible GPUs
-- those checks validate the current implementation's real NVIDIA-backed CUDA lane on supported
-  hosts; the remaining work is to close the full validation matrix on supported hardware, as
-  tracked in
-  [../../DEVELOPMENT_PLAN/phase-2-kind-cluster-storage-and-lifecycle.md](../../DEVELOPMENT_PLAN/phase-2-kind-cluster-storage-and-lifecycle.md)
 
 ## Teardown
 

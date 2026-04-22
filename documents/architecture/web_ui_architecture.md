@@ -3,8 +3,8 @@
 **Status**: Authoritative source
 **Referenced by**: [overview.md](overview.md), [../../DEVELOPMENT_PLAN/phase-5-web-ui-and-shared-types.md](../../DEVELOPMENT_PLAN/phase-5-web-ui-and-shared-types.md)
 
-> **Purpose**: Define the browser topology and the contract boundary between the Haskell service
-> and the web UI.
+> **Purpose**: Define the browser topology and the contract boundary between the routed service
+> surface owned by `infernix service` and the web UI.
 
 ## Topology
 
@@ -15,6 +15,7 @@
 - on the supported Apple host-native path, the same `/api` route can be repointed to the host bridge while the browser stays on the same edge base URL
 - the visible catalog comes from the generated active-mode demo catalog rather than a hand-maintained UI allowlist
 - the browser workbench renders the generated catalog in generated order and does not maintain a hidden filtered subset on the supported path
+- routed catalog or publication failures surface as unavailable live state rather than browser-only fallback data
 
 ## Shared Contracts
 
@@ -28,8 +29,9 @@
 
 - unit tests prove the generated contract module shape plus the workbench view-model logic for selection, catalog parity, publication summary rendering, family-aware request guidance, and result-state rendering
 - E2E coverage exhaustively hits every generated catalog entry through routed Playwright HTTP
-  coverage against the real cluster edge and separately exercises browser UI interaction for
-  publication-detail rendering, model selection, submission, object-reference results, and the
+  coverage against the real cluster edge, cross-checks routed `/api/models` against the serialized
+  generated demo config, and separately exercises browser UI interaction for publication-detail
+  rendering, model selection, submission, object-reference results, and the
   host-bridge-versus-cluster-service daemon-location switch on the supported Apple host path
 - the host-native and outer-container validation paths launch that Playwright suite from the same
   built web image that serves the UI, and the host-native final-substrate lane serves

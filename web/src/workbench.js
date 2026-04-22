@@ -68,11 +68,11 @@ export function publicationSummary(publication, fallbackRuntimeMode) {
   const upstreams = Array.isArray(publication?.upstreams) ? publication.upstreams : [];
   return {
     runtimeMode: publication?.runtimeMode ?? fallbackRuntimeMode ?? "unknown",
-    controlPlaneContext: publication?.controlPlaneContext ?? "generated-fallback",
-    daemonLocation: publication?.daemonLocation ?? "control-plane-unknown",
-    catalogSource: publication?.catalogSource ?? "generated-contract-fallback",
+    controlPlaneContext: publication?.controlPlaneContext ?? "Unavailable",
+    daemonLocation: publication?.daemonLocation ?? "Unavailable",
+    catalogSource: publication?.catalogSource ?? "Unavailable",
     edgePort: publication?.edgePort == null ? "Not published" : String(publication.edgePort),
-    apiUpstreamMode: publication?.apiUpstream?.mode ?? "unpublished",
+    apiUpstreamMode: publication?.apiUpstream?.mode ?? "Unavailable",
     demoConfigPath:
       publication?.demoConfigPath ??
       publication?.generatedDemoConfigPath ??

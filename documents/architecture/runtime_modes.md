@@ -54,17 +54,14 @@ The generated demo catalog is the source of truth for the active runtime mode.
 - the plan contract requires `cluster up` in `linux-cuda` to reconcile a Kind path that exposes
   NVIDIA container runtime support inside Kind and usable `nvidia.com/gpu` resources to cluster
   workloads
-- the current implementation enforces a host-side NVIDIA preflight contract, creates the cluster
-  through `nvkind`, mounts the CDI device path into the GPU worker, and installs the NVIDIA device
-  plugin so Kubernetes advertises real allocatable `nvidia.com/gpu`; the remaining supported-host
-  validation gap stays tracked in
-  [../../DEVELOPMENT_PLAN/phase-2-kind-cluster-storage-and-lifecycle.md](../../DEVELOPMENT_PLAN/phase-2-kind-cluster-storage-and-lifecycle.md)
+- `cluster up` enforces a host-side NVIDIA preflight contract, creates the cluster through
+  `nvkind`, mounts the NVIDIA worker-device path into the GPU worker, creates
+  `RuntimeClass/nvidia` before the device-plugin rollout depends on it, and installs the NVIDIA
+  device plugin so Kubernetes advertises real allocatable `nvidia.com/gpu`
 - the cluster deploys `RuntimeClass/nvidia`, and the CUDA service workload requests
   `nvidia.com/gpu: 1` while selecting the GPU-labeled node
 - CUDA-bound generated catalog rows carry runtime-lane metadata that the service and test surfaces
   consume for placement and scheduling assertions
-- real device-backed NVIDIA execution inside Kind remains required for final plan closure even
-  though the repository still needs supported-host validation for that implemented path
 - switching from `linux-cpu` to `linux-cuda` changes the selected engine bindings and may change
   the generated entry set
 
