@@ -1,3 +1,20 @@
+FROM haskell:9.14.1-slim-bookworm AS build
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates protobuf-compiler \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
+
+COPY Setup.hs cabal.project infernix.cabal LICENSE README.md ./
+COPY app app
+COPY proto proto
+COPY src src
+COPY test test
+
+RUN cabal update \
+    && cabal install --builddir=/tmp/infernix-cabal --installdir=/opt/infernix/bin --install-method=copy --overwrite-policy=always exe:infernix
+
 FROM haskell:9.14.1-slim-bookworm
 
 ARG KIND_VERSION=v0.31.0
@@ -30,9 +47,10 @@ RUN apt-get update \
 WORKDIR /workspace
 
 COPY tools/requirements.txt /tmp/tools-requirements.txt
-COPY docker/infernix /usr/local/bin/infernix
+COPY --from=build /opt/infernix/bin/infernix /usr/local/bin/infernix
 
 RUN python3 -m pip install --break-system-packages --no-cache-dir -r /tmp/tools-requirements.txt
+RUN cabal update
 
 ENV INFERNIX_BUILD_ROOT=/opt/build/infernix
 ENV INFERNIX_CABAL_BUILDDIR=/opt/build/infernix

@@ -183,7 +183,7 @@ The repo ships one Haskell executable, `infernix`.
 - `infernix service` runs the service runtime.
 - `infernix cluster ...` owns Kind and Helm lifecycle.
 - `infernix test ...` owns validation entrypoints.
-- No second repo-owned Haskell executable exists for tests, bootstrap wrappers, or sidecar helpers.
+- No second repo-owned Haskell executable or launcher script exists for tests, bootstrap, or sidecar helpers.
 
 ### 2. Dual Control-Plane Execution Contexts
 
@@ -379,23 +379,24 @@ At closure, Playwright is installed in the same container image that serves the 
 
 Containerized builds keep generated artifacts out of the bind-mounted repo tree.
 
-- Dockerfiles and supported outer-container `cabal` invocations pass `--builddir=/opt/build/infernix`
-  explicitly so container artifacts land under `/opt/build/infernix`.
+- Supported outer-container runtime `cabal` invocations pass `--builddir=/opt/build/infernix`
+  explicitly so runtime container artifacts land under `/opt/build/infernix`.
 - Supported container Cabal workflows use `/opt/build/infernix` as the build root.
-- The validated Compose launcher materializes `infernix` through the repo-owned `docker/infernix`
-  wrapper and keeps container-side build output under `/opt/build/infernix`.
+- The validated Compose launcher uses the image-installed `infernix` binary and keeps
+  container-side runtime build output under `/opt/build/infernix`.
 - Unqualified bare `cabal` invocations are not allowed to recreate `dist-newstyle/` or any other
   build output under the mounted repository during supported container workflows.
-- The repo-owned CLI, container entrypoint contract, or wrapper layer must enforce this behavior
-  rather than relying on contributor discipline alone.
+- The repo-owned CLI or container entrypoint contract must enforce this behavior rather than
+  relying on contributor discipline alone.
 
 ### 12. Apple Host Build Output Stays Under `./.build`
 
 Apple host-native builds keep generated artifacts under the repo-local `./.build/` directory.
 
-- The current implementation achieves this through the repo-owned `./cabalw` wrapper, which
-  injects `--builddir=.build/cabal` unless a supported workflow already passed its own builddir,
-  plus `./.build/infernix` materialization.
+- The current implementation achieves this through direct
+  `cabal --builddir=.build/cabal install --installdir=./.build --install-method=copy --overwrite-policy=always exe:infernix`
+  host builds plus `./.build/infernix` materialization, and the supported path does not include
+  repo-owned scripts or wrappers.
 - Supported Apple host-native command examples use `./.build/infernix ...`.
 - The generated mode-specific demo `.dhall` files for host-side `cluster up` live under
   `./.build/`.

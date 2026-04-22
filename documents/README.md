@@ -39,4 +39,6 @@
 
 - Update the owning document when CLI surfaces, storage rules, routes, or runtime modes change.
 - Update linked documents in the same change when a contract crosses boundaries.
+- Supported workflow docs use direct `cabal`, `docker compose`, and `infernix` commands rather
+  than repo-owned scripts or wrapper layers.
 - Run the docs validator before handing off changes.

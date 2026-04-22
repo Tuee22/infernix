@@ -20,9 +20,9 @@ Those actions are reserved for the user.
 - Keep `DEVELOPMENT_PLAN/` aligned with the current implementation state.
 - Use `documents/` for canonical architecture, development, engineering, operations, and reference guidance.
 - Review `README.md`, `AGENTS.md`, and `CLAUDE.md` together when repository workflow guidance changes.
-- Use the repo-owned `./cabalw ...` wrapper on the Apple host path so Cabal output stays under
-  `./.build/cabal`; only pass explicit `--builddir` overrides when a supported workflow requires
-  them.
+- Do not add repo-owned scripts or wrappers for supported workflows.
+- Use direct `cabal --builddir=.build/cabal install --installdir=./.build --install-method=copy --overwrite-policy=always exe:infernix`
+  host builds unless a supported workflow requires different explicit output paths.
 - Keep root docs explicit about what is implemented today versus what remains target-state intent.
 - Keep the Harbor-first bootstrap narrative aligned across `README.md`, `DEVELOPMENT_PLAN/`, and
   `documents/`: Harbor and only Harbor-required bootstrap support services may pull upstream before

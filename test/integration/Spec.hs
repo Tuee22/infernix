@@ -22,7 +22,7 @@ import System.FilePath ((</>))
 import System.IO (Handle, hClose, hGetLine)
 import System.IO.Error (catchIOError, isDoesNotExistError)
 import System.Process
-  ( CreateProcess (std_err, std_in, std_out),
+  ( CreateProcess (cwd, std_err, std_in, std_out),
     StdStream (CreatePipe),
     createProcess,
     proc,
@@ -476,22 +476,31 @@ captureInfernixOutput :: Paths -> RuntimeMode -> [String] -> IO String
 captureInfernixOutput paths runtimeMode args = do
   let binaryPath = buildRoot paths </> "infernix"
   binaryExists <- doesFileExist binaryPath
-  let commandAndArgs
-        | binaryExists =
-            ( binaryPath,
-              ["--runtime-mode", showRuntimeMode runtimeMode] <> args
-            )
-        | otherwise =
-            ( repoRoot paths </> "cabalw",
-              [ "run",
-                "exe:infernix",
-                "--",
-                "--runtime-mode",
-                showRuntimeMode runtimeMode
-              ]
-                <> args
-            )
-  (exitCode, stdoutOutput, stderrOutput) <- uncurry readProcessWithExitCode commandAndArgs ""
+  buildDir <- Config.resolveCabalBuildDir
+  (exitCode, stdoutOutput, stderrOutput) <-
+    if binaryExists
+      then
+        readProcessWithExitCode
+          binaryPath
+          (["--runtime-mode", showRuntimeMode runtimeMode] <> args)
+          ""
+      else
+        readCreateProcessWithExitCode
+          ( proc
+              "cabal"
+              ( [ "--builddir=" <> buildDir,
+                  "run",
+                  "exe:infernix",
+                  "--",
+                  "--runtime-mode",
+                  showRuntimeMode runtimeMode
+                ]
+                  <> args
+              )
+          )
+            { cwd = Just (repoRoot paths)
+            }
+          ""
   assert (null stderrOutput || exitCode == ExitSuccess) "cluster status does not emit stderr output"
   case exitCode of
     ExitSuccess -> pure stdoutOutput

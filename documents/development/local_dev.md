@@ -9,7 +9,7 @@
 ## Apple Host-Native Flow
 
 ```bash
-./cabalw build exe:infernix
+cabal --builddir=.build/cabal install --installdir=./.build --install-method=copy --overwrite-policy=always exe:infernix
 ./.build/infernix --runtime-mode apple-silicon cluster up
 ./.build/infernix --runtime-mode apple-silicon cluster status
 ./.build/infernix --runtime-mode apple-silicon test all
@@ -29,11 +29,13 @@ docker compose run --rm infernix infernix cluster down
 ## Rules
 
 - runtime mode is selected independently of control-plane execution context
+- supported workflows do not use repo-owned scripts or wrapper layers
 - on the Apple host path, `infernix` detects repo-owned Python manifests, installs missing
   Homebrew `poetry` when those manifests require it, and installs the declared dependencies on the
   supported path
-- `./cabalw` is the supported Apple host build wrapper and injects the repo-owned Cabal build root
-  unless the caller already passed `--builddir`
+- Apple host builds call `cabal` directly with `--builddir=.build/cabal` and
+  `--installdir=./.build`, which keeps Cabal output under `./.build/` and materializes
+  `./.build/infernix`
 - Apple mode uses the repo-local kubeconfig under `./.build/`
 - container mode keeps build output under `/opt/build/infernix`
 - container mode supports launching from the repo root or nested working directories inside the mounted workspace

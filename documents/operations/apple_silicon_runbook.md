@@ -7,7 +7,7 @@
 
 ## Supported Flow
 
-- build `infernix` with `./cabalw build exe:infernix`
+- build `infernix` with `cabal --builddir=.build/cabal install --installdir=./.build --install-method=copy --overwrite-policy=always exe:infernix`
 - run `./.build/infernix cluster up`
 - use `./.build/infernix kubectl ...` instead of mutating global kubeconfig
 - run `./.build/infernix test all`
@@ -17,7 +17,8 @@
 - on the Apple host path, `infernix` detects repo-owned Python manifests, installs missing
   Homebrew `poetry` when those manifests require it, and installs the declared dependencies before
   running the supported command surface
-- `./cabalw` is the supported host build wrapper and keeps Cabal output under `./.build/cabal`
+- supported Apple host workflows do not use repo-owned scripts; the direct `cabal` command keeps
+  Cabal output under `./.build/cabal` and materializes `./.build/infernix`
 - `cluster up` writes `./.build/infernix.kubeconfig`
 - supported flows do not mutate `$HOME/.kube/config`
 - `cluster up` and `cluster status` keep the publication inventory under `./.data/runtime/publication.json`

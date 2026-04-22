@@ -129,8 +129,9 @@ At closure, `infernix` is constructed around these non-negotiable rules:
 - one mandatory local HA topology: 3x Harbor and Pulsar replicas plus 4x MinIO replicas, with hard pod anti-affinity suppressed for Kind scheduling
 - one manual local persistence doctrine rooted at `./.data/`
 - one repo-owned build-artifact doctrine that keeps host-native Cabal output under `./.build/`,
-  through the repo-owned `./cabalw` wrapper and `./.build/infernix` materialization, with
-  explicit `/opt/build/infernix` overrides for container and Dockerfile Cabal invocations
+  through direct `cabal --builddir=.build/cabal ...` host installs and `./.build/infernix`
+  materialization, with explicit `/opt/build/infernix` runtime build roots on the outer-container
+  path and no repo-owned scripts or wrapper layers
 - one reverse-proxied localhost edge port exposing the UI, API, Harbor, MinIO, and Pulsar browser surfaces
 - one repo-owned web application deployed as a cluster service in all supported modes
 - three supported runtime modes: `apple-silicon`, `linux-cpu`, and `linux-cuda`

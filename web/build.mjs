@@ -5,7 +5,6 @@ import { execFileSync } from "node:child_process";
 const webRoot = process.cwd();
 const repoBuildRoot = process.env.INFERNIX_BUILD_ROOT ?? join(webRoot, "..", ".build");
 const cabalBuildDir = process.env.INFERNIX_CABAL_BUILDDIR ?? "../.build/cabal";
-const cabalCommand = process.env.INFERNIX_CABAL_BUILDDIR ? "cabal" : "../cabalw";
 const distRoot = join(webRoot, "dist");
 const generatedRoot = join(repoBuildRoot, "web-generated");
 const srcRoot = join(webRoot, "src");
@@ -21,10 +20,8 @@ mkdirSync(generatedStagingRoot, { recursive: true });
 const runtimeModeArgs = process.env.INFERNIX_RUNTIME_MODE ? ["--runtime-mode", process.env.INFERNIX_RUNTIME_MODE] : [];
 
 execFileSync(
-  cabalCommand,
-  process.env.INFERNIX_CABAL_BUILDDIR
-    ? ["run", `--builddir=${cabalBuildDir}`, "exe:infernix", "--", ...runtimeModeArgs, "internal", "generate-web-contracts", generatedStagingRoot]
-    : ["run", "exe:infernix", "--", ...runtimeModeArgs, "internal", "generate-web-contracts", generatedStagingRoot],
+  "cabal",
+  ["--builddir=" + cabalBuildDir, "run", "exe:infernix", "--", ...runtimeModeArgs, "internal", "generate-web-contracts", generatedStagingRoot],
   {
     cwd: webRoot,
     stdio: "inherit",

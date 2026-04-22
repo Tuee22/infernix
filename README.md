@@ -79,7 +79,8 @@ The supported local platform is built around:
 - one local Harbor registry used by every non-Harbor cluster pod after Harbor bootstrap completes
 - one cluster-resident demo webapp image, built from a separate webapp binary via `web/Dockerfile`,
   that also owns Playwright browser dependencies
-- one repo-owned `./cabalw` wrapper that keeps host-native Cabal artifacts under `./.build/`
+- one direct host Cabal install path that keeps host-native artifacts under `./.build/` without
+  repo-owned scripts
 - one repo-local kubeconfig managed under the active build-output location rather than the user's
   global kubeconfig
 
@@ -94,12 +95,12 @@ the mandatory HA services, and the cluster-resident demo webapp.
 
 ### From Apple Host
 
-Build the binary with the repo-owned Cabal defaults, bring up the test cluster, run the full suite,
-then tear it down:
+Build the binary with the supported explicit Cabal install command, bring up the test cluster, run
+the full suite, then tear it down:
 
 ```bash
-# Build the infernix binary using the supported repo-owned host wrapper.
-./cabalw build exe:infernix
+# Build and materialize the infernix binary without a repo-owned wrapper script.
+cabal --builddir=.build/cabal install --installdir=./.build --install-method=copy --overwrite-policy=always exe:infernix
 # Reconcile the Kind test cluster, storage, images, and Helm workloads.
 ./.build/infernix cluster up
 # Report cluster health, edge routing, and durable-state status.
@@ -112,11 +113,11 @@ then tear it down:
 ./.build/infernix cluster down
 ```
 
-The repo-owned `./cabalw` wrapper injects `--builddir=./.build/cabal` unless a supported command
-passes its own builddir explicitly, so generated host-native artifacts stay under `./.build/`.
-`cluster up` auto-generates the mode-specific demo Dhall config for the active Apple mode, writes
-the repo-local kubeconfig to `./.build/infernix.kubeconfig`, and does not mutate
-`$HOME/.kube/config`.
+Supported Apple host builds call `cabal` directly with `--builddir=./.build/cabal` and
+`--installdir=./.build`, so generated host-native artifacts stay under `./.build/` without a
+repo-owned script wrapper. `cluster up` auto-generates the mode-specific demo Dhall config for the
+active Apple mode, writes the repo-local kubeconfig to `./.build/infernix.kubeconfig`, and does
+not mutate `$HOME/.kube/config`.
 
 ### From Outer Container
 
@@ -137,10 +138,12 @@ docker compose run --rm infernix infernix test all
 docker compose run --rm infernix infernix cluster down
 ```
 
-Containerized builds keep all generated artifacts under `/opt/build/infernix`. Supported outer
-container workflows and Dockerfile `cabal` invocations pass `--builddir=/opt/build/infernix`
-explicitly so build output never lands in the mounted repository tree. The generated mode-specific
-demo Dhall config and repo-local kubeconfig also live under `/opt/build/infernix` on this path.
+Containerized control-plane runs keep generated artifacts under `/opt/build/infernix`. Supported
+outer container workflows do not use repo-owned scripts: `docker compose build infernix` installs
+a real `infernix` binary into the image, and supported runtime `cabal` invocations pass
+`--builddir=/opt/build/infernix` explicitly so build output never lands in the mounted repository
+tree. The generated mode-specific demo Dhall config and repo-local kubeconfig also live under
+`/opt/build/infernix` on this path.
 
 ## CLI Surface
 

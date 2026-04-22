@@ -69,6 +69,8 @@ Rules:
 - keep one canonical home per topic
 - move implementation status discussion into `DEVELOPMENT_PLAN/`
 - keep examples aligned with the supported `infernix` CLI surface
+- document direct `cabal`, `docker compose`, and `infernix` invocations rather than repo-owned
+  scripts or wrapper layers
 
 ## Update Rules
 
