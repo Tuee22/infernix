@@ -3,7 +3,8 @@
 **Status**: Authoritative source
 **Referenced by**: [testing_strategy.md](testing_strategy.md), [../../DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md](../../DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md)
 
-> **Purpose**: Record the supported HA-failure coverage for Harbor, MinIO, and Pulsar.
+> **Purpose**: Record the supported HA-failure coverage for Harbor, MinIO, operator-managed
+> PostgreSQL, and Pulsar.
 
 ## Rules
 
@@ -12,6 +13,8 @@
   access and Harbor-backed image pulls still work afterward
 - MinIO recovery coverage deletes a single MinIO pod and verifies that persisted protobuf runtime
   results, manifests, and large-output objects remain available afterward
+- PostgreSQL recovery coverage deletes the current Patroni primary and verifies that a replacement
+  primary takes over without breaking Harbor's routed portal surface
 - Pulsar recovery coverage deletes a single Pulsar proxy pod and verifies that routed inference and
   schema-backed request or result transport still work afterward
 - the Apple host-native final-substrate lane is the validated HA-failure path in the supported
@@ -22,4 +25,5 @@
 - [testing_strategy.md](testing_strategy.md)
 - [../tools/harbor.md](../tools/harbor.md)
 - [../tools/minio.md](../tools/minio.md)
+- [../tools/postgresql.md](../tools/postgresql.md)
 - [../tools/pulsar.md](../tools/pulsar.md)

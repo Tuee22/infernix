@@ -78,6 +78,9 @@ Rules:
   `documents/reference/cli_surface.md`, and any impacted runbooks in the same change
 - when storage rules change, update `documents/engineering/k8s_storage.md`,
   `documents/engineering/storage_and_state.md`, and the relevant phase document in the same change
+- when PostgreSQL topology changes, update `documents/tools/postgresql.md`,
+  `documents/tools/harbor.md`, `documents/engineering/k8s_storage.md`, and the relevant phase
+  document in the same change
 - when route prefixes change, update `documents/engineering/edge_routing.md`,
   `documents/reference/web_portal_surface.md`, and the relevant phase document in the same change
 - when the root workflow changes, review `README.md`, `AGENTS.md`, and `CLAUDE.md` in the same change

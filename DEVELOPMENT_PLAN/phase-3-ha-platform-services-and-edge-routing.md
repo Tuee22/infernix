@@ -3,15 +3,23 @@
 **Status**: Authoritative source
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
 
-> **Purpose**: Define the mandatory local HA Harbor, MinIO, and Pulsar deployments plus the
-> unified edge routing model that makes every portal reachable on one localhost port and keeps the
-> browser contract stable across runtime modes.
+> **Purpose**: Define the mandatory local HA Harbor, MinIO, operator-managed PostgreSQL, and
+> Pulsar deployments plus the unified edge routing model that makes every portal reachable on one
+> localhost port and keeps the browser contract stable across runtime modes.
 
 ## HA Reconcile Surface
 
 - `infernix cluster up` is the declarative and idempotent entrypoint for the mandatory local HA topology.
 - The supported cluster path always deploys the local HA topology; there is no optional non-HA mode.
 - No service-specific HA bootstrap command family exists outside the supported cluster reconcile surface.
+
+## PostgreSQL Doctrine
+
+- Every in-cluster PostgreSQL dependency uses a Patroni cluster managed by the Percona Kubernetes operator.
+- A service may use a dedicated PostgreSQL cluster, but it still uses the Percona plus Patroni model rather than a chart-managed standalone PostgreSQL deployment.
+- Services that can self-deploy PostgreSQL, such as Grafana or similar add-ons, disable that embedded PostgreSQL path and point at an operator-managed cluster instead.
+- PostgreSQL claims use `infernix-manual` and explicit PV binding from Phase 2.
+- On a pristine cluster, Harbor stays the first deployed service; only Harbor and Harbor-required backend services such as MinIO and PostgreSQL may pull from public container repositories before Harbor is ready, and every later non-Harbor workload pulls from Harbor.
 
 ## Mode-Stable Route Contract
 
@@ -37,7 +45,11 @@ artifacts, Pulsar-backed request or result transport, and HA recovery for all th
 services on the Kind and Helm substrate. Because Pulsar is first enabled during the final
 Harbor-backed Helm phase, the supported chart values force the upstream Pulsar initialization jobs
 there so clean and repeat `cluster up` runs still create the required BookKeeper and cluster
-metadata before the proxy and broker readiness gates apply.
+metadata before the proxy and broker readiness gates apply. The same supported cluster path now
+installs the Percona PostgreSQL operator through Helm, disables Harbor's chart-managed standalone
+database path, reconciles Harbor's Patroni PVCs through `infernix-manual`, repairs Harbor database
+migration state through the current Patroni primary, and keeps repeat `cluster down` plus
+`cluster up` cycles bound to the same manually managed PostgreSQL host paths.
 
 ## Sprint 3.1: HA MinIO Deployment [Done]
 
@@ -74,7 +86,39 @@ None.
 
 ---
 
-## Sprint 3.2: HA Pulsar Deployment [Done]
+## Sprint 3.2: Operator-Managed Patroni PostgreSQL [Done]
+
+**Status**: Done
+**Implementation**: `chart/Chart.yaml`, `chart/values.yaml`, `src/Infernix/Cluster.hs`, `tools/discover_chart_claims.py`, `tools/helm_chart_check.py`, `tools/publish_chart_images.py`, `test/integration/Spec.hs`
+**Docs to update**: `documents/engineering/k8s_native_dev_policy.md`, `documents/engineering/k8s_storage.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/tools/harbor.md`, `documents/tools/postgresql.md`
+
+### Objective
+
+Standardize every in-cluster PostgreSQL dependency on one HA operator-managed contract.
+
+### Deliverables
+
+- the supported cluster path installs the Percona Kubernetes operator through the repo-owned Helm workflow
+- every in-cluster PostgreSQL dependency, including Harbor and future service-specific databases, uses a Patroni cluster reconciled by that operator
+- services that can self-deploy PostgreSQL disable that chart-managed PostgreSQL path and target an operator-managed cluster instead
+- operator-managed PostgreSQL claims use `storageClassName: infernix-manual`, rely on manually reconciled PVs under `./.data/`, and bind deterministically to named claims
+- Harbor-first bootstrap on a pristine cluster deploys Harbor first and allows only Harbor plus its required backend services, including MinIO and PostgreSQL, to pull from public container repositories before Harbor becomes pull-ready
+- once Harbor is ready, every remaining non-Harbor workload, including later PostgreSQL-backed services, pulls only from Harbor-backed image references
+
+### Validation
+
+- `infernix cluster up` produces a ready Percona operator rollout and ready Patroni members for Harbor's PostgreSQL backend
+- `infernix kubectl get pvc -A` shows operator-managed PostgreSQL claims bound through `infernix-manual`
+- rendered Helm values and service configuration disable embedded standalone PostgreSQL deployments for any service that can otherwise self-provision one
+- repeat `cluster down` plus `cluster up` cycles rebind PostgreSQL claims to the same manually managed PVs without storage repair
+
+### Remaining Work
+
+None.
+
+---
+
+## Sprint 3.3: HA Pulsar Deployment [Done]
 
 **Status**: Done
 **Implementation**: `chart/values.yaml`, `chart/templates/workloads-platform-portals.yaml`, `src/Infernix/Cluster.hs`, `src/Infernix/Storage.hs`, `tools/portal_surface.py`, `tools/runtime_backend.py`, `test/integration/Spec.hs`
@@ -120,7 +164,7 @@ None.
 
 ---
 
-## Sprint 3.3: HA Harbor Deployment [Done]
+## Sprint 3.4: HA Harbor Deployment [Done]
 
 **Status**: Done
 **Implementation**: `chart/values.yaml`, `src/Infernix/Cluster.hs`, `tools/publish_chart_images.py`, `tools/portal_surface.py`, `test/integration/Spec.hs`
@@ -133,7 +177,9 @@ Provide the mandatory local HA image registry and browser portal for cluster ima
 ### Deliverables
 
 - Harbor deploys through its Helm chart
-- Harbor stores image blobs in MinIO and uses chart-owned persistence for its remaining durable state
+- Harbor stores image blobs in MinIO and uses a dedicated operator-managed Patroni PostgreSQL
+  cluster for its database backend while the remaining durable chart-owned state keeps the same
+  manual PV doctrine
 - Harbor application-plane workloads use three replicas where the chosen chart exposes those
   replicated surfaces
 - repo-owned Helm values suppress hard pod anti-affinity and equivalent hard scheduling constraints
@@ -157,7 +203,7 @@ None.
 
 ---
 
-## Sprint 3.4: Unified Edge Proxy and Localhost Port Allocation [Done]
+## Sprint 3.5: Unified Edge Proxy and Localhost Port Allocation [Done]
 
 **Status**: Done
 **Implementation**: `src/Infernix/Cluster.hs`, `chart/templates/edge-configmap.yaml`, `chart/templates/workloads-platform-portals.yaml`, `tools/edge_proxy.py`, `tools/portal_surface.py`, `tools/runtime_backend.py`, `test/integration/Spec.hs`
@@ -204,7 +250,7 @@ None.
 
 ---
 
-## Sprint 3.5: Cluster-Resident Webapp Service and Apple Host Bridge [Done]
+## Sprint 3.6: Cluster-Resident Webapp Service and Apple Host Bridge [Done]
 
 **Status**: Done
 **Implementation**: `src/Infernix/CLI.hs`, `src/Infernix/Service.hs`, `tools/service_server.py`, `web/playwright/inference.spec.js`
@@ -239,7 +285,7 @@ None.
 
 ---
 
-## Sprint 3.6: Mode-Stable Publication Contract [Done]
+## Sprint 3.7: Mode-Stable Publication Contract [Done]
 
 **Status**: Done
 **Implementation**: `src/Infernix/Models.hs`, `src/Infernix/Service.hs`, `tools/service_server.py`, `web/src/app.js`, `web/src/workbench.js`, `test/integration/Spec.hs`
@@ -283,8 +329,10 @@ None.
 
 **Engineering docs to create/update:**
 - `documents/engineering/edge_routing.md` - single-port routing and upstream selection
+- `documents/engineering/k8s_storage.md` - manual PV doctrine and PostgreSQL claim binding
 - `documents/engineering/object_storage.md` - MinIO authority and routed access
 - `documents/tools/minio.md` - MinIO deployment and route surfaces
+- `documents/tools/postgresql.md` - Percona operator and Patroni PostgreSQL deployment rules
 - `documents/tools/pulsar.md` - Pulsar deployment and route surfaces
 - `documents/tools/harbor.md` - Harbor deployment and image-registry rules
 

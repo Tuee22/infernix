@@ -121,6 +121,35 @@ def statefulset_claim_rows(document: dict) -> list[tuple[str, str, str, int, str
     return rows
 
 
+def validate_percona_postgresql_cluster(document: dict) -> None:
+    metadata = document.get("metadata") or {}
+    spec = document.get("spec") or {}
+    cluster_name = str(metadata.get("name") or "<unnamed>")
+
+    for instance in spec.get("instances") or []:
+        instance_name = str(instance.get("name") or "<unnamed>")
+        pvc_spec = instance.get("dataVolumeClaimSpec") or {}
+        storage_class = pvc_spec.get("storageClassName")
+        if storage_class != "infernix-manual":
+            fail(
+                "PerconaPGCluster instance "
+                f"{cluster_name}/{instance_name} uses unsupported dataVolumeClaimSpec.storageClassName {storage_class!r}"
+            )
+
+    backups = spec.get("backups") or {}
+    if backups.get("enabled") is False:
+        return
+    for repo in ((backups.get("pgbackrest") or {}).get("repos") or []):
+        repo_name = str(repo.get("name") or "<unnamed>")
+        volume_claim_spec = ((repo.get("volume") or {}).get("volumeClaimSpec") or {})
+        storage_class = volume_claim_spec.get("storageClassName")
+        if storage_class not in {None, "infernix-manual"}:
+            fail(
+                "PerconaPGCluster pgBackRest repo "
+                f"{cluster_name}/{repo_name} uses unsupported volumeClaimSpec.storageClassName {storage_class!r}"
+            )
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         fail("usage: discover_chart_claims.py <rendered-chart.yaml>")
@@ -138,6 +167,8 @@ def main() -> int:
             discovered.extend(explicit_claim_rows(document))
         elif kind == "StatefulSet":
             discovered.extend(statefulset_claim_rows(document))
+        elif kind == "PerconaPGCluster":
+            validate_percona_postgresql_cluster(document)
 
     if not discovered:
         fail("rendered chart did not contain any persistent claims")

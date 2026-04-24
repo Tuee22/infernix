@@ -13,7 +13,10 @@ cluster-resident web application, and one governed documentation suite.
 - the Haskell executable `infernix` owns service runtime, cluster lifecycle, validation, and docs checks
 - the browser entrypoint is always the edge proxy on one localhost port
 - the web UI is always served from a cluster workload
-- Harbor, MinIO, and Pulsar are mandatory local platform services
+- Harbor, MinIO, Pulsar, and operator-managed PostgreSQL are the local platform services
+- Harbor is always the first deployed service on a pristine cluster, and only Harbor plus
+  Harbor-required backend services such as MinIO and PostgreSQL may pull from public container
+  repositories before Harbor is ready
 - durable storage is rooted under `./.data/`
 
 ## Repository Shape
@@ -25,7 +28,7 @@ major roots:
 - `app/` and `src/` for the Haskell control plane
 - `web/` for the web application and E2E assets
 - `chart/` and `kind/` for cluster reconciliation inputs, including the locked Harbor, Pulsar,
-  Bitnami MinIO, and ingress-nginx Helm dependency declarations
+  Bitnami MinIO, Percona PostgreSQL operator, and ingress-nginx Helm dependency declarations
 - `test/` for repository-owned validation
 - `documents/` for governed documentation
 
@@ -34,3 +37,4 @@ major roots:
 - [runtime_modes.md](runtime_modes.md)
 - [web_ui_architecture.md](web_ui_architecture.md)
 - [../engineering/storage_and_state.md](../engineering/storage_and_state.md)
+- [../tools/postgresql.md](../tools/postgresql.md)

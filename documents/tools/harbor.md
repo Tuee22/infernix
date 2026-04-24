@@ -9,13 +9,18 @@
 
 - Harbor is the local image authority for every non-Harbor cluster workload
 - `cluster up` deploys Harbor first through Helm and allows Harbor plus only the storage or support
-  services Harbor needs during bootstrap to pull from declared upstream registries while Harbor is
-  not yet available
+  services Harbor needs during bootstrap, including MinIO and PostgreSQL, to pull from public
+  container repositories while Harbor is not yet available
+- Harbor uses a dedicated Patroni cluster managed by the Percona Kubernetes operator for its
+  PostgreSQL backend instead of a chart-managed standalone PostgreSQL deployment
+- Harbor reaches that PostgreSQL backend through the operator-managed `harbor-postgresql`
+  cluster plus its PgBouncer deployment on the supported cluster path
 - the Harbor bootstrap and final Helm phases keep the chart-generated Harbor secret material and
   registry credentials stable so repeat `cluster up` runs do not invalidate Harbor login or image
   publication state
 - once Harbor is ready, `cluster up` mirrors third-party images and publishes repo-owned service
   and web images into Harbor before the final non-Harbor Helm rollout
+- once Harbor is ready, every later non-Harbor rollout pulls from Harbor-backed image references
 - after Harbor reaches its final rollout shape, `cluster up` preloads the Harbor-backed final
   image refs onto the Kind worker before the remaining non-Harbor workloads are scaled
 - repeated `cluster up` runs compare local and remote digests where available and skip unnecessary
@@ -28,5 +33,6 @@
 ## Cross-References
 
 - [minio.md](minio.md)
+- [postgresql.md](postgresql.md)
 - [../engineering/object_storage.md](../engineering/object_storage.md)
 - [../reference/web_portal_surface.md](../reference/web_portal_surface.md)

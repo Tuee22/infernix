@@ -5,7 +5,7 @@
 
 > **Purpose**: Define the supported static-quality and test matrix for the single-binary CLI, the
 > service runtime, the browser workbench, the per-mode generated demo catalog, and the mandatory HA
-> behavior of Harbor, MinIO, and Pulsar.
+> behavior of Harbor, MinIO, operator-managed PostgreSQL, and Pulsar.
 
 ## Current Repo Assessment
 
@@ -17,7 +17,10 @@ engine-specific default runner exercised whenever no adapter-specific override i
 default validation matrix now auto-includes `linux-cuda` only when the active control-plane
 surface passes the NVIDIA preflight contract, but
 final closure still requires those same suites to validate supported-host final engine workers
-across the already validated runtime matrix.
+across the already validated runtime matrix. HA validation now covers Harbor, MinIO, Pulsar, and
+Harbor's operator-managed Patroni PostgreSQL backend on the supported substrate, including
+PostgreSQL readiness, primary failover, and deterministic PVC rebinding through
+`infernix-manual`.
 
 - `infernix test lint` and `infernix test unit` are the canonical host-side static-quality and
   unit gates
@@ -109,7 +112,7 @@ None.
 ### Objective
 
 Exercise the generated demo-config and service integration path, and carry that coverage
-forward onto the final Kind, Helm, Harbor, MinIO, and Pulsar substrate.
+forward onto the final Kind, Helm, Harbor, MinIO, Pulsar, and later operator-managed PostgreSQL substrate.
 
 ### Deliverables
 
@@ -310,6 +313,35 @@ validation cover every generated catalog entry using the engine binding selected
 - close the Harbor-backed host-native routed E2E lane on top of the final runtime workers rather
   than the current repo-owned worker layer
 
+---
+
+## Sprint 6.7: Operator-Managed PostgreSQL Failure and Lifecycle Coverage [Done]
+
+**Status**: Done
+**Implementation**: `src/Infernix/Cluster.hs`, `test/integration/Spec.hs`
+**Docs to update**: `documents/development/testing_strategy.md`, `documents/development/chaos_testing.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/tools/postgresql.md`
+
+### Objective
+
+Back the PostgreSQL doctrine with concrete readiness, failover, and storage-rebind coverage.
+
+### Deliverables
+
+- integration coverage proves the Percona operator and Patroni members reach ready state for Harbor and any future dedicated service-specific PostgreSQL clusters
+- HA-failure coverage deletes or restarts a PostgreSQL member and verifies Patroni reestablishes service without breaking the owning workload
+- lifecycle coverage proves `cluster down` plus `cluster up` rebinds PostgreSQL claims to the same manually managed PVs
+- validation proves services that can optionally self-deploy PostgreSQL still consume operator-managed clusters instead of reintroducing standalone chart PostgreSQL deployments
+
+### Validation
+
+- `infernix test integration` verifies ready operator-managed PostgreSQL members, Patroni failover, and deterministic PVC rebinding through `infernix-manual`
+- HA validation fails if Harbor or another PostgreSQL-backed workload regresses to a chart-managed standalone PostgreSQL deployment
+- repeated cluster lifecycle validation fails if PostgreSQL claims no longer reattach to the same manually managed PVs
+
+### Remaining Work
+
+None.
+
 ## Documentation Requirements
 
 **Engineering docs to create/update:**
@@ -318,6 +350,7 @@ validation cover every generated catalog entry using the engine binding selected
 - `documents/development/chaos_testing.md` - HA failure and recovery coverage
 - `documents/operations/cluster_bootstrap_runbook.md` - test prerequisites and cluster reuse rules
 - `documents/operations/apple_silicon_runbook.md` - Apple matrix expectations
+- `documents/tools/postgresql.md` - PostgreSQL operator readiness and failover rules
 
 **Product or reference docs to create/update:**
 - `documents/reference/cli_reference.md` - test command reference

@@ -9,6 +9,8 @@
 
 - MinIO is the authoritative object store
 - MinIO runs as a four-node distributed cluster on the supported Kind path
+- on a pristine cluster, MinIO may pull from public container repositories only when it is one of
+  Harbor's required backend services before Harbor becomes pull-ready
 - the routed service runtime stores runtime artifact bundles, source-artifact manifests or payload
   copies or direct-upstream downloads, and protobuf manifests in the `infernix-runtime` bucket and
   stores runtime results in
@@ -20,4 +22,5 @@
 
 - [pulsar.md](pulsar.md)
 - [harbor.md](harbor.md)
+- [postgresql.md](postgresql.md)
 - [../engineering/object_storage.md](../engineering/object_storage.md)

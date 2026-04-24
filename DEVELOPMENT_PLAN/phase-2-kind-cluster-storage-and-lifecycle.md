@@ -13,7 +13,8 @@ These rules close in this phase and remain mandatory afterward:
 
 - cluster bootstrap deletes every default StorageClass present on the supported Kind path
 - the only supported persistent StorageClass is `infernix-manual` using `kubernetes.io/no-provisioner`
-- durable PVCs come only from Helm-managed StatefulSets or chart-owned persistence templates
+- every PVC-backed Helm workload, including operator-managed durable claims reconciled from a
+  repo-owned Helm release, uses `infernix-manual`
 - durable PVs come only from the storage-reconciliation step embedded in `infernix cluster up`
 - each durable PV maps to `./.data/kind/<namespace>/<release>/<workload>/<ordinal>/<claim>`
 - `infernix cluster down` never deletes or mutates anything under `./.data/`
@@ -44,8 +45,9 @@ storage services Harbor needs before readiness, the Harbor chart values pin the 
 secret material and registry credentials that must remain stable across the `harbor-final` and
 `final` phases, the Kind registry-host config now only rewrites `localhost:30002`, `cluster up`
 preloads the Harbor-backed final image refs onto the Kind worker before the final non-Harbor
-rollout begins, and both clean and repeat Apple reruns complete without the old transient MinIO
-first-pull `502 Bad Gateway`. The Linux outer-container path now keeps the Kind API server and
+rollout begins, fresh clean-cluster reruns preload the Harbor bootstrap-support image set onto
+new Kind nodes before Helm warmup begins, and both clean and repeat Apple reruns complete without
+the old transient MinIO first-pull `502 Bad Gateway`. The Linux outer-container path now keeps the Kind API server and
 routed host-port mappings on `127.0.0.1`, joins the private Docker `kind` network for
 cluster-backed commands, writes the repo-local kubeconfig from `kind get kubeconfig --internal`,
 pins Kind nodes to `kindest/node:v1.34.0`, and primes Kind node-local registry or storage state
@@ -57,7 +59,10 @@ NVIDIA host through the full integration and routed E2E matrix, including repeat
 teardown and real `nvidia.com/gpu` visibility. The
 validated Linux outer-container lane also requires host inotify capacity high enough for
 mount-bearing Kind nodes; on the current Ubuntu host, `fs.inotify.max_user_instances >= 1024`
-keeps the repeated worker bootstrap and claim-sync lifecycle stable.
+keeps the repeated worker bootstrap and claim-sync lifecycle stable. The Harbor bootstrap slice now
+keeps the same Harbor-first image flow while the supported platform provisions Harbor's PostgreSQL
+backend through operator-managed Patroni claims that still follow the same manual-storage and
+explicit-binding doctrine under `./.data/kind/...`.
 
 ## Sprint 2.1: Kind Bootstrap and StorageClass Reset [Done]
 
@@ -194,8 +199,8 @@ image preparation handled automatically during `cluster up`.
 
 - `infernix cluster up` deploys Harbor itself through the Helm chart before the post-bootstrap
   Harbor-backed rollout begins
-- the Harbor bootstrap slice, including Harbor's required storage and supporting services, pulls
-  from the chart's declared upstream image registries while Harbor is not yet available
+- the Harbor bootstrap slice, including Harbor's required backend services such as MinIO and the
+  PostgreSQL surface Harbor needs, pulls from public container repositories while Harbor is not yet available
 - Harbor's chart-generated secret material and registry credentials remain stable across the
   `harbor-final` and `final` Helm phases so repeat `cluster up` runs do not invalidate Harbor
   login or image publication state
@@ -214,7 +219,7 @@ image preparation handled automatically during `cluster up`.
 
 ### Validation
 
-- `infernix cluster up` first produces a healthy Harbor bootstrap slice through Helm using upstream
+- `infernix cluster up` first produces a healthy Harbor bootstrap slice through Helm using public
   image references for Harbor and the services Harbor needs during bootstrap
 - `infernix cluster up` does not begin the remaining non-Harbor rollout until Harbor is reachable
   enough for image publication and pulls

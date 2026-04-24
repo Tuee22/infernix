@@ -13,8 +13,13 @@
 - `infernix cluster status` is read-only
 - repo-owned Kind configs live under `kind/` and define the Apple, CPU, and CUDA cluster shapes that `cluster up` renders into the supported local Kind clusters
 - repo-owned Helm charts and values live under `chart/`, self-bootstrap the declared Helm repositories, and deploy the repo-owned edge, web, service, publication, and PVC workloads on that cluster path
+- every in-cluster PostgreSQL dependency uses a Patroni cluster managed by the Percona
+  Kubernetes operator through that same Helm-owned workflow
+- services that can self-deploy PostgreSQL disable that embedded chart path and target an
+  operator-managed cluster instead
 - `cluster up` bootstraps Harbor first through Helm, allowing Harbor and only the storage or
-  support services Harbor needs during bootstrap to pull from their declared upstream registries
+  support services Harbor needs during bootstrap, including MinIO and PostgreSQL, to pull from
+  public container repositories
 - the Harbor bootstrap and final Helm phases preserve stable Harbor-generated secret material and
   registry credentials so repeat `cluster up` runs do not invalidate Harbor login or image
   publication state
@@ -41,4 +46,5 @@
 
 - [k8s_storage.md](k8s_storage.md)
 - [edge_routing.md](edge_routing.md)
+- [../tools/postgresql.md](../tools/postgresql.md)
 - [../operations/cluster_bootstrap_runbook.md](../operations/cluster_bootstrap_runbook.md)

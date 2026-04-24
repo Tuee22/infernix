@@ -271,9 +271,15 @@ The manual storage model is a hard architectural rule and cannot be weakened in 
 - All default storage classes are deleted during cluster bootstrap.
 - The only supported persistent storage class is a `kubernetes.io/no-provisioner` class owned by
   this repo.
-- PVCs are created only by Helm-owned StatefulSets or chart-owned persistence templates.
-- PVs are created only by `infernix` lifecycle code and map deterministically into `./.data/`.
+- Every PVC-backed Helm deployment, including operator-managed durable claims reconciled from a
+  repo-owned Helm release, uses that storage class.
+- PVs are created only by `infernix` lifecycle code, map deterministically into `./.data/`, and
+  bind explicitly to their intended claims.
 - Hand-authored standalone PVC manifests for durable workloads are forbidden.
+- Any in-cluster PostgreSQL deployment uses a Patroni cluster managed by the Percona Kubernetes
+  operator, even when an upstream chart could self-deploy PostgreSQL.
+- Dedicated PostgreSQL clusters per service are allowed, but direct chart-managed standalone
+  PostgreSQL StatefulSets are not part of the supported contract.
 
 ### O. CLI Surface and Behavior Contract
 

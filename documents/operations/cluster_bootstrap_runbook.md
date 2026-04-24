@@ -17,18 +17,22 @@
   mount-bearing Kind nodes; the validated Ubuntu flow uses
   `fs.inotify.max_user_instances >= 1024`
 - confirm that the chosen edge port, active runtime mode, generated demo-config paths, and build-root publication details are printed
-- confirm that Harbor and its required bootstrap storage or support services reconcile first, and
-  that the remaining non-Harbor workloads do not appear until Harbor is ready for image pulls
+- confirm that Harbor is the first deployed service on a pristine cluster and that only
+  Harbor-required backend services such as MinIO and the PostgreSQL operator or Patroni cluster
+  reconcile or pull from public container repositories before Harbor is ready for image pulls
 - confirm that `cluster up` preloads the Harbor-backed final image refs onto the Kind worker before
   the remaining non-Harbor workloads begin their final rollout
+- confirm that `infernix kubectl get pods -n platform` shows the Percona PostgreSQL operator and
+  the Patroni members needed for Harbor's PostgreSQL backend reaching ready state before the final
+  post-Harbor rollout depends on them, and that `harbor-postgresql-pgbouncer` is also ready
 - confirm that `infernix kubectl get jobs -n platform` shows
   `infernix-infernix-pulsar-bookie-init` and `infernix-infernix-pulsar-pulsar-init` completing
   during the final Harbor-backed rollout, because Pulsar is first enabled there
 - confirm that `infernix kubectl get pods -n platform` shows `infernix-edge`, `infernix-web`,
   `infernix-service`, the Harbor application-plane workloads, the MinIO statefulset, the Pulsar
-  statefulsets, and the Harbor or MinIO or Pulsar gateway workloads
+  statefulsets, the PostgreSQL operator-managed members, and the Harbor or MinIO or Pulsar gateway workloads
 - confirm that `infernix kubectl get storageclass` shows only `infernix-manual`
-- confirm that `infernix kubectl get pvc -n platform` shows the service, Harbor, MinIO, and Pulsar claims bound through `infernix-manual`
+- confirm that `infernix kubectl get pvc -A` shows the service, Harbor, MinIO, Pulsar, and PostgreSQL claims bound through `infernix-manual`
 - confirm routes with `infernix cluster status`
 - confirm that `cluster status` reports the build root, data root, runtime result count, object-store object count, and model-cache entry count alongside the route inventory
 - inspect `./.data/runtime/publication.json` or `GET /api/publication` to confirm the routed publication contract matches `cluster status`, including API-upstream mode and routed-upstream health details
@@ -43,6 +47,8 @@
 - on a repeat `cluster up`, confirm the same Harbor-backed final rollout completes without a helper
   registry container reappearing and without the MinIO StatefulSet recording the old transient
   first-pull Harbor `502 Bad Gateway`
+- on a repeat `cluster down` plus `cluster up`, confirm Harbor's PostgreSQL PVCs rebind to the
+  same host paths under `./.data/kind/...` rather than allocating a new manual-storage location
 - confirm `docker port <kind-control-plane> 6443/tcp` and `docker port <kind-control-plane> 30090/tcp`
   report `127.0.0.1:...` bindings rather than `0.0.0.0:...`
 - confirm `curl http://127.0.0.1:<port>/` reaches the routed workbench from the host
@@ -60,4 +66,5 @@
 
 - [../engineering/k8s_native_dev_policy.md](../engineering/k8s_native_dev_policy.md)
 - [../engineering/k8s_storage.md](../engineering/k8s_storage.md)
+- [../tools/postgresql.md](../tools/postgresql.md)
 - [../reference/cli_surface.md](../reference/cli_surface.md)

@@ -20,8 +20,8 @@ govern this plan.
 | [system-components.md](system-components.md) | Authoritative component inventory and state-location map |
 | [phase-0-documentation-and-governance.md](phase-0-documentation-and-governance.md) | `documents/` suite creation, documentation standards, and docs-suite alignment with the three-mode matrix |
 | [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md) | Repository scaffold, single-binary CLI, Cabal build doctrine and container artifact isolation, execution-context contract, and runtime-mode selection baseline |
-| [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md) | Kind bootstrap, manual PV doctrine, Helm lifecycle, Harbor bootstrap-first and post-bootstrap Harbor-backed image flow, GPU-enabled `linux-cuda` cluster reconcile, and mode-aware ConfigMap-backed demo-config generation |
-| [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md) | Mandatory local HA Harbor, MinIO, Pulsar, unified edge routing, and mode-stable browser and API publication |
+| [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md) | Kind bootstrap, manual PV doctrine for every PVC-backed Helm workload, Harbor bootstrap-first and post-bootstrap Harbor-backed image flow, GPU-enabled `linux-cuda` cluster reconcile, and mode-aware ConfigMap-backed demo-config generation |
+| [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md) | Mandatory local HA Harbor, MinIO, operator-managed Patroni PostgreSQL, Pulsar, unified edge routing, and mode-stable browser and API publication |
 | [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) | Haskell service runtime, comprehensive matrix registry, protobuf manifest and Pulsar payload contracts, ConfigMap-backed generated demo `.dhall`, and durable artifact lifecycle |
 | [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md) | Browser workbench target, Haskell-owned frontend contracts, and mode-driven manual inference UI |
 | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) | Unit, integration, routed Playwright coverage, per-mode matrix coverage, HA failure coverage, and lifecycle validation |
@@ -63,10 +63,16 @@ across the tracked phases.
   outer-container lane also requires host inotify capacity high enough for mount-bearing Kind
   nodes, with `fs.inotify.max_user_instances >= 1024` keeping repeated worker bootstrap stable
 - the Harbor-first cluster image flow is closed on the supported Apple lane: Harbor bootstrap and
-  only the storage or support services Harbor needs pull from upstream before Harbor is ready, the
+  only the public-repo backend services Harbor needs pull from upstream before Harbor is ready, the
   helper registry is gone, the Kind registry mirror only rewrites `localhost:30002`, the final
-  Harbor-backed image refs are preloaded onto the Kind worker, and clean plus repeat Apple
-  `cluster up` runs complete with the final non-Harbor workloads pulling from Harbor-backed refs
+  Harbor-backed image refs are preloaded onto the Kind worker, fresh clean-cluster reruns also
+  preload the Harbor bootstrap-support image set onto new Kind nodes before Helm warmup begins,
+  and clean plus repeat Apple `cluster up` runs complete with the final non-Harbor workloads
+  pulling from Harbor-backed refs
+- the PostgreSQL platform contract is now closed on the supported Harbor path: the cluster release
+  installs the Percona Kubernetes operator, Harbor disables its chart-managed standalone database,
+  Harbor's Patroni PVCs bind through `infernix-manual`, and integration coverage now validates
+  readiness, failover, and repeat lifecycle rebinding on that operator-managed backend
 - the `linux-cuda` lane now reconciles a real NVIDIA-backed Kind path on supported hosts: the
   current code fails fast unless the NVIDIA host and Docker toolkit preflight commands pass, uses
   `nvkind` to create the cluster, mounts the NVIDIA worker-device path into the GPU worker,
@@ -123,11 +129,15 @@ At closure, `infernix` is constructed around these non-negotiable rules:
 - one repo-owned Haskell executable named `infernix`, used for service runtime, tests, and Kind lifecycle
 - one governed `documents/` suite that stays aligned with the plan and the updated root README
 - one Kind-backed deployment path using Helm, including GPU-enabled Kind behavior for `linux-cuda`
-- one Harbor-first cluster bootstrap that lets Harbor and the storage or support services Harbor
-  needs pull from their declared upstream image registries until Harbor is ready, then requires
-  every remaining cluster workload to pull from Harbor
-- one mandatory local HA topology: 3x Harbor and Pulsar replicas plus 4x MinIO replicas, with hard pod anti-affinity suppressed for Kind scheduling
-- one manual local persistence doctrine rooted at `./.data/`
+- one Harbor-first cluster bootstrap that deploys Harbor first on a pristine cluster, lets Harbor
+  plus only Harbor-required backend services such as MinIO and PostgreSQL pull from public
+  container repositories until Harbor is ready, then requires every remaining cluster workload to
+  pull from Harbor
+- one mandatory local HA topology: 3x Harbor and Pulsar replicas plus 4x MinIO replicas, with
+  hard pod anti-affinity suppressed for Kind scheduling, and operator-managed Patroni PostgreSQL
+  clusters for every in-cluster PostgreSQL need
+- one manual local persistence doctrine rooted at `./.data/`, with explicit PV-to-PVC binding for
+  every PVC-backed Helm workload including operator-managed PostgreSQL claims
 - one repo-owned build-artifact doctrine that keeps host-native Cabal output under `./.build/`,
   through direct `cabal --builddir=.build/cabal ...` host installs and `./.build/infernix`
   materialization, with explicit `/opt/build/infernix` runtime build roots on the outer-container
@@ -155,7 +165,7 @@ At closure, `infernix` is constructed around these non-negotiable rules:
 | 0 | none | establishes and realigns the governed docs suite before phase closure claims continue |
 | 1 | 0 | repository and CLI work can continue to close only after docs capture the runtime-mode direction correctly |
 | 2 | 0-1 | cluster lifecycle depends on the documented repo shape, CLI contract, ConfigMap-backed demo-config contract, and GPU-capable `linux-cuda` Kind rules |
-| 3 | 0-2 | stateful services and edge routing depend on documented storage and cluster doctrine plus the implemented cluster substrate |
+| 3 | 0-2 | stateful services, operator-managed PostgreSQL, and edge routing depend on documented storage and cluster doctrine plus the implemented cluster substrate |
 | 4 | 0-3 | service runtime depends on the documented and implemented platform substrate plus the mode-matrix and ConfigMap publication contract |
 | 5 | 0-4 | UI and shared contracts depend on the documented and implemented service API and generated demo catalog |
 | 6 | 0-5 | validation depends on the completed service and web surfaces plus their governed docs and mode-aware catalog contract |

@@ -9,6 +9,16 @@ dependencies:
     version: 1.18.3
     repository: https://helm.goharbor.io
     condition: upstreamCharts.harbor.enabled
+  - name: pg-operator
+    alias: postgresOperator
+    version: 2.9.0
+    repository: https://percona.github.io/percona-helm-charts
+    condition: upstreamCharts.postgresOperator.enabled
+  - name: pg-db
+    alias: harborpg
+    version: 2.9.0
+    repository: https://percona.github.io/percona-helm-charts
+    condition: upstreamCharts.harborpg.enabled
   - name: pulsar
     version: 4.5.0
     repository: https://pulsar.apache.org/charts

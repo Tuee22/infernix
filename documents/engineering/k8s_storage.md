@@ -8,16 +8,19 @@
 ## Storage Doctrine
 
 - default storage classes are deleted during bootstrap
-- `infernix-manual` is the only supported persistent storage class
-- durable PVCs come only from Helm-managed workloads
-- durable PVs come only from `infernix cluster up`
-- `cluster up` renders the Helm chart, discovers the PVC inventory from that output, and prepares one matching PV per durable claim before workload rollout
+- `infernix-manual` is the only supported persistent storage class and uses `kubernetes.io/no-provisioner`
+- durable PVCs come only from Helm-owned durable workloads, including operator-managed claims
+  reconciled from repo-owned Helm releases
+- durable PVs come only from `infernix cluster up` and bind explicitly to their intended claims
+- `cluster up` renders the Helm release shape, discovers the durable PVC inventory from that owned
+  chart or operator input, and prepares one matching PV per durable claim before workload rollout
 - durable PV paths follow `./.data/kind/<namespace>/<release>/<workload>/<ordinal>/<claim>`
-- the current platform claim inventory prepares one service claim, three Harbor registry claims,
-  four MinIO data claims, and three Pulsar ledger claims under that path doctrine
+- the durable claim inventory includes service, Harbor, MinIO, Pulsar, and any operator-managed
+  PostgreSQL claims under that same path doctrine
 
 ## Cross-References
 
 - [storage_and_state.md](storage_and_state.md)
 - [k8s_native_dev_policy.md](k8s_native_dev_policy.md)
+- [../tools/postgresql.md](../tools/postgresql.md)
 - [../operations/cluster_bootstrap_runbook.md](../operations/cluster_bootstrap_runbook.md)

@@ -21,6 +21,10 @@ REQUIRED_IMAGES = {
     "service": "infernix-service:local",
     "web": "infernix-web:local",
 }
+POSTGRES_OPERATOR_IMAGE = "docker.io/percona/percona-postgresql-operator:2.9.0"
+POSTGRES_DATABASE_IMAGE = "docker.io/percona/percona-distribution-postgresql:18.3-1"
+POSTGRES_PGBOUNCER_IMAGE = "docker.io/percona/percona-pgbouncer:1.25.1-1"
+POSTGRES_PGBACKREST_IMAGE = "docker.io/percona/percona-pgbackrest:2.58.0-1"
 DOCKER_PUSH_TIMEOUT_SECONDS = 900
 DOCKER_PULL_VERIFY_TIMEOUT_SECONDS = 900
 REGISTRY_READY_ATTEMPTS = 24
@@ -159,14 +163,17 @@ def load_images(rendered_chart_path: Path) -> list[str]:
             continue
         spec = pod_spec(document)
         if not isinstance(spec, dict):
-            continue
-        for key in ("initContainers", "containers"):
-            for container in spec.get(key) or []:
-                if not isinstance(container, dict):
-                    continue
-                image = container.get("image")
-                if isinstance(image, str) and image:
-                    images.add(image)
+            spec = None
+        if isinstance(spec, dict):
+            for key in ("initContainers", "containers"):
+                for container in spec.get(key) or []:
+                    if not isinstance(container, dict):
+                        continue
+                    image = container.get("image")
+                    if isinstance(image, str) and image:
+                        images.add(image)
+        for image in custom_resource_images(document):
+            images.add(image)
     if not images:
         fail("rendered chart did not contain any workload image references")
     return sorted(images)
@@ -189,6 +196,22 @@ def pod_spec(document: dict) -> dict | None:
     }:
         return ((spec.get("template") or {}).get("spec") or {})
     return None
+
+
+def custom_resource_images(document: dict) -> list[str]:
+    if document.get("kind") != "PerconaPGCluster":
+        return []
+
+    spec = document.get("spec") or {}
+    images: list[str] = []
+    for image in (
+        spec.get("image"),
+        ((spec.get("proxy") or {}).get("pgBouncer") or {}).get("image"),
+        ((spec.get("backups") or {}).get("pgbackrest") or {}).get("image"),
+    ):
+        if isinstance(image, str) and image:
+            images.append(image)
+    return images
 
 
 def is_harbor_image(image: str) -> bool:
@@ -366,14 +389,33 @@ def emit_overlay(published_images: dict[str, tuple[str, str]], output_path: Path
     minio_shell_image = next((image for image in published_images if image.endswith("/os-shell:12-debian-12-r50")), None)
     minio_console_image = next((image for image in published_images if image.endswith("/minio-object-browser:2.0.2-debian-12-r3")), None)
     pulsar_image = next((image for image in published_images if image.endswith("/pulsar-all:4.0.9")), None)
+    postgres_operator_image = next((image for image in published_images if image == POSTGRES_OPERATOR_IMAGE), None)
+    postgres_database_image = next((image for image in published_images if image == POSTGRES_DATABASE_IMAGE), None)
+    postgres_pgbouncer_image = next((image for image in published_images if image == POSTGRES_PGBOUNCER_IMAGE), None)
+    postgres_pgbackrest_image = next((image for image in published_images if image == POSTGRES_PGBACKREST_IMAGE), None)
 
-    if not all([minio_image, minio_shell_image, minio_console_image, pulsar_image]):
+    if not all(
+        [
+            minio_image,
+            minio_shell_image,
+            minio_console_image,
+            pulsar_image,
+            postgres_operator_image,
+            postgres_database_image,
+            postgres_pgbouncer_image,
+            postgres_pgbackrest_image,
+        ]
+    ):
         fail("did not discover every non-Harbor third-party image required for the final Harbor-backed rollout")
 
     minio_repository, minio_tag = require(minio_image)
     minio_shell_repository, minio_shell_tag = require(minio_shell_image)
     minio_console_repository, minio_console_tag = require(minio_console_image)
     pulsar_repository, pulsar_tag = require(pulsar_image)
+    postgres_operator_repository, postgres_operator_tag = require(postgres_operator_image)
+    postgres_database_repository, postgres_database_tag = require(postgres_database_image)
+    postgres_pgbouncer_repository, postgres_pgbouncer_tag = require(postgres_pgbouncer_image)
+    postgres_pgbackrest_repository, postgres_pgbackrest_tag = require(postgres_pgbackrest_image)
 
     overlay = {
         "service": {
@@ -405,6 +447,24 @@ def emit_overlay(published_images: dict[str, tuple[str, str]], output_path: Path
             "defaultPulsarImageRepository": pulsar_repository,
             "defaultPulsarImageTag": pulsar_tag,
             "defaultPullPolicy": "IfNotPresent",
+        },
+        "postgresOperator": {
+            "image": f"{postgres_operator_repository}:{postgres_operator_tag}",
+            "imagePullPolicy": "IfNotPresent",
+        },
+        "harborpg": {
+            "image": f"{postgres_database_repository}:{postgres_database_tag}",
+            "imagePullPolicy": "IfNotPresent",
+            "backups": {
+                "pgbackrest": {
+                    "image": f"{postgres_pgbackrest_repository}:{postgres_pgbackrest_tag}"
+                }
+            },
+            "proxy": {
+                "pgBouncer": {
+                    "image": f"{postgres_pgbouncer_repository}:{postgres_pgbouncer_tag}"
+                }
+            },
         },
     }
     minio_client_image = next((image for image in published_images if image.endswith("/minio-client:2025.7.21-debian-12-r2")), None)

@@ -51,6 +51,7 @@ seedClaims = platformClaims
 helmRepositories :: [(String, String)]
 helmRepositories =
   [ ("goharbor", "https://helm.goharbor.io"),
+    ("percona", "https://percona.github.io/percona-helm-charts"),
     ("apachepulsar", "https://pulsar.apache.org/charts"),
     ("bitnami", "https://charts.bitnami.com/bitnami"),
     ("ingress-nginx", "https://kubernetes.github.io/ingress-nginx"),
@@ -60,6 +61,8 @@ helmRepositories =
 helmDependencyArchives :: [FilePath]
 helmDependencyArchives =
   [ "chart/charts/harbor-1.18.3.tgz",
+    "chart/charts/pg-operator-2.9.0.tgz",
+    "chart/charts/pg-db-2.9.0.tgz",
     "chart/charts/pulsar-4.5.0.tgz",
     "chart/charts/minio-17.0.21.tgz",
     "chart/charts/ingress-nginx-4.15.1.tgz"
@@ -98,8 +101,7 @@ harborFinalPhaseDeployments =
 
 harborFinalPhaseStatefulSets :: [String]
 harborFinalPhaseStatefulSets =
-  [ "statefulset/infernix-harbor-database",
-    "statefulset/infernix-harbor-redis",
+  [ "statefulset/infernix-harbor-redis",
     "statefulset/infernix-harbor-trivy",
     "statefulset/infernix-minio"
   ]
@@ -129,6 +131,42 @@ data HarborBootstrapOutcome
   = HarborRegistryReady
   | HarborMigrationDirty
   | HarborBootstrapTimedOut String
+
+data OperatorManagedClaim = OperatorManagedClaim
+  { operatorClaimNamespace :: String,
+    operatorClaimCluster :: String,
+    operatorClaimInstanceSet :: String,
+    operatorClaimRole :: String,
+    operatorClaimDataKind :: String,
+    operatorClaimInstance :: String,
+    operatorClaimRepository :: String,
+    operatorClaimPvcName :: String,
+    operatorClaimRequestedStorage :: String
+  }
+
+postgresOperatorDeployment :: String
+postgresOperatorDeployment = "deployment/infernix-postgres-operator"
+
+harborPostgresClusterName :: String
+harborPostgresClusterName = "harbor-postgresql"
+
+harborPostgresExpectedDataClaims :: Int
+harborPostgresExpectedDataClaims = 3
+
+harborPostgresExpectedOperatorClaims :: Int
+harborPostgresExpectedOperatorClaims = 4
+
+harborPostgresPrimarySelector :: String
+harborPostgresPrimarySelector =
+  "postgres-operator.crunchydata.com/cluster="
+    <> harborPostgresClusterName
+    <> ",postgres-operator.crunchydata.com/role=primary"
+
+harborPostgresUserName :: String
+harborPostgresUserName = "harbor"
+
+harborPostgresUserSecretName :: String
+harborPostgresUserSecretName = "infernix-harbor-db-user"
 
 clusterUp :: Maybe RuntimeMode -> IO ()
 clusterUp maybeRuntimeMode = do
@@ -221,13 +259,15 @@ clusterUp maybeRuntimeMode = do
   harborFinalValuesPath <- writeHelmValuesFile paths controlPlane seedState payload HarborFinalPhase
   finalValuesPath <- writeHelmValuesFile paths controlPlane seedState payload FinalPhase
   renderedChartPath <- renderHelmChart paths runtimeMode [finalValuesPath]
+  when clusterCreated $
+    preloadBootstrapSupportImagesOnKindNodes paths runtimeMode renderedChartPath
   applyBootstrapState paths runtimeMode discoveredClaims
-  let state = seedState {claims = discoveredClaims}
-  writeFile publicationPath (renderPublicationState controlPlane state)
-  reconcilePersistentVolumes state
-  repairHarborDatabaseStorageState paths state
-  deployChart paths state [warmupValuesPath] False
-  repairHarborDatabaseMigrationState paths state
+  let initialState = seedState {claims = discoveredClaims}
+  writeFile publicationPath (renderPublicationState controlPlane initialState)
+  reconcilePersistentVolumes initialState
+  deployChart paths initialState [warmupValuesPath] False
+  state <- reconcileOperatorManagedPersistentVolumes paths initialState
+  repairHarborDatabaseMigrationState state
   bootstrapHarborWithRepair paths state [bootstrapValuesPath]
   buildClusterImages paths runtimeMode
   imageOverridesPath <- publishClusterImages paths renderedChartPath runtimeMode
@@ -237,7 +277,8 @@ clusterUp maybeRuntimeMode = do
   deployChart paths state [finalValuesPath, imageOverridesPath] True
   waitForFinalPhaseRollouts state
   waitForRoutedPublicationSurface paths state
-  writeStateFile (clusterStatePath paths) state
+  finalState <- refreshPersistentClaims state
+  writeStateFile (clusterStatePath paths) finalState
   putStrLn "cluster up complete"
   putStrLn ("controlPlaneContext: " <> controlPlane)
   putStrLn ("runtimeMode: " <> Text.unpack (runtimeModeId runtimeMode))
@@ -493,11 +534,12 @@ ensureClaimDirectoryReady paths persistentClaim = do
   case claimOwner persistentClaim of
     Nothing -> pure ()
     Just owner -> runCommand Nothing [] "chown" ["-R", owner, directoryPath]
-  where
-    claimOwner claimSpec
-      | workload claimSpec == "harbor-database" && claim claimSpec == "data" = Just "999:999"
-      | workload claimSpec == "minio" && claim claimSpec == "data" = Just "1001:1001"
-      | otherwise = Nothing
+
+claimOwner :: PersistentClaim -> Maybe String
+claimOwner claimSpec
+  | workload claimSpec == "minio" && claim claimSpec == "data" = Just "1001:1001"
+  | "harbor-postgresql" `List.isPrefixOf` Text.unpack (workload claimSpec) = Just "26:26"
+  | otherwise = Nothing
 
 ensureKindCluster :: Paths -> RuntimeMode -> Int -> IO (Int, String, Bool)
 ensureKindCluster paths runtimeMode requestedPort = do
@@ -1139,6 +1181,91 @@ buildClusterImages paths runtimeMode = do
   runCommand (Just (repoRoot paths)) [] "docker" (dockerBuildArgs "docker/service.Dockerfile" serviceImageRef)
   runCommand (Just (repoRoot paths)) [] "docker" (dockerBuildArgs "web/Dockerfile" webImageRef)
 
+preloadBootstrapSupportImagesOnKindNodes :: Paths -> RuntimeMode -> FilePath -> IO ()
+preloadBootstrapSupportImagesOnKindNodes paths runtimeMode renderedChartPath = do
+  imageRefs <- bootstrapSupportImageRefs paths renderedChartPath
+  let uniqueImageRefs = List.nub (filter (not . null) (map trim imageRefs))
+  unless (null uniqueImageRefs) $ do
+    putStrLn "preloading bootstrap-support images on Kind nodes"
+    mapM_ ensureLocalImageRef uniqueImageRefs
+    runCommand
+      Nothing
+      []
+      "kind"
+      (["load", "docker-image", "--name", kindClusterName paths runtimeMode] <> uniqueImageRefs)
+
+bootstrapSupportImageRefs :: Paths -> FilePath -> IO [String]
+bootstrapSupportImageRefs paths renderedChartPath =
+  filter isBootstrapSupportImageRef . map trim . lines
+    <$> captureCommand
+      (Just (repoRoot paths))
+      []
+      "python3"
+      ["-c", bootstrapSupportImageDiscoveryScript, renderedChartPath]
+  where
+    isBootstrapSupportImageRef imageRef =
+      not (null imageRef)
+        && imageRef /= serviceImageRef
+        && imageRef /= webImageRef
+
+bootstrapSupportImageDiscoveryScript :: String
+bootstrapSupportImageDiscoveryScript =
+  unlines
+    [ "from __future__ import annotations",
+      "import sys",
+      "from pathlib import Path",
+      "import yaml",
+      "",
+      "def pod_spec(document):",
+      "    kind = document.get('kind')",
+      "    spec = document.get('spec') or {}",
+      "    if kind == 'Pod':",
+      "        return spec",
+      "    if kind == 'CronJob':",
+      "        return ((((spec.get('jobTemplate') or {}).get('spec') or {}).get('template') or {}).get('spec') or {})",
+      "    if kind in {'DaemonSet', 'Deployment', 'Job', 'ReplicaSet', 'ReplicationController', 'StatefulSet'}:",
+      "        return ((spec.get('template') or {}).get('spec') or {})",
+      "    return {}",
+      "",
+      "def custom_resource_images(document):",
+      "    if document.get('kind') != 'PerconaPGCluster':",
+      "        return []",
+      "    spec = document.get('spec') or {}",
+      "    return [",
+      "        image",
+      "        for image in [",
+      "            spec.get('image'),",
+      "            (((spec.get('proxy') or {}).get('pgBouncer') or {}).get('image')),",
+      "            (((spec.get('backups') or {}).get('pgbackrest') or {}).get('image')),",
+      "        ]",
+      "        if isinstance(image, str) and image",
+      "    ]",
+      "",
+      "documents = list(yaml.safe_load_all(Path(sys.argv[1]).read_text(encoding='utf-8').replace('\\t', '  ')))",
+      "images = set()",
+      "for document in documents:",
+      "    if not isinstance(document, dict):",
+      "        continue",
+      "    spec = pod_spec(document)",
+      "    if isinstance(spec, dict):",
+      "        for key in ('initContainers', 'containers'):",
+      "            for container in spec.get(key) or []:",
+      "                if isinstance(container, dict):",
+      "                    image = container.get('image')",
+      "                    if isinstance(image, str) and image:",
+      "                        images.add(image)",
+      "    for image in custom_resource_images(document):",
+      "        images.add(image)",
+      "for image in sorted(images):",
+      "    print(image)"
+    ]
+
+ensureLocalImageRef :: String -> IO ()
+ensureLocalImageRef imageRef = do
+  imagePresent <- maybeCommand ["docker", "image", "inspect", imageRef]
+  unless imagePresent $
+    runCommand Nothing [] "docker" ["pull", imageRef]
+
 cleanupLegacyBootstrapRegistry :: IO ()
 cleanupLegacyBootstrapRegistry = do
   _ <- tryCommand Nothing [] "docker" ["rm", "-f", legacyBootstrapRegistryName]
@@ -1226,6 +1353,20 @@ preloadHarborImageOnNode nodeContainer imageRef = do
             )
         )
 
+maybeCommand :: [String] -> IO Bool
+maybeCommand [] = pure False
+maybeCommand (command : arguments) =
+  maybeRun command arguments
+
+maybeRun :: String -> [String] -> IO Bool
+maybeRun command arguments = do
+  result <- tryCommand Nothing [] command arguments
+  pure
+    ( case result of
+        Right _ -> True
+        Left _ -> False
+    )
+
 waitForHarborRegistry :: Paths -> RuntimeMode -> IO ()
 waitForHarborRegistry paths runtimeMode = do
   result <- waitForHarborRegistryResult paths runtimeMode 60 5000000
@@ -1296,48 +1437,9 @@ bootstrapHarborWithRepair paths state valuesPaths = go (3 :: Int)
                 (userError ("Harbor bootstrap Helm reconcile failed after retries:\n" <> err))
 
 repairHarborBootstrapState :: Paths -> ClusterState -> Maybe String -> IO ()
-repairHarborBootstrapState paths state maybeError = do
-  resetRequired <- harborDatabaseResetRequired state maybeError
-  if resetRequired
-    then resetHarborDatabaseStorageState paths state
-    else repairHarborDatabaseStorageState paths state
+repairHarborBootstrapState _paths state _maybeError = do
   cleanupHarborMigrationJob state
-  repairHarborDatabaseMigrationState paths state
-
-harborDatabaseResetRequired :: ClusterState -> Maybe String -> IO Bool
-harborDatabaseResetRequired state maybeError = do
-  migrationPermissionDenied <- harborMigrationHookPermissionDenied state
-  pure
-    ( migrationPermissionDenied
-        || maybe False isHarborPermissionError maybeError
-    )
-  where
-    isHarborPermissionError err =
-      "Permission denied" `List.isInfixOf` err
-        || "could not open file" `List.isInfixOf` err
-
-harborMigrationHookPermissionDenied :: ClusterState -> IO Bool
-harborMigrationHookPermissionDenied state = do
-  result <-
-    tryCommand
-      Nothing
-      []
-      "kubectl"
-      ( kubeconfigArgs state
-          <> [ "-n",
-               "platform",
-               "logs",
-               "job/migration-job",
-               "--tail=200"
-             ]
-      )
-  pure
-    ( case result of
-        Right output ->
-          "Permission denied" `List.isInfixOf` output
-            || "could not open file" `List.isInfixOf` output
-        Left _ -> False
-    )
+  repairHarborDatabaseMigrationState state
 
 cleanupHarborMigrationJob :: ClusterState -> IO ()
 cleanupHarborMigrationJob state = do
@@ -1381,184 +1483,263 @@ harborRegistryMigrationDirty state = do
   let detectionCommand =
         unlines
           [ "set -eu",
-            "export PGPASSWORD=\"$POSTGRES_PASSWORD\"",
-            "registry_present=$(psql -U postgres -d postgres -Atqc \"SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_database WHERE datname = 'registry') THEN 'true' ELSE 'false' END\")",
-            "if [ \"$registry_present\" != \"true\" ]; then",
-            "  echo clean",
-            "  exit 0",
-            "fi",
-            "dirty_count=$(psql -U postgres -d registry -Atqc \"SELECT CASE WHEN EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'schema_migrations') THEN (SELECT COUNT(*)::text FROM schema_migrations WHERE dirty = TRUE) ELSE '0' END\")",
+            "dirty_count=$(psql -h 127.0.0.1 -U " <> harborPostgresUserName <> " -d registry -Atqc \"SELECT CASE WHEN EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'schema_migrations') THEN (SELECT COUNT(*)::text FROM schema_migrations WHERE dirty = TRUE) ELSE '0' END\")",
             "if [ \"$dirty_count\" = \"0\" ]; then",
             "  echo clean",
             "else",
             "  echo dirty",
             "fi"
           ]
-  result <-
-    tryCommand
-      Nothing
-      []
-      "kubectl"
-      ( kubeconfigArgs state
-          <> [ "-n",
-               "platform",
-               "exec",
-               "infernix-harbor-database-0",
-               "--",
-               "sh",
-               "-lc",
-               detectionCommand
-             ]
-      )
+  result <- runHarborDatabaseCommand state detectionCommand
   case result of
     Right output -> pure ("dirty" `List.isInfixOf` output)
     Left _ -> pure False
 
-repairHarborDatabaseStorageState :: Paths -> ClusterState -> IO ()
-repairHarborDatabaseStorageState paths state =
-  case List.find isHarborDatabaseClaim (claims state) of
-    Nothing -> pure ()
-    Just persistentClaim -> do
-      let postgresRoot = claimDirectory paths persistentClaim </> "pgdata"
-          versionFile = postgresRoot </> "pg15" </> "PG_VERSION"
-      postgresRootExists <- doesDirectoryExist postgresRoot
-      versionFileExists <- doesFileExist versionFile
-      when (postgresRootExists && not versionFileExists) $ do
-        removePathForcibly postgresRoot
-        ensureClaimDirectoryReady paths persistentClaim
-        _ <-
-          tryCommand
-            Nothing
-            []
-            "kubectl"
-            ( kubeconfigArgs state
-                <> [ "-n",
-                     "platform",
-                     "delete",
-                     "pod",
-                     "infernix-harbor-database-0",
-                     "--ignore-not-found=true",
-                     "--wait=true"
-                   ]
-            )
-        pure ()
-  where
-    isHarborDatabaseClaim persistentClaim =
-      namespace persistentClaim == "platform"
-        && release persistentClaim == "infernix"
-        && workload persistentClaim == "harbor-database"
-        && claim persistentClaim == "data"
-
-resetHarborDatabaseStorageState :: Paths -> ClusterState -> IO ()
-resetHarborDatabaseStorageState paths state =
-  case List.find isHarborDatabaseClaim (claims state) of
-    Nothing -> pure ()
-    Just persistentClaim -> do
-      let postgresRoot = claimDirectory paths persistentClaim </> "pgdata"
-      postgresRootExists <- doesDirectoryExist postgresRoot
-      when postgresRootExists (removePathForcibly postgresRoot)
-      ensureClaimDirectoryReady paths persistentClaim
-      _ <-
-        tryCommand
-          Nothing
-          []
-          "kubectl"
-          ( kubeconfigArgs state
-              <> [ "-n",
-                   "platform",
-                   "delete",
-                   "pod",
-                   "infernix-harbor-database-0",
-                   "--ignore-not-found=true",
-                   "--wait=true"
-                 ]
-          )
-      pure ()
-  where
-    isHarborDatabaseClaim persistentClaim =
-      namespace persistentClaim == "platform"
-        && release persistentClaim == "infernix"
-        && workload persistentClaim == "harbor-database"
-        && claim persistentClaim == "data"
-
-repairHarborDatabaseMigrationState :: Paths -> ClusterState -> IO ()
-repairHarborDatabaseMigrationState paths state = do
-  waitForHarborDatabaseReadyWithRepair paths state
+repairHarborDatabaseMigrationState :: ClusterState -> IO ()
+repairHarborDatabaseMigrationState state = do
+  waitForHarborDatabaseReadyWithRepair state
   let repairCommand =
         unlines
           [ "set -eu",
-            "export PGPASSWORD=\"$POSTGRES_PASSWORD\"",
-            "registry_present=$(psql -U postgres -d postgres -Atqc \"SELECT CASE WHEN EXISTS (SELECT 1 FROM pg_database WHERE datname = 'registry') THEN 'true' ELSE 'false' END\")",
-            "if [ \"$registry_present\" = \"true\" ]; then",
-            "  dirty_count=$(psql -U postgres -d registry -Atqc \"SELECT CASE WHEN EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'schema_migrations') THEN (SELECT COUNT(*)::text FROM schema_migrations WHERE dirty = TRUE) ELSE '0' END\")",
-            "  if [ \"$dirty_count\" != \"0\" ]; then",
-            "    psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \"SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'registry' AND pid <> pg_backend_pid();\"",
-            "    psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \"DROP DATABASE IF EXISTS registry;\"",
-            "    psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \"CREATE DATABASE registry;\"",
-            "  fi",
+            "dirty_count=$(psql -h 127.0.0.1 -U " <> harborPostgresUserName <> " -d registry -Atqc \"SELECT CASE WHEN EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'schema_migrations') THEN (SELECT COUNT(*)::text FROM schema_migrations WHERE dirty = TRUE) ELSE '0' END\")",
+            "if [ \"$dirty_count\" != \"0\" ]; then",
+            "  psql -h 127.0.0.1 -U " <> harborPostgresUserName <> " -d registry -v ON_ERROR_STOP=1 -c \"DROP SCHEMA public CASCADE;\"",
+            "  psql -h 127.0.0.1 -U " <> harborPostgresUserName <> " -d registry -v ON_ERROR_STOP=1 -c \"CREATE SCHEMA public AUTHORIZATION " <> harborPostgresUserName <> ";\"",
+            "  psql -h 127.0.0.1 -U " <> harborPostgresUserName <> " -d registry -v ON_ERROR_STOP=1 -c \"GRANT ALL ON SCHEMA public TO " <> harborPostgresUserName <> ";\"",
             "fi"
           ]
-  _ <-
-    tryCommand
-      Nothing
-      []
-      "kubectl"
-      ( kubeconfigArgs state
-          <> [ "-n",
-               "platform",
-               "exec",
-               "infernix-harbor-database-0",
-               "--",
-               "sh",
-               "-lc",
-               repairCommand
-             ]
-      )
+  _ <- runHarborDatabaseCommand state repairCommand
   pure ()
 
-waitForHarborDatabaseReadyWithRepair :: Paths -> ClusterState -> IO ()
-waitForHarborDatabaseReadyWithRepair paths state = go (72 :: Int) ""
-  where
-    waitArgs =
-      kubeconfigArgs state
+waitForHarborDatabaseReadyWithRepair :: ClusterState -> IO ()
+waitForHarborDatabaseReadyWithRepair state = do
+  waitForWorkloadRollout state 900 postgresOperatorDeployment
+  waitForHarborPostgresPodsReady state
+  waitForWorkloadRollout state 900 ("deployment/" <> harborPostgresClusterName <> "-pgbouncer")
+  primaryPodName <- waitForHarborPostgresPrimaryPod state
+  runCommand
+    Nothing
+    []
+    "kubectl"
+    ( kubeconfigArgs state
         <> [ "-n",
              "platform",
              "wait",
              "--for=condition=Ready",
-             "pod/infernix-harbor-database-0",
-             "--timeout=5s"
+             "pod/" <> primaryPodName,
+             "--timeout",
+             "60s"
            ]
-    go remainingAttempts lastError = do
-      result <- tryCommand Nothing [] "kubectl" waitArgs
-      case result of
-        Right _ -> pure ()
-        Left err -> do
-          storageCorrupt <- harborDatabaseStorageCorrupt state
-          when storageCorrupt (repairHarborDatabaseStorageState paths state)
+    )
+
+waitForHarborPostgresPodsReady :: ClusterState -> IO ()
+waitForHarborPostgresPodsReady state = go (72 :: Int) False ""
+  where
+    go remainingAttempts restartIssued lastError = do
+      startupPods <- harborPostgresStartupPods state
+      let dataPodCount =
+            length
+              [ ()
+              | startupPod <- startupPods,
+                "harbor-postgresql-instance" `List.isPrefixOf` harborPostgresStartupPodName startupPod
+              ]
+          repoHostCount =
+            length
+              [ ()
+              | startupPod <- startupPods,
+                "harbor-postgresql-repo-host-" `List.isPrefixOf` harborPostgresStartupPodName startupPod
+              ]
+          currentError
+            | dataPodCount < harborPostgresExpectedDataClaims =
+                "expected "
+                  <> show harborPostgresExpectedDataClaims
+                  <> " Harbor PostgreSQL data pods but found "
+                  <> show dataPodCount
+            | repoHostCount < 1 = "expected Harbor PostgreSQL pgBackRest repo host pod but found none"
+            | all harborPostgresStartupPodReady startupPods = ""
+            | otherwise =
+                "Harbor PostgreSQL startup pods are not ready: "
+                  <> List.intercalate
+                    ", "
+                    [ harborPostgresStartupPodName startupPod
+                        <> " ["
+                        <> harborPostgresStartupPodStatus startupPod
+                        <> "]"
+                    | startupPod <- startupPods,
+                      not (harborPostgresStartupPodReady startupPod)
+                    ]
+      if null currentError
+        then pure ()
+        else
           if remainingAttempts <= 1
             then
               ioError
                 ( userError
-                    ( "Harbor database pod never became ready:\n"
-                        <> chooseError err lastError
+                    ( "Harbor PostgreSQL pods never became ready:\n"
+                        <> chooseError currentError lastError
                     )
                 )
             else do
+              restarted <-
+                if restartIssued
+                  then pure False
+                  else restartHarborPostgresStartupPodsIfStuck state startupPods
               threadDelay 5000000
-              go (remainingAttempts - 1) (chooseError err lastError)
+              go (remainingAttempts - 1) (restartIssued || restarted) (chooseError currentError lastError)
 
     chooseError current previous
       | null current = previous
       | otherwise = current
 
-harborDatabaseStorageCorrupt :: ClusterState -> IO Bool
-harborDatabaseStorageCorrupt state = do
-  currentLogs <- tryCommand Nothing [] "kubectl" (kubeconfigArgs state <> ["-n", "platform", "logs", "infernix-harbor-database-0"])
-  previousLogs <- tryCommand Nothing [] "kubectl" (kubeconfigArgs state <> ["-n", "platform", "logs", "infernix-harbor-database-0", "--previous"])
-  pure
-    (any hasConflictMarker [either id id currentLogs, either id id previousLogs])
+data HarborPostgresStartupPod = HarborPostgresStartupPod
+  { harborPostgresStartupPodName :: String,
+    harborPostgresStartupPodReady :: Bool,
+    harborPostgresStartupPodStatus :: String
+  }
+
+harborPostgresStartupPods :: ClusterState -> IO [HarborPostgresStartupPod]
+harborPostgresStartupPods state =
+  mapMaybe parseStartupPodLine . lines
+    <$> kubectlOutput
+      state
+      [ "-n",
+        "platform",
+        "get",
+        "pods",
+        "--no-headers"
+      ]
   where
-    hasConflictMarker output = "exists but is not empty" `List.isInfixOf` output
+    parseStartupPodLine lineValue =
+      case words lineValue of
+        podNameValue : readyValue : statusValue : _
+          | isHarborPostgresStartupPodName podNameValue ->
+              Just
+                HarborPostgresStartupPod
+                  { harborPostgresStartupPodName = podNameValue,
+                    harborPostgresStartupPodReady = readyColumnSatisfied readyValue,
+                    harborPostgresStartupPodStatus = statusValue
+                  }
+        _ -> Nothing
+
+    isHarborPostgresStartupPodName podNameValue =
+      "harbor-postgresql-instance" `List.isPrefixOf` podNameValue
+        || "harbor-postgresql-repo-host-" `List.isPrefixOf` podNameValue
+
+    readyColumnSatisfied readyValue =
+      case break (== '/') readyValue of
+        (readyCountText, '/' : totalCountText) ->
+          case (readMaybe readyCountText :: Maybe Int, readMaybe totalCountText :: Maybe Int) of
+            (Just readyCount, Just totalCount) -> totalCount > 0 && readyCount == totalCount
+            _ -> False
+        _ -> False
+
+restartHarborPostgresStartupPodsIfStuck :: ClusterState -> [HarborPostgresStartupPod] -> IO Bool
+restartHarborPostgresStartupPodsIfStuck state startupPods =
+  if any podLooksStuck startupPods && not (null unreadyPodNames)
+    then do
+      runCommand
+        Nothing
+        []
+        "kubectl"
+        (kubeconfigArgs state <> ["-n", "platform", "delete", "pod"] <> unreadyPodNames)
+      pure True
+    else pure False
+  where
+    unreadyPodNames =
+      [ harborPostgresStartupPodName startupPod
+      | startupPod <- startupPods,
+        not (harborPostgresStartupPodReady startupPod)
+      ]
+    podLooksStuck startupPod =
+      not (harborPostgresStartupPodReady startupPod)
+        && ( "CrashLoopBackOff" `List.isInfixOf` harborPostgresStartupPodStatus startupPod
+               || harborPostgresStartupPodStatus startupPod == "Error"
+               || harborPostgresStartupPodStatus startupPod == "Init:Error"
+           )
+
+waitForHarborPostgresPrimaryPod :: ClusterState -> IO String
+waitForHarborPostgresPrimaryPod state = go (72 :: Int)
+  where
+    go remainingAttempts
+      | remainingAttempts <= 0 =
+          ioError (userError "Harbor PostgreSQL primary pod never appeared")
+      | otherwise = do
+          podName <- harborPostgresPrimaryPodNameMaybe state
+          if null podName
+            then do
+              threadDelay 5000000
+              go (remainingAttempts - 1)
+            else pure podName
+
+harborPostgresPrimaryPodNameMaybe :: ClusterState -> IO String
+harborPostgresPrimaryPodNameMaybe state = do
+  podNames <-
+    filter (not . null) . map trim . lines
+      <$> kubectlOutput
+        state
+        [ "-n",
+          "platform",
+          "get",
+          "pods",
+          "-l",
+          harborPostgresPrimarySelector,
+          "--no-headers",
+          "-o",
+          "custom-columns=:metadata.name"
+        ]
+  pure
+    ( case podNames of
+        podName : _ -> podName
+        [] -> ""
+    )
+
+runHarborDatabaseCommand :: ClusterState -> String -> IO (Either String String)
+runHarborDatabaseCommand state commandText = do
+  password <- harborPostgresPassword state
+  primaryPodName <- waitForHarborPostgresPrimaryPod state
+  tryCommand
+    Nothing
+    []
+    "kubectl"
+    ( kubeconfigArgs state
+        <> [ "-n",
+             "platform",
+             "exec",
+             primaryPodName,
+             "-c",
+             "database",
+             "--",
+             "sh",
+             "-lc",
+             unlines
+               [ "set -eu",
+                 "export PGPASSWORD=" <> shellQuote password,
+                 commandText
+               ]
+           ]
+    )
+
+harborPostgresPassword :: ClusterState -> IO String
+harborPostgresPassword state = do
+  encodedPassword <-
+    kubectlOutput
+      state
+      [ "-n",
+        "platform",
+        "get",
+        "secret",
+        harborPostgresUserSecretName,
+        "-o",
+        "jsonpath={.data.password}"
+      ]
+  trim <$> readProcess "python3" ["-c", "import base64, sys; print(base64.b64decode(sys.stdin.read()).decode('utf-8'), end='')"] encodedPassword
+
+shellQuote :: String -> String
+shellQuote value =
+  "'" <> concatMap escapeCharacter value <> "'"
+  where
+    escapeCharacter '\'' = "'\"'\"'"
+    escapeCharacter character = [character]
 
 deployChart :: Paths -> ClusterState -> [FilePath] -> Bool -> IO ()
 deployChart paths state valuesPaths waitForRollout = do
@@ -1601,12 +1782,14 @@ waitForHarborFinalPhaseRollouts state = do
   putStrLn "waiting for final Harbor rollouts"
   mapM_ (waitForWorkloadRollout state 1200) harborFinalPhaseStatefulSets
   mapM_ (waitForWorkloadRollout state 900) harborFinalPhaseDeployments
+  waitForHarborDatabaseReadyWithRepair state
 
 waitForFinalPhaseRollouts :: ClusterState -> IO ()
 waitForFinalPhaseRollouts state = do
   putStrLn "waiting for final platform rollouts"
   mapM_ (waitForWorkloadRollout state 1200) finalPhaseStatefulSets
   mapM_ (waitForWorkloadRollout state 900) finalPhaseDeployments
+  waitForHarborDatabaseReadyWithRepair state
 
 waitForRoutedPublicationSurface :: Paths -> ClusterState -> IO ()
 waitForRoutedPublicationSurface paths state = do
@@ -1685,6 +1868,215 @@ ensureHelmRepositoryDefinitions paths =
   mapM_
     (\(repoName, repoUrl) -> runCommand (Just (repoRoot paths)) (Config.helmEnvironment paths) "helm" ["repo", "add", "--force-update", repoName, repoUrl])
     helmRepositories
+
+reconcileOperatorManagedPersistentVolumes :: Paths -> ClusterState -> IO ClusterState
+reconcileOperatorManagedPersistentVolumes paths state = do
+  waitForWorkloadRollout state 900 postgresOperatorDeployment
+  operatorClaims <- waitForOperatorManagedPersistentClaims state harborPostgresExpectedOperatorClaims
+  mapM_ (ensureClaimDirectoryReady paths) operatorClaims
+  unless (kindUsesHostBindMounts paths) $
+    prepareKindNodeClaimDirectories paths (clusterRuntimeMode state) operatorClaims
+  let updatedState = state {claims = mergePersistentClaims (claims state) operatorClaims}
+  reconcilePersistentVolumes updatedState
+  waitForPersistentClaimsBound updatedState operatorClaims
+  waitForHarborDatabaseReadyWithRepair updatedState
+  pure updatedState
+
+refreshPersistentClaims :: ClusterState -> IO ClusterState
+refreshPersistentClaims state = do
+  operatorClaims <- discoverOperatorManagedPersistentClaims state
+  pure (state {claims = mergePersistentClaims (claims state) operatorClaims})
+
+waitForOperatorManagedPersistentClaims :: ClusterState -> Int -> IO [PersistentClaim]
+waitForOperatorManagedPersistentClaims state expectedCount = go (72 :: Int) []
+  where
+    go remainingAttempts previousClaims = do
+      currentClaims <- discoverOperatorManagedPersistentClaims state
+      if length currentClaims >= expectedCount
+        then pure currentClaims
+        else
+          if remainingAttempts <= 1
+            then
+              ioError
+                ( userError
+                    ( "operator-managed PostgreSQL claims never appeared; expected at least "
+                        <> show expectedCount
+                        <> " but found "
+                        <> show (length currentClaims)
+                        <> " after retries"
+                    )
+                )
+            else do
+              threadDelay 5000000
+              go (remainingAttempts - 1) (if null currentClaims then previousClaims else currentClaims)
+
+discoverOperatorManagedPersistentClaims :: ClusterState -> IO [PersistentClaim]
+discoverOperatorManagedPersistentClaims state = do
+  pvcPayload <-
+    kubectlOutput
+      state
+      [ "get",
+        "pvc",
+        "-A",
+        "-l",
+        "postgres-operator.crunchydata.com/cluster",
+        "-o",
+        "json"
+      ]
+  discoveryOutput <- readProcess "python3" ["-c", operatorClaimDiscoveryScript] pvcPayload
+  pure (normalizeOperatorManagedClaims (mapMaybe parseOperatorManagedClaimLine (filter (not . null) (lines discoveryOutput))))
+  where
+    operatorClaimDiscoveryScript =
+      unlines
+        [ "import json",
+          "import sys",
+          "payload = json.load(sys.stdin)",
+          "rows = []",
+          "for item in payload.get('items', []):",
+          "    metadata = item.get('metadata') or {}",
+          "    labels = metadata.get('labels') or {}",
+          "    spec = item.get('spec') or {}",
+          "    storage_class = spec.get('storageClassName')",
+          "    cluster = labels.get('postgres-operator.crunchydata.com/cluster')",
+          "    repository = labels.get('postgres-operator.crunchydata.com/pgbackrest-repo')",
+          "    role = labels.get('postgres-operator.crunchydata.com/role') or ('pgbackrest' if repository else None)",
+          "    if not cluster or not role:",
+          "        continue",
+          "    if storage_class != 'infernix-manual':",
+          "        raise SystemExit(",
+          "            'operator-managed PostgreSQL PVC ' + str(metadata.get('name'))",
+          "            + ' uses unsupported storageClassName ' + repr(storage_class)",
+          "        )",
+          "    rows.append([",
+          "        str(metadata.get('namespace') or 'default'),",
+          "        str(cluster),",
+          "        str(labels.get('postgres-operator.crunchydata.com/instance-set') or ''),",
+          "        str(role),",
+          "        str(labels.get('postgres-operator.crunchydata.com/data') or ('pgbackrest' if repository else '')),",
+          "        str(labels.get('postgres-operator.crunchydata.com/instance') or ''),",
+          "        str(repository or ''),",
+          "        str(metadata.get('name') or ''),",
+          "        str((((spec.get('resources') or {}).get('requests') or {}).get('storage')) or '5Gi'),",
+          "    ])",
+          "for row in sorted(rows):",
+          "    print('\\t'.join(row))"
+        ]
+
+parseOperatorManagedClaimLine :: String -> Maybe OperatorManagedClaim
+parseOperatorManagedClaimLine lineValue =
+  case splitTabs lineValue of
+    [namespaceValue, clusterValue, instanceSetValue, roleValue, dataKindValue, instanceValue, repositoryValue, pvcNameValue, requestedStorageValue] ->
+      Just
+        OperatorManagedClaim
+          { operatorClaimNamespace = namespaceValue,
+            operatorClaimCluster = clusterValue,
+            operatorClaimInstanceSet = instanceSetValue,
+            operatorClaimRole = roleValue,
+            operatorClaimDataKind = dataKindValue,
+            operatorClaimInstance = instanceValue,
+            operatorClaimRepository = repositoryValue,
+            operatorClaimPvcName = pvcNameValue,
+            operatorClaimRequestedStorage = requestedStorageValue
+          }
+    _ -> Nothing
+
+normalizeOperatorManagedClaims :: [OperatorManagedClaim] -> [PersistentClaim]
+normalizeOperatorManagedClaims rawClaims =
+  concatMap normalizeGroup groupedClaims
+  where
+    sortedClaims = List.sortOn (\claimValue -> (operatorClaimGroupingKey claimValue, operatorClaimPvcName claimValue)) rawClaims
+    groupedClaims = List.groupBy sameGroupingKey sortedClaims
+    sameGroupingKey left right = operatorClaimGroupingKey left == operatorClaimGroupingKey right
+    normalizeGroup = zipWith operatorClaimToPersistentClaim [0 ..]
+
+operatorClaimGroupingKey :: OperatorManagedClaim -> (String, String, String, String)
+operatorClaimGroupingKey claimValue =
+  ( operatorClaimNamespace claimValue,
+    operatorClaimCluster claimValue,
+    operatorManagedWorkloadName claimValue,
+    operatorManagedClaimName claimValue
+  )
+
+operatorManagedWorkloadName :: OperatorManagedClaim -> String
+operatorManagedWorkloadName claimValue =
+  case operatorClaimRepository claimValue of
+    repositoryValue
+      | not (null repositoryValue) ->
+          operatorClaimCluster claimValue <> "-pgbackrest"
+    _ ->
+      operatorClaimCluster claimValue
+        <> "-"
+        <> groupSuffix
+  where
+    groupSuffix
+      | not (null (operatorClaimInstanceSet claimValue)) = operatorClaimInstanceSet claimValue
+      | not (null (operatorClaimDataKind claimValue)) = operatorClaimDataKind claimValue
+      | otherwise = operatorClaimRole claimValue
+
+operatorManagedClaimName :: OperatorManagedClaim -> String
+operatorManagedClaimName claimValue
+  | not (null (operatorClaimRepository claimValue)) = operatorClaimRepository claimValue
+  | operatorClaimRole claimValue `elem` ["pgdata", "pgwal"] = operatorClaimRole claimValue
+  | not (null (operatorClaimDataKind claimValue)) = operatorClaimDataKind claimValue
+  | otherwise = operatorClaimRole claimValue
+
+operatorClaimToPersistentClaim :: Int -> OperatorManagedClaim -> PersistentClaim
+operatorClaimToPersistentClaim ordinalValue claimValue =
+  PersistentClaim
+    { namespace = Text.pack (operatorClaimNamespace claimValue),
+      release = "infernix",
+      workload = Text.pack (operatorManagedWorkloadName claimValue),
+      ordinal = ordinalValue,
+      claim = Text.pack (operatorManagedClaimName claimValue),
+      pvcName = Text.pack (operatorClaimPvcName claimValue),
+      requestedStorage = Text.pack (operatorClaimRequestedStorage claimValue)
+    }
+
+mergePersistentClaims :: [PersistentClaim] -> [PersistentClaim] -> [PersistentClaim]
+mergePersistentClaims existingClaims newClaims =
+  List.sortOn
+    persistentVolumeClaimName
+    (Map.elems (Map.fromList [(persistentVolumeClaimName persistentClaim, persistentClaim) | persistentClaim <- existingClaims <> newClaims]))
+
+waitForPersistentClaimsBound :: ClusterState -> [PersistentClaim] -> IO ()
+waitForPersistentClaimsBound state = mapM_ waitForPersistentClaimBound
+  where
+    waitForPersistentClaimBound persistentClaim = go (72 :: Int) ""
+      where
+        claimNamespace = Text.unpack (namespace persistentClaim)
+        pvcNameValue = persistentVolumeClaimName persistentClaim
+        go remainingAttempts lastPhase = do
+          phaseValue <-
+            trim
+              <$> kubectlOutput
+                state
+                [ "-n",
+                  claimNamespace,
+                  "get",
+                  "pvc",
+                  pvcNameValue,
+                  "-o",
+                  "jsonpath={.status.phase}"
+                ]
+          if phaseValue == "Bound"
+            then pure ()
+            else
+              if remainingAttempts <= 1
+                then
+                  ioError
+                    ( userError
+                        ( "persistent claim "
+                            <> pvcNameValue
+                            <> " never reached Bound phase; last phase was "
+                            <> choosePhase phaseValue lastPhase
+                        )
+                    )
+                else do
+                  threadDelay 5000000
+                  go (remainingAttempts - 1) (choosePhase phaseValue lastPhase)
+        choosePhase current previous
+          | null current = previous
+          | otherwise = current
 
 reconcilePersistentVolumes :: ClusterState -> IO ()
 reconcilePersistentVolumes state =
@@ -1867,6 +2259,21 @@ prepareKindNodeRuntimePaths paths runtimeMode = do
         "docker"
         ["exec", "-i", nodeName, "cp", "/dev/stdin", registryDirectoryInNode </> "hosts.toml"]
         registryHostsContents
+
+prepareKindNodeClaimDirectories :: Paths -> RuntimeMode -> [PersistentClaim] -> IO ()
+prepareKindNodeClaimDirectories paths runtimeMode persistentClaims = do
+  nodeNames <- kindNodeNames paths runtimeMode
+  mapM_ (prepareOnNode nodeNames) persistentClaims
+  where
+    prepareOnNode nodeNames persistentClaim =
+      mapM_ (prepareOnSingleNode persistentClaim) nodeNames
+    prepareOnSingleNode persistentClaim nodeName = do
+      let directoryPath = nodeMountedClaimPath persistentClaim
+      runCommand Nothing [] "docker" ["exec", nodeName, "mkdir", "-p", directoryPath]
+      runCommand Nothing [] "docker" ["exec", nodeName, "chmod", "-R", "a+rwX", directoryPath]
+      case claimOwner persistentClaim of
+        Nothing -> pure ()
+        Just owner -> runCommand Nothing [] "docker" ["exec", nodeName, "chown", "-R", owner, directoryPath]
 
 syncKindNodeRuntimePathsToHost :: Paths -> RuntimeMode -> Maybe ClusterState -> IO ()
 syncKindNodeRuntimePathsToHost paths runtimeMode maybeState = do
@@ -2182,6 +2589,10 @@ renderHelmValues controlPlane state demoConfigPayload deployPhase engineCommandO
     harborBootstrapChartOverrides =
       [ "upstreamCharts:",
         "  harbor:",
+        "    enabled: true",
+        "  postgresOperator:",
+        "    enabled: true",
+        "  harborpg:",
         "    enabled: true",
         "  minio:",
         "    enabled: true",

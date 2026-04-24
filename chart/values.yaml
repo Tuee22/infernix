@@ -8,6 +8,10 @@ global:
 upstreamCharts:
   harbor:
     enabled: true
+  postgresOperator:
+    enabled: true
+  harborpg:
+    enabled: true
   minio:
     enabled: true
   pulsar:
@@ -168,6 +172,15 @@ harbor:
   harborAdminPassword: Harbor12345
   # Pin Harbor's internal secrets so bootstrap and final phases render the same Harbor resources.
   secretKey: "0123456789abcdef"
+  database:
+    type: external
+    external:
+      host: harbor-postgresql-pgbouncer.platform.svc.cluster.local
+      port: "5432"
+      username: harbor
+      existingSecret: infernix-harbor-db-user
+      coreDatabase: registry
+      sslmode: require
   persistence:
     enabled: true
     resourcePolicy: keep
@@ -179,9 +192,6 @@ harbor:
         jobLog:
           storageClass: infernix-manual
           size: 1Gi
-      database:
-        storageClass: infernix-manual
-        size: 1Gi
       redis:
         storageClass: infernix-manual
         size: 1Gi
@@ -269,6 +279,52 @@ harbor:
       htpasswdString: "harbor_registry_user:$2a$10$4sf.czgjL/xrrR0TipkLzOcrg82zXOFIPmku9jvCosb3t6vH4.Ml2"
   trivy:
     replicas: 3
+
+postgresOperator:
+  fullnameOverride: infernix-postgres-operator
+  image: docker.io/percona/percona-postgresql-operator:2.9.0
+  imagePullPolicy: IfNotPresent
+
+harborpg:
+  fullnameOverride: harbor-postgresql
+  image: docker.io/percona/percona-distribution-postgresql:18.3-1
+  imagePullPolicy: IfNotPresent
+  postgresVersion: 18
+  users:
+    - name: harbor
+      databases:
+        - registry
+      password:
+        type: ASCII
+      secretName: infernix-harbor-db-user
+  instances:
+    - name: instance1
+      replicas: 3
+      dataVolumeClaimSpec:
+        storageClassName: infernix-manual
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 5Gi
+  proxy:
+    pgBouncer:
+      replicas: 3
+      image: docker.io/percona/percona-pgbouncer:1.25.1-1
+  backups:
+    enabled: true
+    pgbackrest:
+      image: docker.io/percona/percona-pgbackrest:2.58.0-1
+      repos:
+        - name: repo1
+          volume:
+            volumeClaimSpec:
+              storageClassName: infernix-manual
+              accessModes:
+                - ReadWriteOnce
+              resources:
+                requests:
+                  storage: 5Gi
 
 pulsar:
   # Pulsar is only enabled in the final Helm phase, so force the upstream init jobs to run there.

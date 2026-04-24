@@ -27,6 +27,10 @@ Those actions are reserved for the user.
 - Keep the Harbor-first bootstrap narrative aligned across `README.md`, `DEVELOPMENT_PLAN/`, and
   `documents/`: Harbor and only Harbor-required bootstrap support services may pull upstream before
   readiness, and every remaining non-Harbor workload pulls from Harbor afterward.
+- Keep the PostgreSQL deployment narrative aligned across `README.md`, `DEVELOPMENT_PLAN/`, and
+  `documents/`: every in-cluster PostgreSQL dependency uses a Patroni cluster managed by the
+  Percona Kubernetes operator, even when a chart can self-deploy PostgreSQL, and its PVCs stay on
+  the manual `infernix-manual` storage doctrine.
 - Keep the three-runtime build direction and the Kind HA testing or demo-ground direction aligned.
 - Treat the cluster-resident webapp as a demo surface while retaining the three-runtime and
   matrix-coverage intent.

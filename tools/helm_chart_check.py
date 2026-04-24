@@ -13,12 +13,15 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 HELM_HOME_ROOT = REPO_ROOT / ".data" / "helm"
 HELM_REPOSITORIES = [
     ("goharbor", "https://helm.goharbor.io"),
+    ("percona", "https://percona.github.io/percona-helm-charts"),
     ("apachepulsar", "https://pulsar.apache.org/charts"),
     ("bitnami", "https://charts.bitnami.com/bitnami"),
     ("ingress-nginx", "https://kubernetes.github.io/ingress-nginx"),
 ]
 HELM_DEPENDENCY_ARCHIVES = [
     REPO_ROOT / "chart" / "charts" / "harbor-1.18.3.tgz",
+    REPO_ROOT / "chart" / "charts" / "pg-operator-2.9.0.tgz",
+    REPO_ROOT / "chart" / "charts" / "pg-db-2.9.0.tgz",
     REPO_ROOT / "chart" / "charts" / "pulsar-4.5.0.tgz",
     REPO_ROOT / "chart" / "charts" / "minio-17.0.21.tgz",
     REPO_ROOT / "chart" / "charts" / "ingress-nginx-4.15.1.tgz",

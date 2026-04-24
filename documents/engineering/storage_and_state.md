@@ -10,6 +10,7 @@
 - manual PV data under `./.data/kind/...`
 - MinIO objects
 - Pulsar ledger state
+- operator-managed PostgreSQL data and WAL state
 - Harbor metadata and registry content
 - host-side runtime artifact bundles under `./.data/object-store/artifacts/`
 - host-side source-artifact manifests and copied or downloaded payloads under
@@ -28,3 +29,4 @@
 - [k8s_storage.md](k8s_storage.md)
 - [model_lifecycle.md](model_lifecycle.md)
 - [../architecture/overview.md](../architecture/overview.md)
+- [../tools/postgresql.md](../tools/postgresql.md)

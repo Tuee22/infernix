@@ -14,6 +14,8 @@
 - [engineering/build_artifacts.md](engineering/build_artifacts.md) defines build-output isolation
 - [operations/cluster_bootstrap_runbook.md](operations/cluster_bootstrap_runbook.md) describes the
   supported cluster bring-up and teardown path
+- [tools/postgresql.md](tools/postgresql.md) records the supported operator-managed PostgreSQL
+  contract
 - [reference/cli_reference.md](reference/cli_reference.md) records the canonical CLI surface
 - [research/README.md](research/README.md) reserves the non-authoritative research subtree used for
   exploratory notes
@@ -37,7 +39,7 @@
 
 ## Maintenance
 
-- Update the owning document when CLI surfaces, storage rules, routes, or runtime modes change.
+- Update the owning document when CLI surfaces, storage rules, PostgreSQL topology, routes, or runtime modes change.
 - Update linked documents in the same change when a contract crosses boundaries.
 - Supported workflow docs use direct `cabal`, `docker compose`, and `infernix` commands rather
   than repo-owned scripts or wrapper layers.

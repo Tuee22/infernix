@@ -23,7 +23,7 @@ This repository serves two aligned purposes:
 
 - one Haskell binary: `infernix`
 - one Kind and Helm workflow for the HA testing and demo ground
-- one mandatory local HA topology: Harbor, MinIO, and Pulsar on Kind
+- one mandatory local HA topology: Harbor, MinIO, Pulsar, and operator-managed PostgreSQL on Kind
 - one local Harbor registry as the image source for every non-Harbor pod
 - one manual persistent-storage doctrine rooted at `./.data/`
 - one repo-owned demo webapp, deployed through Helm, with Haskell-owned frontend contracts
@@ -73,9 +73,11 @@ classes.
 The supported local platform is built around:
 
 - one Kind cluster used as the HA testing and demo ground for Harbor, MinIO, Pulsar, edge routing,
-  and the demo webapp
+  operator-managed PostgreSQL, and the demo webapp
 - one reverse-proxied localhost edge port for the demo UI, API, Harbor, MinIO, and Pulsar browser surfaces
 - one manual storage class backed by repo-owned PVs under `./.data/`
+- one Patroni PostgreSQL model managed by the Percona Kubernetes operator for every in-cluster
+  PostgreSQL dependency
 - one local Harbor registry used by every non-Harbor cluster pod after Harbor bootstrap completes
 - one cluster-resident demo webapp image, built from a separate webapp binary via `web/Dockerfile`,
   that also owns Playwright browser dependencies
@@ -176,7 +178,8 @@ not a parallel lifecycle surface.
 - `cluster up` generates the mode-specific demo `.dhall` file that defines the demo catalog and the
   engine binding for each demo-visible model on the active mode
 - `cluster up` bootstraps Harbor first through Helm and allows Harbor plus only the storage or
-  support services Harbor needs during bootstrap to pull from declared upstream registries
+  support services Harbor needs during bootstrap, including MinIO and PostgreSQL, to pull from
+  public container repositories
 - `cluster up` mirrors required third-party images into Harbor before deploying the remaining
   non-Harbor workloads
 - `cluster up` builds repo-owned images, including the demo webapp image through `web/Dockerfile`,
@@ -185,8 +188,10 @@ not a parallel lifecycle surface.
 - Harbor and only the storage or support services Harbor needs are the allowed direct-upstream
   bootstrap exception before the Harbor-backed pull contract takes over
 - `cluster up` always deploys the mandatory local HA topology: 3x Harbor application-plane services
-  where the selected chart supports them, 4x MinIO, and 3x Pulsar HA surfaces where the selected
-  chart supports them
+  where the selected chart supports them, 4x MinIO, 3x Pulsar HA surfaces where the selected
+  chart supports them, and operator-managed Patroni PostgreSQL for every in-cluster PostgreSQL need
+- services that can self-deploy PostgreSQL still disable that embedded database path and target a
+  dedicated operator-managed cluster instead
 - repo-owned Helm values suppress hard pod anti-affinity and equivalent hard scheduling constraints
   as needed for local Kind scheduling
 - `cluster down` removes cluster state without deleting authoritative data under `./.data/`
@@ -207,11 +212,13 @@ Local durability is explicit.
 - default storage classes are deleted during cluster bootstrap
 - the only supported persistent storage class is the repo-owned `kubernetes.io/no-provisioner`
   class, tentatively named `infernix-manual`
-- PVCs are created only by Helm-owned StatefulSets or chart-owned persistence templates
-- PVs are created only by `infernix` lifecycle logic
+- PVCs are created only by Helm-owned durable workloads, including operator-managed claims
+  reconciled from repo-owned Helm releases
+- PVs are created only by `infernix` lifecycle logic and bind explicitly to their intended claims
 - PVs bind deterministically into `./.data/kind/<namespace>/<release>/<workload>/<ordinal>/<claim>`
 - explicit PV-to-PVC binding guarantees clean `cluster down` and `cluster up` rebinding behavior
 - storage reconciliation is part of `cluster up`; there is no separate storage reconcile command
+- every in-cluster PostgreSQL deployment uses a Patroni cluster managed by the Percona Kubernetes operator
 
 MinIO is authoritative for durable artifacts and large outputs. Local cache state is derived and
 rebuildable.

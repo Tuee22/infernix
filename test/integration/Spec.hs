@@ -5,7 +5,7 @@ module Main (main) where
 import Control.Concurrent (threadDelay)
 import Control.Exception (finally)
 import Data.ByteString.Lazy qualified as Lazy
-import Data.List (isInfixOf, isPrefixOf, tails)
+import Data.List (isInfixOf, isPrefixOf, sort, tails)
 import Data.Maybe (mapMaybe)
 import Data.Text qualified as Text
 import Data.Text.IO qualified as TextIO
@@ -62,6 +62,7 @@ exerciseRuntimeMode paths runtimeMode = do
   clusterUp (Just runtimeMode)
   validateClusterArtifacts paths runtimeMode
   validateClusterStatusOutput paths runtimeMode
+  initialPostgresHostPaths <- validateOperatorManagedPostgresql paths
   maybeState <- loadClusterState paths
   state <- maybe (fail "cluster state was not available after cluster up") pure maybeState
   let baseUrl = edgeBaseUrl paths runtimeMode (edgePort state)
@@ -96,6 +97,8 @@ exerciseRuntimeMode paths runtimeMode = do
   clusterUp (Just runtimeMode)
   maybeStateAfterRepeatUp <- loadClusterState paths
   assert (maybe False clusterPresent maybeStateAfterRepeatUp) ("repeat cluster up remains idempotent for " <> showRuntimeMode runtimeMode)
+  reboundPostgresHostPaths <- validateOperatorManagedPostgresql paths
+  assert (reboundPostgresHostPaths == initialPostgresHostPaths) ("operator-managed PostgreSQL reuses the same manual host paths after repeat up for " <> showRuntimeMode runtimeMode)
   clusterDown (Just runtimeMode)
 
 exerciseCatalogEntry :: String -> RuntimeMode -> SerializedCatalogEntry -> IO ()
@@ -151,6 +154,42 @@ validateClusterStatusOutput paths runtimeMode = do
   assert (("publishedDemoConfigPath: " <> Config.publishedConfigMapCatalogPath paths runtimeMode) `isInfixOf` statusOutput) "cluster status reports the published demo-config path"
   assert (("mountedDemoConfigPath: " <> Config.watchedDemoConfigPath runtimeMode) `isInfixOf` statusOutput) "cluster status reports the mounted demo-config path"
   assert ("route: /api -> Service API" `isInfixOf` statusOutput) "cluster status reports the routed API publication"
+
+validateOperatorManagedPostgresql :: Paths -> IO [String]
+validateOperatorManagedPostgresql paths = do
+  maybeState <- loadClusterState paths
+  state <- maybe (fail "cluster state was not available before PostgreSQL validation") pure maybeState
+  operatorDeployment <-
+    trim
+      <$> kubectlOutputForState
+        state
+        ["-n", "platform", "get", "deployment", "infernix-postgres-operator", "-o", "name"]
+  assert (operatorDeployment == "deployment.apps/infernix-postgres-operator") "Percona PostgreSQL operator deployment is present"
+  pgbouncerDeployment <-
+    trim
+      <$> kubectlOutputForState
+        state
+        ["-n", "platform", "get", "deployment", "harbor-postgresql-pgbouncer", "-o", "name"]
+  assert (pgbouncerDeployment == "deployment.apps/harbor-postgresql-pgbouncer") "Harbor PostgreSQL PgBouncer deployment is present"
+  legacyDatabaseStatefulSet <-
+    trim
+      <$> kubectlOutputForState
+        state
+        ["-n", "platform", "get", "statefulset", "infernix-harbor-database", "--ignore-not-found", "-o", "name"]
+  assert (null legacyDatabaseStatefulSet) "Harbor no longer deploys the chart-managed harbor-database StatefulSet"
+  dataPodNames <- postgresDataPodNames state
+  assert (length dataPodNames == 3) "operator-managed Harbor PostgreSQL exposes three Patroni data pods"
+  primaryPodName <- postgresPrimaryPodName state
+  assert (not (null primaryPodName)) "operator-managed Harbor PostgreSQL exposes a primary Patroni pod"
+  bindings <- postgresDataBindings state
+  assert (length bindings == 3) "operator-managed Harbor PostgreSQL binds three pgdata PVCs"
+  mapM_
+    ( \(_, storageClassName, phaseValue, _, _) -> do
+        assert (storageClassName == "infernix-manual") "operator-managed Harbor PostgreSQL PVCs use infernix-manual"
+        assert (phaseValue == "Bound") "operator-managed Harbor PostgreSQL PVCs reach Bound phase"
+    )
+    bindings
+  pure (sort [hostPath | (_, _, _, _, hostPath) <- bindings])
 
 validateLinuxCudaCluster :: Paths -> RuntimeMode -> IO ()
 validateLinuxCudaCluster paths runtimeMode = do
@@ -327,9 +366,20 @@ validateHaRecovery paths runtimeMode baseUrl entry = do
   inferenceResponse <- httpPostJsonWithRetry 20 (baseUrl <> "/api/inference") longInferenceBody
   requestIdText <- requireJsonStringField "requestId" inferenceResponse
   maybeObjectRef <- extractJsonNullableStringField "objectRef" inferenceResponse
+  validatePostgresqlRecovery state baseUrl
   validateHarborRecovery state baseUrl
   validateMinioRecovery paths state runtimeMode modelIdText requestIdText maybeObjectRef
   validatePulsarRecovery paths runtimeMode state baseUrl modelIdText
+
+validatePostgresqlRecovery :: ClusterState -> String -> IO ()
+validatePostgresqlRecovery state baseUrl = do
+  primaryPodBefore <- postgresPrimaryPodName state
+  runKubectlForState state ["-n", "platform", "delete", "pod", primaryPodBefore, "--wait=true"]
+  primaryPodAfter <- waitForPostgresPrimaryChange state primaryPodBefore
+  assert (primaryPodAfter /= primaryPodBefore) "Patroni elects a replacement primary after deleting the current primary pod"
+  waitForRollout state "deployment/harbor-postgresql-pgbouncer" 300
+  harborResponse <- httpGetWithRetry 40 (baseUrl <> "/harbor")
+  assert ("Harbor Gateway" `isInfixOf` harborResponse || "Harbor" `isInfixOf` harborResponse) "Harbor portal survives Patroni primary replacement"
 
 validateHarborRecovery :: ClusterState -> String -> IO ()
 validateHarborRecovery state baseUrl = do
@@ -591,6 +641,87 @@ firstPodWithPrefix state prefix = do
   case filter (prefix `isPrefixOf`) podNames of
     podName : _ -> pure podName
     [] -> fail ("no pod matched prefix " <> prefix)
+
+postgresDataPodNames :: ClusterState -> IO [String]
+postgresDataPodNames state =
+  filter (not . null) . map trim . lines
+    <$> kubectlOutputForState
+      state
+      [ "-n",
+        "platform",
+        "get",
+        "pods",
+        "-l",
+        "postgres-operator.crunchydata.com/cluster=harbor-postgresql,postgres-operator.crunchydata.com/data=postgres",
+        "--no-headers",
+        "-o",
+        "custom-columns=:metadata.name"
+      ]
+
+postgresPrimaryPodName :: ClusterState -> IO String
+postgresPrimaryPodName state = do
+  podNames <-
+    filter (not . null) . map trim . lines
+      <$> kubectlOutputForState
+        state
+        [ "-n",
+          "platform",
+          "get",
+          "pods",
+          "-l",
+          "postgres-operator.crunchydata.com/cluster=harbor-postgresql,postgres-operator.crunchydata.com/role=primary",
+          "--no-headers",
+          "-o",
+          "custom-columns=:metadata.name"
+        ]
+  pure
+    ( case podNames of
+        podName : _ -> podName
+        [] -> ""
+    )
+
+waitForPostgresPrimaryChange :: ClusterState -> String -> IO String
+waitForPostgresPrimaryChange state previousPrimary = go (60 :: Int)
+  where
+    go remainingAttempts
+      | remainingAttempts <= 0 =
+          fail "Patroni primary did not change after deleting the previous primary pod"
+      | otherwise = do
+          currentPrimary <- postgresPrimaryPodName state
+          dataPods <- postgresDataPodNames state
+          if not (null currentPrimary) && currentPrimary /= previousPrimary && length dataPods == 3
+            then pure currentPrimary
+            else do
+              threadDelay 1000000
+              go (remainingAttempts - 1)
+
+postgresDataBindings :: ClusterState -> IO [(String, String, String, String, String)]
+postgresDataBindings state = do
+  bindingRows <-
+    filter (not . null) . lines
+      <$> kubectlOutputForState
+        state
+        [ "-n",
+          "platform",
+          "get",
+          "pvc",
+          "-l",
+          "postgres-operator.crunchydata.com/cluster=harbor-postgresql,postgres-operator.crunchydata.com/role=pgdata",
+          "-o",
+          "jsonpath={range .items[*]}{.metadata.name}{\"\\t\"}{.spec.storageClassName}{\"\\t\"}{.status.phase}{\"\\t\"}{.spec.volumeName}{\"\\n\"}{end}"
+        ]
+  mapM parseBindingRow bindingRows
+  where
+    parseBindingRow row =
+      case splitTabs row of
+        [claimNameValue, storageClassName, phaseValue, volumeName] -> do
+          hostPath <-
+            trim
+              <$> kubectlOutputForState
+                state
+                ["get", "pv", volumeName, "-o", "jsonpath={.spec.hostPath.path}"]
+          pure (claimNameValue, storageClassName, phaseValue, volumeName, hostPath)
+        _ -> fail ("PostgreSQL PVC row was malformed: " <> row)
 
 renderHarborPullSmokePod :: String -> String
 renderHarborPullSmokePod imageRef =

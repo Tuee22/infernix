@@ -100,7 +100,7 @@ None.
 
 **Status**: Done
 **Implementation**: `documents/`
-**Docs to update**: `documents/architecture/overview.md`, `documents/architecture/model_catalog.md`, `documents/architecture/runtime_modes.md`, `documents/architecture/web_ui_architecture.md`, `documents/development/frontend_contracts.md`, `documents/development/haskell_style.md`, `documents/development/local_dev.md`, `documents/development/testing_strategy.md`, `documents/engineering/build_artifacts.md`, `documents/engineering/docker_policy.md`, `documents/engineering/edge_routing.md`, `documents/engineering/k8s_native_dev_policy.md`, `documents/engineering/k8s_storage.md`, `documents/engineering/model_lifecycle.md`, `documents/engineering/object_storage.md`, `documents/engineering/storage_and_state.md`, `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/reference/api_surface.md`, `documents/reference/cli_reference.md`, `documents/reference/cli_surface.md`, `documents/reference/web_portal_surface.md`, `documents/tools/harbor.md`, `documents/tools/minio.md`, `documents/tools/pulsar.md`
+**Docs to update**: `documents/architecture/overview.md`, `documents/architecture/model_catalog.md`, `documents/architecture/runtime_modes.md`, `documents/architecture/web_ui_architecture.md`, `documents/development/frontend_contracts.md`, `documents/development/haskell_style.md`, `documents/development/local_dev.md`, `documents/development/testing_strategy.md`, `documents/engineering/build_artifacts.md`, `documents/engineering/docker_policy.md`, `documents/engineering/edge_routing.md`, `documents/engineering/k8s_native_dev_policy.md`, `documents/engineering/k8s_storage.md`, `documents/engineering/model_lifecycle.md`, `documents/engineering/object_storage.md`, `documents/engineering/storage_and_state.md`, `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/reference/api_surface.md`, `documents/reference/cli_reference.md`, `documents/reference/cli_surface.md`, `documents/reference/web_portal_surface.md`, `documents/tools/harbor.md`, `documents/tools/minio.md`, `documents/tools/postgresql.md`, `documents/tools/pulsar.md`
 
 ### Objective
 
@@ -113,7 +113,7 @@ Create the minimum governed docs needed to explain the intended product before i
 - engineering docs for build artifacts, Docker policy, storage, edge routing, object storage, and model lifecycle
 - operations docs for cluster bootstrap and Apple Silicon workflow
 - reference docs for API, CLI, and browser surfaces
-- tools docs for Harbor, MinIO, and Pulsar
+- tools docs for Harbor, MinIO, PostgreSQL, and Pulsar
 
 ### Validation
 
@@ -230,6 +230,7 @@ None.
 - `documents/reference/web_portal_surface.md` - browser surface and active-mode catalog behavior
 - `documents/tools/harbor.md` - Harbor notes
 - `documents/tools/minio.md` - MinIO notes
+- `documents/tools/postgresql.md` - PostgreSQL operator and Patroni notes
 - `documents/tools/pulsar.md` - Pulsar notes
 
 **Product or reference docs to create/update:**
