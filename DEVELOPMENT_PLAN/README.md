@@ -48,8 +48,8 @@ A phase or sprint can move to `Done` only when all of the following are true:
 
 ## Current Repo Assessment
 
-The repository has a governed `documents/` suite and a partially closed implementation baseline
-across the tracked phases.
+The repository has a governed `documents/` suite and a closed implementation baseline for the
+current supported contract across the tracked phases.
 
 - the documentation, repository shape, CLI surface, Kind or Helm substrate, generated demo-config
   publication, routed browser workbench, and outer-container launcher are materially implemented

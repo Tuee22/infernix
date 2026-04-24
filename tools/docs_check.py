@@ -45,6 +45,7 @@ METADATA_LINES = [
     re.compile(r"^\*\*Referenced by\*\*: .+"),
 ]
 LINK_RE = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
+BACKTICK_RE = re.compile(r"`([^`]+)`")
 REQUIRED_PHRASES = {
     Path("documents/architecture/runtime_modes.md"): [
         "apple-silicon",
@@ -190,12 +191,30 @@ def validate_phase_doc_structure(relative_path: Path, text: str) -> None:
             fail(f"{relative_path} has a sprint without a valid status line: {sprint_heading}")
 
         status = status_match.group(1)
-        if "**Docs to update**:" not in sprint_block:
+        docs_line_match = re.search(r"^\*\*Docs to update\*\*: .+$", sprint_block, re.MULTILINE)
+        implementation_line_match = re.search(r"^\*\*Implementation\*\*: .+$", sprint_block, re.MULTILINE)
+
+        if docs_line_match is None:
             fail(f"{relative_path} is missing **Docs to update** in {sprint_heading}")
-        if status in {"Done", "Active"} and "**Implementation**:" not in sprint_block:
+        if status in {"Done", "Active"} and implementation_line_match is None:
             fail(f"{relative_path} is missing **Implementation** in {sprint_heading}")
         if status == "Blocked" and "**Blocked by**:" not in sprint_block:
             fail(f"{relative_path} is missing **Blocked by** in {sprint_heading}")
+
+        if status in {"Done", "Active"} and implementation_line_match is not None:
+            validate_backtick_paths(
+                relative_path,
+                sprint_heading,
+                implementation_line_match.group(0),
+                field_name="Implementation",
+            )
+        if status == "Done" and docs_line_match is not None:
+            validate_backtick_paths(
+                relative_path,
+                sprint_heading,
+                docs_line_match.group(0),
+                field_name="Docs to update",
+            )
 
         for required_section in (
             "### Objective",
@@ -205,6 +224,24 @@ def validate_phase_doc_structure(relative_path: Path, text: str) -> None:
         ):
             if required_section not in sprint_block:
                 fail(f"{relative_path} is missing {required_section} in {sprint_heading}")
+
+
+def validate_backtick_paths(
+    relative_path: Path,
+    sprint_heading: str,
+    line: str,
+    *,
+    field_name: str,
+) -> None:
+    matches = BACKTICK_RE.findall(line)
+    if not matches:
+        fail(f"{relative_path} has no backtick paths in {field_name} for {sprint_heading}")
+
+    for reference in matches:
+        if not (REPO_ROOT / reference).exists():
+            fail(
+                f"{relative_path} references missing {field_name} path in {sprint_heading}: {reference}"
+            )
 
 
 def validate_required_phrases() -> None:

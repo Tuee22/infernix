@@ -154,7 +154,7 @@ None.
 ## Sprint 2.3: Helm Umbrella Chart and Repo Workload Layout [Done]
 
 **Status**: Done
-**Implementation**: `chart/Chart.yaml`, `chart/Chart.lock`, `chart/values.yaml`, `chart/templates/`, `src/Infernix/Cluster.hs`, `tools/platform_asset_check.py`, `tools/helm_chart_check.py`
+**Implementation**: `chart/Chart.yaml`, `chart/values.yaml`, `chart/templates/`, `src/Infernix/Cluster.hs`, `tools/platform_asset_check.py`, `tools/helm_chart_check.py`
 **Docs to update**: `documents/architecture/overview.md`, `documents/engineering/k8s_native_dev_policy.md`
 
 ### Objective

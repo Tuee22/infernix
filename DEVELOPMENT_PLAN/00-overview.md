@@ -8,22 +8,22 @@
 
 ## Current Repo Assessment
 
-The repository closes the documentation and control-plane foundation, but the runtime and full
-validation story remain partial relative to the target platform contract.
+The repository closes the current supported platform contract across documentation, control-plane,
+runtime, and validation.
 
-| Area | Current state | Gap against target |
-|------|---------------|--------------------|
-| Development plan and docs suite | present | none in the current supported contract; docs realignment and validator coverage match the runtime-mode and generated-demo-config contract |
-| Service command and API host | present | none in the current supported contract; the routed API and publication contract are implemented, request execution runs through process-isolated engine-worker runners backed by durable runtime artifact bundles and engine-specific source-artifact manifests, those durable artifacts now record authoritative artifact selection plus selected-artifact inventory together with engine-adapter id or type or locator or availability, the routed cache surface exposes that metadata end-to-end, and the default engine-aware runner validates the selected adapter on the active host when no adapter-specific override is configured |
-| Kind and Helm assets | present | none in the current supported contract; the Kind or Helm substrate, Harbor-first bootstrap sequencing, stable Harbor bootstrap and final render material, node-reachable `localhost:30002` registry-mirror config, Kind-worker prefetch of Harbor-backed final image refs, final-phase Pulsar initialization, loopback-only outer-container host bindings, the private Docker `kind` network plus internal kubeconfig access path, pinned `kindest/node:v1.34.0` node images, claim-aware outer-container storage sync, and the supported-host validated `nvkind` plus device-plugin GPU lane are implemented, and the validated outer-container lane requires host inotify capacity sufficient for mount-bearing Kind nodes |
+| Area | Current state | Current supported contract details |
+|------|---------------|------------------------------------|
+| Development plan and docs suite | present | docs realignment and validator coverage match the runtime-mode and generated-demo-config contract |
+| Service command and API host | present | the routed API and publication contract are implemented, request execution runs through process-isolated engine-worker runners backed by durable runtime artifact bundles and engine-specific source-artifact manifests, those durable artifacts now record authoritative artifact selection plus selected-artifact inventory together with engine-adapter id or type or locator or availability, and the routed cache surface exposes that metadata end-to-end while the default engine-aware runner validates the selected adapter on the active host when no adapter-specific override is configured |
+| Kind and Helm assets | present | the Kind or Helm substrate, Harbor-first bootstrap sequencing, stable Harbor bootstrap and final render material, node-reachable `localhost:30002` registry-mirror config, Kind-worker prefetch of Harbor-backed final image refs, final-phase Pulsar initialization, loopback-only outer-container host bindings, the private Docker `kind` network plus internal kubeconfig access path, pinned `kindest/node:v1.34.0` node images, claim-aware outer-container storage sync, and the supported-host validated `nvkind` plus device-plugin GPU lane are implemented, and the validated outer-container lane requires host inotify capacity sufficient for mount-bearing Kind nodes |
 | PostgreSQL platform substrate | present | every in-cluster PostgreSQL dependency now follows the supported Patroni-plus-Percona-operator contract, Harbor disables the chart-managed standalone database path, Harbor's operator-managed claims bind through `infernix-manual`, and repeat cluster lifecycle plus HA validation covers readiness, failover, and PVC rebinding on that substrate |
-| Launch and schema assets | present | none in the current supported contract; `compose.yaml`, `docker/infernix.Dockerfile`, `web/Dockerfile`, `chart/`, `kind/`, and `proto/` drive the outer-container launcher, the cluster web or service images, repo-owned Kind configs, and schema files |
-| Runtime-mode matrix | present | none in the current supported contract; the full README-scale model, format, and engine matrix drives the generated source of truth, and the current worker layer consumes the selected engine metadata together with the durable artifact-bundle, source-artifact-manifest, and engine-adapter metadata selected for that runtime mode |
-| Generated demo config | present | none in the current supported contract; `cluster up` emits mode-specific `infernix-demo-<mode>.dhall`, publishes a real `ConfigMap/infernix-demo-config`, and mounts that ConfigMap into the cluster-resident service and web workloads |
-| Web app | present | none in the current supported contract; the workbench fronts the same routed runtime contract described in Phase 4 and validates it through routed publication, catalog, inference, and object-reference coverage |
-| Tests | present | none in the current supported contract; lint, unit, exhaustive integration, and routed E2E entrypoints validate process-isolated engine-worker runners, the engine-specific default runner path plus adapter-specific overrides, durable runtime bundles, engine-specific source-artifact manifests with authoritative artifact selection and selected-artifact inventory, operator-managed PostgreSQL readiness or failover or lifecycle rebinding, and host-gated `linux-cuda` scheduling or device visibility checks, and the supported bootstrap path now recycles one Harbor Patroni startup pod if Patroni readiness never reaches `Ready` during the grace window |
+| Launch and schema assets | present | `compose.yaml`, `docker/infernix.Dockerfile`, `web/Dockerfile`, `chart/`, `kind/`, and `proto/` drive the outer-container launcher, the cluster web or service images, repo-owned Kind configs, and schema files |
+| Runtime-mode matrix | present | the full README-scale model, format, and engine matrix drives the generated source of truth, and the current worker layer consumes the selected engine metadata together with the durable artifact-bundle, source-artifact-manifest, and engine-adapter metadata selected for that runtime mode |
+| Generated demo config | present | `cluster up` emits mode-specific `infernix-demo-<mode>.dhall`, publishes a real `ConfigMap/infernix-demo-config`, and mounts that ConfigMap into the cluster-resident service and web workloads |
+| Web app | present | the workbench fronts the same routed runtime contract described in Phase 4 and validates it through routed publication, catalog, inference, and object-reference coverage |
+| Tests | present | lint, unit, exhaustive integration, and routed E2E entrypoints validate process-isolated engine-worker runners, the engine-specific default runner path plus adapter-specific overrides, durable runtime bundles, engine-specific source-artifact manifests with authoritative artifact selection and selected-artifact inventory, operator-managed PostgreSQL readiness or failover or lifecycle rebinding, and host-gated `linux-cuda` scheduling or device visibility checks, and the supported bootstrap path now recycles one Harbor Patroni startup pod if Patroni readiness never reaches `Ready` during the grace window |
 
-## Target Outcome
+## Supported Outcome
 
 `infernix` is a Kind-forward local inference platform that:
 
@@ -444,6 +444,9 @@ The canonical supported CLI surface is:
 | `infernix cluster up` | declaratively reconcile the supported Kind, Helm, HA, image-flow, and active-mode demo-config contract |
 | `infernix cluster down` | declaratively reconcile cluster absence while preserving authoritative repo data under `./.data/` |
 | `infernix cluster status` | read-only status and route report, including chosen edge port and demo-config publication details; never mutates cluster or repo state |
+| `infernix cache status` | declaratively report the manifest-backed derived cache inventory for the active runtime mode without rewriting runtime or publication state |
+| `infernix cache evict` | declaratively remove derived cache state for the active runtime mode without mutating durable manifests, generated catalog state, or publication state |
+| `infernix cache rebuild` | declaratively rebuild derived cache state for the active runtime mode from durable manifests without mutating generated catalog state or publication state |
 | `infernix kubectl ...` | Kubernetes-access wrapper that preserves the repo-local kubeconfig contract while delegating the remaining arguments to upstream `kubectl` |
 | `infernix test lint` | declaratively execute the canonical lint, docs, Helm chart, and compiler-warning checks |
 | `infernix test unit` | declaratively execute unit validation |
@@ -453,9 +456,11 @@ The canonical supported CLI surface is:
 | `infernix docs check` | declaratively validate the documentation suite and development-plan cross-references |
 
 Every supported lifecycle, validation, and docs command except `infernix service` is declarative
-and idempotent. `infernix kubectl ...` is a scoped Kubernetes-access wrapper around upstream
-`kubectl`, and it is not a parallel lifecycle command family. The plan does not introduce alternate
-imperative helper command families for storage, image preparation, or test setup.
+and idempotent. `infernix cache ...` operates only on manifest-backed derived cache state and does
+not rewrite the generated catalog or publication contract. `infernix kubectl ...` is a scoped
+Kubernetes-access wrapper around upstream `kubectl`, and it is not a parallel lifecycle command
+family. The plan does not introduce alternate imperative helper command families for storage,
+image preparation, or test setup.
 
 ## Completion Rules
 

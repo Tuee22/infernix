@@ -88,6 +88,9 @@ The canonical supported CLI surface is:
 | `infernix cluster up` | declaratively reconcile the supported cluster and mandatory local HA topology |
 | `infernix cluster down` | declaratively reconcile cluster absence while preserving `./.data/` |
 | `infernix cluster status` | read-only cluster and route status |
+| `infernix cache status` | read-only manifest-backed derived cache report for the active runtime mode |
+| `infernix cache evict` | declaratively remove derived cache state without mutating durable manifests, generated catalog state, or publication state |
+| `infernix cache rebuild` | declaratively rebuild derived cache state from durable manifests for the active runtime mode |
 | `infernix kubectl ...` | scoped `kubectl` wrapper that automatically targets the repo-local kubeconfig |
 | `infernix test lint` | canonical static-quality entrypoint |
 | `infernix test unit` | canonical unit-validation entrypoint |
@@ -108,6 +111,8 @@ Additional rules:
 - `cluster up` is the only supported cluster reconcile entrypoint
 - `cluster down` is the only supported cluster teardown entrypoint
 - `cluster status` is read-only and never performs reconciliation side effects
+- `infernix cache status`, `infernix cache evict`, and `infernix cache rebuild` operate only on
+  manifest-backed derived cache state and do not rewrite the generated catalog or publication contract
 - `infernix kubectl ...` is the supported Kubernetes-access wrapper; it preserves the repo-local
   kubeconfig contract while delegating the remaining arguments to upstream `kubectl`
 - test and docs flows do not introduce parallel imperative setup command families outside this
@@ -116,10 +121,10 @@ Additional rules:
 ### Validation
 
 - `./.build/infernix --help` prints the canonical surface on Apple Silicon
-- `infernix test --help` and `infernix cluster --help` document the supported subcommand families
+- `infernix test --help`, `infernix cluster --help`, and `infernix cache --help` document the supported subcommand families
 - CLI help and reference docs describe the declarative semantics of `cluster up`, `cluster down`,
-  `cluster status`, `test ...`, and `docs check`, plus the repo-local kubeconfig behavior and
-  pass-through scope of `infernix kubectl ...`
+  `cluster status`, `cache ...`, `test ...`, and `docs check`, plus the repo-local kubeconfig
+  behavior and pass-through scope of `infernix kubectl ...`
 
 ### Remaining Work
 

@@ -46,7 +46,7 @@ This phase owns the conversion from README-scale planning matrix to runtime-cons
 ## Sprint 4.1: Typed Configuration, Model Catalog, and Runtime Contracts [Done]
 
 **Status**: Done
-**Implementation**: `src/Infernix/Types.hs`, `src/Infernix/Models.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Storage.hs`, `web/build.mjs`, `proto/infernix/...`, `tools/generated_proto/`, `tools/proto_check.py`, `test/unit/Spec.hs`
+**Implementation**: `src/Infernix/Types.hs`, `src/Infernix/Models.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Storage.hs`, `web/build.mjs`, `proto/infernix/api/inference_service.proto`, `proto/infernix/manifest/runtime_manifest.proto`, `proto/infernix/runtime/inference.proto`, `tools/generated_proto/`, `tools/proto_check.py`, `test/unit/Spec.hs`
 **Docs to update**: `documents/architecture/runtime_modes.md`, `documents/architecture/model_catalog.md`
 
 ### Objective
