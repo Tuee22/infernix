@@ -17,6 +17,12 @@ cluster-resident web application, and one governed documentation suite.
 - Harbor is always the first deployed service on a pristine cluster, and only Harbor plus
   Harbor-required backend services such as MinIO and PostgreSQL may pull from public container
   repositories before Harbor is ready
+- once Harbor is ready, every later non-Harbor workload or add-on pulls only from Harbor-backed
+  image references
+- every in-cluster PostgreSQL dependency, including services that could self-deploy PostgreSQL,
+  uses an operator-managed Patroni cluster instead of a chart-managed standalone PostgreSQL path
+- every PVC-backed Helm workload uses `infernix-manual`, which is backed by
+  `kubernetes.io/no-provisioner`, with manually created PVs explicitly bound to the intended PVCs
 - durable storage is rooted under `./.data/`
 
 ## Repository Shape

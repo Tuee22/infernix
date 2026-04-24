@@ -153,6 +153,9 @@ harborPostgresClusterName = "harbor-postgresql"
 harborPostgresExpectedDataClaims :: Int
 harborPostgresExpectedDataClaims = 3
 
+harborPostgresStartupRepairGraceAttempts :: Int
+harborPostgresStartupRepairGraceAttempts = 18
+
 harborPostgresExpectedOperatorClaims :: Int
 harborPostgresExpectedOperatorClaims = 4
 
@@ -1533,8 +1536,10 @@ waitForHarborDatabaseReadyWithRepair state = do
     )
 
 waitForHarborPostgresPodsReady :: ClusterState -> IO ()
-waitForHarborPostgresPodsReady state = go (72 :: Int) False ""
+waitForHarborPostgresPodsReady state = go totalAttempts False ""
   where
+    totalAttempts = 72 :: Int
+
     go remainingAttempts restartIssued lastError = do
       startupPods <- harborPostgresStartupPods state
       let dataPodCount =
@@ -1549,6 +1554,10 @@ waitForHarborPostgresPodsReady state = go (72 :: Int) False ""
               | startupPod <- startupPods,
                 "harbor-postgresql-repo-host-" `List.isPrefixOf` harborPostgresStartupPodName startupPod
               ]
+          allStartupPodsPresent =
+            dataPodCount >= harborPostgresExpectedDataClaims
+              && repoHostCount >= 1
+          attemptsElapsed = totalAttempts - remainingAttempts
           currentError
             | dataPodCount < harborPostgresExpectedDataClaims =
                 "expected "
@@ -1583,7 +1592,12 @@ waitForHarborPostgresPodsReady state = go (72 :: Int) False ""
               restarted <-
                 if restartIssued
                   then pure False
-                  else restartHarborPostgresStartupPodsIfStuck state startupPods
+                  else
+                    restartHarborPostgresStartupPodsIfStuck
+                      state
+                      allStartupPodsPresent
+                      attemptsElapsed
+                      startupPods
               threadDelay 5000000
               go (remainingAttempts - 1) (restartIssued || restarted) (chooseError currentError lastError)
 
@@ -1633,9 +1647,9 @@ harborPostgresStartupPods state =
             _ -> False
         _ -> False
 
-restartHarborPostgresStartupPodsIfStuck :: ClusterState -> [HarborPostgresStartupPod] -> IO Bool
-restartHarborPostgresStartupPodsIfStuck state startupPods =
-  if any podLooksStuck startupPods && not (null unreadyPodNames)
+restartHarborPostgresStartupPodsIfStuck :: ClusterState -> Bool -> Int -> [HarborPostgresStartupPod] -> IO Bool
+restartHarborPostgresStartupPodsIfStuck state allStartupPodsPresent attemptsElapsed startupPods =
+  if shouldRestart
     then do
       runCommand
         Nothing
@@ -1650,6 +1664,12 @@ restartHarborPostgresStartupPodsIfStuck state startupPods =
       | startupPod <- startupPods,
         not (harborPostgresStartupPodReady startupPod)
       ]
+    shouldRestart =
+      not (null unreadyPodNames)
+        && allStartupPodsPresent
+        && ( any podLooksStuck startupPods
+               || attemptsElapsed >= harborPostgresStartupRepairGraceAttempts
+           )
     podLooksStuck startupPod =
       not (harborPostgresStartupPodReady startupPod)
         && ( "CrashLoopBackOff" `List.isInfixOf` harborPostgresStartupPodStatus startupPod

@@ -13,9 +13,12 @@ These rules close in this phase and remain mandatory afterward:
 
 - cluster bootstrap deletes every default StorageClass present on the supported Kind path
 - the only supported persistent StorageClass is `infernix-manual` using `kubernetes.io/no-provisioner`
-- every PVC-backed Helm workload, including operator-managed durable claims reconciled from a
-  repo-owned Helm release, uses `infernix-manual`
-- durable PVs come only from the storage-reconciliation step embedded in `infernix cluster up`
+- every PVC-backed Helm workload, including repo-owned services, third-party chart dependencies,
+  and operator-managed durable claims reconciled from a repo-owned Helm release, explicitly sets
+  `storageClassName: infernix-manual`
+- durable PVs are created manually only by the storage-reconciliation step embedded in
+  `infernix cluster up`
+- no PVC-backed Helm deployment relies on dynamic provisioning or an implicit default storage class
 - each durable PV maps to `./.data/kind/<namespace>/<release>/<workload>/<ordinal>/<claim>`
 - `infernix cluster down` never deletes or mutates anything under `./.data/`
 - explicit PV-to-PVC binding is required so repeat `cluster down` and `cluster up` cycles rebind
@@ -62,7 +65,9 @@ mount-bearing Kind nodes; on the current Ubuntu host, `fs.inotify.max_user_insta
 keeps the repeated worker bootstrap and claim-sync lifecycle stable. The Harbor bootstrap slice now
 keeps the same Harbor-first image flow while the supported platform provisions Harbor's PostgreSQL
 backend through operator-managed Patroni claims that still follow the same manual-storage and
-explicit-binding doctrine under `./.data/kind/...`.
+explicit-binding doctrine under `./.data/kind/...`. That storage doctrine remains mandatory for
+later phases as well: later Helm rollouts with PVCs still use `infernix-manual` plus manually
+created, explicitly bound PVs.
 
 ## Sprint 2.1: Kind Bootstrap and StorageClass Reset [Done]
 
@@ -123,7 +128,8 @@ upgrade runs.
   `./.data/kind/<namespace>/<release>/<workload>/<ordinal>/<claim>`
 - storage reconciliation runs automatically during `cluster up`; no separate
   `infernix cluster storage reconcile` command is introduced
-- reconciliation rejects workloads that request implicit storage classes
+- reconciliation rejects workloads that request implicit storage classes or omit
+  `storageClassName: infernix-manual`
 - reconciliation rejects hand-authored standalone durable PVC manifests outside chart ownership
 - PV manifests bind explicitly to their intended claims so down/up cycles automatically reattach the
   same claims to the same `./.data/` paths
@@ -207,7 +213,8 @@ image preparation handled automatically during `cluster up`.
 - no repo-owned workload and no non-Harbor platform workload that is not required for Harbor
   bootstrap rolls out before Harbor is reachable enough to serve pulls
 - once Harbor is ready, `infernix cluster up` mirrors all non-Harbor third-party images into
-  Harbor and builds then publishes repo-owned images to Harbor before the final Helm rollout
+  Harbor and builds then publishes repo-owned images to Harbor before any later non-Harbor Helm
+  rollout, add-on rollout, or PostgreSQL-backed service rollout
 - `infernix cluster up` builds the separate webapp image through `web/Dockerfile` and uploads it to Harbor
 - Helm values reference Harbor image coordinates for every non-Harbor cluster pod in the final rollout
 - after Harbor reaches its final rollout shape, `cluster up` preloads the Harbor-backed final image

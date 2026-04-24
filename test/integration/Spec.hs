@@ -336,8 +336,11 @@ validateServiceCacheLifecycle paths runtimeMode baseUrl entry = do
     (("\"durableSourceUri\": \"s3://infernix-runtime/artifacts/" <> showRuntimeMode runtimeMode <> "/" <> modelIdText <> "/bundle.json\"") `isInfixOf` cacheAfterInference)
     "service cache status reports the durable runtime artifact bundle stored in MinIO"
   assert ("\"engineAdapterId\": \"" `isInfixOf` cacheAfterInference) "service cache status reports engine-specific runner metadata"
+  assert ("\"engineAdapterAvailability\": \"" `isInfixOf` cacheAfterInference) "service cache status reports engine-adapter availability"
   assert ("\"sourceArtifactManifestUri\": \"s3://infernix-runtime/source-artifacts/" `isInfixOf` cacheAfterInference) "service cache status reports the durable source-artifact manifest stored in MinIO"
   assert ("\"sourceArtifactSelectionMode\": \"" `isInfixOf` cacheAfterInference) "service cache status reports engine-specific source-artifact selection metadata"
+  assert ("\"sourceArtifactAuthoritativeUri\": \"" `isInfixOf` cacheAfterInference) "service cache status reports the authoritative runtime input URI"
+  assert ("\"sourceArtifactAuthoritativeKind\": \"" `isInfixOf` cacheAfterInference) "service cache status reports the authoritative runtime input kind"
   assert ("\"sourceArtifactSelectedArtifacts\": [" `isInfixOf` cacheAfterInference) "service cache status reports the selected engine-ready artifact inventory"
   evictResponse <- httpPostJsonWithRetry 20 (baseUrl <> "/api/cache/evict") cacheBody
   assert ("\"evictedCount\": 1" `isInfixOf` evictResponse) "service cache eviction reports one evicted entry"

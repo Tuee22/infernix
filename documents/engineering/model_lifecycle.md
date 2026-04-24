@@ -14,6 +14,8 @@
   `artifacts/<runtime-mode>/<model-id>/bundle.json` in the runtime bucket and uses those bundles
   to point at durable source-artifact manifests under
   `source-artifacts/<runtime-mode>/<model-id>/source.json`
+- those durable bundles also record engine-adapter id or type or locator or availability together
+  with the authoritative source-artifact URI or kind selected for the current worker path
 - when the source URL is a local file, the routed worker layer also copies the payload into
   `source-artifacts/<runtime-mode>/<model-id>/payload.bin`; when the source URL is remote, the
   routed worker layer materializes direct upstream payloads or provider metadata into the same

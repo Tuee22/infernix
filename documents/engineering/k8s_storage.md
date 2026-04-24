@@ -9,9 +9,12 @@
 
 - default storage classes are deleted during bootstrap
 - `infernix-manual` is the only supported persistent storage class and uses `kubernetes.io/no-provisioner`
+- every PVC-backed Helm workload explicitly sets `storageClassName: infernix-manual`
 - durable PVCs come only from Helm-owned durable workloads, including operator-managed claims
   reconciled from repo-owned Helm releases
-- durable PVs come only from `infernix cluster up` and bind explicitly to their intended claims
+- durable PVs are created manually only by `infernix cluster up` and bind explicitly to their
+  intended claims
+- no PVC-backed Helm workload relies on dynamic provisioning or an implicit default storage class
 - `cluster up` renders the Helm release shape, discovers the durable PVC inventory from that owned
   chart or operator input, and prepares one matching PV per durable claim before workload rollout
 - durable PV paths follow `./.data/kind/<namespace>/<release>/<workload>/<ordinal>/<claim>`

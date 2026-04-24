@@ -30,8 +30,12 @@
   materialization remains fixture-only for local unit coverage
 - host-native service mode uses the same process-isolated engine-worker contract as the
   cluster-resident service while retrieving durable artifacts and engine-specific source-artifact
-  manifests through the routed MinIO or Pulsar bridge surfaces, and automated validation uses the
-  engine-specific worker runner when no adapter-specific override is configured
+  manifests through the routed MinIO or Pulsar bridge surfaces, reports engine-adapter
+  availability through the durable bundle or routed cache surface, and automated validation uses
+  the engine-specific worker runner when no adapter-specific override is configured
+- adapter-specific `INFERNIX_ENGINE_COMMAND_*` overrides can direct the host-native or
+  cluster-resident worker path at installed host commands while preserving the same routed `/api`
+  contract and durable artifact-selection semantics
 - `test integration`, `test e2e`, and `test all` repeat the default validation suites across
   `apple-silicon` and `linux-cpu` when no explicit runtime-mode override is supplied; the same
   commands auto-include `linux-cuda` only when the active control-plane surface satisfies the

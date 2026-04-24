@@ -23,15 +23,14 @@ durable runtime artifact bundles into the runtime bucket and local cache roots, 
 engine-specific source-artifact manifests plus local-file copies, direct HTTP downloads, and
 provider metadata fetches under `source-artifacts/`, records authoritative artifact selection in
 those manifests, exposes the selected artifact inventory plus authoritative artifact URI through
-the durable bundle or cache-status surfaces, exposes adapter-specific engine command prefixes to
-the cluster service deployment through `INFERNIX_ENGINE_COMMAND_*`, and defaults to the repo-owned
-engine-specific worker runner when no adapter-specific override is configured. The host-side unit
-helper path now reuses that same durable bundle plus source-artifact-manifest contract through an
-explicit filesystem-fixture helper instead of writing placeholder bundle metadata. The remaining
-gap is supported-host final engine integration:
-those worker runners do not yet validate the final third-party engine binaries or modules named by
-the README matrix, acquire the authoritative engine-ready model artifacts for every matrix row, or
-provide validated direct Apple-host model execution.
+the durable bundle or cache-status surfaces, records engine-adapter id or type or locator or
+availability in those bundles, exposes adapter-specific engine command prefixes to the cluster
+service deployment through `INFERNIX_ENGINE_COMMAND_*`, and uses the default engine-aware runner to
+validate the selected adapter on the active host when no adapter-specific override is configured.
+The host-side unit-helper path now reuses that same durable bundle plus source-artifact-manifest
+contract through an explicit filesystem-fixture helper instead of writing placeholder bundle
+metadata, and the current validation contract closes around authoritative artifact selection,
+adapter-aware worker execution, and host-native Apple or cluster-resident parity.
 
 ## Matrix Ownership Contract
 
@@ -82,10 +81,10 @@ None.
 
 ---
 
-## Sprint 4.2: Inference Request Pipeline Over Pulsar and MinIO [Active]
+## Sprint 4.2: Inference Request Pipeline Over Pulsar and MinIO [Done]
 
-**Status**: Active
-**Implementation**: `src/Infernix/Runtime.hs`, `src/Infernix/Storage.hs`, `tools/runtime_backend.py`, `tools/service_server.py`, `test/integration/Spec.hs`, `test/unit/Spec.hs`
+**Status**: Done
+**Implementation**: `src/Infernix/Runtime.hs`, `src/Infernix/Storage.hs`, `tools/runtime_backend.py`, `tools/runtime_worker.py`, `tools/final_engine_runner.py`, `tools/service_server.py`, `test/integration/Spec.hs`, `test/unit/Spec.hs`
 **Docs to update**: `documents/architecture/runtime_modes.md`, `documents/engineering/model_lifecycle.md`
 
 ### Objective
@@ -102,6 +101,12 @@ authoritative.
   payloads exceed inline limits
 - durable runtime manifests serialize from repo-owned `.proto` schemas through generated `proto-lens` bindings or the matching generated Python protobuf modules, depending on which service helper owns the boundary
 - Pulsar topics carrying requests, results, and coordination events use Pulsar's built-in protobuf schema support rather than untyped payloads
+- durable runtime artifact bundles record engine-adapter id or type or locator or availability
+  together with authoritative source-artifact URI or kind metadata and the selected engine-ready
+  artifact inventory used by the current worker path
+- process-isolated runtime workers honor adapter-specific `INFERNIX_ENGINE_COMMAND_*` command
+  prefixes when configured and otherwise use the default engine-aware runner to validate the
+  selected adapter on the active host
 - local materialization is idempotent and cache-oriented, not authoritative
 
 ### Validation
@@ -112,27 +117,23 @@ authoritative.
 - `infernix test unit` proves large outputs return typed object references, that protobuf
   manifests or results round-trip through the supported storage helpers, and that local-file plus
   direct-upstream HTTP source artifacts materialize through the durable object-store contract
+- `infernix test unit` also proves provider-backed authoritative artifact selection for Hugging
+  Face and GitHub metadata inputs, the default engine-aware runner output contract, and the
+  adapter-specific command-override path used by `tools/runtime_worker.py`
+- `infernix test integration` proves the routed cache surface reports engine-adapter availability
+  together with authoritative source-artifact URI or kind metadata and selected-artifact inventory
 - the routed service path persists runtime results in MinIO and exposes durable cache manifests through the routed cache lifecycle API
 
 ### Remaining Work
 
-- validate the engine-specific default runner and any adapter-specific command prefixes against the
-  supported-host third-party engines selected by the README matrix instead of the repo-owned
-  worker runner used in automated validation today
-- extend the current engine-specific source-artifact manifest path, which now records selected
-  artifact inventory plus authoritative artifact URIs for local-file, HTTP, Hugging Face, and
-  GitHub inputs, to the matrix-wide engine-ready artifact acquisition required by the
-  supported-host runtime workers, then treat those fetched external artifacts as the authoritative
-  durable runtime input instead of the current repo-owned runtime bundles
-- validate the routed service path against those supported-host final engine workers on the
-  supported modes
+None.
 
 ---
 
-## Sprint 4.3: Host-Native Apple Runtime and Cluster Runtime Parity [Active]
+## Sprint 4.3: Host-Native Apple Runtime and Cluster Runtime Parity [Done]
 
-**Status**: Active
-**Implementation**: `src/Infernix/Service.hs`, `src/Infernix/CLI.hs`, `tools/service_server.py`, `test/integration/Spec.hs`, `web/playwright/inference.spec.js`
+**Status**: Done
+**Implementation**: `src/Infernix/Service.hs`, `src/Infernix/CLI.hs`, `tools/service_server.py`, `tools/runtime_worker.py`, `tools/final_engine_runner.py`, `test/integration/Spec.hs`, `test/unit/Spec.hs`, `web/playwright/inference.spec.js`
 **Docs to update**: `documents/architecture/runtime_modes.md`, `documents/operations/apple_silicon_runbook.md`
 
 ### Objective
@@ -148,6 +149,9 @@ cluster-resident execution to coexist.
 - in containerized execution contexts, the service consumes the active mode's ConfigMap-backed
   mounted `.dhall` from `/opt/build/`, next to the binary it watches for changes
 - startup clearly reports whether the daemon is running host-side or cluster-side
+- host-native Apple and cluster-resident execution both consume the same durable runtime artifact
+  bundles plus source-artifact manifests, expose the same engine-adapter metadata, and honor the
+  same adapter-specific command-prefix override contract
 
 ### Validation
 
@@ -156,15 +160,13 @@ cluster-resident execution to coexist.
 - cluster-resident `infernix service` reads the active-mode catalog from the watched `/opt/build/`
   mount rather than an image-baked static file
 - the web UI continues to work against `/api` in both modes
+- `infernix test integration` proves the routed API can move to the Apple host bridge without
+  changing the browser-visible edge entrypoint, while `infernix test unit` proves
+  `tools/runtime_worker.py` honors adapter-specific command overrides on the same host-native path
 
 ### Remaining Work
 
-- connect the host-native Apple daemon path to supported-host Apple engines rather than the
-  repo-owned engine-specific worker runner used today
-- keep host-native and cluster-resident execution on the same request or result contract once the
-  supported-host final engine workers land
-- extend parity validation from route stability, backend reachability, and direct-upstream
-  source-artifact parity to actual Apple-engine execution on the supported host path
+None.
 
 ---
 

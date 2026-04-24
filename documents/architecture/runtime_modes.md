@@ -76,8 +76,8 @@ Service placement is a separate concept from runtime mode.
 - the host-native and cluster-resident service placements both launch the same process-isolated
   engine-worker contract, consume durable runtime artifact bundles plus engine-specific
   source-artifact manifests, use the engine-specific worker runner by default on the supported
-  path, and still honor adapter-specific command overrides during supported-host third-party
-  engine validation
+  path, report engine-adapter availability through the durable bundle or routed cache surface, and
+  still honor adapter-specific command overrides when supported-host engine commands are installed
 - local host-side fixture helpers may still use an explicit `filesystem-fixture` ownership mode for
   unit coverage, but the supported `infernix service` surface itself requires the routed durable
   backend contract or explicit backend configuration

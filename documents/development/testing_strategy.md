@@ -9,7 +9,7 @@
 
 - `infernix docs check` validates governed docs, plan metadata, and required cross-document phrases
 - `infernix test lint` validates repository hygiene, chart or Kind or `.proto` asset presence, Helm dependency or lint or render or claim-discovery closure, the repo-owned Haskell style stack, and the Haskell build path
-- `infernix test unit` validates matrix rendering, generated frontend contracts, deterministic runtime behavior, protobuf schema round-trip coverage, engine-runner metadata, authoritative source-artifact selection, and local-file plus direct-upstream source-artifact materialization
+- `infernix test unit` validates matrix rendering, generated frontend contracts, deterministic runtime behavior, protobuf schema round-trip coverage, engine-runner metadata, engine command-override behavior, authoritative source-artifact selection, and local-file plus direct-upstream source-artifact materialization
 - the host-side unit helper path uses an explicit filesystem-fixture backend plus per-model source-artifact overrides where needed, so unit coverage exercises the durable bundle or source-artifact manifest contract without turning implicit filesystem service fallback into a supported runtime mode
 - `infernix test integration` validates lifecycle, generated demo-config publication, serialized-catalog execution, routed publication metadata, process-isolated engine-worker execution, service-path cache lifecycle, Pulsar schema publication, MinIO durability, operator-managed PostgreSQL readiness or primary failover or PVC rebinding, HA recovery, edge-port rediscovery, and real `linux-cuda` device visibility on supported hosts
 - `infernix test e2e` validates the routed browser-facing surface through exhaustive catalog coverage, serialized-catalog cross-checks, and browser UI interaction against the real cluster edge while launching Playwright from the same web image that serves the UI
@@ -31,8 +31,9 @@
 - `infernix test integration` also validates that any operator-managed PostgreSQL cluster required by
   the active platform release reports ready Patroni members, elects a replacement primary after
   pod deletion, and keeps its claims bound through `infernix-manual` across repeat cluster
-  lifecycle runs
-- `infernix test integration` also validates that `/api/publication` reports `workerExecutionMode = process-isolated-engine-workers`, `workerAdapterMode = engine-specific-runner-defaults`, `artifactAcquisitionMode = engine-ready-artifact-manifests`, and that `/api/cache` exposes durable artifact-bundle URIs plus durable source-artifact manifest URIs rooted in the runtime bucket together with the selected artifact inventory used by the current durable bundle
+  lifecycle runs, including Harbor bootstrap self-healing when one startup replica remains
+  `Running` but fails Patroni readiness beyond the supported grace window
+- `infernix test integration` also validates that `/api/publication` reports `workerExecutionMode = process-isolated-engine-workers`, `workerAdapterMode = engine-specific-runner-defaults`, `artifactAcquisitionMode = engine-ready-artifact-manifests`, and that `/api/cache` exposes durable artifact-bundle URIs plus durable source-artifact manifest URIs rooted in the runtime bucket together with engine-adapter availability, authoritative source-artifact URI or kind metadata, and the selected artifact inventory used by the current durable bundle
 - the host-native integration lane also validates that `/api` can move to the Apple host bridge without changing the browser-visible edge entrypoint
 - the outer-container integration lane keeps host-published Kind and edge ports on `127.0.0.1`
   while reaching the cluster through the private Docker `kind` network and the internal kubeconfig
@@ -44,8 +45,7 @@
   targets the control-plane node's routed edge port `30090` instead of a host-gateway alias
 - the automated unit, integration, and E2E entrypoints exercise the engine-specific worker runner
   defaults when no adapter-specific override is configured, and they can still forward
-  `INFERNIX_ENGINE_COMMAND_*` overrides when validating supported-host third-party engine
-  installations
+  `INFERNIX_ENGINE_COMMAND_*` overrides when supported-host engine commands are installed
 - changing the active runtime mode changes the generated catalog and therefore the exercised entry set automatically
 - when no explicit runtime-mode override is supplied, the default validation path repeats the exhaustive integration and E2E path across `apple-silicon` and `linux-cpu` and auto-includes `linux-cuda` on hosts whose active control-plane surface satisfies the NVIDIA preflight contract
 - the supported host-native final-substrate and outer-container control-plane lanes reuse that same exhaustive coverage contract rather than a reduced smoke subset

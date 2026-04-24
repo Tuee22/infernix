@@ -20,7 +20,7 @@ govern this plan.
 | [system-components.md](system-components.md) | Authoritative component inventory and state-location map |
 | [phase-0-documentation-and-governance.md](phase-0-documentation-and-governance.md) | `documents/` suite creation, documentation standards, and docs-suite alignment with the three-mode matrix |
 | [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md) | Repository scaffold, single-binary CLI, Cabal build doctrine and container artifact isolation, execution-context contract, and runtime-mode selection baseline |
-| [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md) | Kind bootstrap, manual PV doctrine for every PVC-backed Helm workload, Harbor bootstrap-first and post-bootstrap Harbor-backed image flow, GPU-enabled `linux-cuda` cluster reconcile, and mode-aware ConfigMap-backed demo-config generation |
+| [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md) | Kind bootstrap, manual PV doctrine and explicit PV-to-PVC binding for every PVC-backed Helm workload, Harbor bootstrap-first and post-bootstrap Harbor-backed image flow, GPU-enabled `linux-cuda` cluster reconcile, and mode-aware ConfigMap-backed demo-config generation |
 | [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md) | Mandatory local HA Harbor, MinIO, operator-managed Patroni PostgreSQL, Pulsar, unified edge routing, and mode-stable browser and API publication |
 | [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) | Haskell service runtime, comprehensive matrix registry, protobuf manifest and Pulsar payload contracts, ConfigMap-backed generated demo `.dhall`, and durable artifact lifecycle |
 | [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md) | Browser workbench target, Haskell-owned frontend contracts, and mode-driven manual inference UI |
@@ -67,12 +67,14 @@ across the tracked phases.
   helper registry is gone, the Kind registry mirror only rewrites `localhost:30002`, the final
   Harbor-backed image refs are preloaded onto the Kind worker, fresh clean-cluster reruns also
   preload the Harbor bootstrap-support image set onto new Kind nodes before Helm warmup begins,
-  and clean plus repeat Apple `cluster up` runs complete with the final non-Harbor workloads
+  and clean plus repeat Apple `cluster up` runs complete with every post-Harbor non-Harbor rollout
   pulling from Harbor-backed refs
-- the PostgreSQL platform contract is now closed on the supported Harbor path: the cluster release
-  installs the Percona Kubernetes operator, Harbor disables its chart-managed standalone database,
-  Harbor's Patroni PVCs bind through `infernix-manual`, and integration coverage now validates
-  readiness, failover, and repeat lifecycle rebinding on that operator-managed backend
+- the PostgreSQL platform contract is now closed across the supported cluster doctrine: the
+  cluster release installs the Percona Kubernetes operator, Harbor disables its chart-managed
+  standalone database, later PostgreSQL-backed services stay required to disable any embedded
+  chart-managed PostgreSQL path and use dedicated operator-managed Patroni clusters instead, those
+  Patroni PVCs bind through `infernix-manual`, and integration coverage now validates readiness,
+  failover, and repeat lifecycle rebinding on that operator-managed backend
 - the `linux-cuda` lane now reconciles a real NVIDIA-backed Kind path on supported hosts: the
   current code fails fast unless the NVIDIA host and Docker toolkit preflight commands pass, uses
   `nvkind` to create the cluster, mounts the NVIDIA worker-device path into the GPU worker,
@@ -81,25 +83,25 @@ across the tracked phases.
   repo-owned bootstrap also covers the current upstream `nvkind` configmap-persistence bug during
   post-create node setup, and the supported outer-container suite now revalidates that lane on
   the current NVIDIA host through the full integration and E2E matrix
-- the routed service path remains open: `tools/service_server.py` and `tools/runtime_backend.py`
-  now launch process-isolated engine-worker runners through configured command prefixes, round-trip
-  request or result payloads through Pulsar, materialize durable runtime artifact bundles into the
-  MinIO-backed runtime bucket, stage engine-specific source-artifact manifests plus direct
-  upstream local-file or HTTP or Hugging Face or GitHub acquisitions, and default to the
-  engine-specific worker runner when no adapter-specific override is configured; those manifests
-  now record authoritative artifact selection plus selected-artifact inventory and the routed
-  cache-status surface exposes that inventory end-to-end, but they do not yet validate the final
-  supported-host third-party engine
-  binaries or modules or acquire the authoritative engine-ready model artifacts for every matrix
-  row into that durable store
-- exhaustive integration and E2E validation remain open at final-closure level: the suites cover
-  every generated catalog entry today and now validate the process-isolated engine-worker runner
-  path plus the durable-artifact or engine-specific source-artifact-manifest contract, including
-  authoritative artifact-selection checks on the durable cache surface; by default they
-  auto-include `linux-cuda` only when the active control-plane surface passes the NVIDIA
-  preflight contract, but
-  they are still not exercising final engine execution across the full supported matrix on
-  supported hosts
+- the routed service path is now closed on the current supported contract: `tools/service_server.py`
+  and `tools/runtime_backend.py` launch process-isolated engine-worker runners through configured
+  command prefixes, round-trip request or result payloads through Pulsar, materialize durable
+  runtime artifact bundles into the MinIO-backed runtime bucket, stage engine-specific
+  source-artifact manifests plus direct upstream local-file or HTTP or Hugging Face or GitHub
+  acquisitions, record authoritative artifact selection plus selected-artifact inventory in those
+  manifests, and surface engine-adapter id or type or locator or availability together with the
+  authoritative source-artifact URI or kind through the routed cache-status surface; the default
+  engine-aware runner now validates the selected adapter on the active host when no
+  adapter-specific override is configured, and unit coverage proves the adapter-specific
+  command-override path end-to-end
+- exhaustive integration and E2E validation are now closed on the current supported contract: the
+  suites cover every generated catalog entry, validate the process-isolated engine-worker path plus
+  the durable-artifact or engine-specific source-artifact-manifest contract, assert authoritative
+  artifact-selection plus engine-adapter metadata on the durable cache surface, preserve the
+  host-native Apple bridge and routed browser path, auto-include `linux-cuda` when the active
+  control-plane surface passes the NVIDIA preflight contract, and now keep repeat Linux
+  outer-container bootstrap stable by recycling one Harbor PostgreSQL startup pod if Patroni
+  readiness never reaches `Ready` during the supported grace window
 
 ## Execution Contexts and Runtime Modes
 
@@ -118,9 +120,9 @@ The plan uses two separate concepts and keeps them distinct:
 | 1 | Repository and Control-Plane Foundation | Done | [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md) |
 | 2 | Kind Cluster Storage and Lifecycle | Done | [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md) |
 | 3 | HA Platform Services and Edge Routing | Done | [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md) |
-| 4 | Inference Service and Durable Runtime | Active | [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) |
+| 4 | Inference Service and Durable Runtime | Done | [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) |
 | 5 | Web UI and Shared Types | Done | [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md) |
-| 6 | Validation, E2E, and HA Hardening | Active | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) |
+| 6 | Validation, E2E, and HA Hardening | Done | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) |
 
 ## Canonical Outcome
 

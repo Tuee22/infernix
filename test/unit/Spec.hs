@@ -240,8 +240,11 @@ main = do
     assert (backendExitCode == ExitSuccess) ("runtime backend local source materialization succeeds: " <> backendStderr)
     assert ("\"artifactAcquisitionMode\": \"local-file-copy\"" `isInfixOf` backendStdout) "runtime backend records local-file source acquisition in cache status"
     assert ("\"engineAdapterId\": \"llama-cpp-cli\"" `isInfixOf` backendStdout) "runtime backend cache status records engine-specific runner metadata"
+    assert ("\"engineAdapterAvailability\": \"" `isInfixOf` backendStdout) "runtime backend cache status reports engine-adapter availability"
     assert ("\"sourceArtifactFetchStatus\": \"materialized\"" `isInfixOf` backendStdout) "runtime backend cache status records materialized source-artifact state"
     assert ("\"sourceArtifactSelectionMode\": \"engine-specific-direct-artifact\"" `isInfixOf` backendStdout) "runtime backend cache status records engine-specific source-artifact selection"
+    assert ("\"sourceArtifactAuthoritativeUri\": \"" `isInfixOf` backendStdout) "runtime backend cache status reports the authoritative runtime input URI"
+    assert ("\"sourceArtifactAuthoritativeKind\": \"" `isInfixOf` backendStdout) "runtime backend cache status reports the authoritative runtime input kind"
     assert ("\"sourceArtifactSelectedArtifacts\": [" `isInfixOf` backendStdout) "runtime backend cache status exposes selected source artifacts for direct materialization"
     writeFile "remote-fixture.txt" "remote source fixture\n"
     let remoteRuntimeBackendScript =
@@ -373,6 +376,25 @@ main = do
     assert ("authoritative=gguf-weights" `isInfixOf` runnerStdout) "engine-specific worker runner reports the authoritative artifact kind"
     assert ("artifacts=1:gguf-weights:file:///tmp/unit-runner.gguf" `isInfixOf` runnerStdout) "engine-specific worker runner reports the selected artifact inventory"
     assert ("selection=engine-specific-huggingface-selection" `isInfixOf` runnerStdout) "engine-specific worker runner reports the manifest selection mode"
+    writeFile "override-runner.py" (unlines ["#!/usr/bin/env python3", "import argparse", "parser = argparse.ArgumentParser()", "parser.add_argument('--artifact-bundle', required=True)", "parser.add_argument('--request-id', required=True)", "parser.add_argument('--input-text', required=True)", "parser.add_argument('--adapter-id', required=True)", "args = parser.parse_args()", "print(f\"override adapter={args.adapter_id} request={args.request_id} input={args.input_text}\")"])
+    withEnvValue
+      "INFERNIX_ENGINE_COMMAND_LLAMA_CPP_CLI"
+      ("python3 " <> cwd </> "override-runner.py")
+      $ do
+        (overrideExitCode, overrideStdout, overrideStderr) <-
+          readProcessWithExitCode
+            "python3"
+            [ repoRoot paths </> "tools" </> "runtime_worker.py",
+              "--artifact-bundle",
+              "runner-bundle.json",
+              "--once",
+              "--input-text",
+              "override coverage"
+            ]
+            ""
+        assert (overrideExitCode == ExitSuccess) ("runtime worker honors engine command overrides: " <> overrideStderr)
+        assert ("override adapter=llama-cpp-cli" `isInfixOf` overrideStdout) "runtime worker forwards the adapter id to override commands"
+        assert ("input=override coverage" `isInfixOf` overrideStdout) "runtime worker forwards the request payload to override commands"
     writeFile "invalid-demo-config.dhall" "{\"runtimeMode\":\"apple-silicon\",\"models\":[{\"modelId\":\"missing-fields\"}]}\n"
     (exitCode, _, stderrOutput) <-
       readProcessWithExitCode
@@ -411,6 +433,12 @@ withSourceArtifactOverrides overrides action = do
           <> "}"
   setEnv "INFERNIX_SOURCE_ARTIFACT_OVERRIDES" renderedOverrides
   action `finally` maybe (unsetEnv "INFERNIX_SOURCE_ARTIFACT_OVERRIDES") (setEnv "INFERNIX_SOURCE_ARTIFACT_OVERRIDES") previousOverrides
+
+withEnvValue :: String -> String -> IO () -> IO ()
+withEnvValue name value action = do
+  previousValue <- lookupEnv name
+  setEnv name value
+  action `finally` maybe (unsetEnv name) (setEnv name) previousValue
 
 withTestRoot :: FilePath -> IO a -> IO a
 withTestRoot root action = do

@@ -22,9 +22,14 @@
   reconcile or pull from public container repositories before Harbor is ready for image pulls
 - confirm that `cluster up` preloads the Harbor-backed final image refs onto the Kind worker before
   the remaining non-Harbor workloads begin their final rollout
+- confirm that every later non-Harbor rollout, add-on, or PostgreSQL-backed service after Harbor
+  readiness pulls from Harbor-backed image references rather than public upstream registries
 - confirm that `infernix kubectl get pods -n platform` shows the Percona PostgreSQL operator and
   the Patroni members needed for Harbor's PostgreSQL backend reaching ready state before the final
   post-Harbor rollout depends on them, and that `harbor-postgresql-pgbouncer` is also ready
+- if one Harbor PostgreSQL startup pod remains `Running` without reaching readiness during
+  bootstrap, confirm the supported reconcile path recycles that pod once and still reaches a fully
+  ready Patroni set before the post-Harbor rollout continues
 - confirm that `infernix kubectl get jobs -n platform` shows
   `infernix-infernix-pulsar-bookie-init` and `infernix-infernix-pulsar-pulsar-init` completing
   during the final Harbor-backed rollout, because Pulsar is first enabled there
@@ -32,7 +37,11 @@
   `infernix-service`, the Harbor application-plane workloads, the MinIO statefulset, the Pulsar
   statefulsets, the PostgreSQL operator-managed members, and the Harbor or MinIO or Pulsar gateway workloads
 - confirm that `infernix kubectl get storageclass` shows only `infernix-manual`
+- confirm that no PVC-backed Helm workload was dynamically provisioned and that each durable PV is
+  manually pre-bound to its intended claim under `./.data/kind/...`
 - confirm that `infernix kubectl get pvc -A` shows the service, Harbor, MinIO, Pulsar, and PostgreSQL claims bound through `infernix-manual`
+- confirm that any service or add-on that can self-deploy PostgreSQL renders with that embedded
+  database path disabled and instead targets an operator-managed Patroni cluster
 - confirm routes with `infernix cluster status`
 - confirm that `cluster status` reports the build root, data root, runtime result count, object-store object count, and model-cache entry count alongside the route inventory
 - inspect `./.data/runtime/publication.json` or `GET /api/publication` to confirm the routed publication contract matches `cluster status`, including API-upstream mode and routed-upstream health details
@@ -49,6 +58,8 @@
   first-pull Harbor `502 Bad Gateway`
 - on a repeat `cluster down` plus `cluster up`, confirm Harbor's PostgreSQL PVCs rebind to the
   same host paths under `./.data/kind/...` rather than allocating a new manual-storage location
+- on a repeat `cluster up`, confirm Harbor PostgreSQL startup reconciliation does not stall
+  indefinitely on a single `Running` but not-`Ready` Patroni startup pod
 - confirm `docker port <kind-control-plane> 6443/tcp` and `docker port <kind-control-plane> 30090/tcp`
   report `127.0.0.1:...` bindings rather than `0.0.0.0:...`
 - confirm `curl http://127.0.0.1:<port>/` reaches the routed workbench from the host

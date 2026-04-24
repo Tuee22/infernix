@@ -13,11 +13,14 @@
 - `infernix cluster status` is read-only
 - repo-owned Kind configs live under `kind/` and define the Apple, CPU, and CUDA cluster shapes that `cluster up` renders into the supported local Kind clusters
 - repo-owned Helm charts and values live under `chart/`, self-bootstrap the declared Helm repositories, and deploy the repo-owned edge, web, service, publication, and PVC workloads on that cluster path
+- every PVC-backed Helm workload on that path explicitly uses `storageClassName: infernix-manual`,
+  and `cluster up` manually creates and pre-binds the matching PVs before rollout
 - every in-cluster PostgreSQL dependency uses a Patroni cluster managed by the Percona
   Kubernetes operator through that same Helm-owned workflow
-- services that can self-deploy PostgreSQL disable that embedded chart path and target an
-  operator-managed cluster instead
-- `cluster up` bootstraps Harbor first through Helm, allowing Harbor and only the storage or
+- services or add-ons that can self-deploy PostgreSQL disable that embedded chart path and target
+  an operator-managed cluster instead
+- `cluster up` bootstraps Harbor first through Helm on a pristine cluster, allowing Harbor and
+  only the storage or
   support services Harbor needs during bootstrap, including MinIO and PostgreSQL, to pull from
   public container repositories
 - the Harbor bootstrap and final Helm phases preserve stable Harbor-generated secret material and
@@ -26,6 +29,8 @@
 - after Harbor is ready, `cluster up` uses Harbor as the image authority for every remaining
   non-Harbor pod, mirrors required third-party images there, and publishes the repo-owned service
   and web images before the final Helm rollout
+- after Harbor is ready, every later Helm-managed workload or add-on also pulls from Harbor-backed
+  image references rather than public upstream registries
 - after Harbor reaches its final rollout shape, `cluster up` preloads the Harbor-backed final
   image refs onto the Kind worker before the remaining non-Harbor workloads are scaled
 - because Pulsar is first enabled in the final Harbor-backed Helm phase, `cluster up` forces the

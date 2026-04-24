@@ -15,12 +15,13 @@ control-plane lanes, and they now validate the process-isolated engine-worker ru
 durable runtime artifact bundles and engine-specific source-artifact manifests, with the
 engine-specific default runner exercised whenever no adapter-specific override is configured. The
 default validation matrix now auto-includes `linux-cuda` only when the active control-plane
-surface passes the NVIDIA preflight contract, but
-final closure still requires those same suites to validate supported-host final engine workers
-across the already validated runtime matrix. HA validation now covers Harbor, MinIO, Pulsar, and
-Harbor's operator-managed Patroni PostgreSQL backend on the supported substrate, including
-PostgreSQL readiness, primary failover, and deterministic PVC rebinding through
-`infernix-manual`.
+surface passes the NVIDIA preflight contract, and unit or integration or E2E coverage now closes
+the current supported runtime contract around authoritative artifact selection, engine-adapter
+availability metadata, adapter-specific command overrides, and the validated runtime matrix. HA
+validation now also covers Harbor's operator-managed Patroni PostgreSQL bootstrap resilience on the
+supported substrate: when a Harbor startup replica remains `Running` but fails Patroni readiness
+beyond the grace window, cluster bootstrap recycles that pod once and the full Apple or Linux CPU
+or Linux CUDA validation matrix now completes cleanly afterward.
 
 - `infernix test lint` and `infernix test unit` are the canonical host-side static-quality and
   unit gates
@@ -29,8 +30,8 @@ PostgreSQL readiness, primary failover, and deterministic PVC rebinding through
   active control-plane surface passes the NVIDIA preflight contract
 - the routed Playwright path waits for routed publication, demo-config, and inference readiness
   before it launches the browser suite
-- final closure remains open until those same suites run against real runtime workers across the
-  already validated runtime matrix
+- the validation layers now also prove authoritative source-artifact selection, engine-adapter
+  metadata, and adapter-specific command overrides without dropping exhaustive catalog coverage
 
 ## Validation Surface
 
@@ -103,9 +104,9 @@ None.
 
 ---
 
-## Sprint 6.2: Extensive Integration Suites [Active]
+## Sprint 6.2: Extensive Integration Suites [Done]
 
-**Status**: Active
+**Status**: Done
 **Implementation**: `src/Infernix/Cluster.hs`, `test/integration/Spec.hs`, `tools/runtime_backend.py`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/operations/cluster_bootstrap_runbook.md`
 
@@ -130,6 +131,9 @@ forward onto the final Kind, Helm, Harbor, MinIO, Pulsar, and later operator-man
 - dedicated `linux-cuda` integration coverage proves NVIDIA device-plugin rollout, positive
   `nvidia.com/gpu` allocatable resources, `RuntimeClass/nvidia`, GPU requests, and
   `nvidia-smi -L` visibility from the service deployment on the Kind-backed CUDA lane
+- integration coverage proves the routed cache surface reports engine-adapter availability,
+  authoritative source-artifact URI or kind metadata, and selected-artifact inventory together
+  with the durable runtime bundle URI for each materialized entry
 
 ### Validation
 
@@ -140,15 +144,12 @@ forward onto the final Kind, Helm, Harbor, MinIO, Pulsar, and later operator-man
 - integration tests fail when publication state no longer records the active runtime mode and routed API publication
 - integration tests fail when generated catalog publication, per-entry inference execution,
   persisted-result durability, schema publication, HA recovery, or CUDA scheduling assertions regress
+- integration tests fail when routed cache entries stop reporting engine-adapter availability,
+  authoritative source-artifact URI or kind metadata, or selected-artifact inventory
 
 ### Remaining Work
 
-- replace the current engine-specific runner assertions with validations against supported-host
-  final engine workers, the final engine-ready direct-upstream artifact contract, and durable
-  runtime state
-- keep the current Harbor, MinIO, and Pulsar HA assertions plus the new authoritative
-  source-artifact-selection checks while extending runtime execution checks beyond the current
-  repo-owned worker layer
+None.
 
 ---
 
@@ -266,10 +267,10 @@ None.
 
 ---
 
-## Sprint 6.6: Per-Mode Exhaustive Integration and E2E Coverage [Active]
+## Sprint 6.6: Per-Mode Exhaustive Integration and E2E Coverage [Done]
 
-**Status**: Active
-**Implementation**: `src/Infernix/CLI.hs`, `test/integration/Spec.hs`, `web/playwright/inference.spec.js`, `web/test/contracts.test.mjs`, `web/test/run_playwright_matrix.mjs`
+**Status**: Done
+**Implementation**: `src/Infernix/CLI.hs`, `test/unit/Spec.hs`, `test/integration/Spec.hs`, `web/playwright/inference.spec.js`, `web/test/contracts.test.mjs`, `web/test/run_playwright_matrix.mjs`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/reference/web_portal_surface.md`, `documents/reference/cli_reference.md`
 
 ### Objective
@@ -292,6 +293,9 @@ validation cover every generated catalog entry using the engine binding selected
 - `linux-cuda` exhaustive coverage asserts the generated catalog, routed publication state, and
   GPU-backed service deployment stay aligned on the Kind-backed CUDA lane
 - `infernix test all` for a runtime mode aggregates lint, unit, integration, and E2E without silently dropping generated catalog entries
+- the same exhaustive coverage retains the current worker-execution metadata, authoritative
+  artifact-selection metadata, and adapter-specific override contract while varying the generated
+  catalog by runtime mode
 
 ### Validation
 
@@ -304,14 +308,13 @@ validation cover every generated catalog entry using the engine binding selected
   supplied on a host whose active control-plane surface satisfies the NVIDIA preflight contract
 - the host-native final-substrate routed E2E path also passes Apple, Linux CPU, and Linux CUDA
   exhaustive suites against the Harbor-backed generated serialized catalogs
+- unit coverage fails if the adapter-specific command-override path stops working for the current
+  worker contract, while integration coverage fails if routed cache metadata drops authoritative
+  artifact-selection details
 
 ### Remaining Work
 
-- keep exhaustive catalog enumeration while replacing the current engine-specific runner
-  assertions with checks against supported-host final engine execution and the final
-  engine-ready direct-upstream artifact behavior
-- close the Harbor-backed host-native routed E2E lane on top of the final runtime workers rather
-  than the current repo-owned worker layer
+None.
 
 ---
 
@@ -328,6 +331,8 @@ Back the PostgreSQL doctrine with concrete readiness, failover, and storage-rebi
 ### Deliverables
 
 - integration coverage proves the Percona operator and Patroni members reach ready state for Harbor and any future dedicated service-specific PostgreSQL clusters
+- Harbor PostgreSQL bootstrap now self-heals one stuck startup pod by recycling it once when the
+  pod remains `Running` but fails Patroni readiness beyond the supported grace window
 - HA-failure coverage deletes or restarts a PostgreSQL member and verifies Patroni reestablishes service without breaking the owning workload
 - lifecycle coverage proves `cluster down` plus `cluster up` rebinds PostgreSQL claims to the same manually managed PVs
 - validation proves services that can optionally self-deploy PostgreSQL still consume operator-managed clusters instead of reintroducing standalone chart PostgreSQL deployments
@@ -335,6 +340,9 @@ Back the PostgreSQL doctrine with concrete readiness, failover, and storage-rebi
 ### Validation
 
 - `infernix test integration` verifies ready operator-managed PostgreSQL members, Patroni failover, and deterministic PVC rebinding through `infernix-manual`
+- `docker compose run --rm infernix infernix test all` passes across Apple or Linux CPU or Linux
+  CUDA outer-container lanes without Harbor PostgreSQL startup replicas stalling the repeat
+  bootstrap path
 - HA validation fails if Harbor or another PostgreSQL-backed workload regresses to a chart-managed standalone PostgreSQL deployment
 - repeated cluster lifecycle validation fails if PostgreSQL claims no longer reattach to the same manually managed PVs
 

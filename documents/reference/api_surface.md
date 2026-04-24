@@ -24,9 +24,10 @@
 - invalid requests return typed user-facing errors
 - large outputs are returned as typed object references and remain retrievable through `GET /objects/:objectRef`
 - cache-eviction and cache-rebuild flows only affect derived cache state; they do not rewrite the generated catalog or publication contract
-- cache status exposes durable runtime-artifact bundle URIs, engine-runner metadata, durable
-  source-artifact manifest URIs, authoritative source-artifact selection, and selected-artifact
-  inventory while keeping derived cache directories rebuildable
+- cache status exposes durable runtime-artifact bundle URIs, engine-runner metadata including
+  engine-adapter availability, durable source-artifact manifest URIs, authoritative
+  source-artifact URI or kind metadata, and selected-artifact inventory while keeping derived
+  cache directories rebuildable
 - publication details stay mode-stable and source from the repo-local publication-state file
 - `GET /api/demo-config` and `GET /api/models` stay aligned with the generated active-mode demo catalog
 - `/api` remains stable even when the active upstream changes between the cluster-resident service and the Apple host bridge

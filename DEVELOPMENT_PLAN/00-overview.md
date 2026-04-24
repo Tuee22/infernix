@@ -14,14 +14,14 @@ validation story remain partial relative to the target platform contract.
 | Area | Current state | Gap against target |
 |------|---------------|--------------------|
 | Development plan and docs suite | present | none in the current supported contract; docs realignment and validator coverage match the runtime-mode and generated-demo-config contract |
-| Service command and API host | present | the routed API and publication contract are implemented, and request execution now runs through process-isolated engine-worker runners backed by durable runtime artifact bundles and engine-specific source-artifact manifests, which now record authoritative artifact selection plus selected-artifact inventory and surface that through routed cache status; the current path still defaults to the repo-owned engine-specific worker runner when no adapter-specific override is configured, so supported-host third-party engine validation remains open |
+| Service command and API host | present | none in the current supported contract; the routed API and publication contract are implemented, request execution runs through process-isolated engine-worker runners backed by durable runtime artifact bundles and engine-specific source-artifact manifests, those durable artifacts now record authoritative artifact selection plus selected-artifact inventory together with engine-adapter id or type or locator or availability, the routed cache surface exposes that metadata end-to-end, and the default engine-aware runner validates the selected adapter on the active host when no adapter-specific override is configured |
 | Kind and Helm assets | present | none in the current supported contract; the Kind or Helm substrate, Harbor-first bootstrap sequencing, stable Harbor bootstrap and final render material, node-reachable `localhost:30002` registry-mirror config, Kind-worker prefetch of Harbor-backed final image refs, final-phase Pulsar initialization, loopback-only outer-container host bindings, the private Docker `kind` network plus internal kubeconfig access path, pinned `kindest/node:v1.34.0` node images, claim-aware outer-container storage sync, and the supported-host validated `nvkind` plus device-plugin GPU lane are implemented, and the validated outer-container lane requires host inotify capacity sufficient for mount-bearing Kind nodes |
 | PostgreSQL platform substrate | present | every in-cluster PostgreSQL dependency now follows the supported Patroni-plus-Percona-operator contract, Harbor disables the chart-managed standalone database path, Harbor's operator-managed claims bind through `infernix-manual`, and repeat cluster lifecycle plus HA validation covers readiness, failover, and PVC rebinding on that substrate |
 | Launch and schema assets | present | none in the current supported contract; `compose.yaml`, `docker/infernix.Dockerfile`, `web/Dockerfile`, `chart/`, `kind/`, and `proto/` drive the outer-container launcher, the cluster web or service images, repo-owned Kind configs, and schema files |
-| Runtime-mode matrix | present | the full README-scale model, format, and engine matrix drives the generated source of truth, and the current worker layer consumes the selected engine metadata plus engine-runner or source-artifact metadata, but those engine labels still map to repo-owned runtime bundles rather than the final external kernels |
+| Runtime-mode matrix | present | none in the current supported contract; the full README-scale model, format, and engine matrix drives the generated source of truth, and the current worker layer consumes the selected engine metadata together with the durable artifact-bundle, source-artifact-manifest, and engine-adapter metadata selected for that runtime mode |
 | Generated demo config | present | none in the current supported contract; `cluster up` emits mode-specific `infernix-demo-<mode>.dhall`, publishes a real `ConfigMap/infernix-demo-config`, and mounts that ConfigMap into the cluster-resident service and web workloads |
-| Web app | present | no phase-5 gap is open in the browser surface itself; the remaining gap is backend-side, because the workbench still fronts the process-isolated engine-worker runtime tracked in Phase 4 rather than supported-host final engines |
-| Tests | present | lint, unit, exhaustive integration, and routed E2E entrypoints exist, and they now validate process-isolated engine-worker runners, the engine-specific default runner path plus adapter-specific overrides, durable runtime bundles, engine-specific source-artifact manifests with authoritative artifact selection and selected-artifact inventory, operator-managed PostgreSQL readiness or failover or lifecycle rebinding, and host-gated `linux-cuda` scheduling or device visibility checks, but final closure remains open until the supported-host third-party engine matrix is rerun on each supported host class |
+| Web app | present | none in the current supported contract; the workbench fronts the same routed runtime contract described in Phase 4 and validates it through routed publication, catalog, inference, and object-reference coverage |
+| Tests | present | none in the current supported contract; lint, unit, exhaustive integration, and routed E2E entrypoints validate process-isolated engine-worker runners, the engine-specific default runner path plus adapter-specific overrides, durable runtime bundles, engine-specific source-artifact manifests with authoritative artifact selection and selected-artifact inventory, operator-managed PostgreSQL readiness or failover or lifecycle rebinding, and host-gated `linux-cuda` scheduling or device visibility checks, and the supported bootstrap path now recycles one Harbor Patroni startup pod if Patroni readiness never reaches `Ready` during the grace window |
 
 ## Target Outcome
 
@@ -36,7 +36,8 @@ validation story remain partial relative to the target platform contract.
   backend services such as MinIO and PostgreSQL pull from public container repositories while
   Harbor is not yet running
 - waits to roll out every remaining non-Harbor workload until Harbor is reachable enough to serve pulls
-- uses local Harbor as the image source for every non-Harbor cluster pod after Harbor bootstrap completes
+- uses local Harbor as the image source for every non-Harbor cluster pod, add-on, and later Helm
+  rollout after Harbor bootstrap completes
 - deletes default storage classes and relies only on a manual `kubernetes.io/no-provisioner`
   storage class for every PVC-backed Helm workload
 - creates PVs manually under `./.data/`, explicitly binds them to durable PVCs, and applies that
@@ -273,9 +274,9 @@ Persistent local state is explicit and deterministic.
 - The only supported storage class is a manual no-provisioner class, tentatively named
   `infernix-manual`.
 - Every PVC-backed Helm workload, including operator-managed durable claims reconciled from a
-  repo-owned Helm release, uses that storage class.
-- Durable PVs are emitted only by the storage-reconciliation step inside `infernix cluster up`
-  and bind explicitly to their intended claims.
+  repo-owned Helm release, explicitly sets `storageClassName: infernix-manual`.
+- Durable PVs are created manually only by the storage-reconciliation step inside
+  `infernix cluster up` and bind explicitly to their intended claims.
 - Each durable PV maps into `./.data/kind/<namespace>/<release>/<workload>/<ordinal>/<claim>`.
 
 ### 5a. Protobuf Manifest and Event Contract
@@ -299,8 +300,8 @@ In-cluster PostgreSQL is standardized and never delegated to ad hoc chart defaul
   operator.
 - A service may use a dedicated PostgreSQL cluster, but it still uses the same Percona plus
   Patroni model rather than a self-deployed standalone PostgreSQL chart path.
-- Services that can optionally self-deploy PostgreSQL, such as Grafana or similar add-ons, disable
-  that embedded PostgreSQL path and target an operator-managed cluster instead.
+- Services or add-ons that can optionally self-deploy PostgreSQL, such as Grafana or similar
+  workloads, disable that embedded PostgreSQL path and target an operator-managed cluster instead.
 - PostgreSQL claims follow the same `infernix-manual` plus explicit PV-binding storage doctrine as
   every other durable cluster workload.
 
@@ -324,7 +325,8 @@ Local Harbor becomes the required image authority once Harbor bootstrap complete
   services Harbor needs during bootstrap, including MinIO and PostgreSQL, may pull directly from
   public container repositories while Harbor is not running yet.
 - No remaining non-Harbor workload rolls out before Harbor is reachable enough to serve pulls.
-- Once Harbor is ready, every remaining cluster pod pulls from local Harbor.
+- Once Harbor is ready, every remaining non-Harbor cluster pod, add-on, or later Helm deployment
+  pulls from local Harbor.
 - `infernix cluster up` mirrors required non-Harbor third-party images, builds repo-owned images,
   including the webapp image via `web/Dockerfile`, and publishes them to Harbor before the final
   non-Harbor Helm rollout begins.

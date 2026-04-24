@@ -17,8 +17,9 @@
 
 - Every in-cluster PostgreSQL dependency uses a Patroni cluster managed by the Percona Kubernetes operator.
 - A service may use a dedicated PostgreSQL cluster, but it still uses the Percona plus Patroni model rather than a chart-managed standalone PostgreSQL deployment.
-- Services that can self-deploy PostgreSQL, such as Grafana or similar add-ons, disable that embedded PostgreSQL path and point at an operator-managed cluster instead.
+- Services or add-ons that can self-deploy PostgreSQL, such as Grafana or similar charted workloads, disable that embedded PostgreSQL path and point at an operator-managed cluster instead.
 - PostgreSQL claims use `infernix-manual` and explicit PV binding from Phase 2.
+- This doctrine remains mandatory for every later phase and add-on; later work does not reintroduce chart-managed standalone PostgreSQL.
 - On a pristine cluster, Harbor stays the first deployed service; only Harbor and Harbor-required backend services such as MinIO and PostgreSQL may pull from public container repositories before Harbor is ready, and every later non-Harbor workload pulls from Harbor.
 
 ## Mode-Stable Route Contract
@@ -47,9 +48,11 @@ Harbor-backed Helm phase, the supported chart values force the upstream Pulsar i
 there so clean and repeat `cluster up` runs still create the required BookKeeper and cluster
 metadata before the proxy and broker readiness gates apply. The same supported cluster path now
 installs the Percona PostgreSQL operator through Helm, disables Harbor's chart-managed standalone
-database path, reconciles Harbor's Patroni PVCs through `infernix-manual`, repairs Harbor database
-migration state through the current Patroni primary, and keeps repeat `cluster down` plus
-`cluster up` cycles bound to the same manually managed PostgreSQL host paths.
+database path, keeps later PostgreSQL-backed services on that same operator-managed Patroni
+contract even when their upstream charts can self-deploy PostgreSQL, reconciles Harbor's Patroni
+PVCs through `infernix-manual`, repairs Harbor database migration state through the current
+Patroni primary, and keeps repeat `cluster down` plus `cluster up` cycles bound to the same
+manually managed PostgreSQL host paths.
 
 ## Sprint 3.1: HA MinIO Deployment [Done]
 
@@ -100,7 +103,7 @@ Standardize every in-cluster PostgreSQL dependency on one HA operator-managed co
 
 - the supported cluster path installs the Percona Kubernetes operator through the repo-owned Helm workflow
 - every in-cluster PostgreSQL dependency, including Harbor and future service-specific databases, uses a Patroni cluster reconciled by that operator
-- services that can self-deploy PostgreSQL disable that chart-managed PostgreSQL path and target an operator-managed cluster instead
+- services or add-ons that can self-deploy PostgreSQL disable that chart-managed PostgreSQL path and target an operator-managed cluster instead
 - operator-managed PostgreSQL claims use `storageClassName: infernix-manual`, rely on manually reconciled PVs under `./.data/`, and bind deterministically to named claims
 - Harbor-first bootstrap on a pristine cluster deploys Harbor first and allows only Harbor plus its required backend services, including MinIO and PostgreSQL, to pull from public container repositories before Harbor becomes pull-ready
 - once Harbor is ready, every remaining non-Harbor workload, including later PostgreSQL-backed services, pulls only from Harbor-backed image references
@@ -109,7 +112,7 @@ Standardize every in-cluster PostgreSQL dependency on one HA operator-managed co
 
 - `infernix cluster up` produces a ready Percona operator rollout and ready Patroni members for Harbor's PostgreSQL backend
 - `infernix kubectl get pvc -A` shows operator-managed PostgreSQL claims bound through `infernix-manual`
-- rendered Helm values and service configuration disable embedded standalone PostgreSQL deployments for any service that can otherwise self-provision one
+- rendered Helm values and service configuration disable embedded standalone PostgreSQL deployments for any service or add-on that can otherwise self-provision one
 - repeat `cluster down` plus `cluster up` cycles rebind PostgreSQL claims to the same manually managed PVs without storage repair
 
 ### Remaining Work

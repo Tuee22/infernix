@@ -7,10 +7,12 @@
 
 ## Durable State
 
-- manual PV data under `./.data/kind/...`
+- manual PV data under `./.data/kind/...` for every PVC-backed Helm workload, with explicit
+  PV-to-PVC binding through `infernix-manual`
 - MinIO objects
 - Pulsar ledger state
-- operator-managed PostgreSQL data and WAL state
+- operator-managed PostgreSQL data and WAL state for Harbor and any dedicated service-specific
+  Patroni clusters
 - Harbor metadata and registry content
 - host-side runtime artifact bundles under `./.data/object-store/artifacts/`
 - host-side source-artifact manifests and copied or downloaded payloads under
