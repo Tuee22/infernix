@@ -17,38 +17,52 @@ This repository serves two aligned purposes:
 - provide consistent binary or container build outputs for three supported runtime modes: Apple
   Silicon or Metal, Ubuntu 24.04 CPU, and Ubuntu 24.04 NVIDIA CUDA containers
 - provide a local Kind cluster, running the mandatory HA service topology, as the testing and demo
-  ground for the control plane; the webapp is a demo surface on that substrate
+  ground for the control plane; the demo UI (served by the `infernix-demo` binary) is a demo
+  surface on that substrate, gated by the active `.dhall` config
 
 ## Highlights
 
-- one Haskell binary: `infernix`
+- two Haskell executables sharing one Cabal library `infernix-lib`: `infernix` (production daemon,
+  cluster lifecycle, edge proxy, gateway pods, Pulsar inference dispatcher, static-quality gate,
+  internal helpers) and `infernix-demo` (demo UI HTTP host)
+- production deployments accept inference work by Pulsar subscription only; the production
+  `infernix service` binds no HTTP listener and the cluster has no `infernix-demo` workload when
+  the demo UI is off
+- Python is restricted to `python/adapters/<engine>/` (Poetry-managed; mypy strict, black check,
+  and ruff strict run in every adapter container build)
 - one Kind and Helm workflow for the HA testing and demo ground
 - one mandatory local HA topology: Harbor, MinIO, Pulsar, and operator-managed PostgreSQL on Kind
 - one local Harbor registry as the image source for every non-Harbor pod
 - one manual persistent-storage doctrine rooted at `./.data/`
-- one repo-owned demo webapp, deployed through Helm, with Haskell-owned frontend contracts
-- one browser-based manual inference demo workbench for any registered model
+- one PureScript demo UI built with spago, tested with `purescript-spec`, with frontend types
+  derived from Haskell ADTs in `src/Infernix/Demo/Api.hs` via `purescript-bridge`
+- one browser-based manual inference demo workbench for any registered model, served by
+  `infernix-demo`
 - three runtime targets: Apple Silicon or Metal, Ubuntu 24.04 CPU, and Ubuntu 24.04 NVIDIA CUDA
   containers
-- one validation surface spanning repo-owned `ormolu`, `cabal format`, `hlint`, unit tests,
-  integration tests, generated-contract or view tests, and Playwright, with the current
-  process-isolated engine-worker runner path now exercising Apple, Linux CPU, and Linux CUDA
-  catalog coverage through the demo webapp and test suite
+- one validation surface spanning repo-owned Haskell `ormolu`/`cabal format`/`hlint`, the strict
+  Python quality gate (mypy, black, ruff) for `python/adapters/`, unit tests, integration tests,
+  `purescript-spec` view and contract tests, and Playwright
 
 ## What Infernix Does
 
 At full plan closure, Infernix does not reimplement model kernels. It coordinates them.
 
-- consumes inference requests from Pulsar and manual browser or API submissions that share the same
-  typed service domain
+- consumes inference requests from Pulsar request topics named in the active `.dhall` and publishes
+  results to the configured result topics; this is the production inference surface
+- optionally exposes a manual browser submission surface via the `infernix-demo` binary, gated by
+  the active `.dhall` `demo_ui` flag, sharing the same typed service domain as the production path
 - resolves logical models against durable manifest and artifact metadata
 - acquires missing artifacts into MinIO idempotently when upstream acquisition policy allows it
 - materializes runtime-local cache state from durable sources
-- launches and supervises engine-specific workers
+- launches and supervises engine workers in Haskell; for Python-native engines (PyTorch, JAX,
+  vLLM, transformers, etc.), the worker forks a Python adapter from `python/adapters/<engine>/`
+  and speaks protobuf-over-stdio to it
 - routes requests into per-engine, per-model, per-device lanes while leaving batching and runtime
   memory policy to the child engine
 - stores large outputs in MinIO and returns references when appropriate
-- exposes a demo web UI for manually running inference against any registered model
+- exposes a demo web UI (PureScript, served by `infernix-demo`) for manually running inference
+  against any registered model when the demo flag is on
 
 ## Supported Modes
 
@@ -61,9 +75,9 @@ the HA testing and demo ground used to validate and demonstrate them.
 | Ubuntu 24.04 / CPU | native or containerized Linux CPU path | CPU-only validation, fallback, and non-GPU workloads under the same manifests, messaging, and runtime contract | `llama.cpp`, `whisper.cpp`, `PyTorch` CPU, `ONNX Runtime` CPU, JVM-hosted tools |
 | Ubuntu 24.04 / NVIDIA CUDA Container | pinned CUDA container lane with NVIDIA runtime | high-throughput GPU execution under the same manifests, messaging, and runtime contract | `vLLM`, `PyTorch` CUDA, `Diffusers` or `ComfyUI`, `CTranslate2`, `TensorFlow` CUDA, `JAX/XLA`, `llama.cpp` when GGUF is the right artifact |
 
-On Apple Silicon, `infernix` may install missing supported host prerequisites through the operator
-flow, including Homebrew `poetry` and other declared Python dependencies required by repo-owned
-runtime paths.
+On Apple Silicon, the operator workflow has no Python prerequisite. Poetry and a local `./.venv/`
+materialize only when an engine-adapter test is exercised explicitly (for example
+`infernix test integration --engine pytorch`).
 
 Infernix uses one operator, artifact, and browser-demo contract across Apple, CPU, and CUDA runtime
 classes.
@@ -73,22 +87,29 @@ classes.
 The supported local platform is built around:
 
 - one Kind cluster used as the HA testing and demo ground for Harbor, MinIO, Pulsar, edge routing,
-  operator-managed PostgreSQL, and the demo webapp
-- one reverse-proxied localhost edge port for the demo UI, API, Harbor, MinIO, and Pulsar browser surfaces
+  operator-managed PostgreSQL, the production `infernix-service` workload, and the optional
+  `infernix-demo` workload
+- one reverse-proxied localhost edge port for the demo UI, demo API, Harbor, MinIO, and Pulsar
+  browser surfaces; the demo routes are absent when the demo surface is disabled
 - one manual storage class backed by repo-owned PVs under `./.data/`
 - one Patroni PostgreSQL model managed by the Percona Kubernetes operator for every in-cluster
   PostgreSQL dependency
 - one local Harbor registry used by every non-Harbor cluster pod after Harbor bootstrap completes
-- one cluster-resident demo webapp image, built from a separate webapp binary via `web/Dockerfile`,
-  that also owns Playwright browser dependencies
+- one OCI image carrying both `infernix` and `infernix-demo` Haskell binaries; the chart workload
+  entrypoint selects which one runs (`infernix service`, `infernix edge`,
+  `infernix gateway harbor|minio|pulsar`, or `infernix-demo serve`)
+- one separate web image built from `web/Dockerfile` that holds the PureScript demo bundle in
+  `web/dist/` (produced by `spago bundle-app`) and the Playwright browser dependencies
 - one direct host Cabal install path that keeps host-native artifacts under `./.build/` without
   repo-owned scripts
 - one repo-local kubeconfig managed under the active build-output location rather than the user's
   global kubeconfig
 
-The demo web UI always runs in the cluster, even when the Haskell daemon runs host-native on Apple
-Silicon. The local Kind and HA substrate is the validation and operator baseline for Apple, CPU,
-and CUDA runtime targets.
+The optional demo UI runs in the cluster as the `infernix-demo` workload when the active `.dhall`
+`demo_ui` flag is on, even when the production `infernix service` daemon runs host-native on Apple
+Silicon. Production deployments leave the demo flag off and accept inference work via Pulsar
+subscription only. The local Kind and HA substrate is the validation and operator baseline for
+Apple, CPU, and CUDA runtime targets.
 
 ## HA Demo Ground Quick Start
 
@@ -101,8 +122,8 @@ Build the binary with the supported explicit Cabal install command, bring up the
 the full suite, then tear it down:
 
 ```bash
-# Build and materialize the infernix binary without a repo-owned wrapper script.
-cabal --builddir=.build/cabal install --installdir=./.build --install-method=copy --overwrite-policy=always exe:infernix
+# Build and materialize both Haskell binaries without a repo-owned wrapper script.
+cabal --builddir=.build/cabal install --installdir=./.build --install-method=copy --overwrite-policy=always exe:infernix exe:infernix-demo
 # Reconcile the Kind test cluster, storage, images, and Helm workloads.
 ./.build/infernix cluster up
 # Report cluster health, edge routing, and durable-state status.
@@ -149,9 +170,14 @@ tree. The generated mode-specific demo Dhall config and repo-local kubeconfig al
 
 ## CLI Surface
 
-The canonical supported CLI surface is:
+The canonical supported CLI surfaces are split between the two binaries.
 
-- `infernix service`
+`infernix` (production daemon and operator workflow):
+
+- `infernix service` — production Pulsar consumer; binds no HTTP listener
+- `infernix edge` — Haskell edge proxy entrypoint (cluster workload)
+- `infernix gateway harbor`, `infernix gateway minio`, `infernix gateway pulsar` — Haskell platform
+  gateway entrypoints (cluster workloads)
 - `infernix cluster up`
 - `infernix cluster down`
 - `infernix cluster status`
@@ -159,16 +185,25 @@ The canonical supported CLI surface is:
 - `infernix cache evict`
 - `infernix cache rebuild`
 - `infernix kubectl ...`
+- `infernix lint files`, `infernix lint docs`, `infernix lint proto`, `infernix lint chart`
 - `infernix test lint`
 - `infernix test unit`
 - `infernix test integration`
 - `infernix test e2e`
 - `infernix test all`
 - `infernix docs check`
+- `infernix internal generate-purs-contracts`
+- `infernix internal discover {images,claims,harbor-overlay}`
+- `infernix internal publish-chart-images`
+- `infernix internal demo-config {load,validate}`
 
-Every repo-owned lifecycle, cache, validation, and docs command other than `infernix service` is
-declarative and idempotent. `infernix kubectl ...` is a scoped wrapper around upstream `kubectl`,
-not a parallel lifecycle surface.
+`infernix-demo` (demo UI HTTP host, gated by `.dhall` `demo_ui` flag):
+
+- `infernix-demo serve --dhall PATH --port N`
+
+Every repo-owned lifecycle, cache, validation, and docs command other than `infernix service` and
+`infernix-demo serve` is declarative and idempotent. `infernix kubectl ...` is a scoped wrapper
+around upstream `kubectl`, not a parallel lifecycle surface.
 
 ## Runtime and Image Flow
 
@@ -225,16 +260,21 @@ rebuildable.
 
 ## Configuration and Runtime Contract
 
-- a `.dhall` configuration defines the runtime contract for supported service flows
+- a `.dhall` configuration defines the runtime contract for supported service flows; the active
+  `.dhall` names `request_topics : List Text`, `result_topic : Text`, `engines : List EngineBinding`,
+  and the optional `demo_ui : Bool` flag that gates the `infernix-demo` workload
 - `cluster up` produces a mode-specific demo `.dhall` file as a build artifact for the active mode
 - the generated demo `.dhall` file enumerates the demo-visible models and workloads for that mode
   and binds each one to its engine or runtime lane
 - the generated demo `.dhall` file is the exact source of truth for which models and engine bindings
-  appear in the demo UI for that mode
+  appear in the demo UI for that mode (when the demo UI is enabled)
 - the set of generated mode-specific demo `.dhall` files must cover every model or workload row in
   the comprehensive model, format, and engine matrix
 - the service contract includes hot-reloadable configuration with safe worker drain, cache
   eviction, and route or device remapping semantics
+- the production inference surface is Pulsar subscription only: `infernix service` consumes
+  protobuf requests from configured request topics, dispatches them through the Haskell worker, and
+  publishes results to the configured result topic; no HTTP listener is bound
 - local cache state is never authoritative; it is reconstructed from durable metadata and durable
   artifacts
 
@@ -252,19 +292,31 @@ rebuildable.
 
 ## Web UI and Testing
 
-The browser surface is a repo-owned demo application with Haskell-generated shared contracts.
+The browser surface is a repo-owned PureScript demo application with Haskell-generated shared
+contracts.
 
-- Haskell types remain the source of truth for the frontend contract
-- the demo webapp is a separate binary from `infernix` and is built through `web/Dockerfile`
-- frontend contract generation happens during the demo webapp image build
-- the demo webapp is deployed through repo-owned Helm chart templates and values
+- Haskell ADTs in `src/Infernix/Demo/Api.hs` remain the source of truth for the frontend contract;
+  PureScript modules in `web/src/Generated/` are emitted from those ADTs by
+  `infernix internal generate-purs-contracts` via `purescript-bridge`
+- the demo UI host is the `infernix-demo` Haskell binary (separate executable from `infernix`,
+  shares `infernix-lib`, ships in the same OCI image); it serves `web/dist/` produced by
+  `spago bundle-app`
+- the web image (`web/Dockerfile`) carries the spago plus purs toolchain alongside Playwright
+  browser dependencies
+- the `infernix-demo` workload is deployed through repo-owned Helm chart templates and values, and
+  is gated by the `.dhall` `demo_ui` flag; production deployments leave it off
 - the demo UI catalog is derived from the generated mode-specific demo `.dhall` file for the active
   mode
-- repo-owned unit tests cover generated contracts, publication rendering, and view behavior
-- Playwright runs from the same image that serves the demo web UI
-- the demo UI can submit manual inference requests against any registered model
-- the demo UI, API surface, generated contracts, and validation suites must expand until every supported
-  model, format, and engine combination has a browser-visible and testable path
+- repo-owned `purescript-spec` suites under `web/test/` cover generated contracts, publication
+  rendering, and view behavior; `infernix test unit` runs `spago test` alongside the Haskell unit
+  suites
+- Playwright runs from the same image that holds the demo bundle; the test orchestration lives in
+  the Haskell integration test suite
+- the demo UI can submit manual inference requests against any registered model in the active demo
+  catalog; the production inference surface remains Pulsar topics named in the active `.dhall`
+- the demo UI, demo API surface, generated PureScript contracts, and validation suites must expand
+  until every supported model, format, and engine combination has a browser-visible and testable
+  path under the demo surface
 
 ## Comprehensive Model / Format / Engine Matrix
 
@@ -323,8 +375,8 @@ Contributions should keep implementation, tests, and docs aligned in the same ch
 
 - use `documents/` for architecture, operator, and development guidance
 - use `DEVELOPMENT_PLAN/` for phase ordering, scope, and closure criteria
-- run `python3 tools/docs_check.py`, `infernix test lint`, and the relevant `infernix test ...`
-  targets before opening changes
+- run `infernix lint docs` (or, until Sprint 1.6 lands, `python3 tools/docs_check.py`),
+  `infernix test lint`, and the relevant `infernix test ...` targets before opening changes
 
 ## License
 

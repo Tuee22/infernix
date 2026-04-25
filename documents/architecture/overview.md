@@ -7,12 +7,22 @@
 
 ## Platform Shape
 
-`infernix` is a Kind-first local inference platform built around one repo-owned control plane, one
-cluster-resident web application, and one governed documentation suite.
+`infernix` is a Kind-first local inference platform built around two repo-owned Haskell
+executables sharing one Cabal library, an optional PureScript demo UI, and one governed
+documentation suite.
 
-- the Haskell executable `infernix` owns service runtime, cluster lifecycle, validation, and docs checks
-- the browser entrypoint is always the edge proxy on one localhost port
-- the web UI is always served from a cluster workload
+- two Haskell executables share `infernix-lib`: `infernix` owns the production daemon, cluster
+  lifecycle, edge proxy, gateway pods, Pulsar inference dispatcher, validation, and docs checks;
+  `infernix-demo` owns the demo HTTP API host
+- production deployments accept inference work by Pulsar subscription only; `infernix service`
+  (production) binds no HTTP listener and the cluster has no `infernix-demo` workload when the
+  active `.dhall` `demo_ui` flag is off
+- when the demo UI is enabled, the browser entrypoint is the Haskell edge proxy on one localhost
+  port and the demo UI is served by the `infernix-demo` workload
+- Python is restricted to `python/adapters/<engine>/` (Poetry-managed; mypy strict, black check,
+  ruff strict run in every adapter container build); all custom platform logic is Haskell
+- the demo UI is PureScript built with `spago`, tested with `purescript-spec`, with frontend types
+  derived from Haskell ADTs in `src/Infernix/Demo/Api.hs` via `purescript-bridge`
 - Harbor, MinIO, Pulsar, and operator-managed PostgreSQL are the local platform services
 - Harbor is always the first deployed service on a pristine cluster, and only Harbor plus
   Harbor-required backend services such as MinIO and PostgreSQL may pull from public container
@@ -31,8 +41,11 @@ The supported repository layout is described in
 [../../DEVELOPMENT_PLAN/00-overview.md](../../DEVELOPMENT_PLAN/00-overview.md) and uses these
 major roots:
 
-- `app/` and `src/` for the Haskell control plane
-- `web/` for the web application and E2E assets
+- `app/` (entry points for `infernix` and `infernix-demo`) and `src/` for the Haskell control
+  plane and `infernix-lib` library
+- `python/` for engine-adapter Python under `python/adapters/<engine>/`, governed by one
+  repo-root `python/pyproject.toml` with Poetry
+- `web/` for the PureScript demo application built with `spago` and the Playwright E2E assets
 - `chart/` and `kind/` for cluster reconciliation inputs, including the locked Harbor, Pulsar,
   Bitnami MinIO, Percona PostgreSQL operator, and ingress-nginx Helm dependency declarations
 - `test/` for repository-owned validation

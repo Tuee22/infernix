@@ -1,6 +1,6 @@
 # Phase 0: Documentation and Governance
 
-**Status**: Authoritative source
+**Status**: Done
 **Referenced by**: [README.md](README.md), [development_plan_standards.md](development_plan_standards.md), [00-overview.md](00-overview.md)
 
 > **Purpose**: Create the governed `documents/` suite, define documentation maintenance rules, and
@@ -8,15 +8,20 @@
 
 ## Documentation-First Gate
 
-This phase closes before later phases can close.
+This phase closed before later phases can close.
 
 - Phases 1-6 are no longer phase-level blocked by documentation realignment.
 - The repo writes and maintains the docs suite before more implementation-closure claims continue.
 
 ## Current Repo Assessment
 
-The repository has a governed docs suite, and the governed docs align with the runtime-mode and
-generated-demo-config contract.
+The repository has a governed docs suite, and the governed docs align with the doctrine declared
+in [00-overview.md](00-overview.md): the two-binary topology, the Pulsar-only production
+inference surface, the demo HTTP surface served only by `infernix-demo`, the Python restriction
+to `python/adapters/<engine>/` under Poetry plus mypy/black/ruff strict, and the PureScript demo
+UI built with spago and consuming Haskell-derived contracts via `purescript-bridge`. The docs
+validator forbids the retired-doctrine phrases outside
+[legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
 
 - the docs suite distinguishes control-plane execution context from runtime mode
 - the docs suite carries the README-scale model or format or engine matrix as a first-class
@@ -24,7 +29,13 @@ generated-demo-config contract.
 - the docs suite documents generated mode-specific demo `.dhall` staging, ConfigMap-backed
   publication, `/opt/build/`, protobuf target contracts, `9090`-first edge-port selection, and
   active-mode exhaustive integration and E2E coverage
-- `tools/docs_check.py` validates those phrases directly so later drift is caught early
+- the docs suite documents the two-binary topology, the Pulsar-only production inference surface,
+  the Python restriction to engine adapters with the strict mypy plus black plus ruff quality
+  gate, and the PureScript demo UI plus `purescript-bridge` contract derivation
+- the docs validator (currently `tools/docs_check.py`, migrating to `infernix lint docs` in
+  Phase 1 Sprint 1.6) validates those phrases directly so later drift is caught early, and
+  enforces the retired-doctrine forbidden-phrase rule outside
+  [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md)
 
 ## Sprint 0.1: `documents/` Suite Scaffold [Done]
 
@@ -203,6 +214,77 @@ closure claims continue.
 ### Remaining Work
 
 None.
+
+---
+
+## Sprint 0.6: Doctrine Realignment Across Documentation Suite [Done]
+
+**Status**: Done
+**Implementation**: `documents/`, `README.md`, `AGENTS.md`, `CLAUDE.md`, `tools/docs_check.py`
+**Docs to update**: `documents/architecture/overview.md`, `documents/architecture/web_ui_architecture.md`, `documents/development/frontend_contracts.md`, `documents/development/local_dev.md`, `documents/development/testing_strategy.md`, `documents/development/python_policy.md`, `documents/development/purescript_policy.md`, `documents/engineering/edge_routing.md`, `documents/engineering/build_artifacts.md`, `documents/engineering/model_lifecycle.md`, `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/reference/api_surface.md`, `documents/reference/web_portal_surface.md`, `documents/reference/cli_reference.md`, `documents/tools/pulsar.md`, `README.md`, `AGENTS.md`, `CLAUDE.md`
+
+### Objective
+
+Realign the documentation suite, the root README, and contributor guidance with the new doctrine
+declared in [00-overview.md](00-overview.md) Hard Constraints 1, 13, 14, and 15:
+two-binary topology (`infernix` plus `infernix-demo` sharing `infernix-lib`); production inference
+surface is Pulsar subscription only; demo HTTP surface lives only in `infernix-demo`; Python is
+restricted to `python/adapters/<engine>/` and validated by Poetry plus mypy strict, black, and ruff
+strict in every adapter container build; and the demo UI is PureScript with frontend types derived
+from Haskell ADTs via `purescript-bridge`.
+
+### Deliverables
+
+- every `documents/` file and the root `README.md`, `AGENTS.md`, and `CLAUDE.md` describe the
+  new doctrine in present-tense declarative language
+- new `documents/development/python_policy.md` documents when Python is allowed (engine adapters
+  whose engine is Python-native), the Poetry plus `python/pyproject.toml` workflow, the
+  `./.venv/`-outside-cluster vs system-wide-inside-container split, and the strict mypy plus
+  black plus ruff quality gate integrated into every adapter container build
+- new `documents/development/purescript_policy.md` documents the spago plus purs toolchain, the
+  `purescript-spec` test framework, and the `purescript-bridge`-driven contract derivation from
+  Haskell ADTs in `src/Infernix/Demo/Api.hs`
+- `documents/architecture/web_ui_architecture.md` is rewritten to describe PureScript built by
+  spago, served from `web/dist/`, and consumed by `infernix-demo`
+- `documents/development/frontend_contracts.md` describes `purescript-bridge` rather than
+  build-generated JavaScript
+- `documents/engineering/edge_routing.md` describes the Haskell edge proxy
+- `documents/engineering/build_artifacts.md` describes `web/dist/` populated by `spago bundle-app`
+  and the two-binary OCI image with selectable entrypoint
+- `documents/engineering/model_lifecycle.md` describes the Haskell worker plus per-engine Python
+  adapter under `python/adapters/<engine>/`
+- `documents/operations/apple_silicon_runbook.md` and `documents/development/local_dev.md` drop
+  Homebrew-Poetry-as-prereq language; Poetry materializes only when an engine-adapter test is
+  exercised
+- `documents/operations/cluster_bootstrap_runbook.md` notes that production `.dhall` configs leave
+  the demo UI off and the cluster has no HTTP API in that case
+- `documents/reference/api_surface.md` and `documents/reference/web_portal_surface.md` carry an
+  explicit "demo-only; not the production surface" header
+- `documents/reference/cli_reference.md` adds the `infernix-demo` binary, the new `infernix edge`,
+  `infernix gateway harbor|minio|pulsar`, `infernix lint`, and `infernix internal ...` subcommands,
+  and describes `infernix service` as a Pulsar consumer in production
+- `documents/tools/pulsar.md` adds the production-inference subscription and dispatch contract,
+  including the `.dhall` schema fields `request_topics`, `result_topic`, and `engines`
+- the docs validator forbids the phrases "Python HTTP server", "JavaScript workbench",
+  "web/build.mjs", "Homebrew-installed poetry", and "single Haskell binary" outside
+  [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md)
+- root `README.md` describes the production surface as "publish protobuf to Pulsar", describes the
+  demo UI as PureScript, and updates the topology diagram for two binaries
+- `AGENTS.md` and `CLAUDE.md` add the doctrine line: "Custom logic in Haskell. Python only for
+  Python-native engine adapters under `python/adapters/`. Frontend in PureScript with types from
+  Haskell. Production accepts work via Pulsar; demo UI only via `infernix-demo`."
+
+### Validation
+
+- the docs validator passes against the rewritten suite
+- `grep -RE 'Python HTTP server|JavaScript workbench|web/build\.mjs|Homebrew-installed poetry|single Haskell binary' DEVELOPMENT_PLAN documents README.md AGENTS.md CLAUDE.md` returns no results outside `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
+- every governed document still begins with the required metadata block
+- inbound and outbound links across the suite resolve correctly
+- root `README.md`, `AGENTS.md`, and `CLAUDE.md` carry the doctrine line and the two-binary topology
+
+### Remaining Work
+
+None. The Haskell migration of the docs validator is owned by Phase 1 Sprint 1.6.
 
 ## Documentation Requirements
 

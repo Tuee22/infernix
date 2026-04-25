@@ -1,11 +1,24 @@
 # Phase 2: Kind Cluster Storage and Lifecycle
 
-**Status**: Authoritative source
+**Status**: Blocked
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
+**Blocked by**: Phase 1 Sprint 1.6
 
 > **Purpose**: Define the supported Kind bootstrap path, the manual storage doctrine, the Helm
 > umbrella deployment model, the Harbor bootstrap and Harbor-backed image preparation flow embedded
 > in `cluster up`, and the mode-aware generated-demo-config behavior tied to cluster reconcile.
+
+## Phase Status
+
+This phase carries no internal sprint deliverable changes under the new doctrine. Sprints 2.1
+through 2.7 retain their `Done` shape. The phase header is `Blocked` only because the cluster
+lifecycle implementation referenced by sprints 2.2, 2.3, and 2.4 currently shells out to the
+custom-logic Python tooling that Phase 1 Sprint 1.6 retires (`tools/discover_chart_claims.py`,
+`tools/helm_chart_check.py`, `tools/platform_asset_check.py`, `tools/list_harbor_overlay_images.py`,
+`tools/publish_chart_images.py`). Once Sprint 1.6 lands and folds those entrypoints into
+`src/Infernix/Cluster/Discover.hs`, `src/Infernix/Cluster/PublishImages.hs`, and the
+`src/Infernix/Lint/` modules, this phase reopens at the file level only to update implementation
+pointers; no sprint deliverable changes.
 
 ## Storage Doctrine
 

@@ -19,6 +19,8 @@ REQUIRED_DOCS = [
     Path("documents/development/frontend_contracts.md"),
     Path("documents/development/haskell_style.md"),
     Path("documents/development/local_dev.md"),
+    Path("documents/development/python_policy.md"),
+    Path("documents/development/purescript_policy.md"),
     Path("documents/development/testing_strategy.md"),
     Path("documents/engineering/build_artifacts.md"),
     Path("documents/engineering/docker_policy.md"),
@@ -38,6 +40,16 @@ REQUIRED_DOCS = [
     Path("documents/tools/minio.md"),
     Path("documents/tools/pulsar.md"),
 ]
+FORBIDDEN_PHRASES = [
+    "Python HTTP server",
+    "JavaScript workbench",
+    "web/build.mjs",
+    "Homebrew-installed poetry",
+    "single Haskell binary",
+]
+FORBIDDEN_PHRASE_EXEMPT_PATHS = {
+    Path("DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md"),
+}
 PHASE_DOCS = sorted(Path("DEVELOPMENT_PLAN").glob("phase-*.md"))
 METADATA_LINES = [
     re.compile(r"^# .+"),
@@ -252,6 +264,28 @@ def validate_required_phrases() -> None:
                 fail(f"{relative_path} is missing required phrase: {phrase}")
 
 
+def validate_forbidden_phrases() -> None:
+    # The forbidden-phrase rule targets doctrine-assertion surfaces: the documents/ suite plus the
+    # root README, AGENTS, and CLAUDE files. DEVELOPMENT_PLAN/ phase docs are exempt because they
+    # legitimately track the retirement of these surfaces in Phase Status, Remaining Work, and
+    # validation-criteria sections.
+    targets = sorted((REPO_ROOT / "documents").rglob("*.md"))
+    for root_doc in ("README.md", "AGENTS.md", "CLAUDE.md"):
+        targets.append(REPO_ROOT / root_doc)
+    for path in targets:
+        if not path.exists():
+            continue
+        relative_path = path.relative_to(REPO_ROOT)
+        text = read_text(path)
+        for phrase in FORBIDDEN_PHRASES:
+            if phrase in text:
+                fail(
+                    f"{relative_path} contains retired-doctrine phrase {phrase!r}; "
+                    f"these phrases are allowed only in DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md "
+                    f"and in DEVELOPMENT_PLAN/ migration-tracking text"
+                )
+
+
 def iter_governed_markdown() -> list[Path]:
     doc_paths = sorted((REPO_ROOT / "documents").rglob("*.md"))
     plan_paths = [REPO_ROOT / path for path in PHASE_DOCS]
@@ -272,6 +306,7 @@ def main() -> None:
     validate_readme()
     validate_phase_docs()
     validate_required_phrases()
+    validate_forbidden_phrases()
 
     for path in iter_governed_markdown():
         if path.suffix not in MARKDOWN_EXTENSIONS:

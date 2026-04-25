@@ -22,8 +22,8 @@ govern this plan.
 | [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md) | Repository scaffold, single-binary CLI, Cabal build doctrine and container artifact isolation, execution-context contract, and runtime-mode selection baseline |
 | [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md) | Kind bootstrap, manual PV doctrine and explicit PV-to-PVC binding for every PVC-backed Helm workload, Harbor bootstrap-first and post-bootstrap Harbor-backed image flow, GPU-enabled `linux-cuda` cluster reconcile, and mode-aware ConfigMap-backed demo-config generation |
 | [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md) | Mandatory local HA Harbor, MinIO, operator-managed Patroni PostgreSQL, Pulsar, unified edge routing, and mode-stable browser and API publication |
-| [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) | Haskell service runtime, comprehensive matrix registry, protobuf manifest and Pulsar payload contracts, ConfigMap-backed generated demo `.dhall`, and durable artifact lifecycle |
-| [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md) | Browser workbench target, Haskell-owned frontend contracts, and mode-driven manual inference UI |
+| [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) | Haskell Pulsar-driven production inference service, Python engine-adapter contract under `python/adapters/`, comprehensive matrix registry, protobuf manifest and Pulsar payload contracts, ConfigMap-backed generated demo `.dhall`, and durable artifact lifecycle |
+| [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md) | PureScript demo UI built with spago, `purescript-spec` test framework, Haskell-owned frontend contracts via `purescript-bridge`, and mode-driven demo workbench served by `infernix-demo` |
 | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) | Unit, integration, routed Playwright coverage, per-mode matrix coverage, HA failure coverage, and lifecycle validation |
 | [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) | Explicit cleanup and removal ledger |
 
@@ -48,60 +48,24 @@ A phase or sprint can move to `Done` only when all of the following are true:
 
 ## Current Repo Assessment
 
-The repository has a governed `documents/` suite and a closed implementation baseline for the
-current supported contract across the tracked phases.
+The repository has a governed `documents/` suite and a closed cluster-substrate baseline. The new
+doctrine declared in [00-overview.md](00-overview.md) (two-binary topology, Pulsar-only production
+inference surface, demo HTTP only via `infernix-demo`, Python restricted to engine adapters under
+`python/adapters/`, frontend in PureScript with types from Haskell via `purescript-bridge`) is
+being landed across phases 1, 3, 4, and 5. Phase 0 Sprint 0.6 owns the documentation realignment
+work that gates the later code-writing phases.
 
-- the documentation, repository shape, CLI surface, Kind or Helm substrate, generated demo-config
-  publication, routed browser workbench, and outer-container launcher are materially implemented
-  and aligned with the current plan
-- the Linux outer-container launcher now keeps the Kind API server and routed host-port mappings
-  on `127.0.0.1`, joins the private Docker `kind` network for cluster-backed commands, writes the
-  repo-local kubeconfig from `kind get kubeconfig --internal`, pins Kind nodes to
-  `kindest/node:v1.34.0`, primes Kind node-local registry or storage state after cluster
-  creation instead of bind-mounting repo-owned Kind paths into those nodes, and now syncs durable
-  claim directories back from the owning Kind node during teardown; the validated Ubuntu
-  outer-container lane also requires host inotify capacity high enough for mount-bearing Kind
-  nodes, with `fs.inotify.max_user_instances >= 1024` keeping repeated worker bootstrap stable
-- the Harbor-first cluster image flow is closed on the supported Apple lane: Harbor bootstrap and
-  only the public-repo backend services Harbor needs pull from upstream before Harbor is ready, the
-  helper registry is gone, the Kind registry mirror only rewrites `localhost:30002`, the final
-  Harbor-backed image refs are preloaded onto the Kind worker, fresh clean-cluster reruns also
-  preload the Harbor bootstrap-support image set onto new Kind nodes before Helm warmup begins,
-  and clean plus repeat Apple `cluster up` runs complete with every post-Harbor non-Harbor rollout
-  pulling from Harbor-backed refs
-- the PostgreSQL platform contract is now closed across the supported cluster doctrine: the
-  cluster release installs the Percona Kubernetes operator, Harbor disables its chart-managed
-  standalone database, later PostgreSQL-backed services stay required to disable any embedded
-  chart-managed PostgreSQL path and use dedicated operator-managed Patroni clusters instead, those
-  Patroni PVCs bind through `infernix-manual`, and integration coverage now validates readiness,
-  failover, and repeat lifecycle rebinding on that operator-managed backend
-- the `linux-cuda` lane now reconciles a real NVIDIA-backed Kind path on supported hosts: the
-  current code fails fast unless the NVIDIA host and Docker toolkit preflight commands pass, uses
-  `nvkind` to create the cluster, mounts the NVIDIA worker-device path into the GPU worker,
-  creates `RuntimeClass/nvidia` before the device-plugin rollout depends on it, and installs the
-  NVIDIA device plugin so Kubernetes advertises real allocatable `nvidia.com/gpu` resources; the
-  repo-owned bootstrap also covers the current upstream `nvkind` configmap-persistence bug during
-  post-create node setup, and the supported outer-container suite now revalidates that lane on
-  the current NVIDIA host through the full integration and E2E matrix
-- the routed service path is now closed on the current supported contract: `tools/service_server.py`
-  and `tools/runtime_backend.py` launch process-isolated engine-worker runners through configured
-  command prefixes, round-trip request or result payloads through Pulsar, materialize durable
-  runtime artifact bundles into the MinIO-backed runtime bucket, stage engine-specific
-  source-artifact manifests plus direct upstream local-file or HTTP or Hugging Face or GitHub
-  acquisitions, record authoritative artifact selection plus selected-artifact inventory in those
-  manifests, and surface engine-adapter id or type or locator or availability together with the
-  authoritative source-artifact URI or kind through the routed cache-status surface; the default
-  engine-aware runner now validates the selected adapter on the active host when no
-  adapter-specific override is configured, and unit coverage proves the adapter-specific
-  command-override path end-to-end
-- exhaustive integration and E2E validation are now closed on the current supported contract: the
-  suites cover every generated catalog entry, validate the process-isolated engine-worker path plus
-  the durable-artifact or engine-specific source-artifact-manifest contract, assert authoritative
-  artifact-selection plus engine-adapter metadata on the durable cache surface, preserve the
-  host-native Apple bridge and routed browser path, auto-include `linux-cuda` when the active
-  control-plane surface passes the NVIDIA preflight contract, and now keep repeat Linux
-  outer-container bootstrap stable by recycling one Harbor PostgreSQL startup pod if Patroni
-  readiness never reaches `Ready` during the supported grace window
+- the cluster substrate, Kind or Helm assets, Harbor-first bootstrap flow, manual storage doctrine,
+  operator-managed Patroni PostgreSQL contract, and `linux-cuda` GPU lane are implemented and
+  doctrine-aligned; their phase (Phase 2) is `Blocked` only because lifecycle code still calls
+  custom-logic Python tooling that Phase 1 Sprint 1.6 retires
+- the production inference surface (Pulsar subscription via `infernix service`), the demo HTTP host
+  (`infernix-demo` binary), the Haskell edge proxy and platform gateways, and the PureScript demo UI
+  are doctrine-declared and not yet implemented; the previous Python-served HTTP surface,
+  JavaScript workbench, and custom-logic `tools/*.py` scripts remain on disk and are tracked for
+  removal in [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md)
+- the `documents/` tree, root README, AGENTS, and CLAUDE still describe several retired-doctrine
+  surfaces; Sprint 0.6 rewrites them in one atomic change
 
 ## Execution Contexts and Runtime Modes
 
@@ -117,18 +81,29 @@ The plan uses two separate concepts and keeps them distinct:
 | Phase | Name | Status | Document |
 |-------|------|--------|----------|
 | 0 | Documentation and Governance | Done | [phase-0-documentation-and-governance.md](phase-0-documentation-and-governance.md) |
-| 1 | Repository and Control-Plane Foundation | Done | [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md) |
-| 2 | Kind Cluster Storage and Lifecycle | Done | [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md) |
-| 3 | HA Platform Services and Edge Routing | Done | [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md) |
-| 4 | Inference Service and Durable Runtime | Done | [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) |
-| 5 | Web UI and Shared Types | Done | [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md) |
-| 6 | Validation, E2E, and HA Hardening | Done | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) |
+| 1 | Repository and Control-Plane Foundation | Active | [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md) |
+| 2 | Kind Cluster Storage and Lifecycle | Blocked | [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md) |
+| 3 | HA Platform Services and Edge Routing | Blocked | [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md) |
+| 4 | Inference Service and Durable Runtime | Blocked | [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) |
+| 5 | Web UI and Shared Types | Blocked | [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md) |
+| 6 | Validation, E2E, and HA Hardening | Blocked | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) |
 
 ## Canonical Outcome
 
 The current supported platform is constructed around these non-negotiable rules:
 
-- one repo-owned Haskell executable named `infernix`, used for service runtime, tests, and Kind lifecycle
+- two repo-owned Haskell executables sharing one Cabal library `infernix-lib`: `infernix` for the
+  production daemon, cluster lifecycle, edge proxy, gateway pods, Pulsar inference dispatcher,
+  static-quality gate, and internal helpers; and `infernix-demo` for the demo UI HTTP host gated by
+  the active `.dhall` `demo_ui` flag
+- production deployments accept inference work by Pulsar subscription only; the production
+  `infernix service` binds no HTTP listener and the cluster has no `infernix-demo` workload when the
+  demo flag is off
+- Python is restricted to `python/adapters/<engine>/` (Poetry-managed; mypy strict, black check,
+  and ruff strict run in every adapter container build); all custom platform logic is Haskell
+- the demo UI is PureScript built with spago, tested with `purescript-spec`, and consumes
+  PureScript modules generated from Haskell ADTs in `src/Infernix/Demo/Api.hs` via
+  `purescript-bridge`
 - one governed `documents/` suite that stays aligned with the plan and the updated root README
 - one Kind-backed deployment path using Helm, including GPU-enabled Kind behavior for `linux-cuda`
 - one Harbor-first cluster bootstrap that deploys Harbor first on a pristine cluster, lets Harbor
@@ -141,22 +116,28 @@ The current supported platform is constructed around these non-negotiable rules:
 - one manual local persistence doctrine rooted at `./.data/`, with explicit PV-to-PVC binding for
   every PVC-backed Helm workload including operator-managed PostgreSQL claims
 - one repo-owned build-artifact doctrine that keeps host-native Cabal output under `./.build/`,
-  through direct `cabal --builddir=.build/cabal ...` host installs and `./.build/infernix`
-  materialization, with explicit `/opt/build/infernix` runtime build roots on the outer-container
-  path and no repo-owned scripts or wrapper layers
-- one reverse-proxied localhost edge port exposing the UI, API, Harbor, MinIO, and Pulsar browser surfaces
-- one repo-owned web application deployed as a cluster service in all supported modes
+  through direct `cabal --builddir=.build/cabal ...` host installs and `./.build/infernix` plus
+  `./.build/infernix-demo` materialization, with explicit `/opt/build/infernix` runtime build roots
+  on the outer-container path and no repo-owned scripts or wrapper layers
+- one reverse-proxied localhost edge port exposing the demo UI, demo API, Harbor, MinIO, and Pulsar
+  browser surfaces; the demo routes are absent when the demo surface is disabled
+- the edge proxy and platform gateways are Haskell modules in `infernix-lib`, deployed as separate
+  cluster workloads using the same OCI image with `infernix edge` or `infernix gateway <kind>` as
+  entrypoint
 - three supported runtime modes: `apple-silicon`, `linux-cpu`, and `linux-cuda`
 - one comprehensive model or format or engine matrix whose mode columns select the engine binding
   for each runtime mode
 - one generated mode-specific demo `.dhall` catalog per runtime mode, staged ephemerally during
-  `cluster up` and published into `ConfigMap/infernix-demo-config` for cluster-resident consumers
+  `cluster up` and published into `ConfigMap/infernix-demo-config` for cluster-resident consumers;
+  the same `.dhall` carries the Pulsar `request_topics`, `result_topic`, and `engines` fields used
+  by the production daemon
 - one repo-owned `.proto` contract for durable runtime manifests and Pulsar topic payloads, with
-  `proto-lens`-generated Haskell bindings and Pulsar built-in protobuf schema support
+  `proto-lens`-generated Haskell bindings, Python `protobuf`-generated bindings under
+  `python/adapters/`, and Pulsar built-in protobuf schema support
 - one edge-port selection rule that tries `9090` first, increments by 1 until open, records the
   chosen port under `./.data/runtime/edge-port.json`, and prints it during `cluster up`
-- one canonical static-quality gate surfaced as `infernix test lint`, using repo-owned lint, docs,
-  and strict compiler-warning checks until a richer formatter or linter stack is actually adopted
+- one canonical static-quality gate surfaced as `infernix test lint`, including the strict Python
+  quality gate (mypy, black, ruff) for `python/adapters/`
 - one integration and E2E contract that exercises every generated catalog entry for the active mode
   rather than a hand-picked subset
 

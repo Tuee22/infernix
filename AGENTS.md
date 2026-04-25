@@ -21,7 +21,7 @@ These actions belong to the user only.
 - Treat `documents/` as the canonical home for architecture and operator guidance.
 - Update `README.md`, `AGENTS.md`, and `CLAUDE.md` together when root workflow guidance changes.
 - Do not add repo-owned scripts or wrappers for supported workflows.
-- Use direct `cabal --builddir=.build/cabal install --installdir=./.build --install-method=copy --overwrite-policy=always exe:infernix`
+- Use direct `cabal --builddir=.build/cabal install --installdir=./.build --install-method=copy --overwrite-policy=always exe:infernix exe:infernix-demo`
   host builds unless a supported workflow requires different explicit output paths.
 - Preserve the distinction between current implementation state and target platform contract in root
   docs.
@@ -33,6 +33,16 @@ These actions belong to the user only.
   Percona Kubernetes operator, even when a chart can self-deploy PostgreSQL, and its PVCs stay on
   the manual `infernix-manual` storage doctrine.
 - Keep the three-runtime build direction and the Kind HA testing or demo-ground direction aligned.
-- Treat the webapp as a demo surface on that HA substrate while carrying forward the matrix-wide
-  coverage goal.
-- Run the repo-local docs validator before closing documentation changes.
+- Treat the demo UI (served by `infernix-demo`) as a demo surface on that HA substrate while
+  carrying forward the matrix-wide coverage goal. Production deployments leave the demo UI off in
+  the active `.dhall` and accept inference work via Pulsar subscription only.
+- Custom platform logic is Haskell. Python is permitted only under `python/adapters/<engine>/` and
+  only when the bound inference engine has no non-Python binding. Repo-owned Python is governed by
+  `python/pyproject.toml` and Poetry; outside the cluster, Poetry materializes `./.venv/`; inside
+  the engine container, Poetry installs system-wide. Every adapter container build runs
+  `tools/python_quality.sh` (mypy strict, black check, ruff strict) and fails on any check failure.
+- The demo UI is PureScript. Frontend types are derived from Haskell ADTs in
+  `src/Infernix/Demo/Api.hs` via `purescript-bridge` into `web/src/Generated/`; the demo UI is built
+  with spago and tested with `purescript-spec`.
+- Run the repo-local docs validator (currently `tools/docs_check.py`, migrating to
+  `infernix lint docs`) before closing documentation changes.

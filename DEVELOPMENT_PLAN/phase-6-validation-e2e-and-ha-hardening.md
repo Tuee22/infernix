@@ -1,11 +1,22 @@
 # Phase 6: Validation, E2E, and HA Hardening
 
-**Status**: Authoritative source
+**Status**: Blocked
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
+**Blocked by**: Phase 1 Sprint 1.6, Phase 3 Sprints 3.5, 3.6, 3.7, 3.8, Phase 4 Sprints 4.2, 4.3, 4.4, 4.5, 4.7, 4.8, Phase 5 Sprints 5.1 through 5.6
 
-> **Purpose**: Define the supported static-quality and test matrix for the single-binary CLI, the
-> service runtime, the browser workbench, the per-mode generated demo catalog, and the mandatory HA
-> behavior of Harbor, MinIO, operator-managed PostgreSQL, and Pulsar.
+> **Purpose**: Define the supported static-quality and test matrix for the two-binary topology
+> (`infernix` plus `infernix-demo` sharing `infernix-lib`), the Pulsar-driven production inference
+> surface, the demo UI host, the per-mode generated demo catalog, and the mandatory HA behavior of
+> Harbor, MinIO, operator-managed PostgreSQL, and Pulsar.
+
+## Phase Status
+
+The validation contract itself (lint plus unit plus integration plus routed E2E plus HA chaos
+plus lifecycle plus per-mode exhaustive matrix) retains its shape under the new doctrine. Each
+sprint drops to `Active` only because its implementation pointers reference doctrine-misaligned
+surfaces (Python service host, JavaScript workbench, JavaScript Playwright matrix runner). As each
+upstream sprint lands, the matching Phase 6 sprint reopens to update its implementation pointer to
+the Haskell entrypoints, the `purescript-spec` suites, and the `infernix-demo` HTTP fixtures.
 
 ## Current Repo Assessment
 

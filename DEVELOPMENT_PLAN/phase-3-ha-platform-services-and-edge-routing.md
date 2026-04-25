@@ -1,11 +1,27 @@
 # Phase 3: HA Platform Services and Edge Routing
 
-**Status**: Authoritative source
+**Status**: Blocked
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
+**Blocked by**: Phase 1 Sprint 1.6
 
 > **Purpose**: Define the mandatory local HA Harbor, MinIO, operator-managed PostgreSQL, and
-> Pulsar deployments plus the unified edge routing model that makes every portal reachable on one
-> localhost port and keeps the browser contract stable across runtime modes.
+> Pulsar deployments; the Haskell-implemented unified edge routing model that makes every portal
+> reachable on one localhost port; the Haskell-implemented Harbor, MinIO, and Pulsar gateway
+> workloads; and the demo HTTP surface served exclusively by the `infernix-demo` binary when the
+> active `.dhall` `demo_ui` flag is on.
+
+## Phase Status
+
+Sprints 3.1 through 3.4 (HA MinIO, Patroni PostgreSQL, HA Pulsar, HA Harbor) remain `Done`. Sprint
+3.5 (Unified Edge Proxy) drops to `Active` because the edge proxy implementation moves from
+`tools/edge_proxy.py` to `src/Infernix/Edge.hs`, deployed via the same chart template using the
+`infernix` image with entrypoint `infernix edge`. Sprint 3.6 (Cluster-Resident Webapp Service and
+Apple Host Bridge) drops to `Active` and is rewritten around the new doctrine: the demo HTTP
+surface lives only in the `infernix-demo` binary, deployed as a separate cluster workload gated by
+the `.dhall` `demo_ui` flag, with `tools/service_server.py` removed from the implementation
+pointer. Sprint 3.7 (Mode-Stable Publication Contract) drops to `Active` because the publication
+endpoint moves to `infernix-demo`'s Haskell handler. New Sprint 3.8 declares the Haskell-implemented
+portal gateways (Harbor, MinIO, Pulsar) replacing `tools/portal_surface.py`.
 
 ## HA Reconcile Surface
 
@@ -206,10 +222,11 @@ None.
 
 ---
 
-## Sprint 3.5: Unified Edge Proxy and Localhost Port Allocation [Done]
+## Sprint 3.5: Unified Edge Proxy and Localhost Port Allocation [Active]
 
-**Status**: Done
-**Implementation**: `src/Infernix/Cluster.hs`, `chart/templates/edge-configmap.yaml`, `chart/templates/workloads-platform-portals.yaml`, `tools/edge_proxy.py`, `tools/portal_surface.py`, `tools/runtime_backend.py`, `test/integration/Spec.hs`
+**Status**: Active
+**Blocked by**: Phase 1 Sprint 1.6
+**Implementation**: `src/Infernix/Cluster.hs`, `chart/templates/edge-configmap.yaml`, `chart/templates/deployment-edge.yaml`, `infernix.cabal`, `tools/edge_proxy.py`, `test/integration/Spec.hs`
 **Docs to update**: `documents/engineering/edge_routing.md`, `documents/reference/web_portal_surface.md`
 
 ### Objective
@@ -237,61 +254,103 @@ Route every browser-visible portal and host-consumed service path through one ch
   `./.data/runtime/publication.json` and exposed by the same routed edge proxy
 - Apple host-native `infernix` uses the routed MinIO and Pulsar edge paths instead of separate host ports
 - the routed contract remains stable regardless of whether the active runtime mode is Apple, Linux CPU, or Linux CUDA
+- the edge proxy is implemented in Haskell as `src/Infernix/Edge.hs` (using `wai` plus
+  `http-reverse-proxy` or equivalent), shipped in the same OCI image as the rest of the `infernix`
+  binary, and run as the `infernix-edge` cluster workload via `infernix edge`
+- when the active `.dhall` `demo_ui` flag is off, the `/`, `/api`, `/api/publication`, `/api/cache`,
+  and `/objects/` routes are absent from the published route inventory because the `infernix-demo`
+  workload is not deployed; the Harbor, MinIO, and Pulsar gateway routes remain unconditional
 
 ### Validation
 
-- `infernix cluster status` prints the chosen port and the published route inventory
+- `infernix cluster status` prints the chosen port and the published route inventory (including
+  the `demo_ui`-gated route subset)
 - if `9090` is free, `cluster up` uses `9090`; otherwise it reports the next open port it selected
 - all browser portals load through the same localhost port
-- `GET /api/publication` resolves through that same port and reports the current publication contract
+- `GET /api/publication` resolves through that same port and reports the current publication
+  contract (when the demo surface is enabled)
 - Apple host-native `infernix service` can reach MinIO and Pulsar through the edge routes on that port
 - changing runtime modes does not change the documented route inventory or the `/api/publication` endpoint
 
 ### Remaining Work
 
-None.
+- the edge proxy is currently implemented as `tools/edge_proxy.py` (Python `ThreadingHTTPServer`);
+  the Haskell port to `src/Infernix/Edge.hs` plus the `infernix edge` entrypoint has not landed
+  yet
+- `chart/templates/deployment-edge.yaml` currently runs `python3 tools/edge_proxy.py`; the chart
+  template must be updated to invoke `infernix edge` from the same OCI image after the Haskell
+  port lands
+- the demo-route gating (`demo_ui` flag conditioning the `/`, `/api`, `/api/publication`,
+  `/api/cache`, and `/objects/` route subset) is not yet implemented; it lands together with the
+  `infernix-demo` workload in Sprint 3.6
 
 ---
 
-## Sprint 3.6: Cluster-Resident Webapp Service and Apple Host Bridge [Done]
+## Sprint 3.6: Demo HTTP Host (`infernix-demo`) and Apple Host Bridge [Active]
 
-**Status**: Done
-**Implementation**: `src/Infernix/CLI.hs`, `src/Infernix/Service.hs`, `tools/service_server.py`, `web/playwright/inference.spec.js`
+**Status**: Active
+**Blocked by**: Phase 1 Sprint 1.6
+**Implementation**: `infernix.cabal`, `app/Main.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Service.hs`, `chart/templates/`, `chart/values.yaml`, `tools/service_server.py`
 **Docs to update**: `documents/architecture/web_ui_architecture.md`, `documents/operations/apple_silicon_runbook.md`
 
 ### Objective
 
-Keep the browser entrypoint stable across the cluster-resident webapp service and the Apple host
-bridge split.
+Provide the demo HTTP API surface (and only the demo HTTP API surface) through the
+`infernix-demo` Haskell binary, deployed as a separate cluster workload gated by the active
+`.dhall` `demo_ui` flag. Keep the browser entrypoint stable when the demo surface is on, and keep
+the cluster free of any HTTP API surface when the demo flag is off.
 
 ### Deliverables
 
-- the browser workbench loads from `/` through the cluster-resident webapp service on the supported path
-- the cluster-resident webapp service, built separately from `infernix`, deploys in the Kind
-  cluster through the repo-owned Helm path
-- `/api` points at the cluster-resident Haskell service when the service runs in cluster mode
-- `/api` points at a host bridge when the Haskell daemon runs host-native on Apple Silicon
-- the browser continues to use the same edge route in both cases
-- the webapp consumes the active runtime mode's generated demo catalog rather than a hand-maintained
-  UI-only allowlist
+- the `infernix-demo` Haskell binary is the single repo-owned source of the demo HTTP API surface
+  (`/`, `/api`, `/api/publication`, `/api/cache`, and `/objects/`); production `infernix service`
+  binds no HTTP listener
+- `infernix-demo` is built from the same `infernix-lib` Cabal library as `infernix`, ships in the
+  same OCI image, and is invoked as `infernix-demo serve --dhall PATH --port N`
+- the demo surface is implemented in `src/Infernix/Demo/Api.hs` (servant-based) and reuses the
+  same Haskell typed runtime contracts owned by the production daemon
+- the chart template `chart/templates/deployment-demo.yaml` deploys the `infernix-demo` workload
+  conditionally on `.Values.demo.enabled` (driven from the active `.dhall` `demo_ui` flag); when
+  disabled, no `infernix-demo` pod exists and the demo routes are absent from the edge
+- the Apple host bridge becomes an `infernix-demo serve --dhall PATH` invocation against a
+  host-side `.dhall`; the cluster-resident pod is the equivalent invocation inside the Kind
+  cluster
+- the demo UI catalog is consumed only from the active runtime mode's generated demo catalog (no
+  UI-only allowlist)
 
 ### Validation
 
-- the browser workbench loads from the routed cluster-resident surface on the supported Apple path
-- a manual inference request from the UI reaches the active daemon location without the browser changing its base URL
-- switching between host-daemon and cluster-daemon modes does not require changing the documented browser entrypoint
-- switching runtime modes changes the active catalog content without changing the browser route structure
+- the demo browser workbench loads from the routed `infernix-demo` workload on the supported Apple
+  and outer-container paths when `demo_ui` is on
+- a manual inference request from the demo UI reaches `infernix-demo`'s `/api/inference` handler
+  and that handler dispatches into the same Haskell runtime contract that production `infernix
+  service` consumes from Pulsar
+- switching between host-native `infernix-demo serve` and the cluster-resident `infernix-demo`
+  workload does not change the documented browser entrypoint
+- switching runtime modes changes the active catalog content without changing the browser route
+  structure
+- when `demo_ui` is off in the active `.dhall`, no `infernix-demo` pod exists, the cluster has no
+  HTTP API surface, and `/`, `/api`, `/api/publication`, `/api/cache`, and `/objects/` are absent
+  from the edge route inventory
 
 ### Remaining Work
 
-None.
+- the demo HTTP API is currently served by `tools/service_server.py` from the same image as the
+  production service; the Haskell port to `src/Infernix/Demo/Api.hs` plus the `infernix-demo`
+  binary plus the separate chart workload have not landed yet
+- `app/Demo.hs` does not exist; `infernix.cabal` still declares one executable
+- `chart/templates/deployment-demo.yaml` does not exist; the demo HTTP surface is currently bundled
+  into the `infernix-service` workload via `python3 tools/service_server.py`
+- `.Values.demo.enabled` and the `.dhall` `demo_ui` flag do not exist; production deployments
+  cannot yet opt out of the demo HTTP surface
 
 ---
 
-## Sprint 3.7: Mode-Stable Publication Contract [Done]
+## Sprint 3.7: Mode-Stable Publication Contract [Active]
 
-**Status**: Done
-**Implementation**: `src/Infernix/Models.hs`, `src/Infernix/Service.hs`, `tools/service_server.py`, `web/src/app.js`, `web/src/workbench.js`, `test/integration/Spec.hs`
+**Status**: Active
+**Blocked by**: Phase 1 Sprint 1.6, Sprint 3.6
+**Implementation**: `src/Infernix/Models.hs`, `src/Infernix/Service.hs`, `infernix.cabal`, `test/integration/Spec.hs`
 **Docs to update**: `documents/engineering/edge_routing.md`, `documents/reference/web_portal_surface.md`, `documents/operations/apple_silicon_runbook.md`
 
 ### Objective
@@ -326,7 +385,63 @@ operators and browser clients keep one stable mode-aware entrypoint.
 
 ### Remaining Work
 
-None.
+- the publication contract is currently served by `tools/service_server.py` and consumed by
+  `web/src/app.js` and `web/src/workbench.js`; the Haskell port (in `src/Infernix/Demo/Api.hs`
+  served by `infernix-demo`) plus the PureScript consumer (Phase 5) have not landed yet
+
+---
+
+## Sprint 3.8: Haskell-Implemented Portal Gateways [Active]
+
+**Status**: Active
+**Blocked by**: Phase 1 Sprint 1.6
+**Implementation**: `infernix.cabal`, `src/Infernix/CLI.hs`, `chart/templates/workloads-platform-portals.yaml`, `tools/portal_surface.py`, `test/integration/Spec.hs`
+**Docs to update**: `documents/engineering/edge_routing.md`, `documents/tools/harbor.md`, `documents/tools/minio.md`, `documents/tools/pulsar.md`
+
+### Objective
+
+Replace the Python `tools/portal_surface.py` gateway implementation with Haskell modules under
+`src/Infernix/Gateway/{Harbor,Minio,Pulsar}.hs`, deployed via the same OCI image as `infernix`
+with `infernix gateway harbor|minio|pulsar` as entrypoint. Preserve the same routes, the same
+auth flows, and the same edge-routed surfaces.
+
+### Deliverables
+
+- `src/Infernix/Gateway/Harbor.hs` exposes the routed Harbor portal and API surface by proxying
+  the chart-managed Harbor service through the shared edge; deployed as cluster workload
+  `infernix-harbor-gateway` via `chart/templates/workloads-platform-portals.yaml` with entrypoint
+  `infernix gateway harbor`
+- `src/Infernix/Gateway/Minio.hs` exposes the routed MinIO console and S3 API by proxying the
+  chart-managed MinIO service through the shared edge; deployed as cluster workload
+  `infernix-minio-gateway` with entrypoint `infernix gateway minio`
+- `src/Infernix/Gateway/Pulsar.hs` exposes the routed Pulsar admin and WebSocket surfaces by
+  proxying the chart-managed Pulsar service through the shared edge; deployed as cluster workload
+  `infernix-pulsar-gateway` with entrypoint `infernix gateway pulsar`
+- `tools/portal_surface.py` is removed; the chart template no longer invokes
+  `python3 tools/portal_surface.py`
+- the Haskell gateway implementations reuse the existing typed credential and auth helpers in
+  `infernix-lib` rather than duplicating the Python `pulsar` and `minio` SDK call shapes
+
+### Validation
+
+- existing integration tests for portal flows pass against the Haskell gateway implementations
+  without relaxing assertions
+- `infernix kubectl get pods -n platform` shows `infernix-harbor-gateway`,
+  `infernix-minio-gateway`, and `infernix-pulsar-gateway` workloads using the same OCI image as
+  `infernix-service` and `infernix-edge`
+- `tools/portal_surface.py` no longer exists in the worktree on the supported path
+- routed `/harbor`, `/minio/console`, `/minio/s3`, `/pulsar/admin`, and `/pulsar/ws` continue to
+  resolve through the shared edge port
+
+### Remaining Work
+
+- the Haskell gateway modules under `src/Infernix/Gateway/` do not exist yet; `tools/portal_surface.py`
+  remains the implementation
+- `chart/templates/workloads-platform-portals.yaml` currently invokes
+  `python3 tools/portal_surface.py`; the entrypoint must be updated to `infernix gateway <kind>`
+  after the Haskell port lands
+- the `infernix gateway harbor|minio|pulsar` subcommands do not exist yet; they land alongside
+  the Haskell gateway implementations
 
 ## Documentation Requirements
 

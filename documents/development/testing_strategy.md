@@ -8,16 +8,38 @@
 ## Validation Layers
 
 - `infernix docs check` validates governed docs, plan metadata, and required cross-document phrases
-- `infernix test lint` validates repository hygiene, chart or Kind or `.proto` asset presence, Helm dependency or lint or render or claim-discovery closure, the repo-owned Haskell style stack, and the Haskell build path
-- `infernix test unit` validates matrix rendering, generated frontend contracts, deterministic runtime behavior, protobuf schema round-trip coverage, engine-runner metadata, engine command-override behavior, authoritative source-artifact selection, and local-file plus direct-upstream source-artifact materialization
-- the host-side unit helper path uses an explicit filesystem-fixture backend plus per-model source-artifact overrides where needed, so unit coverage exercises the durable bundle or source-artifact manifest contract without turning implicit filesystem service fallback into a supported runtime mode
-- `infernix test integration` validates lifecycle, generated demo-config publication, serialized-catalog execution, routed publication metadata, process-isolated engine-worker execution, service-path cache lifecycle, Pulsar schema publication, MinIO durability, operator-managed PostgreSQL readiness or primary failover or PVC rebinding, HA recovery, edge-port rediscovery, and real `linux-cuda` device visibility on supported hosts
-- `infernix test e2e` validates the routed browser-facing surface through exhaustive catalog coverage, serialized-catalog cross-checks, and browser UI interaction against the real cluster edge while launching Playwright from the same web image that serves the UI
-- `infernix test all` runs the complete repository suite; the default validation matrix exercises Apple and Linux CPU when no explicit runtime-mode override is supplied and auto-includes Linux CUDA when the active control-plane surface passes the NVIDIA preflight contract, while the host-native final-substrate lane reuses the Harbor-published web runtime image across the runtime matrix
-- the supported validation contract exercises the process-isolated engine-worker runner layer, the
-  engine-specific worker runner defaults plus any adapter-specific command overrides, durable
-  runtime bundles, engine-specific source-artifact manifests, and the `linux-cuda` Kind path when
-  the host satisfies the documented NVIDIA preflight contract
+- `infernix test lint` validates repository hygiene, chart or Kind or `.proto` asset presence,
+  Helm dependency or lint or render or claim-discovery closure, the repo-owned Haskell style
+  stack, the Haskell build path, and (when `python/adapters/` is present) the strict Python
+  adapter quality gate via `tools/python_quality.sh` (mypy strict, black check, ruff strict)
+- `infernix test unit` validates matrix rendering, deterministic runtime behavior, protobuf schema
+  round-trip coverage, engine-runner metadata, engine command-override behavior, authoritative
+  source-artifact selection, local-file plus direct-upstream source-artifact materialization, and
+  PureScript demo UI behavior via `spago test` (`purescript-spec` suites under `web/test/*.purs`)
+  covering generated contracts, catalog parity, request-shape rendering, and result-state
+  rendering
+- the host-side test helpers materialize the durable bundle plus source-artifact-manifest
+  contract through Haskell test fixtures under `test/unit/`
+- `infernix test integration` validates lifecycle, generated demo-config publication,
+  serialized-catalog execution, routed publication metadata (when the demo surface is enabled),
+  Haskell-worker execution dispatching to per-engine Python adapters where the bound engine is
+  Python-native, service-path cache lifecycle, Pulsar schema publication, the production Pulsar
+  inference subscription contract (no HTTP listener bound on the production daemon), MinIO
+  durability, operator-managed PostgreSQL readiness or primary failover or PVC rebinding, HA
+  recovery, edge-port rediscovery, and real `linux-cuda` device visibility on supported hosts
+- `infernix test e2e` validates the demo-only browser-facing surface (when the demo flag is on)
+  through exhaustive catalog coverage, serialized-catalog cross-checks, and browser UI interaction
+  against the real cluster edge while launching Playwright from the same web image that serves
+  the demo UI
+- `infernix test all` runs the complete repository suite; the default validation matrix exercises
+  Apple and Linux CPU when no explicit runtime-mode override is supplied and auto-includes Linux
+  CUDA when the active control-plane surface passes the NVIDIA preflight contract, while the
+  host-native final-substrate lane reuses the Harbor-published web runtime image across the
+  runtime matrix
+- the supported validation contract exercises the Haskell worker dispatch layer, the
+  engine-specific runner defaults plus any adapter-specific command overrides, durable runtime
+  bundles, engine-specific source-artifact manifests, and the `linux-cuda` Kind path when the
+  host satisfies the documented NVIDIA preflight contract
 - the outer-container integration and E2E lanes also assume the host exposes enough inotify
   instances for mount-bearing Kind nodes; the validated Ubuntu flow uses
   `fs.inotify.max_user_instances >= 1024`
@@ -54,5 +76,7 @@
 
 - [frontend_contracts.md](frontend_contracts.md)
 - [haskell_style.md](haskell_style.md)
+- [python_policy.md](python_policy.md)
+- [purescript_policy.md](purescript_policy.md)
 - [../tools/postgresql.md](../tools/postgresql.md)
 - [../reference/cli_surface.md](../reference/cli_surface.md)

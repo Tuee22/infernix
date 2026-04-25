@@ -33,9 +33,17 @@
 - confirm that `infernix kubectl get jobs -n platform` shows
   `infernix-infernix-pulsar-bookie-init` and `infernix-infernix-pulsar-pulsar-init` completing
   during the final Harbor-backed rollout, because Pulsar is first enabled there
-- confirm that `infernix kubectl get pods -n platform` shows `infernix-edge`, `infernix-web`,
-  `infernix-service`, the Harbor application-plane workloads, the MinIO statefulset, the Pulsar
-  statefulsets, the PostgreSQL operator-managed members, and the Harbor or MinIO or Pulsar gateway workloads
+- confirm that `infernix kubectl get pods -n platform` shows `infernix-edge`, `infernix-service`,
+  the Harbor application-plane workloads, the MinIO statefulset, the Pulsar statefulsets, the
+  PostgreSQL operator-managed members, and the Haskell `infernix-{harbor,minio,pulsar}-gateway`
+  workloads (all running from the same `infernix` OCI image with different entrypoints)
+- when the active `.dhall` enables the demo UI (`demo_ui = True`), also confirm that
+  `infernix-demo` is present; when it does not (the production default), confirm
+  `infernix-demo` is absent, no HTTP API surface is bound by `infernix-service`, and `/`, `/api`,
+  `/api/publication`, `/api/cache`, and `/objects/` do not appear in the edge route inventory
+- confirm that the edge proxy and gateway pods are running the Haskell entrypoints
+  (`infernix edge` and `infernix gateway harbor|minio|pulsar`) rather than legacy Python
+  implementations
 - confirm that `infernix kubectl get storageclass` shows only `infernix-manual`
 - confirm that no PVC-backed Helm workload was dynamically provisioned and that each durable PV is
   manually pre-bound to its intended claim under `./.data/kind/...`
