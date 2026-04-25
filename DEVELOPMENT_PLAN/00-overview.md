@@ -65,9 +65,9 @@ runtime, and validation.
 The supported topology is below. The current implementation deploys the edge proxy, web service,
 service API, and the Harbor or MinIO or Pulsar portal workloads on the real Kind and Helm
 substrate, and the routed service path uses the chart-managed Harbor, MinIO, and Pulsar backends
-while retaining repo-local mirrors for inspection and host-side state reporting. The supported
-target also routes every PostgreSQL dependency through the Percona Kubernetes operator plus
-Patroni-managed PostgreSQL clusters, and Harbor now follows that same operator-managed path on the
+while retaining repo-local mirrors for inspection and host-side state reporting. The current
+supported platform also routes every PostgreSQL dependency through the Percona Kubernetes operator
+plus Patroni-managed PostgreSQL clusters, and Harbor follows that same operator-managed path on the
 supported cluster lifecycle.
 
 ```mermaid
@@ -103,8 +103,8 @@ flowchart TB
 
 ## Canonical Repository Shape
 
-The repository layout authority moves here from `README.md`. The intended shape at full plan
-closure is:
+The repository layout authority moves here from `README.md`. The current canonical shape includes
+these core assets and directories:
 
 ```text
 infernix/
@@ -119,29 +119,33 @@ infernix/
 │   ├── reference/
 │   ├── tools/
 │   └── research/
+├── AGENTS.md
+├── CLAUDE.md
+├── README.md
+├── Setup.hs
+├── compose.yaml
 ├── infernix.cabal
 ├── cabal.project
 ├── app/
 │   └── Main.hs
 ├── src/
 │   └── Infernix/
-│       ├── CLI/
-│       ├── Cluster/
-│       ├── Config/
-│       ├── Manifest/
-│       ├── MinIO/
-│       ├── Models/
-│       ├── Pulsar/
-│       ├── Runtime/
-│       ├── Service/
-│       ├── Storage/
-│       └── Types/
+│       ├── CLI.hs
+│       ├── Cluster.hs
+│       ├── Config.hs
+│       ├── Models.hs
+│       ├── Runtime.hs
+│       ├── Service.hs
+│       ├── Storage.hs
+│       └── Types.hs
 ├── proto/
 │   └── infernix/
 │       ├── api/
 │       ├── manifest/
 │       └── runtime/
 ├── web/
+│   ├── build.mjs
+│   ├── package.json
 │   ├── src/
 │   ├── test/
 │   ├── playwright/
@@ -149,9 +153,16 @@ infernix/
 ├── chart/
 ├── kind/
 ├── docker/
+├── tools/
+│   ├── docs_check.py
+│   ├── generated_proto/
+│   ├── runtime_backend.py
+│   └── service_server.py
 ├── test/
-│   ├── unit/
-│   └── integration/
+│   ├── integration/
+│   │   └── Spec.hs
+│   └── unit/
+│       └── Spec.hs
 ├── .build/
 └── .data/
 ```
@@ -202,9 +213,8 @@ The repo ships one Haskell executable, `infernix`.
 
 The supported local operator surface is platform-sensitive:
 
-- Apple Silicon: `./.build/infernix` is the canonical host-native operator surface. The final
-  closure shells out to host-installed `kind`, `kubectl`, `helm`, and Docker, and the current
-  implementation uses those tools directly for the real Kind and Helm lifecycle.
+- Apple Silicon: `./.build/infernix` is the canonical host-native operator surface. It shells out
+  to host-installed `kind`, `kubectl`, `helm`, and Docker for the real Kind and Helm lifecycle.
 - Apple Silicon host builds place the compiled binary and other generated build artifacts under
   `./.build/`.
 - On Apple Silicon, `cluster up` writes the repo-local kubeconfig to `./.build/infernix.kubeconfig`
@@ -307,7 +317,7 @@ In-cluster PostgreSQL is standardized and never delegated to ad hoc chart defaul
 
 ### 6. Cluster-Resident Webapp Service
 
-At closure, the webapp service runs on the Kind cluster in a container.
+The webapp service runs on the Kind cluster in a container.
 
 - This remains true even when the `infernix` daemon runs host-native on Apple Silicon.
 - The current implementation serves the browser workbench from that cluster-resident web workload
@@ -319,7 +329,7 @@ At closure, the webapp service runs on the Kind cluster in a container.
 
 ### 7. Local Harbor Is The Cluster Image Source
 
-Local Harbor becomes the required image authority once Harbor bootstrap completes.
+Local Harbor is the required image authority once Harbor bootstrap completes.
 
 - `infernix cluster up` installs Harbor through Helm first, and Harbor plus the storage or support
   services Harbor needs during bootstrap, including MinIO and PostgreSQL, may pull directly from
@@ -352,7 +362,7 @@ All browser-visible and host-consumed cluster portals share one loopback port ch
 
 - The CLI tries `9090` first and increments by 1 until it finds an available localhost port during
   cluster startup.
-- The chosen port is recorded under `./.data/`.
+- The chosen port is recorded under `./.data/runtime/edge-port.json`.
 - `cluster up` prints the chosen port to the operator during bring-up.
 - At minimum, the edge exposes `/`, `/api`, `/harbor`, `/minio/console`, `/minio/s3`,
   `/pulsar/admin`, and `/pulsar/ws`.
@@ -380,8 +390,9 @@ Mode-aware coverage is exhaustive by default.
   mounted ConfigMap-backed demo `.dhall`.
 - `infernix test e2e` for a runtime mode exercises every demo-visible entry present in that same
   file through the routed surface; the current implementation covers both exhaustive routed HTTP
-  execution and real browser UI interaction through the built web image, and final closure reuses
-  the Harbor-published runtime image.
+  execution and real browser UI interaction through the built web image, and the current
+  host-native final-substrate lane reuses the Harbor-published web image for that same executor
+  path.
 - The selected engine for each tested entry matches the appropriate runtime-mode column from the
   README matrix because the mounted ConfigMap-backed `.dhall` file encodes that binding.
 
@@ -398,7 +409,7 @@ Haskell ADTs are the SSOT for the frontend contract.
 
 ### 10. Playwright Lives With the Web Image
 
-At closure, Playwright is installed in the same container image that serves the web UI.
+Playwright is installed in the same container image that serves the web UI.
 
 - Chromium, WebKit, and Firefox are provisioned there.
 - The current implementation already runs `infernix test e2e` from that same built web image on

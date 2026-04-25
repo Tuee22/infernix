@@ -42,7 +42,7 @@ A phase or sprint can move to `Done` only when all of the following are true:
 
 1. The deliverables exist in the repository worktree.
 2. The listed validation gates pass on the supported execution path or matrix.
-3. The future governed docs named in `Docs to update` have been created or updated to match the implementation.
+3. The governed docs named in `Docs to update` have been created or updated to match the implementation.
 4. No `Remaining Work` section remains open.
 5. Cleanup promised by the sprint is reflected in [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
 
@@ -126,7 +126,7 @@ The plan uses two separate concepts and keeps them distinct:
 
 ## Canonical Outcome
 
-At closure, `infernix` is constructed around these non-negotiable rules:
+The current supported platform is constructed around these non-negotiable rules:
 
 - one repo-owned Haskell executable named `infernix`, used for service runtime, tests, and Kind lifecycle
 - one governed `documents/` suite that stays aligned with the plan and the updated root README
