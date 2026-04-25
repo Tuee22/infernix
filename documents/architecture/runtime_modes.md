@@ -73,6 +73,9 @@ Service placement is a separate concept from runtime mode.
 
 - Apple host-native service placement runs `infernix service` on the host and repoints the routed
   `/api` surface through the Apple host bridge while the browser stays on the shared edge URL
+- Apple host-native service placement reaches MinIO and Pulsar through the edge-routed
+  `/minio/s3`, `/pulsar/admin`, and `/pulsar/ws` surfaces, while cluster-resident service
+  placement uses cluster-local MinIO and Pulsar networking on the supported Kind path
 - the host-native and cluster-resident service placements both launch the same process-isolated
   engine-worker contract, consume durable runtime artifact bundles plus engine-specific
   source-artifact manifests, use the engine-specific worker runner by default on the supported
@@ -83,6 +86,8 @@ Service placement is a separate concept from runtime mode.
   backend contract or explicit backend configuration
 - cluster-resident service placement consumes the same active runtime mode and the same generated
   demo catalog from `/opt/build/`
+- switching runtime modes changes generated catalog content and engine bindings, not the MinIO or
+  Pulsar access path used by a given service placement
 
 Service placement changes where the daemon runs. It does not redefine the three runtime modes.
 

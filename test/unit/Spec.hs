@@ -17,10 +17,11 @@ import System.Environment (lookupEnv, setEnv, unsetEnv)
 import System.Exit (ExitCode (ExitSuccess))
 import System.FilePath ((</>))
 import System.IO.Error (catchIOError, isDoesNotExistError)
-import System.Process (readProcessWithExitCode)
+import System.Process (readProcess, readProcessWithExitCode)
 
 main :: IO ()
 main = do
+  unitTestRoot <- testRootPath "unit"
   assert (length (catalogForMode AppleSilicon) == 15) "apple-silicon catalog count matches the matrix"
   assert (length (catalogForMode LinuxCpu) == 12) "linux-cpu catalog count matches the matrix"
   assert (length (catalogForMode LinuxCuda) == 16) "linux-cuda catalog count matches the matrix"
@@ -55,7 +56,7 @@ main = do
   assert
     (any ("\"runtimeMode\": \"linux-cpu\"" `isInfixOf`) (lines (LazyChar8.unpack (encodeDemoConfig demoConfig))))
     "demo config render includes the active runtime mode"
-  withTestRoot ".tmp/unit" $ do
+  withTestRoot unitTestRoot $ do
     cwd <- getCurrentDirectory
     paths <- discoverPaths
     ensureRepoLayout paths
@@ -452,6 +453,12 @@ withTestRoot root action = do
     ignoreMissing err
       | isDoesNotExistError err = pure ()
       | otherwise = ioError err
+
+testRootPath :: FilePath -> IO FilePath
+testRootPath suiteName = do
+  paths <- discoverPaths
+  token <- takeWhile (\char -> char /= '\r' && char /= '\n') <$> readProcess "python3" ["-c", "import uuid; print(uuid.uuid4())"] ""
+  pure (repoRoot paths </> ".build" </> ("test-" <> suiteName <> "-" <> token))
 
 assert :: Bool -> String -> IO ()
 assert True _ = pure ()

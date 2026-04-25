@@ -27,10 +27,14 @@ the durable bundle or cache-status surfaces, records engine-adapter id or type o
 availability in those bundles, exposes adapter-specific engine command prefixes to the cluster
 service deployment through `INFERNIX_ENGINE_COMMAND_*`, and uses the default engine-aware runner to
 validate the selected adapter on the active host when no adapter-specific override is configured.
-The host-side unit-helper path now reuses that same durable bundle plus source-artifact-manifest
-contract through an explicit filesystem-fixture helper instead of writing placeholder bundle
-metadata, and the current validation contract closes around authoritative artifact selection,
-adapter-aware worker execution, and host-native Apple or cluster-resident parity.
+The service-placement contract is also explicit in the current code: cluster-resident service pods
+use cluster-local MinIO and Pulsar networking, while Apple host-native service placement uses the
+edge-routed `/minio/s3`, `/pulsar/admin`, and `/pulsar/ws` bridges; switching runtime modes only
+changes engine bindings and generated catalog content. The host-side unit-helper path now reuses
+that same durable bundle plus source-artifact-manifest contract through an explicit
+filesystem-fixture helper instead of writing placeholder bundle metadata, and the current
+validation contract closes around authoritative artifact selection, adapter-aware worker execution,
+and host-native Apple or cluster-resident parity.
 
 ## Matrix Ownership Contract
 
@@ -84,8 +88,8 @@ None.
 ## Sprint 4.2: Inference Request Pipeline Over Pulsar and MinIO [Done]
 
 **Status**: Done
-**Implementation**: `src/Infernix/Runtime.hs`, `src/Infernix/Storage.hs`, `tools/runtime_backend.py`, `tools/runtime_worker.py`, `tools/final_engine_runner.py`, `tools/service_server.py`, `test/integration/Spec.hs`, `test/unit/Spec.hs`
-**Docs to update**: `documents/architecture/runtime_modes.md`, `documents/engineering/model_lifecycle.md`
+**Implementation**: `src/Infernix/Runtime.hs`, `src/Infernix/Storage.hs`, `tools/runtime_backend.py`, `tools/runtime_fixture_backend.py`, `tools/runtime_worker.py`, `tools/final_engine_runner.py`, `tools/service_server.py`, `test/integration/Spec.hs`, `test/unit/Spec.hs`
+**Docs to update**: `documents/architecture/runtime_modes.md`, `documents/engineering/model_lifecycle.md`, `documents/engineering/object_storage.md`
 
 ### Objective
 
@@ -134,7 +138,7 @@ None.
 
 **Status**: Done
 **Implementation**: `src/Infernix/Service.hs`, `src/Infernix/CLI.hs`, `tools/service_server.py`, `tools/runtime_worker.py`, `tools/final_engine_runner.py`, `test/integration/Spec.hs`, `test/unit/Spec.hs`, `web/playwright/inference.spec.js`
-**Docs to update**: `documents/architecture/runtime_modes.md`, `documents/operations/apple_silicon_runbook.md`
+**Docs to update**: `documents/architecture/runtime_modes.md`, `documents/engineering/object_storage.md`, `documents/operations/apple_silicon_runbook.md`
 
 ### Objective
 
@@ -145,13 +149,17 @@ cluster-resident execution to coexist.
 
 - `infernix service` supports host-native Apple execution for direct local model runtimes
 - the same executable can run in a cluster container on the Linux-supported path
-- runtime config selects the correct MinIO and Pulsar access path without changing the API contract
+- service placement selects the MinIO and Pulsar access path without changing the API contract:
+  cluster-resident service placement uses cluster-local networking, while Apple host-native service
+  placement uses the edge-routed `/minio/s3`, `/pulsar/admin`, and `/pulsar/ws` bridges
 - in containerized execution contexts, the service consumes the active mode's ConfigMap-backed
   mounted `.dhall` from `/opt/build/`, next to the binary it watches for changes
 - startup clearly reports whether the daemon is running host-side or cluster-side
 - host-native Apple and cluster-resident execution both consume the same durable runtime artifact
   bundles plus source-artifact manifests, expose the same engine-adapter metadata, and honor the
   same adapter-specific command-prefix override contract
+- switching runtime modes changes generated catalog content and engine bindings, not the MinIO or
+  Pulsar access path used by a given service placement
 
 ### Validation
 
@@ -295,6 +303,7 @@ None.
 - `documents/architecture/runtime_modes.md` - service deployment modes and parity rules
 - `documents/architecture/model_catalog.md` - model registration, matrix row ownership, and generated catalog contract
 - `documents/engineering/model_lifecycle.md` - MinIO authority, local materialization, and cache semantics
+- `documents/engineering/object_storage.md` - service-placement-specific MinIO access contract
 - `documents/engineering/storage_and_state.md` - durable versus derived state inventory
 - `documents/development/testing_strategy.md` - active-mode catalog and engine-binding coverage
 

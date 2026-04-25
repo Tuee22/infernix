@@ -43,19 +43,21 @@ data SerializedCatalogEntry = SerializedCatalogEntry
   }
 
 main :: IO ()
-main = withTestRoot ".tmp/integration" $ do
-  paths <- Config.discoverPaths
-  maybeRequestedMode <- lookupEnv "INFERNIX_RUNTIME_MODE"
-  runtimeModes <- case maybeRequestedMode >>= (parseRuntimeMode . Text.pack) of
-    Just runtimeMode -> pure [runtimeMode]
-    Nothing -> do
-      cudaSupported <- linuxCudaSupportedOnHost
-      pure (filter (\runtimeMode -> runtimeMode /= LinuxCuda || cudaSupported) allRuntimeModes)
-  mapM_ (exerciseRuntimeMode paths) runtimeModes
-  case runtimeModes of
-    runtimeMode : _ -> validateEdgePortConflictAndRediscovery paths runtimeMode
-    [] -> fail "integration suite requires at least one runtime mode"
-  putStrLn "integration tests passed"
+main = do
+  integrationTestRoot <- testRootPath "integration"
+  withTestRoot integrationTestRoot $ do
+    paths <- Config.discoverPaths
+    maybeRequestedMode <- lookupEnv "INFERNIX_RUNTIME_MODE"
+    runtimeModes <- case maybeRequestedMode >>= (parseRuntimeMode . Text.pack) of
+      Just runtimeMode -> pure [runtimeMode]
+      Nothing -> do
+        cudaSupported <- linuxCudaSupportedOnHost
+        pure (filter (\runtimeMode -> runtimeMode /= LinuxCuda || cudaSupported) allRuntimeModes)
+    mapM_ (exerciseRuntimeMode paths) runtimeModes
+    case runtimeModes of
+      runtimeMode : _ -> validateEdgePortConflictAndRediscovery paths runtimeMode
+      [] -> fail "integration suite requires at least one runtime mode"
+    putStrLn "integration tests passed"
 
 exerciseRuntimeMode :: Paths -> RuntimeMode -> IO ()
 exerciseRuntimeMode paths runtimeMode = do
@@ -583,6 +585,12 @@ withTestRoot root action = do
     ignoreMissing err
       | isDoesNotExistError err = pure ()
       | otherwise = ioError err
+
+testRootPath :: FilePath -> IO FilePath
+testRootPath suiteName = do
+  paths <- Config.discoverPaths
+  token <- takeWhile (\char -> char /= '\r' && char /= '\n') <$> readProcess "python3" ["-c", "import uuid; print(uuid.uuid4())"] ""
+  pure (repoRoot paths </> ".build" </> ("test-" <> suiteName <> "-" <> token))
 
 assert :: Bool -> String -> IO ()
 assert True _ = pure ()
