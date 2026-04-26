@@ -2,14 +2,18 @@
 
 module Infernix.Models
   ( catalogForMode,
-    clusterServiceApiUpstream,
+    clusterDemoApiUpstream,
+    engineBindingForSelectedEngine,
+    engineBindingsForMode,
     encodeDemoConfig,
     findModel,
     hostBridgeApiUpstream,
     platformClaims,
+    requestTopicsForMode,
     renderPublicationState,
     renderPublicationStateWithApiUpstream,
     renderConfigMapManifest,
+    resultTopicForMode,
     routeInventory,
   )
 where
@@ -45,6 +49,57 @@ data MatrixRow = MatrixRow
 catalogForMode :: RuntimeMode -> [ModelDescriptor]
 catalogForMode runtimeMode = mapMaybe (descriptorForMode runtimeMode) matrixRows
 
+engineBindingsForMode :: RuntimeMode -> [EngineBinding]
+engineBindingsForMode runtimeMode =
+  uniqueEngineBindings (map (engineBindingForSelectedEngine . selectedEngine) (catalogForMode runtimeMode))
+
+requestTopicsForMode :: RuntimeMode -> [Text]
+requestTopicsForMode runtimeMode =
+  ["persistent://public/default/inference.request." <> runtimeModeId runtimeMode]
+
+resultTopicForMode :: RuntimeMode -> Text
+resultTopicForMode runtimeMode =
+  "persistent://public/default/inference.result." <> runtimeModeId runtimeMode
+
+engineBindingForSelectedEngine :: Text -> EngineBinding
+engineBindingForSelectedEngine selectedEngineValue =
+  let normalizedEngine = Text.toLower selectedEngineValue
+      adapterId
+        | "vllm" `Text.isInfixOf` normalizedEngine = "vllm-python"
+        | "transformers" `Text.isInfixOf` normalizedEngine = "transformers-python"
+        | "diffusers" `Text.isInfixOf` normalizedEngine = "diffusers-python"
+        | "torch" `Text.isInfixOf` normalizedEngine = "pytorch-python"
+        | "tensorflow" `Text.isInfixOf` normalizedEngine = "tensorflow-python"
+        | "jax" `Text.isInfixOf` normalizedEngine = "jax-python"
+        | "whisper.cpp" `Text.isInfixOf` normalizedEngine = "whisper-cpp-cli"
+        | "llama.cpp" `Text.isInfixOf` normalizedEngine = "llama-cpp-cli"
+        | "onnx runtime" `Text.isInfixOf` normalizedEngine = "onnx-runtime-native"
+        | "core ml" `Text.isInfixOf` normalizedEngine = "coreml-native"
+        | "ctranslate2" `Text.isInfixOf` normalizedEngine = "ctranslate2-native"
+        | "mlx" `Text.isInfixOf` normalizedEngine = "mlx-native"
+        | "jvm" `Text.isInfixOf` normalizedEngine = "jvm-native"
+        | otherwise = "engine-native"
+      pythonNative =
+        any
+          (`Text.isInfixOf` normalizedEngine)
+          ["vllm", "transformers", "diffusers", "torch", "tensorflow", "jax"]
+      adapterType
+        | pythonNative = "python-stdio"
+        | otherwise = "haskell-simulated-runner"
+      adapterLocator
+        | pythonNative = "python/adapters/" <> adapterId <> "/" <> adapterScriptName adapterId
+        | otherwise = adapterId
+   in EngineBinding
+        { engineBindingName = selectedEngineValue,
+          engineBindingAdapterId = adapterId,
+          engineBindingAdapterType = adapterType,
+          engineBindingAdapterLocator = adapterLocator,
+          engineBindingPythonNative = pythonNative
+        }
+  where
+    adapterScriptName adapterIdValue =
+      Text.replace "-" "_" adapterIdValue <> "_adapter.py"
+
 findModel :: RuntimeMode -> Text -> Maybe ModelDescriptor
 findModel runtimeMode wantedModelId =
   find ((== wantedModelId) . modelId) (catalogForMode runtimeMode)
@@ -71,36 +126,46 @@ platformClaims =
   [ PersistentClaim "platform" "infernix" "service" 0 "data" "infernix-service-0-data" "5Gi"
   ]
 
-routeInventory :: [RouteInfo]
-routeInventory =
-  [ RouteInfo "/" "Web workbench",
-    RouteInfo "/api" "Service API",
-    RouteInfo "/harbor" "Harbor portal",
-    RouteInfo "/minio/console" "MinIO console",
-    RouteInfo "/minio/s3" "MinIO S3 API",
-    RouteInfo "/pulsar/admin" "Pulsar admin surface",
-    RouteInfo "/pulsar/ws" "Pulsar websocket surface"
-  ]
+routeInventory :: Bool -> [RouteInfo]
+routeInventory demoEnabled =
+  demoRoutes demoEnabled
+    <> [ RouteInfo "/harbor" "Harbor portal",
+         RouteInfo "/minio/console" "MinIO console",
+         RouteInfo "/minio/s3" "MinIO S3 API",
+         RouteInfo "/pulsar/admin" "Pulsar admin surface",
+         RouteInfo "/pulsar/ws" "Pulsar websocket surface"
+       ]
+  where
+    demoRoutes True =
+      [ RouteInfo "/" "Demo workbench",
+        RouteInfo "/api" "Demo API",
+        RouteInfo "/objects" "Demo object store"
+      ]
+    demoRoutes False = []
 
-clusterServiceApiUpstream :: ApiUpstream
-clusterServiceApiUpstream =
+clusterDemoApiUpstream :: ApiUpstream
+clusterDemoApiUpstream =
   ApiUpstream
-    { apiUpstreamMode = "cluster-service",
-      apiUpstreamHost = "infernix-service.platform.svc.cluster.local",
+    { apiUpstreamMode = "cluster-demo",
+      apiUpstreamHost = "infernix-demo.platform.svc.cluster.local",
       apiUpstreamPort = 80
     }
 
 hostBridgeApiUpstream :: Int -> ApiUpstream
 hostBridgeApiUpstream port =
   ApiUpstream
-    { apiUpstreamMode = "host-daemon-bridge",
+    { apiUpstreamMode = "host-demo-bridge",
       apiUpstreamHost = "host.docker.internal",
       apiUpstreamPort = port
     }
 
 renderPublicationState :: String -> ClusterState -> String
 renderPublicationState controlPlane state =
-  renderPublicationStateWithApiUpstream controlPlane state clusterServiceApiUpstream
+  renderPublicationStateWithApiUpstream controlPlane state selectedApiUpstream
+  where
+    selectedApiUpstream
+      | stateHasDemoUi state = clusterDemoApiUpstream
+      | otherwise = disabledApiUpstream
 
 renderPublicationStateWithApiUpstream :: String -> ClusterState -> ApiUpstream -> String
 renderPublicationStateWithApiUpstream controlPlane state apiUpstream =
@@ -110,6 +175,12 @@ renderPublicationStateWithApiUpstream controlPlane state apiUpstream =
     <> ",\n"
     <> "  \"controlPlaneContext\": "
     <> show controlPlane
+    <> ",\n"
+    <> "  \"daemonLocation\": "
+    <> jsonString (daemonLocationFor apiUpstream)
+    <> ",\n"
+    <> "  \"catalogSource\": "
+    <> jsonString "generated-build-root"
     <> ",\n"
     <> "  \"runtimeMode\": "
     <> jsonString (runtimeModeId (clusterRuntimeMode state))
@@ -135,6 +206,18 @@ renderPublicationStateWithApiUpstream controlPlane state apiUpstream =
     <> "  \"mountedDemoConfigPath\": "
     <> jsonFilePath (mountedDemoConfigPath state)
     <> ",\n"
+    <> "  \"demoConfigPath\": "
+    <> jsonFilePath (generatedDemoConfigPath state)
+    <> ",\n"
+    <> "  \"workerExecutionMode\": "
+    <> jsonString "process-isolated-engine-workers"
+    <> ",\n"
+    <> "  \"workerAdapterMode\": "
+    <> jsonString "engine-specific-runner-defaults"
+    <> ",\n"
+    <> "  \"artifactAcquisitionMode\": "
+    <> jsonString "engine-ready-artifact-manifests"
+    <> ",\n"
     <> "  \"apiUpstream\": "
     <> renderApiUpstream apiUpstream
     <> ",\n"
@@ -142,54 +225,53 @@ renderPublicationStateWithApiUpstream controlPlane state apiUpstream =
     <> show (show (updatedAt state))
     <> ",\n"
     <> "  \"upstreams\": [\n"
-    <> intercalate ",\n" (map renderPublicationUpstream (publicationUpstreams apiUpstream))
+    <> intercalate ",\n" (map renderPublicationUpstream (publicationUpstreams (stateHasDemoUi state) apiUpstream))
     <> "\n  ],\n"
     <> "  \"routes\": [\n"
     <> intercalate ",\n" (map renderRouteInfo (routes state))
     <> "\n  ]\n"
     <> "}\n"
 
-publicationUpstreams :: ApiUpstream -> [PublicationUpstream]
-publicationUpstreams apiUpstream =
-  [ PublicationUpstream
-      { publicationUpstreamId = "web",
-        publicationUpstreamRoutePrefix = "/",
-        publicationUpstreamTargetSurface = "cluster-web-runtime",
-        publicationUpstreamHealthStatus = "published",
-        publicationUpstreamDurableBackendState = "cluster-web-runtime-image"
-      },
-    PublicationUpstream
-      { publicationUpstreamId = "service",
-        publicationUpstreamRoutePrefix = "/api",
-        publicationUpstreamTargetSurface =
-          case apiUpstreamMode apiUpstream of
-            "host-daemon-bridge" -> "host-native daemon bridge"
-            _ -> "cluster-resident service",
-        publicationUpstreamHealthStatus = "published",
-        publicationUpstreamDurableBackendState = "pulsar-transport and minio-durable-state"
-      },
-    PublicationUpstream
-      { publicationUpstreamId = "harbor",
-        publicationUpstreamRoutePrefix = "/harbor",
-        publicationUpstreamTargetSurface = "cluster Harbor gateway",
-        publicationUpstreamHealthStatus = "published",
-        publicationUpstreamDurableBackendState = "harbor-registry-backed chart deployment"
-      },
-    PublicationUpstream
-      { publicationUpstreamId = "minio",
-        publicationUpstreamRoutePrefix = "/minio/s3",
-        publicationUpstreamTargetSurface = "cluster MinIO gateway",
-        publicationUpstreamHealthStatus = "published",
-        publicationUpstreamDurableBackendState = "minio-backed chart deployment"
-      },
-    PublicationUpstream
-      { publicationUpstreamId = "pulsar",
-        publicationUpstreamRoutePrefix = "/pulsar/ws",
-        publicationUpstreamTargetSurface = "cluster Pulsar gateway",
-        publicationUpstreamHealthStatus = "published",
-        publicationUpstreamDurableBackendState = "pulsar-backed chart deployment"
-      }
-  ]
+publicationUpstreams :: Bool -> ApiUpstream -> [PublicationUpstream]
+publicationUpstreams demoEnabled apiUpstream =
+  demoUpstreams
+    <> [ PublicationUpstream
+           { publicationUpstreamId = "harbor",
+             publicationUpstreamRoutePrefix = "/harbor",
+             publicationUpstreamTargetSurface = "cluster Harbor gateway",
+             publicationUpstreamHealthStatus = "published",
+             publicationUpstreamDurableBackendState = "harbor-registry-backed chart deployment"
+           },
+         PublicationUpstream
+           { publicationUpstreamId = "minio",
+             publicationUpstreamRoutePrefix = "/minio/s3",
+             publicationUpstreamTargetSurface = "cluster MinIO gateway",
+             publicationUpstreamHealthStatus = "published",
+             publicationUpstreamDurableBackendState = "minio-backed chart deployment"
+           },
+         PublicationUpstream
+           { publicationUpstreamId = "pulsar",
+             publicationUpstreamRoutePrefix = "/pulsar/ws",
+             publicationUpstreamTargetSurface = "cluster Pulsar gateway",
+             publicationUpstreamHealthStatus = "published",
+             publicationUpstreamDurableBackendState = "pulsar-backed chart deployment"
+           }
+       ]
+  where
+    demoUpstreams
+      | demoEnabled =
+          [ PublicationUpstream
+              { publicationUpstreamId = "demo",
+                publicationUpstreamRoutePrefix = "/",
+                publicationUpstreamTargetSurface =
+                  case apiUpstreamMode apiUpstream of
+                    "host-demo-bridge" -> "host-native demo bridge"
+                    _ -> "cluster-resident demo surface",
+                publicationUpstreamHealthStatus = "published",
+                publicationUpstreamDurableBackendState = "generated web bundle and Haskell demo daemon"
+              }
+          ]
+      | otherwise = []
 
 renderApiUpstream :: ApiUpstream -> String
 renderApiUpstream apiUpstream =
@@ -223,6 +305,26 @@ renderRouteInfo route =
     <> ", \"purpose\": "
     <> jsonString (purpose route)
     <> "}"
+
+daemonLocationFor :: ApiUpstream -> Text
+daemonLocationFor apiUpstream =
+  case apiUpstreamMode apiUpstream of
+    "host-demo-bridge" -> "control-plane-host"
+    "host-daemon-bridge" -> "control-plane-host"
+    "disabled" -> "disabled"
+    _ -> "cluster-pod"
+
+stateHasDemoUi :: ClusterState -> Bool
+stateHasDemoUi state =
+  any ((`elem` ["/", "/api", "/objects"]) . path) (routes state)
+
+disabledApiUpstream :: ApiUpstream
+disabledApiUpstream =
+  ApiUpstream
+    { apiUpstreamMode = "disabled",
+      apiUpstreamHost = "",
+      apiUpstreamPort = 0
+    }
 
 demoConfigBanner :: String
 demoConfigBanner = "{- Auto-generated by infernix cluster up -}\n"
@@ -592,10 +694,34 @@ renderDemoConfig demoConfig =
     <> "  \"mountedPath\": "
     <> jsonFilePath (mountedPath demoConfig)
     <> ",\n"
+    <> "  \"demo_ui\": "
+    <> jsonBool (demoUiEnabled demoConfig)
+    <> ",\n"
+    <> "  \"request_topics\": ["
+    <> intercalate ", " (map jsonString (requestTopics demoConfig))
+    <> "],\n"
+    <> "  \"result_topic\": "
+    <> jsonString (resultTopic demoConfig)
+    <> ",\n"
+    <> "  \"engines\": [\n"
+    <> intercalate ",\n" (map renderEngineBinding (engines demoConfig))
+    <> "\n  ],\n"
     <> "  \"models\": [\n"
     <> intercalate ",\n" (map renderModelDescriptor (models demoConfig))
     <> "\n  ]\n"
     <> "}\n"
+
+renderEngineBinding :: EngineBinding -> String
+renderEngineBinding engineBinding =
+  unlines
+    [ "    {",
+      "      \"engine\": " <> jsonString (engineBindingName engineBinding) <> ",",
+      "      \"adapterId\": " <> jsonString (engineBindingAdapterId engineBinding) <> ",",
+      "      \"adapterType\": " <> jsonString (engineBindingAdapterType engineBinding) <> ",",
+      "      \"adapterLocator\": " <> jsonString (engineBindingAdapterLocator engineBinding) <> ",",
+      "      \"pythonNative\": " <> jsonBool (engineBindingPythonNative engineBinding),
+      "    }"
+    ]
 
 renderModelDescriptor :: ModelDescriptor -> String
 renderModelDescriptor model =
@@ -639,3 +765,11 @@ jsonFilePath = show
 
 jsonString :: Text -> String
 jsonString = show . Text.unpack
+
+uniqueEngineBindings :: [EngineBinding] -> [EngineBinding]
+uniqueEngineBindings = go []
+  where
+    go seen [] = reverse seen
+    go seen (engineBinding : rest)
+      | any ((== engineBindingName engineBinding) . engineBindingName) seen = go seen rest
+      | otherwise = go (engineBinding : seen) rest

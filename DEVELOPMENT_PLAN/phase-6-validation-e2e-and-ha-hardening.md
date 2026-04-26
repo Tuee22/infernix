@@ -2,7 +2,7 @@
 
 **Status**: Blocked
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
-**Blocked by**: Phase 1 Sprint 1.6, Phase 3 Sprints 3.5, 3.6, 3.7, 3.8, Phase 4 Sprints 4.2, 4.3, 4.4, 4.5, 4.7, 4.8, Phase 5 Sprints 5.1 through 5.6
+**Blocked by**: Phase 4 Sprints 4.2, 4.3, 4.7, 4.8
 
 > **Purpose**: Define the supported static-quality and test matrix for the two-binary topology
 > (`infernix` plus `infernix-demo` sharing `infernix-lib`), the Pulsar-driven production inference
@@ -14,8 +14,8 @@
 The validation contract itself (lint plus unit plus integration plus routed E2E plus HA chaos
 plus lifecycle plus per-mode exhaustive matrix) retains its shape under the new doctrine. The
 current implementation still satisfies these validation sprints on the supported paths, so the
-individual sprint statuses remain `Done`; later Haskell and PureScript migration work in Phases 1,
-3, 4, and 5 will update the implementation pointers under this phase without changing the overall
+individual sprint statuses remain `Done`; later Haskell and runtime migration work in Phases 1,
+3, and 4 will update the implementation pointers under this phase without changing the overall
 validation contract.
 
 ## Current Repo Assessment
@@ -35,7 +35,7 @@ beyond the grace window, cluster bootstrap recycles that pod once and the full A
 or Linux CUDA validation matrix now completes cleanly afterward.
 
 - `infernix test lint` and `infernix test unit` are the canonical host-side static-quality and
-  unit gates
+  unit gates, and the frontend unit lane now runs through `spago test`
 - `infernix test integration` and `infernix test e2e` exercise `apple-silicon`, `linux-cpu`, and
   automatically include `linux-cuda` when no explicit runtime-mode override is supplied and the
   active control-plane surface passes the NVIDIA preflight contract
@@ -75,7 +75,7 @@ This phase owns the rule that validation follows the generated demo catalog for 
 ## Sprint 6.1: Haskell Static Quality Gates and Extensive Unit Suites [Done]
 
 **Status**: Done
-**Implementation**: `src/Infernix/CLI.hs`, `tools/lint_check.py`, `tools/haskell_style_check.py`, `test/unit/Spec.hs`, `web/test/contracts.test.mjs`
+**Implementation**: `src/Infernix/CLI.hs`, `src/Infernix/Lint/`, `src/Infernix/Lint/HaskellStyle.hs`, `scripts/install-formatter.sh`, `test/haskell-style/Spec.hs`, `test/unit/Spec.hs`, `web/test/Main.purs`
 **Docs to update**: `documents/development/haskell_style.md`, `documents/development/testing_strategy.md`, `documents/reference/cli_reference.md`
 
 ### Objective
@@ -101,8 +101,8 @@ executables, shared contracts, and matrix-rendering logic.
 
 - `infernix test lint` passes when the repo-owned lint, docs, and compiler-warning policy are satisfied
 - removing a required chart, Kind, or `.proto` asset fails `infernix test lint`
-- Haskell formatting or lint drift fails `python3 tools/haskell_style_check.py` and therefore
-  fails `infernix test lint`
+- Haskell formatting or lint drift fails `cabal --builddir=.build/cabal test infernix-haskell-style`
+  and therefore fails `infernix test lint`
 - trailing whitespace, tab characters, missing trailing newlines, docs regressions, or warning regressions fail `infernix test lint`
 - `infernix test unit` runs both Haskell and frontend unit suites
 - breaking generated shared types, generated catalog counts, representative catalog membership, or
@@ -118,7 +118,7 @@ None.
 ## Sprint 6.2: Extensive Integration Suites [Done]
 
 **Status**: Done
-**Implementation**: `src/Infernix/Cluster.hs`, `test/integration/Spec.hs`, `tools/runtime_backend.py`
+**Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Demo/Api.hs`, `src/Infernix/Runtime.hs`, `test/integration/Spec.hs`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/operations/cluster_bootstrap_runbook.md`
 
 ### Objective
@@ -167,7 +167,7 @@ None.
 ## Sprint 6.3: Routed Playwright E2E Coverage [Done]
 
 **Status**: Done
-**Implementation**: `web/playwright.config.js`, `web/playwright/inference.spec.js`, `web/test/run_playwright_matrix.mjs`
+**Implementation**: `src/Infernix/CLI.hs`, `web/playwright/inference.spec.js`, `web/test/run_playwright_matrix.mjs`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/reference/web_portal_surface.md`
 
 ### Objective
@@ -236,7 +236,7 @@ None.
 ## Sprint 6.5: Cluster Lifecycle and Environment-Matrix Validation [Done]
 
 **Status**: Done
-**Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Config.hs`, `src/Infernix/CLI.hs`, `compose.yaml`, `kind/cluster-apple-silicon.yaml`, `kind/cluster-linux-cpu.yaml`, `kind/cluster-linux-cuda.yaml`, `test/integration/Spec.hs`, `web/playwright.config.js`, `web/test/run_playwright_matrix.mjs`
+**Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Config.hs`, `src/Infernix/CLI.hs`, `compose.yaml`, `kind/cluster-apple-silicon.yaml`, `kind/cluster-linux-cpu.yaml`, `kind/cluster-linux-cuda.yaml`, `test/integration/Spec.hs`, `web/playwright/inference.spec.js`, `web/test/run_playwright_matrix.mjs`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/operations/apple_silicon_runbook.md`
 
 ### Objective
@@ -263,9 +263,9 @@ Verify the same product contract across Apple host-native and Linux outer-contai
 - `infernix test integration` proves the host-native lane creates the generated demo
   `.dhall`, published ConfigMap mirror, repo-local kubeconfig, and publication state for the active
   runtime mode
-- `python3 tools/platform_asset_check.py` plus a clean outer-container Kind probe prove the
-  loopback-only host-bind contract, the internal-kubeconfig control-plane endpoint, and the
-  private `kind` network access path on the Linux outer-container lane
+- `infernix lint chart` plus a clean outer-container Kind probe prove the loopback-only host-bind
+  contract, the internal-kubeconfig control-plane endpoint, and the private `kind` network access
+  path on the Linux outer-container lane
 - `cluster status` code prints the runtime mode, build or data roots, demo-config publication
   details, chosen edge port, publication state path, and cache or object inventory without mutating
   cluster state
@@ -281,7 +281,7 @@ None.
 ## Sprint 6.6: Per-Mode Exhaustive Integration and E2E Coverage [Done]
 
 **Status**: Done
-**Implementation**: `src/Infernix/CLI.hs`, `test/unit/Spec.hs`, `test/integration/Spec.hs`, `web/playwright/inference.spec.js`, `web/test/contracts.test.mjs`, `web/test/run_playwright_matrix.mjs`
+**Implementation**: `src/Infernix/CLI.hs`, `test/unit/Spec.hs`, `test/integration/Spec.hs`, `web/playwright/inference.spec.js`, `web/test/Main.purs`, `web/test/run_playwright_matrix.mjs`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/reference/web_portal_surface.md`, `documents/reference/cli_reference.md`
 
 ### Objective

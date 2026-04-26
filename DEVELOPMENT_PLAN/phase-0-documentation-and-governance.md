@@ -19,8 +19,8 @@ The repository has a governed docs suite, and the governed docs align with the d
 in [00-overview.md](00-overview.md): the two-binary topology, the Pulsar-only production
 inference surface, the demo HTTP surface served only by `infernix-demo`, the Python restriction
 to `python/adapters/<engine>/` under Poetry plus mypy/black/ruff strict, and the PureScript demo
-UI built with spago and consuming Haskell-derived contracts via `purescript-bridge`. The docs
-validator forbids the retired-doctrine phrases outside
+UI built with spago and consuming Haskell-owned generated contracts derived through
+`purescript-bridge`. The docs validator forbids the retired-doctrine phrases outside
 [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
 
 - the docs suite distinguishes control-plane execution context from runtime mode
@@ -31,9 +31,9 @@ validator forbids the retired-doctrine phrases outside
   active-mode exhaustive integration and E2E coverage
 - the docs suite documents the two-binary topology, the Pulsar-only production inference surface,
   the Python restriction to engine adapters with the strict mypy plus black plus ruff quality
-  gate, and the PureScript demo UI plus `purescript-bridge` contract derivation
-- the docs validator (currently `tools/docs_check.py`, migrating to `infernix lint docs` in
-  Phase 1 Sprint 1.6) validates those phrases directly so later drift is caught early, and
+  gate, and the PureScript demo UI plus the current Haskell-owned contract generator
+- the docs validator (`infernix lint docs`, implemented in `src/Infernix/Lint/Docs.hs`) validates
+  those phrases directly so later drift is caught early, and
   enforces the retired-doctrine forbidden-phrase rule outside
   [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md)
 
@@ -141,24 +141,24 @@ None.
 ## Sprint 0.4: Documentation Validation and Plan Harmony [Done]
 
 **Status**: Done
-**Implementation**: `tools/docs_check.py`, `README.md`
+**Implementation**: `src/Infernix/Lint/Docs.hs`, `README.md`
 **Docs to update**: `documents/documentation_standards.md`, `documents/README.md`, `README.md`
 
 ### Objective
 
 Make doc consistency a first-class gate and keep the plan and governed docs synchronized during the
-bootstrap stage before the Haskell CLI owns the same workflow.
+bootstrap stage and after the Haskell CLI takes ownership of the same workflow.
 
 ### Deliverables
 
-- `tools/docs_check.py` validates required headers, relative links, and plan or docs cross-references
+- `infernix lint docs` validates required headers, relative links, and plan or docs cross-references
 - the plan remains authoritative for implementation status
 - the docs suite remains authoritative for architecture and operator guidance once the relevant docs exist
 - Phase 1 wires the same validation logic into `infernix docs check`
 
 ### Validation
 
-- `python3 tools/docs_check.py` passes after documentation edits
+- `infernix lint docs` passes after documentation edits
 - changing a canonical route, storage rule, or CLI command requires updating the plan and the owning docs in the same change
 - stale references to disallowed README-only architecture guidance fail the docs validation path
 
@@ -209,7 +209,7 @@ closure claims continue.
   mode names and describe the same generated demo-config contract
 - the plan, README, and docs suite all state that integration and E2E coverage are active-mode
   exhaustive rather than smoke-only when no explicit exception is called out
-- `python3 tools/docs_check.py` passes after the alignment updates
+- `infernix lint docs` passes after the alignment updates
 
 ### Remaining Work
 
@@ -220,7 +220,7 @@ None.
 ## Sprint 0.6: Doctrine Realignment Across Documentation Suite [Done]
 
 **Status**: Done
-**Implementation**: `documents/`, `README.md`, `AGENTS.md`, `CLAUDE.md`, `tools/docs_check.py`
+**Implementation**: `documents/`, `README.md`, `AGENTS.md`, `CLAUDE.md`, `src/Infernix/Lint/Docs.hs`
 **Docs to update**: `documents/architecture/overview.md`, `documents/architecture/web_ui_architecture.md`, `documents/development/frontend_contracts.md`, `documents/development/local_dev.md`, `documents/development/testing_strategy.md`, `documents/development/python_policy.md`, `documents/development/purescript_policy.md`, `documents/engineering/edge_routing.md`, `documents/engineering/build_artifacts.md`, `documents/engineering/model_lifecycle.md`, `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/reference/api_surface.md`, `documents/reference/web_portal_surface.md`, `documents/reference/cli_reference.md`, `documents/tools/pulsar.md`, `README.md`, `AGENTS.md`, `CLAUDE.md`
 
 ### Objective
@@ -231,7 +231,7 @@ two-binary topology (`infernix` plus `infernix-demo` sharing `infernix-lib`); pr
 surface is Pulsar subscription only; demo HTTP surface lives only in `infernix-demo`; Python is
 restricted to `python/adapters/<engine>/` and validated by Poetry plus mypy strict, black, and ruff
 strict in every adapter container build; and the demo UI is PureScript with frontend types derived
-from Haskell ADTs via `purescript-bridge`.
+from Haskell-owned generated contracts derived through `purescript-bridge`.
 
 ### Deliverables
 
@@ -239,18 +239,17 @@ from Haskell ADTs via `purescript-bridge`.
   new doctrine in present-tense declarative language
 - new `documents/development/python_policy.md` documents when Python is allowed (engine adapters
   whose engine is Python-native), the Poetry plus `python/pyproject.toml` workflow, the
-  `./.venv/`-outside-cluster vs system-wide-inside-container split, and the strict mypy plus
+  repo-local-Poetry-environment-outside-cluster vs system-wide-inside-container split, and the strict mypy plus
   black plus ruff quality gate integrated into every adapter container build
 - new `documents/development/purescript_policy.md` documents the spago plus purs toolchain, the
-  `purescript-spec` test framework, and the `purescript-bridge`-driven contract derivation from
-  Haskell ADTs in `src/Infernix/Demo/Api.hs`
+  `purescript-spec` test framework, and the Haskell-owned contract generator
 - `documents/architecture/web_ui_architecture.md` is rewritten to describe PureScript built by
   spago, served from `web/dist/`, and consumed by `infernix-demo`
-- `documents/development/frontend_contracts.md` describes `purescript-bridge` rather than
-  build-generated JavaScript
+- `documents/development/frontend_contracts.md` describes the PureScript contract-generation path
+  rather than build-generated JavaScript
 - `documents/engineering/edge_routing.md` describes the Haskell edge proxy
-- `documents/engineering/build_artifacts.md` describes `web/dist/` populated by `spago bundle-app`
-  and the two-binary OCI image with selectable entrypoint
+- `documents/engineering/build_artifacts.md` describes `web/dist/` populated by the current
+  `spago bundle` path and the two-binary OCI image with selectable entrypoint
 - `documents/engineering/model_lifecycle.md` describes the Haskell worker plus per-engine Python
   adapter under `python/adapters/<engine>/`
 - `documents/operations/apple_silicon_runbook.md` and `documents/development/local_dev.md` drop
@@ -265,9 +264,9 @@ from Haskell ADTs via `purescript-bridge`.
   and describes `infernix service` as a Pulsar consumer in production
 - `documents/tools/pulsar.md` adds the production-inference subscription and dispatch contract,
   including the `.dhall` schema fields `request_topics`, `result_topic`, and `engines`
-- the docs validator forbids the phrases "Python HTTP server", "JavaScript workbench",
-  "web/build.mjs", "Homebrew-installed poetry", and "single Haskell binary" outside
-  [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md)
+- the docs validator forbids the retired-doctrine vocabulary recorded in
+  [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) everywhere else in the
+  governed suite
 - root `README.md` describes the production surface as "publish protobuf to Pulsar", describes the
   demo UI as PureScript, and updates the topology diagram for two binaries
 - `AGENTS.md` and `CLAUDE.md` add the doctrine line: "Custom logic in Haskell. Python only for
@@ -277,7 +276,7 @@ from Haskell ADTs via `purescript-bridge`.
 ### Validation
 
 - the docs validator passes against the rewritten suite
-- `grep -RE 'Python HTTP server|JavaScript workbench|web/build\.mjs|Homebrew-installed poetry|single Haskell binary' DEVELOPMENT_PLAN documents README.md AGENTS.md CLAUDE.md` returns no results outside `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
+- `infernix lint docs` passes against the governed suite and the root workflow documents
 - every governed document still begins with the required metadata block
 - inbound and outbound links across the suite resolve correctly
 - root `README.md`, `AGENTS.md`, and `CLAUDE.md` carry the doctrine line and the two-binary topology

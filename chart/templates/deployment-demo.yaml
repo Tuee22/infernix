@@ -1,0 +1,62 @@
+{{- if .Values.demo.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: infernix-demo
+  namespace: platform
+spec:
+  replicas: {{ .Values.demo.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: infernix-demo
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: infernix-demo
+    spec:
+      containers:
+        - name: infernix-demo
+          image: "{{ .Values.demo.image.repository }}:{{ .Values.demo.image.tag }}"
+          imagePullPolicy: {{ .Values.demo.image.pullPolicy }}
+          command:
+            - infernix-demo
+          args:
+            - --runtime-mode
+            - {{ .Values.runtimeMode | quote }}
+            - serve
+            - --dhall
+            - "{{ .Values.demoConfig.mountPath }}/{{ .Values.demoConfig.fileName }}"
+            - --port
+            - {{ .Values.demo.port | quote }}
+          env:
+            - name: INFERNIX_BIND_HOST
+              value: "0.0.0.0"
+            - name: INFERNIX_RUNTIME_MODE
+              value: {{ .Values.runtimeMode | quote }}
+            - name: INFERNIX_PUBLICATION_STATE_PATH
+              value: "{{ .Values.demoConfig.mountPath }}/{{ .Values.publication.fileName }}"
+            - name: INFERNIX_DATA_ROOT
+              value: "/srv/infernix/.data"
+          ports:
+            - containerPort: {{ .Values.demo.port }}
+          volumeMounts:
+            - name: demo-config
+              mountPath: "{{ .Values.demoConfig.mountPath }}/{{ .Values.demoConfig.fileName }}"
+              subPath: {{ .Values.demoConfig.fileName }}
+              readOnly: true
+            - name: publication-state
+              mountPath: "{{ .Values.demoConfig.mountPath }}/{{ .Values.publication.fileName }}"
+              subPath: {{ .Values.publication.fileName }}
+              readOnly: true
+            - name: demo-data
+              mountPath: /srv/infernix/.data
+      volumes:
+        - name: demo-config
+          configMap:
+            name: {{ .Values.demoConfig.name }}
+        - name: publication-state
+          configMap:
+            name: {{ .Values.publication.name }}
+        - name: demo-data
+          emptyDir: {}
+{{- end }}

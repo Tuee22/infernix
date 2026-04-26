@@ -32,11 +32,11 @@ Operator portals (always present):
 
 ## Workbench Behavior
 
-- the workbench is implemented in PureScript built with `spago bundle-app` into `web/dist/` and
-  served by the `infernix-demo` Haskell binary; see
+- the workbench is implemented in PureScript built into `web/dist/` by `npm --prefix web run build`
+  and served by the `infernix-demo` Haskell binary; see
   [../development/purescript_policy.md](../development/purescript_policy.md)
-- frontend types are derived from Haskell ADTs in `src/Infernix/Demo/Api.hs` via
-  `purescript-bridge` (output in `web/src/Generated/`); see
+- frontend contract modules are emitted into `web/src/Generated/` by
+  `infernix internal generate-purs-contracts`; see
   [../development/frontend_contracts.md](../development/frontend_contracts.md)
 - the visible catalog comes from the generated demo catalog for the active runtime mode
 - the generated catalog is published by `cluster up` as `infernix-demo-<mode>.dhall`, mounted into
@@ -48,8 +48,9 @@ Operator portals (always present):
   config returned by `GET /api/demo-config`, while separately validating publication details from
   `/api/publication` through the real routed cluster edge
 - the host-native and outer-container validation paths launch that routed Playwright contract from
-  the same web image that serves `/`, and the host-native final-substrate lane serves `/` from
-  the Harbor-published web runtime image across `apple-silicon`, `linux-cpu`, and `linux-cuda`
+  the same web image that packages the built demo bundle, and the host-native final-substrate lane
+  reuses that Harbor-published web runtime image across `apple-silicon`, `linux-cpu`, and
+  `linux-cuda`
 - on the outer-container validation path, that web image reaches the routed surface over the
   private Docker `kind` network by targeting the control-plane node on port `30090`, while the
   host-published edge port remains loopback-only on `127.0.0.1`

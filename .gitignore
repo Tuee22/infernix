@@ -35,6 +35,7 @@ web/node_modules/
 web/dist/
 web/output/
 web/.spago/
+web/src/Generated/
 web/.parcel-cache/
 web/playwright-report/
 web/test-results/

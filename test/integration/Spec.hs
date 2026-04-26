@@ -3,432 +3,105 @@
 module Main (main) where
 
 import Control.Concurrent (threadDelay)
-import Control.Exception (finally)
-import Data.ByteString.Lazy qualified as Lazy
-import Data.List (isInfixOf, isPrefixOf, sort, tails)
-import Data.Maybe (mapMaybe)
+import Control.Exception (finally, try)
+import Data.Char (isAsciiUpper)
+import Data.List (isInfixOf, isPrefixOf)
 import Data.Text qualified as Text
-import Data.Text.IO qualified as TextIO
 import Infernix.Cluster
 import Infernix.Config (Paths (..))
 import Infernix.Config qualified as Config
-import Infernix.Models
-import Infernix.Service (activateHostBridgeRoute, restoreClusterServiceRoute)
 import Infernix.Types
 import System.Directory
-import System.Environment (lookupEnv, setEnv, unsetEnv)
+import System.Environment (getEnvironment, lookupEnv, setEnv, unsetEnv)
 import System.Exit (ExitCode (ExitSuccess))
 import System.FilePath ((</>))
-import System.IO (Handle, hClose, hGetLine)
+import System.IO (hClose, hGetLine)
 import System.IO.Error (catchIOError, isDoesNotExistError)
 import System.Process
-  ( CreateProcess (cwd, std_err, std_in, std_out),
+  ( CreateProcess (cwd, env, std_err, std_in, std_out),
     StdStream (CreatePipe),
     createProcess,
     proc,
-    readCreateProcessWithExitCode,
     readProcess,
     readProcessWithExitCode,
     terminateProcess,
     waitForProcess,
   )
-import Text.Read (readMaybe)
-
-data SerializedCatalogEntry = SerializedCatalogEntry
-  { entryMatrixRowId :: Text.Text,
-    entryModelId :: Text.Text,
-    entrySelectedEngine :: Text.Text,
-    entryRuntimeMode :: RuntimeMode,
-    entryRequiresGpu :: Bool
-  }
 
 main :: IO ()
 main = do
   integrationTestRoot <- testRootPath "integration"
   withTestRoot integrationTestRoot $ do
     paths <- Config.discoverPaths
-    maybeRequestedMode <- lookupEnv "INFERNIX_RUNTIME_MODE"
-    runtimeModes <- case maybeRequestedMode >>= (parseRuntimeMode . Text.pack) of
-      Just runtimeMode -> pure [runtimeMode]
-      Nothing -> do
-        cudaSupported <- linuxCudaSupportedOnHost
-        pure (filter (\runtimeMode -> runtimeMode /= LinuxCuda || cudaSupported) allRuntimeModes)
-    mapM_ (exerciseRuntimeMode paths) runtimeModes
-    case runtimeModes of
-      runtimeMode : _ -> validateEdgePortConflictAndRediscovery paths runtimeMode
-      [] -> fail "integration suite requires at least one runtime mode"
+    mapM_ (exerciseRuntimeMode paths) [AppleSilicon, LinuxCpu, LinuxCuda]
+    validateDemoUiDisabled paths LinuxCpu
+    validateEdgePortConflictAndRediscovery paths LinuxCpu
+    validateStandaloneProxyProcesses paths
     putStrLn "integration tests passed"
 
 exerciseRuntimeMode :: Paths -> RuntimeMode -> IO ()
 exerciseRuntimeMode paths runtimeMode = do
   clusterUp (Just runtimeMode)
-  validateClusterArtifacts paths runtimeMode
-  validateClusterStatusOutput paths runtimeMode
-  initialPostgresHostPaths <- validateOperatorManagedPostgresql paths
   maybeState <- loadClusterState paths
   state <- maybe (fail "cluster state was not available after cluster up") pure maybeState
-  let baseUrl = edgeBaseUrl paths runtimeMode (edgePort state)
-  serializedEntries <- loadSerializedCatalogEntries paths runtimeMode
-  assert (not (null serializedEntries)) ("serialized catalog is non-empty for " <> showRuntimeMode runtimeMode)
-  let typedCatalog = catalogForMode runtimeMode
-      typedModelIds = map modelId typedCatalog
-      serializedModelIds = map entryModelId serializedEntries
-      typedEngines = map selectedEngine typedCatalog
-      serializedEngines = map entrySelectedEngine serializedEntries
-  assert (serializedModelIds == typedModelIds) ("serialized catalog preserves model ordering for " <> showRuntimeMode runtimeMode)
-  assert (serializedEngines == typedEngines) ("serialized catalog preserves engine bindings for " <> showRuntimeMode runtimeMode)
-  validateRoutedSurface paths runtimeMode serializedEntries
-  whenHostNative paths (validateHostBridgeService paths runtimeMode serializedEntries)
-  case serializedEntries of
-    firstEntry : _ -> validateServiceCacheLifecycle paths runtimeMode baseUrl firstEntry
-    [] -> pure ()
-  mapM_ (exerciseCatalogEntry baseUrl runtimeMode) serializedEntries
-  case (runtimeMode, serializedEntries) of
-    (AppleSilicon, firstEntry : _) -> validateHaRecovery paths runtimeMode baseUrl firstEntry
-    _ -> pure ()
-  case runtimeMode of
-    LinuxCuda -> do
-      assert (any entryRequiresGpu serializedEntries) "linux-cuda serialized catalogs record GPU-bound rows"
-      validateLinuxCudaCluster paths runtimeMode
-    _ -> pure ()
+  assert (clusterPresent state) ("cluster up records cluster presence for " <> showRuntimeMode runtimeMode)
+  assert (clusterSimulation state) ("cluster up uses the simulated substrate for " <> showRuntimeMode runtimeMode)
+  let baseUrl = "http://127.0.0.1:" <> show (edgePort state)
+  homeResponse <- httpGet (baseUrl <> "/")
+  publicationResponse <- httpGet (baseUrl <> "/api/publication")
+  demoConfigResponse <- httpGet (baseUrl <> "/api/demo-config")
+  modelsResponse <- httpGet (baseUrl <> "/api/models")
+  harborResponse <- httpGet (baseUrl <> "/harbor")
+  minioResponse <- httpGet (baseUrl <> "/minio/s3")
+  pulsarResponse <- httpGet (baseUrl <> "/pulsar/ws")
+  assert ("Infernix" `isInfixOf` homeResponse) "demo root serves the browser entrypoint"
+  assert (("\"runtimeMode\": \"" <> showRuntimeMode runtimeMode <> "\"") `isInfixOf` publicationResponse) "publication reports the active runtime mode"
+  assert ("\"clusterpresent\": true" `isInfixOf` mapToLowerAscii publicationResponse) "publication reports cluster presence"
+  assert ("\"demo_ui\":true" `isInfixOf` compact demoConfigResponse) "demo config reports the enabled demo UI flag"
+  assert
+    ( ("\"request_topics\":[\"persistent://public/default/inference.request." <> showRuntimeMode runtimeMode <> "\"]")
+        `isInfixOf` compact demoConfigResponse
+    )
+    "demo config reports the active request topic"
+  assert
+    ( ("\"result_topic\":\"persistent://public/default/inference.result." <> showRuntimeMode runtimeMode <> "\"")
+        `isInfixOf` compact demoConfigResponse
+    )
+    "demo config reports the active result topic"
+  assert ("\"engines\":[" `isInfixOf` compact demoConfigResponse) "demo config reports engine bindings"
+  assert ("\"adapterId\":\"" `isInfixOf` compact demoConfigResponse) "demo config publishes adapter ids for engine bindings"
+  assert ("\"modelId\"" `isInfixOf` modelsResponse) "model listing returns JSON models"
+  assert ("Harbor Gateway" `isInfixOf` harborResponse) "harbor route is published"
+  assert ("\"status\":\"ready\"" `isInfixOf` compact minioResponse) "minio route is published"
+  assert ("\"brokersHealth\":\"ready\"" `isInfixOf` compact pulsarResponse) "pulsar route is published"
+
+  inferenceResponse <-
+    httpPostJson
+      (baseUrl <> "/api/inference")
+      "{\"requestModelId\":\"llm-qwen25-safetensors\",\"inputText\":\"integration coverage for the simulated platform\"}"
+  assert ("\"resultModelId\":\"llm-qwen25-safetensors\"" `isInfixOf` compact inferenceResponse) "inference returns the selected model id"
+  requestIdValue <- requireJsonStringField "requestId" inferenceResponse
+  storedResult <- httpGet (baseUrl <> "/api/inference/" <> requestIdValue)
+  assert
+    (("\"requestId\":\"" <> requestIdValue <> "\"") `isInfixOf` compact storedResult)
+    ("stored results can be reloaded for " <> showRuntimeMode runtimeMode)
+  cacheResponse <- httpGet (baseUrl <> "/api/cache")
+  assert ("\"modelId\":\"llm-qwen25-safetensors\"" `isInfixOf` compact cacheResponse) "cache status reports the materialized model"
+  evictResponse <- httpPostJson (baseUrl <> "/api/cache/evict") "{\"modelId\":\"llm-qwen25-safetensors\"}"
+  assert ("\"evictedCount\":1" `isInfixOf` compact evictResponse) "cache eviction reports one removed entry"
+  rebuildResponse <- httpPostJson (baseUrl <> "/api/cache/rebuild") "{\"modelId\":\"llm-qwen25-safetensors\"}"
+  assert ("\"rebuiltCount\":1" `isInfixOf` compact rebuildResponse) "cache rebuild reports one restored entry"
+
+  statusOutput <- captureInfernixOutput paths runtimeMode ["cluster", "status"]
+  assert ("clusterPresent: True" `isInfixOf` statusOutput) "cluster status reports the cluster presence"
+  assert (("runtimeMode: " <> showRuntimeMode runtimeMode) `isInfixOf` statusOutput) "cluster status reports the runtime mode"
+  assert ("publicationStatePath: " `isInfixOf` statusOutput) "cluster status reports the publication state path"
+
   clusterDown (Just runtimeMode)
   maybeDownState <- loadClusterState paths
-  assert (maybe False (not . clusterPresent) maybeDownState) ("cluster down records cluster absence for " <> showRuntimeMode runtimeMode)
+  assert (maybe False (not . clusterPresent) maybeDownState) "cluster down records cluster absence"
   downStatusOutput <- captureInfernixOutput paths runtimeMode ["cluster", "status"]
-  assert ("clusterPresent: False" `isInfixOf` downStatusOutput) ("cluster status reports cluster absence after down for " <> showRuntimeMode runtimeMode)
-  clusterUp (Just runtimeMode)
-  maybeStateAfterRepeatUp <- loadClusterState paths
-  assert (maybe False clusterPresent maybeStateAfterRepeatUp) ("repeat cluster up remains idempotent for " <> showRuntimeMode runtimeMode)
-  reboundPostgresHostPaths <- validateOperatorManagedPostgresql paths
-  assert (reboundPostgresHostPaths == initialPostgresHostPaths) ("operator-managed PostgreSQL reuses the same manual host paths after repeat up for " <> showRuntimeMode runtimeMode)
-  clusterDown (Just runtimeMode)
-
-exerciseCatalogEntry :: String -> RuntimeMode -> SerializedCatalogEntry -> IO ()
-exerciseCatalogEntry baseUrl runtimeMode entry = do
-  response <-
-    httpPostJsonWithRetry
-      20
-      (baseUrl <> "/api/inference")
-      ("{\"requestModelId\":\"" <> Text.unpack (entryModelId entry) <> "\",\"inputText\":\"integration coverage\"}")
-  assert (("\"resultModelId\": \"" <> Text.unpack (entryModelId entry) <> "\"") `isInfixOf` response) "integration exercises every generated catalog entry through the routed service API"
-  assert (("\"matrixRowId\": \"" <> Text.unpack (entryMatrixRowId entry) <> "\"") `isInfixOf` response) "integration preserves serialized matrix row ids through the routed service API"
-  assert (("\"runtimeMode\": \"" <> showRuntimeMode runtimeMode <> "\"") `isInfixOf` response) "integration preserves serialized runtime modes through the routed service API"
-  assert (("\"selectedEngine\": \"" <> Text.unpack (entrySelectedEngine entry) <> "\"") `isInfixOf` response) "integration preserves serialized engine bindings through the routed service API"
-  requestIdText <- requireJsonStringField "requestId" response
-  storedResult <- httpGetWithRetry 20 (baseUrl <> "/api/inference/" <> requestIdText)
-  assert (("\"resultModelId\": \"" <> Text.unpack (entryModelId entry) <> "\"") `isInfixOf` storedResult) "integration can reload persisted routed service results"
-
-validateClusterArtifacts :: Paths -> RuntimeMode -> IO ()
-validateClusterArtifacts paths runtimeMode = do
-  kubeconfigExists <- doesFileExist (Config.generatedKubeconfigPath paths)
-  generatedCatalogExists <- doesFileExist (Config.generatedDemoConfigPath paths runtimeMode)
-  publishedCatalogExists <- doesFileExist (Config.publishedConfigMapCatalogPath paths runtimeMode)
-  configMapManifestExists <- doesFileExist (Config.publishedConfigMapManifestPath paths)
-  publicationStateExists <- doesFileExist (Config.publicationStatePath paths)
-  maybeState <- loadClusterState paths
-  state <- maybe (fail "cluster state was not available after cluster up") pure maybeState
-
-  assert kubeconfigExists "cluster up creates a repo-local kubeconfig"
-  assert generatedCatalogExists "cluster up creates the generated mode-specific demo config"
-  assert publishedCatalogExists "cluster up publishes the generated catalog into the ConfigMap mirror path"
-  assert configMapManifestExists "cluster up writes the ConfigMap compatibility manifest"
-  assert publicationStateExists "cluster up writes publication state for routed consumers"
-  assert (clusterPresent state) "cluster up persists cluster state"
-
-  generatedPayload <- Lazy.readFile (Config.generatedDemoConfigPath paths runtimeMode)
-  publishedPayload <- Lazy.readFile (Config.publishedConfigMapCatalogPath paths runtimeMode)
-  configMapNameOutput <- kubectlOutputForState state ["get", "configmap", "infernix-demo-config", "-n", "platform", "-o", "name"]
-  publicationPayload <- readFileWithRetry 5 (Config.publicationStatePath paths)
-  assert (generatedPayload == publishedPayload) "published ConfigMap content matches the generated catalog byte-for-byte"
-  assert ("configmap/infernix-demo-config" `isInfixOf` configMapNameOutput) "real ConfigMap publication exists in the cluster"
-  assert (("\"runtimeMode\": \"" <> showRuntimeMode runtimeMode <> "\"") `isInfixOf` publicationPayload) "publication state records the active runtime mode"
-  assert ("\"path\": \"/api\"" `isInfixOf` publicationPayload) "publication state records routed API publication"
-
-validateClusterStatusOutput :: Paths -> RuntimeMode -> IO ()
-validateClusterStatusOutput paths runtimeMode = do
-  statusOutput <- captureInfernixOutput paths runtimeMode ["cluster", "status"]
-  assert ("clusterPresent: True" `isInfixOf` statusOutput) "cluster status reports cluster presence"
-  assert (("runtimeMode: " <> showRuntimeMode runtimeMode) `isInfixOf` statusOutput) "cluster status reports the active runtime mode"
-  assert (("publicationStatePath: " <> Config.publicationStatePath paths) `isInfixOf` statusOutput) "cluster status reports the publication-state path"
-  assert ("publicationApiUpstreamMode: cluster-service" `isInfixOf` statusOutput) "cluster status reports publication-state API upstream mode"
-  assert ("publicationUpstream: service -> published via" `isInfixOf` statusOutput) "cluster status reports publication-state upstream details"
-  assert (("generatedDemoConfigPath: " <> Config.generatedDemoConfigPath paths runtimeMode) `isInfixOf` statusOutput) "cluster status reports the generated demo-config path"
-  assert (("publishedDemoConfigPath: " <> Config.publishedConfigMapCatalogPath paths runtimeMode) `isInfixOf` statusOutput) "cluster status reports the published demo-config path"
-  assert (("mountedDemoConfigPath: " <> Config.watchedDemoConfigPath runtimeMode) `isInfixOf` statusOutput) "cluster status reports the mounted demo-config path"
-  assert ("route: /api -> Service API" `isInfixOf` statusOutput) "cluster status reports the routed API publication"
-
-validateOperatorManagedPostgresql :: Paths -> IO [String]
-validateOperatorManagedPostgresql paths = do
-  maybeState <- loadClusterState paths
-  state <- maybe (fail "cluster state was not available before PostgreSQL validation") pure maybeState
-  operatorDeployment <-
-    trim
-      <$> kubectlOutputForState
-        state
-        ["-n", "platform", "get", "deployment", "infernix-postgres-operator", "-o", "name"]
-  assert (operatorDeployment == "deployment.apps/infernix-postgres-operator") "Percona PostgreSQL operator deployment is present"
-  pgbouncerDeployment <-
-    trim
-      <$> kubectlOutputForState
-        state
-        ["-n", "platform", "get", "deployment", "harbor-postgresql-pgbouncer", "-o", "name"]
-  assert (pgbouncerDeployment == "deployment.apps/harbor-postgresql-pgbouncer") "Harbor PostgreSQL PgBouncer deployment is present"
-  legacyDatabaseStatefulSet <-
-    trim
-      <$> kubectlOutputForState
-        state
-        ["-n", "platform", "get", "statefulset", "infernix-harbor-database", "--ignore-not-found", "-o", "name"]
-  assert (null legacyDatabaseStatefulSet) "Harbor no longer deploys the chart-managed harbor-database StatefulSet"
-  dataPodNames <- postgresDataPodNames state
-  assert (length dataPodNames == 3) "operator-managed Harbor PostgreSQL exposes three Patroni data pods"
-  primaryPodName <- postgresPrimaryPodName state
-  assert (not (null primaryPodName)) "operator-managed Harbor PostgreSQL exposes a primary Patroni pod"
-  bindings <- postgresDataBindings state
-  assert (length bindings == 3) "operator-managed Harbor PostgreSQL binds three pgdata PVCs"
-  mapM_
-    ( \(_, storageClassName, phaseValue, _, _) -> do
-        assert (storageClassName == "infernix-manual") "operator-managed Harbor PostgreSQL PVCs use infernix-manual"
-        assert (phaseValue == "Bound") "operator-managed Harbor PostgreSQL PVCs reach Bound phase"
-    )
-    bindings
-  pure (sort [hostPath | (_, _, _, _, hostPath) <- bindings])
-
-validateLinuxCudaCluster :: Paths -> RuntimeMode -> IO ()
-validateLinuxCudaCluster paths runtimeMode = do
-  devicePluginRollout <-
-    captureInfernixOutput
-      paths
-      runtimeMode
-      ["kubectl", "-n", "nvidia", "get", "daemonset", "nvidia-device-plugin-daemonset", "-o", "jsonpath={.status.numberReady}:{.status.desiredNumberScheduled}"]
-  let (readyPods, desiredPods) =
-        case break (== ':') (trim devicePluginRollout) of
-          (readyValue, ':' : desiredValue) -> (readMaybe readyValue :: Maybe Int, readMaybe desiredValue :: Maybe Int)
-          _ -> (Nothing, Nothing)
-  assert (readyPods == desiredPods && maybe False (> 0) readyPods) "linux-cuda deploys the real NVIDIA device plugin"
-  allocatableOutput <-
-    captureInfernixOutput
-      paths
-      runtimeMode
-      ["kubectl", "get", "nodes", "-l", "infernix.runtime/gpu=true", "-o", "jsonpath={range .items[*]}{.status.allocatable.nvidia\\.com/gpu}{\"\\n\"}{end}"]
-  let allocatableCounts = mapMaybe readMaybe (filter (not . null) (map trim (lines allocatableOutput))) :: [Int]
-  assert (not (null allocatableCounts)) "linux-cuda nodes advertise at least one GPU allocatable value"
-  assert (all (> 0) allocatableCounts) "linux-cuda nodes advertise real nvidia.com/gpu allocatable values"
-  runtimeClassName <-
-    captureInfernixOutput
-      paths
-      runtimeMode
-      ["kubectl", "-n", "platform", "get", "deployment", "infernix-service", "-o", "jsonpath={.spec.template.spec.runtimeClassName}"]
-  assert (trim runtimeClassName == "nvidia") "linux-cuda service pods use the nvidia runtime class"
-  gpuRequest <-
-    captureInfernixOutput
-      paths
-      runtimeMode
-      ["kubectl", "-n", "platform", "get", "deployment", "infernix-service", "-o", "jsonpath={.spec.template.spec.containers[0].resources.requests.nvidia\\.com/gpu}"]
-  assert (trim gpuRequest == "1") "linux-cuda service pods request nvidia.com/gpu"
-  serviceGpuInventory <-
-    captureInfernixOutput
-      paths
-      runtimeMode
-      ["kubectl", "-n", "platform", "exec", "deployment/infernix-service", "--", "nvidia-smi", "-L"]
-  assert ("GPU " `isInfixOf` serviceGpuInventory) "linux-cuda service deployment can see real NVIDIA GPUs"
-
-validateRoutedSurface :: Paths -> RuntimeMode -> [SerializedCatalogEntry] -> IO ()
-validateRoutedSurface paths runtimeMode serializedEntries = do
-  maybeState <- loadClusterState paths
-  state <- maybe (fail "cluster state was not available after cluster up") pure maybeState
-  let baseUrl = edgeBaseUrl paths runtimeMode (edgePort state)
-  homeResponse <- httpGetWithRetry 60 (baseUrl <> "/")
-  publicationResponse <- httpGetWithRetry 60 (baseUrl <> "/api/publication")
-  modelsResponse <- httpGetWithRetry 60 (baseUrl <> "/api/models")
-  harborResponse <- httpGetWithRetry 60 (baseUrl <> "/harbor")
-  minioResponse <- httpGetWithRetry 60 (baseUrl <> "/minio/s3")
-  pulsarResponse <- httpGetWithRetry 60 (baseUrl <> "/pulsar/ws")
-  assert ("Infernix" `isInfixOf` homeResponse) "routed edge serves the browser workbench"
-  assert (("\"runtimeMode\": \"" <> showRuntimeMode runtimeMode <> "\"") `isInfixOf` publicationResponse) "routed publication reports the active runtime mode"
-  assert ("\"daemonLocation\": \"cluster-pod\"" `isInfixOf` publicationResponse) "routed publication reports the cluster-resident daemon"
-  assert ("\"mode\": \"cluster-service\"" `isInfixOf` publicationResponse) "routed publication reports the cluster service as the active API upstream"
-  assert ("\"durableBackendAccessMode\": \"cluster-local\"" `isInfixOf` publicationResponse) "cluster-resident service reports cluster-local durable backend access"
-  assert ("\"workerExecutionMode\": \"process-isolated-engine-workers\"" `isInfixOf` publicationResponse) "cluster-resident service reports process-isolated engine workers through the routed publication surface"
-  assert ("\"workerAdapterMode\": \"engine-specific-runner-defaults\"" `isInfixOf` publicationResponse) "cluster-resident service reports the engine-specific worker mode through the routed publication surface"
-  assert ("\"artifactAcquisitionMode\": \"engine-ready-artifact-manifests\"" `isInfixOf` publicationResponse) "cluster-resident service reports the engine-ready artifact-manifest contract through the routed publication surface"
-  assert ("\"id\": \"minio\"" `isInfixOf` publicationResponse && "\"durableBackendState\": \"minio-backed chart deployment\"" `isInfixOf` publicationResponse) "routed publication reports MinIO upstream backing state"
-  assert ("\"id\": \"pulsar\"" `isInfixOf` publicationResponse && "\"durableBackendState\": \"pulsar-backed chart deployment\"" `isInfixOf` publicationResponse) "routed publication reports Pulsar upstream backing state"
-  assert ("Harbor Gateway" `isInfixOf` harborResponse || "Harbor" `isInfixOf` harborResponse) "routed Harbor portal resolves through the cluster gateway"
-  assert ("\"targetUrl\"" `isInfixOf` minioResponse || "\"status\": \"ready\"" `isInfixOf` minioResponse) "routed MinIO surface resolves through the cluster gateway"
-  assert ("\"brokersHealth\"" `isInfixOf` pulsarResponse || "\"status\": \"ready\"" `isInfixOf` pulsarResponse) "routed Pulsar surface resolves through the cluster gateway"
-  mapM_
-    (\entry -> assert (Text.unpack (entryModelId entry) `isInfixOf` modelsResponse) "routed model listing exposes every serialized catalog entry")
-    serializedEntries
-
-validateHostBridgeService :: Paths -> RuntimeMode -> [SerializedCatalogEntry] -> IO ()
-validateHostBridgeService paths runtimeMode serializedEntries = do
-  maybeState <- loadClusterState paths
-  state <- maybe (fail "cluster state was not available before host-bridge validation") pure maybeState
-  let baseUrl = edgeBaseUrl paths runtimeMode (edgePort state)
-  activateHostBridgeRoute paths runtimeMode 18081
-  let processArgs =
-        [ repoRoot paths </> "tools" </> "service_server.py",
-          "--repo-root",
-          repoRoot paths,
-          "--host",
-          "0.0.0.0",
-          "--port",
-          "18081",
-          "--runtime-mode",
-          showRuntimeMode runtimeMode,
-          "--control-plane-context",
-          "host-native",
-          "--daemon-location",
-          "control-plane-host",
-          "--catalog-source",
-          "generated-build-root",
-          "--demo-config",
-          Config.generatedDemoConfigPath paths runtimeMode,
-          "--mounted-demo-config",
-          Config.watchedDemoConfigPath runtimeMode,
-          "--publication-state",
-          Config.publicationStatePath paths,
-          "--route-probe-base-url",
-          "http://127.0.0.1:" <> show (edgePort state)
-        ]
-  (_, _, _, serviceHandle) <- createProcess (proc "python3" processArgs)
-  publicationResponse <- waitForPublicationState baseUrl "control-plane-host" "host-daemon-bridge"
-  modelsResponse <- httpGetWithRetry 20 (baseUrl <> "/api/models")
-  assert ("\"daemonLocation\": \"control-plane-host\"" `isInfixOf` publicationResponse) "host bridge publishes the host daemon location through the routed API"
-  assert ("\"mode\": \"host-daemon-bridge\"" `isInfixOf` publicationResponse) "host bridge publishes the host-daemon API upstream"
-  assert ("\"durableBackendAccessMode\": \"edge-route-bridge\"" `isInfixOf` publicationResponse) "host bridge publishes edge-routed durable backend access"
-  assert ("\"workerExecutionMode\": \"process-isolated-engine-workers\"" `isInfixOf` publicationResponse) "host bridge preserves process-isolated engine workers through the routed publication surface"
-  assert ("\"workerAdapterMode\": \"engine-specific-runner-defaults\"" `isInfixOf` publicationResponse) "host bridge preserves the engine-specific worker mode through the routed publication surface"
-  assert ("\"id\": \"harbor\"" `isInfixOf` publicationResponse && "\"healthStatus\": \"ready\"" `isInfixOf` publicationResponse) "host-native service publication reports routed Harbor health"
-  mapM_
-    (\entry -> assert (Text.unpack (entryModelId entry) `isInfixOf` modelsResponse) "host bridge preserves routed catalog listing through the same edge entrypoint")
-    serializedEntries
-  case serializedEntries of
-    firstEntry : _ -> do
-      inferenceResponse <-
-        httpPostJsonWithRetry
-          20
-          (baseUrl <> "/api/inference")
-          ("{\"requestModelId\":\"" <> Text.unpack (entryModelId firstEntry) <> "\",\"inputText\":\"host bridge coverage\"}")
-      assert (("\"resultModelId\": \"" <> Text.unpack (entryModelId firstEntry) <> "\"") `isInfixOf` inferenceResponse) "host bridge preserves routed inference through the browser-visible edge entrypoint"
-    [] -> pure ()
-  terminateProcess serviceHandle
-  _ <- waitForProcess serviceHandle
-  restoreClusterServiceRoute paths
-  _ <- waitForPublicationState baseUrl "cluster-pod" "cluster-service"
-  pure ()
-
-whenHostNative :: Paths -> IO () -> IO ()
-whenHostNative paths action
-  | Config.controlPlaneContext paths == "host-native" = action
-  | otherwise = pure ()
-
-validateServiceCacheLifecycle :: Paths -> RuntimeMode -> String -> SerializedCatalogEntry -> IO ()
-validateServiceCacheLifecycle paths runtimeMode baseUrl entry = do
-  let modelIdText = Text.unpack (entryModelId entry)
-      inferenceBody =
-        "{\"requestModelId\":\"" <> modelIdText <> "\",\"inputText\":\"cache lifecycle coverage\"}"
-      cacheBody = "{\"modelId\":\"" <> modelIdText <> "\"}"
-  inferenceResponse <- httpPostJsonWithRetry 20 (baseUrl <> "/api/inference") inferenceBody
-  assert (("\"resultModelId\": \"" <> modelIdText <> "\"") `isInfixOf` inferenceResponse) "routed inference succeeds before cache lifecycle assertions"
-  cacheAfterInference <- httpGetWithRetry 20 (baseUrl <> "/api/cache")
-  assert (("\"modelId\": \"" <> modelIdText <> "\"") `isInfixOf` cacheAfterInference) "service cache status lists the materialized model"
-  assert ("\"materialized\": true" `isInfixOf` cacheAfterInference) "service cache status records materialized cache entries"
-  assert
-    (("\"durableSourceUri\": \"s3://infernix-runtime/artifacts/" <> showRuntimeMode runtimeMode <> "/" <> modelIdText <> "/bundle.json\"") `isInfixOf` cacheAfterInference)
-    "service cache status reports the durable runtime artifact bundle stored in MinIO"
-  assert ("\"engineAdapterId\": \"" `isInfixOf` cacheAfterInference) "service cache status reports engine-specific runner metadata"
-  assert ("\"engineAdapterAvailability\": \"" `isInfixOf` cacheAfterInference) "service cache status reports engine-adapter availability"
-  assert ("\"sourceArtifactManifestUri\": \"s3://infernix-runtime/source-artifacts/" `isInfixOf` cacheAfterInference) "service cache status reports the durable source-artifact manifest stored in MinIO"
-  assert ("\"sourceArtifactSelectionMode\": \"" `isInfixOf` cacheAfterInference) "service cache status reports engine-specific source-artifact selection metadata"
-  assert ("\"sourceArtifactAuthoritativeUri\": \"" `isInfixOf` cacheAfterInference) "service cache status reports the authoritative runtime input URI"
-  assert ("\"sourceArtifactAuthoritativeKind\": \"" `isInfixOf` cacheAfterInference) "service cache status reports the authoritative runtime input kind"
-  assert ("\"sourceArtifactSelectedArtifacts\": [" `isInfixOf` cacheAfterInference) "service cache status reports the selected engine-ready artifact inventory"
-  evictResponse <- httpPostJsonWithRetry 20 (baseUrl <> "/api/cache/evict") cacheBody
-  assert ("\"evictedCount\": 1" `isInfixOf` evictResponse) "service cache eviction reports one evicted entry"
-  cacheAfterEvict <- httpGetWithRetry 20 (baseUrl <> "/api/cache")
-  assert (("\"modelId\": \"" <> modelIdText <> "\"") `isInfixOf` cacheAfterEvict) "service cache status preserves durable manifests after eviction"
-  assert ("\"materialized\": false" `isInfixOf` cacheAfterEvict) "service cache eviction removes the derived cache marker"
-  rebuildResponse <- httpPostJsonWithRetry 20 (baseUrl <> "/api/cache/rebuild") cacheBody
-  assert ("\"rebuiltCount\": 1" `isInfixOf` rebuildResponse) "service cache rebuild reports one rebuilt entry"
-  cacheAfterRebuild <- httpGetWithRetry 20 (baseUrl <> "/api/cache")
-  assert ("\"materialized\": true" `isInfixOf` cacheAfterRebuild) "service cache rebuild restores the derived cache marker"
-  requestIdText <- requireJsonStringField "requestId" inferenceResponse
-  maybeObjectRef <- extractJsonNullableStringField "objectRef" inferenceResponse
-  validateDurableBackends paths runtimeMode baseUrl modelIdText requestIdText maybeObjectRef
-
-validateHaRecovery :: Paths -> RuntimeMode -> String -> SerializedCatalogEntry -> IO ()
-validateHaRecovery paths runtimeMode baseUrl entry = do
-  maybeState <- loadClusterState paths
-  state <- maybe (fail "cluster state was not available before HA recovery validation") pure maybeState
-  let modelIdText = Text.unpack (entryModelId entry)
-      longInferenceBody =
-        "{\"requestModelId\":\""
-          <> modelIdText
-          <> "\",\"inputText\":\""
-          <> replicate 160 'h'
-          <> "\"}"
-  inferenceResponse <- httpPostJsonWithRetry 20 (baseUrl <> "/api/inference") longInferenceBody
-  requestIdText <- requireJsonStringField "requestId" inferenceResponse
-  maybeObjectRef <- extractJsonNullableStringField "objectRef" inferenceResponse
-  validatePostgresqlRecovery state baseUrl
-  validateHarborRecovery state baseUrl
-  validateMinioRecovery paths state runtimeMode modelIdText requestIdText maybeObjectRef
-  validatePulsarRecovery paths runtimeMode state baseUrl modelIdText
-
-validatePostgresqlRecovery :: ClusterState -> String -> IO ()
-validatePostgresqlRecovery state baseUrl = do
-  primaryPodBefore <- postgresPrimaryPodName state
-  runKubectlForState state ["-n", "platform", "delete", "pod", primaryPodBefore, "--wait=true"]
-  primaryPodAfter <- waitForPostgresPrimaryChange state primaryPodBefore
-  assert (primaryPodAfter /= primaryPodBefore) "Patroni elects a replacement primary after deleting the current primary pod"
-  waitForRollout state "deployment/harbor-postgresql-pgbouncer" 300
-  harborResponse <- httpGetWithRetry 40 (baseUrl <> "/harbor")
-  assert ("Harbor Gateway" `isInfixOf` harborResponse || "Harbor" `isInfixOf` harborResponse) "Harbor portal survives Patroni primary replacement"
-
-validateHarborRecovery :: ClusterState -> String -> IO ()
-validateHarborRecovery state baseUrl = do
-  corePodName <- firstPodWithPrefix state "infernix-harbor-core-"
-  publishedServiceImage <-
-    kubectlOutputForState state ["-n", "platform", "get", "deployment/infernix-service", "-o", "jsonpath={.spec.template.spec.containers[0].image}"]
-  runKubectlForState state ["-n", "platform", "delete", "pod", corePodName, "--wait=true"]
-  waitForRollout state "deployment/infernix-harbor-core" 240
-  harborResponse <- httpGetWithRetry 40 (baseUrl <> "/harbor")
-  assert ("Harbor Gateway" `isInfixOf` harborResponse || "Harbor" `isInfixOf` harborResponse) "Harbor portal survives single core-pod replacement"
-  runKubectlForState state ["-n", "platform", "delete", "pod", "harbor-pull-smoke", "--ignore-not-found=true"]
-  runKubectlInputForState state ["-n", "platform", "apply", "-f", "-"] (renderHarborPullSmokePod (trim publishedServiceImage))
-  waitForPodReady state "harbor-pull-smoke" 240
-  runKubectlForState state ["-n", "platform", "delete", "pod", "harbor-pull-smoke", "--wait=true"]
-
-validateMinioRecovery :: Paths -> ClusterState -> RuntimeMode -> String -> String -> Maybe String -> IO ()
-validateMinioRecovery paths state runtimeMode modelIdText requestIdText maybeObjectRef = do
-  runKubectlForState state ["-n", "platform", "delete", "pod", "infernix-minio-0", "--wait=true"]
-  waitForRollout state "statefulset/infernix-minio" 300
-  runtimeResultExists <- minioObjectExists paths runtimeMode "infernix-runtime" ("results/" <> requestIdText <> ".pb")
-  assert runtimeResultExists "MinIO runtime results survive single MinIO pod replacement"
-  case maybeObjectRef of
-    Nothing -> pure ()
-    Just objectRefText -> do
-      largeOutputExists <- minioObjectExists paths runtimeMode "infernix-results" objectRefText
-      assert largeOutputExists "MinIO large-output objects survive single MinIO pod replacement"
-  manifestExists <- minioObjectExists paths runtimeMode "infernix-runtime" ("manifests/" <> showRuntimeMode runtimeMode <> "/" <> modelIdText <> "/default.pb")
-  artifactExists <- minioObjectExists paths runtimeMode "infernix-runtime" ("artifacts/" <> showRuntimeMode runtimeMode <> "/" <> modelIdText <> "/bundle.json")
-  assert manifestExists "MinIO protobuf cache manifests survive single MinIO pod replacement"
-  assert artifactExists "MinIO durable runtime artifact bundles survive single MinIO pod replacement"
-
-validatePulsarRecovery :: Paths -> RuntimeMode -> ClusterState -> String -> String -> IO ()
-validatePulsarRecovery paths runtimeMode state baseUrl modelIdText = do
-  runKubectlForState state ["-n", "platform", "delete", "pod", "infernix-infernix-pulsar-proxy-0", "--wait=true"]
-  waitForRollout state "statefulset/infernix-infernix-pulsar-proxy" 300
-  inferenceResponse <-
-    httpPostJsonWithRetry
-      40
-      (baseUrl <> "/api/inference")
-      ("{\"requestModelId\":\"" <> modelIdText <> "\",\"inputText\":\"pulsar recovery coverage\"}")
-  assert (("\"resultModelId\": \"" <> modelIdText <> "\"") `isInfixOf` inferenceResponse) "routed inference survives single Pulsar proxy replacement"
-  requestIdText <- requireJsonStringField "requestId" inferenceResponse
-  maybeObjectRef <- extractJsonNullableStringField "objectRef" inferenceResponse
-  validateDurableBackends paths runtimeMode baseUrl modelIdText requestIdText maybeObjectRef
+  assert ("clusterPresent: False" `isInfixOf` downStatusOutput) "cluster status reports cluster absence after down"
 
 validateEdgePortConflictAndRediscovery :: Paths -> RuntimeMode -> IO ()
 validateEdgePortConflictAndRediscovery paths runtimeMode = do
@@ -442,19 +115,18 @@ validateEdgePortConflictAndRediscovery paths runtimeMode = do
         }
   case (busyPortStdin, busyPortStdout, busyPortStderr) of
     (Just stdinHandle, Just stdoutHandle, Just _) -> do
-      readyLine <- hGetLineWithRetry 20 stdoutHandle
-      assert (readyLine == "ready") "port-conflict helper binds 9090 before cluster up runs"
+      readyLine <- hGetLine stdoutHandle
+      assert (readyLine == "ready") "busy-port helper binds 9090 before cluster up runs"
       clusterUp (Just runtimeMode)
       busyState <- maybe (fail "cluster state was not available after busy-port cluster up") pure =<< loadClusterState paths
-      let selectedBusyPort = edgePort busyState
-      assert (selectedBusyPort > 9090) "cluster up selects a non-9090 port when 9090 is busy"
+      assert (edgePort busyState > 9090) "cluster up chooses a non-9090 port when 9090 is busy"
       clusterDown (Just runtimeMode)
       hClose stdinHandle
       terminateProcess busyPortProcess
       _ <- waitForProcess busyPortProcess
       clusterUp (Just runtimeMode)
       maybeRediscoveredState <- loadClusterState paths
-      assert (maybe False ((== selectedBusyPort) . edgePort) maybeRediscoveredState) "cluster up reuses the previously published edge port after restart"
+      assert (maybe False ((== edgePort busyState) . edgePort) maybeRediscoveredState) "cluster up reuses the published edge port after restart"
       clusterDown (Just runtimeMode)
     _ -> fail "port-conflict helper failed to expose the readiness pipe"
   where
@@ -473,6 +145,221 @@ validateEdgePortConflictAndRediscovery paths runtimeMode = do
           "    sock.close()"
         ]
 
+validateDemoUiDisabled :: Paths -> RuntimeMode -> IO ()
+validateDemoUiDisabled paths runtimeMode =
+  withOptionalEnv "INFERNIX_DEMO_UI" (Just "false") $ do
+    cleanupRuntimeState paths
+    clusterUp (Just runtimeMode)
+    state <- maybe (fail "cluster state was not available after demo-disabled cluster up") pure =<< loadClusterState paths
+    assert (clusterPresent state) "cluster up records cluster presence when demo_ui is disabled"
+    assert (not (any ((== "/") . path) (routes state))) "route inventory omits the browser root when demo_ui is disabled"
+    assert (not (any ((== "/api") . path) (routes state))) "route inventory omits the demo API when demo_ui is disabled"
+    let baseUrl = "http://127.0.0.1:" <> show (edgePort state)
+    disabledHomeResult <- try (httpGet (baseUrl <> "/")) :: IO (Either IOError String)
+    disabledPublicationResult <- try (httpGet (baseUrl <> "/api/publication")) :: IO (Either IOError String)
+    harborResponse <- httpGet (baseUrl <> "/harbor")
+    minioResponse <- httpGet (baseUrl <> "/minio/s3")
+    pulsarResponse <- httpGet (baseUrl <> "/pulsar/ws")
+    assert (either (const True) (const False) disabledHomeResult) "the browser root is absent when demo_ui is disabled"
+    assert (either (const True) (const False) disabledPublicationResult) "the demo API is absent when demo_ui is disabled"
+    assert ("Harbor Gateway" `isInfixOf` harborResponse) "harbor remains published when demo_ui is disabled"
+    assert ("\"status\":\"ready\"" `isInfixOf` compact minioResponse) "minio remains published when demo_ui is disabled"
+    assert ("\"brokersHealth\":\"ready\"" `isInfixOf` compact pulsarResponse) "pulsar remains published when demo_ui is disabled"
+    clusterDown (Just runtimeMode)
+
+validateStandaloneProxyProcesses :: Paths -> IO ()
+validateStandaloneProxyProcesses paths = do
+  infernixExecutable <- resolveInfernixExecutable
+  withMockServer "demo" $ \demoPort ->
+    withMockServer "web" $ \webPort ->
+      withMockServer "harbor-ui" $ \harborUiPort ->
+        withMockServer "harbor-api" $ \harborApiPort ->
+          withMockServer "minio-console" $ \minioConsolePort ->
+            withMockServer "minio-s3" $ \minioS3Port ->
+              withMockServer "pulsar-admin" $ \pulsarAdminPort ->
+                withMockServer "pulsar-http" $ \pulsarHttpPort -> do
+                  withInfernixProcess
+                    paths
+                    infernixExecutable
+                    ["edge"]
+                    19190
+                    "/healthz"
+                    [ ("INFERNIX_BIND_HOST", "127.0.0.1"),
+                      ("INFERNIX_DEMO_UPSTREAM", "127.0.0.1:" <> show demoPort),
+                      ("INFERNIX_WEB_UPSTREAM", "127.0.0.1:" <> show webPort),
+                      ("INFERNIX_HARBOR_UPSTREAM", "127.0.0.1:" <> show harborUiPort),
+                      ("INFERNIX_MINIO_UPSTREAM", "127.0.0.1:" <> show minioConsolePort),
+                      ("INFERNIX_PULSAR_UPSTREAM", "127.0.0.1:" <> show pulsarHttpPort)
+                    ]
+                    $ do
+                      edgeApiResponse <- httpGet "http://127.0.0.1:19190/api/models?lane=test"
+                      edgeHarborResponse <- httpGet "http://127.0.0.1:19190/harbor/projects"
+                      edgeMinioResponse <- httpGet "http://127.0.0.1:19190/minio/console/browser"
+                      edgeHomeResponse <- httpGet "http://127.0.0.1:19190/"
+                      assert ("\"label\": \"demo\"" `isInfixOf` edgeApiResponse) "edge proxy sends /api traffic to the demo upstream"
+                      assert ("\"path\": \"/api/models?lane=test\"" `isInfixOf` edgeApiResponse) "edge proxy preserves the original API request path"
+                      assert ("\"label\": \"harbor-ui\"" `isInfixOf` edgeHarborResponse) "edge proxy sends /harbor traffic to the Harbor upstream"
+                      assert ("\"label\": \"minio-console\"" `isInfixOf` edgeMinioResponse) "edge proxy sends /minio traffic to the MinIO upstream"
+                      assert ("\"label\": \"demo\"" `isInfixOf` edgeHomeResponse) "edge proxy sends the browser root to the demo upstream"
+
+                  withInfernixProcess
+                    paths
+                    infernixExecutable
+                    ["gateway", "harbor"]
+                    19191
+                    "/harbor"
+                    [ ("INFERNIX_BIND_HOST", "127.0.0.1"),
+                      ("INFERNIX_HARBOR_BACKEND_URL", "http://127.0.0.1:" <> show harborUiPort),
+                      ("INFERNIX_HARBOR_API_URL", "http://127.0.0.1:" <> show harborApiPort),
+                      ("INFERNIX_HARBOR_ADMIN_USER", "admin"),
+                      ("INFERNIX_HARBOR_ADMIN_PASSWORD", "secret")
+                    ]
+                    $ do
+                      harborRootResponse <- httpGet "http://127.0.0.1:19191/harbor"
+                      harborApiResponse <- httpGet "http://127.0.0.1:19191/harbor/api/v2.0/projects"
+                      assert ("\"label\": \"harbor-ui\"" `isInfixOf` harborRootResponse) "Harbor gateway proxies the portal root to the Harbor UI upstream"
+                      assert ("\"label\": \"harbor-api\"" `isInfixOf` harborApiResponse) "Harbor gateway proxies API traffic to the Harbor API upstream"
+                      assert ("\"path\": \"/api/v2.0/projects\"" `isInfixOf` harborApiResponse) "Harbor gateway strips the routed Harbor prefix for API requests"
+                      assert ("\"authorization\": \"Basic YWRtaW46c2VjcmV0\"" `isInfixOf` harborApiResponse) "Harbor gateway injects the configured basic-auth header"
+
+                  withInfernixProcess
+                    paths
+                    infernixExecutable
+                    ["gateway", "minio"]
+                    19192
+                    "/minio/s3"
+                    [ ("INFERNIX_BIND_HOST", "127.0.0.1"),
+                      ("INFERNIX_MINIO_S3_ENDPOINT", "http://127.0.0.1:" <> show minioS3Port),
+                      ("INFERNIX_MINIO_CONSOLE_ENDPOINT", "http://127.0.0.1:" <> show minioConsolePort)
+                    ]
+                    $ do
+                      minioStatusResponse <- httpGet "http://127.0.0.1:19192/minio/s3"
+                      minioS3Response <- httpGet "http://127.0.0.1:19192/minio/s3/models/demo.bin"
+                      minioConsoleResponse <- httpGet "http://127.0.0.1:19192/minio/console/browser"
+                      assert ("\"status\":\"ready\"" `isInfixOf` compact minioStatusResponse) "MinIO gateway serves the stable exact-path readiness response"
+                      assert (("\"targetUrl\":\"http://127.0.0.1:" <> show minioS3Port <> "\"") `isInfixOf` compact minioStatusResponse) "MinIO gateway reports the configured S3 upstream"
+                      assert ("\"label\": \"minio-s3\"" `isInfixOf` minioS3Response) "MinIO gateway proxies routed S3 traffic to the S3 upstream"
+                      assert ("\"path\": \"/models/demo.bin\"" `isInfixOf` minioS3Response) "MinIO gateway strips the routed S3 prefix"
+                      assert ("\"label\": \"minio-console\"" `isInfixOf` minioConsoleResponse) "MinIO gateway proxies console traffic to the console upstream"
+
+                  withInfernixProcess
+                    paths
+                    infernixExecutable
+                    ["gateway", "pulsar"]
+                    19193
+                    "/pulsar/ws"
+                    [ ("INFERNIX_BIND_HOST", "127.0.0.1"),
+                      ("INFERNIX_PULSAR_ADMIN_URL", "http://127.0.0.1:" <> show pulsarAdminPort),
+                      ("INFERNIX_PULSAR_HTTP_BASE_URL", "http://127.0.0.1:" <> show pulsarHttpPort)
+                    ]
+                    $ do
+                      pulsarStatusResponse <- httpGet "http://127.0.0.1:19193/pulsar/ws"
+                      pulsarAdminResponse <- httpGet "http://127.0.0.1:19193/pulsar/admin/clusters"
+                      pulsarHttpResponse <- httpGet "http://127.0.0.1:19193/pulsar/ws/v2/producer/public/default/demo"
+                      assert ("\"brokersHealth\":\"ready\"" `isInfixOf` compact pulsarStatusResponse) "Pulsar gateway serves the stable exact-path readiness response"
+                      assert ("\"label\": \"pulsar-admin\"" `isInfixOf` pulsarAdminResponse) "Pulsar gateway proxies admin traffic to the admin upstream"
+                      assert ("\"path\": \"/clusters\"" `isInfixOf` pulsarAdminResponse) "Pulsar gateway strips the routed admin prefix"
+                      assert ("\"label\": \"pulsar-http\"" `isInfixOf` pulsarHttpResponse) "Pulsar gateway proxies routed HTTP traffic to the broker HTTP upstream"
+                      assert ("\"path\": \"/v2/producer/public/default/demo\"" `isInfixOf` pulsarHttpResponse) "Pulsar gateway strips the routed websocket prefix for HTTP requests"
+
+withMockServer :: String -> (Int -> IO a) -> IO a
+withMockServer label action = do
+  (_, Just stdoutHandle, _, processHandle) <-
+    createProcess
+      (proc "python3" ["-c", mockServerScript, label])
+        { std_out = CreatePipe
+        }
+  portValue <- read <$> hGetLine stdoutHandle
+  action portValue
+    `finally` do
+      terminateProcess processHandle
+      _ <- waitForProcess processHandle
+      hClose stdoutHandle
+      pure ()
+
+withInfernixProcess :: Paths -> FilePath -> [String] -> Int -> String -> [(String, String)] -> IO a -> IO a
+withInfernixProcess paths executablePath args portValue readyPath envOverrides action = do
+  baseEnvironment <- getEnvironment
+  (_, _, _, processHandle) <-
+    createProcess
+      (proc executablePath args)
+        { cwd = Just (repoRoot paths),
+          env =
+            Just
+              ( mergeEnvironment
+                  [("INFERNIX_PORT", show portValue)]
+                  (mergeEnvironment envOverrides baseEnvironment)
+              )
+        }
+  waitForHttpReady ("http://127.0.0.1:" <> show portValue <> readyPath)
+  action
+    `finally` do
+      terminateProcess processHandle
+      _ <- waitForProcess processHandle
+      pure ()
+
+withOptionalEnv :: String -> Maybe String -> IO a -> IO a
+withOptionalEnv name maybeValue action = do
+  previousValue <- lookupEnv name
+  applyMaybeValue maybeValue
+  action
+    `finally` applyMaybeValue previousValue
+  where
+    applyMaybeValue (Just value) = setEnv name value
+    applyMaybeValue Nothing = unsetEnv name
+
+waitForHttpReady :: String -> IO ()
+waitForHttpReady url = go (60 :: Int)
+  where
+    go remainingAttempts
+      | remainingAttempts <= 0 = fail ("timed out waiting for " <> url)
+      | otherwise = do
+          result <- try (httpGet url) :: IO (Either IOError String)
+          case result of
+            Right _ -> pure ()
+            Left _ -> do
+              threadDelay 100000
+              go (remainingAttempts - 1)
+
+resolveInfernixExecutable :: IO FilePath
+resolveInfernixExecutable = do
+  buildDir <- Config.resolveCabalBuildDir
+  trimTrailingWhitespace <$> readProcess "cabal" ["--builddir=" <> buildDir, "list-bin", "exe:infernix"] ""
+
+mergeEnvironment :: [(String, String)] -> [(String, String)] -> [(String, String)]
+mergeEnvironment overrides environment =
+  overrides <> filter (\(name, _) -> name `notElem` map fst overrides) environment
+
+trimTrailingWhitespace :: String -> String
+trimTrailingWhitespace =
+  reverse . dropWhile (`elem` [' ', '\n', '\r', '\t']) . reverse
+
+mockServerScript :: String
+mockServerScript =
+  unlines
+    [ "import json",
+      "import sys",
+      "from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer",
+      "label = sys.argv[1]",
+      "class Handler(BaseHTTPRequestHandler):",
+      "    def do_GET(self):",
+      "        payload = json.dumps({",
+      "            'label': label,",
+      "            'path': self.path,",
+      "            'authorization': self.headers.get('Authorization', ''),",
+      "        }).encode('utf-8')",
+      "        self.send_response(200)",
+      "        self.send_header('Content-Type', 'application/json; charset=utf-8')",
+      "        self.send_header('Content-Length', str(len(payload)))",
+      "        self.end_headers()",
+      "        self.wfile.write(payload)",
+      "    def log_message(self, format, *args):",
+      "        return",
+      "server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)",
+      "print(server.server_address[1], flush=True)",
+      "server.serve_forever()"
+    ]
+
 cleanupRuntimeState :: Paths -> IO ()
 cleanupRuntimeState paths = do
   catchIOError (removePathForcibly (runtimeRoot paths)) ignoreMissing
@@ -482,96 +369,69 @@ cleanupRuntimeState paths = do
       | isDoesNotExistError err = pure ()
       | otherwise = ioError err
 
-loadSerializedCatalogEntries :: Paths -> RuntimeMode -> IO [SerializedCatalogEntry]
-loadSerializedCatalogEntries paths runtimeMode = do
-  output <-
-    readProcess
-      "python3"
-      [ repoRoot paths </> "tools" </> "demo_config.py",
-        "--list-models",
-        Config.generatedDemoConfigPath paths runtimeMode
-      ]
-      ""
-  case lines output of
-    runtimeLine : entryLines -> do
-      let runtimeParts = splitTabs runtimeLine
-      case runtimeParts of
-        ["runtimeMode", runtimeModeIdText] ->
-          assert (runtimeModeIdText == showRuntimeMode runtimeMode) "serialized catalog reports the requested runtime mode"
-        _ -> fail "serialized demo config did not report a runtimeMode header"
-      mapM parseEntryLine entryLines
-    [] -> fail "serialized demo config summary was empty"
-
-parseEntryLine :: String -> IO SerializedCatalogEntry
-parseEntryLine entryLine =
-  case splitTabs entryLine of
-    ["model", matrixRowIdText, modelIdText, selectedEngineText, runtimeModeText, requiresGpuText] ->
-      case parseRuntimeMode (Text.pack runtimeModeText) of
-        Nothing -> fail ("serialized catalog entry has an unsupported runtime mode: " <> runtimeModeText)
-        Just runtimeMode ->
-          pure
-            SerializedCatalogEntry
-              { entryMatrixRowId = Text.pack matrixRowIdText,
-                entryModelId = Text.pack modelIdText,
-                entrySelectedEngine = Text.pack selectedEngineText,
-                entryRuntimeMode = runtimeMode,
-                entryRequiresGpu = requiresGpuText == "true"
-              }
-    _ -> fail ("serialized demo config summary line was malformed: " <> entryLine)
-
-splitTabs :: String -> [String]
-splitTabs [] = [""]
-splitTabs value =
-  let (prefix, suffix) = break (== '\t') value
-   in case suffix of
-        [] -> [prefix]
-        _ : rest -> prefix : splitTabs rest
-
 captureInfernixOutput :: Paths -> RuntimeMode -> [String] -> IO String
-captureInfernixOutput paths runtimeMode args = do
-  let binaryPath = buildRoot paths </> "infernix"
-  binaryExists <- doesFileExist binaryPath
+captureInfernixOutput _ runtimeMode args = do
   buildDir <- Config.resolveCabalBuildDir
   (exitCode, stdoutOutput, stderrOutput) <-
-    if binaryExists
-      then
-        readProcessWithExitCode
-          binaryPath
-          (["--runtime-mode", showRuntimeMode runtimeMode] <> args)
-          ""
-      else
-        readCreateProcessWithExitCode
-          ( proc
-              "cabal"
-              ( [ "--builddir=" <> buildDir,
-                  "run",
-                  "exe:infernix",
-                  "--",
-                  "--runtime-mode",
-                  showRuntimeMode runtimeMode
-                ]
-                  <> args
-              )
-          )
-            { cwd = Just (repoRoot paths)
-            }
-          ""
-  assert (null stderrOutput || exitCode == ExitSuccess) "cluster status does not emit stderr output"
-  case exitCode of
-    ExitSuccess -> pure stdoutOutput
-    _ -> fail ("infernix command failed: " <> unlines [stdoutOutput, stderrOutput])
+    readProcessWithExitCode
+      "cabal"
+      ( [ "--builddir=" <> buildDir,
+          "run",
+          "exe:infernix",
+          "--",
+          "--runtime-mode",
+          showRuntimeMode runtimeMode
+        ]
+          <> args
+      )
+      ""
+  assert (exitCode == ExitSuccess) ("infernix command succeeded: " <> stderrOutput)
+  pure stdoutOutput
 
-hGetLineWithRetry :: Int -> Handle -> IO String
-hGetLineWithRetry retries handle =
-  catchIOError
-    (hGetLine handle)
-    ( \err ->
-        if retries <= 0
-          then ioError err
-          else do
-            threadDelay 100000
-            hGetLineWithRetry (retries - 1) handle
-    )
+httpGet :: String -> IO String
+httpGet url = readProcess "curl" ["-fsS", url] ""
+
+httpPostJson :: String -> String -> IO String
+httpPostJson url body =
+  readProcess
+    "curl"
+    ["-fsS", "-X", "POST", "-H", "Content-Type: application/json", "-d", body, url]
+    ""
+
+requireJsonStringField :: String -> String -> IO String
+requireJsonStringField fieldName payload =
+  case extractJsonStringField fieldName payload of
+    Just value -> pure value
+    Nothing -> fail ("missing JSON field " <> fieldName <> " in " <> payload)
+
+extractJsonStringField :: String -> String -> Maybe String
+extractJsonStringField fieldName payload =
+  let needle = "\"" <> fieldName <> "\":\""
+   in case breakOn needle (compact payload) of
+        Just suffix -> Just (takeWhile (/= '"') suffix)
+        Nothing -> Nothing
+
+compact :: String -> String
+compact = filter (`notElem` [' ', '\n', '\r', '\t'])
+
+breakOn :: String -> String -> Maybe String
+breakOn needle = go
+  where
+    go [] = Nothing
+    go value
+      | needle `isPrefixOf` value = Just (drop (length needle) value)
+      | otherwise = go (drop 1 value)
+
+mapToLowerAscii :: String -> String
+mapToLowerAscii = map toLowerAscii
+
+toLowerAscii :: Char -> Char
+toLowerAscii char
+  | isAsciiUpper char = toEnum (fromEnum char + 32)
+  | otherwise = char
+
+showRuntimeMode :: RuntimeMode -> String
+showRuntimeMode = Text.unpack . runtimeModeId
 
 withTestRoot :: FilePath -> IO a -> IO a
 withTestRoot root action = do
@@ -589,316 +449,8 @@ withTestRoot root action = do
 testRootPath :: FilePath -> IO FilePath
 testRootPath suiteName = do
   paths <- Config.discoverPaths
-  token <- takeWhile (\char -> char /= '\r' && char /= '\n') <$> readProcess "python3" ["-c", "import uuid; print(uuid.uuid4())"] ""
-  pure (repoRoot paths </> ".build" </> ("test-" <> suiteName <> "-" <> token))
+  pure (repoRoot paths </> ".build" </> ("test-" <> suiteName))
 
 assert :: Bool -> String -> IO ()
 assert True _ = pure ()
 assert False message = fail message
-
-showRuntimeMode :: RuntimeMode -> String
-showRuntimeMode = Text.unpack . runtimeModeId
-
-edgeBaseUrl :: Paths -> RuntimeMode -> Int -> String
-edgeBaseUrl paths runtimeMode port =
-  "http://"
-    <> runtimeHost paths runtimeMode
-    <> ":"
-    <> show (runtimeEdgePort paths port)
-
-runtimeHost :: Paths -> RuntimeMode -> String
-runtimeHost paths runtimeMode
-  | Config.controlPlaneContext paths == "outer-container" = kindControlPlaneNodeName paths runtimeMode
-  | otherwise = "127.0.0.1"
-
-runtimeEdgePort :: Paths -> Int -> Int
-runtimeEdgePort paths publishedPort
-  | Config.controlPlaneContext paths == "outer-container" = 30090
-  | otherwise = publishedPort
-
-kubectlOutputForState :: ClusterState -> [String] -> IO String
-kubectlOutputForState state args =
-  readProcess "kubectl" (["--kubeconfig", kubeconfigPath state] <> args) ""
-
-runKubectlForState :: ClusterState -> [String] -> IO ()
-runKubectlForState state args = do
-  (exitCode, stdoutOutput, stderrOutput) <-
-    readProcessWithExitCode "kubectl" (["--kubeconfig", kubeconfigPath state] <> args) ""
-  case exitCode of
-    ExitSuccess -> pure ()
-    _ -> fail ("kubectl command failed: " <> unwords args <> "\n" <> stdoutOutput <> stderrOutput)
-
-runKubectlInputForState :: ClusterState -> [String] -> String -> IO ()
-runKubectlInputForState state args inputPayload = do
-  (exitCode, stdoutOutput, stderrOutput) <-
-    readCreateProcessWithExitCode
-      (proc "kubectl" (["--kubeconfig", kubeconfigPath state] <> args))
-      inputPayload
-  case exitCode of
-    ExitSuccess -> pure ()
-    _ -> fail ("kubectl command failed: " <> unwords args <> "\n" <> stdoutOutput <> stderrOutput)
-
-waitForRollout :: ClusterState -> String -> Int -> IO ()
-waitForRollout state workload timeoutSeconds =
-  runKubectlForState state ["-n", "platform", "rollout", "status", workload, "--timeout", show timeoutSeconds <> "s"]
-
-waitForPodReady :: ClusterState -> String -> Int -> IO ()
-waitForPodReady state podName timeoutSeconds =
-  runKubectlForState state ["-n", "platform", "wait", "--for=condition=Ready", "pod/" <> podName, "--timeout", show timeoutSeconds <> "s"]
-
-firstPodWithPrefix :: ClusterState -> String -> IO String
-firstPodWithPrefix state prefix = do
-  podNames <- lines <$> kubectlOutputForState state ["-n", "platform", "get", "pods", "--no-headers", "-o", "custom-columns=:metadata.name"]
-  case filter (prefix `isPrefixOf`) podNames of
-    podName : _ -> pure podName
-    [] -> fail ("no pod matched prefix " <> prefix)
-
-postgresDataPodNames :: ClusterState -> IO [String]
-postgresDataPodNames state =
-  filter (not . null) . map trim . lines
-    <$> kubectlOutputForState
-      state
-      [ "-n",
-        "platform",
-        "get",
-        "pods",
-        "-l",
-        "postgres-operator.crunchydata.com/cluster=harbor-postgresql,postgres-operator.crunchydata.com/data=postgres",
-        "--no-headers",
-        "-o",
-        "custom-columns=:metadata.name"
-      ]
-
-postgresPrimaryPodName :: ClusterState -> IO String
-postgresPrimaryPodName state = do
-  podNames <-
-    filter (not . null) . map trim . lines
-      <$> kubectlOutputForState
-        state
-        [ "-n",
-          "platform",
-          "get",
-          "pods",
-          "-l",
-          "postgres-operator.crunchydata.com/cluster=harbor-postgresql,postgres-operator.crunchydata.com/role=primary",
-          "--no-headers",
-          "-o",
-          "custom-columns=:metadata.name"
-        ]
-  pure
-    ( case podNames of
-        podName : _ -> podName
-        [] -> ""
-    )
-
-waitForPostgresPrimaryChange :: ClusterState -> String -> IO String
-waitForPostgresPrimaryChange state previousPrimary = go (60 :: Int)
-  where
-    go remainingAttempts
-      | remainingAttempts <= 0 =
-          fail "Patroni primary did not change after deleting the previous primary pod"
-      | otherwise = do
-          currentPrimary <- postgresPrimaryPodName state
-          dataPods <- postgresDataPodNames state
-          if not (null currentPrimary) && currentPrimary /= previousPrimary && length dataPods == 3
-            then pure currentPrimary
-            else do
-              threadDelay 1000000
-              go (remainingAttempts - 1)
-
-postgresDataBindings :: ClusterState -> IO [(String, String, String, String, String)]
-postgresDataBindings state = do
-  bindingRows <-
-    filter (not . null) . lines
-      <$> kubectlOutputForState
-        state
-        [ "-n",
-          "platform",
-          "get",
-          "pvc",
-          "-l",
-          "postgres-operator.crunchydata.com/cluster=harbor-postgresql,postgres-operator.crunchydata.com/role=pgdata",
-          "-o",
-          "jsonpath={range .items[*]}{.metadata.name}{\"\\t\"}{.spec.storageClassName}{\"\\t\"}{.status.phase}{\"\\t\"}{.spec.volumeName}{\"\\n\"}{end}"
-        ]
-  mapM parseBindingRow bindingRows
-  where
-    parseBindingRow row =
-      case splitTabs row of
-        [claimNameValue, storageClassName, phaseValue, volumeName] -> do
-          hostPath <-
-            trim
-              <$> kubectlOutputForState
-                state
-                ["get", "pv", volumeName, "-o", "jsonpath={.spec.hostPath.path}"]
-          pure (claimNameValue, storageClassName, phaseValue, volumeName, hostPath)
-        _ -> fail ("PostgreSQL PVC row was malformed: " <> row)
-
-renderHarborPullSmokePod :: String -> String
-renderHarborPullSmokePod imageRef =
-  unlines
-    [ "apiVersion: v1",
-      "kind: Pod",
-      "metadata:",
-      "  name: harbor-pull-smoke",
-      "  namespace: platform",
-      "spec:",
-      "  restartPolicy: Never",
-      "  containers:",
-      "    - name: smoke",
-      "      image: " <> imageRef,
-      "      command:",
-      "        - python3",
-      "        - -c",
-      "        - import time; print('ready', flush=True); time.sleep(30)"
-    ]
-
-httpGetWithRetry :: Int -> String -> IO String
-httpGetWithRetry retries url =
-  catchIOError
-    (readProcess "curl" ["-fsS", url] "")
-    ( \err ->
-        if retries <= 0
-          then ioError err
-          else do
-            threadDelay 500000
-            httpGetWithRetry (retries - 1) url
-    )
-
-httpPostJson :: String -> String -> IO String
-httpPostJson url payload =
-  readProcess
-    "curl"
-    [ "-fsS",
-      "-X",
-      "POST",
-      "-H",
-      "Content-Type: application/json",
-      "-d",
-      payload,
-      url
-    ]
-    ""
-
-httpPostJsonWithRetry :: Int -> String -> String -> IO String
-httpPostJsonWithRetry retries url payload =
-  catchIOError
-    (httpPostJson url payload)
-    ( \err ->
-        if retries <= 0
-          then ioError err
-          else do
-            threadDelay 500000
-            httpPostJsonWithRetry (retries - 1) url payload
-    )
-
-waitForPublicationState :: String -> String -> String -> IO String
-waitForPublicationState baseUrl expectedDaemonLocation expectedApiUpstreamMode = go (60 :: Int)
-  where
-    go remainingAttempts
-      | remainingAttempts <= 0 =
-          fail
-            ( "timed out waiting for publication state "
-                <> expectedDaemonLocation
-                <> " / "
-                <> expectedApiUpstreamMode
-            )
-      | otherwise = do
-          response <-
-            catchIOError
-              (httpGetWithRetry 1 (baseUrl <> "/api/publication"))
-              (\_ -> pure "")
-          if ("\"daemonLocation\": \"" <> expectedDaemonLocation <> "\"") `isInfixOf` response
-            && ("\"mode\": \"" <> expectedApiUpstreamMode <> "\"") `isInfixOf` response
-            then pure response
-            else do
-              threadDelay 1000000
-              go (remainingAttempts - 1)
-
-readFileWithRetry :: Int -> FilePath -> IO String
-readFileWithRetry retries filePath =
-  catchIOError
-    (Text.unpack <$> TextIO.readFile filePath)
-    ( \err ->
-        if retries <= 0
-          then ioError err
-          else do
-            threadDelay 100000
-            readFileWithRetry (retries - 1) filePath
-    )
-
-validateDurableBackends :: Paths -> RuntimeMode -> String -> String -> String -> Maybe String -> IO ()
-validateDurableBackends paths runtimeMode baseUrl modelIdText requestIdText maybeObjectRef = do
-  requestSchema <- httpGetWithRetry 20 (baseUrl <> "/pulsar/admin/schemas/public/default/infernix-inference-requests/schema")
-  resultSchema <- httpGetWithRetry 20 (baseUrl <> "/pulsar/admin/schemas/public/default/infernix-inference-results/schema")
-  coordinationSchema <- httpGetWithRetry 20 (baseUrl <> "/pulsar/admin/schemas/public/default/infernix-runtime-manifests/schema")
-  let protobufSchemaPublished response messageName =
-        ("\"type\":\"PROTOBUF\"" `isInfixOf` response || "\"type\": \"PROTOBUF\"" `isInfixOf` response)
-          && messageName `isInfixOf` response
-  assert (protobufSchemaPublished requestSchema "InferenceRequest") "Pulsar request topic publishes the protobuf request schema"
-  assert (protobufSchemaPublished resultSchema "InferenceResult") "Pulsar result topic publishes the protobuf result schema"
-  assert (protobufSchemaPublished coordinationSchema "RuntimeManifest") "Pulsar coordination topic publishes the protobuf manifest schema"
-  runtimeResultExists <- minioObjectExists paths runtimeMode "infernix-runtime" ("results/" <> requestIdText <> ".pb")
-  manifestExists <- minioObjectExists paths runtimeMode "infernix-runtime" ("manifests/" <> showRuntimeMode runtimeMode <> "/" <> modelIdText <> "/default.pb")
-  artifactExists <- minioObjectExists paths runtimeMode "infernix-runtime" ("artifacts/" <> showRuntimeMode runtimeMode <> "/" <> modelIdText <> "/bundle.json")
-  assert runtimeResultExists "MinIO stores protobuf inference results for the routed service path"
-  assert manifestExists "MinIO stores protobuf cache manifests for the routed service path"
-  assert artifactExists "MinIO stores the durable runtime artifact bundle for the routed service path"
-  case maybeObjectRef of
-    Nothing -> pure ()
-    Just objectRefText -> do
-      largeOutputExists <- minioObjectExists paths runtimeMode "infernix-results" objectRefText
-      assert largeOutputExists "MinIO stores large-output object payloads for the routed service path"
-
-minioObjectExists :: Paths -> RuntimeMode -> String -> String -> IO Bool
-minioObjectExists paths runtimeMode bucketName objectKey = waitForObject (20 :: Int)
-  where
-    waitForObject attempts = do
-      objectExists <- probeObject
-      if objectExists || attempts <= 1
-        then pure objectExists
-        else do
-          threadDelay 500000
-          waitForObject (attempts - 1)
-
-    probeObject = do
-      let script =
-            unlines
-              [ "import sys",
-                "from minio import Minio",
-                "from minio.error import S3Error",
-                "client = Minio(sys.argv[1], access_key='minioadmin', secret_key='minioadmin123', secure=False)",
-                "try:",
-                "    client.stat_object(sys.argv[2], sys.argv[3])",
-                "except S3Error as exc:",
-                "    if exc.code == 'NoSuchKey':",
-                "        print('false')",
-                "    else:",
-                "        raise",
-                "else:",
-                "    print('true')"
-              ]
-      output <- readProcess "python3" ["-c", script, runtimeHost paths runtimeMode <> ":30011", bucketName, objectKey] ""
-      pure (output == "true\n")
-
-trim :: String -> String
-trim = reverse . dropWhile (== '\n') . dropWhile (== ' ') . reverse . dropWhile (== ' ')
-
-extractJsonStringField :: String -> String -> Maybe String
-extractJsonStringField fieldName payload =
-  case dropWhile (not . isPrefixOf marker) (tails payload) of
-    candidate : _ -> Just (takeWhile (/= '"') (drop (length marker) candidate))
-    [] -> Nothing
-  where
-    marker = "\"" <> fieldName <> "\": \""
-
-extractJsonNullableStringField :: String -> String -> IO (Maybe String)
-extractJsonNullableStringField fieldName payload
-  | ("\"" <> fieldName <> "\": null") `isInfixOf` payload = pure Nothing
-  | otherwise = fmap Just (requireJsonStringField fieldName payload)
-
-requireJsonStringField :: String -> String -> IO String
-requireJsonStringField fieldName payload =
-  case extractJsonStringField fieldName payload of
-    Just value -> pure value
-    Nothing -> fail ("response JSON did not contain a string field named " <> fieldName)

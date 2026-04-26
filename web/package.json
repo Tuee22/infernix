@@ -3,12 +3,17 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "node ./build.mjs",
-    "test:unit": "npm run build && node ./test/contracts.test.mjs",
+    "generate:contracts": "sh -c 'set -eu; mode_args=\"\"; if [ \"${INFERNIX_RUNTIME_MODE:-}\" != \"\" ]; then mode_args=\"--runtime-mode $INFERNIX_RUNTIME_MODE\"; fi; cabal --builddir=../.build/cabal run exe:infernix -- $mode_args internal generate-purs-contracts ./src'",
+    "build:purs": "sh -c 'set -eu; rm -rf dist; mkdir -p dist; cp src/index.html dist/index.html; npm exec spago build; npm exec -- spago bundle --module Main --outfile dist/app.js --platform browser --bundle-type app --force'",
+    "build": "npm run generate:contracts && npm run build:purs",
+    "test:unit": "npm run build && npm exec spago test",
     "test:e2e": "node ./test/run_playwright_matrix.mjs",
-    "test:e2e:image": "npx playwright test"
+    "test:e2e:image": "npx playwright test ./playwright/inference.spec.js --reporter=list --timeout=30000"
   },
   "devDependencies": {
-    "playwright": "1.57.0"
+    "esbuild": "0.28.0",
+    "playwright": "1.57.0",
+    "purescript": "0.15.16",
+    "spago": "0.93.44"
   }
 }

@@ -33,7 +33,7 @@ surface is Pulsar topics named in the active `.dhall`; see
   and exposed by the `infernix-demo` binary; production `infernix service` does not bind any HTTP
   port and never serves these endpoints
 - request validation uses Haskell-owned model metadata; the same Haskell typed runtime contract
-  is shared with the production Pulsar consumer
+  is shared with the current no-HTTP production-daemon placeholder and the planned Pulsar consumer
 - invalid requests return typed user-facing errors
 - large outputs are returned as typed object references and remain retrievable through
   `GET /objects/:objectRef`

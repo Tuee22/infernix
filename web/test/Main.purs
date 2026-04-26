@@ -1,6 +1,153 @@
 module Test.Main where
 
+import Prelude
+
+import Data.Array (any, head, length)
+import Data.Maybe (Maybe(..))
 import Effect (Effect)
+import Effect.Aff (launchAff_)
+import Generated.Contracts
+  ( EngineBinding
+  , InferenceResult(..)
+  , ModelDescriptor
+  , RequestFieldRecord
+  , ResultPayload(..)
+  , apiBasePath
+  , engineBindingRecord
+  , engines
+  , maxInlineOutputLength
+  , modelDescriptorRecord
+  , models
+  , requestTopics
+  , resultTopic
+  , runtimeMode
+  )
+import Infernix.Web.Workbench
+  ( catalogCards
+  , describeCompletedRequest
+  , filterModels
+  , publicationSummary
+  , selectionSummary
+  )
+import Test.Spec (describe, it)
+import Test.Spec.Assertions (shouldEqual)
+import Test.Spec.Reporter.Console (consoleReporter)
+import Test.Spec.Runner (runSpec)
 
 main :: Effect Unit
-main = pure unit
+main =
+  launchAff_ do
+    runSpec [ consoleReporter ] do
+      describe "generated contracts" do
+        it "publish the active runtime constants" do
+          apiBasePath `shouldEqual` "/api"
+          maxInlineOutputLength `shouldEqual` 80
+          requestTopics `shouldEqual` [ "persistent://public/default/inference.request." <> runtimeMode ]
+          resultTopic `shouldEqual` ("persistent://public/default/inference.result." <> runtimeMode)
+          length engines `shouldEqual` expectedEngineCount runtimeMode
+          length models `shouldEqual` expectedModelCount runtimeMode
+          any hasEngineMetadata engines `shouldEqual` true
+          any hasModelMetadata models `shouldEqual` true
+
+      describe "workbench view model" do
+        it "filters and preserves catalog order" do
+          any (\model -> (modelDescriptorRecord model).modelId == "llm-qwen25-safetensors") (filterModels models "qwen") `shouldEqual` true
+          let firstModelId = (_.modelId <<< modelDescriptorRecord <$> head models)
+          map _.modelId (catalogCards models "" firstModelId) `shouldEqual` map (_.modelId <<< modelDescriptorRecord) models
+
+        it "renders the selected model and result framing" do
+          case head models of
+            Nothing -> length models `shouldEqual` 0
+            Just firstModel -> do
+              let firstModelValue = modelDescriptorRecord firstModel
+              (selectionSummary (Just firstModel)).inputLabel `shouldEqual` firstFieldLabel firstModelValue.requestShape
+              (selectionSummary (Just firstModel)).artifactType `shouldEqual` firstModelValue.artifactType
+              publicationSummary
+                ( Just
+                    { runtimeMode: Just runtimeMode
+                    , controlPlaneContext: Just "host-native"
+                    , daemonLocation: Just "control-plane-host"
+                    , catalogSource: Just "generated-build-root"
+                    , edgePort: Just 9090
+                    , apiUpstream: Just { mode: "host-demo-bridge", host: Just "127.0.0.1", port: Just 18081 }
+                    , demoConfigPath: Just "/tmp/infernix-demo.dhall"
+                    , generatedDemoConfigPath: Nothing
+                    , mountedDemoConfigPath: Nothing
+                    , routes: Just [ { path: "/api", purpose: "Demo API" } ]
+                    , upstreams: Just [ { id: "demo", routePrefix: Just "/", healthStatus: "ready", targetSurface: "host-native demo bridge", durableBackendState: "generated web bundle and Haskell demo daemon" } ]
+                    }
+                )
+                runtimeMode
+                `shouldEqual`
+                  { runtimeMode
+                  , controlPlaneContext: "host-native"
+                  , daemonLocation: "control-plane-host"
+                  , catalogSource: "generated-build-root"
+                  , edgePort: "9090"
+                  , apiUpstreamMode: "host-demo-bridge"
+                  , demoConfigPath: "/tmp/infernix-demo.dhall"
+                  , routes: [ { path: "/api", purpose: "Demo API" } ]
+                  , upstreams: [ { id: "demo", routePrefix: Just "/", healthStatus: "ready", targetSurface: "host-native demo bridge", durableBackendState: "generated web bundle and Haskell demo daemon" } ]
+                  }
+              publicationSummary Nothing runtimeMode
+                `shouldEqual`
+                  { runtimeMode
+                  , controlPlaneContext: "Unavailable"
+                  , daemonLocation: "Unavailable"
+                  , catalogSource: "Unavailable"
+                  , edgePort: "Not published"
+                  , apiUpstreamMode: "Unavailable"
+                  , demoConfigPath: "Unavailable"
+                  , routes: []
+                  , upstreams: []
+                  }
+              let completedRequest =
+                    describeCompletedRequest
+                      ( InferenceResult
+                          { requestId: "req-1"
+                          , resultModelId: firstModelValue.modelId
+                          , matrixRowId: firstModelValue.matrixRowId
+                          , runtimeMode: runtimeMode
+                          , selectedEngine: firstModelValue.selectedEngine
+                          , status: "completed"
+                          , payload: ResultPayload { inlineOutput: Nothing, objectRef: Just "results/req-1.txt" }
+                          , createdAt: "2026-04-26T00:00:00Z"
+                          }
+                      )
+                      (Just firstModel)
+              completedRequest.statusText `shouldEqual` ("Completed request req-1 on " <> firstModelValue.selectedEngine)
+              completedRequest.resultLabel `shouldEqual` (selectionSummary (Just firstModel)).resultLabel
+              completedRequest.outputText `shouldEqual` "Stored object reference: results/req-1.txt"
+              completedRequest.objectHref `shouldEqual` Just "/objects/results/req-1.txt"
+
+expectedModelCount :: String -> Int
+expectedModelCount mode =
+  case mode of
+    "apple-silicon" -> 15
+    "linux-cpu" -> 12
+    "linux-cuda" -> 16
+    _ -> 0
+
+expectedEngineCount :: String -> Int
+expectedEngineCount mode =
+  case mode of
+    "apple-silicon" -> 1
+    "linux-cpu" -> 10
+    "linux-cuda" -> 12
+    _ -> 0
+
+hasEngineMetadata :: EngineBinding -> Boolean
+hasEngineMetadata binding =
+  let bindingValue = engineBindingRecord binding
+  in bindingValue.engine /= "" && bindingValue.adapterId /= "" && bindingValue.adapterType /= "" && bindingValue.adapterLocator /= ""
+
+hasModelMetadata :: ModelDescriptor -> Boolean
+hasModelMetadata model =
+  let modelValue = modelDescriptorRecord model
+  in modelValue.selectedEngine /= "" && modelValue.runtimeLane /= "" && modelValue.runtimeMode == runtimeMode
+
+firstFieldLabel :: Array RequestFieldRecord -> String
+firstFieldLabel fields =
+  case head fields of
+    Just field -> field.label
+    Nothing -> "Input Text"

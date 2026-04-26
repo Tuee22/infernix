@@ -19,8 +19,8 @@
   (engine adapters under `python/adapters/<engine>/` only), the Poetry workflow, and the strict
   mypy/black/ruff quality gate integrated into every adapter container build
 - [development/purescript_policy.md](development/purescript_policy.md) defines the PureScript
-  toolchain (purs, spago), the `purescript-spec` test framework, and the `purescript-bridge`
-  contract derivation from Haskell ADTs in `src/Infernix/Demo/Api.hs`
+  toolchain (purs, spago), the `purescript-spec` test framework, and the Haskell-owned generated
+  contract derivation consumed by the demo UI
 - [engineering/build_artifacts.md](engineering/build_artifacts.md) defines build-output isolation
 - [operations/cluster_bootstrap_runbook.md](operations/cluster_bootstrap_runbook.md) describes the
   supported cluster bring-up and teardown path

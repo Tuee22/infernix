@@ -26,10 +26,10 @@ spec:
               value: "0.0.0.0"
             - name: INFERNIX_PORT
               value: "8080"
-            - name: INFERNIX_SERVICE_UPSTREAM
-              value: infernix-service.platform.svc.cluster.local:80
-            - name: INFERNIX_WEB_UPSTREAM
-              value: infernix-web.platform.svc.cluster.local:80
+{{- if .Values.demo.enabled }}
+            - name: INFERNIX_DEMO_UPSTREAM
+              value: infernix-demo.platform.svc.cluster.local:80
+{{- end }}
             - name: INFERNIX_HARBOR_UPSTREAM
               value: infernix-harbor.platform.svc.cluster.local:80
             - name: INFERNIX_MINIO_UPSTREAM

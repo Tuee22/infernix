@@ -25,6 +25,14 @@ message CatalogEntry {
   string notes = 14;
 }
 
+message EngineBinding {
+  string engine = 1;
+  string adapter_id = 2;
+  string adapter_type = 3;
+  string adapter_locator = 4;
+  bool python_native = 5;
+}
+
 message GeneratedCatalog {
   string runtime_mode = 1;
   int32 edge_port = 2;
@@ -32,6 +40,10 @@ message GeneratedCatalog {
   string generated_path = 4;
   string mounted_path = 5;
   repeated CatalogEntry models = 6;
+  bool demo_ui = 7;
+  repeated string request_topics = 8;
+  string result_topic = 9;
+  repeated EngineBinding engines = 10;
 }
 
 message InferenceRequest {
@@ -39,6 +51,20 @@ message InferenceRequest {
   string request_model_id = 2;
   string input_text = 3;
   string runtime_mode = 4;
+}
+
+message WorkerRequest {
+  string request_model_id = 1;
+  string input_text = 2;
+  string runtime_mode = 3;
+  string selected_engine = 4;
+  string adapter_id = 5;
+}
+
+message WorkerResponse {
+  string output_text = 1;
+  string error_code = 2;
+  string error_message = 3;
 }
 
 message ResultPayload {

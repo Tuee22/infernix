@@ -12,8 +12,8 @@ executables sharing one Cabal library, an optional PureScript demo UI, and one g
 documentation suite.
 
 - two Haskell executables share `infernix-lib`: `infernix` owns the production daemon, cluster
-  lifecycle, edge proxy, gateway pods, Pulsar inference dispatcher, validation, and docs checks;
-  `infernix-demo` owns the demo HTTP API host
+  lifecycle, edge proxy, gateway pods, the current no-HTTP production-daemon placeholder, validation,
+  and docs checks; `infernix-demo` owns the demo HTTP API host
 - production deployments accept inference work by Pulsar subscription only; `infernix service`
   (production) binds no HTTP listener and the cluster has no `infernix-demo` workload when the
   active `.dhall` `demo_ui` flag is off
@@ -21,8 +21,9 @@ documentation suite.
   port and the demo UI is served by the `infernix-demo` workload
 - Python is restricted to `python/adapters/<engine>/` (Poetry-managed; mypy strict, black check,
   ruff strict run in every adapter container build); all custom platform logic is Haskell
-- the demo UI is PureScript built with `spago`, tested with `purescript-spec`, with frontend types
-  derived from Haskell ADTs in `src/Infernix/Demo/Api.hs` via `purescript-bridge`
+- the demo UI is PureScript built with `spago`, tested with `purescript-spec`, with generated
+  frontend contracts emitted by `infernix internal generate-purs-contracts` through
+  `purescript-bridge` from dedicated browser-contract ADTs
 - Harbor, MinIO, Pulsar, and operator-managed PostgreSQL are the local platform services
 - Harbor is always the first deployed service on a pristine cluster, and only Harbor plus
   Harbor-required backend services such as MinIO and PostgreSQL may pull from public container

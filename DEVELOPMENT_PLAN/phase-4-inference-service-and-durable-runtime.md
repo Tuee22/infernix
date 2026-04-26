@@ -1,8 +1,7 @@
 # Phase 4: Inference Service and Durable Runtime
 
-**Status**: Blocked
+**Status**: Active
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
-**Blocked by**: Phase 1 Sprint 1.6
 
 > **Purpose**: Define the Haskell service runtime (Pulsar consumer plus engine-worker supervisor
 > plus durable cache), the Python engine-adapter contract under `python/adapters/`, the
@@ -12,47 +11,36 @@
 
 ## Phase Status
 
-Sprints 4.1 (typed configuration and protobuf contracts) and 4.6 (comprehensive matrix registry)
-remain `Done`. Sprints 4.2 (inference pipeline), 4.3 (host-native and cluster parity), and 4.5
-(durable cache) drop to `Active` because their implementation pointers move from
-`tools/runtime_backend.py`, `tools/runtime_worker.py`, `tools/runtime_fixture_backend.py`, and
-`tools/final_engine_runner.py` to Haskell modules under `src/Infernix/Runtime/{Pulsar,Worker,Cache}.hs`
-plus per-engine Python adapters under `python/adapters/<engine>/`. Sprint 4.4 is renamed "Demo
-Inference API Surface" and drops to `Active`: the manual inference HTTP surface is no longer the
-production interface; production deployments accept inference work via Pulsar subscription only,
-and the demo API surface lives only in `infernix-demo`. New Sprint 4.7 declares the Python
+Sprints 4.1 (typed configuration and protobuf contracts), 4.5 (durable cache), and 4.6
+(comprehensive matrix registry) are `Done`. Sprints 4.2 (inference pipeline) and 4.3
+(host-native and cluster parity) remain `Active`: the repo now has
+`src/Infernix/Runtime/{Pulsar,Worker,Cache}.hs`, but `src/Infernix/Runtime/Pulsar.hs` is still a
+no-subscription placeholder while the Python-native bindings now resolve through typed
+protobuf-over-stdio adapters under `python/adapters/<engine>/`; the remaining adapter gap is real
+engine implementation rather than process-boundary ownership. The legacy Python runtime
+helpers have now been removed from `tools/`. Sprint 4.4 (Demo
+Inference API Surface) is now `Done`: the manual inference HTTP surface lives only in
+`infernix-demo`, is gated by `.Values.demo.enabled` plus the active `.dhall` `demo_ui` flag, and
+production `infernix service` no longer binds HTTP. Sprint 4.7 declares the Python
 engine-adapter contract and quality gate (Poetry, mypy strict, black, ruff strict, integrated into
 every adapter container build). New Sprint 4.8 declares the Pulsar-driven production inference
-surface (`.dhall` schema additions, no HTTP listener bound).
+surface (`.dhall` schema additions and the full Pulsar consumer runtime).
 
 ## Current Repo Assessment
 
 The repository already has typed request or response shapes, typed runtime result metadata, a
-README-matrix-backed generated catalog, and a manual inference API path served by
-`tools/service_server.py` behind the Haskell CLI. The cluster-resident service path mounts the
-real `ConfigMap/infernix-demo-config` and publication ConfigMap on the Kind substrate, stores
-protobuf manifests and results in MinIO, registers Pulsar protobuf schemas for request or result
-or coordination topics, exposes explicit cache status or eviction or rebuild flows through both the
-CLI and routed API, and can run host-native on the Apple control-plane path while the routed edge
-keeps `/api` stable through the host bridge. The current routed runtime now launches
-process-isolated engine-worker runners through configured command prefixes, round-trips request or
-result payloads through Pulsar on both the cluster-resident and host-bridge paths, materializes
-durable runtime artifact bundles into the runtime bucket and local cache roots, stages durable
-engine-specific source-artifact manifests plus local-file copies, direct HTTP downloads, and
-provider metadata fetches under `source-artifacts/`, records authoritative artifact selection in
-those manifests, exposes the selected artifact inventory plus authoritative artifact URI through
-the durable bundle or cache-status surfaces, records engine-adapter id or type or locator or
-availability in those bundles, exposes adapter-specific engine command prefixes to the cluster
-service deployment through `INFERNIX_ENGINE_COMMAND_*`, and uses the default engine-aware runner to
-validate the selected adapter on the active host when no adapter-specific override is configured.
-The service-placement contract is also explicit in the current code: cluster-resident service pods
-use cluster-local MinIO and Pulsar networking, while Apple host-native service placement uses the
-edge-routed `/minio/s3`, `/pulsar/admin`, and `/pulsar/ws` bridges; switching runtime modes only
-changes engine bindings and generated catalog content. The host-side unit-helper path now reuses
-that same durable bundle plus source-artifact-manifest contract through an explicit
-filesystem-fixture helper instead of writing placeholder bundle metadata, and the current
-validation contract closes around authoritative artifact selection, adapter-aware worker execution,
-and host-native Apple or cluster-resident parity.
+README-matrix-backed generated catalog, protobuf-backed manifest and result persistence helpers,
+explicit cache status or eviction or rebuild flows, and a manual inference API path served by the
+Haskell demo surface. The supported host-native and Kind-backed paths stage the real
+`ConfigMap/infernix-demo-config`, keep routed publication metadata under repo-local state, and use
+the `Infernix.Runtime` facade together with `src/Infernix/Runtime/Cache.hs`,
+`src/Infernix/Runtime/Worker.hs`, and `src/Infernix/Runtime/Pulsar.hs` to materialize durable
+bundle metadata, cache entries, large-output object references, and the current no-HTTP
+production-daemon placeholder. Python-native bindings now cross a real process boundary through
+engine-specific adapter directories plus adapter-specific command overrides, and the worker
+boundary now uses typed protobuf-over-stdio. The major remaining gaps are the real Pulsar
+consumer loop, schema registration or publication, and replacing the current stub adapters with
+real engine loaders plus cluster-backed adapter execution.
 
 ## Matrix Ownership Contract
 
@@ -92,7 +80,7 @@ Make the service runtime strongly typed before the transport and UI surfaces acc
 - `infernix test unit` covers runtime-mode selection, representative catalog membership or
   omission, generated demo-config rendering, invalid generated-catalog startup handling, and
   protobuf runtime-manifest round-trip coverage
-- `infernix test lint` passes `tools/proto_check.py` against the repo-owned `.proto` contract set
+- `infernix test lint` passes `infernix lint proto` against the repo-owned `.proto` contract set
 - the service runtime rejects unsupported runtime modes and invalid request payloads
   with typed errors
 - the supported web build can derive frontend contract modules from the Haskell SSOT without hand patches
@@ -106,8 +94,7 @@ None.
 ## Sprint 4.2: Inference Request Pipeline Over Pulsar and MinIO [Active]
 
 **Status**: Active
-**Blocked by**: Phase 1 Sprint 1.6
-**Implementation**: `src/Infernix/Runtime.hs`, `src/Infernix/Storage.hs`, `infernix.cabal`, `tools/runtime_backend.py`, `test/integration/Spec.hs`, `test/unit/Spec.hs`
+**Implementation**: `src/Infernix/Runtime.hs`, `src/Infernix/Runtime/Cache.hs`, `src/Infernix/Runtime/Worker.hs`, `src/Infernix/Storage.hs`, `src/Infernix/Demo/Api.hs`, `infernix.cabal`, `test/integration/Spec.hs`, `test/unit/Spec.hs`
 **Docs to update**: `documents/architecture/runtime_modes.md`, `documents/engineering/model_lifecycle.md`, `documents/engineering/object_storage.md`
 
 ### Objective
@@ -143,22 +130,22 @@ authoritative.
 - `infernix test unit` proves large outputs return typed object references, that protobuf
   manifests or results round-trip through the supported storage helpers, and that local-file plus
   direct-upstream HTTP source artifacts materialize through the durable object-store contract
-- `infernix test unit` also proves provider-backed authoritative artifact selection for Hugging
-  Face and GitHub metadata inputs, the default engine-aware runner output contract, and the
-  adapter-specific command-override path used by `tools/runtime_worker.py`
+- `infernix test unit` also proves the durable bundle or cache materialization contract exercised
+  by the current Haskell runtime simulation
 - `infernix test integration` proves the routed cache surface reports engine-adapter availability
   together with authoritative source-artifact URI or kind metadata and selected-artifact inventory
 - the routed service path persists runtime results in MinIO and exposes durable cache manifests through the routed cache lifecycle API
 
 ### Remaining Work
 
-- the Pulsar consumer/dispatcher and worker supervisor are currently implemented in
-  `tools/runtime_backend.py` and `tools/runtime_worker.py`; the Haskell port to
-  `src/Infernix/Runtime/{Pulsar,Worker,Cache}.hs` has not landed yet
-- engine adapters are currently bundled into `tools/runtime_backend.py` rather than separated into
-  `python/adapters/<engine>/`; the per-engine adapter contract lands in Sprint 4.7
-- `tools/service_server.py` still launches the engine workers via the old runtime-backend code
-  path; that responsibility moves into `src/Infernix/Runtime/Worker.hs`
+- `src/Infernix/Runtime/Pulsar.hs` is still a validated placeholder; it does not subscribe to
+  request topics, register Pulsar schemas, or publish results yet
+- the routed runtime now delegates through `src/Infernix/Runtime/Worker.hs` and
+  `src/Infernix/Runtime/Cache.hs`, and Python-native bindings now speak typed
+  protobuf-over-stdio, but the current adapters are still stub responders rather than real engine
+  implementations
+- Sprint 4.7 still owns replacing those stub adapters with real per-engine inference execution and
+  cluster-backed adapter image coverage
 
 ---
 
@@ -166,7 +153,7 @@ authoritative.
 
 **Status**: Active
 **Blocked by**: Sprint 4.2
-**Implementation**: `src/Infernix/Service.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Runtime.hs`, `infernix.cabal`, `test/integration/Spec.hs`, `test/unit/Spec.hs`
+**Implementation**: `src/Infernix/Service.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Runtime.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Worker.hs`, `infernix.cabal`, `test/integration/Spec.hs`, `test/unit/Spec.hs`
 **Docs to update**: `documents/architecture/runtime_modes.md`, `documents/engineering/object_storage.md`, `documents/operations/apple_silicon_runbook.md`
 
 ### Objective
@@ -204,18 +191,16 @@ cluster-resident execution to coexist.
 
 ### Remaining Work
 
-- the host-native versus cluster-resident parity assertions currently target the
-  `tools/service_server.py` plus `tools/runtime_worker.py` implementation; those assertions must
-  be re-targeted at the Haskell daemon (`infernix service` for production, `infernix-demo serve`
-  for the demo surface) once Sprint 4.2 lands
+- the routed demo parity path now targets the Haskell host bridge, but the production daemon still
+  lacks the real Pulsar consumer loop, topic schema registration, and per-engine adapter coverage
+  planned in Sprint 4.2
 
 ---
 
-## Sprint 4.4: Demo Inference API Surface [Active]
+## Sprint 4.4: Demo Inference API Surface [Done]
 
-**Status**: Active
-**Blocked by**: Phase 1 Sprint 1.6, Phase 3 Sprint 3.6
-**Implementation**: `infernix.cabal`, `app/Main.hs`, `tools/service_server.py`
+**Status**: Done
+**Implementation**: `infernix.cabal`, `app/Demo.hs`, `src/Infernix/DemoCLI.hs`, `src/Infernix/Demo/Api.hs`, `src/Infernix/Service.hs`, `src/Infernix/Edge.hs`, `src/Infernix/Models.hs`, `chart/templates/deployment-demo.yaml`, `chart/templates/service-demo.yaml`, `test/integration/Spec.hs`, `web/playwright/inference.spec.js`
 **Docs to update**: `documents/reference/api_surface.md`, `documents/reference/web_portal_surface.md`
 
 ### Objective
@@ -251,19 +236,14 @@ via Pulsar subscription only and never bind this HTTP surface.
 
 ### Remaining Work
 
-- the API surface is currently served by `tools/service_server.py` and treated as a production
-  surface; it must be re-scoped as demo-only and re-implemented in `src/Infernix/Demo/Api.hs`
-  exposed by the `infernix-demo` binary
-- the demo gating (`.Values.demo.enabled` plus the `.dhall` `demo_ui` flag) does not exist yet
-- production deployments cannot yet opt out of the HTTP API surface
+None.
 
 ---
 
-## Sprint 4.5: Durable Service Cache and Reconcile Semantics [Active]
+## Sprint 4.5: Durable Service Cache and Reconcile Semantics [Done]
 
-**Status**: Active
-**Blocked by**: Phase 1 Sprint 1.6, Sprint 4.2
-**Implementation**: `src/Infernix/Runtime.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `infernix.cabal`, `test/unit/Spec.hs`, `test/integration/Spec.hs`
+**Status**: Done
+**Implementation**: `src/Infernix/Runtime.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Demo/Api.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Storage.hs`, `test/unit/Spec.hs`, `test/integration/Spec.hs`
 **Docs to update**: `documents/engineering/model_lifecycle.md`, `documents/engineering/storage_and_state.md`
 
 ### Objective
@@ -299,17 +279,14 @@ Make derived runtime state reproducible from durable sources and keep lifecycle 
 
 ### Remaining Work
 
-- the cache lifecycle is currently implemented in `tools/runtime_backend.py`; the Haskell port to
-  `src/Infernix/Runtime/Cache.hs` lands together with Sprint 4.2
-- `tools/runtime_fixture_backend.py` is the host-side unit fixture; the supported path moves the
-  fixture path to Haskell test code under `test/unit/` and removes the Python helper
+None.
 
 ---
 
 ## Sprint 4.6: Comprehensive Matrix Registry, Generated Demo `.dhall`, and ConfigMap Publication [Done]
 
 **Status**: Done
-**Implementation**: `src/Infernix/Models.hs`, `test/unit/Spec.hs`, `test/integration/Spec.hs`, `web/test/contracts.test.mjs`
+**Implementation**: `src/Infernix/Models.hs`, `test/unit/Spec.hs`, `test/integration/Spec.hs`, `web/test/Main.purs`
 **Docs to update**: `documents/architecture/model_catalog.md`, `documents/architecture/runtime_modes.md`, `documents/engineering/model_lifecycle.md`, `documents/development/testing_strategy.md`
 
 ### Objective
@@ -355,8 +332,7 @@ None.
 ## Sprint 4.7: Python Engine Adapter Contract and Quality Gate [Active]
 
 **Status**: Active
-**Blocked by**: Phase 1 Sprint 1.6
-**Implementation**: `tools/runtime_backend.py`, `tools/runtime_worker.py`, `tools/final_engine_runner.py`, `tools/requirements.txt`, `proto/infernix/runtime/inference.proto`, `tools/generated_proto/`, `docker/`
+**Implementation**: `python/pyproject.toml`, `python/poetry.lock`, `python/adapters/common.py`, `python/adapters/fixture/`, `python/adapters/{vllm-python,transformers-python,diffusers-python,pytorch-python,tensorflow-python,jax-python}/`, `tools/python_quality.sh`, `src/Infernix/Runtime/Worker.hs`, `proto/infernix/runtime/inference.proto`, `tools/generated_proto/`, `docker/{vllm-python,transformers-python,diffusers-python,pytorch-python,tensorflow-python,jax-python}.Dockerfile`, `test/unit/Spec.hs`
 **Docs to update**: `documents/development/python_policy.md` (new), `documents/engineering/model_lifecycle.md`, `documents/development/testing_strategy.md`
 
 ### Objective
@@ -370,9 +346,9 @@ single dispatch point that forks a Python adapter over typed protobuf-over-stdio
 ### Deliverables
 
 - one repo-root `python/pyproject.toml` (Poetry-managed) declaring all Python dependencies needed
-  by adapters; outside the cluster, `poetry install` materializes `./.venv/` in the repo folder;
-  inside the engine container, Poetry installs system-wide from the same `pyproject.toml`, with no
-  in-container `.venv`
+  by adapters; outside the cluster, `poetry install` materializes a repo-local adapter virtual
+  environment; inside the engine container, Poetry installs system-wide from the same
+  `pyproject.toml`, with no in-container `.venv`
 - one `python/adapters/<engine>/` directory per Python-native inference engine (PyTorch, JAX,
   vLLM, transformers, Diffusers, etc.); each adapter is a thin module that loads the engine, takes
   a typed protobuf request from stdin, runs the engine, and emits a typed protobuf response to
@@ -382,7 +358,7 @@ single dispatch point that forks a Python adapter over typed protobuf-over-stdio
   non-zero on any failure
 - every adapter `Dockerfile` (under `docker/<adapter>.Dockerfile` or equivalent) runs
   `tools/python_quality.sh` as a build step; the container image build fails on any check failure
-- `infernix test lint` runs the same quality gate against `./.venv/` on the host
+- `infernix test lint` runs the same quality gate against that Poetry-managed adapter environment on the host
 - `src/Infernix/Runtime/Worker.hs` forks the appropriate Python adapter for each request whose
   engine binding names a Python-native engine; the adapter speaks typed protobuf-over-stdio (or
   unix socket) using the same `.proto` schemas used by the Haskell side via `proto-lens`
@@ -397,21 +373,24 @@ single dispatch point that forks a Python adapter over typed protobuf-over-stdio
 - intentionally introducing a type error, formatting drift, or ruff violation under
   `python/adapters/` causes the adapter `docker build` to fail; `infernix test lint` also fails
   in that case
-- `infernix test unit` exercises the Haskell worker plus a fixture Python adapter handshake
-  end-to-end and asserts the typed protobuf-over-stdio contract
-- `infernix test integration --engine pytorch` (or the equivalent for any Python-native engine)
-  exercises one real adapter end-to-end on the cluster substrate and fails if the adapter image's
-  quality gate did not run
+- `infernix test unit` exercises the Haskell worker plus a Python adapter handshake end-to-end and
+  asserts the typed protobuf-over-stdio contract
+- `infernix test integration` on a runtime mode whose active catalog selects a Python-native
+  binding exercises one real adapter path end-to-end on the cluster substrate and fails if the
+  adapter image's quality gate did not run
 - `find python -name '*.py' -type f` returns only files under `python/adapters/`; `tools/` carries
   no engine-specific Python after the migration
 
 ### Remaining Work
 
-- `python/` does not exist yet; the engine-adapter execution path currently lives in
-  `tools/runtime_backend.py`, `tools/runtime_worker.py`, and `tools/final_engine_runner.py`
-- `tools/python_quality.sh` does not exist yet
-- no adapter Dockerfile yet runs the quality gate as a build step
-- `src/Infernix/Runtime/Worker.hs` does not exist yet (lands in Sprint 4.2 first)
+- the worker now dispatches every Python-native binding through a real adapter directory and a
+  typed protobuf-over-stdio contract, and every adapter Dockerfile now runs
+  `tools/python_quality.sh` as a build step
+- the remaining gap is engine depth rather than ownership: the current adapters are still stub
+  responders that normalize the input payload instead of loading real vLLM or transformers or
+  Diffusers or PyTorch or TensorFlow or JAX runtimes
+- the integration suite still does not build or schedule dedicated adapter images or prove one real
+  Python-native engine on the cluster substrate
 
 ---
 
@@ -419,7 +398,7 @@ single dispatch point that forks a Python adapter over typed protobuf-over-stdio
 
 **Status**: Active
 **Blocked by**: Sprint 4.2, Sprint 4.7
-**Implementation**: `src/Infernix/Service.hs`, `src/Infernix/Config.hs`, `src/Infernix/CLI.hs`, `chart/templates/deployment-service.yaml`, `chart/values.yaml`, `tools/runtime_backend.py`, `test/integration/Spec.hs`
+**Implementation**: `src/Infernix/Service.hs`, `src/Infernix/Config.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Types.hs`, `src/Infernix/Models.hs`, `src/Infernix/DemoConfig.hs`, `chart/templates/deployment-service.yaml`, `chart/values.yaml`, `src/Infernix/Runtime.hs`, `src/Infernix/Runtime/Pulsar.hs`, `proto/infernix/runtime/inference.proto`, `tools/generated_proto/`, `test/unit/Spec.hs`, `test/integration/Spec.hs`, `web/test/Main.purs`
 **Docs to update**: `documents/tools/pulsar.md`, `documents/architecture/runtime_modes.md`, `documents/reference/cli_reference.md`
 
 ### Objective
@@ -444,7 +423,8 @@ result topics named in the same config. **No HTTP listener is bound in productio
   by `python/adapters/<engine>/`
 - `chart/templates/deployment-service.yaml` no longer requires a `demo_ui = True` deployment in
   production; the chart deploys `infernix-service` with the production entrypoint
-  `infernix service` and binds no HTTP service for it
+  `infernix service`, publishes no Kubernetes HTTP `Service`, and exposes no fake service port for
+  the production daemon
 
 ### Validation
 
@@ -464,11 +444,9 @@ result topics named in the same config. **No HTTP listener is bound in productio
 
 ### Remaining Work
 
-- `src/Infernix/Runtime/Pulsar.hs` does not exist yet (lands in Sprint 4.2 first)
-- the `.dhall` schema does not yet carry `request_topics`, `result_topic`, or `engines`
-- `chart/templates/deployment-service.yaml` currently exposes an HTTP service for the
-  `infernix-service` pod; the chart must be updated to drop that service when `demo_ui` is off
-- the production deployment cannot yet opt out of the demo HTTP surface
+- `src/Infernix/Runtime/Pulsar.hs` now owns the no-HTTP production-daemon placeholder, but it
+  still does not subscribe to request topics, register protobuf schemas with Pulsar, dispatch
+  requests through a real worker supervisor, or publish results to `result_topic`
 
 ## Documentation Requirements
 

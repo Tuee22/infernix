@@ -29,34 +29,42 @@ When the flag is on:
 - routed catalog or publication failures surface as unavailable live state rather than browser-only
   fallback data
 
-## Two-Binary Image Topology
+## Image Topology
 
 `infernix` and `infernix-demo` share one Cabal library `infernix-lib` and ship in the same OCI
 image. The chart workload entrypoint selects which executable runs; the same image powers
 `infernix-service` (production), `infernix-edge`, the Harbor, MinIO, and Pulsar gateway pods, and
-`infernix-demo`. The PureScript bundle lives in a separate web image built from `web/Dockerfile`
-that also carries Playwright browser dependencies; the `infernix-demo` workload mounts that
-bundle from `web/dist/`.
+`infernix-demo`. `docker/service.Dockerfile` copies the built PureScript bundle from `web/dist/`
+into that image so `infernix-demo` can serve `/`.
+
+The repository also builds a separate web image from `web/Dockerfile`. That image packages the
+same built `web/dist/` bundle together with Playwright browser dependencies and is the supported
+executor for `infernix test e2e`. `infernix cluster up` still builds and Harbor-publishes that
+image for the routed E2E lanes, but it is no longer deployed as a separate cluster workload
+because routed `/` is served by `infernix-demo`.
 
 ## PureScript Application
 
-- repo-owned browser application code lives under `web/src/*.purs` and is built by `spago build`
-  plus `spago bundle-app` into `web/dist/`
+- repo-owned browser application code lives under `web/src/*.purs`
+- `npm --prefix web run build` regenerates `web/src/Generated/Contracts.purs`, runs `spago build`,
+  and emits `web/dist/app.js` through `spago bundle --module Main --outfile dist/app.js --platform browser --bundle-type app`
 - handwritten PureScript modules import generated modules from `web/src/Generated/` for shared
   types; they do not declare their own request or response types
-- `web/Dockerfile` installs `purs` and `spago` alongside the Playwright browser dependencies
+- `web/Dockerfile` installs the npm-managed PureScript toolchain (`purescript`, `spago`, and
+  `esbuild`) alongside the Playwright browser dependencies
 - frontend tests use `purescript-spec` under `web/test/*.purs` and run via `spago test`
 - `infernix test unit` invokes `spago test` alongside the Haskell unit suites
 
 ## Shared Contracts
 
-- Haskell ADTs in `src/Infernix/Demo/Api.hs` are the source of truth for request and response
-  types
-- the `infernix-lib` build invokes `infernix internal generate-purs-contracts`, which uses
-  `purescript-bridge` to emit PureScript modules into `web/src/Generated/`
-- `web/Dockerfile` invokes the same codegen entrypoint so the web image build is self-contained
-- generated contracts expose the active runtime mode and the generated catalog entries for that
-  mode
+- dedicated browser-contract ADTs in `src/Generated/Contracts.hs` are the source of truth for
+  the PureScript request, response, engine-binding, and error types consumed by the demo UI
+- `infernix internal generate-purs-contracts` emits `web/src/Generated/Contracts.purs`
+- `npm --prefix web run build` invokes that codegen entrypoint before `spago build`
+- generated contracts are derived through `purescript-bridge`, producing `newtype` wrappers plus
+  helper functions that expose record views to handwritten frontend modules
+- the generator appends the active runtime mode, request-topic, result-topic, engine-binding, and
+  catalog constants together with explicit `Simple.JSON` instances used by routed `/api` decoding
 
 ## Testing
 
@@ -67,10 +75,10 @@ bundle from `web/dist/`.
   coverage against the real cluster edge, cross-checks routed `/api/models` against the serialized
   generated demo config, and separately exercises browser UI interaction for publication-detail
   rendering, model selection, submission, object-reference results, and the
-  host-bridge-versus-cluster-service daemon-location switch on the supported Apple host path
+  host-bridge-versus-cluster-demo daemon-location switch on the supported Apple host path
 - the host-native and outer-container validation paths launch that Playwright suite from the same
-  built web image that serves the demo UI, and the host-native final-substrate lane serves that UI
-  from the Harbor-published web runtime image across `apple-silicon`, `linux-cpu`, and `linux-cuda`
+  built web image that packages the demo bundle, and the host-native final-substrate lane reuses
+  the Harbor-published web runtime image across `apple-silicon`, `linux-cpu`, and `linux-cuda`
 
 ## Cross-References
 

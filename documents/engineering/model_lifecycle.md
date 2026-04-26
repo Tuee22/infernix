@@ -29,10 +29,11 @@
   modules in `tools/generated_proto/`
 - the production daemon (`infernix service`) registers protobuf schemas on Pulsar topics for
   requests, results, and coordination messages and consumes those topics directly
-- engine workers are Haskell processes; for Python-native engines, the worker forks the appropriate
-  adapter under `python/adapters/<engine>/` over typed protobuf-over-stdio (or unix socket) and
-  treats the adapter as a pure request-to-response process; the adapter does not open network
-  sockets, write to MinIO, or subscribe to Pulsar itself (see [../development/python_policy.md](../development/python_policy.md))
+- engine workers are Haskell processes; for Python-native engines, the worker now forks the named
+  adapter path and exchanges typed protobuf worker messages over stdio. The current adapters keep
+  the process boundary and quality gate in place but still return stub output rather than loading
+  real engine libraries. Adapters do not open network sockets, write to MinIO, or subscribe to
+  Pulsar themselves (see [../development/python_policy.md](../development/python_policy.md))
 - derived cache state is keyed by runtime mode and model identity and is always rebuildable
 - the demo `/api/cache` surface (served by `infernix-demo` when the demo flag is on) operates on
   the manifest-backed durable contract exposed by the Haskell worker, including engine-runner

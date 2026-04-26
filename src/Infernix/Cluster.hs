@@ -12,27 +12,39 @@ module Infernix.Cluster
 where
 
 import Control.Concurrent (threadDelay)
-import Control.Exception (IOException, try)
+import Control.Exception (IOException, bracket, try)
 import Control.Monad (unless, when)
+import Data.Aeson (Value (..), eitherDecode)
+import Data.Aeson.Key qualified as Key
+import Data.Aeson.KeyMap qualified as KeyMap
+import Data.ByteString.Base64 qualified as Base64
+import Data.ByteString.Char8 qualified as ByteString8
 import Data.ByteString.Lazy qualified as Lazy
 import Data.ByteString.Lazy.Char8 qualified as LazyChar8
-import Data.Char (isSpace)
+import Data.Char (isSpace, toLower)
 import Data.List qualified as List
 import Data.Map.Strict qualified as Map
-import Data.Maybe (fromMaybe, mapMaybe)
+import Data.Maybe (catMaybes, fromMaybe, isJust, mapMaybe)
 import Data.Text qualified as Text
 import Data.Time (getCurrentTime)
+import Data.Vector qualified as Vector
+import Infernix.Cluster.Discover
+import Infernix.Cluster.PublishImages qualified as PublishImages
 import Infernix.Config (Paths (..))
 import Infernix.Config qualified as Config
 import Infernix.Models
 import Infernix.Storage
 import Infernix.Types
-import System.Directory (copyFile, createDirectoryIfMissing, doesDirectoryExist, doesFileExist, listDirectory, removePathForcibly)
+import Network.Socket qualified as Socket
+import System.Directory (copyFile, createDirectoryIfMissing, doesDirectoryExist, doesFileExist, findExecutable, listDirectory, removePathForcibly)
 import System.Environment (getEnvironment, lookupEnv)
 import System.Exit (ExitCode (..))
 import System.FilePath (takeDirectory, (</>))
 import System.Process
   ( CreateProcess (cwd, env),
+    callProcess,
+    createProcess,
+    getPid,
     proc,
     readCreateProcessWithExitCode,
     readProcess,
@@ -68,16 +80,19 @@ helmDependencyArchives =
     "chart/charts/ingress-nginx-4.15.1.tgz"
   ]
 
-finalPhaseDeployments :: [String]
-finalPhaseDeployments =
-  [ "deployment/infernix-edge",
-    "deployment/infernix-harbor-gateway",
-    "deployment/infernix-minio-console",
-    "deployment/infernix-minio-gateway",
-    "deployment/infernix-pulsar-gateway",
-    "deployment/infernix-service",
-    "deployment/infernix-web"
-  ]
+finalPhaseDeployments :: ClusterState -> [String]
+finalPhaseDeployments state =
+  baseDeployments
+    <> [deployment | clusterStateHasDemoUi state, deployment <- ["deployment/infernix-demo"]]
+  where
+    baseDeployments =
+      [ "deployment/infernix-edge",
+        "deployment/infernix-harbor-gateway",
+        "deployment/infernix-minio-console",
+        "deployment/infernix-minio-gateway",
+        "deployment/infernix-pulsar-gateway",
+        "deployment/infernix-service"
+      ]
 
 finalPhaseStatefulSets :: [String]
 finalPhaseStatefulSets =
@@ -171,14 +186,171 @@ harborPostgresUserName = "harbor"
 harborPostgresUserSecretName :: String
 harborPostgresUserSecretName = "infernix-harbor-db-user"
 
+simulationPidPath :: Paths -> FilePath
+simulationPidPath paths = runtimeRoot paths </> "simulated-demo.pid"
+
+platformCommandsAvailable :: IO Bool
+platformCommandsAvailable = do
+  let requiredCommands = ["docker", "helm", "kind", "kubectl"]
+  availableCommands <- mapM findExecutable requiredCommands
+  pure (all isJust availableCommands)
+
+resolveDemoUiEnabled :: IO Bool
+resolveDemoUiEnabled = do
+  maybeValue <- lookupEnv "INFERNIX_DEMO_UI"
+  case fmap (map toLower . trim) maybeValue of
+    Nothing -> pure True
+    Just "true" -> pure True
+    Just "1" -> pure True
+    Just "on" -> pure True
+    Just "enabled" -> pure True
+    Just "false" -> pure False
+    Just "0" -> pure False
+    Just "off" -> pure False
+    Just "disabled" -> pure False
+    Just rawValue ->
+      ioError
+        ( userError
+            ( "Unsupported INFERNIX_DEMO_UI value: "
+                <> rawValue
+                <> " (expected true|false)"
+            )
+        )
+
+clusterStateHasDemoUi :: ClusterState -> Bool
+clusterStateHasDemoUi state =
+  any ((`elem` ["/", "/api", "/objects"]) . path) (routes state)
+
+clusterUpSimulated :: Paths -> RuntimeMode -> IO ()
+clusterUpSimulated paths runtimeMode = do
+  requestedPort <- chooseEdgePort paths
+  demoUiEnabledValue <- resolveDemoUiEnabled
+  createDirectoryIfMissing True (buildRoot paths)
+  createDirectoryIfMissing True (runtimeRoot paths)
+  createDirectoryIfMissing True (takeDirectory (Config.generatedKubeconfigPath paths))
+  createDirectoryIfMissing True (takeDirectory (Config.generatedDemoConfigPath paths runtimeMode))
+  createDirectoryIfMissing True (takeDirectory (Config.publishedConfigMapCatalogPath paths runtimeMode))
+  writeFile (Config.generatedKubeconfigPath paths) "simulated-kubeconfig\n"
+  writeFile (edgePortPath paths) (show requestedPort)
+  let demoConfig =
+        DemoConfig
+          { configRuntimeMode = runtimeMode,
+            configEdgePort = requestedPort,
+            configMapName = "infernix-demo-config",
+            generatedPath = Config.generatedDemoConfigPath paths runtimeMode,
+            mountedPath = Config.watchedDemoConfigPath runtimeMode,
+            demoUiEnabled = demoUiEnabledValue,
+            requestTopics = requestTopicsForMode runtimeMode,
+            resultTopic = resultTopicForMode runtimeMode,
+            engines = engineBindingsForMode runtimeMode,
+            models = catalogForMode runtimeMode
+          }
+      payload = encodeDemoConfig demoConfig
+  Lazy.writeFile (Config.generatedDemoConfigPath paths runtimeMode) payload
+  Lazy.writeFile (Config.publishedConfigMapCatalogPath paths runtimeMode) payload
+  writeFile (Config.publishedConfigMapManifestPath paths) (renderConfigMapManifest runtimeMode payload)
+  now <- getCurrentTime
+  let state =
+        ClusterState
+          { clusterPresent = True,
+            clusterSimulation = True,
+            edgePort = requestedPort,
+            routes = routeInventory demoUiEnabledValue,
+            storageClass = "infernix-manual",
+            claims = seedClaims,
+            clusterRuntimeMode = runtimeMode,
+            kubeconfigPath = Config.generatedKubeconfigPath paths,
+            generatedDemoConfigPath = Config.generatedDemoConfigPath paths runtimeMode,
+            publishedDemoConfigPath = Config.publishedConfigMapCatalogPath paths runtimeMode,
+            publishedConfigMapManifestPath = Config.publishedConfigMapManifestPath paths,
+            mountedDemoConfigPath = Config.watchedDemoConfigPath runtimeMode,
+            updatedAt = now
+          }
+  writeFile (Config.publicationStatePath paths) (renderPublicationState (Config.controlPlaneContext paths) state)
+  writeStateFile (clusterStatePath paths) state
+  killSimulatedService paths
+  runCommand (Just (repoRoot paths)) [] "npm" ["--prefix", "web", "run", "build"]
+  buildDir <- Config.resolveCabalBuildDir
+  baseEnv <- getEnvironment
+  (_, _, _, processHandle) <-
+    createProcess
+      ( proc
+          "cabal"
+          [ "--builddir=" <> buildDir,
+            "run",
+            "exe:infernix-demo",
+            "--",
+            "--runtime-mode",
+            Text.unpack (runtimeModeId runtimeMode),
+            "serve",
+            "--dhall",
+            Config.generatedDemoConfigPath paths runtimeMode,
+            "--port",
+            show requestedPort
+          ]
+      )
+        { cwd = Just (repoRoot paths),
+          env =
+            Just
+              ( mergeEnvironment
+                  baseEnv
+                  [ ("INFERNIX_CONTROL_PLANE_CONTEXT", "host-native"),
+                    ("INFERNIX_DAEMON_LOCATION", "cluster-pod"),
+                    ("INFERNIX_BIND_HOST", "127.0.0.1"),
+                    ("INFERNIX_PUBLICATION_STATE_PATH", Config.publicationStatePath paths)
+                  ]
+              )
+        }
+  maybePid <- getPid processHandle
+  case maybePid of
+    Just pidValue -> writeFile (simulationPidPath paths) (show pidValue)
+    Nothing -> ioError (userError "simulated cluster failed to expose a demo-service pid")
+  waitForSimulatedService requestedPort demoUiEnabledValue
+  putStrLn "cluster up complete (simulated)"
+  putStrLn ("runtimeMode: " <> Text.unpack (runtimeModeId runtimeMode))
+  putStrLn ("edgePort: " <> show requestedPort)
+
+waitForSimulatedService :: Int -> Bool -> IO ()
+waitForSimulatedService edgePortValue demoUiEnabledValue = go (30 :: Int)
+  where
+    readyUrl
+      | demoUiEnabledValue = "http://127.0.0.1:" <> show edgePortValue <> "/api/publication"
+      | otherwise = "http://127.0.0.1:" <> show edgePortValue <> "/harbor"
+    go remainingAttempts
+      | remainingAttempts <= 0 =
+          ioError (userError "simulated demo service never became ready")
+      | otherwise = do
+          result <- try (readProcess "curl" ["-fsS", readyUrl] "") :: IO (Either IOException String)
+          case result of
+            Right _ -> pure ()
+            Left _ -> do
+              threadDelay 500000
+              go (remainingAttempts - 1)
+
+killSimulatedService :: Paths -> IO ()
+killSimulatedService paths = do
+  pidExists <- doesFileExist (simulationPidPath paths)
+  when pidExists $ do
+    pidValue <- readFile (simulationPidPath paths)
+    _ <- try (callProcess "kill" [trim pidValue]) :: IO (Either IOException ())
+    removePathForcibly (simulationPidPath paths)
+
 clusterUp :: Maybe RuntimeMode -> IO ()
 clusterUp maybeRuntimeMode = do
   paths <- Config.discoverPaths
   Config.ensureRepoLayout paths
-  cleanupLegacyBootstrapRegistry
   runtimeMode <- Config.resolveRuntimeMode maybeRuntimeMode
+  commandsAvailable <- platformCommandsAvailable
+  if not commandsAvailable
+    then clusterUpSimulated paths runtimeMode
+    else clusterUpWithPlatform paths runtimeMode
+
+clusterUpWithPlatform :: Paths -> RuntimeMode -> IO ()
+clusterUpWithPlatform paths runtimeMode = do
+  cleanupLegacyBootstrapRegistry
   let controlPlane = Config.controlPlaneContext paths
   requestedPort <- chooseEdgePort paths
+  demoUiEnabledValue <- resolveDemoUiEnabled
   let requestedDemoConfig =
         DemoConfig
           { configRuntimeMode = runtimeMode,
@@ -186,6 +358,10 @@ clusterUp maybeRuntimeMode = do
             configMapName = "infernix-demo-config",
             generatedPath = Config.generatedDemoConfigPath paths runtimeMode,
             mountedPath = Config.watchedDemoConfigPath runtimeMode,
+            demoUiEnabled = demoUiEnabledValue,
+            requestTopics = requestTopicsForMode runtimeMode,
+            resultTopic = resultTopicForMode runtimeMode,
+            engines = engineBindingsForMode runtimeMode,
             models = catalogForMode runtimeMode
           }
       requestedPayload = encodeDemoConfig requestedDemoConfig
@@ -194,8 +370,9 @@ clusterUp maybeRuntimeMode = do
   let claimDiscoveryState =
         ClusterState
           { clusterPresent = True,
+            clusterSimulation = False,
             edgePort = requestedPort,
-            routes = routeInventory,
+            routes = routeInventory demoUiEnabledValue,
             storageClass = "infernix-manual",
             claims = seedClaims,
             clusterRuntimeMode = runtimeMode,
@@ -230,6 +407,10 @@ clusterUp maybeRuntimeMode = do
             configMapName = "infernix-demo-config",
             generatedPath = demoConfigPath,
             mountedPath = mountedCatalogPath,
+            demoUiEnabled = demoUiEnabledValue,
+            requestTopics = requestTopicsForMode runtimeMode,
+            resultTopic = resultTopicForMode runtimeMode,
+            engines = engineBindingsForMode runtimeMode,
             models = catalogForMode runtimeMode
           }
       payload = encodeDemoConfig demoConfig
@@ -245,8 +426,9 @@ clusterUp maybeRuntimeMode = do
   let seedState =
         ClusterState
           { clusterPresent = True,
+            clusterSimulation = False,
             edgePort = edgePortValue,
-            routes = routeInventory,
+            routes = routeInventory demoUiEnabledValue,
             storageClass = "infernix-manual",
             claims = seedClaims,
             clusterRuntimeMode = runtimeMode,
@@ -264,7 +446,7 @@ clusterUp maybeRuntimeMode = do
   renderedChartPath <- renderHelmChart paths runtimeMode [finalValuesPath]
   when clusterCreated $
     preloadBootstrapSupportImagesOnKindNodes paths runtimeMode renderedChartPath
-  applyBootstrapState paths runtimeMode discoveredClaims
+  applyBootstrapState paths runtimeMode demoUiEnabledValue discoveredClaims
   let initialState = seedState {claims = discoveredClaims}
   writeFile publicationPath (renderPublicationState controlPlane initialState)
   reconcilePersistentVolumes initialState
@@ -301,16 +483,20 @@ clusterDown maybeRuntimeMode = do
         case maybeState of
           Just state -> pure (clusterRuntimeMode state)
           Nothing -> Config.resolveRuntimeMode Nothing
-  clusterExists <- kindClusterExists paths runtimeMode
-  when clusterExists $ do
-    unless (kindUsesHostBindMounts paths) $
-      syncKindNodeRuntimePathsToHost paths runtimeMode maybeState
-    runCommand
-      Nothing
-      [("KUBECONFIG", Config.generatedKubeconfigPath paths)]
-      "kind"
-      ["delete", "cluster", "--name", kindClusterName paths runtimeMode]
-  cleanupLegacyBootstrapRegistry
+  case maybeState of
+    Just state
+      | clusterSimulation state -> killSimulatedService paths
+    _ -> do
+      clusterExists <- kindClusterExists paths runtimeMode
+      when clusterExists $ do
+        unless (kindUsesHostBindMounts paths) $
+          syncKindNodeRuntimePathsToHost paths runtimeMode maybeState
+        runCommand
+          Nothing
+          [("KUBECONFIG", Config.generatedKubeconfigPath paths)]
+          "kind"
+          ["delete", "cluster", "--name", kindClusterName paths runtimeMode]
+      cleanupLegacyBootstrapRegistry
   case maybeState of
     Nothing -> putStrLn "cluster already absent"
     Just state
@@ -342,19 +528,24 @@ clusterStatus maybeRuntimeMode = do
       putStrLn ("expectedDemoConfigPath: " <> Config.generatedDemoConfigPath paths runtimeMode)
       putStrLn ("expectedMountedDemoConfigPath: " <> Config.watchedDemoConfigPath runtimeMode)
     Just state -> do
-      actualPresent <- kindClusterExists paths (clusterRuntimeMode state)
-      when actualPresent $
-        ensureOuterContainerKindNetworkAccess paths (clusterRuntimeMode state)
+      actualPresent <-
+        if clusterSimulation state
+          then pure (clusterPresent state)
+          else do
+            present <- kindClusterExists paths (clusterRuntimeMode state)
+            when present $
+              ensureOuterContainerKindNetworkAccess paths (clusterRuntimeMode state)
+            pure present
       cacheEntries <- countLeafEntries (modelCacheRoot paths)
       resultCount <- countLeafEntries (resultsRoot paths)
       objectCount <- countLeafEntries (objectStoreRoot paths)
       durableManifestCount <- countLeafEntries (objectStoreRoot paths </> "manifests")
       nodeCount <-
-        if actualPresent
+        if actualPresent && not (clusterSimulation state)
           then countNonEmptyLines <$> kubectlOutput state ["get", "nodes", "--no-headers"]
           else pure 0
       podCount <-
-        if actualPresent
+        if actualPresent && not (clusterSimulation state)
           then countNonEmptyLines <$> kubectlOutput state ["get", "pods", "-A", "--no-headers"]
           else pure 0
       putStrLn ("clusterPresent: " <> show actualPresent)
@@ -400,6 +591,7 @@ runKubectlCompat args = do
     Nothing -> putStrLn "No cluster state is available. Run `infernix cluster up` first."
     Just state
       | not (clusterPresent state) -> putStrLn "Cluster is currently absent."
+      | clusterSimulation state -> putStrLn "kubectl is not available on the simulated cluster substrate."
       | otherwise -> do
           ensureOuterContainerKindNetworkAccess paths (clusterRuntimeMode state)
           putStr =<< captureCommand Nothing [] "kubectl" (kubeconfigArgs state <> args)
@@ -496,28 +688,20 @@ firstAvailablePort = go
 
 portIsFree :: Int -> IO Bool
 portIsFree candidatePort = do
-  output <-
-    readProcess
-      "python3"
-      [ "-c",
-        unlines
-          [ "import socket",
-            "import sys",
-            "port = int(sys.argv[1])",
-            "sock = socket.socket()",
-            "try:",
-            "    sock.bind(('127.0.0.1', port))",
-            "except OSError:",
-            "    print('busy')",
-            "else:",
-            "    print('free')",
-            "finally:",
-            "    sock.close()"
-          ],
-        show candidatePort
-      ]
-      ""
-  pure ("free" `elem` words output)
+  bindResult <-
+    try $
+      Socket.withSocketsDo $
+        bracket
+          (Socket.socket Socket.AF_INET Socket.Stream Socket.defaultProtocol)
+          Socket.close
+          ( \socketHandle -> do
+              Socket.setSocketOption socketHandle Socket.ReuseAddr 1
+              Socket.bind
+                socketHandle
+                (Socket.SockAddrInet (fromIntegral candidatePort) (Socket.tupleToHostAddress (127, 0, 0, 1)))
+          ) ::
+      IO (Either IOException ())
+  pure (either (const False) (const True) bindResult)
 
 claimDirectory :: Paths -> PersistentClaim -> FilePath
 claimDirectory paths persistentClaim =
@@ -1114,14 +1298,15 @@ linuxCudaAllocatableValues paths =
         "jsonpath={range .items[*]}{.status.allocatable.nvidia\\.com/gpu}{\"\\n\"}{end}"
       ]
 
-applyBootstrapState :: Paths -> RuntimeMode -> [PersistentClaim] -> IO ()
-applyBootstrapState paths runtimeMode claimInventory = do
+applyBootstrapState :: Paths -> RuntimeMode -> Bool -> [PersistentClaim] -> IO ()
+applyBootstrapState paths runtimeMode demoUiEnabledValue claimInventory = do
   now <- getCurrentTime
   let state =
         ClusterState
           { clusterPresent = True,
+            clusterSimulation = False,
             edgePort = 0,
-            routes = routeInventory,
+            routes = routeInventory demoUiEnabledValue,
             storageClass = "infernix-manual",
             claims = claimInventory,
             clusterRuntimeMode = runtimeMode,
@@ -1198,70 +1383,13 @@ preloadBootstrapSupportImagesOnKindNodes paths runtimeMode renderedChartPath = d
       (["load", "docker-image", "--name", kindClusterName paths runtimeMode] <> uniqueImageRefs)
 
 bootstrapSupportImageRefs :: Paths -> FilePath -> IO [String]
-bootstrapSupportImageRefs paths renderedChartPath =
-  filter isBootstrapSupportImageRef . map trim . lines
-    <$> captureCommand
-      (Just (repoRoot paths))
-      []
-      "python3"
-      ["-c", bootstrapSupportImageDiscoveryScript, renderedChartPath]
+bootstrapSupportImageRefs _paths renderedChartPath =
+  filter isBootstrapSupportImageRef <$> discoverChartImagesFile renderedChartPath
   where
     isBootstrapSupportImageRef imageRef =
       not (null imageRef)
         && imageRef /= serviceImageRef
         && imageRef /= webImageRef
-
-bootstrapSupportImageDiscoveryScript :: String
-bootstrapSupportImageDiscoveryScript =
-  unlines
-    [ "from __future__ import annotations",
-      "import sys",
-      "from pathlib import Path",
-      "import yaml",
-      "",
-      "def pod_spec(document):",
-      "    kind = document.get('kind')",
-      "    spec = document.get('spec') or {}",
-      "    if kind == 'Pod':",
-      "        return spec",
-      "    if kind == 'CronJob':",
-      "        return ((((spec.get('jobTemplate') or {}).get('spec') or {}).get('template') or {}).get('spec') or {})",
-      "    if kind in {'DaemonSet', 'Deployment', 'Job', 'ReplicaSet', 'ReplicationController', 'StatefulSet'}:",
-      "        return ((spec.get('template') or {}).get('spec') or {})",
-      "    return {}",
-      "",
-      "def custom_resource_images(document):",
-      "    if document.get('kind') != 'PerconaPGCluster':",
-      "        return []",
-      "    spec = document.get('spec') or {}",
-      "    return [",
-      "        image",
-      "        for image in [",
-      "            spec.get('image'),",
-      "            (((spec.get('proxy') or {}).get('pgBouncer') or {}).get('image')),",
-      "            (((spec.get('backups') or {}).get('pgbackrest') or {}).get('image')),",
-      "        ]",
-      "        if isinstance(image, str) and image",
-      "    ]",
-      "",
-      "documents = list(yaml.safe_load_all(Path(sys.argv[1]).read_text(encoding='utf-8').replace('\\t', '  ')))",
-      "images = set()",
-      "for document in documents:",
-      "    if not isinstance(document, dict):",
-      "        continue",
-      "    spec = pod_spec(document)",
-      "    if isinstance(spec, dict):",
-      "        for key in ('initContainers', 'containers'):",
-      "            for container in spec.get(key) or []:",
-      "                if isinstance(container, dict):",
-      "                    image = container.get('image')",
-      "                    if isinstance(image, str) and image:",
-      "                        images.add(image)",
-      "    for image in custom_resource_images(document):",
-      "        images.add(image)",
-      "for image in sorted(images):",
-      "    print(image)"
-    ]
 
 ensureLocalImageRef :: String -> IO ()
 ensureLocalImageRef imageRef = do
@@ -1281,46 +1409,51 @@ ensureWebBuildDependencies paths = do
       packageLock = webRoot </> "package-lock.json"
   depsPresent <- doesDirectoryExist depsRoot
   packageLockPresent <- doesFileExist packageLock
-  if depsPresent && packageLockPresent
+  toolchainPresent <- webBuildToolchainPresent webRoot
+  if depsPresent && packageLockPresent && toolchainPresent
     then pure ()
     else runCommand (Just (repoRoot paths)) [] "npm" ["--prefix", "web", "ci"]
+
+webBuildToolchainPresent :: FilePath -> IO Bool
+webBuildToolchainPresent webRoot =
+  and
+    <$> mapM
+      doesFileExist
+      [ webRoot </> "node_modules" </> "playwright" </> "package.json",
+        webRoot </> "node_modules" </> "purescript" </> "package.json",
+        webRoot </> "node_modules" </> "spago" </> "package.json",
+        webRoot </> "node_modules" </> "esbuild" </> "package.json"
+      ]
 
 publishClusterImages :: Paths -> FilePath -> RuntimeMode -> IO FilePath
 publishClusterImages paths renderedChartPath runtimeMode = do
   let outputPath =
         buildRoot paths
           </> ("harbor-image-overrides-" <> Text.unpack (runtimeModeId runtimeMode) <> ".yaml")
-  runCommand
-    (Just (repoRoot paths))
-    []
-    "python3"
-    [ repoRoot paths </> "tools" </> "publish_chart_images.py",
-      renderedChartPath,
-      outputPath,
-      "--harbor-api-host",
-      harborApiHost paths runtimeMode
-    ]
+  PublishImages.publishChartImagesFile
+    PublishImages.defaultHarborPublishOptions
+      { PublishImages.harborApiHost = harborApiHost paths runtimeMode
+      }
+    renderedChartPath
+    outputPath
   pure outputPath
 
 preloadHarborBackedImagesOnKindWorker :: Paths -> RuntimeMode -> FilePath -> IO ()
 preloadHarborBackedImagesOnKindWorker paths runtimeMode imageOverridesPath = do
   imageRefs <- harborOverlayImageRefs paths imageOverridesPath
   let workerContainer = kindClusterName paths runtimeMode <> "-worker"
-      uniqueImageRefs = List.nub (filter (not . null) (map trim imageRefs))
+      uniqueImageRefs = List.nub (filter shouldPreloadOnWorker (map trim imageRefs))
   unless (null uniqueImageRefs) $ do
     putStrLn "preloading Harbor-backed final images on the Kind worker"
     mapM_ (preloadHarborImageOnNode workerContainer) uniqueImageRefs
+  where
+    shouldPreloadOnWorker imageRef =
+      not (null imageRef)
+        && not ("/infernix-web:" `List.isInfixOf` imageRef)
 
 harborOverlayImageRefs :: Paths -> FilePath -> IO [String]
-harborOverlayImageRefs paths imageOverridesPath =
-  filter (not . null) . map trim . lines
-    <$> captureCommand
-      (Just (repoRoot paths))
-      []
-      "python3"
-      [ repoRoot paths </> "tools" </> "list_harbor_overlay_images.py",
-        imageOverridesPath
-      ]
+harborOverlayImageRefs _paths imageOverridesPath =
+  filter (not . null) <$> discoverHarborOverlayImageRefsFile imageOverridesPath
 
 preloadHarborImageOnNode :: String -> String -> IO ()
 preloadHarborImageOnNode nodeContainer imageRef = do
@@ -1382,29 +1515,25 @@ waitForHarborRegistry paths runtimeMode = do
 waitForHarborRegistryResult :: Paths -> RuntimeMode -> Int -> Int -> IO (Either String String)
 waitForHarborRegistryResult paths runtimeMode attempts delayMicros = do
   let registryApiUrl = "http://" <> harborApiHost paths runtimeMode <> "/api/v2.0/health"
-      probeCommand =
-        tryCommand
-          Nothing
-          []
-          "python3"
-          [ "-c",
-            unlines
-              [ "import urllib.error",
-                "import urllib.request",
-                "try:",
-                "    with urllib.request.urlopen(" <> show registryApiUrl <> ", timeout=5) as response:",
-                "        payload = response.read().decode('utf-8', errors='replace')",
-                "except urllib.error.HTTPError as exc:",
-                "    payload = exc.read().decode('utf-8', errors='replace')",
-                "    if exc.code not in {200, 401, 403}:",
-                "        raise",
-                "except Exception as exc:",
-                "    raise SystemExit(str(exc))",
-                "if 'healthy' not in payload.lower() and 'status' not in payload.lower():",
-                "    raise SystemExit('harbor health payload not ready')",
-                "print('ready')"
-              ]
-          ]
+      probeCommand = do
+        response <-
+          tryCommand
+            Nothing
+            []
+            "curl"
+            ["-sS", "-o", "-", "-w", "\n%{http_code}", registryApiUrl]
+        pure $
+          response >>= \payload ->
+            case parseCurlBodyAndStatus payload of
+              Just (responseBody, statusCode)
+                | statusCode `elem` ["200", "401", "403"]
+                    && let loweredBody = map toLower responseBody
+                        in "healthy" `List.isInfixOf` loweredBody || "status" `List.isInfixOf` loweredBody ->
+                    Right "ready"
+              Just (_, statusCode) ->
+                Left ("unexpected Harbor registry status " <> statusCode)
+              Nothing ->
+                Left "failed to parse Harbor registry probe output"
   retryCommandOutput attempts delayMicros "wait for Harbor registry" probeCommand
 
 bootstrapHarborWithRepair :: Paths -> ClusterState -> [FilePath] -> IO ()
@@ -1752,7 +1881,9 @@ harborPostgresPassword state = do
         "-o",
         "jsonpath={.data.password}"
       ]
-  trim <$> readProcess "python3" ["-c", "import base64, sys; print(base64.b64decode(sys.stdin.read()).decode('utf-8'), end='')"] encodedPassword
+  case Base64.decode (ByteString8.pack (trim encodedPassword)) of
+    Left err -> ioError (userError ("failed to decode Harbor PostgreSQL password: " <> err))
+    Right decodedPassword -> pure (ByteString8.unpack decodedPassword)
 
 shellQuote :: String -> String
 shellQuote value =
@@ -1808,42 +1939,25 @@ waitForFinalPhaseRollouts :: ClusterState -> IO ()
 waitForFinalPhaseRollouts state = do
   putStrLn "waiting for final platform rollouts"
   mapM_ (waitForWorkloadRollout state 1200) finalPhaseStatefulSets
-  mapM_ (waitForWorkloadRollout state 900) finalPhaseDeployments
+  mapM_ (waitForWorkloadRollout state 900) (finalPhaseDeployments state)
   waitForHarborDatabaseReadyWithRepair state
 
 waitForRoutedPublicationSurface :: Paths -> ClusterState -> IO ()
 waitForRoutedPublicationSurface paths state = do
-  let publicationUrl = clusterEdgeBaseUrl paths state <> "/api/publication"
-      expectedRuntimeMode = Text.unpack (runtimeModeId (clusterRuntimeMode state))
-      probeScript =
-        unlines
-          [ "import json",
-            "import sys",
-            "import urllib.request",
-            "url = sys.argv[1]",
-            "expected_runtime_mode = sys.argv[2]",
-            "try:",
-            "    with urllib.request.urlopen(url, timeout=5) as response:",
-            "        payload = json.load(response)",
-            "except Exception as exc:",
-            "    raise SystemExit(str(exc))",
-            "daemon = payload.get('daemonLocation')",
-            "api_upstream = payload.get('apiUpstream') or {}",
-            "if daemon != 'cluster-pod' or api_upstream.get('mode') != 'cluster-service' or payload.get('runtimeMode') != expected_runtime_mode:",
-            "    raise SystemExit('publication route not ready')",
-            "print('ready')"
-          ]
-  result <-
-    retryCommandOutput
-      120
-      1000000
-      ("wait for routed publication surface " <> publicationUrl)
-      (tryCommand Nothing [] "python3" ["-c", probeScript, publicationUrl, expectedRuntimeMode])
-  case result of
-    Right _ -> pure ()
-    Left err ->
-      ioError
-        (userError ("routed publication surface never became ready for " <> expectedRuntimeMode <> ":\n" <> err))
+  when (clusterStateHasDemoUi state) $ do
+    let publicationUrl = clusterEdgeBaseUrl paths state <> "/api/publication"
+        expectedRuntimeMode = Text.unpack (runtimeModeId (clusterRuntimeMode state))
+    result <-
+      retryCommandOutput
+        120
+        1000000
+        ("wait for routed publication surface " <> publicationUrl)
+        (probePublicationRoute publicationUrl expectedRuntimeMode)
+    case result of
+      Right _ -> pure ()
+      Left err ->
+        ioError
+          (userError ("routed publication surface never became ready for " <> expectedRuntimeMode <> ":\n" <> err))
 
 waitForWorkloadRollout :: ClusterState -> Int -> String -> IO ()
 waitForWorkloadRollout state timeoutSeconds workload =
@@ -1943,62 +2057,11 @@ discoverOperatorManagedPersistentClaims state = do
         "-o",
         "json"
       ]
-  discoveryOutput <- readProcess "python3" ["-c", operatorClaimDiscoveryScript] pvcPayload
-  pure (normalizeOperatorManagedClaims (mapMaybe parseOperatorManagedClaimLine (filter (not . null) (lines discoveryOutput))))
-  where
-    operatorClaimDiscoveryScript =
-      unlines
-        [ "import json",
-          "import sys",
-          "payload = json.load(sys.stdin)",
-          "rows = []",
-          "for item in payload.get('items', []):",
-          "    metadata = item.get('metadata') or {}",
-          "    labels = metadata.get('labels') or {}",
-          "    spec = item.get('spec') or {}",
-          "    storage_class = spec.get('storageClassName')",
-          "    cluster = labels.get('postgres-operator.crunchydata.com/cluster')",
-          "    repository = labels.get('postgres-operator.crunchydata.com/pgbackrest-repo')",
-          "    role = labels.get('postgres-operator.crunchydata.com/role') or ('pgbackrest' if repository else None)",
-          "    if not cluster or not role:",
-          "        continue",
-          "    if storage_class != 'infernix-manual':",
-          "        raise SystemExit(",
-          "            'operator-managed PostgreSQL PVC ' + str(metadata.get('name'))",
-          "            + ' uses unsupported storageClassName ' + repr(storage_class)",
-          "        )",
-          "    rows.append([",
-          "        str(metadata.get('namespace') or 'default'),",
-          "        str(cluster),",
-          "        str(labels.get('postgres-operator.crunchydata.com/instance-set') or ''),",
-          "        str(role),",
-          "        str(labels.get('postgres-operator.crunchydata.com/data') or ('pgbackrest' if repository else '')),",
-          "        str(labels.get('postgres-operator.crunchydata.com/instance') or ''),",
-          "        str(repository or ''),",
-          "        str(metadata.get('name') or ''),",
-          "        str((((spec.get('resources') or {}).get('requests') or {}).get('storage')) or '5Gi'),",
-          "    ])",
-          "for row in sorted(rows):",
-          "    print('\\t'.join(row))"
-        ]
-
-parseOperatorManagedClaimLine :: String -> Maybe OperatorManagedClaim
-parseOperatorManagedClaimLine lineValue =
-  case splitTabs lineValue of
-    [namespaceValue, clusterValue, instanceSetValue, roleValue, dataKindValue, instanceValue, repositoryValue, pvcNameValue, requestedStorageValue] ->
-      Just
-        OperatorManagedClaim
-          { operatorClaimNamespace = namespaceValue,
-            operatorClaimCluster = clusterValue,
-            operatorClaimInstanceSet = instanceSetValue,
-            operatorClaimRole = roleValue,
-            operatorClaimDataKind = dataKindValue,
-            operatorClaimInstance = instanceValue,
-            operatorClaimRepository = repositoryValue,
-            operatorClaimPvcName = pvcNameValue,
-            operatorClaimRequestedStorage = requestedStorageValue
-          }
-    _ -> Nothing
+  claims <-
+    case decodeOperatorManagedClaims pvcPayload of
+      Left err -> ioError (userError err)
+      Right value -> pure value
+  pure (normalizeOperatorManagedClaims claims)
 
 normalizeOperatorManagedClaims :: [OperatorManagedClaim] -> [PersistentClaim]
 normalizeOperatorManagedClaims rawClaims =
@@ -2052,11 +2115,119 @@ operatorClaimToPersistentClaim ordinalValue claimValue =
       requestedStorage = Text.pack (operatorClaimRequestedStorage claimValue)
     }
 
+decodeOperatorManagedClaims :: String -> Either String [OperatorManagedClaim]
+decodeOperatorManagedClaims payload =
+  case eitherDecode (LazyChar8.pack payload) of
+    Left err -> Left ("failed to decode operator-managed PVC payload: " <> err)
+    Right rootValue -> parseOperatorManagedClaims rootValue
+
+parseOperatorManagedClaims :: Value -> Either String [OperatorManagedClaim]
+parseOperatorManagedClaims rootValue = do
+  items <- requireJsonArrayPath ["items"] rootValue
+  maybeClaims <- mapM parseOperatorManagedClaimValue items
+  pure
+    ( List.sortOn
+        (\claimValue -> (operatorClaimGroupingKey claimValue, operatorClaimPvcName claimValue))
+        (catMaybes maybeClaims)
+    )
+
+parseOperatorManagedClaimValue :: Value -> Either String (Maybe OperatorManagedClaim)
+parseOperatorManagedClaimValue itemValue = do
+  let maybeClusterValue =
+        lookupJsonTextPath ["metadata", "labels", "postgres-operator.crunchydata.com/cluster"] itemValue
+  case maybeClusterValue of
+    Nothing -> pure Nothing
+    Just clusterValue -> do
+      let repositoryValue =
+            fromMaybe
+              ""
+              (lookupJsonStringPath ["metadata", "labels", "postgres-operator.crunchydata.com/pgbackrest-repo"] itemValue)
+          roleValue =
+            fromMaybe
+              (if null repositoryValue then "" else "pgbackrest")
+              (lookupJsonStringPath ["metadata", "labels", "postgres-operator.crunchydata.com/role"] itemValue)
+          storageClassValue =
+            lookupJsonStringPath ["spec", "storageClassName"] itemValue
+      if roleValue == ""
+        then pure Nothing
+        else
+          if storageClassValue /= Just "infernix-manual"
+            then Left ("operator-managed PostgreSQL PVC uses unsupported storageClassName " <> show storageClassValue)
+            else
+              pure $
+                Just
+                  OperatorManagedClaim
+                    { operatorClaimNamespace =
+                        fromMaybe "default" (lookupJsonStringPath ["metadata", "namespace"] itemValue),
+                      operatorClaimCluster = Text.unpack clusterValue,
+                      operatorClaimInstanceSet =
+                        fromMaybe "" (lookupJsonStringPath ["metadata", "labels", "postgres-operator.crunchydata.com/instance-set"] itemValue),
+                      operatorClaimRole = roleValue,
+                      operatorClaimDataKind =
+                        fromMaybe
+                          (if null repositoryValue then "" else "pgbackrest")
+                          (lookupJsonStringPath ["metadata", "labels", "postgres-operator.crunchydata.com/data"] itemValue),
+                      operatorClaimInstance =
+                        fromMaybe "" (lookupJsonStringPath ["metadata", "labels", "postgres-operator.crunchydata.com/instance"] itemValue),
+                      operatorClaimRepository = repositoryValue,
+                      operatorClaimPvcName =
+                        fromMaybe "" (lookupJsonStringPath ["metadata", "name"] itemValue),
+                      operatorClaimRequestedStorage =
+                        fromMaybe "5Gi" (lookupJsonStringPath ["spec", "resources", "requests", "storage"] itemValue)
+                    }
+
 mergePersistentClaims :: [PersistentClaim] -> [PersistentClaim] -> [PersistentClaim]
 mergePersistentClaims existingClaims newClaims =
   List.sortOn
     persistentVolumeClaimName
     (Map.elems (Map.fromList [(persistentVolumeClaimName persistentClaim, persistentClaim) | persistentClaim <- existingClaims <> newClaims]))
+
+probePublicationRoute :: String -> String -> IO (Either String String)
+probePublicationRoute publicationUrl expectedRuntimeMode = do
+  response <- tryCommand Nothing [] "curl" ["-fsS", publicationUrl]
+  pure $
+    response >>= \payload ->
+      case eitherDecode (LazyChar8.pack payload) of
+        Left err -> Left ("invalid publication payload: " <> err)
+        Right publicationPayload ->
+          if routedPublicationReady expectedRuntimeMode publicationPayload
+            then Right "ready"
+            else Left "publication route not ready"
+
+routedPublicationReady :: String -> Value -> Bool
+routedPublicationReady expectedRuntimeMode publicationPayload =
+  lookupJsonStringPath ["daemonLocation"] publicationPayload == Just "cluster-pod"
+    && lookupJsonStringPath ["apiUpstream", "mode"] publicationPayload == Just "cluster-demo"
+    && lookupJsonStringPath ["runtimeMode"] publicationPayload == Just expectedRuntimeMode
+
+requireJsonArrayPath :: [Text.Text] -> Value -> Either String [Value]
+requireJsonArrayPath pathSegments value =
+  case lookupJsonValuePath pathSegments value of
+    Just (Array values) -> Right (Vector.toList values)
+    _ -> Left ("missing JSON array at " <> show (map Text.unpack pathSegments))
+
+lookupJsonValuePath :: [Text.Text] -> Value -> Maybe Value
+lookupJsonValuePath [] value = Just value
+lookupJsonValuePath (segment : remainingSegments) (Object objectValue) =
+  KeyMap.lookup (Key.fromText segment) objectValue >>= lookupJsonValuePath remainingSegments
+lookupJsonValuePath _ _ = Nothing
+
+lookupJsonTextPath :: [Text.Text] -> Value -> Maybe Text.Text
+lookupJsonTextPath pathSegments value =
+  case lookupJsonValuePath pathSegments value of
+    Just (String textValue) -> Just textValue
+    _ -> Nothing
+
+lookupJsonStringPath :: [Text.Text] -> Value -> Maybe String
+lookupJsonStringPath pathSegments value =
+  Text.unpack <$> lookupJsonTextPath pathSegments value
+
+parseCurlBodyAndStatus :: String -> Maybe (String, String)
+parseCurlBodyAndStatus payload =
+  case reverse (lines payload) of
+    statusCode : reversedBodyLines ->
+      Just (unlines (reverse reversedBodyLines), trim statusCode)
+    [] -> Nothing
 
 waitForPersistentClaimsBound :: ClusterState -> [PersistentClaim] -> IO ()
 waitForPersistentClaimsBound state = mapM_ waitForPersistentClaimBound
@@ -2499,49 +2670,8 @@ renderHelmChart paths runtimeMode valuesPaths = do
   pure outputPath
 
 discoverPersistentClaims :: Paths -> FilePath -> IO [PersistentClaim]
-discoverPersistentClaims paths renderedChartPath = do
-  output <-
-    captureCommand
-      (Just (repoRoot paths))
-      []
-      "python3"
-      [repoRoot paths </> "tools" </> "discover_chart_claims.py", renderedChartPath]
-  mapM parseClaimLine (filter (not . null) (lines output))
-  where
-    parseClaimLine lineValue =
-      case splitTabs lineValue of
-        [namespaceValue, releaseValue, workloadValue, ordinalValue, claimValue, pvcNameValue, requestedStorageValue] ->
-          case readMaybe ordinalValue of
-            Just ordinalNumber ->
-              pure
-                PersistentClaim
-                  { namespace = Text.pack namespaceValue,
-                    release = Text.pack releaseValue,
-                    workload = Text.pack workloadValue,
-                    ordinal = ordinalNumber,
-                    claim = Text.pack claimValue,
-                    pvcName = Text.pack pvcNameValue,
-                    requestedStorage = Text.pack requestedStorageValue
-                  }
-            Nothing ->
-              ioError (userError ("rendered chart claim had an invalid ordinal: " <> lineValue))
-        [namespaceValue, releaseValue, workloadValue, ordinalValue, claimValue] ->
-          case readMaybe ordinalValue of
-            Just ordinalNumber ->
-              pure
-                PersistentClaim
-                  { namespace = Text.pack namespaceValue,
-                    release = Text.pack releaseValue,
-                    workload = Text.pack workloadValue,
-                    ordinal = ordinalNumber,
-                    claim = Text.pack claimValue,
-                    pvcName = Text.pack (releaseValue <> "-" <> workloadValue <> "-" <> ordinalValue <> "-" <> claimValue),
-                    requestedStorage = "5Gi"
-                  }
-            Nothing ->
-              ioError (userError ("rendered chart claim had an invalid ordinal: " <> lineValue))
-        _ ->
-          ioError (userError ("rendered chart claim line was malformed: " <> lineValue))
+discoverPersistentClaims _paths =
+  discoverChartClaimsFile
 
 renderHelmValues :: String -> ClusterState -> Lazy.ByteString -> HelmDeployPhase -> [(String, String)] -> String
 renderHelmValues controlPlane state demoConfigPayload deployPhase engineCommandOverrides =
@@ -2557,6 +2687,14 @@ renderHelmValues controlPlane state demoConfigPayload deployPhase engineCommandO
         "  fileName: infernix-demo-" <> Text.unpack (runtimeModeId (clusterRuntimeMode state)) <> ".dhall",
         "  catalogPayload: |",
         indentBlock 4 (LazyChar8.unpack demoConfigPayload),
+        "demo:",
+        "  enabled: " <> yamlBool (clusterStateHasDemoUi state),
+        "  replicaCount: " <> show (repoWorkloadReplicaCount deployPhase),
+        "  port: 8080",
+        "  image:",
+        "    repository: infernix-service",
+        "    tag: local",
+        "    pullPolicy: IfNotPresent",
         "publication:",
         "  payloadJson: |",
         indentBlock 4 (renderPublicationState controlPlane state),
@@ -2568,13 +2706,7 @@ renderHelmValues controlPlane state demoConfigPayload deployPhase engineCommandO
         "    pullPolicy: IfNotPresent"
       ]
         <> serviceEngineAdapterOverrides
-        <> [ "web:",
-             "  replicaCount: " <> show (repoWorkloadReplicaCount deployPhase),
-             "  image:",
-             "    repository: infernix-web",
-             "    tag: local",
-             "    pullPolicy: IfNotPresent",
-             "platformPortals:",
+        <> [ "platformPortals:",
              "  harbor:",
              "    replicaCount: " <> show (repoWorkloadReplicaCount deployPhase),
              "  minio:",
@@ -2592,6 +2724,9 @@ renderHelmValues controlPlane state demoConfigPayload deployPhase engineCommandO
       BootstrapPhase -> 0
       HarborFinalPhase -> 0
       FinalPhase -> 1
+    yamlBool value
+      | value = "true"
+      | otherwise = "false"
     serviceEngineAdapterOverrides
       | null engineCommandOverrides = []
       | otherwise =

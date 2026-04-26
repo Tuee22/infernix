@@ -198,8 +198,9 @@ Rules:
 - `infernix kubectl ...` is the supported operator wrapper for Kubernetes access and automatically
   targets the repo-local kubeconfig in the active build-output location.
 - On Apple Silicon, the supported operator workflow has no generic Python prerequisite. Poetry plus
-  `./.venv/` materialize only when an engine-adapter test or adapter-local workflow is exercised
-  explicitly, and `infernix` does not install Poetry as a generic platform prerequisite.
+  a repo-local adapter virtual environment materialize only when an engine-adapter test or
+  adapter-local workflow is exercised explicitly, and `infernix` does not install Poetry as a
+  generic platform prerequisite.
 - Containerized Linux uses Compose only as a one-command launcher with the Docker socket forwarded
   and `./.data/` bind mounted once that lane is closed; until then, the plan must call scaffold-only
   launcher surfaces out explicitly.

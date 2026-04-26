@@ -1,39 +1,34 @@
 # Phase 5: Demo UI in PureScript and Shared Types
 
-**Status**: Blocked
+**Status**: Done
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
-**Blocked by**: Phase 1 Sprint 1.6, Phase 4 Sprint 4.4
 
 > **Purpose**: Define the PureScript demo UI built with spago, the Haskell-owned frontend contract
-> derived via `purescript-bridge`, the `purescript-spec` test framework, and the manual inference
-> workbench that lets a user run inference against any registered model in the active runtime mode
-> (when the demo surface is enabled).
+> generator, the `purescript-spec` test framework, and the manual inference workbench that lets a
+> user run inference against any registered model in the active runtime mode (when the demo
+> surface is enabled).
 
 ## Phase Status
 
-All sprints in this phase drop from `Done` to `Active` because every sprint deliverable conflicts
-with the new doctrine in [00-overview.md](00-overview.md) Hard Constraint 15: the JavaScript
-workbench built by `web/build.mjs` is replaced by PureScript built with spago; build-generated
-JavaScript contract modules are replaced by PureScript modules generated from Haskell ADTs in
-`src/Infernix/Demo/Api.hs` via `purescript-bridge`; the contracts test framework moves from
-`web/test/contracts.test.mjs` to `purescript-spec` suites under `web/test/*.purs`; the manual
-inference workbench is reimplemented in PureScript; the web image (`web/Dockerfile`) installs the
-purs and spago toolchain alongside Playwright. The DOM surface and the Playwright assertions are
-preserved as much as possible to minimize churn in the existing E2E suites.
+Sprints 5.1 through 5.6 are now `Done`: the demo UI is implemented in PureScript under
+`web/src/*.purs`, the generated contract module is consumed from `web/src/Generated/`,
+`purescript-spec` now owns the frontend unit suite under `web/test/Main.purs`, the routed UI
+keeps the established DOM surface for Playwright, the separate web image is no longer deployed as
+a compatibility workload on the cluster, and `infernix internal generate-purs-contracts` now
+derives the supported frontend contract module through `purescript-bridge` from dedicated
+browser-contract ADTs in `src/Generated/Contracts.hs`.
 
 ## Current Repo Assessment
 
-The repository already has a browser workbench, build-generated JavaScript frontend contracts, and
-routed Playwright coverage. The browser workbench loads from the cluster-resident web workload on
-the supported Kind path, build-root frontend contract staging is closed, and both
-browser-independent and browser-driven coverage prove catalog parity, publication-detail rendering,
-and result rendering through the routed cluster edge. Same-image browser execution uses the built
-web image on both supported control-plane lanes, and the Apple host-native final-substrate lane
-serves the UI from the Harbor-published web image. The repository now also carries `web/spago.yaml`
-plus placeholder `.purs` source and test modules, but the supported web build, contract
-generation, and frontend tests still run through `web/build.mjs`, `web/package.json`, and the
-JavaScript workbench. The workbench renders family-aware request guidance and result framing for
-every generated entry.
+The repository now ships the supported PureScript demo path: `web/src/Main.purs` and
+`web/src/Infernix/Web/Workbench.purs` own the browser workbench, `web/test/Main.purs` owns the
+frontend unit suite through `purescript-spec`, `npm --prefix web run build` regenerates
+`web/src/Generated/Contracts.purs` and bundles the app into `web/dist/app.js`, and routed
+Playwright coverage still proves catalog parity, publication-detail rendering, and result
+rendering through the cluster edge. The generated contract surface is now bridge-owned:
+`src/Generated/Contracts.hs` defines dedicated browser-contract ADTs, `purescript-bridge`
+derives the PureScript newtypes into `web/src/Generated/Contracts.purs`, and the CLI appends the
+active-mode runtime constants and `Simple.JSON` instances consumed by the demo UI.
 
 ## Demo Catalog Contract
 
@@ -43,28 +38,29 @@ This phase owns the browser-side interpretation of the generated demo catalog.
   supported path proves this through generated staging, the repo-local publication mirror, and the
   mounted ConfigMap-backed `.dhall`
 - the UI does not maintain a hidden hard-coded allowlist on the supported path
-- the browser workbench must expose every model or workload entry present in that generated file
+- the browser workbench exposes every model or workload entry present in that generated file
 - mode changes alter the catalog content without changing the route structure
 
-## Sprint 5.1: Demo Web Application Host (PureScript) [Active]
+## Sprint 5.1: Demo Web Application Host (PureScript) [Done]
 
-**Status**: Active
-**Blocked by**: Phase 1 Sprint 1.6, Phase 3 Sprint 3.6
-**Implementation**: `web/`, `web/Dockerfile`, `infernix.cabal`, `chart/templates/`
+**Status**: Done
+**Implementation**: `web/src/Main.purs`, `web/src/Infernix/Web/Workbench.purs`, `web/package.json`, `web/spago.yaml`, `docker/service.Dockerfile`, `chart/templates/deployment-demo.yaml`, `chart/templates/service-demo.yaml`, `src/Infernix/Edge.hs`, `src/Infernix/Demo/Api.hs`
 **Docs to update**: `documents/architecture/web_ui_architecture.md`, `documents/reference/web_portal_surface.md`
 
 ### Objective
 
-Close the web hosting contract while keeping one stable browser entrypoint across the
-cluster-resident webapp service and the Apple host bridge.
+Close the web hosting contract while keeping one stable browser entrypoint across the routed
+cluster path and the Apple host bridge.
 
 ### Deliverables
 
-- repo-owned browser application code lives under `web/src/*.purs`; the supported implementation is
-  a PureScript demo application built with `spago build` and `spago bundle-app` into `web/dist/`
-- a cluster-resident web image, built via `web/Dockerfile`, carries the spago plus purs toolchain
-  alongside Playwright browser dependencies and produces the static `web/dist/` bundle
-- the demo HTTP host is the `infernix-demo` Haskell binary (Phase 4 Sprint 4.4) which serves the
+- repo-owned browser application code lives under `web/src/*.purs`; the supported implementation
+  is a PureScript demo application built through `npm --prefix web run build`, which runs
+  `spago build` plus `spago bundle --module Main --outfile dist/app.js --platform browser --bundle-type app`
+  into `web/dist/`
+- a separate web image built via `web/Dockerfile` carries the npm-managed PureScript toolchain and
+  Playwright browser dependencies while packaging the same built `web/dist/` bundle
+- the demo HTTP host is the `infernix-demo` Haskell binary (Phase 4 Sprint 4.4), which serves the
   PureScript bundle from `web/dist/` and exposes the demo API surface
 - the `infernix-demo` workload deployment is owned by `chart/templates/deployment-demo.yaml`,
   gated by `.Values.demo.enabled` (driven from the active `.dhall` `demo_ui` flag)
@@ -85,22 +81,14 @@ cluster-resident webapp service and the Apple host bridge.
 
 ### Remaining Work
 
-- `web/src/` currently holds JavaScript files (`app.js`, `workbench.js`); these must be replaced
-  by PureScript modules under `web/src/*.purs`
-- `web/build.mjs` and `web/package.json` currently drive the web build; they must be replaced by
-  `web/spago.yaml` plus `spago build` plus `spago bundle-app` invoked from `web/Dockerfile`
-- the demo HTTP host is currently `tools/service_server.py`; the Haskell port (`infernix-demo`)
-  lands in Phase 4 Sprint 4.4
-- the `chart/templates/deployment-demo.yaml` template and `.Values.demo.enabled` toggle do not
-  exist yet (they land alongside the `infernix-demo` workload in Phase 3 Sprint 3.6)
+None.
 
 ---
 
-## Sprint 5.2: Haskell-Owned Frontend Contract via purescript-bridge [Active]
+## Sprint 5.2: Haskell-Owned Frontend Contract via purescript-bridge [Done]
 
-**Status**: Active
-**Blocked by**: Phase 1 Sprint 1.6, Sprint 5.1
-**Implementation**: `src/Infernix/CLI.hs`, `web/`, `infernix.cabal`
+**Status**: Done
+**Implementation**: `src/Generated/Contracts.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Models.hs`, `src/Infernix/Types.hs`, `web/src/Generated/Contracts.purs`, `web/src/Main.purs`, `web/src/Infernix/Web/Workbench.purs`, `web/test/Main.purs`, `infernix.cabal`, `web/package.json`
 **Docs to update**: `documents/architecture/web_ui_architecture.md`, `documents/development/frontend_contracts.md`
 
 ### Objective
@@ -110,43 +98,43 @@ hand-maintained duplicates.
 
 ### Deliverables
 
-- the supported web build generates PureScript contract modules from Haskell ADTs in
-  `src/Infernix/Demo/Api.hs` via `purescript-bridge`
+- the supported web build generates PureScript contract modules from Haskell-owned DTO and catalog
+  records
 - the supported demo application imports those build-generated PureScript modules from
   `web/src/Generated/` for request and response shapes; no handwritten duplicate request or
   response types remain on the supported path
-- the generated PureScript modules live in `web/src/Generated/` and are emitted by
-  `infernix internal generate-purs-contracts`, which the `infernix-lib` build invokes; the same
-  command runs from `web/Dockerfile` so the web image build stays self-contained
-- the source-of-truth Haskell records live in `src/Infernix/Demo/Api.hs` (preferred over
-  `proto-lens`-generated types directly to keep the bridge surface clean)
+- the generated PureScript module lives in `web/src/Generated/Contracts.purs` and is emitted by
+  `infernix internal generate-purs-contracts`; `npm --prefix web run build` invokes the same
+  command before `spago build`
+- the bridge-owned Haskell contract surface lives in `src/Generated/Contracts.hs`, while the
+  generated runtime constants and catalog values are sourced from `src/Infernix/Models.hs`,
+  `src/Infernix/Types.hs`, and the routed API domain in `src/Infernix/Demo/Api.hs`
+- the generated PureScript module exposes `newtype` wrappers plus explicit helper functions that
+  unwrap record views for frontend code and frontend tests
+- the generated PureScript module also carries explicit `Simple.JSON` `ReadForeign` and
+  `WriteForeign` instances so the frontend can decode routed `/api` payloads without hand-written
+  duplicate codecs
 - no standalone public frontend codegen command exists outside `infernix internal generate-purs-contracts`
 
 ### Validation
 
-- repeated web builds generate the same frontend contract modules deterministically
+- repeated web builds generate the same `Generated.Contracts` module deterministically
 - `infernix test unit` fails if the web build or frontend tests detect drift from the Haskell source
-- the web build succeeds using only the build-generated PureScript contract modules for shared
+- the web build succeeds using only the build-generated PureScript contract module for shared
   types
 - no tracked `web/src/Generated/` artifact remains in version control on the supported path; the
   directory is rebuilt by `infernix internal generate-purs-contracts` on every web build
 
 ### Remaining Work
 
-- `web/build.mjs` currently emits JavaScript contract modules; the Haskell-side codegen entrypoint
-  is currently `infernix internal generate-web-contracts` emitting `contracts.js`. Both must be
-  replaced by `infernix internal generate-purs-contracts` emitting PureScript via
-  `purescript-bridge` into `web/src/Generated/`
-- `src/Infernix/Demo/Api.hs` does not exist yet (lands in Phase 4 Sprint 4.4)
-- the `purescript-bridge` integration is not yet present in the Haskell build
+None.
 
 ---
 
-## Sprint 5.3: Frontend Contract and View-Level Coverage via purescript-spec [Active]
+## Sprint 5.3: Frontend Contract and View-Level Coverage via purescript-spec [Done]
 
-**Status**: Active
-**Blocked by**: Sprint 5.2
-**Implementation**: `web/test/`, `web/src/`, `web/`
+**Status**: Done
+**Implementation**: `web/test/Main.purs`, `web/src/Infernix/Web/Workbench.purs`, `web/src/Generated/Contracts.purs`, `src/Infernix/CLI.hs`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/development/frontend_contracts.md`
 
 ### Objective
@@ -170,30 +158,27 @@ contract and behaves predictably.
 ### Validation
 
 - `infernix test unit` runs `spago test` (PureScript suites) alongside the Haskell unit tests
-- contract tests fail when request or response shapes drift from the Haskell ADTs in
-  `src/Infernix/Demo/Api.hs`
+- contract tests fail when request or response shapes drift from the Haskell-owned source
 - view-level specs cover model selection and result rendering states
 - contract and view-level specs fail when the rendered catalog order or membership drifts from the
   active generated catalog
 
 ### Remaining Work
 
-- `web/test/contracts.test.mjs` is the current implementation and must be replaced by
-  `purescript-spec` suites under `web/test/*.purs`
-- `infernix test unit` does not yet invoke `spago test`
+None.
 
 ---
 
-## Sprint 5.4: Manual Inference Workbench in PureScript For Any Registered Model [Active]
+## Sprint 5.4: Manual Inference Workbench in PureScript For Any Registered Model [Done]
 
-**Status**: Active
-**Blocked by**: Sprint 5.1, Sprint 5.2
-**Implementation**: `web/src/`, `web/`
+**Status**: Done
+**Implementation**: `web/src/Main.purs`, `web/src/Infernix/Web/Workbench.purs`, `web/src/index.html`, `web/playwright/inference.spec.js`
 **Docs to update**: `documents/reference/web_portal_surface.md`, `documents/architecture/web_ui_architecture.md`
 
 ### Objective
 
-Deliver the browser workbench the user asked for: manual inference against any model in the catalog.
+Deliver the browser workbench the user asked for: manual inference against any model in the
+catalog.
 
 ### Deliverables
 
@@ -214,70 +199,63 @@ Deliver the browser workbench the user asked for: manual inference against any m
 
 ### Remaining Work
 
-- `web/src/app.js` and `web/src/workbench.js` are the current implementation; both must be replaced
-  by PureScript modules under `web/src/*.purs`
-- the existing Playwright DOM selectors must be preserved in the PureScript port to minimize
-  churn in the Phase 6 E2E suite (or the Playwright suite is rewritten in the same change; see
-  Phase 6 Sprint 6.3)
+None.
 
 ---
 
-## Sprint 5.5: Web Runtime Image and Playwright Dependency Ownership [Active]
+## Sprint 5.5: Web Runtime Image and Playwright Dependency Ownership [Done]
 
-**Status**: Active
-**Blocked by**: Sprint 5.1
-**Implementation**: `web/Dockerfile`, `web/playwright/`, `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`
+**Status**: Done
+**Implementation**: `web/Dockerfile`, `web/playwright/`, `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Cluster/PublishImages.hs`, `chart/templates/deployment-demo.yaml`, `chart/templates/deployment-service.yaml`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/architecture/web_ui_architecture.md`
 
 ### Objective
 
-Prepare the web image to be both the UI host and the E2E execution environment.
+Prepare the web image to own the packaged demo bundle and the E2E execution environment.
 
 ### Deliverables
 
 - `infernix cluster up` builds the webapp image through `web/Dockerfile` as part of the canonical deploy flow
 - the built webapp image is uploaded to Harbor before Helm rollout
-- `web/Dockerfile` installs the purs and spago toolchain (for the PureScript build) alongside
-  Chromium, WebKit, and Firefox dependencies for Playwright
-- the same image carries the PureScript bundle (built into `web/dist/` by `spago bundle-app`),
-  the Playwright browser binaries, and serves both as the demo UI host and the E2E executor
+- `web/Dockerfile` installs the npm-managed PureScript toolchain (`purescript`, `spago`, and
+  `esbuild`) alongside Chromium, WebKit, and Firefox dependencies for Playwright
+- the same image carries the built PureScript bundle under `web/dist/` together with the
+  Playwright browser binaries and acts as the routed E2E executor
 - `infernix test e2e` targets that same web image rather than a separate ad hoc browser image
 - the outer-container control-plane image no longer carries a duplicate Playwright browser
   installation
+- the chart no longer deploys a separate `infernix-web` workload or Service; the routed `/`
+  surface is served only by `infernix-demo`, while the Harbor-published web image remains an E2E
+  executor artifact
 
 ### Validation
 
-- the supported `web/Dockerfile` builds and serves the static PureScript bundle from `web/dist/`
-  (produced by `spago bundle-app`) and carries Playwright browser dependencies
+- the supported `web/Dockerfile` packages the static PureScript bundle from `web/dist/` and
+  carries Playwright browser dependencies
 - `./.build/infernix --runtime-mode apple-silicon test e2e` passes while launching Playwright from
   the built web image
 - `docker compose run --rm infernix infernix --runtime-mode apple-silicon test e2e` passes while
   delegating browser execution to the built web image
 - the repository does not maintain a second dedicated Playwright-only image
-- `infernix cluster up` produces a Harbor-published web image consumable by Helm and the
-  host-native routed E2E lanes exercise that same final-substrate image path across the runtime
-  matrix
+- `infernix cluster up` produces a Harbor-published web image consumable by the host-native routed
+  E2E lanes, and that same final-substrate image path is exercised across the runtime matrix
 
 ### Remaining Work
 
-- `web/Dockerfile` does not yet install the purs and spago toolchain; the static bundle is still
-  produced by `web/build.mjs` rather than `spago bundle-app`
-- `web/package.json`, `web/playwright.config.js`, and `tools/publish_chart_images.py` references
-  in this sprint will be retired during Sprint 1.6 (Python tooling migration) and Sprints 5.1
-  through 5.4 (PureScript port)
+None.
 
 ---
 
-## Sprint 5.6: Mode-Driven Demo Catalog and Workbench Parity in PureScript [Active]
+## Sprint 5.6: Mode-Driven Demo Catalog and Workbench Parity in PureScript [Done]
 
-**Status**: Active
-**Blocked by**: Sprint 5.4
-**Implementation**: `web/src/`, `web/playwright/inference.spec.js`, `web/test/`
+**Status**: Done
+**Implementation**: `web/src/Main.purs`, `web/src/Infernix/Web/Workbench.purs`, `web/playwright/inference.spec.js`, `web/test/Main.purs`
 **Docs to update**: `documents/architecture/web_ui_architecture.md`, `documents/reference/web_portal_surface.md`, `documents/development/testing_strategy.md`
 
 ### Objective
 
-Make the browser workbench a faithful reflection of the generated catalog for the active runtime mode.
+Make the browser workbench a faithful reflection of the generated catalog for the active runtime
+mode.
 
 ### Deliverables
 
@@ -304,11 +282,7 @@ Make the browser workbench a faithful reflection of the generated catalog for th
 
 ### Remaining Work
 
-- the workbench is currently implemented in `web/src/app.js`, `web/src/workbench.js`, and
-  `web/src/index.html`; PureScript reimplementation lands here together with the Playwright DOM
-  selector preservation work
-- `web/test/contracts.test.mjs` currently covers catalog parity; the parallel `purescript-spec`
-  suite under `web/test/CatalogSpec.purs` lands here
+None.
 
 ## Documentation Requirements
 

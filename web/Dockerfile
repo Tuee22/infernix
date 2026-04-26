@@ -17,7 +17,6 @@ RUN npx playwright install firefox
 
 RUN npx playwright install webkit
 
-COPY web/playwright.config.js ./playwright.config.js
 COPY web/playwright ./playwright
 COPY web/test ./test
 COPY web/dist ./dist

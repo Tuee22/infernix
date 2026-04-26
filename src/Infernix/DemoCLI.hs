@@ -5,14 +5,13 @@ module Infernix.DemoCLI
   )
 where
 
-import Control.Exception (bracket_)
 import Data.Maybe (fromMaybe)
 import Data.Text qualified as Text
 import Infernix.CLI (extractRuntimeMode)
-import Infernix.Config (discoverPaths, generatedDemoConfigPath, resolveRuntimeMode)
-import Infernix.Service (runService)
+import Infernix.Config (discoverPaths, ensureRepoLayout, generatedDemoConfigPath, publicationStatePath, resolveRuntimeMode)
+import Infernix.Demo.Api (DemoApiOptions (..), runDemoApiServer)
 import Infernix.Types (RuntimeMode, runtimeModeId)
-import System.Environment (getArgs, lookupEnv, setEnv, unsetEnv)
+import System.Environment (getArgs, lookupEnv)
 import System.Exit (exitFailure)
 
 main :: IO ()
@@ -35,16 +34,23 @@ dispatch maybeRuntimeMode ("serve" : serveArgs) =
       exitFailure
     Right (maybePort, maybeDhallPath) -> do
       paths <- discoverPaths
+      ensureRepoLayout paths
       runtimeMode <- resolveRuntimeMode maybeRuntimeMode
       let selectedDhallPath =
             fromMaybe (generatedDemoConfigPath paths runtimeMode) maybeDhallPath
-          runtimeModeValue = Text.unpack (runtimeModeId runtimeMode)
-      withTemporaryEnv
-        [ ("INFERNIX_DEMO_CONFIG_PATH", Just selectedDhallPath),
-          ("INFERNIX_CATALOG_SOURCE", Just "env-config-override"),
-          ("INFERNIX_RUNTIME_MODE", Just runtimeModeValue)
-        ]
-        (runService (Just runtimeMode) maybePort)
+      maybeBindHost <- lookupEnv "INFERNIX_BIND_HOST"
+      maybePublicationPath <- lookupEnv "INFERNIX_PUBLICATION_STATE_PATH"
+      putStrLn ("demoRuntimeMode: " <> Text.unpack (runtimeModeId runtimeMode))
+      putStrLn ("demoConfigPath: " <> selectedDhallPath)
+      runDemoApiServer
+        DemoApiOptions
+          { demoPaths = paths,
+            demoRuntimeMode = runtimeMode,
+            demoBindHost = fromMaybe "127.0.0.1" maybeBindHost,
+            demoPort = fromMaybe 8080 maybePort,
+            demoConfigPath = selectedDhallPath,
+            demoPublicationPath = fromMaybe (publicationStatePath paths) maybePublicationPath
+          }
 dispatch _ _ = do
   putStrLn helpText
   exitFailure
@@ -63,27 +69,6 @@ parseServeArgs = go Nothing Nothing
       go maybePort (Just dhallPath) rest
     go _ _ ("--help" : _) = Left helpText
     go _ _ (value : _) = Left ("Unsupported infernix-demo argument: " <> value)
-
-withTemporaryEnv :: [(String, Maybe String)] -> IO a -> IO a
-withTemporaryEnv bindings action = do
-  previousValues <- mapM (\(name, _) -> (,) name <$> lookupEnv name) bindings
-  let applyBindings =
-        mapM_
-          ( \(name, maybeValue) ->
-              case maybeValue of
-                Just value -> setEnv name value
-                Nothing -> unsetEnv name
-          )
-          bindings
-      restoreBindings =
-        mapM_
-          ( \(name, maybeValue) ->
-              case maybeValue of
-                Just value -> setEnv name value
-                Nothing -> unsetEnv name
-          )
-          previousValues
-  bracket_ applyBindings restoreBindings action
 
 helpText :: String
 helpText =

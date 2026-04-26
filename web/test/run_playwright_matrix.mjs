@@ -36,7 +36,7 @@ for (const runtimeMode of runtimeModes) {
   try {
     runInfernix(runtimeMode, ["cluster", "up"]);
     const edgePort = loadPublishedEdgePort();
-    const result = spawnSync("npx", ["playwright", "test"], {
+    const result = spawnSync("npx", ["playwright", "test", "./playwright/inference.spec.js", "--reporter=list", "--timeout=30000"], {
       cwd: webRoot,
       stdio: "inherit",
       env: {

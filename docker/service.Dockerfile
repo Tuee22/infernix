@@ -19,19 +19,12 @@ RUN cabal update \
 
 FROM haskell:9.14.1-slim-bookworm
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends python3 python3-pip \
-    && rm -rf /var/lib/apt/lists/*
-
 WORKDIR /srv/infernix
 
 COPY --from=build /opt/infernix/bin/infernix /usr/local/bin/infernix
 COPY --from=build /opt/infernix/bin/infernix-demo /usr/local/bin/infernix-demo
-COPY tools tools
-COPY proto proto
-
-RUN python3 -m pip install --break-system-packages --no-cache-dir -r /srv/infernix/tools/requirements.txt
+COPY web/dist web/dist
 
 RUN mkdir -p web/dist
 
-CMD ["infernix", "service", "--port", "8080"]
+CMD ["infernix", "service"]

@@ -23,7 +23,7 @@ govern this plan.
 | [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md) | Kind bootstrap, manual PV doctrine and explicit PV-to-PVC binding for every PVC-backed Helm workload, Harbor bootstrap-first and post-bootstrap Harbor-backed image flow, GPU-enabled `linux-cuda` cluster reconcile, and mode-aware ConfigMap-backed demo-config generation |
 | [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md) | Mandatory local HA Harbor, MinIO, operator-managed Patroni PostgreSQL, Pulsar, unified edge routing, and mode-stable browser and API publication |
 | [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) | Haskell Pulsar-driven production inference service, Python engine-adapter contract under `python/adapters/`, comprehensive matrix registry, protobuf manifest and Pulsar payload contracts, ConfigMap-backed generated demo `.dhall`, and durable artifact lifecycle |
-| [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md) | PureScript demo UI built with spago, `purescript-spec` test framework, Haskell-owned frontend contracts via `purescript-bridge`, and mode-driven demo workbench served by `infernix-demo` |
+| [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md) | PureScript demo UI built with spago, `purescript-spec` test framework, Haskell-owned generated frontend contracts, and mode-driven demo workbench served by `infernix-demo` |
 | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) | Unit, integration, routed Playwright coverage, per-mode matrix coverage, HA failure coverage, and lifecycle validation |
 | [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) | Explicit cleanup and removal ledger |
 
@@ -51,22 +51,20 @@ A phase or sprint can move to `Done` only when all of the following are true:
 The repository has a governed `documents/` suite and a closed cluster-substrate baseline. The new
 doctrine declared in [00-overview.md](00-overview.md) (two-binary topology, Pulsar-only production
 inference surface, demo HTTP only via `infernix-demo`, Python restricted to engine adapters under
-`python/adapters/`, frontend in PureScript with types from Haskell via `purescript-bridge`) is
+`python/adapters/`, frontend in PureScript with Haskell-owned generated contracts derived through
+`purescript-bridge`) is
 being landed across phases 1, 3, 4, and 5.
 
 - the cluster substrate, Kind or Helm assets, Harbor-first bootstrap flow, manual storage doctrine,
   operator-managed Patroni PostgreSQL contract, and `linux-cuda` GPU lane are implemented and
-  doctrine-aligned; their phase (Phase 2) is `Blocked` only because lifecycle code still calls
-  custom-logic Python tooling that Phase 1 Sprint 1.6 retires
+  doctrine-aligned; their phase (Phase 2) is now `Done`
 - the repository now ships `infernix` plus `infernix-demo`, broader CLI wrapper entrypoints for
-  edge or gateway or lint or internal flows, a repo-root `python/` scaffold, and a placeholder
-  `spago` tree under `web/`; the production inference surface (Pulsar subscription via
-  `infernix service`), the Haskell demo HTTP host, the Haskell edge proxy and platform gateways,
-  the `purescript-bridge` integration, the canonical `spago test` path, and the strict Python
-  adapter quality gate in `infernix test lint` are still not fully implemented, and the previous
-  Python-served HTTP surface, JavaScript workbench, and custom-logic `tools/*.py` scripts remain
-  on disk and are tracked for removal in
-  [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md)
+  edge or gateway or lint or internal flows, a repo-root `python/` scaffold, and a live PureScript
+  web path under `web/`; the Haskell demo HTTP host, Haskell edge proxy, Haskell platform
+  gateways, Haskell chart discovery, Haskell chart image publication, Haskell docs or chart or
+  proto or file lint paths, the Haskell-owned Haskell-style gate, and the PureScript build or test
+  lane are all implemented. The major open work is now the Pulsar-driven production runtime split
+  and the Haskell worker plus real engine-adapter boundary
 - the `documents/` tree, root README, AGENTS, and CLAUDE are now aligned with the retired-doctrine
   removals from Phase 0; the remaining open work is implementation migration rather than docs-suite
   realignment
@@ -86,10 +84,10 @@ The plan uses two separate concepts and keeps them distinct:
 |-------|------|--------|----------|
 | 0 | Documentation and Governance | Done | [phase-0-documentation-and-governance.md](phase-0-documentation-and-governance.md) |
 | 1 | Repository and Control-Plane Foundation | Active | [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md) |
-| 2 | Kind Cluster Storage and Lifecycle | Blocked | [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md) |
-| 3 | HA Platform Services and Edge Routing | Blocked | [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md) |
-| 4 | Inference Service and Durable Runtime | Blocked | [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) |
-| 5 | Web UI and Shared Types | Blocked | [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md) |
+| 2 | Kind Cluster Storage and Lifecycle | Done | [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md) |
+| 3 | HA Platform Services and Edge Routing | Active | [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md) |
+| 4 | Inference Service and Durable Runtime | Active | [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) |
+| 5 | Web UI and Shared Types | Done | [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md) |
 | 6 | Validation, E2E, and HA Hardening | Blocked | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) |
 
 ## Canonical Outcome
@@ -106,8 +104,8 @@ The current supported platform is constructed around these non-negotiable rules:
 - Python is restricted to `python/adapters/<engine>/` (Poetry-managed; mypy strict, black check,
   and ruff strict run in every adapter container build); all custom platform logic is Haskell
 - the demo UI is PureScript built with spago, tested with `purescript-spec`, and consumes
-  PureScript modules generated from Haskell ADTs in `src/Infernix/Demo/Api.hs` via
-  `purescript-bridge`
+  PureScript modules generated through `purescript-bridge` from dedicated Haskell browser-contract
+  ADTs in `src/Generated/Contracts.hs`
 - one governed `documents/` suite that stays aligned with the plan and the updated root README
 - one Kind-backed deployment path using Helm, including GPU-enabled Kind behavior for `linux-cuda`
 - one Harbor-first cluster bootstrap that deploys Harbor first on a pristine cluster, lets Harbor

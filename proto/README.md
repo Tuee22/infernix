@@ -16,5 +16,5 @@ Runtime contract:
 - Python helpers consume the generated modules under `tools/generated_proto/`
 - the routed service persists protobuf runtime manifests and results through MinIO-backed flows and
   registers protobuf schemas for request, result, and coordination topics in Pulsar
-- `tools/proto_check.py` validates the required schema files, package declarations, and canonical
+- `infernix lint proto` validates the required schema files, package declarations, and canonical
   symbols

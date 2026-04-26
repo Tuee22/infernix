@@ -23,7 +23,7 @@ ARG HELM_VERSION=v4.1.3
 ARG DOCKER_VERSION=29.2.1
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl nodejs npm protobuf-compiler python3 python3-pip tar gzip \
+    && apt-get install -y --no-install-recommends ca-certificates curl nodejs npm protobuf-compiler python3 tar gzip unzip \
     && arch="$(dpkg --print-architecture)" \
     && case "$arch" in \
         amd64) bin_arch=amd64; docker_arch=x86_64 ;; \
@@ -46,11 +46,9 @@ RUN apt-get update \
 
 WORKDIR /workspace
 
-COPY tools/requirements.txt /tmp/tools-requirements.txt
 COPY --from=build /opt/infernix/bin/infernix /usr/local/bin/infernix
 COPY --from=build /opt/infernix/bin/infernix-demo /usr/local/bin/infernix-demo
 
-RUN python3 -m pip install --break-system-packages --no-cache-dir -r /tmp/tools-requirements.txt
 RUN cabal update
 
 ENV INFERNIX_BUILD_ROOT=/opt/build/infernix

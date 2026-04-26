@@ -34,8 +34,9 @@ This repository serves two aligned purposes:
 - one mandatory local HA topology: Harbor, MinIO, Pulsar, and operator-managed PostgreSQL on Kind
 - one local Harbor registry as the image source for every non-Harbor pod
 - one manual persistent-storage doctrine rooted at `./.data/`
-- one PureScript demo UI built with spago, tested with `purescript-spec`, with frontend types
-  derived from Haskell ADTs in `src/Infernix/Demo/Api.hs` via `purescript-bridge`
+- one PureScript demo UI built with spago, tested with `purescript-spec`, with frontend contracts
+  emitted by `infernix internal generate-purs-contracts` through `purescript-bridge` from
+  dedicated Haskell browser-contract ADTs plus active-mode catalog metadata
 - one browser-based manual inference demo workbench for any registered model, served by
   `infernix-demo`
 - three runtime targets: Apple Silicon or Metal, Ubuntu 24.04 CPU, and Ubuntu 24.04 NVIDIA CUDA
@@ -75,9 +76,9 @@ the HA testing and demo ground used to validate and demonstrate them.
 | Ubuntu 24.04 / CPU | native or containerized Linux CPU path | CPU-only validation, fallback, and non-GPU workloads under the same manifests, messaging, and runtime contract | `llama.cpp`, `whisper.cpp`, `PyTorch` CPU, `ONNX Runtime` CPU, JVM-hosted tools |
 | Ubuntu 24.04 / NVIDIA CUDA Container | pinned CUDA container lane with NVIDIA runtime | high-throughput GPU execution under the same manifests, messaging, and runtime contract | `vLLM`, `PyTorch` CUDA, `Diffusers` or `ComfyUI`, `CTranslate2`, `TensorFlow` CUDA, `JAX/XLA`, `llama.cpp` when GGUF is the right artifact |
 
-On Apple Silicon, the operator workflow has no Python prerequisite. Poetry and a local `./.venv/`
-materialize only when an engine-adapter test is exercised explicitly (for example
-`infernix test integration --engine pytorch`).
+On Apple Silicon, the operator workflow has no Python prerequisite. Poetry and a repo-local
+adapter virtual environment materialize only when the Python adapter validation surface is
+exercised explicitly (for example `infernix test unit` or `infernix test all`).
 
 Infernix uses one operator, artifact, and browser-demo contract across Apple, CPU, and CUDA runtime
 classes.
@@ -99,7 +100,7 @@ The supported local platform is built around:
   entrypoint selects which one runs (`infernix service`, `infernix edge`,
   `infernix gateway harbor|minio|pulsar`, or `infernix-demo serve`)
 - one separate web image built from `web/Dockerfile` that holds the PureScript demo bundle in
-  `web/dist/` (produced by `spago bundle-app`) and the Playwright browser dependencies
+  `web/dist/` (produced by `spago bundle`) and the Playwright browser dependencies
 - one direct host Cabal install path that keeps host-native artifacts under `./.build/` without
   repo-owned scripts
 - one repo-local kubeconfig managed under the active build-output location rather than the user's
@@ -295,12 +296,12 @@ rebuildable.
 The browser surface is a repo-owned PureScript demo application with Haskell-generated shared
 contracts.
 
-- Haskell ADTs in `src/Infernix/Demo/Api.hs` remain the source of truth for the frontend contract;
-  PureScript modules in `web/src/Generated/` are emitted from those ADTs by
-  `infernix internal generate-purs-contracts` via `purescript-bridge`
+- Haskell-owned DTO and catalog records remain the source of truth for the frontend contract;
+  PureScript modules in `web/src/Generated/` are emitted by
+  `infernix internal generate-purs-contracts` through `purescript-bridge`
 - the demo UI host is the `infernix-demo` Haskell binary (separate executable from `infernix`,
   shares `infernix-lib`, ships in the same OCI image); it serves `web/dist/` produced by
-  `spago bundle-app`
+  `spago bundle`
 - the web image (`web/Dockerfile`) carries the spago plus purs toolchain alongside Playwright
   browser dependencies
 - the `infernix-demo` workload is deployed through repo-owned Helm chart templates and values, and
@@ -375,7 +376,7 @@ Contributions should keep implementation, tests, and docs aligned in the same ch
 
 - use `documents/` for architecture, operator, and development guidance
 - use `DEVELOPMENT_PLAN/` for phase ordering, scope, and closure criteria
-- run `infernix lint docs` (or, until Sprint 1.6 lands, `python3 tools/docs_check.py`),
+- run `infernix lint docs`,
   `infernix test lint`, and the relevant `infernix test ...` targets before opening changes
 
 ## License

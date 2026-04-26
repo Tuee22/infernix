@@ -39,10 +39,6 @@ spec:
               value: "{{ .Values.demoConfig.mountPath }}/{{ .Values.demoConfig.fileName }}"
             - name: INFERNIX_PUBLICATION_STATE_PATH
               value: "{{ .Values.demoConfig.mountPath }}/{{ .Values.publication.fileName }}"
-            - name: INFERNIX_ROUTE_PROBE_BASE_URL
-              value: "http://infernix-edge.platform.svc.cluster.local"
-            - name: INFERNIX_BIND_HOST
-              value: "0.0.0.0"
             - name: INFERNIX_DATA_ROOT
               value: "/srv/infernix/.data"
             - name: INFERNIX_MINIO_ENDPOINT
@@ -78,8 +74,6 @@ spec:
             requests:
               nvidia.com/gpu: "1"
 {{- end }}
-          ports:
-            - containerPort: {{ .Values.service.port }}
           volumeMounts:
             - name: demo-config
               mountPath: "{{ .Values.demoConfig.mountPath }}/{{ .Values.demoConfig.fileName }}"

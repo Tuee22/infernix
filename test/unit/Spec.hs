@@ -2,22 +2,39 @@
 
 module Main (main) where
 
-import Control.Exception (finally)
-import Data.ByteString.Lazy.Char8 qualified as LazyChar8
-import Data.List (find, isInfixOf, nub)
-import Data.Maybe (fromMaybe, isJust, isNothing)
+import Control.Exception (finally, try)
+import Data.ByteString.Char8 qualified as ByteString8
+import Data.ByteString.Lazy qualified as Lazy
+import Data.List (dropWhileEnd, find, nub)
+import Data.Map.Strict qualified as Map
+import Data.Maybe (isJust, isNothing)
 import Data.Text qualified as Text
 import Infernix.CLI (extractRuntimeMode)
+import Infernix.Cluster.Discover
+import Infernix.Cluster.PublishImages
+  ( PublishedImage,
+    contentAddressTagFromInspectPayload,
+    normalizeRepositoryPath,
+    writeHarborOverridesFile,
+  )
 import Infernix.Config
+import Infernix.DemoConfig (decodeDemoConfigFile)
+import Infernix.Edge (edgeTargetForPath)
+import Infernix.Gateway
+  ( harborGatewayTargetForPath,
+    minioGatewayTargetForPath,
+    pulsarGatewayTargetForPath,
+  )
+import Infernix.HttpProxy (ProxyTarget (..))
 import Infernix.Models
 import Infernix.Runtime
+import Infernix.Runtime.Worker (engineCommandOverrideEnvironmentName)
 import Infernix.Types
 import System.Directory
 import System.Environment (lookupEnv, setEnv, unsetEnv)
-import System.Exit (ExitCode (ExitSuccess))
 import System.FilePath ((</>))
 import System.IO.Error (catchIOError, isDoesNotExistError)
-import System.Process (readProcess, readProcessWithExitCode)
+import System.Process (readProcess)
 
 main :: IO ()
 main = do
@@ -38,408 +55,233 @@ main = do
   assertUniqueModelIds AppleSilicon
   assertUniqueModelIds LinuxCpu
   assertUniqueModelIds LinuxCuda
-  assert (all ((== AppleSilicon) . runtimeMode) (catalogForMode AppleSilicon)) "apple-silicon catalog entries carry the apple-silicon mode id"
-  assert (all ((== LinuxCpu) . runtimeMode) (catalogForMode LinuxCpu)) "linux-cpu catalog entries carry the linux-cpu mode id"
-  assert (all ((== LinuxCuda) . runtimeMode) (catalogForMode LinuxCuda)) "linux-cuda catalog entries carry the linux-cuda mode id"
-  assert (not (any requiresGpu (catalogForMode AppleSilicon))) "apple-silicon catalog entries do not claim GPU-only scheduling"
-  assert (not (any requiresGpu (catalogForMode LinuxCpu))) "linux-cpu catalog entries do not claim GPU-only scheduling"
-  assert (any requiresGpu (catalogForMode LinuxCuda)) "linux-cuda catalog entries expose GPU-bound scheduling metadata"
-  let demoConfig =
-        DemoConfig
-          { configRuntimeMode = LinuxCpu,
-            configEdgePort = 9090,
-            configMapName = "infernix-demo-config",
-            generatedPath = "./.build/infernix-demo-linux-cpu.dhall",
-            mountedPath = "/opt/build/infernix-demo-linux-cpu.dhall",
-            models = catalogForMode LinuxCpu
-          }
-  assert
-    (any ("\"runtimeMode\": \"linux-cpu\"" `isInfixOf`) (lines (LazyChar8.unpack (encodeDemoConfig demoConfig))))
-    "demo config render includes the active runtime mode"
   withTestRoot unitTestRoot $ do
-    cwd <- getCurrentDirectory
     paths <- discoverPaths
     ensureRepoLayout paths
-    maybeBuildRootEnv <- lookupEnv "INFERNIX_BUILD_ROOT"
-    let expectedBuildRoot = fromMaybe (repoRoot paths </> ".build") maybeBuildRootEnv
-        request =
+    let demoConfig =
+          DemoConfig
+            { configRuntimeMode = LinuxCpu,
+              configEdgePort = 9090,
+              configMapName = "infernix-demo-config",
+              generatedPath = "./.build/infernix-demo-linux-cpu.dhall",
+              mountedPath = "/opt/build/infernix-demo-linux-cpu.dhall",
+              demoUiEnabled = True,
+              requestTopics = requestTopicsForMode LinuxCpu,
+              resultTopic = resultTopicForMode LinuxCpu,
+              engines = engineBindingsForMode LinuxCpu,
+              models = catalogForMode LinuxCpu
+            }
+        demoConfigPath = buildRoot paths </> "demo-config-test.dhall"
+    createDirectoryIfMissing True (buildRoot paths)
+    Lazy.writeFile demoConfigPath (encodeDemoConfig demoConfig)
+    decodedConfig <- decodeDemoConfigFile demoConfigPath
+    assert (configRuntimeMode decodedConfig == LinuxCpu) "demo-config decode preserves runtime mode"
+    assert (demoUiEnabled decodedConfig) "demo-config decode preserves the demo UI flag"
+    assert (requestTopics decodedConfig == requestTopicsForMode LinuxCpu) "demo-config decode preserves request topics"
+    assert (resultTopic decodedConfig == resultTopicForMode LinuxCpu) "demo-config decode preserves the result topic"
+    assert (engines decodedConfig == engineBindingsForMode LinuxCpu) "demo-config decode preserves engine bindings"
+    assert (length (models decodedConfig) == length (catalogForMode LinuxCpu)) "demo-config decode preserves the model list"
+
+    let request =
           InferenceRequest
             { requestModelId = "llm-qwen25-safetensors",
-              inputText = Text.replicate 81 "x"
+              inputText = Text.replicate 96 "x"
             }
-        validateLoadedResult inferenceResult loadedResult = do
-          assert (requestId loadedResult == requestId inferenceResult) "protobuf result reload preserves request ids"
-          assert (resultModelId loadedResult == resultModelId inferenceResult) "protobuf result reload preserves model ids"
-          assert (payload loadedResult == payload inferenceResult) "protobuf result reload preserves payload encoding"
-        failUnexpected err = fail ("unexpected error: " <> show err)
-        validateInferenceResult inferenceResult = do
-          let maybeObjectRef = objectRef (payload inferenceResult)
-              checkObjectRef ref = do
-                exists <- doesFileExist (objectStoreRoot paths </> Text.unpack ref)
-                assert exists "stored object reference points at a real file"
-          assert (isJust maybeObjectRef) "large outputs use the object store"
-          maybe (pure ()) checkObjectRef maybeObjectRef
-          resultProtoExists <-
-            doesFileExist
-              (resultsRoot paths </> Text.unpack (requestId inferenceResult) <> ".pb")
-          legacyResultExists <-
-            doesFileExist
-              (resultsRoot paths </> Text.unpack (requestId inferenceResult) <> ".state")
-          assert resultProtoExists "inference execution persists protobuf result files"
-          assert (not legacyResultExists) "inference execution no longer writes legacy state result files"
-          maybeLoadedResult <- loadInferenceResult paths (requestId inferenceResult)
-          maybe
-            (fail "loadInferenceResult must decode the persisted protobuf result")
-            (validateLoadedResult inferenceResult)
-            maybeLoadedResult
-          cacheExists <-
-            doesFileExist
-              (modelCacheRoot paths </> "apple-silicon" </> "llm-qwen25-safetensors" </> "default" </> "materialized.txt")
-          assert cacheExists "runtime cache is keyed by runtime mode and model id"
-          let durableArtifactPath =
-                objectStoreRoot paths </> "artifacts" </> "apple-silicon" </> "llm-qwen25-safetensors" </> "bundle.json"
-          durableArtifactExists <- doesFileExist durableArtifactPath
-          assert durableArtifactExists "inference execution materializes a durable artifact bundle for the selected model"
-          durableArtifactContents <- readFile durableArtifactPath
-          assert ("\"engineAdapterId\": \"pytorch-python\"" `isInfixOf` durableArtifactContents) "durable artifact bundles record the selected engine adapter id"
-          assert ("\"artifactAcquisitionMode\": \"local-file-copy\"" `isInfixOf` durableArtifactContents) "host-side durable artifact bundles use explicit local source-artifact copies under fixture overrides"
-          assert ("\"sourceArtifactFetchStatus\": \"materialized\"" `isInfixOf` durableArtifactContents) "host-side durable artifact bundles record materialized source-artifact state"
-          assert ("\"sourceArtifactSelectionMode\": \"engine-specific-direct-artifact\"" `isInfixOf` durableArtifactContents) "durable artifact bundles record engine-specific source-artifact selection metadata"
-          assert ("source-artifacts/apple-silicon/llm-qwen25-safetensors/source.json" `isInfixOf` durableArtifactContents) "host-side durable artifact bundles point at the durable source-artifact manifest"
-          assert ("\"sourceArtifactResolvedUrl\": \"file://" `isInfixOf` durableArtifactContents) "durable artifact bundles record the resolved source artifact location"
-          assert ("\"sourceArtifactAuthoritativeUri\": \"file://" `isInfixOf` durableArtifactContents) "durable artifact bundles record the authoritative runtime input location"
-          assert ("\"sourceArtifactSelectedArtifacts\": [" `isInfixOf` durableArtifactContents) "durable artifact bundles record the selected engine-ready artifacts"
-          cacheBundleExists <-
-            doesFileExist
-              (modelCacheRoot paths </> "apple-silicon" </> "llm-qwen25-safetensors" </> "default" </> "artifact-bundle.json")
-          assert cacheBundleExists "runtime cache materialization copies the durable artifact bundle into the derived cache root"
-          sourceManifestExists <-
-            doesFileExist
-              (objectStoreRoot paths </> "source-artifacts" </> "apple-silicon" </> "llm-qwen25-safetensors" </> "source.json")
-          assert sourceManifestExists "host-side materialization persists the durable source-artifact manifest"
-          manifestProtoExists <-
-            doesFileExist
-              (objectStoreRoot paths </> "manifests" </> "apple-silicon" </> "llm-qwen25-safetensors" </> "default.pb")
-          legacyManifestExists <-
-            doesFileExist
-              (objectStoreRoot paths </> "manifests" </> "apple-silicon" </> "llm-qwen25-safetensors" </> "default.state")
-          assert manifestProtoExists "cache materialization persists protobuf manifests"
-          assert (not legacyManifestExists) "cache materialization no longer writes legacy state manifests"
-          manifests <- listCacheManifests paths AppleSilicon
-          let maybeManifest = find ((== "llm-qwen25-safetensors") . cacheModelId) manifests
-          assert (maybe False (("artifacts/apple-silicon/llm-qwen25-safetensors/bundle.json" `isInfixOf`) . Text.unpack . cacheDurableSourceUri) maybeManifest) "cache manifests point at the durable artifact bundle rather than the upstream download URL"
-          evictedCount <- evictCache paths AppleSilicon (Just "llm-qwen25-safetensors")
-          assert (evictedCount == 1) "cache eviction removes the requested derived cache entry"
-          cachePresentAfterEvict <-
-            doesFileExist
-              (modelCacheRoot paths </> "apple-silicon" </> "llm-qwen25-safetensors" </> "default" </> "materialized.txt")
-          assert (not cachePresentAfterEvict) "cache eviction removes the materialized cache marker"
-          rebuiltEntries <- rebuildCache paths AppleSilicon (Just "llm-qwen25-safetensors")
-          assert (length rebuiltEntries == 1) "cache rebuild restores a manifest-backed cache entry"
-          cachePresentAfterRebuild <-
-            doesFileExist
-              (modelCacheRoot paths </> "apple-silicon" </> "llm-qwen25-safetensors" </> "default" </> "materialized.txt")
-          assert cachePresentAfterRebuild "cache rebuild restores the materialized cache marker"
-          cacheBundleExistsAfterRebuild <-
-            doesFileExist
-              (modelCacheRoot paths </> "apple-silicon" </> "llm-qwen25-safetensors" </> "default" </> "artifact-bundle.json")
-          assert cacheBundleExistsAfterRebuild "cache rebuild restores the durable artifact bundle into the derived cache root"
-        validateJaxArtifactBundle = do
-          let jaxRequest =
-                InferenceRequest
-                  { requestModelId = "music-mt3-jax",
-                    inputText = "jax adapter coverage"
-                  }
-              jaxArtifactPath =
-                objectStoreRoot paths </> "artifacts" </> "apple-silicon" </> "music-mt3-jax" </> "bundle.json"
-          jaxResult <- executeInference paths AppleSilicon jaxRequest
-          case jaxResult of
-            Left err -> fail ("unexpected jax inference error: " <> show err)
-            Right _ -> pure ()
-          jaxArtifactContents <- readFile jaxArtifactPath
-          assert ("\"engineAdapterId\": \"jax-python\"" `isInfixOf` jaxArtifactContents) "durable artifact bundles map jax-metal to the explicit jax adapter"
-          assert ("\"artifactAcquisitionMode\": \"local-file-copy\"" `isInfixOf` jaxArtifactContents) "host-side durable artifact bundles reuse the explicit source-artifact materialization helper for jax coverage"
-          assert ("\"sourceArtifactSelectionMode\": \"engine-specific-direct-artifact\"" `isInfixOf` jaxArtifactContents) "jax artifact bundles record the engine-specific source-artifact selection mode"
-    assert (repoRoot paths /= cwd) "discoverPaths climbs from nested working directories back to the repo root"
-    assert (buildRoot paths == expectedBuildRoot) "discoverPaths keeps build artifacts in the active build root"
-    let qwenSourceFixture = cwd </> "source-fixture.txt"
-        jaxSourceFixture = cwd </> "source-fixture-jax.txt"
-    writeFile qwenSourceFixture "local source fixture\n"
-    writeFile jaxSourceFixture "local jax source fixture\n"
-    withSourceArtifactOverrides
-      [ ("llm-qwen25-safetensors", "file://" <> qwenSourceFixture),
-        ("music-mt3-jax", "file://" <> jaxSourceFixture)
-      ]
-      $ do
-        result <- executeInference paths AppleSilicon request
-        either failUnexpected validateInferenceResult result
-        validateJaxArtifactBundle
-    let runtimeBackendFixtureModeScript =
-          unlines
-            [ "import pathlib",
-              "import sys",
-              "sys.path.insert(0, str(pathlib.Path(sys.argv[1]) / 'tools'))",
-              "from runtime_backend import RuntimeBackend",
-              "data_root = pathlib.Path(sys.argv[2])",
-              "paths = {",
-              "  'results_root': data_root / 'runtime' / 'results',",
-              "  'object_store_root': data_root / 'object-store',",
-              "  'model_cache_root': data_root / 'runtime' / 'model-cache',",
-              "}",
-              "for path in paths.values():",
-              "  path.mkdir(parents=True, exist_ok=True)",
-              "try:",
-              "  RuntimeBackend(paths=paths, runtime_mode='linux-cpu', control_plane_context='host-native', daemon_location='control-plane-host', publication_state={'routes': []})",
-              "except RuntimeError as exc:",
-              "  print(str(exc))",
-              "else:",
-              "  raise SystemExit('runtime backend unexpectedly allowed filesystem mode without explicit fixture ownership')"
-            ]
-    (fixtureModeExitCode, fixtureModeStdout, fixtureModeStderr) <-
-      readProcessWithExitCode
-        "python3"
-        ["-c", runtimeBackendFixtureModeScript, repoRoot paths, cwd </> ".data"]
-        ""
-    assert (fixtureModeExitCode == ExitSuccess) ("runtime backend explicit fixture-mode requirement is observable: " <> fixtureModeStderr)
-    assert ("filesystem-fixture mode must be enabled explicitly" `isInfixOf` fixtureModeStdout) "runtime backend refuses implicit filesystem fallback"
-    let runtimeBackendScript =
-          unlines
-            [ "import json",
-              "import pathlib",
-              "import sys",
-              "sys.path.insert(0, str(pathlib.Path(sys.argv[1]) / 'tools'))",
-              "from runtime_backend import RuntimeBackend",
-              "repo_root = pathlib.Path(sys.argv[1])",
-              "data_root = pathlib.Path(sys.argv[2])",
-              "paths = {",
-              "  'results_root': data_root / 'runtime' / 'results',",
-              "  'object_store_root': data_root / 'object-store',",
-              "  'model_cache_root': data_root / 'runtime' / 'model-cache',",
-              "}",
-              "for path in paths.values():",
-              "  path.mkdir(parents=True, exist_ok=True)",
-              "backend = RuntimeBackend(paths=paths, runtime_mode='linux-cpu', control_plane_context='host-native', daemon_location='control-plane-host', publication_state={'routes': []}, allow_filesystem_fallback=True)",
-              "entry = backend.materialize_cache({",
-              "  'matrixRowId': 'fixture-row',",
-              "  'modelId': 'fixture-model',",
-              "  'displayName': 'Fixture Model',",
-              "  'family': 'llm',",
-              "  'artifactType': 'fixture',",
-              "  'referenceModel': 'fixture',",
-              "  'selectedEngine': 'llama.cpp',",
-              "  'runtimeLane': 'kind-linux-cpu',",
-              "  'downloadUrl': pathlib.Path('source-fixture.txt').resolve().as_uri(),",
-              "})",
-              "print(json.dumps(entry, sort_keys=True))",
-              "backend.close()"
-            ]
-    (backendExitCode, backendStdout, backendStderr) <-
-      readProcessWithExitCode
-        "python3"
-        ["-c", runtimeBackendScript, repoRoot paths, cwd </> ".data"]
-        ""
-    assert (backendExitCode == ExitSuccess) ("runtime backend local source materialization succeeds: " <> backendStderr)
-    assert ("\"artifactAcquisitionMode\": \"local-file-copy\"" `isInfixOf` backendStdout) "runtime backend records local-file source acquisition in cache status"
-    assert ("\"engineAdapterId\": \"llama-cpp-cli\"" `isInfixOf` backendStdout) "runtime backend cache status records engine-specific runner metadata"
-    assert ("\"engineAdapterAvailability\": \"" `isInfixOf` backendStdout) "runtime backend cache status reports engine-adapter availability"
-    assert ("\"sourceArtifactFetchStatus\": \"materialized\"" `isInfixOf` backendStdout) "runtime backend cache status records materialized source-artifact state"
-    assert ("\"sourceArtifactSelectionMode\": \"engine-specific-direct-artifact\"" `isInfixOf` backendStdout) "runtime backend cache status records engine-specific source-artifact selection"
-    assert ("\"sourceArtifactAuthoritativeUri\": \"" `isInfixOf` backendStdout) "runtime backend cache status reports the authoritative runtime input URI"
-    assert ("\"sourceArtifactAuthoritativeKind\": \"" `isInfixOf` backendStdout) "runtime backend cache status reports the authoritative runtime input kind"
-    assert ("\"sourceArtifactSelectedArtifacts\": [" `isInfixOf` backendStdout) "runtime backend cache status exposes selected source artifacts for direct materialization"
-    writeFile "remote-fixture.txt" "remote source fixture\n"
-    let remoteRuntimeBackendScript =
-          unlines
-            [ "import functools",
-              "import http.server",
-              "import json",
-              "import pathlib",
-              "import sys",
-              "import threading",
-              "sys.path.insert(0, str(pathlib.Path(sys.argv[1]) / 'tools'))",
-              "from runtime_backend import RuntimeBackend",
-              "repo_root = pathlib.Path(sys.argv[1])",
-              "data_root = pathlib.Path(sys.argv[2])",
-              "handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(pathlib.Path.cwd()))",
-              "server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), handler)",
-              "thread = threading.Thread(target=server.serve_forever, daemon=True)",
-              "thread.start()",
-              "port = server.server_address[1]",
-              "paths = {",
-              "  'results_root': data_root / 'runtime' / 'results',",
-              "  'object_store_root': data_root / 'object-store',",
-              "  'model_cache_root': data_root / 'runtime' / 'model-cache',",
-              "}",
-              "for path in paths.values():",
-              "  path.mkdir(parents=True, exist_ok=True)",
-              "backend = RuntimeBackend(paths=paths, runtime_mode='linux-cpu', control_plane_context='host-native', daemon_location='control-plane-host', publication_state={'routes': []}, allow_filesystem_fallback=True)",
-              "try:",
-              "  entry = backend.materialize_cache({",
-              "    'matrixRowId': 'remote-row',",
-              "    'modelId': 'remote-model',",
-              "    'displayName': 'Remote Model',",
-              "    'family': 'llm',",
-              "    'artifactType': 'fixture',",
-              "    'referenceModel': 'remote',",
-              "    'selectedEngine': 'llama.cpp',",
-              "    'runtimeLane': 'kind-linux-cpu',",
-              "    'downloadUrl': f'http://127.0.0.1:{port}/remote-fixture.txt',",
-              "  })",
-              "  print(json.dumps(entry, sort_keys=True))",
-              "finally:",
-              "  backend.close()",
-              "  server.shutdown()",
-              "  server.server_close()"
-            ]
-    (remoteExitCode, remoteStdout, remoteStderr) <-
-      readProcessWithExitCode
-        "python3"
-        ["-c", remoteRuntimeBackendScript, repoRoot paths, cwd </> ".data"]
-        ""
-    assert (remoteExitCode == ExitSuccess) ("runtime backend remote source materialization succeeds: " <> remoteStderr)
-    assert ("\"artifactAcquisitionMode\": \"direct-http-download\"" `isInfixOf` remoteStdout) "runtime backend records direct upstream HTTP acquisition in cache status"
-    assert ("\"sourceArtifactFetchStatus\": \"materialized\"" `isInfixOf` remoteStdout) "runtime backend records materialized direct upstream source state"
-    assert ("\"sourceArtifactSelectionMode\": \"engine-specific-direct-artifact\"" `isInfixOf` remoteStdout) "runtime backend records engine-specific direct-artifact selection for HTTP inputs"
-    assert ("\"sourceArtifactSelectedArtifacts\": [" `isInfixOf` remoteStdout) "runtime backend cache status exposes selected source artifacts for direct HTTP materialization"
-    let providerSelectionScript =
-          unlines
-            [ "import json",
-              "import pathlib",
-              "import sys",
-              "sys.path.insert(0, str(pathlib.Path(sys.argv[1]) / 'tools'))",
-              "from runtime_backend import select_github_artifacts, select_huggingface_artifacts",
-              "hf = select_huggingface_artifacts(",
-              "  model={",
-              "    'selectedEngine': 'llama.cpp',",
-              "    'artifactType': 'GGUF',",
-              "    'downloadUrl': 'https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF',",
-              "  },",
-              "  payload={",
-              "    'modelId': 'TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF',",
-              "    'metadata': {'siblings': ['tinyllama.Q4_K_M.gguf', 'tokenizer.json', 'README.md']},",
-              "  },",
-              "  payload_uri='file:///tmp/hf-provider.json',",
-              "  resolved_url='https://huggingface.co/api/models/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF',",
-              ")",
-              "gh = select_github_artifacts(",
-              "  model={",
-              "    'selectedEngine': 'whisper.cpp',",
-              "    'artifactType': 'whisper.cpp model set / GGML-style',",
-              "    'downloadUrl': 'https://github.com/ggml-org/whisper.cpp/tree/master/models',",
-              "  },",
-              "  payload={",
-              "    'repository': 'ggml-org/whisper.cpp',",
-              "    'metadata': {'html_url': 'https://github.com/ggml-org/whisper.cpp', 'default_branch': 'master'},",
-              "    'releases': [",
-              "      {'assets': [",
-              "        {'name': 'ggml-small.en.bin', 'browser_download_url': 'https://github.com/ggml-org/whisper.cpp/releases/download/v1/ggml-small.en.bin', 'content_type': 'application/octet-stream'},",
-              "        {'name': 'vocab.json', 'browser_download_url': 'https://github.com/ggml-org/whisper.cpp/releases/download/v1/vocab.json', 'content_type': 'application/json'},",
-              "      ]}",
-              "    ],",
-              "  },",
-              "  payload_uri='file:///tmp/github-provider.json',",
-              "  resolved_url='https://api.github.com/repos/ggml-org/whisper.cpp',",
-              ")",
-              "print(json.dumps({",
-              "  'hfAuthoritativeUri': hf.authoritative_uri,",
-              "  'hfAuthoritativeKind': hf.authoritative_kind,",
-              "  'hfSelectedArtifacts': hf.selected_artifacts,",
-              "  'ghAuthoritativeUri': gh.authoritative_uri,",
-              "  'ghAuthoritativeKind': gh.authoritative_kind,",
-              "  'ghSelectedArtifacts': gh.selected_artifacts,",
-              "}, sort_keys=True))"
-            ]
-    (providerExitCode, providerStdout, providerStderr) <-
-      readProcessWithExitCode
-        "python3"
-        ["-c", providerSelectionScript, repoRoot paths]
-        ""
-    assert (providerExitCode == ExitSuccess) ("provider-backed engine-ready artifact selection succeeds: " <> providerStderr)
-    assert ("\"hfAuthoritativeUri\": \"https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama.Q4_K_M.gguf\"" `isInfixOf` providerStdout) "huggingface selection promotes the required engine-ready artifact to the authoritative URI"
-    assert ("\"hfAuthoritativeKind\": \"gguf-weights\"" `isInfixOf` providerStdout) "huggingface selection records the authoritative artifact kind"
-    assert ("\"ghAuthoritativeUri\": \"https://github.com/ggml-org/whisper.cpp/releases/download/v1/ggml-small.en.bin\"" `isInfixOf` providerStdout) "github selection promotes the required engine-ready artifact to the authoritative URI"
-    assert ("\"ghSelectedArtifacts\": [" `isInfixOf` providerStdout) "github selection records the selected artifact inventory"
-    writeFile "runner-source.json" (unlines ["{", "  \"selectionMode\": \"engine-specific-huggingface-selection\",", "  \"fetchStatus\": \"materialized\",", "  \"acquisitionMode\": \"huggingface-model-metadata\",", "  \"selectedArtifacts\": [", "    {", "      \"artifactId\": \"tinyllama.Q4_K_M.gguf\",", "      \"artifactKind\": \"gguf-weights\",", "      \"uri\": \"file:///tmp/unit-runner.gguf\",", "      \"required\": true", "    }", "  ]", "}"])
-    writeFile "runner-bundle.json" (unlines ["{", "  \"artifactKind\": \"infernix-runtime-bundle\",", "  \"schemaVersion\": 1,", "  \"runtimeMode\": \"linux-cpu\",", "  \"matrixRowId\": \"runner-row\",", "  \"modelId\": \"runner-model\",", "  \"displayName\": \"Runner Model\",", "  \"family\": \"llm\",", "  \"artifactType\": \"GGUF\",", "  \"referenceModel\": \"TinyLlama\",", "  \"selectedEngine\": \"llama.cpp\",", "  \"runtimeLane\": \"kind-linux-cpu\",", "  \"sourceDownloadUrl\": \"https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF\",", "  \"workerProfile\": \"text-generation\",", "  \"engineAdapterId\": \"llama-cpp-cli\",", "  \"engineAdapterType\": \"external-command\",", "  \"engineAdapterLocator\": \"missing-llama-cli\",", "  \"artifactAcquisitionMode\": \"engine-ready-artifact-manifests\",", "  \"sourceArtifactManifestPath\": \"runner-source.json\",", "  \"sourceArtifactSelectionMode\": \"engine-specific-huggingface-selection\",", "  \"sourceArtifactAuthoritativeUri\": \"file:///tmp/unit-runner.gguf\",", "  \"sourceArtifactAuthoritativeKind\": \"gguf-weights\"", "}"])
-    (runnerExitCode, runnerStdout, runnerStderr) <-
-      readProcessWithExitCode
-        "python3"
-        [ repoRoot paths </> "tools" </> "final_engine_runner.py",
-          "--artifact-bundle",
-          "runner-bundle.json",
-          "--input-text",
-          "runner coverage",
-          "--adapter-id",
-          "llama-cpp-cli"
-        ]
-        ""
-    assert (runnerExitCode == ExitSuccess) ("engine-specific worker runner reports authoritative artifact selection: " <> runnerStderr)
-    assert ("authoritative=gguf-weights" `isInfixOf` runnerStdout) "engine-specific worker runner reports the authoritative artifact kind"
-    assert ("artifacts=1:gguf-weights:file:///tmp/unit-runner.gguf" `isInfixOf` runnerStdout) "engine-specific worker runner reports the selected artifact inventory"
-    assert ("selection=engine-specific-huggingface-selection" `isInfixOf` runnerStdout) "engine-specific worker runner reports the manifest selection mode"
-    writeFile "override-runner.py" (unlines ["#!/usr/bin/env python3", "import argparse", "parser = argparse.ArgumentParser()", "parser.add_argument('--artifact-bundle', required=True)", "parser.add_argument('--request-id', required=True)", "parser.add_argument('--input-text', required=True)", "parser.add_argument('--adapter-id', required=True)", "args = parser.parse_args()", "print(f\"override adapter={args.adapter_id} request={args.request_id} input={args.input_text}\")"])
-    withEnvValue
-      "INFERNIX_ENGINE_COMMAND_LLAMA_CPP_CLI"
-      ("python3 " <> cwd </> "override-runner.py")
-      $ do
-        (overrideExitCode, overrideStdout, overrideStderr) <-
-          readProcessWithExitCode
-            "python3"
-            [ repoRoot paths </> "tools" </> "runtime_worker.py",
-              "--artifact-bundle",
-              "runner-bundle.json",
-              "--once",
-              "--input-text",
-              "override coverage"
-            ]
-            ""
-        assert (overrideExitCode == ExitSuccess) ("runtime worker honors engine command overrides: " <> overrideStderr)
-        assert ("override adapter=llama-cpp-cli" `isInfixOf` overrideStdout) "runtime worker forwards the adapter id to override commands"
-        assert ("input=override coverage" `isInfixOf` overrideStdout) "runtime worker forwards the request payload to override commands"
-    writeFile "invalid-demo-config.dhall" "{\"runtimeMode\":\"apple-silicon\",\"models\":[{\"modelId\":\"missing-fields\"}]}\n"
-    (exitCode, _, stderrOutput) <-
-      readProcessWithExitCode
-        "python3"
-        [ repoRoot paths </> "tools" </> "service_server.py",
-          "--repo-root",
-          repoRoot paths,
-          "--port",
-          "0",
-          "--runtime-mode",
-          "apple-silicon",
-          "--control-plane-context",
-          "host-native",
-          "--daemon-location",
-          "control-plane-host",
-          "--catalog-source",
-          "generated-build-root",
-          "--demo-config",
-          cwd </> "invalid-demo-config.dhall",
-          "--mounted-demo-config",
-          "/opt/build/infernix-demo-apple-silicon.dhall",
-          "--publication-state",
-          cwd </> "publication.json"
-        ]
-        ""
-    assert (exitCode /= ExitSuccess) "service startup fails on invalid generated demo config metadata"
-    assert ("invalid demo config" `isInfixOf` stderrOutput) "service startup reports invalid demo config failures clearly"
+    inferenceResult <- executeInference paths AppleSilicon request
+    case inferenceResult of
+      Left err -> fail ("unexpected inference error: " <> show err)
+      Right result -> do
+        assert (resultModelId result == "llm-qwen25-safetensors") "inference result records the selected model id"
+        assert (resultRuntimeMode result == AppleSilicon) "inference result records the runtime mode"
+        assert (isJust (objectRef (payload result))) "long outputs are stored in the object store"
+        let resultPath = resultsRoot paths </> Text.unpack (requestId result) <> ".pb"
+        resultExists <- doesFileExist resultPath
+        assert resultExists "inference execution writes a protobuf result file"
+        case objectRef (payload result) of
+          Just objectRefValue -> do
+            durableOutput <- readFile (objectStoreRoot paths </> Text.unpack objectRefValue)
+            assert
+              (durableOutput == replicate 96 'x')
+              "python-native worker execution uses the process-isolated typed adapter path by default"
+          Nothing -> fail "expected an object-store-backed output for the long inference result"
+        manifests <- listCacheManifests paths AppleSilicon
+        let maybeManifest = find ((== "llm-qwen25-safetensors") . cacheModelId) manifests
+        assert (isJust maybeManifest) "inference execution materializes a cache manifest"
+        evictedCount <- evictCache paths AppleSilicon (Just "llm-qwen25-safetensors")
+        assert (evictedCount == 1) "cache eviction removes the selected cache entry"
+        rebuiltEntries <- rebuildCache paths AppleSilicon (Just "llm-qwen25-safetensors")
+        assert (length rebuiltEntries == 1) "cache rebuild restores the selected cache entry"
+
+    let overrideModel = maybe (fail "expected the apple-silicon qwen row") pure (findModel AppleSilicon "llm-qwen25-safetensors")
+    overrideModelDescriptor <- overrideModel
+    let overrideBinding = engineBindingForSelectedEngine (selectedEngine overrideModelDescriptor)
+        overrideEnvName = engineCommandOverrideEnvironmentName overrideBinding
+        overrideMarkerPath = buildRoot paths </> "worker-override-used.txt"
+        overrideWrapperPath = buildRoot paths </> "python-worker-wrapper.sh"
+    workerPython <- resolveWorkerPython paths
+    writeFile
+      overrideWrapperPath
+      ( unlines
+          [ "#!/bin/sh",
+            "printf override-used > " <> show overrideMarkerPath,
+            "exec \"$@\""
+          ]
+      )
+    wrapperPermissions <- getPermissions overrideWrapperPath
+    setPermissions overrideWrapperPath wrapperPermissions {executable = True}
+    assert
+      (overrideEnvName == "INFERNIX_ENGINE_COMMAND_TRANSFORMERS_PYTHON")
+      "python-native adapter overrides normalize adapter ids into environment variables"
+    withOptionalEnv overrideEnvName (Just (overrideWrapperPath <> " " <> workerPython)) $ do
+      overrideResult <-
+        executeInference
+          paths
+          AppleSilicon
+          InferenceRequest
+            { requestModelId = "llm-qwen25-safetensors",
+              inputText = "  override payload  "
+            }
+      case overrideResult of
+        Left err -> fail ("unexpected override inference error: " <> show err)
+        Right result -> do
+          assert
+            (inlineOutput (payload result) == Just "override payload")
+            "adapter-specific command overrides still execute the selected worker path"
+          markerExists <- doesFileExist overrideMarkerPath
+          assert markerExists "adapter-specific command overrides invoke the configured worker wrapper"
+
+    writeFile "invalid-demo-config.dhall" "{\"runtimeMode\":\"apple-silicon\",\"models\":[]}\n"
+    invalidConfigResult <- try (decodeDemoConfigFile "invalid-demo-config.dhall") :: IO (Either IOError DemoConfig)
+    assert (either (const True) (const False) invalidConfigResult) "invalid demo configs are rejected"
+
+    writeFile "rendered-chart.yaml" sampleRenderedChart
+    discoveredImages <- discoverChartImagesFile "rendered-chart.yaml"
+    assert
+      ( discoveredImages
+          == [ "docker.io/library/busybox:1.36",
+               "docker.io/percona/percona-distribution-postgresql:18.3-1",
+               "infernix-service:local"
+             ]
+      )
+      "rendered chart image discovery returns sorted unique image refs"
+    discoveredClaims <- discoverChartClaimsFile "rendered-chart.yaml"
+    assert (length discoveredClaims == 3) "rendered chart claim discovery finds explicit and StatefulSet claims"
+    assert
+      ( map pvcName discoveredClaims
+          == [ "data-infernix-minio-0",
+               "data-infernix-minio-1",
+               "infernix-service-0-data"
+             ]
+      )
+      "rendered chart claim discovery preserves normalized PVC names"
+
+    writeFile "harbor-overlay.yaml" sampleHarborOverlay
+    overlayImages <- discoverHarborOverlayImageRefsFile "harbor-overlay.yaml"
+    assert
+      ( overlayImages
+          == [ "harbor.local/library/infernix-service:sha256-service",
+               "harbor.local/library/infernix-web:sha256-web",
+               "harbor.local/library/bitnamilegacy/minio:sha256-minio",
+               "harbor.local/library/bitnamilegacy/os-shell:sha256-shell",
+               "harbor.local/library/bitnamilegacy/minio-object-browser:sha256-console",
+               "harbor.local/library/bitnamilegacy/minio-client:sha256-client",
+               "harbor.local/library/apachepulsar/pulsar-all:sha256-pulsar"
+             ]
+      )
+      "Harbor overlay discovery returns the routed image refs"
+    writeHarborOverridesFile samplePublishedImages "generated-harbor-overrides.yaml"
+    generatedOverlayImages <- discoverHarborOverlayImageRefsFile "generated-harbor-overrides.yaml"
+    assert
+      ( generatedOverlayImages
+          == [ "harbor.local/library/infernix-service:sha256-service",
+               "harbor.local/library/infernix-web:sha256-web",
+               "harbor.local/library/bitnamilegacy/minio:sha256-minio",
+               "harbor.local/library/bitnamilegacy/os-shell:sha256-shell",
+               "harbor.local/library/bitnamilegacy/minio-object-browser:sha256-console",
+               "harbor.local/library/bitnamilegacy/minio-client:sha256-client",
+               "harbor.local/library/apachepulsar/pulsar-all:sha256-pulsar"
+             ]
+      )
+      "Harbor overlay emission produces the routed image override contract"
+    assert
+      (normalizeRepositoryPath "docker.io/library/busybox:1.36" == "library/busybox")
+      "repository normalization removes tags and explicit registries"
+    assert
+      (normalizeRepositoryPath "localhost:30002/library/infernix-service@sha256:deadbeef" == "library/infernix-service")
+      "repository normalization removes digests and loopback Harbor prefixes"
+    assert
+      (contentAddressTagFromInspectPayload sampleDockerImageInspect == Right "sha256-deadbeef")
+      "docker inspect parsing prefers repo digests for content-addressed tags"
+    assert
+      (contentAddressTagFromInspectPayload sampleDockerImageInspectWithoutRepoDigest == Right "sha256-fallback")
+      "docker inspect parsing falls back to the image id when no repo digest is present"
+
+    assertProxyTarget
+      (edgeTargetForPath (Just "http://demo:18081") (Just "http://web:8080") "http://harbor:8080" "http://minio:9001" "http://pulsar:8080" "/api/models")
+      "http://demo:18081"
+      "/api/models"
+      "edge proxy sends API paths to the demo upstream"
+    assertProxyTarget
+      (edgeTargetForPath (Just "http://demo:18081") (Just "http://web:8080") "http://harbor:8080" "http://minio:9001" "http://pulsar:8080" "/objects/result.pb")
+      "http://demo:18081"
+      "/objects/result.pb"
+      "edge proxy sends object paths to the demo upstream"
+    assertProxyTarget
+      (edgeTargetForPath (Just "http://demo:18081") (Just "http://web:8080") "http://harbor:8080" "http://minio:9001" "http://pulsar:8080" "/harbor/api/v2.0/projects")
+      "http://harbor:8080"
+      "/harbor/api/v2.0/projects"
+      "edge proxy sends Harbor paths to the Harbor gateway"
+    assertProxyTarget
+      (edgeTargetForPath (Just "http://demo:18081") (Just "http://web:8080") "http://harbor:8080" "http://minio:9001" "http://pulsar:8080" "/")
+      "http://demo:18081"
+      "/"
+      "edge proxy sends the browser root to the demo upstream"
+    assertProxyTarget
+      (edgeTargetForPath Nothing (Just "http://web:8080") "http://harbor:8080" "http://minio:9001" "http://pulsar:8080" "/")
+      "http://web:8080"
+      "/"
+      "edge proxy falls back to the web upstream when no demo upstream is configured"
+    assert
+      ( isNothing
+          (edgeTargetForPath Nothing (Just "http://web:8080") "http://harbor:8080" "http://minio:9001" "http://pulsar:8080" "/api/models")
+      )
+      "edge proxy leaves demo API paths unpublished when no demo upstream is configured"
+
+    assertProxyTarget
+      (harborGatewayTargetForPath "http://harbor-ui:8080" "http://harbor-core:8080" "Basic dGVzdA==" "/harbor/api/v2.0/projects")
+      "http://harbor-core:8080"
+      "/api/v2.0/projects"
+      "Harbor gateway strips the routed prefix before proxying"
+    assertProxyHeader
+      (harborGatewayTargetForPath "http://harbor-ui:8080" "http://harbor-core:8080" "Basic dGVzdA==" "/harbor/api/v2.0/projects")
+      "Basic dGVzdA=="
+      "Harbor gateway injects the configured basic-auth header for API traffic"
+    assertProxyTarget
+      (harborGatewayTargetForPath "http://harbor-ui:8080" "http://harbor-core:8080" "Basic dGVzdA==" "/harbor")
+      "http://harbor-ui:8080"
+      "/"
+      "Harbor gateway normalizes the bare routed prefix to root"
+    assertProxyTarget
+      (minioGatewayTargetForPath "http://minio-console:9001" "http://minio-s3:9000" "/minio/console/browser")
+      "http://minio-console:9001"
+      "/browser"
+      "MinIO gateway routes console requests to the console upstream"
+    assertProxyTarget
+      (minioGatewayTargetForPath "http://minio-console:9001" "http://minio-s3:9000" "/minio/s3/models")
+      "http://minio-s3:9000"
+      "/models"
+      "MinIO gateway routes S3 requests to the S3 upstream"
+    assertProxyTarget
+      (pulsarGatewayTargetForPath "http://pulsar-admin:8080" "http://pulsar-http:8080" "/pulsar/admin/clusters")
+      "http://pulsar-admin:8080"
+      "/clusters"
+      "Pulsar gateway routes admin requests to the admin upstream"
+    assertProxyTarget
+      (pulsarGatewayTargetForPath "http://pulsar-admin:8080" "http://pulsar-http:8080" "/pulsar/ws/v2/producer/public/default/topic")
+      "http://pulsar-http:8080"
+      "/v2/producer/public/default/topic"
+      "Pulsar gateway routes HTTP websocket-surface requests to the broker HTTP upstream"
   putStrLn "unit tests passed"
-
-withSourceArtifactOverrides :: [(String, String)] -> IO () -> IO ()
-withSourceArtifactOverrides overrides action = do
-  previousOverrides <- lookupEnv "INFERNIX_SOURCE_ARTIFACT_OVERRIDES"
-  let renderedOverrides =
-        "{"
-          <> unwordsWith ", " [show modelId <> ": " <> show sourceUrl | (modelId, sourceUrl) <- overrides]
-          <> "}"
-  setEnv "INFERNIX_SOURCE_ARTIFACT_OVERRIDES" renderedOverrides
-  action `finally` maybe (unsetEnv "INFERNIX_SOURCE_ARTIFACT_OVERRIDES") (setEnv "INFERNIX_SOURCE_ARTIFACT_OVERRIDES") previousOverrides
-
-withEnvValue :: String -> String -> IO () -> IO ()
-withEnvValue name value action = do
-  previousValue <- lookupEnv name
-  setEnv name value
-  action `finally` maybe (unsetEnv name) (setEnv name) previousValue
 
 withTestRoot :: FilePath -> IO a -> IO a
 withTestRoot root action = do
@@ -454,24 +296,199 @@ withTestRoot root action = do
       | isDoesNotExistError err = pure ()
       | otherwise = ioError err
 
+withOptionalEnv :: String -> Maybe String -> IO a -> IO a
+withOptionalEnv name maybeValue action = do
+  previousValue <- lookupEnv name
+  applyMaybeValue maybeValue
+  action
+    `finally` applyMaybeValue previousValue
+  where
+    applyMaybeValue (Just value) = setEnv name value
+    applyMaybeValue Nothing = unsetEnv name
+
+resolveWorkerPython :: Paths -> IO FilePath
+resolveWorkerPython paths = do
+  poetryEnvPath <- readProcess "poetry" ["--directory", repoRoot paths </> "python", "env", "info", "--path"] ""
+  pure (trimTrailingWhitespace poetryEnvPath </> "bin" </> "python")
+
+trimTrailingWhitespace :: String -> String
+trimTrailingWhitespace =
+  dropWhileEnd (`elem` [' ', '\n', '\r', '\t'])
+
 testRootPath :: FilePath -> IO FilePath
 testRootPath suiteName = do
   paths <- discoverPaths
-  token <- takeWhile (\char -> char /= '\r' && char /= '\n') <$> readProcess "python3" ["-c", "import uuid; print(uuid.uuid4())"] ""
-  pure (repoRoot paths </> ".build" </> ("test-" <> suiteName <> "-" <> token))
+  pure (repoRoot paths </> ".build" </> ("test-" <> suiteName))
 
 assert :: Bool -> String -> IO ()
 assert True _ = pure ()
 assert False message = fail message
 
-unwordsWith :: String -> [String] -> String
-unwordsWith _ [] = ""
-unwordsWith separator values = foldr1 (\left right -> left <> separator <> right) values
+assertProxyTarget :: Maybe ProxyTarget -> String -> String -> String -> IO ()
+assertProxyTarget maybeTarget expectedBaseUrl expectedPath message =
+  case maybeTarget of
+    Just target ->
+      assert
+        (proxyBaseUrl target == expectedBaseUrl && proxyPath target == ByteString8.pack expectedPath)
+        message
+    Nothing -> fail message
+
+assertProxyHeader :: Maybe ProxyTarget -> String -> String -> IO ()
+assertProxyHeader maybeTarget expectedHeaderValue message =
+  case maybeTarget of
+    Just target ->
+      assert
+        ( case proxyRequestHeaders target of
+            [(_, headerValue)] -> headerValue == ByteString8.pack expectedHeaderValue
+            _ -> False
+        )
+        message
+    Nothing -> fail message
 
 assertUniqueModelIds :: RuntimeMode -> IO ()
 assertUniqueModelIds mode = do
-  let models = catalogForMode mode
-      identifiers = map modelId models
-      matrixRows = map matrixRowId models
+  let modelsForMode = catalogForMode mode
+      identifiers = map modelId modelsForMode
+      matrixRows = map matrixRowId modelsForMode
   assert (length identifiers == length (nub identifiers)) ("catalog model ids are unique for " <> show mode)
   assert (length matrixRows == length (nub matrixRows)) ("catalog matrix rows are unique for " <> show mode)
+
+sampleRenderedChart :: String
+sampleRenderedChart =
+  unlines
+    [ "---",
+      "apiVersion: apps/v1",
+      "kind: Deployment",
+      "metadata:",
+      "  name: infernix-service",
+      "spec:",
+      "  template:",
+      "    spec:",
+      "      initContainers:",
+      "        - name: prepare",
+      "          image: docker.io/library/busybox:1.36",
+      "      containers:",
+      "        - name: service",
+      "          image: infernix-service:local",
+      "---",
+      "apiVersion: apps/v1",
+      "kind: StatefulSet",
+      "metadata:",
+      "  name: infernix-minio",
+      "  namespace: platform",
+      "  labels:",
+      "    release: infernix",
+      "spec:",
+      "  replicas: 2",
+      "  volumeClaimTemplates:",
+      "    - metadata:",
+      "        name: data",
+      "      spec:",
+      "        storageClassName: infernix-manual",
+      "        resources:",
+      "          requests:",
+      "            storage: 7Gi",
+      "---",
+      "apiVersion: v1",
+      "kind: PersistentVolumeClaim",
+      "metadata:",
+      "  name: infernix-service-0-data",
+      "  namespace: platform",
+      "  labels:",
+      "    infernix.io/release: infernix",
+      "    infernix.io/workload: service",
+      "    infernix.io/ordinal: \"0\"",
+      "    infernix.io/claim: data",
+      "spec:",
+      "  storageClassName: infernix-manual",
+      "  resources:",
+      "    requests:",
+      "      storage: 5Gi",
+      "---",
+      "apiVersion: pgv2.percona.com/v2",
+      "kind: PerconaPGCluster",
+      "metadata:",
+      "  name: harbor-postgresql",
+      "spec:",
+      "  image: docker.io/percona/percona-distribution-postgresql:18.3-1",
+      "  instances:",
+      "    - name: instance1",
+      "      dataVolumeClaimSpec:",
+      "        storageClassName: infernix-manual"
+    ]
+
+sampleHarborOverlay :: String
+sampleHarborOverlay =
+  unlines
+    [ "service:",
+      "  image:",
+      "    registry: harbor.local",
+      "    repository: library/infernix-service",
+      "    tag: sha256-service",
+      "web:",
+      "  image:",
+      "    registry: harbor.local",
+      "    repository: library/infernix-web",
+      "    tag: sha256-web",
+      "minio:",
+      "  image:",
+      "    registry: harbor.local",
+      "    repository: library/bitnamilegacy/minio",
+      "    tag: sha256-minio",
+      "  defaultInitContainers:",
+      "    volumePermissions:",
+      "      image:",
+      "        registry: harbor.local",
+      "        repository: library/bitnamilegacy/os-shell",
+      "        tag: sha256-shell",
+      "  console:",
+      "    image:",
+      "      registry: harbor.local",
+      "      repository: library/bitnamilegacy/minio-object-browser",
+      "      tag: sha256-console",
+      "  clientImage:",
+      "    registry: harbor.local",
+      "    repository: library/bitnamilegacy/minio-client",
+      "    tag: sha256-client",
+      "pulsar:",
+      "  defaultPulsarImageRepository: harbor.local/library/apachepulsar/pulsar-all",
+      "  defaultPulsarImageTag: sha256-pulsar"
+    ]
+
+samplePublishedImages :: Map.Map String PublishedImage
+samplePublishedImages =
+  Map.fromList
+    [ ("infernix-service:local", ("harbor.local/library/infernix-service", "sha256-service")),
+      ("infernix-web:local", ("harbor.local/library/infernix-web", "sha256-web")),
+      ("docker.io/bitnamilegacy/minio:2025.7.23-debian-12-r3", ("harbor.local/library/bitnamilegacy/minio", "sha256-minio")),
+      ("docker.io/bitnamilegacy/os-shell:12-debian-12-r50", ("harbor.local/library/bitnamilegacy/os-shell", "sha256-shell")),
+      ("docker.io/bitnamilegacy/minio-object-browser:2.0.2-debian-12-r3", ("harbor.local/library/bitnamilegacy/minio-object-browser", "sha256-console")),
+      ("docker.io/bitnamilegacy/minio-client:2025.7.21-debian-12-r2", ("harbor.local/library/bitnamilegacy/minio-client", "sha256-client")),
+      ("docker.io/apachepulsar/pulsar-all:4.0.9", ("harbor.local/library/apachepulsar/pulsar-all", "sha256-pulsar")),
+      ("docker.io/percona/percona-postgresql-operator:2.9.0", ("harbor.local/library/percona/percona-postgresql-operator", "sha256-pg-operator")),
+      ("docker.io/percona/percona-distribution-postgresql:18.3-1", ("harbor.local/library/percona/percona-distribution-postgresql", "sha256-pg-db")),
+      ("docker.io/percona/percona-pgbouncer:1.25.1-1", ("harbor.local/library/percona/percona-pgbouncer", "sha256-pgbouncer")),
+      ("docker.io/percona/percona-pgbackrest:2.58.0-1", ("harbor.local/library/percona/percona-pgbackrest", "sha256-pgbackrest"))
+    ]
+
+sampleDockerImageInspect :: String
+sampleDockerImageInspect =
+  unlines
+    [ "[",
+      "  {",
+      "    \"RepoDigests\": [\"docker.io/library/busybox@sha256:deadbeef\"],",
+      "    \"Id\": \"sha256:fallback\"",
+      "  }",
+      "]"
+    ]
+
+sampleDockerImageInspectWithoutRepoDigest :: String
+sampleDockerImageInspectWithoutRepoDigest =
+  unlines
+    [ "[",
+      "  {",
+      "    \"RepoDigests\": [],",
+      "    \"Id\": \"sha256:fallback\"",
+      "  }",
+      "]"
+    ]

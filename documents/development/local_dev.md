@@ -38,8 +38,8 @@ When exercising a Python-native engine adapter (and only then), Poetry materiali
 environment in the repo:
 
 ```bash
-poetry install --directory python
-./.build/infernix --runtime-mode apple-silicon test integration --engine pytorch
+POETRY_VIRTUALENVS_IN_PROJECT=true poetry install --directory python --no-root
+./.build/infernix test unit
 ```
 
 `infernix` does not install Poetry as a generic platform prerequisite; it must be available on the
@@ -49,7 +49,8 @@ host before the adapter test runs.
 
 - runtime mode is selected independently of control-plane execution context
 - supported workflows do not use repo-owned scripts or wrapper layers
-- the operator workflow has no Python prerequisite; Poetry and `./.venv/` materialize only when an
+- the operator workflow has no Python prerequisite; Poetry and a repo-local adapter virtual
+  environment materialize only when an
   engine-adapter test is exercised explicitly (see [python_policy.md](python_policy.md))
 - Apple host builds call `cabal` directly with `--builddir=.build/cabal` and
   `--installdir=./.build`, which keeps Cabal output under `./.build/` and materializes

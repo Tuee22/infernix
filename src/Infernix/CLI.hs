@@ -6,32 +6,54 @@ module Infernix.CLI
   )
 where
 
+import Control.Applicative ((<|>))
 import Control.Concurrent (threadDelay)
-import Control.Exception (finally)
-import Data.List (intercalate, isPrefixOf)
-import Data.Maybe (fromMaybe)
+import Control.Exception (IOException, evaluate, finally, try)
+import Control.Monad (unless, when)
+import Data.Aeson (Value (..), eitherDecode)
+import Data.Aeson.Key qualified as Key
+import Data.Aeson.KeyMap qualified as KeyMap
+import Data.ByteString.Lazy.Char8 qualified as LazyChar8
+import Data.List (intercalate, isInfixOf, isPrefixOf)
+import Data.Maybe (fromMaybe, isJust)
 import Data.Text qualified as Text
+import Data.Vector qualified as Vector
+import Generated.Contracts qualified as Contracts
 import Infernix.Cluster
+import Infernix.Cluster.Discover
+import Infernix.Cluster.PublishImages qualified as PublishImages
 import Infernix.Config
-import Infernix.Models
+import Infernix.DemoConfig (decodeDemoConfigFile, renderModelListing, validateDemoConfigFile)
+import Infernix.Edge (runEdgeProxy)
+import Infernix.Gateway (runGatewayProxy)
+import Infernix.Lint.Chart (runChartLint)
+import Infernix.Lint.Docs (runDocsLint)
+import Infernix.Lint.Files (runFilesLint)
+import Infernix.Lint.Proto (runProtoLint)
 import Infernix.Runtime (evictCache, listCacheManifests, rebuildCache)
 import Infernix.Service
 import Infernix.Storage (readEdgePortMaybe)
 import Infernix.Types
   ( CacheManifest (..),
-    ModelDescriptor (..),
-    RequestField (..),
+    PersistentClaim (..),
     RuntimeMode (LinuxCuda),
     allRuntimeModes,
     parseRuntimeMode,
     runtimeModeId,
   )
+import Language.PureScript.Bridge (buildBridge, defaultBridge, writePSTypesWith)
+import Language.PureScript.Bridge.Builder (BridgePart, (^==))
+import Language.PureScript.Bridge.CodeGenSwitches (noArgonautCodecs, noLenses)
+import Language.PureScript.Bridge.PSTypes (psArray)
+import Language.PureScript.Bridge.TypeInfo (typeName)
 import System.Directory
   ( copyFile,
     createDirectoryIfMissing,
     doesDirectoryExist,
     doesFileExist,
+    findExecutable,
     getPermissions,
+    listDirectory,
     setPermissions,
   )
 import System.Environment (getArgs, getEnvironment, getExecutablePath)
@@ -60,12 +82,11 @@ dispatch maybeRuntimeMode args = case args of
   _ -> do
     ensureAppleHostPrerequisites
     case args of
-      ["service"] -> runService maybeRuntimeMode Nothing
-      ["service", "--port", port] -> runService maybeRuntimeMode (Just (read port))
-      ["edge"] -> runPythonTool maybeRuntimeMode "tools/edge_proxy.py" []
-      ["gateway", "harbor"] -> runPortalSurface maybeRuntimeMode "harbor"
-      ["gateway", "minio"] -> runPortalSurface maybeRuntimeMode "minio"
-      ["gateway", "pulsar"] -> runPortalSurface maybeRuntimeMode "pulsar"
+      ["service"] -> runService maybeRuntimeMode
+      ["edge"] -> runEdgeProxy
+      ["gateway", "harbor"] -> runGatewayProxy "harbor"
+      ["gateway", "minio"] -> runGatewayProxy "minio"
+      ["gateway", "pulsar"] -> runGatewayProxy "pulsar"
       ["cluster", "up"] -> clusterUp maybeRuntimeMode
       ["cluster", "down"] -> clusterDown maybeRuntimeMode
       ["cluster", "status"] -> clusterStatus maybeRuntimeMode
@@ -75,16 +96,16 @@ dispatch maybeRuntimeMode args = case args of
       ["cache", "rebuild"] -> runCacheRebuild maybeRuntimeMode Nothing
       ["cache", "rebuild", "--model", modelIdValue] -> runCacheRebuild maybeRuntimeMode (Just (Text.pack modelIdValue))
       "kubectl" : kubectlArgs -> runKubectlCompat kubectlArgs
-      ["docs", "check"] -> runCommand maybeRuntimeMode "python3" ["tools/docs_check.py"]
-      ["lint", "files"] -> runCommand maybeRuntimeMode "python3" ["tools/lint_check.py"]
-      ["lint", "docs"] -> runCommand maybeRuntimeMode "python3" ["tools/docs_check.py"]
-      ["lint", "proto"] -> runCommand maybeRuntimeMode "python3" ["tools/proto_check.py"]
+      ["docs", "check"] -> runDocsLint
+      ["lint", "files"] -> runFilesLint
+      ["lint", "docs"] -> runDocsLint
+      ["lint", "proto"] -> runProtoLint
       ["lint", "chart"] -> do
-        runCommand maybeRuntimeMode "python3" ["tools/platform_asset_check.py"]
-        runCommand maybeRuntimeMode "python3" ["tools/helm_chart_check.py"]
+        runChartLint
       ["test", "lint"] -> runLint maybeRuntimeMode
       ["test", "unit"] -> do
         ensureWebDependencies
+        ensurePythonAdapterDependencies maybeRuntimeMode
         runCabalCommand maybeRuntimeMode ["test", "infernix-unit"]
         runCommand maybeRuntimeMode "npm" ["--prefix", "web", "run", "test:unit"]
       ["test", "integration"] -> runCabalCommand maybeRuntimeMode ["test", "infernix-integration"]
@@ -92,25 +113,24 @@ dispatch maybeRuntimeMode args = case args of
       ["test", "all"] -> do
         ensureWebDependencies
         runLint maybeRuntimeMode
+        ensurePythonAdapterDependencies maybeRuntimeMode
         runCabalCommand maybeRuntimeMode ["test", "infernix-unit"]
         runCommand maybeRuntimeMode "npm" ["--prefix", "web", "run", "test:unit"]
         runCabalCommand maybeRuntimeMode ["test", "infernix-integration"]
         runEndToEnd maybeRuntimeMode
       ["internal", "discover", "images", renderedChartPath] ->
-        runCommand maybeRuntimeMode "python3" ["tools/discover_chart_images.py", renderedChartPath]
+        mapM_ putStrLn =<< discoverChartImagesFile renderedChartPath
       ["internal", "discover", "claims", renderedChartPath] ->
-        runCommand maybeRuntimeMode "python3" ["tools/discover_chart_claims.py", renderedChartPath]
+        mapM_ (putStrLn . renderPersistentClaimLine) =<< discoverChartClaimsFile renderedChartPath
       ["internal", "discover", "harbor-overlay", overlayPath] ->
-        runCommand maybeRuntimeMode "python3" ["tools/list_harbor_overlay_images.py", overlayPath]
+        mapM_ putStrLn =<< discoverHarborOverlayImageRefsFile overlayPath
       ["internal", "publish-chart-images", renderedChartPath, outputPath] ->
-        runCommand maybeRuntimeMode "python3" ["tools/publish_chart_images.py", renderedChartPath, outputPath]
-      ["internal", "demo-config", "load", demoConfigPath] ->
-        runCommand maybeRuntimeMode "python3" ["tools/demo_config.py", demoConfigPath]
+        PublishImages.publishChartImagesFile PublishImages.defaultHarborPublishOptions renderedChartPath outputPath
+      ["internal", "demo-config", "load", demoConfigPath] -> do
+        demoConfig <- decodeDemoConfigFile demoConfigPath
+        putStr (renderModelListing demoConfig)
       ["internal", "demo-config", "validate", demoConfigPath] ->
-        runCommand maybeRuntimeMode "python3" ["tools/demo_config.py", demoConfigPath]
-      ["internal", "generate-web-contracts", outputDir] -> do
-        runtimeMode <- resolveRuntimeMode maybeRuntimeMode
-        writeGeneratedContracts runtimeMode outputDir
+        validateDemoConfigFile demoConfigPath
       ["internal", "generate-purs-contracts", outputDir] -> do
         runtimeMode <- resolveRuntimeMode maybeRuntimeMode
         writeGeneratedPursContracts runtimeMode outputDir
@@ -118,47 +138,32 @@ dispatch maybeRuntimeMode args = case args of
         putStrLn helpText
         exitFailure
 
-runPythonTool :: Maybe RuntimeMode -> FilePath -> [String] -> IO ()
-runPythonTool maybeRuntimeMode scriptPath args = do
-  paths <- discoverPaths
-  runCommandWithCwdAndEnv
-    maybeRuntimeMode
-    []
-    "python3"
-    ([repoRoot paths </> scriptPath] <> args)
-    (repoRoot paths)
-
-runPortalSurface :: Maybe RuntimeMode -> String -> IO ()
-runPortalSurface maybeRuntimeMode surface =
-  do
-    paths <- discoverPaths
-    runCommandWithCwdAndEnv
-      maybeRuntimeMode
-      [("INFERNIX_PORTAL_SURFACE", surface)]
-      "python3"
-      [repoRoot paths </> "tools" </> "portal_surface.py"]
-      (repoRoot paths)
-
 runLint :: Maybe RuntimeMode -> IO ()
 runLint maybeRuntimeMode = do
-  runCommand maybeRuntimeMode "python3" ["tools/haskell_style_check.py"]
-  runCommand maybeRuntimeMode "python3" ["tools/lint_check.py"]
-  runCommand maybeRuntimeMode "python3" ["tools/platform_asset_check.py"]
-  runCommand maybeRuntimeMode "python3" ["tools/helm_chart_check.py"]
-  runCommand maybeRuntimeMode "python3" ["tools/proto_check.py"]
-  runCommand maybeRuntimeMode "python3" ["tools/docs_check.py"]
+  runCabalCommand maybeRuntimeMode ["test", "infernix-haskell-style"]
+  runFilesLint
+  runChartLint
+  runProtoLint
+  runDocsLint
+  runPythonQualityIfPresent maybeRuntimeMode
   runCabalCommand maybeRuntimeMode ["build", "all"]
 
 runEndToEnd :: Maybe RuntimeMode -> IO ()
 runEndToEnd maybeRuntimeMode = do
-  paths <- discoverPaths
-  runtimeModes <-
-    case maybeRuntimeMode of
-      Just runtimeMode -> pure [runtimeMode]
-      Nothing -> do
-        cudaSupported <- linuxCudaSupportedOnHost
-        pure (filter (\runtimeMode -> runtimeMode /= LinuxCuda || cudaSupported) allRuntimeModes)
-  mapM_ (runRuntimeModeE2E paths) runtimeModes
+  ensureWebDependencies
+  ensurePlaywrightBrowsers
+  commandsAvailable <- platformCommandsAvailableForE2E
+  if not commandsAvailable
+    then runCommand maybeRuntimeMode "npm" ["--prefix", "web", "run", "test:e2e"]
+    else do
+      paths <- discoverPaths
+      runtimeModes <-
+        case maybeRuntimeMode of
+          Just runtimeMode -> pure [runtimeMode]
+          Nothing -> do
+            cudaSupported <- linuxCudaSupportedOnHost
+            pure (filter (\runtimeMode -> runtimeMode /= LinuxCuda || cudaSupported) allRuntimeModes)
+      mapM_ (runRuntimeModeE2E paths) runtimeModes
 
 runRuntimeModeE2E :: Paths -> RuntimeMode -> IO ()
 runRuntimeModeE2E paths runtimeMode =
@@ -171,8 +176,8 @@ runRuntimeModeE2E paths runtimeMode =
           Nothing -> ioError (userError "edge port was not published after cluster up")
       if controlPlaneContext paths == "host-native"
         then
-          withHostBridgeService runtimeMode edgePort $
-            runPlaywrightImage runtimeMode Nothing "127.0.0.1" edgePort "control-plane-host" "host-daemon-bridge"
+          withHostBridgeDemo runtimeMode edgePort $
+            runPlaywrightImage runtimeMode Nothing "127.0.0.1" edgePort "control-plane-host" "host-demo-bridge"
         else
           runPlaywrightImage
             runtimeMode
@@ -180,51 +185,50 @@ runRuntimeModeE2E paths runtimeMode =
             (kindControlPlaneNodeName paths runtimeMode)
             30090
             "cluster-pod"
-            "cluster-service"
+            "cluster-demo"
   )
     `finally` clusterDown (Just runtimeMode)
 
-withHostBridgeService :: RuntimeMode -> Int -> IO () -> IO ()
-withHostBridgeService runtimeMode edgePort action = do
+withHostBridgeDemo :: RuntimeMode -> Int -> IO () -> IO ()
+withHostBridgeDemo runtimeMode edgePort action = do
   paths <- discoverPaths
   activateHostBridgeRoute paths runtimeMode 18081
+  executablePath <- resolveDemoExecutable
+  environment <- getEnvironment
   let processArgs =
-        [ repoRoot paths </> "tools" </> "service_server.py",
-          "--repo-root",
-          repoRoot paths,
-          "--host",
-          "0.0.0.0",
-          "--port",
-          "18081",
-          "--runtime-mode",
+        [ "--runtime-mode",
           Text.unpack (runtimeModeId runtimeMode),
-          "--control-plane-context",
-          "host-native",
-          "--daemon-location",
-          "control-plane-host",
-          "--catalog-source",
-          "generated-build-root",
-          "--demo-config",
+          "serve",
+          "--dhall",
           generatedDemoConfigPath paths runtimeMode,
-          "--mounted-demo-config",
-          watchedDemoConfigPath runtimeMode,
-          "--publication-state",
-          publicationStatePath paths,
-          "--route-probe-base-url",
-          "http://127.0.0.1:" <> show edgePort
+          "--port",
+          "18081"
         ]
-  (_, _, _, serviceHandle) <-
+  (_, _, _, demoHandle) <-
     createProcess
-      (proc "python3" processArgs)
-        { cwd = Just (repoRoot paths)
+      (proc executablePath processArgs)
+        { cwd = Just (repoRoot paths),
+          env =
+            Just
+              ( mergeEnvironment
+                  [ ("INFERNIX_CONTROL_PLANE_CONTEXT", "host-native"),
+                    ("INFERNIX_DAEMON_LOCATION", "control-plane-host"),
+                    ("INFERNIX_CATALOG_SOURCE", "generated-build-root"),
+                    ("INFERNIX_DEMO_CONFIG_PATH", generatedDemoConfigPath paths runtimeMode),
+                    ("INFERNIX_PUBLICATION_STATE_PATH", publicationStatePath paths),
+                    ("INFERNIX_BIND_HOST", "0.0.0.0"),
+                    ("INFERNIX_ROUTE_PROBE_BASE_URL", "http://127.0.0.1:" <> show edgePort)
+                  ]
+                  environment
+              )
         }
-  waitForPublication edgePort "control-plane-host" "host-daemon-bridge"
+  waitForPublication edgePort "control-plane-host" "host-demo-bridge"
   action
     `finally` do
-      terminateProcess serviceHandle
-      _ <- waitForProcess serviceHandle
+      terminateProcess demoHandle
+      _ <- waitForProcess demoHandle
       restoreClusterServiceRoute paths
-      waitForPublication edgePort "cluster-pod" "cluster-service"
+      waitForPublication edgePort "cluster-pod" "cluster-demo"
 
 runPlaywrightImage :: RuntimeMode -> Maybe String -> String -> Int -> String -> String -> IO ()
 runPlaywrightImage runtimeMode maybeNetwork routeProbeHost edgePort expectedDaemonLocation expectedApiUpstreamMode = do
@@ -318,40 +322,16 @@ waitForPublication edgePort expectedDaemonLocation expectedApiUpstreamMode = go 
                 )
             )
       | otherwise = do
-          output <-
-            readProcess
-              "python3"
-              [ "-c",
-                unlines
-                  [ "import json",
-                    "import sys",
-                    "import urllib.request",
-                    "port = sys.argv[1]",
-                    "expected_daemon = sys.argv[2]",
-                    "expected_mode = sys.argv[3]",
-                    "try:",
-                    "    with urllib.request.urlopen(f'http://127.0.0.1:{port}/api/publication', timeout=5) as response:",
-                    "        payload = json.load(response)",
-                    "except Exception:",
-                    "    print('pending')",
-                    "else:",
-                    "    daemon = payload.get('daemonLocation')",
-                    "    upstream_mode = (payload.get('apiUpstream') or {}).get('mode')",
-                    "    if daemon == expected_daemon and upstream_mode == expected_mode:",
-                    "        print('ready')",
-                    "    else:",
-                    "        print('pending')"
-                  ],
-                show edgePort,
-                expectedDaemonLocation,
-                expectedApiUpstreamMode
-              ]
-              ""
-          if "ready" `elem` words output
+          publicationPayload <- loadJsonUrl ("http://127.0.0.1:" <> show edgePort <> "/api/publication")
+          if publicationReady publicationPayload
             then pure ()
             else do
               threadDelay 1000000
               go (remainingAttempts - 1)
+    publicationReady (Just payloadValue) =
+      jsonTextAt ["daemonLocation"] payloadValue == Just (Text.pack expectedDaemonLocation)
+        && jsonTextAt ["apiUpstream", "mode"] payloadValue == Just (Text.pack expectedApiUpstreamMode)
+    publicationReady Nothing = False
 
 waitForPlaywrightSurface :: String -> Int -> String -> String -> IO ()
 waitForPlaywrightSurface host edgePort expectedDaemonLocation expectedApiUpstreamMode = go (60 :: Int)
@@ -368,56 +348,38 @@ waitForPlaywrightSurface host edgePort expectedDaemonLocation expectedApiUpstrea
                 )
             )
       | otherwise = do
-          output <-
-            readProcess
-              "python3"
-              [ "-c",
-                unlines
-                  [ "import json",
-                    "import sys",
-                    "import urllib.request",
-                    "base_url = f'http://{sys.argv[1]}:{sys.argv[2]}'",
-                    "expected_daemon = sys.argv[3]",
-                    "expected_mode = sys.argv[4]",
-                    "def load_json(path, timeout=5, data=None):",
-                    "    request = urllib.request.Request(base_url + path, data=data)",
-                    "    request.add_header('Content-Type', 'application/json') if data is not None else None",
-                    "    with urllib.request.urlopen(request, timeout=timeout) as response:",
-                    "        return json.load(response)",
-                    "try:",
-                    "    publication = load_json('/api/publication')",
-                    "    demo_config = load_json('/api/demo-config')",
-                    "    with urllib.request.urlopen(base_url + '/', timeout=5) as response:",
-                    "        home = response.read().decode('utf-8', errors='replace')",
-                    "    models = demo_config.get('models') or []",
-                    "    if not models:",
-                    "        raise ValueError('demo config did not publish any models')",
-                    "    probe_payload = json.dumps({",
-                    "        'requestModelId': models[0]['modelId'],",
-                    "        'inputText': 'playwright readiness probe'",
-                    "    }).encode('utf-8')",
-                    "    inference = load_json('/api/inference', timeout=15, data=probe_payload)",
-                    "except Exception:",
-                    "    print('pending')",
-                    "else:",
-                    "    daemon = publication.get('daemonLocation')",
-                    "    upstream_mode = (publication.get('apiUpstream') or {}).get('mode')",
-                    "    if daemon == expected_daemon and upstream_mode == expected_mode and 'Infernix' in home and inference.get('resultModelId') == models[0].get('modelId'):",
-                    "        print('ready')",
-                    "    else:",
-                    "        print('pending')"
-                  ],
-                host,
-                show edgePort,
-                expectedDaemonLocation,
-                expectedApiUpstreamMode
-              ]
-              ""
-          if "ready" `elem` words output
+          ready <- surfaceReady
+          if ready
             then pure ()
             else do
               threadDelay 1000000
               go (remainingAttempts - 1)
+    surfaceReady = do
+      let baseUrl = "http://" <> host <> ":" <> show edgePort
+      maybePublication <- loadJsonUrl (baseUrl <> "/api/publication")
+      maybeDemoConfig <- loadJsonUrl (baseUrl <> "/api/demo-config")
+      maybeHome <- loadTextUrl (baseUrl <> "/")
+      case (maybePublication, maybeDemoConfig, maybeHome) of
+        (Just publicationPayload, Just demoConfigPayload, Just homeBody) ->
+          case firstModelId demoConfigPayload of
+            Just firstModel -> do
+              let payloadBody =
+                    "{\"requestModelId\":"
+                      <> show (Text.unpack firstModel)
+                      <> ",\"inputText\":\"playwright readiness probe\"}"
+              maybeInference <- postJsonUrl (baseUrl <> "/api/inference") payloadBody
+              pure
+                ( jsonTextAt ["daemonLocation"] publicationPayload == Just (Text.pack expectedDaemonLocation)
+                    && jsonTextAt ["apiUpstream", "mode"] publicationPayload == Just (Text.pack expectedApiUpstreamMode)
+                    && "Infernix" `isInfixOf` homeBody
+                    && maybe False (\inferencePayload -> jsonTextAt ["resultModelId"] inferencePayload == Just firstModel) maybeInference
+                )
+            Nothing -> pure False
+        _ -> pure False
+    firstModelId demoConfigPayload =
+      case jsonArrayAt ["models"] demoConfigPayload of
+        Just (Object firstModel : _) -> KeyMap.lookup (Key.fromText "modelId") firstModel >>= valueText
+        _ -> Nothing
 
 runCacheStatus :: Maybe RuntimeMode -> IO ()
 runCacheStatus maybeRuntimeMode = do
@@ -459,149 +421,60 @@ printCacheManifest manifest =
         <> ")"
     )
 
+renderPersistentClaimLine :: PersistentClaim -> String
+renderPersistentClaimLine persistentClaim =
+  intercalate
+    "\t"
+    [ Text.unpack (namespace persistentClaim),
+      Text.unpack (release persistentClaim),
+      Text.unpack (workload persistentClaim),
+      show (ordinal persistentClaim),
+      Text.unpack (claim persistentClaim),
+      Text.unpack (pvcName persistentClaim),
+      Text.unpack (requestedStorage persistentClaim)
+    ]
+
 runCabalCommand :: Maybe RuntimeMode -> [String] -> IO ()
 runCabalCommand maybeRuntimeMode args = do
   buildDir <- resolveCabalBuildDir
   runCommand maybeRuntimeMode "cabal" (("--builddir=" <> buildDir) : args)
 
-writeGeneratedContracts :: RuntimeMode -> FilePath -> IO ()
-writeGeneratedContracts runtimeMode outputDir = do
-  let generatedDir = outputDir </> "Generated"
-      outputFile = generatedDir </> "contracts.js"
-  createDirectoryIfMissing True generatedDir
-  writeFile outputFile (renderContractsModule runtimeMode (catalogForMode runtimeMode))
-
 writeGeneratedPursContracts :: RuntimeMode -> FilePath -> IO ()
 writeGeneratedPursContracts runtimeMode outputDir = do
   let generatedDir = outputDir </> "Generated"
       outputFile = generatedDir </> "Contracts.purs"
+      bridgeSwitch = noLenses <> noArgonautCodecs
   createDirectoryIfMissing True generatedDir
-  writeFile outputFile (renderPursContractsModule runtimeMode (catalogForMode runtimeMode))
+  writePSTypesWith bridgeSwitch outputDir (buildBridge (contractArrayBridge <|> defaultBridge)) Contracts.contractSumTypes
+  appendFile outputFile (Contracts.renderPursContractFooter runtimeMode)
+  normalizeGeneratedPursContracts outputFile
 
-renderContractsModule :: RuntimeMode -> [ModelDescriptor] -> String
-renderContractsModule runtimeMode models =
-  unlines
-    [ "export const apiBasePath = '/api';",
-      "export const runtimeMode = " <> show (Text.unpack (runtimeModeId runtimeMode)) <> ";",
-      "export const maxInlineOutputLength = 80;",
-      "export const models = [",
-      intercalate ",\n" (map renderModel models),
-      "];"
-    ]
+contractArrayBridge :: BridgePart
+contractArrayBridge = (typeName ^== "List" <|> typeName ^== "[]") >> psArray
+
+normalizeGeneratedPursContracts :: FilePath -> IO ()
+normalizeGeneratedPursContracts outputFile = do
+  generatedModule <- readFile outputFile
+  let normalizedModule = unlines (map normalizeLine (filter keepLine (lines generatedModule)))
+  _ <- evaluate (length normalizedModule)
+  writeFile outputFile normalizedModule
   where
-    renderModel model =
-      "  { matrixRowId: "
-        <> show (Text.unpack (matrixRowId model))
-        <> ", modelId: "
-        <> show (Text.unpack (modelId model))
-        <> ", displayName: "
-        <> show (Text.unpack (displayName model))
-        <> ", family: "
-        <> show (Text.unpack (family model))
-        <> ", description: "
-        <> show (Text.unpack (description model))
-        <> ", artifactType: "
-        <> show (Text.unpack (artifactType model))
-        <> ", referenceModel: "
-        <> show (Text.unpack (referenceModel model))
-        <> ", downloadUrl: "
-        <> show (Text.unpack (downloadUrl model))
-        <> ", selectedEngine: "
-        <> show (Text.unpack (selectedEngine model))
-        <> ", runtimeLane: "
-        <> show (Text.unpack (runtimeLane model))
-        <> ", requiresGpu: "
-        <> jsBool (requiresGpu model)
-        <> ", notes: "
-        <> show (Text.unpack (notes model))
-        <> ", requestShape: [{ name: 'inputText', label: "
-        <> show (Text.unpack (fieldLabel model))
-        <> ", fieldType: 'text' }] }"
-    fieldLabel model =
-      case requestShape model of
-        RequestField {label = value} : _ -> value
-        [] -> "Input Text"
+    normalizeLine line
+      | line == "import Data.Maybe (Maybe, Maybe(..))" = "import Data.Maybe (Maybe)"
+      | line == "import Prim (Array, Boolean, String)" = "import Prim (Array, Boolean, Int, String)"
+      | line == "import Data.Newtype (class Newtype)" =
+          unlines
+            [ "import Data.Newtype (class Newtype)",
+              "import Simple.JSON as JSON"
+            ]
+      | otherwise = line
 
-jsBool :: Bool -> String
-jsBool value
-  | value = "true"
-  | otherwise = "false"
-
-renderPursContractsModule :: RuntimeMode -> [ModelDescriptor] -> String
-renderPursContractsModule runtimeMode models =
-  unlines
-    [ "module Generated.Contracts where",
-      "",
-      "type RequestField =",
-      "  { name :: String",
-      "  , label :: String",
-      "  , fieldType :: String",
-      "  }",
-      "",
-      "type ModelDescriptor =",
-      "  { matrixRowId :: String",
-      "  , modelId :: String",
-      "  , displayName :: String",
-      "  , family :: String",
-      "  , description :: String",
-      "  , artifactType :: String",
-      "  , referenceModel :: String",
-      "  , downloadUrl :: String",
-      "  , selectedEngine :: String",
-      "  , runtimeLane :: String",
-      "  , requiresGpu :: Boolean",
-      "  , notes :: String",
-      "  , requestShape :: Array RequestField",
-      "  }",
-      "",
-      "apiBasePath :: String",
-      "apiBasePath = " <> show ("/api" :: String),
-      "",
-      "runtimeMode :: String",
-      "runtimeMode = " <> show (Text.unpack (runtimeModeId runtimeMode)),
-      "",
-      "maxInlineOutputLength :: Int",
-      "maxInlineOutputLength = 80",
-      "",
-      "models :: Array ModelDescriptor",
-      "models =",
-      "  ["
-    ]
-    <> intercalate ",\n" (map renderModel models)
-    <> "\n  ]\n"
-  where
-    renderModel model =
-      unlines
-        [ "    { matrixRowId: " <> showText (matrixRowId model),
-          "    , modelId: " <> showText (modelId model),
-          "    , displayName: " <> showText (displayName model),
-          "    , family: " <> showText (family model),
-          "    , description: " <> showText (description model),
-          "    , artifactType: " <> showText (artifactType model),
-          "    , referenceModel: " <> showText (referenceModel model),
-          "    , downloadUrl: " <> showText (downloadUrl model),
-          "    , selectedEngine: " <> showText (selectedEngine model),
-          "    , runtimeLane: " <> showText (runtimeLane model),
-          "    , requiresGpu: " <> psBool (requiresGpu model),
-          "    , notes: " <> showText (notes model),
-          "    , requestShape: " <> renderRequestShape (requestShape model),
-          "    }"
-        ]
-    renderRequestShape fields =
-      "[ "
-        <> intercalate ", " (map renderField fields)
-        <> " ]"
-    renderField RequestField {name = fieldName, label = fieldLabelValue, fieldType = fieldTypeValue} =
-      "{ name: "
-        <> showText fieldName
-        <> ", label: "
-        <> showText fieldLabelValue
-        <> ", fieldType: "
-        <> showText fieldTypeValue
-        <> " }"
-    showText = show . Text.unpack
-    psBool True = "true"
-    psBool False = "false"
+    keepLine line =
+      not
+        ( "import Data.Generic.Rep " `isPrefixOf` line
+            || "import Data.Generic " `isPrefixOf` line
+            || "derive instance generic" `isPrefixOf` line
+        )
 
 extractRuntimeMode :: [String] -> Either String (Maybe RuntimeMode, [String])
 extractRuntimeMode = go Nothing []
@@ -627,6 +500,11 @@ runCommandInDirectory = runCommandWithCwd
 runCommandWithCwd :: Maybe RuntimeMode -> FilePath -> [String] -> FilePath -> IO ()
 runCommandWithCwd maybeRuntimeMode =
   runCommandWithCwdAndEnv maybeRuntimeMode []
+
+resolveDemoExecutable :: IO FilePath
+resolveDemoExecutable = do
+  buildDir <- resolveCabalBuildDir
+  trimTrailingWhitespace <$> readProcess "cabal" ["--builddir=" <> buildDir, "list-bin", "exe:infernix-demo"] ""
 
 runCommandWithCwdAndEnv :: Maybe RuntimeMode -> [(String, String)] -> FilePath -> [String] -> FilePath -> IO ()
 runCommandWithCwdAndEnv maybeRuntimeMode extraEnvironment command args workingDirectory = do
@@ -655,15 +533,142 @@ mergeEnvironment overrides environment =
   where
     overrideNames = map fst overrides
 
+trimTrailingWhitespace :: String -> String
+trimTrailingWhitespace =
+  reverse . dropWhile (`elem` [' ', '\n', '\r', '\t']) . reverse
+
+loadJsonUrl :: String -> IO (Maybe Value)
+loadJsonUrl url = do
+  response <- try (readProcess "curl" ["-fsS", url] "") :: IO (Either IOException String)
+  case response of
+    Left _ -> pure Nothing
+    Right payload ->
+      case eitherDecode (LazyChar8.pack payload) of
+        Left _ -> pure Nothing
+        Right decodedValue -> pure (Just decodedValue)
+
+loadTextUrl :: String -> IO (Maybe String)
+loadTextUrl url = do
+  response <- try (readProcess "curl" ["-fsS", url] "") :: IO (Either IOException String)
+  case response of
+    Left _ -> pure Nothing
+    Right payload -> pure (Just payload)
+
+postJsonUrl :: String -> String -> IO (Maybe Value)
+postJsonUrl url body = do
+  response <-
+    try
+      ( readProcess
+          "curl"
+          ["-fsS", "-X", "POST", "-H", "Content-Type: application/json", "-d", body, url]
+          ""
+      ) ::
+      IO (Either IOException String)
+  case response of
+    Left _ -> pure Nothing
+    Right payload ->
+      case eitherDecode (LazyChar8.pack payload) of
+        Left _ -> pure Nothing
+        Right decodedValue -> pure (Just decodedValue)
+
+jsonTextAt :: [Text.Text] -> Value -> Maybe Text.Text
+jsonTextAt [] value = valueText value
+jsonTextAt (segment : remainingSegments) (Object objectValue) =
+  KeyMap.lookup (Key.fromText segment) objectValue >>= jsonTextAt remainingSegments
+jsonTextAt _ _ = Nothing
+
+jsonArrayAt :: [Text.Text] -> Value -> Maybe [Value]
+jsonArrayAt [] (Array values) = Just (Vector.toList values)
+jsonArrayAt (segment : remainingSegments) (Object objectValue) =
+  KeyMap.lookup (Key.fromText segment) objectValue >>= jsonArrayAt remainingSegments
+jsonArrayAt _ _ = Nothing
+
+valueText :: Value -> Maybe Text.Text
+valueText (String textValue) = Just textValue
+valueText _ = Nothing
+
 ensureWebDependencies :: IO ()
 ensureWebDependencies = do
   paths <- discoverPaths
   let webRoot = repoRoot paths </> "web"
   depsDirectoryPresent <- doesDirectoryExist (webRoot </> "node_modules")
-  playwrightPresent <- doesFileExist (webRoot </> "node_modules" </> "playwright" </> "package.json")
-  if depsDirectoryPresent && playwrightPresent
+  toolchainPresent <- webToolchainPresent webRoot
+  if depsDirectoryPresent && toolchainPresent
     then pure ()
     else runCommandInDirectory Nothing "npm" ["--prefix", "web", "ci"] (repoRoot paths)
+
+webToolchainPresent :: FilePath -> IO Bool
+webToolchainPresent webRoot =
+  and
+    <$> mapM
+      doesFileExist
+      [ webRoot </> "node_modules" </> "playwright" </> "package.json",
+        webRoot </> "node_modules" </> "purescript" </> "package.json",
+        webRoot </> "node_modules" </> "spago" </> "package.json",
+        webRoot </> "node_modules" </> "esbuild" </> "package.json"
+      ]
+
+ensurePlaywrightBrowsers :: IO ()
+ensurePlaywrightBrowsers = do
+  paths <- discoverPaths
+  runCommandInDirectory Nothing "npx" ["playwright", "install", "chromium"] (repoRoot paths </> "web")
+
+runPythonQualityIfPresent :: Maybe RuntimeMode -> IO ()
+runPythonQualityIfPresent maybeRuntimeMode = do
+  adaptersPresent <- pythonAdaptersPresent
+  when adaptersPresent $ do
+    paths <- discoverPaths
+    ensurePythonQualityDependencies maybeRuntimeMode paths
+    runCommandWithCwdAndEnv
+      maybeRuntimeMode
+      [("POETRY_VIRTUALENVS_IN_PROJECT", "true")]
+      "bash"
+      ["tools/python_quality.sh"]
+      (repoRoot paths)
+
+ensurePythonAdapterDependencies :: Maybe RuntimeMode -> IO ()
+ensurePythonAdapterDependencies maybeRuntimeMode = do
+  paths <- discoverPaths
+  adaptersPresent <- pythonAdaptersPresent
+  when adaptersPresent $ do
+    ensurePythonQualityDependencies maybeRuntimeMode paths
+
+pythonAdaptersPresent :: IO Bool
+pythonAdaptersPresent = do
+  paths <- discoverPaths
+  let adaptersRoot = repoRoot paths </> "python" </> "adapters"
+  adaptersDirectoryPresent <- doesDirectoryExist adaptersRoot
+  if not adaptersDirectoryPresent
+    then pure False
+    else not . null <$> listDirectory adaptersRoot
+
+ensurePythonQualityDependencies :: Maybe RuntimeMode -> Paths -> IO ()
+ensurePythonQualityDependencies maybeRuntimeMode paths = do
+  let venvBin = repoRoot paths </> "python" </> ".venv" </> "bin"
+      requiredTools = ["mypy", "black", "ruff"]
+  toolsReady <- allM (doesFileExist . (venvBin </>)) requiredTools
+  unless toolsReady $
+    runCommandWithCwdAndEnv
+      maybeRuntimeMode
+      [("POETRY_VIRTUALENVS_IN_PROJECT", "true")]
+      "poetry"
+      ["install", "--directory", "python", "--no-root"]
+      (repoRoot paths)
+
+allM :: (Monad m) => (a -> m Bool) -> [a] -> m Bool
+allM predicate = go
+  where
+    go [] = pure True
+    go (value : rest) = do
+      matches <- predicate value
+      if matches
+        then go rest
+        else pure False
+
+platformCommandsAvailableForE2E :: IO Bool
+platformCommandsAvailableForE2E = do
+  availableCommands <- mapM findExecutable ["docker", "helm", "kind", "kubectl"]
+  pure (all isJust availableCommands)
 
 ensureAppleHostPrerequisites :: IO ()
 ensureAppleHostPrerequisites = pure ()
@@ -688,7 +693,7 @@ helpText =
     [ "infernix [--runtime-mode apple-silicon|linux-cpu|linux-cuda]",
       "",
       "Commands:",
-      "  infernix service [--port PORT]",
+      "  infernix service",
       "  infernix edge",
       "  infernix gateway harbor|minio|pulsar",
       "  infernix cluster up",
@@ -705,7 +710,6 @@ helpText =
       "  infernix test e2e",
       "  infernix test all",
       "  infernix docs check",
-      "  infernix internal generate-web-contracts PATH",
       "  infernix internal generate-purs-contracts PATH",
       "  infernix internal discover {images,claims,harbor-overlay} PATH",
       "  infernix internal publish-chart-images RENDERED_CHART OUTPUT",
@@ -742,8 +746,7 @@ lintHelpText =
 internalHelpText :: String
 internalHelpText =
   unlines
-    [ "infernix internal generate-web-contracts PATH",
-      "infernix internal generate-purs-contracts PATH",
+    [ "infernix internal generate-purs-contracts PATH",
       "infernix internal discover images RENDERED_CHART",
       "infernix internal discover claims RENDERED_CHART",
       "infernix internal discover harbor-overlay OVERLAY",

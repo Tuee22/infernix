@@ -1,0 +1,14 @@
+{{- if .Values.demo.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: infernix-demo
+  namespace: platform
+spec:
+  selector:
+    app.kubernetes.io/name: infernix-demo
+  ports:
+    - name: http
+      port: 80
+      targetPort: {{ .Values.demo.port }}
+{{- end }}

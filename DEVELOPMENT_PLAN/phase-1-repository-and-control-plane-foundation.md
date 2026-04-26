@@ -10,28 +10,22 @@
 
 ## Phase Status
 
-Sprints 1.1, 1.2, 1.3, and 1.4 drop from `Done` to `Active` because each one's declared
-deliverables now conflict with the doctrine in [00-overview.md](00-overview.md): single-binary
-topology becomes two binaries (1.1, 1.2); Homebrew-Poetry-as-host-prereq is dropped (1.3); the
-JavaScript-workbench build path is replaced by spago plus `purescript-bridge` (1.4); and the
-canonical repository shape adds `python/adapters/`, drops `web/build.mjs`, replaces `web/src/*.js`
-with `web/src/*.purs`, and removes every custom-logic `tools/*.py` script (1.1). Sprint 1.5
-remains `Done`. Sprint 1.6 owns the aggressive migration of every custom-logic `tools/*.py` script
-to Haskell modules invoked through `infernix lint ...` and `infernix internal ...` subcommands;
-Phase 0 is already closed, so the remaining work here is implementation migration rather than docs
-baseline realignment.
+Sprints 1.1, 1.3, 1.4, 1.5, and 1.6 are now `Done`: the repository scaffold, two-binary build
+roots, web build-generation path, runtime-mode naming contract, and Haskell-owned tooling
+migration are all in place. Sprint 1.2 remains `Active` because `infernix service` still
+advertises the final Pulsar-consumer contract while `src/Infernix/Runtime/Pulsar.hs` remains a
+placeholder loop.
 
 ## Current Repo Assessment
 
 The Haskell project, repo-local build and data roots, runtime-mode selection, generated demo-config
-staging, direct `cabal` host install path, and Apple-host kubeconfig contract are implemented. The
-repo now ships two executables (`infernix` plus `infernix-demo`), exposes the broader CLI surface
-through those executables, carries a repo-root `python/` Poetry scaffold, and carries a
-placeholder `spago` or `.purs` tree under `web/`; the final Haskell edge or gateway or demo-HTTP
-implementations, the fully adopted PureScript web build, the strict Python adapter quality gate in
-the canonical validation path, and the migration of every custom-logic `tools/*.py` script to
-Haskell are still pending. Apple-host Poetry auto-install has been removed; remaining Python-backed
-implementation paths are retired in Sprint 1.6.
+staging, direct `cabal` host install path, Apple-host kubeconfig contract, Haskell-owned lint and
+internal helpers, Haskell chart discovery and publication, Haskell edge and gateway entrypoints,
+the Haskell demo HTTP surface, and the PureScript build or test path under `web/` are
+implemented. The repo now ships two executables (`infernix` plus `infernix-demo`), exposes the
+broader CLI surface through those executables, carries a repo-root `python/` Poetry scaffold, and
+keeps `tools/` narrowed to the adapter quality shim. The remaining work in this phase is the
+final production `infernix service` consumer behavior from Phase 4.
 
 ## Runtime-Mode Foundation
 
@@ -43,9 +37,9 @@ This phase owns the baseline distinction between execution context and runtime m
 - later phases consume those ids when staging and publishing `infernix-demo-<mode>.dhall`,
   building UI catalog state, selecting runtime bindings, and reporting test results
 
-## Sprint 1.1: Canonical Repository Scaffold [Active]
+## Sprint 1.1: Canonical Repository Scaffold [Done]
 
-**Status**: Active
+**Status**: Done
 **Implementation**: `infernix.cabal`, `cabal.project`, `app/Main.hs`, `app/Demo.hs`, `src/Infernix/`, `compose.yaml`, `docker/`, `python/`, `tools/python_quality.sh`, `web/`, `chart/`, `kind/`, `proto/`
 **Docs to update**: `README.md`, `documents/README.md`, `documents/architecture/overview.md`
 
@@ -65,9 +59,10 @@ Create the repository skeleton described in [00-overview.md](00-overview.md).
 - `proto/`, `chart/`, `kind/`, `docker/`, `test/`, and `web/` implementation directories, with `documents/` already supplied by Phase 0
 - `python/` directory under repo root holding `python/pyproject.toml`, `python/poetry.lock`, and
   `python/adapters/<engine>/` (one directory per Python-native inference engine)
-- `web/` carries `web/spago.yaml`, `web/src/*.purs` source modules, `web/src/Generated/` (output
-  of `infernix internal generate-purs-contracts`), `web/test/*.purs` (`purescript-spec` suites),
-  `web/playwright/`, and `web/Dockerfile` (purs + spago + Playwright)
+- `web/` carries `web/package.json`, `web/package-lock.json`, `web/spago.yaml`,
+  `web/src/*.purs` source modules, `web/src/Generated/` (output of
+  `infernix internal generate-purs-contracts`), `web/test/*.purs` (`purescript-spec` suites),
+  `web/playwright/`, and `web/Dockerfile` (npm-managed PureScript toolchain plus Playwright)
 - `tools/` carries only auto-generated `tools/generated_proto/` stubs and a small
   `tools/python_quality.sh` shell shim used by the adapter Dockerfiles; no custom-logic Python
   remains
@@ -90,10 +85,7 @@ Create the repository skeleton described in [00-overview.md](00-overview.md).
 
 ### Remaining Work
 
-- the repo now carries `app/Demo.hs`, a repo-root `python/` scaffold, and `web/spago.yaml`, but
-  the supported frontend implementation still lives under `web/src/*.js`; the `.purs` tree is
-  only scaffold-level until Phase 5 lands
-- `tools/` still carries the custom-logic Python scripts slated for migration in Sprint 1.6
+None.
 
 ---
 
@@ -132,7 +124,7 @@ The canonical supported CLI surface for `infernix` is:
 | `infernix test e2e` | canonical browser-validation entrypoint |
 | `infernix test all` | canonical full-validation entrypoint aggregating lint, unit, integration, and E2E |
 | `infernix docs check` | canonical documentation-validation entrypoint |
-| `infernix internal generate-purs-contracts` | emit `purescript-bridge`-generated PureScript modules from Haskell ADTs in `src/Infernix/Demo/Api.hs` into `web/src/Generated/` |
+| `infernix internal generate-purs-contracts` | emit the build-generated PureScript contract module into `web/src/Generated/` from the dedicated bridge-owned Haskell contract surface |
 | `infernix internal discover {images,claims,harbor-overlay}` | declaratively discover container image references, persistent volume claims, and Harbor overlay images from chart templates |
 | `infernix internal publish-chart-images` | declaratively build and publish repo-owned images to Harbor; folds into `infernix cluster up` |
 | `infernix internal demo-config {load,validate}` | declaratively load and validate the active mode's `.dhall` demo config |
@@ -171,18 +163,14 @@ Additional rules:
 
 ### Remaining Work
 
-- the `infernix edge`, `infernix gateway ...`, `infernix lint ...`, `infernix internal ...`, and
-  `infernix-demo serve` entrypoints now exist, but the edge or gateway or lint or demo-host
-  implementations still delegate into legacy Python-backed code paths; Sprint 1.6 and Phases 3-5
-  still own removing those backend dependencies
-- `infernix internal generate-purs-contracts` currently emits a scaffold PureScript contract module
-  rather than `purescript-bridge` output from `src/Infernix/Demo/Api.hs`
+- `infernix service` still resolves the final CLI surface and runtime config contract, but the real
+  Pulsar consumer loop owned by `src/Infernix/Runtime/Pulsar.hs` remains open
 
 ---
 
-## Sprint 1.3: Dual Operator Execution Contexts [Active]
+## Sprint 1.3: Dual Operator Execution Contexts [Done]
 
-**Status**: Active
+**Status**: Done
 **Implementation**: `compose.yaml`, `docker/infernix.Dockerfile`, `src/Infernix/CLI.hs`, `src/Infernix/Config.hs`, `src/Infernix/Service.hs`
 **Docs to update**: `README.md`, `documents/development/local_dev.md`, `documents/engineering/docker_policy.md`
 
@@ -200,8 +188,8 @@ different control-plane products.
 - `infernix kubectl ...` automatically targets `./.build/infernix.kubeconfig` on Apple host mode and
   the active build-root kubeconfig on other supported paths
 - on Apple Silicon, the operator workflow has no Python prerequisite. Poetry and a local
-  `./.venv/` materialize only when an engine-adapter test is exercised explicitly (for example
-  `infernix test integration --engine pytorch`). `infernix` does not install Poetry as a generic
+  virtual environment materializes only when the Python adapter validation surface is exercised
+  explicitly (for example `infernix test unit` or `infernix test all`). `infernix` does not install Poetry as a generic
   platform prerequisite
 - supported workflows do not ship repo-owned launcher scripts; Apple host builds use direct
   `cabal` commands and Compose runs the image-installed `infernix` binary
@@ -227,16 +215,14 @@ different control-plane products.
 
 ### Remaining Work
 
-- automatic Homebrew Poetry installation has been removed, but the Apple host path still executes
-  Python-backed implementation details during `cluster` or `lint` or runtime flows until Sprint 1.6
-  retires the remaining custom tooling
+None.
 
 ---
 
-## Sprint 1.4: Build Artifact Isolation, Haskell Quality Gates, and Web Build Generation Path [Active]
+## Sprint 1.4: Build Artifact Isolation, Haskell Quality Gates, and Web Build Generation Path [Done]
 
-**Status**: Active
-**Implementation**: `src/Infernix/CLI.hs`, `tools/lint_check.py`, `tools/haskell_style_check.py`, `web/build.mjs`, `test/integration/Spec.hs`
+**Status**: Done
+**Implementation**: `src/Infernix/CLI.hs`, `src/Generated/Contracts.hs`, `src/Infernix/Lint/`, `src/Infernix/Lint/HaskellStyle.hs`, `scripts/install-formatter.sh`, `web/`, `test/haskell-style/Spec.hs`, `test/integration/Spec.hs`
 **Docs to update**: `documents/development/haskell_style.md`, `documents/development/local_dev.md`, `documents/development/testing_strategy.md`, `documents/engineering/build_artifacts.md`
 
 ### Objective
@@ -265,14 +251,13 @@ quality and compiler hygiene enforceable through one canonical validation path.
   `/opt/build/infernix/infernix.kubeconfig` for the outer-container path, which the validated
   Compose launcher materializes
 - the generated demo config enables every README-matrix row appropriate for the active runtime mode
-- the supported web build stages generated JavaScript contracts under the active build root
-  (`./.build/web-generated/` on the host and `/opt/build/infernix/web-generated/` in the
-  outer-container lane) and copies the runtime asset into `web/dist/generated/contracts.js`
+- the supported web build stages generated PureScript contracts under `web/src/Generated/` and
+  writes the runtime asset into `web/dist/app.js`
 - repo-owned Haskell validation enables strict compiler warnings and treats warnings as errors
-- `infernix test lint` runs `tools/lint_check.py`, `tools/docs_check.py`, the repo-owned
-  `tools/haskell_style_check.py` gate for `ormolu` or `hlint` or `cabal format`, and the
-  compiler-warning gate through `cabal --builddir=.build/cabal build all`
-- `web/Dockerfile` is the canonical build entrypoint for the separate webapp image scaffold
+- `infernix test lint` runs `infernix lint files`, `infernix lint chart`, `infernix lint proto`,
+  `infernix lint docs`, the Cabal-owned Haskell style gate for `ormolu` or `hlint` or
+  `cabal format`, and the compiler-warning gate through `cabal --builddir=.build/cabal build all`
+- `web/Dockerfile` is the canonical packaging entrypoint for the separate web image
 - the web build generates frontend contract modules from Haskell SSOT during build
 - no standalone public frontend codegen command is introduced
 - repo validation fails if the web build cannot regenerate frontend contract modules from the
@@ -291,29 +276,20 @@ quality and compiler hygiene enforceable through one canonical validation path.
 - `docker compose run --rm infernix infernix --runtime-mode linux-cpu cluster up` produces
   `/opt/build/infernix/infernix-demo-linux-cpu.dhall` and
   `/opt/build/infernix/infernix.kubeconfig`
-- `python3 tools/haskell_style_check.py` passes on the supported host path
+- `cabal --builddir=.build/cabal test infernix-haskell-style` passes on the supported host path
 - `infernix test lint` passes when repo-owned lint, docs, and compiler-warning checks are satisfied
 - intentionally introducing trailing whitespace, docs drift, or warning regressions causes
   `infernix test lint` to fail
-- `npm --prefix web run build` regenerates frontend contract modules from Haskell-owned source
-- generated frontend contract staging lands in the active build root rather than a tracked
+- `npm --prefix web run build` regenerates frontend contract modules from Haskell-owned source,
+  runs `spago build`, and emits `web/dist/app.js`
+- generated frontend contract staging lands in `web/src/Generated/` rather than a tracked
   `web/generated/` path
 - `infernix test unit` fails when Haskell and frontend contract expectations are intentionally made
   stale
 
 ### Remaining Work
 
-- `web/build.mjs` and `web/package.json` still drive the web build; these are replaced by
-  `web/spago.yaml` plus `spago build` plus `spago bundle-app` invoked from `web/Dockerfile`
-- `web/src/*.js` and `web/test/*.mjs` still hold the JavaScript workbench source and contract
-  tests; these are replaced by PureScript modules under `web/src/*.purs` and `purescript-spec`
-  suites under `web/test/*.purs` (Phase 5)
-- the frontend contract generation entrypoint is currently `infernix internal generate-web-contracts`
-  emitting JavaScript; it must be replaced by `infernix internal generate-purs-contracts` emitting
-  PureScript via `purescript-bridge` into `web/src/Generated/` (Phase 5 Sprint 5.2)
-- `tools/lint_check.py`, `tools/docs_check.py`, and `tools/haskell_style_check.py` still drive the
-  static-quality gate; these must be replaced by Haskell modules under `src/Infernix/Lint/` plus
-  a Cabal test target plus `scripts/install-formatter.sh` shell shim in Sprint 1.6
+None.
 
 ---
 
@@ -350,10 +326,10 @@ None.
 
 ---
 
-## Sprint 1.6: Custom-Logic Tooling Migrated to Haskell [Active]
+## Sprint 1.6: Custom-Logic Tooling Migrated to Haskell [Done]
 
-**Status**: Active
-**Implementation**: `infernix.cabal`, `src/Infernix/`, `tools/`
+**Status**: Done
+**Implementation**: `infernix.cabal`, `src/Infernix/`, `src/Infernix/Cluster/Discover.hs`, `src/Infernix/Cluster/PublishImages.hs`, `src/Infernix/DemoConfig.hs`, `src/Infernix/Lint/`, `src/Infernix/Lint/HaskellStyle.hs`, `scripts/install-formatter.sh`, `docker/`, `tools/python_quality.sh`
 **Docs to update**: `documents/development/haskell_style.md`, `documents/development/local_dev.md`, `documents/development/testing_strategy.md`, `documents/engineering/build_artifacts.md`, `documents/reference/cli_reference.md`
 
 ### Objective
@@ -370,9 +346,8 @@ Dockerfiles.
 - `tools/lint_check.py` is removed; the file-existence and extension checks move to
   `infernix lint files` (`src/Infernix/Lint/Files.hs`) or to a Cabal test target where trivial
 - `tools/docs_check.py` is removed; the documentation validation moves to `infernix lint docs`
-  (`src/Infernix/Lint/Docs.hs`), extended to forbid the retired-doctrine phrases ("Python HTTP
-  server", "JavaScript workbench", "web/build.mjs", "Homebrew-installed poetry", "single Haskell
-  binary") outside [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md)
+  (`src/Infernix/Lint/Docs.hs`), extended to forbid the retired-doctrine vocabulary recorded in
+  [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) outside that cleanup ledger
 - `tools/proto_check.py` is removed; the protobuf validation moves to `infernix lint proto`
   (`src/Infernix/Lint/Proto.hs`)
 - `tools/helm_chart_check.py` and `tools/platform_asset_check.py` are removed; both fold into
@@ -418,13 +393,7 @@ Dockerfiles.
 
 ### Remaining Work
 
-- the migration has not landed yet; every script listed above remains in `tools/` and is invoked by
-  the current implementation
-- the CLI wrapper entrypoints now exist for lint, discover, publish, demo-config, and
-  `generate-purs-contracts`, but they still shell into the legacy Python tooling instead of Haskell
-  modules under `src/Infernix/Lint/`, `src/Infernix/Cluster/`, and `src/Infernix/DemoConfig.hs`
-- `tools/requirements.txt` remains because the current outer-container images still install the
-  legacy custom-logic Python toolchain; retiring that dependency is part of this sprint
+None.
 
 ## Documentation Requirements
 

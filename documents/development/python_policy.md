@@ -14,10 +14,12 @@ has no non-Python binding.
 - the supported Python-native engines (PyTorch, JAX, vLLM, transformers, Diffusers, CTranslate2,
   TensorFlow, ONNX Runtime, basic-pitch, Omnizart, MLX, whisper.cpp Python wrappers, etc.) live
   under `python/adapters/<engine>/`
-- each adapter is a thin module that loads its engine, takes a typed protobuf request from stdin,
-  runs the engine, and emits a typed protobuf response to stdout
+- each adapter is a thin module that loads its engine, takes one worker-owned request payload from
+  stdin, runs the engine, and emits one worker-owned result payload to stdout
 - the Haskell worker (`src/Infernix/Runtime/Worker.hs`) is the single dispatch point that forks a
-  Python adapter when the bound engine is Python-native
+  Python adapter when the bound engine is Python-native; the worker now resolves the named
+  engine-specific adapter path for every Python-native binding and exchanges typed protobuf worker
+  messages over stdio
 - no other Python lives in this repository on the supported path; in particular, build helpers,
   lint, chart discovery, image publishing, demo-config parsing, doc validation, and the demo HTTP
   host are all Haskell
@@ -27,16 +29,16 @@ has no non-Python binding.
 One repo-root `python/pyproject.toml` (Poetry-managed) declares all Python dependencies needed by
 adapters.
 
-- outside the cluster, `poetry install --directory python` materializes `./.venv/` in the repo
-  folder; Apple host-native Python flows use that virtual environment
+- outside the cluster, `poetry install --directory python` materializes a repo-local Poetry
+  environment for adapter validation; Apple host-native Python flows use that virtual environment
 - inside the engine container, Poetry installs system-wide from the same `pyproject.toml` (no
   in-container `.venv` is used)
 - adapter container builds copy `python/pyproject.toml` and `python/poetry.lock` and run
-  `poetry install --no-root --only main --no-cache` plus the quality gate as build steps; the
-  container image build fails on any check failure
+  `POETRY_VIRTUALENVS_CREATE=false poetry install --directory python --no-root` plus the quality
+  gate as build steps; the container image build fails on any check failure
 - Poetry is not a generic platform prerequisite; `infernix` does not install it during `cluster up`
-  or generic operator workflows. It materializes only when an engine-adapter test is exercised
-  explicitly (for example `infernix test integration --engine pytorch`)
+  or generic operator workflows. It materializes only when the adapter validation surface is
+  exercised explicitly (for example `infernix test unit` or `infernix test all`)
 
 ## Quality Gate
 
@@ -53,7 +55,7 @@ Rules:
 
 - the gate runs as a single build step in every adapter `Dockerfile`; an adapter image cannot
   build successfully if any check fails
-- `infernix test lint` runs the same gate against `./.venv/` on the host
+- `infernix test lint` runs the same gate against that Poetry-managed environment on the host
 - the gate covers the entire `python/` tree, not only the engine being built; this prevents drift
   across adapters
 - adapter modules carry inline type annotations on every function and class; `# type: ignore`
@@ -61,13 +63,23 @@ Rules:
 
 ## Adapter Contract
 
-Each adapter under `python/adapters/<engine>/` honors a small typed protocol:
+Each adapter under `python/adapters/<engine>/` honors a small process contract:
 
-- read a length-prefixed protobuf `InferenceRequest` from stdin (schema:
-  `proto/infernix/runtime/inference.proto`, generated bindings under `tools/generated_proto/`)
+- read one request payload from stdin
 - execute the engine
-- write a length-prefixed protobuf `InferenceResponse` to stdout
+- write one result payload to stdout
 - log errors to stderr; the Haskell worker captures stderr for diagnostics
+
+Current state:
+
+- the worker request and response payloads are typed protobuf messages from
+  `proto/infernix/runtime/inference.proto`, consumed on the Python side through
+  `tools/generated_proto/`
+- the repo now carries adapter directories for every current Python-native binding
+  (`vllm-python`, `transformers-python`, `diffusers-python`, `pytorch-python`,
+  `tensorflow-python`, and `jax-python`) plus the minimal `fixture` adapter
+- the remaining gap is engine depth rather than ownership: the current adapters are still stub
+  responders that normalize the input payload instead of loading the real engine libraries
 
 Adapters do not open network sockets, do not write to MinIO, and do not subscribe to Pulsar
 themselves; the Haskell worker owns those boundaries and treats the adapter as a pure

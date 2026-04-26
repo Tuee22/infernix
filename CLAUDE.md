@@ -37,9 +37,12 @@ Those actions are reserved for the user.
   deployments leave the demo UI off and accept inference work via Pulsar subscription only.
 - Custom platform logic is Haskell. Python is permitted only under `python/adapters/<engine>/` and
   only when the bound inference engine has no non-Python binding. Repo-owned Python is governed by
-  `python/pyproject.toml` and Poetry; outside the cluster, Poetry materializes `./.venv/`; inside
-  the engine container, Poetry installs system-wide. Every adapter container build runs
+  `python/pyproject.toml` and Poetry; outside the cluster, Poetry materializes a repo-local
+  adapter virtual environment on demand; inside the engine container, Poetry installs
+  system-wide. Every adapter container build runs
   `tools/python_quality.sh` (mypy strict, black check, ruff strict) and fails on any check failure.
-- The demo UI is PureScript. Frontend types are derived from Haskell ADTs in
-  `src/Infernix/Demo/Api.hs` via `purescript-bridge` into `web/src/Generated/`; the demo UI is
+- The demo UI is PureScript. Frontend contracts are emitted into `web/src/Generated/` by
+  `infernix internal generate-purs-contracts`, which derives them through `purescript-bridge`
+  from dedicated Haskell browser-contract ADTs in `src/Generated/Contracts.hs`; the demo UI is
   built with spago and tested with `purescript-spec`.
+- Run the repo-local docs validator via `infernix lint docs` before closing documentation changes.

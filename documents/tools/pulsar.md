@@ -8,9 +8,9 @@
 ## Rules
 
 - Pulsar is the durable event transport for inference lifecycle events and the **production
-  inference request surface**: in production, `infernix service` (Haskell) subscribes to request
-  topics named in the active `.dhall` and publishes results to result topics named in the same
-  config; no HTTP listener is bound on the production daemon
+  inference request surface**: the active `.dhall` names the request and result topics that the
+  production daemon will own, and `infernix service` already keeps that daemon on a no-HTTP
+  surface. The real Pulsar consumer loop is still open work
 - repo-owned `.proto` schemas define the payload contract for Pulsar topics; the same schemas
   feed both `proto-lens`-generated Haskell bindings and auto-generated Python protobuf modules
   consumed by `python/adapters/<engine>/`
@@ -33,8 +33,9 @@ The active `.dhall` config carries the production inference fields consumed by `
   inference requests
 - `result_topic : Text` — the Pulsar topic the production daemon publishes results to
 - `engines : List EngineBinding` — the engines available to the worker dispatch layer; entries
-  whose binding is Python-native cause the Haskell worker to fork the corresponding adapter under
-  `python/adapters/<engine>/` over typed protobuf-over-stdio
+  whose binding is Python-native cause the Haskell worker to cross the Python adapter process
+  boundary through the named engine-specific adapter directory and the typed
+  protobuf-over-stdio worker contract
 - the optional `demo_ui : Bool` flag toggles the `infernix-demo` workload (production deployments
   leave it off)
 

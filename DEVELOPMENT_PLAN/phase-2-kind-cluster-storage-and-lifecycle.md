@@ -1,8 +1,7 @@
 # Phase 2: Kind Cluster Storage and Lifecycle
 
-**Status**: Blocked
+**Status**: Done
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
-**Blocked by**: Phase 1 Sprint 1.6
 
 > **Purpose**: Define the supported Kind bootstrap path, the manual storage doctrine, the Helm
 > umbrella deployment model, the Harbor bootstrap and Harbor-backed image preparation flow embedded
@@ -10,15 +9,10 @@
 
 ## Phase Status
 
-This phase carries no internal sprint deliverable changes under the new doctrine. Sprints 2.1
-through 2.7 retain their `Done` shape. The phase header is `Blocked` only because the cluster
-lifecycle implementation referenced by sprints 2.2, 2.3, and 2.4 currently shells out to the
-custom-logic Python tooling that Phase 1 Sprint 1.6 retires (`tools/discover_chart_claims.py`,
-`tools/helm_chart_check.py`, `tools/platform_asset_check.py`, `tools/list_harbor_overlay_images.py`,
-`tools/publish_chart_images.py`). Once Sprint 1.6 lands and folds those entrypoints into
-`src/Infernix/Cluster/Discover.hs`, `src/Infernix/Cluster/PublishImages.hs`, and the
-`src/Infernix/Lint/` modules, this phase reopens at the file level only to update implementation
-pointers; no sprint deliverable changes.
+This phase carries no remaining open work under the current doctrine. Sprints 2.1 through 2.7
+retain their `Done` shape, and the former Sprint 1.6 blocker is now closed: the cluster lifecycle
+uses `src/Infernix/Cluster/Discover.hs`, `src/Infernix/Cluster/PublishImages.hs`, and the
+`src/Infernix/Lint/` modules directly rather than the retired custom-logic Python tooling.
 
 ## Storage Doctrine
 
@@ -125,7 +119,7 @@ None.
 ## Sprint 2.2: Manual PV Reconciliation During Cluster Up [Done]
 
 **Status**: Done
-**Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Models.hs`, `tools/discover_chart_claims.py`, `tools/helm_chart_check.py`, `chart/templates/workloads-platform-portals.yaml`
+**Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Cluster/Discover.hs`, `src/Infernix/Lint/Chart.hs`, `src/Infernix/Models.hs`, `chart/templates/workloads-platform-portals.yaml`
 **Docs to update**: `documents/engineering/k8s_storage.md`, `documents/operations/cluster_bootstrap_runbook.md`
 
 ### Objective
@@ -149,9 +143,9 @@ upgrade runs.
 
 ### Validation
 
-- `./.build/infernix test lint` passes `tools/helm_chart_check.py`, which renders the chart and
-  rejects PVCs missing `storageClassName: infernix-manual` or chart-ownership labels through
-  `tools/discover_chart_claims.py`
+- `./.build/infernix test lint` passes `infernix lint chart`, which renders the chart and rejects
+  PVCs missing `storageClassName: infernix-manual` or chart-ownership labels through the
+  Haskell-owned claim-discovery path
 - repeated `infernix cluster up` runs perform idempotent storage reconciliation
 - `helm template` plus the `cluster up` storage step creates one PV per expected durable PVC
 - `infernix kubectl get pv,pvc -A` shows all durable claims bound through `infernix-manual`
@@ -167,7 +161,7 @@ None.
 ## Sprint 2.3: Helm Umbrella Chart and Repo Workload Layout [Done]
 
 **Status**: Done
-**Implementation**: `chart/Chart.yaml`, `chart/values.yaml`, `chart/templates/`, `src/Infernix/Cluster.hs`, `tools/platform_asset_check.py`, `tools/helm_chart_check.py`
+**Implementation**: `chart/Chart.yaml`, `chart/values.yaml`, `chart/templates/`, `src/Infernix/Cluster.hs`, `src/Infernix/Lint/Chart.hs`
 **Docs to update**: `documents/architecture/overview.md`, `documents/engineering/k8s_native_dev_policy.md`
 
 ### Objective
@@ -189,8 +183,8 @@ Put repo-owned and third-party workloads behind one Helm deployment model.
 
 ### Validation
 
-- `./.build/infernix test lint` passes `tools/platform_asset_check.py` and `tools/helm_chart_check.py`
-- the chart templates mount `ConfigMap/infernix-demo-config` at `/opt/build/` for both the service and web workloads
+- `./.build/infernix test lint` passes `infernix lint chart`
+- the chart templates mount `ConfigMap/infernix-demo-config` at `/opt/build/` for the service, web, and `infernix-demo` workloads
 - `chart/values.yaml` records the mandatory HA replica targets and the stable routed edge inventory
 - `helm lint chart` and `helm template infernix chart` succeed through the repo-owned dependency bootstrap path
 - `./.build/infernix --runtime-mode apple-silicon test integration` and
@@ -206,7 +200,7 @@ None.
 ## Sprint 2.4: Automatic Harbor Image Preparation and Helm Pull Contract [Done]
 
 **Status**: Done
-**Implementation**: `src/Infernix/Cluster.hs`, `chart/values.yaml`, `tools/publish_chart_images.py`, `tools/list_harbor_overlay_images.py`, `web/Dockerfile`
+**Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Cluster/Discover.hs`, `src/Infernix/Cluster/PublishImages.hs`, `chart/values.yaml`, `web/Dockerfile`
 **Docs to update**: `documents/engineering/k8s_native_dev_policy.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/tools/harbor.md`
 
 ### Objective
@@ -264,7 +258,7 @@ None.
 ## Sprint 2.5: Kind Lifecycle Idempotency and Status Surface [Done]
 
 **Status**: Done
-**Implementation**: `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `compose.yaml`, `kind/cluster-apple-silicon.yaml`, `kind/cluster-linux-cpu.yaml`, `kind/cluster-linux-cuda.yaml`, `test/integration/Spec.hs`, `tools/platform_asset_check.py`
+**Implementation**: `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Lint/Chart.hs`, `compose.yaml`, `kind/cluster-apple-silicon.yaml`, `kind/cluster-linux-cpu.yaml`, `kind/cluster-linux-cuda.yaml`, `test/integration/Spec.hs`
 **Docs to update**: `README.md`, `documents/reference/cli_reference.md`, `documents/operations/cluster_bootstrap_runbook.md`
 
 ### Objective
@@ -290,8 +284,8 @@ Make cluster reconcile, status, and teardown predictable.
 
 - `./.build/infernix cluster up`, `./.build/infernix cluster status`, `./.build/infernix cluster down`, and repeat `./.build/infernix cluster up` work in sequence on Apple without manual cleanup
 - repeated `./.build/infernix cluster down` succeeds without requiring manual cluster cleanup
-- `python3 tools/platform_asset_check.py` passes and enforces the loopback-only Kind config plus
-  pinned `kindest/node:v1.34.0` node images across the repo-owned Kind asset set
+- `infernix lint chart` passes and enforces the loopback-only Kind config plus pinned
+  `kindest/node:v1.34.0` node images across the repo-owned Kind asset set
 - a clean outer-container Kind probe shows `docker port <control-plane>` reports
   `127.0.0.1:...` host bindings, `kind get kubeconfig --internal` records the internal
   `<cluster>-control-plane:6443` endpoint, and `kubectl --kubeconfig ... get nodes` succeeds
@@ -310,7 +304,7 @@ None.
 ## Sprint 2.6: Mode-Aware `cluster up` Demo Config Staging and ConfigMap Publication [Done]
 
 **Status**: Done
-**Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Config.hs`, `src/Infernix/Models.hs`, `chart/templates/configmap-demo-catalog.yaml`, `chart/templates/deployment-service.yaml`, `chart/templates/deployment-web.yaml`, `test/integration/Spec.hs`
+**Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Config.hs`, `src/Infernix/Models.hs`, `chart/templates/configmap-demo-catalog.yaml`, `chart/templates/deployment-service.yaml`, `chart/templates/deployment-demo.yaml`, `test/integration/Spec.hs`
 **Docs to update**: `documents/engineering/build_artifacts.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/development/testing_strategy.md`
 
 ### Objective
@@ -346,7 +340,7 @@ None.
 ## Sprint 2.7: GPU-Enabled Kind Runtime For `linux-cuda` [Done]
 
 **Status**: Done
-**Implementation**: `kind/cluster-linux-cuda.yaml`, `src/Infernix/Cluster.hs`, `chart/templates/deployment-service.yaml`, `chart/templates/runtimeclass-nvidia.yaml`, `test/integration/Spec.hs`, `tools/platform_asset_check.py`
+**Implementation**: `kind/cluster-linux-cuda.yaml`, `src/Infernix/Cluster.hs`, `src/Infernix/Lint/Chart.hs`, `chart/templates/deployment-service.yaml`, `chart/templates/runtimeclass-nvidia.yaml`, `test/integration/Spec.hs`
 **Docs to update**: `documents/engineering/k8s_native_dev_policy.md`, `documents/architecture/runtime_modes.md`, `documents/development/testing_strategy.md`
 
 ### Objective
@@ -374,8 +368,8 @@ Make `linux-cuda` a real GPU-backed cluster mode rather than a nominal matrix co
 
 ### Validation
 
-- `./.build/infernix test lint` passes `tools/platform_asset_check.py`, which verifies the GPU
-  Kind config carries the worker-device volume mount and the GPU node label
+- `./.build/infernix test lint` passes `infernix lint chart`, which verifies the GPU Kind config
+  carries the worker-device volume mount and the GPU node label
 - `infernix kubectl get nodes -l infernix.runtime/gpu=true -o jsonpath=...` on the current Kind
   path shows positive allocatable `nvidia.com/gpu` resources for `linux-cuda`
 - `infernix kubectl -n nvidia get daemonset nvidia-device-plugin-daemonset -o jsonpath=...`

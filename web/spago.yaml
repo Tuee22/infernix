@@ -1,9 +1,27 @@
 package:
   name: infernix-web
   dependencies:
+    - aff
+    - affjax
+    - affjax-web
+    - argonaut
+    - arrays
+    - console
     - effect
+    - foldable-traversable
+    - maybe
+    - newtype
     - prelude
+    - refs
+    - simple-json
+    - spec
+    - strings
+    - tuples
+    - web-dom
+    - web-events
+    - web-html
+    - web-uievents
 
 workspace:
-  package_set:
+  packageSet:
     registry: 66.0.0

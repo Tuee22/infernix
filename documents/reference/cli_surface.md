@@ -17,7 +17,8 @@ Both ship in the same OCI image; the entrypoint selects which exe runs.
 
 ## `infernix` Families
 
-- `service` starts the long-running production daemon (Pulsar consumer; binds no HTTP port)
+- `service` starts the long-running production daemon placeholder (binds no HTTP port; the real
+  Pulsar consumer loop remains open work)
 - `edge` runs the Haskell edge proxy as the cluster `infernix-edge` workload entrypoint
 - `gateway harbor|minio|pulsar` runs the Haskell platform gateways as the
   `infernix-{harbor,minio,pulsar}-gateway` workload entrypoints

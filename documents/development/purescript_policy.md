@@ -9,8 +9,9 @@
 ## Scope
 
 The demo UI is the only browser-facing surface in this repository. It is implemented in
-PureScript. JavaScript may exist only as compiled output of `spago bundle-app` under `web/dist/`;
-no source-level `.js` or `.mjs` files are part of the supported web surface.
+PureScript. JavaScript exists as compiled output under `web/dist/`; source-level `.js` or `.mjs`
+files are not part of the supported browser application. The remaining `.js` or `.mjs` files
+under `web/playwright/` and `web/test/run_playwright_matrix.mjs` are test-harness assets.
 
 The demo UI is served by the `infernix-demo` Haskell binary (a separate executable from
 `infernix`, sharing the `infernix-lib` Cabal library) and gated by the active `.dhall` `demo_ui`
@@ -18,30 +19,28 @@ flag. Production deployments leave the flag off and the cluster has no demo UI w
 
 ## Toolchain
 
+- `web/package.json` owns the npm-distributed toolchain and scripts
 - `web/spago.yaml` declares the PureScript package set and dependencies
 - `purs` is the PureScript compiler
 - `spago build` compiles the source tree under `web/src/*.purs`
-- `spago bundle-app` produces the static demo bundle in `web/dist/`
+- `spago bundle --module Main --outfile dist/app.js --platform browser --bundle-type app` produces
+  the static demo bundle in `web/dist/`
 - `spago test` runs the `purescript-spec` suites under `web/test/*.purs`
-- `web/Dockerfile` installs `purs` and `spago` alongside the Playwright browser dependencies; the
-  same image hosts the demo UI and runs the routed Playwright E2E suite
+- `web/Dockerfile` installs the npm-managed PureScript toolchain and Playwright browser
+  dependencies; the same image packages the built bundle and runs the routed Playwright E2E suite
 
 ## Source Layout
 
 ```text
 web/
+├── package.json
 ├── spago.yaml
 ├── src/
 │   ├── Main.purs
-│   ├── Workbench.purs
-│   ├── Catalog.purs
-│   ├── ...
-│   └── Generated/        (purescript-bridge output, build-time generated, not tracked)
+│   ├── Infernix/Web/Workbench.purs
+│   └── Generated/        (build-time generated contracts, not tracked)
 ├── test/
-│   ├── Spec.purs
-│   ├── ContractsSpec.purs
-│   ├── CatalogSpec.purs
-│   └── ...
+│   └── Main.purs
 ├── playwright/
 └── Dockerfile
 ```
@@ -56,29 +55,29 @@ Rules:
 
 ## Contract Derivation
 
-Frontend types are derived from Haskell ADTs in `src/Infernix/Demo/Api.hs` via `purescript-bridge`.
+Frontend types are generated from Haskell-owned DTO and catalog records.
 
 - `infernix internal generate-purs-contracts` is the single supported codegen entrypoint; it is
-  invoked by the `infernix-lib` build and again from `web/Dockerfile` so the web image build is
-  self-contained
-- the source-of-truth Haskell records live in `src/Infernix/Demo/Api.hs` (preferred over
-  `proto-lens`-generated types directly so the bridge surface stays clean and free of
-  protobuf-specific scaffolding)
-- generated PureScript modules live in `web/src/Generated/` and carry the same record names and
-  field shapes as their Haskell originators
+  invoked by `npm --prefix web run build`
+- generated PureScript modules live in `web/src/Generated/` and carry the request, response,
+  engine-binding, and catalog constants needed by the current demo UI
 - no standalone public frontend codegen command exists outside `infernix internal generate-purs-contracts`
+- the codegen path derives the PureScript contract types through `purescript-bridge` from
+  dedicated browser-contract ADTs in `src/Generated/Contracts.hs`
+- the generated module also appends the active runtime constants, catalog constants, helper
+  unwrappers for the bridge-generated `newtype` surface, and explicit `Simple.JSON` instances
 
 ## Test Framework
 
 `purescript-spec` is the authoritative contract gate for the demo UI.
 
 - `infernix test unit` invokes `spago test` alongside the Haskell unit suites
-- contract suites assert that generated PureScript modules round-trip the same JSON shapes the
-  Haskell `infernix-demo` server emits
-- view-level suites assert that the rendered catalog matches the active generated demo catalog,
-  that the model picker selects entries by id, that submission round-trips through the
-  `infernix-demo` `/api/inference` handler, and that result rendering handles inline payloads and
-  object references uniformly
+- contract suites assert that generated PureScript modules expose the active runtime constants and
+  generated catalog expected by the routed demo surface
+- contract suites also prove that the bridge-generated `newtype` surface stays aligned with the
+  handwritten workbench helpers that unwrap record views
+- view-level suites assert catalog order, selection, publication summary rendering, and result
+  rendering behavior
 - the existing Playwright DOM selectors (`web/playwright/inference.spec.js` and equivalents) are
   preserved across the PureScript views; if a selector cannot be preserved, the Playwright spec
   is updated in the same change

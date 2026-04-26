@@ -1,11 +1,14 @@
 import { test, expect } from "playwright/test";
 
+const edgePort = Number(process.env.INFERNIX_EDGE_PORT ?? "9090");
+const edgeHost = process.env.INFERNIX_PLAYWRIGHT_HOST ?? "127.0.0.1";
+const baseUrl = `http://${edgeHost}:${edgePort}`;
 const expectedDaemonLocation = process.env.INFERNIX_EXPECT_DAEMON_LOCATION;
 const expectedApiUpstreamMode = process.env.INFERNIX_EXPECT_API_UPSTREAM_MODE;
 
 async function loadSerializedCatalog(request) {
-  const publicationResponse = await request.get("/api/publication");
-  const demoConfigResponse = await request.get("/api/demo-config");
+  const publicationResponse = await request.get(`${baseUrl}/api/publication`);
+  const demoConfigResponse = await request.get(`${baseUrl}/api/demo-config`);
   expect(publicationResponse.ok()).toBeTruthy();
   expect(demoConfigResponse.ok()).toBeTruthy();
   const publication = await publicationResponse.json();
@@ -15,11 +18,11 @@ async function loadSerializedCatalog(request) {
 
 test("active mode catalog is fully exercised through the routed HTTP surface", async ({ request }) => {
   const { publication, models } = await loadSerializedCatalog(request);
-  const homeResponse = await request.get("/");
+  const homeResponse = await request.get(`${baseUrl}/`);
   expect(homeResponse.ok()).toBeTruthy();
   expect(await homeResponse.text()).toContain("Infernix");
 
-  const catalogResponse = await request.get("/api/models");
+  const catalogResponse = await request.get(`${baseUrl}/api/models`);
   expect(catalogResponse.ok()).toBeTruthy();
   const routedModels = await catalogResponse.json();
   expect(routedModels).toEqual(models);
@@ -29,7 +32,7 @@ test("active mode catalog is fully exercised through the routed HTTP surface", a
   expect(publication.artifactAcquisitionMode).toBe("engine-ready-artifact-manifests");
 
   for (const model of models) {
-    const inferenceResponse = await request.post("/api/inference", {
+    const inferenceResponse = await request.post(`${baseUrl}/api/inference`, {
       data: {
         requestModelId: model.modelId,
         inputText: `exercise ${model.modelId}`,
@@ -46,7 +49,7 @@ test("active mode catalog is fully exercised through the routed HTTP surface", a
 test("manual inference workbench renders generated catalog entries and result state in the browser", async ({ page, request }) => {
   const { publication, models } = await loadSerializedCatalog(request);
 
-  await page.goto("/");
+  await page.goto(baseUrl);
   await expect(page.locator("h1")).toHaveText("Infernix");
   await expect(page.locator("#runtime-mode")).toHaveText(publication.runtimeMode);
   await expect(page.locator("#control-plane-context")).not.toHaveText("loading…");
