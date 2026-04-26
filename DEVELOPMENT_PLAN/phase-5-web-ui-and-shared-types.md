@@ -29,8 +29,11 @@ the supported Kind path, build-root frontend contract staging is closed, and bot
 browser-independent and browser-driven coverage prove catalog parity, publication-detail rendering,
 and result rendering through the routed cluster edge. Same-image browser execution uses the built
 web image on both supported control-plane lanes, and the Apple host-native final-substrate lane
-serves the UI from the Harbor-published web image. The workbench renders family-aware request
-guidance and result framing for every generated entry.
+serves the UI from the Harbor-published web image. The repository now also carries `web/spago.yaml`
+plus placeholder `.purs` source and test modules, but the supported web build, contract
+generation, and frontend tests still run through `web/build.mjs`, `web/package.json`, and the
+JavaScript workbench. The workbench renders family-aware request guidance and result framing for
+every generated entry.
 
 ## Demo Catalog Contract
 

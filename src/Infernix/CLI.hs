@@ -8,7 +8,6 @@ where
 
 import Control.Concurrent (threadDelay)
 import Control.Exception (finally)
-import Control.Monad (forM_, when)
 import Data.List (intercalate, isPrefixOf)
 import Data.Maybe (fromMaybe)
 import Data.Text qualified as Text
@@ -32,14 +31,12 @@ import System.Directory
     createDirectoryIfMissing,
     doesDirectoryExist,
     doesFileExist,
-    findExecutable,
     getPermissions,
     setPermissions,
   )
 import System.Environment (getArgs, getEnvironment, getExecutablePath)
 import System.Exit (ExitCode (ExitSuccess), exitFailure, exitWith)
-import System.FilePath (takeDirectory, (</>))
-import System.Info (os)
+import System.FilePath (takeFileName, (</>))
 import System.Process (CreateProcess (cwd, env), createProcess, proc, readProcess, terminateProcess, waitForProcess)
 
 main :: IO ()
@@ -58,11 +55,17 @@ dispatch maybeRuntimeMode args = case args of
   ["--help"] -> putStrLn helpText
   ["cluster", "--help"] -> putStrLn clusterHelpText
   ["test", "--help"] -> putStrLn testHelpText
+  ["lint", "--help"] -> putStrLn lintHelpText
+  ["internal", "--help"] -> putStrLn internalHelpText
   _ -> do
     ensureAppleHostPrerequisites
     case args of
       ["service"] -> runService maybeRuntimeMode Nothing
       ["service", "--port", port] -> runService maybeRuntimeMode (Just (read port))
+      ["edge"] -> runPythonTool maybeRuntimeMode "tools/edge_proxy.py" []
+      ["gateway", "harbor"] -> runPortalSurface maybeRuntimeMode "harbor"
+      ["gateway", "minio"] -> runPortalSurface maybeRuntimeMode "minio"
+      ["gateway", "pulsar"] -> runPortalSurface maybeRuntimeMode "pulsar"
       ["cluster", "up"] -> clusterUp maybeRuntimeMode
       ["cluster", "down"] -> clusterDown maybeRuntimeMode
       ["cluster", "status"] -> clusterStatus maybeRuntimeMode
@@ -73,6 +76,12 @@ dispatch maybeRuntimeMode args = case args of
       ["cache", "rebuild", "--model", modelIdValue] -> runCacheRebuild maybeRuntimeMode (Just (Text.pack modelIdValue))
       "kubectl" : kubectlArgs -> runKubectlCompat kubectlArgs
       ["docs", "check"] -> runCommand maybeRuntimeMode "python3" ["tools/docs_check.py"]
+      ["lint", "files"] -> runCommand maybeRuntimeMode "python3" ["tools/lint_check.py"]
+      ["lint", "docs"] -> runCommand maybeRuntimeMode "python3" ["tools/docs_check.py"]
+      ["lint", "proto"] -> runCommand maybeRuntimeMode "python3" ["tools/proto_check.py"]
+      ["lint", "chart"] -> do
+        runCommand maybeRuntimeMode "python3" ["tools/platform_asset_check.py"]
+        runCommand maybeRuntimeMode "python3" ["tools/helm_chart_check.py"]
       ["test", "lint"] -> runLint maybeRuntimeMode
       ["test", "unit"] -> do
         ensureWebDependencies
@@ -87,12 +96,48 @@ dispatch maybeRuntimeMode args = case args of
         runCommand maybeRuntimeMode "npm" ["--prefix", "web", "run", "test:unit"]
         runCabalCommand maybeRuntimeMode ["test", "infernix-integration"]
         runEndToEnd maybeRuntimeMode
+      ["internal", "discover", "images", renderedChartPath] ->
+        runCommand maybeRuntimeMode "python3" ["tools/discover_chart_images.py", renderedChartPath]
+      ["internal", "discover", "claims", renderedChartPath] ->
+        runCommand maybeRuntimeMode "python3" ["tools/discover_chart_claims.py", renderedChartPath]
+      ["internal", "discover", "harbor-overlay", overlayPath] ->
+        runCommand maybeRuntimeMode "python3" ["tools/list_harbor_overlay_images.py", overlayPath]
+      ["internal", "publish-chart-images", renderedChartPath, outputPath] ->
+        runCommand maybeRuntimeMode "python3" ["tools/publish_chart_images.py", renderedChartPath, outputPath]
+      ["internal", "demo-config", "load", demoConfigPath] ->
+        runCommand maybeRuntimeMode "python3" ["tools/demo_config.py", demoConfigPath]
+      ["internal", "demo-config", "validate", demoConfigPath] ->
+        runCommand maybeRuntimeMode "python3" ["tools/demo_config.py", demoConfigPath]
       ["internal", "generate-web-contracts", outputDir] -> do
         runtimeMode <- resolveRuntimeMode maybeRuntimeMode
         writeGeneratedContracts runtimeMode outputDir
+      ["internal", "generate-purs-contracts", outputDir] -> do
+        runtimeMode <- resolveRuntimeMode maybeRuntimeMode
+        writeGeneratedPursContracts runtimeMode outputDir
       _ -> do
         putStrLn helpText
         exitFailure
+
+runPythonTool :: Maybe RuntimeMode -> FilePath -> [String] -> IO ()
+runPythonTool maybeRuntimeMode scriptPath args = do
+  paths <- discoverPaths
+  runCommandWithCwdAndEnv
+    maybeRuntimeMode
+    []
+    "python3"
+    ([repoRoot paths </> scriptPath] <> args)
+    (repoRoot paths)
+
+runPortalSurface :: Maybe RuntimeMode -> String -> IO ()
+runPortalSurface maybeRuntimeMode surface =
+  do
+    paths <- discoverPaths
+    runCommandWithCwdAndEnv
+      maybeRuntimeMode
+      [("INFERNIX_PORTAL_SURFACE", surface)]
+      "python3"
+      [repoRoot paths </> "tools" </> "portal_surface.py"]
+      (repoRoot paths)
 
 runLint :: Maybe RuntimeMode -> IO ()
 runLint maybeRuntimeMode = do
@@ -426,6 +471,13 @@ writeGeneratedContracts runtimeMode outputDir = do
   createDirectoryIfMissing True generatedDir
   writeFile outputFile (renderContractsModule runtimeMode (catalogForMode runtimeMode))
 
+writeGeneratedPursContracts :: RuntimeMode -> FilePath -> IO ()
+writeGeneratedPursContracts runtimeMode outputDir = do
+  let generatedDir = outputDir </> "Generated"
+      outputFile = generatedDir </> "Contracts.purs"
+  createDirectoryIfMissing True generatedDir
+  writeFile outputFile (renderPursContractsModule runtimeMode (catalogForMode runtimeMode))
+
 renderContractsModule :: RuntimeMode -> [ModelDescriptor] -> String
 renderContractsModule runtimeMode models =
   unlines
@@ -475,6 +527,82 @@ jsBool value
   | value = "true"
   | otherwise = "false"
 
+renderPursContractsModule :: RuntimeMode -> [ModelDescriptor] -> String
+renderPursContractsModule runtimeMode models =
+  unlines
+    [ "module Generated.Contracts where",
+      "",
+      "type RequestField =",
+      "  { name :: String",
+      "  , label :: String",
+      "  , fieldType :: String",
+      "  }",
+      "",
+      "type ModelDescriptor =",
+      "  { matrixRowId :: String",
+      "  , modelId :: String",
+      "  , displayName :: String",
+      "  , family :: String",
+      "  , description :: String",
+      "  , artifactType :: String",
+      "  , referenceModel :: String",
+      "  , downloadUrl :: String",
+      "  , selectedEngine :: String",
+      "  , runtimeLane :: String",
+      "  , requiresGpu :: Boolean",
+      "  , notes :: String",
+      "  , requestShape :: Array RequestField",
+      "  }",
+      "",
+      "apiBasePath :: String",
+      "apiBasePath = " <> show ("/api" :: String),
+      "",
+      "runtimeMode :: String",
+      "runtimeMode = " <> show (Text.unpack (runtimeModeId runtimeMode)),
+      "",
+      "maxInlineOutputLength :: Int",
+      "maxInlineOutputLength = 80",
+      "",
+      "models :: Array ModelDescriptor",
+      "models =",
+      "  ["
+    ]
+    <> intercalate ",\n" (map renderModel models)
+    <> "\n  ]\n"
+  where
+    renderModel model =
+      unlines
+        [ "    { matrixRowId: " <> showText (matrixRowId model),
+          "    , modelId: " <> showText (modelId model),
+          "    , displayName: " <> showText (displayName model),
+          "    , family: " <> showText (family model),
+          "    , description: " <> showText (description model),
+          "    , artifactType: " <> showText (artifactType model),
+          "    , referenceModel: " <> showText (referenceModel model),
+          "    , downloadUrl: " <> showText (downloadUrl model),
+          "    , selectedEngine: " <> showText (selectedEngine model),
+          "    , runtimeLane: " <> showText (runtimeLane model),
+          "    , requiresGpu: " <> psBool (requiresGpu model),
+          "    , notes: " <> showText (notes model),
+          "    , requestShape: " <> renderRequestShape (requestShape model),
+          "    }"
+        ]
+    renderRequestShape fields =
+      "[ "
+        <> intercalate ", " (map renderField fields)
+        <> " ]"
+    renderField RequestField {name = fieldName, label = fieldLabelValue, fieldType = fieldTypeValue} =
+      "{ name: "
+        <> showText fieldName
+        <> ", label: "
+        <> showText fieldLabelValue
+        <> ", fieldType: "
+        <> showText fieldTypeValue
+        <> " }"
+    showText = show . Text.unpack
+    psBool True = "true"
+    psBool False = "false"
+
 extractRuntimeMode :: [String] -> Either String (Maybe RuntimeMode, [String])
 extractRuntimeMode = go Nothing []
   where
@@ -497,14 +625,19 @@ runCommandInDirectory :: Maybe RuntimeMode -> FilePath -> [String] -> FilePath -
 runCommandInDirectory = runCommandWithCwd
 
 runCommandWithCwd :: Maybe RuntimeMode -> FilePath -> [String] -> FilePath -> IO ()
-runCommandWithCwd maybeRuntimeMode command args workingDirectory = do
+runCommandWithCwd maybeRuntimeMode =
+  runCommandWithCwdAndEnv maybeRuntimeMode []
+
+runCommandWithCwdAndEnv :: Maybe RuntimeMode -> [(String, String)] -> FilePath -> [String] -> FilePath -> IO ()
+runCommandWithCwdAndEnv maybeRuntimeMode extraEnvironment command args workingDirectory = do
   environment <- getEnvironment
   let augmentedEnvironment =
+        mergeEnvironment runtimeModeBindings (mergeEnvironment extraEnvironment environment)
+      runtimeModeBindings =
         case maybeRuntimeMode of
-          Nothing -> environment
+          Nothing -> []
           Just runtimeMode ->
-            ("INFERNIX_RUNTIME_MODE", Text.unpack (runtimeModeId runtimeMode))
-              : filter ((/= "INFERNIX_RUNTIME_MODE") . fst) environment
+            [("INFERNIX_RUNTIME_MODE", Text.unpack (runtimeModeId runtimeMode))]
   (_, _, _, processHandle) <-
     createProcess
       (proc command args)
@@ -515,6 +648,12 @@ runCommandWithCwd maybeRuntimeMode command args workingDirectory = do
   case exitCode of
     ExitSuccess -> pure ()
     _ -> exitWith exitCode
+
+mergeEnvironment :: [(String, String)] -> [(String, String)] -> [(String, String)]
+mergeEnvironment overrides environment =
+  overrides <> filter (\(name, _) -> name `notElem` overrideNames) environment
+  where
+    overrideNames = map fst overrides
 
 ensureWebDependencies :: IO ()
 ensureWebDependencies = do
@@ -527,83 +666,14 @@ ensureWebDependencies = do
     else runCommandInDirectory Nothing "npm" ["--prefix", "web", "ci"] (repoRoot paths)
 
 ensureAppleHostPrerequisites :: IO ()
-ensureAppleHostPrerequisites = do
-  paths <- discoverPaths
-  when (controlPlaneContext paths == "host-native" && os == "darwin") $ do
-    ensureHostCommand "python3" Nothing
-    manifests <- discoverPythonDependencyManifests (repoRoot paths)
-    when (any requiresPoetry manifests) (ensureHostCommand "poetry" (Just installPoetryWithBrew))
-    forM_ manifests installPythonDependencyManifest
-
-data PythonDependencyManifest
-  = PoetryProject FilePath
-  | RequirementsFile FilePath
-
-discoverPythonDependencyManifests :: FilePath -> IO [PythonDependencyManifest]
-discoverPythonDependencyManifests repoRootPath = do
-  let poetryCandidates =
-        [ repoRootPath </> "pyproject.toml",
-          repoRootPath </> "tools" </> "pyproject.toml"
-        ]
-      requirementsCandidates =
-        [ repoRootPath </> "requirements.txt",
-          repoRootPath </> "tools" </> "requirements.txt"
-        ]
-  poetryManifests <- collectManifests PoetryProject poetryCandidates
-  requirementsManifests <- collectManifests RequirementsFile requirementsCandidates
-  pure (poetryManifests <> requirementsManifests)
-  where
-    collectManifests constructor candidates = do
-      present <- mapM doesFileExist candidates
-      pure [constructor candidate | (candidate, True) <- zip candidates present]
-
-requiresPoetry :: PythonDependencyManifest -> Bool
-requiresPoetry manifest = case manifest of
-  PoetryProject _ -> True
-  RequirementsFile _ -> False
-
-installPythonDependencyManifest :: PythonDependencyManifest -> IO ()
-installPythonDependencyManifest manifest = case manifest of
-  PoetryProject manifestPath ->
-    runCommandInDirectory Nothing "poetry" ["install", "--no-root"] (takeDirectory manifestPath)
-  RequirementsFile manifestPath ->
-    runCommand
-      Nothing
-      "python3"
-      ["-m", "pip", "install", "--quiet", "--disable-pip-version-check", "--user", "--break-system-packages", "-r", manifestPath]
-
-ensureHostCommand :: FilePath -> Maybe (IO ()) -> IO ()
-ensureHostCommand commandName maybeInstall = do
-  maybeCommand <- findExecutable commandName
-  case maybeCommand of
-    Just _ -> pure ()
-    Nothing ->
-      case maybeInstall of
-        Nothing -> ioError (userError (commandName <> " is required on the Apple host path but is not installed."))
-        Just installAction -> do
-          installAction
-          maybeInstalledCommand <- findExecutable commandName
-          case maybeInstalledCommand of
-            Just _ -> pure ()
-            Nothing ->
-              ioError
-                (userError (commandName <> " was not found after the attempted host prerequisite installation."))
-
-installPoetryWithBrew :: IO ()
-installPoetryWithBrew = do
-  maybeBrew <- findExecutable "brew"
-  case maybeBrew of
-    Nothing ->
-      ioError
-        (userError "poetry is required by the repo-owned Python dependency manifests, but Homebrew is not installed on the Apple host path.")
-    Just _ -> runCommand Nothing "brew" ["install", "poetry"]
+ensureAppleHostPrerequisites = pure ()
 
 syncBuildRootExecutable :: IO ()
 syncBuildRootExecutable = do
   paths <- discoverPaths
   ensureRepoLayout paths
   currentExecutable <- getExecutablePath
-  let targetExecutable = buildRoot paths </> "infernix"
+  let targetExecutable = buildRoot paths </> takeFileName currentExecutable
   if currentExecutable == targetExecutable
     then pure ()
     else do
@@ -619,6 +689,8 @@ helpText =
       "",
       "Commands:",
       "  infernix service [--port PORT]",
+      "  infernix edge",
+      "  infernix gateway harbor|minio|pulsar",
       "  infernix cluster up",
       "  infernix cluster down",
       "  infernix cluster status",
@@ -626,12 +698,18 @@ helpText =
       "  infernix cache evict [--model MODEL_ID]",
       "  infernix cache rebuild [--model MODEL_ID]",
       "  infernix kubectl ...",
+      "  infernix lint files|docs|proto|chart",
       "  infernix test lint",
       "  infernix test unit",
       "  infernix test integration",
       "  infernix test e2e",
       "  infernix test all",
-      "  infernix docs check"
+      "  infernix docs check",
+      "  infernix internal generate-web-contracts PATH",
+      "  infernix internal generate-purs-contracts PATH",
+      "  infernix internal discover {images,claims,harbor-overlay} PATH",
+      "  infernix internal publish-chart-images RENDERED_CHART OUTPUT",
+      "  infernix internal demo-config {load,validate} PATH"
     ]
 
 clusterHelpText :: String
@@ -650,4 +728,26 @@ testHelpText =
       "infernix test integration",
       "infernix test e2e",
       "infernix test all"
+    ]
+
+lintHelpText :: String
+lintHelpText =
+  unlines
+    [ "infernix lint files",
+      "infernix lint docs",
+      "infernix lint proto",
+      "infernix lint chart"
+    ]
+
+internalHelpText :: String
+internalHelpText =
+  unlines
+    [ "infernix internal generate-web-contracts PATH",
+      "infernix internal generate-purs-contracts PATH",
+      "infernix internal discover images RENDERED_CHART",
+      "infernix internal discover claims RENDERED_CHART",
+      "infernix internal discover harbor-overlay OVERLAY",
+      "infernix internal publish-chart-images RENDERED_CHART OUTPUT",
+      "infernix internal demo-config load PATH",
+      "infernix internal demo-config validate PATH"
     ]

@@ -1,0 +1,9 @@
+package:
+  name: infernix-web
+  dependencies:
+    - effect
+    - prelude
+
+workspace:
+  package_set:
+    registry: 66.0.0

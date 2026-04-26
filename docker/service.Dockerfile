@@ -13,8 +13,9 @@ COPY src src
 COPY test test
 
 RUN cabal update \
-    && cabal build --builddir=/tmp/infernix-cabal exe:infernix \
-    && install -D "$(cabal list-bin --builddir=/tmp/infernix-cabal exe:infernix)" /opt/infernix/bin/infernix
+    && cabal build --builddir=/tmp/infernix-cabal exe:infernix exe:infernix-demo \
+    && install -D "$(cabal list-bin --builddir=/tmp/infernix-cabal exe:infernix)" /opt/infernix/bin/infernix \
+    && install -D "$(cabal list-bin --builddir=/tmp/infernix-cabal exe:infernix-demo)" /opt/infernix/bin/infernix-demo
 
 FROM haskell:9.14.1-slim-bookworm
 
@@ -25,6 +26,7 @@ RUN apt-get update \
 WORKDIR /srv/infernix
 
 COPY --from=build /opt/infernix/bin/infernix /usr/local/bin/infernix
+COPY --from=build /opt/infernix/bin/infernix-demo /usr/local/bin/infernix-demo
 COPY tools tools
 COPY proto proto
 

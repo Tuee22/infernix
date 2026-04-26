@@ -12,12 +12,12 @@ The supported platform contract is described in present-tense declarative langua
 plan. The repository carries a previous Python-HTTP and JavaScript-workbench implementation of
 several surfaces (tracked in [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md))
 while the supported doctrine described below is being landed across phases 1, 3, 4, and 5. Phase 0
-Sprint 0.6 owns the doctrine-realignment documentation work; until that sprint closes, the later
-code-writing phases are `Blocked` per `development_plan_standards.md` principle A.
+is closed; the remaining open work is implementation migration and validation-surface retargeting,
+not documentation-suite bootstrap.
 
 | Area | Doctrine status | Current supported contract details |
 |------|-----------------|------------------------------------|
-| Development plan and docs suite | active realignment | Phase 0 Sprint 0.6 rewrites the documentation suite, root README, AGENTS, and CLAUDE to the two-binary, Pulsar-production, PureScript-demo-UI, Python-restricted-to-engine-adapters doctrine declared in this overview |
+| Development plan and docs suite | realigned baseline closed | The documentation suite, root README, AGENTS, and CLAUDE now describe the two-binary, Pulsar-production, PureScript-demo-UI, Python-restricted-to-engine-adapters doctrine declared in this overview; later phases now retire the remaining legacy implementation surfaces |
 | Production daemon and Pulsar inference | doctrine declared, implementation pending | `infernix service` (production) is a Haskell Pulsar consumer that subscribes to request topics named in the active `.dhall`, dispatches each request through the Haskell worker (`src/Infernix/Runtime/{Pulsar,Worker,Cache}.hs`), and publishes results to result topics named in the same config. No HTTP listener is bound. Engine-specific Python is loaded only from `python/adapters/<engine>/` and only when the bound engine is Python-native |
 | Demo UI host | doctrine declared, implementation pending | `infernix-demo` is a separate Haskell executable sharing `infernix-lib`. It exposes the demo HTTP API surface (`/`, `/api`, `/api/publication`, `/api/cache`, `/objects/`) via servant, gated by the `.dhall` `demo_ui` flag. Deployed as the `infernix-demo` cluster workload from the same OCI image |
 | Edge proxy and platform gateways | doctrine declared, implementation pending | Edge proxy in `src/Infernix/Edge.hs`; Harbor, MinIO, and Pulsar gateway pods in `src/Infernix/Gateway/{Harbor,Minio,Pulsar}.hs`. All four are Haskell modules deployed as separate cluster workloads using the same `infernix` image with `infernix edge` or `infernix gateway <kind>` as entrypoint |

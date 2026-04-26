@@ -68,7 +68,9 @@ database path, keeps later PostgreSQL-backed services on that same operator-mana
 contract even when their upstream charts can self-deploy PostgreSQL, reconciles Harbor's Patroni
 PVCs through `infernix-manual`, repairs Harbor database migration state through the current
 Patroni primary, and keeps repeat `cluster down` plus `cluster up` cycles bound to the same
-manually managed PostgreSQL host paths.
+manually managed PostgreSQL host paths. The charted edge and gateway workloads now enter through
+`infernix edge` and `infernix gateway ...`, but those wrapper entrypoints still delegate to the
+Python implementations described above.
 
 ## Sprint 3.1: HA MinIO Deployment [Done]
 
@@ -275,11 +277,9 @@ Route every browser-visible portal and host-consumed service path through one ch
 ### Remaining Work
 
 - the edge proxy is currently implemented as `tools/edge_proxy.py` (Python `ThreadingHTTPServer`);
-  the Haskell port to `src/Infernix/Edge.hs` plus the `infernix edge` entrypoint has not landed
-  yet
-- `chart/templates/deployment-edge.yaml` currently runs `python3 tools/edge_proxy.py`; the chart
-  template must be updated to invoke `infernix edge` from the same OCI image after the Haskell
-  port lands
+  `chart/templates/deployment-edge.yaml` now invokes `infernix edge`, but that wrapper entrypoint
+  still delegates to the Python implementation because the Haskell port to `src/Infernix/Edge.hs`
+  has not landed yet
 - the demo-route gating (`demo_ui` flag conditioning the `/`, `/api`, `/api/publication`,
   `/api/cache`, and `/objects/` route subset) is not yet implemented; it lands together with the
   `infernix-demo` workload in Sprint 3.6
@@ -337,8 +337,10 @@ the cluster free of any HTTP API surface when the demo flag is off.
 
 - the demo HTTP API is currently served by `tools/service_server.py` from the same image as the
   production service; the Haskell port to `src/Infernix/Demo/Api.hs` plus the `infernix-demo`
-  binary plus the separate chart workload have not landed yet
-- `app/Demo.hs` does not exist; `infernix.cabal` still declares one executable
+  chart workload have not landed yet
+- `app/Demo.hs`, `src/Infernix/DemoCLI.hs`, and the `infernix-demo` executable now exist, but
+  `infernix-demo serve` currently delegates into the existing service path instead of hosting a
+  dedicated Haskell demo API implementation in `src/Infernix/Demo/Api.hs`
 - `chart/templates/deployment-demo.yaml` does not exist; the demo HTTP surface is currently bundled
   into the `infernix-service` workload via `python3 tools/service_server.py`
 - `.Values.demo.enabled` and the `.dhall` `demo_ui` flag do not exist; production deployments
@@ -437,11 +439,11 @@ auth flows, and the same edge-routed surfaces.
 
 - the Haskell gateway modules under `src/Infernix/Gateway/` do not exist yet; `tools/portal_surface.py`
   remains the implementation
-- `chart/templates/workloads-platform-portals.yaml` currently invokes
-  `python3 tools/portal_surface.py`; the entrypoint must be updated to `infernix gateway <kind>`
-  after the Haskell port lands
-- the `infernix gateway harbor|minio|pulsar` subcommands do not exist yet; they land alongside
-  the Haskell gateway implementations
+- `chart/templates/workloads-platform-portals.yaml` now invokes `infernix gateway <kind>`, but
+  those entrypoints still delegate to `tools/portal_surface.py` until the Haskell gateway modules
+  land
+- the `infernix gateway harbor|minio|pulsar` subcommands now exist as wrapper surfaces, but the
+  Haskell gateway implementations they are meant to host do not exist yet
 
 ## Documentation Requirements
 

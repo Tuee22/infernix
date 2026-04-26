@@ -12,11 +12,11 @@
 ## Phase Status
 
 The validation contract itself (lint plus unit plus integration plus routed E2E plus HA chaos
-plus lifecycle plus per-mode exhaustive matrix) retains its shape under the new doctrine. Each
-sprint drops to `Active` only because its implementation pointers reference doctrine-misaligned
-surfaces (Python service host, JavaScript workbench, JavaScript Playwright matrix runner). As each
-upstream sprint lands, the matching Phase 6 sprint reopens to update its implementation pointer to
-the Haskell entrypoints, the `purescript-spec` suites, and the `infernix-demo` HTTP fixtures.
+plus lifecycle plus per-mode exhaustive matrix) retains its shape under the new doctrine. The
+current implementation still satisfies these validation sprints on the supported paths, so the
+individual sprint statuses remain `Done`; later Haskell and PureScript migration work in Phases 1,
+3, 4, and 5 will update the implementation pointers under this phase without changing the overall
+validation contract.
 
 ## Current Repo Assessment
 
@@ -80,8 +80,8 @@ This phase owns the rule that validation follows the generated demo catalog for 
 
 ### Objective
 
-Make static-quality enforcement and unit coverage broad enough to protect the single-binary control
-plane, shared contracts, and matrix-rendering logic.
+Make static-quality enforcement and unit coverage broad enough to protect the control-plane
+executables, shared contracts, and matrix-rendering logic.
 
 ### Deliverables
 

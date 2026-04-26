@@ -6,6 +6,20 @@
 > **Purpose**: Record the authoritative component inventory for operator surfaces, runtime modes,
 > and durable state locations in `infernix`.
 
+## Current Repo Assessment
+
+- the control-plane topology now includes `infernix` plus `infernix-demo`, and the cluster
+  workload entrypoints now use `infernix edge` and `infernix gateway ...`; those surfaces still
+  delegate into legacy Python implementations until Phase 1 Sprint 1.6 and Phase 3 close
+- `web/spago.yaml`, `web/src/*.purs`, and `web/test/*.purs` now exist as scaffolds, but the
+  supported web build, frontend tests, and web image still run through `web/build.mjs`,
+  `web/package.json`, and the JavaScript workbench
+- `infernix internal generate-purs-contracts` now exists as a scaffold writer, but the current web
+  build still consumes `infernix internal generate-web-contracts` and build-generated JavaScript
+  contracts
+- `python/adapters/` plus `tools/python_quality.sh` now exist, but the Python adapter quality gate
+  is not yet wired into the canonical `infernix test lint` path
+
 ## Operator and Host Components
 
 | Component | Technology | Deployment | Purpose | Durable State |

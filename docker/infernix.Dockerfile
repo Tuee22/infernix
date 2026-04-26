@@ -13,7 +13,7 @@ COPY src src
 COPY test test
 
 RUN cabal update \
-    && cabal install --builddir=/tmp/infernix-cabal --installdir=/opt/infernix/bin --install-method=copy --overwrite-policy=always exe:infernix
+    && cabal install --builddir=/tmp/infernix-cabal --installdir=/opt/infernix/bin --install-method=copy --overwrite-policy=always exe:infernix exe:infernix-demo
 
 FROM haskell:9.14.1-slim-bookworm
 
@@ -48,6 +48,7 @@ WORKDIR /workspace
 
 COPY tools/requirements.txt /tmp/tools-requirements.txt
 COPY --from=build /opt/infernix/bin/infernix /usr/local/bin/infernix
+COPY --from=build /opt/infernix/bin/infernix-demo /usr/local/bin/infernix-demo
 
 RUN python3 -m pip install --break-system-packages --no-cache-dir -r /tmp/tools-requirements.txt
 RUN cabal update

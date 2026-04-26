@@ -19,7 +19,7 @@ govern this plan.
 | [00-overview.md](00-overview.md) | Architecture baseline, hard constraints, runtime-mode contract, and canonical repository shape |
 | [system-components.md](system-components.md) | Authoritative component inventory and state-location map |
 | [phase-0-documentation-and-governance.md](phase-0-documentation-and-governance.md) | `documents/` suite creation, documentation standards, and docs-suite alignment with the three-mode matrix |
-| [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md) | Repository scaffold, single-binary CLI, Cabal build doctrine and container artifact isolation, execution-context contract, and runtime-mode selection baseline |
+| [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md) | Repository scaffold, two-binary CLI surface, Cabal build doctrine and container artifact isolation, execution-context contract, and runtime-mode selection baseline |
 | [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md) | Kind bootstrap, manual PV doctrine and explicit PV-to-PVC binding for every PVC-backed Helm workload, Harbor bootstrap-first and post-bootstrap Harbor-backed image flow, GPU-enabled `linux-cuda` cluster reconcile, and mode-aware ConfigMap-backed demo-config generation |
 | [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md) | Mandatory local HA Harbor, MinIO, operator-managed Patroni PostgreSQL, Pulsar, unified edge routing, and mode-stable browser and API publication |
 | [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) | Haskell Pulsar-driven production inference service, Python engine-adapter contract under `python/adapters/`, comprehensive matrix registry, protobuf manifest and Pulsar payload contracts, ConfigMap-backed generated demo `.dhall`, and durable artifact lifecycle |
@@ -52,20 +52,24 @@ The repository has a governed `documents/` suite and a closed cluster-substrate 
 doctrine declared in [00-overview.md](00-overview.md) (two-binary topology, Pulsar-only production
 inference surface, demo HTTP only via `infernix-demo`, Python restricted to engine adapters under
 `python/adapters/`, frontend in PureScript with types from Haskell via `purescript-bridge`) is
-being landed across phases 1, 3, 4, and 5. Phase 0 Sprint 0.6 owns the documentation realignment
-work that gates the later code-writing phases.
+being landed across phases 1, 3, 4, and 5.
 
 - the cluster substrate, Kind or Helm assets, Harbor-first bootstrap flow, manual storage doctrine,
   operator-managed Patroni PostgreSQL contract, and `linux-cuda` GPU lane are implemented and
   doctrine-aligned; their phase (Phase 2) is `Blocked` only because lifecycle code still calls
   custom-logic Python tooling that Phase 1 Sprint 1.6 retires
-- the production inference surface (Pulsar subscription via `infernix service`), the demo HTTP host
-  (`infernix-demo` binary), the Haskell edge proxy and platform gateways, and the PureScript demo UI
-  are doctrine-declared and not yet implemented; the previous Python-served HTTP surface,
-  JavaScript workbench, and custom-logic `tools/*.py` scripts remain on disk and are tracked for
-  removal in [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md)
-- the `documents/` tree, root README, AGENTS, and CLAUDE still describe several retired-doctrine
-  surfaces; Sprint 0.6 rewrites them in one atomic change
+- the repository now ships `infernix` plus `infernix-demo`, broader CLI wrapper entrypoints for
+  edge or gateway or lint or internal flows, a repo-root `python/` scaffold, and a placeholder
+  `spago` tree under `web/`; the production inference surface (Pulsar subscription via
+  `infernix service`), the Haskell demo HTTP host, the Haskell edge proxy and platform gateways,
+  the `purescript-bridge` integration, the canonical `spago test` path, and the strict Python
+  adapter quality gate in `infernix test lint` are still not fully implemented, and the previous
+  Python-served HTTP surface, JavaScript workbench, and custom-logic `tools/*.py` scripts remain
+  on disk and are tracked for removal in
+  [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md)
+- the `documents/` tree, root README, AGENTS, and CLAUDE are now aligned with the retired-doctrine
+  removals from Phase 0; the remaining open work is implementation migration rather than docs-suite
+  realignment
 
 ## Execution Contexts and Runtime Modes
 

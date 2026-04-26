@@ -16,19 +16,22 @@ topology becomes two binaries (1.1, 1.2); Homebrew-Poetry-as-host-prereq is drop
 JavaScript-workbench build path is replaced by spago plus `purescript-bridge` (1.4); and the
 canonical repository shape adds `python/adapters/`, drops `web/build.mjs`, replaces `web/src/*.js`
 with `web/src/*.purs`, and removes every custom-logic `tools/*.py` script (1.1). Sprint 1.5
-remains `Done`. New Sprint 1.6 declares the aggressive migration of every custom-logic `tools/*.py`
-script to Haskell modules invoked through `infernix lint ...` and `infernix internal ...`
-subcommands; this sprint is `Blocked` by Sprint 0.6 closing the documentation realignment.
+remains `Done`. Sprint 1.6 owns the aggressive migration of every custom-logic `tools/*.py` script
+to Haskell modules invoked through `infernix lint ...` and `infernix internal ...` subcommands;
+Phase 0 is already closed, so the remaining work here is implementation migration rather than docs
+baseline realignment.
 
 ## Current Repo Assessment
 
 The Haskell project, repo-local build and data roots, runtime-mode selection, generated demo-config
 staging, direct `cabal` host install path, and Apple-host kubeconfig contract are implemented. The
-two-binary topology (`infernix` plus `infernix-demo`), the PureScript-based web build, the Python
-adapter quality gate (Poetry plus mypy strict plus black plus ruff strict), and the migration of
-every custom-logic `tools/*.py` script to Haskell are doctrine-declared and pending implementation.
-Apple-host Python prerequisite detection (Homebrew Poetry) is being retired; Poetry materializes
-only when an engine-adapter test is exercised explicitly.
+repo now ships two executables (`infernix` plus `infernix-demo`), exposes the broader CLI surface
+through those executables, carries a repo-root `python/` Poetry scaffold, and carries a
+placeholder `spago` or `.purs` tree under `web/`; the final Haskell edge or gateway or demo-HTTP
+implementations, the fully adopted PureScript web build, the strict Python adapter quality gate in
+the canonical validation path, and the migration of every custom-logic `tools/*.py` script to
+Haskell are still pending. Apple-host Poetry auto-install has been removed; remaining Python-backed
+implementation paths are retired in Sprint 1.6.
 
 ## Runtime-Mode Foundation
 
@@ -43,7 +46,7 @@ This phase owns the baseline distinction between execution context and runtime m
 ## Sprint 1.1: Canonical Repository Scaffold [Active]
 
 **Status**: Active
-**Implementation**: `infernix.cabal`, `cabal.project`, `app/Main.hs`, `src/Infernix/`, `compose.yaml`, `docker/`, `web/`, `chart/`, `kind/`, `proto/`
+**Implementation**: `infernix.cabal`, `cabal.project`, `app/Main.hs`, `app/Demo.hs`, `src/Infernix/`, `compose.yaml`, `docker/`, `python/`, `tools/python_quality.sh`, `web/`, `chart/`, `kind/`, `proto/`
 **Docs to update**: `README.md`, `documents/README.md`, `documents/architecture/overview.md`
 
 ### Objective
@@ -87,12 +90,9 @@ Create the repository skeleton described in [00-overview.md](00-overview.md).
 
 ### Remaining Work
 
-- `infernix.cabal` still declares a single `exe:infernix` target; it must be split into
-  `library: infernix-lib` plus `exe:infernix` plus `exe:infernix-demo` with both executables
-  depending on the shared library
-- `app/Demo.hs` does not exist yet
-- `python/` directory does not exist yet
-- `web/spago.yaml` does not exist yet; `web/src/` still holds `.js` files
+- the repo now carries `app/Demo.hs`, a repo-root `python/` scaffold, and `web/spago.yaml`, but
+  the supported frontend implementation still lives under `web/src/*.js`; the `.purs` tree is
+  only scaffold-level until Phase 5 lands
 - `tools/` still carries the custom-logic Python scripts slated for migration in Sprint 1.6
 
 ---
@@ -100,7 +100,7 @@ Create the repository skeleton described in [00-overview.md](00-overview.md).
 ## Sprint 1.2: Two Haskell Binaries and CLI Contract [Active]
 
 **Status**: Active
-**Implementation**: `app/Main.hs`, `src/Infernix/CLI.hs`
+**Implementation**: `app/Main.hs`, `app/Demo.hs`, `src/Infernix/CLI.hs`, `src/Infernix/DemoCLI.hs`, `chart/templates/deployment-edge.yaml`, `chart/templates/workloads-platform-portals.yaml`
 **Docs to update**: `README.md`, `documents/reference/cli_reference.md`, `documents/reference/cli_surface.md`
 
 ### Objective
@@ -171,16 +171,12 @@ Additional rules:
 
 ### Remaining Work
 
-- `infernix.cabal` still declares one executable `infernix` that owns CLI plus service plus tests;
-  it must be split into `library: infernix-lib` plus `exe:infernix` plus `exe:infernix-demo`
-- the `infernix edge` and `infernix gateway harbor|minio|pulsar` subcommands do not yet exist;
-  they land alongside the Haskell edge proxy and gateway implementations in Phase 3
-- the `infernix lint files|docs|proto|chart` and `infernix internal ...` subcommands do not yet
-  exist; they land in Sprint 1.6
-- the `infernix internal generate-purs-contracts` subcommand does not yet exist; it lands in
-  Phase 5 Sprint 5.2 alongside the PureScript build chain
-- the `infernix-demo serve` exe does not yet exist; it lands alongside the Haskell demo HTTP host
-  in Phase 4 Sprint 4.4
+- the `infernix edge`, `infernix gateway ...`, `infernix lint ...`, `infernix internal ...`, and
+  `infernix-demo serve` entrypoints now exist, but the edge or gateway or lint or demo-host
+  implementations still delegate into legacy Python-backed code paths; Sprint 1.6 and Phases 3-5
+  still own removing those backend dependencies
+- `infernix internal generate-purs-contracts` currently emits a scaffold PureScript contract module
+  rather than `purescript-bridge` output from `src/Infernix/Demo/Api.hs`
 
 ---
 
@@ -231,11 +227,9 @@ different control-plane products.
 
 ### Remaining Work
 
-- the Apple-host implementation still detects repo-owned Python manifests and installs
-  Homebrew-managed Poetry as a host prerequisite; that path must be removed and Python prerequisite
-  installation must be scoped to the explicit engine-adapter test entry point only
-- `documents/operations/apple_silicon_runbook.md` and `documents/development/local_dev.md` still
-  describe Homebrew-Poetry-as-prereq; Sprint 0.6 owns the docs rewrite
+- automatic Homebrew Poetry installation has been removed, but the Apple host path still executes
+  Python-backed implementation details during `cluster` or `lint` or runtime flows until Sprint 1.6
+  retires the remaining custom tooling
 
 ---
 
@@ -426,8 +420,11 @@ Dockerfiles.
 
 - the migration has not landed yet; every script listed above remains in `tools/` and is invoked by
   the current implementation
-- Sprint 0.6 must close first so that the supported documentation suite already declares the new
-  doctrine before this sprint replaces the implementation pointers wholesale
+- the CLI wrapper entrypoints now exist for lint, discover, publish, demo-config, and
+  `generate-purs-contracts`, but they still shell into the legacy Python tooling instead of Haskell
+  modules under `src/Infernix/Lint/`, `src/Infernix/Cluster/`, and `src/Infernix/DemoConfig.hs`
+- `tools/requirements.txt` remains because the current outer-container images still install the
+  legacy custom-logic Python toolchain; retiring that dependency is part of this sprint
 
 ## Documentation Requirements
 

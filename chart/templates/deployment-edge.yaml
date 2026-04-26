@@ -18,9 +18,9 @@ spec:
           image: "{{ .Values.service.image.repository }}:{{ .Values.service.image.tag }}"
           imagePullPolicy: {{ .Values.service.image.pullPolicy }}
           command:
-            - python3
+            - infernix
           args:
-            - tools/edge_proxy.py
+            - edge
           env:
             - name: INFERNIX_BIND_HOST
               value: "0.0.0.0"

@@ -18,9 +18,10 @@ spec:
           image: "{{ .Values.service.image.repository }}:{{ .Values.service.image.tag }}"
           imagePullPolicy: {{ .Values.service.image.pullPolicy }}
           command:
-            - python3
+            - infernix
           args:
-            - tools/portal_surface.py
+            - gateway
+            - harbor
           env:
             - name: INFERNIX_BIND_HOST
               value: "0.0.0.0"
@@ -72,9 +73,10 @@ spec:
           image: "{{ .Values.service.image.repository }}:{{ .Values.service.image.tag }}"
           imagePullPolicy: {{ .Values.service.image.pullPolicy }}
           command:
-            - python3
+            - infernix
           args:
-            - tools/portal_surface.py
+            - gateway
+            - minio
           env:
             - name: INFERNIX_BIND_HOST
               value: "0.0.0.0"
@@ -126,9 +128,10 @@ spec:
           image: "{{ .Values.service.image.repository }}:{{ .Values.service.image.tag }}"
           imagePullPolicy: {{ .Values.service.image.pullPolicy }}
           command:
-            - python3
+            - infernix
           args:
-            - tools/portal_surface.py
+            - gateway
+            - pulsar
           env:
             - name: INFERNIX_BIND_HOST
               value: "0.0.0.0"

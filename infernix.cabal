@@ -27,6 +27,7 @@ library
         Infernix.CLI
         Infernix.Cluster
         Infernix.Config
+        Infernix.DemoCLI
         Infernix.Models
         Infernix.Runtime
         Infernix.Service
@@ -67,6 +68,25 @@ library
 
 executable infernix
     main-is:          Main.hs
+    hs-source-dirs:   app
+    default-language: GHC2021
+    ghc-options:      -Wall -Werror
+    build-depends:
+        base >=4.18 && <4.23,
+        bytestring >=0.11 && <0.13,
+        containers >=0.6 && <0.9,
+        directory >=1.3 && <1.4,
+        filepath >=1.4 && <1.6,
+        lens-family >=1.2 && <2.2,
+        process >=1.6 && <1.7,
+        proto-lens >=0.7 && <0.8,
+        proto-lens-runtime >=0.7 && <0.8,
+        text >=2.0 && <2.2,
+        time >=1.12 && <1.16,
+        infernix
+
+executable infernix-demo
+    main-is:          Demo.hs
     hs-source-dirs:   app
     default-language: GHC2021
     ghc-options:      -Wall -Werror
