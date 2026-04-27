@@ -1,3 +1,4 @@
+{{- if .Values.repoGateway.enabled }}
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
@@ -5,6 +6,11 @@ metadata:
   namespace: platform
 spec:
   gatewayClassName: infernix-gateway
+  infrastructure:
+    parametersRef:
+      group: gateway.envoyproxy.io
+      kind: EnvoyProxy
+      name: infernix-edge
   listeners:
     - name: http
       protocol: HTTP
@@ -12,3 +18,4 @@ spec:
       allowedRoutes:
         namespaces:
           from: Same
+{{- end }}

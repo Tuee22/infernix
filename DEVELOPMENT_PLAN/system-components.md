@@ -9,15 +9,14 @@
 ## Current Repo Assessment
 
 - the repo already ships the two-binary Haskell topology, Envoy Gateway assets, the PureScript
-  demo UI, the split runtime modules under `src/Infernix/Runtime/`, and the manual storage or
-  Harbor-first Kind lifecycle
-- the repo still needs the DRY cleanup captured in this plan: one command registry, one shared
-  Linux substrate Dockerfile, one shared Python project, one route registry, generated-payload
-  removal from `chart/values.yaml`, `npx` removal, and the handwritten browser-contract move out
-  of `src/Generated/`
-- `compose.yaml` still live-mounts the repo, `src/Infernix/Models.hs` still duplicates route data,
-  and `src/Infernix/CLI.hs` still includes `npx playwright` setup logic, so the current worktree
-  has not yet reached the supported final component shape described below
+  demo UI, the split runtime modules under `src/Infernix/Runtime/`, the shared Python project,
+  the shared Linux substrate Dockerfile, the route registry, and the snapshot launcher
+- the remaining open gaps are now the adapter-depth and validation-closure gaps: non-stub
+  adapters, exhaustive per-entry integration coverage beyond the routed Playwright suite,
+  explicit HA-failure automation for Harbor, MinIO, Pulsar, and PostgreSQL, supported
+  NVIDIA-host validation for `linux-cuda`, final outer-container `linux-cpu` integration
+  revalidation after the latest harness fixes, and the still-partial Apple host-native engine
+  bootstrap
 
 ## Operator and Host Components
 
@@ -36,12 +35,12 @@
 
 | Component | Current content | Purpose | Gap |
 |-----------|-----------------|---------|-----|
-| Linux substrate image definition | `docker/linux-substrate.Dockerfile` (target shape) replacing `docker/linux-base.Dockerfile`, `docker/linux-cpu.Dockerfile`, and `docker/linux-cuda.Dockerfile` | one shared build definition produces the two real Linux runtime images and owns ghcup, Poetry, node, Playwright, and the Kind toolbelt | current worktree still carries the three-file layout |
-| Compose launcher | `compose.yaml` | one-command Linux launcher against the baked substrate image | current file still bind-mounts the repo and `web/node_modules` |
-| Shared Python adapter project | `python/pyproject.toml`, `python/adapters/*.py` | single dependency boundary and adapter tree for Python-native engines | current worktree still keeps three per-substrate Poetry projects |
-| Browser-contract source | `src/Infernix/Web/Contracts.hs` and `web/src/Generated/Contracts.purs` | keeps handwritten Haskell contract source out of `Generated/` while preserving generated PureScript output there | current handwritten Haskell source still lives at `src/Generated/Contracts.hs` |
-| Helm deployment assets | `chart/Chart.yaml`, `chart/values.yaml`, `chart/templates/` | hold repo-owned workloads, ConfigMaps, Gateway resources, and third-party chart dependencies | `chart/values.yaml` still embeds generated demo-config and publication payload copies |
-| Kind topology assets | `kind/cluster-apple-silicon.yaml`, `kind/cluster-linux-cpu.yaml`, `kind/cluster-linux-cuda.yaml` | mode-specific Kind shapes, including GPU-enabled `linux-cuda` | CUDA lane still needs the in-image `nvkind` cleanup |
+| Linux substrate image definition | `docker/linux-substrate.Dockerfile` | one shared build definition produces the two real Linux runtime images and owns ghcup, Poetry, Node.js 22+, Playwright, and the Kind toolbelt | the `linux-cpu` lane is validated; supported NVIDIA-host validation for `linux-cuda` remains |
+| Compose launcher | `compose.yaml` | one-command Linux launcher against the baked substrate image | `cluster up`, routed Pulsar, and image-owned Playwright are validated on `linux-cpu`; the final outer-container `test integration` rerun is still pending after the latest harness fixes |
+| Shared Python adapter project | `python/pyproject.toml`, `python/adapters/*.py` | single dependency boundary and adapter tree for Python-native engines | adapters are still stub responders rather than real engine loaders |
+| Browser-contract source | `src/Infernix/Web/Contracts.hs` and `web/src/Generated/Contracts.purs` | keeps handwritten Haskell contract source out of `Generated/` while preserving generated PureScript output there | no material ownership gap remains in the worktree |
+| Helm deployment assets | `chart/Chart.yaml`, `chart/values.yaml`, `chart/templates/` | hold repo-owned workloads, ConfigMaps, Gateway resources, and third-party chart dependencies | no material HA-route gap remains on the final chart shape |
+| Kind topology assets | `kind/cluster-apple-silicon.yaml`, `kind/cluster-linux-cpu.yaml`, `kind/cluster-linux-cuda.yaml` | mode-specific Kind shapes, including GPU-enabled `linux-cuda` | the topology and in-image `nvkind` path are landed; refreshed supported-host validation remains |
 | Protobuf contract assets | `proto/infernix/...`, generated `tools/generated_proto/` stubs | define canonical runtime, manifest, and event schema boundaries | generated stubs must stay untracked |
 
 ## Cluster and Publication Components
@@ -70,11 +69,14 @@
 | Cluster status | `infernix cluster status` | report cluster presence, runtime mode, publication state, build or data roots, and route inventory without mutation |
 | Kubernetes wrapper | `infernix kubectl ...` | scoped wrapper around upstream `kubectl` against the repo-local kubeconfig |
 | Cache lifecycle | `infernix cache status`, `infernix cache evict`, `infernix cache rebuild` | inspect or reconcile derived runtime cache state without mutating authoritative sources |
+| Focused lint | `infernix lint files`, `infernix lint docs`, `infernix lint proto`, `infernix lint chart` | run the repo-owned focused lint entrypoints for files, docs, `.proto`, and chart assets |
+| Aggregate static validation | `infernix test lint` | run the focused lint entrypoints together with Haskell style/build and Python quality checks |
+| Docs validation | `infernix docs check` | validate the governed docs suite and phase-plan shape through the canonical docs linter |
 | Service runtime | `infernix service` | validate the active generated catalog and consume Pulsar work without binding HTTP in production |
 | Demo UI runtime | `infernix-demo serve --dhall PATH --port N` | serve the demo-only HTTP surface against the active generated catalog |
 | Frontend contract generation | `infernix internal generate-purs-contracts` | generate the supported PureScript contract module from Haskell source |
 | Unit validation | `infernix test unit` | validate Haskell runtime behavior plus PureScript unit suites |
-| Integration validation | `infernix test integration` | exercise every generated catalog entry for the active runtime mode plus storage, publication, HA, and CUDA assertions |
+| Integration validation | `infernix test integration` | validate the published active-mode catalog contract, routed surfaces, cache flows, service-loop behavior, and one representative inference request for each selected runtime mode |
 | Routed E2E validation | `infernix test e2e` | exercise every demo-visible generated catalog entry through the real routed browser surface using Playwright |
 
 ## Browser and API Surface
@@ -96,9 +98,9 @@
 
 | Runtime mode | Canonical mode id | Supported contract | Current repo gap |
 |--------------|-------------------|--------------------|------------------|
-| Apple Silicon / Metal | `apple-silicon` | host-native control plane and host-native inference lane; shared config, route, and Pulsar contracts | adapter and engine bootstrap still partial |
-| Ubuntu 24.04 / CPU | `linux-cpu` | containerized Linux lane built from the shared substrate Dockerfile | current worktree still carries separate Dockerfiles |
-| Ubuntu 24.04 / NVIDIA CUDA Container | `linux-cuda` | GPU-enabled Kind lane built from the shared substrate Dockerfile and in-image `nvkind` toolchain | current worktree still relies on the old `nvkind` handoff workaround |
+| Apple Silicon / Metal | `apple-silicon` | host-native control plane and host-native inference lane; shared config, route, and Pulsar contracts | engine bootstrap is still partial |
+| Ubuntu 24.04 / CPU | `linux-cpu` | containerized Linux lane built from the shared substrate Dockerfile | final outer-container `test integration` revalidation is still pending after the latest harness fixes |
+| Ubuntu 24.04 / NVIDIA CUDA Container | `linux-cuda` | GPU-enabled Kind lane built from the shared substrate Dockerfile and in-image `nvkind` toolchain | refreshed supported-host validation remains |
 
 ## Serialization Boundaries
 

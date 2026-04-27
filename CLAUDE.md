@@ -1,5 +1,8 @@
 # CLAUDE.md
 
+**Status**: Governed entry document
+**Canonical workflow docs**: `documents/`
+
 Instructions for Claude and other LLM-based coding assistants working in this repository.
 
 ## Git Restrictions
@@ -37,15 +40,15 @@ Those actions are reserved for the user.
   deployments leave the demo UI off and accept inference work via Pulsar subscription only.
 - Routing is owned by Gateway API resources and repo-owned HTTPRoute manifests. The demo cluster is
   local-only and carries no auth filter.
-- Custom platform logic is Haskell. Python is permitted only under `python/<substrate>/adapters/`
-  and only when the bound inference engine has no non-Python binding. Each substrate owns its own
-  `pyproject.toml`; all adapter execution goes through `poetry run`, and the canonical quality gate
-  is `poetry run check-code` (mypy strict, black check, ruff strict). On Apple Silicon, Poetry may
-  materialize `python/apple-silicon/.venv/` on demand; Linux substrate images install adapter deps
-  during image build.
+- Custom platform logic is Haskell. Python is permitted only under `python/adapters/` and only
+  when the bound inference engine has no non-Python binding. The shared Poetry project lives at
+  `python/pyproject.toml`; all adapter execution goes through `poetry run`, and the canonical
+  quality gate is `poetry run check-code` (mypy strict, black check, ruff strict). On Apple
+  Silicon, Poetry may materialize `python/.venv/` on demand; Linux substrate images install adapter
+  deps during image build.
 - The demo UI is PureScript. Frontend contracts are emitted into `web/src/Generated/` by
   `infernix internal generate-purs-contracts`, which derives them through `purescript-bridge`
-  from dedicated Haskell browser-contract ADTs in `src/Generated/Contracts.hs`; the demo UI is
+  from dedicated Haskell browser-contract ADTs in `src/Infernix/Web/Contracts.hs`; the demo UI is
   built with spago and tested with `purescript-spec`.
 - The tracked repository carries no repo-owned `.sh` files and no committed generated artifacts
   such as Poetry lockfiles, generated protobuf stubs, `*.pyc`, `web/spago.lock`, or

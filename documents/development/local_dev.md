@@ -32,15 +32,16 @@ docker compose run --rm infernix infernix --runtime-mode linux-cpu test all
 docker compose run --rm infernix infernix --runtime-mode linux-cpu cluster down
 ```
 
-For the CUDA lane, build and run `docker/linux-cuda.Dockerfile` directly with `--gpus all`.
+For the CUDA lane, build the shared substrate image with the CUDA base image and run it with
+`--gpus all`.
 
 ## Engine Adapter Testing
 
 When exercising a Python-native engine adapter, Poetry materializes a local environment only for
-the active substrate project:
+the shared adapter project:
 
 ```bash
-POETRY_VIRTUALENVS_IN_PROJECT=true poetry install --directory python/apple-silicon
+POETRY_VIRTUALENVS_IN_PROJECT=true poetry install --directory python
 ./.build/infernix --runtime-mode apple-silicon test unit
 ```
 
@@ -55,8 +56,8 @@ POETRY_VIRTUALENVS_IN_PROJECT=true poetry install --directory python/apple-silic
   `./.build/infernix` and `./.build/infernix-demo`
 - Apple mode uses the repo-local kubeconfig under `./.build/`
 - container mode keeps build output under `/opt/build/infernix`
-- container mode supports launching from the repo root or nested working directories inside the
-  mounted workspace
+- container mode runs against a baked image snapshot and bind-mounts only `./.data/` together
+  with the Docker socket and the named build caches
 - when Docker, Kind, Helm, or kubectl are unavailable, `cluster up` falls back to the simulated
   substrate and `cluster status` reports that explicitly
 - `docker compose up` and `docker compose exec` are not supported operator workflows

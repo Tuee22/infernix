@@ -54,6 +54,7 @@ import System.Process (proc, readCreateProcessWithExitCode)
 
 data HarborPublishOptions = HarborPublishOptions
   { harborHost :: String,
+    harborClientHost :: String,
     harborApiHost :: String,
     harborProject :: String,
     harborUser :: String,
@@ -67,6 +68,7 @@ defaultHarborPublishOptions :: HarborPublishOptions
 defaultHarborPublishOptions =
   HarborPublishOptions
     { harborHost = "localhost:30002",
+      harborClientHost = "localhost:30002",
       harborApiHost = "localhost:30002",
       harborProject = "library",
       harborUser = "admin",
@@ -127,9 +129,12 @@ publishChartImagesFile options renderedChartPath outputPath = do
 publishImage :: Manager -> HarborPublishOptions -> String -> IO (String, PublishedImage)
 publishImage manager options sourceImage = do
   ensureLocalImage sourceImage
-  (targetRepository, targetTag) <- targetImageRef sourceImage options
-  publishIfNeeded manager options sourceImage targetRepository targetTag
-  pure (sourceImage, (targetRepository, targetTag))
+  targetTag <- contentAddressTag sourceImage
+  let repositoryPath = normalizeRepositoryPath sourceImage
+      publishedRepository = harborHost options <> "/" <> harborProject options <> "/" <> repositoryPath
+      clientRepository = harborClientHost options <> "/" <> harborProject options <> "/" <> repositoryPath
+  publishIfNeeded manager options sourceImage clientRepository repositoryPath targetTag
+  pure (sourceImage, (publishedRepository, targetTag))
 
 ensureLocalImage :: String -> IO ()
 ensureLocalImage imageRef = do
@@ -138,11 +143,11 @@ ensureLocalImage imageRef = do
     Right _ -> pure ()
     Left _ -> runCommand "docker" ["pull", imageRef] ""
 
-publishIfNeeded :: Manager -> HarborPublishOptions -> String -> String -> String -> IO ()
-publishIfNeeded manager options sourceImage targetRepository targetTag = do
-  let targetRef = targetRepository <> ":" <> targetTag
+publishIfNeeded :: Manager -> HarborPublishOptions -> String -> String -> String -> String -> IO ()
+publishIfNeeded manager options sourceImage clientRepository repositoryPath targetTag = do
+  let targetRef = clientRepository <> ":" <> targetTag
   runCommand "docker" ["tag", sourceImage, targetRef] ""
-  tagPresent <- harborTagExists manager options targetRepository targetTag
+  tagPresent <- harborTagExists manager options repositoryPath targetTag
   if tagPresent
     then verifyRegistryPull manager options targetRef
     else do
@@ -153,6 +158,7 @@ pushImageWithRetries :: Manager -> HarborPublishOptions -> String -> IO ()
 pushImageWithRetries manager options targetRef = go (4 :: Int) ""
   where
     (targetRepository, _, targetTag) = breakRepositoryAndTag targetRef
+    repositoryPath = normalizeRepositoryPath targetRepository
     go remainingAttempts lastFailure
       | remainingAttempts <= 0 =
           failWith ("docker push failed for " <> targetRef <> "\n" <> lastFailure)
@@ -161,7 +167,7 @@ pushImageWithRetries manager options targetRef = go (4 :: Int) ""
           case result of
             Right _ -> pure ()
             Left failureMessage -> do
-              tagPresent <- harborTagExists manager options targetRepository targetTag
+              tagPresent <- harborTagExists manager options repositoryPath targetTag
               if tagPresent
                 then pure ()
                 else do
@@ -208,12 +214,12 @@ loginHarborWithRetries manager options = do
   where
     go remainingAttempts lastFailure
       | remainingAttempts <= 0 =
-          failWith ("docker login failed for " <> harborHost options <> "\n" <> lastFailure)
+          failWith ("docker login failed for " <> harborClientHost options <> "\n" <> lastFailure)
       | otherwise = do
           result <-
             tryRunCommand
               "docker"
-              ["login", harborHost options, "--username", harborUser options, "--password-stdin"]
+              ["login", harborClientHost options, "--username", harborUser options, "--password-stdin"]
               (harborPassword options <> "\n")
           case result of
             Right _ -> pure ()
@@ -251,9 +257,8 @@ registryReady manager apiHost = do
     Right response -> pure (statusCode (responseStatus response) `elem` [200, 401, 403])
 
 harborTagExists :: Manager -> HarborPublishOptions -> String -> String -> IO Bool
-harborTagExists manager options targetRepository targetTag = do
-  let repositoryPath = harborRepositoryPath options targetRepository
-      requestUrl = harborRepositoryUrl (harborApiHost options) (harborProject options) repositoryPath
+harborTagExists manager options repositoryPath targetTag = do
+  let requestUrl = harborRepositoryUrl (harborApiHost options) (harborProject options) repositoryPath
   request <- authenticatedHarborRequest options requestUrl
   responseResult <- try (httpLbs request manager) :: IO (Either SomeException (Response LazyChar8.ByteString))
   case responseResult of
@@ -289,16 +294,6 @@ harborAuthorizationHeader options =
     <> Base64.encode
       (ByteString8.pack (harborUser options <> ":" <> harborPassword options))
 
-harborRepositoryPath :: HarborPublishOptions -> String -> String
-harborRepositoryPath options targetRepository =
-  case stripPrefix prefix targetRepository of
-    Just repositoryPath -> repositoryPath
-    Nothing ->
-      errorWith
-        ("target repository " <> targetRepository <> " did not match Harbor prefix " <> prefix)
-  where
-    prefix = harborHost options <> "/" <> harborProject options <> "/"
-
 harborRepositoryUrl :: String -> String -> String -> String
 harborRepositoryUrl apiHost project repositoryPath =
   "http://"
@@ -308,13 +303,6 @@ harborRepositoryUrl apiHost project repositoryPath =
     <> "/repositories/"
     <> urlEncodeString (urlEncodeString repositoryPath)
     <> "/artifacts?page_size=100&with_tag=true"
-
-targetImageRef :: String -> HarborPublishOptions -> IO (String, String)
-targetImageRef imageRef options = do
-  targetTag <- contentAddressTag imageRef
-  let repositoryPath = normalizeRepositoryPath imageRef
-      targetRepository = harborHost options <> "/" <> harborProject options <> "/" <> repositoryPath
-  pure (targetRepository, targetTag)
 
 contentAddressTag :: String -> IO String
 contentAddressTag imageRef = do
@@ -512,9 +500,6 @@ urlEncodeString = ByteString8.unpack . urlEncode True . ByteString8.pack
 
 failWith :: String -> IO a
 failWith message = ioError (userError ("publish-chart-images: " <> message))
-
-errorWith :: String -> a
-errorWith message = error ("publish-chart-images: " <> message)
 
 takeBefore :: Char -> String -> String
 takeBefore delimiter = takeWhile (/= delimiter)

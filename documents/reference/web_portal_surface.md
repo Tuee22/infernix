@@ -28,11 +28,13 @@ Operator portals (always present):
 - `/minio/console` loads the MinIO console surface
 - `/minio/s3` exposes the routed MinIO S3 API surface
 - `/pulsar/admin` loads the Pulsar admin surface
-- `/pulsar/ws` exposes the routed Pulsar WebSocket surface
+- `/pulsar/ws` exposes the routed Pulsar WebSocket surface and preserves Pulsar's `/ws/v2/...`
+  upstream context root
 
-On the real Kind path those routes are published by `Gateway/infernix-edge` and the repo-owned
-HTTPRoute set. On the simulated substrate, the same prefixes return compatibility HTML or JSON so
-the route inventory and rewrite behavior remain testable.
+On the real Kind path those routes are published by `Gateway/infernix-edge`,
+`EnvoyProxy/infernix-edge`, and the repo-owned HTTPRoute set. On the simulated substrate, the same
+prefixes return compatibility HTML or JSON so the route inventory and rewrite behavior remain
+testable.
 
 ## Workbench Behavior
 
@@ -57,8 +59,8 @@ the route inventory and rewrite behavior remain testable.
 - the user can browse any generated model entry, inspect its selected engine and request shape,
   and submit a manual inference request through the demo `/api`
 - manual inference requests execute through the same Haskell worker dispatch used by the
-  production daemon, including per-substrate Python adapters under `python/<substrate>/adapters/`
-  when the bound engine is Python-native
+  production daemon, including shared Python adapters under `python/adapters/` when the bound
+  engine is Python-native
 - large outputs surface as object-reference results with browser-visible links that resolve
   through `GET /objects/:objectRef`
 - switching runtime modes changes the generated catalog and selected engine bindings without

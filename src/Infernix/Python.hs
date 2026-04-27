@@ -8,9 +8,8 @@ module Infernix.Python
 where
 
 import Control.Monad (unless)
-import Data.Text qualified as Text
 import Infernix.Config (Paths (..))
-import Infernix.Types (RuntimeMode, runtimeModeId)
+import Infernix.Types (RuntimeMode)
 import System.Directory
   ( createDirectoryIfMissing,
     doesDirectoryExist,
@@ -23,8 +22,8 @@ import System.FilePath ((</>))
 import System.Process (CreateProcess (env), proc, readCreateProcessWithExitCode)
 
 pythonProjectDirectory :: Paths -> RuntimeMode -> FilePath
-pythonProjectDirectory paths runtimeMode =
-  repoRoot paths </> "python" </> Text.unpack (runtimeModeId runtimeMode)
+pythonProjectDirectory paths _runtimeMode =
+  repoRoot paths </> "python"
 
 pythonAdaptersPresent :: FilePath -> IO Bool
 pythonAdaptersPresent projectDirectory = do

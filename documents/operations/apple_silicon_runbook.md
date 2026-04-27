@@ -33,10 +33,9 @@ When the demo UI is needed as a host-side equivalent of the cluster `infernix-de
 - when the demo surface is enabled and `infernix-demo serve` runs host-native, the routed `/api`
   reaches the Apple host bridge while the browser stays on the same base URL
 - the host-native daemon uses the same Haskell worker contract as the cluster-resident daemon and
-  forks Python adapters from `python/apple-silicon/adapters/` only when the bound engine is
-  Python-native
+  forks Python adapters from `python/adapters/` only when the bound engine is Python-native
 - `infernix service` runs `ensureAppleSiliconRuntimeReady` before the daemon loop. That flow
-  ensures `python/apple-silicon/` is installed, creates repo-local engine roots under
+  ensures the shared `python/` project is installed, creates repo-local engine roots under
   `./.data/engines/`, and invokes each `poetry run setup-*` entrypoint for the active mode's
   Python-native engine bindings
 - the current `setup-*` entrypoints are idempotent preflight hooks, not full Homebrew or CMake

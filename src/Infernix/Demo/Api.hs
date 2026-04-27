@@ -127,7 +127,7 @@ application options request respond = do
             )
     ["pulsar", "ws"]
       | requestMethod request == methodGet ->
-          respond (jsonResponse status200 (object ["status" .= ("ready" :: String), "brokersHealth" .= ("ready" :: String), "rewrittenPath" .= ("/" :: String)]))
+          respond (jsonResponse status200 (object ["status" .= ("ready" :: String), "brokersHealth" .= ("ready" :: String), "rewrittenPath" .= ("/ws" :: String)]))
     "pulsar" : "ws" : wsSegments
       | requestMethod request == methodGet ->
           respond
@@ -135,7 +135,7 @@ application options request respond = do
                 status200
                 ( object
                     [ "label" .= ("pulsar-http" :: String),
-                      "rewrittenPath" .= prefixedPath wsSegments
+                      "rewrittenPath" .= prefixedPath ("ws" : wsSegments)
                     ]
                 )
             )

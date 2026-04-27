@@ -6,19 +6,17 @@
 > **Purpose**: Record the supported HA-failure coverage for Harbor, MinIO, operator-managed
 > PostgreSQL, and Pulsar.
 
-## Rules
+## Current Status
 
-- the canonical HA-failure coverage lives in `infernix test integration`
-- Harbor recovery coverage deletes a single Harbor application pod and verifies that routed portal
-  access and Harbor-backed image pulls still work afterward
-- MinIO recovery coverage deletes a single MinIO pod and verifies that persisted protobuf runtime
-  results, manifests, and large-output objects remain available afterward
-- PostgreSQL recovery coverage deletes the current Patroni primary and verifies that a replacement
-  primary takes over without breaking Harbor's routed portal surface
-- Pulsar recovery coverage deletes a single Pulsar proxy pod and verifies that routed inference and
-  schema-backed request or result transport still work afterward
-- the Apple host-native final-substrate lane is the validated HA-failure path in the supported
-  contract
+- the repository does not yet ship supported automated HA-failure or pod-deletion validation for
+  Harbor, MinIO, Patroni PostgreSQL, or Pulsar
+- `infernix test integration` currently validates steady-state routed availability, publication,
+  cache mutation, and service-loop request or result behavior; it does not delete or restart
+  workload pods
+- the remaining HA-failure automation is tracked in
+  `DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md`
+- the Apple host-native lane remains the intended final HA-failure closure path once that Phase 6
+  work lands
 
 ## Cross-References
 

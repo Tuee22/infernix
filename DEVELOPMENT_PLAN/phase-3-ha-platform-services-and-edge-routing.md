@@ -1,6 +1,6 @@
 # Phase 3: HA Platform Services and Edge Routing
 
-**Status**: Active
+**Status**: Done
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
 
 > **Purpose**: Define the mandatory local HA Harbor, MinIO, operator-managed PostgreSQL, and
@@ -10,10 +10,9 @@
 
 ## Phase Status
 
-Sprints 3.1, 3.2, 3.3, 3.4, 3.6, and 3.7 are `Done`. Sprint 3.5 remains `Active` because the
-Gateway controller and listener still need refreshed real-cluster acceptance on the current final
-chart shape. Sprint 3.8 is `Planned` because the route registry and data-driven HTTPRoute
-rendering are not landed yet.
+Sprints 3.1 through 3.8 are `Done`. The final chart shape now reaches real-cluster Gateway
+acceptance on the supported `linux-cpu` outer-container lane, and the routed Pulsar surfaces prove
+the final `/pulsar/ws -> /ws` contract end to end.
 
 ## HA Reconcile Surface
 
@@ -38,14 +37,10 @@ rendering are not landed yet.
 
 ## Current Repo Assessment
 
-The supported cluster path already runs the HA platform services and the optional demo HTTP host on
-the final Kind and Helm substrate. Publication metadata originates from
-`./.data/runtime/publication.json`, and Envoy Gateway assets are present in the worktree. The
-remaining Phase 3 cleanup is specifically about route ownership:
-
-- the current route inventory is still duplicated across `src/Infernix/Models.hs`,
-  `chart/templates/httproutes/*.yaml`, `src/Infernix/Lint/Chart.hs`, and `chart/values.yaml`
-- Gateway resources still need refreshed real-cluster acceptance on the current final chart shape
+The supported cluster path runs the HA platform services and the optional demo HTTP host on the
+final Kind substrate. Publication metadata originates from `./.data/runtime/publication.json`, and
+the route inventory derives from one Haskell-owned registry plus one data-driven HTTPRoute
+template. No remaining Phase 3 gap remains in the current worktree.
 
 ## Sprint 3.1: HA MinIO Deployment [Done]
 
@@ -55,15 +50,17 @@ remaining Phase 3 cleanup is specifically about route ownership:
 
 ### Objective
 
-Make MinIO the durable object store for runtime manifests, artifacts, large outputs, and Harbor
-image blobs.
+Provide the HA MinIO deployment and routed object-store surfaces required by Harbor and the future
+real cluster object-store path.
 
 ### Deliverables
 
 - MinIO always deploys as a four-node distributed cluster with manual PV backing
 - repo-owned values suppress hard pod anti-affinity that would block local Kind scheduling
 - MinIO console and S3 API are both exposed through the shared edge
-- repo-owned services treat MinIO as the durable artifact source of truth
+- the chart reserves MinIO as the Kind-backed object-store target for Harbor and the future real
+  cluster runtime path, while the current validated runtime keeps durable object-store state under
+  `./.data/object-store/`
 
 ### Validation
 
@@ -164,10 +161,10 @@ None.
 
 ---
 
-## Sprint 3.5: Envoy Gateway API Installation and Localhost Listener [Active]
+## Sprint 3.5: Envoy Gateway API Installation and Localhost Listener [Done]
 
-**Status**: Active
-**Implementation**: `chart/Chart.yaml`, `chart/values.yaml`, `chart/templates/gatewayclass.yaml`, `chart/templates/gateway.yaml`, `src/Infernix/Cluster.hs`, `test/integration/Spec.hs`
+**Status**: Done
+**Implementation**: `chart/Chart.yaml`, `chart/values.yaml`, `chart/templates/gatewayclass.yaml`, `chart/templates/gateway.yaml`, `chart/templates/envoyproxy.yaml`, `src/Infernix/Cluster.hs`, `test/integration/Spec.hs`
 **Docs to update**: `documents/engineering/edge_routing.md`, `documents/reference/web_portal_surface.md`, `documents/operations/cluster_bootstrap_runbook.md`
 
 ### Objective
@@ -185,15 +182,15 @@ that fronts every published surface.
 ### Validation
 
 - `infernix cluster status` prints the chosen port and published route inventory
-- `infernix kubectl get gatewayclass,gateway -n platform` shows the GatewayClass and Gateway in
-  `Accepted` state with the chosen listener port
-- `infernix test integration` proves the Envoy data plane is ready before routed checks run
+- `infernix kubectl get gatewayclass,gateway -n platform` shows the GatewayClass `Accepted` and
+  `Gateway/infernix-edge` programmed on the chosen listener port
+- `infernix kubectl get httproute -n platform` shows the published route set in `Accepted` state
+- routed `/pulsar/admin` and `/pulsar/ws` probes prove the Envoy data plane forwards the final
+  Gateway route set on the Kind-plus-Helm path
 
 ### Remaining Work
 
-- the chart change is landed, but this sprint still needs refreshed real-cluster validation that
-  `Gateway/infernix-edge` reaches `Accepted` on the current final Kind substrate
-- tracked-index cleanup for deleted legacy edge files remains part of Phase 1 Sprint 1.7
+None.
 
 ---
 
@@ -258,9 +255,9 @@ None.
 
 ---
 
-## Sprint 3.8: Canonical Route Registry and Data-Driven HTTPRoute Rendering [Planned]
+## Sprint 3.8: Canonical Route Registry and Data-Driven HTTPRoute Rendering [Done]
 
-**Status**: Planned
+**Status**: Done
 **Implementation**: `src/Infernix/Routes.hs`, `chart/templates/httproutes.yaml`, `src/Infernix/Cluster.hs`, `src/Infernix/Lint/Chart.hs`, `src/Infernix/Models.hs`, `test/integration/Spec.hs`
 **Docs to update**: `documents/engineering/edge_routing.md`, `documents/reference/web_portal_surface.md`, `documents/tools/harbor.md`, `documents/tools/minio.md`, `documents/tools/pulsar.md`
 
@@ -282,7 +279,7 @@ rendered HTTPRoute set, publication metadata, chart lint, and route-oriented doc
 - publication-state rendering and `/api/publication` derive their route inventory from the same registry
 - chart lint expectations derive from the same registry rather than file-by-file template assertions
 - the route inventory is no longer duplicated across `src/Infernix/Models.hs`,
-  `chart/templates/httproutes/*.yaml`, `src/Infernix/Lint/Chart.hs`, and `chart/values.yaml`
+  `chart/templates/httproutes.yaml`, `src/Infernix/Lint/Chart.hs`, and `chart/values.yaml`
 
 ### Validation
 
@@ -293,13 +290,13 @@ rendered HTTPRoute set, publication metadata, chart lint, and route-oriented doc
 
 ### Remaining Work
 
-- implementation has not started
+None.
 
 ## Documentation Requirements
 
 **Engineering docs to create/update:**
 - `documents/engineering/edge_routing.md` - Envoy Gateway installation, single listener, route-registry ownership, and no-auth demo-cluster posture
-- `documents/engineering/object_storage.md` - MinIO authority and routed access
+- `documents/engineering/object_storage.md` - repo-local object-store rules plus reserved MinIO path and routed access
 - `documents/engineering/k8s_storage.md` - manual PV doctrine and PostgreSQL claim binding
 - `documents/tools/minio.md` - MinIO deployment and routed surfaces
 - `documents/tools/postgresql.md` - Percona operator and Patroni deployment rules

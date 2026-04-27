@@ -1,6 +1,6 @@
 # Phase 5: Web UI and Shared Types
 
-**Status**: Active
+**Status**: Done
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
 
 > **Purpose**: Define the PureScript demo UI built with spago, the Haskell-owned frontend contract
@@ -9,20 +9,16 @@
 
 ## Phase Status
 
-Sprints 5.1, 5.2, 5.3, 5.4, and 5.6 stay `Done`. Sprint 5.5 is `Blocked` on the shared Linux
-substrate image from Phase 4 Sprint 4.9. Sprint 5.7 is `Planned` to move the handwritten Haskell
-browser-contract source out of `src/Generated/`.
+Sprints 5.1 through 5.7 are `Done`. The final Linux substrate image now owns the demo bundle,
+Playwright toolchain, and routed `linux-cpu` E2E execution path.
 
 ## Current Repo Assessment
 
-The repository already ships the supported PureScript demo path: `web/src/Main.purs` and
+The repository ships the supported PureScript demo path: `web/src/Main.purs` and
 `web/src/Infernix/Web/Workbench.purs` own the browser workbench, `web/test/Main.purs` owns the
-frontend unit suite, and `npm --prefix web run build` regenerates generated contracts and bundles
-the app into `web/dist/app.js`. The remaining UI cleanup is now specific and narrow:
-
-- the handwritten Haskell browser-contract source still lives at `src/Generated/Contracts.hs`
-- Linux Playwright ownership still depends on the final shared substrate image
-- some Playwright workflows still reference `npx`
+frontend unit suite, `src/Infernix/Web/Contracts.hs` owns the handwritten browser contract, and
+`npm --prefix web run build` regenerates generated contracts and bundles the app into
+`web/dist/app.js`. No remaining Phase 5 gap remains in the current worktree.
 
 ## Demo Catalog Contract
 
@@ -65,7 +61,7 @@ None.
 ## Sprint 5.2: Haskell-Owned Frontend Contract Foundation [Done]
 
 **Status**: Done
-**Implementation**: `src/Generated/Contracts.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Models.hs`, `src/Infernix/Types.hs`, `web/src/Generated/Contracts.purs`, `web/src/Main.purs`, `web/src/Infernix/Web/Workbench.purs`, `web/test/Main.purs`, `infernix.cabal`, `web/package.json`
+**Implementation**: `src/Infernix/Web/Contracts.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Models.hs`, `src/Infernix/Types.hs`, `web/src/Generated/Contracts.purs`, `web/src/Main.purs`, `web/src/Infernix/Web/Workbench.purs`, `web/test/Main.purs`, `infernix.cabal`, `web/package.json`
 **Docs to update**: `documents/architecture/web_ui_architecture.md`, `documents/development/frontend_contracts.md`
 
 ### Objective
@@ -151,11 +147,10 @@ None.
 
 ---
 
-## Sprint 5.5: Web Runtime Image and Playwright Dependency Ownership [Blocked]
+## Sprint 5.5: Web Runtime Image and Playwright Dependency Ownership [Done]
 
-**Status**: Blocked
+**Status**: Done
 **Implementation**: `docker/linux-substrate.Dockerfile`, `web/playwright/`, `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `chart/templates/deployment-demo.yaml`, `chart/templates/deployment-service.yaml`
-**Blocked by**: Phase 4 Sprint 4.9
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/architecture/web_ui_architecture.md`
 
 ### Objective
@@ -165,7 +160,7 @@ substrate image and remove `npx` from the supported workflow.
 
 ### Deliverables
 
-- the final Linux substrate image bundles the demo UI under `/srv/web/` and includes Playwright plus browser deps
+- the final Linux substrate image includes the built `web/dist/` bundle and Playwright plus browser deps
 - `infernix test e2e --runtime-mode linux-cpu|linux-cuda` launches Playwright from the substrate image
 - `infernix test e2e --runtime-mode apple-silicon` launches Playwright from the Apple host install
 - the chart does not deploy a separate web workload or web image
@@ -180,7 +175,7 @@ substrate image and remove `npx` from the supported workflow.
 
 ### Remaining Work
 
-- completion is blocked on the shared Linux substrate image from Phase 4 Sprint 4.9
+None.
 
 ---
 
@@ -213,10 +208,10 @@ None.
 
 ---
 
-## Sprint 5.7: Reserve `Generated/` For Generated Outputs Only [Planned]
+## Sprint 5.7: Reserve `Generated/` For Generated Outputs Only [Done]
 
-**Status**: Planned
-**Implementation**: `src/Infernix/Web/Contracts.hs`, `src/Generated/Contracts.hs`, `web/src/Generated/Contracts.purs`, `infernix.cabal`
+**Status**: Done
+**Implementation**: `src/Infernix/Web/Contracts.hs`, `web/src/Generated/Contracts.purs`, `src/Infernix/CLI.hs`, `infernix.cabal`
 **Docs to update**: `documents/architecture/web_ui_architecture.md`, `documents/development/frontend_contracts.md`, `documents/engineering/implementation_boundaries.md`
 
 ### Objective
@@ -239,7 +234,7 @@ directories mean generated output only.
 
 ### Remaining Work
 
-- implementation has not started
+None.
 
 ## Documentation Requirements
 

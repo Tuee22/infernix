@@ -7,7 +7,7 @@
 
 ## Contract Ownership
 
-- dedicated browser-contract ADTs in `src/Generated/Contracts.hs` own the browser-facing contract
+- dedicated browser-contract ADTs in `src/Infernix/Web/Contracts.hs` own the browser-facing contract
   surface
 - `infernix internal generate-purs-contracts` emits `web/src/Generated/Contracts.purs`
 - `npm --prefix web run build` invokes that codegen entrypoint before `spago build`
@@ -24,7 +24,8 @@
 
 - `infernix test unit` runs `spago test` (`purescript-spec`) for the generated-contract,
   catalog-parity, request-shape, and result-state suites alongside the Haskell unit suites
-- the web build fails when generated contracts drift from the Haskell-owned source
+- the web build regenerates `web/src/Generated/Contracts.purs` from the Haskell-owned source on
+  every run; codegen or PureScript compile failures stop the build
 - generated contracts expose the active runtime mode and every generated catalog entry for that
   mode
 - the frontend decodes routed `/api` payloads through the generated `Simple.JSON` instances rather

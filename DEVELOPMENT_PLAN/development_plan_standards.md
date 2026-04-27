@@ -313,6 +313,10 @@ The canonical command surface is:
 - `infernix cache evict`
 - `infernix cache rebuild`
 - `infernix kubectl ...`
+- `infernix lint files`
+- `infernix lint docs`
+- `infernix lint proto`
+- `infernix lint chart`
 - `infernix test lint`
 - `infernix test unit`
 - `infernix test integration`
@@ -341,8 +345,9 @@ Rules:
 - `infernix kubectl ...` is a scoped wrapper around upstream `kubectl`, automatically injecting the
   repo-local kubeconfig from the active build-output location; it is not a separate lifecycle
   orchestration surface.
-- `infernix test ...` and `infernix docs check` may reuse or reconcile prerequisites, but they do
-  not depend on alternate imperative setup commands outside the supported CLI surface.
+- `infernix lint ...`, `infernix test ...`, and `infernix docs check` may reuse or reconcile
+  prerequisites, but they do not depend on alternate imperative setup commands outside the
+  supported CLI surface.
 - No CLI flag or alternate command family selects between non-HA and HA service topology; the
   mandatory local HA topology is the only supported cluster target.
 
@@ -350,11 +355,14 @@ Rules:
 
 Mode-aware validation is explicit.
 
-- `infernix test integration` for a given active runtime mode exercises every model or workload
-  entry present in that mode's ConfigMap-backed mounted demo `.dhall` catalog.
+- `infernix test integration` for a given active runtime mode currently validates the published
+  catalog contract, routed surfaces, cache lifecycle, and a representative inference request plus
+  service-loop roundtrip for that mode.
 - `infernix test e2e` for a given active runtime mode exercises every demo-visible catalog entry
   present in that same generated file through the routed web surface unless a narrower exception is
   called out explicitly in the owning phase document.
+- Exhaustive per-entry integration coverage is claimed only once the owning phase marks that work
+  `Done` explicitly.
 - Integration and E2E checks use the engine binding encoded in the mounted ConfigMap-backed demo
   `.dhall`, which must match the appropriate mode column from the README matrix.
 - `infernix test all` aggregates lint, unit, integration, and E2E for the active runtime mode; the

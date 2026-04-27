@@ -1,1 +1,0 @@
-"""Apple Silicon adapter package."""

@@ -1,9 +1,8 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DuplicateRecordFields #-}
-{-# LANGUAGE NamedFieldPuns #-}
 
-module Generated.Contracts
+module Infernix.Web.Contracts
   ( EngineBinding (..),
     ErrorResponse (..),
     InferenceRequest (..),
@@ -238,143 +237,167 @@ renderPursContractFooter activeRuntimeMode =
             "instance readForeignRequestField :: JSON.ReadForeign RequestField where",
             "  readImpl value = RequestField <$> JSON.readImpl value",
             "",
-            "instance writeForeignRequestField :: JSON.WriteForeign RequestField where",
-            "  writeImpl (RequestField value) = JSON.writeImpl value",
-            "",
             "instance readForeignModelDescriptor :: JSON.ReadForeign ModelDescriptor where",
             "  readImpl value = ModelDescriptor <$> JSON.readImpl value",
-            "",
-            "instance writeForeignModelDescriptor :: JSON.WriteForeign ModelDescriptor where",
-            "  writeImpl (ModelDescriptor value) = JSON.writeImpl value",
             "",
             "instance readForeignInferenceRequest :: JSON.ReadForeign InferenceRequest where",
             "  readImpl value = InferenceRequest <$> JSON.readImpl value",
             "",
-            "instance writeForeignInferenceRequest :: JSON.WriteForeign InferenceRequest where",
-            "  writeImpl (InferenceRequest value) = JSON.writeImpl value",
-            "",
             "instance readForeignResultPayload :: JSON.ReadForeign ResultPayload where",
             "  readImpl value = ResultPayload <$> JSON.readImpl value",
-            "",
-            "instance writeForeignResultPayload :: JSON.WriteForeign ResultPayload where",
-            "  writeImpl (ResultPayload value) = JSON.writeImpl value",
             "",
             "instance readForeignInferenceResult :: JSON.ReadForeign InferenceResult where",
             "  readImpl value = InferenceResult <$> JSON.readImpl value",
             "",
-            "instance writeForeignInferenceResult :: JSON.WriteForeign InferenceResult where",
-            "  writeImpl (InferenceResult value) = JSON.writeImpl value",
-            "",
             "instance readForeignErrorResponse :: JSON.ReadForeign ErrorResponse where",
             "  readImpl value = ErrorResponse <$> JSON.readImpl value",
             "",
-            "instance writeForeignErrorResponse :: JSON.WriteForeign ErrorResponse where",
-            "  writeImpl (ErrorResponse value) = JSON.writeImpl value",
-            "",
             "instance readForeignEngineBinding :: JSON.ReadForeign EngineBinding where",
-            "  readImpl value = EngineBinding <$> JSON.readImpl value",
-            "",
-            "instance writeForeignEngineBinding :: JSON.WriteForeign EngineBinding where",
-            "  writeImpl (EngineBinding value) = JSON.writeImpl value"
+            "  readImpl value = EngineBinding <$> JSON.readImpl value"
           ]
 
-requestFieldFromInternal :: Types.RequestField -> RequestField
-requestFieldFromInternal fieldValue =
-  RequestField
-    { name = Types.name fieldValue,
-      label = Types.label fieldValue,
-      fieldType = Types.fieldType fieldValue
+engineBindingFromInternal :: Types.EngineBinding -> EngineBinding
+engineBindingFromInternal internalBinding =
+  EngineBinding
+    { engine = Types.engineBindingName internalBinding,
+      adapterId = Types.engineBindingAdapterId internalBinding,
+      adapterType = Types.engineBindingAdapterType internalBinding,
+      adapterLocator = Types.engineBindingAdapterLocator internalBinding,
+      adapterEntrypoint = Types.engineBindingAdapterEntrypoint internalBinding,
+      setupEntrypoint = Types.engineBindingSetupEntrypoint internalBinding,
+      projectDirectory = Text.pack (Types.engineBindingProjectDirectory internalBinding),
+      pythonNative = Types.engineBindingPythonNative internalBinding
     }
 
 modelDescriptorFromInternal :: Types.ModelDescriptor -> ModelDescriptor
-modelDescriptorFromInternal modelValue =
+modelDescriptorFromInternal internalModel =
   ModelDescriptor
-    { matrixRowId = Types.matrixRowId modelValue,
-      modelId = Types.modelId modelValue,
-      displayName = Types.displayName modelValue,
-      family = Types.family modelValue,
-      description = Types.description modelValue,
-      artifactType = Types.artifactType modelValue,
-      referenceModel = Types.referenceModel modelValue,
-      downloadUrl = Types.downloadUrl modelValue,
-      selectedEngine = Types.selectedEngine modelValue,
-      runtimeMode = Types.runtimeModeId (Types.runtimeMode modelValue),
-      runtimeLane = Types.runtimeLane modelValue,
-      requiresGpu = Types.requiresGpu modelValue,
-      notes = Types.notes modelValue,
-      requestShape = map requestFieldFromInternal (Types.requestShape modelValue)
+    { matrixRowId = Types.matrixRowId internalModel,
+      modelId = Types.modelId internalModel,
+      displayName = Types.displayName internalModel,
+      family = Types.family internalModel,
+      description = Types.description internalModel,
+      artifactType = Types.artifactType internalModel,
+      referenceModel = Types.referenceModel internalModel,
+      downloadUrl = Types.downloadUrl internalModel,
+      selectedEngine = Types.selectedEngine internalModel,
+      runtimeMode = Types.runtimeModeId (Types.runtimeMode internalModel),
+      runtimeLane = Types.runtimeLane internalModel,
+      requiresGpu = Types.requiresGpu internalModel,
+      notes = Types.notes internalModel,
+      requestShape = map requestFieldFromInternal (Types.requestShape internalModel)
     }
 
-engineBindingFromInternal :: Types.EngineBinding -> EngineBinding
-engineBindingFromInternal bindingValue =
-  EngineBinding
-    { engine = Types.engineBindingName bindingValue,
-      adapterId = Types.engineBindingAdapterId bindingValue,
-      adapterType = Types.engineBindingAdapterType bindingValue,
-      adapterLocator = Types.engineBindingAdapterLocator bindingValue,
-      adapterEntrypoint = Types.engineBindingAdapterEntrypoint bindingValue,
-      setupEntrypoint = Types.engineBindingSetupEntrypoint bindingValue,
-      projectDirectory = Text.pack (Types.engineBindingProjectDirectory bindingValue),
-      pythonNative = Types.engineBindingPythonNative bindingValue
+requestFieldFromInternal :: Types.RequestField -> RequestField
+requestFieldFromInternal internalField =
+  RequestField
+    { name = Types.name internalField,
+      label = Types.label internalField,
+      fieldType = Types.fieldType internalField
     }
-
-renderEngineBinding :: EngineBinding -> String
-renderEngineBinding bindingValue =
-  unlines
-    [ "    EngineBinding",
-      "      { engine: " <> showText (engine bindingValue),
-      "      , adapterId: " <> showText (adapterId bindingValue),
-      "      , adapterType: " <> showText (adapterType bindingValue),
-      "      , adapterLocator: " <> showText (adapterLocator bindingValue),
-      "      , adapterEntrypoint: " <> showText (adapterEntrypoint bindingValue),
-      "      , setupEntrypoint: " <> showText (setupEntrypoint bindingValue),
-      "      , projectDirectory: " <> showText (projectDirectory bindingValue),
-      "      , pythonNative: " <> psBool (pythonNative bindingValue),
-      "      }"
-    ]
-
-renderModel :: ModelDescriptor -> String
-renderModel ModelDescriptor {matrixRowId, modelId, displayName, family, description, artifactType, referenceModel, downloadUrl, selectedEngine, runtimeMode, runtimeLane, requiresGpu, notes, requestShape} =
-  unlines
-    [ "    ModelDescriptor",
-      "      { matrixRowId: " <> showText matrixRowId,
-      "      , modelId: " <> showText modelId,
-      "      , displayName: " <> showText displayName,
-      "      , family: " <> showText family,
-      "      , description: " <> showText description,
-      "      , artifactType: " <> showText artifactType,
-      "      , referenceModel: " <> showText referenceModel,
-      "      , downloadUrl: " <> showText downloadUrl,
-      "      , selectedEngine: " <> showText selectedEngine,
-      "      , runtimeMode: " <> showText runtimeMode,
-      "      , runtimeLane: " <> showText runtimeLane,
-      "      , requiresGpu: " <> psBool requiresGpu,
-      "      , notes: " <> showText notes,
-      "      , requestShape: " <> renderRequestShape requestShape,
-      "      }"
-    ]
-
-renderRequestShape :: [RequestField] -> String
-renderRequestShape fields =
-  "[ " <> intercalate ", " (map renderRequestField fields) <> " ]"
-
-renderRequestField :: RequestField -> String
-renderRequestField fieldValue =
-  "RequestField { name: "
-    <> showText (name fieldValue)
-    <> ", label: "
-    <> showText (label fieldValue)
-    <> ", fieldType: "
-    <> showText (fieldType fieldValue)
-    <> " }"
 
 renderPursStringArray :: [String] -> String
-renderPursStringArray values =
-  "[ " <> intercalate ", " (map show values) <> " ]"
+renderPursStringArray values = "[" <> intercalate ", " (map show values) <> "]"
 
-psBool :: Bool -> String
-psBool True = "true"
-psBool False = "false"
+renderEngineBinding :: EngineBinding -> String
+renderEngineBinding binding =
+  "    EngineBinding\n"
+    <> "      { engine: "
+    <> show (Text.unpack (engine binding))
+    <> "\n"
+    <> "      , adapterId: "
+    <> show (Text.unpack (adapterId binding))
+    <> "\n"
+    <> "      , adapterType: "
+    <> show (Text.unpack (adapterType binding))
+    <> "\n"
+    <> "      , adapterLocator: "
+    <> show (Text.unpack (adapterLocator binding))
+    <> "\n"
+    <> "      , adapterEntrypoint: "
+    <> show (Text.unpack (adapterEntrypoint binding))
+    <> "\n"
+    <> "      , setupEntrypoint: "
+    <> show (Text.unpack (setupEntrypoint binding))
+    <> "\n"
+    <> "      , projectDirectory: "
+    <> show (Text.unpack (projectDirectory binding))
+    <> "\n"
+    <> "      , pythonNative: "
+    <> (if pythonNative binding then "true" else "false")
+    <> "\n"
+    <> "      }"
 
-showText :: Text.Text -> String
-showText = show . Text.unpack
+renderModel :: ModelDescriptor -> String
+renderModel modelDescriptor =
+  let ModelDescriptor
+        { matrixRowId = modelMatrixRowId,
+          modelId = modelModelId,
+          displayName = modelDisplayName,
+          family = modelFamily,
+          description = modelDescription,
+          artifactType = modelArtifactType,
+          referenceModel = modelReferenceModel,
+          downloadUrl = modelDownloadUrl,
+          selectedEngine = modelSelectedEngine,
+          runtimeMode = modelRuntimeMode,
+          runtimeLane = modelRuntimeLane,
+          requiresGpu = modelRequiresGpu,
+          notes = modelNotes,
+          requestShape = modelRequestShape
+        } = modelDescriptor
+   in "    ModelDescriptor\n"
+        <> "      { matrixRowId: "
+        <> show (Text.unpack modelMatrixRowId)
+        <> "\n"
+        <> "      , modelId: "
+        <> show (Text.unpack modelModelId)
+        <> "\n"
+        <> "      , displayName: "
+        <> show (Text.unpack modelDisplayName)
+        <> "\n"
+        <> "      , family: "
+        <> show (Text.unpack modelFamily)
+        <> "\n"
+        <> "      , description: "
+        <> show (Text.unpack modelDescription)
+        <> "\n"
+        <> "      , artifactType: "
+        <> show (Text.unpack modelArtifactType)
+        <> "\n"
+        <> "      , referenceModel: "
+        <> show (Text.unpack modelReferenceModel)
+        <> "\n"
+        <> "      , downloadUrl: "
+        <> show (Text.unpack modelDownloadUrl)
+        <> "\n"
+        <> "      , selectedEngine: "
+        <> show (Text.unpack modelSelectedEngine)
+        <> "\n"
+        <> "      , runtimeMode: "
+        <> show (Text.unpack modelRuntimeMode)
+        <> "\n"
+        <> "      , runtimeLane: "
+        <> show (Text.unpack modelRuntimeLane)
+        <> "\n"
+        <> "      , requiresGpu: "
+        <> (if modelRequiresGpu then "true" else "false")
+        <> "\n"
+        <> "      , notes: "
+        <> show (Text.unpack modelNotes)
+        <> "\n"
+        <> "      , requestShape:\n"
+        <> "          ["
+        <> intercalate ", " (map renderRequestField modelRequestShape)
+        <> "]\n"
+        <> "      }"
+
+renderRequestField :: RequestField -> String
+renderRequestField requestField =
+  "RequestField { name: "
+    <> show (Text.unpack (name requestField))
+    <> ", label: "
+    <> show (Text.unpack (label requestField))
+    <> ", fieldType: "
+    <> show (Text.unpack (fieldType requestField))
+    <> " }"

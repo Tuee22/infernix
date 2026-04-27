@@ -52,7 +52,8 @@ Service placement is a separate concept from runtime mode.
   routed `/api` surface through the Apple host bridge while the browser stays on the shared edge URL
 - the same production daemon runs in every placement and consumes the same generated
   `request_topics`, `result_topic`, and `engines` fields from the active `.dhall`
-- the current daemon implements the topic contract as a filesystem-backed simulation under
+- when Pulsar endpoint env vars are present, the daemon uses the real Pulsar WebSocket or admin
+  transport for those topic fields; otherwise it falls back to the filesystem simulation under
   `./.data/runtime/pulsar/`
 - host-native and cluster-resident placements both launch the same process-isolated engine-worker
   contract and honor the same adapter-specific command overrides

@@ -22,8 +22,9 @@
 - repo-owned `.proto` schemas define the contract for durable manifests and topic payloads;
   Haskell consumes them through `proto-lens`-generated bindings, and per-substrate Python adapters
   consume them through the matching auto-generated Python protobuf modules in `tools/generated_proto/`
-- the production daemon (`infernix service`) keeps the topic-shaped request or result contract but
-  currently implements it as a filesystem-backed simulation under `./.data/runtime/pulsar/`
+- the production daemon (`infernix service`) keeps the topic-shaped request or result contract and
+  uses real Pulsar WebSocket or admin endpoints when the Pulsar environment variables are present;
+  without them it falls back to the filesystem simulation under `./.data/runtime/pulsar/`
 - engine workers are Haskell processes; for Python-native engines, the worker forks the named
   adapter entrypoint and exchanges typed protobuf worker messages over stdio. The current adapters
   keep the process boundary and quality gate in place but still return stub output rather than

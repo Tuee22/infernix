@@ -1,5 +1,15 @@
-FROM nvidia/cuda:13.2.1-cudnn-runtime-ubuntu24.04
+ARG GO_IMAGE=golang:1.24
+ARG BASE_IMAGE=ubuntu:24.04
+FROM ${GO_IMAGE} AS nvkind-builder
 
+ARG NVKIND_GO_INSTALL_TARGET=github.com/NVIDIA/nvkind/cmd/nvkind@8bce71ec58cf12b4003758eb4e49adac53cc40f2
+
+RUN GOBIN=/go/bin go install ${NVKIND_GO_INSTALL_TARGET}
+
+FROM ${BASE_IMAGE}
+
+ARG BASE_IMAGE
+ARG RUNTIME_MODE=linux-cpu
 ARG GHC_VERSION=9.14.1
 ARG CABAL_VERSION=3.16.1.0
 ARG KIND_VERSION=v0.29.0
@@ -12,10 +22,14 @@ ENV DEBIAN_FRONTEND=noninteractive \
     BOOTSTRAP_HASKELL_INSTALL_NO_STACK=1 \
     POETRY_VIRTUALENVS_IN_PROJECT=true \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    GHC_VERSION=${GHC_VERSION} \
+    CABAL_VERSION=${CABAL_VERSION} \
     INFERNIX_BUILD_ROOT=/opt/build/infernix \
     INFERNIX_CABAL_BUILDDIR=/opt/build/infernix/cabal \
-    INFERNIX_RUNTIME_MODE=linux-cuda \
-    PATH=/opt/build/infernix:/workspace/.build:/root/.local/bin:/root/.ghcup/bin:/root/.cabal/bin:${PATH}
+    INFERNIX_RUNTIME_MODE=${RUNTIME_MODE} \
+    PATH=/root/.local/bin:/root/.ghcup/bin:/root/.cabal/bin:${PATH}
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -24,6 +38,7 @@ RUN apt-get update \
         curl \
         docker.io \
         git \
+        gnupg \
         libffi-dev \
         libgmp-dev \
         libncurses-dev \
@@ -35,10 +50,15 @@ RUN apt-get update \
         python3-dev \
         python3-pip \
         python3-venv \
-        nodejs \
-        npm \
         xz-utils \
         zlib1g-dev \
+    && mkdir -p /etc/apt/keyrings \
+    && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+      | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \
+    && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main" \
+      > /etc/apt/sources.list.d/nodesource.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends nodejs \
     && ln -sf /usr/bin/python3 /usr/local/bin/python \
     && rm -rf /var/lib/apt/lists/*
 
@@ -48,7 +68,9 @@ RUN curl https://get-ghcup.haskell.org -sSf | sh \
     && ghcup install ghc ${GHC_VERSION} \
     && ghcup set ghc ${GHC_VERSION} \
     && ghcup install cabal ${CABAL_VERSION} \
-    && ghcup set cabal ${CABAL_VERSION}
+    && ghcup set cabal ${CABAL_VERSION} \
+    && mkdir -p /opt/ghc \
+    && ln -sfn /root/.ghcup/ghc/${GHC_VERSION} /opt/ghc/${GHC_VERSION}
 
 RUN curl -fsSL -o /usr/local/bin/kind https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64 \
     && chmod +x /usr/local/bin/kind
@@ -61,6 +83,8 @@ RUN curl -fsSL -o /tmp/helm.tar.gz https://get.helm.sh/helm-${HELM_VERSION}-linu
     && install /tmp/linux-amd64/helm /usr/local/bin/helm \
     && rm -rf /tmp/helm.tar.gz /tmp/linux-amd64
 
+COPY --from=nvkind-builder /go/bin/nvkind /usr/local/bin/nvkind
+
 WORKDIR /workspace
 
 COPY . /workspace
@@ -68,9 +92,9 @@ COPY . /workspace
 RUN mkdir -p /opt/build/infernix /workspace/tools/generated_proto \
     && cabal update \
     && npm --prefix web ci \
-    && npx --prefix web playwright install --with-deps chromium firefox webkit \
-    && poetry install --directory python/linux-cuda \
-    && poetry --directory python/linux-cuda run python -m grpc_tools.protoc \
+    && npm --prefix web exec -- playwright install --with-deps chromium firefox webkit \
+    && poetry install --directory python \
+    && poetry --directory python run python -m grpc_tools.protoc \
          -I /workspace/proto \
          --python_out /workspace/tools/generated_proto \
          /workspace/proto/infernix/api/inference_service.proto \
@@ -83,6 +107,6 @@ RUN mkdir -p /opt/build/infernix /workspace/tools/generated_proto \
          exe:infernix \
          exe:infernix-demo \
     && npm --prefix web run build \
-    && poetry --directory python/linux-cuda run check-code
+    && poetry --directory python run check-code
 
 CMD ["infernix", "--help"]

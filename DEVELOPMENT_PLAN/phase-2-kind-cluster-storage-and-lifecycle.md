@@ -12,9 +12,10 @@
 
 Sprints 2.1, 2.2, 2.4, 2.5, 2.6, and 2.7 stay `Done`: the storage doctrine, Kind bootstrap,
 manual PV reconciliation, Harbor-first image flow, lifecycle surface, generated demo-config
-publication, and GPU-enabled Kind lane are all present. Sprint 2.3 remains `Active` because the
-chart still carries generated payload duplication that belongs in render-time inputs, not stable
-defaults. Sprint 2.8 is `Planned` to remove the host-visible `nvkind` workaround.
+publication, and GPU-enabled Kind lane are all present. Sprint 2.3 is now `Done`: the route
+registry plus generated values overlays own the demo-config and publication payload inputs instead
+of committed live copies. Sprint 2.8 is `Active` while the in-image `nvkind` path still needs
+refreshed supported-host validation.
 
 ## Storage Doctrine
 
@@ -38,14 +39,12 @@ These rules close in this phase and remain mandatory afterward:
 
 ## Current Repo Assessment
 
-The storage doctrine, Helm rollout, generated demo-config publication, and Harbor-first image flow
-are implemented on the current Kind path. The remaining lifecycle cleanup is now concentrated in
-two areas:
+The storage doctrine, Helm rollout, generated demo-config publication, Harbor-first image flow,
+route de-duplication, and generated values overlay path are implemented on the current Kind path.
+The remaining lifecycle work is now limited to the `linux-cuda` supported-host closure:
 
-- `chart/values.yaml` still embeds serialized demo-config and publication payload copies that
-  should instead be rendered as reconcile-time or lint-time inputs
-- the `linux-cuda` path still depends on the current host-visible `nvkind` handoff workaround
-  rather than an in-image multi-stage build
+- the `linux-cuda` path now carries the in-image `nvkind` toolchain, but it still needs refreshed
+  supported-host validation
 
 ## Sprint 2.1: Kind Bootstrap and StorageClass Reset [Done]
 
@@ -107,9 +106,9 @@ None.
 
 ---
 
-## Sprint 2.3: Helm Umbrella Chart, Stable Defaults, and Generated Input Material [Active]
+## Sprint 2.3: Helm Umbrella Chart, Stable Defaults, and Generated Input Material [Done]
 
-**Status**: Active
+**Status**: Done
 **Implementation**: `chart/Chart.yaml`, `chart/values.yaml`, `chart/templates/`, `src/Infernix/Cluster.hs`, `src/Infernix/Lint/Chart.hs`
 **Docs to update**: `documents/architecture/overview.md`, `documents/engineering/k8s_native_dev_policy.md`, `documents/engineering/edge_routing.md`
 
@@ -138,9 +137,7 @@ Put repo-owned and third-party workloads behind one Helm deployment model while 
 
 ### Remaining Work
 
-- the chart still carries committed generated demo-config and publication payload copies in
-  `chart/values.yaml`
-- the final route-template de-duplication is owned by Phase 3 Sprint 3.8
+None.
 
 ---
 
@@ -263,9 +260,9 @@ None.
 
 ---
 
-## Sprint 2.8: `linux-cuda` Toolchain Closure Without Host-Visible `nvkind` Handoff [Planned]
+## Sprint 2.8: `linux-cuda` Toolchain Closure Without Host-Visible `nvkind` Handoff [Active]
 
-**Status**: Planned
+**Status**: Active
 **Implementation**: `docker/linux-substrate.Dockerfile`, `src/Infernix/Cluster.hs`, `kind/cluster-linux-cuda.yaml`, `documents/engineering/k8s_native_dev_policy.md`
 **Docs to update**: `documents/engineering/k8s_native_dev_policy.md`, `documents/engineering/docker_policy.md`, `documents/operations/cluster_bootstrap_runbook.md`
 
@@ -290,7 +287,8 @@ the final Linux CUDA image.
 
 ### Remaining Work
 
-- implementation has not started
+- the in-image `nvkind` build is landed, but refreshed `linux-cuda` image and cluster validation
+  on a supported NVIDIA host is still pending
 
 ## Documentation Requirements
 

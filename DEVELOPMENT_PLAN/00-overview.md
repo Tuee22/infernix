@@ -8,21 +8,22 @@
 
 ## Current Repo Assessment
 
-The supported architecture now converges on a tighter DRY model than the current worktree fully
-implements. The table below separates the intended contract from the still-open cleanup gap.
+The supported architecture now largely matches the tightened DRY model. The table below separates
+the supported contract from the remaining implementation gap.
 
 | Area | Supported contract | Current repo gap |
 |------|--------------------|------------------|
-| Root-document governance | `README.md` is orientation only; `documents/` owns canonical topic docs; `AGENTS.md` and `CLAUDE.md` are thin governed entry documents | root workflow and topology details are still repeated across multiple root docs |
-| CLI ownership | one Haskell command registry drives parse, dispatch, help text, and canonical CLI reference | the command surface and docs are still maintained in more than one place |
-| Control-plane execution | Apple host-native control plane plus Linux outer-container control plane | the Linux launcher still bind-mounts the full repo instead of running as an image snapshot |
+| Root-document governance | `README.md` is orientation only; `documents/` owns canonical topic docs; `AGENTS.md` and `CLAUDE.md` are thin governed entry documents | no material governance gap remains in the worktree |
+| CLI ownership | one Haskell command registry drives parse, dispatch, help text, and canonical CLI reference | no material CLI-ownership gap remains in the worktree |
+| Control-plane execution | Apple host-native control plane plus Linux outer-container control plane | the `linux-cpu` outer-container lane is validated on `cluster up`, routed Pulsar, and routed E2E; the final outer-container `test integration` rerun is still pending after the latest harness fixes |
 | Runtime honesty | one host-native Apple inference lane plus two Linux substrate images | parts of the current docs and implementation still imply stronger Apple or Linux symmetry than the platform really has |
-| Linux image layout | one shared `docker/linux-substrate.Dockerfile` builds `infernix-linux-cpu` and `infernix-linux-cuda` | the worktree still carries `docker/linux-base.Dockerfile`, `docker/linux-cpu.Dockerfile`, and `docker/linux-cuda.Dockerfile` |
-| Python adapter boundary | one `python/pyproject.toml` and one `python/adapters/` tree | the worktree still keeps one Poetry project per substrate |
-| Browser-contract ownership | handwritten Haskell contract ADTs live outside any `Generated/` directory; only emitted PureScript stays under `web/src/Generated/` | the handwritten source still lives at `src/Generated/Contracts.hs` |
-| Route or publication contract | one Haskell route registry drives rendered HTTPRoutes, publication state, chart lint, and docs | route or publication data is still duplicated across Haskell, chart templates, chart values, and lint |
-| Generated deployment inputs | `chart/values.yaml` holds stable defaults only; generated demo-config and publication payloads are ephemeral inputs | `chart/values.yaml` still embeds serialized demo-config and publication blobs |
-| Validation doctrine | one canonical testing doctrine plus one canonical Haskell-style guide describe enforced rules, review guidance, and validation entrypoints | testing, portability, boundary, and enforcement guidance is still spread across multiple docs with partial overlap |
+| Linux image layout | one shared `docker/linux-substrate.Dockerfile` builds `infernix-linux-cpu` and `infernix-linux-cuda` | the shared image is validated on `linux-cpu`; supported NVIDIA-host validation for `linux-cuda` remains |
+| Pulsar production transport | `src/Infernix/Runtime/Pulsar.hs` uses Pulsar WebSocket and admin surfaces when configured, with filesystem simulation only as the fallback path | no material transport gap remains beyond the stub-engine adapters tracked below |
+| Python adapter boundary | one `python/pyproject.toml` and one `python/adapters/` tree | the shared project is landed; the remaining gap is that adapters are still stub responders |
+| Browser-contract ownership | handwritten Haskell contract ADTs live outside any `Generated/` directory; only emitted PureScript stays under `web/src/Generated/` | no material browser-contract ownership gap remains in the worktree |
+| Route or publication contract | one Haskell route registry drives rendered HTTPRoutes, publication state, chart lint, and docs | no material route or publication gap remains in the worktree |
+| Generated deployment inputs | `chart/values.yaml` holds stable defaults only; generated demo-config and publication payloads are ephemeral inputs | no material generated-input gap remains in the worktree |
+| Validation doctrine | one canonical testing doctrine plus one canonical Haskell-style guide describe enforced rules, review guidance, and validation entrypoints | doctrine is landed; the remaining gaps are the final outer-container `linux-cpu` integration rerun, exhaustive per-entry integration coverage beyond the routed Playwright suite, explicit HA-failure automation for Harbor, MinIO, Pulsar, and PostgreSQL, and supported NVIDIA-host closure for `linux-cuda` |
 
 ## Supported Outcome
 
@@ -286,8 +287,11 @@ The plan keeps control-plane execution context separate from runtime mode.
 
 ### 8b. Integration and E2E Cover The Entire Active-Mode Catalog
 
-- `infernix test integration` exercises every generated catalog entry for the active mode.
+- `infernix test integration` currently validates the active-mode generated catalog contract,
+  routed surfaces, and a representative inference request for the active mode.
 - `infernix test e2e` exercises every demo-visible generated catalog entry for the active mode.
+- exhaustive per-entry integration coverage remains tracked in Phase 6 Sprint 6.6 until the
+  integration suite stops hardcoding a representative model request
 
 ### 9. Haskell Types Own Frontend Contracts
 
@@ -345,6 +349,10 @@ The supported operator surface is:
 - `infernix cache evict`
 - `infernix cache rebuild`
 - `infernix kubectl ...`
+- `infernix lint files`
+- `infernix lint docs`
+- `infernix lint proto`
+- `infernix lint chart`
 - `infernix test lint`
 - `infernix test unit`
 - `infernix test integration`

@@ -7,6 +7,7 @@ where
 
 import Data.Maybe (fromMaybe)
 import Data.Text qualified as Text
+import GHC.IO.Encoding (setLocaleEncoding, utf8)
 import Infernix.CLI (extractRuntimeMode)
 import Infernix.Config (discoverPaths, ensureRepoLayout, generatedDemoConfigPath, publicationStatePath, resolveRuntimeMode)
 import Infernix.Demo.Api (DemoApiOptions (..), runDemoApiServer)
@@ -16,6 +17,7 @@ import System.Exit (exitFailure)
 
 main :: IO ()
 main = do
+  setLocaleEncoding utf8
   args <- getArgs
   case extractRuntimeMode args of
     Left message -> do

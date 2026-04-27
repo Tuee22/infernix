@@ -1,0 +1,22 @@
+{{- if .Values.repoGateway.enabled }}
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: infernix-edge
+  namespace: platform
+spec:
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyService:
+        type: NodePort
+        externalTrafficPolicy: Cluster
+        patch:
+          type: StrategicMerge
+          value:
+            spec:
+              ports:
+                - name: http-80
+                  port: {{ .Values.gateway.listenerPort }}
+                  nodePort: {{ .Values.gateway.publishedNodePort }}
+{{- end }}

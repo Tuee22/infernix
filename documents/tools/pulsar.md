@@ -14,13 +14,19 @@
 - repo-owned `.proto` schemas define the payload contract for request and result topics; the same
   schemas feed both `proto-lens`-generated Haskell bindings and auto-generated Python protobuf
   modules consumed by the active substrate adapter package
-- the current production daemon implements the topic contract as a filesystem-backed simulation
+- when `INFERNIX_PULSAR_WS_BASE_URL` and `INFERNIX_PULSAR_ADMIN_URL` are set, the production
+  daemon uses Pulsar's WebSocket producer or consumer endpoints plus the admin schema API for the
+  configured topics
+- when those endpoints are absent, the daemon falls back to the repo-local filesystem simulation
   rooted at `./.data/runtime/pulsar/`: request topics and the result topic are directories, and
-  schema registration is represented by marker files under `./.data/runtime/pulsar/schemas/`
-- result payloads are protobuf messages written to the configured `result_topic` directory after
-  the worker finishes execution
+  schema registration is mirrored as marker files under `./.data/runtime/pulsar/schemas/`
+- result payloads remain protobuf messages in both modes: over Pulsar topics on the real path, and
+  as `.pb` files under the simulated `result_topic` directory on the fallback path
 - because Pulsar is first enabled in the final Harbor-backed Helm phase, `cluster up` forces the
   upstream bookkeeper and cluster-initialization jobs there on the real Kind path
+- the final chart keeps `pulsar.proxy.configData.webSocketServiceEnabled: "true"` so the internal
+  daemon transport and the routed `/pulsar/ws` surface both terminate on Pulsar's real WebSocket
+  endpoints
 - the admin surface is exposed through `/pulsar/admin`
 - the WebSocket surface is exposed through `/pulsar/ws`
 

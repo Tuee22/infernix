@@ -22,6 +22,9 @@
 - confirm that `infernix kubectl get pods -n platform` shows the Envoy Gateway data plane,
   `infernix-service`, the Harbor application-plane workloads, the MinIO statefulset, the Pulsar
   statefulsets, and the PostgreSQL operator-managed members
+- confirm that `infernix kubectl get gatewayclass infernix-gateway` reports `Accepted=True`,
+  `infernix kubectl -n platform get gateway infernix-edge` reports `Accepted=True` and
+  `Programmed=True`, and `infernix kubectl -n platform get envoyproxy infernix-edge` is present
 - when the active `.dhall` enables the demo UI (`demo_ui = True`), also confirm that
   `infernix-demo` is present; when it does not, confirm `infernix-demo` is absent
 - confirm that `infernix kubectl get storageclass` shows only `infernix-manual`
@@ -30,7 +33,11 @@
   publication contract matches `cluster status`
 - inspect the real ConfigMap with `infernix kubectl get configmap infernix-demo-config -n platform -o yaml`
 - confirm `curl http://127.0.0.1:<port>/harbor`, `curl http://127.0.0.1:<port>/minio/s3`, and
-  `curl http://127.0.0.1:<port>/pulsar/ws` all resolve through the shared routed port
+  `curl http://127.0.0.1:<port>/pulsar/admin/admin/v2/clusters` all resolve through the shared
+  routed port
+- confirm `curl http://127.0.0.1:<port>/pulsar/ws/v2/producer/public/default/demo` reaches the
+  Pulsar proxy WebSocket servlet and returns `405 Method Not Allowed` instead of a routed `404`,
+  proving the `/pulsar/ws -> /ws` rewrite is active
 - on the simulated substrate, those same routes return compatibility payloads proving the published
   route and rewrite behavior rather than live Harbor, MinIO, or Pulsar content
 

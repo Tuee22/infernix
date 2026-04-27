@@ -1,1 +1,0 @@
-"""Linux CPU adapter package."""

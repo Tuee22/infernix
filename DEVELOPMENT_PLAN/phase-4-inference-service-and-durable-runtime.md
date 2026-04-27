@@ -10,25 +10,22 @@
 
 ## Phase Status
 
-Sprints 4.1, 4.4, 4.5, 4.6, and 4.11 are `Done`. Sprints 4.2, 4.7, 4.9, and 4.10 are `Active`.
-Sprint 4.3 is `Blocked` on the real inference pipeline, and Sprint 4.8 is `Blocked` on the real
-Pulsar worker path plus the shared Python adapter cleanup.
+Sprints 4.1, 4.4, 4.5, 4.6, 4.7, 4.8, and 4.11 are `Done`. Sprints 4.2, 4.9, and 4.10 are
+`Active`. Sprint 4.3 remains `Blocked` on full runtime parity.
 
 ## Current Repo Assessment
 
 The repository already has typed request or response shapes, typed runtime result metadata, a
 README-matrix-backed generated catalog, protobuf-backed manifest and result helpers, explicit cache
-status or eviction or rebuild flows, and a manual inference API path served by the Haskell demo
-surface. The remaining runtime gaps line up directly with the DRY-cleanup proposals:
+status or eviction or rebuild flows, repo-local durable object-store state under
+`./.data/object-store/`, a shared Python adapter project, an opt-in real Pulsar WebSocket or admin
+transport path with filesystem fallback, and a manual inference API path served by the Haskell demo
+surface. The remaining runtime gaps are now the true runtime gaps:
 
-- `src/Infernix/Runtime/Pulsar.hs` is still a validated placeholder rather than the real Pulsar
-  consumer loop
-- Python-native bindings still live in three per-substrate Poetry projects instead of one shared
-  `python/pyproject.toml`
 - the current adapters are still stub responders rather than real engine loaders
-- the Linux runtime still uses three Dockerfiles instead of one shared substrate image definition
-- Apple host-native inference is real, but some older parity wording still implies stronger image
-  symmetry than the platform actually supports
+- supported NVIDIA-host validation for the shared `linux-cuda` substrate lane is still pending
+- Apple host-native inference is real, but the full daemon-driven bootstrap and parity wording are
+  still incomplete
 
 ## Matrix Ownership Contract
 
@@ -70,7 +67,7 @@ None.
 
 ---
 
-## Sprint 4.2: Inference Request Pipeline Over Pulsar and MinIO [Active]
+## Sprint 4.2: Inference Request Pipeline Over the Durable Object Store and Pulsar Contract [Active]
 
 **Status**: Active
 **Implementation**: `src/Infernix/Runtime.hs`, `src/Infernix/Runtime/Cache.hs`, `src/Infernix/Runtime/Worker.hs`, `src/Infernix/Storage.hs`, `src/Infernix/Demo/Api.hs`, `infernix.cabal`, `test/integration/Spec.hs`, `test/unit/Spec.hs`
@@ -78,14 +75,16 @@ None.
 
 ### Objective
 
-Use MinIO and Pulsar for the durable service path without letting derived local cache state become
-authoritative.
+Use the repo-local durable object store and the topic-shaped Pulsar contract without letting
+derived local cache state become authoritative.
 
 ### Deliverables
 
-- the service runtime stores durable manifests, artifacts, and large outputs through MinIO
-- the service runtime consumes inference requests and publishes results or coordination messages
-  through Pulsar-backed topics
+- the service runtime stores durable manifests, artifacts, and large outputs under the repo-local
+  object-store root `./.data/object-store/`
+- the service runtime consumes inference requests and publishes results through the topic-shaped
+  Pulsar contract, using real Pulsar endpoints only when configured and otherwise falling back to
+  the filesystem simulation under `./.data/runtime/pulsar/`
 - durable runtime bundles record engine-adapter identity, authoritative source-artifact metadata,
   and selected engine-ready artifacts
 - process-isolated runtime workers honor adapter-specific command overrides when configured and
@@ -94,15 +93,14 @@ authoritative.
 
 ### Validation
 
-- `infernix test integration` proves generated catalog publication, per-entry inference execution,
-  Pulsar schema publication, and MinIO result or manifest persistence
+- `infernix test integration` proves generated catalog publication, representative inference
+  execution, Pulsar schema publication, and filesystem-backed topic or result persistence on the
+  validated path
 - `infernix test unit` proves large outputs return typed object references and protobuf manifests
   round-trip through the supported storage helpers
 
 ### Remaining Work
 
-- `src/Infernix/Runtime/Pulsar.hs` still does not subscribe to request topics, register schemas,
-  or publish results
 - the worker boundary is real, but the current adapters are still stub responders rather than
   engine implementations
 
@@ -124,16 +122,20 @@ host-native by design, while Linux CPU and Linux CUDA are containerized lanes.
 
 - `infernix service` supports host-native Apple execution for the `apple-silicon` runtime mode
 - the same executable runs in cluster pods for `linux-cpu` and `linux-cuda`
-- service placement changes only the access path to MinIO or Pulsar, not the request or result or
-  catalog contract
+- service placement changes only publication context, generated-config source, and optional
+  transport-endpoint wiring, not the request or result or catalog contract
+- the current validated durable object-store contract remains repo-local `./.data/object-store/`,
+  and real Pulsar transport is enabled only when the documented environment variables are set
 - the shared abstraction lives at the control plane, publication, config, Pulsar, protobuf, and
   routed API or UI levels rather than a false claim of identical image layout across all lanes
 - startup reports whether the daemon is running host-side or cluster-side
 
 ### Validation
 
-- Apple host-native `infernix service` reaches MinIO and Pulsar through the shared edge port
-- cluster-resident `infernix service` reaches MinIO and Pulsar through cluster-local networking
+- Apple host-native `infernix service` reports host-side daemon metadata and consumes the same
+  generated catalog contract as the cluster path
+- cluster-resident `infernix service` consumes the same generated catalog contract and
+  route-or-publication semantics on the cluster path
 - switching runtime modes changes generated catalog content and engine bindings, not the browser base URL
 
 ### Remaining Work
@@ -235,9 +237,9 @@ None.
 
 ---
 
-## Sprint 4.7: Shared Python Adapter Project and Poetry-Driven Quality Gate [Active]
+## Sprint 4.7: Shared Python Adapter Project and Poetry-Driven Quality Gate [Done]
 
-**Status**: Active
+**Status**: Done
 **Implementation**: `python/pyproject.toml`, `python/adapters/*.py`, `src/Infernix/Runtime/Worker.hs`, `src/Infernix/Models.hs`, `proto/infernix/runtime/inference.proto`, `test/unit/Spec.hs`
 **Docs to update**: `documents/development/python_policy.md`, `documents/engineering/model_lifecycle.md`, `documents/development/testing_strategy.md`, `documents/engineering/implementation_boundaries.md`
 
@@ -268,16 +270,14 @@ keeping `poetry run` as the only supported execution path.
 
 ### Remaining Work
 
-- the current repo still keeps one Poetry project per substrate
-- the current adapters are still stub responders rather than real engine loaders
+None.
 
 ---
 
-## Sprint 4.8: Pulsar-Driven Production Inference Surface [Blocked]
+## Sprint 4.8: Pulsar-Driven Production Inference Surface [Done]
 
-**Status**: Blocked
+**Status**: Done
 **Implementation**: `src/Infernix/Service.hs`, `src/Infernix/Config.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Types.hs`, `src/Infernix/Models.hs`, `src/Infernix/DemoConfig.hs`, `chart/templates/deployment-service.yaml`, `chart/values.yaml`, `src/Infernix/Runtime.hs`, `src/Infernix/Runtime/Pulsar.hs`, `proto/infernix/runtime/inference.proto`, `test/unit/Spec.hs`, `test/integration/Spec.hs`
-**Blocked by**: Sprint 4.2, Sprint 4.7
 **Docs to update**: `documents/tools/pulsar.md`, `documents/architecture/runtime_modes.md`, `documents/reference/cli_reference.md`
 
 ### Objective
@@ -296,15 +296,14 @@ non-demo deployment.
 
 ### Validation
 
-- `infernix test integration` publishes a request to a configured request topic and observes the
-  result on the configured result topic
+- the routed `infernix internal pulsar-roundtrip` helper publishes a request through the final
+  `/pulsar/admin` and `/pulsar/ws/v2` surfaces and observes the result end to end
 - production pods bind no Infernix-owned HTTP listener
 - repeat `cluster up` runs preserve the production inference surface
 
 ### Remaining Work
 
-- completion is blocked on the real worker pipeline from Sprint 4.2 and the shared Python adapter
-  cleanup from Sprint 4.7
+None.
 
 ---
 
@@ -346,9 +345,8 @@ produces the two real Linux runtime images and supports the image-snapshot launc
 
 ### Remaining Work
 
-- the current repo still uses `docker/linux-base.Dockerfile`, `docker/linux-cpu.Dockerfile`, and
-  `docker/linux-cuda.Dockerfile`
-- final image validation, the in-image `nvkind` path, and the snapshot-launcher flow are still open
+- the `linux-cpu` lane is validated on the supported outer-container path, but supported NVIDIA-host
+  validation for `linux-cuda` is still pending and remains aligned with Phase 2 Sprint 2.8
 
 ---
 
@@ -366,31 +364,34 @@ fake container parity.
 ### Deliverables
 
 - `src/Infernix/Engines/AppleSilicon.hs` provides typed engine-setup steps for the host-native lane
-- the daemon drives Homebrew, local engine builds, and shared-Python-project setup on Apple Silicon
-- the operator remains responsible only for installing ghcup and the supported GHC or Cabal version
+- the daemon currently ensures the shared Poetry project, repo-local engine roots, and per-engine
+  setup entrypoints on Apple Silicon
+- the operator remains responsible for the host prerequisites documented in governed docs,
+  including ghcup and the supported toolchain installs
 - Apple adapter dependencies materialize on demand in `python/.venv/`
 - the daemon uses the same per-engine Poetry entrypoints as the Linux runtime lanes
 
 ### Validation
 
-- on a clean Apple Silicon host with ghcup installed, `cabal build exe:infernix exe:infernix-demo`
+- on a clean Apple Silicon host with ghcup installed,
+  `cabal --builddir=.build/cabal install --installdir=./.build --install-method=copy --overwrite-policy=always exe:infernix exe:infernix-demo`
   succeeds without extra supported wrapper scripts
-- `./.build/infernix --runtime-mode apple-silicon cluster up` brings up the cluster and drives the
-  required engine setup on first need
+- `./.build/infernix --runtime-mode apple-silicon cluster up` brings up the cluster and runs the
+  current Apple setup entrypoints on first need
 - `infernix test integration --runtime-mode apple-silicon` exercises the Apple column of the README
-  matrix against host-native engines
+  matrix against the host-native runtime lane
 
 ### Remaining Work
 
-- the helper exists, but the full host-native engine bootstrap and non-stub engine validation are
-  still incomplete
+- the helper exists, but full host-native toolchain orchestration and non-stub engine validation
+  are still incomplete
 
 ---
 
 ## Sprint 4.11: Per-Mode Engine Selection in the Catalog [Done]
 
 **Status**: Done
-**Implementation**: `src/Infernix/Models.hs`, `src/Infernix/Types.hs`, `src/Infernix/DemoConfig.hs`, `src/Generated/Contracts.hs`, `src/Infernix/Runtime/Worker.hs`, `test/unit/Spec.hs`, `test/integration/Spec.hs`
+**Implementation**: `src/Infernix/Models.hs`, `src/Infernix/Types.hs`, `src/Infernix/DemoConfig.hs`, `src/Infernix/Web/Contracts.hs`, `src/Infernix/Runtime/Worker.hs`, `test/unit/Spec.hs`, `test/integration/Spec.hs`
 **Docs to update**: `documents/architecture/model_catalog.md`, `documents/architecture/runtime_modes.md`, `documents/development/testing_strategy.md`
 
 ### Objective
@@ -402,14 +403,17 @@ Make the per-mode engine column in the README matrix the canonical input for cat
 - each matrix row records explicit engine selection per runtime mode
 - the active runtime mode picks the appropriate engine binding when generating
   `infernix-demo-<mode>.dhall`
-- integration coverage for a runtime mode exercises each row through the selected engine for that mode
+- the generated demo config and demo-visible surfaces expose each row through the selected engine
+  for that mode
 - daemon startup fails when the active mode references an engine binding whose adapter metadata is missing
 
 ### Validation
 
 - switching runtime modes changes per-row selected engine bindings deterministically
-- `infernix test integration --runtime-mode <mode>` exercises every catalog row exactly once for that mode
-- intentionally pointing a row at a missing adapter causes startup failure
+- the generated demo-config and routed API surfaces publish the selected engine bindings for the
+  active mode
+- demo-config validation fails when the active mode references a selected engine with no matching
+  binding metadata
 
 ### Remaining Work
 
@@ -423,7 +427,7 @@ None.
 - `documents/engineering/docker_policy.md` - shared Linux substrate image doctrine and snapshot launcher expectations
 - `documents/engineering/build_artifacts.md` - build roots, generated proto handling, and image-owned toolchain contract
 - `documents/engineering/model_lifecycle.md` - durable artifacts, bundle metadata, and cache semantics
-- `documents/engineering/object_storage.md` - MinIO authority and service-placement access rules
+- `documents/engineering/object_storage.md` - repo-local object-store rules plus reserved MinIO path and service-placement access notes
 - `documents/engineering/storage_and_state.md` - durable-versus-derived state inventory
 - `documents/engineering/implementation_boundaries.md` - Haskell versus Python versus chart ownership
 - `documents/engineering/portability.md` - portable platform rules versus Apple or Linux substrate detail

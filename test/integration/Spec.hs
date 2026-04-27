@@ -4,6 +4,7 @@ module Main (main) where
 
 import Control.Concurrent (threadDelay)
 import Control.Exception (finally, try)
+import Control.Monad (when)
 import Data.Char (isAsciiUpper)
 import Data.List (isInfixOf, isPrefixOf)
 import Data.Text qualified as Text
@@ -17,6 +18,7 @@ import Infernix.Runtime.Pulsar
     schemaMarkerPath,
   )
 import Infernix.Types
+import Infernix.Workflow (platformCommandsAvailable)
 import System.Directory
 import System.Environment (lookupEnv, setEnv, unsetEnv)
 import System.Exit (ExitCode (ExitSuccess))
@@ -37,19 +39,36 @@ main = do
   integrationTestRoot <- testRootPath "integration"
   withTestRoot integrationTestRoot $ do
     paths <- Config.discoverPaths
-    mapM_ (exerciseRuntimeMode paths) [AppleSilicon, LinuxCpu, LinuxCuda]
-    validateDemoUiDisabled paths LinuxCpu
-    validateEdgePortConflictAndRediscovery paths LinuxCpu
+    runtimeModes <- integrationRuntimeModes
+    mapM_ (exerciseRuntimeMode paths) runtimeModes
+    when (LinuxCpu `elem` runtimeModes) $ do
+      validateDemoUiDisabled paths LinuxCpu
+      if Config.controlPlaneContext paths == "outer-container"
+        then pure ()
+        else validateEdgePortConflictAndRediscovery paths LinuxCpu
     putStrLn "integration tests passed"
+
+integrationRuntimeModes :: IO [RuntimeMode]
+integrationRuntimeModes = do
+  maybeRuntimeModeValue <- lookupEnv "INFERNIX_RUNTIME_MODE"
+  case maybeRuntimeModeValue of
+    Nothing -> pure [AppleSilicon, LinuxCpu, LinuxCuda]
+    Just rawValue ->
+      case parseRuntimeMode (Text.pack rawValue) of
+        Just runtimeMode -> pure [runtimeMode]
+        Nothing -> fail ("unsupported INFERNIX_RUNTIME_MODE for integration tests: " <> rawValue)
 
 exerciseRuntimeMode :: Paths -> RuntimeMode -> IO ()
 exerciseRuntimeMode paths runtimeMode = do
+  commandsAvailable <- platformCommandsAvailable
   clusterUp (Just runtimeMode)
   maybeState <- loadClusterState paths
   state <- maybe (fail "cluster state was not available after cluster up") pure maybeState
   assert (clusterPresent state) ("cluster up records cluster presence for " <> showRuntimeMode runtimeMode)
-  assert (clusterSimulation state) ("cluster up uses the simulated substrate for " <> showRuntimeMode runtimeMode)
-  let baseUrl = "http://127.0.0.1:" <> show (edgePort state)
+  assert
+    (clusterSimulation state == not commandsAvailable)
+    ("cluster up reports the expected substrate mode for " <> showRuntimeMode runtimeMode)
+  let baseUrl = routeBaseUrl paths state
   homeResponse <- httpGet (baseUrl <> "/")
   publicationResponse <- httpGet (baseUrl <> "/api/publication")
   demoConfigResponse <- httpGet (baseUrl <> "/api/demo-config")
@@ -76,14 +95,14 @@ exerciseRuntimeMode paths runtimeMode = do
     "demo config reports the active result topic"
   assert ("\"engines\":[" `isInfixOf` compact demoConfigResponse) "demo config reports engine bindings"
   assert ("\"adapterEntrypoint\":\"" `isInfixOf` compact demoConfigResponse) "demo config publishes adapter entrypoints"
-  assert ("\"projectDirectory\":\"python/" `isInfixOf` compact demoConfigResponse) "demo config publishes substrate project directories"
+  assert ("\"projectDirectory\":\"python\"" `isInfixOf` compact demoConfigResponse) "demo config publishes the shared Python project directory"
   assert ("\"modelId\"" `isInfixOf` modelsResponse) "model listing returns JSON models"
   assert ("Harbor" `isInfixOf` harborResponse) "harbor route is published"
   assert ("\"rewrittenPath\":\"/api/v2.0/projects\"" `isInfixOf` compact harborApiResponse) "harbor API routes strip the /harbor prefix"
   assert ("\"rewrittenPath\":\"/browser\"" `isInfixOf` compact minioConsoleResponse) "minio console routes strip the /minio/console prefix"
   assert ("\"rewrittenPath\":\"/models/demo.bin\"" `isInfixOf` compact minioS3Response) "minio S3 routes strip the /minio/s3 prefix"
   assert ("\"rewrittenPath\":\"/clusters\"" `isInfixOf` compact pulsarAdminResponse) "pulsar admin routes strip the /pulsar/admin prefix"
-  assert ("\"rewrittenPath\":\"/v2/producer/public/default/demo\"" `isInfixOf` compact pulsarHttpResponse) "pulsar HTTP routes strip the /pulsar/ws prefix"
+  assert ("\"rewrittenPath\":\"/ws/v2/producer/public/default/demo\"" `isInfixOf` compact pulsarHttpResponse) "pulsar HTTP routes preserve the Pulsar websocket context root"
 
   inferenceResponse <-
     httpPostJson
@@ -118,8 +137,11 @@ exerciseRuntimeMode paths runtimeMode = do
 validateServiceRuntimeLoop :: Paths -> RuntimeMode -> IO ()
 validateServiceRuntimeLoop paths runtimeMode = do
   infernixExecutable <- resolveInfernixExecutable
-  let requestTopic = head (requestTopicsForMode runtimeMode)
-      resultTopic = resultTopicForMode runtimeMode
+  requestTopic <-
+    case requestTopicsForMode runtimeMode of
+      topic : _ -> pure topic
+      [] -> fail ("no request topics configured for " <> showRuntimeMode runtimeMode)
+  let resultTopic = resultTopicForMode runtimeMode
   (_, _, _, processHandle) <-
     createProcess
       (proc infernixExecutable ["--runtime-mode", showRuntimeMode runtimeMode, "service"])
@@ -212,7 +234,7 @@ validateDemoUiDisabled paths runtimeMode =
     assert (clusterPresent state) "cluster up records cluster presence when demo_ui is disabled"
     assert (not (any ((== "/") . path) (routes state))) "route inventory omits the browser root when demo_ui is disabled"
     assert (not (any ((== "/api") . path) (routes state))) "route inventory omits the demo API when demo_ui is disabled"
-    let baseUrl = "http://127.0.0.1:" <> show (edgePort state)
+    let baseUrl = routeBaseUrl paths state
     disabledHomeResult <- try (httpGet (baseUrl <> "/")) :: IO (Either IOError String)
     disabledPublicationResult <- try (httpGet (baseUrl <> "/api/publication")) :: IO (Either IOError String)
     harborResponse <- httpGet (baseUrl <> "/harbor")
@@ -297,6 +319,18 @@ extractJsonStringField fieldName payload =
 
 compact :: String -> String
 compact = filter (`notElem` [' ', '\n', '\r', '\t'])
+
+routeBaseUrl :: Paths -> ClusterState -> String
+routeBaseUrl paths state =
+  let (hostName, portNumber) = routeProbeHostAndPort paths state
+   in "http://" <> hostName <> ":" <> show portNumber
+
+routeProbeHostAndPort :: Paths -> ClusterState -> (String, Int)
+routeProbeHostAndPort paths state
+  | clusterSimulation state = ("127.0.0.1", edgePort state)
+  | Config.controlPlaneContext paths == "outer-container" =
+      (kindControlPlaneNodeName paths (clusterRuntimeMode state), 30090)
+  | otherwise = ("127.0.0.1", edgePort state)
 
 breakOn :: String -> String -> Maybe String
 breakOn needle = go

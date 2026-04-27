@@ -30,9 +30,9 @@ This repository serves two aligned purposes:
 - production deployments accept inference work by Pulsar subscription only; the production
   `infernix service` binds no HTTP listener and the cluster has no `infernix-demo` workload when
   the demo UI is off
-- Python is restricted to `python/<substrate>/adapters/<engine>/` (per-substrate
-  `pyproject.toml`, Poetry-managed; the canonical quality entrypoint is `poetry run check-code`
-  running mypy strict, black check, and ruff strict in sequence)
+- Python is restricted to the shared Poetry project at `python/pyproject.toml` and the shared
+  adapter tree under `python/adapters/`; the canonical quality entrypoint is
+  `poetry run check-code`, which runs mypy strict, black check, and ruff strict in sequence
 - one Kind and Helm workflow for the HA testing and demo ground
 - one mandatory local HA topology: Harbor, MinIO, Pulsar, and operator-managed PostgreSQL on Kind
 - one local Harbor registry as the image source for every non-Harbor pod
@@ -45,15 +45,14 @@ This repository serves two aligned purposes:
 - three runtime targets: Apple Silicon or Metal, Ubuntu 24.04 CPU, and Ubuntu 24.04 NVIDIA CUDA
   containers
 - one validation surface spanning repo-owned Haskell `ormolu`/`cabal format`/`hlint`,
-  `poetry run check-code` (mypy strict, black check, ruff strict) for the active substrate's
-  `python/<substrate>/adapters/`, unit tests, integration tests, `purescript-spec` view and
-  contract tests, and Playwright launched from the per-substrate container (Linux) or the host
-  (Apple Silicon)
-- one custom container per Linux substrate (`linux-cpu`, `linux-cuda`) on `ubuntu:24.04` (or
-  `nvidia/cuda:<…>-cudnn-runtime-ubuntu24.04` for CUDA), with ghcup-pinned GHC 9.14.1 + Cabal
-  3.16.1.0, Python 3 + Poetry, gcc 15.2, the C/C++ engines built from source, and the
-  Kind/kubectl/Helm/Docker CLI toolbelt baked in. Apple Silicon has no Dockerfile — the
-  operator pre-installs ghcup; the daemon installs engine deps via system `clang` and `brew`
+  `poetry run check-code` against `python/adapters/`, unit tests, integration tests,
+  `purescript-spec` view and contract tests, and Playwright launched from the shared Linux
+  substrate image or the host (Apple Silicon)
+- one shared Linux substrate build definition (`docker/linux-substrate.Dockerfile`) emits
+  `infernix-linux-cpu` and `infernix-linux-cuda`, each with ghcup-pinned GHC 9.14.1 + Cabal
+  3.16.1.0, Python 3 + Poetry, node, Playwright, `nvkind`, and the Kind/kubectl/Helm/Docker
+  toolbelt baked in. Apple Silicon has no Dockerfile; the operator pre-installs ghcup and the
+  daemon installs engine deps via system `clang` and `brew`
 - no `.sh` files anywhere in the repo; no committed built artifacts (`poetry.lock`, generated
   proto, `.mypy_cache`, `.ruff_cache`, `*.pyc`, `web/dist/`, `web/spago.lock`,
   `web/src/Generated/`)
@@ -70,9 +69,8 @@ At full plan closure, Infernix does not reimplement model kernels. It coordinate
 - acquires missing artifacts into MinIO idempotently when upstream acquisition policy allows it
 - materializes runtime-local cache state from durable sources
 - launches and supervises engine workers in Haskell; for Python-native engines (PyTorch, JAX,
-  vLLM, transformers, etc.), the worker forks a Python adapter from
-  `python/<substrate>/adapters/<engine>/` through `poetry run <adapter-entrypoint>` and speaks
-  protobuf-over-stdio to it
+  vLLM, transformers, etc.), the worker forks a Python adapter from `python/adapters/*.py`
+  through `poetry run <adapter-entrypoint>` and speaks protobuf-over-stdio to it
 - routes requests into per-engine, per-model, per-device lanes while leaving batching and runtime
   memory policy to the child engine
 - stores large outputs in MinIO and returns references when appropriate
@@ -105,10 +103,10 @@ The supported local platform is built around:
   Gateway controller, operator-managed PostgreSQL, the production `infernix-service` workload,
   and the optional `infernix-demo` workload
 - one Envoy-Gateway-API-owned localhost listener (`Gateway/infernix-edge`, port chosen by
-  `cluster up` starting at `9090`) plus one HTTPRoute manifest per public path (`/`, `/api`,
-  `/objects`, `/harbor`, `/minio/console`, `/minio/s3`, `/pulsar/admin`, `/pulsar/ws`); the
-  demo routes are absent when the demo surface is disabled. The demo cluster runs locally and
-  applies no auth filters
+  `cluster up` starting at `9090`) backed by the repo-owned `EnvoyProxy/infernix-edge` service
+  shape plus one HTTPRoute manifest per public path (`/`, `/api`, `/objects`, `/harbor`,
+  `/minio/console`, `/minio/s3`, `/pulsar/admin`, `/pulsar/ws`); the demo routes are absent when
+  the demo surface is disabled. The demo cluster runs locally and applies no auth filters
 - one manual storage class backed by repo-owned PVs under `./.data/`
 - one Patroni PostgreSQL model managed by the Percona Kubernetes operator for every in-cluster
   PostgreSQL dependency
@@ -164,61 +162,69 @@ cabal --builddir=.build/cabal install --installdir=./.build --install-method=cop
 `cluster up` writes `./.build/infernix.kubeconfig` and never touches `$HOME/.kube/config`. On
 first inference request, the daemon orchestrates engine setup (e.g., `brew install` for
 required system deps, `cmake`/`make` builds of llama.cpp against system `clang`,
-`poetry install --directory python/apple-silicon` into `python/apple-silicon/.venv/`).
+`poetry install --directory python` into `python/.venv/`).
 
-### Quick Start: Linux CPU (substrate container)
+### Quick Start: Linux CPU (outer container)
 
-The `linux-cpu` substrate ships one custom container — `infernix-linux-cpu:local` — built from
-`docker/linux-cpu.Dockerfile`. The image plays launcher, in-cluster workload, and Playwright
-executor.
+The `linux-cpu` substrate ships one baked image snapshot — `infernix-linux-cpu:local` — built
+from `docker/linux-substrate.Dockerfile` with `BASE_IMAGE=ubuntu:24.04`. The image plays
+launcher, in-cluster workload, and Playwright executor.
 
 **Prerequisites**: a Linux host with Docker, the
 [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
 NOT required for this lane.
 
 ```bash
-# Build the linux-cpu substrate image (Ubuntu 24.04 + ghcup + Poetry + gcc 15.2 + engines).
-docker build -f docker/linux-cpu.Dockerfile -t infernix-linux-cpu:local .
-# Reconcile the Kind test cluster from inside the substrate container.
-docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD":/workspace -w /workspace \
-  infernix-linux-cpu:local infernix --runtime-mode linux-cpu cluster up
+# Build the shared Linux launcher image snapshot.
+docker compose build infernix
+# Reconcile the Kind test cluster from inside the baked image.
+docker compose run --rm infernix infernix --runtime-mode linux-cpu cluster up
 # Inspect cluster health, the Envoy Gateway listener port, and HTTPRoute inventory.
-docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD":/workspace -w /workspace \
-  infernix-linux-cpu:local infernix --runtime-mode linux-cpu cluster status
+docker compose run --rm infernix infernix --runtime-mode linux-cpu cluster status
 # Run lint, unit, integration, and routed E2E validation (Playwright runs inside this image).
-docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD":/workspace -w /workspace \
-  infernix-linux-cpu:local infernix --runtime-mode linux-cpu test all
+docker compose run --rm infernix infernix --runtime-mode linux-cpu test all
 # Tear down.
-docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD":/workspace -w /workspace \
-  infernix-linux-cpu:local infernix --runtime-mode linux-cpu cluster down
+docker compose run --rm infernix infernix --runtime-mode linux-cpu cluster down
 ```
 
-The substrate container owns the entire toolchain: the in-container daemon never installs
-anything via `apt` or `pip` and never compiles. The Dockerfile build is the only place that
-runs `poetry install`, `apt-get install`, and engine compilation against gcc 15.2.
+The Linux launcher bind-mounts only `./.data/` plus the Docker socket and named build caches.
+The baked image owns the entire toolchain: the runtime path never installs anything via `apt`,
+`pip`, or `cabal build`.
 
 ### Quick Start: Linux CUDA (substrate container)
 
-The `linux-cuda` substrate ships one custom container — `infernix-linux-cuda:local` — built
-from `docker/linux-cuda.Dockerfile` (`FROM nvidia/cuda:<…>-cudnn-runtime-ubuntu24.04`).
+The `linux-cuda` substrate ships one baked image snapshot — `infernix-linux-cuda:local` — built
+from `docker/linux-substrate.Dockerfile` with a CUDA base image. The image includes the `nvkind`
+binary needed by the supported `linux-cuda` cluster lifecycle.
 
 **Prerequisites**: a Linux host with an NVIDIA GPU, Docker, and the NVIDIA Container Toolkit;
 verify the host with `docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi -L`.
 
 ```bash
 # Build the linux-cuda substrate image.
-docker build -f docker/linux-cuda.Dockerfile -t infernix-linux-cuda:local .
+docker build -f docker/linux-substrate.Dockerfile \
+  --build-arg RUNTIME_MODE=linux-cuda \
+  --build-arg BASE_IMAGE=nvidia/cuda:13.2.1-cudnn-runtime-ubuntu24.04 \
+  -t infernix-linux-cuda:local .
 # Reconcile the GPU-enabled Kind test cluster (nvkind plus NVIDIA device plugin).
-docker run --rm --gpus all -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD":/workspace -w /workspace \
+docker run --rm --gpus all \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v "$PWD/.data:/workspace/.data" \
   infernix-linux-cuda:local infernix --runtime-mode linux-cuda cluster up
 # Confirm GPU visibility from the cluster service deployment.
-docker run --rm --gpus all -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD":/workspace -w /workspace \
+docker run --rm --gpus all \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v "$PWD/.data:/workspace/.data" \
   infernix-linux-cuda:local infernix --runtime-mode linux-cuda kubectl -n platform exec deployment/infernix-service -- nvidia-smi -L
 # Run the full validation lane against the GPU-backed catalog.
-docker run --rm --gpus all -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD":/workspace -w /workspace \
+docker run --rm --gpus all \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v "$PWD/.data:/workspace/.data" \
   infernix-linux-cuda:local infernix --runtime-mode linux-cuda test all
 # Tear down.
-docker run --rm --gpus all -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD":/workspace -w /workspace \
+docker run --rm --gpus all \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v "$PWD/.data:/workspace/.data" \
   infernix-linux-cuda:local infernix --runtime-mode linux-cuda cluster down
 ```
 
@@ -274,9 +280,9 @@ around upstream `kubectl`, not a parallel lifecycle surface.
   public container repositories
 - `cluster up` mirrors required third-party images into Harbor before deploying the remaining
   non-Harbor workloads
-- `cluster up` builds the per-substrate substrate-container image (`docker/linux-cpu.Dockerfile`
-  or `docker/linux-cuda.Dockerfile`) for the active Linux runtime mode, and publishes it to
-  Harbor before Helm rollout. On Apple Silicon no image build occurs (host-native execution)
+- `cluster up` builds the active Linux runtime image from `docker/linux-substrate.Dockerfile`
+  using the selected `RUNTIME_MODE` plus `BASE_IMAGE`, and publishes it to Harbor before Helm
+  rollout. On Apple Silicon no image build occurs
 - every non-Harbor pod pulls from local Harbor
 - Harbor and only the storage or support services Harbor needs are the allowed direct-upstream
   bootstrap exception before the Harbor-backed pull contract takes over
@@ -362,8 +368,9 @@ contracts.
 - on Linux substrates, the substrate container also carries the spago plus purs toolchain
   (used at image build time to bundle the demo UI) plus Playwright browser dependencies
   (Chromium, Firefox, WebKit) for routed E2E execution. There is no separate web-only image
-- on Apple Silicon, `infernix test e2e` runs Playwright from the operator's host node
-  install (`npx playwright install` is a one-time operator setup step)
+- on Apple Silicon, `infernix test e2e` runs Playwright from the operator's host node install
+  (`npm --prefix web exec -- playwright install --with-deps chromium firefox webkit` is the
+  one-time setup step)
 - the `infernix-demo` workload is deployed through repo-owned Helm chart templates and values, and
   is gated by the `.dhall` `demo_ui` flag; production deployments leave it off
 - the demo UI catalog is derived from the generated mode-specific demo `.dhall` file for the active

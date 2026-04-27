@@ -13,7 +13,7 @@ def _repo_root() -> Path:
     configured = os.environ.get("INFERNIX_REPO_ROOT")
     if configured:
         return Path(configured)
-    return Path(__file__).resolve().parents[3]
+    return Path(__file__).resolve().parents[2]
 
 
 generated_proto_root = _repo_root() / "tools" / "generated_proto"

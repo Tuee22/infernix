@@ -19,8 +19,8 @@ documentation suite.
   `demo_ui` flag is off
 - when the demo UI is enabled, the browser entrypoint is the shared routed surface on one
   localhost port and the demo UI is served by `infernix-demo`
-- Python is restricted to per-substrate adapter packages under `python/<substrate>/adapters/`;
-  the canonical quality gate is `poetry run check-code`, and all custom platform logic is Haskell
+- Python is restricted to the shared adapter project under `python/`; the canonical quality gate
+  is `poetry run check-code`, and all custom platform logic is Haskell
 - the demo UI is PureScript built with `spago`, tested with `purescript-spec`, with generated
   frontend contracts emitted by `infernix internal generate-purs-contracts` through
   `purescript-bridge` from dedicated browser-contract ADTs
@@ -43,7 +43,7 @@ The supported repository layout is described in
 major roots:
 
 - `app/` and `src/` for the Haskell control plane and `infernix-lib` library
-- `python/` for per-substrate adapter packages and per-substrate `pyproject.toml` files
+- `python/` for the shared adapter package and shared `pyproject.toml`
 - `web/` for the PureScript demo application built with `spago` and the Playwright E2E assets
 - `chart/` and `kind/` for cluster reconciliation inputs, including the locked Harbor, Pulsar,
   MinIO, Percona PostgreSQL operator, and Envoy Gateway Helm dependency declarations

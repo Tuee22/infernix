@@ -24,8 +24,8 @@ custom-setup
 
 library
     exposed-modules:
-        Generated.Contracts
         Infernix.CLI
+        Infernix.CommandRegistry
         Infernix.Cluster
         Infernix.Cluster.Discover
         Infernix.Cluster.PublishImages
@@ -41,6 +41,7 @@ library
         Infernix.Lint.Proto
         Infernix.Models
         Infernix.Python
+        Infernix.Routes
         Infernix.Runtime
         Infernix.Runtime.Cache
         Infernix.Runtime.Pulsar
@@ -48,6 +49,8 @@ library
         Infernix.Service
         Infernix.Storage
         Infernix.Types
+        Infernix.Web.Contracts
+        Infernix.Workflow
 
     hs-source-dirs:   src
     other-modules:
@@ -91,6 +94,7 @@ library
         time >=1.12 && <1.16,
         vector >=0.13 && <0.14,
         wai >=3.2 && <3.3,
+        websockets >=0.13 && <0.14,
         warp >=3.3 && <3.5,
         yaml >=0.11 && <0.12
 

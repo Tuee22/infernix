@@ -9,27 +9,34 @@
 
 ## Phase Status
 
-Sprints 6.2, 6.4, 6.5, and 6.7 stay `Done`. Sprint 6.1 remains `Active` while tracked-index
-cleanup and the documentation-doctrine upgrades are still open. Sprint 6.3 is `Blocked` on the
-final substrate-image Playwright path. Sprint 6.6 is `Active` because exhaustive integration
-enumeration is landed but exhaustive routed E2E closure still depends on Sprint 6.3.
+Sprints 6.1, 6.2, 6.3, and 6.5 are `Done`. Sprints 6.4, 6.6, and 6.7 are `Active`: routed
+Playwright already exhaustively covers every demo-visible catalog entry, but the integration suite
+still hardcodes one representative model request, explicit HA-failure automation for Harbor,
+MinIO, Pulsar, and PostgreSQL is still open, the `linux-cpu` outer-container `test integration`
+rerun is still being revalidated after the latest real-substrate harness fixes, and supported
+NVIDIA-host closure for `linux-cuda` remains open.
 
 ## Current Repo Assessment
 
-The repository already has lint, unit, integration, and Playwright entrypoints. The current gaps
-are now about final doctrine and final execution paths:
-
-- `infernix lint files` still fails on stale tracked-index entries until the user-owned cleanup from
-  Phase 1 Sprint 1.7 lands
-- the testing doctrine is still spread across multiple docs instead of one canonical engineering doc
-- the Haskell style guide still needs the clearer hard-gate versus review-guidance structure and an
-  explicit enforcement model
-- routed Playwright still needs closure on the final Linux substrate image and Apple host workflows
+The repository already has lint, unit, integration, and Playwright entrypoints. The canonical
+testing, boundary, portability, and Haskell-style docs are landed, and the baked `linux-cpu`
+substrate image now proves routed Playwright plus the real Gateway and Pulsar surfaces. The routed
+Playwright suite exhaustively exercises every demo-visible generated catalog entry, while the
+integration suite currently validates publication, cache, service-loop, and one representative
+inference request per selected runtime mode. The remaining validation gaps are explicit
+HA-failure automation for Harbor, MinIO, and Pulsar, explicit operator-managed PostgreSQL failover
+or rebinding coverage, the final outer-container `linux-cpu` integration rerun on the latest
+harness, and supported NVIDIA-host closure for `linux-cuda`.
 
 ## Validation Surface
 
 The supported validation entrypoints are:
 
+- `infernix lint files`
+- `infernix lint docs`
+- `infernix lint proto`
+- `infernix lint chart`
+- `infernix docs check`
 - `infernix test lint`
 - `infernix test unit`
 - `infernix test integration`
@@ -43,14 +50,15 @@ commands.
 ## Mode-Matrix Validation Contract
 
 - `test unit` proves matrix typing, generated catalog rendering, and contract-generation logic
-- `test integration` exercises every generated catalog entry for the active runtime mode
+- `test integration` currently validates the active runtime mode's published catalog contract,
+  routed surfaces, and a representative routed inference request
 - `test e2e` exercises every demo-visible generated catalog entry for the active runtime mode
 - the full repository closes only when Apple, Linux CPU, and Linux CUDA runs all pass on their
   supported lanes
 
-## Sprint 6.1: Static Quality Gates, Testing Doctrine, and Unit Suites [Active]
+## Sprint 6.1: Static Quality Gates, Testing Doctrine, and Unit Suites [Done]
 
-**Status**: Active
+**Status**: Done
 **Implementation**: `src/Infernix/CLI.hs`, `src/Infernix/Lint/`, `src/Infernix/Lint/HaskellStyle.hs`, `src/Infernix/Lint/Files.hs`, `test/haskell-style/Spec.hs`, `test/unit/Spec.hs`, `web/test/Main.purs`
 **Docs to update**: `documents/development/haskell_style.md`, `documents/development/testing_strategy.md`, `documents/engineering/testing.md`, `documents/engineering/implementation_boundaries.md`, `documents/engineering/portability.md`, `documents/engineering/storage_and_state.md`
 
@@ -84,8 +92,7 @@ contracts, and generated-catalog logic, and put the validation doctrine in canon
 
 ### Remaining Work
 
-- tracked-index cleanup from Phase 1 Sprint 1.7 still blocks full `infernix test lint` closure
-- the canonical testing or boundary or portability docs described above are not all landed yet
+None.
 
 ---
 
@@ -102,19 +109,20 @@ MinIO, Pulsar, and operator-managed PostgreSQL substrate.
 
 ### Deliverables
 
-- integration coverage for `cluster up`, repo-local kubeconfig, generated demo-config publication,
-  and per-entry inference execution
+- integration coverage for `cluster up`, generated demo-config publication, and representative
+  routed inference execution
 - host-native integration coverage proves the routed API can move to the Apple host bridge without
   changing the browser-visible entrypoint
 - dedicated `linux-cuda` integration coverage proves device-plugin rollout, GPU resources, and
   service GPU visibility
-- integration coverage proves routed cache metadata carries engine-adapter and artifact-selection details
+- integration coverage proves routed cache mutation and publication surfaces stay aligned with the
+  generated catalog contract
 
 ### Validation
 
 - `infernix test integration` reconciles or reuses supported cluster prerequisites
-- integration tests fail when publication state, generated catalog publication, schema publication,
-  HA recovery, or CUDA scheduling assertions regress
+- integration tests fail when publication state, generated catalog publication, representative
+  inference execution, service-loop schema publication, or CUDA scheduling assertions regress
 
 ### Remaining Work
 
@@ -122,11 +130,10 @@ None.
 
 ---
 
-## Sprint 6.3: Routed Playwright E2E Coverage [Blocked]
+## Sprint 6.3: Routed Playwright E2E Coverage [Done]
 
-**Status**: Blocked
+**Status**: Done
 **Implementation**: `src/Infernix/CLI.hs`, `web/playwright/inference.spec.js`, `web/test/run_playwright_matrix.mjs`, `web/package.json`
-**Blocked by**: Phase 4 Sprint 4.9, Phase 5 Sprint 5.5
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/reference/web_portal_surface.md`
 
 ### Objective
@@ -150,13 +157,13 @@ browser surface through the shared edge.
 
 ### Remaining Work
 
-- completion is blocked on the shared Linux substrate image and the UI image-ownership cleanup
+None.
 
 ---
 
-## Sprint 6.4: HA Failure and Recovery Coverage For Harbor, MinIO, and Pulsar [Done]
+## Sprint 6.4: HA Failure and Recovery Coverage For Harbor, MinIO, and Pulsar [Active]
 
-**Status**: Done
+**Status**: Active
 **Implementation**: `test/integration/Spec.hs`
 **Docs to update**: `documents/development/chaos_testing.md`, `documents/tools/harbor.md`, `documents/tools/minio.md`, `documents/tools/pulsar.md`
 
@@ -178,7 +185,9 @@ Back the HA claims with concrete failure coverage.
 
 ### Remaining Work
 
-None.
+- `test/integration/Spec.hs` currently proves steady-state routed availability only; it does not
+  delete or restart Harbor, MinIO, or Pulsar workloads
+- automated pre-or-post-restart durability assertions for those HA surfaces remain to implement
 
 ---
 
@@ -238,14 +247,18 @@ catalog entry using the engine binding selected for that mode.
 
 ### Remaining Work
 
-- exhaustive integration enumeration is landed
-- exhaustive routed E2E closure still depends on Sprint 6.3 and the final Linux substrate image path
+- the routed `linux-cpu` image-owned E2E path is now green, but `test/integration/Spec.hs` still
+  hardcodes `llm-qwen25-safetensors` instead of enumerating every generated active-mode catalog
+  entry
+- the final outer-container `test integration` rerun is still being revalidated after the latest
+  real-substrate harness fixes
+- supported NVIDIA-host closure for `linux-cuda` remains open
 
 ---
 
-## Sprint 6.7: Operator-Managed PostgreSQL Failure and Lifecycle Coverage [Done]
+## Sprint 6.7: Operator-Managed PostgreSQL Failure and Lifecycle Coverage [Active]
 
-**Status**: Done
+**Status**: Active
 **Implementation**: `src/Infernix/Cluster.hs`, `test/integration/Spec.hs`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/development/chaos_testing.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/tools/postgresql.md`
 
@@ -268,7 +281,10 @@ Back the PostgreSQL doctrine with readiness, failover, and storage-rebind covera
 
 ### Remaining Work
 
-None.
+- `test/integration/Spec.hs` does not yet assert Patroni failover or explicit PostgreSQL PVC
+  reattachment across cluster lifecycle
+- the sprint still needs those operator-managed PostgreSQL readiness, failover, and rebinding
+  assertions to land
 
 ## Documentation Requirements
 

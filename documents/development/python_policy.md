@@ -8,10 +8,10 @@
 
 ## When Python Is Allowed
 
-Python is permitted only under `python/<substrate>/adapters/` and only when the bound inference
-engine has no non-Python binding.
+Python is permitted only under `python/adapters/` and only when the bound inference engine has no
+non-Python binding.
 
-- supported Python-native engines live as per-engine modules inside the active substrate package
+- supported Python-native engines live as per-engine modules inside the shared adapter package
 - each adapter is a thin module that reads one worker-owned request payload from stdin, runs the
   adapter logic, and emits one worker-owned result payload to stdout
 - the Haskell worker (`src/Infernix/Runtime/Worker.hs`) is the single dispatch point for
@@ -23,23 +23,22 @@ engine has no non-Python binding.
 
 ## Toolchain
 
-Each substrate owns its own Poetry project:
+- the shared Poetry project lives at `python/pyproject.toml`
 
-- `python/apple-silicon/pyproject.toml`
-- `python/linux-cpu/pyproject.toml`
-- `python/linux-cuda/pyproject.toml`
-
-- outside the cluster, `poetry install --directory python/apple-silicon` materializes a repo-local
-  Poetry environment for adapter validation on the Apple host path
-- Linux substrate image builds run `poetry install --directory python/<substrate>` during the
-  image build and then execute adapters through `poetry --directory python/<substrate> run ...`
+- outside the cluster, `poetry install --directory python` materializes a repo-local Poetry
+  environment for adapter validation on the Apple host path
+- Linux substrate image builds run `poetry install --directory python` during the image build and
+  then execute adapters through `poetry --directory python run ...`
 - Poetry is not a generic platform prerequisite; it materializes only when an adapter validation or
   setup path is exercised explicitly
 
 ## Quality Gate
 
-The canonical adapter quality gate is `poetry run check-code`, declared in each substrate
-`pyproject.toml`.
+The canonical adapter quality gate is the `check-code` Poetry entrypoint declared in the shared
+`python/pyproject.toml`.
+
+From the repo root, the supported invocation is `poetry --directory python run check-code`. Inside
+`python/`, the same gate is `poetry run check-code`.
 
 It invokes the following in sequence and exits non-zero on any failure:
 
@@ -52,15 +51,13 @@ It invokes the following in sequence and exits non-zero on any failure:
 Rules:
 
 - the gate runs as a single build step in every Linux substrate image
-- `infernix test lint` runs the same gate against the active substrate project when adapters are
-  present
+- `infernix test lint` runs the same gate against the shared project when adapters are present
 - adapter modules carry inline type annotations on every function and class; `# type: ignore`
   pragmas require an explanatory comment
 
 ## Adapter Contract
 
-Each engine-specific adapter module under `python/<substrate>/adapters/` honors a small process
-contract:
+Each engine-specific adapter module under `python/adapters/` honors a small process contract:
 
 - read one request payload from stdin
 - execute the adapter
@@ -72,7 +69,7 @@ Current state:
 - the worker request and response payloads are typed protobuf messages from
   `proto/infernix/runtime/inference.proto`, consumed on the Python side through
   `tools/generated_proto/`
-- each substrate project exposes one Poetry console script per adapter together with matching
+- the shared project exposes one Poetry console script per adapter together with matching
   `setup-*` entrypoints
 - the remaining gap is engine depth rather than ownership: the current adapters are still stub
   responders that normalize the input payload instead of loading the real engine libraries

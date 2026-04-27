@@ -28,7 +28,7 @@ dependencies:
     repository: https://charts.bitnami.com/bitnami
     condition: upstreamCharts.minio.enabled
   - name: gateway-helm
-    alias: envoyGateway
+    alias: envoygateway
     version: v1.7.2
     repository: oci://docker.io/envoyproxy
     condition: upstreamCharts.envoyGateway.enabled

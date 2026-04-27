@@ -8,20 +8,20 @@ where
 
 import Control.Applicative ((<|>))
 import Control.Concurrent (threadDelay)
-import Control.Exception (IOException, evaluate, finally, try)
+import Control.Exception (IOException, catch, evaluate, finally, try)
 import Control.Monad (when)
 import Data.Aeson (Value (..), eitherDecode)
 import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.ByteString.Lazy.Char8 qualified as LazyChar8
 import Data.List (intercalate, isInfixOf, isPrefixOf)
-import Data.Maybe (isJust)
 import Data.Text qualified as Text
 import Data.Vector qualified as Vector
-import Generated.Contracts qualified as Contracts
+import GHC.IO.Encoding (setLocaleEncoding, utf8)
 import Infernix.Cluster
 import Infernix.Cluster.Discover
 import Infernix.Cluster.PublishImages qualified as PublishImages
+import Infernix.CommandRegistry
 import Infernix.Config
 import Infernix.DemoConfig (decodeDemoConfigFile, renderModelListing, validateDemoConfigFile)
 import Infernix.Lint.Chart (runChartLint)
@@ -34,15 +34,27 @@ import Infernix.Python
     pythonProjectDirectory,
   )
 import Infernix.Runtime (evictCache, listCacheManifests, rebuildCache)
+import Infernix.Runtime.Pulsar (publishInferenceRequest, readPublishedInferenceResultMaybe)
 import Infernix.Service
 import Infernix.Storage (readEdgePortMaybe)
 import Infernix.Types
   ( CacheManifest (..),
+    DemoConfig (..),
+    InferenceRequest (..),
+    InferenceResult (..),
     PersistentClaim (..),
+    ResultPayload (..),
     RuntimeMode (AppleSilicon, LinuxCuda),
     allRuntimeModes,
     parseRuntimeMode,
     runtimeModeId,
+  )
+import Infernix.Web.Contracts qualified as Contracts
+import Infernix.Workflow
+  ( ensurePlaywrightBrowsers,
+    ensureWebDependencies,
+    platformCommandsAvailableForE2E,
+    resolveWebNpmInvocation,
   )
 import Language.PureScript.Bridge (buildBridge, defaultBridge, writePSTypesWith)
 import Language.PureScript.Bridge.Builder (BridgePart, (^==))
@@ -52,10 +64,8 @@ import Language.PureScript.Bridge.TypeInfo (typeName)
 import System.Directory
   ( copyFile,
     createDirectoryIfMissing,
-    doesDirectoryExist,
-    doesFileExist,
-    findExecutable,
     getPermissions,
+    removePathForcibly,
     setPermissions,
   )
 import System.Environment (getArgs, getEnvironment, getExecutablePath)
@@ -65,6 +75,7 @@ import System.Process (CreateProcess (cwd, env), createProcess, proc, readProces
 
 main :: IO ()
 main = do
+  setLocaleEncoding utf8
   syncBuildRootExecutable
   args <- getArgs
   case extractRuntimeMode args of
@@ -74,67 +85,64 @@ main = do
     Right (maybeRuntimeMode, remainingArgs) -> dispatch maybeRuntimeMode remainingArgs
 
 dispatch :: Maybe RuntimeMode -> [String] -> IO ()
-dispatch maybeRuntimeMode args = case args of
-  [] -> putStrLn helpText
-  ["--help"] -> putStrLn helpText
-  ["cluster", "--help"] -> putStrLn clusterHelpText
-  ["test", "--help"] -> putStrLn testHelpText
-  ["lint", "--help"] -> putStrLn lintHelpText
-  ["internal", "--help"] -> putStrLn internalHelpText
-  _ -> do
-    ensureAppleHostPrerequisites
-    case args of
-      ["service"] -> runService maybeRuntimeMode
-      ["cluster", "up"] -> clusterUp maybeRuntimeMode
-      ["cluster", "down"] -> clusterDown maybeRuntimeMode
-      ["cluster", "status"] -> clusterStatus maybeRuntimeMode
-      ["cache", "status"] -> runCacheStatus maybeRuntimeMode
-      ["cache", "evict"] -> runCacheEvict maybeRuntimeMode Nothing
-      ["cache", "evict", "--model", modelIdValue] -> runCacheEvict maybeRuntimeMode (Just (Text.pack modelIdValue))
-      ["cache", "rebuild"] -> runCacheRebuild maybeRuntimeMode Nothing
-      ["cache", "rebuild", "--model", modelIdValue] -> runCacheRebuild maybeRuntimeMode (Just (Text.pack modelIdValue))
-      "kubectl" : kubectlArgs -> runKubectlCompat kubectlArgs
-      ["docs", "check"] -> runDocsLint
-      ["lint", "files"] -> runFilesLint
-      ["lint", "docs"] -> runDocsLint
-      ["lint", "proto"] -> runProtoLint
-      ["lint", "chart"] -> do
-        runChartLint
-      ["test", "lint"] -> runLint maybeRuntimeMode
-      ["test", "unit"] -> do
-        ensureWebDependencies
-        ensurePythonAdapterDependencies maybeRuntimeMode
-        runCabalCommand maybeRuntimeMode ["test", "infernix-unit"]
-        runCommand maybeRuntimeMode "npm" ["--prefix", "web", "run", "test:unit"]
-      ["test", "integration"] -> runCabalCommand maybeRuntimeMode ["test", "infernix-integration"]
-      ["test", "e2e"] -> runEndToEnd maybeRuntimeMode
-      ["test", "all"] -> do
-        ensureWebDependencies
-        runLint maybeRuntimeMode
-        ensurePythonAdapterDependencies maybeRuntimeMode
-        runCabalCommand maybeRuntimeMode ["test", "infernix-unit"]
-        runCommand maybeRuntimeMode "npm" ["--prefix", "web", "run", "test:unit"]
-        runCabalCommand maybeRuntimeMode ["test", "infernix-integration"]
-        runEndToEnd maybeRuntimeMode
-      ["internal", "discover", "images", renderedChartPath] ->
-        mapM_ putStrLn =<< discoverChartImagesFile renderedChartPath
-      ["internal", "discover", "claims", renderedChartPath] ->
-        mapM_ (putStrLn . renderPersistentClaimLine) =<< discoverChartClaimsFile renderedChartPath
-      ["internal", "discover", "harbor-overlay", overlayPath] ->
-        mapM_ putStrLn =<< discoverHarborOverlayImageRefsFile overlayPath
-      ["internal", "publish-chart-images", renderedChartPath, outputPath] ->
-        PublishImages.publishChartImagesFile PublishImages.defaultHarborPublishOptions renderedChartPath outputPath
-      ["internal", "demo-config", "load", demoConfigPath] -> do
-        demoConfig <- decodeDemoConfigFile demoConfigPath
-        putStr (renderModelListing demoConfig)
-      ["internal", "demo-config", "validate", demoConfigPath] ->
-        validateDemoConfigFile demoConfigPath
-      ["internal", "generate-purs-contracts", outputDir] -> do
-        runtimeMode <- resolveRuntimeMode maybeRuntimeMode
-        writeGeneratedPursContracts runtimeMode outputDir
-      _ -> do
-        putStrLn helpText
-        exitFailure
+dispatch maybeRuntimeMode args =
+  case parseCommand args of
+    Left _ -> do
+      putStrLn helpText
+      exitFailure
+    Right command -> do
+      ensureAppleHostPrerequisites
+      case command of
+        ShowRootHelp -> putStrLn helpText
+        ShowTopicHelp topic -> putStrLn (topicHelpText topic)
+        ServiceCommand -> runService maybeRuntimeMode
+        ClusterUpCommand -> clusterUp maybeRuntimeMode
+        ClusterDownCommand -> clusterDown maybeRuntimeMode
+        ClusterStatusCommand -> clusterStatus maybeRuntimeMode
+        CacheStatusCommand -> runCacheStatus maybeRuntimeMode
+        CacheEvictCommand maybeModelId -> runCacheEvict maybeRuntimeMode (Text.pack <$> maybeModelId)
+        CacheRebuildCommand maybeModelId -> runCacheRebuild maybeRuntimeMode (Text.pack <$> maybeModelId)
+        KubectlCommand kubectlArgs -> runKubectlCompat kubectlArgs
+        DocsCheckCommand -> runDocsLint
+        LintFilesCommand -> runFilesLint
+        LintDocsCommand -> runDocsLint
+        LintProtoCommand -> runProtoLint
+        LintChartCommand -> runChartLint
+        TestLintCommand -> runLint maybeRuntimeMode
+        TestUnitCommand -> do
+          ensureWebDependencies
+          ensurePythonAdapterDependencies maybeRuntimeMode
+          runCabalCommand maybeRuntimeMode ["test", "infernix-unit"]
+          runWebNpmCommand maybeRuntimeMode ["--prefix", "web", "run", "test:unit"]
+        TestIntegrationCommand -> runCabalCommand maybeRuntimeMode ["test", "infernix-integration"]
+        TestE2ECommand -> runEndToEnd maybeRuntimeMode
+        TestAllCommand -> do
+          ensureWebDependencies
+          runLint maybeRuntimeMode
+          ensurePythonAdapterDependencies maybeRuntimeMode
+          runCabalCommand maybeRuntimeMode ["test", "infernix-unit"]
+          runWebNpmCommand maybeRuntimeMode ["--prefix", "web", "run", "test:unit"]
+          runCabalCommand maybeRuntimeMode ["test", "infernix-integration"]
+          runEndToEnd maybeRuntimeMode
+        InternalDiscoverImagesCommand renderedChartPath ->
+          mapM_ putStrLn =<< discoverChartImagesFile renderedChartPath
+        InternalDiscoverClaimsCommand renderedChartPath ->
+          mapM_ (putStrLn . renderPersistentClaimLine) =<< discoverChartClaimsFile renderedChartPath
+        InternalDiscoverHarborOverlayCommand overlayPath ->
+          mapM_ putStrLn =<< discoverHarborOverlayImageRefsFile overlayPath
+        InternalPublishChartImagesCommand renderedChartPath outputPath ->
+          PublishImages.publishChartImagesFile PublishImages.defaultHarborPublishOptions renderedChartPath outputPath
+        InternalDemoConfigLoadCommand demoConfigPath -> do
+          demoConfig <- decodeDemoConfigFile demoConfigPath
+          putStr (renderModelListing demoConfig)
+        InternalDemoConfigValidateCommand demoConfigPath ->
+          validateDemoConfigFile demoConfigPath
+        InternalGeneratePursContractsCommand outputDir -> do
+          runtimeMode <- resolveRuntimeMode maybeRuntimeMode
+          writeGeneratedPursContracts runtimeMode outputDir
+        InternalPulsarRoundTripCommand demoConfigPath modelIdValue inputTextValue -> do
+          runtimeMode <- resolveRuntimeMode maybeRuntimeMode
+          runInternalPulsarRoundTrip runtimeMode demoConfigPath modelIdValue inputTextValue
 
 runLint :: Maybe RuntimeMode -> IO ()
 runLint maybeRuntimeMode = do
@@ -153,7 +161,7 @@ runEndToEnd maybeRuntimeMode = do
     then do
       ensureWebDependencies
       ensurePlaywrightBrowsers
-      runCommand maybeRuntimeMode "npm" ["--prefix", "web", "run", "test:e2e"]
+      runWebNpmCommand maybeRuntimeMode ["--prefix", "web", "run", "test:e2e"]
     else do
       paths <- discoverPaths
       runtimeModes <-
@@ -205,6 +213,18 @@ runHostPlaywright :: RuntimeMode -> String -> Int -> String -> String -> IO ()
 runHostPlaywright runtimeMode routeProbeHost edgePort expectedDaemonLocation expectedApiUpstreamMode = do
   waitForPlaywrightSurface routeProbeHost edgePort expectedDaemonLocation expectedApiUpstreamMode
   paths <- discoverPaths
+  (command, args) <-
+    resolveWebNpmInvocation
+      [ "--prefix",
+        "web",
+        "exec",
+        "--",
+        "playwright",
+        "test",
+        "./playwright/inference.spec.js",
+        "--reporter=list",
+        "--timeout=30000"
+      ]
   runCommandWithCwdAndEnv
     (Just runtimeMode)
     [ ("INFERNIX_RUNTIME_MODE", Text.unpack (runtimeModeId runtimeMode)),
@@ -213,8 +233,8 @@ runHostPlaywright runtimeMode routeProbeHost edgePort expectedDaemonLocation exp
       ("INFERNIX_EXPECT_DAEMON_LOCATION", expectedDaemonLocation),
       ("INFERNIX_EXPECT_API_UPSTREAM_MODE", expectedApiUpstreamMode)
     ]
-    "npm"
-    ["--prefix", "web", "run", "test:e2e:image"]
+    command
+    args
     (repoRoot paths)
 
 withHostBridgeDemo :: RuntimeMode -> Int -> IO () -> IO ()
@@ -258,6 +278,59 @@ withHostBridgeDemo runtimeMode edgePort action = do
       restoreClusterServiceRoute paths
       waitForPublication edgePort "cluster-pod" "cluster-demo"
 
+runInternalPulsarRoundTrip :: RuntimeMode -> FilePath -> String -> String -> IO ()
+runInternalPulsarRoundTrip runtimeMode demoConfigPath modelIdValue inputTextValue = do
+  paths <- discoverPaths
+  demoConfig <- decodeDemoConfigFile demoConfigPath
+  requestTopicValue <-
+    case requestTopics demoConfig of
+      topicValue : _ -> pure topicValue
+      [] -> ioError (userError "demo config does not declare any request topics")
+  let requestValue =
+        InferenceRequest
+          { requestModelId = Text.pack modelIdValue,
+            inputText = Text.pack inputTextValue
+          }
+      requestIdValue = Text.pack modelIdValue <> "-request"
+  _ <- publishInferenceRequest paths runtimeMode requestTopicValue requestValue
+  maybeResult <- waitForInternalPulsarResult paths (resultTopic demoConfig) requestIdValue
+  case maybeResult of
+    Nothing ->
+      ioError
+        ( userError
+            ( "timed out waiting for Pulsar result for request "
+                <> Text.unpack requestIdValue
+            )
+        )
+    Just resultValue -> printInternalPulsarResult resultValue
+
+waitForInternalPulsarResult :: Paths -> Text.Text -> Text.Text -> IO (Maybe InferenceResult)
+waitForInternalPulsarResult paths resultTopicValue requestIdValue = go (120 :: Int)
+  where
+    go remainingAttempts
+      | remainingAttempts <= 0 = pure Nothing
+      | otherwise = do
+          maybeResult <- readPublishedInferenceResultMaybe paths resultTopicValue requestIdValue
+          case maybeResult of
+            Just resultValue -> pure (Just resultValue)
+            Nothing -> do
+              threadDelay 250000
+              go (remainingAttempts - 1)
+
+printInternalPulsarResult :: InferenceResult -> IO ()
+printInternalPulsarResult resultValue = do
+  putStrLn ("requestId: " <> Text.unpack (requestId resultValue))
+  putStrLn ("status: " <> Text.unpack (status resultValue))
+  putStrLn ("resultModelId: " <> Text.unpack (resultModelId resultValue))
+  putStrLn ("resultRuntimeMode: " <> Text.unpack (runtimeModeId (resultRuntimeMode resultValue)))
+  putStrLn ("resultSelectedEngine: " <> Text.unpack (resultSelectedEngine resultValue))
+  case payload resultValue of
+    ResultPayload {inlineOutput = Just inlineOutputValue} ->
+      putStrLn ("inlineOutput: " <> Text.unpack inlineOutputValue)
+    ResultPayload {objectRef = Just objectRefValue} ->
+      putStrLn ("objectRef: " <> Text.unpack objectRefValue)
+    _ -> pure ()
+
 runPlaywrightImage :: RuntimeMode -> Maybe String -> String -> Int -> String -> String -> IO ()
 runPlaywrightImage runtimeMode maybeNetwork routeProbeHost edgePort expectedDaemonLocation expectedApiUpstreamMode = do
   paths <- discoverPaths
@@ -284,8 +357,13 @@ runPlaywrightImage runtimeMode maybeNetwork routeProbeHost edgePort expectedDaem
              "npm",
              "--prefix",
              "web",
-             "run",
-             "test:e2e:image"
+             "exec",
+             "--",
+             "playwright",
+             "test",
+             "./playwright/inference.spec.js",
+             "--reporter=list",
+             "--timeout=30000"
            ]
     )
 
@@ -428,27 +506,40 @@ runCabalCommand maybeRuntimeMode args = do
   buildDir <- resolveCabalBuildDir
   runCommand maybeRuntimeMode "cabal" (("--builddir=" <> buildDir) : args)
 
+runWebNpmCommand :: Maybe RuntimeMode -> [String] -> IO ()
+runWebNpmCommand maybeRuntimeMode npmArgs = do
+  (command, args) <- resolveWebNpmInvocation npmArgs
+  runCommand maybeRuntimeMode command args
+
 writeGeneratedPursContracts :: RuntimeMode -> FilePath -> IO ()
 writeGeneratedPursContracts runtimeMode outputDir = do
   let generatedDir = outputDir </> "Generated"
+      tempGeneratedRoot = outputDir </> ".bridge-generated"
+      generatedSourceFile = tempGeneratedRoot </> "Infernix" </> "Web" </> "Contracts.purs"
+      legacyOutputFile = outputDir </> "Infernix" </> "Web" </> "Contracts.purs"
       outputFile = generatedDir </> "Contracts.purs"
       bridgeSwitch = noLenses <> noArgonautCodecs
   createDirectoryIfMissing True generatedDir
-  writePSTypesWith bridgeSwitch outputDir (buildBridge (contractArrayBridge <|> defaultBridge)) Contracts.contractSumTypes
-  appendFile outputFile (Contracts.renderPursContractFooter runtimeMode)
-  normalizeGeneratedPursContracts outputFile
+  removePathForcibly tempGeneratedRoot `catchAnyIOException` (\_ -> pure ())
+  removePathForcibly legacyOutputFile `catchAnyIOException` (\_ -> pure ())
+  createDirectoryIfMissing True tempGeneratedRoot
+  writePSTypesWith bridgeSwitch tempGeneratedRoot (buildBridge (contractArrayBridge <|> defaultBridge)) Contracts.contractSumTypes
+  normalizeGeneratedPursContracts runtimeMode generatedSourceFile outputFile
+  removePathForcibly tempGeneratedRoot
 
 contractArrayBridge :: BridgePart
 contractArrayBridge = (typeName ^== "List" <|> typeName ^== "[]") >> psArray
 
-normalizeGeneratedPursContracts :: FilePath -> IO ()
-normalizeGeneratedPursContracts outputFile = do
-  generatedModule <- readFile outputFile
+normalizeGeneratedPursContracts :: RuntimeMode -> FilePath -> FilePath -> IO ()
+normalizeGeneratedPursContracts runtimeMode sourceFile outputFile = do
+  generatedModule <- readFile sourceFile
   let normalizedModule = unlines (map normalizeLine (filter keepLine (lines generatedModule)))
-  _ <- evaluate (length normalizedModule)
-  writeFile outputFile normalizedModule
+      finalModule = normalizedModule <> Contracts.renderPursContractFooter runtimeMode
+  _ <- evaluate (length finalModule)
+  writeFile outputFile finalModule
   where
     normalizeLine line
+      | line == "module Infernix.Web.Contracts where" = "module Generated.Contracts where"
       | line == "import Data.Maybe (Maybe, Maybe(..))" = "import Data.Maybe (Maybe)"
       | line == "import Prim (Array, Boolean, String)" = "import Prim (Array, Boolean, Int, String)"
       | line == "import Data.Newtype (class Newtype)" =
@@ -464,6 +555,9 @@ normalizeGeneratedPursContracts outputFile = do
             || "import Data.Generic " `isPrefixOf` line
             || "derive instance generic" `isPrefixOf` line
         )
+
+catchAnyIOException :: IO () -> (IOException -> IO ()) -> IO ()
+catchAnyIOException = catch
 
 extractRuntimeMode :: [String] -> Either String (Maybe RuntimeMode, [String])
 extractRuntimeMode = go Nothing []
@@ -482,9 +576,6 @@ runCommand :: Maybe RuntimeMode -> FilePath -> [String] -> IO ()
 runCommand maybeRuntimeMode command args = do
   paths <- discoverPaths
   runCommandWithCwd maybeRuntimeMode command args (repoRoot paths)
-
-runCommandInDirectory :: Maybe RuntimeMode -> FilePath -> [String] -> FilePath -> IO ()
-runCommandInDirectory = runCommandWithCwd
 
 runCommandWithCwd :: Maybe RuntimeMode -> FilePath -> [String] -> FilePath -> IO ()
 runCommandWithCwd maybeRuntimeMode =
@@ -576,32 +667,6 @@ valueText :: Value -> Maybe Text.Text
 valueText (String textValue) = Just textValue
 valueText _ = Nothing
 
-ensureWebDependencies :: IO ()
-ensureWebDependencies = do
-  paths <- discoverPaths
-  let webRoot = repoRoot paths </> "web"
-  depsDirectoryPresent <- doesDirectoryExist (webRoot </> "node_modules")
-  toolchainPresent <- webToolchainPresent webRoot
-  if depsDirectoryPresent && toolchainPresent
-    then pure ()
-    else runCommandInDirectory Nothing "npm" ["--prefix", "web", "ci"] (repoRoot paths)
-
-webToolchainPresent :: FilePath -> IO Bool
-webToolchainPresent webRoot =
-  and
-    <$> mapM
-      doesFileExist
-      [ webRoot </> "node_modules" </> "playwright" </> "package.json",
-        webRoot </> "node_modules" </> "purescript" </> "package.json",
-        webRoot </> "node_modules" </> "spago" </> "package.json",
-        webRoot </> "node_modules" </> "esbuild" </> "package.json"
-      ]
-
-ensurePlaywrightBrowsers :: IO ()
-ensurePlaywrightBrowsers = do
-  paths <- discoverPaths
-  runCommandInDirectory Nothing "npx" ["playwright", "install", "chromium"] (repoRoot paths </> "web")
-
 runPythonQualityIfPresent :: Maybe RuntimeMode -> IO ()
 runPythonQualityIfPresent maybeRuntimeMode = do
   paths <- discoverPaths
@@ -629,11 +694,6 @@ ensurePythonAdapterDependencies maybeRuntimeMode = do
 ensurePythonQualityDependencies :: Paths -> FilePath -> IO ()
 ensurePythonQualityDependencies = ensurePoetryProjectReady
 
-platformCommandsAvailableForE2E :: IO Bool
-platformCommandsAvailableForE2E = do
-  availableCommands <- mapM findExecutable ["docker", "helm", "kind", "kubectl"]
-  pure (all isJust availableCommands)
-
 ensureAppleHostPrerequisites :: IO ()
 ensureAppleHostPrerequisites = pure ()
 
@@ -650,69 +710,3 @@ syncBuildRootExecutable = do
       copyFile currentExecutable targetExecutable
       currentPermissions <- getPermissions currentExecutable
       setPermissions targetExecutable currentPermissions
-
-helpText :: String
-helpText =
-  unlines
-    [ "infernix [--runtime-mode apple-silicon|linux-cpu|linux-cuda]",
-      "",
-      "Commands:",
-      "  infernix service",
-      "  infernix cluster up",
-      "  infernix cluster down",
-      "  infernix cluster status",
-      "  infernix cache status",
-      "  infernix cache evict [--model MODEL_ID]",
-      "  infernix cache rebuild [--model MODEL_ID]",
-      "  infernix kubectl ...",
-      "  infernix lint files|docs|proto|chart",
-      "  infernix test lint",
-      "  infernix test unit",
-      "  infernix test integration",
-      "  infernix test e2e",
-      "  infernix test all",
-      "  infernix docs check",
-      "  infernix internal generate-purs-contracts PATH",
-      "  infernix internal discover {images,claims,harbor-overlay} PATH",
-      "  infernix internal publish-chart-images RENDERED_CHART OUTPUT",
-      "  infernix internal demo-config {load,validate} PATH"
-    ]
-
-clusterHelpText :: String
-clusterHelpText =
-  unlines
-    [ "infernix cluster up",
-      "infernix cluster down",
-      "infernix cluster status"
-    ]
-
-testHelpText :: String
-testHelpText =
-  unlines
-    [ "infernix test lint",
-      "infernix test unit",
-      "infernix test integration",
-      "infernix test e2e",
-      "infernix test all"
-    ]
-
-lintHelpText :: String
-lintHelpText =
-  unlines
-    [ "infernix lint files",
-      "infernix lint docs",
-      "infernix lint proto",
-      "infernix lint chart"
-    ]
-
-internalHelpText :: String
-internalHelpText =
-  unlines
-    [ "infernix internal generate-purs-contracts PATH",
-      "infernix internal discover images RENDERED_CHART",
-      "infernix internal discover claims RENDERED_CHART",
-      "infernix internal discover harbor-overlay OVERLAY",
-      "infernix internal publish-chart-images RENDERED_CHART OUTPUT",
-      "infernix internal demo-config load PATH",
-      "infernix internal demo-config validate PATH"
-    ]

@@ -24,7 +24,7 @@ import Data.ByteString.Lazy.Char8 qualified as LazyChar8
 import Data.Char (isSpace, toLower)
 import Data.List qualified as List
 import Data.Map.Strict qualified as Map
-import Data.Maybe (catMaybes, fromMaybe, isJust, mapMaybe)
+import Data.Maybe (catMaybes, fromMaybe, mapMaybe)
 import Data.Text qualified as Text
 import Data.Time (getCurrentTime)
 import Data.Vector qualified as Vector
@@ -34,10 +34,12 @@ import Infernix.Config (Paths (..))
 import Infernix.Config qualified as Config
 import Infernix.Engines.AppleSilicon (ensureAppleSiliconRuntimeReady)
 import Infernix.Models
+import Infernix.Routes (routeHelmValues)
 import Infernix.Storage
 import Infernix.Types
+import Infernix.Workflow (platformCommandsAvailable, resolveWebNpmInvocation)
 import Network.Socket qualified as Socket
-import System.Directory (copyFile, createDirectoryIfMissing, doesDirectoryExist, doesFileExist, findExecutable, listDirectory, removePathForcibly)
+import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, findExecutable, listDirectory, removePathForcibly)
 import System.Environment (getEnvironment, lookupEnv)
 import System.Exit (ExitCode (..))
 import System.FilePath (takeDirectory, (</>))
@@ -79,6 +81,9 @@ helmDependencyArchives =
     "chart/charts/minio-17.0.21.tgz",
     "chart/charts/gateway-helm-v1.7.2.tgz"
   ]
+
+envoyGatewayDependencyArchive :: FilePath
+envoyGatewayDependencyArchive = "chart/charts/gateway-helm-v1.7.2.tgz"
 
 finalPhaseDeployments :: ClusterState -> [String]
 finalPhaseDeployments state =
@@ -125,12 +130,6 @@ nvidiaCudaContainerImage = "nvidia/cuda:12.4.1-base-ubuntu22.04"
 
 kindNodeImage :: String
 kindNodeImage = "kindest/node:v1.34.0"
-
-nvkindGoInstallTarget :: String
-nvkindGoInstallTarget = "github.com/NVIDIA/nvkind/cmd/nvkind@8bce71ec58cf12b4003758eb4e49adac53cc40f2"
-
-nvkindGoBuilderImage :: String
-nvkindGoBuilderImage = "golang:1.24"
 
 data HelmDeployPhase
   = WarmupPhase
@@ -184,12 +183,6 @@ harborPostgresUserSecretName = "infernix-harbor-db-user"
 
 simulationPidPath :: Paths -> FilePath
 simulationPidPath paths = runtimeRoot paths </> "simulated-demo.pid"
-
-platformCommandsAvailable :: IO Bool
-platformCommandsAvailable = do
-  let requiredCommands = ["docker", "helm", "kind", "kubectl"]
-  availableCommands <- mapM findExecutable requiredCommands
-  pure (all isJust availableCommands)
 
 resolveDemoUiEnabled :: IO Bool
 resolveDemoUiEnabled = do
@@ -266,7 +259,7 @@ clusterUpSimulated paths runtimeMode = do
   writeStateFile (clusterStatePath paths) state
   killSimulatedService paths
   ensureWebBuildDependencies paths
-  runCommand (Just (repoRoot paths)) [] "npm" ["--prefix", "web", "run", "build"]
+  runWebBuildCommand paths ["--prefix", "web", "run", "build"]
   buildDir <- Config.resolveCabalBuildDir
   baseEnv <- getEnvironment
   (_, _, _, processHandle) <-
@@ -448,6 +441,8 @@ clusterUpWithPlatform paths runtimeMode = do
   applyBootstrapState paths runtimeMode demoUiEnabledValue discoveredClaims
   let initialState = seedState {claims = discoveredClaims}
   writeFile publicationPath (renderPublicationState controlPlane initialState)
+  ensureHelmDependencies paths
+  ensureEnvoyGatewayCrdsInstalled paths initialState
   reconcilePersistentVolumes initialState
   deployChart paths initialState [warmupValuesPath] False
   state <- reconcileOperatorManagedPersistentVolumes paths initialState
@@ -455,8 +450,9 @@ clusterUpWithPlatform paths runtimeMode = do
   bootstrapHarborWithRepair paths state [bootstrapValuesPath]
   buildClusterImages paths runtimeMode
   imageOverridesPath <- publishClusterImages paths renderedChartPath runtimeMode
-  deployChart paths state [harborFinalValuesPath] True
+  deployChart paths state [harborFinalValuesPath, imageOverridesPath] True
   waitForHarborFinalPhaseRollouts state
+  waitForGatewayApiCrds state
   preloadHarborBackedImagesOnKindWorker paths runtimeMode imageOverridesPath
   deployChart paths state [finalValuesPath, imageOverridesPath] True
   waitForFinalPhaseRollouts state
@@ -1006,86 +1002,15 @@ dockerGpuVolumeMountProbeCommand =
   ]
 
 ensureNvkindBinary :: Paths -> IO FilePath
-ensureNvkindBinary paths = do
-  let binaryPath = buildRoot paths </> "tools" </> "nvkind"
-      binaryDirectory = takeDirectory binaryPath
-  outerContainerBinaryPath <- resolveOuterContainerNvkindPath paths
-  binaryExists <- doesFileExist binaryPath
-  if binaryExists
-    then pure binaryPath
-    else do
-      createDirectoryIfMissing True binaryDirectory
-      syncOuterContainerNvkindBinary outerContainerBinaryPath binaryPath
-      copiedBinaryExists <- doesFileExist binaryPath
-      if copiedBinaryExists
-        then pure binaryPath
-        else do
-          builderBinaryDirectory <- resolveNvkindBuilderDirectory paths
-          goResult <- tryCommand Nothing [] "go" ["version"]
-          case goResult of
-            Right output
-              | hostGoSupportsNvkind output ->
-                  runCommand
-                    Nothing
-                    [("GOBIN", binaryDirectory)]
-                    "go"
-                    ["install", nvkindGoInstallTarget]
-            _ ->
-              runCommand
-                Nothing
-                []
-                "docker"
-                [ "run",
-                  "--rm",
-                  "-v",
-                  builderBinaryDirectory <> ":/go/bin",
-                  nvkindGoBuilderImage,
-                  "go",
-                  "install",
-                  nvkindGoInstallTarget
-                ]
-          syncOuterContainerNvkindBinary outerContainerBinaryPath binaryPath
-          pure binaryPath
-  where
-    syncOuterContainerNvkindBinary maybeSourcePath targetPath =
-      case maybeSourcePath of
-        Just sourcePath -> do
-          sourceExists <- doesFileExist sourcePath
-          when sourceExists (copyFile sourcePath targetPath)
-        Nothing -> pure ()
-
-resolveNvkindBuilderDirectory :: Paths -> IO FilePath
-resolveNvkindBuilderDirectory paths
-  | Config.controlPlaneContext paths == "outer-container" = resolveOuterContainerNvkindHostDirectory paths
-  | otherwise = pure (buildRoot paths </> "tools")
-
-resolveOuterContainerNvkindPath :: Paths -> IO (Maybe FilePath)
-resolveOuterContainerNvkindPath paths
-  | Config.controlPlaneContext paths == "outer-container" = pure (Just (repoRoot paths </> ".build" </> "tools" </> "nvkind"))
-  | otherwise = pure Nothing
-
-resolveOuterContainerNvkindHostDirectory :: Paths -> IO FilePath
-resolveOuterContainerNvkindHostDirectory _paths = do
-  maybeHostKindRoot <- lookupEnv "INFERNIX_HOST_KIND_ROOT"
-  case maybeHostKindRoot of
-    Just hostKindRoot -> pure (takeDirectory (takeDirectory hostKindRoot) </> ".build" </> "tools")
+ensureNvkindBinary _paths = do
+  maybeSystemNvkind <- findExecutable "nvkind"
+  case maybeSystemNvkind of
+    Just executablePath -> pure executablePath
     Nothing ->
       ioError
-        (userError "outer-container nvkind bootstrap requires INFERNIX_HOST_KIND_ROOT so Docker can write the helper binary to a host-visible repo path")
-
-hostGoSupportsNvkind :: String -> Bool
-hostGoSupportsNvkind versionOutput =
-  maybe False (>= minimumVersion) (parseGoVersion =<< findGoVersionToken (words versionOutput))
-  where
-    minimumVersion :: (Int, Int)
-    minimumVersion = (1, 24)
-    findGoVersionToken = List.find (List.isPrefixOf "go")
-    parseGoVersion token =
-      case break (== '.') (drop 2 token) of
-        (majorDigits, '.' : rest) ->
-          let (minorDigits, _) = span (`elem` ['0' .. '9']) rest
-           in (,) <$> readMaybe majorDigits <*> readMaybe minorDigits
-        _ -> Nothing
+        ( userError
+            "nvkind is not available on PATH. The supported linux-cuda control-plane path runs inside the shared linux substrate image, which supplies nvkind."
+        )
 
 waitForKindKubeconfig :: Paths -> RuntimeMode -> IO (Either String String)
 waitForKindKubeconfig paths runtimeMode = do
@@ -1361,18 +1286,28 @@ applyStorageClass state =
 buildClusterImages :: Paths -> RuntimeMode -> IO ()
 buildClusterImages paths runtimeMode = do
   let runtimeModeName = Text.unpack (runtimeModeId (clusterWorkloadRuntimeMode runtimeMode))
-      dockerBuildArgs dockerfile imageRef = ["build", "-f", dockerfile, "-t", imageRef, "."]
+      baseImage =
+        case clusterWorkloadRuntimeMode runtimeMode of
+          LinuxCuda -> "nvidia/cuda:13.2.1-cudnn-runtime-ubuntu24.04"
+          _ -> "ubuntu:24.04"
+      dockerBuildArgs imageRef =
+        [ "build",
+          "-f",
+          "docker/linux-substrate.Dockerfile",
+          "--build-arg",
+          "BASE_IMAGE=" <> baseImage,
+          "--build-arg",
+          "RUNTIME_MODE=" <> runtimeModeName,
+          "-t",
+          imageRef,
+          "."
+        ]
   putStrLn ("building cluster images for " <> runtimeModeName)
   runCommand
     (Just (repoRoot paths))
     []
     "docker"
-    (dockerBuildArgs "docker/linux-base.Dockerfile" clusterBaseImageRef)
-  runCommand
-    (Just (repoRoot paths))
-    []
-    "docker"
-    (dockerBuildArgs (clusterWorkloadDockerfile runtimeMode) (clusterWorkloadImageRef runtimeMode))
+    (dockerBuildArgs (clusterWorkloadImageRef runtimeMode))
 
 preloadBootstrapSupportImagesOnKindNodes :: Paths -> RuntimeMode -> FilePath -> IO ()
 preloadBootstrapSupportImagesOnKindNodes paths runtimeMode renderedChartPath = do
@@ -1417,7 +1352,12 @@ ensureWebBuildDependencies paths = do
   toolchainPresent <- webBuildToolchainPresent webRoot
   if depsPresent && packageLockPresent && toolchainPresent
     then pure ()
-    else runCommand (Just (repoRoot paths)) [] "npm" ["--prefix", "web", "ci"]
+    else runWebBuildCommand paths ["--prefix", "web", "ci"]
+
+runWebBuildCommand :: Paths -> [String] -> IO ()
+runWebBuildCommand paths npmArgs = do
+  (command, args) <- resolveWebNpmInvocation npmArgs
+  runCommand (Just (repoRoot paths)) [] command args
 
 webBuildToolchainPresent :: FilePath -> IO Bool
 webBuildToolchainPresent webRoot =
@@ -1938,6 +1878,35 @@ waitForHarborFinalPhaseRollouts state = do
   mapM_ (waitForWorkloadRollout state 900) harborFinalPhaseDeployments
   waitForHarborDatabaseReadyWithRepair state
 
+waitForGatewayApiCrds :: ClusterState -> IO ()
+waitForGatewayApiCrds state =
+  mapM_
+    (waitForGatewayApiCrd state)
+    [ "gatewayclasses.gateway.networking.k8s.io",
+      "gateways.gateway.networking.k8s.io",
+      "httproutes.gateway.networking.k8s.io",
+      "referencegrants.gateway.networking.k8s.io"
+    ]
+
+waitForGatewayApiCrd :: ClusterState -> String -> IO ()
+waitForGatewayApiCrd state crdName = do
+  result <-
+    retryCommandOutput
+      60
+      1000000
+      ("wait for Gateway API CRD " <> crdName)
+      ( tryCommand
+          Nothing
+          []
+          "kubectl"
+          (kubeconfigArgs state <> ["get", "crd", crdName])
+      )
+  case result of
+    Right _ -> pure ()
+    Left err ->
+      ioError
+        (userError ("Gateway API CRD never became ready: " <> crdName <> "\n" <> err))
+
 waitForFinalPhaseRollouts :: ClusterState -> IO ()
 waitForFinalPhaseRollouts state = do
   putStrLn "waiting for final platform rollouts"
@@ -1999,6 +1968,41 @@ ensureHelmDependencies paths = do
     missingHelmRepoMetadata err =
       "no repository definition" `List.isInfixOf` err
         || "no cached repository" `List.isInfixOf` err
+
+ensureEnvoyGatewayCrdsInstalled :: Paths -> ClusterState -> IO ()
+ensureEnvoyGatewayCrdsInstalled paths state = do
+  crdPaths <-
+    filter ("gateway-helm/crds/" `List.isPrefixOf`) . lines
+      <$> captureCommand
+        (Just (repoRoot paths))
+        []
+        "tar"
+        ["-tf", envoyGatewayDependencyArchive]
+  when (null crdPaths) $
+    ioError
+      ( userError
+          ( "Envoy Gateway dependency archive did not contain any CRDs:\n"
+              <> repoRoot paths
+              </> envoyGatewayDependencyArchive
+          )
+      )
+  crdDocuments <-
+    mapM
+      ( \crdPath ->
+          captureCommand
+            (Just (repoRoot paths))
+            []
+            "tar"
+            ["-xOf", envoyGatewayDependencyArchive, crdPath]
+      )
+      crdPaths
+  -- Helm does not install CRDs that live under dependency charts, so apply the bundle explicitly.
+  runCommandWithInput
+    Nothing
+    []
+    "kubectl"
+    (kubeconfigArgs state <> ["apply", "--server-side", "--force-conflicts", "-f", "-"])
+    (List.intercalate "\n---\n" crdDocuments)
 
 ensureHelmRepositoryDefinitions :: Paths -> IO ()
 ensureHelmRepositoryDefinitions paths =
@@ -2707,6 +2711,7 @@ renderHelmValues controlPlane state demoConfigPayload deployPhase engineCommandO
         "    tag: local",
         "    pullPolicy: IfNotPresent"
       ]
+        <> routeHelmValues (clusterStateHasDemoUi state)
         <> serviceEngineAdapterOverrides
         <> phaseChartOverrides deployPhase
         <> bootstrapHarborOverrides deployPhase
@@ -2731,11 +2736,11 @@ renderHelmValues controlPlane state demoConfigPayload deployPhase engineCommandO
           ["    commandEnv:"]
             <> map (\(name, value) -> "      " <> name <> ": " <> show value) engineCommandOverrides
     phaseChartOverrides phaseValue = case phaseValue of
-      WarmupPhase -> harborBootstrapChartOverrides
-      BootstrapPhase -> harborBootstrapChartOverrides
-      HarborFinalPhase -> harborBootstrapChartOverrides
+      WarmupPhase -> preFinalChartOverrides False
+      BootstrapPhase -> preFinalChartOverrides False
+      HarborFinalPhase -> preFinalChartOverrides True
       FinalPhase -> []
-    harborBootstrapChartOverrides =
+    preFinalChartOverrides envoyGatewayEnabled =
       [ "upstreamCharts:",
         "  harbor:",
         "    enabled: true",
@@ -2748,7 +2753,9 @@ renderHelmValues controlPlane state demoConfigPayload deployPhase engineCommandO
         "  pulsar:",
         "    enabled: false",
         "  envoyGateway:",
-        "    enabled: false",
+        "    enabled: " <> yamlBool envoyGatewayEnabled,
+        "repoGateway:",
+        "  enabled: false",
         "minio:",
         "  console:",
         "    enabled: false"
@@ -2875,15 +2882,6 @@ clusterWorkloadImageRepository runtimeMode =
 clusterWorkloadImageRef :: RuntimeMode -> String
 clusterWorkloadImageRef runtimeMode =
   clusterWorkloadImageRepository runtimeMode <> ":local"
-
-clusterBaseImageRef :: String
-clusterBaseImageRef = "infernix-linux-base:local"
-
-clusterWorkloadDockerfile :: RuntimeMode -> FilePath
-clusterWorkloadDockerfile runtimeMode =
-  case clusterWorkloadRuntimeMode runtimeMode of
-    LinuxCuda -> "docker/linux-cuda.Dockerfile"
-    _ -> "docker/linux-cpu.Dockerfile"
 
 runCommand :: Maybe FilePath -> [(String, String)] -> FilePath -> [String] -> IO ()
 runCommand maybeWorkingDirectory envOverrides command args = do

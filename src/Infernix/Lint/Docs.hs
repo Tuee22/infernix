@@ -5,6 +5,7 @@ where
 
 import Control.Monad (forM_, unless, when)
 import Data.List (isInfixOf, isPrefixOf)
+import Infernix.CommandRegistry (documentedCommandLines)
 import Infernix.Config (Paths (..), discoverPaths)
 import System.Directory (doesFileExist)
 import System.FilePath ((</>))
@@ -59,7 +60,15 @@ forbiddenPhrases =
     "docker/infernix.Dockerfile",
     "docker/service.Dockerfile",
     "python/adapters/<engine>/",
-    "python/pyproject.toml",
+    "python/<substrate>/adapters/",
+    "python/apple-silicon/",
+    "python/linux-cpu/",
+    "python/linux-cuda/",
+    "src/Generated/Contracts.hs",
+    "docker/linux-base.Dockerfile",
+    "docker/linux-cpu.Dockerfile",
+    "docker/linux-cuda.Dockerfile",
+    "npx playwright",
     "Harbor admin Basic-auth"
   ]
 
@@ -92,6 +101,10 @@ runDocsLint = do
   readmeContents <- readFile (repoRoot paths </> "README.md")
   unless ("documents/" `isInfixOf` readmeContents && "DEVELOPMENT_PLAN/" `isInfixOf` readmeContents) $
     ioError (userError "README.md must reference documents/ and DEVELOPMENT_PLAN/")
+  cliReferenceContents <- readFile (repoRoot paths </> "documents/reference/cli_reference.md")
+  forM_ documentedCommandLines $ \commandLine ->
+    unless (commandLine `isInfixOf` cliReferenceContents) $
+      ioError (userError ("documents/reference/cli_reference.md is missing the registry command line: " <> commandLine))
   forM_ phaseDocs $ \relativePath -> do
     contents <- readFile (repoRoot paths </> relativePath)
     validatePhaseDoc relativePath contents

@@ -15,13 +15,25 @@
 - [architecture/web_ui_architecture.md](architecture/web_ui_architecture.md) describes the
   PureScript demo UI topology and the two-binary cluster image layout
 - [development/local_dev.md](development/local_dev.md) describes the supported local workflows
+- [development/haskell_style.md](development/haskell_style.md) defines the enforced Haskell
+  formatter, linter, and compiler-warning gate
 - [development/python_policy.md](development/python_policy.md) defines when Python is allowed
-  (per-substrate adapter packages under `python/<substrate>/adapters/` only), the Poetry
+  (shared adapter modules under `python/adapters/` only), the Poetry
   workflow, and the strict mypy/black/ruff quality gate surfaced as `poetry run check-code`
 - [development/purescript_policy.md](development/purescript_policy.md) defines the PureScript
   toolchain (purs, spago), the `purescript-spec` test framework, and the Haskell-owned generated
   contract derivation consumed by the demo UI
+- [development/testing_strategy.md](development/testing_strategy.md) records the implemented lint,
+  unit, integration, and routed E2E coverage
+- [development/chaos_testing.md](development/chaos_testing.md) records the current HA-failure
+  validation status and the Phase 6 ownership for the remaining automation
 - [engineering/build_artifacts.md](engineering/build_artifacts.md) defines build-output isolation
+- [engineering/implementation_boundaries.md](engineering/implementation_boundaries.md) defines
+  the ownership boundaries across Haskell, Python, chart assets, and generated outputs
+- [engineering/portability.md](engineering/portability.md) defines the portable contract versus
+  Apple- or Linux-specific execution details
+- [engineering/testing.md](engineering/testing.md) defines the canonical validation doctrine and
+  fail-fast behavior
 - [operations/cluster_bootstrap_runbook.md](operations/cluster_bootstrap_runbook.md) describes the
   supported cluster bring-up and teardown path
 - [tools/postgresql.md](tools/postgresql.md) records the supported operator-managed PostgreSQL

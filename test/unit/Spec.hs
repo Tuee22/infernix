@@ -129,8 +129,8 @@ main = do
       (engineBindingSetupEntrypoint overrideBinding == "setup-transformers-python")
       "engine bindings publish Poetry setup entrypoints"
     assert
-      (engineBindingProjectDirectory overrideBinding == "python/apple-silicon")
-      "engine bindings publish the substrate Poetry project directory"
+      (engineBindingProjectDirectory overrideBinding == "python")
+      "engine bindings publish the shared Poetry project directory"
     withOptionalEnv overrideEnvName (Just (overrideWrapperPath <> " ")) $ do
       overrideResult <-
         executeInference

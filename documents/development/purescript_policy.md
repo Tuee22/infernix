@@ -19,16 +19,17 @@ The demo UI is served by the `infernix-demo` Haskell binary and gated by the act
 ## Toolchain
 
 - `web/package.json` owns the npm-distributed toolchain and scripts
+- Node.js 22 or newer is required for the supported PureScript or Playwright toolchain
 - `web/spago.yaml` declares the PureScript package set and dependencies
 - `purs` is the PureScript compiler
 - `spago build` compiles the source tree under `web/src/*.purs`
 - `spago bundle --module Main --outfile dist/app.js --platform browser --bundle-type app` produces
   the static demo bundle in `web/dist/`
 - `spago test` runs the `purescript-spec` suites under `web/test/*.purs`
-- the npm-managed PureScript toolchain is installed either in `web/node_modules/` on the host path
-  or in the active Linux substrate image build
-- routed Playwright E2E runs from the host on Apple Silicon and from the active Linux substrate
-  image when the platform toolchain is available
+- the npm-managed PureScript toolchain is installed either in `web/node_modules/` on the host
+  path or in the active Linux substrate image build, both on Node.js 22+
+- routed Playwright E2E runs from the host on Apple Silicon, from the active Linux substrate image
+  when the platform toolchain is available, and otherwise through the local npm runner
 
 ## Source Layout
 
@@ -62,7 +63,7 @@ Frontend types are generated from Haskell-owned DTO and catalog records.
 - generated PureScript modules live in `web/src/Generated/` and carry the request, response,
   engine-binding, and catalog constants needed by the current demo UI
 - the codegen path derives the PureScript contract types through `purescript-bridge` from
-  dedicated browser-contract ADTs in `src/Generated/Contracts.hs`
+  dedicated browser-contract ADTs in `src/Infernix/Web/Contracts.hs`
 - the generated module also appends the active runtime constants, catalog constants, helper
   unwrappers for the bridge-generated `newtype` surface, and explicit `Simple.JSON` instances
 

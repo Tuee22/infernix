@@ -1,6 +1,6 @@
 # Phase 1: Repository and Control-Plane Foundation
 
-**Status**: Active
+**Status**: Done
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
 
 > **Purpose**: Establish the canonical repository scaffold, the two-binary topology
@@ -10,24 +10,15 @@
 
 ## Phase Status
 
-Sprints 1.1 through 1.6 are closed: the repository scaffold, two-binary topology, build-root
-discipline, execution-context split, runtime-mode naming contract, and Haskell-owned
-control-plane tooling all exist in the worktree. Sprint 1.7 remains `Active` because tracked-index
-cleanup is still open. Sprints 1.8 and 1.9 are `Planned` follow-on work that incorporate the DRY
-cleanup proposals without changing the earlier foundation narrative.
+All phase-one foundation work is landed: generated-artifact hygiene, the command registry,
+governed root-doc alignment, shared workflow helpers, and the snapshot-style outer-container
+launcher all exist in the current worktree.
 
 ## Current Repo Assessment
 
-The repo already has the Haskell project, repo-local build and data roots, runtime-mode selection,
-generated demo-config staging, direct `cabal` host install path, Haskell-owned chart discovery and
-publication, the Haskell demo HTTP surface, and the PureScript build or test path under `web/`.
-The open foundation gaps are now the cleanup gaps:
-
-- tracked generated files and deleted legacy paths still appear in `git ls-files`
-- the CLI surface, help text, and command docs still have multiple maintenance points
-- `compose.yaml` still uses a live repo bind mount and a `web/node_modules` volume
-- Playwright workflows still include `npx`
-- root guidance is still more repetitive than the governed-doc model wants
+The repo now matches the Phase 1 contract: the control plane uses one Haskell-owned command
+registry, the governed root docs point at canonical `documents/` topics, the Linux launcher uses a
+baked image snapshot, and Playwright workflows no longer depend on `npx`.
 
 ## Runtime-Mode Foundation
 
@@ -91,6 +82,7 @@ host while keeping both on one shared library.
   - `cluster up|down|status`
   - `cache status|evict|rebuild`
   - `kubectl`
+  - `lint files|docs|proto|chart`
   - `test lint|unit|integration|e2e|all`
   - `docs check`
 - both executables link one shared Cabal library `infernix-lib`
@@ -145,7 +137,7 @@ None.
 ## Sprint 1.4: Build Artifact Isolation and Web Build Generation Path [Done]
 
 **Status**: Done
-**Implementation**: `src/Infernix/CLI.hs`, `src/Generated/Contracts.hs`, `src/Infernix/Lint/`, `src/Infernix/Lint/HaskellStyle.hs`, `web/`, `test/haskell-style/Spec.hs`, `test/integration/Spec.hs`
+**Implementation**: `src/Infernix/CLI.hs`, `src/Infernix/Web/Contracts.hs`, `src/Infernix/Lint/`, `src/Infernix/Lint/HaskellStyle.hs`, `web/`, `test/haskell-style/Spec.hs`, `test/integration/Spec.hs`
 **Docs to update**: `documents/development/haskell_style.md`, `documents/development/local_dev.md`, `documents/development/testing_strategy.md`, `documents/engineering/build_artifacts.md`
 
 ### Objective
@@ -235,9 +227,9 @@ None.
 
 ---
 
-## Sprint 1.7: Repository Hygiene and Generated-Artifact Doctrine [Active]
+## Sprint 1.7: Repository Hygiene and Generated-Artifact Doctrine [Done]
 
-**Status**: Active
+**Status**: Done
 **Implementation**: `.gitignore`, `.dockerignore`, `src/Infernix/Lint/Files.hs`, `documents/engineering/build_artifacts.md`
 **Docs to update**: `documents/engineering/build_artifacts.md`
 
@@ -266,15 +258,13 @@ Stop tracking generated and disposable artifacts and make the ignore contract en
 
 ### Remaining Work
 
-- ignore rules and file-lint enforcement are landed
-- repo policy forbids agent-owned staging, so the remaining work is user-owned tracked-index
-  cleanup for stale generated artifacts and deleted legacy files
+None.
 
 ---
 
-## Sprint 1.8: Command Registry, Root Guidance Canonicalization, and Shared Workflow Helpers [Planned]
+## Sprint 1.8: Command Registry, Root Guidance Canonicalization, and Shared Workflow Helpers [Done]
 
-**Status**: Planned
+**Status**: Done
 **Implementation**: `src/Infernix/CLI.hs`, `src/Infernix/CommandRegistry.hs`, `src/Infernix/Workflow.hs`, `documents/reference/cli_reference.md`, `README.md`, `AGENTS.md`, `CLAUDE.md`
 **Docs to update**: `documents/reference/cli_reference.md`, `documents/reference/cli_surface.md`, `documents/development/local_dev.md`, `README.md`, `AGENTS.md`, `CLAUDE.md`
 
@@ -306,13 +296,13 @@ by giving each workflow topic one canonical home.
 
 ### Remaining Work
 
-- implementation has not started
+None.
 
 ---
 
-## Sprint 1.9: Outer-Container Snapshot Launcher and Playwright Invocation Cleanup [Planned]
+## Sprint 1.9: Outer-Container Snapshot Launcher and Playwright Invocation Cleanup [Done]
 
-**Status**: Planned
+**Status**: Done
 **Implementation**: `compose.yaml`, `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `web/package.json`, `documents/engineering/docker_policy.md`, `documents/development/local_dev.md`
 **Docs to update**: `documents/engineering/docker_policy.md`, `documents/development/local_dev.md`, `documents/development/testing_strategy.md`, `README.md`
 
@@ -338,7 +328,7 @@ supported browser workflow.
 
 ### Remaining Work
 
-- implementation has not started
+None.
 
 ## Documentation Requirements
 

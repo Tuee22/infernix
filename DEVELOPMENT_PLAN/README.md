@@ -49,29 +49,21 @@ A phase or sprint can move to `Done` only when all of the following are true:
 
 ## Current Repo Assessment
 
-Phase 0 is closed. Every later phase is open because the repository still carries a partially
-landed DRY-cleanup and documentation-governance realignment.
+Phase 0 is closed. Phase 1 is now closed as well, and the major DRY-cleanup work has landed in the
+current worktree: the shared Python project, the shared Linux substrate Dockerfile, the route
+registry, the command registry, the browser-contract move, the snapshot launcher, and the docs
+doctrine refresh are all present. Real-cluster Gateway acceptance, the routed Pulsar roundtrip,
+and image-owned Playwright are now proven on the `linux-cpu` outer-container lane.
 
-- the current worktree still uses three Linux Dockerfiles
-  (`docker/linux-base.Dockerfile`, `docker/linux-cpu.Dockerfile`,
-  `docker/linux-cuda.Dockerfile`) even though the plan now converges on one shared
-  `docker/linux-substrate.Dockerfile` that produces the two real Linux runtime images
-- the current Python runtime boundary is still split across `python/apple-silicon/`,
-  `python/linux-cpu/`, and `python/linux-cuda/`; the plan now converges on one
-  `python/pyproject.toml` and one shared `python/adapters/` tree
-- the handwritten Haskell browser-contract source still lives at `src/Generated/Contracts.hs`,
-  which conflicts with the repository rule that `Generated/` is reserved for generated outputs
-- the route and publication inventory is still duplicated across `src/Infernix/Models.hs`,
-  `chart/templates/httproutes/*.yaml`, `src/Infernix/Lint/Chart.hs`, and committed payload blobs
-  in `chart/values.yaml`
-- `compose.yaml` still bind-mounts the whole repo and a `web/node_modules` volume, which does not
-  match the image-snapshot outer-container doctrine the plan now targets
-- some Playwright workflows still use `npx`, and the root docs still repeat workflow material
-  that should live once in `documents/`
-- routed Gateway validation, the real Pulsar consumer loop, non-stub adapters, the shared Linux
-  image, and the final routed Playwright path are still open
-- tracked-index cleanup is still open because repo policy forbids agent-owned staging or
-  cache-index edits
+The remaining open work is now the true platform work:
+
+- non-stub engine adapters
+- the full Apple host-native engine bootstrap
+- exhaustive per-entry integration coverage beyond the routed Playwright suite
+- explicit HA-failure automation for Harbor, MinIO, Pulsar, and operator-managed PostgreSQL
+- supported NVIDIA-host validation for `linux-cuda`
+- final `docker compose run --rm infernix infernix --runtime-mode linux-cpu test integration`
+  revalidation after the latest outer-container harness fixes
 
 ## Execution Contexts and Runtime Modes
 
@@ -87,11 +79,11 @@ The plan keeps these concepts separate:
 | Phase | Name | Status | Document |
 |-------|------|--------|----------|
 | 0 | Documentation and Governance | Done | [phase-0-documentation-and-governance.md](phase-0-documentation-and-governance.md) |
-| 1 | Repository and Control-Plane Foundation | Active | [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md) |
+| 1 | Repository and Control-Plane Foundation | Done | [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md) |
 | 2 | Kind Cluster Storage and Lifecycle | Active | [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md) |
-| 3 | HA Platform Services and Edge Routing | Active | [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md) |
+| 3 | HA Platform Services and Edge Routing | Done | [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md) |
 | 4 | Inference Service and Durable Runtime | Active | [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) |
-| 5 | Web UI and Shared Types | Active | [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md) |
+| 5 | Web UI and Shared Types | Done | [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md) |
 | 6 | Validation, E2E, and HA Hardening | Active | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) |
 
 ## Canonical Outcome

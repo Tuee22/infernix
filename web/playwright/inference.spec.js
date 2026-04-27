@@ -63,24 +63,26 @@ test("manual inference workbench renders generated catalog entries and result st
   }
   await expect(page.locator("#route-list li")).toHaveCount(publication.routes.length);
   await expect(page.locator("#upstream-list li")).toHaveCount(publication.upstreams.length);
-  await expect(page.locator(".catalog-item")).toHaveCount(models.length);
+  const catalogItems = page.locator(".catalog-item");
+  await expect(catalogItems).toHaveCount(models.length);
 
-  const selectedModel = models[1] ?? models[0];
-  await page.locator(".catalog-item").nth(models[1] ? 1 : 0).click();
-  await expect(page.locator("#selected-model-name")).toHaveText(selectedModel.displayName);
-  await expect(page.locator("#selected-engine")).toHaveText(selectedModel.selectedEngine);
-  await expect(page.locator("#selected-family")).not.toHaveText("Loading…");
-  await expect(page.locator("#selected-artifact-type")).toHaveText(selectedModel.artifactType);
-  await expect(page.locator("#request-guidance")).not.toHaveText(/Select a model/);
-  await expect(page.locator("#submit-button")).not.toHaveText("Run Inference");
+  for (const [index, model] of models.entries()) {
+    await catalogItems.nth(index).click();
+    await expect(page.locator("#selected-model-name")).toHaveText(model.displayName);
+    await expect(page.locator("#selected-engine")).toHaveText(model.selectedEngine);
+    await expect(page.locator("#selected-family")).not.toHaveText("Loading…");
+    await expect(page.locator("#selected-artifact-type")).toHaveText(model.artifactType);
+    await expect(page.locator("#request-guidance")).not.toHaveText(/Select a model/);
+    await expect(page.locator("#submit-button")).not.toHaveText("Run Inference");
 
-  await page.locator("#inputText").fill("x".repeat(120));
-  await page.locator("#submit-button").click();
+    await page.locator("#inputText").fill(`browser exercise ${model.modelId} ${"x".repeat(120)}`);
+    await page.locator("#submit-button").click();
 
-  await expect(page.locator("#request-status")).toContainText("Completed request");
-  await expect(page.locator("#request-status")).toContainText(selectedModel.selectedEngine);
-  await expect(page.locator("#result-label")).not.toHaveText("Result payload");
-  await expect(page.locator("#result-output")).toContainText("Stored object reference");
-  await expect(page.locator("#object-link-container a")).toHaveAttribute("href", /\/objects\/results\/req-/);
-  await expect(page.locator("#object-link-container a")).not.toHaveText("Open large output");
+    await expect(page.locator("#request-status")).toContainText("Completed request");
+    await expect(page.locator("#request-status")).toContainText(model.selectedEngine);
+    await expect(page.locator("#result-label")).not.toHaveText("Result payload");
+    await expect(page.locator("#result-output")).toContainText("Stored object reference");
+    await expect(page.locator("#object-link-container a")).toHaveAttribute("href", /\/objects\/results\/req-/);
+    await expect(page.locator("#object-link-container a")).not.toHaveText("Open large output");
+  }
 });

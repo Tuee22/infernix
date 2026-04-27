@@ -43,7 +43,7 @@ executor. There is no separate web-only image on the supported path. On Apple Si
 
 ## Shared Contracts
 
-- dedicated browser-contract ADTs in `src/Generated/Contracts.hs` are the source of truth for the
+- dedicated browser-contract ADTs in `src/Infernix/Web/Contracts.hs` are the source of truth for the
   PureScript request, response, engine-binding, and error types consumed by the demo UI
 - `infernix internal generate-purs-contracts` emits `web/src/Generated/Contracts.purs`
 - `npm --prefix web run build` invokes that codegen entrypoint before `spago build`

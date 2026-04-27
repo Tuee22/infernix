@@ -1,7 +1,7 @@
 [tool.poetry]
-name = "infernix-linux-cuda-adapters"
+name = "infernix-adapters"
 version = "0.1.0"
-description = "Linux CUDA Python adapters for infernix"
+description = "Shared Python adapters for infernix"
 authors = ["Infernix <noreply@example.com>"]
 packages = [{ include = "adapters" }]
 

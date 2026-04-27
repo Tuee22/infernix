@@ -11,6 +11,9 @@
 - supported Apple host Cabal workflows call `cabal` directly with `--builddir=./.build/cabal` and
   `--installdir=./.build`
 - supported outer-container Cabal workflows use `/opt/build/infernix`
+- on the outer-container path, the baked launcher binaries remain `/usr/local/bin/infernix` and
+  `/usr/local/bin/infernix-demo`; `/opt/build/infernix` holds generated state and refreshed
+  compatibility copies, not the authoritative image snapshot
 - `cluster up` writes `./.build/infernix.kubeconfig` on the host path
 - `cluster up` writes `./.build/infernix-demo-<mode>.dhall` on the host path
 - `cluster up` writes `./.data/runtime/publication.json` as the publication inventory consumed by
@@ -40,13 +43,13 @@
 - generated PureScript contract modules stage under `web/src/Generated/` and the `spago bundle`
   output lives in `web/dist/`
 - generated web build output and Playwright artifacts live under `web/dist/` and `./.data/`
-- engine-adapter Python builds use Poetry against the active substrate project; outside the
-  cluster, `poetry install --directory python/apple-silicon` materializes a repo-local adapter
-  virtual environment, and Linux substrate image builds run `poetry install --directory
-  python/<substrate>`
+- engine-adapter Python builds use Poetry against the shared `python/` project; outside the
+  cluster, `poetry install --directory python` materializes a repo-local adapter virtual
+  environment at `python/.venv/`, and Linux substrate image builds run the same shared install
+- the supported web build runs on Node.js 22+ on both the host and Linux substrate-image paths
 - `.gitignore` and `.dockerignore` mirror the generated-artifact ignore set: Poetry lockfiles,
   generated protobuf stubs, `*.pyc`, `web/spago.lock`, `web/src/Generated/`, `web/dist/`, and
-  per-substrate `.venv/` directories are not tracked
+  `python/.venv/` are not tracked
 
 ## Cross-References
 
