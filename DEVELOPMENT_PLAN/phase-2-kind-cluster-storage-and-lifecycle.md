@@ -1,6 +1,6 @@
 # Phase 2: Kind Cluster Storage and Lifecycle
 
-**Status**: Done
+**Status**: Active
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
 
 > **Purpose**: Define the supported Kind bootstrap path, the manual storage doctrine, the Helm
@@ -9,10 +9,14 @@
 
 ## Phase Status
 
-This phase carries no remaining open work under the current doctrine. Sprints 2.1 through 2.7
-retain their `Done` shape, and the former Sprint 1.6 blocker is now closed: the cluster lifecycle
-uses `src/Infernix/Cluster/Discover.hs`, `src/Infernix/Cluster/PublishImages.hs`, and the
-`src/Infernix/Lint/` modules directly rather than the retired custom-logic Python tooling.
+Sprints 2.1, 2.2, 2.4, 2.5, 2.6, and 2.7 stay `Done`: the storage doctrine, Kind bootstrap, GPU
+lane, manual PV reconciliation, Harbor image-preparation flow, idempotency surface, and the
+mode-aware demo-config staging are all in place. Sprint 2.3 (Helm Umbrella Chart and Repo
+Workload Layout) is downgraded to `Active`: the chart inventory loses the
+`infernix-edge`/`infernix-{harbor,minio,pulsar}-gateway` workloads (replaced by the Envoy
+Gateway controller chart dependency plus the HTTPRoute manifest set in Phase 3 Sprints 3.5/3.8)
+and gains the substrate-container image references introduced in Phase 4 Sprint 4.9. Phase 2
+closes again once 2.3 reflects that change and the chart is rendering against the new shape.
 
 ## Storage Doctrine
 
@@ -158,9 +162,9 @@ None.
 
 ---
 
-## Sprint 2.3: Helm Umbrella Chart and Repo Workload Layout [Done]
+## Sprint 2.3: Helm Umbrella Chart and Repo Workload Layout [Active]
 
-**Status**: Done
+**Status**: Active
 **Implementation**: `chart/Chart.yaml`, `chart/values.yaml`, `chart/templates/`, `src/Infernix/Cluster.hs`, `src/Infernix/Lint/Chart.hs`
 **Docs to update**: `documents/architecture/overview.md`, `documents/engineering/k8s_native_dev_policy.md`
 
@@ -193,7 +197,18 @@ Put repo-owned and third-party workloads behind one Helm deployment model.
 
 ### Remaining Work
 
-None.
+- the chart inventory still carries the legacy `infernix-edge` workload
+  (`chart/templates/deployment-edge.yaml`, `service-edge.yaml`, `edge-configmap.yaml`) and
+  the `infernix-{harbor,minio,pulsar}-gateway` entries in
+  `chart/templates/workloads-platform-portals.yaml`; these are removed when Phase 3 Sprint 3.5
+  installs the Envoy Gateway controller and Phase 3 Sprint 3.8 lands the HTTPRoute manifest
+  set
+- the chart's service and demo deployments still pull from the legacy `infernix-service:local`
+  / `infernix-demo:local` image refs; under the new substrate-container doctrine they pull from
+  the per-substrate image built by Phase 4 Sprint 4.9 (`infernix-linux-cpu:local` or
+  `infernix-linux-cuda:local`)
+- the chart loses the separate `web/Dockerfile`-built web image when Phase 5 Sprint 5.5 folds
+  Playwright into the substrate container
 
 ---
 

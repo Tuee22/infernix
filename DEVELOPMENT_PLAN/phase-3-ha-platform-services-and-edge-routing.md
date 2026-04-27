@@ -4,18 +4,24 @@
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
 
 > **Purpose**: Define the mandatory local HA Harbor, MinIO, operator-managed PostgreSQL, and
-> Pulsar deployments; the Haskell-implemented unified edge routing model that makes every portal
-> reachable on one localhost port; the Haskell-implemented Harbor, MinIO, and Pulsar gateway
-> workloads; and the demo HTTP surface served exclusively by the `infernix-demo` binary when the
-> active `.dhall` `demo_ui` flag is on.
+> Pulsar deployments; the Envoy Gateway API installation that owns all browser-visible and
+> host-consumed routing on one localhost port; the HTTPRoute manifest set that makes Harbor,
+> MinIO, Pulsar, and the optional demo surface reachable through that single Gateway; and the
+> demo HTTP surface served exclusively by the `infernix-demo` binary when the active `.dhall`
+> `demo_ui` flag is on.
 
 ## Phase Status
 
-Sprints 3.1 through 3.5 (HA MinIO, Patroni PostgreSQL, HA Pulsar, HA Harbor, and the unified edge
-proxy), 3.6 (Demo HTTP Host and Apple Host Bridge), 3.7 (Mode-Stable Publication Contract), and
-3.8 (Haskell-Implemented Portal Gateways) are now `Done`. The phase remains `Active` because the
-later production-runtime work in Phase 4 is still open, but the supported edge, gateway, demo
-workload, and host-bridge routing contracts are now Haskell-owned and validated.
+Sprints 3.1 (HA MinIO), 3.2 (Patroni PostgreSQL), 3.3 (HA Pulsar), 3.4 (HA Harbor), 3.6 (Demo
+HTTP Host and Apple Host Bridge), and 3.7 (Mode-Stable Publication Contract) are `Done`. Sprints
+3.5 (Envoy Gateway API installation and localhost listener) and 3.8 (Mode-Stable Route Inventory
+via HTTPRoute manifests) are `Planned`: this phase owns replacing the prior Haskell-implemented
+unified edge proxy and the per-backend Haskell gateway workloads with Envoy Gateway API, since
+the demo cluster runs locally and needs no auth; the in-tree `src/Infernix/Edge.hs`,
+`src/Infernix/Gateway.hs`, `src/Infernix/HttpProxy.hs`, the `chart/templates/deployment-edge.yaml`
+manifest, and the gateway entries in `chart/templates/workloads-platform-portals.yaml` are
+Pending Removal in [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md). The phase
+stays `Active` because 3.5 and 3.8 are open and Phase 4 still has open production-runtime work.
 
 ## HA Reconcile Surface
 
@@ -44,27 +50,32 @@ This phase owns the rule that runtime-mode changes do not fork the browser entry
 
 ## Current Repo Assessment
 
-The repository serves `/`, `/api`, and `/api/publication` from the supported simulated Kind and
-Helm substrate through Haskell-owned edge and demo surfaces: `src/Infernix/Edge.hs` owns the
-shared routed proxy, `src/Infernix/Demo/Api.hs` owns the demo HTTP API, and `src/Infernix/Gateway.hs`
-owns the Harbor, MinIO, and Pulsar gateway workloads. On the Apple host-native control-plane path,
-`infernix-demo serve` can repoint `/api` through a host daemon bridge without changing the browser
-entrypoint, while publication metadata continues to originate from
-`./.data/runtime/publication.json` and reports API-upstream mode plus routed upstream health and
-backing-state details. The Haskell edge and gateway entrypoints are covered both indirectly
-through the current simulated-cluster integration path and directly through process-level proxy
-tests against mock upstream services. The Apple host-native validation lane continues to exercise
-Harbor-first image publication, MinIO-backed durable artifacts, Pulsar-backed request or result
-transport, and HA recovery for all three platform services on the Kind and Helm substrate. Because
-Pulsar is first enabled during the final Harbor-backed Helm phase, the supported chart values
-force the upstream Pulsar initialization jobs there so clean and repeat `cluster up` runs still
-create the required BookKeeper and cluster metadata before the proxy and broker readiness gates
-apply. The same supported cluster path now installs the Percona PostgreSQL operator through Helm,
-disables Harbor's chart-managed standalone database path, keeps later PostgreSQL-backed services on
-that same operator-managed Patroni contract even when their upstream charts can self-deploy
-PostgreSQL, reconciles Harbor's Patroni PVCs through `infernix-manual`, repairs Harbor database
-migration state through the current Patroni primary, and keeps repeat `cluster down` plus
-`cluster up` cycles bound to the same manually managed PostgreSQL host paths.
+The supported cluster path runs the HA platform services (Harbor, MinIO, operator-managed
+Patroni PostgreSQL, Pulsar) and the demo HTTP host (`infernix-demo`, gated by the active `.dhall`
+`demo_ui` flag) on the final Kind and Helm substrate. The demo HTTP surface is served by
+`src/Infernix/Demo/Api.hs`, and on the Apple host-native control-plane path `infernix-demo serve`
+can repoint `/api` through a host daemon bridge without changing the browser entrypoint;
+publication metadata originates from `./.data/runtime/publication.json` and reports API-upstream
+mode plus routed upstream health and backing-state details. Because Pulsar is first enabled
+during the final Harbor-backed Helm phase, the supported chart values force the upstream Pulsar
+initialization jobs there so clean and repeat `cluster up` runs still create the required
+BookKeeper and cluster metadata before the proxy and broker readiness gates apply. The same
+supported cluster path installs the Percona PostgreSQL operator through Helm, disables Harbor's
+chart-managed standalone database path, keeps later PostgreSQL-backed services on that same
+operator-managed Patroni contract even when their upstream charts can self-deploy PostgreSQL,
+reconciles Harbor's Patroni PVCs through `infernix-manual`, repairs Harbor database migration
+state through the current Patroni primary, and keeps repeat `cluster down` plus `cluster up`
+cycles bound to the same manually managed PostgreSQL host paths.
+
+Edge routing and per-backend portal exposure now move to Envoy Gateway API. The current tree
+still carries the prior Haskell-implemented edge proxy (`src/Infernix/Edge.hs`), the per-backend
+Haskell gateways (`src/Infernix/Gateway.hs`), the shared proxy code (`src/Infernix/HttpProxy.hs`),
+the chart manifest `chart/templates/deployment-edge.yaml`, and the gateway entries in
+`chart/templates/workloads-platform-portals.yaml`. All of those surfaces are listed in
+[legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) Pending Removal and are
+demolished by Sprint 3.5 (new) and Sprint 3.8 (new) below. The demo cluster has no auth: the
+prior Harbor Basic-auth header injection in `src/Infernix/Gateway.hs` is dropped without
+replacement.
 
 ## Sprint 3.1: HA MinIO Deployment [Done]
 
@@ -218,54 +229,57 @@ None.
 
 ---
 
-## Sprint 3.5: Unified Edge Proxy and Localhost Port Allocation [Done]
+## Sprint 3.5: Envoy Gateway API Installation and Localhost Listener [Planned]
 
-**Status**: Done
-**Implementation**: `src/Infernix/Cluster.hs`, `chart/templates/edge-configmap.yaml`, `chart/templates/deployment-edge.yaml`, `infernix.cabal`, `src/Infernix/Edge.hs`, `src/Infernix/HttpProxy.hs`, `test/integration/Spec.hs`
-**Docs to update**: `documents/engineering/edge_routing.md`, `documents/reference/web_portal_surface.md`
+**Status**: Planned
+**Implementation**: `chart/Chart.yaml`, `chart/values.yaml`, `chart/templates/gatewayclass.yaml`, `chart/templates/gateway.yaml`, `src/Infernix/Cluster.hs`, `test/integration/Spec.hs`
+**Docs to update**: `documents/engineering/edge_routing.md`, `documents/reference/web_portal_surface.md`, `documents/operations/cluster_bootstrap_runbook.md`
 
 ### Objective
 
-Route every browser-visible portal and host-consumed service path through one chosen localhost port.
+Replace the Haskell-implemented unified edge proxy with the Envoy Gateway API controller and a
+single `Gateway` resource that owns one localhost-bound HTTP listener for every browser-visible
+and host-consumed cluster surface. The demo cluster runs locally and has no auth, so the
+Gateway listener publishes plain HTTP without any auth filter.
 
 ### Deliverables
 
-- the CLI tries `9090` first and increments by 1 until it finds an available localhost port during cluster startup
-- the chosen port is recorded under `./.data/runtime/edge-port.json`
-- `cluster up` prints the chosen port to the operator during bring-up
-- the edge proxy exposes stable route prefixes:
-
-| Route | Purpose |
-|-------|---------|
-| `/` | browser workbench |
-| `/api` | demo API |
-| `/harbor` | Harbor portal |
-| `/minio/console` | MinIO console |
-| `/minio/s3` | MinIO S3 API |
-| `/pulsar/admin` | Pulsar admin HTTP surface |
-| `/pulsar/ws` | Pulsar WebSocket surface |
-
-- `/api/publication` remains a stable routed metadata endpoint sourced from
-  `./.data/runtime/publication.json` and exposed by the same routed edge proxy
-- Apple host-native `infernix` uses the routed MinIO and Pulsar edge paths instead of separate host ports
-- the routed contract remains stable regardless of whether the active runtime mode is Apple, Linux CPU, or Linux CUDA
-- the edge proxy is implemented in Haskell as `src/Infernix/Edge.hs` (using `wai` plus
-  `http-reverse-proxy` or equivalent), shipped in the same OCI image as the rest of the `infernix`
-  binary, and run as the `infernix-edge` cluster workload via `infernix edge`
+- the Helm chart pulls the Envoy Gateway controller as a chart dependency (Harbor-mirrored once
+  Harbor is ready, per the Harbor-first contract); the controller owns the Gateway API CRDs
+- one `GatewayClass` named `infernix-gateway` and one `Gateway` named `infernix-edge` in the
+  `platform` namespace; the `Gateway` defines a single HTTP listener bound to the chosen
+  localhost port
+- the CLI continues to try `9090` first and increments by 1 until it finds an available
+  localhost port during `cluster up`; the chosen port is still recorded under
+  `./.data/runtime/edge-port.json` and printed during bring-up; the chart Gateway listener uses
+  that same port
+- the Apple host-native control plane reaches Harbor, MinIO, Pulsar, and the demo HTTP host
+  through that same Gateway listener; the prior Apple-side `infernix edge` daemon path is
+  removed
+- `src/Infernix/Edge.hs`, `src/Infernix/HttpProxy.hs`, `chart/templates/edge-configmap.yaml`,
+  `chart/templates/deployment-edge.yaml`, and `chart/templates/service-edge.yaml` are deleted;
+  the `infernix edge` CLI subcommand is removed from `src/Infernix/CLI.hs`
+- the chart no longer renders any Haskell-implemented edge workload
 
 ### Validation
 
-- `infernix cluster status` prints the chosen port and the published route inventory
-- if `9090` is free, `cluster up` uses `9090`; otherwise it reports the next open port it selected
-- all browser portals load through the same localhost port
-- `GET /api/publication` resolves through that same port and reports the current publication
-  contract (when the demo surface is enabled)
-- Apple host-native `infernix service` can reach MinIO and Pulsar through the edge routes on that port
-- changing runtime modes does not change the documented route inventory or the `/api/publication` endpoint
+- `infernix cluster status` prints the chosen port and the published route inventory (the route
+  set lands in Sprint 3.8)
+- if `9090` is free, `cluster up` uses `9090`; otherwise it reports the next open port it
+  selected
+- `infernix kubectl get gatewayclass,gateway -n platform` shows the `infernix-gateway`
+  GatewayClass and the `infernix-edge` Gateway in `Accepted` state with the chosen listener port
+- `infernix lint chart` rejects any reintroduced reference to the deleted edge workload
+  templates or the `infernix edge` subcommand
+- `infernix test integration` proves the Envoy data-plane pod backing the `infernix-edge`
+  Gateway is ready before the HTTPRoute manifests from Sprint 3.8 land
 
 ### Remaining Work
 
-None.
+- ship the chart change, delete the in-tree Haskell edge proxy modules, and migrate the
+  legacy-tracking-for-deletion entries for `Edge.hs`, `Gateway.hs`, `HttpProxy.hs`,
+  `deployment-edge.yaml`, `service-edge.yaml`, and `edge-configmap.yaml` from Pending Removal to
+  Completed once the demolition lands
 
 ---
 
@@ -363,64 +377,82 @@ None.
 
 ---
 
-## Sprint 3.8: Haskell-Implemented Portal Gateways [Done]
+## Sprint 3.8: Mode-Stable Route Inventory via HTTPRoute Manifests [Planned]
 
-**Status**: Done
-**Implementation**: `infernix.cabal`, `src/Infernix/CLI.hs`, `src/Infernix/Gateway.hs`, `src/Infernix/HttpProxy.hs`, `chart/templates/workloads-platform-portals.yaml`, `test/integration/Spec.hs`
-**Docs to update**: `documents/engineering/edge_routing.md`, `documents/tools/harbor.md`, `documents/tools/minio.md`, `documents/tools/pulsar.md`
+**Status**: Planned
+**Blocked by**: Sprint 3.5
+**Implementation**: `chart/templates/httproutes/`, `chart/values.yaml`, `src/Infernix/Cluster.hs`, `src/Infernix/Models.hs`, `test/integration/Spec.hs`
+**Docs to update**: `documents/engineering/edge_routing.md`, `documents/reference/web_portal_surface.md`, `documents/tools/harbor.md`, `documents/tools/minio.md`, `documents/tools/pulsar.md`
 
 ### Objective
 
-Replace the Python `tools/portal_surface.py` gateway implementation with Haskell-owned gateway
-logic under `src/Infernix/Gateway.hs`, deployed via the same OCI image as `infernix`
-with `infernix gateway harbor|minio|pulsar` as entrypoint. Preserve the same routes, the same
-auth flows, and the same edge-routed surfaces.
+Publish the stable browser-visible and host-consumed route inventory through Envoy Gateway API
+HTTPRoute manifests attached to the `infernix-edge` Gateway from Sprint 3.5. The HTTPRoute set
+is the canonical route contract; runtime-mode changes never alter it. The demo cluster is
+local-only, so no auth filters are applied.
 
 ### Deliverables
 
-- `src/Infernix/Gateway.hs` exposes the routed Harbor portal and API surface by proxying
-  the chart-managed Harbor service through the shared edge; deployed as cluster workload
-  `infernix-harbor-gateway` via `chart/templates/workloads-platform-portals.yaml` with entrypoint
-  `infernix gateway harbor`
-- `src/Infernix/Gateway.hs` exposes the routed MinIO console and S3 API by proxying the
-  chart-managed MinIO service through the shared edge; deployed as cluster workload
-  `infernix-minio-gateway` with entrypoint `infernix gateway minio`
-- `src/Infernix/Gateway.hs` exposes the routed Pulsar admin and WebSocket surfaces by
-  proxying the chart-managed Pulsar service through the shared edge; deployed as cluster workload
-  `infernix-pulsar-gateway` with entrypoint `infernix gateway pulsar`
-- `tools/portal_surface.py` is removed; the chart template now invokes the Haskell-owned
-  `infernix gateway harbor|minio|pulsar` entrypoints directly
-- the Haskell gateway implementations reuse shared proxy or credential-handling code in
-  `infernix-lib` rather than preserving the old Python `pulsar` and `minio` SDK call shapes
+- one HTTPRoute manifest per public path under `chart/templates/httproutes/`, each one
+  attached as a child of `Gateway/infernix-edge`:
+
+| Path prefix | Backend | Filter |
+|-------------|---------|--------|
+| `/` (root, plus `/api`, `/api/publication`, `/api/cache`, `/objects/`) | `infernix-demo` Service | none; only rendered when `.Values.demo.enabled` is true |
+| `/harbor` | Harbor portal Service | `URLRewrite` strips `/harbor`; routes whose path starts `/harbor/api` go to the Harbor API Service instead of the portal |
+| `/minio/console` | MinIO console Service | `URLRewrite` strips `/minio/console` |
+| `/minio/s3` | MinIO S3 Service | `URLRewrite` strips `/minio/s3` |
+| `/pulsar/admin` | Pulsar admin Service | `URLRewrite` strips `/pulsar/admin` |
+| `/pulsar/ws` | Pulsar broker HTTP base Service | `URLRewrite` strips `/pulsar/ws` |
+
+- when the active `.dhall` `demo_ui` flag is off, the HTTPRoutes for `/`, `/api`,
+  `/api/publication`, `/api/cache`, and `/objects/` are absent from the rendered chart and the
+  cluster has no demo API surface at all
+- no `RequestHeaderModifier` injects credentials anywhere; the Harbor admin Basic-auth header
+  the prior Haskell gateway stamped is dropped (demo cluster only)
+- `infernix-publication-state` ConfigMap renders the `routes` list directly from the HTTPRoute
+  manifests; the route inventory is not duplicated in code
+- `chart/templates/workloads-platform-portals.yaml` loses its `infernix-harbor-gateway`,
+  `infernix-minio-gateway`, and `infernix-pulsar-gateway` entries; `src/Infernix/Gateway.hs` and
+  `src/Infernix/HttpProxy.hs` are deleted; the `infernix gateway harbor|minio|pulsar` CLI
+  subcommands are removed from `src/Infernix/CLI.hs`
+- runtime-mode changes (`apple-silicon`, `linux-cpu`, `linux-cuda`) never alter this HTTPRoute set
 
 ### Validation
 
-- existing integration tests for portal flows pass against the Haskell gateway implementations
-  without relaxing assertions
-- `infernix kubectl get pods -n platform` shows `infernix-harbor-gateway`,
-  `infernix-minio-gateway`, and `infernix-pulsar-gateway` workloads using the same OCI image as
-  `infernix-service` and `infernix-edge`
-- `tools/portal_surface.py` no longer exists in the worktree on the supported path
-- routed `/harbor`, `/minio/console`, `/minio/s3`, `/pulsar/admin`, and `/pulsar/ws` continue to
-  resolve through the shared edge port
+- `infernix kubectl get httproute -n platform` shows the expected route set; each HTTPRoute is
+  in `Accepted` state
+- `curl http://127.0.0.1:<port>/harbor/`, `curl http://127.0.0.1:<port>/minio/console/`,
+  `curl http://127.0.0.1:<port>/minio/s3/`, `curl http://127.0.0.1:<port>/pulsar/admin/`, and
+  `curl http://127.0.0.1:<port>/pulsar/ws` all reach their backends through the shared port
+- `curl http://127.0.0.1:<port>/` returns the demo workbench when `demo_ui` is on, and 404s
+  when `demo_ui` is off
+- `GET /api/publication` resolves through the same port and reports the routed route inventory
+  exactly as the rendered HTTPRoute set defines it
+- `infernix lint chart` rejects any reintroduced reference to the deleted gateway workload
+  manifests or the `infernix gateway` subcommands
 
 ### Remaining Work
 
-None.
+- ship the HTTPRoute manifest set, delete the in-tree `src/Infernix/Gateway.hs`,
+  `src/Infernix/HttpProxy.hs`, and the gateway entries in `workloads-platform-portals.yaml`,
+  remove the `infernix gateway` CLI subcommands, and migrate the corresponding
+  legacy-tracking-for-deletion entries from Pending Removal to Completed once the demolition
+  lands
 
 ## Documentation Requirements
 
 **Engineering docs to create/update:**
-- `documents/engineering/edge_routing.md` - single-port routing and upstream selection
+- `documents/engineering/edge_routing.md` - Envoy Gateway API installation, single-Gateway listener, HTTPRoute manifest set as the canonical route contract, and demo-cluster no-auth posture
 - `documents/engineering/k8s_storage.md` - manual PV doctrine and PostgreSQL claim binding
 - `documents/engineering/object_storage.md` - MinIO authority and routed access
-- `documents/tools/minio.md` - MinIO deployment and route surfaces
+- `documents/tools/minio.md` - MinIO deployment and HTTPRoute surfaces
 - `documents/tools/postgresql.md` - Percona operator and Patroni PostgreSQL deployment rules
-- `documents/tools/pulsar.md` - Pulsar deployment and route surfaces
-- `documents/tools/harbor.md` - Harbor deployment and image-registry rules
+- `documents/tools/pulsar.md` - Pulsar deployment and HTTPRoute surfaces
+- `documents/tools/harbor.md` - Harbor deployment, image-registry rules, and HTTPRoute portal/API split
 
 **Product or reference docs to create/update:**
-- `documents/reference/web_portal_surface.md` - browser-visible route inventory and active-mode catalog behavior
+- `documents/reference/web_portal_surface.md` - browser-visible HTTPRoute inventory and active-mode catalog behavior
 - `documents/operations/apple_silicon_runbook.md` - Apple host-mode startup and bridge behavior
 
 **Cross-references to add:**

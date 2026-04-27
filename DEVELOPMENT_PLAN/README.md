@@ -21,9 +21,9 @@ govern this plan.
 | [phase-0-documentation-and-governance.md](phase-0-documentation-and-governance.md) | `documents/` suite creation, documentation standards, and docs-suite alignment with the three-mode matrix |
 | [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md) | Repository scaffold, two-binary CLI surface, Cabal build doctrine and container artifact isolation, execution-context contract, and runtime-mode selection baseline |
 | [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md) | Kind bootstrap, manual PV doctrine and explicit PV-to-PVC binding for every PVC-backed Helm workload, Harbor bootstrap-first and post-bootstrap Harbor-backed image flow, GPU-enabled `linux-cuda` cluster reconcile, and mode-aware ConfigMap-backed demo-config generation |
-| [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md) | Mandatory local HA Harbor, MinIO, operator-managed Patroni PostgreSQL, Pulsar, unified edge routing, and mode-stable browser and API publication |
-| [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) | Haskell Pulsar-driven production inference service, Python engine-adapter contract under `python/adapters/`, comprehensive matrix registry, protobuf manifest and Pulsar payload contracts, ConfigMap-backed generated demo `.dhall`, and durable artifact lifecycle |
-| [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md) | PureScript demo UI built with spago, `purescript-spec` test framework, Haskell-owned generated frontend contracts, and mode-driven demo workbench served by `infernix-demo` |
+| [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md) | Mandatory local HA Harbor, MinIO, operator-managed Patroni PostgreSQL, Pulsar; Envoy Gateway API installation (`Gateway/infernix-edge`) plus HTTPRoute manifest set as the canonical route inventory; demo cluster runs locally with no auth |
+| [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) | Haskell Pulsar-driven production inference service, per-substrate Python engine-adapter contract under `python/<substrate>/adapters/` invoked via `poetry run`, single `poetry run check-code` quality entrypoint, per-substrate substrate-container build (Ubuntu 24.04, ghcup, Poetry, gcc 15.2, in-container engine builds), Apple Silicon daemon-driven brew/clang bootstrap, comprehensive matrix registry with per-substrate engine selection, protobuf manifest and Pulsar payload contracts, ConfigMap-backed generated demo `.dhall`, and durable artifact lifecycle |
+| [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md) | PureScript demo UI built with spago, `purescript-spec` test framework, Haskell-owned generated frontend contracts derived through `purescript-bridge` from `src/Generated/Contracts.hs`, mode-driven demo workbench served by `infernix-demo`, and Playwright executor folded into the per-substrate container (Linux) or run from the host (Apple Silicon) |
 | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) | Unit, integration, routed Playwright coverage, per-mode matrix coverage, HA failure coverage, and lifecycle validation |
 | [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) | Explicit cleanup and removal ledger |
 
@@ -48,26 +48,36 @@ A phase or sprint can move to `Done` only when all of the following are true:
 
 ## Current Repo Assessment
 
-The repository has a governed `documents/` suite and a closed cluster-substrate baseline. The new
-doctrine declared in [00-overview.md](00-overview.md) (two-binary topology, Pulsar-only production
-inference surface, demo HTTP only via `infernix-demo`, Python restricted to engine adapters under
-`python/adapters/`, frontend in PureScript with Haskell-owned generated contracts derived through
-`purescript-bridge`) is
-being landed across phases 1, 3, 4, and 5.
+The repository has a governed `documents/` suite and a Kind-substrate baseline. The new
+doctrine declared in [00-overview.md](00-overview.md) (two-binary topology, Pulsar-only
+production inference surface, demo HTTP only via `infernix-demo`, Envoy Gateway API + HTTPRoute
+manifests own all routing with no auth filters, Python restricted to engine adapters under
+`python/<substrate>/adapters/` invoked through `poetry run`, one custom container per Linux
+substrate with the daemon never installing or compiling inside the container, Apple Silicon
+host-native with daemon-driven `brew` and system `clang` engine setup, no `.sh` files, no
+committed built artifacts, frontend in PureScript with Haskell-owned generated contracts derived
+through `purescript-bridge` from `src/Generated/Contracts.hs`) is being landed across phases
+0, 1, 2, 3, 4, and 5.
 
 - the cluster substrate, Kind or Helm assets, Harbor-first bootstrap flow, manual storage doctrine,
-  operator-managed Patroni PostgreSQL contract, and `linux-cuda` GPU lane are implemented and
-  doctrine-aligned; their phase (Phase 2) is now `Done`
-- the repository now ships `infernix` plus `infernix-demo`, broader CLI wrapper entrypoints for
-  edge or gateway or lint or internal flows, a repo-root `python/` scaffold, and a live PureScript
-  web path under `web/`; the Haskell demo HTTP host, Haskell edge proxy, Haskell platform
-  gateways, Haskell chart discovery, Haskell chart image publication, Haskell docs or chart or
-  proto or file lint paths, the Haskell-owned Haskell-style gate, and the PureScript build or test
-  lane are all implemented. The major open work is now the Pulsar-driven production runtime split
-  and the Haskell worker plus real engine-adapter boundary
-- the `documents/` tree, root README, AGENTS, and CLAUDE are now aligned with the retired-doctrine
-  removals from Phase 0; the remaining open work is implementation migration rather than docs-suite
-  realignment
+  operator-managed Patroni PostgreSQL contract, and `linux-cuda` GPU lane are implemented; Phase 2
+  is reopened as `Active` only because Sprint 2.3 (chart inventory) needs to land the Envoy
+  Gateway API surface and the substrate-container image references introduced in Phase 4
+- the repository ships `infernix` plus `infernix-demo`, a Haskell demo HTTP host, Haskell chart
+  discovery, Haskell chart image publication, Haskell docs/chart/proto/file lint paths, the
+  Haskell-owned Haskell-style gate, and a live PureScript build path under `web/`. Routing moves
+  from the legacy `src/Infernix/Edge.hs`/`Gateway.hs`/`HttpProxy.hs` modules to the Helm-installed
+  Envoy Gateway controller plus repo-owned HTTPRoute manifests (Phase 3 Sprints 3.5/3.8); the
+  per-engine adapter Dockerfiles plus the `tools/python_quality.sh` shim collapse into a single
+  per-substrate container with `poetry run check-code` (Phase 4 Sprints 4.7/4.9); Apple Silicon
+  becomes pure host-native with daemon-driven `brew` and system `clang` engine setup (Phase 4
+  Sprint 4.10); the per-engine catalog gains an explicit per-substrate engine selection (Phase 4
+  Sprint 4.11); and committed built artifacts (`poetry.lock`, generated proto, `.pyc`,
+  `web/spago.lock`, `web/src/Generated/`) plus all `.sh` files are removed from git and added to
+  `.gitignore` and `.dockerignore` (Phase 1 Sprint 1.7)
+- the `documents/` tree, root README, AGENTS, and CLAUDE need a doctrine-realignment pass for
+  Envoy Gateway API, the substrate-container shape, the no-`.sh`-files rule, and the
+  per-substrate quick start (Phase 0 Sprint 0.7)
 
 ## Execution Contexts and Runtime Modes
 
@@ -82,12 +92,12 @@ The plan uses two separate concepts and keeps them distinct:
 
 | Phase | Name | Status | Document |
 |-------|------|--------|----------|
-| 0 | Documentation and Governance | Done | [phase-0-documentation-and-governance.md](phase-0-documentation-and-governance.md) |
+| 0 | Documentation and Governance | Active | [phase-0-documentation-and-governance.md](phase-0-documentation-and-governance.md) |
 | 1 | Repository and Control-Plane Foundation | Active | [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md) |
-| 2 | Kind Cluster Storage and Lifecycle | Done | [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md) |
+| 2 | Kind Cluster Storage and Lifecycle | Active | [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md) |
 | 3 | HA Platform Services and Edge Routing | Active | [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md) |
 | 4 | Inference Service and Durable Runtime | Active | [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) |
-| 5 | Web UI and Shared Types | Done | [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md) |
+| 5 | Web UI and Shared Types | Active | [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md) |
 | 6 | Validation, E2E, and HA Hardening | Blocked | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) |
 
 ## Canonical Outcome
@@ -95,14 +105,17 @@ The plan uses two separate concepts and keeps them distinct:
 The current supported platform is constructed around these non-negotiable rules:
 
 - two repo-owned Haskell executables sharing one Cabal library `infernix-lib`: `infernix` for the
-  production daemon, cluster lifecycle, edge proxy, gateway pods, Pulsar inference dispatcher,
-  static-quality gate, and internal helpers; and `infernix-demo` for the demo UI HTTP host gated by
-  the active `.dhall` `demo_ui` flag
+  production daemon, cluster lifecycle, Pulsar inference dispatcher, static-quality gate, and
+  internal helpers; and `infernix-demo` for the demo UI HTTP host gated by the active `.dhall`
+  `demo_ui` flag. Routing is owned by the Helm-installed Envoy Gateway controller plus
+  repo-owned HTTPRoute manifests; `infernix` itself is no longer a routing process
 - production deployments accept inference work by Pulsar subscription only; the production
   `infernix service` binds no HTTP listener and the cluster has no `infernix-demo` workload when the
   demo flag is off
-- Python is restricted to `python/adapters/<engine>/` (Poetry-managed; mypy strict, black check,
-  and ruff strict run in every adapter container build); all custom platform logic is Haskell
+- Python is restricted to `python/<substrate>/adapters/<engine>/` (per-substrate
+  `pyproject.toml`, Poetry-managed; the canonical quality entrypoint is `poetry run check-code`
+  running mypy strict, black check, and ruff strict in sequence; per-engine setup work runs
+  through `poetry run setup-<engine>` console scripts); all custom platform logic is Haskell
 - the demo UI is PureScript built with spago, tested with `purescript-spec`, and consumes
   PureScript modules generated through `purescript-bridge` from dedicated Haskell browser-contract
   ADTs in `src/Generated/Contracts.hs`
@@ -121,11 +134,14 @@ The current supported platform is constructed around these non-negotiable rules:
   through direct `cabal --builddir=.build/cabal ...` host installs and `./.build/infernix` plus
   `./.build/infernix-demo` materialization, with explicit `/opt/build/infernix` runtime build roots
   on the outer-container path and no repo-owned scripts or wrapper layers
-- one reverse-proxied localhost edge port exposing the demo UI, demo API, Harbor, MinIO, and Pulsar
-  browser surfaces; the demo routes are absent when the demo surface is disabled
-- the edge proxy and platform gateways are Haskell modules in `infernix-lib`, deployed as separate
-  cluster workloads using the same OCI image with `infernix edge` or `infernix gateway <kind>` as
-  entrypoint
+- one Envoy-Gateway-API-owned localhost listener (`Gateway/infernix-edge`, port chosen by
+  `cluster up` starting at `9090`) exposing the demo UI, demo API, Harbor, MinIO, and Pulsar
+  browser surfaces through one HTTPRoute manifest per public path; the demo HTTPRoutes are
+  absent when the demo surface is disabled. The demo cluster runs locally and applies no auth
+  filters
+- routing is owned by the Helm-installed Envoy Gateway controller plus repo-owned HTTPRoute
+  manifests under `chart/templates/httproutes/`; `infernix` itself is no longer a routing
+  process
 - three supported runtime modes: `apple-silicon`, `linux-cpu`, and `linux-cuda`
 - one comprehensive model or format or engine matrix whose mode columns select the engine binding
   for each runtime mode
@@ -135,13 +151,14 @@ The current supported platform is constructed around these non-negotiable rules:
   by the production daemon
 - one repo-owned `.proto` contract for durable runtime manifests and Pulsar topic payloads, with
   `proto-lens`-generated Haskell bindings, Python `protobuf`-generated bindings under
-  `python/adapters/`, and Pulsar built-in protobuf schema support
+  `python/<substrate>/adapters/`, and Pulsar built-in protobuf schema support
 - one edge-port selection rule that tries `9090` first, increments by 1 until open, records the
   chosen port under `./.data/runtime/edge-port.json`, and prints it during `cluster up`
-- one canonical static-quality gate surfaced as `infernix test lint`, including the strict Python
-  quality gate (mypy, black, ruff) for `python/adapters/`
-- one integration and E2E contract that exercises every generated catalog entry for the active mode
-  rather than a hand-picked subset
+- one canonical static-quality gate surfaced as `infernix test lint`, including
+  `poetry run check-code` (mypy strict, black check, ruff strict) for the active substrate's
+  Python adapter tree
+- one integration and E2E contract that exercises every generated catalog entry for the active
+  mode using the substrate-selected engine column from the README matrix
 
 ## Dependency Chain
 

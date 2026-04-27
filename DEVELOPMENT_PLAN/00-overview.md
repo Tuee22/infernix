@@ -20,14 +20,14 @@ not documentation-suite bootstrap.
 | Development plan and docs suite | realigned baseline closed | The documentation suite, root README, AGENTS, and CLAUDE now describe the two-binary, Pulsar-production, PureScript-demo-UI, Python-restricted-to-engine-adapters doctrine declared in this overview; later phases now retire the remaining legacy implementation surfaces |
 | Production daemon and Pulsar inference | partial implementation | `infernix service` no longer binds HTTP and now delegates to the split runtime modules under `src/Infernix/Runtime/{Pulsar,Worker,Cache}.hs`; `Pulsar.hs` is still a no-subscription placeholder, and the worker now resolves engine-specific Python adapters over typed protobuf-over-stdio but those adapters are still stub responders rather than real engine loaders |
 | Demo UI host | present | `infernix-demo` is a separate Haskell executable sharing `infernix-lib`. It exposes the demo HTTP API surface (`/`, `/api`, `/api/publication`, `/api/cache`, `/objects/`) via servant, is used by the host bridge and supported simulated path, and is now deployed on the real cluster through the Helm-gated `infernix-demo` workload driven by the active `.dhall` `demo_ui` flag |
-| Edge proxy and platform gateways | implemented on the supported path | Edge proxy in `src/Infernix/Edge.hs`; Harbor, MinIO, and Pulsar gateway pods in `src/Infernix/Gateway.hs`. The shared proxy layer in `src/Infernix/HttpProxy.hs` plus those Haskell entrypoints are deployed as separate cluster workloads using the same `infernix` image with `infernix edge` or `infernix gateway <kind>` as entrypoint |
+| Edge routing and platform portals | doctrine realignment underway | Routing moves to Envoy Gateway API: a Helm-installed Envoy Gateway controller, one `Gateway/infernix-edge` resource bound to the chosen localhost port, and one HTTPRoute manifest per public path (`/`, `/api`, `/objects`, `/harbor`, `/minio/console`, `/minio/s3`, `/pulsar/admin`, `/pulsar/ws`) with `URLRewrite` filters per backend. The current tree still carries `src/Infernix/Edge.hs`, `src/Infernix/Gateway.hs`, `src/Infernix/HttpProxy.hs`, `chart/templates/deployment-edge.yaml`, and the gateway entries in `chart/templates/workloads-platform-portals.yaml`; all of those surfaces are listed in [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) Pending Removal and demolished by Phase 3 Sprints 3.5 and 3.8. The demo cluster is local-only, so no auth filters apply (the prior Harbor admin Basic-auth header injection is dropped without replacement) |
 | Kind and Helm assets | present | the Kind or Helm substrate, Harbor-first bootstrap sequencing, stable Harbor bootstrap and final render material, node-reachable `localhost:30002` registry-mirror config, Kind-worker prefetch of Harbor-backed final image refs, final-phase Pulsar initialization, loopback-only outer-container host bindings, the private Docker `kind` network plus internal kubeconfig access path, pinned `kindest/node:v1.34.0` node images, claim-aware outer-container storage sync, and the supported-host validated `nvkind` plus device-plugin GPU lane are implemented, and the validated outer-container lane requires host inotify capacity sufficient for mount-bearing Kind nodes |
 | PostgreSQL platform substrate | present | every in-cluster PostgreSQL dependency follows the supported Patroni-plus-Percona-operator contract, Harbor disables the chart-managed standalone database path, Harbor's operator-managed claims bind through `infernix-manual`, and repeat cluster lifecycle plus HA validation covers readiness, failover, and PVC rebinding on that substrate |
-| Launch and schema assets | present | `compose.yaml`, `docker/infernix.Dockerfile`, `web/Dockerfile`, `chart/`, `kind/`, and `proto/` drive the outer-container launcher, the cluster image, repo-owned Kind configs, and schema files; `web/Dockerfile` now packages the built PureScript bundle together with the npm-managed PureScript toolchain and Playwright |
+| Launch and schema assets | doctrine realignment underway | The current tree carries `compose.yaml`, `docker/infernix.Dockerfile`, `docker/service.Dockerfile`, six per-engine `docker/<engine>-python.Dockerfile`s, `web/Dockerfile`, `chart/`, `kind/`, and `proto/`. Under the new doctrine all of those Dockerfiles collapse into one custom container per Linux substrate: `docker/linux-base.Dockerfile` (shared `ubuntu:24.04` base layer with ghcup-pinned GHC 9.14.1 + Cabal 3.16.1.0, Python 3 + pip + Poetry, gcc 15.2, llama.cpp built from source, Playwright + browsers, Kind/kubectl/Helm/Docker CLI), `docker/linux-cpu.Dockerfile`, and `docker/linux-cuda.Dockerfile` (`FROM nvidia/cuda:<…>-cudnn-runtime-ubuntu24.04`). Apple Silicon has no Dockerfile — the operator runs a host-native `cabal build` against ghcup-installed GHC/Cabal, and the daemon orchestrates engine setup via system `clang` and `brew`. Phase 4 Sprints 4.9 and 4.10 own the migration; Phase 5 Sprint 5.5 folds Playwright into the substrate container; the obsolete Dockerfiles are listed in [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) Pending Removal |
 | Runtime-mode matrix | present | the full README-scale model, format, and engine matrix drives the generated source of truth; the Haskell worker consumes the selected engine metadata together with the durable artifact-bundle, source-artifact-manifest, and engine-adapter metadata selected for that runtime mode |
 | Generated demo config | present | `cluster up` emits mode-specific `infernix-demo-<mode>.dhall`, publishes a real `ConfigMap/infernix-demo-config`, and mounts that ConfigMap into the cluster-resident service, web, and `infernix-demo` workloads |
 | Demo UI implementation language | present | PureScript built with spago; `purescript-spec` test framework; generated frontend contracts derived by `infernix internal generate-purs-contracts` through `purescript-bridge` from dedicated Haskell browser-contract ADTs in `src/Generated/Contracts.hs`; build output served from `web/dist/` produced by `spago bundle` |
-| Custom-logic Python tooling | adapter-only doctrine partially landed | Repo-owned custom platform logic, cluster helpers, and lint helpers are now Haskell-owned. The remaining Python surface is the engine-adapter boundary under `python/adapters/<engine>/`, governed by Poetry plus `tools/python_quality.sh`, while the broader production runtime migration is still open in later phases |
+| Custom-logic Python tooling | doctrine realignment underway | Repo-owned custom platform logic, cluster helpers, and lint helpers are Haskell-owned. The Python surface lives only at `python/<substrate>/adapters/<engine>/`, governed by per-substrate `pyproject.toml` files and invoked exclusively through `poetry run`. The single quality entrypoint is `poetry run check-code` (mypy strict, black check, ruff strict). Per-engine Poetry console scripts (`setup-<engine>`, adapter entrypoints) replace raw `python <script>` invocation. The legacy `tools/python_quality.sh` shim and `scripts/install-formatter.sh` are listed in Pending Removal because the repo carries no `.sh` files anywhere |
 | Tests | present (gates retain shape; implementation pointers are being re-targeted) | lint, unit, exhaustive integration, and routed E2E entrypoints retain their validation contract; pointers shift from Python-implemented surfaces to Haskell modules and `purescript-spec` suites as the upstream sprints land |
 
 ## Supported Outcome
@@ -35,9 +35,10 @@ not documentation-suite bootstrap.
 `infernix` is a Kind-forward local inference platform that:
 
 - ships two Haskell executables sharing one Cabal library `infernix-lib`: `infernix` for the
-  production daemon, cluster lifecycle, edge proxy, gateway pods, Pulsar inference dispatcher,
-  static-quality gate, and internal helpers; and `infernix-demo` for the demo UI HTTP host (gated
-  by the active `.dhall` `demo_ui` flag)
+  production daemon, cluster lifecycle, Pulsar inference dispatcher, static-quality gate, and
+  internal helpers; and `infernix-demo` for the demo UI HTTP host (gated by the active `.dhall`
+  `demo_ui` flag). All routing is owned by the Helm-installed Envoy Gateway controller plus
+  repo-owned HTTPRoute manifests; `infernix` itself is no longer a routing process
 - uses one Kind cluster as the supported local substrate
 - deploys Harbor, MinIO, Pulsar, and every required PostgreSQL backend through one Helm-owned
   cluster path, with PostgreSQL always delivered as Patroni clusters managed by the Percona
@@ -56,13 +57,16 @@ not documentation-suite bootstrap.
   same OCI image, in every supported runtime mode that opts into the demo surface; the demo UI
   itself is implemented in PureScript and served from `web/dist/` produced by `spago bundle`
 - exposes the demo UI, demo API, Harbor, MinIO, and Pulsar browser surfaces through one
-  reverse-proxied localhost edge port; the production inference surface is Pulsar topics named in
-  the active `.dhall`, not HTTP
+  Envoy-Gateway-owned localhost listener (`Gateway/infernix-edge`) plus one HTTPRoute manifest
+  per public path; the demo cluster runs locally and applies no auth filters; the production
+  inference surface is Pulsar topics named in the active `.dhall`, not HTTP
 - accepts production inference work by Pulsar subscription only: `infernix service` consumes
   protobuf requests from configured request topics, dispatches them through the Haskell worker,
   and publishes results to configured result topics, with no HTTP listener bound
-- restricts Python to `python/adapters/<engine>/` (Poetry-managed, mypy/black/ruff strict in every
-  adapter container build); all custom platform logic is Haskell
+- restricts Python to `python/<substrate>/adapters/<engine>/` (Poetry-managed; per-substrate
+  `pyproject.toml`; the canonical quality entrypoint is `poetry run check-code` running mypy
+  strict, black check, and ruff strict in sequence); per-engine setup work runs through
+  `poetry run setup-<engine>` console scripts; all custom platform logic is Haskell
 - keeps Haskell types authoritative for frontend contracts through
   `infernix internal generate-purs-contracts` and verifies the frontend through `purescript-spec`
   plus routed Playwright coverage
@@ -77,33 +81,42 @@ not documentation-suite bootstrap.
 - enforces static quality through `infernix test lint`, starting with repo-owned lint, docs, and
   strict compiler-warning checks and permitting a richer formatter or linter stack once it is
   actually adopted
-- runs Playwright from the same container image that serves the web UI
+- runs Playwright from the per-substrate container on Linux substrates (which also serves the
+  web UI bundle), and from the operator's host node install on Apple Silicon
+- collapses every Linux Dockerfile into one custom container per substrate (`linux-cpu`,
+  `linux-cuda`) on `ubuntu:24.04` (or `nvidia/cuda:<…>-cudnn-runtime-ubuntu24.04` for CUDA),
+  with ghcup-pinned GHC 9.14.1 + Cabal 3.16.1.0, Python 3 + Poetry, gcc 15.2, and the Kind
+  toolbelt baked in. Inside the substrate container the daemon never invokes `apt`, `pip`, or
+  any compiler; the Dockerfile owns the toolchain. Apple Silicon has no Dockerfile — the
+  operator pre-installs ghcup with GHC 9.14.1 + Cabal 3.16.1.0 active, then `cabal build`
+  produces working binaries and the daemon installs C/C++ engine deps via system `clang` and
+  `brew`
+- carries no `.sh` files anywhere in the repo and commits no built artifacts (`poetry.lock`,
+  generated proto, `.mypy_cache`, `.ruff_cache`, `*.pyc`, `web/dist/`, `web/spago.lock`,
+  `web/src/Generated/`); `.gitignore` and `.dockerignore` mirror each other for that ignore set
 
 ## Topology Baseline
 
-The supported topology is below. The current implementation deploys the edge proxy, web service,
-demo workload, and the Harbor or MinIO or Pulsar portal workloads on the real Kind and Helm
-substrate, and the routed service path uses the chart-managed Harbor, MinIO, and Pulsar backends
-while retaining repo-local mirrors for inspection and host-side state reporting. The current
-supported platform also routes every PostgreSQL dependency through the Percona Kubernetes operator
-plus Patroni-managed PostgreSQL clusters, and Harbor follows that same operator-managed path on the
-supported cluster lifecycle.
+The supported topology is below. Routing is owned by the Helm-installed Envoy Gateway controller
+plus one `Gateway/infernix-edge` resource bound to the chosen localhost port; HTTPRoute manifests
+attached to that Gateway expose the demo, Harbor, MinIO, and Pulsar surfaces with `URLRewrite`
+filters per backend. The demo cluster runs locally and applies no auth filters. Every PostgreSQL
+dependency runs through the Percona Kubernetes operator plus Patroni-managed PostgreSQL clusters;
+Harbor follows that same operator-managed path on the supported cluster lifecycle.
 
 ```mermaid
 flowchart TB
     apple["Apple host infernix CLI"]
-    linux["Linux outer infernix container"]
+    linux["Linux substrate-container infernix CLI"]
     data["Host .data"]
     pulsarClient["Inference requester (Pulsar publisher)"]
 
     subgraph kind["Kind cluster"]
-        edge["infernix edge (Haskell)"]
+        envoy["Envoy Gateway controller + Gateway/infernix-edge"]
+        routes["HTTPRoute manifests (/, /api, /harbor, /minio/*, /pulsar/*)"]
         demo["infernix-demo (Haskell servant; gated by .dhall demo_ui)"]
         service["infernix service (Haskell, Pulsar consumer; no HTTP)"]
-        adapters["python/adapters/<engine> (Python-native engines only)"]
-        harborGw["infernix gateway harbor (Haskell)"]
-        minioGw["infernix gateway minio (Haskell)"]
-        pulsarGw["infernix gateway pulsar (Haskell)"]
+        adapters["python/<substrate>/adapters/<engine> (Python-native engines, invoked via poetry run)"]
         harbor["Harbor"]
         minio["MinIO"]
         pgop["Percona PostgreSQL operator"]
@@ -111,16 +124,14 @@ flowchart TB
         pulsar["Pulsar"]
     end
 
-    apple --> edge
-    linux --> edge
+    apple --> envoy
+    linux --> envoy
     pulsarClient --> pulsar
-    edge --> demo
-    edge --> harborGw
-    edge --> minioGw
-    edge --> pulsarGw
-    harborGw --> harbor
-    minioGw --> minio
-    pulsarGw --> pulsar
+    envoy --> routes
+    routes --> demo
+    routes --> harbor
+    routes --> minio
+    routes --> pulsar
     harbor --> postgres
     pgop --> postgres
     pulsar --> service
@@ -159,6 +170,8 @@ infernix/
 │   ├── Main.hs            (entry point for `infernix`)
 │   └── Demo.hs            (entry point for `infernix-demo`)
 ├── src/
+│   ├── Generated/
+│   │   └── Contracts.hs        (purescript-bridge-owned browser-contract ADTs)
 │   └── Infernix/
 │       ├── CLI.hs
 │       ├── Cluster/
@@ -169,15 +182,13 @@ infernix/
 │       ├── Demo/
 │       │   └── Api.hs
 │       ├── DemoConfig.hs
-│       ├── Edge.hs
-│       ├── Gateway/
-│       │   ├── Harbor.hs
-│       │   ├── Minio.hs
-│       │   └── Pulsar.hs
+│       ├── Engines/
+│       │   └── AppleSilicon.hs (daemon-driven brew + clang engine bootstrap)
 │       ├── Lint/
 │       │   ├── Chart.hs
 │       │   ├── Docs.hs
 │       │   ├── Files.hs
+│       │   ├── HaskellStyle.hs
 │       │   └── Proto.hs
 │       ├── Models.hs
 │       ├── Runtime/
@@ -194,10 +205,16 @@ infernix/
 │       ├── manifest/
 │       └── runtime/
 ├── python/
-│   ├── pyproject.toml     (Poetry-managed; only Python under repo ownership)
-│   ├── poetry.lock
-│   └── adapters/
-│       └── <engine>/      (one directory per Python-native inference engine)
+│   ├── apple-silicon/
+│   │   ├── pyproject.toml     (Poetry-managed; declares engines for the Apple column;
+│   │   │                       creates a repo-local .venv on the host)
+│   │   └── adapters/<engine>/ (per-engine adapter; one per substrate-supported engine)
+│   ├── linux-cpu/
+│   │   ├── pyproject.toml     (system-wide Poetry install inside the linux-cpu container)
+│   │   └── adapters/<engine>/
+│   └── linux-cuda/
+│       ├── pyproject.toml     (system-wide Poetry install inside the linux-cuda container)
+│       └── adapters/<engine>/
 ├── web/
 │   ├── spago.yaml
 │   ├── src/
@@ -208,13 +225,17 @@ infernix/
 │   ├── playwright/
 │   └── Dockerfile         (installs purs, spago, and Playwright)
 ├── chart/
+│   └── templates/
+│       ├── gatewayclass.yaml      (Envoy Gateway API GatewayClass)
+│       ├── gateway.yaml           (Gateway/infernix-edge bound to chosen localhost port)
+│       └── httproutes/            (one HTTPRoute per public path, with URLRewrite filters)
 ├── kind/
 ├── docker/
-├── scripts/
-│   └── install-formatter.sh   (downloads ormolu and hlint binaries)
+│   ├── linux-base.Dockerfile      (shared substrate base layer)
+│   ├── linux-cpu.Dockerfile       (FROM ubuntu:24.04)
+│   └── linux-cuda.Dockerfile      (FROM nvidia/cuda:<…>-cudnn-runtime-ubuntu24.04)
 ├── tools/
-│   ├── generated_proto/       (auto-generated protobuf stubs)
-│   └── python_quality.sh      (runs mypy strict, black check, ruff strict against python/)
+│   └── generated_proto/           (auto-generated protobuf stubs; regenerated, not committed)
 ├── test/
 │   ├── integration/
 │   │   └── Spec.hs
@@ -261,10 +282,10 @@ Phase 0 creates and maintains the governed `documents/` suite before later phase
 
 The repo ships two Haskell executables built from one Cabal library named `infernix-lib`:
 
-- `infernix` is the production daemon. It owns the CLI surface for cluster lifecycle (`infernix cluster ...`), the Pulsar-subscribed inference dispatcher (`infernix service`), the edge proxy (`infernix edge`), the Harbor, MinIO, and Pulsar gateway pods (`infernix gateway harbor|minio|pulsar`), the static-quality gate (`infernix lint`, `infernix test ...`), and internal build helpers (`infernix internal ...`). In production mode it binds no HTTP listener.
+- `infernix` is the production daemon. It owns the CLI surface for cluster lifecycle (`infernix cluster ...`), the Pulsar-subscribed inference dispatcher (`infernix service`), the static-quality gate (`infernix lint`, `infernix test ...`), and internal build helpers (`infernix internal ...`). In production mode it binds no HTTP listener. Routing is owned by the Helm-installed Envoy Gateway controller plus repo-owned HTTPRoute manifests; `infernix` itself runs no edge-proxy or per-backend gateway process.
 - `infernix-demo` is the demo UI host. It exposes a servant-based HTTP server that serves `/`, `/api`, `/api/publication`, `/api/cache`, and `/objects/` for the demo workbench. It is invoked through `infernix-demo serve --dhall PATH --port N` and is gated by the active `.dhall` `demo_ui` flag; production deployments leave the flag off.
 
-Both executables ship in the same OCI image; the entrypoint selects which exe runs. No third repo-owned Haskell executable or launcher script exists for tests, bootstrap, or sidecar helpers.
+Both executables ship in the same per-substrate OCI image; the chart workload entrypoint selects which exe runs. No third repo-owned Haskell executable or launcher script exists for tests, bootstrap, or sidecar helpers.
 
 ### 2. Dual Control-Plane Execution Contexts
 
@@ -381,15 +402,17 @@ The demo UI host runs on the Kind cluster in a container, gated by the active `.
 
 - The demo UI host is the `infernix-demo` Haskell executable, deployed as the `infernix-demo`
   cluster workload via `chart/templates/deployment-demo.yaml`.
-- The same OCI image carries both `infernix` and `infernix-demo`; the chart workload entrypoint
-  selects which exe runs.
-- The PureScript front-end bundle lives in a separate web image built by `web/Dockerfile`
-  (purs + spago + Playwright) and is served by `infernix-demo` from `web/dist/`.
-- The stable browser entrypoint is always the edge proxy when the demo surface is enabled.
-- Production deployments leave `demo_ui` off in the active `.dhall`; the `infernix-demo` workload
-  is then absent and the cluster has no HTTP API surface at all.
-- The `infernix-demo` workload is owned by repo Helm chart templates, while the separate web image
-  is built and Harbor-published for routed E2E execution rather than deployed as its own workload.
+- On Linux substrates, the per-substrate OCI image carries both `infernix` and `infernix-demo`
+  along with the spago-bundled PureScript front-end under `web/dist/` and Playwright + the
+  browser deps; the chart workload entrypoint selects which exe runs. On Apple Silicon there
+  is no Dockerfile — the operator runs `cabal build` against ghcup-installed GHC/Cabal and
+  Playwright runs from the host node install.
+- The stable browser entrypoint is always the Envoy `Gateway/infernix-edge` listener when the
+  demo surface is enabled.
+- Production deployments leave `demo_ui` off in the active `.dhall`; the `infernix-demo`
+  workload is then absent and the cluster has no HTTP API surface at all.
+- The `infernix-demo` workload is owned by repo Helm chart templates; there is no separate
+  web image.
 
 ### 7. Local Harbor Is The Cluster Image Source
 
@@ -401,9 +424,10 @@ Local Harbor is the required image authority once Harbor bootstrap completes.
 - No remaining non-Harbor workload rolls out before Harbor is reachable enough to serve pulls.
 - Once Harbor is ready, every remaining non-Harbor cluster pod, add-on, or later Helm deployment
   pulls from local Harbor.
-- `infernix cluster up` mirrors required non-Harbor third-party images, builds repo-owned images,
-  including the webapp image via `web/Dockerfile`, and publishes them to Harbor before the final
-  non-Harbor Helm rollout begins.
+- `infernix cluster up` mirrors required non-Harbor third-party images and builds repo-owned
+  images for the active runtime mode (the per-substrate image from `docker/linux-cpu.Dockerfile`
+  or `docker/linux-cuda.Dockerfile` on Linux substrates; nothing built on Apple Silicon), then
+  publishes them to Harbor before the final non-Harbor Helm rollout begins.
 
 ### 7a. Mandatory Local HA Service Topology
 
@@ -420,17 +444,22 @@ The supported cluster path always deploys the HA service layout.
 - There is no supported single-replica dev profile and no CLI flag that opts out of the mandatory
   local HA topology.
 
-### 8. Stable Edge Port and Route Prefixes
+### 8. Stable Edge Port and Route Prefixes via Envoy Gateway API
 
-All browser-visible and host-consumed cluster portals share one loopback port chosen by the CLI.
+All browser-visible and host-consumed cluster portals share one loopback port owned by the
+Envoy Gateway controller and the `Gateway/infernix-edge` resource.
 
-- The CLI tries `9090` first and increments by 1 until it finds an available localhost port during
-  cluster startup.
+- The CLI tries `9090` first and increments by 1 until it finds an available localhost port
+  during cluster startup; the rendered `Gateway` listener uses that port.
 - The chosen port is recorded under `./.data/runtime/edge-port.json`.
 - `cluster up` prints the chosen port to the operator during bring-up.
-- At minimum, the edge exposes `/`, `/api`, `/harbor`, `/minio/console`, `/minio/s3`,
-  `/pulsar/admin`, and `/pulsar/ws`.
-- Apple host-native `infernix` reaches MinIO and Pulsar through these reverse-proxied edge routes.
+- One HTTPRoute manifest per public path (`/`, `/api`, `/objects`, `/harbor`, `/minio/console`,
+  `/minio/s3`, `/pulsar/admin`, `/pulsar/ws`) is attached to the `infernix-edge` Gateway with
+  the appropriate `URLRewrite` filter; the demo HTTPRoutes (`/`, `/api`, `/api/publication`,
+  `/api/cache`, `/objects`) are absent when the active `.dhall` `demo_ui` flag is off.
+- Apple host-native `infernix` reaches Harbor, MinIO, Pulsar, and the demo HTTP host through
+  the same Gateway listener.
+- The demo cluster runs locally and applies no auth filters.
 
 ### 8a. `cluster up` Is A Test-Cluster Bring-Up Flow
 
@@ -475,16 +504,18 @@ Haskell ADTs are the SSOT for the frontend contract.
   and `infernix test e2e` proves the demo UI stays aligned with the Haskell-owned contract through
   routed Playwright coverage.
 
-### 10. Playwright Lives With the Web Image
+### 10. Playwright Lives In The Substrate Container (Linux) or On The Host (Apple Silicon)
 
-Playwright is installed in the same container image that carries the built web bundle for routed
-E2E execution.
+Playwright is installed in the same per-substrate container image that carries the built web
+bundle and the Haskell binaries on Linux substrates. Apple Silicon has no substrate container,
+so Playwright runs from the operator's host node install.
 
-- Chromium, WebKit, and Firefox are provisioned there.
-- The current implementation already runs `infernix test e2e` from that same built web image on
-  both the host-native and validated outer-container control-plane paths.
-- The host-native final-substrate runtime matrix reuses the Harbor-published web image for
-  that same E2E executor path.
+- On `linux-cpu` and `linux-cuda`, the Dockerfile installs Chromium, WebKit, and Firefox plus
+  Playwright system deps, alongside the spago-bundled `web/dist/` bundle. The same image plays
+  launcher, in-cluster workload, and E2E executor.
+- On `apple-silicon`, `infernix test e2e` invokes `npx playwright test` against the host's
+  node install; the operator pre-installs the browsers via `npx playwright install`.
+- No separate `web/Dockerfile`-built image exists.
 
 ### 11. Container Build Output Stays Under `/opt/build`
 
@@ -517,23 +548,30 @@ Apple host-native builds keep generated artifacts under the repo-local `./.build
 
 ### 13. Python Restriction
 
-Python is permitted only under `python/adapters/<engine>/` and only when the bound inference engine
-has no non-Python binding.
+Python is permitted only under `python/<substrate>/adapters/<engine>/` and only when the bound
+inference engine has no non-Python binding.
 
-- All custom platform logic, including cluster lifecycle, edge and portal gateways, the demo UI
-  HTTP host, build helpers, lint, chart discovery, image publishing, demo-config parsing, and doc
-  validation, is Haskell.
-- Python under `python/` is governed by one repo-root `python/pyproject.toml` and Poetry. Outside
-  the cluster, `poetry install` materializes a repo-local adapter virtual environment. Inside the
-  engine container, Poetry installs system-wide from the same `pyproject.toml`; no in-container
-  `.venv` exists.
-- Every adapter container build runs a single `tools/python_quality.sh` step that invokes mypy
-  (strict), black (check), and ruff (strict) against `python/`. The container image build fails
-  on any check failure. `infernix test lint` runs the same gate against that Poetry-managed
-  adapter environment on the host.
-- The only files that may remain under `tools/` are auto-generated stubs in
-  `tools/generated_proto/` (regenerated by build) and a small `tools/python_quality.sh` shell
-  shim used by the adapter Dockerfiles.
+- All custom platform logic, including cluster lifecycle, the demo UI HTTP host, build helpers,
+  lint, chart discovery, image publishing, demo-config parsing, and doc validation, is Haskell.
+  Routing is delegated to the Envoy Gateway controller plus repo-owned HTTPRoute manifests;
+  `infernix` itself owns no proxy process.
+- Python is governed by per-substrate `pyproject.toml` files (`python/apple-silicon/pyproject.toml`,
+  `python/linux-cpu/pyproject.toml`, `python/linux-cuda/pyproject.toml`); a single root
+  `python/pyproject.toml` is the preferred form when (and only when) a single resolution
+  satisfies every engine in scope. Poetry optional groups (`[tool.poetry.group.<engine>]`) are
+  the supported tool when engines coexist in one resolution but only some are installed per
+  lane.
+- On Apple Silicon, `poetry install --directory python/apple-silicon` materializes a repo-local
+  `.venv`. On Linux substrates, the substrate Dockerfile runs `poetry install` system-wide
+  (`POETRY_VIRTUALENVS_CREATE=false`) at image build time; the in-container daemon never
+  re-runs Poetry, never invokes `apt`/`pip`, and never compiles.
+- Every Python invocation goes through `poetry run`. The single quality entrypoint is
+  `poetry run check-code`, declared as a Poetry console script that runs mypy strict, black
+  check, and ruff strict in sequence. Per-engine setup work runs through additional Poetry
+  console scripts (`setup-<engine>`) the daemon shells out to.
+- `tools/` carries only auto-generated stubs in `tools/generated_proto/` (regenerated by
+  build, gitignored). The repo carries no `.sh` files anywhere; `tools/python_quality.sh` and
+  `scripts/install-formatter.sh` are removed.
 
 ### 14. Production Surface Is Pulsar-Only
 
@@ -573,8 +611,6 @@ The canonical supported CLI surface is:
 | Command | Contract |
 |---------|----------|
 | `infernix service` | long-running daemon entrypoint; in production it is a Pulsar consumer that subscribes to request topics named in the active `.dhall` and dispatches each request through the Haskell worker, with no HTTP listener bound; the only supported surface that is not idempotent by design |
-| `infernix edge` | long-running entrypoint for the cluster-resident Haskell edge proxy workload; deployed via the `infernix-edge` chart template using the same OCI image |
-| `infernix gateway harbor`, `infernix gateway minio`, `infernix gateway pulsar` | long-running entrypoints for the Haskell platform gateway workloads; deployed via `chart/templates/workloads-platform-portals.yaml` using the same OCI image |
 | `infernix cluster up` | declaratively reconcile the supported Kind, Helm, HA, image-flow, and active-mode demo-config contract |
 | `infernix cluster down` | declaratively reconcile cluster absence while preserving authoritative repo data under `./.data/` |
 | `infernix cluster status` | read-only status and route report, including chosen edge port and demo-config publication details; never mutates cluster or repo state |

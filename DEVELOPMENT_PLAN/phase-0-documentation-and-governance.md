@@ -1,6 +1,6 @@
 # Phase 0: Documentation and Governance
 
-**Status**: Done
+**Status**: Active
 **Referenced by**: [README.md](README.md), [development_plan_standards.md](development_plan_standards.md), [00-overview.md](00-overview.md)
 
 > **Purpose**: Create the governed `documents/` suite, define documentation maintenance rules, and
@@ -8,9 +8,12 @@
 
 ## Documentation-First Gate
 
-This phase closed before later phases can close.
+This phase has reopened for one realignment pass (Sprint 0.7) covering the Envoy Gateway API,
+single-substrate-container, and repo-hygiene doctrine. Sprints 0.1 through 0.6 stay `Done`.
 
-- Phases 1-6 are no longer phase-level blocked by documentation realignment.
+- Phases 1-6 are no longer phase-level blocked by documentation realignment, but later sprints
+  whose docs are touched by 0.7 should be closed only after 0.7 lands so the governed docs and
+  the implementation stay aligned.
 - The repo writes and maintains the docs suite before more implementation-closure claims continue.
 
 ## Current Repo Assessment
@@ -284,6 +287,91 @@ from Haskell-owned generated contracts derived through `purescript-bridge`.
 ### Remaining Work
 
 None. The Haskell migration of the docs validator is owned by Phase 1 Sprint 1.6.
+
+---
+
+## Sprint 0.7: Doctrine Realignment for Envoy Gateway API, Substrate Container, and Hygiene [Planned]
+
+**Status**: Planned
+**Implementation**: `documents/engineering/edge_routing.md`, `documents/engineering/docker_policy.md`, `documents/engineering/build_artifacts.md`, `documents/development/python_policy.md`, `documents/development/purescript_policy.md`, `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/reference/cli_reference.md`, `documents/reference/web_portal_surface.md`, `documents/architecture/overview.md`, `README.md`, `AGENTS.md`, `CLAUDE.md`, `src/Infernix/Lint/Docs.hs`
+**Docs to update**: every governed doc touched above
+
+### Objective
+
+Realign the governed documentation suite, the root README, and contributor guidance with the
+new doctrine declared in [00-overview.md](00-overview.md): Envoy Gateway API replaces every
+Haskell custom reverse proxy; the demo cluster runs locally with no auth; one custom container
+per Linux substrate (`ubuntu:24.04` base, ghcup-pinned GHC 9.14.1 + Cabal 3.16.1.0, Python 3 +
+pip + Poetry from apt and pip, in-container engine builds including llama.cpp, gcc 15.2 from
+the Ubuntu Toolchain Test PPA, and a no-`apt`/`pip`/compile rule for the in-container daemon);
+Apple Silicon is host-native with daemon-driven `brew` and system `clang` engine setup; no
+`.sh` files anywhere in the repo; no committed build artifacts (`poetry.lock`, generated proto,
+`.mypy_cache`, `.ruff_cache`, `*.pyc`, `web/dist/`, `web/spago.lock`); README quick start per
+substrate; PureScript contracts derived via `purescript-bridge` from `src/Generated/Contracts.hs`.
+
+### Deliverables
+
+- `documents/engineering/edge_routing.md` is rewritten to describe the Envoy Gateway controller,
+  the `infernix-edge` Gateway resource, the HTTPRoute manifest set as the canonical route
+  contract, the demo-cluster no-auth posture, and the URLRewrite filter behavior per portal.
+  The Haskell unified-proxy and per-backend Haskell gateway language is removed
+- `documents/engineering/docker_policy.md` is rewritten to describe the per-substrate
+  container shape (one custom Dockerfile per Linux substrate, `ubuntu:24.04` or
+  `nvidia/cuda:<…>-ubuntu24.04` base, ghcup-pinned toolchain, Poetry-only Python invocation,
+  in-container engine builds, gcc 15.2, no in-container `apt`/`pip`/compile from the daemon),
+  and explicitly notes that `apple-silicon` has no Dockerfile (host-native build)
+- `documents/engineering/build_artifacts.md` is rewritten to describe the per-substrate
+  Dockerfile layout, the repo-local Apple Silicon Poetry venv at `python/apple-silicon/.venv/`,
+  the substrate-container's role as launcher + workload + Playwright executor, and the
+  built-artifact ignore rules covered by `.gitignore` and `.dockerignore`
+- `documents/development/python_policy.md` is rewritten to describe per-substrate
+  `pyproject.toml` files, the single `poetry run check-code` quality entrypoint, per-engine
+  `setup-<engine>` console scripts, the all-Python-via-`poetry-run` rule, and the
+  Apple-Silicon-`.venv` / Linux-system-wide split
+- `documents/development/purescript_policy.md` is updated to confirm the
+  `src/Generated/Contracts.hs` + `purescript-bridge` derivation path and to drop any reference
+  to a separate Playwright image (Playwright now lives inside the substrate container)
+- `documents/operations/apple_silicon_runbook.md` is rewritten to document the operator
+  pre-installed ghcup contract (GHC 9.14.1 + Cabal 3.16.1.0 active), the daemon-driven `brew`
+  and system `clang` engine setup, the `cabal build` quick start, and the lack of a
+  Dockerfile on Apple Silicon
+- `documents/operations/cluster_bootstrap_runbook.md` is updated to document the substrate
+  container build step on Linux substrates, the Envoy Gateway controller installation flow,
+  and the HTTPRoute-driven route inventory
+- `documents/reference/cli_reference.md` removes `infernix edge` and `infernix gateway
+  harbor|minio|pulsar` from the canonical CLI surface; the supported routing surface is the
+  Helm-installed Envoy Gateway controller plus repo-owned HTTPRoute manifests
+- `documents/reference/web_portal_surface.md` rewrites the route inventory to render straight
+  from the HTTPRoute manifest set (Phase 3 Sprint 3.8) rather than the Haskell edge proxy
+- `documents/architecture/overview.md` updates the topology to remove the Haskell edge and
+  per-backend gateway pods, replace them with Envoy Gateway API + HTTPRoutes, and describe one
+  substrate container per Linux runtime mode
+- `README.md` is rewritten to carry per-substrate quick start subsections (Apple Silicon
+  host-native, Linux CPU substrate container, Linux CUDA substrate container) plus updated
+  topology language
+- `AGENTS.md` and `CLAUDE.md` add the doctrine line: "Routing through Envoy Gateway API + HTTPRoute
+  manifests, no auth (demo cluster, local-only). One custom container per Linux substrate
+  (`ubuntu:24.04` or `nvidia/cuda:<…>-ubuntu24.04`); Apple Silicon is host-native (operator-
+  installed ghcup, daemon-driven brew + clang). All Python through `poetry run`. No `.sh`
+  files; no committed build artifacts."
+- `src/Infernix/Lint/Docs.hs` adds the retired-doctrine forbidden-phrase set covering
+  `infernix edge`, `infernix gateway`, `tools/python_quality.sh`, `web/Dockerfile`,
+  `docker/<engine>-python.Dockerfile`, and Harbor admin Basic auth language outside
+  [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md)
+
+### Validation
+
+- `infernix lint docs` passes against the rewritten suite and the root workflow documents
+- `infernix lint docs` fails when any of the new forbidden retired-doctrine phrases appears
+  outside `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
+- every governed document still begins with the required metadata block; inbound and outbound
+  links across the suite resolve correctly
+- root `README.md`, `AGENTS.md`, and `CLAUDE.md` carry the updated doctrine line and the per-substrate
+  quick start
+
+### Remaining Work
+
+- author the doc rewrites named above and add the new forbidden-phrase set to the docs validator
 
 ## Documentation Requirements
 

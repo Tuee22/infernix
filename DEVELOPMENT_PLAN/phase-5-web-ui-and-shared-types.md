@@ -1,6 +1,6 @@
 # Phase 5: Demo UI in PureScript and Shared Types
 
-**Status**: Done
+**Status**: Active
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
 
 > **Purpose**: Define the PureScript demo UI built with spago, the Haskell-owned frontend contract
@@ -10,13 +10,12 @@
 
 ## Phase Status
 
-Sprints 5.1 through 5.6 are now `Done`: the demo UI is implemented in PureScript under
-`web/src/*.purs`, the generated contract module is consumed from `web/src/Generated/`,
-`purescript-spec` now owns the frontend unit suite under `web/test/Main.purs`, the routed UI
-keeps the established DOM surface for Playwright, the separate web image is no longer deployed as
-a compatibility workload on the cluster, and `infernix internal generate-purs-contracts` now
-derives the supported frontend contract module through `purescript-bridge` from dedicated
-browser-contract ADTs in `src/Generated/Contracts.hs`.
+Sprints 5.1, 5.2, 5.3, 5.4, and 5.6 stay `Done`. Sprint 5.5 (Web Runtime Image and Playwright
+Dependency Ownership) is downgraded to `Active`: under the new doctrine the separate
+`web/Dockerfile` image is folded into the per-substrate container (Phase 4 Sprint 4.9), so the
+Playwright executor moves from the web image into the substrate image. The demo UI source,
+`purescript-spec` suites, generated `purescript-bridge` contracts, and the demo workbench all
+stay as they are. Phase 5 closes again once 5.5 reflects the substrate-container fold.
 
 ## Current Repo Assessment
 
@@ -203,46 +202,55 @@ None.
 
 ---
 
-## Sprint 5.5: Web Runtime Image and Playwright Dependency Ownership [Done]
+## Sprint 5.5: Web Runtime Image and Playwright Dependency Ownership [Active]
 
-**Status**: Done
-**Implementation**: `web/Dockerfile`, `web/playwright/`, `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Cluster/PublishImages.hs`, `chart/templates/deployment-demo.yaml`, `chart/templates/deployment-service.yaml`
+**Status**: Active
+**Blocked by**: Phase 4 Sprint 4.9
+**Implementation**: `docker/linux-base.Dockerfile`, `docker/linux-cpu.Dockerfile`, `docker/linux-cuda.Dockerfile`, `web/playwright/`, `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `chart/templates/deployment-demo.yaml`, `chart/templates/deployment-service.yaml`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/architecture/web_ui_architecture.md`
 
 ### Objective
 
-Prepare the web image to own the packaged demo bundle and the E2E execution environment.
+Fold the packaged PureScript demo bundle and the Playwright executor into the per-substrate
+container (Phase 4 Sprint 4.9). One custom container per Linux substrate carries the built web
+bundle, the PureScript toolchain (only when the bundle is rebuilt during the image build), and
+Playwright + browser dependencies; on Apple Silicon the operator runs Playwright from the host
+through `infernix test e2e` against the host node install.
 
 ### Deliverables
 
-- `infernix cluster up` builds the webapp image through `web/Dockerfile` as part of the canonical deploy flow
-- the built webapp image is uploaded to Harbor before Helm rollout
-- `web/Dockerfile` installs the npm-managed PureScript toolchain (`purescript`, `spago`, and
-  `esbuild`) alongside Chromium, WebKit, and Firefox dependencies for Playwright
-- the same image carries the built PureScript bundle under `web/dist/` together with the
-  Playwright browser binaries and acts as the routed E2E executor
-- `infernix test e2e` targets that same web image rather than a separate ad hoc browser image
-- the outer-container control-plane image no longer carries a duplicate Playwright browser
-  installation
+- the per-substrate Linux Dockerfile (Phase 4 Sprint 4.9) installs `purescript`, `spago`, and
+  the npm dependencies long enough to bundle the demo UI into `web/dist/`, then installs
+  Chromium, WebKit, and Firefox plus Playwright system deps; the built `web/dist/` bundle is
+  copied into `/srv/web/` and is served by the in-cluster `infernix-demo` workload mounting the
+  same image
+- `infernix test e2e --runtime-mode linux-cpu|linux-cuda` launches Playwright from the
+  substrate container; on Apple Silicon, `infernix test e2e --runtime-mode apple-silicon`
+  launches Playwright from the operator's host node install
 - the chart no longer deploys a separate `infernix-web` workload or Service; the routed `/`
-  surface is served only by `infernix-demo`, while the Harbor-published web image remains an E2E
-  executor artifact
+  surface is served only by `infernix-demo`
+- `web/Dockerfile` is deleted; the corresponding entry in
+  [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) Pending Removal moves to
+  Completed when the deletion lands
 
 ### Validation
 
-- the supported `web/Dockerfile` packages the static PureScript bundle from `web/dist/` and
-  carries Playwright browser dependencies
-- `./.build/infernix --runtime-mode apple-silicon test e2e` passes while launching Playwright from
-  the built web image
-- `docker compose run --rm infernix infernix --runtime-mode apple-silicon test e2e` passes while
-  delegating browser execution to the built web image
-- the repository does not maintain a second dedicated Playwright-only image
-- `infernix cluster up` produces a Harbor-published web image consumable by the host-native routed
-  E2E lanes, and that same final-substrate image path is exercised across the runtime matrix
+- a substrate-container build produces a working Playwright runner (`docker run --rm <substrate-image>
+  npx playwright --version`) without a separate web image
+- `./.build/infernix --runtime-mode apple-silicon test e2e` passes against the host's
+  Playwright install
+- `docker compose run --rm <substrate-image> infernix --runtime-mode linux-cpu test e2e` passes
+  with Playwright launched from inside the substrate container
+- the repository ships no `web/Dockerfile` after the migration; `infernix lint chart` rejects
+  any chart manifest reusing the legacy `infernix-web` image coordinate
 
 ### Remaining Work
 
-None.
+- delete `web/Dockerfile`, fold the PureScript build + Playwright install into the
+  per-substrate Dockerfile authored by Phase 4 Sprint 4.9, update `infernix test e2e` to
+  invoke the Playwright runner from the substrate image (Linux) or the host node install
+  (Apple Silicon), and migrate the corresponding legacy-tracking entry from Pending Removal to
+  Completed
 
 ---
 

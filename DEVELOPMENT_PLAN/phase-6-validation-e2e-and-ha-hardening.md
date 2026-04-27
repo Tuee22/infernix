@@ -72,10 +72,10 @@ This phase owns the rule that validation follows the generated demo catalog for 
 - full repository closure requires repeating active-mode validation across `apple-silicon`,
   `linux-cpu`, and `linux-cuda`
 
-## Sprint 6.1: Haskell Static Quality Gates and Extensive Unit Suites [Done]
+## Sprint 6.1: Haskell Static Quality Gates and Extensive Unit Suites [Active]
 
-**Status**: Done
-**Implementation**: `src/Infernix/CLI.hs`, `src/Infernix/Lint/`, `src/Infernix/Lint/HaskellStyle.hs`, `scripts/install-formatter.sh`, `test/haskell-style/Spec.hs`, `test/unit/Spec.hs`, `web/test/Main.purs`
+**Status**: Active
+**Implementation**: `src/Infernix/CLI.hs`, `src/Infernix/Lint/`, `src/Infernix/Lint/HaskellStyle.hs`, `test/haskell-style/Spec.hs`, `test/unit/Spec.hs`, `web/test/Main.purs`
 **Docs to update**: `documents/development/haskell_style.md`, `documents/development/testing_strategy.md`, `documents/reference/cli_reference.md`
 
 ### Objective
@@ -89,8 +89,9 @@ executables, shared contracts, and matrix-rendering logic.
 - the current repo-owned lint layer enforces whitespace, newline, and tab discipline for tracked sources
 - `infernix test lint` also validates the repo-owned chart, Kind, and `.proto` asset inventory
 - `infernix docs check` remains part of the canonical static-quality gate
-- the repo-owned Haskell style stack bootstraps `ormolu` and `hlint` binaries under
-  `./.build/haskell-style-tools/` and checks `infernix.cabal` with `cabal format`
+- the repo-owned Haskell style stack installs `ormolu` and `hlint` through Cabal/Hackage as
+  Cabal-test-target build-tool dependencies (no `.sh` shim) and checks `infernix.cabal` with
+  `cabal format`
 - strict compiler-warning validation with warnings treated as errors on supported paths
 - Haskell unit coverage for runtime-mode resolution, model catalog logic, generated demo-config
   rendering, invalid generated-catalog startup handling, and service domain types
@@ -111,7 +112,11 @@ executables, shared contracts, and matrix-rendering logic.
 
 ### Remaining Work
 
-None.
+- the Python adapter quality gate moves from `tools/python_quality.sh` to `poetry run check-code`
+  (Phase 4 Sprint 4.7); `infernix test lint` invokes `poetry run check-code` against the active
+  substrate's `pyproject.toml`. The Haskell style gate becomes a Cabal test target without a
+  `.sh` shim. Both changes close together with the corresponding Pending Removal entries in
+  [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md)
 
 ---
 
@@ -164,9 +169,10 @@ None.
 
 ---
 
-## Sprint 6.3: Routed Playwright E2E Coverage [Done]
+## Sprint 6.3: Routed Playwright E2E Coverage [Active]
 
-**Status**: Done
+**Status**: Active
+**Blocked by**: Phase 4 Sprint 4.9, Phase 5 Sprint 5.5
 **Implementation**: `src/Infernix/CLI.hs`, `web/playwright/inference.spec.js`, `web/test/run_playwright_matrix.mjs`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/reference/web_portal_surface.md`
 
@@ -192,15 +198,19 @@ image and the Harbor-published host-native runtime image.
   select a model, submit a request, or render an object-reference result state
 - the host-native routed suite also fails if `/api` cannot move to the Apple host
   bridge while the browser stays on the same edge base URL
-- `./.build/infernix --runtime-mode apple-silicon test e2e` launches Chromium, WebKit, and Firefox from the built web image without depending on host-installed Playwright or host browser binaries
+- `./.build/infernix --runtime-mode apple-silicon test e2e` launches Playwright from the host
+  node install (Apple Silicon has no substrate container, see Phase 4 Sprint 4.10)
 - `./.build/infernix --runtime-mode linux-cpu test e2e` and
-  `./.build/infernix --runtime-mode linux-cuda test e2e` do the same while reusing the
-  Harbor-published web runtime image on the host-native final substrate
-- `docker compose run --rm infernix infernix --runtime-mode apple-silicon test e2e` does the same without requiring those browsers in the outer control-plane image
+  `./.build/infernix --runtime-mode linux-cuda test e2e` launch Chromium, WebKit, and Firefox
+  from the substrate container (Phase 4 Sprint 4.9), without a separate web image
+- `docker compose run --rm <substrate-image> infernix --runtime-mode linux-cpu test e2e` does
+  the same with the substrate image acting as both launcher and Playwright executor
 
 ### Remaining Work
 
-None.
+- update Playwright invocation in `infernix test e2e` to target the substrate container on
+  Linux substrates (rather than the deleted `web/Dockerfile`-built image) and the host node
+  install on Apple Silicon. Closes when Phase 4 Sprint 4.9 and Phase 5 Sprint 5.5 land
 
 ---
 

@@ -15,16 +15,18 @@ Sprints 4.1 (typed configuration and protobuf contracts), 4.5 (durable cache), a
 (comprehensive matrix registry) are `Done`. Sprints 4.2 (inference pipeline) and 4.3
 (host-native and cluster parity) remain `Active`: the repo now has
 `src/Infernix/Runtime/{Pulsar,Worker,Cache}.hs`, but `src/Infernix/Runtime/Pulsar.hs` is still a
-no-subscription placeholder while the Python-native bindings now resolve through typed
-protobuf-over-stdio adapters under `python/adapters/<engine>/`; the remaining adapter gap is real
-engine implementation rather than process-boundary ownership. The legacy Python runtime
-helpers have now been removed from `tools/`. Sprint 4.4 (Demo
-Inference API Surface) is now `Done`: the manual inference HTTP surface lives only in
-`infernix-demo`, is gated by `.Values.demo.enabled` plus the active `.dhall` `demo_ui` flag, and
-production `infernix service` no longer binds HTTP. Sprint 4.7 declares the Python
-engine-adapter contract and quality gate (Poetry, mypy strict, black, ruff strict, integrated into
-every adapter container build). New Sprint 4.8 declares the Pulsar-driven production inference
-surface (`.dhall` schema additions and the full Pulsar consumer runtime).
+no-subscription placeholder while the Python-native bindings cross a real process boundary
+through typed protobuf-over-stdio. Sprint 4.4 (Demo Inference API Surface) is `Done`: the manual
+inference HTTP surface lives only in `infernix-demo`, is gated by `.Values.demo.enabled` plus the
+active `.dhall` `demo_ui` flag, and production `infernix service` binds no HTTP listener.
+Sprint 4.7 (Python engine-adapter contract and quality gate) is `Active` and is reshaped under
+the new doctrine: per-engine Dockerfiles and the `tools/python_quality.sh` shell shim are
+demolished, replaced by `poetry run check-code` plus per-engine Poetry entrypoints the daemon
+invokes. Sprint 4.8 (Pulsar-driven production inference surface) is `Active`. New Sprint 4.9
+(Linux substrate container build), new Sprint 4.10 (Apple Silicon daemon-driven engine
+bootstrap), and new Sprint 4.11 (per-substrate engine selection in catalog) are all `Planned`
+and own the new "one custom container per substrate, daemon-orchestrated on Apple Silicon"
+delivery contract.
 
 ## Current Repo Assessment
 
@@ -329,68 +331,76 @@ None.
 
 ---
 
-## Sprint 4.7: Python Engine Adapter Contract and Quality Gate [Active]
+## Sprint 4.7: Python Engine Adapter Contract and Poetry-Driven Quality Gate [Active]
 
 **Status**: Active
-**Implementation**: `python/pyproject.toml`, `python/poetry.lock`, `python/adapters/common.py`, `python/adapters/fixture/`, `python/adapters/{vllm-python,transformers-python,diffusers-python,pytorch-python,tensorflow-python,jax-python}/`, `tools/python_quality.sh`, `src/Infernix/Runtime/Worker.hs`, `proto/infernix/runtime/inference.proto`, `tools/generated_proto/`, `docker/{vllm-python,transformers-python,diffusers-python,pytorch-python,tensorflow-python,jax-python}.Dockerfile`, `test/unit/Spec.hs`
-**Docs to update**: `documents/development/python_policy.md` (new), `documents/engineering/model_lifecycle.md`, `documents/development/testing_strategy.md`
+**Implementation**: `python/<substrate>/pyproject.toml`, `python/<substrate>/adapters/<engine>/`, `src/Infernix/Runtime/Worker.hs`, `src/Infernix/Models.hs`, `proto/infernix/runtime/inference.proto`, `test/unit/Spec.hs`
+**Docs to update**: `documents/development/python_policy.md`, `documents/engineering/model_lifecycle.md`, `documents/development/testing_strategy.md`
 
 ### Objective
 
-Establish the Python engine-adapter contract so that Python is restricted to
-`python/adapters/<engine>/` and only when the bound inference engine has no non-Python binding.
-Make every adapter container build run a strict mypy plus black plus ruff quality gate that fails
-the build on any check failure. Make the Haskell worker (`src/Infernix/Runtime/Worker.hs`) the
-single dispatch point that forks a Python adapter over typed protobuf-over-stdio.
+Establish the Python engine-adapter contract under the new doctrine: Python is restricted to
+`python/.../adapters/<engine>/` and only invoked through `poetry run`. The strict quality gate
+runs as a single `poetry run check-code` entrypoint (mypy strict, black check, ruff strict).
+Each engine that the daemon needs to set up or invoke ships its own Poetry console-script
+entrypoint. The Haskell worker (`src/Infernix/Runtime/Worker.hs`) is the single dispatch point
+and forks `poetry run <entrypoint>` rather than a raw `python` invocation.
 
 ### Deliverables
 
-- one repo-root `python/pyproject.toml` (Poetry-managed) declaring all Python dependencies needed
-  by adapters; outside the cluster, `poetry install` materializes a repo-local adapter virtual
-  environment; inside the engine container, Poetry installs system-wide from the same
-  `pyproject.toml`, with no in-container `.venv`
-- one `python/adapters/<engine>/` directory per Python-native inference engine (PyTorch, JAX,
-  vLLM, transformers, Diffusers, etc.); each adapter is a thin module that loads the engine, takes
-  a typed protobuf request from stdin, runs the engine, and emits a typed protobuf response to
-  stdout
-- one `tools/python_quality.sh` shell script that runs `poetry run mypy --strict python/`,
-  `poetry run black --check python/`, and `poetry run ruff check python/` in sequence and exits
-  non-zero on any failure
-- every adapter `Dockerfile` (under `docker/<adapter>.Dockerfile` or equivalent) runs
-  `tools/python_quality.sh` as a build step; the container image build fails on any check failure
-- `infernix test lint` runs the same quality gate against that Poetry-managed adapter environment on the host
-- `src/Infernix/Runtime/Worker.hs` forks the appropriate Python adapter for each request whose
-  engine binding names a Python-native engine; the adapter speaks typed protobuf-over-stdio (or
-  unix socket) using the same `.proto` schemas used by the Haskell side via `proto-lens`
-- `tools/runtime_worker.py` and `tools/final_engine_runner.py` are removed; the Python execution
-  path is now confined to `python/adapters/<engine>/`
+- per-substrate `pyproject.toml` is the supported layout (`python/apple-silicon/pyproject.toml`,
+  `python/linux-cpu/pyproject.toml`, `python/linux-cuda/pyproject.toml`); a single root
+  `python/pyproject.toml` is the preferred form when (and only when) a single resolution can
+  satisfy every engine in scope. Poetry optional groups (`[tool.poetry.group.<engine>]`) cover
+  cases where engines coexist in one resolution but only some are installed per lane
+- one `python/<substrate>/adapters/<engine>/` directory per Python-native inference engine that
+  the active substrate's matrix column selects (PyTorch, JAX, vLLM, transformers, Diffusers,
+  TensorFlow, etc.); each adapter is a thin Python module that loads the engine, reads a typed
+  protobuf request from stdin, runs the engine, and emits a typed protobuf response to stdout
+- the canonical Python quality entrypoint is `poetry run check-code`, declared in each
+  `pyproject.toml` under `[tool.poetry.scripts]`. The `check-code` script runs `mypy --strict`,
+  `black --check`, and `ruff check` in sequence against the substrate's adapter tree and exits
+  non-zero on any failure. `tools/python_quality.sh` and `scripts/install-formatter.sh` are
+  removed; the repo carries no `.sh` files anywhere
+- per-engine setup entrypoints are declared as Poetry console scripts in the same
+  `pyproject.toml` (for example `setup-vllm`, `setup-llama-cpp`, `setup-transformers`); on the
+  Linux substrates the Dockerfile pre-bakes engine deps so these entrypoints reduce to
+  pre-flight checks, while on Apple Silicon the daemon invokes them to drive engine setup (see
+  Sprint 4.10)
+- `src/Infernix/Runtime/Worker.hs` forks `poetry run <adapter-entrypoint>` (with the substrate
+  directory passed as `--directory`) rather than `python <script>`; the protobuf-over-stdio
+  contract is unchanged. Engine binding metadata in `src/Infernix/Models.hs` records the Poetry
+  entrypoint name instead of a raw script path
+- `infernix test lint` invokes `poetry run check-code` against the active substrate's
+  `pyproject.toml`; on Apple Silicon it runs against the repo-local `.venv`, on Linux it runs
+  against the system-wide Poetry install inside the substrate container
+- the legacy per-engine Dockerfiles (`docker/{vllm,transformers,diffusers,pytorch,tensorflow,jax}-python.Dockerfile`)
+  are deleted; engine deps live inside the substrate container from Sprint 4.9
 
 ### Validation
 
-- `poetry install --directory python` succeeds on the supported Apple host and on the supported
-  Linux outer-container path
-- `tools/python_quality.sh` passes against the supported `python/` tree
+- `poetry run check-code` passes against the supported per-substrate `python/` trees
 - intentionally introducing a type error, formatting drift, or ruff violation under
-  `python/adapters/` causes the adapter `docker build` to fail; `infernix test lint` also fails
-  in that case
-- `infernix test unit` exercises the Haskell worker plus a Python adapter handshake end-to-end and
-  asserts the typed protobuf-over-stdio contract
+  `python/<substrate>/adapters/` causes both the substrate-container build (Linux) and
+  `infernix test lint` (any substrate) to fail
+- `infernix test unit` exercises the Haskell worker plus a Python adapter handshake end-to-end
+  using `poetry run <adapter-entrypoint>` and asserts the typed protobuf-over-stdio contract
 - `infernix test integration` on a runtime mode whose active catalog selects a Python-native
-  binding exercises one real adapter path end-to-end on the cluster substrate and fails if the
-  adapter image's quality gate did not run
-- `find python -name '*.py' -type f` returns only files under `python/adapters/`; `tools/` carries
-  no engine-specific Python after the migration
+  binding exercises one real adapter path end-to-end against the substrate-appropriate engine
+  install
+- `find python -name '*.py' -type f` returns only files under `python/<substrate>/adapters/`;
+  `tools/` carries no engine-specific Python after the migration
+- `find . -name '*.sh' -type f` returns nothing tracked by git
+- `git ls-files | grep -E '^python/.*poetry\.lock$'` returns nothing (Sprint 1.7 hygiene)
 
 ### Remaining Work
 
-- the worker now dispatches every Python-native binding through a real adapter directory and a
-  typed protobuf-over-stdio contract, and every adapter Dockerfile now runs
-  `tools/python_quality.sh` as a build step
-- the remaining gap is engine depth rather than ownership: the current adapters are still stub
-  responders that normalize the input payload instead of loading real vLLM or transformers or
-  Diffusers or PyTorch or TensorFlow or JAX runtimes
-- the integration suite still does not build or schedule dedicated adapter images or prove one real
-  Python-native engine on the cluster substrate
+- migrate the existing `python/adapters/<engine>/` tree to the per-substrate layout, declare the
+  `check-code` and `setup-<engine>` Poetry console scripts in each `pyproject.toml`, replace the
+  raw `python <script>` spawn in `src/Infernix/Runtime/Worker.hs` with `poetry run` invocation,
+  delete the six per-engine Dockerfiles, delete `tools/python_quality.sh` and
+  `scripts/install-formatter.sh`, and migrate the corresponding legacy-tracking entries from
+  Pending Removal to Completed
 
 ---
 
@@ -419,8 +429,8 @@ result topics named in the same config. **No HTTP listener is bound in productio
 - production `infernix service` startup binds no HTTP port; an `ss --listening --tcp` (or
   equivalent) probe of the production pod returns no Infernix-owned listener
 - request and result topics use Pulsar's built-in protobuf schema support; the same `.proto`
-  schemas feed both `proto-lens` (Haskell) and the auto-generated Python protobuf modules consumed
-  by `python/adapters/<engine>/`
+  schemas feed both `proto-lens` (Haskell) and the auto-generated Python protobuf modules
+  consumed by `python/<substrate>/adapters/<engine>/` through `poetry run` invocations
 - `chart/templates/deployment-service.yaml` no longer requires a `demo_ui = True` deployment in
   production; the chart deploys `infernix-service` with the production entrypoint
   `infernix service`, publishes no Kubernetes HTTP `Service`, and exposes no fake service port for
@@ -432,10 +442,10 @@ result topics named in the same config. **No HTTP listener is bound in productio
   named in the active `.dhall`, asserts a result lands on the configured `result_topic`, and
   asserts that the production pod binds no HTTP port (`ss --listening --tcp` shows no Infernix
   listener)
-- with `demo_ui` off in the active `.dhall`, the cluster deploys `infernix-service`,
-  `infernix-edge`, and the `infernix-{harbor,minio,pulsar}-gateway` workloads but does not deploy
-  `infernix-demo`; `/`, `/api`, `/api/publication`, `/api/cache`, and `/objects/` are absent from
-  the edge inventory
+- with `demo_ui` off in the active `.dhall`, the cluster deploys `infernix-service` and the
+  Envoy Gateway controller plus the platform-portal HTTPRoute set (Sprint 3.5/3.8), but does
+  not deploy `infernix-demo`; `/`, `/api`, `/api/publication`, `/api/cache`, and `/objects/`
+  HTTPRoutes are absent from the rendered chart
 - with `demo_ui` on, the demo workbench can submit a request via `/api/inference` and the same
   Haskell worker dispatch path serves both the demo HTTP submission and the Pulsar subscription
   path
@@ -448,15 +458,189 @@ result topics named in the same config. **No HTTP listener is bound in productio
   still does not subscribe to request topics, register protobuf schemas with Pulsar, dispatch
   requests through a real worker supervisor, or publish results to `result_topic`
 
+---
+
+## Sprint 4.9: Linux Substrate Container Build (Ubuntu 24.04 + ghcup + Poetry + Engine Toolchain) [Planned]
+
+**Status**: Planned
+**Blocked by**: Sprint 4.7
+**Implementation**: `docker/linux-base.Dockerfile`, `docker/linux-cpu.Dockerfile`, `docker/linux-cuda.Dockerfile`, `python/linux-cpu/pyproject.toml`, `python/linux-cuda/pyproject.toml`, `src/Infernix/Cluster.hs`, `chart/values.yaml`, `chart/templates/deployment-service.yaml`, `.dockerignore`
+**Docs to update**: `documents/engineering/docker_policy.md`, `documents/engineering/build_artifacts.md`, `documents/development/python_policy.md`, `documents/operations/cluster_bootstrap_runbook.md`
+
+### Objective
+
+Replace today's nine custom Dockerfiles (one launcher, one in-cluster service, six per-engine
+adapters, one web/Playwright) with one custom container per Linux substrate. Each substrate
+container is launcher, in-cluster workload, and Playwright executor — everything. The Linux
+container owns the entire toolchain end-to-end: the daemon, when running inside this image,
+must not `apt install`, must not `pip install`, must not compile.
+
+### Deliverables
+
+- `docker/linux-base.Dockerfile` defines the shared substrate-container base layer (Ubuntu
+  24.04 + ghcup-pinned GHC 9.14.1 + Cabal 3.16.1.0 + apt python3/python3-pip/python3-dev +
+  `python` symlink + `pip install poetry` + gcc 15.2 from the Ubuntu Toolchain Test PPA + node
+  + Playwright browser deps + Kind/kubectl/Helm/Docker CLI). The same `*-base.Dockerfile` is
+  the FROM for both Linux substrates so the toolchain layer is built once
+- `docker/linux-cpu.Dockerfile` extends the base with `FROM ubuntu:24.04` and installs the
+  `linux-cpu` engine deps via `poetry install` (system-wide; `POETRY_VIRTUALENVS_CREATE=false`)
+  against `python/linux-cpu/pyproject.toml`; builds repo-owned C++ engines (e.g., llama.cpp
+  CPU) from source against gcc 15.2; copies the built `infernix` and `infernix-demo` Haskell
+  binaries from the Cabal build stage; copies the spago-bundled web bundle into `/srv/web`
+- `docker/linux-cuda.Dockerfile` extends the base with `FROM nvidia/cuda:<…>-cudnn-runtime-ubuntu24.04`
+  (or whichever published nvidia/cuda Ubuntu 24.04 tag is current) and installs the
+  `linux-cuda` engine deps via `poetry install` against `python/linux-cuda/pyproject.toml`;
+  builds CUDA-aware C++ engines (e.g., llama.cpp CUDA) against gcc 15.2 plus the CUDA
+  toolchain
+- the substrate image plays three roles: outer-container launcher (Kind/kubectl/Helm/Docker
+  CLI baked in), in-cluster workload (used by both `chart/templates/deployment-service.yaml`
+  and `chart/templates/deployment-demo.yaml`), and Playwright E2E executor (browsers and
+  Playwright deps baked in). The repo no longer ships `docker/infernix.Dockerfile`,
+  `docker/service.Dockerfile`, `web/Dockerfile`, or any `docker/<engine>-python.Dockerfile`
+- `src/Infernix/Cluster.hs` `buildClusterImages` is updated to build exactly one image per
+  active runtime mode: `linux-cpu` builds `linux-cpu.Dockerfile`, `linux-cuda` builds
+  `linux-cuda.Dockerfile`, `apple-silicon` builds nothing (host-native, see Sprint 4.10)
+- `.dockerignore` mirrors `.gitignore` (Sprint 1.7) plus excludes `.build/`, `.data/`,
+  `node_modules/`, `web/dist/`, `web/output/`, `.venv/`, `**/.mypy_cache/`, `**/.ruff_cache/`,
+  `**/__pycache__/`, `**/poetry.lock`, `**/spago.lock`, `tools/generated_proto/`
+- inside the substrate container, the daemon never invokes `apt`, `pip`, `cabal build`,
+  `cmake`, or any compiler. The Dockerfile has done that work; the daemon spawns Poetry
+  console scripts (`poetry run setup-<engine>` or `poetry run <adapter-entrypoint>`) only
+
+### Validation
+
+- `docker build -f docker/linux-cpu.Dockerfile -t infernix-linux-cpu:local .` and
+  `docker build -f docker/linux-cuda.Dockerfile -t infernix-linux-cuda:local .` both succeed
+  on supported hosts; the `linux-cuda` build runs through `poetry run check-code` as a build
+  step and fails if any adapter under `python/linux-cuda/adapters/` violates the strict gate
+- `infernix cluster up --runtime-mode linux-cpu` and `--runtime-mode linux-cuda` both produce
+  a running cluster with `infernix-service` (and optionally `infernix-demo`) using the active
+  substrate image
+- a smoke probe (`docker run --rm <substrate-image> infernix --help`) and
+  (`docker run --rm <substrate-image> ghc --version` returning `9.14.1`,
+  `cabal --version` returning `3.16.1.0`, `gcc --version` containing `15.2`,
+  `python --version` returning `3.12.x`) confirm the toolchain pin
+- `infernix test e2e --runtime-mode linux-cpu` launches Playwright from the substrate
+  container without depending on a separate web image
+
+### Remaining Work
+
+- author the three Dockerfiles, the per-substrate `pyproject.toml` files, the `.dockerignore`,
+  the `Cluster.hs` build flow update, and the chart-deployment image-coordinate change; delete
+  the obsolete Dockerfiles named in [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md)
+  Pending Removal once the substrate image is wired in
+
+---
+
+## Sprint 4.10: Apple Silicon Daemon-Driven Engine Bootstrap [Planned]
+
+**Status**: Planned
+**Blocked by**: Sprint 4.7
+**Implementation**: `src/Infernix/Engines/AppleSilicon.hs` (new), `src/Infernix/Service.hs`, `src/Infernix/CLI.hs`, `python/apple-silicon/pyproject.toml`, `test/integration/Spec.hs`
+**Docs to update**: `documents/operations/apple_silicon_runbook.md`, `documents/development/local_dev.md`, `documents/development/python_policy.md`
+
+### Objective
+
+On Apple Silicon, where there is no substrate container, the Haskell daemon owns every step the
+Linux Dockerfile owns on Linux. The operator installs `ghcup` (with GHC 9.14.1 + Cabal 3.16.1.0
+active) once; thereafter a plain `cabal build` produces working binaries, and `infernix`
+itself drives all engine setup via `brew` and system `clang`.
+
+### Deliverables
+
+- a new Haskell module (`src/Infernix/Engines/AppleSilicon.hs` or similar) provides a small
+  typed DSL for engine setup steps: `brewInstall`, `gitClone`, `cmake`, `make`, `ensurePoetry`,
+  `poetryInstall`. It runs idempotently and is invoked by `infernix cluster up` (and by
+  `infernix service` on first request) when the active runtime mode is `apple-silicon`
+- the daemon orchestrates engine setup on Apple Silicon by:
+  - ensuring required Homebrew packages are installed (`brew install <pkg>` shelled out from
+    the daemon)
+  - building C/C++ engines (e.g., llama.cpp) from source against system `clang` into a
+    repo-local install root under `./.data/engines/<engine>/`
+  - materializing a repo-local Poetry venv at `python/apple-silicon/.venv/` from
+    `python/apple-silicon/pyproject.toml`, and installing each engine's deps through Poetry
+    optional groups
+- the daemon never installs ghcup or Cabal; those are operator responsibilities. The Apple
+  host build path is documented as: install ghcup, `ghcup install ghc 9.14.1 && ghcup install
+  cabal 3.16.1.0 && ghcup set ghc 9.14.1 && ghcup set cabal 3.16.1.0`, then
+  `cabal build exe:infernix exe:infernix-demo`
+- the daemon-driven engine setup honors the same per-engine Poetry `setup-<engine>`
+  entrypoints declared in 4.7, so the protobuf-over-stdio adapter contract is identical
+  across substrates
+
+### Validation
+
+- on a clean Apple Silicon host with `ghcup` installed and the right GHC/Cabal active,
+  `cabal build exe:infernix exe:infernix-demo` succeeds without further manual setup
+- `./.build/infernix --runtime-mode apple-silicon cluster up` brings up the cluster, and the
+  daemon brews the engine prerequisites and builds the C++ engines on first need without the
+  operator running any setup script
+- `infernix test integration --runtime-mode apple-silicon` exercises the apple-silicon column
+  of the README matrix end-to-end against host-native engines
+- `which clang` resolves on the Apple host; the daemon does not bundle a compiler
+
+### Remaining Work
+
+- author the new Apple Silicon engine-bootstrap Haskell module, declare the apple-silicon
+  Poetry layout, wire the daemon's first-run engine-readiness flow, and update the operator
+  runbook to document the ghcup-only prerequisite
+
+---
+
+## Sprint 4.11: Per-Substrate Engine Selection in the Catalog [Planned]
+
+**Status**: Planned
+**Blocked by**: Sprint 4.6, Sprint 4.7
+**Implementation**: `src/Infernix/Models.hs`, `src/Infernix/Types.hs`, `src/Infernix/DemoConfig.hs`, `test/unit/Spec.hs`, `test/integration/Spec.hs`
+**Docs to update**: `documents/architecture/model_catalog.md`, `documents/architecture/runtime_modes.md`, `documents/development/testing_strategy.md`
+
+### Objective
+
+Make the per-substrate engine column in the README matrix the canonical input for catalog
+generation. Each catalog row carries a per-substrate `selectedEngine` mapping; the active
+runtime mode picks one. The integration suite for a given substrate runs each row through
+exactly the engine selected for that substrate.
+
+### Deliverables
+
+- `src/Infernix/Models.hs` declares an explicit per-substrate engine selection per matrix row
+  (`selectedEngineByMode :: Map RuntimeModeId Text`); the active runtime mode picks the
+  appropriate engine when generating `infernix-demo-<mode>.dhall`
+- the engine binding metadata records the matching Poetry entrypoint (`setup-<engine>`) and
+  the protobuf-over-stdio adapter entrypoint, derived from the per-substrate engine selection
+- `infernix test integration` for a runtime mode iterates every catalog row and exercises it
+  through the substrate-selected engine; rows whose substrate column is `Not recommended` are
+  omitted from that mode's catalog and therefore from that mode's integration column
+- the daemon refuses to start when the active mode's catalog references an engine binding
+  whose adapter entrypoint or substrate-appropriate `pyproject.toml` is absent
+
+### Validation
+
+- a test fixture proves that switching runtime mode (`apple-silicon` ↔ `linux-cpu` ↔
+  `linux-cuda`) changes the per-row selected engine in the generated catalog deterministically
+- `infernix test integration --runtime-mode <mode>` exercises every catalog row exactly once
+  per substrate, using the substrate-selected engine
+- intentionally pointing a row at an engine that has no adapter under
+  `python/<substrate>/adapters/` causes daemon startup to fail with a typed error
+
+### Remaining Work
+
+- declare the per-substrate engine binding in `src/Infernix/Models.hs`, regenerate the
+  per-mode `.dhall` files, and update the integration suite to enumerate by substrate column
+
 ## Documentation Requirements
 
 **Engineering docs to create/update:**
-- `documents/architecture/runtime_modes.md` - service deployment modes and parity rules
-- `documents/architecture/model_catalog.md` - model registration, matrix row ownership, and generated catalog contract
+- `documents/architecture/runtime_modes.md` - service deployment modes, per-substrate engine selection, and parity rules
+- `documents/architecture/model_catalog.md` - per-substrate engine binding, matrix row ownership, and generated catalog contract
+- `documents/engineering/docker_policy.md` - one-substrate-container doctrine, Ubuntu 24.04 base, ghcup-pinned toolchain, and the no-`apt`/`pip`/compile rule for the in-container daemon
+- `documents/engineering/build_artifacts.md` - per-substrate Dockerfile layout, repo-local Apple Silicon Poetry venv, and built-artifact ignore rules
 - `documents/engineering/model_lifecycle.md` - MinIO authority, local materialization, and cache semantics
 - `documents/engineering/object_storage.md` - service-placement-specific MinIO access contract
 - `documents/engineering/storage_and_state.md` - durable versus derived state inventory
-- `documents/development/testing_strategy.md` - active-mode catalog and engine-binding coverage
+- `documents/development/python_policy.md` - per-substrate `pyproject.toml`, `poetry run check-code` quality entrypoint, per-engine `setup-<engine>` console scripts, and the all-Python-via-`poetry-run` rule
+- `documents/development/testing_strategy.md` - per-substrate integration column coverage and engine-binding parity
+- `documents/operations/apple_silicon_runbook.md` - operator-installed ghcup contract, daemon-driven brew/clang engine setup, and host-native cabal build flow
 
 **Product or reference docs to create/update:**
 - `documents/reference/api_surface.md` - browser and operator API contract
