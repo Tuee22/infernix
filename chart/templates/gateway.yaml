@@ -1,0 +1,14 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: infernix-edge
+  namespace: platform
+spec:
+  gatewayClassName: infernix-gateway
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: {{ .Values.gateway.listenerPort }}
+      allowedRoutes:
+        namespaces:
+          from: Same

@@ -48,7 +48,26 @@ forbiddenPhrases =
     "JavaScript workbench",
     "web/build.mjs",
     "Homebrew-installed poetry",
-    "single Haskell binary"
+    "single Haskell binary",
+    "infernix edge",
+    "infernix gateway harbor",
+    "infernix gateway minio",
+    "infernix gateway pulsar",
+    "tools/python_quality.sh",
+    "scripts/install-formatter.sh",
+    "web/Dockerfile",
+    "docker/infernix.Dockerfile",
+    "docker/service.Dockerfile",
+    "python/adapters/<engine>/",
+    "python/pyproject.toml",
+    "Harbor admin Basic-auth"
+  ]
+
+rootWorkflowDocs :: [FilePath]
+rootWorkflowDocs =
+  [ "README.md",
+    "AGENTS.md",
+    "CLAUDE.md"
   ]
 
 phaseDocs :: [FilePath]
@@ -76,12 +95,10 @@ runDocsLint = do
   forM_ phaseDocs $ \relativePath -> do
     contents <- readFile (repoRoot paths </> relativePath)
     validatePhaseDoc relativePath contents
-  forM_ (("documents/README.md" : requiredDocs) <> phaseDocs <> ["DEVELOPMENT_PLAN/00-overview.md", "DEVELOPMENT_PLAN/system-components.md"]) $ \relativePath -> do
+  forM_ (rootWorkflowDocs <> ["documents/README.md"] <> requiredDocs) $ \relativePath -> do
     contents <- readFile (repoRoot paths </> relativePath)
     when
-      ( relativePath /= "DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md"
-          && any (`isInfixOf` contents) forbiddenPhrases
-      )
+      (any (`isInfixOf` contents) forbiddenPhrases)
       (ioError (userError ("forbidden retired-doctrine phrase found in " <> relativePath)))
 
 validatePhaseDoc :: FilePath -> String -> IO ()

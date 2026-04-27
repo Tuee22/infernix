@@ -1,0 +1,56 @@
+[tool.poetry]
+name = "infernix-linux-cpu-adapters"
+version = "0.1.0"
+description = "Linux CPU Python adapters for infernix"
+authors = ["Infernix <noreply@example.com>"]
+packages = [{ include = "adapters" }]
+
+[tool.poetry.dependencies]
+python = "^3.12"
+protobuf = "^6.31.1"
+grpcio-tools = "^1.73.0"
+
+[tool.poetry.group.dev.dependencies]
+black = "^24.10.0"
+mypy = "^1.15.0"
+ruff = "^0.11.0"
+
+[tool.poetry.scripts]
+check-code = "adapters.common:run_check_code"
+adapter-diffusers-python = "adapters.diffusers_python:main"
+adapter-jax-python = "adapters.jax_python:main"
+adapter-pytorch-python = "adapters.pytorch_python:main"
+adapter-tensorflow-python = "adapters.tensorflow_python:main"
+adapter-transformers-python = "adapters.transformers_python:main"
+adapter-vllm-python = "adapters.vllm_python:main"
+setup-diffusers-python = "adapters.diffusers_python:setup"
+setup-jax-python = "adapters.jax_python:setup"
+setup-pytorch-python = "adapters.pytorch_python:setup"
+setup-tensorflow-python = "adapters.tensorflow_python:setup"
+setup-transformers-python = "adapters.transformers_python:setup"
+setup-vllm-python = "adapters.vllm_python:setup"
+
+[tool.black]
+line-length = 88
+target-version = ["py312"]
+
+[tool.mypy]
+files = ["adapters"]
+python_version = "3.12"
+strict = true
+
+[[tool.mypy.overrides]]
+module = ["infernix.*"]
+follow_imports = "skip"
+ignore_missing_imports = true
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["B", "E", "F", "I", "UP"]
+
+[build-system]
+requires = ["poetry-core>=1.9.0"]
+build-backend = "poetry.core.masonry.api"

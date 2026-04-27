@@ -48,36 +48,29 @@ A phase or sprint can move to `Done` only when all of the following are true:
 
 ## Current Repo Assessment
 
-The repository has a governed `documents/` suite and a Kind-substrate baseline. The new
-doctrine declared in [00-overview.md](00-overview.md) (two-binary topology, Pulsar-only
-production inference surface, demo HTTP only via `infernix-demo`, Envoy Gateway API + HTTPRoute
-manifests own all routing with no auth filters, Python restricted to engine adapters under
-`python/<substrate>/adapters/` invoked through `poetry run`, one custom container per Linux
-substrate with the daemon never installing or compiling inside the container, Apple Silicon
-host-native with daemon-driven `brew` and system `clang` engine setup, no `.sh` files, no
-committed built artifacts, frontend in PureScript with Haskell-owned generated contracts derived
-through `purescript-bridge` from `src/Generated/Contracts.hs`) is being landed across phases
-0, 1, 2, 3, 4, and 5.
+The repository now has the governed `documents/` suite, the two-binary Haskell topology
+(`infernix` plus `infernix-demo`), the Envoy-Gateway-backed chart surface, the per-substrate
+Python adapter projects under `python/<substrate>/`, the PureScript demo UI, and the split
+runtime modules under `src/Infernix/Runtime/{Cache,Worker,Pulsar}.hs`.
 
-- the cluster substrate, Kind or Helm assets, Harbor-first bootstrap flow, manual storage doctrine,
-  operator-managed Patroni PostgreSQL contract, and `linux-cuda` GPU lane are implemented; Phase 2
-  is reopened as `Active` only because Sprint 2.3 (chart inventory) needs to land the Envoy
-  Gateway API surface and the substrate-container image references introduced in Phase 4
-- the repository ships `infernix` plus `infernix-demo`, a Haskell demo HTTP host, Haskell chart
-  discovery, Haskell chart image publication, Haskell docs/chart/proto/file lint paths, the
-  Haskell-owned Haskell-style gate, and a live PureScript build path under `web/`. Routing moves
-  from the legacy `src/Infernix/Edge.hs`/`Gateway.hs`/`HttpProxy.hs` modules to the Helm-installed
-  Envoy Gateway controller plus repo-owned HTTPRoute manifests (Phase 3 Sprints 3.5/3.8); the
-  per-engine adapter Dockerfiles plus the `tools/python_quality.sh` shim collapse into a single
-  per-substrate container with `poetry run check-code` (Phase 4 Sprints 4.7/4.9); Apple Silicon
-  becomes pure host-native with daemon-driven `brew` and system `clang` engine setup (Phase 4
-  Sprint 4.10); the per-engine catalog gains an explicit per-substrate engine selection (Phase 4
-  Sprint 4.11); and committed built artifacts (`poetry.lock`, generated proto, `.pyc`,
-  `web/spago.lock`, `web/src/Generated/`) plus all `.sh` files are removed from git and added to
-  `.gitignore` and `.dockerignore` (Phase 1 Sprint 1.7)
-- the `documents/` tree, root README, AGENTS, and CLAUDE need a doctrine-realignment pass for
-  Envoy Gateway API, the substrate-container shape, the no-`.sh`-files rule, and the
-  per-substrate quick start (Phase 0 Sprint 0.7)
+- Phase 0 is closed: the governed docs, root workflow guidance, and `infernix lint docs` are
+  aligned with the Envoy Gateway, per-substrate container, and repository-hygiene doctrine
+- Phase 1 is open only for Sprint 1.7 hygiene follow-through: generated artifacts and obsolete
+  files are removed from the worktree and ignored by `.gitignore` plus `.dockerignore`, but
+  `git ls-files` still reports stale tracked entries until user-owned index cleanup happens;
+  `src/Infernix/Lint/Files.hs` now enforces that doctrine directly
+- Phase 2 is active because the chart inventory now targets `Gateway` plus `HTTPRoute` assets and
+  per-substrate runtime-image coordinates, but that final chart shape still needs renewed
+  Helm or Kind acceptance on a host with the full cluster toolchain available
+- Phases 3 through 5 are active because the worktree now carries the Envoy Gateway manifests,
+  deletes the legacy Haskell routing modules, wires `poetry run` adapter entrypoints, lands the
+  Apple runtime-prep helper, authors the Linux substrate Dockerfiles, and derives supported-path
+  publication routes from rendered HTTPRoutes, but the remaining work is still real-cluster route
+  acceptance, real Pulsar subscription behavior, non-stub engine adapters, and full
+  substrate-image or Playwright validation
+- Phase 6 is active because the host-side Haskell build, Haskell style gate, docs/chart/proto
+  lint, unit suite, and integration suite are green again, while the user-owned lint-hygiene
+  closeout and routed Playwright validation against the substrate images remain open
 
 ## Execution Contexts and Runtime Modes
 
@@ -92,13 +85,13 @@ The plan uses two separate concepts and keeps them distinct:
 
 | Phase | Name | Status | Document |
 |-------|------|--------|----------|
-| 0 | Documentation and Governance | Active | [phase-0-documentation-and-governance.md](phase-0-documentation-and-governance.md) |
+| 0 | Documentation and Governance | Done | [phase-0-documentation-and-governance.md](phase-0-documentation-and-governance.md) |
 | 1 | Repository and Control-Plane Foundation | Active | [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md) |
 | 2 | Kind Cluster Storage and Lifecycle | Active | [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md) |
 | 3 | HA Platform Services and Edge Routing | Active | [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md) |
 | 4 | Inference Service and Durable Runtime | Active | [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) |
 | 5 | Web UI and Shared Types | Active | [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md) |
-| 6 | Validation, E2E, and HA Hardening | Blocked | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) |
+| 6 | Validation, E2E, and HA Hardening | Active | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) |
 
 ## Canonical Outcome
 
@@ -112,7 +105,7 @@ The current supported platform is constructed around these non-negotiable rules:
 - production deployments accept inference work by Pulsar subscription only; the production
   `infernix service` binds no HTTP listener and the cluster has no `infernix-demo` workload when the
   demo flag is off
-- Python is restricted to `python/<substrate>/adapters/<engine>/` (per-substrate
+- Python is restricted to `python/<substrate>/adapters/*.py` (per-substrate
   `pyproject.toml`, Poetry-managed; the canonical quality entrypoint is `poetry run check-code`
   running mypy strict, black check, and ruff strict in sequence; per-engine setup work runs
   through `poetry run setup-<engine>` console scripts); all custom platform logic is Haskell

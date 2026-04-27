@@ -4,7 +4,7 @@
 **Referenced by**: [api_surface.md](api_surface.md), [../../DEVELOPMENT_PLAN/phase-3-ha-platform-services-and-edge-routing.md](../../DEVELOPMENT_PLAN/phase-3-ha-platform-services-and-edge-routing.md)
 
 > **Purpose**: Describe the browser-visible routes and PureScript demo workbench behavior exposed
-> through the edge proxy.
+> through the published routed surface.
 
 ## Scope
 
@@ -19,25 +19,27 @@ Demo-only (present when `.dhall` `demo_ui = True`):
 
 - `/` loads the PureScript manual inference workbench served by `infernix-demo`
 - `/objects/:objectRef` loads large-output payloads referenced by the workbench
-- `/api`, `/api/publication`, `/api/cache` are the demo HTTP API endpoints; see
+- `/api`, `/api/publication`, and `/api/cache` are the demo HTTP API endpoints; see
   [api_surface.md](api_surface.md)
 
 Operator portals (always present):
 
-- `/harbor` loads the Harbor portal surface (via `infernix-harbor-gateway`)
-- `/minio/console` loads the MinIO console surface (via `infernix-minio-gateway`)
-- `/minio/s3` exposes the routed MinIO S3 API surface (via `infernix-minio-gateway`)
-- `/pulsar/admin` loads the Pulsar admin surface (via `infernix-pulsar-gateway`)
-- `/pulsar/ws` exposes the routed Pulsar WebSocket surface (via `infernix-pulsar-gateway`)
+- `/harbor` loads the Harbor portal surface
+- `/minio/console` loads the MinIO console surface
+- `/minio/s3` exposes the routed MinIO S3 API surface
+- `/pulsar/admin` loads the Pulsar admin surface
+- `/pulsar/ws` exposes the routed Pulsar WebSocket surface
+
+On the real Kind path those routes are published by `Gateway/infernix-edge` and the repo-owned
+HTTPRoute set. On the simulated substrate, the same prefixes return compatibility HTML or JSON so
+the route inventory and rewrite behavior remain testable.
 
 ## Workbench Behavior
 
-- the workbench is implemented in PureScript built into `web/dist/` by `npm --prefix web run build`
-  and served by the `infernix-demo` Haskell binary; see
-  [../development/purescript_policy.md](../development/purescript_policy.md)
+- the workbench is implemented in PureScript, built into `web/dist/` by
+  `npm --prefix web run build`, and served by the `infernix-demo` Haskell binary
 - frontend contract modules are emitted into `web/src/Generated/` by
-  `infernix internal generate-purs-contracts`; see
-  [../development/frontend_contracts.md](../development/frontend_contracts.md)
+  `infernix internal generate-purs-contracts`
 - the visible catalog comes from the generated demo catalog for the active runtime mode
 - the generated catalog is published by `cluster up` as `infernix-demo-<mode>.dhall`, mounted into
   the `infernix-demo` workload through `ConfigMap/infernix-demo-config`, and mirrored under the
@@ -45,29 +47,18 @@ Operator portals (always present):
 - the browser workbench renders the generated catalog exactly rather than maintaining a separate
   browser-only subset
 - the routed Playwright contract cross-checks `/api/models` against the serialized generated demo
-  config returned by `GET /api/demo-config`, while separately validating publication details from
-  `/api/publication` through the real routed cluster edge
-- the host-native and outer-container validation paths launch that routed Playwright contract from
-  the same web image that packages the built demo bundle, and the host-native final-substrate lane
-  reuses that Harbor-published web runtime image across `apple-silicon`, `linux-cpu`, and
-  `linux-cuda`
-- on the outer-container validation path, that web image reaches the routed surface over the
-  private Docker `kind` network by targeting the control-plane node on port `30090`, while the
-  host-published edge port remains loopback-only on `127.0.0.1`
+  config returned by `GET /api/demo-config` and separately validates publication details from
+  `/api/publication`
+- the host-native validation path launches routed Playwright from the host install; the Linux path
+  launches it from the active substrate image when the platform toolchain is available
 - the workbench surfaces the active runtime mode, control-plane context, daemon location, catalog
   source, chosen edge port, demo-config path, and routed publication inventory through
   `/api/publication`
-- the workbench also renders routed-upstream health and durable-backing-state details for the
-  Harbor, MinIO, and Pulsar route surfaces
 - the user can browse any generated model entry, inspect its selected engine and request shape,
   and submit a manual inference request through the demo `/api`
-- the workbench treats routed catalog or publication failures as unavailable live state rather
-  than synthesizing a browser-only fallback catalog or publication summary
 - manual inference requests execute through the same Haskell worker dispatch used by the
-  production Pulsar path, including per-engine Python adapters under `python/adapters/<engine>/`
+  production daemon, including per-substrate Python adapters under `python/<substrate>/adapters/`
   when the bound engine is Python-native
-- the workbench renders family-aware request guidance, artifact metadata, submit labels, and
-  result framing without introducing a browser-only catalog
 - large outputs surface as object-reference results with browser-visible links that resolve
   through `GET /objects/:objectRef`
 - switching runtime modes changes the generated catalog and selected engine bindings without

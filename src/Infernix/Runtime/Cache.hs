@@ -115,7 +115,7 @@ materializeCache paths runtimeMode model = do
             "}"
           ]
       durableArtifactContents =
-        let engineBinding = engineBindingForSelectedEngine (selectedEngine model)
+        let engineBinding = engineBindingForSelectedEngine runtimeMode (selectedEngine model)
          in Text.pack . unlines $
               [ "{",
                 "  \"artifactKind\": \"infernix-runtime-bundle\",",

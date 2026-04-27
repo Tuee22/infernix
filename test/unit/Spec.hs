@@ -3,9 +3,8 @@
 module Main (main) where
 
 import Control.Exception (finally, try)
-import Data.ByteString.Char8 qualified as ByteString8
 import Data.ByteString.Lazy qualified as Lazy
-import Data.List (dropWhileEnd, find, nub)
+import Data.List (find, nub)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (isJust, isNothing)
 import Data.Text qualified as Text
@@ -19,13 +18,6 @@ import Infernix.Cluster.PublishImages
   )
 import Infernix.Config
 import Infernix.DemoConfig (decodeDemoConfigFile)
-import Infernix.Edge (edgeTargetForPath)
-import Infernix.Gateway
-  ( harborGatewayTargetForPath,
-    minioGatewayTargetForPath,
-    pulsarGatewayTargetForPath,
-  )
-import Infernix.HttpProxy (ProxyTarget (..))
 import Infernix.Models
 import Infernix.Runtime
 import Infernix.Runtime.Worker (engineCommandOverrideEnvironmentName)
@@ -34,7 +26,6 @@ import System.Directory
 import System.Environment (lookupEnv, setEnv, unsetEnv)
 import System.FilePath ((</>))
 import System.IO.Error (catchIOError, isDoesNotExistError)
-import System.Process (readProcess)
 
 main :: IO ()
 main = do
@@ -114,11 +105,10 @@ main = do
 
     let overrideModel = maybe (fail "expected the apple-silicon qwen row") pure (findModel AppleSilicon "llm-qwen25-safetensors")
     overrideModelDescriptor <- overrideModel
-    let overrideBinding = engineBindingForSelectedEngine (selectedEngine overrideModelDescriptor)
+    let overrideBinding = engineBindingForSelectedEngine AppleSilicon (selectedEngine overrideModelDescriptor)
         overrideEnvName = engineCommandOverrideEnvironmentName overrideBinding
         overrideMarkerPath = buildRoot paths </> "worker-override-used.txt"
         overrideWrapperPath = buildRoot paths </> "python-worker-wrapper.sh"
-    workerPython <- resolveWorkerPython paths
     writeFile
       overrideWrapperPath
       ( unlines
@@ -132,7 +122,16 @@ main = do
     assert
       (overrideEnvName == "INFERNIX_ENGINE_COMMAND_TRANSFORMERS_PYTHON")
       "python-native adapter overrides normalize adapter ids into environment variables"
-    withOptionalEnv overrideEnvName (Just (overrideWrapperPath <> " " <> workerPython)) $ do
+    assert
+      (engineBindingAdapterEntrypoint overrideBinding == "adapter-transformers-python")
+      "engine bindings publish Poetry adapter entrypoints"
+    assert
+      (engineBindingSetupEntrypoint overrideBinding == "setup-transformers-python")
+      "engine bindings publish Poetry setup entrypoints"
+    assert
+      (engineBindingProjectDirectory overrideBinding == "python/apple-silicon")
+      "engine bindings publish the substrate Poetry project directory"
+    withOptionalEnv overrideEnvName (Just (overrideWrapperPath <> " ")) $ do
       overrideResult <-
         executeInference
           paths
@@ -160,7 +159,7 @@ main = do
       ( discoveredImages
           == [ "docker.io/library/busybox:1.36",
                "docker.io/percona/percona-distribution-postgresql:18.3-1",
-               "infernix-service:local"
+               "infernix-linux-cpu:local"
              ]
       )
       "rendered chart image discovery returns sorted unique image refs"
@@ -179,8 +178,7 @@ main = do
     overlayImages <- discoverHarborOverlayImageRefsFile "harbor-overlay.yaml"
     assert
       ( overlayImages
-          == [ "harbor.local/library/infernix-service:sha256-service",
-               "harbor.local/library/infernix-web:sha256-web",
+          == [ "harbor.local/library/infernix-linux-cpu:sha256-runtime",
                "harbor.local/library/bitnamilegacy/minio:sha256-minio",
                "harbor.local/library/bitnamilegacy/os-shell:sha256-shell",
                "harbor.local/library/bitnamilegacy/minio-object-browser:sha256-console",
@@ -193,8 +191,7 @@ main = do
     generatedOverlayImages <- discoverHarborOverlayImageRefsFile "generated-harbor-overrides.yaml"
     assert
       ( generatedOverlayImages
-          == [ "harbor.local/library/infernix-service:sha256-service",
-               "harbor.local/library/infernix-web:sha256-web",
+          == [ "harbor.local/library/infernix-linux-cpu:sha256-runtime",
                "harbor.local/library/bitnamilegacy/minio:sha256-minio",
                "harbor.local/library/bitnamilegacy/os-shell:sha256-shell",
                "harbor.local/library/bitnamilegacy/minio-object-browser:sha256-console",
@@ -215,72 +212,6 @@ main = do
     assert
       (contentAddressTagFromInspectPayload sampleDockerImageInspectWithoutRepoDigest == Right "sha256-fallback")
       "docker inspect parsing falls back to the image id when no repo digest is present"
-
-    assertProxyTarget
-      (edgeTargetForPath (Just "http://demo:18081") (Just "http://web:8080") "http://harbor:8080" "http://minio:9001" "http://pulsar:8080" "/api/models")
-      "http://demo:18081"
-      "/api/models"
-      "edge proxy sends API paths to the demo upstream"
-    assertProxyTarget
-      (edgeTargetForPath (Just "http://demo:18081") (Just "http://web:8080") "http://harbor:8080" "http://minio:9001" "http://pulsar:8080" "/objects/result.pb")
-      "http://demo:18081"
-      "/objects/result.pb"
-      "edge proxy sends object paths to the demo upstream"
-    assertProxyTarget
-      (edgeTargetForPath (Just "http://demo:18081") (Just "http://web:8080") "http://harbor:8080" "http://minio:9001" "http://pulsar:8080" "/harbor/api/v2.0/projects")
-      "http://harbor:8080"
-      "/harbor/api/v2.0/projects"
-      "edge proxy sends Harbor paths to the Harbor gateway"
-    assertProxyTarget
-      (edgeTargetForPath (Just "http://demo:18081") (Just "http://web:8080") "http://harbor:8080" "http://minio:9001" "http://pulsar:8080" "/")
-      "http://demo:18081"
-      "/"
-      "edge proxy sends the browser root to the demo upstream"
-    assertProxyTarget
-      (edgeTargetForPath Nothing (Just "http://web:8080") "http://harbor:8080" "http://minio:9001" "http://pulsar:8080" "/")
-      "http://web:8080"
-      "/"
-      "edge proxy falls back to the web upstream when no demo upstream is configured"
-    assert
-      ( isNothing
-          (edgeTargetForPath Nothing (Just "http://web:8080") "http://harbor:8080" "http://minio:9001" "http://pulsar:8080" "/api/models")
-      )
-      "edge proxy leaves demo API paths unpublished when no demo upstream is configured"
-
-    assertProxyTarget
-      (harborGatewayTargetForPath "http://harbor-ui:8080" "http://harbor-core:8080" "Basic dGVzdA==" "/harbor/api/v2.0/projects")
-      "http://harbor-core:8080"
-      "/api/v2.0/projects"
-      "Harbor gateway strips the routed prefix before proxying"
-    assertProxyHeader
-      (harborGatewayTargetForPath "http://harbor-ui:8080" "http://harbor-core:8080" "Basic dGVzdA==" "/harbor/api/v2.0/projects")
-      "Basic dGVzdA=="
-      "Harbor gateway injects the configured basic-auth header for API traffic"
-    assertProxyTarget
-      (harborGatewayTargetForPath "http://harbor-ui:8080" "http://harbor-core:8080" "Basic dGVzdA==" "/harbor")
-      "http://harbor-ui:8080"
-      "/"
-      "Harbor gateway normalizes the bare routed prefix to root"
-    assertProxyTarget
-      (minioGatewayTargetForPath "http://minio-console:9001" "http://minio-s3:9000" "/minio/console/browser")
-      "http://minio-console:9001"
-      "/browser"
-      "MinIO gateway routes console requests to the console upstream"
-    assertProxyTarget
-      (minioGatewayTargetForPath "http://minio-console:9001" "http://minio-s3:9000" "/minio/s3/models")
-      "http://minio-s3:9000"
-      "/models"
-      "MinIO gateway routes S3 requests to the S3 upstream"
-    assertProxyTarget
-      (pulsarGatewayTargetForPath "http://pulsar-admin:8080" "http://pulsar-http:8080" "/pulsar/admin/clusters")
-      "http://pulsar-admin:8080"
-      "/clusters"
-      "Pulsar gateway routes admin requests to the admin upstream"
-    assertProxyTarget
-      (pulsarGatewayTargetForPath "http://pulsar-admin:8080" "http://pulsar-http:8080" "/pulsar/ws/v2/producer/public/default/topic")
-      "http://pulsar-http:8080"
-      "/v2/producer/public/default/topic"
-      "Pulsar gateway routes HTTP websocket-surface requests to the broker HTTP upstream"
   putStrLn "unit tests passed"
 
 withTestRoot :: FilePath -> IO a -> IO a
@@ -306,15 +237,6 @@ withOptionalEnv name maybeValue action = do
     applyMaybeValue (Just value) = setEnv name value
     applyMaybeValue Nothing = unsetEnv name
 
-resolveWorkerPython :: Paths -> IO FilePath
-resolveWorkerPython paths = do
-  poetryEnvPath <- readProcess "poetry" ["--directory", repoRoot paths </> "python", "env", "info", "--path"] ""
-  pure (trimTrailingWhitespace poetryEnvPath </> "bin" </> "python")
-
-trimTrailingWhitespace :: String -> String
-trimTrailingWhitespace =
-  dropWhileEnd (`elem` [' ', '\n', '\r', '\t'])
-
 testRootPath :: FilePath -> IO FilePath
 testRootPath suiteName = do
   paths <- discoverPaths
@@ -323,27 +245,6 @@ testRootPath suiteName = do
 assert :: Bool -> String -> IO ()
 assert True _ = pure ()
 assert False message = fail message
-
-assertProxyTarget :: Maybe ProxyTarget -> String -> String -> String -> IO ()
-assertProxyTarget maybeTarget expectedBaseUrl expectedPath message =
-  case maybeTarget of
-    Just target ->
-      assert
-        (proxyBaseUrl target == expectedBaseUrl && proxyPath target == ByteString8.pack expectedPath)
-        message
-    Nothing -> fail message
-
-assertProxyHeader :: Maybe ProxyTarget -> String -> String -> IO ()
-assertProxyHeader maybeTarget expectedHeaderValue message =
-  case maybeTarget of
-    Just target ->
-      assert
-        ( case proxyRequestHeaders target of
-            [(_, headerValue)] -> headerValue == ByteString8.pack expectedHeaderValue
-            _ -> False
-        )
-        message
-    Nothing -> fail message
 
 assertUniqueModelIds :: RuntimeMode -> IO ()
 assertUniqueModelIds mode = do
@@ -369,7 +270,7 @@ sampleRenderedChart =
       "          image: docker.io/library/busybox:1.36",
       "      containers:",
       "        - name: service",
-      "          image: infernix-service:local",
+      "          image: infernix-linux-cpu:local",
       "---",
       "apiVersion: apps/v1",
       "kind: StatefulSet",
@@ -423,13 +324,13 @@ sampleHarborOverlay =
     [ "service:",
       "  image:",
       "    registry: harbor.local",
-      "    repository: library/infernix-service",
-      "    tag: sha256-service",
-      "web:",
+      "    repository: library/infernix-linux-cpu",
+      "    tag: sha256-runtime",
+      "demo:",
       "  image:",
       "    registry: harbor.local",
-      "    repository: library/infernix-web",
-      "    tag: sha256-web",
+      "    repository: library/infernix-linux-cpu",
+      "    tag: sha256-runtime",
       "minio:",
       "  image:",
       "    registry: harbor.local",
@@ -458,8 +359,7 @@ sampleHarborOverlay =
 samplePublishedImages :: Map.Map String PublishedImage
 samplePublishedImages =
   Map.fromList
-    [ ("infernix-service:local", ("harbor.local/library/infernix-service", "sha256-service")),
-      ("infernix-web:local", ("harbor.local/library/infernix-web", "sha256-web")),
+    [ ("infernix-linux-cpu:local", ("harbor.local/library/infernix-linux-cpu", "sha256-runtime")),
       ("docker.io/bitnamilegacy/minio:2025.7.23-debian-12-r3", ("harbor.local/library/bitnamilegacy/minio", "sha256-minio")),
       ("docker.io/bitnamilegacy/os-shell:12-debian-12-r50", ("harbor.local/library/bitnamilegacy/os-shell", "sha256-shell")),
       ("docker.io/bitnamilegacy/minio-object-browser:2.0.2-debian-12-r3", ("harbor.local/library/bitnamilegacy/minio-object-browser", "sha256-console")),

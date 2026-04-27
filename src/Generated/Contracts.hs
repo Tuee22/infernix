@@ -85,6 +85,9 @@ data EngineBinding = EngineBinding
     adapterId :: Text.Text,
     adapterType :: Text.Text,
     adapterLocator :: Text.Text,
+    adapterEntrypoint :: Text.Text,
+    setupEntrypoint :: Text.Text,
+    projectDirectory :: Text.Text,
     pythonNative :: Bool
   }
   deriving (Eq, Generic, Show)
@@ -223,6 +226,9 @@ renderPursContractFooter activeRuntimeMode =
             "  , adapterId :: String",
             "  , adapterType :: String",
             "  , adapterLocator :: String",
+            "  , adapterEntrypoint :: String",
+            "  , setupEntrypoint :: String",
+            "  , projectDirectory :: String",
             "  , pythonNative :: Boolean",
             "  }",
             "",
@@ -306,6 +312,9 @@ engineBindingFromInternal bindingValue =
       adapterId = Types.engineBindingAdapterId bindingValue,
       adapterType = Types.engineBindingAdapterType bindingValue,
       adapterLocator = Types.engineBindingAdapterLocator bindingValue,
+      adapterEntrypoint = Types.engineBindingAdapterEntrypoint bindingValue,
+      setupEntrypoint = Types.engineBindingSetupEntrypoint bindingValue,
+      projectDirectory = Text.pack (Types.engineBindingProjectDirectory bindingValue),
       pythonNative = Types.engineBindingPythonNative bindingValue
     }
 
@@ -317,6 +326,9 @@ renderEngineBinding bindingValue =
       "      , adapterId: " <> showText (adapterId bindingValue),
       "      , adapterType: " <> showText (adapterType bindingValue),
       "      , adapterLocator: " <> showText (adapterLocator bindingValue),
+      "      , adapterEntrypoint: " <> showText (adapterEntrypoint bindingValue),
+      "      , setupEntrypoint: " <> showText (setupEntrypoint bindingValue),
+      "      , projectDirectory: " <> showText (projectDirectory bindingValue),
       "      , pythonNative: " <> psBool (pythonNative bindingValue),
       "      }"
     ]

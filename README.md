@@ -361,7 +361,7 @@ contracts.
   `web/dist/` produced by `spago bundle`
 - on Linux substrates, the substrate container also carries the spago plus purs toolchain
   (used at image build time to bundle the demo UI) plus Playwright browser dependencies
-  (Chromium, Firefox, WebKit) for routed E2E execution. There is no separate `web/Dockerfile`
+  (Chromium, Firefox, WebKit) for routed E2E execution. There is no separate web-only image
 - on Apple Silicon, `infernix test e2e` runs Playwright from the operator's host node
   install (`npx playwright install` is a one-time operator setup step)
 - the `infernix-demo` workload is deployed through repo-owned Helm chart templates and values, and

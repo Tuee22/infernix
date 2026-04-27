@@ -32,16 +32,15 @@ library
         Infernix.Config
         Infernix.Demo.Api
         Infernix.DemoCLI
-        Infernix.Edge
-        Infernix.Gateway
         Infernix.DemoConfig
-        Infernix.HttpProxy
+        Infernix.Engines.AppleSilicon
         Infernix.Lint.Chart
         Infernix.Lint.Docs
         Infernix.Lint.Files
         Infernix.Lint.HaskellStyle
         Infernix.Lint.Proto
         Infernix.Models
+        Infernix.Python
         Infernix.Runtime
         Infernix.Runtime.Cache
         Infernix.Runtime.Pulsar

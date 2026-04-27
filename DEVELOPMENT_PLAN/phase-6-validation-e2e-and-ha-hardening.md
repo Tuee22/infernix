@@ -1,9 +1,7 @@
 # Phase 6: Validation, E2E, and HA Hardening
 
-**Status**: Blocked
+**Status**: Active
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
-**Blocked by**: Phase 4 Sprints 4.2, 4.3, 4.7, 4.8
-
 > **Purpose**: Define the supported static-quality and test matrix for the two-binary topology
 > (`infernix` plus `infernix-demo` sharing `infernix-lib`), the Pulsar-driven production inference
 > surface, the demo UI host, the per-mode generated demo catalog, and the mandatory HA behavior of
@@ -12,11 +10,9 @@
 ## Phase Status
 
 The validation contract itself (lint plus unit plus integration plus routed E2E plus HA chaos
-plus lifecycle plus per-mode exhaustive matrix) retains its shape under the new doctrine. The
-current implementation still satisfies these validation sprints on the supported paths, so the
-individual sprint statuses remain `Done`; later Haskell and runtime migration work in Phases 1,
-3, and 4 will update the implementation pointers under this phase without changing the overall
-validation contract.
+plus lifecycle plus per-mode exhaustive matrix) retains its shape under the new doctrine.
+Sprints 6.2, 6.4, 6.5, 6.6, and 6.7 stay `Done`; Sprints 6.1 and 6.3 remain `Active` while the
+lint-hygiene closeout and the substrate-image Playwright path finish landing.
 
 ## Current Repo Assessment
 
@@ -24,15 +20,17 @@ The repository already has lint, unit, integration, and Playwright entrypoints. 
 remain the canonical validation contract across the supported host-native and outer-container
 control-plane lanes, and they now validate the process-isolated engine-worker runner contract plus
 durable runtime artifact bundles and engine-specific source-artifact manifests, with the
-engine-specific default runner exercised whenever no adapter-specific override is configured. The
-default validation matrix now auto-includes `linux-cuda` only when the active control-plane
-surface passes the NVIDIA preflight contract, and unit or integration or E2E coverage now closes
-the current supported runtime contract around authoritative artifact selection, engine-adapter
-availability metadata, adapter-specific command overrides, and the validated runtime matrix. HA
-validation now also covers Harbor's operator-managed Patroni PostgreSQL bootstrap resilience on the
-supported substrate: when a Harbor startup replica remains `Running` but fails Patroni readiness
-beyond the grace window, cluster bootstrap recycles that pod once and the full Apple or Linux CPU
-or Linux CUDA validation matrix now completes cleanly afterward.
+engine-specific default runner exercised whenever no adapter-specific override is configured.
+`cabal --builddir=.build/cabal build all`, `test infernix-haskell-style`, `test infernix-unit`,
+and `test infernix-integration` are green again after the current runtime and packaging changes,
+and `infernix lint docs`, `infernix lint chart`, and `infernix lint proto` pass. `infernix lint
+files` now enforces the tracked-generated-artifact doctrine directly and currently fails for the
+remaining stale `git ls-files` entries, so the remaining open validation work is `infernix test
+lint` closure around user-owned hygiene cleanup and routed Playwright execution through the final
+substrate-image paths. HA validation still covers Harbor's operator-managed Patroni PostgreSQL
+bootstrap resilience on the supported substrate: when a Harbor startup replica remains `Running`
+but fails Patroni readiness beyond the grace window, cluster bootstrap recycles that pod once and
+the full Apple or Linux CPU or Linux CUDA validation matrix completes cleanly afterward.
 
 - `infernix test lint` and `infernix test unit` are the canonical host-side static-quality and
   unit gates, and the frontend unit lane now runs through `spago test`
@@ -75,7 +73,7 @@ This phase owns the rule that validation follows the generated demo catalog for 
 ## Sprint 6.1: Haskell Static Quality Gates and Extensive Unit Suites [Active]
 
 **Status**: Active
-**Implementation**: `src/Infernix/CLI.hs`, `src/Infernix/Lint/`, `src/Infernix/Lint/HaskellStyle.hs`, `test/haskell-style/Spec.hs`, `test/unit/Spec.hs`, `web/test/Main.purs`
+**Implementation**: `src/Infernix/CLI.hs`, `src/Infernix/Lint/`, `src/Infernix/Lint/HaskellStyle.hs`, `src/Infernix/Lint/Files.hs`, `test/haskell-style/Spec.hs`, `test/unit/Spec.hs`, `web/test/Main.purs`
 **Docs to update**: `documents/development/haskell_style.md`, `documents/development/testing_strategy.md`, `documents/reference/cli_reference.md`
 
 ### Objective
@@ -112,11 +110,10 @@ executables, shared contracts, and matrix-rendering logic.
 
 ### Remaining Work
 
-- the Python adapter quality gate moves from `tools/python_quality.sh` to `poetry run check-code`
-  (Phase 4 Sprint 4.7); `infernix test lint` invokes `poetry run check-code` against the active
-  substrate's `pyproject.toml`. The Haskell style gate becomes a Cabal test target without a
-  `.sh` shim. Both changes close together with the corresponding Pending Removal entries in
-  [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md)
+- `poetry run check-code`, the no-shim Haskell style gate, and the tracked-generated-path guard
+  in `src/Infernix/Lint/Files.hs` are landed, but this sprint still depends on the Phase 1 Sprint
+  1.7 hygiene closeout so tracked generated artifacts and deleted legacy files stop appearing in
+  `git ls-files`
 
 ---
 
@@ -185,9 +182,10 @@ image and the Harbor-published host-native runtime image.
 
 - Playwright suites live under `web/playwright/` or an equivalent UI-owned path
 - `infernix test e2e` exercises the routed surface through Playwright-owned HTTP coverage and
-  browser UI interaction coverage launched from the built web image
-- the host-native final-substrate path reuses the Harbor-published web image across
-  `apple-silicon`, `linux-cpu`, and `linux-cuda`
+  browser UI interaction coverage launched from the substrate image on Linux or the host install
+  on Apple Silicon
+- the final validation path reuses the same runtime image that serves `infernix-demo` on Linux
+  substrates and the host-installed Playwright toolchain on Apple Silicon
 - E2E covers the routed UI contract, model selection, manual inference submission, and result rendering
 
 ### Validation
@@ -208,9 +206,9 @@ image and the Harbor-published host-native runtime image.
 
 ### Remaining Work
 
-- update Playwright invocation in `infernix test e2e` to target the substrate container on
-  Linux substrates (rather than the deleted `web/Dockerfile`-built image) and the host node
-  install on Apple Silicon. Closes when Phase 4 Sprint 4.9 and Phase 5 Sprint 5.5 land
+- the Playwright invocation is retargeted toward the substrate container on Linux substrates and
+  the host node install on Apple Silicon, but this sprint still needs successful routed runs on
+  those final execution paths once Phase 4 Sprint 4.9 and Phase 5 Sprint 5.5 finish validating
 
 ---
 

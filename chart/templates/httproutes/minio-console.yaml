@@ -1,0 +1,25 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: infernix-minio-console
+  namespace: platform
+  annotations:
+    infernix.io/purpose: MinIO console
+spec:
+  parentRefs:
+    - name: infernix-edge
+      sectionName: http
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /minio/console
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /
+      backendRefs:
+        - name: infernix-minio-console
+          port: 9090

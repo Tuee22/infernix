@@ -12,11 +12,9 @@
 Sprints 2.1, 2.2, 2.4, 2.5, 2.6, and 2.7 stay `Done`: the storage doctrine, Kind bootstrap, GPU
 lane, manual PV reconciliation, Harbor image-preparation flow, idempotency surface, and the
 mode-aware demo-config staging are all in place. Sprint 2.3 (Helm Umbrella Chart and Repo
-Workload Layout) is downgraded to `Active`: the chart inventory loses the
-`infernix-edge`/`infernix-{harbor,minio,pulsar}-gateway` workloads (replaced by the Envoy
-Gateway controller chart dependency plus the HTTPRoute manifest set in Phase 3 Sprints 3.5/3.8)
-and gains the substrate-container image references introduced in Phase 4 Sprint 4.9. Phase 2
-closes again once 2.3 reflects that change and the chart is rendering against the new shape.
+Workload Layout) remains `Active`: the chart inventory now targets Envoy Gateway plus HTTPRoute
+assets and per-substrate runtime-image coordinates, but that final rendered shape still needs
+renewed Helm or Kind acceptance on a host with the full cluster toolchain available.
 
 ## Storage Doctrine
 
@@ -175,9 +173,9 @@ Put repo-owned and third-party workloads behind one Helm deployment model.
 ### Deliverables
 
 - one umbrella chart under `chart/`
-- repo-owned workloads for the Haskell service, the webapp service, the edge-routing configuration, and the current Harbor or MinIO or Pulsar portal surfaces exist as chart templates and values
-- chart dependencies for Harbor, MinIO, Pulsar, and ingress-nginx
-- the webapp service is deployed through repo-owned Helm chart templates and values, not ad hoc manifests
+- repo-owned workloads for the Haskell service, the `infernix-demo` surface, the Gateway API
+  resources, and the publication ConfigMaps exist as chart templates and values
+- chart dependencies for Harbor, MinIO, Pulsar, Envoy Gateway, and the Percona PostgreSQL operator
 - repo-owned workloads mount `ConfigMap/infernix-demo-config` in the watched runtime directory used by the daemon and UI
 - chart defaults encode the mandatory local HA topology: three-replica Harbor and Pulsar surfaces
   where supported by the chosen charts, and a four-replica distributed MinIO deployment
@@ -197,25 +195,17 @@ Put repo-owned and third-party workloads behind one Helm deployment model.
 
 ### Remaining Work
 
-- the chart inventory still carries the legacy `infernix-edge` workload
-  (`chart/templates/deployment-edge.yaml`, `service-edge.yaml`, `edge-configmap.yaml`) and
-  the `infernix-{harbor,minio,pulsar}-gateway` entries in
-  `chart/templates/workloads-platform-portals.yaml`; these are removed when Phase 3 Sprint 3.5
-  installs the Envoy Gateway controller and Phase 3 Sprint 3.8 lands the HTTPRoute manifest
-  set
-- the chart's service and demo deployments still pull from the legacy `infernix-service:local`
-  / `infernix-demo:local` image refs; under the new substrate-container doctrine they pull from
-  the per-substrate image built by Phase 4 Sprint 4.9 (`infernix-linux-cpu:local` or
-  `infernix-linux-cuda:local`)
-- the chart loses the separate `web/Dockerfile`-built web image when Phase 5 Sprint 5.5 folds
-  Playwright into the substrate container
+- the chart now carries the Gateway API surface and the substrate-image value schema, but the
+  current host environment has not rerun `helm lint chart`, `helm template infernix chart`, or
+  real Kind reconcile against that final shape because the host toolchain lane is unavailable and
+  the substrate-image validation work from Phases 4 and 5 is still in progress
 
 ---
 
 ## Sprint 2.4: Automatic Harbor Image Preparation and Helm Pull Contract [Done]
 
 **Status**: Done
-**Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Cluster/Discover.hs`, `src/Infernix/Cluster/PublishImages.hs`, `chart/values.yaml`, `web/Dockerfile`
+**Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Cluster/Discover.hs`, `src/Infernix/Cluster/PublishImages.hs`, `chart/values.yaml`
 **Docs to update**: `documents/engineering/k8s_native_dev_policy.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/tools/harbor.md`
 
 ### Objective
@@ -237,7 +227,8 @@ image preparation handled automatically during `cluster up`.
 - once Harbor is ready, `infernix cluster up` mirrors all non-Harbor third-party images into
   Harbor and builds then publishes repo-owned images to Harbor before any later non-Harbor Helm
   rollout, add-on rollout, or PostgreSQL-backed service rollout
-- `infernix cluster up` builds the separate webapp image through `web/Dockerfile` and uploads it to Harbor
+- `infernix cluster up` builds the repo-owned runtime images required by the active chart and
+  uploads them to Harbor before the post-bootstrap rollout
 - Helm values reference Harbor image coordinates for every non-Harbor cluster pod in the final rollout
 - after Harbor reaches its final rollout shape, `cluster up` preloads the Harbor-backed final image
   refs onto the Kind worker before the remaining non-Harbor workloads are scaled

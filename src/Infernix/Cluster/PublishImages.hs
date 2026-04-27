@@ -12,6 +12,7 @@ module Infernix.Cluster.PublishImages
   )
 where
 
+import Control.Applicative ((<|>))
 import Control.Concurrent (threadDelay)
 import Control.Exception (SomeException, try)
 import Data.Aeson
@@ -75,11 +76,13 @@ defaultHarborPublishOptions =
 harborPrefixes :: [String]
 harborPrefixes = ["goharbor/", "docker.io/goharbor/", "quay.io/goharbor/"]
 
-requiredRenderedChartImages :: [String]
-requiredRenderedChartImages = ["infernix-service:local"]
+requiredRenderedChartImageAlternatives :: [[String]]
+requiredRenderedChartImageAlternatives =
+  [ ["infernix-linux-cpu:local", "infernix-linux-cuda:local"]
+  ]
 
 alwaysPublishedImages :: [String]
-alwaysPublishedImages = ["infernix-web:local"]
+alwaysPublishedImages = []
 
 postgresOperatorImage :: String
 postgresOperatorImage = "docker.io/percona/percona-postgresql-operator:2.9.0"
@@ -108,15 +111,18 @@ publishChartImagesFile options renderedChartPath outputPath = do
   images <- discoverChartImagesFile renderedChartPath
   let chartPublishableImages = filter (not . isHarborImage) images
       publishableImages = nub (alwaysPublishedImages <> chartPublishableImages)
-  mapM_ (requirePresent chartPublishableImages) requiredRenderedChartImages
+  mapM_ (requireOnePresent chartPublishableImages) requiredRenderedChartImageAlternatives
   loginHarborWithRetries manager options
   publishedImages <- mapM (publishImage manager options) publishableImages
   writeHarborOverridesFile (Map.fromList publishedImages) outputPath
   where
-    requirePresent imageSet imageRef
-      | imageRef `elem` imageSet = pure ()
+    requireOnePresent imageSet imageRefs
+      | any (`elem` imageSet) imageRefs = pure ()
       | otherwise =
-          failWith ("required repo-owned image " <> imageRef <> " was not present in the rendered chart")
+          failWith
+            ( "none of the required repo-owned images were present in the rendered chart: "
+                <> show imageRefs
+            )
 
 publishImage :: Manager -> HarborPublishOptions -> String -> IO (String, PublishedImage)
 publishImage manager options sourceImage = do
@@ -335,8 +341,8 @@ repoDigestTag inspection =
   find
     (not . null)
     [ replaceColon digestValue
-    | repoDigestValue <- dockerRepoDigests inspection,
-      Just (_, digestValue) <- [breakOn '@' repoDigestValue]
+      | repoDigestValue <- dockerRepoDigests inspection,
+        Just (_, digestValue) <- [breakOn '@' repoDigestValue]
     ]
 
 normalizeRepositoryPath :: String -> String
@@ -360,8 +366,7 @@ writeHarborOverridesFile publishedImages outputPath =
 
 buildHarborOverridesValue :: Map String PublishedImage -> Either String Value
 buildHarborOverridesValue publishedImages = do
-  (serviceRepository, serviceTag) <- requiredPublishedImage "infernix-service:local" publishedImages
-  (webRepository, webTag) <- requiredPublishedImage "infernix-web:local" publishedImages
+  runtimeImage <- requiredRuntimeImage publishedImages
   minioImage <- requireDiscoveredImage (findPublishedImageWithSuffix "/minio:2025.7.23-debian-12-r3" publishedImages)
   minioShellImage <- requireDiscoveredImage (findPublishedImageWithSuffix "/os-shell:12-debian-12-r50" publishedImages)
   minioConsoleImage <- requireDiscoveredImage (findPublishedImageWithSuffix "/minio-object-browser:2.0.2-debian-12-r3" publishedImages)
@@ -375,21 +380,11 @@ buildHarborOverridesValue publishedImages = do
         object
           [ "service"
               .= object
-                [ "image"
-                    .= object
-                      [ "repository" .= serviceRepository,
-                        "tag" .= serviceTag,
-                        "pullPolicy" .= ("IfNotPresent" :: String)
-                      ]
+                [ "image" .= renderRepoOwnedImage runtimeImage
                 ],
-            "web"
+            "demo"
               .= object
-                [ "image"
-                    .= object
-                      [ "repository" .= webRepository,
-                        "tag" .= webTag,
-                        "pullPolicy" .= ("IfNotPresent" :: String)
-                      ]
+                [ "image" .= renderRepoOwnedImage runtimeImage
                 ],
             "minio"
               .= minioObject minioImage minioShellImage minioConsoleImage minioClientImage,
@@ -426,6 +421,12 @@ buildHarborOverridesValue publishedImages = do
           ]
   pure baseOverlay
   where
+    renderRepoOwnedImage (repository, tagValue) =
+      object
+        [ "repository" .= repository,
+          "tag" .= tagValue,
+          "pullPolicy" .= ("IfNotPresent" :: String)
+        ]
     minioObject minioPublished minioShellPublished minioConsolePublished maybeMinioClientPublished =
       let baseObject =
             [ "image" .= splitRegistryRepository minioPublished,
@@ -449,9 +450,16 @@ buildHarborOverridesValue publishedImages = do
                   maybeMinioClientPublished
             )
 
-requiredPublishedImage :: String -> Map String PublishedImage -> Either String PublishedImage
-requiredPublishedImage imageRef publishedImages =
-  maybe (Left ("required image " <> imageRef <> " was not published")) Right (Map.lookup imageRef publishedImages)
+requiredRuntimeImage :: Map String PublishedImage -> Either String PublishedImage
+requiredRuntimeImage publishedImages =
+  maybe
+    (Left "required runtime image infernix-linux-cpu:local or infernix-linux-cuda:local was not published")
+    Right
+    (Map.lookup "infernix-linux-cuda:local" publishedImages `orElse` Map.lookup "infernix-linux-cpu:local" publishedImages)
+
+orElse :: Maybe a -> Maybe a -> Maybe a
+orElse maybeLeft maybeRight =
+  maybeLeft <|> maybeRight
 
 findPublishedImageWithSuffix :: String -> Map String PublishedImage -> Maybe PublishedImage
 findPublishedImageWithSuffix suffix =

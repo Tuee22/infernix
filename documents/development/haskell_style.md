@@ -11,9 +11,8 @@
 - `cabal format` is the formatter for `infernix.cabal`
 - `hlint` provides lint checks
 - strict compiler warnings are enabled and treated as errors in repository validation
-- `infernix test lint` bootstraps the repo-owned formatter and linter binaries via the Cabal
-  test target plus a small `scripts/install-formatter.sh` shell shim that downloads `ormolu` and
-  `hlint` into `./.build/haskell-style-tools/`
+- `infernix test lint` bootstraps the repo-owned formatter and linter binaries through the Cabal
+  test target into `./.build/haskell-style-tools/`
 
 ## Entry Point
 

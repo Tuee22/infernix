@@ -147,6 +147,9 @@ data EngineBinding = EngineBinding
     engineBindingAdapterId :: Text,
     engineBindingAdapterType :: Text,
     engineBindingAdapterLocator :: Text,
+    engineBindingAdapterEntrypoint :: Text,
+    engineBindingSetupEntrypoint :: Text,
+    engineBindingProjectDirectory :: FilePath,
     engineBindingPythonNative :: Bool
   }
   deriving (Eq, Read, Show)
@@ -158,6 +161,9 @@ instance ToJSON EngineBinding where
         "adapterId" .= engineBindingAdapterId engineBinding,
         "adapterType" .= engineBindingAdapterType engineBinding,
         "adapterLocator" .= engineBindingAdapterLocator engineBinding,
+        "adapterEntrypoint" .= engineBindingAdapterEntrypoint engineBinding,
+        "setupEntrypoint" .= engineBindingSetupEntrypoint engineBinding,
+        "projectDirectory" .= engineBindingProjectDirectory engineBinding,
         "pythonNative" .= engineBindingPythonNative engineBinding
       ]
 
@@ -168,6 +174,9 @@ instance FromJSON EngineBinding where
       <*> value .: "adapterId"
       <*> value .: "adapterType"
       <*> value .: "adapterLocator"
+      <*> value .: "adapterEntrypoint"
+      <*> value .: "setupEntrypoint"
+      <*> value .: "projectDirectory"
       <*> value .: "pythonNative"
 
 data RequestField = RequestField

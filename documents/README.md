@@ -16,8 +16,8 @@
   PureScript demo UI topology and the two-binary cluster image layout
 - [development/local_dev.md](development/local_dev.md) describes the supported local workflows
 - [development/python_policy.md](development/python_policy.md) defines when Python is allowed
-  (engine adapters under `python/adapters/<engine>/` only), the Poetry workflow, and the strict
-  mypy/black/ruff quality gate integrated into every adapter container build
+  (per-substrate adapter packages under `python/<substrate>/adapters/` only), the Poetry
+  workflow, and the strict mypy/black/ruff quality gate surfaced as `poetry run check-code`
 - [development/purescript_policy.md](development/purescript_policy.md) defines the PureScript
   toolchain (purs, spago), the `purescript-spec` test framework, and the Haskell-owned generated
   contract derivation consumed by the demo UI
@@ -27,7 +27,8 @@
 - [tools/postgresql.md](tools/postgresql.md) records the supported operator-managed PostgreSQL
   contract
 - [tools/pulsar.md](tools/pulsar.md) records the production inference subscription and dispatch
-  contract (`request_topics`, `result_topic`, `engines` in the active `.dhall`)
+  contract (`request_topics`, `result_topic`, `engines` in the active `.dhall`) together with the
+  current filesystem-backed daemon simulation
 - [reference/cli_reference.md](reference/cli_reference.md) records the canonical CLI surface for
   both `infernix` and `infernix-demo`
 - [research/README.md](research/README.md) reserves the non-authoritative research subtree used for

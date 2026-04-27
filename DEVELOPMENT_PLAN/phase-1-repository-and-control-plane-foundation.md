@@ -10,29 +10,24 @@
 
 ## Phase Status
 
-Sprints 1.1, 1.3, 1.4, and 1.5 stay `Done`: the repository scaffold, two-binary build roots,
-web build-generation path, and runtime-mode naming contract are in place. Sprint 1.2 remains
-`Active` because `infernix service` still advertises the final Pulsar-consumer contract while
-`src/Infernix/Runtime/Pulsar.hs` remains a placeholder loop, and the `infernix edge` and
-`infernix gateway harbor|minio|pulsar` rows are now removed from the supported CLI surface
-(routing moves to Envoy Gateway API in Phase 3 Sprints 3.5/3.8). Sprint 1.6 (Custom-Logic
-Tooling Migrated to Haskell) is downgraded to `Active`: the `tools/python_quality.sh` shell
-shim and `scripts/install-formatter.sh` are now obsolete and slated for removal in favor of
-`poetry run check-code` (Phase 4 Sprint 4.7) and a Cabal-test-target Haskell style gate that
-does not depend on `.sh` files. New Sprint 1.7 (Repository Hygiene and Generated-Artifact
-Doctrine) is `Planned` and owns untracking the committed build artifacts and creating a
-`.dockerignore` mirror.
+Sprints 1.1 through 1.6 are closed: the repository scaffold, two-binary CLI surface, direct
+build-root doctrine, execution-context split, runtime-mode naming contract, and Haskell-owned
+tooling migration are all landed in the worktree. Sprint 1.7 (Repository Hygiene and
+Generated-Artifact Doctrine) is the only remaining open sprint in this phase: the ignore rules
+and worktree cleanup are in place, the tracked-generated-path guard is landed, and the remaining
+work is tracked-index cleanup for stale generated paths and deleted legacy files.
 
 ## Current Repo Assessment
 
-The Haskell project, repo-local build and data roots, runtime-mode selection, generated demo-config
-staging, direct `cabal` host install path, Apple-host kubeconfig contract, Haskell-owned lint and
-internal helpers, Haskell chart discovery and publication, Haskell edge and gateway entrypoints,
-the Haskell demo HTTP surface, and the PureScript build or test path under `web/` are
-implemented. The repo now ships two executables (`infernix` plus `infernix-demo`), exposes the
-broader CLI surface through those executables, carries a repo-root `python/` Poetry scaffold, and
-keeps `tools/` narrowed to the adapter quality shim. The remaining work in this phase is the
-final production `infernix service` consumer behavior from Phase 4.
+The Haskell project, repo-local build and data roots, runtime-mode selection, generated
+demo-config staging, direct `cabal` host install path, Apple-host kubeconfig contract,
+Haskell-owned lint and internal helpers, Haskell chart discovery and publication, the Haskell
+demo HTTP surface, and the PureScript build or test path under `web/` are implemented. The repo
+ships two executables (`infernix` plus `infernix-demo`), carries per-substrate Python projects
+under `python/apple-silicon/`, `python/linux-cpu/`, and `python/linux-cuda/`, and no longer keeps
+repo-owned shell shims in the worktree. The remaining work in this phase is repository hygiene:
+clear the stale tracked generated files or deleted legacy paths from the git index while the
+Haskell file-lint path keeps rejecting their return.
 
 ## Runtime-Mode Foundation
 
@@ -47,7 +42,7 @@ This phase owns the baseline distinction between execution context and runtime m
 ## Sprint 1.1: Canonical Repository Scaffold [Done]
 
 **Status**: Done
-**Implementation**: `infernix.cabal`, `cabal.project`, `app/Main.hs`, `app/Demo.hs`, `src/Infernix/`, `compose.yaml`, `docker/`, `python/`, `tools/python_quality.sh`, `web/`, `chart/`, `kind/`, `proto/`
+**Implementation**: `infernix.cabal`, `cabal.project`, `app/Main.hs`, `app/Demo.hs`, `src/Infernix/`, `compose.yaml`, `docker/`, `python/`, `web/`, `chart/`, `kind/`, `proto/`
 **Docs to update**: `README.md`, `documents/README.md`, `documents/architecture/overview.md`
 
 ### Objective
@@ -64,15 +59,16 @@ Create the repository skeleton described in [00-overview.md](00-overview.md).
   `--builddir=.build/cabal` and `--installdir=./.build` plus `./.build/infernix` and
   `./.build/infernix-demo` materialization
 - `proto/`, `chart/`, `kind/`, `docker/`, `test/`, and `web/` implementation directories, with `documents/` already supplied by Phase 0
-- `python/` directory under repo root holding `python/pyproject.toml`, `python/poetry.lock`, and
-  `python/adapters/<engine>/` (one directory per Python-native inference engine)
+- `python/` directory under repo root holding per-substrate Poetry projects
+  (`python/apple-silicon/pyproject.toml`, `python/linux-cpu/pyproject.toml`,
+  `python/linux-cuda/pyproject.toml`) and flat adapter modules under each substrate's
+  `adapters/` package
 - `web/` carries `web/package.json`, `web/package-lock.json`, `web/spago.yaml`,
   `web/src/*.purs` source modules, `web/src/Generated/` (output of
   `infernix internal generate-purs-contracts`), `web/test/*.purs` (`purescript-spec` suites),
-  `web/playwright/`, and `web/Dockerfile` (npm-managed PureScript toolchain plus Playwright)
-- `tools/` carries only auto-generated `tools/generated_proto/` stubs and a small
-  `tools/python_quality.sh` shell shim used by the adapter Dockerfiles; no custom-logic Python
-  remains
+  and `web/playwright/`
+- `tools/` carries only auto-generated `tools/generated_proto/` stubs at build time; no
+  repo-owned custom-logic Python or shell wrapper remains on the supported path
 - `proto/` is the authoritative home for repo-owned `.proto` schemas covering durable runtime
   manifests and Pulsar topic payloads
 - root `.gitignore` and `.dockerignore` files that ignore `./.data/`, `./.claude/`, `./.build/`,
@@ -96,10 +92,10 @@ None.
 
 ---
 
-## Sprint 1.2: Two Haskell Binaries and CLI Contract [Active]
+## Sprint 1.2: Two Haskell Binaries and CLI Contract [Done]
 
-**Status**: Active
-**Implementation**: `app/Main.hs`, `app/Demo.hs`, `src/Infernix/CLI.hs`, `src/Infernix/DemoCLI.hs`, `chart/templates/deployment-edge.yaml`, `chart/templates/workloads-platform-portals.yaml`
+**Status**: Done
+**Implementation**: `app/Main.hs`, `app/Demo.hs`, `src/Infernix/CLI.hs`, `src/Infernix/DemoCLI.hs`, `src/Infernix/Service.hs`
 **Docs to update**: `README.md`, `documents/reference/cli_reference.md`, `documents/reference/cli_surface.md`
 
 ### Objective
@@ -168,15 +164,14 @@ Additional rules:
 
 ### Remaining Work
 
-- `infernix service` still resolves the final CLI surface and runtime config contract, but the real
-  Pulsar consumer loop owned by `src/Infernix/Runtime/Pulsar.hs` remains open
+None.
 
 ---
 
 ## Sprint 1.3: Dual Operator Execution Contexts [Done]
 
 **Status**: Done
-**Implementation**: `compose.yaml`, `docker/infernix.Dockerfile`, `src/Infernix/CLI.hs`, `src/Infernix/Config.hs`, `src/Infernix/Service.hs`
+**Implementation**: `compose.yaml`, `docker/linux-base.Dockerfile`, `docker/linux-cpu.Dockerfile`, `docker/linux-cuda.Dockerfile`, `src/Infernix/CLI.hs`, `src/Infernix/Config.hs`, `src/Infernix/Service.hs`
 **Docs to update**: `README.md`, `documents/development/local_dev.md`, `documents/engineering/docker_policy.md`
 
 ### Objective
@@ -227,7 +222,7 @@ None.
 ## Sprint 1.4: Build Artifact Isolation, Haskell Quality Gates, and Web Build Generation Path [Done]
 
 **Status**: Done
-**Implementation**: `src/Infernix/CLI.hs`, `src/Generated/Contracts.hs`, `src/Infernix/Lint/`, `src/Infernix/Lint/HaskellStyle.hs`, `scripts/install-formatter.sh`, `web/`, `test/haskell-style/Spec.hs`, `test/integration/Spec.hs`
+**Implementation**: `src/Infernix/CLI.hs`, `src/Generated/Contracts.hs`, `src/Infernix/Lint/`, `src/Infernix/Lint/HaskellStyle.hs`, `web/`, `test/haskell-style/Spec.hs`, `test/integration/Spec.hs`
 **Docs to update**: `documents/development/haskell_style.md`, `documents/development/local_dev.md`, `documents/development/testing_strategy.md`, `documents/engineering/build_artifacts.md`
 
 ### Objective
@@ -262,7 +257,8 @@ quality and compiler hygiene enforceable through one canonical validation path.
 - `infernix test lint` runs `infernix lint files`, `infernix lint chart`, `infernix lint proto`,
   `infernix lint docs`, the Cabal-owned Haskell style gate for `ormolu` or `hlint` or
   `cabal format`, and the compiler-warning gate through `cabal --builddir=.build/cabal build all`
-- `web/Dockerfile` is the canonical packaging entrypoint for the separate web image
+- the supported web build owns contract generation and bundle creation, while later
+  substrate-image packaging work may relocate container ownership without changing the build contract
 - the web build generates frontend contract modules from Haskell SSOT during build
 - no standalone public frontend codegen command is introduced
 - repo validation fails if the web build cannot regenerate frontend contract modules from the
@@ -331,20 +327,20 @@ None.
 
 ---
 
-## Sprint 1.6: Custom-Logic Tooling Migrated to Haskell [Active]
+## Sprint 1.6: Custom-Logic Tooling Migrated to Haskell [Done]
 
-**Status**: Active
-**Implementation**: `infernix.cabal`, `src/Infernix/`, `src/Infernix/Cluster/Discover.hs`, `src/Infernix/Cluster/PublishImages.hs`, `src/Infernix/DemoConfig.hs`, `src/Infernix/Lint/`, `src/Infernix/Lint/HaskellStyle.hs`, `scripts/install-formatter.sh`, `docker/`, `tools/python_quality.sh`
+**Status**: Done
+**Implementation**: `infernix.cabal`, `src/Infernix/`, `src/Infernix/Cluster/Discover.hs`, `src/Infernix/Cluster/PublishImages.hs`, `src/Infernix/DemoConfig.hs`, `src/Infernix/Lint/`, `src/Infernix/Lint/HaskellStyle.hs`, `src/Infernix/Python.hs`
 **Docs to update**: `documents/development/haskell_style.md`, `documents/development/local_dev.md`, `documents/development/testing_strategy.md`, `documents/engineering/build_artifacts.md`, `documents/reference/cli_reference.md`
 
 ### Objective
 
 Retire every custom-logic `tools/*.py` script in favor of Haskell modules under `infernix-lib`,
 exposed through `infernix lint ...` and `infernix internal ...` subcommands. Remove the build-time
-Python prerequisite entirely on the supported path; Python remains only under `python/adapters/`
-for engine adapters. Per Hard Constraint 13, `tools/` is left holding only auto-generated stubs in
-`tools/generated_proto/` and a small `tools/python_quality.sh` shell shim used by the adapter
-Dockerfiles.
+Python prerequisite entirely on the supported path; Python remains only under
+`python/<substrate>/adapters/` for engine adapters. Per Hard Constraint 13, `tools/` is left
+holding only auto-generated stubs in `tools/generated_proto/`; the supported path no longer keeps
+repo-owned shell shims in the worktree.
 
 ### Deliverables
 
@@ -369,14 +365,16 @@ Dockerfiles.
   `infernix internal demo-config {load,validate}` (`src/Infernix/DemoConfig.hs`); the existing
   Haskell config loader is the canonical implementation
 - `tools/haskell_style_check.py` is removed; the Haskell style gate becomes a Cabal test target
-  that invokes `ormolu`, `hlint`, and `cabal format` directly, plus a `scripts/install-formatter.sh`
-  shell shim that downloads the binaries; no Python is involved in validating Haskell code
+  that installs `ormolu` and `hlint` through Cabal or Hackage into the repo-local build root and
+  checks `infernix.cabal` with `cabal format`; no Python or shell shim is involved in validating
+  Haskell code
 - `tools/requirements.txt` is removed; no build-time Python remains on the supported path
 - `infernix.cabal` is restructured to one `library: infernix-lib` plus
   `executable infernix` plus `executable infernix-demo`, with the new lint and discover modules
   under `infernix-lib`
-- `infernix test lint` runs every new Haskell-implemented check plus, when `python/adapters/` is
-  present, the strict Python quality gate via `tools/python_quality.sh`
+- `infernix test lint` runs every new Haskell-implemented check plus the strict Python quality
+  gate via `poetry run check-code` for the active substrate project when Python adapters are
+  present
 
 ### Validation
 
@@ -389,8 +387,8 @@ Dockerfiles.
   `infernix internal discover harbor-overlay`, `infernix internal publish-chart-images`, and
   `infernix internal demo-config {load,validate}` produce output equivalent to (or strictly
   preferable to) their previous Python tools on the supported chart and demo-config inputs
-- the Haskell style Cabal test target succeeds when the formatter binaries are installed via
-  `scripts/install-formatter.sh`
+- the Haskell style Cabal test target succeeds through the Hackage-installed `ormolu` and `hlint`
+  toolchain in the repo-local build root
 - `infernix test lint` continues to pass on the supported Apple host-native and Linux
   outer-container lanes after the migration
 - a clean `infernix cluster up` followed by `infernix test all` succeeds without invoking
@@ -398,19 +396,14 @@ Dockerfiles.
 
 ### Remaining Work
 
-- `tools/python_quality.sh` and `scripts/install-formatter.sh` are slated for removal under the
-  no-`.sh`-files rule. `tools/python_quality.sh` is replaced by `poetry run check-code` (Phase
-  4 Sprint 4.7); the Haskell style gate becomes a Cabal test target that downloads `ormolu`
-  and `hlint` through Cabal/Hackage rather than a shell shim. The corresponding entries are in
-  [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) Pending Removal until the
-  removal lands
+None.
 
 ---
 
-## Sprint 1.7: Repository Hygiene and Generated-Artifact Doctrine [Planned]
+## Sprint 1.7: Repository Hygiene and Generated-Artifact Doctrine [Active]
 
-**Status**: Planned
-**Implementation**: `.gitignore`, `.dockerignore`, `documents/engineering/build_artifacts.md`
+**Status**: Active
+**Implementation**: `.gitignore`, `.dockerignore`, `src/Infernix/Lint/Files.hs`, `documents/engineering/build_artifacts.md`
 **Docs to update**: `documents/engineering/build_artifacts.md`
 
 ### Objective
@@ -449,9 +442,10 @@ context.
 
 ### Remaining Work
 
-- run `git rm --cached` against the named paths, update `.gitignore` and create `.dockerignore`,
-  rewrite `documents/engineering/build_artifacts.md`, and migrate the corresponding
-  legacy-tracking entries from Pending Removal to Completed once the cleanup lands
+- the ignore rules, worktree deletions, and tracked-generated-path guard are landed, and
+  `infernix lint files` now fails when tracked generated artifacts remain in `git ls-files`
+- repo policy forbids agent-owned staging, so the remaining work is user-owned tracked-index
+  cleanup for stale generated artifacts and deleted legacy files
 
 ## Documentation Requirements
 

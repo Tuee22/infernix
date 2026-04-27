@@ -27,7 +27,8 @@ dependencies:
     version: 17.0.21
     repository: https://charts.bitnami.com/bitnami
     condition: upstreamCharts.minio.enabled
-  - name: ingress-nginx
-    version: 4.15.1
-    repository: https://kubernetes.github.io/ingress-nginx
-    condition: upstreamCharts.ingressNginx.enabled
+  - name: gateway-helm
+    alias: envoyGateway
+    version: v1.7.2
+    repository: oci://docker.io/envoyproxy
+    condition: upstreamCharts.envoyGateway.enabled

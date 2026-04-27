@@ -10,16 +10,20 @@ import Data.Text qualified as Text
 import Infernix.Cluster
 import Infernix.Config (Paths (..))
 import Infernix.Config qualified as Config
+import Infernix.Models (requestTopicsForMode, resultTopicForMode)
+import Infernix.Runtime.Pulsar
+  ( publishInferenceRequest,
+    readPublishedInferenceResultMaybe,
+    schemaMarkerPath,
+  )
 import Infernix.Types
 import System.Directory
-import System.Environment (getEnvironment, lookupEnv, setEnv, unsetEnv)
+import System.Environment (lookupEnv, setEnv, unsetEnv)
 import System.Exit (ExitCode (ExitSuccess))
 import System.FilePath ((</>))
-import System.IO (hClose, hGetLine)
 import System.IO.Error (catchIOError, isDoesNotExistError)
 import System.Process
-  ( CreateProcess (cwd, env, std_err, std_in, std_out),
-    StdStream (CreatePipe),
+  ( CreateProcess (cwd),
     createProcess,
     proc,
     readProcess,
@@ -36,7 +40,6 @@ main = do
     mapM_ (exerciseRuntimeMode paths) [AppleSilicon, LinuxCpu, LinuxCuda]
     validateDemoUiDisabled paths LinuxCpu
     validateEdgePortConflictAndRediscovery paths LinuxCpu
-    validateStandaloneProxyProcesses paths
     putStrLn "integration tests passed"
 
 exerciseRuntimeMode :: Paths -> RuntimeMode -> IO ()
@@ -52,8 +55,11 @@ exerciseRuntimeMode paths runtimeMode = do
   demoConfigResponse <- httpGet (baseUrl <> "/api/demo-config")
   modelsResponse <- httpGet (baseUrl <> "/api/models")
   harborResponse <- httpGet (baseUrl <> "/harbor")
-  minioResponse <- httpGet (baseUrl <> "/minio/s3")
-  pulsarResponse <- httpGet (baseUrl <> "/pulsar/ws")
+  harborApiResponse <- httpGet (baseUrl <> "/harbor/api/v2.0/projects")
+  minioConsoleResponse <- httpGet (baseUrl <> "/minio/console/browser")
+  minioS3Response <- httpGet (baseUrl <> "/minio/s3/models/demo.bin")
+  pulsarAdminResponse <- httpGet (baseUrl <> "/pulsar/admin/clusters")
+  pulsarHttpResponse <- httpGet (baseUrl <> "/pulsar/ws/v2/producer/public/default/demo")
   assert ("Infernix" `isInfixOf` homeResponse) "demo root serves the browser entrypoint"
   assert (("\"runtimeMode\": \"" <> showRuntimeMode runtimeMode <> "\"") `isInfixOf` publicationResponse) "publication reports the active runtime mode"
   assert ("\"clusterpresent\": true" `isInfixOf` mapToLowerAscii publicationResponse) "publication reports cluster presence"
@@ -69,11 +75,15 @@ exerciseRuntimeMode paths runtimeMode = do
     )
     "demo config reports the active result topic"
   assert ("\"engines\":[" `isInfixOf` compact demoConfigResponse) "demo config reports engine bindings"
-  assert ("\"adapterId\":\"" `isInfixOf` compact demoConfigResponse) "demo config publishes adapter ids for engine bindings"
+  assert ("\"adapterEntrypoint\":\"" `isInfixOf` compact demoConfigResponse) "demo config publishes adapter entrypoints"
+  assert ("\"projectDirectory\":\"python/" `isInfixOf` compact demoConfigResponse) "demo config publishes substrate project directories"
   assert ("\"modelId\"" `isInfixOf` modelsResponse) "model listing returns JSON models"
-  assert ("Harbor Gateway" `isInfixOf` harborResponse) "harbor route is published"
-  assert ("\"status\":\"ready\"" `isInfixOf` compact minioResponse) "minio route is published"
-  assert ("\"brokersHealth\":\"ready\"" `isInfixOf` compact pulsarResponse) "pulsar route is published"
+  assert ("Harbor" `isInfixOf` harborResponse) "harbor route is published"
+  assert ("\"rewrittenPath\":\"/api/v2.0/projects\"" `isInfixOf` compact harborApiResponse) "harbor API routes strip the /harbor prefix"
+  assert ("\"rewrittenPath\":\"/browser\"" `isInfixOf` compact minioConsoleResponse) "minio console routes strip the /minio/console prefix"
+  assert ("\"rewrittenPath\":\"/models/demo.bin\"" `isInfixOf` compact minioS3Response) "minio S3 routes strip the /minio/s3 prefix"
+  assert ("\"rewrittenPath\":\"/clusters\"" `isInfixOf` compact pulsarAdminResponse) "pulsar admin routes strip the /pulsar/admin prefix"
+  assert ("\"rewrittenPath\":\"/v2/producer/public/default/demo\"" `isInfixOf` compact pulsarHttpResponse) "pulsar HTTP routes strip the /pulsar/ws prefix"
 
   inferenceResponse <-
     httpPostJson
@@ -92,6 +102,8 @@ exerciseRuntimeMode paths runtimeMode = do
   rebuildResponse <- httpPostJson (baseUrl <> "/api/cache/rebuild") "{\"modelId\":\"llm-qwen25-safetensors\"}"
   assert ("\"rebuiltCount\":1" `isInfixOf` compact rebuildResponse) "cache rebuild reports one restored entry"
 
+  validateServiceRuntimeLoop paths runtimeMode
+
   statusOutput <- captureInfernixOutput paths runtimeMode ["cluster", "status"]
   assert ("clusterPresent: True" `isInfixOf` statusOutput) "cluster status reports the cluster presence"
   assert (("runtimeMode: " <> showRuntimeMode runtimeMode) `isInfixOf` statusOutput) "cluster status reports the runtime mode"
@@ -103,47 +115,93 @@ exerciseRuntimeMode paths runtimeMode = do
   downStatusOutput <- captureInfernixOutput paths runtimeMode ["cluster", "status"]
   assert ("clusterPresent: False" `isInfixOf` downStatusOutput) "cluster status reports cluster absence after down"
 
+validateServiceRuntimeLoop :: Paths -> RuntimeMode -> IO ()
+validateServiceRuntimeLoop paths runtimeMode = do
+  infernixExecutable <- resolveInfernixExecutable
+  let requestTopic = head (requestTopicsForMode runtimeMode)
+      resultTopic = resultTopicForMode runtimeMode
+  (_, _, _, processHandle) <-
+    createProcess
+      (proc infernixExecutable ["--runtime-mode", showRuntimeMode runtimeMode, "service"])
+        { cwd = Just (repoRoot paths)
+        }
+  waitForFile (schemaMarkerPath paths requestTopic)
+  waitForFile (schemaMarkerPath paths resultTopic)
+  _ <-
+    publishInferenceRequest
+      paths
+      runtimeMode
+      requestTopic
+      InferenceRequest
+        { requestModelId = "llm-qwen25-safetensors",
+          inputText = "service daemon request path"
+        }
+  maybeResult <- waitForPublishedResult paths resultTopic
+  case maybeResult of
+    Nothing -> fail ("service daemon did not publish a result for " <> showRuntimeMode runtimeMode)
+    Just resultValue -> do
+      assert (resultModelId resultValue == "llm-qwen25-safetensors") "service daemon publishes the selected model id"
+      assert (resultRuntimeMode resultValue == runtimeMode) "service daemon preserves the runtime mode in published results"
+  terminateProcess processHandle
+  _ <- waitForProcess processHandle
+  pure ()
+
+waitForPublishedResult :: Paths -> Text.Text -> IO (Maybe InferenceResult)
+waitForPublishedResult paths resultTopic = go (60 :: Int)
+  where
+    go remainingAttempts
+      | remainingAttempts <= 0 = pure Nothing
+      | otherwise = do
+          maybeResult <- readPublishedInferenceResultMaybe paths resultTopic "llm-qwen25-safetensors-request"
+          case maybeResult of
+            Just resultValue -> pure (Just resultValue)
+            Nothing -> do
+              threadDelay 100000
+              go (remainingAttempts - 1)
+
+waitForFile :: FilePath -> IO ()
+waitForFile filePath = go (60 :: Int)
+  where
+    go remainingAttempts
+      | remainingAttempts <= 0 = fail ("timed out waiting for " <> filePath)
+      | otherwise = do
+          exists <- doesFileExist filePath
+          if exists
+            then pure ()
+            else do
+              threadDelay 100000
+              go (remainingAttempts - 1)
+
 validateEdgePortConflictAndRediscovery :: Paths -> RuntimeMode -> IO ()
 validateEdgePortConflictAndRediscovery paths runtimeMode = do
   cleanupRuntimeState paths
-  (busyPortStdin, busyPortStdout, busyPortStderr, busyPortProcess) <-
+  (_, _, _, busyPortProcess) <-
     createProcess
       (proc "python3" ["-c", busyPortScript])
-        { std_in = CreatePipe,
-          std_out = CreatePipe,
-          std_err = CreatePipe
-        }
-  case (busyPortStdin, busyPortStdout, busyPortStderr) of
-    (Just stdinHandle, Just stdoutHandle, Just _) -> do
-      readyLine <- hGetLine stdoutHandle
-      assert (readyLine == "ready") "busy-port helper binds 9090 before cluster up runs"
-      clusterUp (Just runtimeMode)
-      busyState <- maybe (fail "cluster state was not available after busy-port cluster up") pure =<< loadClusterState paths
-      assert (edgePort busyState > 9090) "cluster up chooses a non-9090 port when 9090 is busy"
-      clusterDown (Just runtimeMode)
-      hClose stdinHandle
-      terminateProcess busyPortProcess
-      _ <- waitForProcess busyPortProcess
-      clusterUp (Just runtimeMode)
-      maybeRediscoveredState <- loadClusterState paths
-      assert (maybe False ((== edgePort busyState) . edgePort) maybeRediscoveredState) "cluster up reuses the published edge port after restart"
-      clusterDown (Just runtimeMode)
-    _ -> fail "port-conflict helper failed to expose the readiness pipe"
+  waitForPortConflictHelper
+  clusterUp (Just runtimeMode)
+  busyState <- maybe (fail "cluster state was not available after busy-port cluster up") pure =<< loadClusterState paths
+  assert (edgePort busyState > 9090) "cluster up chooses a non-9090 port when 9090 is busy"
+  clusterDown (Just runtimeMode)
+  terminateProcess busyPortProcess
+  _ <- waitForProcess busyPortProcess
+  clusterUp (Just runtimeMode)
+  maybeRediscoveredState <- loadClusterState paths
+  assert (maybe False ((== edgePort busyState) . edgePort) maybeRediscoveredState) "cluster up reuses the published edge port after restart"
+  clusterDown (Just runtimeMode)
   where
     busyPortScript =
       unlines
         [ "import socket",
-          "import sys",
+          "import time",
           "sock = socket.socket()",
           "sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)",
           "sock.bind(('127.0.0.1', 9090))",
           "sock.listen(1)",
-          "print('ready', flush=True)",
-          "try:",
-          "    sys.stdin.read()",
-          "finally:",
-          "    sock.close()"
+          "time.sleep(30)"
         ]
+    waitForPortConflictHelper = do
+      threadDelay 250000
 
 validateDemoUiDisabled :: Paths -> RuntimeMode -> IO ()
 validateDemoUiDisabled paths runtimeMode =
@@ -162,141 +220,10 @@ validateDemoUiDisabled paths runtimeMode =
     pulsarResponse <- httpGet (baseUrl <> "/pulsar/ws")
     assert (either (const True) (const False) disabledHomeResult) "the browser root is absent when demo_ui is disabled"
     assert (either (const True) (const False) disabledPublicationResult) "the demo API is absent when demo_ui is disabled"
-    assert ("Harbor Gateway" `isInfixOf` harborResponse) "harbor remains published when demo_ui is disabled"
+    assert ("Harbor" `isInfixOf` harborResponse) "harbor remains published when demo_ui is disabled"
     assert ("\"status\":\"ready\"" `isInfixOf` compact minioResponse) "minio remains published when demo_ui is disabled"
     assert ("\"brokersHealth\":\"ready\"" `isInfixOf` compact pulsarResponse) "pulsar remains published when demo_ui is disabled"
     clusterDown (Just runtimeMode)
-
-validateStandaloneProxyProcesses :: Paths -> IO ()
-validateStandaloneProxyProcesses paths = do
-  infernixExecutable <- resolveInfernixExecutable
-  withMockServer "demo" $ \demoPort ->
-    withMockServer "web" $ \webPort ->
-      withMockServer "harbor-ui" $ \harborUiPort ->
-        withMockServer "harbor-api" $ \harborApiPort ->
-          withMockServer "minio-console" $ \minioConsolePort ->
-            withMockServer "minio-s3" $ \minioS3Port ->
-              withMockServer "pulsar-admin" $ \pulsarAdminPort ->
-                withMockServer "pulsar-http" $ \pulsarHttpPort -> do
-                  withInfernixProcess
-                    paths
-                    infernixExecutable
-                    ["edge"]
-                    19190
-                    "/healthz"
-                    [ ("INFERNIX_BIND_HOST", "127.0.0.1"),
-                      ("INFERNIX_DEMO_UPSTREAM", "127.0.0.1:" <> show demoPort),
-                      ("INFERNIX_WEB_UPSTREAM", "127.0.0.1:" <> show webPort),
-                      ("INFERNIX_HARBOR_UPSTREAM", "127.0.0.1:" <> show harborUiPort),
-                      ("INFERNIX_MINIO_UPSTREAM", "127.0.0.1:" <> show minioConsolePort),
-                      ("INFERNIX_PULSAR_UPSTREAM", "127.0.0.1:" <> show pulsarHttpPort)
-                    ]
-                    $ do
-                      edgeApiResponse <- httpGet "http://127.0.0.1:19190/api/models?lane=test"
-                      edgeHarborResponse <- httpGet "http://127.0.0.1:19190/harbor/projects"
-                      edgeMinioResponse <- httpGet "http://127.0.0.1:19190/minio/console/browser"
-                      edgeHomeResponse <- httpGet "http://127.0.0.1:19190/"
-                      assert ("\"label\": \"demo\"" `isInfixOf` edgeApiResponse) "edge proxy sends /api traffic to the demo upstream"
-                      assert ("\"path\": \"/api/models?lane=test\"" `isInfixOf` edgeApiResponse) "edge proxy preserves the original API request path"
-                      assert ("\"label\": \"harbor-ui\"" `isInfixOf` edgeHarborResponse) "edge proxy sends /harbor traffic to the Harbor upstream"
-                      assert ("\"label\": \"minio-console\"" `isInfixOf` edgeMinioResponse) "edge proxy sends /minio traffic to the MinIO upstream"
-                      assert ("\"label\": \"demo\"" `isInfixOf` edgeHomeResponse) "edge proxy sends the browser root to the demo upstream"
-
-                  withInfernixProcess
-                    paths
-                    infernixExecutable
-                    ["gateway", "harbor"]
-                    19191
-                    "/harbor"
-                    [ ("INFERNIX_BIND_HOST", "127.0.0.1"),
-                      ("INFERNIX_HARBOR_BACKEND_URL", "http://127.0.0.1:" <> show harborUiPort),
-                      ("INFERNIX_HARBOR_API_URL", "http://127.0.0.1:" <> show harborApiPort),
-                      ("INFERNIX_HARBOR_ADMIN_USER", "admin"),
-                      ("INFERNIX_HARBOR_ADMIN_PASSWORD", "secret")
-                    ]
-                    $ do
-                      harborRootResponse <- httpGet "http://127.0.0.1:19191/harbor"
-                      harborApiResponse <- httpGet "http://127.0.0.1:19191/harbor/api/v2.0/projects"
-                      assert ("\"label\": \"harbor-ui\"" `isInfixOf` harborRootResponse) "Harbor gateway proxies the portal root to the Harbor UI upstream"
-                      assert ("\"label\": \"harbor-api\"" `isInfixOf` harborApiResponse) "Harbor gateway proxies API traffic to the Harbor API upstream"
-                      assert ("\"path\": \"/api/v2.0/projects\"" `isInfixOf` harborApiResponse) "Harbor gateway strips the routed Harbor prefix for API requests"
-                      assert ("\"authorization\": \"Basic YWRtaW46c2VjcmV0\"" `isInfixOf` harborApiResponse) "Harbor gateway injects the configured basic-auth header"
-
-                  withInfernixProcess
-                    paths
-                    infernixExecutable
-                    ["gateway", "minio"]
-                    19192
-                    "/minio/s3"
-                    [ ("INFERNIX_BIND_HOST", "127.0.0.1"),
-                      ("INFERNIX_MINIO_S3_ENDPOINT", "http://127.0.0.1:" <> show minioS3Port),
-                      ("INFERNIX_MINIO_CONSOLE_ENDPOINT", "http://127.0.0.1:" <> show minioConsolePort)
-                    ]
-                    $ do
-                      minioStatusResponse <- httpGet "http://127.0.0.1:19192/minio/s3"
-                      minioS3Response <- httpGet "http://127.0.0.1:19192/minio/s3/models/demo.bin"
-                      minioConsoleResponse <- httpGet "http://127.0.0.1:19192/minio/console/browser"
-                      assert ("\"status\":\"ready\"" `isInfixOf` compact minioStatusResponse) "MinIO gateway serves the stable exact-path readiness response"
-                      assert (("\"targetUrl\":\"http://127.0.0.1:" <> show minioS3Port <> "\"") `isInfixOf` compact minioStatusResponse) "MinIO gateway reports the configured S3 upstream"
-                      assert ("\"label\": \"minio-s3\"" `isInfixOf` minioS3Response) "MinIO gateway proxies routed S3 traffic to the S3 upstream"
-                      assert ("\"path\": \"/models/demo.bin\"" `isInfixOf` minioS3Response) "MinIO gateway strips the routed S3 prefix"
-                      assert ("\"label\": \"minio-console\"" `isInfixOf` minioConsoleResponse) "MinIO gateway proxies console traffic to the console upstream"
-
-                  withInfernixProcess
-                    paths
-                    infernixExecutable
-                    ["gateway", "pulsar"]
-                    19193
-                    "/pulsar/ws"
-                    [ ("INFERNIX_BIND_HOST", "127.0.0.1"),
-                      ("INFERNIX_PULSAR_ADMIN_URL", "http://127.0.0.1:" <> show pulsarAdminPort),
-                      ("INFERNIX_PULSAR_HTTP_BASE_URL", "http://127.0.0.1:" <> show pulsarHttpPort)
-                    ]
-                    $ do
-                      pulsarStatusResponse <- httpGet "http://127.0.0.1:19193/pulsar/ws"
-                      pulsarAdminResponse <- httpGet "http://127.0.0.1:19193/pulsar/admin/clusters"
-                      pulsarHttpResponse <- httpGet "http://127.0.0.1:19193/pulsar/ws/v2/producer/public/default/demo"
-                      assert ("\"brokersHealth\":\"ready\"" `isInfixOf` compact pulsarStatusResponse) "Pulsar gateway serves the stable exact-path readiness response"
-                      assert ("\"label\": \"pulsar-admin\"" `isInfixOf` pulsarAdminResponse) "Pulsar gateway proxies admin traffic to the admin upstream"
-                      assert ("\"path\": \"/clusters\"" `isInfixOf` pulsarAdminResponse) "Pulsar gateway strips the routed admin prefix"
-                      assert ("\"label\": \"pulsar-http\"" `isInfixOf` pulsarHttpResponse) "Pulsar gateway proxies routed HTTP traffic to the broker HTTP upstream"
-                      assert ("\"path\": \"/v2/producer/public/default/demo\"" `isInfixOf` pulsarHttpResponse) "Pulsar gateway strips the routed websocket prefix for HTTP requests"
-
-withMockServer :: String -> (Int -> IO a) -> IO a
-withMockServer label action = do
-  (_, Just stdoutHandle, _, processHandle) <-
-    createProcess
-      (proc "python3" ["-c", mockServerScript, label])
-        { std_out = CreatePipe
-        }
-  portValue <- read <$> hGetLine stdoutHandle
-  action portValue
-    `finally` do
-      terminateProcess processHandle
-      _ <- waitForProcess processHandle
-      hClose stdoutHandle
-      pure ()
-
-withInfernixProcess :: Paths -> FilePath -> [String] -> Int -> String -> [(String, String)] -> IO a -> IO a
-withInfernixProcess paths executablePath args portValue readyPath envOverrides action = do
-  baseEnvironment <- getEnvironment
-  (_, _, _, processHandle) <-
-    createProcess
-      (proc executablePath args)
-        { cwd = Just (repoRoot paths),
-          env =
-            Just
-              ( mergeEnvironment
-                  [("INFERNIX_PORT", show portValue)]
-                  (mergeEnvironment envOverrides baseEnvironment)
-              )
-        }
-  waitForHttpReady ("http://127.0.0.1:" <> show portValue <> readyPath)
-  action
-    `finally` do
-      terminateProcess processHandle
-      _ <- waitForProcess processHandle
-      pure ()
 
 withOptionalEnv :: String -> Maybe String -> IO a -> IO a
 withOptionalEnv name maybeValue action = do
@@ -308,57 +235,14 @@ withOptionalEnv name maybeValue action = do
     applyMaybeValue (Just value) = setEnv name value
     applyMaybeValue Nothing = unsetEnv name
 
-waitForHttpReady :: String -> IO ()
-waitForHttpReady url = go (60 :: Int)
-  where
-    go remainingAttempts
-      | remainingAttempts <= 0 = fail ("timed out waiting for " <> url)
-      | otherwise = do
-          result <- try (httpGet url) :: IO (Either IOError String)
-          case result of
-            Right _ -> pure ()
-            Left _ -> do
-              threadDelay 100000
-              go (remainingAttempts - 1)
-
 resolveInfernixExecutable :: IO FilePath
 resolveInfernixExecutable = do
   buildDir <- Config.resolveCabalBuildDir
   trimTrailingWhitespace <$> readProcess "cabal" ["--builddir=" <> buildDir, "list-bin", "exe:infernix"] ""
 
-mergeEnvironment :: [(String, String)] -> [(String, String)] -> [(String, String)]
-mergeEnvironment overrides environment =
-  overrides <> filter (\(name, _) -> name `notElem` map fst overrides) environment
-
 trimTrailingWhitespace :: String -> String
 trimTrailingWhitespace =
   reverse . dropWhile (`elem` [' ', '\n', '\r', '\t']) . reverse
-
-mockServerScript :: String
-mockServerScript =
-  unlines
-    [ "import json",
-      "import sys",
-      "from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer",
-      "label = sys.argv[1]",
-      "class Handler(BaseHTTPRequestHandler):",
-      "    def do_GET(self):",
-      "        payload = json.dumps({",
-      "            'label': label,",
-      "            'path': self.path,",
-      "            'authorization': self.headers.get('Authorization', ''),",
-      "        }).encode('utf-8')",
-      "        self.send_response(200)",
-      "        self.send_header('Content-Type', 'application/json; charset=utf-8')",
-      "        self.send_header('Content-Length', str(len(payload)))",
-      "        self.end_headers()",
-      "        self.wfile.write(payload)",
-      "    def log_message(self, format, *args):",
-      "        return",
-      "server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)",
-      "print(server.server_address[1], flush=True)",
-      "server.serve_forever()"
-    ]
 
 cleanupRuntimeState :: Paths -> IO ()
 cleanupRuntimeState paths = do

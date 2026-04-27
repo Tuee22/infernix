@@ -10,12 +10,11 @@
 
 The demo UI is the only browser-facing surface in this repository. It is implemented in
 PureScript. JavaScript exists as compiled output under `web/dist/`; source-level `.js` or `.mjs`
-files are not part of the supported browser application. The remaining `.js` or `.mjs` files
-under `web/playwright/` and `web/test/run_playwright_matrix.mjs` are test-harness assets.
+files are not part of the supported browser application. The remaining `.js` or `.mjs` files under
+`web/playwright/` and `web/test/run_playwright_matrix.mjs` are test-harness assets.
 
-The demo UI is served by the `infernix-demo` Haskell binary (a separate executable from
-`infernix`, sharing the `infernix-lib` Cabal library) and gated by the active `.dhall` `demo_ui`
-flag. Production deployments leave the flag off and the cluster has no demo UI workload at all.
+The demo UI is served by the `infernix-demo` Haskell binary and gated by the active `.dhall`
+`demo_ui` flag. Production deployments leave the flag off and the cluster has no demo UI workload.
 
 ## Toolchain
 
@@ -26,8 +25,10 @@ flag. Production deployments leave the flag off and the cluster has no demo UI w
 - `spago bundle --module Main --outfile dist/app.js --platform browser --bundle-type app` produces
   the static demo bundle in `web/dist/`
 - `spago test` runs the `purescript-spec` suites under `web/test/*.purs`
-- `web/Dockerfile` installs the npm-managed PureScript toolchain and Playwright browser
-  dependencies; the same image packages the built bundle and runs the routed Playwright E2E suite
+- the npm-managed PureScript toolchain is installed either in `web/node_modules/` on the host path
+  or in the active Linux substrate image build
+- routed Playwright E2E runs from the host on Apple Silicon and from the active Linux substrate
+  image when the platform toolchain is available
 
 ## Source Layout
 
@@ -42,7 +43,7 @@ web/
 ├── test/
 │   └── Main.purs
 ├── playwright/
-└── Dockerfile
+└── package-lock.json
 ```
 
 Rules:
@@ -57,11 +58,9 @@ Rules:
 
 Frontend types are generated from Haskell-owned DTO and catalog records.
 
-- `infernix internal generate-purs-contracts` is the single supported codegen entrypoint; it is
-  invoked by `npm --prefix web run build`
+- `infernix internal generate-purs-contracts` is the single supported codegen entrypoint
 - generated PureScript modules live in `web/src/Generated/` and carry the request, response,
   engine-binding, and catalog constants needed by the current demo UI
-- no standalone public frontend codegen command exists outside `infernix internal generate-purs-contracts`
 - the codegen path derives the PureScript contract types through `purescript-bridge` from
   dedicated browser-contract ADTs in `src/Generated/Contracts.hs`
 - the generated module also appends the active runtime constants, catalog constants, helper
@@ -78,9 +77,8 @@ Frontend types are generated from Haskell-owned DTO and catalog records.
   handwritten workbench helpers that unwrap record views
 - view-level suites assert catalog order, selection, publication summary rendering, and result
   rendering behavior
-- the existing Playwright DOM selectors (`web/playwright/inference.spec.js` and equivalents) are
-  preserved across the PureScript views; if a selector cannot be preserved, the Playwright spec
-  is updated in the same change
+- the existing Playwright DOM selectors are preserved across the PureScript views; if a selector
+  cannot be preserved, the Playwright spec is updated in the same change
 
 ## Cross-References
 

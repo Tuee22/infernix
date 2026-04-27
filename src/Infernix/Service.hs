@@ -8,19 +8,21 @@ where
 import Data.Text qualified as Text
 import Infernix.Cluster (loadClusterState)
 import Infernix.Config
+import Infernix.Engines.AppleSilicon (ensureAppleSiliconRuntimeReady)
 import Infernix.Models
   ( hostBridgeApiUpstream,
     renderPublicationState,
     renderPublicationStateWithApiUpstream,
   )
 import Infernix.Runtime.Pulsar (runProductionDaemon)
-import Infernix.Types (ClusterState, RuntimeMode, clusterPresent, clusterRuntimeMode, runtimeModeId)
+import Infernix.Types (ClusterState, RuntimeMode (AppleSilicon), clusterPresent, clusterRuntimeMode, runtimeModeId)
 
 runService :: Maybe RuntimeMode -> IO ()
 runService maybeRuntimeMode = do
   paths <- discoverPaths
   ensureRepoLayout paths
   runtimeMode <- resolveRuntimeMode maybeRuntimeMode
+  whenAppleRuntimeReady paths runtimeMode
   runProductionDaemon paths runtimeMode
 
 activateHostBridgeRoute :: Paths -> RuntimeMode -> Int -> IO ()
@@ -62,3 +64,9 @@ requireActiveClusterState maybeState =
     Just state
       | clusterPresent state -> pure state
     _ -> ioError (userError "host bridge activation requires an active cluster state")
+
+whenAppleRuntimeReady :: Paths -> RuntimeMode -> IO ()
+whenAppleRuntimeReady paths runtimeMode =
+  case runtimeMode of
+    AppleSilicon -> ensureAppleSiliconRuntimeReady paths
+    _ -> pure ()

@@ -80,21 +80,65 @@ application :: DemoApiOptions -> Application
 application options request respond = do
   demoEnabled <- demoUiEnabled <$> decodeDemoConfigFile (demoConfigPath options)
   case pathInfo request of
-    ["harbor"]
+    "harbor" : harborSegments
       | requestMethod request == methodGet ->
-          respond (htmlResponse "<!doctype html><title>Harbor Gateway</title><h1>Harbor Gateway</h1><p>Status: ready</p>")
+          serveHarborRoute harborSegments respond
     ["minio", "console"]
       | requestMethod request == methodGet ->
-          respond (jsonResponse status200 (object ["status" .= ("ready" :: String), "targetUrl" .= ("minio-console" :: String)]))
+          respond (jsonResponse status200 (object ["status" .= ("ready" :: String), "targetUrl" .= ("minio-console" :: String), "rewrittenPath" .= ("/" :: String)]))
+    "minio" : "console" : consoleSegments
+      | requestMethod request == methodGet ->
+          respond
+            ( jsonResponse
+                status200
+                ( object
+                    [ "label" .= ("minio-console" :: String),
+                      "rewrittenPath" .= prefixedPath consoleSegments
+                    ]
+                )
+            )
     ["minio", "s3"]
       | requestMethod request == methodGet ->
-          respond (jsonResponse status200 (object ["status" .= ("ready" :: String), "targetUrl" .= ("minio-s3" :: String)]))
+          respond (jsonResponse status200 (object ["status" .= ("ready" :: String), "targetUrl" .= ("minio-s3" :: String), "rewrittenPath" .= ("/" :: String)]))
+    "minio" : "s3" : s3Segments
+      | requestMethod request == methodGet ->
+          respond
+            ( jsonResponse
+                status200
+                ( object
+                    [ "label" .= ("minio-s3" :: String),
+                      "rewrittenPath" .= prefixedPath s3Segments
+                    ]
+                )
+            )
     ["pulsar", "admin"]
       | requestMethod request == methodGet ->
-          respond (jsonResponse status200 (object ["status" .= ("ready" :: String), "brokersHealth" .= ("ready" :: String)]))
+          respond (jsonResponse status200 (object ["status" .= ("ready" :: String), "brokersHealth" .= ("ready" :: String), "rewrittenPath" .= ("/" :: String)]))
+    "pulsar" : "admin" : adminSegments
+      | requestMethod request == methodGet ->
+          respond
+            ( jsonResponse
+                status200
+                ( object
+                    [ "label" .= ("pulsar-admin" :: String),
+                      "rewrittenPath" .= prefixedPath adminSegments
+                    ]
+                )
+            )
     ["pulsar", "ws"]
       | requestMethod request == methodGet ->
-          respond (jsonResponse status200 (object ["status" .= ("ready" :: String), "brokersHealth" .= ("ready" :: String)]))
+          respond (jsonResponse status200 (object ["status" .= ("ready" :: String), "brokersHealth" .= ("ready" :: String), "rewrittenPath" .= ("/" :: String)]))
+    "pulsar" : "ws" : wsSegments
+      | requestMethod request == methodGet ->
+          respond
+            ( jsonResponse
+                status200
+                ( object
+                    [ "label" .= ("pulsar-http" :: String),
+                      "rewrittenPath" .= prefixedPath wsSegments
+                    ]
+                )
+            )
     ["healthz"]
       | requestMethod request == methodGet && demoEnabled ->
           respond (textResponse status200 "ok")
@@ -247,7 +291,7 @@ cacheEntryValue options manifest = do
           "durableSourceUri" .= cacheDurableSourceUri manifest,
           "cacheKey" .= cacheCacheKey manifest,
           "materialized" .= materialized,
-          "engineAdapterId" .= engineBindingAdapterId (engineBindingForSelectedEngine (cacheSelectedEngine manifest)),
+          "engineAdapterId" .= engineBindingAdapterId (engineBindingForSelectedEngine (cacheRuntimeMode manifest) (cacheSelectedEngine manifest)),
           "engineAdapterAvailability" .= ("available" :: String),
           "sourceArtifactManifestUri" .= cacheDurableSourceUri manifest,
           "sourceArtifactSelectionMode" .= ("engine-specific-direct-artifact" :: String),
@@ -314,3 +358,33 @@ htmlResponse body =
 
 fromStringHost :: String -> HostPreference
 fromStringHost = fromString
+
+serveHarborRoute :: [Text.Text] -> (Response -> IO responseReceived) -> IO responseReceived
+serveHarborRoute segments respond =
+  case segments of
+    [] ->
+      respond (htmlResponse "<!doctype html><title>Harbor</title><h1>Harbor</h1><p>Route published through Gateway/infernix-edge.</p>")
+    "api" : apiSegments ->
+      respond
+        ( jsonResponse
+            status200
+            ( object
+                [ "label" .= ("harbor-api" :: String),
+                  "rewrittenPath" .= prefixedPath ("api" : apiSegments)
+                ]
+            )
+        )
+    _ ->
+      respond
+        ( jsonResponse
+            status200
+            ( object
+                [ "label" .= ("harbor-ui" :: String),
+                  "rewrittenPath" .= prefixedPath segments
+                ]
+            )
+        )
+
+prefixedPath :: [Text.Text] -> String
+prefixedPath [] = "/"
+prefixedPath segments = "/" <> joinPathSegments segments

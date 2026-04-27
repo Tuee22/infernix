@@ -1,6 +1,6 @@
 # Phase 0: Documentation and Governance
 
-**Status**: Active
+**Status**: Done
 **Referenced by**: [README.md](README.md), [development_plan_standards.md](development_plan_standards.md), [00-overview.md](00-overview.md)
 
 > **Purpose**: Create the governed `documents/` suite, define documentation maintenance rules, and
@@ -8,22 +8,18 @@
 
 ## Documentation-First Gate
 
-This phase has reopened for one realignment pass (Sprint 0.7) covering the Envoy Gateway API,
-single-substrate-container, and repo-hygiene doctrine. Sprints 0.1 through 0.6 stay `Done`.
-
-- Phases 1-6 are no longer phase-level blocked by documentation realignment, but later sprints
-  whose docs are touched by 0.7 should be closed only after 0.7 lands so the governed docs and
-  the implementation stay aligned.
-- The repo writes and maintains the docs suite before more implementation-closure claims continue.
+This phase is closed. The governed docs, root workflow guidance, and docs validator now describe
+the current doctrine: Envoy Gateway routing, per-substrate container packaging on Linux,
+host-native Apple execution, per-substrate Python adapter projects, and repository hygiene rules.
 
 ## Current Repo Assessment
 
 The repository has a governed docs suite, and the governed docs align with the doctrine declared
 in [00-overview.md](00-overview.md): the two-binary topology, the Pulsar-only production
 inference surface, the demo HTTP surface served only by `infernix-demo`, the Python restriction
-to `python/adapters/<engine>/` under Poetry plus mypy/black/ruff strict, and the PureScript demo
-UI built with spago and consuming Haskell-owned generated contracts derived through
-`purescript-bridge`. The docs validator forbids the retired-doctrine phrases outside
+to per-substrate adapter projects under `python/<substrate>/`, and the PureScript demo UI built
+with spago and consuming Haskell-owned generated contracts derived through `purescript-bridge`.
+The docs validator forbids the retired-doctrine phrases outside
 [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
 
 - the docs suite distinguishes control-plane execution context from runtime mode
@@ -232,7 +228,7 @@ Realign the documentation suite, the root README, and contributor guidance with 
 declared in [00-overview.md](00-overview.md) Hard Constraints 1, 13, 14, and 15:
 two-binary topology (`infernix` plus `infernix-demo` sharing `infernix-lib`); production inference
 surface is Pulsar subscription only; demo HTTP surface lives only in `infernix-demo`; Python is
-restricted to `python/adapters/<engine>/` and validated by Poetry plus mypy strict, black, and ruff
+restricted to `python/<substrate>/adapters/*.py` and validated by Poetry plus mypy strict, black, and ruff
 strict in every adapter container build; and the demo UI is PureScript with frontend types derived
 from Haskell-owned generated contracts derived through `purescript-bridge`.
 
@@ -253,8 +249,8 @@ from Haskell-owned generated contracts derived through `purescript-bridge`.
 - `documents/engineering/edge_routing.md` describes the Haskell edge proxy
 - `documents/engineering/build_artifacts.md` describes `web/dist/` populated by the current
   `spago bundle` path and the two-binary OCI image with selectable entrypoint
-- `documents/engineering/model_lifecycle.md` describes the Haskell worker plus per-engine Python
-  adapter under `python/adapters/<engine>/`
+- `documents/engineering/model_lifecycle.md` describes the Haskell worker plus per-substrate
+  Python adapter modules under `python/<substrate>/adapters/`
 - `documents/operations/apple_silicon_runbook.md` and `documents/development/local_dev.md` drop
   Homebrew-Poetry-as-prereq language; Poetry materializes only when an engine-adapter test is
   exercised
@@ -290,9 +286,9 @@ None. The Haskell migration of the docs validator is owned by Phase 1 Sprint 1.6
 
 ---
 
-## Sprint 0.7: Doctrine Realignment for Envoy Gateway API, Substrate Container, and Hygiene [Planned]
+## Sprint 0.7: Doctrine Realignment for Envoy Gateway API, Substrate Container, and Hygiene [Done]
 
-**Status**: Planned
+**Status**: Done
 **Implementation**: `documents/engineering/edge_routing.md`, `documents/engineering/docker_policy.md`, `documents/engineering/build_artifacts.md`, `documents/development/python_policy.md`, `documents/development/purescript_policy.md`, `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/reference/cli_reference.md`, `documents/reference/web_portal_surface.md`, `documents/architecture/overview.md`, `README.md`, `AGENTS.md`, `CLAUDE.md`, `src/Infernix/Lint/Docs.hs`
 **Docs to update**: every governed doc touched above
 
@@ -371,7 +367,7 @@ substrate; PureScript contracts derived via `purescript-bridge` from `src/Genera
 
 ### Remaining Work
 
-- author the doc rewrites named above and add the new forbidden-phrase set to the docs validator
+None.
 
 ## Documentation Requirements
 

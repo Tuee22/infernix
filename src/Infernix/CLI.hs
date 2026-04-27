@@ -9,13 +9,13 @@ where
 import Control.Applicative ((<|>))
 import Control.Concurrent (threadDelay)
 import Control.Exception (IOException, evaluate, finally, try)
-import Control.Monad (unless, when)
+import Control.Monad (when)
 import Data.Aeson (Value (..), eitherDecode)
 import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.ByteString.Lazy.Char8 qualified as LazyChar8
 import Data.List (intercalate, isInfixOf, isPrefixOf)
-import Data.Maybe (fromMaybe, isJust)
+import Data.Maybe (isJust)
 import Data.Text qualified as Text
 import Data.Vector qualified as Vector
 import Generated.Contracts qualified as Contracts
@@ -24,19 +24,22 @@ import Infernix.Cluster.Discover
 import Infernix.Cluster.PublishImages qualified as PublishImages
 import Infernix.Config
 import Infernix.DemoConfig (decodeDemoConfigFile, renderModelListing, validateDemoConfigFile)
-import Infernix.Edge (runEdgeProxy)
-import Infernix.Gateway (runGatewayProxy)
 import Infernix.Lint.Chart (runChartLint)
 import Infernix.Lint.Docs (runDocsLint)
 import Infernix.Lint.Files (runFilesLint)
 import Infernix.Lint.Proto (runProtoLint)
+import Infernix.Python
+  ( ensurePoetryProjectReady,
+    pythonAdaptersPresent,
+    pythonProjectDirectory,
+  )
 import Infernix.Runtime (evictCache, listCacheManifests, rebuildCache)
 import Infernix.Service
 import Infernix.Storage (readEdgePortMaybe)
 import Infernix.Types
   ( CacheManifest (..),
     PersistentClaim (..),
-    RuntimeMode (LinuxCuda),
+    RuntimeMode (AppleSilicon, LinuxCuda),
     allRuntimeModes,
     parseRuntimeMode,
     runtimeModeId,
@@ -53,7 +56,6 @@ import System.Directory
     doesFileExist,
     findExecutable,
     getPermissions,
-    listDirectory,
     setPermissions,
   )
 import System.Environment (getArgs, getEnvironment, getExecutablePath)
@@ -83,10 +85,6 @@ dispatch maybeRuntimeMode args = case args of
     ensureAppleHostPrerequisites
     case args of
       ["service"] -> runService maybeRuntimeMode
-      ["edge"] -> runEdgeProxy
-      ["gateway", "harbor"] -> runGatewayProxy "harbor"
-      ["gateway", "minio"] -> runGatewayProxy "minio"
-      ["gateway", "pulsar"] -> runGatewayProxy "pulsar"
       ["cluster", "up"] -> clusterUp maybeRuntimeMode
       ["cluster", "down"] -> clusterDown maybeRuntimeMode
       ["cluster", "status"] -> clusterStatus maybeRuntimeMode
@@ -150,11 +148,12 @@ runLint maybeRuntimeMode = do
 
 runEndToEnd :: Maybe RuntimeMode -> IO ()
 runEndToEnd maybeRuntimeMode = do
-  ensureWebDependencies
-  ensurePlaywrightBrowsers
   commandsAvailable <- platformCommandsAvailableForE2E
   if not commandsAvailable
-    then runCommand maybeRuntimeMode "npm" ["--prefix", "web", "run", "test:e2e"]
+    then do
+      ensureWebDependencies
+      ensurePlaywrightBrowsers
+      runCommand maybeRuntimeMode "npm" ["--prefix", "web", "run", "test:e2e"]
     else do
       paths <- discoverPaths
       runtimeModes <-
@@ -163,6 +162,9 @@ runEndToEnd maybeRuntimeMode = do
           Nothing -> do
             cudaSupported <- linuxCudaSupportedOnHost
             pure (filter (\runtimeMode -> runtimeMode /= LinuxCuda || cudaSupported) allRuntimeModes)
+      when (AppleSilicon `elem` runtimeModes) $ do
+        ensureWebDependencies
+        ensurePlaywrightBrowsers
       mapM_ (runRuntimeModeE2E paths) runtimeModes
 
 runRuntimeModeE2E :: Paths -> RuntimeMode -> IO ()
@@ -174,20 +176,46 @@ runRuntimeModeE2E paths runtimeMode =
         case maybePort of
           Just port -> pure port
           Nothing -> ioError (userError "edge port was not published after cluster up")
-      if controlPlaneContext paths == "host-native"
+      if runtimeMode == AppleSilicon
         then
           withHostBridgeDemo runtimeMode edgePort $
-            runPlaywrightImage runtimeMode Nothing "127.0.0.1" edgePort "control-plane-host" "host-demo-bridge"
+            runHostPlaywright runtimeMode "127.0.0.1" edgePort "control-plane-host" "host-demo-bridge"
         else
-          runPlaywrightImage
-            runtimeMode
-            (Just "kind")
-            (kindControlPlaneNodeName paths runtimeMode)
-            30090
-            "cluster-pod"
-            "cluster-demo"
+          if controlPlaneContext paths == "host-native"
+            then
+              runPlaywrightImage
+                runtimeMode
+                Nothing
+                "127.0.0.1"
+                edgePort
+                "cluster-pod"
+                "cluster-demo"
+            else
+              runPlaywrightImage
+                runtimeMode
+                (Just "kind")
+                (kindControlPlaneNodeName paths runtimeMode)
+                30090
+                "cluster-pod"
+                "cluster-demo"
   )
     `finally` clusterDown (Just runtimeMode)
+
+runHostPlaywright :: RuntimeMode -> String -> Int -> String -> String -> IO ()
+runHostPlaywright runtimeMode routeProbeHost edgePort expectedDaemonLocation expectedApiUpstreamMode = do
+  waitForPlaywrightSurface routeProbeHost edgePort expectedDaemonLocation expectedApiUpstreamMode
+  paths <- discoverPaths
+  runCommandWithCwdAndEnv
+    (Just runtimeMode)
+    [ ("INFERNIX_RUNTIME_MODE", Text.unpack (runtimeModeId runtimeMode)),
+      ("INFERNIX_EDGE_PORT", show edgePort),
+      ("INFERNIX_PLAYWRIGHT_HOST", routeProbeHost),
+      ("INFERNIX_EXPECT_DAEMON_LOCATION", expectedDaemonLocation),
+      ("INFERNIX_EXPECT_API_UPSTREAM_MODE", expectedApiUpstreamMode)
+    ]
+    "npm"
+    ["--prefix", "web", "run", "test:e2e:image"]
+    (repoRoot paths)
 
 withHostBridgeDemo :: RuntimeMode -> Int -> IO () -> IO ()
 withHostBridgeDemo runtimeMode edgePort action = do
@@ -254,59 +282,20 @@ runPlaywrightImage runtimeMode maybeNetwork routeProbeHost edgePort expectedDaem
              "INFERNIX_EXPECT_API_UPSTREAM_MODE=" <> expectedApiUpstreamMode,
              imageRef,
              "npm",
+             "--prefix",
+             "web",
              "run",
              "test:e2e:image"
            ]
     )
 
 resolvePlaywrightImage :: Paths -> RuntimeMode -> IO String
-resolvePlaywrightImage paths runtimeMode = do
-  let overridePath =
-        buildRoot paths
-          </> ("harbor-image-overrides-" <> Text.unpack (runtimeModeId runtimeMode) <> ".yaml")
-  overrideExists <- doesFileExist overridePath
-  if not overrideExists
-    then pure "infernix-web:local"
-    else do
-      overrideLines <- lines <$> readFile overridePath
-      pure (fromMaybe "infernix-web:local" (publishedWebImageRef overrideLines))
-
-publishedWebImageRef :: [String] -> Maybe String
-publishedWebImageRef overrideLines = do
-  webSection <- nestedYamlSection 0 "web:" overrideLines
-  imageSection <- nestedYamlSection 2 "image:" webSection
-  repository <- lookupYamlScalar 4 "repository:" imageSection
-  tag <- lookupYamlScalar 4 "tag:" imageSection
-  pure (repository <> ":" <> tag)
-
-nestedYamlSection :: Int -> String -> [String] -> Maybe [String]
-nestedYamlSection indent header = go
-  where
-    prefix = replicate indent ' ' <> header
-    go [] = Nothing
-    go (line : rest)
-      | line == prefix =
-          Just
-            ( takeWhile
-                (\candidate -> null (trimLeft candidate) || leadingSpaces candidate > indent)
-                rest
-            )
-      | otherwise = go rest
-
-lookupYamlScalar :: Int -> String -> [String] -> Maybe String
-lookupYamlScalar indent fieldLabel = go
-  where
-    prefix = replicate indent ' ' <> fieldLabel
-    go [] = Nothing
-    go (line : rest)
-      | prefix `isPrefixOf` line = Just (trimLeft (drop (length prefix) line))
-      | otherwise = go rest
-
-leadingSpaces :: String -> Int
-leadingSpaces = length . takeWhile (== ' ')
-
-trimLeft :: String -> String
-trimLeft = dropWhile (== ' ')
+resolvePlaywrightImage _paths runtimeMode =
+  pure
+    ( case runtimeMode of
+        LinuxCuda -> "infernix-linux-cuda:local"
+        _ -> "infernix-linux-cpu:local"
+    )
 
 waitForPublication :: Int -> String -> String -> IO ()
 waitForPublication edgePort expectedDaemonLocation expectedApiUpstreamMode = go (60 :: Int)
@@ -615,55 +604,30 @@ ensurePlaywrightBrowsers = do
 
 runPythonQualityIfPresent :: Maybe RuntimeMode -> IO ()
 runPythonQualityIfPresent maybeRuntimeMode = do
-  adaptersPresent <- pythonAdaptersPresent
-  when adaptersPresent $ do
-    paths <- discoverPaths
-    ensurePythonQualityDependencies maybeRuntimeMode paths
-    runCommandWithCwdAndEnv
-      maybeRuntimeMode
-      [("POETRY_VIRTUALENVS_IN_PROJECT", "true")]
-      "bash"
-      ["tools/python_quality.sh"]
-      (repoRoot paths)
-
-ensurePythonAdapterDependencies :: Maybe RuntimeMode -> IO ()
-ensurePythonAdapterDependencies maybeRuntimeMode = do
   paths <- discoverPaths
-  adaptersPresent <- pythonAdaptersPresent
+  runtimeMode <- resolveRuntimeMode maybeRuntimeMode
+  let projectDirectory = pythonProjectDirectory paths runtimeMode
+  adaptersPresent <- pythonAdaptersPresent projectDirectory
   when adaptersPresent $ do
-    ensurePythonQualityDependencies maybeRuntimeMode paths
-
-pythonAdaptersPresent :: IO Bool
-pythonAdaptersPresent = do
-  paths <- discoverPaths
-  let adaptersRoot = repoRoot paths </> "python" </> "adapters"
-  adaptersDirectoryPresent <- doesDirectoryExist adaptersRoot
-  if not adaptersDirectoryPresent
-    then pure False
-    else not . null <$> listDirectory adaptersRoot
-
-ensurePythonQualityDependencies :: Maybe RuntimeMode -> Paths -> IO ()
-ensurePythonQualityDependencies maybeRuntimeMode paths = do
-  let venvBin = repoRoot paths </> "python" </> ".venv" </> "bin"
-      requiredTools = ["mypy", "black", "ruff"]
-  toolsReady <- allM (doesFileExist . (venvBin </>)) requiredTools
-  unless toolsReady $
+    ensurePythonQualityDependencies paths projectDirectory
     runCommandWithCwdAndEnv
       maybeRuntimeMode
       [("POETRY_VIRTUALENVS_IN_PROJECT", "true")]
       "poetry"
-      ["install", "--directory", "python", "--no-root"]
-      (repoRoot paths)
+      ["--directory", projectDirectory, "run", "check-code"]
+      projectDirectory
 
-allM :: (Monad m) => (a -> m Bool) -> [a] -> m Bool
-allM predicate = go
-  where
-    go [] = pure True
-    go (value : rest) = do
-      matches <- predicate value
-      if matches
-        then go rest
-        else pure False
+ensurePythonAdapterDependencies :: Maybe RuntimeMode -> IO ()
+ensurePythonAdapterDependencies maybeRuntimeMode = do
+  paths <- discoverPaths
+  runtimeMode <- resolveRuntimeMode maybeRuntimeMode
+  let projectDirectory = pythonProjectDirectory paths runtimeMode
+  adaptersPresent <- pythonAdaptersPresent projectDirectory
+  when adaptersPresent $ do
+    ensurePythonQualityDependencies paths projectDirectory
+
+ensurePythonQualityDependencies :: Paths -> FilePath -> IO ()
+ensurePythonQualityDependencies = ensurePoetryProjectReady
 
 platformCommandsAvailableForE2E :: IO Bool
 platformCommandsAvailableForE2E = do
@@ -694,8 +658,6 @@ helpText =
       "",
       "Commands:",
       "  infernix service",
-      "  infernix edge",
-      "  infernix gateway harbor|minio|pulsar",
       "  infernix cluster up",
       "  infernix cluster down",
       "  infernix cluster status",

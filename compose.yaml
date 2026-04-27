@@ -2,7 +2,7 @@ services:
   infernix:
     build:
       context: .
-      dockerfile: docker/infernix.Dockerfile
+      dockerfile: docker/linux-cpu.Dockerfile
     command: ["infernix", "--help"]
     environment:
       INFERNIX_BUILD_ROOT: /opt/build/infernix

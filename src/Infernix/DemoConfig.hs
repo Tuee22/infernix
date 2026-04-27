@@ -76,7 +76,7 @@ validateDemoConfig demoConfig
   | null (engines demoConfig) =
       Left "engines must not be empty"
   | any invalidEngineBinding (engines demoConfig) =
-      Left "every engine binding must declare a non-blank engine, adapterId, adapterType, and adapterLocator"
+      Left "every engine binding must declare non-blank engine, adapterId, adapterType, adapterLocator, adapterEntrypoint, setupEntrypoint, and projectDirectory values"
   | null (models demoConfig) =
       Left "models must not be empty"
   | any invalidRequestShape (models demoConfig) =
@@ -99,7 +99,10 @@ validateDemoConfig demoConfig
         [ engineBindingName engineBinding,
           engineBindingAdapterId engineBinding,
           engineBindingAdapterType engineBinding,
-          engineBindingAdapterLocator engineBinding
+          engineBindingAdapterLocator engineBinding,
+          engineBindingAdapterEntrypoint engineBinding,
+          engineBindingSetupEntrypoint engineBinding,
+          Text.pack (engineBindingProjectDirectory engineBinding)
         ]
     invalidRequestShape model =
       null (requestShape model)
@@ -109,8 +112,8 @@ validateDemoConfig demoConfig
     runtimeMismatch model = runtimeMode model /= configRuntimeMode demoConfig
     missingEngineBindings =
       [ Text.unpack engineName
-      | engineName <- nub (map selectedEngine (models demoConfig)),
-        engineName `notElem` map engineBindingName (engines demoConfig)
+        | engineName <- nub (map selectedEngine (models demoConfig)),
+          engineName `notElem` map engineBindingName (engines demoConfig)
       ]
     duplicateModelIds = duplicates (map (Text.unpack . modelId) (models demoConfig))
     duplicateMatrixRows = duplicates (map (Text.unpack . matrixRowId) (models demoConfig))

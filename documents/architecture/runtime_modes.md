@@ -16,10 +16,6 @@ The control-plane execution context answers where `infernix` runs.
 Both execution contexts use the same runtime-mode ids, generated demo-config contract, and
 repo-local durable state root under `./.data/`.
 
-- on the Linux outer-container cluster path, the launcher reaches Kubernetes over the private
-  Docker `kind` network with an internal kubeconfig while host-published cluster ports remain
-  loopback-only on `127.0.0.1`
-
 ## Runtime Modes
 
 The runtime mode answers which engine column from the root README matrix is active for generated
@@ -31,9 +27,9 @@ demo catalog entries, service binding, and validation.
 | Ubuntu 24.04 / CPU | `linux-cpu` | `Best Linux CPU engine` |
 | Ubuntu 24.04 / NVIDIA CUDA Container | `linux-cuda` | `Best Linux CUDA engine` |
 
-`cluster up` resolves the active runtime mode before cluster-side reconciliation begins, renders
-`infernix-demo-<mode>.dhall`, and publishes that exact content into
-`ConfigMap/infernix-demo-config`.
+`cluster up` resolves the active runtime mode before reconciliation begins, renders
+`infernix-demo-<mode>.dhall`, and publishes that exact content into the repo-local publication
+mirror or `ConfigMap/infernix-demo-config`.
 
 ## Generated Demo Config Contract
 
@@ -41,55 +37,27 @@ The generated demo catalog is the source of truth for the active runtime mode.
 
 - `infernix-demo-<mode>.dhall` records every README matrix row supported by that mode and omits
   rows whose selected engine is `Not recommended`
-- each generated entry records the selected engine, request shape, runtime lane, and workload metadata
+- each generated entry records the selected engine, request shape, runtime lane, and workload
+  metadata
 - in containerized execution contexts, `ConfigMap/infernix-demo-config` is mounted read-only at
   `/opt/build/`, and the watched file lives at `/opt/build/infernix-demo-<mode>.dhall`
 - `infernix test integration` and `infernix test e2e` enumerate every generated catalog entry for
   the active runtime mode rather than using a smoke subset
 
-## GPU-Enabled `linux-cuda`
-
-`linux-cuda` is a distinct runtime mode, not a generic alias for "Linux".
-
-- the plan contract requires `cluster up` in `linux-cuda` to reconcile a Kind path that exposes
-  NVIDIA container runtime support inside Kind and usable `nvidia.com/gpu` resources to cluster
-  workloads
-- `cluster up` enforces a host-side NVIDIA preflight contract, creates the cluster through
-  `nvkind`, mounts the NVIDIA worker-device path into the GPU worker, creates
-  `RuntimeClass/nvidia` before the device-plugin rollout depends on it, syncs NVIDIA userspace
-  into the Kind worker when the supported host exposes GPUs through the accepted `--gpus all`
-  worker-device contract rather than a Docker default-runtime injection, and installs the NVIDIA
-  device plugin so Kubernetes advertises real allocatable `nvidia.com/gpu`
-- the cluster deploys `RuntimeClass/nvidia`, and the CUDA service workload requests
-  `nvidia.com/gpu: 1` while selecting the GPU-labeled node
-- CUDA-bound generated catalog rows carry runtime-lane metadata that the service and test surfaces
-  consume for placement and scheduling assertions
-- switching from `linux-cpu` to `linux-cuda` changes the selected engine bindings and may change
-  the generated entry set
-
 ## Service Placement
 
 Service placement is a separate concept from runtime mode.
 
-- Apple host-native service placement runs `infernix service` on the host and repoints the routed
-  `/api` surface through the Apple host bridge while the browser stays on the shared edge URL
-- Apple host-native service placement reaches MinIO and Pulsar through the edge-routed
-  `/minio/s3`, `/pulsar/admin`, and `/pulsar/ws` surfaces, while cluster-resident service
-  placement uses cluster-local MinIO and Pulsar networking on the supported Kind path
-- the host-native and cluster-resident service placements both launch the same process-isolated
-  engine-worker contract, consume durable runtime artifact bundles plus engine-specific
-  source-artifact manifests, use the engine-specific worker runner by default on the supported
-  path, report engine-adapter availability through the durable bundle or routed cache surface, and
-  still honor adapter-specific command overrides when supported-host engine commands are installed
-- local host-side fixture helpers may still use an explicit `filesystem-fixture` ownership mode for
-  unit coverage, but the supported `infernix service` surface itself requires the routed durable
-  backend contract or explicit backend configuration
-- cluster-resident service placement consumes the same active runtime mode and the same generated
-  demo catalog from `/opt/build/`
-- switching runtime modes changes generated catalog content and engine bindings, not the MinIO or
-  Pulsar access path used by a given service placement
-
-Service placement changes where the daemon runs. It does not redefine the three runtime modes.
+- Apple host-native service placement runs `infernix service` on the host and can repoint the
+  routed `/api` surface through the Apple host bridge while the browser stays on the shared edge URL
+- the same production daemon runs in every placement and consumes the same generated
+  `request_topics`, `result_topic`, and `engines` fields from the active `.dhall`
+- the current daemon implements the topic contract as a filesystem-backed simulation under
+  `./.data/runtime/pulsar/`
+- host-native and cluster-resident placements both launch the same process-isolated engine-worker
+  contract and honor the same adapter-specific command overrides
+- switching runtime modes changes generated catalog content and engine bindings, not the service
+  placement contract
 
 ## Cross-References
 

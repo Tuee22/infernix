@@ -16,44 +16,27 @@ upstreamCharts:
     enabled: true
   pulsar:
     enabled: true
-  ingressNginx:
-    enabled: false
+  envoyGateway:
+    enabled: true
 
-edge:
-  port: 9090
-  nodePort: 30090
-  replicaCount: 1
-  routes:
-    - path: /
-      purpose: Demo workbench
-    - path: /api
-      purpose: Demo API
-    - path: /objects
-      purpose: Demo object store
-    - path: /harbor
-      purpose: Harbor portal
-    - path: /minio/console
-      purpose: MinIO console
-    - path: /minio/s3
-      purpose: MinIO S3 API
-    - path: /pulsar/admin
-      purpose: Pulsar admin surface
-    - path: /pulsar/ws
-      purpose: Pulsar websocket surface
+gateway:
+  publishedPort: 9090
+  publishedNodePort: 30090
+  listenerPort: 80
 
 demoConfig:
   name: infernix-demo-config
   mountPath: /opt/build
   fileName: infernix-demo-apple-silicon.dhall
   catalogPayload: |
-    {"runtimeMode":"apple-silicon","edgePort":9090,"configMapName":"infernix-demo-config","generatedPath":"./.build/infernix-demo-apple-silicon.dhall","mountedPath":"/opt/build/infernix-demo-apple-silicon.dhall","demo_ui":true,"request_topics":["persistent://public/default/inference.request.apple-silicon"],"result_topic":"persistent://public/default/inference.result.apple-silicon","engines":[{"engine":"Transformers + PyTorch MPS","adapterId":"transformers-python","adapterType":"python-stdio","adapterLocator":"python/adapters/transformers-python/adapter.py","pythonNative":true}],"models":[{"matrixRowId":"llm-general-text-qwen25","modelId":"llm-qwen25-safetensors","displayName":"Qwen2.5-1.5B Instruct","family":"llm","description":"General text generation over the canonical safetensors checkpoint family.","artifactType":"HF safetensors","referenceModel":"Qwen2.5-1.5B-Instruct","downloadUrl":"https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct","selectedEngine":"Transformers + PyTorch MPS","requestShape":[{"name":"inputText","label":"Prompt","fieldType":"text"}],"runtimeMode":"apple-silicon","runtimeLane":"apple-silicon-host","requiresGpu":false,"notes":"Canonical source format for many open-weight LLMs."}]}
+    {"runtimeMode":"apple-silicon","edgePort":9090,"configMapName":"infernix-demo-config","generatedPath":"./.build/infernix-demo-apple-silicon.dhall","mountedPath":"/opt/build/infernix-demo-apple-silicon.dhall","demo_ui":true,"request_topics":["persistent://public/default/inference.request.apple-silicon"],"result_topic":"persistent://public/default/inference.result.apple-silicon","engines":[{"engine":"Transformers + PyTorch MPS","adapterId":"transformers-python","adapterType":"python-stdio","adapterLocator":"adapters/transformers_python.py","adapterEntrypoint":"adapter-transformers-python","setupEntrypoint":"setup-transformers-python","projectDirectory":"python/apple-silicon","pythonNative":true}],"models":[{"matrixRowId":"llm-general-text-qwen25","modelId":"llm-qwen25-safetensors","displayName":"Qwen2.5-1.5B Instruct","family":"llm","description":"General text generation over the canonical safetensors checkpoint family.","artifactType":"HF safetensors","referenceModel":"Qwen2.5-1.5B-Instruct","downloadUrl":"https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct","selectedEngine":"Transformers + PyTorch MPS","requestShape":[{"name":"inputText","label":"Prompt","fieldType":"text"}],"runtimeMode":"apple-silicon","runtimeLane":"apple-silicon-host","requiresGpu":false,"notes":"Canonical source format for many open-weight LLMs."}]}
 
 demo:
   enabled: true
   replicaCount: 1
   port: 8080
   image:
-    repository: infernix-service
+    repository: infernix-linux-cpu
     tag: local
     pullPolicy: IfNotPresent
 
@@ -61,11 +44,11 @@ publication:
   name: infernix-publication-state
   fileName: publication.json
   payloadJson: |
-    {"clusterPresent":false,"controlPlaneContext":"host-native","daemonLocation":"cluster-pod","catalogSource":"generated-build-root","runtimeMode":"apple-silicon","edgePort":9090,"storageClass":"infernix-manual","generatedDemoConfigPath":"./.build/infernix-demo-apple-silicon.dhall","publishedDemoConfigPath":"./.data/runtime/configmaps/infernix-demo-config/infernix-demo-apple-silicon.dhall","publishedConfigMapManifestPath":"./.data/runtime/configmaps/infernix-demo-config/configmap.yaml","mountedDemoConfigPath":"/opt/build/infernix-demo-apple-silicon.dhall","demoConfigPath":"./.build/infernix-demo-apple-silicon.dhall","workerExecutionMode":"process-isolated-engine-workers","workerAdapterMode":"engine-specific-runner-defaults","artifactAcquisitionMode":"engine-ready-artifact-manifests","apiUpstream":{"mode":"cluster-demo","host":"infernix-demo.platform.svc.cluster.local","port":80},"upstreams":[{"id":"demo","routePrefix":"/","targetSurface":"cluster-resident demo surface","healthStatus":"published","durableBackendState":"generated web bundle and Haskell demo daemon"},{"id":"harbor","routePrefix":"/harbor","targetSurface":"cluster Harbor gateway","healthStatus":"published","durableBackendState":"harbor-registry-backed chart deployment"},{"id":"minio","routePrefix":"/minio/s3","targetSurface":"cluster MinIO gateway","healthStatus":"published","durableBackendState":"minio-backed chart deployment"},{"id":"pulsar","routePrefix":"/pulsar/ws","targetSurface":"cluster Pulsar gateway","healthStatus":"published","durableBackendState":"pulsar-backed chart deployment"}],"routes":[{"path":"/","purpose":"Demo workbench"},{"path":"/api","purpose":"Demo API"},{"path":"/objects","purpose":"Demo object store"},{"path":"/harbor","purpose":"Harbor portal"},{"path":"/minio/console","purpose":"MinIO console"},{"path":"/minio/s3","purpose":"MinIO S3 API"},{"path":"/pulsar/admin","purpose":"Pulsar admin surface"},{"path":"/pulsar/ws","purpose":"Pulsar websocket surface"}]}
+    {"clusterPresent":false,"controlPlaneContext":"host-native","daemonLocation":"cluster-pod","catalogSource":"generated-build-root","runtimeMode":"apple-silicon","edgePort":9090,"storageClass":"infernix-manual","generatedDemoConfigPath":"./.build/infernix-demo-apple-silicon.dhall","publishedDemoConfigPath":"./.data/runtime/configmaps/infernix-demo-config/infernix-demo-apple-silicon.dhall","publishedConfigMapManifestPath":"./.data/runtime/configmaps/infernix-demo-config/configmap.yaml","mountedDemoConfigPath":"/opt/build/infernix-demo-apple-silicon.dhall","demoConfigPath":"./.build/infernix-demo-apple-silicon.dhall","workerExecutionMode":"process-isolated-engine-workers","workerAdapterMode":"engine-specific-runner-defaults","artifactAcquisitionMode":"engine-ready-artifact-manifests","apiUpstream":{"mode":"cluster-demo","host":"infernix-demo.platform.svc.cluster.local","port":80},"upstreams":[{"id":"demo","routePrefix":"/","targetSurface":"HTTPRoute -> infernix-demo Service","healthStatus":"published","durableBackendState":"generated web bundle and Haskell demo daemon"},{"id":"harbor","routePrefix":"/harbor","targetSurface":"HTTPRoute -> Harbor portal Service","healthStatus":"published","durableBackendState":"envoy-gateway-routed harbor deployment"},{"id":"minio","routePrefix":"/minio/s3","targetSurface":"HTTPRoute -> MinIO Service","healthStatus":"published","durableBackendState":"envoy-gateway-routed minio deployment"},{"id":"pulsar","routePrefix":"/pulsar/ws","targetSurface":"HTTPRoute -> Pulsar Service","healthStatus":"published","durableBackendState":"envoy-gateway-routed pulsar deployment"}],"routes":[{"path":"/","purpose":"Demo workbench"},{"path":"/api","purpose":"Demo API"},{"path":"/objects","purpose":"Demo object store"},{"path":"/harbor","purpose":"Harbor portal"},{"path":"/minio/console","purpose":"MinIO console"},{"path":"/minio/s3","purpose":"MinIO S3 API"},{"path":"/pulsar/admin","purpose":"Pulsar admin surface"},{"path":"/pulsar/ws","purpose":"Pulsar websocket surface"}]}
 
 service:
   image:
-    repository: infernix-service
+    repository: infernix-linux-cpu
     tag: local
     pullPolicy: IfNotPresent
   replicaCount: 1
@@ -92,21 +75,6 @@ service:
     namespace: default
   engineAdapters:
     commandEnv: {}
-
-platformPortals:
-  harbor:
-    replicaCount: 1
-    backendUrl: http://harbor.platform.svc.cluster.local
-    apiUrl: http://infernix-harbor-core.platform.svc.cluster.local
-    adminUser: admin
-  minio:
-    replicaCount: 1
-    s3Endpoint: http://infernix-minio.platform.svc.cluster.local:9000
-    consoleEndpoint: http://infernix-minio-console.platform.svc.cluster.local:9090
-  pulsar:
-    replicaCount: 1
-    adminUrl: http://infernix-infernix-pulsar-proxy.platform.svc.cluster.local/admin/v2
-    httpBaseUrl: http://infernix-infernix-pulsar-proxy.platform.svc.cluster.local
 
 minio:
   mode: distributed

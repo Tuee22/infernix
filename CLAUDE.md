@@ -35,14 +35,19 @@ Those actions are reserved for the user.
 - Treat the demo UI (served by the `infernix-demo` binary, gated by the active `.dhall` `demo_ui`
   flag) as a demo surface while retaining the three-runtime and matrix-coverage intent. Production
   deployments leave the demo UI off and accept inference work via Pulsar subscription only.
-- Custom platform logic is Haskell. Python is permitted only under `python/adapters/<engine>/` and
-  only when the bound inference engine has no non-Python binding. Repo-owned Python is governed by
-  `python/pyproject.toml` and Poetry; outside the cluster, Poetry materializes a repo-local
-  adapter virtual environment on demand; inside the engine container, Poetry installs
-  system-wide. Every adapter container build runs
-  `tools/python_quality.sh` (mypy strict, black check, ruff strict) and fails on any check failure.
+- Routing is owned by Gateway API resources and repo-owned HTTPRoute manifests. The demo cluster is
+  local-only and carries no auth filter.
+- Custom platform logic is Haskell. Python is permitted only under `python/<substrate>/adapters/`
+  and only when the bound inference engine has no non-Python binding. Each substrate owns its own
+  `pyproject.toml`; all adapter execution goes through `poetry run`, and the canonical quality gate
+  is `poetry run check-code` (mypy strict, black check, ruff strict). On Apple Silicon, Poetry may
+  materialize `python/apple-silicon/.venv/` on demand; Linux substrate images install adapter deps
+  during image build.
 - The demo UI is PureScript. Frontend contracts are emitted into `web/src/Generated/` by
   `infernix internal generate-purs-contracts`, which derives them through `purescript-bridge`
   from dedicated Haskell browser-contract ADTs in `src/Generated/Contracts.hs`; the demo UI is
   built with spago and tested with `purescript-spec`.
+- The tracked repository carries no repo-owned `.sh` files and no committed generated artifacts
+  such as Poetry lockfiles, generated protobuf stubs, `*.pyc`, `web/spago.lock`, or
+  `web/src/Generated/`.
 - Run the repo-local docs validator via `infernix lint docs` before closing documentation changes.

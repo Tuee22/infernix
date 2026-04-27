@@ -15,13 +15,11 @@
 Sprints 3.1 (HA MinIO), 3.2 (Patroni PostgreSQL), 3.3 (HA Pulsar), 3.4 (HA Harbor), 3.6 (Demo
 HTTP Host and Apple Host Bridge), and 3.7 (Mode-Stable Publication Contract) are `Done`. Sprints
 3.5 (Envoy Gateway API installation and localhost listener) and 3.8 (Mode-Stable Route Inventory
-via HTTPRoute manifests) are `Planned`: this phase owns replacing the prior Haskell-implemented
-unified edge proxy and the per-backend Haskell gateway workloads with Envoy Gateway API, since
-the demo cluster runs locally and needs no auth; the in-tree `src/Infernix/Edge.hs`,
-`src/Infernix/Gateway.hs`, `src/Infernix/HttpProxy.hs`, the `chart/templates/deployment-edge.yaml`
-manifest, and the gateway entries in `chart/templates/workloads-platform-portals.yaml` are
-Pending Removal in [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md). The phase
-stays `Active` because 3.5 and 3.8 are open and Phase 4 still has open production-runtime work.
+via HTTPRoute manifests) are `Active`: the worktree now carries the Gateway API chart dependency,
+the `GatewayClass` plus `Gateway` manifests, the HTTPRoute set, and rendered-chart route discovery
+for publication state, while the legacy Haskell routing modules and templates are deleted from
+the worktree. The remaining work is real-cluster Gateway or HTTPRoute acceptance and final
+tracked-index cleanup for the removed legacy files.
 
 ## HA Reconcile Surface
 
@@ -67,15 +65,13 @@ reconciles Harbor's Patroni PVCs through `infernix-manual`, repairs Harbor datab
 state through the current Patroni primary, and keeps repeat `cluster down` plus `cluster up`
 cycles bound to the same manually managed PostgreSQL host paths.
 
-Edge routing and per-backend portal exposure now move to Envoy Gateway API. The current tree
-still carries the prior Haskell-implemented edge proxy (`src/Infernix/Edge.hs`), the per-backend
-Haskell gateways (`src/Infernix/Gateway.hs`), the shared proxy code (`src/Infernix/HttpProxy.hs`),
-the chart manifest `chart/templates/deployment-edge.yaml`, and the gateway entries in
-`chart/templates/workloads-platform-portals.yaml`. All of those surfaces are listed in
-[legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) Pending Removal and are
-demolished by Sprint 3.5 (new) and Sprint 3.8 (new) below. The demo cluster has no auth: the
-prior Harbor Basic-auth header injection in `src/Infernix/Gateway.hs` is dropped without
-replacement.
+Edge routing and per-backend portal exposure now land through Envoy Gateway API in the worktree:
+`chart/Chart.yaml` depends on Envoy Gateway, `chart/templates/gatewayclass.yaml` and
+`chart/templates/gateway.yaml` publish the shared listener, and `chart/templates/httproutes/`
+contains the public route inventory. The legacy Haskell routing modules and legacy edge or
+gateway templates are deleted from the worktree, but `src/Infernix/Cluster.hs` and
+`src/Infernix/Models.hs` still duplicate the route inventory in code and the final cluster
+acceptance of the Gateway resources has not yet been revalidated on the current host.
 
 ## Sprint 3.1: HA MinIO Deployment [Done]
 
@@ -229,9 +225,9 @@ None.
 
 ---
 
-## Sprint 3.5: Envoy Gateway API Installation and Localhost Listener [Planned]
+## Sprint 3.5: Envoy Gateway API Installation and Localhost Listener [Active]
 
-**Status**: Planned
+**Status**: Active
 **Implementation**: `chart/Chart.yaml`, `chart/values.yaml`, `chart/templates/gatewayclass.yaml`, `chart/templates/gateway.yaml`, `src/Infernix/Cluster.hs`, `test/integration/Spec.hs`
 **Docs to update**: `documents/engineering/edge_routing.md`, `documents/reference/web_portal_surface.md`, `documents/operations/cluster_bootstrap_runbook.md`
 
@@ -276,10 +272,11 @@ Gateway listener publishes plain HTTP without any auth filter.
 
 ### Remaining Work
 
-- ship the chart change, delete the in-tree Haskell edge proxy modules, and migrate the
-  legacy-tracking-for-deletion entries for `Edge.hs`, `Gateway.hs`, `HttpProxy.hs`,
-  `deployment-edge.yaml`, `service-edge.yaml`, and `edge-configmap.yaml` from Pending Removal to
-  Completed once the demolition lands
+- the chart change and worktree deletions are landed, but this sprint still needs real-cluster
+  validation that the Envoy Gateway controller and `Gateway/infernix-edge` reach `Accepted` on
+  the supported Kind substrate
+- the deleted legacy files still appear in `git ls-files` until user-owned index cleanup lands
+  under Phase 1 Sprint 1.7
 
 ---
 
@@ -377,11 +374,10 @@ None.
 
 ---
 
-## Sprint 3.8: Mode-Stable Route Inventory via HTTPRoute Manifests [Planned]
+## Sprint 3.8: Mode-Stable Route Inventory via HTTPRoute Manifests [Active]
 
-**Status**: Planned
-**Blocked by**: Sprint 3.5
-**Implementation**: `chart/templates/httproutes/`, `chart/values.yaml`, `src/Infernix/Cluster.hs`, `src/Infernix/Models.hs`, `test/integration/Spec.hs`
+**Status**: Active
+**Implementation**: `chart/templates/httproutes/`, `chart/values.yaml`, `src/Infernix/Cluster.hs`, `src/Infernix/Cluster/Discover.hs`, `src/Infernix/Lint/Chart.hs`, `src/Infernix/Models.hs`, `test/integration/Spec.hs`
 **Docs to update**: `documents/engineering/edge_routing.md`, `documents/reference/web_portal_surface.md`, `documents/tools/harbor.md`, `documents/tools/minio.md`, `documents/tools/pulsar.md`
 
 ### Objective
@@ -398,7 +394,9 @@ local-only, so no auth filters are applied.
 
 | Path prefix | Backend | Filter |
 |-------------|---------|--------|
-| `/` (root, plus `/api`, `/api/publication`, `/api/cache`, `/objects/`) | `infernix-demo` Service | none; only rendered when `.Values.demo.enabled` is true |
+| `/` | `infernix-demo` Service | none; rendered only when `.Values.demo.enabled` is true |
+| `/api` | `infernix-demo` Service | none; rendered only when `.Values.demo.enabled` is true |
+| `/objects` | `infernix-demo` Service | none; rendered only when `.Values.demo.enabled` is true |
 | `/harbor` | Harbor portal Service | `URLRewrite` strips `/harbor`; routes whose path starts `/harbor/api` go to the Harbor API Service instead of the portal |
 | `/minio/console` | MinIO console Service | `URLRewrite` strips `/minio/console` |
 | `/minio/s3` | MinIO S3 Service | `URLRewrite` strips `/minio/s3` |
@@ -410,8 +408,9 @@ local-only, so no auth filters are applied.
   cluster has no demo API surface at all
 - no `RequestHeaderModifier` injects credentials anywhere; the Harbor admin Basic-auth header
   the prior Haskell gateway stamped is dropped (demo cluster only)
-- `infernix-publication-state` ConfigMap renders the `routes` list directly from the HTTPRoute
-  manifests; the route inventory is not duplicated in code
+- `infernix-publication-state` ConfigMap renders the `routes` list directly from the rendered
+  HTTPRoute manifests on the supported cluster path; the route inventory is not duplicated in
+  code there
 - `chart/templates/workloads-platform-portals.yaml` loses its `infernix-harbor-gateway`,
   `infernix-minio-gateway`, and `infernix-pulsar-gateway` entries; `src/Infernix/Gateway.hs` and
   `src/Infernix/HttpProxy.hs` are deleted; the `infernix gateway harbor|minio|pulsar` CLI
@@ -434,11 +433,14 @@ local-only, so no auth filters are applied.
 
 ### Remaining Work
 
-- ship the HTTPRoute manifest set, delete the in-tree `src/Infernix/Gateway.hs`,
-  `src/Infernix/HttpProxy.hs`, and the gateway entries in `workloads-platform-portals.yaml`,
-  remove the `infernix gateway` CLI subcommands, and migrate the corresponding
-  legacy-tracking-for-deletion entries from Pending Removal to Completed once the demolition
-  lands
+- the supported cluster path now derives publication-state routes from the rendered HTTPRoute set
+  and annotates each route with `infernix.io/purpose`; the remaining work is real-cluster
+  validation that those HTTPRoutes reach `Accepted` and route the shared localhost listener
+  correctly on the supported Kind substrate
+- the simulation fallback still seeds local route inventory from `src/Infernix/Models.hs` for
+  non-cluster execution, so only the supported cluster path is de-duplicated today
+- the deleted gateway files and templates still appear in `git ls-files` until user-owned index
+  cleanup lands under Phase 1 Sprint 1.7
 
 ## Documentation Requirements
 

@@ -4,10 +4,12 @@ module Infernix.Lint.Files
 where
 
 import Control.Monad (forM, unless)
-import Data.List (isSuffixOf)
+import Data.List (isInfixOf, isPrefixOf, isSuffixOf)
 import Infernix.Config (Paths (..), discoverPaths)
 import System.Directory (doesDirectoryExist, doesFileExist, listDirectory)
+import System.Exit (ExitCode (ExitSuccess))
 import System.FilePath ((</>))
+import System.Process (CreateProcess (cwd), proc, readCreateProcessWithExitCode)
 
 checkSuffixes :: [String]
 checkSuffixes = [".cabal", ".hs", ".js", ".json", ".md", ".mjs", ".proto", ".purs", ".py", ".sh", ".yaml", ".yml"]
@@ -35,7 +37,9 @@ skipDirectories =
 runFilesLint :: IO ()
 runFilesLint = do
   paths <- discoverPaths
-  failures <- concat <$> walkDirectory (repoRoot paths) ""
+  workingTreeFailures <- concat <$> walkDirectory (repoRoot paths) ""
+  trackedGeneratedFailures <- listTrackedGeneratedFailures (repoRoot paths)
+  let failures = workingTreeFailures <> trackedGeneratedFailures
   unless (null failures) $
     ioError (userError (unlines failures))
 
@@ -89,3 +93,40 @@ checkFile root relativePath = do
 
 rstrip :: String -> String
 rstrip = reverse . dropWhile (`elem` [' ', '\t']) . reverse
+
+listTrackedGeneratedFailures :: FilePath -> IO [String]
+listTrackedGeneratedFailures root = do
+  (exitCode, stdoutOutput, stderrOutput) <-
+    readCreateProcessWithExitCode ((proc "git" ["ls-files"]) {cwd = Just root}) ""
+  case exitCode of
+    ExitSuccess ->
+      pure
+        [ relativePath <> ": tracked generated artifact"
+          | relativePath <- lines stdoutOutput,
+            isTrackedGeneratedPath relativePath
+        ]
+    _ ->
+      ioError
+        ( userError
+            ( "git ls-files failed during file lint:\n"
+                <> stderrOutput
+            )
+        )
+
+isTrackedGeneratedPath :: FilePath -> Bool
+isTrackedGeneratedPath relativePath =
+  or
+    [ "/__pycache__/" `isInfixOf` relativePath,
+      "__pycache__" `isSuffixOf` relativePath,
+      ".pyc" `isSuffixOf` relativePath,
+      relativePath == "poetry.lock",
+      "/poetry.lock" `isSuffixOf` relativePath,
+      relativePath == "spago.lock",
+      "/spago.lock" `isSuffixOf` relativePath,
+      "tools/generated_proto/" `isPrefixOf` relativePath,
+      "web/src/Generated/" `isPrefixOf` relativePath,
+      "/.mypy_cache/" `isInfixOf` relativePath,
+      "/.mypy_cache" `isSuffixOf` relativePath,
+      "/.ruff_cache/" `isInfixOf` relativePath,
+      "/.ruff_cache" `isSuffixOf` relativePath
+    ]

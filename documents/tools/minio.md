@@ -7,16 +7,17 @@
 
 ## Rules
 
-- MinIO is the authoritative object store
+- MinIO is the chart-owned object-store target on the supported Kind path
+- the current validated runtime persists durable object-store data under `./.data/object-store/`
 - MinIO runs as a four-node distributed cluster on the supported Kind path
 - on a pristine cluster, MinIO may pull from public container repositories only when it is one of
   Harbor's required backend services before Harbor becomes pull-ready
-- the routed service runtime stores runtime artifact bundles, source-artifact manifests or payload
-  copies or direct-upstream downloads, and protobuf manifests in the `infernix-runtime` bucket and
-  stores runtime results in
-  the `infernix-results` bucket
+- the chart values reserve the `infernix-runtime` and `infernix-results` buckets for the real
+  cluster path
 - the MinIO console is exposed through `/minio/console`
 - the MinIO S3 API is exposed through `/minio/s3`
+- on the simulated substrate, those routes remain published as compatibility surfaces for rewrite
+  validation
 
 ## Cross-References
 

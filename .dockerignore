@@ -33,13 +33,24 @@ test-results
 # Frontend build artifacts
 node_modules
 web/node_modules
+web/dist
 web/output
 web/.spago
+web/spago.lock
+web/src/Generated
 web/.parcel-cache
 web/playwright-report
 web/test-results
 chart/charts
 Chart.lock
+
+# Python and generated artifacts
+**/.mypy_cache
+**/.ruff_cache
+**/__pycache__
+**/poetry.lock
+python/*/.venv
+tools/generated_proto
 
 # Temporary files
 *.log

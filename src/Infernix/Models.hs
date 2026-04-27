@@ -51,7 +51,7 @@ catalogForMode runtimeMode = mapMaybe (descriptorForMode runtimeMode) matrixRows
 
 engineBindingsForMode :: RuntimeMode -> [EngineBinding]
 engineBindingsForMode runtimeMode =
-  uniqueEngineBindings (map (engineBindingForSelectedEngine . selectedEngine) (catalogForMode runtimeMode))
+  uniqueEngineBindings (map (engineBindingForSelectedEngine runtimeMode . selectedEngine) (catalogForMode runtimeMode))
 
 requestTopicsForMode :: RuntimeMode -> [Text]
 requestTopicsForMode runtimeMode =
@@ -61,8 +61,8 @@ resultTopicForMode :: RuntimeMode -> Text
 resultTopicForMode runtimeMode =
   "persistent://public/default/inference.result." <> runtimeModeId runtimeMode
 
-engineBindingForSelectedEngine :: Text -> EngineBinding
-engineBindingForSelectedEngine selectedEngineValue =
+engineBindingForSelectedEngine :: RuntimeMode -> Text -> EngineBinding
+engineBindingForSelectedEngine runtimeMode selectedEngineValue =
   let normalizedEngine = Text.toLower selectedEngineValue
       adapterId
         | "vllm" `Text.isInfixOf` normalizedEngine = "vllm-python"
@@ -87,18 +87,26 @@ engineBindingForSelectedEngine selectedEngineValue =
         | pythonNative = "python-stdio"
         | otherwise = "haskell-simulated-runner"
       adapterLocator
-        | pythonNative = "python/adapters/" <> adapterId <> "/" <> adapterScriptName adapterId
+        | pythonNative = "adapters/" <> adapterModuleName adapterId <> ".py"
         | otherwise = adapterId
+      adapterEntrypoint
+        | pythonNative = "adapter-" <> adapterId
+        | otherwise = "runner-" <> adapterId
+      setupEntrypoint
+        | pythonNative = "setup-" <> adapterId
+        | otherwise = "setup-" <> adapterId
    in EngineBinding
         { engineBindingName = selectedEngineValue,
           engineBindingAdapterId = adapterId,
           engineBindingAdapterType = adapterType,
           engineBindingAdapterLocator = adapterLocator,
+          engineBindingAdapterEntrypoint = adapterEntrypoint,
+          engineBindingSetupEntrypoint = setupEntrypoint,
+          engineBindingProjectDirectory = "python/" <> Text.unpack (runtimeModeId runtimeMode),
           engineBindingPythonNative = pythonNative
         }
   where
-    adapterScriptName adapterIdValue =
-      Text.replace "-" "_" adapterIdValue <> "_adapter.py"
+    adapterModuleName = Text.replace "-" "_"
 
 findModel :: RuntimeMode -> Text -> Maybe ModelDescriptor
 findModel runtimeMode wantedModelId =
@@ -238,23 +246,23 @@ publicationUpstreams demoEnabled apiUpstream =
     <> [ PublicationUpstream
            { publicationUpstreamId = "harbor",
              publicationUpstreamRoutePrefix = "/harbor",
-             publicationUpstreamTargetSurface = "cluster Harbor gateway",
+             publicationUpstreamTargetSurface = "HTTPRoute -> Harbor portal Service",
              publicationUpstreamHealthStatus = "published",
-             publicationUpstreamDurableBackendState = "harbor-registry-backed chart deployment"
+             publicationUpstreamDurableBackendState = "envoy-gateway-routed harbor deployment"
            },
          PublicationUpstream
            { publicationUpstreamId = "minio",
              publicationUpstreamRoutePrefix = "/minio/s3",
-             publicationUpstreamTargetSurface = "cluster MinIO gateway",
+             publicationUpstreamTargetSurface = "HTTPRoute -> MinIO Service",
              publicationUpstreamHealthStatus = "published",
-             publicationUpstreamDurableBackendState = "minio-backed chart deployment"
+             publicationUpstreamDurableBackendState = "envoy-gateway-routed minio deployment"
            },
          PublicationUpstream
            { publicationUpstreamId = "pulsar",
              publicationUpstreamRoutePrefix = "/pulsar/ws",
-             publicationUpstreamTargetSurface = "cluster Pulsar gateway",
+             publicationUpstreamTargetSurface = "HTTPRoute -> Pulsar Service",
              publicationUpstreamHealthStatus = "published",
-             publicationUpstreamDurableBackendState = "pulsar-backed chart deployment"
+             publicationUpstreamDurableBackendState = "envoy-gateway-routed pulsar deployment"
            }
        ]
   where
@@ -719,6 +727,9 @@ renderEngineBinding engineBinding =
       "      \"adapterId\": " <> jsonString (engineBindingAdapterId engineBinding) <> ",",
       "      \"adapterType\": " <> jsonString (engineBindingAdapterType engineBinding) <> ",",
       "      \"adapterLocator\": " <> jsonString (engineBindingAdapterLocator engineBinding) <> ",",
+      "      \"adapterEntrypoint\": " <> jsonString (engineBindingAdapterEntrypoint engineBinding) <> ",",
+      "      \"setupEntrypoint\": " <> jsonString (engineBindingSetupEntrypoint engineBinding) <> ",",
+      "      \"projectDirectory\": " <> jsonFilePath (engineBindingProjectDirectory engineBinding) <> ",",
       "      \"pythonNative\": " <> jsonBool (engineBindingPythonNative engineBinding),
       "    }"
     ]

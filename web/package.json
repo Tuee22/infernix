@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "generate:contracts": "sh -c 'set -eu; mode_args=\"\"; if [ \"${INFERNIX_RUNTIME_MODE:-}\" != \"\" ]; then mode_args=\"--runtime-mode $INFERNIX_RUNTIME_MODE\"; fi; cabal --builddir=../.build/cabal run exe:infernix -- $mode_args internal generate-purs-contracts ./src'",
+    "generate:contracts": "sh -c 'set -eu; mode_args=\"\"; builddir=\"${INFERNIX_CABAL_BUILDDIR:-../.build/cabal}\"; if [ \"${INFERNIX_RUNTIME_MODE:-}\" != \"\" ]; then mode_args=\"--runtime-mode $INFERNIX_RUNTIME_MODE\"; fi; cabal --builddir=\"$builddir\" run exe:infernix -- $mode_args internal generate-purs-contracts ./src'",
     "build:purs": "sh -c 'set -eu; rm -rf dist; mkdir -p dist; cp src/index.html dist/index.html; npm exec spago build; npm exec -- spago bundle --module Main --outfile dist/app.js --platform browser --bundle-type app --force'",
     "build": "npm run generate:contracts && npm run build:purs",
     "test:unit": "npm run build && npm exec spago test",

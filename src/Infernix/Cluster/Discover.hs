@@ -3,6 +3,7 @@
 module Infernix.Cluster.Discover
   ( discoverChartClaimsFile,
     discoverChartImagesFile,
+    discoverChartRoutesFile,
     discoverHarborOverlayImageRefsFile,
   )
 where
@@ -20,7 +21,7 @@ import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Vector qualified as Vector
 import Data.Yaml qualified as Yaml
-import Infernix.Types (PersistentClaim (..))
+import Infernix.Types (PersistentClaim (..), RouteInfo (..))
 import Text.Read (readMaybe)
 
 discoverChartImagesFile :: FilePath -> IO [String]
@@ -39,13 +40,21 @@ discoverChartClaimsFile renderedChartPath = do
     then failWith "discover-chart-claims" "rendered chart did not contain any persistent claims"
     else pure (sortOnPersistentClaim discovered)
 
+discoverChartRoutesFile :: FilePath -> IO [RouteInfo]
+discoverChartRoutesFile renderedChartPath = do
+  documents <- loadYamlDocuments renderedChartPath
+  discovered <- concatMapM chartRouteRows documents
+  if null discovered
+    then failWith "discover-chart-routes" "rendered chart did not contain any HTTPRoute path inventory"
+    else pure (List.sortOn path discovered)
+
 discoverHarborOverlayImageRefsFile :: FilePath -> IO [String]
 discoverHarborOverlayImageRefsFile overlayPath = do
   overlay <- loadSingleYamlDocument overlayPath
   pure . nub $
     concat
       [ maybe [] pure (overlayImageRef overlay ["service", "image"]),
-        maybe [] pure (overlayImageRef overlay ["web", "image"]),
+        maybe [] pure (overlayImageRef overlay ["demo", "image"]),
         maybe [] pure (overlayImageRef overlay ["minio", "image"]),
         maybe [] pure (overlayImageRef overlay ["minio", "defaultInitContainers", "volumePermissions", "image"]),
         maybe [] pure (overlayImageRef overlay ["minio", "console", "image"]),
@@ -105,9 +114,9 @@ containerImages podSpec containerKey =
   case lookupValuePath [containerKey] podSpec of
     Just (Array containers) ->
       [ Text.unpack imageRef
-      | container <- Vector.toList containers,
-        Just imageRef <- [lookupTextPath ["image"] container],
-        not (Text.null imageRef)
+        | container <- Vector.toList containers,
+          Just imageRef <- [lookupTextPath ["image"] container],
+          not (Text.null imageRef)
       ]
     _ -> []
 
@@ -116,12 +125,12 @@ customResourceImages document =
   case lookupTextPath ["kind"] document of
     Just "PerconaPGCluster" ->
       [ Text.unpack imageRef
-      | Just imageRef <-
-          [ lookupTextPath ["spec", "image"] document,
-            lookupTextPath ["spec", "proxy", "pgBouncer", "image"] document,
-            lookupTextPath ["spec", "backups", "pgbackrest", "image"] document
-          ],
-        not (Text.null imageRef)
+        | Just imageRef <-
+            [ lookupTextPath ["spec", "image"] document,
+              lookupTextPath ["spec", "proxy", "pgBouncer", "image"] document,
+              lookupTextPath ["spec", "backups", "pgbackrest", "image"] document
+            ],
+          not (Text.null imageRef)
       ]
     _ -> []
 
@@ -131,6 +140,23 @@ chartClaimRows document =
     Just "PersistentVolumeClaim" -> explicitClaimRows document
     Just "StatefulSet" -> statefulSetClaimRows document
     Just "PerconaPGCluster" -> validatePerconaPostgresqlCluster document >> pure []
+    _ -> pure []
+
+chartRouteRows :: Value -> IO [RouteInfo]
+chartRouteRows document =
+  case lookupTextPath ["kind"] document of
+    Just "HTTPRoute" -> do
+      routePathValue <-
+        maybe
+          (failWith "discover-chart-routes" "HTTPRoute is missing spec.rules[0].matches[0].path.value")
+          pure
+          (lookupTextPath ["spec", "rules", "0", "matches", "0", "path", "value"] document)
+      purposeValue <-
+        maybe
+          (failWith "discover-chart-routes" "HTTPRoute is missing metadata.annotations.infernix.io/purpose")
+          pure
+          (lookupTextPath ["metadata", "annotations", "infernix.io/purpose"] document)
+      pure [RouteInfo routePathValue purposeValue]
     _ -> pure []
 
 explicitClaimRows :: Value -> IO [PersistentClaim]
@@ -202,7 +228,7 @@ templateClaims namespaceValue releaseValue workloadValue statefulSetName replica
           pvcName = Text.pack (templateName <> "-" <> statefulSetName <> "-" <> show ordinalValue),
           requestedStorage = Text.pack requestedSize
         }
-    | ordinalValue <- [0 .. replicas - 1]
+      | ordinalValue <- [0 .. replicas - 1]
     ]
 
 validatePerconaPostgresqlCluster :: Value -> IO ()
@@ -336,6 +362,9 @@ lookupValuePath :: [Text] -> Value -> Maybe Value
 lookupValuePath [] value = Just value
 lookupValuePath (segment : remainingSegments) (Object objectValue) =
   KeyMap.lookup (Key.fromText segment) objectValue >>= lookupValuePath remainingSegments
+lookupValuePath (segment : remainingSegments) (Array values) = do
+  index <- readMaybe (Text.unpack segment)
+  indexVector (Vector.toList values) index >>= lookupValuePath remainingSegments
 lookupValuePath _ _ = Nothing
 
 lookupTextPath :: [Text] -> Value -> Maybe Text
@@ -402,6 +431,14 @@ concatMapM action (value : remaining) = do
   current <- action value
   next <- concatMapM action remaining
   pure (current <> next)
+
+indexVector :: [a] -> Int -> Maybe a
+indexVector values index
+  | index < 0 = Nothing
+  | otherwise =
+      case drop index values of
+        value : _ -> Just value
+        [] -> Nothing
 
 stripPrefixMaybe :: String -> String -> Maybe String
 stripPrefixMaybe prefix value =

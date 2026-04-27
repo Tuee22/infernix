@@ -9,19 +9,17 @@
 
 The repository ships two Haskell executables sharing one Cabal library `infernix-lib`:
 
-- `infernix` — production daemon and operator workflow
-- `infernix-demo` — demo UI HTTP host (gated by `.dhall` `demo_ui` flag; absent from production
+- `infernix` - production daemon and operator workflow
+- `infernix-demo` - demo UI HTTP host (gated by `.dhall` `demo_ui`; absent from production
   deployments)
 
-Both ship in the same OCI image; the entrypoint selects which exe runs.
+Both ship in the same runtime image on the real cluster path; the entrypoint selects which
+executable runs.
 
 ## `infernix` Families
 
-- `service` starts the long-running production daemon placeholder (binds no HTTP port; the real
-  Pulsar consumer loop remains open work)
-- `edge` runs the Haskell edge proxy as the cluster `infernix-edge` workload entrypoint
-- `gateway harbor|minio|pulsar` runs the Haskell platform gateways as the
-  `infernix-{harbor,minio,pulsar}-gateway` workload entrypoints
+- `service` starts the long-running production daemon (binds no HTTP port; current topic
+  consumption is filesystem-backed)
 - `cluster` reconciles or reports cluster state
 - `cache` inspects or clears or rebuilds manifest-backed derived cache state
 - `kubectl` proxies Kubernetes access through the repo-local kubeconfig

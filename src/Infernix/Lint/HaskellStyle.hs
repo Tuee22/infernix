@@ -24,7 +24,7 @@ runHaskellStyleLint :: IO ()
 runHaskellStyleLint = do
   paths <- discoverPaths
   createDirectoryIfMissing True (buildRoot paths)
-  runCommand (repoRoot paths) "sh" [repoRoot paths </> "scripts" </> "install-formatter.sh"]
+  installFormatterTools paths
   let toolsRoot = buildRoot paths </> "haskell-style-tools" </> "bin"
       ormoluPath = toolsRoot </> "ormolu"
       hlintPath = toolsRoot </> "hlint"
@@ -38,6 +38,26 @@ runHaskellStyleLint = do
   runCommand (repoRoot paths) hlintPath ["Setup.hs", "app", "src", "test"]
   checkCabalManifest paths
   putStrLn "haskell-style-check: ok"
+
+installFormatterTools :: Paths -> IO ()
+installFormatterTools paths = do
+  let toolsRoot = buildRoot paths </> "haskell-style-tools" </> "bin"
+      ormoluPath = toolsRoot </> "ormolu"
+      hlintPath = toolsRoot </> "hlint"
+  ormoluPresent <- doesFileExist ormoluPath
+  hlintPresent <- doesFileExist hlintPath
+  when (not ormoluPresent || not hlintPresent) $
+    runCommand
+      (repoRoot paths)
+      "cabal"
+      [ "--builddir=.build/cabal",
+        "install",
+        "--installdir=" <> toolsRoot,
+        "--install-method=copy",
+        "--overwrite-policy=always",
+        "ormolu",
+        "hlint"
+      ]
 
 checkCabalManifest :: Paths -> IO ()
 checkCabalManifest paths = do

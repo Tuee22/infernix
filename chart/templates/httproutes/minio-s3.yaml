@@ -1,0 +1,25 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: infernix-minio-s3
+  namespace: platform
+  annotations:
+    infernix.io/purpose: MinIO S3 API
+spec:
+  parentRefs:
+    - name: infernix-edge
+      sectionName: http
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /minio/s3
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /
+      backendRefs:
+        - name: infernix-minio
+          port: 9000

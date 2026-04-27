@@ -17,17 +17,17 @@ not documentation-suite bootstrap.
 
 | Area | Doctrine status | Current supported contract details |
 |------|-----------------|------------------------------------|
-| Development plan and docs suite | realigned baseline closed | The documentation suite, root README, AGENTS, and CLAUDE now describe the two-binary, Pulsar-production, PureScript-demo-UI, Python-restricted-to-engine-adapters doctrine declared in this overview; later phases now retire the remaining legacy implementation surfaces |
+| Development plan and docs suite | realigned baseline closed | The documentation suite, root README, AGENTS, and CLAUDE now describe the two-binary, Pulsar-production, PureScript-demo-UI, per-substrate-Python-adapter doctrine declared in this overview; later phases now retire the remaining legacy implementation and hygiene surfaces |
 | Production daemon and Pulsar inference | partial implementation | `infernix service` no longer binds HTTP and now delegates to the split runtime modules under `src/Infernix/Runtime/{Pulsar,Worker,Cache}.hs`; `Pulsar.hs` is still a no-subscription placeholder, and the worker now resolves engine-specific Python adapters over typed protobuf-over-stdio but those adapters are still stub responders rather than real engine loaders |
 | Demo UI host | present | `infernix-demo` is a separate Haskell executable sharing `infernix-lib`. It exposes the demo HTTP API surface (`/`, `/api`, `/api/publication`, `/api/cache`, `/objects/`) via servant, is used by the host bridge and supported simulated path, and is now deployed on the real cluster through the Helm-gated `infernix-demo` workload driven by the active `.dhall` `demo_ui` flag |
-| Edge routing and platform portals | doctrine realignment underway | Routing moves to Envoy Gateway API: a Helm-installed Envoy Gateway controller, one `Gateway/infernix-edge` resource bound to the chosen localhost port, and one HTTPRoute manifest per public path (`/`, `/api`, `/objects`, `/harbor`, `/minio/console`, `/minio/s3`, `/pulsar/admin`, `/pulsar/ws`) with `URLRewrite` filters per backend. The current tree still carries `src/Infernix/Edge.hs`, `src/Infernix/Gateway.hs`, `src/Infernix/HttpProxy.hs`, `chart/templates/deployment-edge.yaml`, and the gateway entries in `chart/templates/workloads-platform-portals.yaml`; all of those surfaces are listed in [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) Pending Removal and demolished by Phase 3 Sprints 3.5 and 3.8. The demo cluster is local-only, so no auth filters apply (the prior Harbor admin Basic-auth header injection is dropped without replacement) |
+| Edge routing and platform portals | doctrine realignment underway | Routing now lands through Envoy Gateway API: the worktree carries the Envoy Gateway chart dependency, `GatewayClass/infernix-gateway`, `Gateway/infernix-edge`, and one HTTPRoute manifest per public path. The legacy Haskell routing modules and edge templates are deleted from the worktree, but real-cluster Gateway or HTTPRoute acceptance and publication-state de-duplication are still open in Phases 3 and 6. The demo cluster is local-only, so no auth filters apply |
 | Kind and Helm assets | present | the Kind or Helm substrate, Harbor-first bootstrap sequencing, stable Harbor bootstrap and final render material, node-reachable `localhost:30002` registry-mirror config, Kind-worker prefetch of Harbor-backed final image refs, final-phase Pulsar initialization, loopback-only outer-container host bindings, the private Docker `kind` network plus internal kubeconfig access path, pinned `kindest/node:v1.34.0` node images, claim-aware outer-container storage sync, and the supported-host validated `nvkind` plus device-plugin GPU lane are implemented, and the validated outer-container lane requires host inotify capacity sufficient for mount-bearing Kind nodes |
 | PostgreSQL platform substrate | present | every in-cluster PostgreSQL dependency follows the supported Patroni-plus-Percona-operator contract, Harbor disables the chart-managed standalone database path, Harbor's operator-managed claims bind through `infernix-manual`, and repeat cluster lifecycle plus HA validation covers readiness, failover, and PVC rebinding on that substrate |
-| Launch and schema assets | doctrine realignment underway | The current tree carries `compose.yaml`, `docker/infernix.Dockerfile`, `docker/service.Dockerfile`, six per-engine `docker/<engine>-python.Dockerfile`s, `web/Dockerfile`, `chart/`, `kind/`, and `proto/`. Under the new doctrine all of those Dockerfiles collapse into one custom container per Linux substrate: `docker/linux-base.Dockerfile` (shared `ubuntu:24.04` base layer with ghcup-pinned GHC 9.14.1 + Cabal 3.16.1.0, Python 3 + pip + Poetry, gcc 15.2, llama.cpp built from source, Playwright + browsers, Kind/kubectl/Helm/Docker CLI), `docker/linux-cpu.Dockerfile`, and `docker/linux-cuda.Dockerfile` (`FROM nvidia/cuda:<…>-cudnn-runtime-ubuntu24.04`). Apple Silicon has no Dockerfile — the operator runs a host-native `cabal build` against ghcup-installed GHC/Cabal, and the daemon orchestrates engine setup via system `clang` and `brew`. Phase 4 Sprints 4.9 and 4.10 own the migration; Phase 5 Sprint 5.5 folds Playwright into the substrate container; the obsolete Dockerfiles are listed in [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) Pending Removal |
+| Launch and schema assets | doctrine realignment underway | The worktree now carries `compose.yaml`, `docker/linux-base.Dockerfile`, `docker/linux-cpu.Dockerfile`, `docker/linux-cuda.Dockerfile`, `chart/`, `kind/`, and `proto/`; the legacy launcher, service, engine, and web Dockerfiles are deleted from the worktree but still require index cleanup. The shared Linux base image is validated, while the runtime-substrate images and the full prebaked-engine toolchain contract still need closure in Phases 4 and 5 |
 | Runtime-mode matrix | present | the full README-scale model, format, and engine matrix drives the generated source of truth; the Haskell worker consumes the selected engine metadata together with the durable artifact-bundle, source-artifact-manifest, and engine-adapter metadata selected for that runtime mode |
 | Generated demo config | present | `cluster up` emits mode-specific `infernix-demo-<mode>.dhall`, publishes a real `ConfigMap/infernix-demo-config`, and mounts that ConfigMap into the cluster-resident service, web, and `infernix-demo` workloads |
 | Demo UI implementation language | present | PureScript built with spago; `purescript-spec` test framework; generated frontend contracts derived by `infernix internal generate-purs-contracts` through `purescript-bridge` from dedicated Haskell browser-contract ADTs in `src/Generated/Contracts.hs`; build output served from `web/dist/` produced by `spago bundle` |
-| Custom-logic Python tooling | doctrine realignment underway | Repo-owned custom platform logic, cluster helpers, and lint helpers are Haskell-owned. The Python surface lives only at `python/<substrate>/adapters/<engine>/`, governed by per-substrate `pyproject.toml` files and invoked exclusively through `poetry run`. The single quality entrypoint is `poetry run check-code` (mypy strict, black check, ruff strict). Per-engine Poetry console scripts (`setup-<engine>`, adapter entrypoints) replace raw `python <script>` invocation. The legacy `tools/python_quality.sh` shim and `scripts/install-formatter.sh` are listed in Pending Removal because the repo carries no `.sh` files anywhere |
+| Custom-logic Python tooling | doctrine realignment underway | Repo-owned custom platform logic, cluster helpers, and lint helpers are Haskell-owned. The Python surface lives only at `python/<substrate>/adapters/*.py`, governed by per-substrate `pyproject.toml` files and invoked exclusively through `poetry run`. The single quality entrypoint is `poetry run check-code` (mypy strict, black check, ruff strict). Per-engine Poetry console scripts (`setup-<engine>`, adapter entrypoints) replace raw `python <script>` invocation. The legacy shell shims are deleted from the worktree, while real engine loaders and version-control hygiene remain open |
 | Tests | present (gates retain shape; implementation pointers are being re-targeted) | lint, unit, exhaustive integration, and routed E2E entrypoints retain their validation contract; pointers shift from Python-implemented surfaces to Haskell modules and `purescript-spec` suites as the upstream sprints land |
 
 ## Supported Outcome
@@ -63,7 +63,7 @@ not documentation-suite bootstrap.
 - accepts production inference work by Pulsar subscription only: `infernix service` consumes
   protobuf requests from configured request topics, dispatches them through the Haskell worker,
   and publishes results to configured result topics, with no HTTP listener bound
-- restricts Python to `python/<substrate>/adapters/<engine>/` (Poetry-managed; per-substrate
+- restricts Python to `python/<substrate>/adapters/*.py` (Poetry-managed; per-substrate
   `pyproject.toml`; the canonical quality entrypoint is `poetry run check-code` running mypy
   strict, black check, and ruff strict in sequence); per-engine setup work runs through
   `poetry run setup-<engine>` console scripts; all custom platform logic is Haskell
@@ -91,7 +91,7 @@ not documentation-suite bootstrap.
   operator pre-installs ghcup with GHC 9.14.1 + Cabal 3.16.1.0 active, then `cabal build`
   produces working binaries and the daemon installs C/C++ engine deps via system `clang` and
   `brew`
-- carries no `.sh` files anywhere in the repo and commits no built artifacts (`poetry.lock`,
+- carries no tracked repo-owned `.sh` sources and commits no built artifacts (`poetry.lock`,
   generated proto, `.mypy_cache`, `.ruff_cache`, `*.pyc`, `web/dist/`, `web/spago.lock`,
   `web/src/Generated/`); `.gitignore` and `.dockerignore` mirror each other for that ignore set
 
@@ -116,7 +116,7 @@ flowchart TB
         routes["HTTPRoute manifests (/, /api, /harbor, /minio/*, /pulsar/*)"]
         demo["infernix-demo (Haskell servant; gated by .dhall demo_ui)"]
         service["infernix service (Haskell, Pulsar consumer; no HTTP)"]
-        adapters["python/<substrate>/adapters/<engine> (Python-native engines, invoked via poetry run)"]
+        adapters["python/<substrate>/adapters/*.py (Python-native engines, invoked via poetry run)"]
         harbor["Harbor"]
         minio["MinIO"]
         pgop["Percona PostgreSQL operator"]
@@ -206,15 +206,15 @@ infernix/
 │       └── runtime/
 ├── python/
 │   ├── apple-silicon/
-│   │   ├── pyproject.toml     (Poetry-managed; declares engines for the Apple column;
-│   │   │                       creates a repo-local .venv on the host)
-│   │   └── adapters/<engine>/ (per-engine adapter; one per substrate-supported engine)
+│   │   ├── pyproject.toml     (Poetry-managed; declares console scripts for the Apple column;
+│   │   │                       creates a repo-local .venv on demand on the host)
+│   │   └── adapters/*.py      (flat adapter modules plus shared helpers)
 │   ├── linux-cpu/
 │   │   ├── pyproject.toml     (system-wide Poetry install inside the linux-cpu container)
-│   │   └── adapters/<engine>/
+│   │   └── adapters/*.py
 │   └── linux-cuda/
 │       ├── pyproject.toml     (system-wide Poetry install inside the linux-cuda container)
-│       └── adapters/<engine>/
+│       └── adapters/*.py
 ├── web/
 │   ├── spago.yaml
 │   ├── src/
@@ -222,8 +222,7 @@ infernix/
 │   │   └── Generated/     (build-time generated PureScript contracts)
 │   ├── test/
 │   │   └── *.purs         (purescript-spec suites)
-│   ├── playwright/
-│   └── Dockerfile         (installs purs, spago, and Playwright)
+│   └── playwright/
 ├── chart/
 │   └── templates/
 │       ├── gatewayclass.yaml      (Envoy Gateway API GatewayClass)
@@ -548,7 +547,7 @@ Apple host-native builds keep generated artifacts under the repo-local `./.build
 
 ### 13. Python Restriction
 
-Python is permitted only under `python/<substrate>/adapters/<engine>/` and only when the bound
+Python is permitted only under `python/<substrate>/adapters/*.py` and only when the bound
 inference engine has no non-Python binding.
 
 - All custom platform logic, including cluster lifecycle, the demo UI HTTP host, build helpers,
@@ -570,8 +569,8 @@ inference engine has no non-Python binding.
   check, and ruff strict in sequence. Per-engine setup work runs through additional Poetry
   console scripts (`setup-<engine>`) the daemon shells out to.
 - `tools/` carries only auto-generated stubs in `tools/generated_proto/` (regenerated by
-  build, gitignored). The repo carries no `.sh` files anywhere; `tools/python_quality.sh` and
-  `scripts/install-formatter.sh` are removed.
+  build, gitignored). The repo carries no tracked repo-owned `.sh` sources; `tools/python_quality.sh`
+  and `scripts/install-formatter.sh` are removed from the worktree.
 
 ### 14. Production Surface Is Pulsar-Only
 

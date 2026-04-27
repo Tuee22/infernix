@@ -32,6 +32,7 @@ import Infernix.Cluster.Discover
 import Infernix.Cluster.PublishImages qualified as PublishImages
 import Infernix.Config (Paths (..))
 import Infernix.Config qualified as Config
+import Infernix.Engines.AppleSilicon (ensureAppleSiliconRuntimeReady)
 import Infernix.Models
 import Infernix.Storage
 import Infernix.Types
@@ -66,7 +67,6 @@ helmRepositories =
     ("percona", "https://percona.github.io/percona-helm-charts"),
     ("apachepulsar", "https://pulsar.apache.org/charts"),
     ("bitnami", "https://charts.bitnami.com/bitnami"),
-    ("ingress-nginx", "https://kubernetes.github.io/ingress-nginx"),
     ("nvdp", "https://nvidia.github.io/k8s-device-plugin")
   ]
 
@@ -77,7 +77,7 @@ helmDependencyArchives =
     "chart/charts/pg-db-2.9.0.tgz",
     "chart/charts/pulsar-4.5.0.tgz",
     "chart/charts/minio-17.0.21.tgz",
-    "chart/charts/ingress-nginx-4.15.1.tgz"
+    "chart/charts/gateway-helm-v1.7.2.tgz"
   ]
 
 finalPhaseDeployments :: ClusterState -> [String]
@@ -86,11 +86,7 @@ finalPhaseDeployments state =
     <> [deployment | clusterStateHasDemoUi state, deployment <- ["deployment/infernix-demo"]]
   where
     baseDeployments =
-      [ "deployment/infernix-edge",
-        "deployment/infernix-harbor-gateway",
-        "deployment/infernix-minio-console",
-        "deployment/infernix-minio-gateway",
-        "deployment/infernix-pulsar-gateway",
+      [ "deployment/infernix-minio-console",
         "deployment/infernix-service"
       ]
 
@@ -269,6 +265,7 @@ clusterUpSimulated paths runtimeMode = do
   writeFile (Config.publicationStatePath paths) (renderPublicationState (Config.controlPlaneContext paths) state)
   writeStateFile (clusterStatePath paths) state
   killSimulatedService paths
+  ensureWebBuildDependencies paths
   runCommand (Just (repoRoot paths)) [] "npm" ["--prefix", "web", "run", "build"]
   buildDir <- Config.resolveCabalBuildDir
   baseEnv <- getEnvironment
@@ -340,6 +337,7 @@ clusterUp maybeRuntimeMode = do
   paths <- Config.discoverPaths
   Config.ensureRepoLayout paths
   runtimeMode <- Config.resolveRuntimeMode maybeRuntimeMode
+  when (runtimeMode == AppleSilicon) (ensureAppleSiliconRuntimeReady paths)
   commandsAvailable <- platformCommandsAvailable
   if not commandsAvailable
     then clusterUpSimulated paths runtimeMode
@@ -386,6 +384,7 @@ clusterUpWithPlatform paths runtimeMode = do
   claimDiscoveryValuesPath <- writeHelmValuesFile paths controlPlane claimDiscoveryState requestedPayload FinalPhase
   claimDiscoveryRenderedChartPath <- renderHelmChart paths runtimeMode [claimDiscoveryValuesPath]
   discoveredClaims <- discoverPersistentClaims paths claimDiscoveryRenderedChartPath
+  discoveredRoutes <- discoverChartRoutesFile claimDiscoveryRenderedChartPath
   mapM_ (ensureClaimDirectoryReady paths) discoveredClaims
   (edgePortValue, kubeconfigContents, clusterCreated) <- ensureKindCluster paths runtimeMode requestedPort
   when (clusterCreated && not (kindUsesHostBindMounts paths)) $
@@ -428,7 +427,7 @@ clusterUpWithPlatform paths runtimeMode = do
           { clusterPresent = True,
             clusterSimulation = False,
             edgePort = edgePortValue,
-            routes = routeInventory demoUiEnabledValue,
+            routes = discoveredRoutes,
             storageClass = "infernix-manual",
             claims = seedClaims,
             clusterRuntimeMode = runtimeMode,
@@ -1361,13 +1360,19 @@ applyStorageClass state =
 
 buildClusterImages :: Paths -> RuntimeMode -> IO ()
 buildClusterImages paths runtimeMode = do
-  let runtimeModeName = Text.unpack (runtimeModeId runtimeMode)
+  let runtimeModeName = Text.unpack (runtimeModeId (clusterWorkloadRuntimeMode runtimeMode))
       dockerBuildArgs dockerfile imageRef = ["build", "-f", dockerfile, "-t", imageRef, "."]
   putStrLn ("building cluster images for " <> runtimeModeName)
-  ensureWebBuildDependencies paths
-  runCommand (Just (repoRoot paths)) [] "npm" ["--prefix", "web", "run", "build"]
-  runCommand (Just (repoRoot paths)) [] "docker" (dockerBuildArgs "docker/service.Dockerfile" serviceImageRef)
-  runCommand (Just (repoRoot paths)) [] "docker" (dockerBuildArgs "web/Dockerfile" webImageRef)
+  runCommand
+    (Just (repoRoot paths))
+    []
+    "docker"
+    (dockerBuildArgs "docker/linux-base.Dockerfile" clusterBaseImageRef)
+  runCommand
+    (Just (repoRoot paths))
+    []
+    "docker"
+    (dockerBuildArgs (clusterWorkloadDockerfile runtimeMode) (clusterWorkloadImageRef runtimeMode))
 
 preloadBootstrapSupportImagesOnKindNodes :: Paths -> RuntimeMode -> FilePath -> IO ()
 preloadBootstrapSupportImagesOnKindNodes paths runtimeMode renderedChartPath = do
@@ -1388,8 +1393,8 @@ bootstrapSupportImageRefs _paths renderedChartPath =
   where
     isBootstrapSupportImageRef imageRef =
       not (null imageRef)
-        && imageRef /= serviceImageRef
-        && imageRef /= webImageRef
+        && imageRef /= "infernix-linux-cpu:local"
+        && imageRef /= "infernix-linux-cuda:local"
 
 ensureLocalImageRef :: String -> IO ()
 ensureLocalImageRef imageRef = do
@@ -1447,9 +1452,7 @@ preloadHarborBackedImagesOnKindWorker paths runtimeMode imageOverridesPath = do
     putStrLn "preloading Harbor-backed final images on the Kind worker"
     mapM_ (preloadHarborImageOnNode workerContainer) uniqueImageRefs
   where
-    shouldPreloadOnWorker imageRef =
-      not (null imageRef)
-        && not ("/infernix-web:" `List.isInfixOf` imageRef)
+    shouldPreloadOnWorker imageRef = not (null imageRef)
 
 harborOverlayImageRefs :: Paths -> FilePath -> IO [String]
 harborOverlayImageRefs _paths imageOverridesPath =
@@ -1674,14 +1677,14 @@ waitForHarborPostgresPodsReady state = go totalAttempts False ""
       let dataPodCount =
             length
               [ ()
-              | startupPod <- startupPods,
-                "harbor-postgresql-instance" `List.isPrefixOf` harborPostgresStartupPodName startupPod
+                | startupPod <- startupPods,
+                  "harbor-postgresql-instance" `List.isPrefixOf` harborPostgresStartupPodName startupPod
               ]
           repoHostCount =
             length
               [ ()
-              | startupPod <- startupPods,
-                "harbor-postgresql-repo-host-" `List.isPrefixOf` harborPostgresStartupPodName startupPod
+                | startupPod <- startupPods,
+                  "harbor-postgresql-repo-host-" `List.isPrefixOf` harborPostgresStartupPodName startupPod
               ]
           allStartupPodsPresent =
             dataPodCount >= harborPostgresExpectedDataClaims
@@ -1703,8 +1706,8 @@ waitForHarborPostgresPodsReady state = go totalAttempts False ""
                         <> " ["
                         <> harborPostgresStartupPodStatus startupPod
                         <> "]"
-                    | startupPod <- startupPods,
-                      not (harborPostgresStartupPodReady startupPod)
+                      | startupPod <- startupPods,
+                        not (harborPostgresStartupPodReady startupPod)
                     ]
       if null currentError
         then pure ()
@@ -1790,8 +1793,8 @@ restartHarborPostgresStartupPodsIfStuck state allStartupPodsPresent attemptsElap
   where
     unreadyPodNames =
       [ harborPostgresStartupPodName startupPod
-      | startupPod <- startupPods,
-        not (harborPostgresStartupPodReady startupPod)
+        | startupPod <- startupPods,
+          not (harborPostgresStartupPodReady startupPod)
       ]
     shouldRestart =
       not (null unreadyPodNames)
@@ -2648,9 +2651,9 @@ engineCommandOverridesFromEnvironment = do
     ( List.sortOn
         fst
         [ (name, value)
-        | (name, value) <- environment,
-          "INFERNIX_ENGINE_COMMAND_" `List.isPrefixOf` name,
-          not (null value)
+          | (name, value) <- environment,
+            "INFERNIX_ENGINE_COMMAND_" `List.isPrefixOf` name,
+            not (null value)
         ]
     )
 
@@ -2678,11 +2681,10 @@ renderHelmValues controlPlane state demoConfigPayload deployPhase engineCommandO
   unlines
     ( [ "runtimeMode: " <> Text.unpack (runtimeModeId (clusterRuntimeMode state)),
         "controlPlaneContext: " <> show controlPlane,
-        "edge:",
-        "  port: " <> show (edgePort state),
-        "  replicaCount: " <> show (repoWorkloadReplicaCount deployPhase),
-        "  routes:",
-        renderRoutesYaml (routes state),
+        "gateway:",
+        "  publishedPort: " <> show (edgePort state),
+        "  publishedNodePort: 30090",
+        "  listenerPort: 80",
         "demoConfig:",
         "  fileName: infernix-demo-" <> Text.unpack (runtimeModeId (clusterRuntimeMode state)) <> ".dhall",
         "  catalogPayload: |",
@@ -2692,7 +2694,7 @@ renderHelmValues controlPlane state demoConfigPayload deployPhase engineCommandO
         "  replicaCount: " <> show (repoWorkloadReplicaCount deployPhase),
         "  port: 8080",
         "  image:",
-        "    repository: infernix-service",
+        "    repository: " <> clusterWorkloadImageRepository (clusterRuntimeMode state),
         "    tag: local",
         "    pullPolicy: IfNotPresent",
         "publication:",
@@ -2701,19 +2703,11 @@ renderHelmValues controlPlane state demoConfigPayload deployPhase engineCommandO
         "service:",
         "  replicaCount: " <> show (repoWorkloadReplicaCount deployPhase),
         "  image:",
-        "    repository: infernix-service",
+        "    repository: " <> clusterWorkloadImageRepository (clusterRuntimeMode state),
         "    tag: local",
         "    pullPolicy: IfNotPresent"
       ]
         <> serviceEngineAdapterOverrides
-        <> [ "platformPortals:",
-             "  harbor:",
-             "    replicaCount: " <> show (repoWorkloadReplicaCount deployPhase),
-             "  minio:",
-             "    replicaCount: " <> show (repoWorkloadReplicaCount deployPhase),
-             "  pulsar:",
-             "    replicaCount: " <> show (repoWorkloadReplicaCount deployPhase)
-           ]
         <> phaseChartOverrides deployPhase
         <> bootstrapHarborOverrides deployPhase
     )
@@ -2752,6 +2746,8 @@ renderHelmValues controlPlane state demoConfigPayload deployPhase engineCommandO
         "  minio:",
         "    enabled: true",
         "  pulsar:",
+        "    enabled: false",
+        "  envoyGateway:",
         "    enabled: false",
         "minio:",
         "  console:",
@@ -2796,16 +2792,6 @@ renderHelmValues controlPlane state demoConfigPayload deployPhase engineCommandO
         [ "harbor:",
           "  enableMigrateHelmHook: true"
         ]
-
-renderRoutesYaml :: [RouteInfo] -> String
-renderRoutesYaml =
-  concatMap
-    ( \route ->
-        unlines
-          [ "    - path: " <> Text.unpack (path route),
-            "      purpose: " <> Text.unpack (purpose route)
-          ]
-    )
 
 harborApiHost :: Paths -> RuntimeMode -> String
 harborApiHost paths runtimeMode
@@ -2874,11 +2860,30 @@ kubectlOutput state args = captureCommand Nothing [] "kubectl" (kubeconfigArgs s
 kubeconfigArgs :: ClusterState -> [String]
 kubeconfigArgs state = ["--kubeconfig", kubeconfigPath state]
 
-serviceImageRef :: String
-serviceImageRef = "infernix-service:local"
+clusterWorkloadRuntimeMode :: RuntimeMode -> RuntimeMode
+clusterWorkloadRuntimeMode runtimeMode =
+  case runtimeMode of
+    LinuxCuda -> LinuxCuda
+    _ -> LinuxCpu
 
-webImageRef :: String
-webImageRef = "infernix-web:local"
+clusterWorkloadImageRepository :: RuntimeMode -> String
+clusterWorkloadImageRepository runtimeMode =
+  case clusterWorkloadRuntimeMode runtimeMode of
+    LinuxCuda -> "infernix-linux-cuda"
+    _ -> "infernix-linux-cpu"
+
+clusterWorkloadImageRef :: RuntimeMode -> String
+clusterWorkloadImageRef runtimeMode =
+  clusterWorkloadImageRepository runtimeMode <> ":local"
+
+clusterBaseImageRef :: String
+clusterBaseImageRef = "infernix-linux-base:local"
+
+clusterWorkloadDockerfile :: RuntimeMode -> FilePath
+clusterWorkloadDockerfile runtimeMode =
+  case clusterWorkloadRuntimeMode runtimeMode of
+    LinuxCuda -> "docker/linux-cuda.Dockerfile"
+    _ -> "docker/linux-cpu.Dockerfile"
 
 runCommand :: Maybe FilePath -> [(String, String)] -> FilePath -> [String] -> IO ()
 runCommand maybeWorkingDirectory envOverrides command args = do
