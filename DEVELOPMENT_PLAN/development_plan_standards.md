@@ -137,6 +137,15 @@ Important rule for this repository bootstrap stage:
 - Until Phase 0 lands, the paths under `documents/` may not exist yet.
 - They still appear in `Docs to update` and `Documentation Requirements` because the plan must make
   future documentation obligations explicit before the suite exists.
+- When a phase creates or materially rewrites a broad engineering document, the owning sprint or
+  phase calls out the intended document structure when it matters to closure criteria:
+  - add a `TL;DR` or `Executive Summary` when the topic is broad
+  - include an explicit `Current status` note when implemented behavior and target direction appear
+    in the same document
+  - include a `Validation` section when the document defines a contract that tests or lint must
+    prove
+  - answer these questions directly: what is the rule, what is current versus target, how is it
+    validated, and what is local substrate detail versus true platform contract
 
 ### I. Explicit Cleanup and Removal Ledger
 
@@ -158,6 +167,14 @@ finished-product document.
 - `README.md` still reflects the authoritative intended product shape, canonical CLI surface,
   storage doctrine, operator workflows, runtime-mode envelope, and validation direction described by
   the plan, even when those capabilities are not fully implemented yet.
+- `README.md`, `AGENTS.md`, and `CLAUDE.md` are governed root documents. When a sprint owns
+  root-document governance, it explicitly states which file is canonical for a topic and which
+  files are orientation or automation entry documents only.
+- Root-document governance work calls out the metadata rules those files must follow, including
+  explicit `Status`, `Supersedes`, and authoritative-reference or canonical-home markers when they
+  distinguish canonical guidance from reference-only guidance.
+- Root documents that are not canonical for a topic summarize and link to the canonical
+  `documents/` home instead of restating the full contract.
 - Once Phase 0 lands, `documents/documentation_standards.md` governs the docs suite while this file
   remains authoritative for the plan itself.
 - When root-level workflow guidance changes, update `README.md`, `AGENTS.md`, and `CLAUDE.md` in
@@ -352,6 +369,18 @@ Static quality and compiler hygiene are first-class repository requirements.
 - The plan must describe the actual lint, docs, formatting, or compiler-warning checks the
   repository enforces today rather than naming aspirational external tools as if they are already
   active.
+- When the plan names `documents/development/haskell_style.md`, it describes the actual formatter,
+  linter, `cabal format`, and warning-gate behavior that supported validation enforces today.
+- The plan distinguishes mechanically enforced repository hard-gate inputs from editor-only
+  guidance and keeps review guidance separate from hard validation rules.
+- The plan points to `src/Infernix/Lint/HaskellStyle.hs` as the enforcement-model implementation
+  when describing Haskell style-guide hard gates.
+- The Haskell style-guide obligations called out by the plan include review guidance for module
+  shape, function shape, effect-boundary clarity, and typed control flow.
+- The Haskell style guide states the fail-fast rule explicitly: supported validation fails on
+  hard-gate violations and does not silently rewrite tracked source.
+- `ormolu` remains the canonical formatter unless the implementation changes; the plan must not
+  imply a switch to `fourmolu` without an atomic implementation and documentation update.
 - Repo-owned validation enables strict compiler warnings and treats warnings as errors on supported
   paths.
 - If the repository later adopts external formatters or linters, the plan must be updated
