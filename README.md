@@ -280,9 +280,10 @@ around upstream `kubectl`, not a parallel lifecycle surface.
   public container repositories
 - `cluster up` mirrors required third-party images into Harbor before deploying the remaining
   non-Harbor workloads
-- `cluster up` builds the active Linux runtime image from `docker/linux-substrate.Dockerfile`
-  using the selected `RUNTIME_MODE` plus `BASE_IMAGE`, and publishes it to Harbor before Helm
-  rollout. On Apple Silicon no image build occurs
+- `cluster up` publishes the active Linux runtime image to Harbor before the final Helm rollout.
+  On the supported Linux outer-container path it reuses the already-built baked
+  `infernix-linux-<mode>:local` snapshot rather than rebuilding it again inside the launcher. On
+  Apple Silicon no image build occurs
 - every non-Harbor pod pulls from local Harbor
 - Harbor and only the storage or support services Harbor needs are the allowed direct-upstream
   bootstrap exception before the Harbor-backed pull contract takes over

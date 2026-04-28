@@ -1,23 +1,25 @@
 from __future__ import annotations
 
 from adapters.common import (
-    inference_pb2,
-    request_input_text,
-    run_setup_noop,
-    run_text_adapter,
+    AdapterContext,
+    render_engine_output,
+    run_context_adapter,
+    run_setup_bootstrap,
 )
 
 
-def transform(request: inference_pb2.WorkerRequest) -> str:
-    return request_input_text(request).strip()
+def transform(context: AdapterContext) -> str:
+    vowels = sum(1 for character in context.input_text.lower() if character in "aeiou")
+    detail = f"chars={len(context.input_text)}:vowels={vowels}"
+    return render_engine_output("tensorflow-python", context, detail)
 
 
 def main() -> int:
-    return run_text_adapter(transform)
+    return run_context_adapter(transform)
 
 
 def setup() -> int:
-    return run_setup_noop("tensorflow-python")
+    return run_setup_bootstrap("tensorflow-python")
 
 
 if __name__ == "__main__":

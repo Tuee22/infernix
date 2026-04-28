@@ -95,7 +95,8 @@ Standardize every in-cluster PostgreSQL dependency on one HA operator-managed co
 
 - `infernix cluster up` produces ready Percona and Patroni members for Harbor's PostgreSQL backend
 - rendered Helm values disable embedded standalone PostgreSQL deployments where applicable
-- repeat `cluster down` plus `cluster up` cycles rebind PostgreSQL claims to the same PVs
+- repeat `cluster down` plus `cluster up` cycles rebind operator-managed PostgreSQL storage onto the
+  same deterministic PV inventory and host paths
 
 ### Remaining Work
 

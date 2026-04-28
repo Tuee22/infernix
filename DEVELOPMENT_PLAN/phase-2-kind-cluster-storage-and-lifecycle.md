@@ -1,6 +1,6 @@
 # Phase 2: Kind Cluster Storage and Lifecycle
 
-**Status**: Active
+**Status**: Blocked
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
 
 > **Purpose**: Define the supported Kind bootstrap path, the manual storage doctrine, the Helm
@@ -14,8 +14,9 @@ Sprints 2.1, 2.2, 2.4, 2.5, 2.6, and 2.7 stay `Done`: the storage doctrine, Kind
 manual PV reconciliation, Harbor-first image flow, lifecycle surface, generated demo-config
 publication, and GPU-enabled Kind lane are all present. Sprint 2.3 is now `Done`: the route
 registry plus generated values overlays own the demo-config and publication payload inputs instead
-of committed live copies. Sprint 2.8 is `Active` while the in-image `nvkind` path still needs
-refreshed supported-host validation.
+of committed live copies. Sprint 2.8 is now `Blocked`: the in-image `nvkind` path is landed, and
+the remaining closure needs a supported NVIDIA host with enough free disk headroom for Harbor
+publication plus Pulsar BookKeeper durability.
 
 ## Storage Doctrine
 
@@ -43,8 +44,11 @@ The storage doctrine, Helm rollout, generated demo-config publication, Harbor-fi
 route de-duplication, and generated values overlay path are implemented on the current Kind path.
 The remaining lifecycle work is now limited to the `linux-cuda` supported-host closure:
 
-- the `linux-cuda` path now carries the in-image `nvkind` toolchain, but it still needs refreshed
-  supported-host validation
+- the `linux-cuda` path now carries the in-image `nvkind` toolchain and, on April 28, 2026,
+  reaches real cluster creation, Harbor-backed image publication, and Helm rollout on a supported
+  NVIDIA host
+- that same rerun still blocks later because low host disk headroom makes BookKeeper ledger
+  directories non-writable and prevents `infernix-service` readiness
 
 ## Sprint 2.1: Kind Bootstrap and StorageClass Reset [Done]
 
@@ -67,7 +71,8 @@ Create or reuse the Kind cluster and establish the manual storage-class baseline
 ### Validation
 
 - `./.build/infernix cluster up` creates or reuses the Kind cluster on Apple Silicon
-- `docker compose run --rm infernix infernix cluster up` does the same on the Linux outer path
+- `docker compose run --rm infernix infernix cluster up` does the same on the `linux-cpu` outer
+  path
 - `infernix kubectl get storageclass` shows `infernix-manual` and no default class after bootstrap
 
 ### Remaining Work
@@ -92,13 +97,15 @@ Make local persistence explicit and deterministic as part of `cluster up`.
 - reconciliation rejects workloads that request implicit storage classes
 - reconciliation rejects hand-authored standalone durable PVC manifests outside chart ownership
 - explicit PV-to-PVC binding makes repeat `cluster down` or `cluster up` cycles reattach the same
-  claims to the same `./.data/` paths
+  deterministic durable PV inventory to the same `./.data/` paths, even when an operator recreates
+  opaque claim names
 
 ### Validation
 
 - `infernix test lint` rejects PVCs missing `storageClassName: infernix-manual`
 - repeated `infernix cluster up` runs perform idempotent storage reconciliation
-- `cluster down` followed by `cluster up` rebinds durable claims to the same PVs without repair
+- `cluster down` followed by `cluster up` reuses the same deterministic durable PVs and `./.data/`
+  host paths without repair
 
 ### Remaining Work
 
@@ -260,10 +267,11 @@ None.
 
 ---
 
-## Sprint 2.8: `linux-cuda` Toolchain Closure Without Host-Visible `nvkind` Handoff [Active]
+## Sprint 2.8: `linux-cuda` Toolchain Closure Without Host-Visible `nvkind` Handoff [Blocked]
 
-**Status**: Active
+**Status**: Blocked
 **Implementation**: `docker/linux-substrate.Dockerfile`, `src/Infernix/Cluster.hs`, `kind/cluster-linux-cuda.yaml`, `documents/engineering/k8s_native_dev_policy.md`
+**Blocked by**: supported NVIDIA host with enough free disk headroom for Harbor publication and Pulsar BookKeeper durability
 **Docs to update**: `documents/engineering/k8s_native_dev_policy.md`, `documents/engineering/docker_policy.md`, `documents/operations/cluster_bootstrap_runbook.md`
 
 ### Objective
@@ -281,14 +289,18 @@ the final Linux CUDA image.
 ### Validation
 
 - the CUDA substrate image build produces a runnable `nvkind` binary
-- `docker compose run --rm infernix infernix --runtime-mode linux-cuda cluster up` succeeds on a
-  supported NVIDIA host without a host-visible `nvkind` handoff path
+- `docker run --rm --gpus all -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD/.data:/workspace/.data" infernix-linux-cuda:local infernix --runtime-mode linux-cuda cluster up`
+  succeeds on a supported NVIDIA host without a host-visible `nvkind` handoff path
 - repeated CUDA cluster lifecycle runs preserve GPU visibility and durable storage behavior
 
 ### Remaining Work
 
-- the in-image `nvkind` build is landed, but refreshed `linux-cuda` image and cluster validation
-  on a supported NVIDIA host is still pending
+- rerun the supported `linux-cuda` cluster lifecycle on a supported NVIDIA host with enough free
+  disk headroom to keep Kind image preload, Harbor publication, and Pulsar BookKeeper durability
+  stable through final service readiness
+- the April 28, 2026 rerun already proves the in-image `nvkind` path through real cluster
+  creation, Harbor-backed image publication, and Helm rollout before the host runs out of disk
+  and BookKeeper marks its ledger directories non-writable
 
 ## Documentation Requirements
 

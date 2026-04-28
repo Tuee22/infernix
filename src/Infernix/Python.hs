@@ -19,7 +19,7 @@ import System.Directory
 import System.Environment (getEnvironment)
 import System.Exit (ExitCode (ExitSuccess))
 import System.FilePath ((</>))
-import System.Process (CreateProcess (env), proc, readCreateProcessWithExitCode)
+import System.Process (CreateProcess (cwd, env), proc, readCreateProcessWithExitCode)
 
 pythonProjectDirectory :: Paths -> RuntimeMode -> FilePath
 pythonProjectDirectory paths _runtimeMode =
@@ -101,7 +101,8 @@ runPoetryCommand projectDirectory args failurePrefix = do
   (exitCode, _, stderrOutput) <-
     readCreateProcessWithExitCode
       ( (proc "poetry" args)
-          { env =
+          { cwd = Just projectDirectory,
+            env =
               Just
                 ( ("POETRY_VIRTUALENVS_IN_PROJECT", "true")
                     : filter ((/= "POETRY_VIRTUALENVS_IN_PROJECT") . fst) baseEnvironment

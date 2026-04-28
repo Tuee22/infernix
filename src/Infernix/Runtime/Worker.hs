@@ -23,7 +23,7 @@ import Infernix.Types
 import Lens.Family2 (set, view)
 import Proto.Infernix.Runtime.Inference qualified as ProtoInference
 import Proto.Infernix.Runtime.Inference_Fields qualified as ProtoInferenceFields
-import System.Directory (findExecutable)
+import System.Directory (doesFileExist, findExecutable)
 import System.Environment (lookupEnv)
 import System.Exit (ExitCode (ExitSuccess))
 import System.FilePath ((</>))
@@ -38,8 +38,8 @@ import System.Process
   )
 
 data WorkerInvocation
-  = DirectWorkerInvocation FilePath [String]
-  | ShellWorkerInvocation String
+  = DirectWorkerInvocation FilePath FilePath [String]
+  | ShellWorkerInvocation FilePath String
 
 runInferenceWorker :: Paths -> RuntimeMode -> ModelDescriptor -> InferenceRequest -> IO (Either ErrorResponse Text)
 runInferenceWorker paths runtimeMode model request =
@@ -47,7 +47,8 @@ runInferenceWorker paths runtimeMode model request =
       fallbackOutput = renderInferenceOutput model request
    in case engineBindingAdapterType engineBinding of
         "python-stdio" ->
-          runPythonWorker paths runtimeMode model engineBinding request fallbackOutput
+          ensurePythonEngineSetupReady paths runtimeMode engineBinding
+            >> runPythonWorker paths runtimeMode model engineBinding request fallbackOutput
         _ ->
           pure (Right fallbackOutput)
 
@@ -67,7 +68,7 @@ runPythonWorker paths runtimeMode model engineBinding request fallbackOutput = d
     Nothing ->
       pure (Right fallbackOutput)
     Just invocation -> do
-      let workerRequest = encodeMessage (buildWorkerRequest runtimeMode model engineBinding request)
+      let workerRequest = encodeMessage (buildWorkerRequest paths runtimeMode model engineBinding request)
       workerResult <- runWorkerInvocation paths invocation workerRequest
       pure
         ( case workerResult of
@@ -89,6 +90,60 @@ runPythonWorker paths runtimeMode model engineBinding request fallbackOutput = d
                   }
         )
 
+ensurePythonEngineSetupReady :: Paths -> RuntimeMode -> EngineBinding -> IO ()
+ensurePythonEngineSetupReady paths runtimeMode engineBinding = do
+  let installRoot = engineInstallRootPath paths engineBinding
+      bootstrapManifest = installRoot </> "bootstrap.json"
+      projectDirectory = repoRoot paths </> engineBindingProjectDirectory engineBinding
+  bootstrapReady <- doesFileExist bootstrapManifest
+  if bootstrapReady
+    then pure ()
+    else do
+      maybePoetry <- findExecutable "poetry"
+      case maybePoetry of
+        Nothing -> pure ()
+        Just poetryExecutable -> do
+          ensurePoetryProjectReady paths projectDirectory
+          runSetupInvocation paths poetryExecutable projectDirectory installRoot runtimeMode engineBinding
+
+runSetupInvocation :: Paths -> FilePath -> FilePath -> FilePath -> RuntimeMode -> EngineBinding -> IO ()
+runSetupInvocation paths poetryExecutable projectDirectory installRoot runtimeMode engineBinding = do
+  let setupArgs =
+        [ "--directory",
+          projectDirectory,
+          "run",
+          Text.unpack (engineBindingSetupEntrypoint engineBinding)
+        ]
+      envOverrides =
+        [ ("POETRY_VIRTUALENVS_IN_PROJECT", "true"),
+          ("INFERNIX_REPO_ROOT", repoRoot paths),
+          ("INFERNIX_ENGINE_INSTALL_ROOT", installRoot),
+          ("INFERNIX_RUNTIME_MODE", Text.unpack (runtimeModeId runtimeMode))
+        ]
+  processEnvironment <- workerProcessEnvironment paths envOverrides
+  (_, _, maybeWorkerError, workerHandle) <-
+    createProcess
+      (proc poetryExecutable setupArgs)
+        { cwd = Just projectDirectory,
+          env = Just processEnvironment,
+          std_err = CreatePipe
+        }
+  stderrOutput <-
+    case maybeWorkerError of
+      Just workerError -> ByteString.hGetContents workerError
+      Nothing -> pure ""
+  exitCode <- waitForProcess workerHandle
+  case exitCode of
+    ExitSuccess -> pure ()
+    _ ->
+      ioError
+        ( userError
+            ( "engine setup failed: "
+                <> Text.unpack (engineBindingSetupEntrypoint engineBinding)
+                <> stderrSuffix stderrOutput
+            )
+        )
+
 resolvePythonInvocation :: Paths -> EngineBinding -> Maybe String -> IO (Maybe WorkerInvocation)
 resolvePythonInvocation paths engineBinding maybeOverride = do
   let projectDirectory = repoRoot paths </> engineBindingProjectDirectory engineBinding
@@ -99,6 +154,7 @@ resolvePythonInvocation paths engineBinding maybeOverride = do
         pure
           ( Just
               ( ShellWorkerInvocation
+                  projectDirectory
                   ( overrideCommand
                       <> " "
                       <> shellQuote poetryExecutable
@@ -116,6 +172,7 @@ resolvePythonInvocation paths engineBinding maybeOverride = do
           ( Just
               ( DirectWorkerInvocation
                   poetryExecutable
+                  projectDirectory
                   [ "--directory",
                     projectDirectory,
                     "run",
@@ -132,13 +189,16 @@ resolvePythonInvocation paths engineBinding maybeOverride = do
 
 runWorkerInvocation :: Paths -> WorkerInvocation -> ByteString.ByteString -> IO (Either String ByteString.ByteString)
 runWorkerInvocation paths invocation inputPayload = do
-  processEnvironment <- workerProcessEnvironment paths
-  let processValue = (processFor invocation) {env = Just processEnvironment}
+  processEnvironment <- workerProcessEnvironment paths []
+  let processValue =
+        (processFor invocation)
+          { cwd = Just (workerInvocationCwd invocation),
+            env = Just processEnvironment
+          }
   (maybeWorkerInput, maybeWorkerOutput, maybeWorkerError, workerHandle) <-
     createProcess
       processValue
-        { cwd = Just (repoRoot paths),
-          std_in = CreatePipe,
+        { std_in = CreatePipe,
           std_out = CreatePipe,
           std_err = CreatePipe
         }
@@ -165,21 +225,29 @@ runWorkerInvocation paths invocation inputPayload = do
 processFor :: WorkerInvocation -> CreateProcess
 processFor invocation =
   case invocation of
-    DirectWorkerInvocation command args -> proc command args
-    ShellWorkerInvocation command -> shell command
+    DirectWorkerInvocation command _workingDirectory args -> proc command args
+    ShellWorkerInvocation _workingDirectory command -> shell command
 
-workerProcessEnvironment :: Paths -> IO [(String, String)]
-workerProcessEnvironment paths =
+workerInvocationCwd :: WorkerInvocation -> FilePath
+workerInvocationCwd invocation =
+  case invocation of
+    DirectWorkerInvocation _command workingDirectory _args -> workingDirectory
+    ShellWorkerInvocation workingDirectory _command -> workingDirectory
+
+workerProcessEnvironment :: Paths -> [(String, String)] -> IO [(String, String)]
+workerProcessEnvironment paths extraEnvironment =
   pure
-    [ ("POETRY_VIRTUALENVS_IN_PROJECT", "true"),
-      ("INFERNIX_REPO_ROOT", repoRoot paths)
-    ]
+    ( [ ("POETRY_VIRTUALENVS_IN_PROJECT", "true"),
+        ("INFERNIX_REPO_ROOT", repoRoot paths)
+      ]
+        <> extraEnvironment
+    )
 
 describeInvocation :: WorkerInvocation -> String
 describeInvocation invocation =
   case invocation of
-    DirectWorkerInvocation command args -> unwords (command : args)
-    ShellWorkerInvocation command -> command
+    DirectWorkerInvocation command _workingDirectory args -> unwords (command : args)
+    ShellWorkerInvocation _workingDirectory command -> command
 
 stderrSuffix :: ByteString.ByteString -> String
 stderrSuffix stderrOutput =
@@ -187,13 +255,17 @@ stderrSuffix stderrOutput =
     Just message -> "\n" <> message
     Nothing -> ""
 
-buildWorkerRequest :: RuntimeMode -> ModelDescriptor -> EngineBinding -> InferenceRequest -> ProtoInference.WorkerRequest
-buildWorkerRequest runtimeMode model engineBinding request =
+buildWorkerRequest :: Paths -> RuntimeMode -> ModelDescriptor -> EngineBinding -> InferenceRequest -> ProtoInference.WorkerRequest
+buildWorkerRequest paths runtimeMode model engineBinding request =
   set (field @"requestModelId") (requestModelId request) $
     set (field @"inputText") (inputText request) $
       set (field @"runtimeMode") (runtimeModeId runtimeMode) $
         set (field @"selectedEngine") (selectedEngine model) $
-          set (field @"adapterId") (engineBindingAdapterId engineBinding) defMessage
+          set (field @"adapterId") (engineBindingAdapterId engineBinding) $
+            set (field @"artifactBundlePath") (Text.pack (artifactBundlePathFor paths runtimeMode model)) $
+              set (field @"sourceManifestPath") (Text.pack (sourceManifestPathFor paths runtimeMode model)) $
+                set (field @"cacheManifestPath") (Text.pack (cacheManifestPathFor paths runtimeMode model)) $
+                  set (field @"engineInstallRoot") (Text.pack (engineInstallRootPath paths engineBinding)) defMessage
 
 workerOutputFromResponse :: ProtoInference.WorkerResponse -> Either ErrorResponse Text
 workerOutputFromResponse workerResponse =
@@ -241,3 +313,31 @@ trimWhitespace :: String -> Maybe String
 trimWhitespace rawValue =
   let trimmed = dropWhileEnd (`elem` [' ', '\n', '\r', '\t']) (dropWhile (`elem` [' ', '\n', '\r', '\t']) rawValue)
    in if null trimmed then Nothing else Just trimmed
+
+artifactBundlePathFor :: Paths -> RuntimeMode -> ModelDescriptor -> FilePath
+artifactBundlePathFor paths runtimeMode model =
+  objectStoreRoot paths
+    </> "artifacts"
+    </> Text.unpack (runtimeModeId runtimeMode)
+    </> Text.unpack (modelId model)
+    </> "bundle.json"
+
+sourceManifestPathFor :: Paths -> RuntimeMode -> ModelDescriptor -> FilePath
+sourceManifestPathFor paths runtimeMode model =
+  objectStoreRoot paths
+    </> "source-artifacts"
+    </> Text.unpack (runtimeModeId runtimeMode)
+    </> Text.unpack (modelId model)
+    </> "source.json"
+
+cacheManifestPathFor :: Paths -> RuntimeMode -> ModelDescriptor -> FilePath
+cacheManifestPathFor paths runtimeMode model =
+  objectStoreRoot paths
+    </> "manifests"
+    </> Text.unpack (runtimeModeId runtimeMode)
+    </> Text.unpack (modelId model)
+    </> "default.pb"
+
+engineInstallRootPath :: Paths -> EngineBinding -> FilePath
+engineInstallRootPath paths engineBinding =
+  dataRoot paths </> "engines" </> Text.unpack (engineBindingAdapterId engineBinding)

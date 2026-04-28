@@ -109,7 +109,9 @@ controlPlaneContext paths
   | otherwise = "outer-container"
 
 generatedKubeconfigPath :: Paths -> FilePath
-generatedKubeconfigPath paths = buildRoot paths </> "infernix.kubeconfig"
+generatedKubeconfigPath paths
+  | controlPlaneContext paths == "outer-container" = runtimeRoot paths </> "infernix.kubeconfig"
+  | otherwise = buildRoot paths </> "infernix.kubeconfig"
 
 generatedDemoConfigPath :: Paths -> RuntimeMode -> FilePath
 generatedDemoConfigPath paths runtimeMode =

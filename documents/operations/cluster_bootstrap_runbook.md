@@ -12,11 +12,17 @@
   substrate; `cluster status` will report that mode and the published routes remain available
 - for `linux-cuda`, confirm the supported NVIDIA host satisfies the documented `nvidia-smi` and
   `docker run --gpus all` preflight contract before cluster creation
+- for `linux-cuda`, also confirm the host filesystem has substantial free space before `cluster up`
+  or `test all`; low disk headroom can make Kind-hosted BookKeeper ledger directories
+  non-writable during the Harbor-backed rollout and prevent `infernix-service` readiness
 - confirm that the chosen edge port, active runtime mode, generated demo-config paths, and
   build-root publication details are printed
 - on the real Kind path, confirm that Harbor is the first deployed service on a pristine cluster
   and that only Harbor-required backend services pull from public container repositories before
   Harbor is ready
+- on the supported outer-container path, confirm that `cluster up` reuses the already-built
+  `infernix-linux-<mode>:local` snapshot instead of rebuilding that runtime image inside the
+  launcher
 - confirm that `cluster up` preloads Harbor-backed final image refs onto the Kind worker before the
   remaining non-Harbor workloads begin their final rollout
 - confirm that `infernix kubectl get pods -n platform` shows the Envoy Gateway data plane,

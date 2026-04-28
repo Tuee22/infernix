@@ -3,14 +3,16 @@ module Infernix.Lint.HaskellStyle
   )
 where
 
+import Control.Exception (IOException, try)
 import Control.Monad (when)
 import Data.List (sort)
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, isJust)
 import Infernix.Config (Paths (..), discoverPaths)
 import System.Directory
   ( createDirectoryIfMissing,
     doesDirectoryExist,
     doesFileExist,
+    findExecutable,
     getTemporaryDirectory,
     listDirectory,
     removeFile,
@@ -25,7 +27,7 @@ runHaskellStyleLint = do
   paths <- discoverPaths
   createDirectoryIfMissing True (buildRoot paths)
   installFormatterTools paths
-  let toolsRoot = buildRoot paths </> "haskell-style-tools" </> "bin"
+  let toolsRoot = formatterToolsBinRoot paths
       ormoluPath = toolsRoot </> "ormolu"
       hlintPath = toolsRoot </> "hlint"
   ormoluPresent <- doesFileExist ormoluPath
@@ -41,23 +43,79 @@ runHaskellStyleLint = do
 
 installFormatterTools :: Paths -> IO ()
 installFormatterTools paths = do
-  let toolsRoot = buildRoot paths </> "haskell-style-tools" </> "bin"
+  let toolsRoot = formatterToolsBinRoot paths
       ormoluPath = toolsRoot </> "ormolu"
       hlintPath = toolsRoot </> "hlint"
   ormoluPresent <- doesFileExist ormoluPath
   hlintPresent <- doesFileExist hlintPath
-  when (not ormoluPresent || not hlintPresent) $
-    runCommand
-      (repoRoot paths)
-      "cabal"
-      [ "--builddir=.build/cabal",
-        "install",
-        "--installdir=" <> toolsRoot,
-        "--install-method=copy",
-        "--overwrite-policy=always",
-        "ormolu",
-        "hlint"
-      ]
+  when (not ormoluPresent || not hlintPresent) $ do
+    primaryInstallResult <- try (installFormatterToolsWithCommand paths "cabal" (formatterInstallArgs paths)) :: IO (Either IOException ())
+    case primaryInstallResult of
+      Right () -> pure ()
+      Left primaryErr -> installFormatterToolsWithFallback paths primaryErr
+
+installFormatterToolsWithFallback :: Paths -> IOException -> IO ()
+installFormatterToolsWithFallback paths primaryErr = do
+  ghcupAvailable <- isJust <$> findExecutable "ghcup"
+  if not ghcupAvailable
+    then
+      ioError
+        ( userError
+            ( "haskell-style-check: formatter bootstrap failed with the active toolchain and ghcup is unavailable\n"
+                <> "primary error:\n"
+                <> show primaryErr
+            )
+        )
+    else do
+      fallbackInstallResult <-
+        try
+          ( installFormatterToolsWithCommand
+              paths
+              "ghcup"
+              ( ["run", "--install", "--ghc", formatterBootstrapGhcVersion, "--", "cabal"]
+                  <> formatterInstallArgs paths
+              )
+          ) ::
+          IO (Either IOException ())
+      case fallbackInstallResult of
+        Right () -> pure ()
+        Left fallbackErr ->
+          ioError
+            ( userError
+                ( "haskell-style-check: formatter bootstrap failed with both the active toolchain and the ghcup fallback"
+                    <> "\nactive toolchain error:\n"
+                    <> show primaryErr
+                    <> "\nghcup fallback error:\n"
+                    <> show fallbackErr
+                )
+            )
+
+installFormatterToolsWithCommand :: Paths -> FilePath -> [String] -> IO ()
+installFormatterToolsWithCommand paths =
+  runCommand (repoRoot paths)
+
+formatterInstallArgs :: Paths -> [String]
+formatterInstallArgs paths =
+  [ "--builddir=" <> formatterToolsBuildRoot paths,
+    "install",
+    "--installdir=" <> formatterToolsBinRoot paths,
+    "--install-method=copy",
+    "--overwrite-policy=always",
+    "ormolu",
+    "hlint"
+  ]
+
+formatterToolsRoot :: Paths -> FilePath
+formatterToolsRoot paths = buildRoot paths </> "haskell-style-tools"
+
+formatterToolsBuildRoot :: Paths -> FilePath
+formatterToolsBuildRoot paths = formatterToolsRoot paths </> "cabal"
+
+formatterToolsBinRoot :: Paths -> FilePath
+formatterToolsBinRoot paths = formatterToolsRoot paths </> "bin"
+
+formatterBootstrapGhcVersion :: String
+formatterBootstrapGhcVersion = "9.6.7"
 
 checkCabalManifest :: Paths -> IO ()
 checkCabalManifest paths = do

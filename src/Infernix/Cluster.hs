@@ -575,7 +575,15 @@ loadClusterState :: Paths -> IO (Maybe ClusterState)
 loadClusterState paths = do
   stateExists <- doesFileExist (clusterStatePath paths)
   if stateExists
-    then readStateFileMaybe (clusterStatePath paths)
+    then do
+      maybeState <- readStateFileMaybe (clusterStatePath paths)
+      case maybeState of
+        Just state -> do
+          let normalizedState = normalizeClusterStatePaths paths state
+          when (normalizedState /= state) $
+            writeStateFile (clusterStatePath paths) normalizedState
+          pure (Just normalizedState)
+        Nothing -> pure Nothing
     else pure Nothing
 
 runKubectlCompat :: [String] -> IO ()
@@ -589,7 +597,21 @@ runKubectlCompat args = do
       | clusterSimulation state -> putStrLn "kubectl is not available on the simulated cluster substrate."
       | otherwise -> do
           ensureOuterContainerKindNetworkAccess paths (clusterRuntimeMode state)
+          ensureClusterKubeconfigPresent paths state
           putStr =<< captureCommand Nothing [] "kubectl" (kubeconfigArgs state <> args)
+
+normalizeClusterStatePaths :: Paths -> ClusterState -> ClusterState
+normalizeClusterStatePaths paths state =
+  state
+    { kubeconfigPath = Config.generatedKubeconfigPath paths
+    }
+
+ensureClusterKubeconfigPresent :: Paths -> ClusterState -> IO ()
+ensureClusterKubeconfigPresent paths state = do
+  let kubeconfigFile = kubeconfigPath state
+  kubeconfigExists <- doesFileExist kubeconfigFile
+  unless kubeconfigExists $
+    writeTextFile kubeconfigFile . Text.pack =<< waitForKindKubeconfigOrFail paths (clusterRuntimeMode state)
 
 publicationStateSummaryLines :: FilePath -> IO [String]
 publicationStateSummaryLines publicationPath = do
@@ -1286,11 +1308,12 @@ applyStorageClass state =
 buildClusterImages :: Paths -> RuntimeMode -> IO ()
 buildClusterImages paths runtimeMode = do
   let runtimeModeName = Text.unpack (runtimeModeId (clusterWorkloadRuntimeMode runtimeMode))
+      imageRef = clusterWorkloadImageRef runtimeMode
       baseImage =
         case clusterWorkloadRuntimeMode runtimeMode of
           LinuxCuda -> "nvidia/cuda:13.2.1-cudnn-runtime-ubuntu24.04"
           _ -> "ubuntu:24.04"
-      dockerBuildArgs imageRef =
+      dockerBuildArgs targetImageRef =
         [ "build",
           "-f",
           "docker/linux-substrate.Dockerfile",
@@ -1299,15 +1322,19 @@ buildClusterImages paths runtimeMode = do
           "--build-arg",
           "RUNTIME_MODE=" <> runtimeModeName,
           "-t",
-          imageRef,
+          targetImageRef,
           "."
         ]
-  putStrLn ("building cluster images for " <> runtimeModeName)
-  runCommand
-    (Just (repoRoot paths))
-    []
-    "docker"
-    (dockerBuildArgs (clusterWorkloadImageRef runtimeMode))
+  imagePresent <- maybeCommand ["docker", "image", "inspect", imageRef]
+  if Config.controlPlaneContext paths == "outer-container" && imagePresent
+    then putStrLn ("reusing baked cluster image for " <> runtimeModeName <> ": " <> imageRef)
+    else do
+      putStrLn ("building cluster images for " <> runtimeModeName)
+      runCommand
+        (Just (repoRoot paths))
+        []
+        "docker"
+        (dockerBuildArgs imageRef)
 
 preloadBootstrapSupportImagesOnKindNodes :: Paths -> RuntimeMode -> FilePath -> IO ()
 preloadBootstrapSupportImagesOnKindNodes paths runtimeMode renderedChartPath = do

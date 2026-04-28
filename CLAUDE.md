@@ -26,6 +26,9 @@ Those actions are reserved for the user.
 - Do not add repo-owned scripts or wrappers for supported workflows.
 - Use direct `cabal --builddir=.build/cabal install --installdir=./.build --install-method=copy --overwrite-policy=always exe:infernix exe:infernix-demo`
   host builds unless a supported workflow requires different explicit output paths.
+- On the supported Linux outer-container path, `cluster up` reuses the already-built
+  `infernix-linux-<mode>:local` snapshot instead of rebuilding the identical runtime image inside
+  the launcher.
 - Keep root docs explicit about what is implemented today versus what remains target-state intent.
 - Keep the Harbor-first bootstrap narrative aligned across `README.md`, `DEVELOPMENT_PLAN/`, and
   `documents/`: Harbor and only Harbor-required bootstrap support services may pull upstream before

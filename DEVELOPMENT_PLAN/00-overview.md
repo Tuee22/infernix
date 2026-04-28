@@ -15,15 +15,15 @@ the supported contract from the remaining implementation gap.
 |------|--------------------|------------------|
 | Root-document governance | `README.md` is orientation only; `documents/` owns canonical topic docs; `AGENTS.md` and `CLAUDE.md` are thin governed entry documents | no material governance gap remains in the worktree |
 | CLI ownership | one Haskell command registry drives parse, dispatch, help text, and canonical CLI reference | no material CLI-ownership gap remains in the worktree |
-| Control-plane execution | Apple host-native control plane plus Linux outer-container control plane | the `linux-cpu` outer-container lane is validated on `cluster up`, routed Pulsar, and routed E2E; the final outer-container `test integration` rerun is still pending after the latest harness fixes |
+| Control-plane execution | Apple host-native control plane plus Linux outer-container control plane | the `linux-cpu` outer-container lane is validated on `cluster up`, routed Pulsar, routed E2E, and a fresh exhaustive integration or HA rerun on April 28, 2026; the supported `linux-cuda` rerun from April 28, 2026 reaches real cluster creation, Harbor-backed image publication, and Helm rollout, but low host disk headroom leaves BookKeeper ledger directories non-writable and keeps `infernix-service` from becoming ready |
 | Runtime honesty | one host-native Apple inference lane plus two Linux substrate images | parts of the current docs and implementation still imply stronger Apple or Linux symmetry than the platform really has |
-| Linux image layout | one shared `docker/linux-substrate.Dockerfile` builds `infernix-linux-cpu` and `infernix-linux-cuda` | the shared image is validated on `linux-cpu`; supported NVIDIA-host validation for `linux-cuda` remains |
+| Linux image layout | one shared `docker/linux-substrate.Dockerfile` builds `infernix-linux-cpu` and `infernix-linux-cuda` | the shared image is validated on `linux-cpu`, now bakes a tracked-source snapshot manifest for git-less `lint files` runs, and reaches Harbor-backed `linux-cuda` rollout on April 28, 2026; final CUDA closure is blocked on a supported NVIDIA host with enough free disk headroom |
 | Pulsar production transport | `src/Infernix/Runtime/Pulsar.hs` uses Pulsar WebSocket and admin surfaces when configured, with filesystem simulation only as the fallback path | no material transport gap remains beyond the stub-engine adapters tracked below |
-| Python adapter boundary | one `python/pyproject.toml` and one `python/adapters/` tree | the shared project is landed; the remaining gap is that adapters are still stub responders |
+| Python adapter boundary | one `python/pyproject.toml` and one `python/adapters/` tree | the shared project is landed; adapters now consume durable bundle or manifest metadata and idempotent setup manifests, but they still synthesize engine-family output instead of loading heavyweight upstream runtimes |
 | Browser-contract ownership | handwritten Haskell contract ADTs live outside any `Generated/` directory; only emitted PureScript stays under `web/src/Generated/` | no material browser-contract ownership gap remains in the worktree |
 | Route or publication contract | one Haskell route registry drives rendered HTTPRoutes, publication state, chart lint, and docs | no material route or publication gap remains in the worktree |
 | Generated deployment inputs | `chart/values.yaml` holds stable defaults only; generated demo-config and publication payloads are ephemeral inputs | no material generated-input gap remains in the worktree |
-| Validation doctrine | one canonical testing doctrine plus one canonical Haskell-style guide describe enforced rules, review guidance, and validation entrypoints | doctrine is landed; the remaining gaps are the final outer-container `linux-cpu` integration rerun, exhaustive per-entry integration coverage beyond the routed Playwright suite, explicit HA-failure automation for Harbor, MinIO, Pulsar, and PostgreSQL, and supported NVIDIA-host closure for `linux-cuda` |
+| Validation doctrine | one canonical testing doctrine plus one canonical Haskell-style guide describe enforced rules, review guidance, and validation entrypoints | doctrine is landed; the remaining supported-lane validation gap is the supported `linux-cuda` rerun, which now specifically needs enough host disk headroom for Harbor publication plus Pulsar BookKeeper durability after the April 28, 2026 run exhausted disk during service bring-up |
 
 ## Supported Outcome
 
@@ -183,7 +183,7 @@ The plan keeps control-plane execution context separate from runtime mode.
 | Context | Canonical launcher | Purpose |
 |---------|--------------------|---------|
 | Apple host-native control plane | `./.build/infernix ...` | canonical operator surface on Apple Silicon |
-| Linux outer-container control plane | `docker compose run --rm infernix infernix ...` | image-snapshot launcher for Linux workflows |
+| Linux outer-container control plane | `docker compose run --rm infernix infernix ...` for `linux-cpu`; direct `docker run --gpus all ... infernix-linux-cuda:local infernix ...` for `linux-cuda` | image-snapshot launcher for Linux workflows |
 
 ### Runtime Modes
 
@@ -217,7 +217,9 @@ The plan keeps control-plane execution context separate from runtime mode.
 
 - Apple host-native control plane is the canonical operator surface.
 - Linux outer-container control plane is a convenience launcher around a baked image snapshot.
-- Supported Linux launcher docs use `docker compose run --rm infernix infernix ...`.
+- Supported Linux launcher docs use `docker compose run --rm infernix infernix ...` for
+  `linux-cpu` and direct `docker run --gpus all ... infernix-linux-cuda:local infernix ...` for
+  `linux-cuda`.
 - `docker compose up` and `docker compose exec` are not supported operator workflows.
 - The Linux launcher bind-mounts only `./.data/` once its cleanup sprint closes.
 
@@ -287,11 +289,11 @@ The plan keeps control-plane execution context separate from runtime mode.
 
 ### 8b. Integration and E2E Cover The Entire Active-Mode Catalog
 
-- `infernix test integration` currently validates the active-mode generated catalog contract,
-  routed surfaces, and a representative inference request for the active mode.
+- `infernix test integration` validates the active-mode generated catalog contract, routed
+  surfaces, and routed inference execution for every generated active-mode catalog entry.
 - `infernix test e2e` exercises every demo-visible generated catalog entry for the active mode.
-- exhaustive per-entry integration coverage remains tracked in Phase 6 Sprint 6.6 until the
-  integration suite stops hardcoding a representative model request
+- integration no longer hardcodes a representative model request; remaining Phase 6 work is
+  limited to rerunning the live supported lanes and keeping the plan truthful as those results land
 
 ### 9. Haskell Types Own Frontend Contracts
 

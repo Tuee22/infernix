@@ -18,6 +18,12 @@
 - the launcher container sets `/opt/build/infernix` as the supported outer build root
 - the baked launcher binaries under `/usr/local/bin/` are authoritative; any compatibility copies
   refreshed into `/opt/build/infernix` do not take precedence on `PATH`
+- the shared substrate images bake `/opt/build/infernix/source-snapshot-files.txt` before later
+  generated outputs are created so git-less image runs of `infernix lint files` validate the
+  source snapshot rather than the mutated runtime tree
+- on the supported outer-container path, `cluster up` reuses the already-built
+  `infernix-linux-<mode>:local` snapshot instead of rebuilding the same runtime image again inside
+  the launcher
 - cluster-backed outer-container commands keep host-published Kind API and routed ports on
   `127.0.0.1`
 - cluster-backed outer-container commands join the private Docker `kind` network and use
@@ -26,6 +32,9 @@
 - the Linux substrate images carry the runtime and validation dependencies needed to launch the
   control plane, build the web bundle, run `poetry install`, regenerate protobuf stubs, and execute
   `poetry run check-code`
+- the Linux substrate images also preinstall the compatible ghcup-managed GHC used to bootstrap
+  `hlint` for the Haskell style gate when the active project compiler is newer than the current
+  `hlint` release line
 - routed Playwright execution is delegated to the host on Apple Silicon and to the active Linux
   substrate image on Linux
 

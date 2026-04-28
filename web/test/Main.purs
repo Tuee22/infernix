@@ -131,9 +131,9 @@ expectedModelCount mode =
 expectedEngineCount :: String -> Int
 expectedEngineCount mode =
   case mode of
-    "apple-silicon" -> 1
+    "apple-silicon" -> 12
     "linux-cpu" -> 10
-    "linux-cuda" -> 12
+    "linux-cuda" -> 10
     _ -> 0
 
 hasEngineMetadata :: EngineBinding -> Boolean

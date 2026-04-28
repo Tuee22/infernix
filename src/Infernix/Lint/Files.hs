@@ -38,7 +38,7 @@ runFilesLint :: IO ()
 runFilesLint = do
   paths <- discoverPaths
   workingTreeFailures <- concat <$> walkDirectory (repoRoot paths) ""
-  trackedGeneratedFailures <- listTrackedGeneratedFailures (repoRoot paths)
+  trackedGeneratedFailures <- listTrackedGeneratedFailures paths
   let failures = workingTreeFailures <> trackedGeneratedFailures
   unless (null failures) $
     ioError (userError (unlines failures))
@@ -94,8 +94,16 @@ checkFile root relativePath = do
 rstrip :: String -> String
 rstrip = reverse . dropWhile (`elem` [' ', '\t']) . reverse
 
-listTrackedGeneratedFailures :: FilePath -> IO [String]
-listTrackedGeneratedFailures root = do
+listTrackedGeneratedFailures :: Paths -> IO [String]
+listTrackedGeneratedFailures paths = do
+  let root = repoRoot paths
+  gitDirectoryPresent <- doesDirectoryExist (root </> ".git")
+  if gitDirectoryPresent
+    then listTrackedGeneratedFailuresFromGit root
+    else listTrackedGeneratedFailuresFromSnapshotManifest paths
+
+listTrackedGeneratedFailuresFromGit :: FilePath -> IO [String]
+listTrackedGeneratedFailuresFromGit root = do
   (exitCode, stdoutOutput, stderrOutput) <-
     readCreateProcessWithExitCode ((proc "git" ["ls-files"]) {cwd = Just root}) ""
   case exitCode of
@@ -112,6 +120,30 @@ listTrackedGeneratedFailures root = do
                 <> stderrOutput
             )
         )
+
+listTrackedGeneratedFailuresFromSnapshotManifest :: Paths -> IO [String]
+listTrackedGeneratedFailuresFromSnapshotManifest paths = do
+  let manifestPath = sourceSnapshotManifestPath paths
+  manifestPresent <- doesFileExist manifestPath
+  if manifestPresent
+    then do
+      manifestEntries <- lines <$> readFile manifestPath
+      pure
+        [ relativePath <> ": tracked generated artifact"
+          | relativePath <- manifestEntries,
+            not (null relativePath),
+            isTrackedGeneratedPath relativePath
+        ]
+    else
+      ioError
+        ( userError
+            ( "infernix lint files requires either a git working tree or a source snapshot manifest at "
+                <> manifestPath
+            )
+        )
+
+sourceSnapshotManifestPath :: Paths -> FilePath
+sourceSnapshotManifestPath paths = buildRoot paths </> "source-snapshot-files.txt"
 
 isTrackedGeneratedPath :: FilePath -> Bool
 isTrackedGeneratedPath relativePath =

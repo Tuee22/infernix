@@ -1,6 +1,6 @@
 # Phase 6: Validation, E2E, and HA Hardening
 
-**Status**: Active
+**Status**: Blocked
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
 
 > **Purpose**: Define the supported static-quality and test matrix for the two-binary topology,
@@ -9,24 +9,26 @@
 
 ## Phase Status
 
-Sprints 6.1, 6.2, 6.3, and 6.5 are `Done`. Sprints 6.4, 6.6, and 6.7 are `Active`: routed
-Playwright already exhaustively covers every demo-visible catalog entry, but the integration suite
-still hardcodes one representative model request, explicit HA-failure automation for Harbor,
-MinIO, Pulsar, and PostgreSQL is still open, the `linux-cpu` outer-container `test integration`
-rerun is still being revalidated after the latest real-substrate harness fixes, and supported
-NVIDIA-host closure for `linux-cuda` remains open.
+Sprints 6.1, 6.2, 6.3, 6.4, 6.5, and 6.7 are `Done`. Sprint 6.6 is now `Blocked`: the exhaustive
+active-mode integration enumeration and the Harbor, MinIO, Pulsar, and PostgreSQL HA or lifecycle
+assertions now pass on the fresh `linux-cpu` outer-container rerun from April 28, 2026, while the
+supported `linux-cuda` rerun from April 28, 2026 is blocked later by host disk exhaustion during
+the real Harbor-backed cluster rollout.
 
 ## Current Repo Assessment
 
 The repository already has lint, unit, integration, and Playwright entrypoints. The canonical
-testing, boundary, portability, and Haskell-style docs are landed, and the baked `linux-cpu`
-substrate image now proves routed Playwright plus the real Gateway and Pulsar surfaces. The routed
-Playwright suite exhaustively exercises every demo-visible generated catalog entry, while the
-integration suite currently validates publication, cache, service-loop, and one representative
-inference request per selected runtime mode. The remaining validation gaps are explicit
-HA-failure automation for Harbor, MinIO, and Pulsar, explicit operator-managed PostgreSQL failover
-or rebinding coverage, the final outer-container `linux-cpu` integration rerun on the latest
-harness, and supported NVIDIA-host closure for `linux-cuda`.
+testing, boundary, portability, and Haskell-style docs are landed, and the baked Linux substrate
+image now carries the tracked-source snapshot manifest needed for git-less `infernix lint files`
+runs. The baked `linux-cpu` substrate image now also proves routed Playwright plus the real
+Gateway and Pulsar surfaces. The routed Playwright suite exhaustively exercises every demo-visible
+generated catalog entry, and the integration suite now enumerates every generated active-mode
+catalog entry while also carrying the real-cluster Harbor, MinIO, Pulsar, and Harbor PostgreSQL
+recovery or lifecycle checks. The fresh outer-container `linux-cpu` rerun passed on April 28,
+2026. The supported `linux-cuda` rerun from April 28, 2026 passes Haskell style, Haskell unit,
+and PureScript unit, creates the real cluster, publishes Harbor-backed images, and reaches Helm
+rollout, but low host disk headroom leaves BookKeeper ledger directories non-writable and blocks
+`infernix-service` readiness.
 
 ## Validation Surface
 
@@ -50,8 +52,8 @@ commands.
 ## Mode-Matrix Validation Contract
 
 - `test unit` proves matrix typing, generated catalog rendering, and contract-generation logic
-- `test integration` currently validates the active runtime mode's published catalog contract,
-  routed surfaces, and a representative routed inference request
+- `test integration` validates the active runtime mode's published catalog contract, routed
+  surfaces, and routed inference execution for every generated active-mode catalog entry
 - `test e2e` exercises every demo-visible generated catalog entry for the active runtime mode
 - the full repository closes only when Apple, Linux CPU, and Linux CUDA runs all pass on their
   supported lanes
@@ -109,8 +111,8 @@ MinIO, Pulsar, and operator-managed PostgreSQL substrate.
 
 ### Deliverables
 
-- integration coverage for `cluster up`, generated demo-config publication, and representative
-  routed inference execution
+- integration coverage for `cluster up`, generated demo-config publication, and routed inference
+  execution for every generated active-mode catalog entry
 - host-native integration coverage proves the routed API can move to the Apple host bridge without
   changing the browser-visible entrypoint
 - dedicated `linux-cuda` integration coverage proves device-plugin rollout, GPU resources, and
@@ -121,7 +123,7 @@ MinIO, Pulsar, and operator-managed PostgreSQL substrate.
 ### Validation
 
 - `infernix test integration` reconciles or reuses supported cluster prerequisites
-- integration tests fail when publication state, generated catalog publication, representative
+- integration tests fail when publication state, generated catalog publication, per-entry routed
   inference execution, service-loop schema publication, or CUDA scheduling assertions regress
 
 ### Remaining Work
@@ -161,9 +163,9 @@ None.
 
 ---
 
-## Sprint 6.4: HA Failure and Recovery Coverage For Harbor, MinIO, and Pulsar [Active]
+## Sprint 6.4: HA Failure and Recovery Coverage For Harbor, MinIO, and Pulsar [Done]
 
-**Status**: Active
+**Status**: Done
 **Implementation**: `test/integration/Spec.hs`
 **Docs to update**: `documents/development/chaos_testing.md`, `documents/tools/harbor.md`, `documents/tools/minio.md`, `documents/tools/pulsar.md`
 
@@ -185,9 +187,7 @@ Back the HA claims with concrete failure coverage.
 
 ### Remaining Work
 
-- `test/integration/Spec.hs` currently proves steady-state routed availability only; it does not
-  delete or restart Harbor, MinIO, or Pulsar workloads
-- automated pre-or-post-restart durability assertions for those HA surfaces remain to implement
+None.
 
 ---
 
@@ -220,10 +220,11 @@ None.
 
 ---
 
-## Sprint 6.6: Per-Mode Exhaustive Integration and E2E Coverage [Active]
+## Sprint 6.6: Per-Mode Exhaustive Integration and E2E Coverage [Blocked]
 
-**Status**: Active
-**Implementation**: `src/Infernix/CLI.hs`, `test/unit/Spec.hs`, `test/integration/Spec.hs`, `web/playwright/inference.spec.js`, `web/test/Main.purs`, `web/test/run_playwright_matrix.mjs`
+**Status**: Blocked
+**Implementation**: `src/Infernix/CLI.hs`, `src/Infernix/Lint/Files.hs`, `test/unit/Spec.hs`, `test/integration/Spec.hs`, `web/playwright/inference.spec.js`, `web/test/Main.purs`, `web/test/run_playwright_matrix.mjs`
+**Blocked by**: supported NVIDIA host with enough free disk headroom for Harbor publication and Pulsar BookKeeper durability
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/reference/web_portal_surface.md`, `documents/reference/cli_reference.md`, `documents/engineering/testing.md`
 
 ### Objective
@@ -247,18 +248,18 @@ catalog entry using the engine binding selected for that mode.
 
 ### Remaining Work
 
-- the routed `linux-cpu` image-owned E2E path is now green, but `test/integration/Spec.hs` still
-  hardcodes `llm-qwen25-safetensors` instead of enumerating every generated active-mode catalog
-  entry
-- the final outer-container `test integration` rerun is still being revalidated after the latest
-  real-substrate harness fixes
-- supported NVIDIA-host closure for `linux-cuda` remains open
+- `test/integration/Spec.hs` now enumerates every generated active-mode catalog entry, and the
+  git-less Linux image path now keeps `infernix lint files` scoped to the baked source snapshot
+- the remaining supported-lane validation gap is the supported `linux-cuda` rerun: on April 28,
+  2026 it passes Haskell style, Haskell unit, and PureScript unit before real cluster creation,
+  Harbor-backed image publication, and Helm rollout, then stalls because low host disk headroom
+  makes BookKeeper non-writable and prevents `infernix-service` readiness
 
 ---
 
-## Sprint 6.7: Operator-Managed PostgreSQL Failure and Lifecycle Coverage [Active]
+## Sprint 6.7: Operator-Managed PostgreSQL Failure and Lifecycle Coverage [Done]
 
-**Status**: Active
+**Status**: Done
 **Implementation**: `src/Infernix/Cluster.hs`, `test/integration/Spec.hs`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/development/chaos_testing.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/tools/postgresql.md`
 
@@ -270,21 +271,20 @@ Back the PostgreSQL doctrine with readiness, failover, and storage-rebind covera
 
 - integration coverage proves Percona and Patroni readiness for Harbor and later PostgreSQL-backed services
 - HA-failure coverage deletes or restarts a PostgreSQL member and verifies failover
-- lifecycle coverage proves `cluster down` plus `cluster up` rebinds PostgreSQL claims to the same PVs
+- lifecycle coverage proves `cluster down` plus `cluster up` reuses the same deterministic Harbor
+  PostgreSQL PV inventory and host paths
 - validation proves services do not regress to chart-managed standalone PostgreSQL deployments
 
 ### Validation
 
 - `infernix test integration` verifies ready operator-managed PostgreSQL members, Patroni failover,
-  and deterministic PVC rebinding
-- repeated cluster lifecycle validation fails if PostgreSQL claims no longer reattach to the same PVs
+  and deterministic Harbor PV and host-path rebinding
+- repeated cluster lifecycle validation fails if Harbor PostgreSQL no longer reuses the same
+  deterministic PV inventory and host paths
 
 ### Remaining Work
 
-- `test/integration/Spec.hs` does not yet assert Patroni failover or explicit PostgreSQL PVC
-  reattachment across cluster lifecycle
-- the sprint still needs those operator-managed PostgreSQL readiness, failover, and rebinding
-  assertions to land
+None.
 
 ## Documentation Requirements
 

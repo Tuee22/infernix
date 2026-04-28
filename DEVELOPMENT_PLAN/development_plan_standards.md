@@ -198,6 +198,7 @@ command uses:
 ```bash
 docker compose run --rm infernix infernix cluster up
 docker compose run --rm infernix infernix test integration
+docker run --rm --gpus all -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD/.data:/workspace/.data" infernix-linux-cuda:local infernix --runtime-mode linux-cuda cluster up
 ```
 
 Rules:
@@ -208,19 +209,22 @@ Rules:
 - Apple Silicon host builds place the compiled `infernix` binary and other generated build
   artifacts under `./.build/`, and supported host-native command examples use `./.build/infernix`.
 - Plan documents do not introduce repo-owned scripts or wrappers for supported build or launch
-  flows; they spell out direct `cabal`, `docker compose`, and `infernix` invocations when
-  explicit flags are required.
+  flows; they spell out direct `cabal`, `docker compose`, `docker run`, and `infernix`
+  invocations when explicit flags are required.
 - On Apple Silicon, `cluster up` writes the repo-local kubeconfig to `./.build/infernix.kubeconfig`
   and must not mutate `$HOME/.kube/config` or the user's global current context.
+- On the Linux outer-container path, `cluster up` writes the repo-local kubeconfig to
+  `./.data/runtime/infernix.kubeconfig` so fresh launcher containers can reuse the same durable
+  cluster handle without depending on ephemeral `/opt/build` state.
 - `infernix kubectl ...` is the supported operator wrapper for Kubernetes access and automatically
-  targets the repo-local kubeconfig in the active build-output location.
+  targets the repo-local kubeconfig in the current execution context's durable location.
 - On Apple Silicon, the supported operator workflow has no generic Python prerequisite. Poetry plus
   a repo-local adapter virtual environment materialize only when an engine-adapter test or
   adapter-local workflow is exercised explicitly, and `infernix` does not install Poetry as a
   generic platform prerequisite.
-- Containerized Linux uses Compose only as a one-command launcher with the Docker socket forwarded
-  and `./.data/` bind mounted once that lane is closed; until then, the plan must call scaffold-only
-  launcher surfaces out explicitly.
+- Containerized Linux uses Compose as the supported one-command launcher for `linux-cpu`, while
+  `linux-cuda` uses a direct `docker run --gpus all infernix-linux-cuda:local ...` launcher with
+  the Docker socket forwarded and `./.data/` bind mounted on the supported path.
 - `docker compose up` and `docker compose exec` are not supported outer-control-plane workflows.
 
 ### L. Runtime Mode Matrix Contract
@@ -356,13 +360,16 @@ Rules:
 Mode-aware validation is explicit.
 
 - `infernix test integration` for a given active runtime mode currently validates the published
-  catalog contract, routed surfaces, cache lifecycle, and a representative inference request plus
-  service-loop roundtrip for that mode.
+  catalog contract, routed surfaces, cache lifecycle, every generated active-mode catalog entry,
+  and a service-loop roundtrip for that mode.
+- when an owning phase calls out real-cluster HA or lifecycle assertions, the supported
+  non-simulated lane also owns those pod-replacement, durability, failover, or rebinding checks.
 - `infernix test e2e` for a given active runtime mode exercises every demo-visible catalog entry
   present in that same generated file through the routed web surface unless a narrower exception is
   called out explicitly in the owning phase document.
-- Exhaustive per-entry integration coverage is claimed only once the owning phase marks that work
-  `Done` explicitly.
+- Exhaustive per-entry integration coverage is claimed only once the owning phase documents that
+  broader contract explicitly and keeps any remaining supported-lane validation work in `Active`
+  status until those reruns close.
 - Integration and E2E checks use the engine binding encoded in the mounted ConfigMap-backed demo
   `.dhall`, which must match the appropriate mode column from the README matrix.
 - `infernix test all` aggregates lint, unit, integration, and E2E for the active runtime mode; the

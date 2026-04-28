@@ -10,8 +10,8 @@
 
 ## Phase Status
 
-Sprints 4.1, 4.4, 4.5, 4.6, 4.7, 4.8, and 4.11 are `Done`. Sprints 4.2, 4.9, and 4.10 are
-`Active`. Sprint 4.3 remains `Blocked` on full runtime parity.
+Sprints 4.1, 4.4, 4.5, 4.6, 4.7, 4.8, and 4.11 are `Done`. Sprints 4.2 and 4.10 remain `Active`.
+Sprints 4.3 and 4.9 are `Blocked`.
 
 ## Current Repo Assessment
 
@@ -20,10 +20,16 @@ README-matrix-backed generated catalog, protobuf-backed manifest and result help
 status or eviction or rebuild flows, repo-local durable object-store state under
 `./.data/object-store/`, a shared Python adapter project, an opt-in real Pulsar WebSocket or admin
 transport path with filesystem fallback, and a manual inference API path served by the Haskell demo
-surface. The remaining runtime gaps are now the true runtime gaps:
+surface. The shared Linux substrate image now also carries a tracked-source snapshot manifest so
+`infernix lint files` remains honest in git-less image runs. The remaining runtime gaps are now
+the true runtime gaps:
 
-- the current adapters are still stub responders rather than real engine loaders
-- supported NVIDIA-host validation for the shared `linux-cuda` substrate lane is still pending
+- the shared adapters now consume durable bundle or manifest metadata and setup manifests, but they
+  still synthesize engine-family output instead of integrating heavyweight upstream runtimes
+- the supported `linux-cuda` rerun from April 28, 2026 now passes Haskell style, Haskell unit,
+  and PureScript unit, creates the real cluster, publishes Harbor-backed images, and enters Helm
+  rollout, but low host disk headroom makes BookKeeper ledger directories non-writable and keeps
+  `infernix-service` from becoming ready
 - Apple host-native inference is real, but the full daemon-driven bootstrap and parity wording are
   still incomplete
 
@@ -57,8 +63,9 @@ Make the service runtime strongly typed before transport and UI surfaces accumul
 
 ### Validation
 
-- `infernix test unit` covers runtime-mode selection, representative catalog membership or
-  omission, generated demo-config rendering, invalid startup handling, and protobuf round-trips
+- `infernix test unit` covers runtime-mode selection, generated catalog counts, per-mode row
+  inclusion or omission, generated demo-config rendering, invalid startup handling, and protobuf
+  round-trips
 - `infernix test lint` passes `infernix lint proto` against the repo-owned `.proto` set
 
 ### Remaining Work
@@ -93,16 +100,17 @@ derived local cache state become authoritative.
 
 ### Validation
 
-- `infernix test integration` proves generated catalog publication, representative inference
-  execution, Pulsar schema publication, and filesystem-backed topic or result persistence on the
-  validated path
+- `infernix test integration` proves generated catalog publication, per-entry routed inference
+  execution for the active-mode catalog, Pulsar schema publication, and filesystem-backed topic or
+  result persistence on the validated path
 - `infernix test unit` proves large outputs return typed object references and protobuf manifests
   round-trip through the supported storage helpers
 
 ### Remaining Work
 
-- the worker boundary is real, but the current adapters are still stub responders rather than
-  engine implementations
+- the worker boundary, durable metadata path, and setup-manifest contract are real, but the shared
+  adapters still synthesize engine-family output instead of integrating heavyweight upstream
+  runtimes
 
 ---
 
@@ -227,7 +235,7 @@ catalogs, and later test enumeration.
 
 ### Validation
 
-- unit tests prove generated catalog counts and representative row inclusion or omission
+- unit tests prove generated catalog counts and per-mode row inclusion or omission
 - frontend contract checks prove the generated active-mode contract carries selected engines and runtime metadata
 - integration fixtures prove the published ConfigMap matches the generated active-mode catalog
 
@@ -307,10 +315,11 @@ None.
 
 ---
 
-## Sprint 4.9: Shared Linux Substrate Image Build and Snapshot Runtime [Active]
+## Sprint 4.9: Shared Linux Substrate Image Build and Snapshot Runtime [Blocked]
 
-**Status**: Active
-**Implementation**: `docker/linux-substrate.Dockerfile`, `compose.yaml`, `src/Infernix/Cluster.hs`, `chart/values.yaml`, `chart/templates/deployment-service.yaml`, `.dockerignore`
+**Status**: Blocked
+**Implementation**: `docker/linux-substrate.Dockerfile`, `compose.yaml`, `src/Infernix/Cluster.hs`, `src/Infernix/Lint/Files.hs`, `chart/values.yaml`, `chart/templates/deployment-service.yaml`, `.dockerignore`
+**Blocked by**: supported NVIDIA host with enough free disk headroom for Harbor publication and Pulsar BookKeeper durability
 **Docs to update**: `documents/engineering/docker_policy.md`, `documents/engineering/build_artifacts.md`, `documents/development/python_policy.md`, `documents/operations/cluster_bootstrap_runbook.md`
 
 ### Objective
@@ -327,8 +336,13 @@ produces the two real Linux runtime images and supports the image-snapshot launc
 - `docker/linux-base.Dockerfile` is removed from the supported architecture
 - the shared image definition owns ghcup-pinned GHC or Cabal, Python, Poetry, node, Playwright,
   and the Kind toolbelt
+- on the supported Linux outer-container path, `cluster up` reuses the already-built
+  `infernix-linux-<mode>:local` snapshot instead of rebuilding the identical runtime image inside
+  the launcher
 - the CUDA image bakes in the `nvkind` binary through a multi-stage build rather than a host
   handoff path
+- the baked image captures `/opt/build/infernix/source-snapshot-files.txt` before later generated
+  outputs appear so git-less image runs of `infernix lint files` validate only the source snapshot
 - inside the Linux runtime image, the daemon does not run `apt`, `pip`, `cabal build`, or compiler
   toolchains at runtime
 
@@ -340,13 +354,19 @@ produces the two real Linux runtime images and supports the image-snapshot launc
   succeeds on supported hosts
 - smoke probes from the built images confirm the expected `infernix`, `ghc`, `cabal`, `python`,
   and Playwright tooling
+- `infernix lint files` succeeds inside the baked Linux image without `.git` metadata by using the
+  captured source-snapshot manifest
 - `infernix cluster up --runtime-mode linux-cpu` and `--runtime-mode linux-cuda` use the active
   substrate image on the supported path
 
 ### Remaining Work
 
-- the `linux-cpu` lane is validated on the supported outer-container path, but supported NVIDIA-host
-  validation for `linux-cuda` is still pending and remains aligned with Phase 2 Sprint 2.8
+- the `linux-cpu` lane is validated on the supported outer-container path and the git-less
+  source-snapshot lint path is landed
+- the supported `linux-cuda` rerun from April 28, 2026 already proves real cluster creation,
+  Harbor-backed image publication, and Helm rollout after the unit and frontend gates pass, but
+  final closure remains blocked until a supported NVIDIA host has enough free disk headroom to keep
+  BookKeeper writable through `infernix-service` readiness
 
 ---
 

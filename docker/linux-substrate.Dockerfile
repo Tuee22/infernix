@@ -11,6 +11,7 @@ FROM ${BASE_IMAGE}
 ARG BASE_IMAGE
 ARG RUNTIME_MODE=linux-cpu
 ARG GHC_VERSION=9.14.1
+ARG STYLE_GHC_VERSION=9.6.7
 ARG CABAL_VERSION=3.16.1.0
 ARG KIND_VERSION=v0.29.0
 ARG KUBECTL_VERSION=v1.34.0
@@ -25,6 +26,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
     GHC_VERSION=${GHC_VERSION} \
+    STYLE_GHC_VERSION=${STYLE_GHC_VERSION} \
     CABAL_VERSION=${CABAL_VERSION} \
     INFERNIX_BUILD_ROOT=/opt/build/infernix \
     INFERNIX_CABAL_BUILDDIR=/opt/build/infernix/cabal \
@@ -67,10 +69,12 @@ RUN python3 -m pip install --break-system-packages poetry
 RUN curl https://get-ghcup.haskell.org -sSf | sh \
     && ghcup install ghc ${GHC_VERSION} \
     && ghcup set ghc ${GHC_VERSION} \
+    && ghcup install ghc ${STYLE_GHC_VERSION} \
     && ghcup install cabal ${CABAL_VERSION} \
     && ghcup set cabal ${CABAL_VERSION} \
     && mkdir -p /opt/ghc \
-    && ln -sfn /root/.ghcup/ghc/${GHC_VERSION} /opt/ghc/${GHC_VERSION}
+    && ln -sfn /root/.ghcup/ghc/${GHC_VERSION} /opt/ghc/${GHC_VERSION} \
+    && ln -sfn /root/.ghcup/ghc/${STYLE_GHC_VERSION} /opt/ghc/${STYLE_GHC_VERSION}
 
 RUN curl -fsSL -o /usr/local/bin/kind https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64 \
     && chmod +x /usr/local/bin/kind
@@ -89,7 +93,11 @@ WORKDIR /workspace
 
 COPY . /workspace
 
-RUN mkdir -p /opt/build/infernix /workspace/tools/generated_proto \
+RUN mkdir -p /opt/build/infernix \
+    && cd /workspace \
+    && find . -type f | sed 's#^\\./##' | LC_ALL=C sort > /opt/build/infernix/source-snapshot-files.txt
+
+RUN mkdir -p /workspace/tools/generated_proto \
     && cabal update \
     && npm --prefix web ci \
     && npm --prefix web exec -- playwright install --with-deps chromium firefox webkit \

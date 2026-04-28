@@ -17,7 +17,10 @@
 - the MinIO console is exposed through `/minio/console`
 - the MinIO S3 API is exposed through `/minio/s3`
 - on the simulated substrate, those routes remain published as compatibility surfaces for rewrite
-  validation
+  validation; on the real cluster path, `/minio/console/browser` returns the live MinIO console
+  HTML and `/minio/s3/...` reaches the live S3 surface
+- the real non-simulated `linux-cpu` integration lane writes a sentinel file through the MinIO
+  data volume, replaces one MinIO pod, and asserts the sentinel remains readable afterward
 
 ## Cross-References
 

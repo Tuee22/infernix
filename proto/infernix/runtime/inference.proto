@@ -59,6 +59,10 @@ message WorkerRequest {
   string runtime_mode = 3;
   string selected_engine = 4;
   string adapter_id = 5;
+  string artifact_bundle_path = 6;
+  string source_manifest_path = 7;
+  string cache_manifest_path = 8;
+  string engine_install_root = 9;
 }
 
 message WorkerResponse {

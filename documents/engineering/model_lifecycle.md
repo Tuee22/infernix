@@ -20,15 +20,20 @@
   worker layer materializes direct upstream payloads or provider metadata into the same durable
   prefix
 - repo-owned `.proto` schemas define the contract for durable manifests and topic payloads;
-  Haskell consumes them through `proto-lens`-generated bindings, and per-substrate Python adapters
-  consume them through the matching auto-generated Python protobuf modules in `tools/generated_proto/`
+  Haskell consumes them through `proto-lens`-generated bindings, and the shared Python adapter
+  project consumes them through matching auto-generated Python protobuf modules in
+  `tools/generated_proto/`
 - the production daemon (`infernix service`) keeps the topic-shaped request or result contract and
   uses real Pulsar WebSocket or admin endpoints when the Pulsar environment variables are present;
   without them it falls back to the filesystem simulation under `./.data/runtime/pulsar/`
 - engine workers are Haskell processes; for Python-native engines, the worker forks the named
-  adapter entrypoint and exchanges typed protobuf worker messages over stdio. The current adapters
-  keep the process boundary and quality gate in place but still return stub output rather than
-  loading real engine libraries
+  adapter entrypoint and exchanges typed protobuf worker messages over stdio. The worker passes the
+  durable artifact bundle, source manifest, cache manifest, and engine install root into that
+  adapter boundary so the shared Python modules can derive engine-family-specific behavior from
+  authoritative runtime metadata
+- per-adapter bootstrap state lives under `./.data/engines/<adapter-id>/bootstrap.json`; the
+  Apple host path and the cluster or worker path both treat that bootstrap manifest as the
+  idempotent setup-ready marker
 - derived cache state is keyed by runtime mode and model identity and is always rebuildable
 - the demo `/api/cache` surface operates on the manifest-backed durable contract exposed by the
   Haskell worker, including engine-runner metadata and selected-artifact inventory derived from the

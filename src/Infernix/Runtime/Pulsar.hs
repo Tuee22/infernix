@@ -145,15 +145,19 @@ runProductionDaemon paths runtimeMode = do
   putStrLn ("serviceResultTopic: " <> Text.unpack (resultTopic demoConfig))
   putStrLn ("serviceEngineBindingCount: " <> show (length (engines demoConfig)))
   putStrLn "serviceHttpListener: disabled"
+  clearServiceReadinessMarker paths
   case maybeTransport of
     Nothing -> do
       ensureSchemaMarkers paths demoConfig
+      writeServiceReadinessMarker paths
       putStrLn "serviceSubscriptionMode: filesystem-pulsar-simulation"
       forever $ do
         forM_ (requestTopics demoConfig) (drainTopic paths runtimeMode (resultTopic demoConfig))
         threadDelay 500000
     Just transport -> do
-      ensureRegisteredSchemas paths transport demoConfig
+      ensureSchemaMarkers paths demoConfig
+      ensureRegisteredSchemasWithRetry paths transport demoConfig
+      writeServiceReadinessMarker paths
       putStrLn "serviceSubscriptionMode: websocket-pulsar"
       putStrLn ("servicePulsarWsBaseUrl: " <> renderPulsarWebSocketBase (pulsarWebSocketBase transport))
       forM_
@@ -231,6 +235,22 @@ ensureSchemaMarkers paths demoConfig = do
         (schemaMarkerPath paths topicValue)
         (unlines ["schema: protobuf", "topic: " <> Text.unpack topicValue])
 
+serviceReadinessMarkerPath :: Paths -> FilePath
+serviceReadinessMarkerPath paths =
+  runtimeRoot paths </> "service" </> "subscription.ready"
+
+clearServiceReadinessMarker :: Paths -> IO ()
+clearServiceReadinessMarker paths = do
+  let markerPath = serviceReadinessMarkerPath paths
+  markerPresent <- doesFileExist markerPath
+  when markerPresent (removeFile markerPath)
+
+writeServiceReadinessMarker :: Paths -> IO ()
+writeServiceReadinessMarker paths = do
+  let markerPath = serviceReadinessMarkerPath paths
+  createDirectoryIfMissing True (takeDirectory markerPath)
+  writeFile markerPath "ready\n"
+
 schemaMarkerPath :: Paths -> Text.Text -> FilePath
 schemaMarkerPath paths topicValue =
   runtimeRoot paths </> "pulsar" </> "schemas" </> sanitizeTopic topicValue <.> "schema"
@@ -266,6 +286,25 @@ ensureRegisteredSchemas paths transport demoConfig = do
   forM_ (requestTopics demoConfig) $ \topicValue ->
     ensureRemoteSchema manager adminBaseUrl topicValue "infernix.runtime.InferenceRequest"
   ensureRemoteSchema manager adminBaseUrl (resultTopic demoConfig) "infernix.runtime.InferenceResult"
+
+ensureRegisteredSchemasWithRetry :: Paths -> PulsarTransport -> DemoConfig -> IO ()
+ensureRegisteredSchemasWithRetry paths transport demoConfig =
+  retry (1 :: Int)
+  where
+    retry attempt = do
+      registrationResult <- try @SomeException (ensureRegisteredSchemas paths transport demoConfig)
+      case registrationResult of
+        Right _ -> pure ()
+        Left err -> do
+          hPutStrLn
+            stderr
+            ( "pulsar schema registration attempt "
+                <> show attempt
+                <> " failed:\n"
+                <> displayException err
+            )
+          threadDelay 1000000
+          retry (attempt + 1)
 
 requirePulsarAdminBaseUrl :: PulsarTransport -> IO String
 requirePulsarAdminBaseUrl transport =

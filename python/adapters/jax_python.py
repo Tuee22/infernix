@@ -1,23 +1,26 @@
 from __future__ import annotations
 
 from adapters.common import (
-    inference_pb2,
-    request_input_text,
-    run_setup_noop,
-    run_text_adapter,
+    AdapterContext,
+    render_engine_output,
+    run_context_adapter,
+    run_setup_bootstrap,
+    word_list,
 )
 
 
-def transform(request: inference_pb2.WorkerRequest) -> str:
-    return request_input_text(request).strip()
+def transform(context: AdapterContext) -> str:
+    words = word_list(context.input_text)
+    detail = "shape=" + ("x".join(str(len(word)) for word in words) if words else "0")
+    return render_engine_output("jax-python", context, detail)
 
 
 def main() -> int:
-    return run_text_adapter(transform)
+    return run_context_adapter(transform)
 
 
 def setup() -> int:
-    return run_setup_noop("jax-python")
+    return run_setup_bootstrap("jax-python")
 
 
 if __name__ == "__main__":

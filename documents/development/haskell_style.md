@@ -13,6 +13,9 @@
 - strict compiler warnings are enabled and treated as errors in repository validation
 - `infernix test lint` bootstraps the repo-owned formatter and linter binaries through the Cabal
   test target into `./.build/haskell-style-tools/`
+- when the active project compiler is too new for the current `hlint` release, the bootstrap
+  falls back to a ghcup-managed compatible GHC `9.6.7` while still materializing the final
+  `ormolu` and `hlint` binaries under `./.build/haskell-style-tools/`
 
 ## Hard Gates
 

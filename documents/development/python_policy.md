@@ -28,7 +28,7 @@ non-Python binding.
 - outside the cluster, `poetry install --directory python` materializes a repo-local Poetry
   environment for adapter validation on the Apple host path
 - Linux substrate image builds run `poetry install --directory python` during the image build and
-  then execute adapters through `poetry --directory python run ...`
+  then execute adapters from the shared `python/` project root through `poetry run ...`
 - Poetry is not a generic platform prerequisite; it materializes only when an adapter validation or
   setup path is exercised explicitly
 
@@ -37,8 +37,7 @@ non-Python binding.
 The canonical adapter quality gate is the `check-code` Poetry entrypoint declared in the shared
 `python/pyproject.toml`.
 
-From the repo root, the supported invocation is `poetry --directory python run check-code`. Inside
-`python/`, the same gate is `poetry run check-code`.
+The supported invocation is `poetry run check-code` from inside `python/`.
 
 It invokes the following in sequence and exits non-zero on any failure:
 
@@ -69,10 +68,15 @@ Current state:
 - the worker request and response payloads are typed protobuf messages from
   `proto/infernix/runtime/inference.proto`, consumed on the Python side through
   `tools/generated_proto/`
+- the worker request includes repo-local durable metadata paths for the selected model's artifact
+  bundle, source-artifact manifest, cache manifest, and engine install root
 - the shared project exposes one Poetry console script per adapter together with matching
   `setup-*` entrypoints
-- the remaining gap is engine depth rather than ownership: the current adapters are still stub
-  responders that normalize the input payload instead of loading the real engine libraries
+- each `setup-*` entrypoint writes an idempotent repo-local bootstrap manifest at
+  `./.data/engines/<adapter-id>/bootstrap.json`
+- adapter modules load durable runtime context from those bundle or manifest paths and emit
+  deterministic engine-family-specific output through the final protobuf-over-stdio worker
+  contract rather than acting as a raw stdin echo path
 
 Adapters do not open network sockets, do not write object-store state, and do not subscribe to the
 topic transport themselves; the Haskell worker owns those boundaries and treats the adapter as a

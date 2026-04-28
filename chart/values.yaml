@@ -104,7 +104,7 @@ minio:
       api: "30011"
   persistence:
     storageClass: infernix-manual
-    size: 5Gi
+    size: 20Gi
   statefulset:
     replicaCount: 4
     zones: 1

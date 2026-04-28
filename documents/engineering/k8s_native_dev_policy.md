@@ -32,6 +32,9 @@
   the cluster path without rebuilding the runtime image
 - the plan contract for the `linux-cuda` Kind path requires NVIDIA container runtime support
   inside Kind plus usable `nvidia.com/gpu` resources for scheduled workloads
+- the supported real-cluster `linux-cuda` path also requires enough host disk headroom for Kind
+  image preload, Harbor-backed image publication, and Pulsar BookKeeper durability during final
+  rollout
 
 ## Cross-References
 

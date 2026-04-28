@@ -17,7 +17,7 @@
   `kubernetes.io/no-provisioner`, and those claims bind to manually created PVs under
   `./.data/kind/...`
 - `infernix test integration` validates PostgreSQL readiness, replacement-primary failover, and
-  repeat lifecycle rebinding to the same manually managed PV host paths
+  repeat lifecycle reuse of the same deterministic manually managed PV inventory and host paths
 - Harbor PostgreSQL bootstrap may recycle one startup pod once when that pod remains `Running`
   but fails Patroni readiness beyond the supported grace window; that self-heal is part of the
   supported readiness contract before any post-Harbor rollout depends on the cluster

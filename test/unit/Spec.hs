@@ -4,7 +4,7 @@ module Main (main) where
 
 import Control.Exception (finally, try)
 import Data.ByteString.Lazy qualified as Lazy
-import Data.List (find, nub)
+import Data.List (find, isInfixOf, nub)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (isJust, isNothing)
 import Data.Text qualified as Text
@@ -18,14 +18,17 @@ import Infernix.Cluster.PublishImages
   )
 import Infernix.Config
 import Infernix.DemoConfig (decodeDemoConfigFile)
+import Infernix.Engines.AppleSilicon (ensureAppleSiliconRuntimeReady)
 import Infernix.Models
 import Infernix.Runtime
+import Infernix.Runtime.Pulsar (runProductionDaemon)
 import Infernix.Runtime.Worker (engineCommandOverrideEnvironmentName)
 import Infernix.Types
 import System.Directory
 import System.Environment (lookupEnv, setEnv, unsetEnv)
 import System.FilePath ((</>))
 import System.IO.Error (catchIOError, isDoesNotExistError)
+import System.Timeout (timeout)
 
 main :: IO ()
 main = do
@@ -47,107 +50,142 @@ main = do
   assertUniqueModelIds LinuxCpu
   assertUniqueModelIds LinuxCuda
   withTestRoot unitTestRoot $ do
-    paths <- discoverPaths
-    ensureRepoLayout paths
-    let demoConfig =
-          DemoConfig
-            { configRuntimeMode = LinuxCpu,
-              configEdgePort = 9090,
-              configMapName = "infernix-demo-config",
-              generatedPath = "./.build/infernix-demo-linux-cpu.dhall",
-              mountedPath = "/opt/build/infernix-demo-linux-cpu.dhall",
-              demoUiEnabled = True,
-              requestTopics = requestTopicsForMode LinuxCpu,
-              resultTopic = resultTopicForMode LinuxCpu,
-              engines = engineBindingsForMode LinuxCpu,
-              models = catalogForMode LinuxCpu
-            }
-        demoConfigPath = buildRoot paths </> "demo-config-test.dhall"
-    createDirectoryIfMissing True (buildRoot paths)
-    Lazy.writeFile demoConfigPath (encodeDemoConfig demoConfig)
-    decodedConfig <- decodeDemoConfigFile demoConfigPath
-    assert (configRuntimeMode decodedConfig == LinuxCpu) "demo-config decode preserves runtime mode"
-    assert (demoUiEnabled decodedConfig) "demo-config decode preserves the demo UI flag"
-    assert (requestTopics decodedConfig == requestTopicsForMode LinuxCpu) "demo-config decode preserves request topics"
-    assert (resultTopic decodedConfig == resultTopicForMode LinuxCpu) "demo-config decode preserves the result topic"
-    assert (engines decodedConfig == engineBindingsForMode LinuxCpu) "demo-config decode preserves engine bindings"
-    assert (length (models decodedConfig) == length (catalogForMode LinuxCpu)) "demo-config decode preserves the model list"
-
-    let request =
-          InferenceRequest
-            { requestModelId = "llm-qwen25-safetensors",
-              inputText = Text.replicate 96 "x"
-            }
-    inferenceResult <- executeInference paths AppleSilicon request
-    case inferenceResult of
-      Left err -> fail ("unexpected inference error: " <> show err)
-      Right result -> do
-        assert (resultModelId result == "llm-qwen25-safetensors") "inference result records the selected model id"
-        assert (resultRuntimeMode result == AppleSilicon) "inference result records the runtime mode"
-        assert (isJust (objectRef (payload result))) "long outputs are stored in the object store"
-        let resultPath = resultsRoot paths </> Text.unpack (requestId result) <> ".pb"
-        resultExists <- doesFileExist resultPath
-        assert resultExists "inference execution writes a protobuf result file"
-        case objectRef (payload result) of
-          Just objectRefValue -> do
-            durableOutput <- readFile (objectStoreRoot paths </> Text.unpack objectRefValue)
+    withOptionalEnv "INFERNIX_BUILD_ROOT" Nothing $ do
+      paths <- discoverPaths
+      ensureRepoLayout paths
+      assert
+        (controlPlaneContext paths == "host-native")
+        "an unset build-root override keeps unit tests on the host-native control-plane context"
+      assert
+        (generatedKubeconfigPath paths == buildRoot paths </> "infernix.kubeconfig")
+        "host-native kubeconfig stays under the build root"
+      withOptionalEnv "INFERNIX_BUILD_ROOT" (Just "/opt/build/infernix") $ do
+        outerPaths <- discoverPaths
+        assert
+          (controlPlaneContext outerPaths == "outer-container")
+          "setting a non-host build root selects the outer-container control-plane context"
+        assert
+          (generatedKubeconfigPath outerPaths == runtimeRoot outerPaths </> "infernix.kubeconfig")
+          "outer-container kubeconfig persists under the durable runtime root"
+      let demoConfig =
+            DemoConfig
+              { configRuntimeMode = LinuxCpu,
+                configEdgePort = 9090,
+                configMapName = "infernix-demo-config",
+                generatedPath = "./.build/infernix-demo-linux-cpu.dhall",
+                mountedPath = "/opt/build/infernix-demo-linux-cpu.dhall",
+                demoUiEnabled = True,
+                requestTopics = requestTopicsForMode LinuxCpu,
+                resultTopic = resultTopicForMode LinuxCpu,
+                engines = engineBindingsForMode LinuxCpu,
+                models = catalogForMode LinuxCpu
+              }
+          demoConfigPath = buildRoot paths </> "demo-config-test.dhall"
+      createDirectoryIfMissing True (buildRoot paths)
+      Lazy.writeFile demoConfigPath (encodeDemoConfig demoConfig)
+      decodedConfig <- decodeDemoConfigFile demoConfigPath
+      assert (configRuntimeMode decodedConfig == LinuxCpu) "demo-config decode preserves runtime mode"
+      assert (demoUiEnabled decodedConfig) "demo-config decode preserves the demo UI flag"
+      assert (requestTopics decodedConfig == requestTopicsForMode LinuxCpu) "demo-config decode preserves request topics"
+      assert (resultTopic decodedConfig == resultTopicForMode LinuxCpu) "demo-config decode preserves the result topic"
+      assert (engines decodedConfig == engineBindingsForMode LinuxCpu) "demo-config decode preserves engine bindings"
+      assert (length (models decodedConfig) == length (catalogForMode LinuxCpu)) "demo-config decode preserves the model list"
+      let readinessMarkerPath = runtimeRoot paths </> "service" </> "subscription.ready"
+      withOptionalEnv "INFERNIX_DEMO_CONFIG_PATH" (Just demoConfigPath) $
+        withOptionalEnv "INFERNIX_PULSAR_WS_BASE_URL" (Just "ws://127.0.0.1:65530/ws/v2") $
+          withOptionalEnv "INFERNIX_PULSAR_ADMIN_URL" (Just "http://127.0.0.1:65530/admin/v2") $ do
+            _ <- timeout 2000000 (runProductionDaemon paths LinuxCpu)
+            readinessMarkerPresent <- doesFileExist readinessMarkerPath
             assert
-              (durableOutput == replicate 96 'x')
-              "python-native worker execution uses the process-isolated typed adapter path by default"
-          Nothing -> fail "expected an object-store-backed output for the long inference result"
-        manifests <- listCacheManifests paths AppleSilicon
-        let maybeManifest = find ((== "llm-qwen25-safetensors") . cacheModelId) manifests
-        assert (isJust maybeManifest) "inference execution materializes a cache manifest"
-        evictedCount <- evictCache paths AppleSilicon (Just "llm-qwen25-safetensors")
-        assert (evictedCount == 1) "cache eviction removes the selected cache entry"
-        rebuiltEntries <- rebuildCache paths AppleSilicon (Just "llm-qwen25-safetensors")
-        assert (length rebuiltEntries == 1) "cache rebuild restores the selected cache entry"
+              (not readinessMarkerPresent)
+              "real Pulsar startup keeps the readiness marker absent until schema registration succeeds"
 
-    let overrideModel = maybe (fail "expected the apple-silicon qwen row") pure (findModel AppleSilicon "llm-qwen25-safetensors")
-    overrideModelDescriptor <- overrideModel
-    let overrideBinding = engineBindingForSelectedEngine AppleSilicon (selectedEngine overrideModelDescriptor)
-        overrideEnvName = engineCommandOverrideEnvironmentName overrideBinding
-        overrideMarkerPath = buildRoot paths </> "worker-override-used.txt"
-        overrideWrapperPath = buildRoot paths </> "python-worker-wrapper.sh"
-    writeFile
-      overrideWrapperPath
-      ( unlines
-          [ "#!/bin/sh",
-            "printf override-used > " <> show overrideMarkerPath,
-            "exec \"$@\""
-          ]
-      )
-    wrapperPermissions <- getPermissions overrideWrapperPath
-    setPermissions overrideWrapperPath wrapperPermissions {executable = True}
-    assert
-      (overrideEnvName == "INFERNIX_ENGINE_COMMAND_TRANSFORMERS_PYTHON")
-      "python-native adapter overrides normalize adapter ids into environment variables"
-    assert
-      (engineBindingAdapterEntrypoint overrideBinding == "adapter-transformers-python")
-      "engine bindings publish Poetry adapter entrypoints"
-    assert
-      (engineBindingSetupEntrypoint overrideBinding == "setup-transformers-python")
-      "engine bindings publish Poetry setup entrypoints"
-    assert
-      (engineBindingProjectDirectory overrideBinding == "python")
-      "engine bindings publish the shared Poetry project directory"
-    withOptionalEnv overrideEnvName (Just (overrideWrapperPath <> " ")) $ do
-      overrideResult <-
-        executeInference
-          paths
-          AppleSilicon
-          InferenceRequest
-            { requestModelId = "llm-qwen25-safetensors",
-              inputText = "  override payload  "
-            }
-      case overrideResult of
-        Left err -> fail ("unexpected override inference error: " <> show err)
+      ensureAppleSiliconRuntimeReady paths
+
+      let request =
+            InferenceRequest
+              { requestModelId = "llm-qwen25-safetensors",
+                inputText = Text.replicate 96 "x"
+              }
+      inferenceResult <- executeInference paths AppleSilicon request
+      case inferenceResult of
+        Left err -> fail ("unexpected inference error: " <> show err)
         Right result -> do
-          assert
-            (inlineOutput (payload result) == Just "override payload")
-            "adapter-specific command overrides still execute the selected worker path"
-          markerExists <- doesFileExist overrideMarkerPath
-          assert markerExists "adapter-specific command overrides invoke the configured worker wrapper"
+          assert (resultModelId result == "llm-qwen25-safetensors") "inference result records the selected model id"
+          assert (resultRuntimeMode result == AppleSilicon) "inference result records the runtime mode"
+          assert (isJust (objectRef (payload result))) "long outputs are stored in the object store"
+          let resultPath = resultsRoot paths </> Text.unpack (requestId result) <> ".pb"
+          resultExists <- doesFileExist resultPath
+          assert resultExists "inference execution writes a protobuf result file"
+          case objectRef (payload result) of
+            Just objectRefValue -> do
+              durableOutput <- readFile (objectStoreRoot paths </> Text.unpack objectRefValue)
+              assert
+                ("transformers-python|ready|llm-qwen25-safetensors|tok=1|" `isInfixOf` durableOutput)
+                "python-native worker execution loads adapter bootstrap state and model metadata"
+              assert
+                (Text.unpack (inputText request) `isInfixOf` durableOutput)
+                "python-native worker execution preserves the submitted prompt payload"
+            Nothing -> fail "expected an object-store-backed output for the long inference result"
+          let bootstrapManifestPath = dataRoot paths </> "engines" </> "transformers-python" </> "bootstrap.json"
+          bootstrapExists <- doesFileExist bootstrapManifestPath
+          assert bootstrapExists "apple-silicon setup creates per-adapter bootstrap manifests"
+          bootstrapContents <- readFile bootstrapManifestPath
+          assert ("transformers-python" `isInfixOf` bootstrapContents) "adapter bootstrap manifests record the adapter id"
+          manifests <- listCacheManifests paths AppleSilicon
+          let maybeManifest = find ((== "llm-qwen25-safetensors") . cacheModelId) manifests
+          assert (isJust maybeManifest) "inference execution materializes a cache manifest"
+          evictedCount <- evictCache paths AppleSilicon (Just "llm-qwen25-safetensors")
+          assert (evictedCount == 1) "cache eviction removes the selected cache entry"
+          rebuiltEntries <- rebuildCache paths AppleSilicon (Just "llm-qwen25-safetensors")
+          assert (length rebuiltEntries == 1) "cache rebuild restores the selected cache entry"
+
+      let overrideModel = maybe (fail "expected the apple-silicon qwen row") pure (findModel AppleSilicon "llm-qwen25-safetensors")
+      overrideModelDescriptor <- overrideModel
+      let overrideBinding = engineBindingForSelectedEngine AppleSilicon (selectedEngine overrideModelDescriptor)
+          overrideEnvName = engineCommandOverrideEnvironmentName overrideBinding
+          overrideMarkerPath = buildRoot paths </> "worker-override-used.txt"
+          overrideWrapperPath = buildRoot paths </> "python-worker-wrapper.sh"
+      writeFile
+        overrideWrapperPath
+        ( unlines
+            [ "#!/bin/sh",
+              "printf override-used > " <> show overrideMarkerPath,
+              "exec \"$@\""
+            ]
+        )
+      wrapperPermissions <- getPermissions overrideWrapperPath
+      setPermissions overrideWrapperPath wrapperPermissions {executable = True}
+      assert
+        (overrideEnvName == "INFERNIX_ENGINE_COMMAND_TRANSFORMERS_PYTHON")
+        "python-native adapter overrides normalize adapter ids into environment variables"
+      assert
+        (engineBindingAdapterEntrypoint overrideBinding == "adapter-transformers-python")
+        "engine bindings publish Poetry adapter entrypoints"
+      assert
+        (engineBindingSetupEntrypoint overrideBinding == "setup-transformers-python")
+        "engine bindings publish Poetry setup entrypoints"
+      assert
+        (engineBindingProjectDirectory overrideBinding == "python")
+        "engine bindings publish the shared Poetry project directory"
+      withOptionalEnv overrideEnvName (Just (overrideWrapperPath <> " ")) $ do
+        overrideResult <-
+          executeInference
+            paths
+            AppleSilicon
+            InferenceRequest
+              { requestModelId = "llm-qwen25-safetensors",
+                inputText = "  override payload  "
+              }
+        case overrideResult of
+          Left err -> fail ("unexpected override inference error: " <> show err)
+          Right result -> do
+            payloadText <- renderPayloadText paths (payload result)
+            assert
+              ("override payload" `isInfixOf` payloadText)
+              "adapter-specific command overrides still execute the selected worker path"
+            markerExists <- doesFileExist overrideMarkerPath
+            assert markerExists "adapter-specific command overrides invoke the configured worker wrapper"
 
     writeFile "invalid-demo-config.dhall" "{\"runtimeMode\":\"apple-silicon\",\"models\":[]}\n"
     invalidConfigResult <- try (decodeDemoConfigFile "invalid-demo-config.dhall") :: IO (Either IOError DemoConfig)
@@ -253,6 +291,15 @@ assertUniqueModelIds mode = do
       matrixRows = map matrixRowId modelsForMode
   assert (length identifiers == length (nub identifiers)) ("catalog model ids are unique for " <> show mode)
   assert (length matrixRows == length (nub matrixRows)) ("catalog matrix rows are unique for " <> show mode)
+
+renderPayloadText :: Paths -> ResultPayload -> IO String
+renderPayloadText paths payloadValue =
+  case inlineOutput payloadValue of
+    Just outputText -> pure (Text.unpack outputText)
+    Nothing ->
+      case objectRef payloadValue of
+        Just objectRefValue -> readFile (objectStoreRoot paths </> Text.unpack objectRefValue)
+        Nothing -> pure ""
 
 sampleRenderedChart :: String
 sampleRenderedChart =

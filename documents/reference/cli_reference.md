@@ -68,7 +68,11 @@ Runtime-mode override:
 - `infernix lint files|docs|proto|chart` run the canonical Haskell-implemented static checks
   (`src/Infernix/Lint/*`); `infernix test lint` runs them together with the strict Haskell
   warning gate, the `ormolu` and `hlint` style stack via the Cabal test target, and the active
-  substrate's Python adapter quality gate via `poetry run check-code` when adapters are present
+  substrate's Python adapter quality gate via `poetry run check-code` when adapters are present;
+  `infernix lint files` uses tracked files from `.git` when available and otherwise falls back to
+  the baked `/opt/build/infernix/source-snapshot-files.txt` manifest on git-less Linux image runs;
+  the style gate may bootstrap `hlint` through a ghcup-managed compatible GHC when the active
+  project compiler is newer than the current `hlint` release line
 - `infernix test unit` runs the Haskell unit suites and the PureScript frontend unit suites via
   `npm --prefix web run test:unit`
 - `infernix test e2e` launches Playwright from the host on Apple Silicon, from the active Linux
