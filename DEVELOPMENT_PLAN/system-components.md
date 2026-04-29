@@ -12,9 +12,14 @@
   demo UI, the split runtime modules under `src/Infernix/Runtime/`, the shared Python project,
   the shared Linux substrate Dockerfile, the baked source-snapshot manifest used by git-less
   `infernix lint files` runs, the route registry, and the snapshot launcher
-- the supported direct `linux-cuda` rerun passed on April 29, 2026, but clean-host prerequisite
-  minimization remains open: the current Apple host path still expects more preinstalled tools than
-  the intended Homebrew-plus-ghcup contract tracked in Phase 6 Sprint 6.8
+- the `linux-cuda` lane is represented in the Kind topology, chart, launcher, and validation
+  surfaces, but clean-host prerequisite minimization remains open: the current Apple host path
+  still expects more preinstalled tools than the intended Homebrew-plus-ghcup contract tracked in
+  Phase 6 Sprint 6.8
+- the governed root-doc metadata closure and the true single-definition command-registry closure
+  also remain open: the current root docs still need the stricter metadata markers, and the CLI
+  surface still splits parse, help, and reference derivation across separate structures tracked in
+  Phase 6 Sprints 6.9 and 6.10
 
 ## Operator and Host Components
 
@@ -22,7 +27,7 @@
 |-----------|------------|------------|---------|---------------|
 | Apple host control plane | `./.build/infernix` plus direct `cabal` materialization against operator-installed ghcup | host-native | canonical operator surface on Apple Silicon; host-native inference lane; repo-local kubeconfig owner; target clean-host contract reduces pre-existing host requirements to Homebrew plus ghcup and treats Colima as the only supported Docker environment | `./.build/`, `./.data/` |
 | Linux outer-container control plane | `docker compose run --rm infernix infernix ...` for `linux-cpu` plus direct `docker run --gpus all ... infernix-linux-cuda:local infernix ...` for `linux-cuda` | Linux container | image-snapshot launcher for Linux workflows; forwards Docker socket and bind-mounts only `./.data/` on the supported path | `./.data/`, `./.data/runtime/infernix.kubeconfig`, `/opt/build/infernix/`, `/root/.cabal` |
-| Command registry | Haskell parser or dispatcher registry | host or outer container | single source of truth for supported commands, help text, and CLI reference docs | none |
+| Command registry | Haskell parser or dispatcher registry | host or outer container | anchors the supported command inventory, `--help` output, and CLI-reference lint coverage while later work collapses parse, help, and reference derivation into one structured definition | none |
 | Runtime-mode selector | CLI flag or `INFERNIX_RUNTIME_MODE` | host or outer container | resolves `apple-silicon`, `linux-cpu`, or `linux-cuda` independently of execution context | build-root config artifacts only |
 | Route registry | Haskell-owned route inventory | host or outer container during render or reconcile | records public prefixes, backend identity, rewrite rules, visibility, and publication metadata | none |
 | Frontend contract generator | `infernix internal generate-purs-contracts` | host or outer container during web build | emits generated PureScript contracts from handwritten Haskell browser-contract ADTs | `web/src/Generated/` |
@@ -33,14 +38,14 @@
 
 | Component | Current content | Purpose | Gap |
 |-----------|-----------------|---------|-----|
-| Linux substrate image definition | `docker/linux-substrate.Dockerfile` | one shared build definition produces the two real Linux runtime images and owns ghcup, Poetry, Node.js 22+, Playwright, and the Kind toolbelt | no material Linux-substrate image gap remains in the worktree after fresh `linux-cpu` and direct `linux-cuda` full-suite reruns passed on April 29, 2026; the image bakes `/opt/build/infernix/source-snapshot-files.txt` for git-less `lint files` runs |
-| Compose launcher | `compose.yaml` | one-command `linux-cpu` launcher against the baked substrate image | `cluster up` now reuses the already-built baked runtime image instead of rebuilding it inside the launcher; the fresh `linux-cpu` full-suite rerun passed on April 29, 2026 |
-| Direct CUDA launcher | baked `infernix-linux-cuda:local` image plus `docker run --gpus all` | supported `linux-cuda` control-plane entrypoint against the baked substrate image | no material direct-CUDA-launcher gap remains in the worktree after the supported April 29, 2026 rerun passed real cluster creation, Harbor-backed image publication, final platform rollouts, exhaustive integration, routed Playwright, and cluster teardown |
+| Linux substrate image definition | `docker/linux-substrate.Dockerfile` | one shared build definition produces the two real Linux runtime images and owns ghcup, Poetry, Node.js 22+, Playwright, and the Kind toolbelt | no material Linux-substrate image implementation gap remains in the worktree; the image bakes `/opt/build/infernix/source-snapshot-files.txt` for git-less `lint files` runs |
+| Compose launcher | `compose.yaml` | one-command `linux-cpu` launcher against the baked substrate image | `cluster up` reuses the already-built baked runtime image instead of rebuilding it inside the launcher |
+| Direct CUDA launcher | baked `infernix-linux-cuda:local` image plus `docker run --gpus all` | supported `linux-cuda` control-plane entrypoint against the baked substrate image | no material direct-CUDA-launcher implementation gap remains in the worktree; the direct launcher, GPU Kind topology, and runtime-class wiring are present |
 | Shared Python adapter project | `python/pyproject.toml`, `python/adapters/` | single dependency boundary and adapter tree for Python-native engines | the worker, setup entrypoints, and durable metadata path are landed; the current validated contract uses deterministic engine-family-specific worker output derived from durable bundle or manifest metadata and setup manifests |
 | Apple host prerequisite bootstrap | governed docs plus future Haskell bootstrap logic | minimize Apple pre-existing host installs and let `infernix` reconcile supported Homebrew-managed tools and Poetry bootstrap | the current worktree still expects preinstalled `kind`, `kubectl`, `helm`, `node`, and `poetry` on Apple; closure is tracked in Phase 6 Sprint 6.8 |
 | Browser-contract source | `src/Infernix/Web/Contracts.hs`, `web/package.json` | keeps handwritten Haskell contract source out of `Generated/` while preserving generated PureScript output there | generated PureScript output is rebuilt on demand under `web/src/Generated/`; no material ownership gap remains in the worktree |
 | Helm deployment assets | `chart/Chart.yaml`, `chart/values.yaml`, `chart/templates/` | hold repo-owned workloads, ConfigMaps, Gateway resources, and third-party chart dependencies | no material HA-route gap remains on the final chart shape |
-| Kind topology assets | `kind/cluster-apple-silicon.yaml`, `kind/cluster-linux-cpu.yaml`, `kind/cluster-linux-cuda.yaml` | mode-specific Kind shapes, including GPU-enabled `linux-cuda` | no material Kind-topology gap remains in the worktree after the supported direct `linux-cuda` rerun passed on April 29, 2026 |
+| Kind topology assets | `kind/cluster-apple-silicon.yaml`, `kind/cluster-linux-cpu.yaml`, `kind/cluster-linux-cuda.yaml` | mode-specific Kind shapes, including GPU-enabled `linux-cuda` | no material Kind-topology definition gap remains in the worktree |
 | Protobuf contract assets | `proto/infernix/...` plus on-demand generated `tools/generated_proto/` stubs | define canonical runtime, manifest, and event schema boundaries | generated stubs must stay untracked |
 
 ## Cluster and Publication Components
@@ -99,8 +104,8 @@
 | Runtime mode | Canonical mode id | Supported contract | Current repo gap |
 |--------------|-------------------|--------------------|------------------|
 | Apple Silicon / Metal | `apple-silicon` | host-native control plane and host-native inference lane; shared config, route, and Pulsar contracts | clean-host bootstrap remains open until `infernix` can reconcile the remaining Apple host tools from the intended Homebrew-plus-ghcup baseline and use Colima as the only supported Docker environment |
-| Ubuntu 24.04 / CPU | `linux-cpu` | containerized Linux lane built from the shared substrate Dockerfile | no material `linux-cpu` substrate-validation gap remains in the worktree after the fresh outer-container full-suite rerun passed on April 29, 2026 |
-| Ubuntu 24.04 / NVIDIA CUDA Container | `linux-cuda` | GPU-enabled Kind lane built from the shared substrate Dockerfile and in-image `nvkind` toolchain | no material `linux-cuda` substrate-validation gap remains in the worktree after the supported direct full-suite rerun passed on April 29, 2026 |
+| Ubuntu 24.04 / CPU | `linux-cpu` | containerized Linux lane built from the shared substrate Dockerfile | no material `linux-cpu` implementation gap remains in the worktree |
+| Ubuntu 24.04 / NVIDIA CUDA Container | `linux-cuda` | GPU-enabled Kind lane built from the shared substrate Dockerfile and in-image `nvkind` toolchain | no material `linux-cuda` implementation gap remains in the worktree |
 
 ## Serialization Boundaries
 

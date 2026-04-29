@@ -5,33 +5,41 @@
 
 > **Purpose**: Define the supported static-quality and test matrix for the two-binary topology,
 > the Pulsar-driven production inference surface, the demo UI host, the per-mode generated
-> catalog, and the mandatory HA behavior of Harbor, MinIO, operator-managed PostgreSQL, and Pulsar.
+> catalog, the mandatory HA behavior of Harbor, MinIO, operator-managed PostgreSQL, and Pulsar,
+> and the remaining repository-hardening follow-ons that keep governed root docs and the CLI
+> surface mechanically aligned with implementation.
 
 ## Phase Status
 
-Sprints 6.1 through 6.7 are `Done`. Sprint 6.8 is `Active`. The fresh `linux-cpu` outer-container
-full-suite rerun and the supported direct `linux-cuda` full-suite rerun both passed on April 29,
-2026, but the clean-host prerequisite-minimization contract remains open.
+Sprints 6.1 through 6.7 are `Done`. Sprint 6.8 is `Active`. Sprints 6.9 and 6.10 are `Planned`.
+The validation entrypoints, active-mode catalog coverage, and Linux-lane cluster or E2E assertions
+are present in the current worktree, but the clean-host prerequisite-minimization contract, the
+stricter governed-root-document metadata closure, and the true single-definition CLI-registry
+closure remain open.
 
 ## Current Repo Assessment
 
 The repository already has lint, unit, integration, and Playwright entrypoints. The canonical
 testing, boundary, portability, and Haskell-style docs are landed, and the baked Linux substrate
-image now carries the source-snapshot manifest needed for git-less `infernix lint files`
-runs. The baked `linux-cpu` substrate image now also proves routed Playwright plus the real
-Gateway and Pulsar surfaces. The routed Playwright suite exhaustively exercises every demo-visible
-generated catalog entry, and the integration suite now enumerates every generated active-mode
-catalog entry while also carrying the real-cluster Harbor, MinIO, Pulsar, and Harbor PostgreSQL
-recovery or lifecycle checks. The fresh outer-container `linux-cpu` full-suite rerun passed on
-April 29, 2026. The supported direct `linux-cuda` full-suite rerun also passed on April 29, 2026,
-covering Haskell style, Haskell unit, PureScript unit, real cluster creation, Harbor-backed image
-publication, final platform rollouts, exhaustive integration, routed Playwright, and cluster
-teardown. The remaining Phase 6 gap is clean-host bootstrap closure: the intended supported
-workflow now reduces Apple pre-existing host requirements to Homebrew plus ghcup, makes Colima the
-only supported Apple Docker environment, lets `infernix` reconcile the remaining Homebrew-managed
-Apple host tools plus Poetry bootstrap on demand, and keeps Linux host prerequisites at Docker only
-for `linux-cpu` plus Docker and NVIDIA host prerequisites for `linux-cuda`. The current worktree
-still assumes a broader Apple host toolchain on first use.
+image now carries the source-snapshot manifest needed for git-less `infernix lint files` runs. The
+routed Playwright suite exhaustively exercises every demo-visible generated catalog entry, and the
+integration suite enumerates every generated active-mode catalog entry while also carrying Harbor,
+MinIO, Pulsar, and Harbor PostgreSQL recovery or lifecycle checks in code. The `linux-cpu`
+outer-container lane and direct `linux-cuda` lane are both modeled by the cluster, chart, and
+validation surfaces in the worktree. The remaining Phase 6 gaps are:
+
+- clean-host bootstrap closure: the intended supported workflow reduces Apple pre-existing host
+  requirements to Homebrew plus ghcup, makes Colima the only supported Apple Docker environment,
+  lets `infernix` reconcile the remaining Homebrew-managed Apple host tools plus Poetry bootstrap
+  on demand, and keeps Linux host prerequisites at Docker only for `linux-cpu` plus Docker and
+  NVIDIA host prerequisites for `linux-cuda`; the current worktree still assumes a broader Apple
+  host toolchain on first use
+- governed-root-document metadata closure: `README.md` still lacks the governed metadata block,
+  and `AGENTS.md` or `CLAUDE.md` still need the explicit supersession or canonical-home markers
+  required by the root-document-governance direction
+- true single-definition CLI-registry closure: the current command-registry surface still keeps
+  parsing, documented command lines, and CLI-reference enforcement in separate structures rather
+  than one structured Haskell definition
 
 ## Validation Surface
 
@@ -339,9 +347,90 @@ toolchain from package managers instead of depending on a broad preinstalled App
 - align the governed docs suite around the minimal host prerequisite narrative without overstating
   the current implementation state
 
+---
+
+## Sprint 6.9: Governed Root-Document Metadata Closure [Planned]
+
+**Status**: Planned
+**Implementation**: `README.md`, `AGENTS.md`, `CLAUDE.md`, `documents/documentation_standards.md`, `src/Infernix/Lint/Docs.hs`
+**Docs to update**: `README.md`, `AGENTS.md`, `CLAUDE.md`, `documents/documentation_standards.md`, `documents/README.md`
+
+### Objective
+
+Close the stricter governed-root-document metadata model so the root entry documents match the
+standards they already cite.
+
+### Deliverables
+
+- `README.md` carries the governed root-document metadata block appropriate for an orientation
+  document and makes its canonical-home links explicit
+- `AGENTS.md` and `CLAUDE.md` remain thin governed entry documents and carry the explicit
+  supersession or canonical-home markers required when they summarize rather than own workflow
+  topics
+- `documents/documentation_standards.md` describes the root-document metadata contract in the same
+  terms the repo actually enforces
+- the docs linter grows root-document checks strong enough to catch missing root-document metadata
+  markers rather than relying on convention alone
+
+### Validation
+
+- `infernix docs check` fails when `README.md`, `AGENTS.md`, or `CLAUDE.md` are missing the
+  required governed metadata markers for their declared role
+- root docs summarize and link to canonical `documents/` topics instead of restating the full
+  workflow contract in parallel
+
+### Remaining Work
+
+- add the missing governed metadata block to `README.md`
+- add the explicit supersession or canonical-home markers to `AGENTS.md` and `CLAUDE.md`
+- teach the docs linter to enforce the stronger root-document metadata contract
+- tighten `documents/documentation_standards.md` so the written rule and the mechanical checks match
+
+---
+
+## Sprint 6.10: True Single-Definition CLI Registry Closure [Planned]
+
+**Status**: Planned
+**Implementation**: `src/Infernix/CommandRegistry.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Lint/Docs.hs`, `documents/reference/cli_reference.md`, `documents/reference/cli_surface.md`
+**Docs to update**: `documents/reference/cli_reference.md`, `documents/reference/cli_surface.md`, `documents/development/local_dev.md`, `README.md`
+
+### Objective
+
+Collapse the supported CLI surface into one structured Haskell definition so parsing, help text,
+and the canonical CLI reference stop drifting independently.
+
+### Deliverables
+
+- one structured Haskell registry owns supported command parsing, help text, and command-family
+  metadata
+- the canonical CLI reference derives from that same structured registry or from a mechanically
+  equivalent generated artifact rather than a separate handwritten command inventory
+- `documents/reference/cli_surface.md` remains a short family overview that summarizes and links to
+  the canonical CLI reference
+- docs lint validates the stronger CLI-registry contract instead of only checking that registry
+  command lines appear somewhere in the reference document
+
+### Validation
+
+- `./.build/infernix --help` and the canonical CLI reference enumerate the same supported command
+  families from the same structured registry source
+- changing a supported command in the structured registry changes parsing, help output, and CLI
+  reference material through one implementation path
+- `infernix docs check` fails when the CLI reference drifts from the structured command registry
+
+### Remaining Work
+
+- replace the current split between `parseCommand`, `documentedCommandLines`, and handwritten
+  reference-document maintenance with one structured registry definition
+- remove the current string-presence-only CLI-reference lint model
+- keep `documents/reference/cli_surface.md` as a summary doc rather than a parallel command
+  inventory
+- align local-dev and README command examples with the stronger registry-backed CLI reference
+
 ## Documentation Requirements
 
 **Engineering docs to create/update:**
+- `documents/documentation_standards.md` - root-document metadata contract and canonical-home markers
 - `documents/engineering/testing.md` - canonical testing doctrine, preflight expectations, and unsupported paths
 - `documents/development/testing_strategy.md` - operator workflow, matrix selection, and test-entrypoint details
 - `documents/development/haskell_style.md` - hard gates, review guidance, enforcement model, and fail-fast rule
@@ -357,9 +446,17 @@ toolchain from package managers instead of depending on a broad preinstalled App
 - `documents/development/python_policy.md` - Poetry bootstrap boundary for Apple hosts
 
 **Product or reference docs to create/update:**
+- `README.md` - orientation layer with governed root-document metadata and canonical-home links
+- `AGENTS.md` - thin governed automation entry document with explicit supersession or canonical-home markers
+- `CLAUDE.md` - thin governed automation entry document with explicit supersession or canonical-home markers
 - `documents/reference/cli_reference.md` - test command reference
+- `documents/reference/cli_surface.md` - short command-family overview that links to the canonical CLI reference
 - `documents/reference/web_portal_surface.md` - browser coverage expectations and active-mode catalog behavior
 
 **Cross-references to add:**
+- keep [phase-0-documentation-and-governance.md](phase-0-documentation-and-governance.md) aligned
+  when governed root-document metadata rules change
+- keep [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md)
+  aligned when command-registry ownership or CLI-reference derivation rules change
 - keep [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md)
   aligned when HA claims, route assumptions, or active-mode validation rules change

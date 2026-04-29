@@ -13,9 +13,7 @@
 Sprints 2.1 through 2.8 are `Done`. The storage doctrine, Kind bootstrap, manual PV
 reconciliation, Harbor-first image flow, lifecycle surface, generated demo-config publication,
 GPU-enabled Kind lane, generated values overlay path, and in-image `nvkind` closure are all
-present. The supported direct `linux-cuda` rerun passed on April 29, 2026, proving the in-image
-`nvkind` path through real cluster creation, Harbor-backed image publication, final platform
-rollouts, and cluster teardown on a supported NVIDIA host.
+present in the current worktree.
 
 ## Storage Doctrine
 
@@ -41,8 +39,8 @@ These rules close in this phase and remain mandatory afterward:
 
 The storage doctrine, Helm rollout, generated demo-config publication, Harbor-first image flow,
 route de-duplication, generated values overlay path, and in-image `nvkind` path are implemented on
-the current Kind substrate. The supported direct `linux-cuda` rerun passed on April 29, 2026, so
-no remaining Phase 2 lifecycle gap is open in the current worktree.
+the current Kind substrate. No remaining Phase 2 lifecycle implementation gap is open in the
+current worktree.
 
 ## Sprint 2.1: Kind Bootstrap and StorageClass Reset [Done]
 

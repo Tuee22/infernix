@@ -13,18 +13,18 @@ supported contract from the current validation state.
 
 | Area | Supported contract | Current repo gap |
 |------|--------------------|------------------|
-| Root-document governance | `README.md` is orientation only; `documents/` owns canonical topic docs; `AGENTS.md` and `CLAUDE.md` are thin governed entry documents | no material governance gap remains in the worktree |
-| CLI ownership | one Haskell command registry drives parse, dispatch, help text, and canonical CLI reference | no material CLI-ownership gap remains in the worktree |
-| Control-plane execution | Apple host-native control plane plus Linux outer-container control plane | the `linux-cpu` outer-container lane and the supported direct `linux-cuda` lane both pass fresh full-suite reruns on April 29, 2026; no material control-plane validation gap remains in the worktree |
+| Root-document governance | `README.md` is orientation only; `documents/` owns canonical topic docs; `AGENTS.md` and `CLAUDE.md` are thin governed entry documents | the stricter metadata closure remains open: `README.md` still lacks the governed root-doc metadata block, and `AGENTS.md` or `CLAUDE.md` still need the explicit supersession or canonical-home markers tracked in Phase 6 Sprint 6.9 |
+| CLI ownership | one Haskell command-registry foundation anchors supported command inventory, help text, and canonical CLI reference coverage | the true single-definition closure remains open: parsing, documented command lines, and CLI-reference enforcement still live in separate structures; closure is tracked in Phase 6 Sprint 6.10 |
+| Control-plane execution | Apple host-native control plane plus Linux outer-container control plane | the worktree contains the Apple host-native path, the `linux-cpu` outer-container launcher, and the supported direct `linux-cuda` launcher; no material control-plane implementation gap remains outside the separate clean-host bootstrap follow-on |
 | Host prerequisite minimization | Apple requires only Homebrew plus ghcup before building `infernix`; Colima is the only supported Apple Docker environment; `linux-cpu` requires only Docker; `linux-cuda` adds only the NVIDIA Docker prerequisites; `infernix` reconciles every remaining supported host tool through package managers | the current Apple host path still assumes preinstalled `kind`, `kubectl`, `helm`, `node`, and a `poetry` executable on first use; clean-host bootstrap closure is tracked in Phase 6 Sprint 6.8 |
 | Runtime honesty | one host-native Apple inference lane plus two Linux substrate images | no material runtime-honesty gap remains in the governed docs or current worktree |
-| Linux image layout | one shared `docker/linux-substrate.Dockerfile` builds `infernix-linux-cpu` and `infernix-linux-cuda` | the shared image is validated on `linux-cpu` and `linux-cuda`, now bakes a source-snapshot manifest for git-less `lint files` runs, and has no material Linux-image closure gap remaining in the worktree after fresh full-suite reruns passed on April 29, 2026 |
+| Linux image layout | one shared `docker/linux-substrate.Dockerfile` builds `infernix-linux-cpu` and `infernix-linux-cuda` | the shared image and source-snapshot manifest are landed, and no material Linux-image implementation gap remains in the worktree |
 | Pulsar production transport | `src/Infernix/Runtime/Pulsar.hs` uses Pulsar WebSocket and admin surfaces when configured, with filesystem simulation only as the fallback path | no material transport gap remains in the worktree |
 | Python adapter boundary | one `python/pyproject.toml` and one `python/adapters/` tree | the shared project is landed; the current validated adapter contract consumes durable bundle or manifest metadata plus idempotent setup manifests to produce deterministic engine-family-specific worker output, and no material repository-shape gap remains in the worktree |
 | Browser-contract ownership | handwritten Haskell contract ADTs live outside any `Generated/` directory; only emitted PureScript stays under `web/src/Generated/` | no material browser-contract ownership gap remains in the worktree |
 | Route or publication contract | one Haskell route registry drives rendered HTTPRoutes, publication state, chart lint, and docs | no material route or publication gap remains in the worktree |
 | Generated deployment inputs | `chart/values.yaml` holds stable defaults only; generated demo-config and publication payloads are ephemeral inputs | no material generated-input gap remains in the worktree |
-| Validation doctrine | one canonical testing doctrine plus one canonical Haskell-style guide describe enforced rules, review guidance, and validation entrypoints | doctrine is landed, and fresh full-suite reruns on the supported `linux-cpu` and direct `linux-cuda` lanes passed on April 29, 2026 |
+| Validation doctrine | one canonical testing doctrine plus one canonical Haskell-style guide describe enforced rules, review guidance, and validation entrypoints | doctrine is landed, and the worktree contains lint, unit, integration, and E2E entrypoints with explicit active-mode catalog coverage; the remaining follow-on is the clean-host bootstrap closure tracked in Phase 6 Sprint 6.8 |
 
 ## Supported Outcome
 
@@ -208,6 +208,8 @@ The plan keeps control-plane execution context separate from runtime mode.
 - Phase 0 remains the closed bootstrap for governed docs.
 - New documentation gaps land as explicit follow-on work in later phases.
 - `README.md` stays an orientation layer.
+- governed root docs carry explicit status, supersession, and canonical-home markers when they
+  distinguish canonical guidance from entry-document summaries
 - Canonical topic ownership moves into `documents/`:
   - runtime modes: `documents/architecture/runtime_modes.md`
   - local operator workflow: `documents/development/local_dev.md`
@@ -308,9 +310,8 @@ The plan keeps control-plane execution context separate from runtime mode.
 - `infernix test integration` validates the active-mode generated catalog contract, routed
   surfaces, and routed inference execution for every generated active-mode catalog entry.
 - `infernix test e2e` exercises every demo-visible generated catalog entry for the active mode.
-- integration no longer hardcodes a representative model request; the live supported Linux lanes
-  were rerun successfully on April 29, 2026, and no remaining Phase 6 validation work is open in
-  this plan
+- integration no longer hardcodes a representative model request; active-mode catalog coverage is
+  explicit, and the remaining Phase 6 work is the clean-host bootstrap closure tracked in Sprint 6.8
 
 ### 9. Haskell Types Own Frontend Contracts
 

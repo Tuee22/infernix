@@ -10,15 +10,19 @@
 
 ## Phase Status
 
-All phase-one foundation work is landed: generated-artifact hygiene, the command registry,
-governed root-doc alignment, shared workflow helpers, and the snapshot-style outer-container
-launcher all exist in the current worktree.
+The phase-one foundation is landed at the repository-shape level: generated-artifact hygiene, the
+command-registry foundation, governed root-doc alignment, and the snapshot-style outer-container
+launcher all exist in the current worktree. Later phases now own the stricter governed-root-doc
+metadata closure and the true single-definition CLI-registry closure.
 
 ## Current Repo Assessment
 
-The repo now matches the Phase 1 contract: the control plane uses one Haskell-owned command
-registry, the governed root docs point at canonical `documents/` topics, the Linux launcher uses a
-baked image snapshot, and Playwright workflows no longer depend on `npx`.
+The repo now matches the broad Phase 1 contract: the control plane has a Haskell-owned
+command-registry foundation, the governed root docs point at canonical `documents/` topics, the
+Linux launcher uses a baked image snapshot, and Playwright workflows no longer depend on `npx`.
+The remaining Phase 1-shaped follow-ons are tracked later in Phase 6: Sprint 6.9 closes the
+stricter root-document metadata model, and Sprint 6.10 closes the true single-definition CLI
+registry model.
 
 ## Runtime-Mode Foundation
 
@@ -272,29 +276,29 @@ None.
 
 ### Objective
 
-Make the CLI surface derive from one Haskell-owned command registry and reduce root-document drift
-by giving each workflow topic one canonical home.
+Establish the Haskell-owned command-registry foundation and reduce root-document drift by giving
+each workflow topic one canonical home.
 
 ### Deliverables
 
-- one Haskell command registry owns supported command parsing, dispatch, `--help` output, and the
-  canonical CLI reference document
-- shared Haskell workflow helpers own:
+- one Haskell command-registry foundation owns the supported command inventory, parser entrypoint,
+  `--help` output, and CLI-reference lint coverage
+- a shared Haskell workflow-helper module exists for:
   - web toolchain presence checks
   - `npm --prefix web ci` readiness
   - platform command availability checks
   - shared generated-file banner literals
 - `documents/reference/cli_surface.md` becomes a short family overview that links to the canonical
   CLI reference instead of repeating it
-- `README.md`, `AGENTS.md`, and `CLAUDE.md` become thinner governed entry docs with explicit
-  status or supersession metadata and links into `documents/`
+- `README.md`, `AGENTS.md`, and `CLAUDE.md` become thinner governed entry docs that link into
+  `documents/` rather than restating the full workflow contract
 
 ### Validation
 
 - `./.build/infernix --help` and the canonical CLI reference enumerate the same supported command families
-- changing a command description in the registry changes generated help and the reference doc in
-  the same implementation path
-- `infernix test lint` fails if root-doc workflow summaries drift from their canonical documents
+- `infernix lint docs` fails if the canonical CLI reference drops a supported registry command line
+- root-doc workflow summaries point readers at canonical `documents/` topics rather than carrying
+  full duplicate workflow contracts
 
 ### Remaining Work
 

@@ -10,9 +10,8 @@
 
 ## Phase Status
 
-Sprints 3.1 through 3.8 are `Done`. The final chart shape reaches real-cluster Gateway acceptance
-on the supported Linux lanes, and the routed Pulsar surfaces prove the final `/pulsar/ws -> /ws`
-contract end to end.
+Sprints 3.1 through 3.8 are `Done`. The final chart shape, route registry, publication contract,
+and `/pulsar/ws -> /ws` rewrite contract are all represented in the current worktree.
 
 ## HA Reconcile Surface
 
