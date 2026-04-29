@@ -486,11 +486,7 @@ clusterDown maybeRuntimeMode = do
       when clusterExists $ do
         unless (kindUsesHostBindMounts paths) $
           syncKindNodeRuntimePathsToHost paths runtimeMode maybeState
-        runCommand
-          Nothing
-          [("KUBECONFIG", Config.generatedKubeconfigPath paths)]
-          "kind"
-          ["delete", "cluster", "--name", kindClusterName paths runtimeMode]
+        deleteKindCluster paths runtimeMode
       cleanupLegacyBootstrapRegistry
   case maybeState of
     Nothing -> putStrLn "cluster already absent"
@@ -2909,6 +2905,49 @@ clusterWorkloadImageRepository runtimeMode =
 clusterWorkloadImageRef :: RuntimeMode -> String
 clusterWorkloadImageRef runtimeMode =
   clusterWorkloadImageRepository runtimeMode <> ":local"
+
+deleteKindCluster :: Paths -> RuntimeMode -> IO ()
+deleteKindCluster paths runtimeMode = go (3 :: Int) ""
+  where
+    commandArgs = ["delete", "cluster", "--name", kindClusterName paths runtimeMode]
+    commandLabel = "kind " <> unwords commandArgs
+
+    go remainingAttempts lastError = do
+      result <-
+        tryCommand
+          Nothing
+          [("KUBECONFIG", Config.generatedKubeconfigPath paths)]
+          "kind"
+          commandArgs
+      case result of
+        Right _ -> pure ()
+        Left err -> do
+          clusterDeleted <- waitForKindClusterAbsence paths runtimeMode
+          if clusterDeleted
+            then pure ()
+            else
+              if remainingAttempts <= 1
+                then ioError (userError ("command failed: " <> commandLabel <> "\n" <> chooseError err lastError))
+                else do
+                  threadDelay 2000000
+                  go (remainingAttempts - 1) (chooseError err lastError)
+
+    chooseError current previous
+      | null current = previous
+      | otherwise = current
+
+waitForKindClusterAbsence :: Paths -> RuntimeMode -> IO Bool
+waitForKindClusterAbsence paths runtimeMode = go (30 :: Int)
+  where
+    go remainingAttempts
+      | remainingAttempts <= 0 = pure False
+      | otherwise = do
+          clusterStillExists <- kindClusterExists paths runtimeMode
+          if clusterStillExists
+            then do
+              threadDelay 1000000
+              go (remainingAttempts - 1)
+            else pure True
 
 runCommand :: Maybe FilePath -> [(String, String)] -> FilePath -> [String] -> IO ()
 runCommand maybeWorkingDirectory envOverrides command args = do

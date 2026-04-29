@@ -8,22 +8,22 @@
 
 ## Current Repo Assessment
 
-The supported architecture now largely matches the tightened DRY model. The table below separates
-the supported contract from the remaining implementation gap.
+The supported architecture now matches the tightened DRY model. The table below separates the
+supported contract from the current validation state.
 
 | Area | Supported contract | Current repo gap |
 |------|--------------------|------------------|
 | Root-document governance | `README.md` is orientation only; `documents/` owns canonical topic docs; `AGENTS.md` and `CLAUDE.md` are thin governed entry documents | no material governance gap remains in the worktree |
 | CLI ownership | one Haskell command registry drives parse, dispatch, help text, and canonical CLI reference | no material CLI-ownership gap remains in the worktree |
-| Control-plane execution | Apple host-native control plane plus Linux outer-container control plane | the `linux-cpu` outer-container lane is validated on `cluster up`, routed Pulsar, routed E2E, and a fresh exhaustive integration or HA rerun on April 28, 2026; the supported `linux-cuda` rerun from April 28, 2026 reaches real cluster creation, Harbor-backed image publication, and Helm rollout, but low host disk headroom leaves BookKeeper ledger directories non-writable and keeps `infernix-service` from becoming ready |
-| Runtime honesty | one host-native Apple inference lane plus two Linux substrate images | no material runtime-honesty gap remains in the governed docs or current worktree; the remaining ordered closure is the supported `linux-cuda` rerun |
-| Linux image layout | one shared `docker/linux-substrate.Dockerfile` builds `infernix-linux-cpu` and `infernix-linux-cuda` | the shared image is validated on `linux-cpu`, now bakes a tracked-source snapshot manifest for git-less `lint files` runs, and reaches Harbor-backed `linux-cuda` rollout on April 28, 2026; final CUDA closure is blocked on a supported NVIDIA host with enough free disk headroom |
+| Control-plane execution | Apple host-native control plane plus Linux outer-container control plane | the `linux-cpu` outer-container lane and the supported direct `linux-cuda` lane both pass fresh full-suite reruns on April 29, 2026; no material control-plane validation gap remains in the worktree |
+| Runtime honesty | one host-native Apple inference lane plus two Linux substrate images | no material runtime-honesty gap remains in the governed docs or current worktree |
+| Linux image layout | one shared `docker/linux-substrate.Dockerfile` builds `infernix-linux-cpu` and `infernix-linux-cuda` | the shared image is validated on `linux-cpu` and `linux-cuda`, now bakes a source-snapshot manifest for git-less `lint files` runs, and has no material Linux-image closure gap remaining in the worktree after fresh full-suite reruns passed on April 29, 2026 |
 | Pulsar production transport | `src/Infernix/Runtime/Pulsar.hs` uses Pulsar WebSocket and admin surfaces when configured, with filesystem simulation only as the fallback path | no material transport gap remains in the worktree |
 | Python adapter boundary | one `python/pyproject.toml` and one `python/adapters/` tree | the shared project is landed; the current validated adapter contract consumes durable bundle or manifest metadata plus idempotent setup manifests to produce deterministic engine-family-specific worker output, and no material repository-shape gap remains in the worktree |
 | Browser-contract ownership | handwritten Haskell contract ADTs live outside any `Generated/` directory; only emitted PureScript stays under `web/src/Generated/` | no material browser-contract ownership gap remains in the worktree |
 | Route or publication contract | one Haskell route registry drives rendered HTTPRoutes, publication state, chart lint, and docs | no material route or publication gap remains in the worktree |
 | Generated deployment inputs | `chart/values.yaml` holds stable defaults only; generated demo-config and publication payloads are ephemeral inputs | no material generated-input gap remains in the worktree |
-| Validation doctrine | one canonical testing doctrine plus one canonical Haskell-style guide describe enforced rules, review guidance, and validation entrypoints | doctrine is landed; the remaining supported-lane validation gap is the supported `linux-cuda` rerun, which now specifically needs enough host disk headroom for Harbor publication plus Pulsar BookKeeper durability after the April 28, 2026 run exhausted disk during service bring-up |
+| Validation doctrine | one canonical testing doctrine plus one canonical Haskell-style guide describe enforced rules, review guidance, and validation entrypoints | doctrine is landed, and fresh full-suite reruns on the supported `linux-cpu` and direct `linux-cuda` lanes passed on April 29, 2026 |
 
 ## Supported Outcome
 
@@ -222,6 +222,10 @@ The plan keeps control-plane execution context separate from runtime mode.
 - Supported Linux launcher docs use `docker compose run --rm infernix infernix ...` for
   `linux-cpu` and direct `docker run --gpus all ... infernix-linux-cuda:local infernix ...` for
   `linux-cuda`.
+- Apple host-native `cluster up` writes the repo-local kubeconfig to `./.build/infernix.kubeconfig`.
+- Linux outer-container `cluster up` writes the repo-local kubeconfig to
+  `./.data/runtime/infernix.kubeconfig` so fresh launcher containers reuse the same durable
+  cluster handle.
 - `docker compose up` and `docker compose exec` are not supported operator workflows.
 - The Linux launcher bind-mounts only `./.data/` once its cleanup sprint closes.
 
@@ -240,7 +244,11 @@ The plan keeps control-plane execution context separate from runtime mode.
 
 - `cluster up` emits `infernix-demo-<mode>.dhall` for the active runtime mode.
 - The generated file is staging content and is published into `ConfigMap/infernix-demo-config`.
+- On the Linux outer-container control-plane path, the generated staging file lives under
+  `/opt/build/infernix/infernix-demo-<mode>.dhall`.
 - Cluster-resident consumers mount that ConfigMap read-only at `/opt/build/`.
+- Cluster-resident consumers read the active mode's mounted file from
+  `/opt/build/infernix-demo-<mode>.dhall`.
 - The mounted file is the exact source of truth for demo-visible catalog entries.
 
 ### 5. Manual Storage Doctrine
@@ -294,8 +302,9 @@ The plan keeps control-plane execution context separate from runtime mode.
 - `infernix test integration` validates the active-mode generated catalog contract, routed
   surfaces, and routed inference execution for every generated active-mode catalog entry.
 - `infernix test e2e` exercises every demo-visible generated catalog entry for the active mode.
-- integration no longer hardcodes a representative model request; remaining Phase 6 work is
-  limited to rerunning the live supported lanes and keeping the plan truthful as those results land
+- integration no longer hardcodes a representative model request; the live supported Linux lanes
+  were rerun successfully on April 29, 2026, and no remaining Phase 6 validation work is open in
+  this plan
 
 ### 9. Haskell Types Own Frontend Contracts
 
@@ -310,9 +319,10 @@ The plan keeps control-plane execution context separate from runtime mode.
 - Supported workflows use `npm --prefix web exec -- playwright ...`; `npx` is not part of the
   supported final workflow.
 
-### 11. Container Build Output Stays Under `/opt/build`
+### 11. Container Build Output Stays Under `/opt/build/infernix`
 
-- Linux containerized build output stays under `/opt/build`.
+- Linux outer-container build output stays under `/opt/build/infernix/`.
+- Cluster-mounted runtime config remains mounted separately at `/opt/build/`.
 - The outer-container launcher does not rely on a live repo bind mount once the snapshot model is
   closed.
 

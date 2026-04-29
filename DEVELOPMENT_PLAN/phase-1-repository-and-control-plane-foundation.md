@@ -117,6 +117,8 @@ different products.
   `kind`, `kubectl`, `helm`, and Docker
 - `cluster up` writes `./.build/infernix.kubeconfig` on Apple and does not mutate
   `$HOME/.kube/config`
+- `cluster up` writes `./.data/runtime/infernix.kubeconfig` on the Linux outer-container path so
+  fresh launcher containers reuse the same durable cluster handle
 - `infernix kubectl ...` automatically targets the repo-local kubeconfig on supported paths
 - Linux uses Compose only as a one-command launcher:
   `docker compose run --rm infernix infernix <subcommand>`
@@ -148,7 +150,7 @@ static quality enforceable through canonical entrypoints.
 ### Deliverables
 
 - host-native Haskell builds materialize `./.build/infernix` and `./.build/infernix-demo`
-- containerized build output stays under `/opt/build/`
+- outer-container build output stays under `/opt/build/infernix/`
 - `cluster up` stages `infernix-demo-<mode>.dhall` under the active build root
 - the supported web build regenerates frontend contracts, runs `spago build`, and emits
   `web/dist/app.js`

@@ -10,8 +10,8 @@
 ## Phase Status
 
 Sprints 5.1 through 5.7 are `Done`. The final Linux substrate image now owns the demo bundle,
-Playwright toolchain, and routed `linux-cpu` E2E execution path. Ordered plan closure still
-depends on Phase 4's remaining supported `linux-cuda` rerun.
+Playwright toolchain, and routed `linux-cpu` plus supported direct `linux-cuda` E2E execution
+paths.
 
 ## Current Repo Assessment
 
@@ -19,8 +19,8 @@ The repository ships the supported PureScript demo path: `web/src/Main.purs` and
 `web/src/Infernix/Web/Workbench.purs` own the browser workbench, `web/test/Main.purs` owns the
 frontend unit suite, `src/Infernix/Web/Contracts.hs` owns the handwritten browser contract, and
 `npm --prefix web run build` regenerates generated contracts and bundles the app into
-`web/dist/app.js`. No remaining Phase 5 implementation gap remains in the current worktree, but
-the ordered phase chain still depends on the remaining Phase 4 supported `linux-cuda` closure.
+`web/dist/app.js`. No remaining Phase 5 implementation or dependency gap remains in the current
+worktree.
 
 ## Demo Catalog Contract
 

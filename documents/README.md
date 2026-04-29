@@ -26,7 +26,7 @@
 - [development/testing_strategy.md](development/testing_strategy.md) records the implemented lint,
   unit, integration, and routed E2E coverage
 - [development/chaos_testing.md](development/chaos_testing.md) records the current HA-failure
-  validation status and the Phase 6 ownership for the remaining automation
+  validation status and the Phase 6 ownership for that coverage
 - [engineering/build_artifacts.md](engineering/build_artifacts.md) defines build-output isolation
 - [engineering/implementation_boundaries.md](engineering/implementation_boundaries.md) defines
   the ownership boundaries across Haskell, Python, chart assets, and generated outputs

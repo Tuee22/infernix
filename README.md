@@ -7,10 +7,10 @@ It handles orchestration, model resolution, artifact delivery, request routing, 
 supervision, and browser-facing manual inference while leaving execution kernels to the best
 runtime for each model family.
 
-The repository currently contains a partial implementation of that platform. This README captures
-the intended product contract and operator direction, while
+The supported platform in the current worktree matches the closed Phase 0 through Phase 6 plan
+baseline. This README is the operator-oriented orientation and quick-start layer, while
 [DEVELOPMENT_PLAN/](DEVELOPMENT_PLAN/README.md) is the authoritative source for implementation
-status, unfinished phases, and closure criteria.
+status, validation history, and phase-closure evidence.
 
 This repository serves two aligned purposes:
 
@@ -59,7 +59,7 @@ This repository serves two aligned purposes:
 
 ## What Infernix Does
 
-At full plan closure, Infernix does not reimplement model kernels. It coordinates them.
+Infernix does not reimplement model kernels. It coordinates them.
 
 - consumes inference requests from Pulsar request topics named in the active `.dhall` and publishes
   results to the configured result topics; this is the production inference surface
@@ -127,78 +127,244 @@ Silicon. Production deployments leave the demo flag off and accept inference wor
 subscription only. The local Kind and HA substrate is the validation and operator baseline for
 Apple, CPU, and CUDA runtime targets.
 
-## HA Demo Ground Quick Start
+## System Prerequisites
 
-The local HA Kind cluster is the testing and demo ground for all three runtime modes. Each
-substrate has its own quick-start path. Routing is owned by the Envoy Gateway controller and
-HTTPRoute manifests installed by `cluster up`; the demo cluster applies no auth.
+Use the host package manager or installer that matches the supported execution context:
 
-### Quick Start: Apple Silicon (host-native)
+- on Apple Silicon, use `brew` for operator-facing userland tools and use the upstream `ghcup`
+  bootstrap for the Haskell toolchain
+- on Linux, use `apt` plus the vendor-maintained Docker or NVIDIA repositories rather than older
+  distro-default packages when those vendor repos are the supported path
+- manual installation is only expected where the host OS or GPU driver model makes it necessary,
+  most notably `ghcup` on macOS and the NVIDIA driver on CUDA hosts
 
-Apple Silicon has no Dockerfile. The operator pre-installs `ghcup` with GHC 9.14.1 + Cabal
-3.16.1.0 active; `cabal build` produces working binaries; the `infernix` daemon installs
-engine deps via system `clang` and Homebrew on first need.
+The Linux install examples below assume an Ubuntu 24.04 host.
 
-**Prerequisites**: macOS on Apple Silicon, [Homebrew](https://brew.sh/),
-[Docker Desktop](https://www.docker.com/products/docker-desktop/),
-[ghcup](https://www.haskell.org/ghcup/) with `ghc 9.14.1` and `cabal 3.16.1.0` set as active,
-`brew install kind kubectl helm node`.
+### Apple Silicon host prerequisites
+
+Required on the host:
+
+- Homebrew
+- Docker Desktop
+- `ghcup` with `ghc 9.14.1` and `cabal 3.16.1.0` active
+- `kind`, `kubectl`, `helm`, and Node.js 22+ from Homebrew
+- Playwright browser binaries for routed `test e2e`
+
+Supported install path:
 
 ```bash
-# Build both Haskell binaries directly into ./.build/ (no repo-owned scripts).
+# Homebrew (official installer).
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+# Userland tools managed by Homebrew.
+brew install kind kubectl helm node@22
+brew install --cask docker
+
+# Haskell toolchain managed by ghcup rather than Homebrew.
+curl --proto '=https' --tlsv1.2 -sSf https://get-ghcup.haskell.org | sh
+ghcup install ghc 9.14.1
+ghcup set ghc 9.14.1
+ghcup install cabal 3.16.1.0
+ghcup set cabal 3.16.1.0
+
+# One-time Playwright browser install for host-routed E2E.
+npm --prefix web exec -- playwright install --with-deps chromium firefox webkit
+```
+
+Notes:
+
+- `ghcup` is the supported manual install because the Apple host-native workflow depends on an
+  explicitly selected GHC and Cabal pair
+- Docker Desktop is the supported macOS Docker runtime; the repo does not support an alternate
+  Kind-on-mac launcher path
+- engine-specific bootstrap beyond the operator toolchain is currently limited to repo-local
+  Poetry setup plus adapter `setup-*` entrypoints; host-level `brew` package installation remains
+  an operator responsibility
+
+### Linux CPU host prerequisites
+
+Required on the host:
+
+- Docker Engine
+- Docker Compose plugin
+- permission to access `/var/run/docker.sock`
+
+Not required on the host for the supported outer-container path:
+
+- `kind`
+- `kubectl`
+- `helm`
+- Node.js
+- GHC or Cabal
+
+Supported install path:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y ca-certificates curl gnupg
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+sudo chmod a+r /etc/apt/keyrings/docker.gpg
+echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+  $(. /etc/os-release && echo \"$VERSION_CODENAME\") stable" | \
+  sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+sudo apt-get update
+sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+sudo usermod -aG docker "$USER"
+newgrp docker
+docker version
+docker compose version
+```
+
+Notes:
+
+- prefer Docker's official apt repository over Ubuntu's older `docker.io` package so the supported
+  Compose plugin and current engine features stay aligned with the Linux substrate images
+- the Linux CPU workflow does not need host-installed Kubernetes or Haskell tooling because the
+  baked `infernix-linux-cpu:local` image carries the repo-supported toolchain
+
+### Linux CUDA host prerequisites
+
+Required on the host:
+
+- everything from the Linux CPU host prerequisites
+- an NVIDIA GPU visible to the host OS
+- a working NVIDIA driver on the host
+- the NVIDIA Container Toolkit configured for Docker
+
+Supported install path:
+
+```bash
+# First complete the Linux CPU host setup above.
+
+# Manual host-driver step: use Ubuntu Additional Drivers, your fleet's GPU-driver automation,
+# or NVIDIA's distro guidance so nvidia-smi works on the host before continuing.
+nvidia-smi -L
+
+# NVIDIA Container Toolkit from NVIDIA's apt repository.
+curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | \
+  sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+curl -fsSL https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
+  sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
+  sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list > /dev/null
+sudo apt-get update
+sudo apt-get install -y nvidia-container-toolkit
+sudo nvidia-ctk runtime configure --runtime=docker
+sudo systemctl restart docker
+
+# Verify both the host GPU and Docker GPU handoff.
+nvidia-smi -L
+docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi -L
+```
+
+Notes:
+
+- the NVIDIA driver is the main manual step because the right installation path depends on the
+  host kernel, Secure Boot posture, and fleet policy; the repo assumes that driver is already
+  working before `linux-cuda` validation starts
+- the supported `linux-cuda` lane does not need host-installed `kind`, `kubectl`, `helm`, Node.js,
+  or GHC because the baked `infernix-linux-cuda:local` image carries them
+- plan for substantial free disk space before `cluster up` or `test all`; the Kind preload plus
+  Harbor-backed rollout is materially heavier than the CPU lane
+
+## Demo and Validation Quick Start
+
+The local HA Kind cluster is the supported demo ground and full-suite validation ground for all
+three runtime modes. `cluster up` owns the bring-up path, `cluster status` prints the chosen
+edge port plus the published route inventory, and the demo UI is available at
+`http://127.0.0.1:<edge-port>/` whenever the active generated `.dhall` enables `demo_ui`.
+
+`infernix test all` is the canonical aggregate suite on every substrate:
+
+- `infernix test lint`
+- `infernix test unit`
+- `infernix test integration`
+- `infernix test e2e`
+- `infernix test all`
+
+### Apple Silicon (host-native)
+
+Apple Silicon has no Dockerfile. The operator pre-installs `ghcup` with GHC 9.14.1 + Cabal
+3.16.1.0 active, and the host toolchain owns the `apple-silicon` runtime lane directly.
+
+**Prerequisites**: complete the Apple Silicon host setup in [System Prerequisites](#system-prerequisites).
+
+```bash
+# Build both Haskell binaries directly into ./.build/.
 cabal --builddir=.build/cabal install --installdir=./.build --install-method=copy --overwrite-policy=always exe:infernix exe:infernix-demo
-# Reconcile the Kind test cluster (--runtime-mode is inferred as apple-silicon on macOS).
+
+# Bring up the Kind HA demo ground.
 ./.build/infernix --runtime-mode apple-silicon cluster up
-# Inspect cluster health, the Envoy Gateway listener port, and HTTPRoute inventory.
+
+# Print the edge port, route inventory, and publication details, then open
+# http://127.0.0.1:<edge-port>/ in a browser.
 ./.build/infernix --runtime-mode apple-silicon cluster status
-# Query the cluster through the repo-local kubeconfig wrapper.
-./.build/infernix --runtime-mode apple-silicon kubectl get pods -A
-# Run lint, unit, integration, and routed E2E validation against host-installed Playwright.
+
+# Optional: serve the same demo UI directly from the host on a dedicated port.
+./.build/infernix-demo serve --dhall ./.build/infernix-demo-apple-silicon.dhall --port 9180
+
+# Run the full suite.
 ./.build/infernix --runtime-mode apple-silicon test all
-# Tear down the Kind cluster while preserving authoritative data under ./.data.
+
+# Or run each suite directly.
+./.build/infernix --runtime-mode apple-silicon test lint
+./.build/infernix --runtime-mode apple-silicon test unit
+./.build/infernix --runtime-mode apple-silicon test integration
+./.build/infernix --runtime-mode apple-silicon test e2e
+
+# Tear down while preserving authoritative data under ./.data.
 ./.build/infernix --runtime-mode apple-silicon cluster down
 ```
 
 `cluster up` writes `./.build/infernix.kubeconfig` and never touches `$HOME/.kube/config`. On
-first inference request, the daemon orchestrates engine setup (e.g., `brew install` for
-required system deps, `cmake`/`make` builds of llama.cpp against system `clang`,
-`poetry install --directory python` into `python/.venv/`).
+the current Apple path, the daemon ensures the shared Poetry project exists under `python/.venv/`
+when needed and runs adapter `setup-*` entrypoints that write repo-local bootstrap manifests under
+`./.data/engines/`. It does not currently install Homebrew packages on the operator's behalf.
 
-### Quick Start: Linux CPU (outer container)
+### Linux CPU (outer container)
 
-The `linux-cpu` substrate ships one baked image snapshot — `infernix-linux-cpu:local` — built
-from `docker/linux-substrate.Dockerfile` with `BASE_IMAGE=ubuntu:24.04`. The image plays
-launcher, in-cluster workload, and Playwright executor.
+The `linux-cpu` substrate ships one baked image snapshot, `infernix-linux-cpu:local`, built from
+`docker/linux-substrate.Dockerfile` with `BASE_IMAGE=ubuntu:24.04`. The same image acts as the
+launcher, the in-cluster workload image source, and the routed Playwright executor.
 
-**Prerequisites**: a Linux host with Docker, the
-[NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
-NOT required for this lane.
+**Prerequisites**: complete the Linux CPU host setup in [System Prerequisites](#system-prerequisites).
 
 ```bash
-# Build the shared Linux launcher image snapshot.
+# Build the shared Linux substrate image snapshot.
 docker compose build infernix
-# Reconcile the Kind test cluster from inside the baked image.
+
+# Bring up the Kind HA demo ground.
 docker compose run --rm infernix infernix --runtime-mode linux-cpu cluster up
-# Inspect cluster health, the Envoy Gateway listener port, and HTTPRoute inventory.
+
+# Print the edge port, route inventory, and publication details, then open
+# http://127.0.0.1:<edge-port>/ in a browser.
 docker compose run --rm infernix infernix --runtime-mode linux-cpu cluster status
-# Run lint, unit, integration, and routed E2E validation (Playwright runs inside this image).
+
+# Run the full suite.
 docker compose run --rm infernix infernix --runtime-mode linux-cpu test all
+
+# Or run each suite directly.
+docker compose run --rm infernix infernix --runtime-mode linux-cpu test lint
+docker compose run --rm infernix infernix --runtime-mode linux-cpu test unit
+docker compose run --rm infernix infernix --runtime-mode linux-cpu test integration
+docker compose run --rm infernix infernix --runtime-mode linux-cpu test e2e
+
 # Tear down.
 docker compose run --rm infernix infernix --runtime-mode linux-cpu cluster down
 ```
 
-The Linux launcher bind-mounts only `./.data/` plus the Docker socket and named build caches.
-The baked image owns the entire toolchain: the runtime path never installs anything via `apt`,
-`pip`, or `cabal build`.
+The Linux launcher bind-mounts only `./.data/`, the Docker socket, and named build caches. The
+baked image owns the full toolchain, so the supported runtime path does not install anything via
+`apt`, `pip`, or ad hoc host-side `cabal build`.
 
-### Quick Start: Linux CUDA (substrate container)
+### Linux CUDA (substrate container)
 
-The `linux-cuda` substrate ships one baked image snapshot — `infernix-linux-cuda:local` — built
-from `docker/linux-substrate.Dockerfile` with a CUDA base image. The image includes the `nvkind`
-binary needed by the supported `linux-cuda` cluster lifecycle.
+The `linux-cuda` substrate ships one baked image snapshot, `infernix-linux-cuda:local`, built
+from `docker/linux-substrate.Dockerfile` with a CUDA base image. The image includes `nvkind` and
+the GPU validation toolchain needed by the supported `linux-cuda` cluster lifecycle.
 
-**Prerequisites**: a Linux host with an NVIDIA GPU, Docker, and the NVIDIA Container Toolkit;
-verify the host with `docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi -L`.
+**Prerequisites**: complete the Linux CUDA host setup in [System Prerequisites](#system-prerequisites).
 
 ```bash
 # Build the linux-cuda substrate image.
@@ -206,21 +372,50 @@ docker build -f docker/linux-substrate.Dockerfile \
   --build-arg RUNTIME_MODE=linux-cuda \
   --build-arg BASE_IMAGE=nvidia/cuda:13.2.1-cudnn-runtime-ubuntu24.04 \
   -t infernix-linux-cuda:local .
-# Reconcile the GPU-enabled Kind test cluster (nvkind plus NVIDIA device plugin).
+
+# Bring up the GPU-enabled Kind HA demo ground.
 docker run --rm --gpus all \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v "$PWD/.data:/workspace/.data" \
   infernix-linux-cuda:local infernix --runtime-mode linux-cuda cluster up
+
+# Print the edge port, route inventory, and publication details, then open
+# http://127.0.0.1:<edge-port>/ in a browser.
+docker run --rm --gpus all \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v "$PWD/.data:/workspace/.data" \
+  infernix-linux-cuda:local infernix --runtime-mode linux-cuda cluster status
+
 # Confirm GPU visibility from the cluster service deployment.
 docker run --rm --gpus all \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v "$PWD/.data:/workspace/.data" \
   infernix-linux-cuda:local infernix --runtime-mode linux-cuda kubectl -n platform exec deployment/infernix-service -- nvidia-smi -L
-# Run the full validation lane against the GPU-backed catalog.
+
+# Run the full suite.
 docker run --rm --gpus all \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v "$PWD/.data:/workspace/.data" \
   infernix-linux-cuda:local infernix --runtime-mode linux-cuda test all
+
+# Or run each suite directly.
+docker run --rm --gpus all \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v "$PWD/.data:/workspace/.data" \
+  infernix-linux-cuda:local infernix --runtime-mode linux-cuda test lint
+docker run --rm --gpus all \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v "$PWD/.data:/workspace/.data" \
+  infernix-linux-cuda:local infernix --runtime-mode linux-cuda test unit
+docker run --rm --gpus all \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v "$PWD/.data:/workspace/.data" \
+  infernix-linux-cuda:local infernix --runtime-mode linux-cuda test integration
+docker run --rm --gpus all \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v "$PWD/.data:/workspace/.data" \
+  infernix-linux-cuda:local infernix --runtime-mode linux-cuda test e2e
+
 # Tear down.
 docker run --rm --gpus all \
   -v /var/run/docker.sock:/var/run/docker.sock \
@@ -228,10 +423,9 @@ docker run --rm --gpus all \
   infernix-linux-cuda:local infernix --runtime-mode linux-cuda cluster down
 ```
 
-The CUDA substrate image bundles CUDA-aware engine builds (e.g., llama.cpp CUDA, vLLM) at
-image build time. The `cluster up` flow installs the Envoy Gateway controller, the NVIDIA
-device plugin, and `RuntimeClass/nvidia` before scheduling the GPU-requesting service
-workload.
+The CUDA substrate image bundles CUDA-aware engine builds such as `llama.cpp` CUDA and `vLLM` at
+image build time. `cluster up` installs the Envoy Gateway controller, the NVIDIA device plugin,
+and `RuntimeClass/nvidia` before scheduling the GPU-requesting service workload.
 
 ## CLI Surface
 

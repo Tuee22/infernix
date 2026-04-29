@@ -1,22 +1,21 @@
 # Phase 2: Kind Cluster Storage and Lifecycle
 
-**Status**: Blocked
+**Status**: Done
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
 
 > **Purpose**: Define the supported Kind bootstrap path, the manual storage doctrine, the Helm
 > deployment model, the Harbor bootstrap and Harbor-backed image flow embedded in `cluster up`,
-> the mode-aware generated demo-config behavior tied to cluster reconcile, and the remaining
-> `linux-cuda` lifecycle cleanup.
+> the mode-aware generated demo-config behavior tied to cluster reconcile, and the `linux-cuda`
+> lifecycle closure.
 
 ## Phase Status
 
-Sprints 2.1, 2.2, 2.4, 2.5, 2.6, and 2.7 stay `Done`: the storage doctrine, Kind bootstrap,
-manual PV reconciliation, Harbor-first image flow, lifecycle surface, generated demo-config
-publication, and GPU-enabled Kind lane are all present. Sprint 2.3 is now `Done`: the route
-registry plus generated values overlays own the demo-config and publication payload inputs instead
-of committed live copies. Sprint 2.8 is now `Blocked`: the in-image `nvkind` path is landed, and
-the remaining closure needs a supported NVIDIA host with enough free disk headroom for Harbor
-publication plus Pulsar BookKeeper durability.
+Sprints 2.1 through 2.8 are `Done`. The storage doctrine, Kind bootstrap, manual PV
+reconciliation, Harbor-first image flow, lifecycle surface, generated demo-config publication,
+GPU-enabled Kind lane, generated values overlay path, and in-image `nvkind` closure are all
+present. The supported direct `linux-cuda` rerun passed on April 29, 2026, proving the in-image
+`nvkind` path through real cluster creation, Harbor-backed image publication, final platform
+rollouts, and cluster teardown on a supported NVIDIA host.
 
 ## Storage Doctrine
 
@@ -41,14 +40,9 @@ These rules close in this phase and remain mandatory afterward:
 ## Current Repo Assessment
 
 The storage doctrine, Helm rollout, generated demo-config publication, Harbor-first image flow,
-route de-duplication, and generated values overlay path are implemented on the current Kind path.
-The remaining lifecycle work is now limited to the `linux-cuda` supported-host closure:
-
-- the `linux-cuda` path now carries the in-image `nvkind` toolchain and, on April 28, 2026,
-  reaches real cluster creation, Harbor-backed image publication, and Helm rollout on a supported
-  NVIDIA host
-- that same rerun still blocks later because low host disk headroom makes BookKeeper ledger
-  directories non-writable and prevents `infernix-service` readiness
+route de-duplication, generated values overlay path, and in-image `nvkind` path are implemented on
+the current Kind substrate. The supported direct `linux-cuda` rerun passed on April 29, 2026, so
+no remaining Phase 2 lifecycle gap is open in the current worktree.
 
 ## Sprint 2.1: Kind Bootstrap and StorageClass Reset [Done]
 
@@ -131,7 +125,8 @@ Put repo-owned and third-party workloads behind one Helm deployment model while 
   publications exist as chart templates
 - chart dependencies cover Harbor, MinIO, Pulsar, Envoy Gateway, the Percona PostgreSQL operator,
   and operator-managed PostgreSQL clusters where required
-- repo-owned workloads mount `ConfigMap/infernix-demo-config` in the watched runtime directory
+- repo-owned workloads mount `ConfigMap/infernix-demo-config` in the runtime config mount
+  directory
 - chart defaults encode the mandatory local HA topology
 - `chart/values.yaml` holds stable defaults only; generated demo-config or publication payloads
   are rendered as reconcile-time or lint-time inputs instead of committed blobs
@@ -267,11 +262,10 @@ None.
 
 ---
 
-## Sprint 2.8: `linux-cuda` Toolchain Closure Without Host-Visible `nvkind` Handoff [Blocked]
+## Sprint 2.8: `linux-cuda` Toolchain Closure Without Host-Visible `nvkind` Handoff [Done]
 
-**Status**: Blocked
+**Status**: Done
 **Implementation**: `docker/linux-substrate.Dockerfile`, `src/Infernix/Cluster.hs`, `kind/cluster-linux-cuda.yaml`, `documents/engineering/k8s_native_dev_policy.md`
-**Blocked by**: supported NVIDIA host with enough free disk headroom for Harbor publication and Pulsar BookKeeper durability
 **Docs to update**: `documents/engineering/k8s_native_dev_policy.md`, `documents/engineering/docker_policy.md`, `documents/operations/cluster_bootstrap_runbook.md`
 
 ### Objective
@@ -295,12 +289,7 @@ the final Linux CUDA image.
 
 ### Remaining Work
 
-- rerun the supported `linux-cuda` cluster lifecycle on a supported NVIDIA host with enough free
-  disk headroom to keep Kind image preload, Harbor publication, and Pulsar BookKeeper durability
-  stable through final service readiness
-- the April 28, 2026 rerun already proves the in-image `nvkind` path through real cluster
-  creation, Harbor-backed image publication, and Helm rollout before the host runs out of disk
-  and BookKeeper marks its ledger directories non-writable
+None.
 
 ## Documentation Requirements
 

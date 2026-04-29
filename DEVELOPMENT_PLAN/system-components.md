@@ -12,34 +12,33 @@
   demo UI, the split runtime modules under `src/Infernix/Runtime/`, the shared Python project,
   the shared Linux substrate Dockerfile, the baked source-snapshot manifest used by git-less
   `infernix lint files` runs, the route registry, and the snapshot launcher
-- the remaining ordered plan closure is now the supported `linux-cuda` rerun on a supported
-  NVIDIA host with enough free disk headroom for Harbor publication plus Pulsar BookKeeper
-  durability
+- the supported direct `linux-cuda` rerun passed on April 29, 2026, so no remaining ordered plan
+  closure is open in the current worktree
 
 ## Operator and Host Components
 
 | Component | Technology | Deployment | Purpose | Durable state |
 |-----------|------------|------------|---------|---------------|
 | Apple host control plane | `./.build/infernix` plus direct `cabal` materialization against operator-installed ghcup | host-native | canonical operator surface on Apple Silicon; host-native inference lane; repo-local kubeconfig owner | `./.build/`, `./.data/` |
-| Linux outer-container control plane | `docker compose run --rm infernix infernix ...` for `linux-cpu` plus direct `docker run --gpus all ... infernix-linux-cuda:local infernix ...` for `linux-cuda` | Linux container | image-snapshot launcher for Linux workflows; forwards Docker socket and bind-mounts only `./.data/` on the supported path | `./.data/`, `/opt/build`, `/root/.cabal` |
+| Linux outer-container control plane | `docker compose run --rm infernix infernix ...` for `linux-cpu` plus direct `docker run --gpus all ... infernix-linux-cuda:local infernix ...` for `linux-cuda` | Linux container | image-snapshot launcher for Linux workflows; forwards Docker socket and bind-mounts only `./.data/` on the supported path | `./.data/`, `./.data/runtime/infernix.kubeconfig`, `/opt/build/infernix/`, `/root/.cabal` |
 | Command registry | Haskell parser or dispatcher registry | host or outer container | single source of truth for supported commands, help text, and CLI reference docs | none |
 | Runtime-mode selector | CLI flag or `INFERNIX_RUNTIME_MODE` | host or outer container | resolves `apple-silicon`, `linux-cpu`, or `linux-cuda` independently of execution context | build-root config artifacts only |
 | Route registry | Haskell-owned route inventory | host or outer container during render or reconcile | records public prefixes, backend identity, rewrite rules, visibility, and publication metadata | none |
 | Frontend contract generator | `infernix internal generate-purs-contracts` | host or outer container during web build | emits generated PureScript contracts from handwritten Haskell browser-contract ADTs | `web/src/Generated/` |
 | Repo-local durable root | local filesystem | repo root | authoritative home for cluster state, runtime state, config publication mirrors, and test artifacts | `./.data/` |
-| Build artifact root | explicit Cabal builddir or installdir flags plus generated artifacts | host or outer container | keeps compiled output and generated files out of tracked source paths | `./.build/` on host; `/opt/build/` in container |
+| Build artifact root | explicit Cabal builddir or installdir flags plus generated artifacts | host or outer container | keeps compiled output and generated files out of tracked source paths | `./.build/` on host; `/opt/build/infernix/` in the outer-container control plane |
 
 ## Repository Asset Components
 
 | Component | Current content | Purpose | Gap |
 |-----------|-----------------|---------|-----|
-| Linux substrate image definition | `docker/linux-substrate.Dockerfile` | one shared build definition produces the two real Linux runtime images and owns ghcup, Poetry, Node.js 22+, Playwright, and the Kind toolbelt | the `linux-cpu` lane is validated, the image now bakes `/opt/build/infernix/source-snapshot-files.txt` for git-less `lint files` runs, and final `linux-cuda` closure remains blocked on a supported NVIDIA host with enough free disk headroom |
-| Compose launcher | `compose.yaml` | one-command `linux-cpu` launcher against the baked substrate image | `cluster up` now reuses the already-built baked runtime image instead of rebuilding it inside the launcher; `cluster up`, routed Pulsar, image-owned Playwright, and the fresh exhaustive integration or HA rerun are validated on `linux-cpu` |
-| Direct CUDA launcher | baked `infernix-linux-cuda:local` image plus `docker run --gpus all` | supported `linux-cuda` control-plane entrypoint against the baked substrate image | the image-owned `nvkind` path is landed; the supported rerun from April 28, 2026 reaches real cluster creation, Harbor-backed image publication, and Helm rollout before low host disk headroom makes BookKeeper ledger directories non-writable |
+| Linux substrate image definition | `docker/linux-substrate.Dockerfile` | one shared build definition produces the two real Linux runtime images and owns ghcup, Poetry, Node.js 22+, Playwright, and the Kind toolbelt | no material Linux-substrate image gap remains in the worktree after fresh `linux-cpu` and direct `linux-cuda` full-suite reruns passed on April 29, 2026; the image bakes `/opt/build/infernix/source-snapshot-files.txt` for git-less `lint files` runs |
+| Compose launcher | `compose.yaml` | one-command `linux-cpu` launcher against the baked substrate image | `cluster up` now reuses the already-built baked runtime image instead of rebuilding it inside the launcher; the fresh `linux-cpu` full-suite rerun passed on April 29, 2026 |
+| Direct CUDA launcher | baked `infernix-linux-cuda:local` image plus `docker run --gpus all` | supported `linux-cuda` control-plane entrypoint against the baked substrate image | no material direct-CUDA-launcher gap remains in the worktree after the supported April 29, 2026 rerun passed real cluster creation, Harbor-backed image publication, final platform rollouts, exhaustive integration, routed Playwright, and cluster teardown |
 | Shared Python adapter project | `python/pyproject.toml`, `python/adapters/` | single dependency boundary and adapter tree for Python-native engines | the worker, setup entrypoints, and durable metadata path are landed; the current validated contract uses deterministic engine-family-specific worker output derived from durable bundle or manifest metadata and setup manifests |
 | Browser-contract source | `src/Infernix/Web/Contracts.hs`, `web/package.json` | keeps handwritten Haskell contract source out of `Generated/` while preserving generated PureScript output there | generated PureScript output is rebuilt on demand under `web/src/Generated/`; no material ownership gap remains in the worktree |
 | Helm deployment assets | `chart/Chart.yaml`, `chart/values.yaml`, `chart/templates/` | hold repo-owned workloads, ConfigMaps, Gateway resources, and third-party chart dependencies | no material HA-route gap remains on the final chart shape |
-| Kind topology assets | `kind/cluster-apple-silicon.yaml`, `kind/cluster-linux-cpu.yaml`, `kind/cluster-linux-cuda.yaml` | mode-specific Kind shapes, including GPU-enabled `linux-cuda` | the topology and in-image `nvkind` path are landed; final `linux-cuda` closure still needs a supported NVIDIA host with enough free disk headroom for Harbor publication and Pulsar BookKeeper durability |
+| Kind topology assets | `kind/cluster-apple-silicon.yaml`, `kind/cluster-linux-cpu.yaml`, `kind/cluster-linux-cuda.yaml` | mode-specific Kind shapes, including GPU-enabled `linux-cuda` | no material Kind-topology gap remains in the worktree after the supported direct `linux-cuda` rerun passed on April 29, 2026 |
 | Protobuf contract assets | `proto/infernix/...` plus on-demand generated `tools/generated_proto/` stubs | define canonical runtime, manifest, and event schema boundaries | generated stubs must stay untracked |
 
 ## Cluster and Publication Components
@@ -97,16 +96,16 @@
 
 | Runtime mode | Canonical mode id | Supported contract | Current repo gap |
 |--------------|-------------------|--------------------|------------------|
-| Apple Silicon / Metal | `apple-silicon` | host-native control plane and host-native inference lane; shared config, route, and Pulsar contracts | engine bootstrap is still partial |
-| Ubuntu 24.04 / CPU | `linux-cpu` | containerized Linux lane built from the shared substrate Dockerfile | no material linux-cpu substrate-validation gap remains in the worktree after the fresh outer-container integration rerun passed on April 28, 2026 |
-| Ubuntu 24.04 / NVIDIA CUDA Container | `linux-cuda` | GPU-enabled Kind lane built from the shared substrate Dockerfile and in-image `nvkind` toolchain | the supported rerun from April 28, 2026 reaches real cluster creation, Harbor-backed image publication, and Helm rollout, but low host disk headroom makes BookKeeper non-writable before `infernix-service` becomes ready |
+| Apple Silicon / Metal | `apple-silicon` | host-native control plane and host-native inference lane; shared config, route, and Pulsar contracts | no material Apple engine-bootstrap gap remains in the worktree |
+| Ubuntu 24.04 / CPU | `linux-cpu` | containerized Linux lane built from the shared substrate Dockerfile | no material `linux-cpu` substrate-validation gap remains in the worktree after the fresh outer-container full-suite rerun passed on April 29, 2026 |
+| Ubuntu 24.04 / NVIDIA CUDA Container | `linux-cuda` | GPU-enabled Kind lane built from the shared substrate Dockerfile and in-image `nvkind` toolchain | no material `linux-cuda` substrate-validation gap remains in the worktree after the supported direct full-suite rerun passed on April 29, 2026 |
 
 ## Serialization Boundaries
 
 | Boundary | Direction | Format | Owner | Notes |
 |----------|-----------|--------|-------|-------|
-| Matrix registry -> generated demo-config staging | local build boundary | `.dhall` derived from typed Haskell data | Haskell config or catalog modules | active runtime mode selects engine bindings |
-| Generated demo-config -> ConfigMap publication | control plane | real ConfigMap data plus repo-local mirror | `infernix cluster up` | cluster workloads mount the published file at `/opt/build/` |
+| Matrix registry -> generated demo-config staging | local build boundary | `.dhall` derived from typed Haskell data | Haskell config or catalog modules | host-native staging lives under `./.build/`; outer-container staging lives under `/opt/build/infernix/`; active runtime mode selects engine bindings |
+| Generated demo-config -> ConfigMap publication | control plane | real ConfigMap data plus repo-local mirror | `infernix cluster up` | cluster workloads mount the published file at `/opt/build/` and consume `/opt/build/infernix-demo-<mode>.dhall` |
 | Browser <-> demo API | external (demo only) | JSON over HTTP | handwritten Haskell browser-contract ADTs plus generated PureScript bindings | production deployments do not expose this surface |
 | Inference requester <-> Pulsar | external | protobuf over Pulsar topics | repo-owned `.proto` schemas with Haskell and Python generated bindings | production inference surface |
 | Haskell worker <-> Python adapter | internal child-process boundary | protobuf over stdio | `src/Infernix/Runtime/Worker.hs` plus `python/adapters/` | invoked only through `poetry run` |
@@ -118,8 +117,11 @@
 | Durable PV directories | storage reconciliation in `cluster up` | `./.data/kind/...` | deterministic host path layout for every PVC-backed workload |
 | Generated host demo-config staging | `cluster up` | `./.build/infernix-demo-<mode>.dhall` | host path for active-mode catalog staging |
 | Generated host kubeconfig | `cluster up` | `./.build/infernix.kubeconfig` | repo-local kubeconfig used by `infernix kubectl` |
-| Outer-container build root | containerized build or runtime | `/opt/build/` | baked-image build root and ConfigMap mount point |
-| Source snapshot manifest | Linux substrate image build | `/opt/build/infernix/source-snapshot-files.txt` | sorted tracked-source snapshot captured before later generated outputs so git-less image runs of `infernix lint files` validate only the baked source tree |
+| Generated outer-container demo-config staging | `cluster up` | `/opt/build/infernix/infernix-demo-<mode>.dhall` | outer-container build-root staging artifact before ConfigMap publication |
+| Generated outer-container kubeconfig | `cluster up` | `./.data/runtime/infernix.kubeconfig` | durable repo-local kubeconfig reused across fresh outer-container launcher invocations |
+| Cluster-mounted active demo-config path | Helm deployment plus ConfigMap mount | `/opt/build/infernix-demo-<mode>.dhall` | cluster-resident `infernix service` and `infernix-demo` read the active mode's ConfigMap-backed catalog from this mounted path |
+| Outer-container build root | containerized build or runtime | `/opt/build/infernix/` | baked-image build root used by the outer-container control plane; cluster-mounted runtime config stays at `/opt/build/` |
+| Source snapshot manifest | Linux substrate image build | `/opt/build/infernix/source-snapshot-files.txt` | sorted source snapshot captured from the baked image context before later generated outputs so git-less image runs of `infernix lint files` validate only the baked source tree |
 | Durable runtime artifact bundles | service runtime and cache materialization | `./.data/object-store/artifacts/<runtime-mode>/<model-id>/bundle.json` | durable worker input metadata |
 | Durable source-artifact manifests | service runtime and cache materialization | `./.data/object-store/source-artifacts/<runtime-mode>/<model-id>/source.json` | authoritative artifact-selection metadata |
 | Publication state | `cluster up`, `cluster down`, `infernix service` | `./.data/runtime/publication.json` | route inventory and runtime metadata |

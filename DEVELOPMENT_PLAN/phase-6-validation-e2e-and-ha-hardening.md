@@ -1,6 +1,6 @@
 # Phase 6: Validation, E2E, and HA Hardening
 
-**Status**: Blocked
+**Status**: Done
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
 
 > **Purpose**: Define the supported static-quality and test matrix for the two-binary topology,
@@ -9,26 +9,24 @@
 
 ## Phase Status
 
-Sprints 6.1, 6.2, 6.3, 6.4, 6.5, and 6.7 are `Done`. Sprint 6.6 is now `Blocked`: the exhaustive
-active-mode integration enumeration and the Harbor, MinIO, Pulsar, and PostgreSQL HA or lifecycle
-assertions now pass on the fresh `linux-cpu` outer-container rerun from April 28, 2026, while the
-supported `linux-cuda` rerun from April 28, 2026 is blocked later by host disk exhaustion during
-the real Harbor-backed cluster rollout.
+Sprints 6.1 through 6.7 are `Done`. The fresh `linux-cpu` outer-container full-suite rerun and the
+supported direct `linux-cuda` full-suite rerun both passed on April 29, 2026, so no remaining
+Phase 6 validation work is open in the plan.
 
 ## Current Repo Assessment
 
 The repository already has lint, unit, integration, and Playwright entrypoints. The canonical
 testing, boundary, portability, and Haskell-style docs are landed, and the baked Linux substrate
-image now carries the tracked-source snapshot manifest needed for git-less `infernix lint files`
+image now carries the source-snapshot manifest needed for git-less `infernix lint files`
 runs. The baked `linux-cpu` substrate image now also proves routed Playwright plus the real
 Gateway and Pulsar surfaces. The routed Playwright suite exhaustively exercises every demo-visible
 generated catalog entry, and the integration suite now enumerates every generated active-mode
 catalog entry while also carrying the real-cluster Harbor, MinIO, Pulsar, and Harbor PostgreSQL
-recovery or lifecycle checks. The fresh outer-container `linux-cpu` rerun passed on April 28,
-2026. The supported `linux-cuda` rerun from April 28, 2026 passes Haskell style, Haskell unit,
-and PureScript unit, creates the real cluster, publishes Harbor-backed images, and reaches Helm
-rollout, but low host disk headroom leaves BookKeeper ledger directories non-writable and blocks
-`infernix-service` readiness.
+recovery or lifecycle checks. The fresh outer-container `linux-cpu` full-suite rerun passed on
+April 29, 2026. The supported direct `linux-cuda` full-suite rerun also passed on April 29, 2026,
+covering Haskell style, Haskell unit, PureScript unit, real cluster creation, Harbor-backed image
+publication, final platform rollouts, exhaustive integration, routed Playwright, and cluster
+teardown.
 
 ## Validation Surface
 
@@ -220,11 +218,10 @@ None.
 
 ---
 
-## Sprint 6.6: Per-Mode Exhaustive Integration and E2E Coverage [Blocked]
+## Sprint 6.6: Per-Mode Exhaustive Integration and E2E Coverage [Done]
 
-**Status**: Blocked
+**Status**: Done
 **Implementation**: `src/Infernix/CLI.hs`, `src/Infernix/Lint/Files.hs`, `test/unit/Spec.hs`, `test/integration/Spec.hs`, `web/playwright/inference.spec.js`, `web/test/Main.purs`, `web/test/run_playwright_matrix.mjs`
-**Blocked by**: supported NVIDIA host with enough free disk headroom for Harbor publication and Pulsar BookKeeper durability
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/reference/web_portal_surface.md`, `documents/reference/cli_reference.md`, `documents/engineering/testing.md`
 
 ### Objective
@@ -248,12 +245,7 @@ catalog entry using the engine binding selected for that mode.
 
 ### Remaining Work
 
-- `test/integration/Spec.hs` now enumerates every generated active-mode catalog entry, and the
-  git-less Linux image path now keeps `infernix lint files` scoped to the baked source snapshot
-- the remaining supported-lane validation gap is the supported `linux-cuda` rerun: on April 28,
-  2026 it passes Haskell style, Haskell unit, and PureScript unit before real cluster creation,
-  Harbor-backed image publication, and Helm rollout, then stalls because low host disk headroom
-  makes BookKeeper non-writable and prevents `infernix-service` readiness
+None.
 
 ---
 

@@ -1,6 +1,6 @@
 # Phase 4: Inference Service and Durable Runtime
 
-**Status**: Blocked
+**Status**: Done
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
 
 > **Purpose**: Define the Haskell service runtime, the shared Python engine-adapter contract, the
@@ -10,8 +10,7 @@
 
 ## Phase Status
 
-Sprints 4.1 through 4.8, 4.10, and 4.11 are `Done`. Sprint 4.9 is `Blocked` by the supported
-`linux-cuda` rerun.
+Sprints 4.1 through 4.11 are `Done`.
 
 ## Current Repo Assessment
 
@@ -24,11 +23,12 @@ durable bundle or manifest metadata, an opt-in real Pulsar WebSocket or admin tr
 filesystem fallback, and a manual inference API path served by the Haskell demo surface. The Apple
 host-native lane now also has daemon-driven Poetry-project and setup-entrypoint bootstrap through
 `src/Infernix/Engines/AppleSilicon.hs`, and the shared Linux substrate image carries the
-tracked-source snapshot manifest so `infernix lint files` remains honest in git-less image runs.
-The remaining Phase 4 closure item is now the supported `linux-cuda` rerun: on April 28, 2026 it
-passes Haskell style, Haskell unit, and PureScript unit, creates the real cluster, publishes
-Harbor-backed images, and enters Helm rollout, but low host disk headroom makes BookKeeper ledger
-directories non-writable and keeps `infernix-service` from becoming ready.
+source-snapshot manifest so `infernix lint files` remains honest in git-less image runs. Fresh
+full-suite reruns on the supported `linux-cpu` and direct `linux-cuda` lanes both passed on April
+29, 2026. The supported `linux-cuda` rerun now reaches real cluster creation, Harbor-backed image
+publication, final platform rollouts, exhaustive integration, routed Playwright, and cluster
+teardown on a supported NVIDIA host, so no remaining Phase 4 closure item is open in the current
+worktree.
 
 ## Matrix Ownership Contract
 
@@ -309,11 +309,10 @@ None.
 
 ---
 
-## Sprint 4.9: Shared Linux Substrate Image Build and Snapshot Runtime [Blocked]
+## Sprint 4.9: Shared Linux Substrate Image Build and Snapshot Runtime [Done]
 
-**Status**: Blocked
+**Status**: Done
 **Implementation**: `docker/linux-substrate.Dockerfile`, `compose.yaml`, `src/Infernix/Cluster.hs`, `src/Infernix/Lint/Files.hs`, `chart/values.yaml`, `chart/templates/deployment-service.yaml`, `.dockerignore`
-**Blocked by**: supported NVIDIA host with enough free disk headroom for Harbor publication and Pulsar BookKeeper durability
 **Docs to update**: `documents/engineering/docker_policy.md`, `documents/engineering/build_artifacts.md`, `documents/development/python_policy.md`, `documents/operations/cluster_bootstrap_runbook.md`
 
 ### Objective
@@ -355,12 +354,7 @@ produces the two real Linux runtime images and supports the image-snapshot launc
 
 ### Remaining Work
 
-- the `linux-cpu` lane is validated on the supported outer-container path and the git-less
-  source-snapshot lint path is landed
-- the supported `linux-cuda` rerun from April 28, 2026 already proves real cluster creation,
-  Harbor-backed image publication, and Helm rollout after the unit and frontend gates pass, but
-  final closure remains blocked until a supported NVIDIA host has enough free disk headroom to keep
-  BookKeeper writable through `infernix-service` readiness
+None.
 
 ---
 

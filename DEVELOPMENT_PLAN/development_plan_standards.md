@@ -284,9 +284,10 @@ Rules:
 - `cluster up` creates or updates `ConfigMap/infernix-demo-config` from that generated content.
 - In containerized execution contexts, cluster-resident consumers mount
   `ConfigMap/infernix-demo-config` read-only at `/opt/build/`.
-- The daemon looks for the active-mode `.dhall` in the same folder as its binary and actively
-  watches that file for changes.
-- Cluster-resident consumers consume the active mode's file from that watched mount rather than
+- The outer-container control plane stages generated files under its active build root, while
+  cluster-resident consumers read the active-mode `.dhall` from
+  `/opt/build/infernix-demo-<mode>.dhall` via the mounted ConfigMap path.
+- Cluster-resident consumers consume the active mode's file from that mounted path rather than
   from an image-baked static file.
 - Rows whose active-mode engine cell is `Not recommended` are omitted from that mode's generated
   demo catalog.
