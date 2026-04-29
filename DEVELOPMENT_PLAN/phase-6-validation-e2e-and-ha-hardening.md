@@ -1,6 +1,6 @@
 # Phase 6: Validation, E2E, and HA Hardening
 
-**Status**: Done
+**Status**: Active
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
 
 > **Purpose**: Define the supported static-quality and test matrix for the two-binary topology,
@@ -9,9 +9,9 @@
 
 ## Phase Status
 
-Sprints 6.1 through 6.7 are `Done`. The fresh `linux-cpu` outer-container full-suite rerun and the
-supported direct `linux-cuda` full-suite rerun both passed on April 29, 2026, so no remaining
-Phase 6 validation work is open in the plan.
+Sprints 6.1 through 6.7 are `Done`. Sprint 6.8 is `Active`. The fresh `linux-cpu` outer-container
+full-suite rerun and the supported direct `linux-cuda` full-suite rerun both passed on April 29,
+2026, but the clean-host prerequisite-minimization contract remains open.
 
 ## Current Repo Assessment
 
@@ -26,7 +26,12 @@ recovery or lifecycle checks. The fresh outer-container `linux-cpu` full-suite r
 April 29, 2026. The supported direct `linux-cuda` full-suite rerun also passed on April 29, 2026,
 covering Haskell style, Haskell unit, PureScript unit, real cluster creation, Harbor-backed image
 publication, final platform rollouts, exhaustive integration, routed Playwright, and cluster
-teardown.
+teardown. The remaining Phase 6 gap is clean-host bootstrap closure: the intended supported
+workflow now reduces Apple pre-existing host requirements to Homebrew plus ghcup, makes Colima the
+only supported Apple Docker environment, lets `infernix` reconcile the remaining Homebrew-managed
+Apple host tools plus Poetry bootstrap on demand, and keeps Linux host prerequisites at Docker only
+for `linux-cpu` plus Docker and NVIDIA host prerequisites for `linux-cuda`. The current worktree
+still assumes a broader Apple host toolchain on first use.
 
 ## Validation Surface
 
@@ -278,6 +283,62 @@ Back the PostgreSQL doctrine with readiness, failover, and storage-rebind covera
 
 None.
 
+---
+
+## Sprint 6.8: Minimal Host Prerequisites and Clean-Host Bootstrap Closure [Active]
+
+**Status**: Active
+**Implementation**: `README.md`, `AGENTS.md`, `CLAUDE.md`, `src/Infernix/Engines/AppleSilicon.hs`, `src/Infernix/Python.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/CLI.hs`, `documents/development/local_dev.md`, `documents/operations/apple_silicon_runbook.md`, `documents/development/python_policy.md`, `documents/engineering/portability.md`, `documents/engineering/docker_policy.md`
+**Docs to update**: `README.md`, `AGENTS.md`, `CLAUDE.md`, `documents/development/local_dev.md`, `documents/operations/apple_silicon_runbook.md`, `documents/development/python_policy.md`, `documents/engineering/portability.md`, `documents/engineering/docker_policy.md`, `documents/operations/cluster_bootstrap_runbook.md`
+
+### Objective
+
+Minimize host-side prerequisites and let `infernix` reconcile the remaining supported operator
+toolchain from package managers instead of depending on a broad preinstalled Apple host stack.
+
+### Deliverables
+
+- Apple host-native flow reduces pre-existing host requirements to Homebrew plus ghcup before
+  building `./.build/infernix`
+- Colima is the only supported Docker environment on Apple Silicon, and the supported Apple path
+  installs or starts Colima through Homebrew-managed tooling
+- after the Apple binary exists, `infernix` can reconcile the remaining supported Homebrew-managed
+  operator tools needed by the active path, including the Docker CLI, `kind`, `kubectl`, `helm`,
+  Node.js, and Playwright prerequisites
+- when Apple adapter flows first need Poetry and the `poetry` executable is absent, `infernix`
+  can bootstrap Poetry through the host's built-in Python and then continue all host-side Python
+  management through the shared Poetry project
+- `linux-cpu` host prerequisites stop at Docker Engine plus the Docker Compose plugin
+- `linux-cuda` host prerequisites stop at Docker Engine plus the supported NVIDIA driver and
+  container-toolkit setup
+- clean-host validation proves the supported commands reconcile prerequisites rather than relying on
+  undocumented manual setup beyond those minimal host baselines
+
+### Validation
+
+- on a clean Apple Silicon host with only Homebrew plus ghcup present,
+  `cabal --builddir=.build/cabal install --installdir=./.build --install-method=copy --overwrite-policy=always exe:infernix exe:infernix-demo`
+  succeeds, and `./.build/infernix --runtime-mode apple-silicon cluster up` reconciles the
+  remaining supported Apple host prerequisites through the supported package-manager path
+- Apple host validation proves the supported flow can bootstrap Poetry when absent and then run the
+  adapter setup path without manual Poetry installation
+- on a clean Linux CPU host with Docker only,
+  `docker compose build infernix` plus `docker compose run --rm infernix infernix --runtime-mode linux-cpu test all`
+  passes
+- on a clean Linux CUDA host with Docker plus the supported NVIDIA host prerequisites,
+  `docker build -f docker/linux-substrate.Dockerfile --build-arg RUNTIME_MODE=linux-cuda --build-arg BASE_IMAGE=nvidia/cuda:13.2.1-cudnn-runtime-ubuntu24.04 -t infernix-linux-cuda:local .`
+  plus the direct `linux-cuda` `test all` lane passes
+
+### Remaining Work
+
+- implement Apple host prerequisite detection and Homebrew-managed reconcile logic in Haskell
+- switch governed Apple Docker guidance from Docker Desktop or generic Docker wording to Colima-only support
+- teach the Apple bootstrap path to install Poetry through the host's built-in Python when the
+  `poetry` executable is absent
+- add clean-host validation coverage for the Apple minimal-prerequisite contract
+- align the governed docs suite around the minimal host prerequisite narrative without overstating
+  the current implementation state
+
 ## Documentation Requirements
 
 **Engineering docs to create/update:**
@@ -292,6 +353,8 @@ None.
 - `documents/operations/cluster_bootstrap_runbook.md` - test prerequisites and cluster reuse rules
 - `documents/operations/apple_silicon_runbook.md` - Apple matrix expectations
 - `documents/tools/postgresql.md` - PostgreSQL operator readiness and failover rules
+- `documents/engineering/docker_policy.md` - Colima-only Apple Docker guidance and minimal Linux host prerequisites
+- `documents/development/python_policy.md` - Poetry bootstrap boundary for Apple hosts
 
 **Product or reference docs to create/update:**
 - `documents/reference/cli_reference.md` - test command reference

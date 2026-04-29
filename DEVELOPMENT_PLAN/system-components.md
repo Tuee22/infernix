@@ -12,14 +12,15 @@
   demo UI, the split runtime modules under `src/Infernix/Runtime/`, the shared Python project,
   the shared Linux substrate Dockerfile, the baked source-snapshot manifest used by git-less
   `infernix lint files` runs, the route registry, and the snapshot launcher
-- the supported direct `linux-cuda` rerun passed on April 29, 2026, so no remaining ordered plan
-  closure is open in the current worktree
+- the supported direct `linux-cuda` rerun passed on April 29, 2026, but clean-host prerequisite
+  minimization remains open: the current Apple host path still expects more preinstalled tools than
+  the intended Homebrew-plus-ghcup contract tracked in Phase 6 Sprint 6.8
 
 ## Operator and Host Components
 
 | Component | Technology | Deployment | Purpose | Durable state |
 |-----------|------------|------------|---------|---------------|
-| Apple host control plane | `./.build/infernix` plus direct `cabal` materialization against operator-installed ghcup | host-native | canonical operator surface on Apple Silicon; host-native inference lane; repo-local kubeconfig owner | `./.build/`, `./.data/` |
+| Apple host control plane | `./.build/infernix` plus direct `cabal` materialization against operator-installed ghcup | host-native | canonical operator surface on Apple Silicon; host-native inference lane; repo-local kubeconfig owner; target clean-host contract reduces pre-existing host requirements to Homebrew plus ghcup and treats Colima as the only supported Docker environment | `./.build/`, `./.data/` |
 | Linux outer-container control plane | `docker compose run --rm infernix infernix ...` for `linux-cpu` plus direct `docker run --gpus all ... infernix-linux-cuda:local infernix ...` for `linux-cuda` | Linux container | image-snapshot launcher for Linux workflows; forwards Docker socket and bind-mounts only `./.data/` on the supported path | `./.data/`, `./.data/runtime/infernix.kubeconfig`, `/opt/build/infernix/`, `/root/.cabal` |
 | Command registry | Haskell parser or dispatcher registry | host or outer container | single source of truth for supported commands, help text, and CLI reference docs | none |
 | Runtime-mode selector | CLI flag or `INFERNIX_RUNTIME_MODE` | host or outer container | resolves `apple-silicon`, `linux-cpu`, or `linux-cuda` independently of execution context | build-root config artifacts only |
@@ -36,6 +37,7 @@
 | Compose launcher | `compose.yaml` | one-command `linux-cpu` launcher against the baked substrate image | `cluster up` now reuses the already-built baked runtime image instead of rebuilding it inside the launcher; the fresh `linux-cpu` full-suite rerun passed on April 29, 2026 |
 | Direct CUDA launcher | baked `infernix-linux-cuda:local` image plus `docker run --gpus all` | supported `linux-cuda` control-plane entrypoint against the baked substrate image | no material direct-CUDA-launcher gap remains in the worktree after the supported April 29, 2026 rerun passed real cluster creation, Harbor-backed image publication, final platform rollouts, exhaustive integration, routed Playwright, and cluster teardown |
 | Shared Python adapter project | `python/pyproject.toml`, `python/adapters/` | single dependency boundary and adapter tree for Python-native engines | the worker, setup entrypoints, and durable metadata path are landed; the current validated contract uses deterministic engine-family-specific worker output derived from durable bundle or manifest metadata and setup manifests |
+| Apple host prerequisite bootstrap | governed docs plus future Haskell bootstrap logic | minimize Apple pre-existing host installs and let `infernix` reconcile supported Homebrew-managed tools and Poetry bootstrap | the current worktree still expects preinstalled `kind`, `kubectl`, `helm`, `node`, and `poetry` on Apple; closure is tracked in Phase 6 Sprint 6.8 |
 | Browser-contract source | `src/Infernix/Web/Contracts.hs`, `web/package.json` | keeps handwritten Haskell contract source out of `Generated/` while preserving generated PureScript output there | generated PureScript output is rebuilt on demand under `web/src/Generated/`; no material ownership gap remains in the worktree |
 | Helm deployment assets | `chart/Chart.yaml`, `chart/values.yaml`, `chart/templates/` | hold repo-owned workloads, ConfigMaps, Gateway resources, and third-party chart dependencies | no material HA-route gap remains on the final chart shape |
 | Kind topology assets | `kind/cluster-apple-silicon.yaml`, `kind/cluster-linux-cpu.yaml`, `kind/cluster-linux-cuda.yaml` | mode-specific Kind shapes, including GPU-enabled `linux-cuda` | no material Kind-topology gap remains in the worktree after the supported direct `linux-cuda` rerun passed on April 29, 2026 |
@@ -96,7 +98,7 @@
 
 | Runtime mode | Canonical mode id | Supported contract | Current repo gap |
 |--------------|-------------------|--------------------|------------------|
-| Apple Silicon / Metal | `apple-silicon` | host-native control plane and host-native inference lane; shared config, route, and Pulsar contracts | no material Apple engine-bootstrap gap remains in the worktree |
+| Apple Silicon / Metal | `apple-silicon` | host-native control plane and host-native inference lane; shared config, route, and Pulsar contracts | clean-host bootstrap remains open until `infernix` can reconcile the remaining Apple host tools from the intended Homebrew-plus-ghcup baseline and use Colima as the only supported Docker environment |
 | Ubuntu 24.04 / CPU | `linux-cpu` | containerized Linux lane built from the shared substrate Dockerfile | no material `linux-cpu` substrate-validation gap remains in the worktree after the fresh outer-container full-suite rerun passed on April 29, 2026 |
 | Ubuntu 24.04 / NVIDIA CUDA Container | `linux-cuda` | GPU-enabled Kind lane built from the shared substrate Dockerfile and in-image `nvkind` toolchain | no material `linux-cuda` substrate-validation gap remains in the worktree after the supported direct full-suite rerun passed on April 29, 2026 |
 

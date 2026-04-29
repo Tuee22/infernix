@@ -27,8 +27,11 @@ source-snapshot manifest so `infernix lint files` remains honest in git-less ima
 full-suite reruns on the supported `linux-cpu` and direct `linux-cuda` lanes both passed on April
 29, 2026. The supported `linux-cuda` rerun now reaches real cluster creation, Harbor-backed image
 publication, final platform rollouts, exhaustive integration, routed Playwright, and cluster
-teardown on a supported NVIDIA host, so no remaining Phase 4 closure item is open in the current
-worktree.
+teardown on a supported NVIDIA host. The stricter clean-host prerequisite-minimization contract is
+now tracked as follow-on work in Phase 6 Sprint 6.8: the current Apple host bootstrap still
+automates the shared Poetry project and adapter setup entrypoints after the required host tools
+already exist, rather than reconciling the full supported Homebrew-managed toolchain from a
+Homebrew-plus-ghcup baseline.
 
 ## Matrix Ownership Contract
 

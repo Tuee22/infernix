@@ -47,8 +47,12 @@ Those actions are reserved for the user.
   when the bound inference engine has no non-Python binding. The shared Poetry project lives at
   `python/pyproject.toml`; all adapter execution goes through `poetry run`, and the canonical
   quality gate is `poetry run check-code` (mypy strict, black check, ruff strict). On Apple
-  Silicon, Poetry may materialize `python/.venv/` on demand; Linux substrate images install adapter
-  deps during image build.
+  Silicon, Colima is the only supported Docker environment, the minimal pre-existing host
+  prerequisites are Homebrew plus ghcup, and the governed direction is that `infernix` reconciles
+  the remaining Homebrew-managed tools plus Poetry bootstrap when adapter flows need them; the
+  current worktree still only materializes `python/.venv/` on demand once `poetry` itself exists.
+  Linux substrate images install adapter deps during image build, and Linux host prerequisites stop
+  at Docker plus the NVIDIA host prerequisites for `linux-cuda`.
 - The demo UI is PureScript. Frontend contracts are emitted into `web/src/Generated/` by
   `infernix internal generate-purs-contracts`, which derives them through `purescript-bridge`
   from dedicated Haskell browser-contract ADTs in `src/Infernix/Web/Contracts.hs`; the demo UI is

@@ -16,6 +16,7 @@ supported contract from the current validation state.
 | Root-document governance | `README.md` is orientation only; `documents/` owns canonical topic docs; `AGENTS.md` and `CLAUDE.md` are thin governed entry documents | no material governance gap remains in the worktree |
 | CLI ownership | one Haskell command registry drives parse, dispatch, help text, and canonical CLI reference | no material CLI-ownership gap remains in the worktree |
 | Control-plane execution | Apple host-native control plane plus Linux outer-container control plane | the `linux-cpu` outer-container lane and the supported direct `linux-cuda` lane both pass fresh full-suite reruns on April 29, 2026; no material control-plane validation gap remains in the worktree |
+| Host prerequisite minimization | Apple requires only Homebrew plus ghcup before building `infernix`; Colima is the only supported Apple Docker environment; `linux-cpu` requires only Docker; `linux-cuda` adds only the NVIDIA Docker prerequisites; `infernix` reconciles every remaining supported host tool through package managers | the current Apple host path still assumes preinstalled `kind`, `kubectl`, `helm`, `node`, and a `poetry` executable on first use; clean-host bootstrap closure is tracked in Phase 6 Sprint 6.8 |
 | Runtime honesty | one host-native Apple inference lane plus two Linux substrate images | no material runtime-honesty gap remains in the governed docs or current worktree |
 | Linux image layout | one shared `docker/linux-substrate.Dockerfile` builds `infernix-linux-cpu` and `infernix-linux-cuda` | the shared image is validated on `linux-cpu` and `linux-cuda`, now bakes a source-snapshot manifest for git-less `lint files` runs, and has no material Linux-image closure gap remaining in the worktree after fresh full-suite reruns passed on April 29, 2026 |
 | Pulsar production transport | `src/Infernix/Runtime/Pulsar.hs` uses Pulsar WebSocket and admin surfaces when configured, with filesystem simulation only as the fallback path | no material transport gap remains in the worktree |
@@ -36,6 +37,9 @@ supported contract from the current validation state.
   text, and the canonical CLI reference
 - treats Apple Silicon as a host-native inference lane by design and treats `linux-cpu` plus
   `linux-cuda` as the two containerized Linux runtime lanes
+- reduces the intended Apple pre-existing host requirements to Homebrew plus ghcup, treats Colima
+  as the only supported Apple Docker environment, and lets `infernix` reconcile the remaining
+  Homebrew-managed Apple host tools plus Poetry bootstrap as needed
 - uses one Kind cluster as the supported local cluster substrate
 - deploys Harbor first through Helm on a pristine cluster, allowing Harbor and only
   Harbor-required support services such as MinIO and PostgreSQL to pull from public registries
@@ -63,6 +67,8 @@ supported contract from the current validation state.
   real runtime images `infernix-linux-cpu` and `infernix-linux-cuda`
 - uses a Linux outer-container launcher that runs against a baked image snapshot and bind-mounts
   only `./.data/`
+- keeps Linux host prerequisites minimal: Docker only for `linux-cpu`, Docker plus the supported
+  NVIDIA driver or container-toolkit setup for `linux-cuda`
 - keeps generated artifacts out of git, including generated proto stubs, `*.pyc`,
   `__pycache__/`, Poetry lockfiles, `web/spago.lock`, `web/dist/`, and `web/src/Generated/`
 

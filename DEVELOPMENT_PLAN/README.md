@@ -49,7 +49,7 @@ A phase or sprint can move to `Done` only when all of the following are true:
 
 ## Current Repo Assessment
 
-Phase 0 through Phase 6 are now closed in the current worktree. The major DRY-cleanup work has
+Phase 0 through Phase 5 remain closed in the current worktree, and the major DRY-cleanup work has
 landed: the shared Python project, the shared Linux substrate Dockerfile, the route registry, the
 command registry, the browser-contract move, the snapshot launcher, and the docs doctrine refresh
 are all present. Fresh supported Linux full-suite reruns passed on April 29, 2026: the
@@ -58,7 +58,12 @@ integration, and routed Playwright, and the supported direct `linux-cuda` lane n
 cluster creation, Harbor-backed image publication, final platform rollouts, exhaustive
 integration, routed Playwright, and cluster teardown on a supported NVIDIA host.
 
-No remaining open work is tracked in the current development plan.
+Phase 6 is reopened by the clean-host prerequisite-minimization contract. The intended supported
+workflow now reduces Apple pre-existing host requirements to Homebrew plus ghcup, makes Colima the
+only supported Apple Docker environment, lets `infernix` reconcile the remaining Homebrew-managed
+Apple host tools plus Poetry bootstrap on demand, and keeps Linux host prerequisites at Docker only
+for `linux-cpu` plus Docker and NVIDIA host prerequisites for `linux-cuda`. The current worktree
+still assumes a broader Apple host toolchain on first use, so that follow-on remains open.
 
 ## Execution Contexts and Runtime Modes
 
@@ -79,7 +84,7 @@ The plan keeps these concepts separate:
 | 3 | HA Platform Services and Edge Routing | Done | [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md) |
 | 4 | Inference Service and Durable Runtime | Done | [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) |
 | 5 | Web UI and Shared Types | Done | [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md) |
-| 6 | Validation, E2E, and HA Hardening | Done | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) |
+| 6 | Validation, E2E, and HA Hardening | Active | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) |
 
 ## Canonical Outcome
 
@@ -93,11 +98,16 @@ The supported platform closes around these rules:
 - Apple Silicon is the only host-native inference lane; `linux-cpu` and `linux-cuda` are the two
   containerized Linux runtime lanes; the plan no longer pretends Apple has container parity at the
   inference boundary
+- Apple host bootstrap closes toward Homebrew plus ghcup as the only pre-existing requirements,
+  with Colima as the only supported Docker environment and `infernix` reconciling the remaining
+  Homebrew-managed host tools plus Poetry bootstrap on demand
 - the Linux image story closes through one shared `docker/linux-substrate.Dockerfile` that builds
   `infernix-linux-cpu` and `infernix-linux-cuda`; `docker/linux-base.Dockerfile` is retired
 - the Linux outer-container launcher uses an image-snapshot model: rebuild the image when the repo
   changes, then run `docker compose run --rm infernix infernix ...`; the container bind-mounts
   only `./.data/` and uses named volumes for `/opt/build` and `/root/.cabal`
+- Linux host prerequisites close at Docker for `linux-cpu` and Docker plus the supported NVIDIA
+  host prerequisites for `linux-cuda`; everything else lives in the substrate images
 - Python is restricted to one shared Poetry project rooted at `python/pyproject.toml` and one
   shared adapter tree under `python/adapters/`; all adapter execution runs through `poetry run`
   and the canonical Python quality gate is `poetry run check-code`

@@ -6,6 +6,17 @@
 > **Purpose**: Describe the supported local operator workflows for Apple host-native and
 > containerized Linux execution.
 
+## Current Status
+
+- the intended Apple clean-host contract reduces pre-existing host requirements to Homebrew plus
+  ghcup, treats Colima as the only supported Docker environment, and lets `infernix` reconcile the
+  remaining supported Homebrew-managed tools plus Poetry bootstrap on demand
+- the current worktree still expects host-installed `kind`, `kubectl`, `helm`, and a `poetry`
+  executable on Apple when those paths are exercised; that gap is tracked in
+  [../../DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md](../../DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md)
+- `linux-cpu` host prerequisites stop at Docker Engine plus the Docker Compose plugin, and
+  `linux-cuda` adds only the supported NVIDIA driver and container-toolkit setup
+
 ## Apple Host-Native Flow
 
 ```bash
@@ -49,8 +60,10 @@ POETRY_VIRTUALENVS_IN_PROJECT=true poetry install --directory python
 
 - runtime mode is selected independently of control-plane execution context
 - supported workflows do not use repo-owned scripts or wrapper layers
-- the operator workflow has no generic Python prerequisite; Poetry and a repo-local adapter
-  virtual environment materialize only when an engine-adapter test or setup path is exercised
+- the target Apple host workflow has no generic Python prerequisite; Poetry and a repo-local
+  adapter virtual environment materialize only when an engine-adapter test or setup path is
+  exercised
+- Colima is the only supported Docker environment on Apple Silicon
 - Apple host builds call `cabal` directly with `--builddir=.build/cabal` and
   `--installdir=./.build`, which keeps Cabal output under `./.build/` and materializes
   `./.build/infernix` and `./.build/infernix-demo`

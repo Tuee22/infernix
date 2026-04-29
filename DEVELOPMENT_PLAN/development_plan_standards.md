@@ -227,13 +227,19 @@ Rules:
   cluster handle without depending on ephemeral `/opt/build` state.
 - `infernix kubectl ...` is the supported operator wrapper for Kubernetes access and automatically
   targets the repo-local kubeconfig in the current execution context's durable location.
-- On Apple Silicon, the supported operator workflow has no generic Python prerequisite. Poetry plus
-  a repo-local adapter virtual environment materialize only when an engine-adapter test or
-  adapter-local workflow is exercised explicitly, and `infernix` does not install Poetry as a
-  generic platform prerequisite.
+- On Apple Silicon, the intended minimal pre-existing host prerequisites are Homebrew plus ghcup.
+- Colima is the only supported Docker environment on Apple Silicon and is installed from Homebrew
+  on the supported path.
+- After the binary exists, the Apple host workflow is allowed to let `infernix` reconcile the
+  remaining Homebrew-managed operator tools needed by the active path and bootstrap Poetry through
+  the host's system Python when adapter flows first need it; the repo-local adapter virtual
+  environment still materializes only when an engine-adapter path is exercised explicitly.
 - Containerized Linux uses Compose as the supported one-command launcher for `linux-cpu`, while
   `linux-cuda` uses a direct `docker run --gpus all infernix-linux-cuda:local ...` launcher with
   the Docker socket forwarded and `./.data/` bind mounted on the supported path.
+- On Linux CPU, host prerequisites stop at Docker Engine plus the Docker Compose plugin.
+- On Linux CUDA, host prerequisites stop at Docker Engine plus the supported NVIDIA driver and
+  container-toolkit setup.
 - `docker compose up` and `docker compose exec` are not supported outer-control-plane workflows.
 
 ### L. Runtime Mode Matrix Contract

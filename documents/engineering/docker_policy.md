@@ -5,6 +5,15 @@
 
 > **Purpose**: Define the supported outer-container control-plane workflow.
 
+## Host Prerequisite Boundary
+
+- on Apple Silicon, Colima is the only supported Docker environment
+- on `linux-cpu`, host prerequisites stop at Docker Engine plus the Docker Compose plugin
+- on `linux-cuda`, host prerequisites stop at the `linux-cpu` Docker baseline plus the supported
+  NVIDIA driver and container-toolkit setup
+- every remaining control-plane, web, Poetry, Playwright, and Kubernetes toolchain dependency for
+  Linux lives inside the shared substrate images
+
 ## Supported Usage
 
 - `docker compose build infernix` refreshes the supported Linux CPU outer-container image

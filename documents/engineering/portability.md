@@ -19,18 +19,29 @@
 - Apple Silicon is the only supported host-native inference lane
 - the canonical Apple operator workflow runs `./.build/infernix ...` directly after a `cabal`
   install into `./.build/`
-- Apple engine setup is daemon-driven and may use Homebrew, system `clang`, and `python/.venv/`
+- the intended Apple clean-host contract reduces pre-existing host requirements to Homebrew plus
+  ghcup and treats Colima as the only supported Docker environment
+- Apple engine setup is daemon-driven and may use Homebrew, the host's built-in Python,
+  system `clang`, and `python/.venv/`
 - Apple does not rely on a Linux runtime image for inference
+
+Current status:
+
+- the current worktree still expects a broader Apple host toolchain on first use than the final
+  minimal-prerequisite contract; clean-host bootstrap closure is tracked in
+  [../../DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md](../../DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md)
 
 ## Linux Rules
 
 - `linux-cpu` and `linux-cuda` are containerized lanes built from `docker/linux-substrate.Dockerfile`
 - the supported Linux control-plane launcher is a baked image snapshot, not a live repo mount
+- Linux CPU host prerequisites stop at Docker Engine plus the Docker Compose plugin
 - the Linux runtime path does not install dependencies at runtime with `apt`, `pip`, or `cabal build`
 
 ## CUDA-Specific Rules
 
 - `linux-cuda` requires a supported NVIDIA host plus the NVIDIA Container Toolkit
+- `linux-cuda` adds only the NVIDIA host prerequisites beyond the Linux CPU Docker baseline
 - the supported CUDA cluster lifecycle requires `nvkind` from the baked substrate image
 - host-visible `nvkind` rebuild or handoff paths are not part of the supported contract
 

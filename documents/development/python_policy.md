@@ -24,13 +24,21 @@ non-Python binding.
 ## Toolchain
 
 - the shared Poetry project lives at `python/pyproject.toml`
-
+- on the intended Apple clean-host path, `infernix` may bootstrap the `poetry` executable through
+  the host's built-in Python when adapter setup or validation first needs it
 - outside the cluster, `poetry install --directory python` materializes a repo-local Poetry
   environment for adapter validation on the Apple host path
 - Linux substrate image builds run `poetry install --directory python` during the image build and
   then execute adapters from the shared `python/` project root through `poetry run ...`
 - Poetry is not a generic platform prerequisite; it materializes only when an adapter validation or
   setup path is exercised explicitly
+
+Current status:
+
+- the current worktree still invokes `poetry` directly on Apple and therefore expects the
+  executable to exist before adapter setup or validation runs
+- the clean-host Poetry-bootstrap closure is tracked in
+  [../../DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md](../../DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md)
 
 ## Quality Gate
 

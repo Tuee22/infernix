@@ -5,6 +5,15 @@
 
 > **Purpose**: Describe the supported Apple host-native operator workflow.
 
+## Current Status
+
+- the intended Apple clean-host contract reduces pre-existing host requirements to Homebrew plus
+  ghcup before the binary is built
+- Colima is the only supported Docker environment on Apple Silicon
+- the current worktree still expects host-installed `kind`, `kubectl`, `helm`, and a `poetry`
+  executable when those paths are first exercised; clean-host bootstrap closure is tracked in
+  [../../DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md](../../DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md)
+
 ## Supported Flow
 
 - build both Haskell binaries with
@@ -34,12 +43,16 @@ When the demo UI is needed as a host-side equivalent of the cluster `infernix-de
   reaches the Apple host bridge while the browser stays on the same base URL
 - the host-native daemon uses the same Haskell worker contract as the cluster-resident daemon and
   forks Python adapters from `python/adapters/` only when the bound engine is Python-native
+- the intended Apple host bootstrap uses Homebrew-managed Colima, Docker CLI, `kind`, `kubectl`,
+  `helm`, Node.js, and related operator tools rather than a broader manual prerequisite list
 - `infernix service` runs `ensureAppleSiliconRuntimeReady` before the daemon loop. That flow
   ensures the shared `python/` project is installed, creates repo-local engine roots under
   `./.data/engines/`, and invokes each `poetry run setup-*` entrypoint for the active mode's
   Python-native engine bindings
-- the current `setup-*` entrypoints are idempotent preflight hooks, not full Homebrew or CMake
-  installers
+- the intended Apple bootstrap may also install Poetry through the host's built-in Python when the
+  `poetry` executable is absent
+- the current `setup-*` entrypoints are idempotent preflight hooks, not the full Homebrew or
+  Poetry-bootstrap closure described above
 
 ## Cross-References
 

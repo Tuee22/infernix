@@ -7,8 +7,10 @@ It handles orchestration, model resolution, artifact delivery, request routing, 
 supervision, and browser-facing manual inference while leaving execution kernels to the best
 runtime for each model family.
 
-The supported platform in the current worktree matches the closed Phase 0 through Phase 6 plan
-baseline. This README is the operator-oriented orientation and quick-start layer, while
+The repository broadly matches the Phase 0 through Phase 6 platform baseline, but clean-host
+prerequisite minimization and package-manager-driven Apple host bootstrap are now tracked as open
+follow-on work in [DEVELOPMENT_PLAN/](DEVELOPMENT_PLAN/README.md). This README is the
+operator-oriented orientation and quick-start layer, while
 [DEVELOPMENT_PLAN/](DEVELOPMENT_PLAN/README.md) is the authoritative source for implementation
 status, validation history, and phase-closure evidence.
 
@@ -131,24 +133,26 @@ Apple, CPU, and CUDA runtime targets.
 
 Use the host package manager or installer that matches the supported execution context:
 
-- on Apple Silicon, use `brew` for operator-facing userland tools and use the upstream `ghcup`
-  bootstrap for the Haskell toolchain
-- on Linux, use `apt` plus the vendor-maintained Docker or NVIDIA repositories rather than older
-  distro-default packages when those vendor repos are the supported path
-- manual installation is only expected where the host OS or GPU driver model makes it necessary,
-  most notably `ghcup` on macOS and the NVIDIA driver on CUDA hosts
+- on Apple Silicon, the intended pre-existing host prerequisites are only Homebrew plus `ghcup`
+- on Linux CPU, the intended host prerequisites stop at Docker Engine plus the Docker Compose plugin
+- on Linux CUDA, the intended host prerequisites stop at Docker Engine plus the supported NVIDIA
+  driver and container-toolkit setup
+
+Current status:
+
+- the minimal-prerequisites and package-manager-bootstrap contract is tracked as active follow-on
+  work in [DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md](DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md)
+- the current worktree still expects a broader Apple host toolchain on first use than the final
+  minimal-prerequisite contract described below
 
 The Linux install examples below assume an Ubuntu 24.04 host.
 
 ### Apple Silicon host prerequisites
 
-Required on the host:
+Required before building `./.build/infernix` on the host:
 
 - Homebrew
-- Docker Desktop
 - `ghcup` with `ghc 9.14.1` and `cabal 3.16.1.0` active
-- `kind`, `kubectl`, `helm`, and Node.js 22+ from Homebrew
-- Playwright browser binaries for routed `test e2e`
 
 Supported install path:
 
@@ -157,8 +161,6 @@ Supported install path:
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 
 # Userland tools managed by Homebrew.
-brew install kind kubectl helm node@22
-brew install --cask docker
 
 # Haskell toolchain managed by ghcup rather than Homebrew.
 curl --proto '=https' --tlsv1.2 -sSf https://get-ghcup.haskell.org | sh
@@ -166,20 +168,20 @@ ghcup install ghc 9.14.1
 ghcup set ghc 9.14.1
 ghcup install cabal 3.16.1.0
 ghcup set cabal 3.16.1.0
-
-# One-time Playwright browser install for host-routed E2E.
-npm --prefix web exec -- playwright install --with-deps chromium firefox webkit
 ```
 
 Notes:
 
 - `ghcup` is the supported manual install because the Apple host-native workflow depends on an
   explicitly selected GHC and Cabal pair
-- Docker Desktop is the supported macOS Docker runtime; the repo does not support an alternate
-  Kind-on-mac launcher path
-- engine-specific bootstrap beyond the operator toolchain is currently limited to repo-local
-  Poetry setup plus adapter `setup-*` entrypoints; host-level `brew` package installation remains
-  an operator responsibility
+- Colima is the only supported Docker environment on Apple Silicon, and the intended Apple host
+  bootstrap installs it from Homebrew together with the Docker CLI, `kind`, `kubectl`, `helm`,
+  Node.js, Playwright prerequisites, and any other supported operator-facing tools needed by the
+  active runtime path
+- the intended Apple host bootstrap also installs Poetry through the host's built-in Python when
+  `poetry` is absent, after which all host-side Python configuration continues through Poetry
+- the current worktree does not yet fully implement that clean-host bootstrap; the open work is
+  tracked in the development plan link above
 
 ### Linux CPU host prerequisites
 
@@ -223,6 +225,7 @@ Notes:
   Compose plugin and current engine features stay aligned with the Linux substrate images
 - the Linux CPU workflow does not need host-installed Kubernetes or Haskell tooling because the
   baked `infernix-linux-cpu:local` image carries the repo-supported toolchain
+- everything beyond Docker happens inside the shared Linux substrate image build or runtime path
 
 ### Linux CUDA host prerequisites
 
@@ -267,6 +270,8 @@ Notes:
   or GHC because the baked `infernix-linux-cuda:local` image carries them
 - plan for substantial free disk space before `cluster up` or `test all`; the Kind preload plus
   Harbor-backed rollout is materially heavier than the CPU lane
+- everything beyond Docker plus the NVIDIA host prerequisites happens inside the shared Linux
+  substrate image build or runtime path
 
 ## Demo and Validation Quick Start
 
@@ -318,9 +323,11 @@ cabal --builddir=.build/cabal install --installdir=./.build --install-method=cop
 ```
 
 `cluster up` writes `./.build/infernix.kubeconfig` and never touches `$HOME/.kube/config`. On
-the current Apple path, the daemon ensures the shared Poetry project exists under `python/.venv/`
-when needed and runs adapter `setup-*` entrypoints that write repo-local bootstrap manifests under
-`./.data/engines/`. It does not currently install Homebrew packages on the operator's behalf.
+the intended minimal-prerequisites path, the binary reconciles Colima plus the remaining
+Homebrew-managed operator tools and then ensures the shared Poetry project exists under
+`python/.venv/` when needed. The current worktree only automates the repo-local Poetry project and
+adapter `setup-*` manifests after the required Apple host tools already exist; the clean-host
+bootstrap gap remains tracked in the development plan.
 
 ### Linux CPU (outer container)
 
