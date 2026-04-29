@@ -35,10 +35,9 @@ non-Python binding.
 
 Current status:
 
-- the current worktree still invokes `poetry` directly on Apple and therefore expects the
-  executable to exist before adapter setup or validation runs
-- the clean-host Poetry-bootstrap closure is tracked in
-  [../../DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md](../../DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md)
+- on the Apple host-native path, `infernix` bootstraps a user-local `poetry` executable through
+  the host's built-in Python when adapter setup or validation first needs it
+- once `poetry` exists, the shared project still materializes `python/.venv/` only on demand
 
 ## Quality Gate
 

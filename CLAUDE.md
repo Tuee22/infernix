@@ -1,7 +1,11 @@
 # CLAUDE.md
 
 **Status**: Governed entry document
-**Canonical workflow docs**: `documents/`
+**Supersedes**: older root-level workflow duplication for LLM coding assistants
+**Canonical homes**: [documents/README.md](documents/README.md), [documents/documentation_standards.md](documents/documentation_standards.md), [documents/development/local_dev.md](documents/development/local_dev.md), [DEVELOPMENT_PLAN/README.md](DEVELOPMENT_PLAN/README.md)
+
+> **Purpose**: Provide a thin automation-oriented entry document that points Claude-style agents at
+> the canonical workflow and implementation-status docs.
 
 Instructions for Claude and other LLM-based coding assistants working in this repository.
 
@@ -49,10 +53,11 @@ Those actions are reserved for the user.
   quality gate is `poetry run check-code` (mypy strict, black check, ruff strict). On Apple
   Silicon, Colima is the only supported Docker environment, the minimal pre-existing host
   prerequisites are Homebrew plus ghcup, and the governed direction is that `infernix` reconciles
-  the remaining Homebrew-managed tools plus Poetry bootstrap when adapter flows need them; the
-  current worktree still only materializes `python/.venv/` on demand once `poetry` itself exists.
-  Linux substrate images install adapter deps during image build, and Linux host prerequisites stop
-  at Docker plus the NVIDIA host prerequisites for `linux-cuda`.
+  the remaining Homebrew-managed tools plus Poetry bootstrap when adapter flows need them. Apple
+  host paths still materialize `python/.venv/` only on demand, after `infernix` bootstraps a
+  user-local `poetry` executable through the host's built-in Python when necessary. Linux
+  substrate images install adapter deps during image build, and Linux host prerequisites stop at
+  Docker plus the NVIDIA host prerequisites for `linux-cuda`.
 - The demo UI is PureScript. Frontend contracts are emitted into `web/src/Generated/` by
   `infernix internal generate-purs-contracts`, which derives them through `purescript-bridge`
   from dedicated Haskell browser-contract ADTs in `src/Infernix/Web/Contracts.hs`; the demo UI is

@@ -8,6 +8,8 @@
 ## Bring-Up
 
 - run `infernix cluster up`
+- on the Apple host-native path, the command reconciles Homebrew-managed Colima, Docker CLI,
+  `kind`, `kubectl`, and `helm` before it attempts the real Kind workflow
 - if Docker, Kind, Helm, or kubectl are unavailable, expect `cluster up` to use the simulated
   substrate; `cluster status` will report that mode and the published routes remain available
 - for `linux-cuda`, confirm the supported NVIDIA host satisfies the documented `nvidia-smi` and

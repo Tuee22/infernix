@@ -18,12 +18,12 @@ import Data.Text (Text)
 import Data.Text qualified as Text
 import Infernix.Config (Paths (..))
 import Infernix.Models (engineBindingForSelectedEngine)
-import Infernix.Python (ensurePoetryProjectReady)
+import Infernix.Python (ensurePoetryExecutable, ensurePoetryProjectReady)
 import Infernix.Types
 import Lens.Family2 (set, view)
 import Proto.Infernix.Runtime.Inference qualified as ProtoInference
 import Proto.Infernix.Runtime.Inference_Fields qualified as ProtoInferenceFields
-import System.Directory (doesFileExist, findExecutable)
+import System.Directory (doesFileExist)
 import System.Environment (lookupEnv)
 import System.Exit (ExitCode (ExitSuccess))
 import System.FilePath ((</>))
@@ -99,12 +99,9 @@ ensurePythonEngineSetupReady paths runtimeMode engineBinding = do
   if bootstrapReady
     then pure ()
     else do
-      maybePoetry <- findExecutable "poetry"
-      case maybePoetry of
-        Nothing -> pure ()
-        Just poetryExecutable -> do
-          ensurePoetryProjectReady paths projectDirectory
-          runSetupInvocation paths poetryExecutable projectDirectory installRoot runtimeMode engineBinding
+      poetryExecutable <- ensurePoetryExecutable paths
+      ensurePoetryProjectReady paths projectDirectory
+      runSetupInvocation paths poetryExecutable projectDirectory installRoot runtimeMode engineBinding
 
 runSetupInvocation :: Paths -> FilePath -> FilePath -> FilePath -> RuntimeMode -> EngineBinding -> IO ()
 runSetupInvocation paths poetryExecutable projectDirectory installRoot runtimeMode engineBinding = do
@@ -149,7 +146,8 @@ resolvePythonInvocation paths engineBinding maybeOverride = do
   let projectDirectory = repoRoot paths </> engineBindingProjectDirectory engineBinding
   case trimWhitespace =<< maybeOverride of
     Just overrideCommand ->
-      withPoetryExecutable $ \poetryExecutable -> do
+      do
+        poetryExecutable <- ensurePoetryExecutable paths
         ensurePoetryProjectReady paths projectDirectory
         pure
           ( Just
@@ -166,7 +164,8 @@ resolvePythonInvocation paths engineBinding maybeOverride = do
               )
           )
     Nothing ->
-      withPoetryExecutable $ \poetryExecutable -> do
+      do
+        poetryExecutable <- ensurePoetryExecutable paths
         ensurePoetryProjectReady paths projectDirectory
         pure
           ( Just
@@ -180,12 +179,6 @@ resolvePythonInvocation paths engineBinding maybeOverride = do
                   ]
               )
           )
-  where
-    withPoetryExecutable action = do
-      maybePoetry <- findExecutable "poetry"
-      case maybePoetry of
-        Just poetryExecutable -> action poetryExecutable
-        Nothing -> pure Nothing
 
 runWorkerInvocation :: Paths -> WorkerInvocation -> ByteString.ByteString -> IO (Either String ByteString.ByteString)
 runWorkerInvocation paths invocation inputPayload = do

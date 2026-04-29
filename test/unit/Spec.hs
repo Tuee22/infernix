@@ -16,9 +16,16 @@ import Infernix.Cluster.PublishImages
     normalizeRepositoryPath,
     writeHarborOverridesFile,
   )
+import Infernix.CommandRegistry
+  ( Command (..),
+    parseCommand,
+    renderCliReferenceCommandsSection,
+    renderCliSurfaceFamiliesSection,
+  )
 import Infernix.Config
 import Infernix.DemoConfig (decodeDemoConfigFile)
 import Infernix.Engines.AppleSilicon (ensureAppleSiliconRuntimeReady)
+import Infernix.HostPrereqs (appleHostRequirementIds)
 import Infernix.Models
 import Infernix.Runtime
 import Infernix.Runtime.Pulsar (runProductionDaemon)
@@ -46,6 +53,24 @@ main = do
     "CLI parsing accepts --runtime-mode after the command family"
   assert (extractRuntimeMode ["--runtime-mode"] == Left "Missing value for --runtime-mode") "CLI parsing rejects a missing runtime mode value"
   assert (extractRuntimeMode ["--runtime-mode", "bogus"] == Left "Unsupported runtime mode: bogus") "CLI parsing rejects unsupported runtime modes"
+  assert
+    (parseCommand ["internal", "discover", "images", "rendered-chart.yaml"] == Right (InternalDiscoverImagesCommand "rendered-chart.yaml"))
+    "the structured command registry parses internal discovery commands from the same definition used by the docs"
+  assert
+    ("### `cluster`" `isInfixOf` renderCliReferenceCommandsSection)
+    "the generated CLI reference includes the cluster family heading"
+  assert
+    ("- `test` - runs the aggregate validation entrypoints" `isInfixOf` renderCliSurfaceFamiliesSection)
+    "the generated CLI surface overview includes the test family summary"
+  assert
+    (appleHostRequirementIds AppleSilicon ClusterUpCommand == ["docker", "colima", "kind", "kubectl", "helm", "node", "poetry"])
+    "apple host prerequisite planning includes the full cluster and adapter toolchain for apple-silicon cluster up"
+  assert
+    (appleHostRequirementIds LinuxCpu TestAllCommand == ["docker", "colima", "kind", "kubectl", "helm", "node"])
+    "apple host prerequisite planning skips Poetry when the active runtime mode is linux-cpu"
+  assert
+    (null (appleHostRequirementIds AppleSilicon DocsCheckCommand))
+    "apple host prerequisite planning does not install unrelated tools for docs-only commands"
   assertUniqueModelIds AppleSilicon
   assertUniqueModelIds LinuxCpu
   assertUniqueModelIds LinuxCuda

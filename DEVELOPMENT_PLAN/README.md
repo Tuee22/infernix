@@ -56,16 +56,13 @@ are all present. The worktree also contains the `linux-cpu` outer-container laun
 supported direct `linux-cuda` launcher, the routed Pulsar path, the HA and lifecycle coverage,
 and the routed Playwright coverage that those closed phases depend on.
 
-Phase 6 is reopened by three follow-ons: the clean-host prerequisite-minimization contract, the
-stricter governed-root-document metadata closure, and the true single-definition CLI-registry
-closure. The intended supported workflow now reduces Apple pre-existing host requirements to
-Homebrew plus ghcup, makes Colima the only supported Apple Docker environment, lets `infernix`
-reconcile the remaining Homebrew-managed Apple host tools plus Poetry bootstrap on demand, and
-keeps Linux host prerequisites at Docker only for `linux-cpu` plus Docker and NVIDIA host
-prerequisites for `linux-cuda`. The current worktree still assumes a broader Apple host toolchain
-on first use, the governed root docs have not all reached the stricter metadata model yet, and the
-command-registry surface still splits parse, help, and CLI-reference derivation across separate
-structures.
+Phase 6 is now closed in the current worktree. The Apple host-native path reduces pre-existing
+host requirements to Homebrew plus ghcup, treats Colima as the only supported Apple Docker
+environment, reconciles the remaining Homebrew-managed Apple host tools on demand, and bootstraps
+Poetry through the host's built-in Python when adapter setup or validation first needs it. The
+governed root docs now carry the stricter metadata block, and the structured Haskell command
+registry now owns parsing, help output, and the generated CLI-reference sections that docs lint
+enforces mechanically.
 
 ## Execution Contexts and Runtime Modes
 
@@ -86,7 +83,7 @@ The plan keeps these concepts separate:
 | 3 | HA Platform Services and Edge Routing | Done | [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md) |
 | 4 | Inference Service and Durable Runtime | Done | [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) |
 | 5 | Web UI and Shared Types | Done | [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md) |
-| 6 | Validation, E2E, and HA Hardening | Active | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) |
+| 6 | Validation, E2E, and HA Hardening | Done | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) |
 
 ## Canonical Outcome
 

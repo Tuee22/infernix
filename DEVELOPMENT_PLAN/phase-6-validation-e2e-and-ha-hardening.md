@@ -1,6 +1,6 @@
 # Phase 6: Validation, E2E, and HA Hardening
 
-**Status**: Active
+**Status**: Done
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
 
 > **Purpose**: Define the supported static-quality and test matrix for the two-binary topology,
@@ -11,35 +11,22 @@
 
 ## Phase Status
 
-Sprints 6.1 through 6.7 are `Done`. Sprint 6.8 is `Active`. Sprints 6.9 and 6.10 are `Planned`.
-The validation entrypoints, active-mode catalog coverage, and Linux-lane cluster or E2E assertions
-are present in the current worktree, but the clean-host prerequisite-minimization contract, the
-stricter governed-root-document metadata closure, and the true single-definition CLI-registry
-closure remain open.
+Sprints 6.1 through 6.10 are `Done`. The validation entrypoints, active-mode catalog coverage,
+clean-host bootstrap logic, governed-root-document metadata closure, and structured CLI-registry
+closure are all present in the current worktree.
 
 ## Current Repo Assessment
 
 The repository already has lint, unit, integration, and Playwright entrypoints. The canonical
 testing, boundary, portability, and Haskell-style docs are landed, and the baked Linux substrate
 image now carries the source-snapshot manifest needed for git-less `infernix lint files` runs. The
-routed Playwright suite exhaustively exercises every demo-visible generated catalog entry, and the
+routed Playwright suite exhaustively exercises every demo-visible generated catalog entry, the
 integration suite enumerates every generated active-mode catalog entry while also carrying Harbor,
-MinIO, Pulsar, and Harbor PostgreSQL recovery or lifecycle checks in code. The `linux-cpu`
-outer-container lane and direct `linux-cuda` lane are both modeled by the cluster, chart, and
-validation surfaces in the worktree. The remaining Phase 6 gaps are:
-
-- clean-host bootstrap closure: the intended supported workflow reduces Apple pre-existing host
-  requirements to Homebrew plus ghcup, makes Colima the only supported Apple Docker environment,
-  lets `infernix` reconcile the remaining Homebrew-managed Apple host tools plus Poetry bootstrap
-  on demand, and keeps Linux host prerequisites at Docker only for `linux-cpu` plus Docker and
-  NVIDIA host prerequisites for `linux-cuda`; the current worktree still assumes a broader Apple
-  host toolchain on first use
-- governed-root-document metadata closure: `README.md` still lacks the governed metadata block,
-  and `AGENTS.md` or `CLAUDE.md` still need the explicit supersession or canonical-home markers
-  required by the root-document-governance direction
-- true single-definition CLI-registry closure: the current command-registry surface still keeps
-  parsing, documented command lines, and CLI-reference enforcement in separate structures rather
-  than one structured Haskell definition
+MinIO, Pulsar, and Harbor PostgreSQL recovery or lifecycle checks in code, the Apple host-native
+path now reconciles its remaining supported prerequisites from the Homebrew-plus-ghcup baseline,
+the governed root docs now carry the stricter metadata model, and the structured Haskell command
+registry now owns parsing, help output, and the generated CLI-reference sections that docs lint
+enforces.
 
 ## Validation Surface
 
@@ -293,10 +280,10 @@ None.
 
 ---
 
-## Sprint 6.8: Minimal Host Prerequisites and Clean-Host Bootstrap Closure [Active]
+## Sprint 6.8: Minimal Host Prerequisites and Clean-Host Bootstrap Closure [Done]
 
-**Status**: Active
-**Implementation**: `README.md`, `AGENTS.md`, `CLAUDE.md`, `src/Infernix/Engines/AppleSilicon.hs`, `src/Infernix/Python.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/CLI.hs`, `documents/development/local_dev.md`, `documents/operations/apple_silicon_runbook.md`, `documents/development/python_policy.md`, `documents/engineering/portability.md`, `documents/engineering/docker_policy.md`
+**Status**: Done
+**Implementation**: `README.md`, `AGENTS.md`, `CLAUDE.md`, `src/Infernix/HostPrereqs.hs`, `src/Infernix/Engines/AppleSilicon.hs`, `src/Infernix/Python.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/CLI.hs`, `documents/development/local_dev.md`, `documents/operations/apple_silicon_runbook.md`, `documents/development/python_policy.md`, `documents/engineering/portability.md`, `documents/engineering/docker_policy.md`
 **Docs to update**: `README.md`, `AGENTS.md`, `CLAUDE.md`, `documents/development/local_dev.md`, `documents/operations/apple_silicon_runbook.md`, `documents/development/python_policy.md`, `documents/engineering/portability.md`, `documents/engineering/docker_policy.md`, `documents/operations/cluster_bootstrap_runbook.md`
 
 ### Objective
@@ -339,19 +326,13 @@ toolchain from package managers instead of depending on a broad preinstalled App
 
 ### Remaining Work
 
-- implement Apple host prerequisite detection and Homebrew-managed reconcile logic in Haskell
-- switch governed Apple Docker guidance from Docker Desktop or generic Docker wording to Colima-only support
-- teach the Apple bootstrap path to install Poetry through the host's built-in Python when the
-  `poetry` executable is absent
-- add clean-host validation coverage for the Apple minimal-prerequisite contract
-- align the governed docs suite around the minimal host prerequisite narrative without overstating
-  the current implementation state
+None.
 
 ---
 
-## Sprint 6.9: Governed Root-Document Metadata Closure [Planned]
+## Sprint 6.9: Governed Root-Document Metadata Closure [Done]
 
-**Status**: Planned
+**Status**: Done
 **Implementation**: `README.md`, `AGENTS.md`, `CLAUDE.md`, `documents/documentation_standards.md`, `src/Infernix/Lint/Docs.hs`
 **Docs to update**: `README.md`, `AGENTS.md`, `CLAUDE.md`, `documents/documentation_standards.md`, `documents/README.md`
 
@@ -381,17 +362,14 @@ standards they already cite.
 
 ### Remaining Work
 
-- add the missing governed metadata block to `README.md`
-- add the explicit supersession or canonical-home markers to `AGENTS.md` and `CLAUDE.md`
-- teach the docs linter to enforce the stronger root-document metadata contract
-- tighten `documents/documentation_standards.md` so the written rule and the mechanical checks match
+None.
 
 ---
 
-## Sprint 6.10: True Single-Definition CLI Registry Closure [Planned]
+## Sprint 6.10: True Single-Definition CLI Registry Closure [Done]
 
-**Status**: Planned
-**Implementation**: `src/Infernix/CommandRegistry.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Lint/Docs.hs`, `documents/reference/cli_reference.md`, `documents/reference/cli_surface.md`
+**Status**: Done
+**Implementation**: `src/Infernix/CommandRegistry.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Lint/Docs.hs`, `documents/reference/cli_reference.md`, `documents/reference/cli_surface.md`, `test/unit/Spec.hs`
 **Docs to update**: `documents/reference/cli_reference.md`, `documents/reference/cli_surface.md`, `documents/development/local_dev.md`, `README.md`
 
 ### Objective
@@ -420,12 +398,7 @@ and the canonical CLI reference stop drifting independently.
 
 ### Remaining Work
 
-- replace the current split between `parseCommand`, `documentedCommandLines`, and handwritten
-  reference-document maintenance with one structured registry definition
-- remove the current string-presence-only CLI-reference lint model
-- keep `documents/reference/cli_surface.md` as a summary doc rather than a parallel command
-  inventory
-- align local-dev and README command examples with the stronger registry-backed CLI reference
+None.
 
 ## Documentation Requirements
 

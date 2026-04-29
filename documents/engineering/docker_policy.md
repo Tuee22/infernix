@@ -8,6 +8,8 @@
 ## Host Prerequisite Boundary
 
 - on Apple Silicon, Colima is the only supported Docker environment
+- on the Apple host-native control-plane path, `./.build/infernix` reconciles Homebrew-managed
+  Colima and the Docker CLI before it attempts real cluster work
 - on `linux-cpu`, host prerequisites stop at Docker Engine plus the Docker Compose plugin
 - on `linux-cuda`, host prerequisites stop at the `linux-cpu` Docker baseline plus the supported
   NVIDIA driver and container-toolkit setup

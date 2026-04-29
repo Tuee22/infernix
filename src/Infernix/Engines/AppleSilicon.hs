@@ -10,7 +10,7 @@ import Data.List (nubBy)
 import Data.Text qualified as Text
 import Infernix.Config (Paths (..))
 import Infernix.Models (engineBindingsForMode)
-import Infernix.Python (ensurePoetryProjectReady, pythonProjectDirectory)
+import Infernix.Python (ensurePoetryExecutable, ensurePoetryProjectReady, pythonProjectDirectory)
 import Infernix.Types (EngineBinding (..), RuntimeMode (AppleSilicon))
 import System.Directory (createDirectoryIfMissing, doesFileExist)
 import System.Environment (getEnvironment)
@@ -58,6 +58,7 @@ runAppleSetupStep paths step =
       let bootstrapManifestPath = engineInstallRoot </> "bootstrap.json"
       bootstrapReady <- doesFileExist bootstrapManifestPath
       unless bootstrapReady $ do
+        poetryExecutable <- ensurePoetryExecutable paths
         baseEnvironment <- getEnvironment
         let processEnvironment =
               [ ("POETRY_VIRTUALENVS_IN_PROJECT", "true"),
@@ -70,7 +71,7 @@ runAppleSetupStep paths step =
                   baseEnvironment
         (exitCode, _, stderrOutput) <-
           readCreateProcessWithExitCode
-            ( (proc "poetry" ["--directory", projectDirectory, "run", entrypoint])
+            ( (proc poetryExecutable ["--directory", projectDirectory, "run", entrypoint])
                 { cwd = Just projectDirectory,
                   env = Just processEnvironment
                 }

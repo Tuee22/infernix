@@ -62,11 +62,15 @@
 - `documents/` owns architecture guidance, operator workflow guidance, and reference material.
 - `README.md` stays an orientation document and links into this suite instead of becoming the deep
   architecture source of truth.
+- `AGENTS.md` and `CLAUDE.md` stay as governed entry documents with explicit `Canonical homes`
+  links back into this suite.
 
 ## Maintenance
 
 - Update the owning document when CLI surfaces, storage rules, PostgreSQL topology, routes, or runtime modes change.
 - Update linked documents in the same change when a contract crosses boundaries.
+- When root workflow guidance changes, update the governed metadata and canonical-home links in
+  `README.md`, `AGENTS.md`, and `CLAUDE.md` in the same change.
 - Supported workflow docs use direct `cabal`, `docker compose`, and `infernix` commands rather
   than repo-owned scripts or wrapper layers.
 - Run the docs validator before handing off changes.

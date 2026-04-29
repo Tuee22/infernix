@@ -13,10 +13,10 @@ supported contract from the current validation state.
 
 | Area | Supported contract | Current repo gap |
 |------|--------------------|------------------|
-| Root-document governance | `README.md` is orientation only; `documents/` owns canonical topic docs; `AGENTS.md` and `CLAUDE.md` are thin governed entry documents | the stricter metadata closure remains open: `README.md` still lacks the governed root-doc metadata block, and `AGENTS.md` or `CLAUDE.md` still need the explicit supersession or canonical-home markers tracked in Phase 6 Sprint 6.9 |
-| CLI ownership | one Haskell command-registry foundation anchors supported command inventory, help text, and canonical CLI reference coverage | the true single-definition closure remains open: parsing, documented command lines, and CLI-reference enforcement still live in separate structures; closure is tracked in Phase 6 Sprint 6.10 |
+| Root-document governance | `README.md` is orientation only; `documents/` owns canonical topic docs; `AGENTS.md` and `CLAUDE.md` are thin governed entry documents | no material governed-root-doc metadata gap remains in the worktree |
+| CLI ownership | one structured Haskell command registry owns supported command parsing, help text, and the generated canonical CLI reference sections | no material CLI-ownership gap remains in the worktree |
 | Control-plane execution | Apple host-native control plane plus Linux outer-container control plane | the worktree contains the Apple host-native path, the `linux-cpu` outer-container launcher, and the supported direct `linux-cuda` launcher; no material control-plane implementation gap remains outside the separate clean-host bootstrap follow-on |
-| Host prerequisite minimization | Apple requires only Homebrew plus ghcup before building `infernix`; Colima is the only supported Apple Docker environment; `linux-cpu` requires only Docker; `linux-cuda` adds only the NVIDIA Docker prerequisites; `infernix` reconciles every remaining supported host tool through package managers | the current Apple host path still assumes preinstalled `kind`, `kubectl`, `helm`, `node`, and a `poetry` executable on first use; clean-host bootstrap closure is tracked in Phase 6 Sprint 6.8 |
+| Host prerequisite minimization | Apple requires only Homebrew plus ghcup before building `infernix`; Colima is the only supported Apple Docker environment; `linux-cpu` requires only Docker; `linux-cuda` adds only the NVIDIA Docker prerequisites; `infernix` reconciles every remaining supported host tool through package managers | no material host-prerequisite gap remains in the worktree |
 | Runtime honesty | one host-native Apple inference lane plus two Linux substrate images | no material runtime-honesty gap remains in the governed docs or current worktree |
 | Linux image layout | one shared `docker/linux-substrate.Dockerfile` builds `infernix-linux-cpu` and `infernix-linux-cuda` | the shared image and source-snapshot manifest are landed, and no material Linux-image implementation gap remains in the worktree |
 | Pulsar production transport | `src/Infernix/Runtime/Pulsar.hs` uses Pulsar WebSocket and admin surfaces when configured, with filesystem simulation only as the fallback path | no material transport gap remains in the worktree |
@@ -24,7 +24,7 @@ supported contract from the current validation state.
 | Browser-contract ownership | handwritten Haskell contract ADTs live outside any `Generated/` directory; only emitted PureScript stays under `web/src/Generated/` | no material browser-contract ownership gap remains in the worktree |
 | Route or publication contract | one Haskell route registry drives rendered HTTPRoutes, publication state, chart lint, and docs | no material route or publication gap remains in the worktree |
 | Generated deployment inputs | `chart/values.yaml` holds stable defaults only; generated demo-config and publication payloads are ephemeral inputs | no material generated-input gap remains in the worktree |
-| Validation doctrine | one canonical testing doctrine plus one canonical Haskell-style guide describe enforced rules, review guidance, and validation entrypoints | doctrine is landed, and the worktree contains lint, unit, integration, and E2E entrypoints with explicit active-mode catalog coverage; the remaining follow-on is the clean-host bootstrap closure tracked in Phase 6 Sprint 6.8 |
+| Validation doctrine | one canonical testing doctrine plus one canonical Haskell-style guide describe enforced rules, review guidance, and validation entrypoints | doctrine is landed, and the worktree contains lint, unit, integration, and E2E entrypoints with explicit active-mode catalog coverage and registry-backed docs validation |
 
 ## Supported Outcome
 
@@ -311,7 +311,7 @@ The plan keeps control-plane execution context separate from runtime mode.
   surfaces, and routed inference execution for every generated active-mode catalog entry.
 - `infernix test e2e` exercises every demo-visible generated catalog entry for the active mode.
 - integration no longer hardcodes a representative model request; active-mode catalog coverage is
-  explicit, and the remaining Phase 6 work is the clean-host bootstrap closure tracked in Sprint 6.8
+  explicit across the full validation surface
 
 ### 9. Haskell Types Own Frontend Contracts
 

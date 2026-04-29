@@ -26,6 +26,29 @@ Rules:
 - `**Referenced by**:` is required, even when there is only one cross-reference
 - the purpose quote block is required
 
+## Governed Root Documents
+
+The governed root documents use a parallel metadata block so readers and automation can distinguish
+orientation or entry guidance from canonical topic ownership.
+
+```markdown
+# Title
+
+**Status**: Governed orientation document | Governed entry document
+**Supersedes**: short statement describing the root-level duplication this file replaces
+**Canonical homes**: [documents/...](documents/...), [DEVELOPMENT_PLAN/README.md](DEVELOPMENT_PLAN/README.md)
+
+> **Purpose**: One-sentence summary.
+```
+
+Rules:
+
+- `README.md` uses `**Status**: Governed orientation document`
+- `AGENTS.md` and `CLAUDE.md` use `**Status**: Governed entry document`
+- every governed root doc carries both `**Supersedes**:` and `**Canonical homes**:` lines
+- root docs summarize and link; they do not become parallel canonical homes for workflow or
+  architecture topics
+
 ## Taxonomy
 
 The canonical suite layout is:
@@ -53,8 +76,10 @@ Rules:
 
 - `DEVELOPMENT_PLAN/` owns phase order, current implementation status, and closure criteria.
 - `documents/` owns architecture and operator guidance once the relevant document exists.
-- `README.md` is an orientation layer and points to canonical documents instead of duplicating them.
-- `AGENTS.md` and `CLAUDE.md` must stay aligned with workflow guidance when repository-level rules change.
+- `README.md` is a governed orientation layer and points to canonical documents instead of
+  duplicating them.
+- `AGENTS.md` and `CLAUDE.md` are governed entry documents and must stay aligned with workflow
+  guidance when repository-level rules change.
 
 ## Naming And Linking
 
@@ -75,7 +100,8 @@ Rules:
 ## Update Rules
 
 - when the CLI surface changes, update `documents/reference/cli_reference.md`,
-  `documents/reference/cli_surface.md`, and any impacted runbooks in the same change
+  `documents/reference/cli_surface.md`, their generated command-registry sections, and any
+  impacted runbooks in the same change
 - when storage rules change, update `documents/engineering/k8s_storage.md`,
   `documents/engineering/storage_and_state.md`, and the relevant phase document in the same change
 - when PostgreSQL topology changes, update `documents/tools/postgresql.md`,
@@ -89,8 +115,11 @@ Rules:
 
 The repo-local documentation validator checks:
 
-- required metadata lines
+- required metadata lines for governed `documents/` content
+- governed root-document metadata lines (`Status`, `Supersedes`, `Canonical homes`, purpose)
 - governed document existence for the canonical bootstrap set
-- relative link resolution
+- relative link resolution for governed docs, governed root docs, and phase-plan docs
 - root README references to both `documents/` and `DEVELOPMENT_PLAN/`
+- registry-generated CLI sections in `documents/reference/cli_reference.md` and
+  `documents/reference/cli_surface.md`
 - `DEVELOPMENT_PLAN/` phase documents retaining their `## Documentation Requirements` section

@@ -1,5 +1,12 @@
 # Infernix
 
+**Status**: Governed orientation document
+**Supersedes**: older root-level workflow duplication; canonical contracts live under `documents/` and `DEVELOPMENT_PLAN/`
+**Canonical homes**: [documents/README.md](documents/README.md), [documents/reference/cli_reference.md](documents/reference/cli_reference.md), [documents/development/local_dev.md](documents/development/local_dev.md), [DEVELOPMENT_PLAN/README.md](DEVELOPMENT_PLAN/README.md)
+
+> **Purpose**: Orient operators and contributors to the supported product shape, quick-start flows,
+> and canonical repository guidance.
+
 Infernix is a Haskell inference control plane for running heterogeneous model runtimes behind one
 typed operator surface.
 
@@ -7,10 +14,7 @@ It handles orchestration, model resolution, artifact delivery, request routing, 
 supervision, and browser-facing manual inference while leaving execution kernels to the best
 runtime for each model family.
 
-The repository broadly matches the Phase 0 through Phase 6 platform baseline, but clean-host
-prerequisite minimization and package-manager-driven Apple host bootstrap are now tracked as open
-follow-on work in [DEVELOPMENT_PLAN/](DEVELOPMENT_PLAN/README.md). This README is the
-operator-oriented orientation and quick-start layer, while
+This README is the operator-oriented orientation and quick-start layer, while
 [DEVELOPMENT_PLAN/](DEVELOPMENT_PLAN/README.md) is the authoritative source for implementation
 status, validation history, and phase-closure evidence.
 
@@ -140,10 +144,14 @@ Use the host package manager or installer that matches the supported execution c
 
 Current status:
 
-- the minimal-prerequisites and package-manager-bootstrap contract is tracked as active follow-on
-  work in [DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md](DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md)
-- the current worktree still expects a broader Apple host toolchain on first use than the final
-  minimal-prerequisite contract described below
+- after `./.build/infernix` exists on Apple Silicon, supported host-native commands reconcile
+  Colima, Docker CLI, `kind`, `kubectl`, `helm`, and Node.js through Homebrew when the active path
+  needs them
+- Apple host-native adapter setup and validation paths bootstrap a user-local `poetry` executable
+  through the host's built-in Python when it is absent and then materialize `python/.venv/` on
+  demand
+- `linux-cpu` and `linux-cuda` still keep their host prerequisites at Docker-only plus the
+  documented NVIDIA additions for `linux-cuda`
 
 The Linux install examples below assume an Ubuntu 24.04 host.
 
@@ -174,14 +182,11 @@ Notes:
 
 - `ghcup` is the supported manual install because the Apple host-native workflow depends on an
   explicitly selected GHC and Cabal pair
-- Colima is the only supported Docker environment on Apple Silicon, and the intended Apple host
-  bootstrap installs it from Homebrew together with the Docker CLI, `kind`, `kubectl`, `helm`,
-  Node.js, Playwright prerequisites, and any other supported operator-facing tools needed by the
-  active runtime path
-- the intended Apple host bootstrap also installs Poetry through the host's built-in Python when
-  `poetry` is absent, after which all host-side Python configuration continues through Poetry
-- the current worktree does not yet fully implement that clean-host bootstrap; the open work is
-  tracked in the development plan link above
+- Colima is the only supported Docker environment on Apple Silicon; once `./.build/infernix`
+  exists, supported commands install it from Homebrew together with the Docker CLI, `kind`,
+  `kubectl`, `helm`, Node.js, and any other operator-facing tools needed by the active path
+- Apple adapter setup and validation commands bootstrap Poetry through the host's built-in Python
+  when `poetry` is absent, after which all host-side Python configuration continues through Poetry
 
 ### Linux CPU host prerequisites
 
@@ -323,11 +328,9 @@ cabal --builddir=.build/cabal install --installdir=./.build --install-method=cop
 ```
 
 `cluster up` writes `./.build/infernix.kubeconfig` and never touches `$HOME/.kube/config`. On
-the intended minimal-prerequisites path, the binary reconciles Colima plus the remaining
-Homebrew-managed operator tools and then ensures the shared Poetry project exists under
-`python/.venv/` when needed. The current worktree only automates the repo-local Poetry project and
-adapter `setup-*` manifests after the required Apple host tools already exist; the clean-host
-bootstrap gap remains tracked in the development plan.
+the supported minimal-prerequisites path, the binary reconciles Colima plus the remaining
+Homebrew-managed operator tools and bootstraps Poetry through the host's built-in Python before an
+adapter setup or validation path first needs the shared `python/.venv/`.
 
 ### Linux CPU (outer container)
 

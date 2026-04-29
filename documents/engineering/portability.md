@@ -27,9 +27,8 @@
 
 Current status:
 
-- the current worktree still expects a broader Apple host toolchain on first use than the final
-  minimal-prerequisite contract; clean-host bootstrap closure is tracked in
-  [../../DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md](../../DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md)
+- the Apple host-native control plane now bootstraps the remaining Homebrew-managed tooling plus
+  Poetry on demand after the minimal Homebrew-plus-ghcup baseline is in place
 
 ## Linux Rules
 

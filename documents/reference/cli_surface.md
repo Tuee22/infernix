@@ -16,19 +16,18 @@ The repository ships two Haskell executables sharing one Cabal library `infernix
 Both ship in the same runtime image on the real cluster path; the entrypoint selects which
 executable runs.
 
+<!-- infernix:family-overview:start -->
 ## `infernix` Families
 
-- `service` starts the long-running production daemon (binds no HTTP port; current topic
-  consumption is filesystem-backed)
-- `cluster` reconciles or reports cluster state
-- `cache` inspects or clears or rebuilds manifest-backed derived cache state
-- `kubectl` proxies Kubernetes access through the repo-local kubeconfig
-- `lint` runs canonical Haskell-implemented static checks (`files`, `docs`, `proto`, `chart`)
-- `test` runs repository validation
-- `docs` validates governed documentation
-- `internal` runs build-time helpers (`generate-purs-contracts`,
-  `discover {images,claims,harbor-overlay}`, `publish-chart-images`,
-  `demo-config {load,validate}`)
+- `service` - starts the long-running production daemon that consumes Pulsar work and binds no HTTP port
+- `cluster` - reconciles or reports cluster state, generated config publication, and routed surfaces
+- `cache` - inspects or reconciles manifest-backed derived cache state for the active runtime mode
+- `kubectl` - proxies upstream Kubernetes access through the repo-local kubeconfig
+- `lint` - runs the focused Haskell-owned static checks for files, docs, `.proto`, and chart assets
+- `test` - runs the aggregate validation entrypoints for lint, unit, integration, routed E2E, and the full suite
+- `docs` - validates the governed documentation suite and the development-plan shape
+- `internal` - runs build-time helpers for contract generation, chart discovery, demo-config inspection, and Pulsar round-trip validation
+<!-- infernix:family-overview:end -->
 
 ## `infernix-demo` Families
 

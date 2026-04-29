@@ -12,17 +12,16 @@
 
 The phase-one foundation is landed at the repository-shape level: generated-artifact hygiene, the
 command-registry foundation, governed root-doc alignment, and the snapshot-style outer-container
-launcher all exist in the current worktree. Later phases now own the stricter governed-root-doc
-metadata closure and the true single-definition CLI-registry closure.
+launcher all exist in the current worktree, and the later Phase 6 follow-ons that tightened
+root-document metadata and collapsed the CLI registry into one structured definition are now
+closed.
 
 ## Current Repo Assessment
 
 The repo now matches the broad Phase 1 contract: the control plane has a Haskell-owned
-command-registry foundation, the governed root docs point at canonical `documents/` topics, the
-Linux launcher uses a baked image snapshot, and Playwright workflows no longer depend on `npx`.
-The remaining Phase 1-shaped follow-ons are tracked later in Phase 6: Sprint 6.9 closes the
-stricter root-document metadata model, and Sprint 6.10 closes the true single-definition CLI
-registry model.
+command registry, the governed root docs point at canonical `documents/` topics with explicit
+metadata, the Linux launcher uses a baked image snapshot, and Playwright workflows no longer
+depend on `npx`.
 
 ## Runtime-Mode Foundation
 

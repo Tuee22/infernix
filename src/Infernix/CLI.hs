@@ -24,12 +24,14 @@ import Infernix.Cluster.PublishImages qualified as PublishImages
 import Infernix.CommandRegistry
 import Infernix.Config
 import Infernix.DemoConfig (decodeDemoConfigFile, renderModelListing, validateDemoConfigFile)
+import Infernix.HostPrereqs (ensureAppleHostPrerequisites)
 import Infernix.Lint.Chart (runChartLint)
 import Infernix.Lint.Docs (runDocsLint)
 import Infernix.Lint.Files (runFilesLint)
 import Infernix.Lint.Proto (runProtoLint)
 import Infernix.Python
-  ( ensurePoetryProjectReady,
+  ( ensurePoetryExecutable,
+    ensurePoetryProjectReady,
     pythonAdaptersPresent,
     pythonProjectDirectory,
   )
@@ -91,7 +93,7 @@ dispatch maybeRuntimeMode args =
       putStrLn helpText
       exitFailure
     Right command -> do
-      ensureAppleHostPrerequisites
+      ensureAppleHostPrerequisites maybeRuntimeMode command
       case command of
         ShowRootHelp -> putStrLn helpText
         ShowTopicHelp topic -> putStrLn (topicHelpText topic)
@@ -675,10 +677,11 @@ runPythonQualityIfPresent maybeRuntimeMode = do
   adaptersPresent <- pythonAdaptersPresent projectDirectory
   when adaptersPresent $ do
     ensurePythonQualityDependencies paths projectDirectory
+    poetryExecutable <- ensurePoetryExecutable paths
     runCommandWithCwdAndEnv
       maybeRuntimeMode
       [("POETRY_VIRTUALENVS_IN_PROJECT", "true")]
-      "poetry"
+      poetryExecutable
       ["--directory", projectDirectory, "run", "check-code"]
       projectDirectory
 
@@ -693,9 +696,6 @@ ensurePythonAdapterDependencies maybeRuntimeMode = do
 
 ensurePythonQualityDependencies :: Paths -> FilePath -> IO ()
 ensurePythonQualityDependencies = ensurePoetryProjectReady
-
-ensureAppleHostPrerequisites :: IO ()
-ensureAppleHostPrerequisites = pure ()
 
 syncBuildRootExecutable :: IO ()
 syncBuildRootExecutable = do
