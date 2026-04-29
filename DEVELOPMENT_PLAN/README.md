@@ -56,13 +56,13 @@ doctrine refresh are all present. Real-cluster Gateway acceptance, the routed Pu
 and image-owned Playwright are now proven on the `linux-cpu` outer-container lane. The supported
 `linux-cuda` rerun from April 28, 2026 now reaches real cluster creation, Harbor-backed image
 publication, and Helm rollout, but low host disk headroom on that NVIDIA host leaves Pulsar
-BookKeeper ledger directories non-writable and prevents `infernix-service` readiness.
+BookKeeper ledger directories non-writable and prevents `infernix-service` readiness. Phase-local
+implementation in Phases 3, 4, and 5 is landed as well, and those phase documents now call out
+their still-open Phase 2 or Phase 4 dependency exceptions explicitly instead of implying full
+upstream phase closure.
 
-The remaining open work is now the true platform work:
+The remaining open work is now the final supported-lane validation closure:
 
-- deeper engine-library integration beyond the current durable-metadata-aware shared adapter
-  contract
-- the full Apple host-native engine bootstrap
 - final supported-lane validation for `linux-cuda`, which now specifically needs a supported
   NVIDIA host with enough free disk headroom for Kind image preload, Harbor publication, and
   Pulsar or BookKeeper convergence before the remaining Linux substrate work can close
@@ -84,7 +84,7 @@ The plan keeps these concepts separate:
 | 1 | Repository and Control-Plane Foundation | Done | [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md) |
 | 2 | Kind Cluster Storage and Lifecycle | Blocked | [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md) |
 | 3 | HA Platform Services and Edge Routing | Done | [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md) |
-| 4 | Inference Service and Durable Runtime | Active | [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) |
+| 4 | Inference Service and Durable Runtime | Blocked | [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) |
 | 5 | Web UI and Shared Types | Done | [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md) |
 | 6 | Validation, E2E, and HA Hardening | Blocked | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) |
 

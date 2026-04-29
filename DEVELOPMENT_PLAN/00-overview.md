@@ -16,10 +16,10 @@ the supported contract from the remaining implementation gap.
 | Root-document governance | `README.md` is orientation only; `documents/` owns canonical topic docs; `AGENTS.md` and `CLAUDE.md` are thin governed entry documents | no material governance gap remains in the worktree |
 | CLI ownership | one Haskell command registry drives parse, dispatch, help text, and canonical CLI reference | no material CLI-ownership gap remains in the worktree |
 | Control-plane execution | Apple host-native control plane plus Linux outer-container control plane | the `linux-cpu` outer-container lane is validated on `cluster up`, routed Pulsar, routed E2E, and a fresh exhaustive integration or HA rerun on April 28, 2026; the supported `linux-cuda` rerun from April 28, 2026 reaches real cluster creation, Harbor-backed image publication, and Helm rollout, but low host disk headroom leaves BookKeeper ledger directories non-writable and keeps `infernix-service` from becoming ready |
-| Runtime honesty | one host-native Apple inference lane plus two Linux substrate images | parts of the current docs and implementation still imply stronger Apple or Linux symmetry than the platform really has |
+| Runtime honesty | one host-native Apple inference lane plus two Linux substrate images | no material runtime-honesty gap remains in the governed docs or current worktree; the remaining ordered closure is the supported `linux-cuda` rerun |
 | Linux image layout | one shared `docker/linux-substrate.Dockerfile` builds `infernix-linux-cpu` and `infernix-linux-cuda` | the shared image is validated on `linux-cpu`, now bakes a tracked-source snapshot manifest for git-less `lint files` runs, and reaches Harbor-backed `linux-cuda` rollout on April 28, 2026; final CUDA closure is blocked on a supported NVIDIA host with enough free disk headroom |
-| Pulsar production transport | `src/Infernix/Runtime/Pulsar.hs` uses Pulsar WebSocket and admin surfaces when configured, with filesystem simulation only as the fallback path | no material transport gap remains beyond the stub-engine adapters tracked below |
-| Python adapter boundary | one `python/pyproject.toml` and one `python/adapters/` tree | the shared project is landed; adapters now consume durable bundle or manifest metadata and idempotent setup manifests, but they still synthesize engine-family output instead of loading heavyweight upstream runtimes |
+| Pulsar production transport | `src/Infernix/Runtime/Pulsar.hs` uses Pulsar WebSocket and admin surfaces when configured, with filesystem simulation only as the fallback path | no material transport gap remains in the worktree |
+| Python adapter boundary | one `python/pyproject.toml` and one `python/adapters/` tree | the shared project is landed; the current validated adapter contract consumes durable bundle or manifest metadata plus idempotent setup manifests to produce deterministic engine-family-specific worker output, and no material repository-shape gap remains in the worktree |
 | Browser-contract ownership | handwritten Haskell contract ADTs live outside any `Generated/` directory; only emitted PureScript stays under `web/src/Generated/` | no material browser-contract ownership gap remains in the worktree |
 | Route or publication contract | one Haskell route registry drives rendered HTTPRoutes, publication state, chart lint, and docs | no material route or publication gap remains in the worktree |
 | Generated deployment inputs | `chart/values.yaml` holds stable defaults only; generated demo-config and publication payloads are ephemeral inputs | no material generated-input gap remains in the worktree |
@@ -80,7 +80,7 @@ flowchart TB
         routes["HTTPRoute set rendered from Haskell route registry"]
         demo["infernix-demo"]
         service["infernix service"]
-        adapters["python/adapters/*.py via poetry run"]
+        adapters["python/adapters/ via poetry run"]
         harbor["Harbor"]
         minio["MinIO"]
         pgop["Percona PostgreSQL operator"]
@@ -107,6 +107,8 @@ flowchart TB
 ## Canonical Repository Shape
 
 The authoritative repository shape closes toward the layout below.
+Generated-only paths such as `web/src/Generated/` and `tools/generated_proto/` materialize on
+demand and stay untracked even though they are part of the supported shape.
 
 ```text
 infernix/

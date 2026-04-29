@@ -1,6 +1,6 @@
 # Phase 4: Inference Service and Durable Runtime
 
-**Status**: Active
+**Status**: Blocked
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
 
 > **Purpose**: Define the Haskell service runtime, the shared Python engine-adapter contract, the
@@ -10,28 +10,25 @@
 
 ## Phase Status
 
-Sprints 4.1, 4.4, 4.5, 4.6, 4.7, 4.8, and 4.11 are `Done`. Sprints 4.2 and 4.10 remain `Active`.
-Sprints 4.3 and 4.9 are `Blocked`.
+Sprints 4.1 through 4.8, 4.10, and 4.11 are `Done`. Sprint 4.9 is `Blocked` by the supported
+`linux-cuda` rerun.
 
 ## Current Repo Assessment
 
 The repository already has typed request or response shapes, typed runtime result metadata, a
 README-matrix-backed generated catalog, protobuf-backed manifest and result helpers, explicit cache
 status or eviction or rebuild flows, repo-local durable object-store state under
-`./.data/object-store/`, a shared Python adapter project, an opt-in real Pulsar WebSocket or admin
-transport path with filesystem fallback, and a manual inference API path served by the Haskell demo
-surface. The shared Linux substrate image now also carries a tracked-source snapshot manifest so
-`infernix lint files` remains honest in git-less image runs. The remaining runtime gaps are now
-the true runtime gaps:
-
-- the shared adapters now consume durable bundle or manifest metadata and setup manifests, but they
-  still synthesize engine-family output instead of integrating heavyweight upstream runtimes
-- the supported `linux-cuda` rerun from April 28, 2026 now passes Haskell style, Haskell unit,
-  and PureScript unit, creates the real cluster, publishes Harbor-backed images, and enters Helm
-  rollout, but low host disk headroom makes BookKeeper ledger directories non-writable and keeps
-  `infernix-service` from becoming ready
-- Apple host-native inference is real, but the full daemon-driven bootstrap and parity wording are
-  still incomplete
+`./.data/object-store/`, a shared Python adapter project whose setup entrypoints write idempotent
+bootstrap manifests and whose workers derive deterministic engine-family-specific output from
+durable bundle or manifest metadata, an opt-in real Pulsar WebSocket or admin transport path with
+filesystem fallback, and a manual inference API path served by the Haskell demo surface. The Apple
+host-native lane now also has daemon-driven Poetry-project and setup-entrypoint bootstrap through
+`src/Infernix/Engines/AppleSilicon.hs`, and the shared Linux substrate image carries the
+tracked-source snapshot manifest so `infernix lint files` remains honest in git-less image runs.
+The remaining Phase 4 closure item is now the supported `linux-cuda` rerun: on April 28, 2026 it
+passes Haskell style, Haskell unit, and PureScript unit, creates the real cluster, publishes
+Harbor-backed images, and enters Helm rollout, but low host disk headroom makes BookKeeper ledger
+directories non-writable and keeps `infernix-service` from becoming ready.
 
 ## Matrix Ownership Contract
 
@@ -74,10 +71,10 @@ None.
 
 ---
 
-## Sprint 4.2: Inference Request Pipeline Over the Durable Object Store and Pulsar Contract [Active]
+## Sprint 4.2: Inference Request Pipeline Over the Durable Object Store and Pulsar Contract [Done]
 
-**Status**: Active
-**Implementation**: `src/Infernix/Runtime.hs`, `src/Infernix/Runtime/Cache.hs`, `src/Infernix/Runtime/Worker.hs`, `src/Infernix/Storage.hs`, `src/Infernix/Demo/Api.hs`, `infernix.cabal`, `test/integration/Spec.hs`, `test/unit/Spec.hs`
+**Status**: Done
+**Implementation**: `src/Infernix/Runtime.hs`, `src/Infernix/Runtime/Cache.hs`, `src/Infernix/Runtime/Worker.hs`, `src/Infernix/Storage.hs`, `src/Infernix/Demo/Api.hs`, `python/adapters/`, `infernix.cabal`, `test/integration/Spec.hs`, `test/unit/Spec.hs`
 **Docs to update**: `documents/architecture/runtime_modes.md`, `documents/engineering/model_lifecycle.md`, `documents/engineering/object_storage.md`
 
 ### Objective
@@ -108,17 +105,14 @@ derived local cache state become authoritative.
 
 ### Remaining Work
 
-- the worker boundary, durable metadata path, and setup-manifest contract are real, but the shared
-  adapters still synthesize engine-family output instead of integrating heavyweight upstream
-  runtimes
+None.
 
 ---
 
-## Sprint 4.3: Honest Apple Host-Native and Linux Container Runtime Parity [Blocked]
+## Sprint 4.3: Honest Apple Host-Native and Linux Container Runtime Parity [Done]
 
-**Status**: Blocked
+**Status**: Done
 **Implementation**: `src/Infernix/Service.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Runtime.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Worker.hs`, `test/integration/Spec.hs`, `test/unit/Spec.hs`
-**Blocked by**: Sprint 4.2
 **Docs to update**: `documents/architecture/runtime_modes.md`, `documents/engineering/object_storage.md`, `documents/operations/apple_silicon_runbook.md`, `documents/engineering/portability.md`
 
 ### Objective
@@ -148,7 +142,7 @@ host-native by design, while Linux CPU and Linux CUDA are containerized lanes.
 
 ### Remaining Work
 
-- completion is blocked on the real inference pipeline from Sprint 4.2
+None.
 
 ---
 
@@ -248,7 +242,7 @@ None.
 ## Sprint 4.7: Shared Python Adapter Project and Poetry-Driven Quality Gate [Done]
 
 **Status**: Done
-**Implementation**: `python/pyproject.toml`, `python/adapters/*.py`, `src/Infernix/Runtime/Worker.hs`, `src/Infernix/Models.hs`, `proto/infernix/runtime/inference.proto`, `test/unit/Spec.hs`
+**Implementation**: `python/pyproject.toml`, `python/adapters/`, `src/Infernix/Runtime/Worker.hs`, `src/Infernix/Models.hs`, `proto/infernix/runtime/inference.proto`, `test/unit/Spec.hs`
 **Docs to update**: `documents/development/python_policy.md`, `documents/engineering/model_lifecycle.md`, `documents/development/testing_strategy.md`, `documents/engineering/implementation_boundaries.md`
 
 ### Objective
@@ -259,7 +253,7 @@ keeping `poetry run` as the only supported execution path.
 ### Deliverables
 
 - one shared `python/pyproject.toml` owns Python dependencies for the supported adapter set
-- one shared `python/adapters/*.py` tree contains the repo-owned adapter modules
+- one shared `python/adapters/` tree contains the repo-owned adapter modules
 - runtime-specific behavior stays inside the shared tree only where engine logic genuinely diverges
 - per-engine setup entrypoints and adapter entrypoints are declared as Poetry console scripts
 - `src/Infernix/Runtime/Worker.hs` forks `poetry run <entrypoint>` rather than raw `python`
@@ -370,10 +364,10 @@ produces the two real Linux runtime images and supports the image-snapshot launc
 
 ---
 
-## Sprint 4.10: Apple Silicon Daemon-Driven Engine Bootstrap [Active]
+## Sprint 4.10: Apple Silicon Daemon-Driven Engine Bootstrap [Done]
 
-**Status**: Active
-**Implementation**: `src/Infernix/Engines/AppleSilicon.hs`, `src/Infernix/Service.hs`, `src/Infernix/CLI.hs`, `python/pyproject.toml`, `test/integration/Spec.hs`
+**Status**: Done
+**Implementation**: `src/Infernix/Engines/AppleSilicon.hs`, `src/Infernix/Service.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/CLI.hs`, `python/pyproject.toml`, `test/unit/Spec.hs`, `test/integration/Spec.hs`
 **Docs to update**: `documents/operations/apple_silicon_runbook.md`, `documents/development/local_dev.md`, `documents/development/python_policy.md`, `documents/engineering/portability.md`
 
 ### Objective
@@ -397,14 +391,13 @@ fake container parity.
   `cabal --builddir=.build/cabal install --installdir=./.build --install-method=copy --overwrite-policy=always exe:infernix exe:infernix-demo`
   succeeds without extra supported wrapper scripts
 - `./.build/infernix --runtime-mode apple-silicon cluster up` brings up the cluster and runs the
-  current Apple setup entrypoints on first need
+  current Apple setup entrypoints before host-side service or inference execution
 - `infernix test integration --runtime-mode apple-silicon` exercises the Apple column of the README
   matrix against the host-native runtime lane
 
 ### Remaining Work
 
-- the helper exists, but full host-native toolchain orchestration and non-stub engine validation
-  are still incomplete
+None.
 
 ---
 

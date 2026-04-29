@@ -23,8 +23,8 @@
 - the fresh outer-container `linux-cpu` rerun of that HA coverage passed on April 28, 2026
 - simulated lanes still exercise route, publication, cache, and service-loop behavior without
   claiming live HA-failure coverage
-- the Apple host-native lane still needs its own final supported HA-failure revalidation once the
-  remaining runtime-parity work closes
+- the Apple host-native lane still needs its own final supported HA-failure revalidation on a
+  supported Apple host; the current validated live HA-failure lane is non-simulated `linux-cpu`
 
 ## Cross-References
 

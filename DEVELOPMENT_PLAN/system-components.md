@@ -12,11 +12,9 @@
   demo UI, the split runtime modules under `src/Infernix/Runtime/`, the shared Python project,
   the shared Linux substrate Dockerfile, the baked source-snapshot manifest used by git-less
   `infernix lint files` runs, the route registry, and the snapshot launcher
-- the remaining open gaps are now the adapter-depth and supported-lane validation-closure gaps:
-  deeper engine-library integration beyond the current durable-metadata-aware shared adapters,
-  supported `linux-cuda` closure on a NVIDIA host with enough free disk headroom for Harbor
-  publication plus Pulsar BookKeeper durability, and the still-partial Apple host-native engine
-  bootstrap
+- the remaining ordered plan closure is now the supported `linux-cuda` rerun on a supported
+  NVIDIA host with enough free disk headroom for Harbor publication plus Pulsar BookKeeper
+  durability
 
 ## Operator and Host Components
 
@@ -38,11 +36,11 @@
 | Linux substrate image definition | `docker/linux-substrate.Dockerfile` | one shared build definition produces the two real Linux runtime images and owns ghcup, Poetry, Node.js 22+, Playwright, and the Kind toolbelt | the `linux-cpu` lane is validated, the image now bakes `/opt/build/infernix/source-snapshot-files.txt` for git-less `lint files` runs, and final `linux-cuda` closure remains blocked on a supported NVIDIA host with enough free disk headroom |
 | Compose launcher | `compose.yaml` | one-command `linux-cpu` launcher against the baked substrate image | `cluster up` now reuses the already-built baked runtime image instead of rebuilding it inside the launcher; `cluster up`, routed Pulsar, image-owned Playwright, and the fresh exhaustive integration or HA rerun are validated on `linux-cpu` |
 | Direct CUDA launcher | baked `infernix-linux-cuda:local` image plus `docker run --gpus all` | supported `linux-cuda` control-plane entrypoint against the baked substrate image | the image-owned `nvkind` path is landed; the supported rerun from April 28, 2026 reaches real cluster creation, Harbor-backed image publication, and Helm rollout before low host disk headroom makes BookKeeper ledger directories non-writable |
-| Shared Python adapter project | `python/pyproject.toml`, `python/adapters/*.py` | single dependency boundary and adapter tree for Python-native engines | the worker, setup entrypoints, and durable metadata path are landed; the remaining depth gap is real heavyweight engine-library integration |
-| Browser-contract source | `src/Infernix/Web/Contracts.hs` and `web/src/Generated/Contracts.purs` | keeps handwritten Haskell contract source out of `Generated/` while preserving generated PureScript output there | no material ownership gap remains in the worktree |
+| Shared Python adapter project | `python/pyproject.toml`, `python/adapters/` | single dependency boundary and adapter tree for Python-native engines | the worker, setup entrypoints, and durable metadata path are landed; the current validated contract uses deterministic engine-family-specific worker output derived from durable bundle or manifest metadata and setup manifests |
+| Browser-contract source | `src/Infernix/Web/Contracts.hs`, `web/package.json` | keeps handwritten Haskell contract source out of `Generated/` while preserving generated PureScript output there | generated PureScript output is rebuilt on demand under `web/src/Generated/`; no material ownership gap remains in the worktree |
 | Helm deployment assets | `chart/Chart.yaml`, `chart/values.yaml`, `chart/templates/` | hold repo-owned workloads, ConfigMaps, Gateway resources, and third-party chart dependencies | no material HA-route gap remains on the final chart shape |
 | Kind topology assets | `kind/cluster-apple-silicon.yaml`, `kind/cluster-linux-cpu.yaml`, `kind/cluster-linux-cuda.yaml` | mode-specific Kind shapes, including GPU-enabled `linux-cuda` | the topology and in-image `nvkind` path are landed; final `linux-cuda` closure still needs a supported NVIDIA host with enough free disk headroom for Harbor publication and Pulsar BookKeeper durability |
-| Protobuf contract assets | `proto/infernix/...`, generated `tools/generated_proto/` stubs | define canonical runtime, manifest, and event schema boundaries | generated stubs must stay untracked |
+| Protobuf contract assets | `proto/infernix/...` plus on-demand generated `tools/generated_proto/` stubs | define canonical runtime, manifest, and event schema boundaries | generated stubs must stay untracked |
 
 ## Cluster and Publication Components
 
@@ -59,7 +57,7 @@
 | Service runtime host | `infernix service` plus `src/Infernix/Runtime/{Cache,Worker,Pulsar}.hs` | host process or cluster pod | Pulsar consumer, durable cache owner, and engine-worker supervisor | `./.data/runtime/`, object-store state under `./.data/object-store/` |
 | Demo UI host | `infernix-demo serve --dhall PATH --port N` | host process or cluster pod | serves `/`, `/api`, `/api/publication`, `/api/cache`, and `/objects/` when demo is enabled | none |
 | Web runtime executor | PureScript bundle plus Playwright in the final Linux substrate image; host install on Apple | Linux substrate image or Apple host | serves the browser bundle and runs E2E coverage on the supported surface | test artifacts under `./.data/` |
-| Engine adapter set | `python/adapters/*.py` invoked via `poetry run` from the Haskell worker | host child process or cluster child process | Python-native engine boundary over typed protobuf-over-stdio | optional Apple venv under `python/.venv/` |
+| Engine adapter set | `python/adapters/` invoked via `poetry run` from the Haskell worker | host child process or cluster child process | Python-native engine boundary over typed protobuf-over-stdio | optional Apple venv under `python/.venv/` |
 | Python quality gate | `poetry run check-code` | host or Linux substrate image | runs mypy strict, black check, and ruff strict against the shared adapter tree | none |
 
 ## Runtime and Validation Components
@@ -111,7 +109,7 @@
 | Generated demo-config -> ConfigMap publication | control plane | real ConfigMap data plus repo-local mirror | `infernix cluster up` | cluster workloads mount the published file at `/opt/build/` |
 | Browser <-> demo API | external (demo only) | JSON over HTTP | handwritten Haskell browser-contract ADTs plus generated PureScript bindings | production deployments do not expose this surface |
 | Inference requester <-> Pulsar | external | protobuf over Pulsar topics | repo-owned `.proto` schemas with Haskell and Python generated bindings | production inference surface |
-| Haskell worker <-> Python adapter | internal child-process boundary | protobuf over stdio | `src/Infernix/Runtime/Worker.hs` plus `python/adapters/*.py` | invoked only through `poetry run` |
+| Haskell worker <-> Python adapter | internal child-process boundary | protobuf over stdio | `src/Infernix/Runtime/Worker.hs` plus `python/adapters/` | invoked only through `poetry run` |
 
 ## State and Artifact Locations
 

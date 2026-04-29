@@ -12,7 +12,8 @@
 
 Sprints 3.1 through 3.8 are `Done`. The final chart shape now reaches real-cluster Gateway
 acceptance on the supported `linux-cpu` outer-container lane, and the routed Pulsar surfaces prove
-the final `/pulsar/ws -> /ws` contract end to end.
+the final `/pulsar/ws -> /ws` contract end to end. Ordered plan closure still depends on Phase 2's
+remaining supported `linux-cuda` lifecycle rerun.
 
 ## HA Reconcile Surface
 
@@ -40,7 +41,8 @@ the final `/pulsar/ws -> /ws` contract end to end.
 The supported cluster path runs the HA platform services and the optional demo HTTP host on the
 final Kind substrate. Publication metadata originates from `./.data/runtime/publication.json`, and
 the route inventory derives from one Haskell-owned registry plus one data-driven HTTPRoute
-template. No remaining Phase 3 gap remains in the current worktree.
+template. No remaining Phase 3 implementation gap remains in the current worktree, but the ordered
+phase chain still depends on Phase 2's remaining supported `linux-cuda` lifecycle closure.
 
 ## Sprint 3.1: HA MinIO Deployment [Done]
 

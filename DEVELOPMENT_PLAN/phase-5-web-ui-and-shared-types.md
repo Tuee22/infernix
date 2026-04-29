@@ -10,7 +10,8 @@
 ## Phase Status
 
 Sprints 5.1 through 5.7 are `Done`. The final Linux substrate image now owns the demo bundle,
-Playwright toolchain, and routed `linux-cpu` E2E execution path.
+Playwright toolchain, and routed `linux-cpu` E2E execution path. Ordered plan closure still
+depends on Phase 4's remaining supported `linux-cuda` rerun.
 
 ## Current Repo Assessment
 
@@ -18,7 +19,8 @@ The repository ships the supported PureScript demo path: `web/src/Main.purs` and
 `web/src/Infernix/Web/Workbench.purs` own the browser workbench, `web/test/Main.purs` owns the
 frontend unit suite, `src/Infernix/Web/Contracts.hs` owns the handwritten browser contract, and
 `npm --prefix web run build` regenerates generated contracts and bundles the app into
-`web/dist/app.js`. No remaining Phase 5 gap remains in the current worktree.
+`web/dist/app.js`. No remaining Phase 5 implementation gap remains in the current worktree, but
+the ordered phase chain still depends on the remaining Phase 4 supported `linux-cuda` closure.
 
 ## Demo Catalog Contract
 
@@ -61,7 +63,7 @@ None.
 ## Sprint 5.2: Haskell-Owned Frontend Contract Foundation [Done]
 
 **Status**: Done
-**Implementation**: `src/Infernix/Web/Contracts.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Models.hs`, `src/Infernix/Types.hs`, `web/src/Generated/Contracts.purs`, `web/src/Main.purs`, `web/src/Infernix/Web/Workbench.purs`, `web/test/Main.purs`, `infernix.cabal`, `web/package.json`
+**Implementation**: `src/Infernix/Web/Contracts.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Models.hs`, `src/Infernix/Types.hs`, `web/src/Main.purs`, `web/src/Infernix/Web/Workbench.purs`, `web/test/Main.purs`, `infernix.cabal`, `web/package.json`
 **Docs to update**: `documents/architecture/web_ui_architecture.md`, `documents/development/frontend_contracts.md`
 
 ### Objective
@@ -91,7 +93,7 @@ None.
 ## Sprint 5.3: Frontend Contract and View-Level Coverage via `purescript-spec` [Done]
 
 **Status**: Done
-**Implementation**: `web/test/Main.purs`, `web/src/Infernix/Web/Workbench.purs`, `web/src/Generated/Contracts.purs`, `src/Infernix/CLI.hs`
+**Implementation**: `web/test/Main.purs`, `web/src/Infernix/Web/Workbench.purs`, `web/package.json`, `src/Infernix/CLI.hs`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/development/frontend_contracts.md`
 
 ### Objective
@@ -211,7 +213,7 @@ None.
 ## Sprint 5.7: Reserve `Generated/` For Generated Outputs Only [Done]
 
 **Status**: Done
-**Implementation**: `src/Infernix/Web/Contracts.hs`, `web/src/Generated/Contracts.purs`, `src/Infernix/CLI.hs`, `infernix.cabal`
+**Implementation**: `src/Infernix/Web/Contracts.hs`, `web/package.json`, `src/Infernix/CLI.hs`, `infernix.cabal`
 **Docs to update**: `documents/architecture/web_ui_architecture.md`, `documents/development/frontend_contracts.md`, `documents/engineering/implementation_boundaries.md`
 
 ### Objective

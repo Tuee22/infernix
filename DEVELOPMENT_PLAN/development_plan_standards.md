@@ -12,7 +12,11 @@
 
 The plan reads as one ordered buildout from empty repository to supported local platform.
 
-- Each phase assumes the previous phase has closed.
+- Each phase is written after the previous phase in dependency order.
+- When later implementation lands before an earlier phase's final supported-lane rerun or
+  environment-dependent blocker closes, the later phase explicitly names that open dependency in
+  its `Phase Status` or `Current Repo Assessment` text instead of pretending the prerequisite is
+  fully closed.
 - Phase 0 is always documentation and governance. No code-writing phase may be marked `Active` or
   `Done` before Phase 0 closes.
 - Newly discovered gaps are handled by adding explicit follow-on work, not by leaving stale
@@ -43,11 +47,16 @@ Status describes the current repository state, not the intended future state.
 
 Rules:
 
-- `Done` requires passing validation, aligned docs, and no remaining work.
+- `Done` requires passing validation, aligned docs, and no remaining work within the scope owned
+  by that phase or sprint.
 - `Active` requires a `Remaining Work` section.
 - `Blocked` requires a `Blocked by` line.
 - `Planned` must not hide unmet blockers.
 - If Phase 0 is still open, later code-writing phases use `Blocked`, not `Planned`.
+- A later phase may remain `Done` while an earlier phase is still `Active` or `Blocked` only when
+  the earlier open item is a clearly named external dependency or supported-lane validation
+  blocker, and the later phase calls that dependency out explicitly in its phase-status or
+  current-assessment text.
 
 ### D. Declarative Current-State Language
 
