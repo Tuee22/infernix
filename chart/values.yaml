@@ -362,5 +362,3 @@ pulsar:
     replicaCount: 3
     podMonitor:
       enabled: false
-  victoria-metrics-k8s-stack:
-    enabled: false

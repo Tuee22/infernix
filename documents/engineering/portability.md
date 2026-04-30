@@ -5,50 +5,52 @@
 
 > **Purpose**: Separate the portable platform contract from substrate-specific execution detail.
 
-## Portable Invariants
+## Executive Summary
+
+- The product contract is portable across three runtime modes: `apple-silicon`, `linux-cpu`, and
+  `linux-cuda`.
+- The execution context is not the same thing as the runtime mode: Apple uses a host-native
+  control plane, while Linux uses baked outer-container launchers.
+- Harbor-first bootstrap, manual storage, operator-managed Patroni PostgreSQL, Gateway API
+  routing, generated catalog behavior, and Pulsar-only production inference are platform invariants.
+- Tool bootstrap, build-root paths, Docker setup, and CUDA device access are substrate detail.
+
+## Current Status
+
+The current worktree implements the intended split directly: Apple remains the only supported
+host-native inference lane, Linux CPU and Linux CUDA remain the containerized lanes, and the repo
+does not claim substrate parity where the underlying hardware or launcher model differs.
+
+## Portable Platform Invariants
 
 - the supported runtime-mode ids are `apple-silicon`, `linux-cpu`, and `linux-cuda`
-- Harbor-first bootstrap, manual `infernix-manual` storage, operator-managed Patroni PostgreSQL,
-  Gateway API routing, and Pulsar-only production inference do not vary by substrate
+- Harbor-first bootstrap, the `infernix-manual` storage doctrine, operator-managed Patroni
+  PostgreSQL, Gateway API routing, and Pulsar-only production inference do not vary by substrate
 - the generated active-mode catalog, publication contract, route inventory, and browser-visible
   base URL stay stable across supported runtime modes
 - Python-native adapters always run through the shared `python/` Poetry project
+- supported validation entrypoints remain `infernix docs check`, `infernix test lint`,
+  `infernix test unit`, `infernix test integration`, `infernix test e2e`, and `infernix test all`
 
-## Apple Silicon Rules
+## Supported Substrate Detail
 
-- Apple Silicon is the only supported host-native inference lane
-- the canonical Apple operator workflow runs `./.build/infernix ...` directly after a `cabal`
-  install into `./.build/`
-- the intended Apple clean-host contract reduces pre-existing host requirements to Homebrew plus
-  ghcup and treats Colima as the only supported Docker environment
-- Apple engine setup is daemon-driven and may use Homebrew, the host's built-in Python,
-  system `clang`, and `python/.venv/`
-- Apple does not rely on a Linux runtime image for inference
-
-Current status:
-
-- the Apple host-native control plane now bootstraps the remaining Homebrew-managed tooling plus
-  Poetry on demand after the minimal Homebrew-plus-ghcup baseline is in place
-
-## Linux Rules
-
-- `linux-cpu` and `linux-cuda` are containerized lanes built from `docker/linux-substrate.Dockerfile`
-- the supported Linux control-plane launcher is a baked image snapshot, not a live repo mount
-- Linux CPU host prerequisites stop at Docker Engine plus the Docker Compose plugin
-- the Linux runtime path does not install dependencies at runtime with `apt`, `pip`, or `cabal build`
-
-## CUDA-Specific Rules
-
-- `linux-cuda` requires a supported NVIDIA host plus the NVIDIA Container Toolkit
-- `linux-cuda` adds only the NVIDIA host prerequisites beyond the Linux CPU Docker baseline
-- the supported CUDA cluster lifecycle requires `nvkind` from the baked substrate image
-- host-visible `nvkind` rebuild or handoff paths are not part of the supported contract
+| Topic | Portable contract | Apple host-native detail | Linux outer-container detail |
+|-------|-------------------|--------------------------|------------------------------|
+| Control-plane launcher | `infernix` owns lifecycle and validation behavior | run `./.build/infernix ...` after direct `cabal` install into `./.build/` | run `docker compose run --rm infernix infernix ...` for `linux-cpu` or direct `docker run --gpus all ... infernix-linux-cuda:local infernix ...` for `linux-cuda` |
+| Host prerequisites | keep prerequisites minimal and explicit | Homebrew plus ghcup before build; Colima is the only supported Apple Docker environment | Docker Engine plus Compose plugin for `linux-cpu`; NVIDIA driver plus container toolkit in addition for `linux-cuda` |
+| Tool bootstrap after the binary exists | supported commands may reconcile remaining operator tooling | Homebrew-managed Docker CLI, `kind`, `kubectl`, `helm`, Node.js, and Poetry bootstrap may be installed on demand | the substrate image already carries the supported toolchain; runtime install is not part of the contract |
+| Build roots and kubeconfig location | outputs stay repo-local and untracked | `./.build/` and `./.build/infernix.kubeconfig` | `/opt/build/infernix/` in the image plus `./.data/runtime/infernix.kubeconfig` for durable outer-container reuse |
+| Python adapter environment | use the shared Poetry project only | `python/.venv/` may materialize on demand through the host's built-in Python plus user-local Poetry bootstrap | adapter dependencies are installed in the shared substrate image build |
+| Browser E2E runner | exercise the routed surface for the active generated catalog | Playwright runs from the host install on the supported Apple lane | Playwright runs from the baked substrate image when possible and otherwise from the local npm runner |
+| CUDA path | supported only when the host actually satisfies the NVIDIA contract | not applicable | `linux-cuda` requires the baked image, forwarded Docker socket, GPU visibility, and in-image `nvkind` |
 
 ## Unsupported Shortcuts
 
 - repo-owned scripts or wrapper layers for supported workflows
 - `docker compose up` or `docker compose exec` as operator entrypoints
 - per-substrate Python projects, handwritten source under `Generated/`, or a separate web runtime image
+- pretending Apple host-native inference and Linux outer-container inference are interchangeable
+  substrate shapes when the underlying bootstrap and hardware contracts differ
 
 ## Cross-References
 
@@ -56,3 +58,12 @@ Current status:
 - [implementation_boundaries.md](implementation_boundaries.md)
 - [../architecture/runtime_modes.md](../architecture/runtime_modes.md)
 - [../operations/apple_silicon_runbook.md](../operations/apple_silicon_runbook.md)
+
+## Validation
+
+- `infernix docs check` fails if this document loses its required structure or governed metadata.
+- `infernix test integration` and `infernix test e2e` validate the generated active-mode catalog
+  and routed surface against the selected runtime mode instead of silently substituting another
+  substrate.
+- the full repository closes only when Apple, Linux CPU, and Linux CUDA all pass on their
+  supported lanes.

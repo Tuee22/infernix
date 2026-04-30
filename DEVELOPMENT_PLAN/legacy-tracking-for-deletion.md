@@ -38,6 +38,7 @@ None.
 | Phrase-based route-aware lint in `src/Infernix/Lint/Chart.hs` and `src/Infernix/Lint/Docs.hs` | Route-aware validation now checks registry-backed generated sections instead of relying on handwritten route phrases alone | Phase 6 Sprint 6.11 |
 | Repeated assistant workflow guidance across `AGENTS.md` and `CLAUDE.md` without one canonical `documents/` assistant-workflow home | The root automation entry docs now stay thin and point at `documents/development/assistant_workflow.md` as the canonical repository-level assistant workflow home | Phase 6 Sprint 6.12 |
 | Duplicated web-dependency readiness checks in `src/Infernix/Workflow.hs` and `src/Infernix/Cluster.hs` | The cluster path now reuses `Infernix.Workflow.ensureWebDependencies` instead of maintaining its own readiness probe | Phase 6 Sprint 6.12 |
+| Dormant `victoria-metrics-k8s-stack` monitoring placeholder in `chart/values.yaml` | Monitoring is not a supported first-class surface, so the stale chart toggle was removed instead of implying a supported monitoring stack | Phase 6 Sprint 6.14 |
 
 ## Cross-References
 

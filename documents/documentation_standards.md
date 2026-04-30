@@ -6,6 +6,14 @@
 > **Purpose**: Define how the governed `documents/` suite is structured, updated, and kept aligned
 > with `DEVELOPMENT_PLAN/`, `README.md`, and the repository implementation.
 
+## TL;DR
+
+- `documents/` is the only canonical documentation root.
+- Governed docs require metadata, relative links, and clear topic ownership.
+- Broad doctrine docs use stronger structure: summary first, explicit current-status notes when
+  current and target behavior mix, and validation sections when tests or lint prove the contract.
+- `src/Infernix/Lint/Docs.hs` is the mechanical enforcement point for the governed docs suite.
+
 ## Metadata Block
 
 Every governed Markdown document under `documents/` starts with this block:
@@ -25,6 +33,21 @@ Rules:
 - `**Status**:` is required
 - `**Referenced by**:` is required, even when there is only one cross-reference
 - the purpose quote block is required
+
+## Broad Doctrine Structure
+
+Broad governed docs that define repository doctrine use stronger structure than a short reference
+page.
+
+Rules:
+
+- include `## TL;DR` or `## Executive Summary` when the topic is broad
+- include `## Current Status` when implemented behavior and target direction appear in the same doc
+- include `## Validation` when tests or lint prove the contract
+- use explicit tables or matrices when a plan sprint calls for ownership, durability, or matrix
+  detail as a closure condition
+- answer these questions directly when relevant: what is the rule, what is current versus target,
+  how is it validated, and what is local substrate detail versus the true platform contract
 
 ## Governed Root Documents
 
@@ -120,6 +143,8 @@ Rules:
 The repo-local documentation validator checks:
 
 - required metadata lines for governed `documents/` content
+- required structure for the named broad doctrine docs whose headings are part of the supported
+  contract
 - governed root-document metadata lines (`Status`, `Supersedes`, `Canonical homes`, purpose)
 - governed document existence for the canonical bootstrap set
 - relative link resolution for governed docs, governed root docs, and phase-plan docs
@@ -128,4 +153,5 @@ The repo-local documentation validator checks:
   `documents/reference/cli_surface.md`
 - registry-generated route sections in the governed route docs and the route summary block in
   `README.md`
+- the explicit monitoring stance across governed docs, plan docs, and chart values
 - `DEVELOPMENT_PLAN/` phase documents retaining their `## Documentation Requirements` section

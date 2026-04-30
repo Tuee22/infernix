@@ -21,9 +21,12 @@
 - the route-oriented docs now consume registry-backed sections, the governed root assistant docs
   now point at one canonical assistant-workflow home under `documents/`, and the cluster path
   reuses the shared web-dependency readiness helper without a duplicate probe
-- the initial testing, portability, implementation-boundary, storage, and Haskell-style doctrine
-  docs are landed, but the remaining Phase 6 follow-on work still needs to deepen their document
-  structure and ownership detail and resolve whether monitoring is a supported first-class surface
+- the deeper testing, portability, implementation-boundary, storage, Haskell-style, and
+  documentation-standards doctrine rewrites are now landed and enforced by docs lint
+- Monitoring is not a supported first-class surface.
+- the supported web test surfaces now use a non-deprecated PureScript runner posture and sanitize
+  conflicting Playwright color-control environment variables, so no material validation follow-on
+  remains open in the current worktree
 
 ## Operator and Host Components
 

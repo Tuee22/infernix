@@ -227,8 +227,9 @@ runHostPlaywright runtimeMode routeProbeHost edgePort expectedDaemonLocation exp
         "--reporter=list",
         "--timeout=30000"
       ]
-  runCommandWithCwdAndEnv
+  runCommandWithCwdAndEnvRemoving
     (Just runtimeMode)
+    ["FORCE_COLOR", "NO_COLOR"]
     [ ("INFERNIX_RUNTIME_MODE", Text.unpack (runtimeModeId runtimeMode)),
       ("INFERNIX_EDGE_PORT", show edgePort),
       ("INFERNIX_PLAYWRIGHT_HOST", routeProbeHost),
@@ -589,10 +590,14 @@ resolveDemoExecutable = do
   trimTrailingWhitespace <$> readProcess "cabal" ["--builddir=" <> buildDir, "list-bin", "exe:infernix-demo"] ""
 
 runCommandWithCwdAndEnv :: Maybe RuntimeMode -> [(String, String)] -> FilePath -> [String] -> FilePath -> IO ()
-runCommandWithCwdAndEnv maybeRuntimeMode extraEnvironment command args workingDirectory = do
+runCommandWithCwdAndEnv maybeRuntimeMode =
+  runCommandWithCwdAndEnvRemoving maybeRuntimeMode []
+
+runCommandWithCwdAndEnvRemoving :: Maybe RuntimeMode -> [String] -> [(String, String)] -> FilePath -> [String] -> FilePath -> IO ()
+runCommandWithCwdAndEnvRemoving maybeRuntimeMode removedEnvironmentNames extraEnvironment command args workingDirectory = do
   environment <- getEnvironment
   let augmentedEnvironment =
-        mergeEnvironment runtimeModeBindings (mergeEnvironment extraEnvironment environment)
+        mergeEnvironment runtimeModeBindings (mergeEnvironment extraEnvironment (removeEnvironmentVariables removedEnvironmentNames environment))
       runtimeModeBindings =
         case maybeRuntimeMode of
           Nothing -> []
@@ -614,6 +619,10 @@ mergeEnvironment overrides environment =
   overrides <> filter (\(name, _) -> name `notElem` overrideNames) environment
   where
     overrideNames = map fst overrides
+
+removeEnvironmentVariables :: [String] -> [(String, String)] -> [(String, String)]
+removeEnvironmentVariables names =
+  filter (\(name, _) -> name `notElem` names)
 
 trimTrailingWhitespace :: String -> String
 trimTrailingWhitespace =

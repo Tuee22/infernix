@@ -5,48 +5,65 @@
 
 > **Purpose**: Define the canonical testing entrypoints, fail-fast behavior, and supported validation boundaries.
 
+## Executive Summary
+
+- `infernix docs check`, `infernix test lint`, `infernix test unit`, `infernix test integration`,
+  `infernix test e2e`, and `infernix test all` are the only supported validation entrypoints.
+- Validation is fail-fast: it reports drift or missing prerequisites and stops instead of silently
+  rewriting tracked source or substituting another lane.
+- Integration and routed E2E coverage derive their target set from the active generated catalog,
+  so changing runtime mode changes the exercised entries automatically.
+- Monitoring is not a supported first-class surface, so no validation entrypoint claims to gate
+  dashboards, scrape config, or alerting behavior.
+
+## Preflight Expectations
+
+- supported validation starts from the supported execution context for the selected runtime mode
+- Apple host-native flows expect the built binary plus the minimal Homebrew-plus-ghcup baseline;
+  supported commands may reconcile the remaining host tools on demand
+- Linux CPU flows expect Docker Engine plus the Docker Compose plugin
+- Linux CUDA flows expect the Linux CPU Docker baseline plus the supported NVIDIA driver and
+  container-toolkit setup
+- real-cluster Linux CUDA validation also expects enough disk headroom for Kind image preload,
+  Harbor-backed rollout, and Pulsar BookKeeper durability
+
 ## Canonical Entry Points
 
-- `infernix docs check` validates the governed docs suite and plan shape
-- `infernix test lint` is the canonical static-quality gate
-- `infernix test unit` owns Haskell and PureScript unit coverage
-- `infernix test integration` owns cluster, publication, cache, object-store, routed auxiliary
-  surfaces, and runtime-path integration coverage for the generated active-mode catalog
-- `infernix test e2e` owns routed browser validation through the shared edge
-- `infernix test all` aggregates the full supported suite
+| Entry point | Responsibility |
+|-------------|----------------|
+| `infernix docs check` | validate the governed docs suite, metadata, required doctrine structure, generated sections, phase-plan shape, and monitoring-stance alignment |
+| `infernix test lint` | run repo hygiene, chart, docs, proto, Haskell style, build, and Python quality checks |
+| `infernix test unit` | own Haskell and PureScript unit coverage, including generated-catalog logic and the protobuf-over-stdio worker boundary |
+| `infernix test integration` | validate cluster lifecycle, publication state, routed auxiliary surfaces, cache flows, service-loop behavior, and every generated active-mode catalog entry |
+| `infernix test e2e` | validate the routed browser surface and every demo-visible generated catalog entry through Playwright |
+| `infernix test all` | run the full supported suite in sequence |
 
-## Fail-Fast Rules
+## Validation Obligations
 
-- validation fails on hard-gate violations; supported workflows do not silently rewrite tracked source
-- `infernix test lint` stops on repo hygiene, chart, docs, proto, formatter, linter, compiler-warning, or Python quality failures
-- the Haskell style gate may bootstrap `hlint` through a ghcup-managed compatible GHC when the
-  active project compiler is newer than the currently supported `hlint` release
-- runtime-mode-specific tests fail when required platform preflights are absent rather than quietly switching to another mode
+- `infernix docs check` proves that the governed docs and the development plan still match the
+  supported contract, including the required structure for broad doctrine docs.
+- `infernix test lint` proves repo-owned static quality, the Haskell style gate, the Haskell build
+  warning policy, and the shared Python adapter quality gate.
+- `infernix test unit` proves the typed control-plane and browser-contract logic that should not
+  require a live cluster, and keeps the Node-based PureScript runner on non-deprecated
+  `purescript-spec` entrypoints.
+- `infernix test integration` proves the active runtime mode's generated catalog, routed surfaces,
+  publication state, cache contract, and the real cluster's HA or lifecycle assertions.
+- `infernix test e2e` proves that the browser workbench can exercise every demo-visible generated
+  catalog entry through the shared routed surface, with supported Playwright launchers sanitizing
+  conflicting `NO_COLOR` and `FORCE_COLOR` pairs before the child process starts.
+- `infernix test all` proves that the repository passes the supported aggregate validation flow
+  without dropping any layer.
 
-## Matrix Rules
+## Unsupported Paths
 
-- integration and E2E coverage derive their target catalog from the generated active-mode demo config
-- changing runtime mode changes the exercised catalog automatically
-- the integration suite now enumerates every generated active-mode catalog entry rather than
-  narrowing itself to one representative routed request
-- the default E2E matrix always covers Apple and Linux CPU; Linux CUDA joins E2E when the
-  supported NVIDIA preflight passes
-- the current integration test binary enumerates Apple, Linux CPU, and Linux CUDA unless
-  `--runtime-mode` or `INFERNIX_RUNTIME_MODE` narrows the lane
-- `infernix test all` inherits that current split between the integration and E2E default matrices
-
-## Boundary Rules
-
-- browser E2E prefers the supported final path: host Playwright on Apple Silicon and the baked
-  Linux substrate image on Linux when platform tooling is available; otherwise it falls back to
-  the local npm runner
-- production-path tests validate `infernix service` as a no-HTTP daemon
-- the non-simulated `linux-cpu` integration lane also owns the current Harbor, MinIO, Pulsar, and
-  Harbor PostgreSQL failure or lifecycle assertions
-- the real-cluster `linux-cuda` lane also depends on enough host disk headroom for Kind image
-  preload, Harbor-backed rollout, and Pulsar BookKeeper durability; low disk headroom is an
-  environment failure, not a substitute for narrower matrix coverage
-- adapter tests validate the Haskell-to-Python protobuf-over-stdio contract rather than an alternate ad hoc transport
+- ad hoc wrapper scripts or alternate validation entrypoints in place of the canonical `infernix`
+  commands
+- silently narrowing integration or E2E coverage to one representative model when the generated
+  active-mode catalog contains more entries
+- quietly swapping to another runtime mode when required substrate preflights are absent
+- treating monitoring dashboards, metrics stacks, or scrape configuration as a supported gated
+  contract in the current repository state
 
 ## Cross-References
 
@@ -55,3 +72,19 @@
 - [storage_and_state.md](storage_and_state.md)
 - [../development/haskell_style.md](../development/haskell_style.md)
 - [../development/testing_strategy.md](../development/testing_strategy.md)
+
+## Validation
+
+- validation fails on hard-gate violations; supported workflows do not silently rewrite tracked
+  source
+- the Haskell style gate may bootstrap `hlint` through a ghcup-managed compatible GHC when the
+  active project compiler is newer than the currently supported `hlint` release
+- runtime-mode-specific tests fail when required platform preflights are absent rather than
+  quietly switching to another mode
+- the supported Node-based web validation paths stay warning-free by avoiding deprecated
+  `runSpec` or `runSpecT` entrypoints and by clearing conflicting `NO_COLOR` or `FORCE_COLOR`
+  pairs before Playwright starts
+- the default E2E matrix always covers Apple and Linux CPU, and Linux CUDA joins E2E only when the
+  supported NVIDIA preflight contract passes
+- the current integration test binary enumerates Apple, Linux CPU, and Linux CUDA unless
+  `--runtime-mode` or `INFERNIX_RUNTIME_MODE` narrows the lane

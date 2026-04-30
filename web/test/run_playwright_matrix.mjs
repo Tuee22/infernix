@@ -13,6 +13,16 @@ const infernixCommand =
   (process.env.INFERNIX_BUILD_ROOT ? "infernix" : "../.build/infernix");
 const playwrightHost = process.env.INFERNIX_PLAYWRIGHT_HOST ?? "127.0.0.1";
 
+function sanitizedPlaywrightEnv(extraEnvironment = {}) {
+  const env = {
+    ...process.env,
+    ...extraEnvironment,
+  };
+  delete env.FORCE_COLOR;
+  delete env.NO_COLOR;
+  return env;
+}
+
 function runInfernix(runtimeMode, args) {
   const result = spawnSync(infernixCommand, ["--runtime-mode", runtimeMode, ...args], {
     cwd: webRoot,
@@ -39,12 +49,11 @@ for (const runtimeMode of runtimeModes) {
     const result = spawnSync("npm", ["exec", "--", "playwright", "test", "./playwright/inference.spec.js", "--reporter=list", "--timeout=30000"], {
       cwd: webRoot,
       stdio: "inherit",
-      env: {
-        ...process.env,
+      env: sanitizedPlaywrightEnv({
         INFERNIX_RUNTIME_MODE: runtimeMode,
         INFERNIX_EDGE_PORT: edgePort,
         INFERNIX_PLAYWRIGHT_HOST: playwrightHost,
-      },
+      }),
     });
     exitStatus = result.status ?? 1;
   } catch (error) {

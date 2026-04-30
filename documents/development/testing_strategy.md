@@ -17,7 +17,7 @@
   `--runtime-mode` parsing, demo-config encode or decode behavior, cache lifecycle, the
   protobuf-over-stdio Python worker path and adapter-command overrides, chart image or claim
   discovery, Harbor overlay emission, and the current PureScript generated-contract or workbench
-  behavior via `spago test`
+  behavior via `spago test` driven by the non-deprecated runner in `web/test/Main.purs`
 - `infernix test integration` validates cluster lifecycle across the selected runtime-mode set,
   generated demo-config publication, routed demo or tool surfaces, routed inference plus cache
   endpoints, service-path request or result publication through the filesystem-backed Pulsar
@@ -73,6 +73,8 @@
 - the Apple host-native validation path launches routed Playwright from the host install; the Linux
   path launches it from the active substrate image when the platform toolchain is available and
   otherwise falls back to the local npm runner
+- supported Playwright launchers clear conflicting `NO_COLOR` and `FORCE_COLOR` values from the
+  child environment before Playwright starts
 - changing the active runtime mode changes the generated catalog and therefore the exercised entry
   set automatically
 - pass `--runtime-mode` when a single predictable validation lane is required

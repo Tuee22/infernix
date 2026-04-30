@@ -3,9 +3,10 @@ module Test.Main where
 import Prelude
 
 import Data.Array (any, head, length)
+import Data.Identity (Identity(..))
 import Data.Maybe (Maybe(..))
 import Effect (Effect)
-import Effect.Aff (launchAff_)
+import Effect.Aff (error, launchAff_, throwError)
 import Generated.Contracts
   ( EngineBinding
   , InferenceResult(..)
@@ -32,12 +33,19 @@ import Infernix.Web.Workbench
 import Test.Spec (describe, it)
 import Test.Spec.Assertions (shouldEqual)
 import Test.Spec.Reporter.Console (consoleReporter)
-import Test.Spec.Runner (runSpec)
+import Test.Spec.Runner (defaultConfig, evalSpecT)
+import Test.Spec.Summary (successful)
+import Data.Newtype (un)
 
 main :: Effect Unit
 main =
   launchAff_ do
-    runSpec [ consoleReporter ] do
+    results <-
+      un Identity $
+        evalSpecT
+          (defaultConfig { exit = false })
+          [ consoleReporter ]
+          do
       describe "generated contracts" do
         it "publish the active runtime constants" do
           apiBasePath `shouldEqual` "/api"
@@ -119,6 +127,9 @@ main =
               completedRequest.resultLabel `shouldEqual` (selectionSummary (Just firstModel)).resultLabel
               completedRequest.outputText `shouldEqual` "Stored object reference: results/req-1.txt"
               completedRequest.objectHref `shouldEqual` Just "/objects/results/req-1.txt"
+
+    unless (successful results) do
+      throwError (error "PureScript unit tests failed")
 
 expectedModelCount :: String -> Int
 expectedModelCount mode =

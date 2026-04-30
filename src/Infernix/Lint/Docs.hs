@@ -4,7 +4,7 @@ module Infernix.Lint.Docs
 where
 
 import Control.Monad (forM_, unless, when)
-import Data.List (isInfixOf, isPrefixOf)
+import Data.List (intercalate, isInfixOf, isPrefixOf)
 import Infernix.CommandRegistry
   ( renderCliReferenceCommandsSection,
     renderCliSurfaceFamiliesSection,
@@ -115,6 +115,15 @@ data GeneratedSectionRule = GeneratedSectionRule
     generatedSectionExpected :: String
   }
 
+data DocumentStructureRule = DocumentStructureRule
+  { documentStructurePath :: FilePath,
+    documentStructureRequirements :: [SectionRequirement]
+  }
+
+data SectionRequirement
+  = RequireSection String
+  | RequireOneOfSections [String]
+
 rootDocRules :: [RootDocRule]
 rootDocRules =
   [ RootDocRule
@@ -209,6 +218,81 @@ generatedSectionRules =
       }
   ]
 
+documentStructureRules :: [DocumentStructureRule]
+documentStructureRules =
+  [ DocumentStructureRule
+      { documentStructurePath = "documents/documentation_standards.md",
+        documentStructureRequirements =
+          [ RequireOneOfSections ["## TL;DR", "## Executive Summary"],
+            RequireSection "## Broad Doctrine Structure",
+            RequireSection "## Validation"
+          ]
+      },
+    DocumentStructureRule
+      { documentStructurePath = "documents/engineering/implementation_boundaries.md",
+        documentStructureRequirements =
+          [ RequireOneOfSections ["## TL;DR", "## Executive Summary"],
+            RequireSection "## Ownership Matrix",
+            RequireSection "## Type Boundaries",
+            RequireSection "## Module-Boundary Doctrine",
+            RequireSection "## Validation"
+          ]
+      },
+    DocumentStructureRule
+      { documentStructurePath = "documents/engineering/storage_and_state.md",
+        documentStructureRequirements =
+          [ RequireOneOfSections ["## TL;DR", "## Executive Summary"],
+            RequireSection "## Owner And Durability Table",
+            RequireSection "## Failure And Rebuild Rules",
+            RequireSection "## Cleanup Rules",
+            RequireSection "## Validation"
+          ]
+      },
+    DocumentStructureRule
+      { documentStructurePath = "documents/engineering/portability.md",
+        documentStructureRequirements =
+          [ RequireOneOfSections ["## TL;DR", "## Executive Summary"],
+            RequireSection "## Current Status",
+            RequireSection "## Portable Platform Invariants",
+            RequireSection "## Supported Substrate Detail",
+            RequireSection "## Validation"
+          ]
+      },
+    DocumentStructureRule
+      { documentStructurePath = "documents/engineering/testing.md",
+        documentStructureRequirements =
+          [ RequireOneOfSections ["## TL;DR", "## Executive Summary"],
+            RequireSection "## Preflight Expectations",
+            RequireSection "## Validation Obligations",
+            RequireSection "## Unsupported Paths",
+            RequireSection "## Validation"
+          ]
+      },
+    DocumentStructureRule
+      { documentStructurePath = "documents/development/haskell_style.md",
+        documentStructureRequirements =
+          [ RequireOneOfSections ["## TL;DR", "## Executive Summary"],
+            RequireSection "## Hard Gates",
+            RequireSection "## Editor-Only Guidance",
+            RequireSection "## Review Doctrine",
+            RequireSection "## Enforcement Model",
+            RequireSection "## Validation"
+          ]
+      }
+  ]
+
+monitoringUnsupportedStatement :: String
+monitoringUnsupportedStatement = "Monitoring is not a supported first-class surface."
+
+monitoringStancePaths :: [FilePath]
+monitoringStancePaths =
+  [ "documents/README.md",
+    "DEVELOPMENT_PLAN/README.md",
+    "DEVELOPMENT_PLAN/00-overview.md",
+    "DEVELOPMENT_PLAN/system-components.md",
+    "DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md"
+  ]
+
 runDocsLint :: IO ()
 runDocsLint = do
   paths <- discoverPaths
@@ -233,6 +317,10 @@ runDocsLint = do
   forM_ generatedSectionRules $ \rule -> do
     contents <- readFile (repoRoot paths </> generatedSectionPath rule)
     validateGeneratedSection rule contents
+  forM_ documentStructureRules $ \rule -> do
+    contents <- readFile (repoRoot paths </> documentStructurePath rule)
+    validateDocumentStructure rule contents
+  validateUnsupportedMonitoringStance paths
   forM_ phaseDocs $ \relativePath -> do
     contents <- readFile (repoRoot paths </> relativePath)
     validatePhaseDoc relativePath contents
@@ -306,6 +394,58 @@ validateForbiddenPhrases relativePath contents =
   when
     (any (`isInfixOf` contents) forbiddenPhrases)
     (ioError (userError ("forbidden retired-doctrine phrase found in " <> relativePath)))
+
+validateDocumentStructure :: DocumentStructureRule -> String -> IO ()
+validateDocumentStructure rule contents =
+  forM_ (documentStructureRequirements rule) validateRequirement
+  where
+    validateRequirement requirement =
+      case requirement of
+        RequireSection headingText ->
+          unless
+            (headingText `isInfixOf` contents)
+            ( ioError
+                ( userError
+                    ( documentStructurePath rule
+                        <> " is missing the required section "
+                        <> headingText
+                    )
+                )
+            )
+        RequireOneOfSections headingTexts ->
+          unless
+            (any (`isInfixOf` contents) headingTexts)
+            ( ioError
+                ( userError
+                    ( documentStructurePath rule
+                        <> " must contain one of the required sections: "
+                        <> intercalate ", " headingTexts
+                    )
+                )
+            )
+
+validateUnsupportedMonitoringStance :: Paths -> IO ()
+validateUnsupportedMonitoringStance paths = do
+  forM_ monitoringStancePaths $ \relativePath -> do
+    contents <- readFile (repoRoot paths </> relativePath)
+    unless
+      (monitoringUnsupportedStatement `isInfixOf` contents)
+      ( ioError
+          ( userError
+              ( relativePath
+                  <> " must declare the monitoring stance with the sentence: "
+                  <> monitoringUnsupportedStatement
+              )
+          )
+      )
+  monitoringDocExists <- doesFileExist (repoRoot paths </> "documents/engineering/monitoring.md")
+  when monitoringDocExists $
+    ioError
+      (userError "documents/engineering/monitoring.md must not exist while monitoring is unsupported")
+  chartContents <- readFile (repoRoot paths </> "chart/values.yaml")
+  when
+    ("victoria-metrics-k8s-stack" `isInfixOf` chartContents)
+    (ioError (userError "chart/values.yaml must not retain dormant monitoring-stack configuration"))
 
 validatePhaseDoc :: FilePath -> String -> IO ()
 validatePhaseDoc relativePath contents = do

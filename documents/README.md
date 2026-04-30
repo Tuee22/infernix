@@ -64,6 +64,8 @@
 - `documents/` owns architecture guidance, operator workflow guidance, and reference material.
 - `documents/development/assistant_workflow.md` owns the canonical assistant-facing repository
   workflow rules.
+- Monitoring is not a supported first-class surface. The governed docs suite intentionally has no
+  canonical `documents/engineering/monitoring.md` until the supported platform contract changes.
 - `README.md` stays an orientation document and links into this suite instead of becoming the deep
   architecture source of truth.
 - `AGENTS.md` and `CLAUDE.md` stay as governed entry documents with explicit `Canonical homes`
@@ -75,6 +77,8 @@
 - Update linked documents in the same change when a contract crosses boundaries.
 - When root workflow guidance changes, update the governed metadata and canonical-home links in
   `README.md`, `AGENTS.md`, and `CLAUDE.md` in the same change.
+- If monitoring ever becomes a supported first-class surface, add the canonical doctrine doc,
+  update this index, update the plan, and update docs lint in the same change.
 - Supported workflow docs use direct `cabal`, `docker compose`, and `infernix` commands rather
   than repo-owned scripts or wrapper layers.
 - Run the docs validator before handing off changes.

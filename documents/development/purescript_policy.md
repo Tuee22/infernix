@@ -26,10 +26,14 @@ The demo UI is served by the `infernix-demo` Haskell binary and gated by the act
 - `spago bundle --module Main --outfile dist/app.js --platform browser --bundle-type app` produces
   the static demo bundle in `web/dist/`
 - `spago test` runs the `purescript-spec` suites under `web/test/*.purs`
+- `web/test/Main.purs` uses the non-deprecated `purescript-spec` runner APIs and preserves
+  non-zero exits explicitly instead of relying on deprecated `runSpec` entrypoints
 - the npm-managed PureScript toolchain is installed either in `web/node_modules/` on the host
   path or in the active Linux substrate image build, both on Node.js 22+
 - routed Playwright E2E runs from the host on Apple Silicon, from the active Linux substrate image
-  when the platform toolchain is available, and otherwise through the local npm runner
+  when the platform toolchain is available, and otherwise through the local npm runner; supported
+  Playwright launchers sanitize conflicting `NO_COLOR` and `FORCE_COLOR` values before spawning
+  the child process
 
 ## Source Layout
 
@@ -78,6 +82,8 @@ Frontend types are generated from Haskell-owned DTO and catalog records.
   handwritten workbench helpers that unwrap record views
 - view-level suites assert catalog order, selection, publication summary rendering, and result
   rendering behavior
+- the Node-based unit-test path stays on non-deprecated runner entrypoints and fails explicitly
+  when the `purescript-spec` summary reports a failing suite
 - the existing Playwright DOM selectors are preserved across the PureScript views; if a selector
   cannot be preserved, the Playwright spec is updated in the same change
 

@@ -1,6 +1,6 @@
 # Phase 6: Validation, E2E, and HA Hardening
 
-**Status**: Active
+**Status**: Done
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
 
 > **Purpose**: Define the supported static-quality and test matrix for the two-binary topology,
@@ -11,13 +11,15 @@
 
 ## Phase Status
 
-Sprints 6.1 through 6.12 are `Done`. Sprints 6.13 and 6.14 are `Planned`. The validation
+Sprints 6.1 through 6.15 are `Done`. The validation
 entrypoints, active-mode catalog coverage, clean-host bootstrap logic, governed-root-document
 metadata closure, structured CLI-registry closure, route-aware docs, assistant-workflow
 canonicalization, and shared workflow-helper reuse are all present in the current worktree. The
-remaining open work imported from `INFERNIX_IMPROVEMENTS_FROM_MATTANDJAMES.md` is doctrinal rather
-than runtime: the broad engineering docs still need stronger structure, deeper boundary or state
-coverage, a fuller Haskell-guide split, and an explicit monitoring stance.
+doctrine rewrite and monitoring-stance resolution imported from
+`INFERNIX_IMPROVEMENTS_FROM_MATTANDJAMES.md` are now landed and validated. The supported web test
+surface now uses a non-deprecated PureScript runner posture, both Playwright launch paths sanitize
+conflicting color-control environment variables, and the current validation rerun passes cleanly
+through the final entrypoints.
 
 ## Current Repo Assessment
 
@@ -33,13 +35,12 @@ the structured Haskell command registry now owns parsing, help output, and the g
 CLI-reference sections that docs lint enforces. The route-oriented docs now consume
 registry-backed generated sections, the root assistant entry docs point at one canonical
 assistant-workflow document under `documents/`, and the cluster path reuses the shared
-web-dependency readiness helper instead of reimplementing it. The remaining gap inside this phase
-is documentation-depth closure: the broad engineering docs still need the stronger summary or
-current-status or validation structure described in `development_plan_standards.md`,
-`documents/engineering/implementation_boundaries.md` and `documents/engineering/storage_and_state.md`
-still need deeper ownership and lifecycle treatment, `documents/development/haskell_style.md`
-still needs the editor-only and typed-control-flow review doctrine, and the repository still needs
-an explicit monitoring decision tied to the dormant `victoria-metrics-k8s-stack` chart setting.
+web-dependency readiness helper instead of reimplementing it. The broad engineering-doc rewrite,
+the deeper ownership and lifecycle treatment, the fuller Haskell-guide split, and the monitoring
+stance resolution are now all landed in the worktree. Monitoring is not a supported first-class
+surface. `infernix lint docs`, `infernix docs check`, and `infernix test all` now pass on the
+current worktree, and the supported web validation path is clean on the final entrypoints. Phase 6
+is therefore `Done`.
 
 ## Validation Surface
 
@@ -489,9 +490,9 @@ None.
 
 ---
 
-## Sprint 6.13: Engineering Doctrine Depth and Haskell Guide Completion [Planned]
+## Sprint 6.13: Engineering Doctrine Depth and Haskell Guide Completion [Done]
 
-**Status**: Planned
+**Status**: Done
 **Implementation**: `documents/engineering/implementation_boundaries.md`, `documents/engineering/storage_and_state.md`, `documents/engineering/portability.md`, `documents/engineering/testing.md`, `documents/development/haskell_style.md`, `src/Infernix/Lint/Docs.hs`
 **Docs to update**: `documents/engineering/implementation_boundaries.md`, `documents/engineering/storage_and_state.md`, `documents/engineering/portability.md`, `documents/engineering/testing.md`, `documents/development/haskell_style.md`, `documents/documentation_standards.md`
 
@@ -534,53 +535,77 @@ the Haskell guide match the stronger structure already required by
 
 ### Remaining Work
 
-- rewrite the named doctrine docs to the stronger structure and depth
-- add the targeted docs-lint checks for the required sections
-- rerun `infernix docs check` and `infernix test lint` after the documentation rewrite lands
+None.
 
 ---
 
-## Sprint 6.14: Monitoring Stance Resolution and Final Doctrine Closure [Planned]
+## Sprint 6.14: Monitoring Stance Resolution and Final Doctrine Closure [Done]
 
-**Status**: Planned
-**Implementation**: `documents/engineering/monitoring.md`, `documents/README.md`, `chart/values.yaml`, `DEVELOPMENT_PLAN/system-components.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`, `src/Infernix/Lint/Docs.hs`
-**Docs to update**: `documents/engineering/monitoring.md`, `documents/README.md`, `documents/engineering/testing.md`, `DEVELOPMENT_PLAN/system-components.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
+**Status**: Done
+**Implementation**: `documents/README.md`, `documents/engineering/testing.md`, `chart/values.yaml`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/00-overview.md`, `DEVELOPMENT_PLAN/system-components.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`, `src/Infernix/Lint/Docs.hs`
+**Docs to update**: `documents/README.md`, `documents/engineering/testing.md`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/00-overview.md`, `DEVELOPMENT_PLAN/system-components.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 
 ### Objective
 
-Resolve the supported monitoring stance explicitly instead of leaving a conditional placeholder in
-the plan and a dormant monitoring stack toggle in chart values.
+Resolve the supported monitoring stance explicitly and remove the dormant monitoring placeholder
+from the supported contract.
 
 ### Deliverables
 
 - the repository carries one explicit supported-contract decision for monitoring instead of a
   dangling placeholder
-- if monitoring remains a first-class supported surface, `documents/engineering/monitoring.md`
-  exists as the canonical doctrine and states required outcomes, low-cardinality rules, typed
-  event-or-metric expectations, ownership, and launch-gate consequences
-- if monitoring is not a first-class supported surface, governed docs and the plan explicitly say
-  so, and dormant monitoring configuration such as the disabled `victoria-metrics-k8s-stack` chart
-  value is either removed or tracked as unsupported cleanup in
-  `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
+- Monitoring is not a supported first-class surface.
+- governed docs and the plan say so explicitly, the dormant `victoria-metrics-k8s-stack` chart
+  value is removed, and the cleanup is recorded in `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 - the docs index and system component inventory point at the chosen monitoring stance so readers do
   not infer support from leftover config alone
-- `src/Infernix/Lint/Docs.hs` checks that the plan and governed docs agree on the chosen
-  monitoring stance
+- `src/Infernix/Lint/Docs.hs` checks that the governed docs, plan docs, and chart values stay
+  aligned on the unsupported monitoring stance
 
 ### Validation
 
-- `infernix docs check` fails if the plan, docs index, and monitoring doctrine or
-  unsupported-surface statement diverge
-- if monitoring is supported, the canonical monitoring doc is reachable from `documents/README.md`
-  and the relevant plan docs
-- if monitoring is unsupported, no governed doc claims first-class monitoring and any dormant
-  compatibility config is either removed or recorded in the cleanup ledger
+- `infernix docs check` fails if the plan, docs index, and unsupported-surface statement diverge
+- `infernix docs check` fails if dormant monitoring configuration returns to `chart/values.yaml`
+- the cleanup ledger records the retired monitoring-stack placeholder
 
 ### Remaining Work
 
-- choose the supported monitoring stance
-- either land the monitoring doctrine doc or record the unsupported-surface cleanup and remove the
-  phase placeholders
+None.
+
+---
+
+## Sprint 6.15: Validation Warning Hygiene For PureScript And Playwright [Done]
+
+**Status**: Done
+**Implementation**: `web/test/Main.purs`, `web/test/run_playwright_matrix.mjs`, `src/Infernix/CLI.hs`
+**Docs to update**: `documents/development/testing_strategy.md`, `documents/engineering/testing.md`, `documents/development/purescript_policy.md`
+
+### Objective
+
+Remove the known non-failing warning noise from the supported web-validation path so `test unit`,
+`test e2e`, and `test all` stay future-proof and produce clean supported output.
+
+### Deliverables
+
+- the PureScript unit suite no longer relies on deprecated `runSpec`
+- the supported Node-based PureScript test runner preserves non-zero exits without relying on the
+  deprecated `runSpec` or `runSpecT` entrypoints
+- the Playwright matrix launcher sanitizes its child-process environment so supported runs do not
+  pass both `NO_COLOR` and `FORCE_COLOR`
+- the Apple host-native Playwright launch path applies the same color-env sanitization
+- the governed testing docs describe the supported runner and env-sanitization posture for the web
+  test path
+
+### Validation
+
+- `infernix test unit` passes without the PureScript `runSpec` deprecation warning
+- `infernix test e2e` passes without the Node warning about `NO_COLOR` being ignored because
+  `FORCE_COLOR` is set
+- `infernix test all` continues to pass after the warning cleanup lands
+
+### Remaining Work
+
+None.
 
 ## Documentation Requirements
 
@@ -595,7 +620,7 @@ the plan and a dormant monitoring stack toggle in chart values.
 - `documents/engineering/implementation_boundaries.md` - ownership matrix, adapter-local versus shared-contract types, instance placement, and module-boundary rules
 - `documents/engineering/portability.md` - portable invariants versus substrate-specific detail, plus explicit current-status and validation sections where target direction still appears
 - `documents/engineering/storage_and_state.md` - owner or durability table, failure-mode rules, and cleanup contracts
-- `documents/engineering/monitoring.md` - required outcomes, low-cardinality or typed-event rules, and launch-gate consequences if monitoring remains a first-class supported surface
+- `documents/engineering/monitoring.md` - create only if monitoring becomes a supported first-class surface in a later change
 - `documents/operations/cluster_bootstrap_runbook.md` - test prerequisites and cluster reuse rules
 - `documents/operations/apple_silicon_runbook.md` - Apple matrix expectations
 - `documents/tools/postgresql.md` - PostgreSQL operator readiness and failover rules
