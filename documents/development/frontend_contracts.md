@@ -10,6 +10,8 @@
 - dedicated browser-contract ADTs in `src/Infernix/Web/Contracts.hs` own the browser-facing contract
   surface
 - `infernix internal generate-purs-contracts` emits `web/src/Generated/Contracts.purs`
+- the retired `web/src/Infernix/Web/Contracts.purs` path is not a supported generated output and
+  is left untouched by the codegen command
 - `npm --prefix web run build` invokes that codegen entrypoint before `spago build`
 - handwritten PureScript modules under `web/src/*.purs` import generated modules from
   `web/src/Generated/` for shared types; they do not declare their own request or response types

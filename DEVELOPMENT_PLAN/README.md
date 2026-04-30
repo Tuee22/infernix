@@ -72,10 +72,22 @@ reuses the shared web-dependency readiness helper instead of carrying a duplicat
 Monitoring is not a supported first-class surface. The dormant `victoria-metrics-k8s-stack` chart
 toggle is absent from `chart/values.yaml`, and the supported web validation surfaces use the
 non-deprecated PureScript runner posture together with sanitized Playwright launch environments.
+The final Phase-6 compatibility and doctrine-structure closure is now present in the worktree:
+`documents/engineering/build_artifacts.md`, `documents/engineering/docker_policy.md`, and
+`documents/engineering/edge_routing.md` now carry the stronger summary/current-status/validation
+shape with matching enforcement in `src/Infernix/Lint/Docs.hs`; the runtime and cache layers read
+only protobuf-backed result or cache-manifest files; PureScript contract generation writes only
+`web/src/Generated/Contracts.purs`; and Harbor-first bootstrap no longer removes helper-registry
+leftovers.
+The `mattandjames`-inspired follow-ons are explicitly limited to repository-governance, CLI,
+launcher-boundary, and engineering-doctrine structure. The supported contract does not adopt that
+repo's offline-browser or Keycloak features, single-runtime `llama-server` stack,
+IndexedDB-specific docs, checked-in generated PureScript posture, or container-only execution
+rule.
 
-The final Sprint 6.16 hardening rerun now passes through `infernix lint docs`, `infernix docs
-check`, and the full `infernix test all` suite on this updated plan state, so no remaining
-Phase-6-scoped follow-on is left open in the current worktree.
+The final supported rerun passes through `infernix lint docs`, `infernix docs check`, and the
+full `infernix test all` suite on this updated plan state, so no remaining Phase-6-scoped
+follow-on is left open in the current worktree.
 
 ## Execution Contexts and Runtime Modes
 
@@ -141,6 +153,10 @@ The supported platform closes around these rules:
   holds one canonical home per topic, and the governed root docs carry explicit status,
   supersession, and canonical-home markers when they distinguish canonical guidance from
   entry-document summaries
+- `mattandjames`-derived improvements stay limited to repository-governance, CLI,
+  outer-container, and doctrine-structure patterns; `infernix` does not import that repo's
+  offline-browser or Keycloak flows, single-runtime `llama-server` model, IndexedDB-specific
+  docs, checked-in generated PureScript policy, or container-only execution rule
 
 ## Dependency Chain
 

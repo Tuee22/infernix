@@ -5,6 +5,23 @@
 
 > **Purpose**: Define the supported outer-container control-plane workflow.
 
+## TL;DR
+
+- Apple host-native flows use Colima plus the host Docker CLI, but Linux control-plane execution
+  runs through baked substrate images instead of live repo-mounted containers.
+- `docker compose run --rm infernix infernix ...` is the supported `linux-cpu` launcher, and
+  direct `docker run --gpus all infernix-linux-cuda:local infernix ...` is the supported
+  `linux-cuda` launcher.
+- The outer-container contract does not include `docker compose up`, `docker compose exec`, or a
+  bootstrap helper-registry sidecar.
+
+## Current Status
+
+The current worktree follows the one-image-family policy directly: both supported Linux runtime
+lanes come from `docker/linux-substrate.Dockerfile`, `cluster up` reuses the already-built
+`infernix-linux-<mode>:local` snapshots, and the Harbor-first bootstrap path no longer depends on
+any retired helper-registry container cleanup.
+
 ## Host Prerequisite Boundary
 
 - on Apple Silicon, Colima is the only supported Docker environment
@@ -65,6 +82,16 @@
 - `docker compose up`
 - `docker compose exec`
 - unqualified containerized `cabal` flows that write into the mounted repository tree
+
+## Validation
+
+- `infernix docs check` fails if this governed Docker-policy document loses its required structure
+  or metadata contract.
+- `infernix test integration` and `infernix test e2e` exercise the supported outer-container
+  launchers, routed surfaces, and image-reuse behavior on the Linux lanes when those lanes are
+  selected.
+- `infernix test all` reruns the full supported matrix entrypoints without reintroducing a live
+  repo-mounted or helper-registry-based container workflow.
 
 ## Cross-References
 

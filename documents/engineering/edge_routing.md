@@ -5,6 +5,22 @@
 
 > **Purpose**: Define the one-port routing contract for browser and host-consumed services.
 
+## TL;DR
+
+- One Haskell-owned route registry defines the supported public prefixes, rendered HTTPRoutes,
+  route-aware docs, and route validation expectations.
+- The routed surface always publishes Harbor, MinIO, and Pulsar, and publishes the demo routes
+  only when the active generated config enables the demo UI.
+- The same prefixes and rewrites stay visible on the simulated substrate so route behavior remains
+  testable without a real platform toolchain.
+
+## Current Status
+
+The current worktree uses the registry-backed route contract directly: the generated route table in
+this document comes from the Haskell route registry, `cluster status` and `/api/publication`
+publish the same routed surface, and the Harbor-first bootstrap path no longer carries a separate
+helper-registry route or namespace.
+
 ## Route Inventory
 
 - the chart-owned route contract lives in `GatewayClass/infernix-gateway`,
@@ -51,6 +67,15 @@
 - `cluster up` prints the chosen port during bring-up
 - `cluster status` reports the active runtime mode together with the chosen port, the published
   route inventory, and the publication-state details that back `/api/publication`
+
+## Validation
+
+- `infernix docs check` fails if this document loses its governed metadata, required structure, or
+  the registry-generated route-inventory section.
+- `infernix test integration` exercises the published Harbor, MinIO, Pulsar, publication, and
+  demo routes together with their supported rewrite behavior.
+- `infernix test e2e` verifies the routed demo surface through the shared edge port when the demo
+  UI is enabled for the selected runtime mode.
 
 ## Cross-References
 

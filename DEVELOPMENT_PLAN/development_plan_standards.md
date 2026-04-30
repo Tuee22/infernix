@@ -33,6 +33,9 @@ The plan is intentionally concrete.
 - Command examples use the canonical binary name `infernix`.
 - Examples do not need to be verbatim implementation, but they must not contradict the supported
   architecture.
+- When the plan cites another repository as a source of practices, it explicitly distinguishes the
+  imported governance or doctrine ideas from any product-specific features, documents, or runtime
+  assumptions that remain out of scope for `infernix`.
 
 ### C. Honest Completion Tracking
 

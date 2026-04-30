@@ -16,7 +16,6 @@ import Infernix.Config (Paths (..))
 import Infernix.Models (engineBindingForSelectedEngine)
 import Infernix.Storage
   ( readCacheManifestProtoMaybe,
-    readStateFileMaybe,
     writeCacheManifestProto,
     writeTextFile,
   )
@@ -47,7 +46,7 @@ listCacheManifests paths runtimeMode = do
       manifestExists <- doesFileExist manifestPath
       if manifestExists
         then readCacheManifestProtoMaybe manifestPath
-        else readStateFileMaybe (modelDirectory </> "default.state")
+        else pure Nothing
 
 evictCache :: Paths -> RuntimeMode -> Maybe Text -> IO Int
 evictCache paths runtimeMode maybeModelId = do

@@ -22,6 +22,9 @@
 - on the real Kind path, confirm that Harbor is the first deployed service on a pristine cluster
   and that only Harbor-required backend services pull from public container repositories before
   Harbor is ready
+- the supported Harbor-first bootstrap path no longer depends on the retired
+  `infernix-bootstrap-registry` container or the old `./.build/kind/registry/localhost:30001`
+  helper-registry namespace
 - on the supported outer-container path, confirm that `cluster up` reuses the already-built
   `infernix-linux-<mode>:local` snapshot instead of rebuilding that runtime image inside the
   launcher

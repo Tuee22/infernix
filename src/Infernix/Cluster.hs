@@ -8,6 +8,7 @@ module Infernix.Cluster
     linuxCudaSupportedOnHost,
     loadClusterState,
     runKubectlCompat,
+    writeGeneratedKindConfig,
   )
 where
 
@@ -338,7 +339,6 @@ clusterUp maybeRuntimeMode = do
 
 clusterUpWithPlatform :: Paths -> RuntimeMode -> IO ()
 clusterUpWithPlatform paths runtimeMode = do
-  cleanupLegacyBootstrapRegistry
   let controlPlane = Config.controlPlaneContext paths
   requestedPort <- chooseEdgePort paths
   demoUiEnabledValue <- resolveDemoUiEnabled
@@ -487,7 +487,6 @@ clusterDown maybeRuntimeMode = do
         unless (kindUsesHostBindMounts paths) $
           syncKindNodeRuntimePathsToHost paths runtimeMode maybeState
         deleteKindCluster paths runtimeMode
-      cleanupLegacyBootstrapRegistry
   case maybeState of
     Nothing -> putStrLn "cluster already absent"
     Just state
@@ -1359,11 +1358,6 @@ ensureLocalImageRef imageRef = do
   imagePresent <- maybeCommand ["docker", "image", "inspect", imageRef]
   unless imagePresent $
     runCommand Nothing [] "docker" ["pull", imageRef]
-
-cleanupLegacyBootstrapRegistry :: IO ()
-cleanupLegacyBootstrapRegistry = do
-  _ <- tryCommand Nothing [] "docker" ["rm", "-f", legacyBootstrapRegistryName]
-  pure ()
 
 runWebBuildCommand :: Paths -> [String] -> IO ()
 runWebBuildCommand paths npmArgs = do
@@ -2323,9 +2317,6 @@ writeGeneratedKindConfig paths runtimeMode edgePortValue = do
 writeRegistryHostsConfig :: Paths -> RuntimeMode -> IO ()
 writeRegistryHostsConfig paths runtimeMode = do
   let registryRoot = repoRoot paths </> ".build" </> "kind" </> "registry"
-      legacyNamespaceDirectory = registryRoot </> "localhost:30001"
-  legacyNamespaceExists <- doesDirectoryExist legacyNamespaceDirectory
-  when legacyNamespaceExists (removePathForcibly legacyNamespaceDirectory)
   writeRegistryNamespace "localhost:30002" (kindClusterName paths runtimeMode <> "-control-plane:30002") registryRoot
   where
     writeRegistryNamespace registryNamespace reachableRegistryHost registryRoot = do
@@ -2810,9 +2801,6 @@ harborAdminUser = "admin"
 
 harborAdminPassword :: String
 harborAdminPassword = "Harbor12345"
-
-legacyBootstrapRegistryName :: String
-legacyBootstrapRegistryName = "infernix-bootstrap-registry"
 
 persistentVolumeClaimName :: PersistentClaim -> String
 persistentVolumeClaimName persistentClaim =

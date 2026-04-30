@@ -5,6 +5,23 @@
 
 > **Purpose**: Define where generated artifacts live and keep them out of tracked source paths.
 
+## TL;DR
+
+- Host-native builds write repo-local outputs under `./.build/`, while supported outer-container
+  flows use `/opt/build/infernix` plus durable repo-local state under `./.data/`.
+- Generated frontend contracts live only under `web/src/Generated/`, and generated browser bundles
+  live under `web/dist/`.
+- Runtime inference results reload only from protobuf-backed `./.data/runtime/results/*.pb`
+  records; retired `*.state` files are not part of the supported artifact contract.
+
+## Current Status
+
+The current worktree follows the supported artifact layout directly: the host path stages
+`./.build/infernix` and `./.build/infernix-demo`, the Linux substrate images own
+`/usr/local/bin/infernix*` together with `/opt/build/infernix`, generated frontend contracts stay
+under `web/src/Generated/`, and runtime result or cache-manifest state uses protobuf-backed
+`*.pb` files instead of legacy text-state fallbacks.
+
 ## Build Roots
 
 - the repo-local operator binaries live at `./.build/infernix` and `./.build/infernix-demo`
@@ -21,10 +38,12 @@
 - `cluster up` writes `./.build/infernix-demo-<mode>.dhall` on the host path
 - `cluster up` writes `./.data/runtime/publication.json` as the publication inventory consumed by
   routed status surfaces
-- the web build stages generated PureScript contract modules under `web/src/Generated/`, written
-  by `infernix internal generate-purs-contracts`
+- the web build stages `web/src/Generated/Contracts.purs`, written by
+  `infernix internal generate-purs-contracts`
 - `spago bundle --module Main --outfile dist/app.js --platform browser --bundle-type app`
   produces the static demo bundle in `web/dist/`
+- inference-result reloads use `./.data/runtime/results/*.pb`
+- cache durability manifests use `./.data/object-store/manifests/<runtime-mode>/<model-id>/default.pb`
 - `ensurePoetryProjectReady` regenerates Python protobuf stubs under `tools/generated_proto/` when
   they are missing
 
@@ -49,6 +68,8 @@
   `cluster down`, or host-bridge demo activation
 - generated PureScript contract modules stage under `web/src/Generated/` and the `spago bundle`
   output lives in `web/dist/`
+- runtime result and cache-manifest reload paths are protobuf-backed `*.pb` files only; supported
+  flows do not read legacy `*.state` compatibility files
 - generated web build output and Playwright artifacts live under `web/dist/` and `./.data/`
 - engine-adapter Python builds use Poetry against the shared `python/` project; outside the
   cluster, `poetry install --directory python` materializes a repo-local adapter virtual
@@ -57,6 +78,15 @@
 - `.gitignore` and `.dockerignore` mirror the generated-artifact ignore set: Poetry lockfiles,
   generated protobuf stubs, `*.pyc`, `web/spago.lock`, `web/src/Generated/`, `web/dist/`, and
   `python/.venv/` are not tracked
+
+## Validation
+
+- `infernix docs check` fails if this governed artifact document loses its required structure or
+  metadata contract.
+- `infernix test unit` covers protobuf-backed result reloads, protobuf-backed cache-manifest
+  handling, and PureScript contract generation to `web/src/Generated/Contracts.purs`.
+- `infernix lint files` fails if generated outputs that belong under `./.build/`, `./.data/`,
+  `web/src/Generated/`, `web/dist/`, or `tools/generated_proto/` return to tracked source paths.
 
 ## Cross-References
 

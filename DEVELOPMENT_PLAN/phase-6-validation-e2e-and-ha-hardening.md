@@ -11,14 +11,16 @@
 
 ## Phase Status
 
-Sprints 6.1 through 6.16 are `Done`. The validation entrypoints,
-active-mode catalog coverage, clean-host bootstrap logic, governed-root-document metadata closure,
-structured CLI-registry closure, route-aware docs, assistant-workflow canonicalization, and shared
-workflow-helper reuse are all present in the current worktree. The canonical docs carry the deeper
-doctrine structure this phase depends on, the monitoring stance is explicit, the supported web
-test surface uses a non-deprecated PureScript runner posture, both Playwright launch paths
-sanitize conflicting color-control environment variables, and the final supported rerun passes
-through `infernix lint docs`, `infernix docs check`, and the full `infernix test all` suite.
+Sprints 6.1 through 6.18 are `Done`. The validation entrypoints, active-mode catalog coverage,
+clean-host bootstrap logic, governed-root-document metadata closure, structured CLI-registry
+closure, route-aware generated sections, assistant-workflow canonicalization, shared
+workflow-helper reuse, and the final compatibility-shim cleanup are all present in the current
+worktree. The monitoring stance is explicit, the supported web test surface uses a
+non-deprecated PureScript runner posture together with sanitized Playwright launch environments,
+the remaining broad engineering docs now carry the stronger summary/current-status/validation
+structure with matching enforcement in `src/Infernix/Lint/Docs.hs`, and the final supported rerun
+passes through `infernix lint docs`, `infernix docs check`, and the full `infernix test all`
+suite.
 
 ## Current Repo Assessment
 
@@ -33,17 +35,20 @@ governed root docs carry the stricter metadata model, and the structured Haskell
 owns parsing, help output, and the generated CLI-reference sections that docs lint enforces. The
 route-oriented docs consume registry-backed generated sections, the root assistant entry docs point
 at one canonical assistant-workflow document under `documents/`, and the cluster path reuses the
-shared web-dependency readiness helper instead of reimplementing it. The broader engineering-doc
-structure, the deeper ownership and lifecycle treatment, the fuller Haskell-guide split, and the
-explicit monitoring stance are all reflected in the current worktree. Monitoring is not a
-supported first-class surface.
+shared web-dependency readiness helper instead of reimplementing it. The deeper ownership and
+lifecycle treatment, the fuller Haskell-guide split, and the explicit monitoring stance are
+reflected in the current worktree. Monitoring is not a supported first-class surface.
 
-No remaining work is implementation- or validation-shaped. The root README now
-uses the honest containerized-`linux-cpu` wording, `documents/development/testing_strategy.md` now
-acts as a supporting operator-detail reference beneath `documents/engineering/testing.md`, and
-`src/Infernix/DemoConfig.hs` now consumes the shared demo-config banner literal from
-`src/Infernix/Workflow.hs`. The docs validators and the full supported suite pass on this
-worktree state, so Phase 6 is `Done`.
+The last follow-on hardening is now closed. The root README uses the honest
+containerized-`linux-cpu` wording, `documents/development/testing_strategy.md` acts as a
+supporting operator-detail reference beneath `documents/engineering/testing.md`,
+`src/Infernix/DemoConfig.hs` consumes the shared demo-config banner literal from
+`src/Infernix/Workflow.hs`, the runtime and cache layers read only protobuf-backed result or
+cache-manifest files, PureScript contract generation writes only `web/src/Generated/Contracts.purs`,
+and Harbor-first bootstrap no longer removes helper-registry leftovers. The remaining broad
+engineering-doc structure closure is also present in `documents/engineering/build_artifacts.md`,
+`documents/engineering/docker_policy.md`, `documents/engineering/edge_routing.md`, and
+`src/Infernix/Lint/Docs.hs`, so no Phase-6-scoped follow-on remains open in the current worktree.
 
 ## Remaining Work
 
@@ -508,6 +513,8 @@ None.
 Finish the remaining `mattandjames`-inspired doctrine-depth work so the broad engineering docs and
 the Haskell guide match the stronger structure already required by
 `development_plan_standards.md`.
+That import is explicitly about repository governance and doctrine shape, not about adopting
+`mattandjames` product-specific features or runtime assumptions.
 
 ### Deliverables
 
@@ -529,6 +536,10 @@ the Haskell guide match the stronger structure already required by
 - `documents/development/haskell_style.md` points directly at `src/Infernix/Lint/HaskellStyle.hs`,
   separates repository hard-gate inputs from editor-only guidance, and adds review doctrine for
   module shape, function shape, effect-boundary clarity, and typed control flow
+- the plan states explicitly that this `mattandjames`-derived follow-on imports repository
+  governance, CLI, launcher-boundary, and doctrine-structure practices only; it does not adopt
+  offline-browser or Keycloak flows, a single-runtime `llama-server` model, IndexedDB-specific
+  docs, checked-in generated PureScript policy, or a container-only execution rule
 - `src/Infernix/Lint/Docs.hs` enforces the required broad-doctrine sections for the docs whose
   structure is part of the supported contract
 
@@ -653,10 +664,94 @@ model, testing doctrine, and shared workflow-helper contract stop overclaiming c
 
 None.
 
+---
+
+## Sprint 6.17: Residual Compatibility-Shim Removal [Done]
+
+**Status**: Done
+**Implementation**: `src/Infernix/Runtime.hs`, `src/Infernix/Runtime/Cache.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `test/unit/Spec.hs`, `test/integration/Spec.hs`
+**Docs to update**: `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/00-overview.md`, `DEVELOPMENT_PLAN/system-components.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`, `documents/development/frontend_contracts.md`, `documents/engineering/build_artifacts.md`, `documents/engineering/storage_and_state.md`, `documents/operations/cluster_bootstrap_runbook.md`
+
+### Objective
+
+Retire the last compatibility shims that keep obsolete result, generated-contract, and helper-registry
+state alive in supported code paths so Phase 6 can close without hidden cleanup work.
+
+### Deliverables
+
+- `src/Infernix/Runtime.hs` and `src/Infernix/Runtime/Cache.hs` read only the supported
+  protobuf-backed inference-result and cache-manifest files and stop accepting retired
+  `*.state` fallbacks
+- `src/Infernix/CLI.hs` stops deleting the retired `web/src/Infernix/Web/Contracts.purs` path
+  during contract generation, leaving `web/src/Generated/Contracts.purs` as the only supported
+  generated frontend-contract output
+- `src/Infernix/Cluster.hs` stops removing the retired `infernix-bootstrap-registry` container and
+  `./.build/kind/registry/localhost:30001` namespace as part of supported Harbor-first bootstrap
+- unit, integration, and docs validation cover the shim-free behavior, and the cleanup ledger
+  records those surfaces as fully closed once the implementation lands
+
+### Validation
+
+- `infernix test unit` fails if runtime result IO, cache-manifest reloads, or PureScript
+  contract generation still depends on the retired `*.state`, `default.state`, or
+  `web/src/Infernix/Web/Contracts.purs` compatibility paths
+- `infernix test integration` fails if the supported cluster bootstrap flow still depends on the
+  retired helper-registry cleanup shims
+- `infernix docs check` fails if the plan, cleanup ledger, or supporting docs overclaim full
+  closure before those compatibility surfaces are removed
+
+### Remaining Work
+
+None.
+
+---
+
+## Sprint 6.18: Remaining Broad Engineering-Doc Structure Closure [Done]
+
+**Status**: Done
+**Implementation**: `documents/engineering/build_artifacts.md`, `documents/engineering/docker_policy.md`, `documents/engineering/edge_routing.md`, `src/Infernix/Lint/Docs.hs`
+**Docs to update**: `documents/engineering/build_artifacts.md`, `documents/engineering/docker_policy.md`, `documents/engineering/edge_routing.md`, `documents/documentation_standards.md`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/00-overview.md`, `DEVELOPMENT_PLAN/system-components.md`
+
+### Objective
+
+Close the remaining doctrine-depth gap for broad engineering contract docs so the plan stops
+overclaiming full structure closure and `infernix docs check` enforces the same stronger shape
+consistently across the remaining governed engineering surfaces.
+
+### Deliverables
+
+- `documents/engineering/build_artifacts.md` adds the stronger broad-doctrine structure expected
+  by `development_plan_standards.md`, including summary and validation sections and any explicit
+  current-status note required by its final scope
+- `documents/engineering/docker_policy.md` adds the stronger broad-doctrine structure expected by
+  `development_plan_standards.md`, including summary and validation sections and any explicit
+  current-status note required by its final scope
+- `documents/engineering/edge_routing.md` adds the stronger broad-doctrine structure expected by
+  `development_plan_standards.md`, including summary and validation sections and any explicit
+  current-status note required by its final scope
+- `src/Infernix/Lint/Docs.hs` extends its document-structure rules so `infernix docs check`
+  enforces the required broad-doctrine sections for those remaining engineering docs
+- the plan and governed docs stop claiming that the broader engineering-doc structure is fully
+  closed before those remaining docs and lint rules land
+
+### Validation
+
+- `infernix docs check` fails if `documents/engineering/build_artifacts.md`,
+  `documents/engineering/docker_policy.md`, or `documents/engineering/edge_routing.md` lose the
+  required broad-doctrine sections once Sprint 6.18 lands
+- `infernix docs check` fails if the plan or governed docs overclaim full doctrine-depth closure
+  before the remaining structure and lint enforcement land
+- `infernix test lint` continues to pass once the broadened docs-lint structure rules are in place
+
+### Remaining Work
+
+None.
+
 ## Documentation Requirements
 
 **Engineering docs to create/update:**
 - `documents/documentation_standards.md` - root-document metadata contract and canonical-home markers
+- `documents/engineering/build_artifacts.md` - generated-artifact locations, build-root rules, and derived-output validation expectations
 - `documents/engineering/edge_routing.md` - route-registry ownership, generated route summaries, and route-aware validation expectations
 - `documents/engineering/testing.md` - canonical testing doctrine, core principles, preflight expectations, unsupported paths, and per-layer validation obligations
 - `documents/development/testing_strategy.md` - operator workflow, matrix selection, and test-entrypoint details
@@ -695,4 +790,4 @@ None.
   shared-helper closure, or the supported monitoring stance changes
 - keep [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) aligned when any pending
   route-doc, route-lint, assistant-doc, workflow-helper, testing-doc, runtime-language, or
-  monitoring-surface cleanup item closes
+  monitoring-surface or compatibility-shim cleanup item closes

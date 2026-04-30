@@ -17,8 +17,9 @@
 ## Current Status
 
 The current repository already follows this split: Kind PV data, object-store metadata, MinIO
-objects, Pulsar ledgers, and Patroni-backed PostgreSQL state are durable, while `./.build/`,
-`/opt/build/infernix/`, generated publication mirrors, caches, and Playwright output are derived.
+objects, Pulsar ledgers, protobuf-backed inference-result files, and Patroni-backed PostgreSQL
+state are durable, while `./.build/`, `/opt/build/infernix/`, generated publication mirrors,
+caches, and Playwright output are derived.
 
 ## Owner And Durability Table
 
@@ -28,9 +29,10 @@ objects, Pulsar ledgers, and Patroni-backed PostgreSQL state are durable, while 
 | Harbor registry content and Harbor metadata | Harbor plus operator-managed PostgreSQL | Harbor PVCs under `./.data/kind/...` | durable | loss is a platform failure, not a cache miss |
 | MinIO objects | MinIO plus the service runtime | MinIO PVCs under `./.data/kind/...` | durable | objects may be republished deliberately, but they are not treated as disposable cache |
 | Pulsar ledgers and BookKeeper journals | Pulsar | Pulsar PVCs under `./.data/kind/...` | durable | deletion resets message durability and is therefore explicit operator intent |
+| Inference-result records | Haskell service runtime plus routed reload handlers | `./.data/runtime/results/*.pb` | durable and user-visible | reload only from protobuf-backed result files; retired `*.state` files are not part of the supported contract |
 | Source-artifact manifests | Haskell service runtime | `./.data/object-store/source-artifacts/` | durable | these manifests are authoritative artifact-selection inputs |
 | Runtime artifact bundles | Haskell service runtime | `./.data/object-store/artifacts/` | durable | bundles are durable worker inputs and are not rebuilt from cache directories alone |
-| Cache manifests used to rebuild model caches | Haskell service runtime | `./.data/object-store/manifests/` | durable | rebuild the derived cache from these manifests rather than inventing alternate cache metadata |
+| Cache manifests used to rebuild model caches | Haskell service runtime | `./.data/object-store/manifests/<runtime-mode>/<model-id>/default.pb` | durable | rebuild the derived cache from these protobuf-backed manifests rather than inventing alternate cache metadata |
 | Publication state and generated ConfigMap mirrors | cluster lifecycle and demo activation | `./.data/runtime/publication.json`, `./.data/runtime/configmaps/infernix-demo-config/` | derived but user-visible | regenerate from `cluster up`, `cluster down`, or the active generated demo config |
 | Repo-local kubeconfig and chosen edge-port record | cluster lifecycle | `./.build/infernix.kubeconfig`, `./.data/runtime/infernix.kubeconfig`, `./.data/runtime/edge-port.json` | derived | recreate from the supported control-plane lifecycle |
 | Build roots and staged generated demo config | build or cluster lifecycle | `./.build/`, `/opt/build/infernix/` | derived | rebuild from source and the active runtime mode |
@@ -43,6 +45,8 @@ objects, Pulsar ledgers, and Patroni-backed PostgreSQL state are durable, while 
   not a normal cleanup event.
 - `cluster down` plus `cluster up` must preserve the deterministic PV inventory and host-path
   binding for the durable Harbor PostgreSQL state and the other PVC-backed workloads.
+- Supported inference-result reloads depend on protobuf-backed `*.pb` records only; legacy
+  `*.state` compatibility files are not part of the rebuild or reload contract.
 - Publication mirrors, repo-local kubeconfig files, edge-port records, and generated demo-config
   staging are disposable because the supported lifecycle commands recreate them.
 - Model-cache directories are disposable because the durable manifests and artifact bundles under
@@ -58,6 +62,8 @@ objects, Pulsar ledgers, and Patroni-backed PostgreSQL state are durable, while 
   outputs; regenerate them from the owning command instead.
 - Keep generated build output, generated contracts, generated protobuf bindings, and test artifacts
   out of tracked source even when they are present locally.
+- Do not preserve or recreate retired `*.state` compatibility files for runtime results or cache
+  manifests; supported reloads use protobuf-backed `*.pb` state only.
 - Prefer rebuilding derived state over preserving stale compatibility copies.
 
 ## Validation

@@ -8,7 +8,9 @@ import Data.List (find, isInfixOf, nub)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (isJust, isNothing)
 import Data.Text qualified as Text
-import Infernix.CLI (extractRuntimeMode)
+import Data.Time (getCurrentTime)
+import Infernix.CLI (extractRuntimeMode, writeGeneratedPursContracts)
+import Infernix.Cluster (writeGeneratedKindConfig)
 import Infernix.Cluster.Discover
 import Infernix.Cluster.PublishImages
   ( PublishedImage,
@@ -106,6 +108,71 @@ main = do
         assert
           (generatedKubeconfigPath outerPaths == runtimeRoot outerPaths </> "infernix.kubeconfig")
           "outer-container kubeconfig persists under the durable runtime root"
+      now <- getCurrentTime
+      let legacyOnlyResult =
+            InferenceResult
+              { requestId = "legacy-only-request",
+                resultModelId = "llm-qwen25-safetensors",
+                resultMatrixRowId = "apple-qwen25-safetensors",
+                resultRuntimeMode = AppleSilicon,
+                resultSelectedEngine = "transformers-python",
+                status = "completed",
+                payload =
+                  ResultPayload
+                    { inlineOutput = Just "legacy output",
+                      objectRef = Nothing
+                    },
+                createdAt = now
+              }
+          legacyResultPath = resultsRoot paths </> "legacy-only-request.state"
+      createDirectoryIfMissing True (resultsRoot paths)
+      writeFile legacyResultPath (show legacyOnlyResult)
+      legacyOnlyReload <- loadInferenceResult paths "legacy-only-request"
+      assert
+        (isNothing legacyOnlyReload)
+        "inference result loading ignores retired .state-only files"
+
+      let legacyManifestDirectory = objectStoreRoot paths </> "manifests" </> "linux-cpu" </> "legacy-model"
+          legacyCacheManifest =
+            CacheManifest
+              { cacheRuntimeMode = LinuxCpu,
+                cacheModelId = "legacy-model",
+                cacheSelectedEngine = "llama-cpp",
+                cacheDurableSourceUri = "s3://infernix-runtime/artifacts/linux-cpu/legacy-model/bundle.json",
+                cacheCacheKey = "default"
+              }
+      createDirectoryIfMissing True legacyManifestDirectory
+      writeFile (legacyManifestDirectory </> "default.state") (show legacyCacheManifest)
+      legacyCacheManifests <- listCacheManifests paths LinuxCpu
+      assert
+        (null legacyCacheManifests)
+        "cache manifest loading ignores retired default.state files"
+
+      let contractsOutputRoot = buildRoot paths </> "contracts-output"
+          legacyContractsPath = contractsOutputRoot </> "Infernix" </> "Web" </> "Contracts.purs"
+          generatedContractsPath = contractsOutputRoot </> "Generated" </> "Contracts.purs"
+      createDirectoryIfMissing True (contractsOutputRoot </> "Infernix" </> "Web")
+      writeFile legacyContractsPath "legacy generated contracts\n"
+      writeGeneratedPursContracts AppleSilicon contractsOutputRoot
+      generatedContractsExist <- doesFileExist generatedContractsPath
+      legacyContractsContents <- readFile legacyContractsPath
+      assert generatedContractsExist "PureScript contract generation writes the supported Generated path"
+      assert
+        (legacyContractsContents == "legacy generated contracts\n")
+        "PureScript contract generation leaves the retired handwritten output path untouched"
+
+      let legacyRegistryNamespace = repoRoot paths </> ".build" </> "kind" </> "registry" </> "localhost:30001"
+      createDirectoryIfMissing True legacyRegistryNamespace
+      writeFile (legacyRegistryNamespace </> "hosts.toml") "legacy helper registry\n"
+      _ <- writeGeneratedKindConfig paths LinuxCpu 30090
+      legacyRegistryNamespaceExists <- doesDirectoryExist legacyRegistryNamespace
+      legacyRegistryHostsContents <- readFile (legacyRegistryNamespace </> "hosts.toml")
+      assert
+        legacyRegistryNamespaceExists
+        "kind registry-host generation leaves the retired helper-registry namespace untouched"
+      assert
+        (legacyRegistryHostsContents == "legacy helper registry\n")
+        "kind registry-host generation does not rewrite the retired helper-registry namespace"
       let demoConfig =
             DemoConfig
               { configRuntimeMode = LinuxCpu,
@@ -156,6 +223,10 @@ main = do
           let resultPath = resultsRoot paths </> Text.unpack (requestId result) <> ".pb"
           resultExists <- doesFileExist resultPath
           assert resultExists "inference execution writes a protobuf result file"
+          reloadedResult <- loadInferenceResult paths (requestId result)
+          assert
+            (fmap requestId reloadedResult == Just (requestId result))
+            "inference result reload reads the protobuf-backed result file"
           case objectRef (payload result) of
             Just objectRefValue -> do
               durableOutput <- readFile (objectStoreRoot paths </> Text.unpack objectRefValue)

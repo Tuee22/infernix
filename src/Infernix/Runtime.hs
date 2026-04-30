@@ -19,7 +19,6 @@ import Infernix.Runtime.Cache (evictCache, listCacheManifests, materializeCache,
 import Infernix.Runtime.Worker (runInferenceWorker)
 import Infernix.Storage
   ( readInferenceResultProtoMaybe,
-    readStateFileMaybe,
     writeInferenceResultProto,
     writeTextFile,
   )
@@ -68,11 +67,8 @@ executeInference paths runtimeMode request = case findModel runtimeMode (request
             pure (Right result)
 
 loadInferenceResult :: Paths -> Text -> IO (Maybe InferenceResult)
-loadInferenceResult paths requestIdValue = do
-  maybeProtoResult <- readInferenceResultProtoMaybe (inferenceResultPath paths requestIdValue)
-  case maybeProtoResult of
-    Just result -> pure (Just result)
-    Nothing -> readStateFileMaybe (legacyInferenceResultPath paths requestIdValue)
+loadInferenceResult paths requestIdValue =
+  readInferenceResultProtoMaybe (inferenceResultPath paths requestIdValue)
 
 buildPayload :: Paths -> Text -> Text -> IO ResultPayload
 buildPayload paths requestIdValue outputText
@@ -95,7 +91,3 @@ buildPayload paths requestIdValue outputText
 inferenceResultPath :: Paths -> Text -> FilePath
 inferenceResultPath paths requestIdValue =
   resultsRoot paths </> Text.unpack requestIdValue <> ".pb"
-
-legacyInferenceResultPath :: Paths -> Text -> FilePath
-legacyInferenceResultPath paths requestIdValue =
-  resultsRoot paths </> Text.unpack requestIdValue <> ".state"

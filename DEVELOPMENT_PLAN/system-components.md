@@ -22,12 +22,16 @@
   at one canonical assistant-workflow home under `documents/`, and the cluster path reuses the
   shared web-dependency readiness helper without a duplicate probe
 - the canonical docs for testing, portability, implementation boundaries, storage, Haskell style,
-  and documentation standards exist and docs lint enforces their required structure
+  documentation standards, `build_artifacts`, `docker_policy`, and `edge_routing` all carry the
+  stronger summary-or-current-status-or-validation structure required by the plan, and docs lint
+  enforces that structure mechanically
 - Monitoring is not a supported first-class surface.
 - the supported web test surfaces use a non-deprecated PureScript runner posture and sanitize
   conflicting Playwright color-control environment variables
-- the last Sprint 6.16 root-runtime, testing-doc, and shared-banner cleanup items are implemented,
-  and the final supported validation rerun is clean on the current worktree
+- the last Phase-6 compatibility-shim cleanup items are implemented: the runtime and cache layers
+  read only protobuf-backed `*.pb` state, PureScript contract generation writes only
+  `web/src/Generated/Contracts.purs`, Harbor-first bootstrap carries no helper-registry cleanup
+  shims, and the final supported validation rerun is clean on the current worktree
 
 ## Operator and Host Components
 
@@ -55,9 +59,11 @@
 | Apple host prerequisite bootstrap | governed docs plus Haskell bootstrap logic | minimize Apple pre-existing host installs and let `infernix` reconcile supported Homebrew-managed tools and Poetry bootstrap | the supported Apple host path reconciles Colima, Docker CLI, `kind`, `kubectl`, `helm`, Node.js, and Poetry on demand after the Homebrew-plus-ghcup baseline is in place |
 | Workflow-helper closure | `src/Infernix/Workflow.hs`, `src/Infernix/Cluster.hs` | keep web dependency readiness and related workflow checks DRY across CLI and cluster paths | no material workflow-helper gap remains in the worktree |
 | Testing doctrine docs | `documents/engineering/testing.md` and `documents/development/testing_strategy.md` | keep one canonical testing doctrine together with one operator-facing detail layer | the canonical doctrine and supporting operator-detail split are present; no material testing-doc gap remains in the worktree |
+| Broad engineering-doc structure enforcement | `documents/engineering/build_artifacts.md`, `documents/engineering/docker_policy.md`, `documents/engineering/edge_routing.md`, `src/Infernix/Lint/Docs.hs` | keep broad contract docs aligned with the stronger summary, current-status, and validation structure required by the plan where applicable | the remaining broad engineering docs now carry that structure and docs lint enforces it; no material doctrine-depth gap remains in the worktree |
 | Route-aware docs and lint | `src/Infernix/Lint/Chart.hs`, `src/Infernix/Lint/Docs.hs`, and route-oriented docs under `documents/` | keep the route registry, data-driven HTTPRoute template, and route documentation mechanically aligned | registry-backed generated sections drive the route-oriented docs and chart or docs validation expectations |
 | Assistant workflow doctrine | `AGENTS.md`, `CLAUDE.md`, `documents/documentation_standards.md`, and `documents/development/assistant_workflow.md` | keep assistant-facing guidance aligned with canonical docs without parallel root-level workflow contracts | the canonical assistant-workflow doc exists, and the root automation docs stay thin and link to it |
 | Browser-contract source | `src/Infernix/Web/Contracts.hs`, `web/package.json` | keeps handwritten Haskell contract source out of `Generated/` while preserving generated PureScript output there | generated PureScript output is rebuilt on demand under `web/src/Generated/`; no material ownership gap remains in the worktree |
+| Residual compatibility cleanup | `src/Infernix/Runtime.hs`, `src/Infernix/Runtime/Cache.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs` | retire compatibility shims for obsolete result or cache-manifest files, retired generated-contract output paths, and the old helper-registry bootstrap model | supported code paths use protobuf-backed result or cache-manifest files, `web/src/Generated/Contracts.purs` is the only generated frontend-contract output, and Harbor-first bootstrap carries no helper-registry cleanup shims; no material compatibility gap remains in the worktree |
 | Helm deployment assets | `chart/Chart.yaml`, `chart/values.yaml`, `chart/templates/` | hold repo-owned workloads, ConfigMaps, Gateway resources, and third-party chart dependencies | no material HA-route gap remains on the final chart shape |
 | Kind topology assets | `kind/cluster-apple-silicon.yaml`, `kind/cluster-linux-cpu.yaml`, `kind/cluster-linux-cuda.yaml` | mode-specific Kind shapes, including GPU-enabled `linux-cuda` | no material Kind-topology definition gap remains in the worktree |
 | Protobuf contract assets | `proto/infernix/...` plus on-demand generated `tools/generated_proto/` stubs | define canonical runtime, manifest, and event schema boundaries | generated stubs must stay untracked |

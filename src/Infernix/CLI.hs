@@ -3,6 +3,7 @@
 module Infernix.CLI
   ( main,
     extractRuntimeMode,
+    writeGeneratedPursContracts,
   )
 where
 
@@ -519,12 +520,10 @@ writeGeneratedPursContracts runtimeMode outputDir = do
   let generatedDir = outputDir </> "Generated"
       tempGeneratedRoot = outputDir </> ".bridge-generated"
       generatedSourceFile = tempGeneratedRoot </> "Infernix" </> "Web" </> "Contracts.purs"
-      legacyOutputFile = outputDir </> "Infernix" </> "Web" </> "Contracts.purs"
       outputFile = generatedDir </> "Contracts.purs"
       bridgeSwitch = noLenses <> noArgonautCodecs
   createDirectoryIfMissing True generatedDir
   removePathForcibly tempGeneratedRoot `catchAnyIOException` (\_ -> pure ())
-  removePathForcibly legacyOutputFile `catchAnyIOException` (\_ -> pure ())
   createDirectoryIfMissing True tempGeneratedRoot
   writePSTypesWith bridgeSwitch tempGeneratedRoot (buildBridge (contractArrayBridge <|> defaultBridge)) Contracts.contractSumTypes
   normalizeGeneratedPursContracts runtimeMode generatedSourceFile outputFile

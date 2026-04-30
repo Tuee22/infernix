@@ -28,6 +28,8 @@ rerun is clean. The table below separates the supported contract from the curren
 | Generated deployment inputs | `chart/values.yaml` holds stable defaults only; generated demo-config and publication payloads are ephemeral inputs | no material generated-input gap remains in the worktree |
 | Validation doctrine | one canonical testing doctrine plus one canonical Haskell-style guide describe enforced rules, review guidance, validation entrypoints, and the enforcement model they rely on | no material validation-doctrine gap remains in the worktree |
 | Engineering doctrine depth | broad engineering docs answer the rule, current-versus-target, validation, and substrate-versus-platform questions directly | the canonical engineering docs follow that broader structure and docs lint enforces it; no material doctrine-depth gap remains in the worktree |
+| Imported-practice scope | `mattandjames`-derived follow-ons apply only to repository governance, CLI ownership, launcher boundaries, and doctrine structure; product-specific features or docs from that repo remain out of scope | no material imported-practice-scoping gap remains in the worktree |
+| Residual compatibility cleanup | supported paths stop reading or deleting retired result, cache-manifest, generated-contract, and helper-registry state | supported code paths use protobuf-backed result and cache-manifest files, `web/src/Generated/Contracts.purs` is the only generated frontend-contract output, and Harbor-first bootstrap carries no helper-registry cleanup shims; no material compatibility gap remains in the worktree |
 | Monitoring stance | the supported platform either owns one canonical monitoring doctrine or explicitly treats monitoring as unsupported | Monitoring is not a supported first-class surface. The dormant `victoria-metrics-k8s-stack` chart toggle is removed, and no material monitoring-stance gap remains in the current worktree |
 
 ## Supported Outcome
@@ -76,6 +78,10 @@ rerun is clean. The table below separates the supported contract from the curren
   `linux-cuda`
 - keeps generated artifacts out of git, including generated proto stubs, `*.pyc`,
   `__pycache__/`, Poetry lockfiles, `web/spago.lock`, `web/dist/`, and `web/src/Generated/`
+- limits `mattandjames`-inspired follow-ons to repository-governance, CLI, launcher-boundary, and
+  doctrine-structure work; the supported contract does not import that repo's offline-browser or
+  Keycloak flows, single-runtime `llama-server` stack, IndexedDB-specific docs, checked-in
+  generated PureScript policy, or container-only execution rule
 
 ## Topology Baseline
 

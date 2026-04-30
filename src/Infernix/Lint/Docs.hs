@@ -229,6 +229,40 @@ documentStructureRules =
           ]
       },
     DocumentStructureRule
+      { documentStructurePath = "documents/engineering/build_artifacts.md",
+        documentStructureRequirements =
+          [ RequireOneOfSections ["## TL;DR", "## Executive Summary"],
+            RequireSection "## Current Status",
+            RequireSection "## Build Roots",
+            RequireSection "## Generated Demo Config Publication",
+            RequireSection "## Rules",
+            RequireSection "## Validation"
+          ]
+      },
+    DocumentStructureRule
+      { documentStructurePath = "documents/engineering/docker_policy.md",
+        documentStructureRequirements =
+          [ RequireOneOfSections ["## TL;DR", "## Executive Summary"],
+            RequireSection "## Current Status",
+            RequireSection "## Host Prerequisite Boundary",
+            RequireSection "## Supported Usage",
+            RequireSection "## Image Set",
+            RequireSection "## Unsupported Usage",
+            RequireSection "## Validation"
+          ]
+      },
+    DocumentStructureRule
+      { documentStructurePath = "documents/engineering/edge_routing.md",
+        documentStructureRequirements =
+          [ RequireOneOfSections ["## TL;DR", "## Executive Summary"],
+            RequireSection "## Current Status",
+            RequireSection "## Route Inventory",
+            RequireSection "## Gateway Ownership",
+            RequireSection "## Port Selection Rules",
+            RequireSection "## Validation"
+          ]
+      },
+    DocumentStructureRule
       { documentStructurePath = "documents/engineering/implementation_boundaries.md",
         documentStructureRequirements =
           [ RequireOneOfSections ["## TL;DR", "## Executive Summary"],
