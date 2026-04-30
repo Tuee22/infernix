@@ -39,6 +39,9 @@ None.
 | Repeated assistant workflow guidance across `AGENTS.md` and `CLAUDE.md` without one canonical `documents/` assistant-workflow home | The root automation entry docs now stay thin and point at `documents/development/assistant_workflow.md` as the canonical repository-level assistant workflow home | Phase 6 Sprint 6.12 |
 | Duplicated web-dependency readiness checks in `src/Infernix/Workflow.hs` and `src/Infernix/Cluster.hs` | The cluster path now reuses `Infernix.Workflow.ensureWebDependencies` instead of maintaining its own readiness probe | Phase 6 Sprint 6.12 |
 | Dormant `victoria-metrics-k8s-stack` monitoring placeholder in `chart/values.yaml` | Monitoring is not a supported first-class surface, so the stale chart toggle was removed instead of implying a supported monitoring stack | Phase 6 Sprint 6.14 |
+| Root `README.md` wording that described `linux-cpu` as a native-or-containerized lane | The supported runtime model is one host-native Apple inference lane plus two containerized Linux lanes, so the remaining root-language drift item had to be removed to keep runtime honesty aligned across the plan and governed docs | Phase 6 Sprint 6.16 |
+| Duplicate demo-config generated-banner literals in `src/Infernix/Workflow.hs` and `src/Infernix/DemoConfig.hs` | The shared workflow-helper closure was not complete while the demo-config banner constant still existed in parallel definitions | Phase 6 Sprint 6.16 |
+| `documents/development/testing_strategy.md` metadata and purpose text that framed it as an authoritative canonical validation surface alongside `documents/engineering/testing.md` | The testing doctrine now closes through one canonical home, with `documents/development/testing_strategy.md` reduced to supporting operator detail instead of a competing authoritative source | Phase 6 Sprint 6.16 |
 
 ## Cross-References
 

@@ -91,7 +91,7 @@ the HA testing and demo ground used to validate and demonstrate them.
 | Mode | Build or deployment shape | Role in the repository | Intended engines |
 |------|---------------------------|------------------------|------------------|
 | Apple Silicon / Metal | host-native Apple binary path | direct host execution, local development, and Apple runtime parity behind the shared control-plane contract | `llama.cpp`, `MLX` or `MLX-LM`, `vllm-metal`, `PyTorch` on MPS, `Core ML`, `jax-metal` |
-| Ubuntu 24.04 / CPU | native or containerized Linux CPU path | CPU-only validation, fallback, and non-GPU workloads under the same manifests, messaging, and runtime contract | `llama.cpp`, `whisper.cpp`, `PyTorch` CPU, `ONNX Runtime` CPU, JVM-hosted tools |
+| Ubuntu 24.04 / CPU | containerized Linux CPU path | CPU-only validation, fallback, and non-GPU workloads under the same manifests, messaging, and runtime contract | `llama.cpp`, `whisper.cpp`, `PyTorch` CPU, `ONNX Runtime` CPU, JVM-hosted tools |
 | Ubuntu 24.04 / NVIDIA CUDA Container | pinned CUDA container lane with NVIDIA runtime | high-throughput GPU execution under the same manifests, messaging, and runtime contract | `vLLM`, `PyTorch` CUDA, `Diffusers` or `ComfyUI`, `CTranslate2`, `TensorFlow` CUDA, `JAX/XLA`, `llama.cpp` when GGUF is the right artifact |
 
 On Apple Silicon, the operator workflow has no Python prerequisite. Poetry and a repo-local
@@ -155,8 +155,8 @@ Current status:
 - Apple host-native adapter setup and validation paths bootstrap a user-local `poetry` executable
   through the host's built-in Python when it is absent and then materialize `python/.venv/` on
   demand
-- `linux-cpu` and `linux-cuda` still keep their host prerequisites at Docker-only plus the
-  documented NVIDIA additions for `linux-cuda`
+- `linux-cpu` keeps its host prerequisites at Docker Engine plus the Docker Compose plugin, and
+  `linux-cuda` adds the documented NVIDIA driver and container-toolkit requirements on top of that
 
 The Linux install examples below assume an Ubuntu 24.04 host.
 

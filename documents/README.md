@@ -25,8 +25,9 @@
 - [development/purescript_policy.md](development/purescript_policy.md) defines the PureScript
   toolchain (purs, spago), the `purescript-spec` test framework, and the Haskell-owned generated
   contract derivation consumed by the demo UI
-- [development/testing_strategy.md](development/testing_strategy.md) records the implemented lint,
-  unit, integration, and routed E2E coverage
+- [development/testing_strategy.md](development/testing_strategy.md) records operator-facing
+  validation-lane detail, matrix selection, and implemented coverage beneath the canonical testing
+  doctrine
 - [development/chaos_testing.md](development/chaos_testing.md) records the current HA-failure
   validation status and the Phase 6 ownership for that coverage
 - [engineering/build_artifacts.md](engineering/build_artifacts.md) defines build-output isolation

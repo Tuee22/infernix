@@ -105,6 +105,8 @@ Rules:
   guidance when repository-level rules change.
 - `documents/development/assistant_workflow.md` is the canonical repository-level assistant
   workflow document; `AGENTS.md` and `CLAUDE.md` summarize and link to it.
+- supporting-reference docs may narrow or operationalize a topic already owned elsewhere, but they
+  point back to the canonical owner instead of presenting a second authoritative home.
 
 ## Naming And Linking
 

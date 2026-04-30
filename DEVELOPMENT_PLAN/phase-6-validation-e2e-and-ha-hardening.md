@@ -11,36 +11,43 @@
 
 ## Phase Status
 
-Sprints 6.1 through 6.15 are `Done`. The validation
-entrypoints, active-mode catalog coverage, clean-host bootstrap logic, governed-root-document
-metadata closure, structured CLI-registry closure, route-aware docs, assistant-workflow
-canonicalization, and shared workflow-helper reuse are all present in the current worktree. The
-doctrine rewrite and monitoring-stance resolution imported from
-`INFERNIX_IMPROVEMENTS_FROM_MATTANDJAMES.md` are now landed and validated. The supported web test
-surface now uses a non-deprecated PureScript runner posture, both Playwright launch paths sanitize
-conflicting color-control environment variables, and the current validation rerun passes cleanly
-through the final entrypoints.
+Sprints 6.1 through 6.16 are `Done`. The validation entrypoints,
+active-mode catalog coverage, clean-host bootstrap logic, governed-root-document metadata closure,
+structured CLI-registry closure, route-aware docs, assistant-workflow canonicalization, and shared
+workflow-helper reuse are all present in the current worktree. The canonical docs carry the deeper
+doctrine structure this phase depends on, the monitoring stance is explicit, the supported web
+test surface uses a non-deprecated PureScript runner posture, both Playwright launch paths
+sanitize conflicting color-control environment variables, and the final supported rerun passes
+through `infernix lint docs`, `infernix docs check`, and the full `infernix test all` suite.
 
 ## Current Repo Assessment
 
-The repository already has lint, unit, integration, and Playwright entrypoints. The canonical
-testing, boundary, portability, storage, and Haskell-style docs are landed, and the baked Linux
-substrate image now carries the source-snapshot manifest needed for git-less `infernix lint
-files` runs. The routed Playwright suite exhaustively exercises every demo-visible generated
-catalog entry, the integration suite enumerates every generated active-mode catalog entry while
-also carrying Harbor, MinIO, Pulsar, and Harbor PostgreSQL recovery or lifecycle checks in code,
-the Apple host-native path now reconciles its remaining supported prerequisites from the
-Homebrew-plus-ghcup baseline, the governed root docs now carry the stricter metadata model, and
-the structured Haskell command registry now owns parsing, help output, and the generated
-CLI-reference sections that docs lint enforces. The route-oriented docs now consume
-registry-backed generated sections, the root assistant entry docs point at one canonical
-assistant-workflow document under `documents/`, and the cluster path reuses the shared
-web-dependency readiness helper instead of reimplementing it. The broad engineering-doc rewrite,
-the deeper ownership and lifecycle treatment, the fuller Haskell-guide split, and the monitoring
-stance resolution are now all landed in the worktree. Monitoring is not a supported first-class
-surface. `infernix lint docs`, `infernix docs check`, and `infernix test all` now pass on the
-current worktree, and the supported web validation path is clean on the final entrypoints. Phase 6
-is therefore `Done`.
+The repository has lint, unit, integration, and Playwright entrypoints. The canonical testing,
+boundary, portability, storage, and Haskell-style docs are present, and the baked Linux substrate
+image carries the source-snapshot manifest needed for git-less `infernix lint files` runs. The
+routed Playwright suite exhaustively exercises every demo-visible generated catalog entry, the
+integration suite enumerates every generated active-mode catalog entry while also carrying Harbor,
+MinIO, Pulsar, and Harbor PostgreSQL recovery or lifecycle checks in code, the Apple host-native
+path reconciles its remaining supported prerequisites from the Homebrew-plus-ghcup baseline, the
+governed root docs carry the stricter metadata model, and the structured Haskell command registry
+owns parsing, help output, and the generated CLI-reference sections that docs lint enforces. The
+route-oriented docs consume registry-backed generated sections, the root assistant entry docs point
+at one canonical assistant-workflow document under `documents/`, and the cluster path reuses the
+shared web-dependency readiness helper instead of reimplementing it. The broader engineering-doc
+structure, the deeper ownership and lifecycle treatment, the fuller Haskell-guide split, and the
+explicit monitoring stance are all reflected in the current worktree. Monitoring is not a
+supported first-class surface.
+
+No remaining work is implementation- or validation-shaped. The root README now
+uses the honest containerized-`linux-cpu` wording, `documents/development/testing_strategy.md` now
+acts as a supporting operator-detail reference beneath `documents/engineering/testing.md`, and
+`src/Infernix/DemoConfig.hs` now consumes the shared demo-config banner literal from
+`src/Infernix/Workflow.hs`. The docs validators and the full supported suite pass on this
+worktree state, so Phase 6 is `Done`.
+
+## Remaining Work
+
+None.
 
 ## Validation Surface
 
@@ -360,7 +367,7 @@ standards they already cite.
 - `README.md` carries the governed root-document metadata block appropriate for an orientation
   document and makes its canonical-home links explicit
 - `AGENTS.md` and `CLAUDE.md` carry the explicit supersession or canonical-home markers required
-  for governed entry documents and now stay thin while linking to the canonical assistant-workflow
+  for governed entry documents and stay thin while linking to the canonical assistant-workflow
   document under `documents/`
 - `documents/documentation_standards.md` describes the root-document metadata contract in the same
   terms the repo actually enforces
@@ -607,6 +614,45 @@ Remove the known non-failing warning noise from the supported web-validation pat
 
 None.
 
+---
+
+## Sprint 6.16: Residual Canonical-Home and Workflow-Helper Closure [Done]
+
+**Status**: Done
+**Implementation**: `README.md`, `documents/engineering/testing.md`, `documents/development/testing_strategy.md`, `documents/README.md`, `src/Infernix/Workflow.hs`, `src/Infernix/DemoConfig.hs`, `src/Infernix/Lint/Docs.hs`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
+**Docs to update**: `README.md`, `documents/engineering/testing.md`, `documents/development/testing_strategy.md`, `documents/README.md`, `documents/architecture/runtime_modes.md`, `documents/documentation_standards.md`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/00-overview.md`, `DEVELOPMENT_PLAN/system-components.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
+
+### Objective
+
+Close the last residual DRY and canonical-topic gaps surfaced by the repo review so the runtime
+model, testing doctrine, and shared workflow-helper contract stop overclaiming closure.
+
+### Deliverables
+
+- the root README uses the same honest runtime-language contract as the governed docs and plan:
+  one host-native Apple inference lane plus two containerized Linux lanes
+- `documents/engineering/testing.md` remains the sole canonical testing doctrine, and
+  `documents/development/testing_strategy.md` is reduced to supporting operator-detail guidance
+  instead of a second authoritative canonical validation surface
+- `src/Infernix/Workflow.hs` owns the demo-config generated-banner constant and
+  `src/Infernix/DemoConfig.hs` consumes that shared literal instead of keeping a parallel copy
+- docs lint and the cleanup ledger both record the closure so those stale guidance or duplicate
+  helper surfaces do not quietly return
+
+### Validation
+
+- `infernix docs check` fails if the governed testing-doc metadata or purpose text reintroduce a
+  second canonical testing home or if the root runtime-language contract drifts from the governed
+  honest-runtime model
+- `infernix test unit` continues to pass once demo-config generation and decoding consume one
+  shared banner literal
+- `infernix test lint` continues to pass after the ledger and docs-lint rules are updated for the
+  final canonical-home cleanup
+
+### Remaining Work
+
+None.
+
 ## Documentation Requirements
 
 **Engineering docs to create/update:**
@@ -637,12 +683,16 @@ None.
 
 **Cross-references to add:**
 - keep [phase-0-documentation-and-governance.md](phase-0-documentation-and-governance.md) aligned
-  when governed root-document metadata rules change
+  when governed root-document metadata rules or canonical-home posture change
 - keep [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md)
-  aligned when command-registry ownership or CLI-reference derivation rules change
+  aligned when command-registry ownership, shared workflow-helper closure, or CLI-reference
+  derivation rules change
+- keep [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md)
+  aligned when runtime-honesty wording or README-matrix interpretation changes
 - keep [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md)
   aligned when HA claims, route assumptions, or active-mode validation rules change
-- keep [system-components.md](system-components.md) aligned when the supported monitoring stance
-  changes
+- keep [system-components.md](system-components.md) aligned when testing-doctrine ownership,
+  shared-helper closure, or the supported monitoring stance changes
 - keep [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) aligned when any pending
-  route-doc, route-lint, assistant-doc, workflow-helper, or monitoring-surface cleanup item closes
+  route-doc, route-lint, assistant-doc, workflow-helper, testing-doc, runtime-language, or
+  monitoring-surface cleanup item closes

@@ -10,16 +10,16 @@
 
 ## Phase Status
 
-The phase-one foundation is landed at the repository-shape level: generated-artifact hygiene, the
+The phase-one foundation remains closed in the current worktree: generated-artifact hygiene, the
 command-registry foundation, governed root-doc alignment, and the snapshot-style outer-container
-launcher all exist in the current worktree, and the later Phase 6 follow-ons that tightened
-root-document metadata, collapsed the CLI registry into one structured definition, moved
-assistant workflow doctrine into a canonical `documents/` home, and removed the last duplicate
-cluster-local web-dependency readiness probe are now all closed.
+launcher are all implemented, and the later closures that tightened root-document metadata,
+collapsed the CLI registry into one structured definition, moved assistant workflow doctrine into
+a canonical `documents/` home, and removed the last duplicate cluster-local web-dependency
+readiness probe are also reflected here.
 
 ## Current Repo Assessment
 
-The repo now matches the broad Phase 1 contract: the control plane has a Haskell-owned
+The repo matches the broad Phase 1 contract: the control plane has a Haskell-owned
 command registry, the governed root docs point at canonical `documents/` topics with explicit
 metadata, the Linux launcher uses a baked image snapshot, and Playwright workflows no longer
 depend on `npx`. No material Phase 1 follow-on gap remains in the current worktree.
@@ -286,8 +286,9 @@ each workflow topic one canonical home.
 - a shared Haskell workflow-helper foundation exists for:
   - npm invocation resolution
   - platform command availability checks
-  - shared generated-file banner literals
   - shared web-dependency readiness used by both CLI and cluster paths
+- later hardening phases may still collapse any remaining helper consumers or literals without
+  changing the Phase-1 ownership boundary
 - `documents/reference/cli_surface.md` becomes a short family overview that links to the canonical
   CLI reference instead of repeating it
 - `README.md`, `AGENTS.md`, and `CLAUDE.md` gain governed metadata and canonical-home links back

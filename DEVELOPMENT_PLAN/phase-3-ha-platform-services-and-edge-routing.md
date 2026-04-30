@@ -11,9 +11,9 @@
 ## Phase Status
 
 Sprints 3.1 through 3.8 are `Done`. The final chart shape, route registry, publication contract,
-and `/pulsar/ws -> /ws` rewrite contract are all represented in the current worktree, and the
-later Phase 6 hardening sprint that closed the registry-backed route-doc and route-lint follow-on
-is now complete.
+and `/pulsar/ws -> /ws` rewrite contract are all represented in the current worktree. The
+route-oriented docs and route-aware validation surfaces also consume registry-backed generated
+sections, so the route inventory stays mechanically aligned across Haskell, Helm, and docs.
 
 ## HA Reconcile Surface
 
@@ -42,7 +42,7 @@ is now complete.
 The supported cluster path runs the HA platform services and the optional demo HTTP host on the
 final Kind substrate. Publication metadata originates from `./.data/runtime/publication.json`, and
 the route inventory derives from one Haskell-owned registry plus one data-driven HTTPRoute
-template. The route-oriented docs and route-aware validation surfaces now consume registry-backed
+template. The route-oriented docs and route-aware validation surfaces consume registry-backed
 generated sections instead of handwritten inventories or phrase checks.
 
 ## Sprint 3.1: HA MinIO Deployment [Done]
@@ -283,7 +283,7 @@ rendered HTTPRoute set, publication metadata, and chart-facing route inputs.
 - publication-state rendering and `/api/publication` derive their route inventory from the same registry
 - the runtime or chart route inventory is no longer duplicated across `src/Infernix/Models.hs`,
   `chart/templates/httproutes.yaml`, and generated Helm values
-- route-oriented docs and route-aware validation now consume registry-backed generated sections
+- route-oriented docs and route-aware validation consume registry-backed generated sections
   derived from that same route registry
 
 ### Validation

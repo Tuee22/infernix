@@ -49,29 +49,33 @@ A phase or sprint can move to `Done` only when all of the following are true:
 
 ## Current Repo Assessment
 
-Phase 0 through Phase 6 are now closed in the current worktree, and the major DRY-cleanup work has
-landed: the shared Python project, the shared Linux substrate Dockerfile, the route registry, the
-command registry, the browser-contract move, the snapshot launcher, and the docs doctrine refresh
-are all present. The worktree also contains the `linux-cpu` outer-container launcher, the
-supported direct `linux-cuda` launcher, the routed Pulsar path, the HA and lifecycle coverage,
-and the routed Playwright coverage that those closed phases depend on.
+Phase 0 through Phase 6 are `Done` in the current worktree. The
+repository contains the shared Python project, the shared Linux substrate Dockerfile, the route
+registry, the command registry, the handwritten browser-contract source under
+`src/Infernix/Web/Contracts.hs`, the snapshot-style Linux launcher, the `linux-cpu`
+outer-container launcher, the supported direct `linux-cuda` launcher, the routed Pulsar path, the
+HA lifecycle coverage, and the routed Playwright coverage those phases require.
 
-Phase 6 is currently `Done` in the current worktree. The Apple host-native path reduces
-pre-existing host requirements to Homebrew plus ghcup, treats Colima as the only supported Apple
-Docker environment, reconciles the remaining Homebrew-managed Apple host tools on demand, and
-bootstraps Poetry through the host's built-in Python when adapter setup or validation first needs
-it. The governed root docs now carry the stricter metadata block, and the structured Haskell
-command registry now owns parsing, help output, and the generated CLI-reference sections that docs
-lint enforces mechanically. The route-oriented docs now consume registry-backed sections, the root
-assistant entry docs now point at one canonical assistant-workflow home under `documents/`, and
-the cluster path reuses the shared web-dependency readiness helper instead of carrying a duplicate
-probe. The doctrine-depth rewrite imported from
-`INFERNIX_IMPROVEMENTS_FROM_MATTANDJAMES.md` is now landed in the governed docs together with
-docs-lint enforcement for the stronger structure. Monitoring is not a supported first-class surface.
-The dormant `victoria-metrics-k8s-stack` chart toggle is gone, and the current validation rerun
-passes through `infernix lint docs`, `infernix docs check`, and `infernix test all`. The supported
-web test surfaces now use a non-deprecated PureScript runner posture and sanitized Playwright
-launch environments, so no Phase 6 follow-on remains open in the current worktree.
+The Phase-6-owned implementation hardening is now present in the worktree: the root README uses
+the honest runtime-language contract, `documents/engineering/testing.md` is the sole canonical
+testing doctrine while `documents/development/testing_strategy.md` is a supporting operator-detail
+reference, and `src/Infernix/Workflow.hs` owns the shared demo-config generated-banner literal
+consumed by `src/Infernix/DemoConfig.hs`. The Apple host-native path still reduces pre-existing
+host requirements to Homebrew plus ghcup, treats Colima as the only supported Apple Docker
+environment, reconciles the remaining Homebrew-managed Apple host tools on demand, and bootstraps
+Poetry through the host's built-in Python when adapter setup or validation first needs it. The
+governed root docs carry the stricter metadata block, the structured Haskell command registry owns
+parsing, help output, and the generated CLI-reference sections that docs lint enforces
+mechanically, the route-oriented docs consume registry-backed sections, the root assistant entry
+docs point at one canonical assistant-workflow home under `documents/`, and the cluster path
+reuses the shared web-dependency readiness helper instead of carrying a duplicate probe.
+Monitoring is not a supported first-class surface. The dormant `victoria-metrics-k8s-stack` chart
+toggle is absent from `chart/values.yaml`, and the supported web validation surfaces use the
+non-deprecated PureScript runner posture together with sanitized Playwright launch environments.
+
+The final Sprint 6.16 hardening rerun now passes through `infernix lint docs`, `infernix docs
+check`, and the full `infernix test all` suite on this updated plan state, so no remaining
+Phase-6-scoped follow-on is left open in the current worktree.
 
 ## Execution Contexts and Runtime Modes
 
@@ -115,8 +119,9 @@ The supported platform closes around these rules:
 - the Linux outer-container launcher uses an image-snapshot model: rebuild the image when the repo
   changes, then run `docker compose run --rm infernix infernix ...`; the container bind-mounts
   only `./.data/` and uses named volumes for `/opt/build` and `/root/.cabal`
-- Linux host prerequisites close at Docker for `linux-cpu` and Docker plus the supported NVIDIA
-  host prerequisites for `linux-cuda`; everything else lives in the substrate images
+- Linux host prerequisites close at Docker Engine plus the Docker Compose plugin for `linux-cpu`
+  and Docker Engine plus the supported NVIDIA driver or container-toolkit setup for `linux-cuda`;
+  everything else lives in the substrate images
 - Python is restricted to one shared Poetry project rooted at `python/pyproject.toml` and one
   shared adapter tree under `python/adapters/`; all adapter execution runs through `poetry run`
   and the canonical Python quality gate is `poetry run check-code`

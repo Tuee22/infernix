@@ -1,9 +1,13 @@
 # Testing Strategy
 
-**Status**: Authoritative source
+**Status**: Supporting reference
 **Referenced by**: [local_dev.md](local_dev.md), [../../DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md](../../DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md)
 
-> **Purpose**: Describe the canonical validation surface and the responsibility of each test layer.
+> **Purpose**: Describe operator-facing validation-lane detail and matrix coverage that support the canonical testing doctrine.
+
+The canonical validation entrypoints, fail-fast rules, and supported boundaries live in
+[../engineering/testing.md](../engineering/testing.md). This page records the implemented
+mode-specific coverage, matrix behavior, and operator detail behind those canonical entrypoints.
 
 ## Validation Layers
 
@@ -23,7 +27,7 @@
   endpoints, service-path request or result publication through the filesystem-backed Pulsar
   simulation, `cluster status`, every generated active-mode catalog entry from the mounted demo
   config, demo-ui disablement on the `linux-cpu` lane, and edge-port rediscovery on the
-  host-native `linux-cpu` lane
+  host-native control-plane `linux-cpu` lane
 - `infernix test e2e` validates the routed browser surface by comparing `/api/models` to the
   generated demo config and exercising every routed catalog entry through both the HTTP inference
   endpoint and the browser workbench

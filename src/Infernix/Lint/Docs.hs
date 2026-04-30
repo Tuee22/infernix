@@ -304,6 +304,7 @@ runDocsLint = do
   readmeContents <- readFile (repoRoot paths </> "README.md")
   unless ("documents/" `isInfixOf` readmeContents && "DEVELOPMENT_PLAN/" `isInfixOf` readmeContents) $
     ioError (userError "README.md must reference documents/ and DEVELOPMENT_PLAN/")
+  validateReadmeRuntimeModeContract readmeContents
   forM_ requiredDocs $ \relativePath -> do
     contents <- readFile (repoRoot paths </> relativePath)
     validateGovernedDocumentMetadata relativePath contents
@@ -320,6 +321,7 @@ runDocsLint = do
   forM_ documentStructureRules $ \rule -> do
     contents <- readFile (repoRoot paths </> documentStructurePath rule)
     validateDocumentStructure rule contents
+  validateTestingDocOwnership paths
   validateUnsupportedMonitoringStance paths
   forM_ phaseDocs $ \relativePath -> do
     contents <- readFile (repoRoot paths </> relativePath)
@@ -423,6 +425,40 @@ validateDocumentStructure rule contents =
                     )
                 )
             )
+
+validateReadmeRuntimeModeContract :: String -> IO ()
+validateReadmeRuntimeModeContract contents = do
+  unless
+    ("| Apple Silicon / Metal | host-native Apple binary path |" `isInfixOf` contents)
+    (ioError (userError "README.md must describe Apple Silicon as the host-native binary path"))
+  unless
+    ("| Ubuntu 24.04 / CPU | containerized Linux CPU path |" `isInfixOf` contents)
+    (ioError (userError "README.md must describe linux-cpu as the containerized Linux CPU path"))
+
+validateTestingDocOwnership :: Paths -> IO ()
+validateTestingDocOwnership paths = do
+  doctrineContents <- readFile (repoRoot paths </> "documents/engineering/testing.md")
+  unless
+    ("**Status**: Authoritative source" `isInfixOf` doctrineContents)
+    (ioError (userError "documents/engineering/testing.md must remain an authoritative source"))
+  strategyContents <- readFile (repoRoot paths </> "documents/development/testing_strategy.md")
+  unless
+    ("**Status**: Supporting reference" `isInfixOf` strategyContents)
+    (ioError (userError "documents/development/testing_strategy.md must be a supporting reference"))
+  unless
+    ("support the canonical testing doctrine" `isInfixOf` strategyContents)
+    ( ioError
+        ( userError
+            "documents/development/testing_strategy.md must describe itself as supporting the canonical testing doctrine"
+        )
+    )
+  when
+    ("canonical validation surface" `isInfixOf` strategyContents)
+    ( ioError
+        ( userError
+            "documents/development/testing_strategy.md must not present itself as the canonical validation surface"
+        )
+    )
 
 validateUnsupportedMonitoringStance :: Paths -> IO ()
 validateUnsupportedMonitoringStance paths = do
