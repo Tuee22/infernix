@@ -1,6 +1,6 @@
 # Phase 6: Validation, E2E, and HA Hardening
 
-**Status**: Done
+**Status**: Active
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
 
 > **Purpose**: Define the supported static-quality and test matrix for the two-binary topology,
@@ -11,26 +11,35 @@
 
 ## Phase Status
 
-Sprints 6.1 through 6.10 are `Done`. The validation entrypoints, active-mode catalog coverage,
-clean-host bootstrap logic, governed-root-document metadata closure, and structured CLI-registry
-closure are all present in the current worktree. Sprints 6.11 and 6.12 are now also `Done`: the
-route-aware docs and lint are registry-backed, assistant-workflow doctrine lives in one canonical
-`documents/` home, and the cluster path reuses the shared web-dependency readiness helper.
+Sprints 6.1 through 6.12 are `Done`. Sprints 6.13 and 6.14 are `Planned`. The validation
+entrypoints, active-mode catalog coverage, clean-host bootstrap logic, governed-root-document
+metadata closure, structured CLI-registry closure, route-aware docs, assistant-workflow
+canonicalization, and shared workflow-helper reuse are all present in the current worktree. The
+remaining open work imported from `INFERNIX_IMPROVEMENTS_FROM_MATTANDJAMES.md` is doctrinal rather
+than runtime: the broad engineering docs still need stronger structure, deeper boundary or state
+coverage, a fuller Haskell-guide split, and an explicit monitoring stance.
 
 ## Current Repo Assessment
 
 The repository already has lint, unit, integration, and Playwright entrypoints. The canonical
-testing, boundary, portability, and Haskell-style docs are landed, and the baked Linux substrate
-image now carries the source-snapshot manifest needed for git-less `infernix lint files` runs. The
-routed Playwright suite exhaustively exercises every demo-visible generated catalog entry, the
-integration suite enumerates every generated active-mode catalog entry while also carrying Harbor,
-MinIO, Pulsar, and Harbor PostgreSQL recovery or lifecycle checks in code, the Apple host-native
-path now reconciles its remaining supported prerequisites from the Homebrew-plus-ghcup baseline,
-the governed root docs now carry the stricter metadata model, and the structured Haskell command
-registry now owns parsing, help output, and the generated CLI-reference sections that docs lint
-enforces. The route-oriented docs now consume registry-backed generated sections, the root
-assistant entry docs point at one canonical assistant-workflow document under `documents/`, and
-the cluster path reuses the shared web-dependency readiness helper instead of reimplementing it.
+testing, boundary, portability, storage, and Haskell-style docs are landed, and the baked Linux
+substrate image now carries the source-snapshot manifest needed for git-less `infernix lint
+files` runs. The routed Playwright suite exhaustively exercises every demo-visible generated
+catalog entry, the integration suite enumerates every generated active-mode catalog entry while
+also carrying Harbor, MinIO, Pulsar, and Harbor PostgreSQL recovery or lifecycle checks in code,
+the Apple host-native path now reconciles its remaining supported prerequisites from the
+Homebrew-plus-ghcup baseline, the governed root docs now carry the stricter metadata model, and
+the structured Haskell command registry now owns parsing, help output, and the generated
+CLI-reference sections that docs lint enforces. The route-oriented docs now consume
+registry-backed generated sections, the root assistant entry docs point at one canonical
+assistant-workflow document under `documents/`, and the cluster path reuses the shared
+web-dependency readiness helper instead of reimplementing it. The remaining gap inside this phase
+is documentation-depth closure: the broad engineering docs still need the stronger summary or
+current-status or validation structure described in `development_plan_standards.md`,
+`documents/engineering/implementation_boundaries.md` and `documents/engineering/storage_and_state.md`
+still need deeper ownership and lifecycle treatment, `documents/development/haskell_style.md`
+still needs the editor-only and typed-control-flow review doctrine, and the repository still needs
+an explicit monitoring decision tied to the dormant `victoria-metrics-k8s-stack` chart setting.
 
 ## Validation Surface
 
@@ -478,20 +487,115 @@ workflow-helper closure.
 
 None.
 
+---
+
+## Sprint 6.13: Engineering Doctrine Depth and Haskell Guide Completion [Planned]
+
+**Status**: Planned
+**Implementation**: `documents/engineering/implementation_boundaries.md`, `documents/engineering/storage_and_state.md`, `documents/engineering/portability.md`, `documents/engineering/testing.md`, `documents/development/haskell_style.md`, `src/Infernix/Lint/Docs.hs`
+**Docs to update**: `documents/engineering/implementation_boundaries.md`, `documents/engineering/storage_and_state.md`, `documents/engineering/portability.md`, `documents/engineering/testing.md`, `documents/development/haskell_style.md`, `documents/documentation_standards.md`
+
+### Objective
+
+Finish the remaining `mattandjames`-inspired doctrine-depth work so the broad engineering docs and
+the Haskell guide match the stronger structure already required by
+`development_plan_standards.md`.
+
+### Deliverables
+
+- broad governed engineering docs that define supported contracts add the stronger structure from
+  `development_plan_standards.md`: `TL;DR` or `Executive Summary` when the topic is broad,
+  explicit `Current Status` notes when current behavior and target direction mix, and explicit
+  `Validation` sections when tests or lint prove the contract
+- `documents/engineering/implementation_boundaries.md` gains an ownership matrix for Haskell,
+  Python, chart, and generated surfaces together with adapter-local-versus-shared-contract type
+  boundaries, instance placement rules, and module-boundary doctrine
+- `documents/engineering/storage_and_state.md` gains an owner or durability table plus
+  failure-mode, rebuild, and cleanup rules for durable and derived state
+- `documents/engineering/portability.md` explicitly separates portable platform invariants from
+  local harness detail and names which differences are supported product contract versus substrate
+  implementation detail
+- `documents/engineering/testing.md` keeps the canonical testing doctrine in the stronger
+  structure and explicitly calls out preflight expectations, unsupported paths, and per-layer
+  validation obligations
+- `documents/development/haskell_style.md` points directly at `src/Infernix/Lint/HaskellStyle.hs`,
+  separates repository hard-gate inputs from editor-only guidance, and adds review doctrine for
+  module shape, function shape, effect-boundary clarity, and typed control flow
+- `src/Infernix/Lint/Docs.hs` enforces the required broad-doctrine sections for the docs whose
+  structure is part of the supported contract
+
+### Validation
+
+- `infernix docs check` fails when the named doctrine docs lose their required
+  summary-or-current-status-or-validation structure or contradict their enforced metadata contract
+- `infernix test lint` still passes once the deeper doc structure and Haskell-guide references land
+- `cabal --builddir=.build/cabal test infernix-haskell-style` remains the implementation-aligned
+  Haskell style gate described by the guide
+
+### Remaining Work
+
+- rewrite the named doctrine docs to the stronger structure and depth
+- add the targeted docs-lint checks for the required sections
+- rerun `infernix docs check` and `infernix test lint` after the documentation rewrite lands
+
+---
+
+## Sprint 6.14: Monitoring Stance Resolution and Final Doctrine Closure [Planned]
+
+**Status**: Planned
+**Implementation**: `documents/engineering/monitoring.md`, `documents/README.md`, `chart/values.yaml`, `DEVELOPMENT_PLAN/system-components.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`, `src/Infernix/Lint/Docs.hs`
+**Docs to update**: `documents/engineering/monitoring.md`, `documents/README.md`, `documents/engineering/testing.md`, `DEVELOPMENT_PLAN/system-components.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
+
+### Objective
+
+Resolve the supported monitoring stance explicitly instead of leaving a conditional placeholder in
+the plan and a dormant monitoring stack toggle in chart values.
+
+### Deliverables
+
+- the repository carries one explicit supported-contract decision for monitoring instead of a
+  dangling placeholder
+- if monitoring remains a first-class supported surface, `documents/engineering/monitoring.md`
+  exists as the canonical doctrine and states required outcomes, low-cardinality rules, typed
+  event-or-metric expectations, ownership, and launch-gate consequences
+- if monitoring is not a first-class supported surface, governed docs and the plan explicitly say
+  so, and dormant monitoring configuration such as the disabled `victoria-metrics-k8s-stack` chart
+  value is either removed or tracked as unsupported cleanup in
+  `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
+- the docs index and system component inventory point at the chosen monitoring stance so readers do
+  not infer support from leftover config alone
+- `src/Infernix/Lint/Docs.hs` checks that the plan and governed docs agree on the chosen
+  monitoring stance
+
+### Validation
+
+- `infernix docs check` fails if the plan, docs index, and monitoring doctrine or
+  unsupported-surface statement diverge
+- if monitoring is supported, the canonical monitoring doc is reachable from `documents/README.md`
+  and the relevant plan docs
+- if monitoring is unsupported, no governed doc claims first-class monitoring and any dormant
+  compatibility config is either removed or recorded in the cleanup ledger
+
+### Remaining Work
+
+- choose the supported monitoring stance
+- either land the monitoring doctrine doc or record the unsupported-surface cleanup and remove the
+  phase placeholders
+
 ## Documentation Requirements
 
 **Engineering docs to create/update:**
 - `documents/documentation_standards.md` - root-document metadata contract and canonical-home markers
 - `documents/engineering/edge_routing.md` - route-registry ownership, generated route summaries, and route-aware validation expectations
-- `documents/engineering/testing.md` - canonical testing doctrine, preflight expectations, and unsupported paths
+- `documents/engineering/testing.md` - canonical testing doctrine, core principles, preflight expectations, unsupported paths, and per-layer validation obligations
 - `documents/development/testing_strategy.md` - operator workflow, matrix selection, and test-entrypoint details
-- `documents/development/haskell_style.md` - hard gates, review guidance, enforcement model, and fail-fast rule
+- `documents/development/haskell_style.md` - hard gates, review guidance, direct enforcement-model pointer, repo-hard-gate versus editor-only guidance split, and fail-fast rule
 - `documents/development/chaos_testing.md` - HA failure and recovery coverage
 - `documents/development/assistant_workflow.md` - canonical repository-level assistant workflow doctrine for governed root entry docs
-- `documents/engineering/implementation_boundaries.md` - ownership boundaries that validation enforces
-- `documents/engineering/portability.md` - portable invariants versus substrate-specific detail
-- `documents/engineering/storage_and_state.md` - owner or durability table and cleanup rules
-- `documents/engineering/monitoring.md` - required if monitoring remains a first-class supported surface
+- `documents/engineering/implementation_boundaries.md` - ownership matrix, adapter-local versus shared-contract types, instance placement, and module-boundary rules
+- `documents/engineering/portability.md` - portable invariants versus substrate-specific detail, plus explicit current-status and validation sections where target direction still appears
+- `documents/engineering/storage_and_state.md` - owner or durability table, failure-mode rules, and cleanup contracts
+- `documents/engineering/monitoring.md` - required outcomes, low-cardinality or typed-event rules, and launch-gate consequences if monitoring remains a first-class supported surface
 - `documents/operations/cluster_bootstrap_runbook.md` - test prerequisites and cluster reuse rules
 - `documents/operations/apple_silicon_runbook.md` - Apple matrix expectations
 - `documents/tools/postgresql.md` - PostgreSQL operator readiness and failover rules
@@ -513,5 +617,7 @@ None.
   aligned when command-registry ownership or CLI-reference derivation rules change
 - keep [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md)
   aligned when HA claims, route assumptions, or active-mode validation rules change
+- keep [system-components.md](system-components.md) aligned when the supported monitoring stance
+  changes
 - keep [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) aligned when any pending
-  route-doc, route-lint, assistant-doc, or workflow-helper cleanup item closes
+  route-doc, route-lint, assistant-doc, workflow-helper, or monitoring-surface cleanup item closes

@@ -21,6 +21,9 @@
 - the route-oriented docs now consume registry-backed sections, the governed root assistant docs
   now point at one canonical assistant-workflow home under `documents/`, and the cluster path
   reuses the shared web-dependency readiness helper without a duplicate probe
+- the initial testing, portability, implementation-boundary, storage, and Haskell-style doctrine
+  docs are landed, but the remaining Phase 6 follow-on work still needs to deepen their document
+  structure and ownership detail and resolve whether monitoring is a supported first-class surface
 
 ## Operator and Host Components
 

@@ -8,7 +8,7 @@
 
 ## Current Repo Assessment
 
-The supported architecture now matches the tightened DRY model. The table below separates the
+The supported architecture now largely matches the tightened DRY model. The table below separates the
 supported contract from the current validation state.
 
 | Area | Supported contract | Current repo gap |
@@ -16,7 +16,7 @@ supported contract from the current validation state.
 | Root-document governance | `README.md` is orientation only; `documents/` owns canonical topic docs; `AGENTS.md` and `CLAUDE.md` are thin governed entry documents | no material governed-root-document gap remains in the worktree |
 | CLI ownership | one structured Haskell command registry owns supported command parsing, help text, and the generated canonical CLI reference sections | no material CLI-ownership gap remains in the worktree |
 | Shared workflow helpers | one Haskell helper module owns web dependency readiness, platform-command availability checks, and shared generated-file banner constants | no material shared-workflow-helper gap remains in the worktree |
-| Control-plane execution | Apple host-native control plane plus Linux outer-container control plane | the worktree contains the Apple host-native path, the `linux-cpu` outer-container launcher, and the supported direct `linux-cuda` launcher; no material control-plane implementation gap remains outside the separate clean-host bootstrap follow-on |
+| Control-plane execution | Apple host-native control plane plus Linux outer-container control plane | the worktree contains the Apple host-native path, the `linux-cpu` outer-container launcher, and the supported direct `linux-cuda` launcher; no material control-plane implementation gap remains in the worktree |
 | Host prerequisite minimization | Apple requires only Homebrew plus ghcup before building `infernix`; Colima is the only supported Apple Docker environment; `linux-cpu` requires only Docker; `linux-cuda` adds only the NVIDIA Docker prerequisites; `infernix` reconciles every remaining supported host tool through package managers | no material host-prerequisite gap remains in the worktree |
 | Runtime honesty | one host-native Apple inference lane plus two Linux substrate images | no material runtime-honesty gap remains in the governed docs or current worktree |
 | Linux image layout | one shared `docker/linux-substrate.Dockerfile` builds `infernix-linux-cpu` and `infernix-linux-cuda` | the shared image and source-snapshot manifest are landed, and no material Linux-image implementation gap remains in the worktree |
@@ -25,7 +25,9 @@ supported contract from the current validation state.
 | Browser-contract ownership | handwritten Haskell contract ADTs live outside any `Generated/` directory; only emitted PureScript stays under `web/src/Generated/` | no material browser-contract ownership gap remains in the worktree |
 | Route or publication contract | one Haskell route registry drives rendered HTTPRoutes, publication state, chart lint, and docs | no material route or publication gap remains in the worktree |
 | Generated deployment inputs | `chart/values.yaml` holds stable defaults only; generated demo-config and publication payloads are ephemeral inputs | no material generated-input gap remains in the worktree |
-| Validation doctrine | one canonical testing doctrine plus one canonical Haskell-style guide describe enforced rules, review guidance, and validation entrypoints | doctrine is landed, and the worktree contains lint, unit, integration, and E2E entrypoints with explicit active-mode catalog coverage and registry-backed docs validation |
+| Validation doctrine | one canonical testing doctrine plus one canonical Haskell-style guide describe enforced rules, review guidance, validation entrypoints, and the enforcement model they rely on | the doctrine is landed, and the worktree contains lint, unit, integration, and E2E entrypoints with explicit active-mode catalog coverage and registry-backed docs validation, but the remaining Phase 6 follow-on work still needs to deepen the Haskell guide's direct enforcement-model pointer, editor-only guidance split, and typed-control-flow review doctrine |
+| Engineering doctrine depth | broad engineering docs answer the rule, current-versus-target, validation, and substrate-versus-platform questions directly | the canonical docs exist, but remaining Phase 6 follow-on work still needs to deepen `documents/engineering/implementation_boundaries.md`, `documents/engineering/storage_and_state.md`, and `documents/engineering/portability.md` and standardize the stronger summary or current-status or validation structure on the broad doctrine docs |
+| Monitoring stance | the supported platform either owns one canonical monitoring doctrine or explicitly treats monitoring as unsupported | the worktree still carries a disabled `victoria-metrics-k8s-stack` chart value without a resolved supported-doc position; Phase 6 follow-on work must either land `documents/engineering/monitoring.md` or retire the unsupported monitoring surface from the supported contract |
 
 ## Supported Outcome
 

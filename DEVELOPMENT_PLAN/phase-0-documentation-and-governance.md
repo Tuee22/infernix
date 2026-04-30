@@ -15,10 +15,10 @@ lint rules established here.
 ## Current Repo Assessment
 
 The governed `documents/` suite exists, `documents/documentation_standards.md` governs canonical
-topic ownership, and the repo-local docs validator is part of the supported workflow. The later
-phases now own follow-on documentation work for the shared Linux substrate image, the shared Python
-adapter project, the command registry, the route registry, testing doctrine, portability,
-implementation boundaries, and the stricter governed-root-document metadata closure tracked in
+topic ownership, and the repo-local docs validator is part of the supported workflow. Later phases
+have already extended that governed suite across the shared Linux substrate image, the shared
+Python adapter project, the command registry, the route registry, testing doctrine, portability,
+implementation boundaries, and the stricter governed-root-document metadata closure landed in
 Phase 6 Sprint 6.9.
 
 ## Sprint 0.1: `documents/` Suite Scaffold [Done]

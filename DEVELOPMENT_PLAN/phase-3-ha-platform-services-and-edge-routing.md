@@ -296,8 +296,7 @@ rendered HTTPRoute set, publication metadata, and chart-facing route inputs.
 
 ### Remaining Work
 
-None within the Phase 3 runtime or chart closure. Phase 6 Sprint 6.11 owns the remaining
-registry-backed route-doc and route-lint derivation work.
+None.
 
 ## Documentation Requirements
 

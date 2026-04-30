@@ -56,15 +56,22 @@ are all present. The worktree also contains the `linux-cpu` outer-container laun
 supported direct `linux-cuda` launcher, the routed Pulsar path, the HA and lifecycle coverage,
 and the routed Playwright coverage that those closed phases depend on.
 
-Phase 6 is now closed in the current worktree. The Apple host-native path reduces pre-existing host requirements to
-Homebrew plus ghcup, treats Colima as the only supported Apple Docker environment, reconciles the
-remaining Homebrew-managed Apple host tools on demand, and bootstraps Poetry through the host's
-built-in Python when adapter setup or validation first needs it. The governed root docs now carry
-the stricter metadata block, and the structured Haskell command registry now owns parsing, help
-output, and the generated CLI-reference sections that docs lint enforces mechanically. The
-route-oriented docs now consume registry-backed sections, the root assistant entry docs now point
-at one canonical assistant-workflow home under `documents/`, and the cluster path reuses the
-shared web-dependency readiness helper instead of carrying a duplicate probe.
+Phase 6 is currently `Active` in the current worktree. The Apple host-native path reduces
+pre-existing host requirements to Homebrew plus ghcup, treats Colima as the only supported Apple
+Docker environment, reconciles the remaining Homebrew-managed Apple host tools on demand, and
+bootstraps Poetry through the host's built-in Python when adapter setup or validation first needs
+it. The governed root docs now carry the stricter metadata block, and the structured Haskell
+command registry now owns parsing, help output, and the generated CLI-reference sections that docs
+lint enforces mechanically. The route-oriented docs now consume registry-backed sections, the root
+assistant entry docs now point at one canonical assistant-workflow home under `documents/`, and
+the cluster path reuses the shared web-dependency readiness helper instead of carrying a duplicate
+probe. The remaining planned Phase 6 follow-ons are documentation-depth work imported from
+`INFERNIX_IMPROVEMENTS_FROM_MATTANDJAMES.md`: broad engineering docs still need the stronger
+summary or current-status or validation structure described in
+`development_plan_standards.md`, `documents/engineering/implementation_boundaries.md` and
+`documents/engineering/storage_and_state.md` still need deeper ownership and lifecycle treatment,
+`documents/development/haskell_style.md` still needs the editor-only and typed-control-flow review
+doctrine, and the repository still needs an explicit supported monitoring stance.
 
 ## Execution Contexts and Runtime Modes
 
@@ -85,7 +92,7 @@ The plan keeps these concepts separate:
 | 3 | HA Platform Services and Edge Routing | Done | [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md) |
 | 4 | Inference Service and Durable Runtime | Done | [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) |
 | 5 | Web UI and Shared Types | Done | [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md) |
-| 6 | Validation, E2E, and HA Hardening | Done | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) |
+| 6 | Validation, E2E, and HA Hardening | Active | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) |
 
 ## Canonical Outcome
 

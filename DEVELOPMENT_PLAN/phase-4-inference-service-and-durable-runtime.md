@@ -23,12 +23,12 @@ durable bundle or manifest metadata, an opt-in real Pulsar WebSocket or admin tr
 filesystem fallback, and a manual inference API path served by the Haskell demo surface. The Apple
 host-native lane now also has daemon-driven Poetry-project and setup-entrypoint bootstrap through
 `src/Infernix/Engines/AppleSilicon.hs`, and the shared Linux substrate image carries the
-source-snapshot manifest so `infernix lint files` remains honest in git-less image runs. The
-stricter clean-host prerequisite-minimization contract is now tracked as follow-on work in Phase 6
-Sprint 6.8: the current Apple host bootstrap still
-automates the shared Poetry project and adapter setup entrypoints after the required host tools
-already exist, rather than reconciling the full supported Homebrew-managed toolchain from a
-Homebrew-plus-ghcup baseline.
+source-snapshot manifest so `infernix lint files` remains honest in git-less image runs. The Apple
+host bootstrap now also aligns with the closed clean-host contract from Phase 6 Sprint 6.8:
+Homebrew plus ghcup remain the only pre-existing host requirements, `infernix` reconciles the
+remaining supported Homebrew-managed operator tools on demand, and Poetry bootstraps through the
+host's built-in Python when adapter paths first need it. No material Phase 4 runtime or bootstrap
+gap remains in the current worktree.
 
 ## Matrix Ownership Contract
 
