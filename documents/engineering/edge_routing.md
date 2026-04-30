@@ -7,22 +7,28 @@
 
 ## Route Inventory
 
-- the unconditional published route inventory is `/harbor`, `/minio/console`, `/minio/s3`,
-  `/pulsar/admin`, and `/pulsar/ws`
-- when the active `.dhall` `demo_ui` flag is on, the inventory adds `/`, `/api`,
-  `/api/publication`, `/api/cache`, and `/objects/<key>`
 - the chart-owned route contract lives in `GatewayClass/infernix-gateway`,
   `Gateway/infernix-edge`, `EnvoyProxy/infernix-edge`, and the HTTPRoute inventory rendered by
   `chart/templates/httproutes.yaml`
-- when the demo surface is enabled, `/` and the demo `/api*`, `/objects/` routes target the
+
+<!-- infernix:route-registry:edge-routing:start -->
+| Public prefix | Visibility | Purpose | Backend | Rewrite |
+|---------------|------------|---------|---------|---------|
+| `/` | demo-only | Demo workbench | `infernix-demo:80` | no rewrite |
+| `/api` | demo-only | Demo API | `infernix-demo:80` | no rewrite |
+| `/objects` | demo-only | Demo object store | `infernix-demo:80` | no rewrite |
+| `/harbor/api` | always published | Harbor API | `infernix-harbor-core:80` | `/harbor/api` -> `/api` |
+| `/harbor` | always published | Harbor portal | `infernix-harbor-portal:80` | `/harbor` -> `/` |
+| `/minio/console` | always published | MinIO console | `infernix-minio-console:9090` | `/minio/console` -> `/` |
+| `/minio/s3` | always published | MinIO S3 API | `infernix-minio:9000` | `/minio/s3` -> `/` |
+| `/pulsar/admin` | always published | Pulsar admin surface | `infernix-infernix-pulsar-proxy:80` | `/pulsar/admin` -> `/` |
+| `/pulsar/ws` | always published | Pulsar websocket surface | `infernix-infernix-pulsar-proxy:80` | `/pulsar/ws` -> `/ws` |
+<!-- infernix:route-registry:edge-routing:end -->
+
+- when the demo surface is enabled, `/` and the demo `/api*` and `/objects/` routes target the
   `infernix-demo` workload; on the Apple host-native path, the same demo surface can be served by
   `infernix-demo serve --dhall PATH --port N` and reached through the same base URL via the host
   bridge
-- `/harbor/api` is matched before `/harbor` and rewrites to Harbor's `/api` surface
-- `/harbor`, `/minio/console`, `/minio/s3`, and `/pulsar/admin` each use `URLRewrite` to strip
-  the public prefix before forwarding to the chart-managed backend service
-- `/pulsar/ws` rewrites to `/ws` so the public route preserves Pulsar's real WebSocket context
-  root (`/ws/v2/...`) when forwarding to the proxy service
 - `/api/publication` reports daemon location plus routed-upstream health and backing-state details
 - when the platform toolchain is unavailable and `cluster up` uses the simulated substrate, the
   same route prefixes are still published and served by compatibility handlers so route and

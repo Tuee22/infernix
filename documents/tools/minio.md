@@ -14,13 +14,19 @@
   Harbor's required backend services before Harbor becomes pull-ready
 - the chart values reserve the `infernix-runtime` and `infernix-results` buckets for the real
   cluster path
-- the MinIO console is exposed through `/minio/console`
-- the MinIO S3 API is exposed through `/minio/s3`
+- the real non-simulated `linux-cpu` integration lane writes a sentinel file through the MinIO
+  data volume, replaces one MinIO pod, and asserts the sentinel remains readable afterward
+
+## Routed Surfaces
+
+<!-- infernix:route-registry:minio:start -->
+- `/minio/console` -> `infernix-minio-console:9090`; rewrites to upstream `/`
+- `/minio/s3` -> `infernix-minio:9000`; rewrites to upstream `/`
+<!-- infernix:route-registry:minio:end -->
+
 - on the simulated substrate, those routes remain published as compatibility surfaces for rewrite
   validation; on the real cluster path, `/minio/console/browser` returns the live MinIO console
   HTML and `/minio/s3/...` reaches the live S3 surface
-- the real non-simulated `linux-cpu` integration lane writes a sentinel file through the MinIO
-  data volume, replaces one MinIO pod, and asserts the sentinel remains readable afterward
 
 ## Cross-References
 

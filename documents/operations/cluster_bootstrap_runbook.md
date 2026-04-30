@@ -40,12 +40,16 @@
 - inspect `./.data/runtime/publication.json` or `GET /api/publication` to confirm the routed
   publication contract matches `cluster status`
 - inspect the real ConfigMap with `infernix kubectl get configmap infernix-demo-config -n platform -o yaml`
-- confirm `curl http://127.0.0.1:<port>/harbor`, `curl http://127.0.0.1:<port>/minio/s3`, and
-  `curl http://127.0.0.1:<port>/pulsar/admin/admin/v2/clusters` all resolve through the shared
-  routed port
-- confirm `curl http://127.0.0.1:<port>/pulsar/ws/v2/producer/public/default/demo` reaches the
-  Pulsar proxy WebSocket servlet and returns `405 Method Not Allowed` instead of a routed `404`,
-  proving the `/pulsar/ws -> /ws` rewrite is active
+
+<!-- infernix:route-registry:cluster-bootstrap:start -->
+- `curl http://127.0.0.1:<port>/harbor` checks the Harbor portal route.
+- `curl http://127.0.0.1:<port>/harbor/api/v2.0/projects` checks the `/harbor/api -> /api` rewrite into the Harbor core service.
+- `curl http://127.0.0.1:<port>/minio/console/browser` checks the `/minio/console -> /` rewrite into the MinIO console service.
+- `curl http://127.0.0.1:<port>/minio/s3/models/demo.bin` checks the `/minio/s3 -> /` rewrite into the MinIO S3 service.
+- `curl http://127.0.0.1:<port>/pulsar/admin/admin/v2/clusters` checks the `/pulsar/admin -> /` rewrite into Pulsar's `/admin/v2` surface.
+- `curl http://127.0.0.1:<port>/pulsar/ws/v2/producer/public/default/demo` checks the `/pulsar/ws -> /ws` rewrite and returns `405 Method Not Allowed` on the real cluster path.
+<!-- infernix:route-registry:cluster-bootstrap:end -->
+
 - on the simulated substrate, those same routes return compatibility payloads proving the published
   route and rewrite behavior rather than live Harbor, MinIO, or Pulsar content
 

@@ -6,14 +6,16 @@
 > **Purpose**: Define the supported static-quality and test matrix for the two-binary topology,
 > the Pulsar-driven production inference surface, the demo UI host, the per-mode generated
 > catalog, the mandatory HA behavior of Harbor, MinIO, operator-managed PostgreSQL, and Pulsar,
-> and the remaining repository-hardening follow-ons that keep governed root docs and the CLI
-> surface mechanically aligned with implementation.
+> and the remaining repository-hardening follow-ons that keep governed root docs, route-aware
+> docs, and the CLI surface mechanically aligned with implementation.
 
 ## Phase Status
 
 Sprints 6.1 through 6.10 are `Done`. The validation entrypoints, active-mode catalog coverage,
 clean-host bootstrap logic, governed-root-document metadata closure, and structured CLI-registry
-closure are all present in the current worktree.
+closure are all present in the current worktree. Sprints 6.11 and 6.12 are now also `Done`: the
+route-aware docs and lint are registry-backed, assistant-workflow doctrine lives in one canonical
+`documents/` home, and the cluster path reuses the shared web-dependency readiness helper.
 
 ## Current Repo Assessment
 
@@ -26,7 +28,9 @@ MinIO, Pulsar, and Harbor PostgreSQL recovery or lifecycle checks in code, the A
 path now reconciles its remaining supported prerequisites from the Homebrew-plus-ghcup baseline,
 the governed root docs now carry the stricter metadata model, and the structured Haskell command
 registry now owns parsing, help output, and the generated CLI-reference sections that docs lint
-enforces.
+enforces. The route-oriented docs now consume registry-backed generated sections, the root
+assistant entry docs point at one canonical assistant-workflow document under `documents/`, and
+the cluster path reuses the shared web-dependency readiness helper instead of reimplementing it.
 
 ## Validation Surface
 
@@ -345,9 +349,9 @@ standards they already cite.
 
 - `README.md` carries the governed root-document metadata block appropriate for an orientation
   document and makes its canonical-home links explicit
-- `AGENTS.md` and `CLAUDE.md` remain thin governed entry documents and carry the explicit
-  supersession or canonical-home markers required when they summarize rather than own workflow
-  topics
+- `AGENTS.md` and `CLAUDE.md` carry the explicit supersession or canonical-home markers required
+  for governed entry documents and now stay thin while linking to the canonical assistant-workflow
+  document under `documents/`
 - `documents/documentation_standards.md` describes the root-document metadata contract in the same
   terms the repo actually enforces
 - the docs linter grows root-document checks strong enough to catch missing root-document metadata
@@ -357,8 +361,8 @@ standards they already cite.
 
 - `infernix docs check` fails when `README.md`, `AGENTS.md`, or `CLAUDE.md` are missing the
   required governed metadata markers for their declared role
-- root docs summarize and link to canonical `documents/` topics instead of restating the full
-  workflow contract in parallel
+- root docs carry the governed metadata and canonical-home links needed for the canonical
+  assistant-workflow entrypoint without losing the canonical topic entrypoints
 
 ### Remaining Work
 
@@ -400,14 +404,90 @@ and the canonical CLI reference stop drifting independently.
 
 None.
 
+---
+
+## Sprint 6.11: Registry-Backed Route Docs and Lint Closure [Done]
+
+**Status**: Done
+**Implementation**: `src/Infernix/Routes.hs`, `src/Infernix/Lint/Chart.hs`, `src/Infernix/Lint/Docs.hs`, `documents/engineering/edge_routing.md`, `documents/reference/web_portal_surface.md`, `documents/tools/harbor.md`, `documents/tools/minio.md`, `documents/tools/pulsar.md`, `documents/operations/cluster_bootstrap_runbook.md`, `README.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
+**Docs to update**: `documents/engineering/edge_routing.md`, `documents/reference/web_portal_surface.md`, `documents/tools/harbor.md`, `documents/tools/minio.md`, `documents/tools/pulsar.md`, `documents/operations/cluster_bootstrap_runbook.md`, `README.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
+
+### Objective
+
+Finish the remaining route or publication DRY cleanup so the Haskell route registry drives
+route-aware docs and validation, not only runtime rendering and Helm values.
+
+### Deliverables
+
+- the Haskell route registry remains the source of truth for rendered HTTPRoutes, publication
+  state, and route-aware documentation summaries
+- route-oriented docs consume registry-backed rendered content or a mechanically equivalent
+  generated section instead of independent handwritten route inventories
+- docs lint and chart lint validate the route-aware contract from registry-backed expectations
+  rather than ad hoc phrase checks
+- the cleanup ledger records no remaining handwritten route-inventory or route-aware lint
+  duplication once the sprint closes
+
+### Validation
+
+- `GET /api/publication` still reports the exact route inventory produced by the registry
+- `infernix docs check` fails when a registry-owned route summary drifts from the corresponding docs
+  section
+- `infernix test lint` fails when route-aware lint or chart expectations diverge from the
+  registry-backed route contract
+- routed Harbor, MinIO, Pulsar, and demo probes continue to pass on the shared edge
+
+### Remaining Work
+
+None.
+
+---
+
+## Sprint 6.12: Assistant Workflow Canonicalization and Workflow-Helper Deduplication [Done]
+
+**Status**: Done
+**Implementation**: `documents/development/assistant_workflow.md`, `documents/documentation_standards.md`, `documents/README.md`, `README.md`, `AGENTS.md`, `CLAUDE.md`, `documents/development/local_dev.md`, `src/Infernix/Workflow.hs`, `src/Infernix/Cluster.hs`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
+**Docs to update**: `documents/development/assistant_workflow.md`, `documents/documentation_standards.md`, `documents/README.md`, `README.md`, `AGENTS.md`, `CLAUDE.md`, `documents/development/local_dev.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
+
+### Objective
+
+Finish the remaining REPO_DRY_CLEANUP follow-ons for assistant-facing root guidance and shared
+workflow-helper closure.
+
+### Deliverables
+
+- repo-level assistant workflow doctrine moves into one canonical governed document under
+  `documents/`
+- `AGENTS.md` and `CLAUDE.md` become thin governed entry docs that summarize and link to that
+  canonical assistant-workflow doc instead of carrying long parallel rule sets
+- `src/Infernix/Workflow.hs` owns shared web-dependency readiness, npm invocation resolution,
+  platform-command availability checks, and shared generated-file banner constants; cluster and CLI
+  paths reuse it instead of re-declaring their own readiness probes
+- the cleanup ledger no longer tracks duplicated assistant guidance or duplicated web-dependency
+  readiness logic once the sprint closes
+
+### Validation
+
+- `infernix docs check` fails if the canonical assistant-workflow doc or the root-doc links drift
+- `rg -n "webBuildToolchainPresent|ensureWebBuildDependencies" src/Infernix` shows one supported
+  readiness implementation path rather than parallel cluster-local copies
+- supported CLI, docs, and outer-container flows still install web dependencies through the shared
+  helper
+
+### Remaining Work
+
+None.
+
 ## Documentation Requirements
 
 **Engineering docs to create/update:**
 - `documents/documentation_standards.md` - root-document metadata contract and canonical-home markers
+- `documents/engineering/edge_routing.md` - route-registry ownership, generated route summaries, and route-aware validation expectations
 - `documents/engineering/testing.md` - canonical testing doctrine, preflight expectations, and unsupported paths
 - `documents/development/testing_strategy.md` - operator workflow, matrix selection, and test-entrypoint details
 - `documents/development/haskell_style.md` - hard gates, review guidance, enforcement model, and fail-fast rule
 - `documents/development/chaos_testing.md` - HA failure and recovery coverage
+- `documents/development/assistant_workflow.md` - canonical repository-level assistant workflow doctrine for governed root entry docs
 - `documents/engineering/implementation_boundaries.md` - ownership boundaries that validation enforces
 - `documents/engineering/portability.md` - portable invariants versus substrate-specific detail
 - `documents/engineering/storage_and_state.md` - owner or durability table and cleanup rules
@@ -433,3 +513,5 @@ None.
   aligned when command-registry ownership or CLI-reference derivation rules change
 - keep [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md)
   aligned when HA claims, route assumptions, or active-mode validation rules change
+- keep [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) aligned when any pending
+  route-doc, route-lint, assistant-doc, or workflow-helper cleanup item closes

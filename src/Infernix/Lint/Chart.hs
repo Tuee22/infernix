@@ -5,6 +5,7 @@ where
 
 import Control.Monad (forM_, unless)
 import Infernix.Config (Paths (..), discoverPaths)
+import Infernix.Routes (renderChartRouteRegistryCommentSection)
 import System.Directory (doesFileExist)
 import System.FilePath ((</>))
 
@@ -124,6 +125,23 @@ requiredPhrases =
     ("chart/templates/service-demo.yaml", [".Values.demo.enabled", "name: infernix-demo", "targetPort: {{ .Values.demo.port }}"])
   ]
 
+data GeneratedSectionRule = GeneratedSectionRule
+  { generatedSectionPath :: FilePath,
+    generatedSectionStartMarker :: String,
+    generatedSectionEndMarker :: String,
+    generatedSectionExpected :: String
+  }
+
+generatedSectionRules :: [GeneratedSectionRule]
+generatedSectionRules =
+  [ GeneratedSectionRule
+      { generatedSectionPath = "chart/templates/httproutes.yaml",
+        generatedSectionStartMarker = "{{/* infernix:route-registry:start */}}",
+        generatedSectionEndMarker = "{{/* infernix:route-registry:end */}}",
+        generatedSectionExpected = trimTrailingNewlines renderChartRouteRegistryCommentSection
+      }
+  ]
+
 runChartLint :: IO ()
 runChartLint = do
   paths <- discoverPaths
@@ -136,6 +154,9 @@ runChartLint = do
     forM_ phrases $ \requiredPhrase ->
       unless (requiredPhrase `contains` contents) $
         ioError (userError (relativePath <> " is missing required phrase: " <> requiredPhrase))
+  forM_ generatedSectionRules $ \rule -> do
+    contents <- readFile (repoRoot paths </> generatedSectionPath rule)
+    validateGeneratedSection rule contents
 
 contains :: String -> String -> Bool
 contains needle haystack = any (needle `prefixOf`) (tails haystack)
@@ -149,3 +170,48 @@ prefixOf (expected : expectedRest) (actual : actualRest) =
 tails :: [a] -> [[a]]
 tails [] = [[]]
 tails value@(_ : rest) = value : tails rest
+
+validateGeneratedSection :: GeneratedSectionRule -> String -> IO ()
+validateGeneratedSection rule contents =
+  case extractGeneratedSection (generatedSectionStartMarker rule) (generatedSectionEndMarker rule) contents of
+    Nothing ->
+      ioError
+        ( userError
+            ( generatedSectionPath rule
+                <> " is missing the generated section markers "
+                <> generatedSectionStartMarker rule
+                <> " and "
+                <> generatedSectionEndMarker rule
+            )
+        )
+    Just renderedSection ->
+      unless
+        (trimTrailingNewlines renderedSection == generatedSectionExpected rule)
+        ( ioError
+            ( userError
+                ( generatedSectionPath rule
+                    <> " has drifted from the Haskell route registry generated section"
+                )
+            )
+        )
+
+extractGeneratedSection :: String -> String -> String -> Maybe String
+extractGeneratedSection startMarker endMarker contents = do
+  let contentLines = lines contents
+  startIndex <- findLineIndex startMarker contentLines
+  endIndex <- findLineIndex endMarker contentLines
+  if endIndex <= startIndex
+    then Nothing
+    else Just (unlines (take (endIndex - startIndex - 1) (drop (startIndex + 1) contentLines)))
+
+findLineIndex :: String -> [String] -> Maybe Int
+findLineIndex target = go 0
+  where
+    go _ [] = Nothing
+    go index (lineValue : remaining)
+      | lineValue == target = Just index
+      | otherwise = go (index + 1) remaining
+
+trimTrailingNewlines :: String -> String
+trimTrailingNewlines =
+  reverse . dropWhile (`elem` ['\n', '\r']) . reverse

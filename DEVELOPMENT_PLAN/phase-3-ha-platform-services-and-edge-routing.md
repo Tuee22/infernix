@@ -6,12 +6,14 @@
 > **Purpose**: Define the mandatory local HA Harbor, MinIO, operator-managed PostgreSQL, and
 > Pulsar deployments; the Envoy Gateway installation that owns all browser-visible routing on one
 > localhost listener; the publication contract; and the route-registry cleanup that removes route
-> duplication across Haskell, Helm, lint, and docs.
+> duplication across Haskell, Helm, route-oriented docs, and route-aware validation.
 
 ## Phase Status
 
 Sprints 3.1 through 3.8 are `Done`. The final chart shape, route registry, publication contract,
-and `/pulsar/ws -> /ws` rewrite contract are all represented in the current worktree.
+and `/pulsar/ws -> /ws` rewrite contract are all represented in the current worktree, and the
+later Phase 6 hardening sprint that closed the registry-backed route-doc and route-lint follow-on
+is now complete.
 
 ## HA Reconcile Surface
 
@@ -29,9 +31,10 @@ and `/pulsar/ws -> /ws` rewrite contract are all represented in the current work
 ## Mode-Stable Route Contract
 
 - runtime-mode changes do not fork the browser entrypoint
-- `/`, `/api`, `/harbor`, `/minio/console`, `/minio/s3`, `/pulsar/admin`, and `/pulsar/ws`
-  remain the published route inventory
-- `/api/publication` remains the routed metadata endpoint for publication state
+- when the demo UI is enabled, `/`, `/api`, `/objects`, `/harbor/api`, `/harbor`,
+  `/minio/console`, `/minio/s3`, `/pulsar/admin`, and `/pulsar/ws` remain the published route
+  inventory
+- `/api/publication` and `/api/cache` remain stable routed demo endpoints under the `/api` prefix
 - Apple host-native mode switching never changes the browser base URL
 
 ## Current Repo Assessment
@@ -39,7 +42,8 @@ and `/pulsar/ws -> /ws` rewrite contract are all represented in the current work
 The supported cluster path runs the HA platform services and the optional demo HTTP host on the
 final Kind substrate. Publication metadata originates from `./.data/runtime/publication.json`, and
 the route inventory derives from one Haskell-owned registry plus one data-driven HTTPRoute
-template. No remaining Phase 3 implementation or dependency gap remains in the current worktree.
+template. The route-oriented docs and route-aware validation surfaces now consume registry-backed
+generated sections instead of handwritten inventories or phrase checks.
 
 ## Sprint 3.1: HA MinIO Deployment [Done]
 
@@ -264,7 +268,7 @@ None.
 ### Objective
 
 Collapse the route and publication contract to one Haskell-owned source of truth that drives the
-rendered HTTPRoute set, publication metadata, chart lint, and route-oriented docs.
+rendered HTTPRoute set, publication metadata, and chart-facing route inputs.
 
 ### Deliverables
 
@@ -277,20 +281,23 @@ rendered HTTPRoute set, publication metadata, chart lint, and route-oriented doc
   - publication-upstream metadata
 - one data-driven chart template renders the entire HTTPRoute set from that registry
 - publication-state rendering and `/api/publication` derive their route inventory from the same registry
-- chart lint expectations derive from the same registry rather than file-by-file template assertions
-- the route inventory is no longer duplicated across `src/Infernix/Models.hs`,
-  `chart/templates/httproutes.yaml`, `src/Infernix/Lint/Chart.hs`, and `chart/values.yaml`
+- the runtime or chart route inventory is no longer duplicated across `src/Infernix/Models.hs`,
+  `chart/templates/httproutes.yaml`, and generated Helm values
+- route-oriented docs and route-aware validation now consume registry-backed generated sections
+  derived from that same route registry
 
 ### Validation
 
 - `infernix kubectl get httproute -n platform` shows the expected route set in `Accepted` state
 - `GET /api/publication` reports the exact route inventory produced by the registry
-- `infernix test lint` fails if a route is added in one route-aware surface without the registry update
+- `infernix test lint` fails if the data-driven HTTPRoute template or required route-aware docs
+  structure disappears from the supported shape
 - routed Harbor, MinIO, Pulsar, and demo probes continue to work through the shared listener
 
 ### Remaining Work
 
-None.
+None within the Phase 3 runtime or chart closure. Phase 6 Sprint 6.11 owns the remaining
+registry-backed route-doc and route-lint derivation work.
 
 ## Documentation Requirements
 

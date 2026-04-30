@@ -27,6 +27,11 @@ import Infernix.DemoConfig (decodeDemoConfigFile)
 import Infernix.Engines.AppleSilicon (ensureAppleSiliconRuntimeReady)
 import Infernix.HostPrereqs (appleHostRequirementIds)
 import Infernix.Models
+import Infernix.Routes
+  ( renderChartRouteRegistryCommentSection,
+    renderEdgeRoutingInventorySection,
+    renderReadmeRouteSummarySection,
+  )
 import Infernix.Runtime
 import Infernix.Runtime.Pulsar (runProductionDaemon)
 import Infernix.Runtime.Worker (engineCommandOverrideEnvironmentName)
@@ -62,6 +67,15 @@ main = do
   assert
     ("- `test` - runs the aggregate validation entrypoints" `isInfixOf` renderCliSurfaceFamiliesSection)
     "the generated CLI surface overview includes the test family summary"
+  assert
+    ("`/harbor/api`" `isInfixOf` renderReadmeRouteSummarySection)
+    "the README route summary includes the Harbor API prefix from the route registry"
+  assert
+    ("`/pulsar/ws`" `isInfixOf` renderEdgeRoutingInventorySection)
+    "the edge-routing route table includes the Pulsar websocket prefix from the route registry"
+  assert
+    ("`/minio/s3` -> `infernix-minio:9000`" `isInfixOf` renderChartRouteRegistryCommentSection)
+    "the chart route summary includes the MinIO S3 backend from the route registry"
   assert
     (appleHostRequirementIds AppleSilicon ClusterUpCommand == ["docker", "colima", "kind", "kubectl", "helm", "node", "poetry"])
     "apple host prerequisite planning includes the full cluster and adapter toolchain for apple-silicon cluster up"

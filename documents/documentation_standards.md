@@ -80,6 +80,8 @@ Rules:
   duplicating them.
 - `AGENTS.md` and `CLAUDE.md` are governed entry documents and must stay aligned with workflow
   guidance when repository-level rules change.
+- `documents/development/assistant_workflow.md` is the canonical repository-level assistant
+  workflow document; `AGENTS.md` and `CLAUDE.md` summarize and link to it.
 
 ## Naming And Linking
 
@@ -109,6 +111,8 @@ Rules:
   document in the same change
 - when route prefixes change, update `documents/engineering/edge_routing.md`,
   `documents/reference/web_portal_surface.md`, and the relevant phase document in the same change
+- when assistant-facing repository workflow rules change, update
+  `documents/development/assistant_workflow.md`, `AGENTS.md`, and `CLAUDE.md` in the same change
 - when the root workflow changes, review `README.md`, `AGENTS.md`, and `CLAUDE.md` in the same change
 
 ## Validation
@@ -122,4 +126,6 @@ The repo-local documentation validator checks:
 - root README references to both `documents/` and `DEVELOPMENT_PLAN/`
 - registry-generated CLI sections in `documents/reference/cli_reference.md` and
   `documents/reference/cli_surface.md`
+- registry-generated route sections in the governed route docs and the route summary block in
+  `README.md`
 - `DEVELOPMENT_PLAN/` phase documents retaining their `## Documentation Requirements` section

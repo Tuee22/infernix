@@ -24,7 +24,7 @@ govern this plan.
 | [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md) | Mandatory local HA platform services, Envoy Gateway ownership, publication contract, and route-registry-driven HTTPRoute rendering |
 | [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) | Haskell runtime, shared Python adapter project, shared Linux substrate image, Apple host-native engine bootstrap, protobuf contracts, and Pulsar production inference |
 | [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md) | PureScript demo UI, generated frontend contracts, generated-path cleanup for browser contracts, and Playwright ownership on final execution paths |
-| [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) | Static quality, testing doctrine, exhaustive integration and E2E coverage, portability or boundary docs, governed root-doc metadata closure, single-definition CLI-registry closure, and HA validation |
+| [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) | Static quality, testing doctrine, exhaustive integration and E2E coverage, portability or boundary docs, governed root-doc metadata closure, single-definition CLI-registry closure, route-registry doc or lint hardening, assistant-workflow canonicalization, and HA validation |
 | [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) | Explicit cleanup and removal ledger |
 
 ## Status Vocabulary
@@ -56,13 +56,15 @@ are all present. The worktree also contains the `linux-cpu` outer-container laun
 supported direct `linux-cuda` launcher, the routed Pulsar path, the HA and lifecycle coverage,
 and the routed Playwright coverage that those closed phases depend on.
 
-Phase 6 is now closed in the current worktree. The Apple host-native path reduces pre-existing
-host requirements to Homebrew plus ghcup, treats Colima as the only supported Apple Docker
-environment, reconciles the remaining Homebrew-managed Apple host tools on demand, and bootstraps
-Poetry through the host's built-in Python when adapter setup or validation first needs it. The
-governed root docs now carry the stricter metadata block, and the structured Haskell command
-registry now owns parsing, help output, and the generated CLI-reference sections that docs lint
-enforces mechanically.
+Phase 6 is now closed in the current worktree. The Apple host-native path reduces pre-existing host requirements to
+Homebrew plus ghcup, treats Colima as the only supported Apple Docker environment, reconciles the
+remaining Homebrew-managed Apple host tools on demand, and bootstraps Poetry through the host's
+built-in Python when adapter setup or validation first needs it. The governed root docs now carry
+the stricter metadata block, and the structured Haskell command registry now owns parsing, help
+output, and the generated CLI-reference sections that docs lint enforces mechanically. The
+route-oriented docs now consume registry-backed sections, the root assistant entry docs now point
+at one canonical assistant-workflow home under `documents/`, and the cluster path reuses the
+shared web-dependency readiness helper instead of carrying a duplicate probe.
 
 ## Execution Contexts and Runtime Modes
 

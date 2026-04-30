@@ -18,6 +18,9 @@
 - the governed root docs carry the stricter metadata model, and the structured Haskell command
   registry now owns parsing, help, and the generated CLI-reference sections that the docs linter
   enforces
+- the route-oriented docs now consume registry-backed sections, the governed root assistant docs
+  now point at one canonical assistant-workflow home under `documents/`, and the cluster path
+  reuses the shared web-dependency readiness helper without a duplicate probe
 
 ## Operator and Host Components
 
@@ -26,8 +29,10 @@
 | Apple host control plane | `./.build/infernix` plus direct `cabal` materialization against operator-installed ghcup | host-native | canonical operator surface on Apple Silicon; host-native inference lane; repo-local kubeconfig owner; target clean-host contract reduces pre-existing host requirements to Homebrew plus ghcup and treats Colima as the only supported Docker environment | `./.build/`, `./.data/` |
 | Linux outer-container control plane | `docker compose run --rm infernix infernix ...` for `linux-cpu` plus direct `docker run --gpus all ... infernix-linux-cuda:local infernix ...` for `linux-cuda` | Linux container | image-snapshot launcher for Linux workflows; forwards Docker socket and bind-mounts only `./.data/` on the supported path | `./.data/`, `./.data/runtime/infernix.kubeconfig`, `/opt/build/infernix/`, `/root/.cabal` |
 | Command registry | structured Haskell parser or dispatcher registry | host or outer container | owns the supported command inventory, `--help` output, and the generated CLI-reference sections that docs lint enforces | none |
+| Shared workflow-helper module | `src/Infernix/Workflow.hs` plus cluster or CLI consumers | host or outer container | centralizes npm invocation resolution, platform-command discovery, and generated-file banner literals for supported workflows | none |
 | Runtime-mode selector | CLI flag or `INFERNIX_RUNTIME_MODE` | host or outer container | resolves `apple-silicon`, `linux-cpu`, or `linux-cuda` independently of execution context | build-root config artifacts only |
 | Route registry | Haskell-owned route inventory | host or outer container during render or reconcile | records public prefixes, backend identity, rewrite rules, visibility, and publication metadata | none |
+| Automation entry documents | `AGENTS.md`, `CLAUDE.md`, and their governed canonical-home links into `documents/` | repo source | point assistant users at canonical workflow rules without turning root entry docs into competing topic homes | none |
 | Frontend contract generator | `infernix internal generate-purs-contracts` | host or outer container during web build | emits generated PureScript contracts from handwritten Haskell browser-contract ADTs | `web/src/Generated/` |
 | Repo-local durable root | local filesystem | repo root | authoritative home for cluster state, runtime state, config publication mirrors, and test artifacts | `./.data/` |
 | Build artifact root | explicit Cabal builddir or installdir flags plus generated artifacts | host or outer container | keeps compiled output and generated files out of tracked source paths | `./.build/` on host; `/opt/build/infernix/` in the outer-container control plane |
@@ -41,6 +46,9 @@
 | Direct CUDA launcher | baked `infernix-linux-cuda:local` image plus `docker run --gpus all` | supported `linux-cuda` control-plane entrypoint against the baked substrate image | no material direct-CUDA-launcher implementation gap remains in the worktree; the direct launcher, GPU Kind topology, and runtime-class wiring are present |
 | Shared Python adapter project | `python/pyproject.toml`, `python/adapters/` | single dependency boundary and adapter tree for Python-native engines | the worker, setup entrypoints, and durable metadata path are landed; the current validated contract uses deterministic engine-family-specific worker output derived from durable bundle or manifest metadata and setup manifests |
 | Apple host prerequisite bootstrap | governed docs plus Haskell bootstrap logic | minimize Apple pre-existing host installs and let `infernix` reconcile supported Homebrew-managed tools and Poetry bootstrap | the worktree now reconciles Colima, Docker CLI, `kind`, `kubectl`, `helm`, Node.js, and Poetry on demand after the Homebrew-plus-ghcup baseline is in place |
+| Workflow-helper closure | `src/Infernix/Workflow.hs`, `src/Infernix/Cluster.hs` | keep web dependency readiness and related workflow checks DRY across CLI and cluster paths | no material shared-helper gap remains in the worktree |
+| Route-aware docs and lint | `src/Infernix/Lint/Chart.hs`, `src/Infernix/Lint/Docs.hs`, and route-oriented docs under `documents/` | keep the route registry, data-driven HTTPRoute template, and route documentation mechanically aligned | registry-backed generated sections now drive the route-oriented docs and chart or docs validation expectations |
+| Assistant workflow doctrine | `AGENTS.md`, `CLAUDE.md`, `documents/documentation_standards.md`, and `documents/development/assistant_workflow.md` | keep assistant-facing guidance aligned with canonical docs without parallel root-level workflow contracts | the canonical assistant-workflow doc exists and the root automation docs now stay thin and link to it |
 | Browser-contract source | `src/Infernix/Web/Contracts.hs`, `web/package.json` | keeps handwritten Haskell contract source out of `Generated/` while preserving generated PureScript output there | generated PureScript output is rebuilt on demand under `web/src/Generated/`; no material ownership gap remains in the worktree |
 | Helm deployment assets | `chart/Chart.yaml`, `chart/values.yaml`, `chart/templates/` | hold repo-owned workloads, ConfigMaps, Gateway resources, and third-party chart dependencies | no material HA-route gap remains on the final chart shape |
 | Kind topology assets | `kind/cluster-apple-silicon.yaml`, `kind/cluster-linux-cpu.yaml`, `kind/cluster-linux-cuda.yaml` | mode-specific Kind shapes, including GPU-enabled `linux-cuda` | no material Kind-topology definition gap remains in the worktree |
@@ -87,11 +95,12 @@
 | Route | Upstream | Purpose | Notes |
 |-------|----------|---------|-------|
 | `/` | HTTPRoute -> `infernix-demo` Service | demo browser UI | absent when `demo_ui` is false |
-| `/api` | HTTPRoute -> `infernix-demo` Service | demo API for model listing and manual inference | absent when `demo_ui` is false |
-| `/api/publication` | HTTPRoute -> `infernix-demo` Service | routed publication metadata | absent when `demo_ui` is false |
-| `/api/cache` | HTTPRoute -> `infernix-demo` Service | demo cache lifecycle API | absent when `demo_ui` is false |
-| `/objects/<key>` | HTTPRoute -> `infernix-demo` Service | demo object-store fixture access | absent when `demo_ui` is false |
-| `/harbor` | HTTPRoute -> Harbor portal or API Service | Harbor browser and API surface | always published |
+| `/api` | HTTPRoute -> `infernix-demo` Service | demo API prefix for models, publication, cache, and manual inference | absent when `demo_ui` is false |
+| `/api/publication` | `GET` endpoint on the `/api` route -> `infernix-demo` Service | routed publication metadata | absent when `demo_ui` is false |
+| `/api/cache` | `GET` and `POST` endpoints on the `/api` route -> `infernix-demo` Service | demo cache lifecycle API | absent when `demo_ui` is false |
+| `/objects/<objectRef>` | HTTPRoute -> `infernix-demo` Service | demo object-store fixture access | absent when `demo_ui` is false |
+| `/harbor/api` | HTTPRoute -> Harbor core Service | Harbor API surface | always published |
+| `/harbor` | HTTPRoute -> Harbor portal Service | Harbor browser portal | always published |
 | `/minio/console` | HTTPRoute -> MinIO console Service | MinIO console | always published |
 | `/minio/s3` | HTTPRoute -> MinIO S3 Service | MinIO S3 API | always published |
 | `/pulsar/admin` | HTTPRoute -> Pulsar admin Service | Pulsar admin surface | always published |

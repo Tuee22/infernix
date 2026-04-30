@@ -15,21 +15,29 @@ and Pulsar portal routes remain unconditional in every supported deployment.
 
 ## Routes
 
-Demo-only (present when `.dhall` `demo_ui = True`):
+The routed surface stays registry-driven. The `/api` prefix covers the demo endpoints documented in
+[api_surface.md](api_surface.md), including `/api/publication` and `/api/cache`.
 
-- `/` loads the PureScript manual inference workbench served by `infernix-demo`
-- `/objects/:objectRef` loads large-output payloads referenced by the workbench
-- `/api`, `/api/publication`, and `/api/cache` are the demo HTTP API endpoints; see
-  [api_surface.md](api_surface.md)
+<!-- infernix:route-registry:web-portal:start -->
+Demo-only prefixes:
 
-Operator portals (always present):
+| Routed prefix | Purpose | Notes |
+|---------------|---------|-------|
+| `/` | Demo workbench | PureScript manual inference workbench served by `infernix-demo`. |
+| `/api` | Demo API | Covers `/api/publication`, `/api/cache`, `/api/models`, `/api/demo-config`, and `/api/inference`. |
+| `/objects` | Demo object store | Serves `GET /objects/:objectRef` for large outputs. |
 
-- `/harbor` loads the Harbor portal surface
-- `/minio/console` loads the MinIO console surface
-- `/minio/s3` exposes the routed MinIO S3 API surface
-- `/pulsar/admin` loads the Pulsar admin surface
-- `/pulsar/ws` exposes the routed Pulsar WebSocket surface and preserves Pulsar's `/ws/v2/...`
-  upstream context root
+Always-published operator prefixes:
+
+| Routed prefix | Purpose | Notes |
+|---------------|---------|-------|
+| `/harbor/api` | Harbor API | Rewrites to upstream `/api` before forwarding to `infernix-harbor-core:80`. |
+| `/harbor` | Harbor portal | Rewrites to upstream `/` before forwarding to `infernix-harbor-portal:80`. |
+| `/minio/console` | MinIO console | Rewrites to upstream `/` before forwarding to `infernix-minio-console:9090`. |
+| `/minio/s3` | MinIO S3 API | Rewrites to upstream `/` before forwarding to `infernix-minio:9000`. |
+| `/pulsar/admin` | Pulsar admin surface | Rewrites to upstream `/` before forwarding to `infernix-infernix-pulsar-proxy:80`. |
+| `/pulsar/ws` | Pulsar websocket surface | Rewrites to upstream `/ws` before forwarding to `infernix-infernix-pulsar-proxy:80`. |
+<!-- infernix:route-registry:web-portal:end -->
 
 On the real Kind path those routes are published by `Gateway/infernix-edge`,
 `EnvoyProxy/infernix-edge`, and the repo-owned HTTPRoute set. On the simulated substrate, the same

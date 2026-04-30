@@ -23,9 +23,16 @@
   image into Harbor before the final non-Harbor rollout
 - after Harbor reaches its final rollout shape, `cluster up` preloads the Harbor-backed final
   image refs onto the Kind worker before the remaining non-Harbor workloads are scaled
-- the Harbor portal is exposed through `/harbor`
-- on the simulated substrate, `/harbor` remains published as a compatibility route for validation
-  even though no live Harbor deployment exists
+
+## Routed Surfaces
+
+<!-- infernix:route-registry:harbor:start -->
+- `/harbor/api` -> `infernix-harbor-core:80`; rewrites to upstream `/api`
+- `/harbor` -> `infernix-harbor-portal:80`; rewrites to upstream `/`
+<!-- infernix:route-registry:harbor:end -->
+
+- on the simulated substrate, the Harbor prefixes remain published as compatibility routes for
+  validation even though no live Harbor deployment exists
 
 ## Cross-References
 

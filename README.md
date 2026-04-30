@@ -110,9 +110,8 @@ The supported local platform is built around:
   and the optional `infernix-demo` workload
 - one Envoy-Gateway-API-owned localhost listener (`Gateway/infernix-edge`, port chosen by
   `cluster up` starting at `9090`) backed by the repo-owned `EnvoyProxy/infernix-edge` service
-  shape plus one HTTPRoute manifest per public path (`/`, `/api`, `/objects`, `/harbor`,
-  `/minio/console`, `/minio/s3`, `/pulsar/admin`, `/pulsar/ws`); the demo routes are absent when
-  the demo surface is disabled. The demo cluster runs locally and applies no auth filters
+  shape; the route inventory stays registry-driven, the demo routes are absent when the demo
+  surface is disabled, and the demo cluster runs locally without auth filters
 - one manual storage class backed by repo-owned PVs under `./.data/`
 - one Patroni PostgreSQL model managed by the Percona Kubernetes operator for every in-cluster
   PostgreSQL dependency
@@ -126,6 +125,12 @@ The supported local platform is built around:
   repo-owned scripts
 - one repo-local kubeconfig managed under the active build-output location rather than the user's
   global kubeconfig
+
+<!-- infernix:route-registry:readme:start -->
+- always-published routed prefixes: `/harbor/api`, `/harbor`, `/minio/console`, `/minio/s3`, `/pulsar/admin`, `/pulsar/ws`
+- demo-only routed prefixes (present when `.dhall` `demo_ui = True`): `/`, `/api`, `/objects`
+- registry-owned rewrites: `/harbor/api` -> `/api`; `/harbor` -> `/`; `/minio/console` -> `/`; `/minio/s3` -> `/`; `/pulsar/admin` -> `/`; `/pulsar/ws` -> `/ws`
+<!-- infernix:route-registry:readme:end -->
 
 The optional demo UI runs in the cluster as the `infernix-demo` workload when the active `.dhall`
 `demo_ui` flag is on, even when the production `infernix service` daemon runs host-native on Apple

@@ -13,15 +13,16 @@
 The phase-one foundation is landed at the repository-shape level: generated-artifact hygiene, the
 command-registry foundation, governed root-doc alignment, and the snapshot-style outer-container
 launcher all exist in the current worktree, and the later Phase 6 follow-ons that tightened
-root-document metadata and collapsed the CLI registry into one structured definition are now
-closed.
+root-document metadata, collapsed the CLI registry into one structured definition, moved
+assistant workflow doctrine into a canonical `documents/` home, and removed the last duplicate
+cluster-local web-dependency readiness probe are now all closed.
 
 ## Current Repo Assessment
 
 The repo now matches the broad Phase 1 contract: the control plane has a Haskell-owned
 command registry, the governed root docs point at canonical `documents/` topics with explicit
 metadata, the Linux launcher uses a baked image snapshot, and Playwright workflows no longer
-depend on `npx`.
+depend on `npx`. No material Phase 1 follow-on gap remains in the current worktree.
 
 ## Runtime-Mode Foundation
 
@@ -282,22 +283,23 @@ each workflow topic one canonical home.
 
 - one Haskell command-registry foundation owns the supported command inventory, parser entrypoint,
   `--help` output, and CLI-reference lint coverage
-- a shared Haskell workflow-helper module exists for:
-  - web toolchain presence checks
-  - `npm --prefix web ci` readiness
+- a shared Haskell workflow-helper foundation exists for:
+  - npm invocation resolution
   - platform command availability checks
   - shared generated-file banner literals
+  - shared web-dependency readiness used by both CLI and cluster paths
 - `documents/reference/cli_surface.md` becomes a short family overview that links to the canonical
   CLI reference instead of repeating it
-- `README.md`, `AGENTS.md`, and `CLAUDE.md` become thinner governed entry docs that link into
-  `documents/` rather than restating the full workflow contract
+- `README.md`, `AGENTS.md`, and `CLAUDE.md` gain governed metadata and canonical-home links back
+  into `documents/`, and the automation entry docs stay thin by pointing at one canonical
+  assistant-workflow home under `documents/`
 
 ### Validation
 
 - `./.build/infernix --help` and the canonical CLI reference enumerate the same supported command families
 - `infernix lint docs` fails if the canonical CLI reference drops a supported registry command line
-- root-doc workflow summaries point readers at canonical `documents/` topics rather than carrying
-  full duplicate workflow contracts
+- root-doc workflow summaries point readers at canonical `documents/` topics and carry the governed
+  metadata or canonical-home markers needed for later thinning
 
 ### Remaining Work
 

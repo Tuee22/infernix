@@ -1,3 +1,15 @@
+{{/* infernix:route-registry:start */}}
+# Route registry summary generated from `src/Infernix/Routes.hs`.
+# - `/` -> `infernix-demo:80` (demo-only; no rewrite)
+# - `/api` -> `infernix-demo:80` (demo-only; no rewrite)
+# - `/objects` -> `infernix-demo:80` (demo-only; no rewrite)
+# - `/harbor/api` -> `infernix-harbor-core:80` (always published; `/harbor/api` -> `/api`)
+# - `/harbor` -> `infernix-harbor-portal:80` (always published; `/harbor` -> `/`)
+# - `/minio/console` -> `infernix-minio-console:9090` (always published; `/minio/console` -> `/`)
+# - `/minio/s3` -> `infernix-minio:9000` (always published; `/minio/s3` -> `/`)
+# - `/pulsar/admin` -> `infernix-infernix-pulsar-proxy:80` (always published; `/pulsar/admin` -> `/`)
+# - `/pulsar/ws` -> `infernix-infernix-pulsar-proxy:80` (always published; `/pulsar/ws` -> `/ws`)
+{{/* infernix:route-registry:end */}}
 {{- if .Values.repoGateway.enabled }}
 {{- range $route := .Values.routes }}
 {{- if or (not $route.demoOnly) $.Values.demo.enabled }}

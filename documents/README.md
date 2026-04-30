@@ -15,6 +15,8 @@
 - [architecture/web_ui_architecture.md](architecture/web_ui_architecture.md) describes the
   PureScript demo UI topology and the two-binary cluster image layout
 - [development/local_dev.md](development/local_dev.md) describes the supported local workflows
+- [development/assistant_workflow.md](development/assistant_workflow.md) defines the canonical
+  repository-level workflow rules for automated agents and LLM coding assistants
 - [development/haskell_style.md](development/haskell_style.md) defines the enforced Haskell
   formatter, linter, and compiler-warning gate
 - [development/python_policy.md](development/python_policy.md) defines when Python is allowed
@@ -60,10 +62,12 @@
 
 - `DEVELOPMENT_PLAN/` owns implementation status, phase order, and closure criteria.
 - `documents/` owns architecture guidance, operator workflow guidance, and reference material.
+- `documents/development/assistant_workflow.md` owns the canonical assistant-facing repository
+  workflow rules.
 - `README.md` stays an orientation document and links into this suite instead of becoming the deep
   architecture source of truth.
 - `AGENTS.md` and `CLAUDE.md` stay as governed entry documents with explicit `Canonical homes`
-  links back into this suite.
+  links back into this suite and into `development/assistant_workflow.md`.
 
 ## Maintenance
 

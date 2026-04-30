@@ -37,7 +37,7 @@ import Infernix.Models
 import Infernix.Routes (routeHelmValues)
 import Infernix.Storage
 import Infernix.Types
-import Infernix.Workflow (platformCommandsAvailable, resolveWebNpmInvocation)
+import Infernix.Workflow (ensureWebDependencies, platformCommandsAvailable, resolveWebNpmInvocation)
 import Network.Socket qualified as Socket
 import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, findExecutable, listDirectory, removePathForcibly)
 import System.Environment (getEnvironment, lookupEnv)
@@ -258,7 +258,7 @@ clusterUpSimulated paths runtimeMode = do
   writeFile (Config.publicationStatePath paths) (renderPublicationState (Config.controlPlaneContext paths) state)
   writeStateFile (clusterStatePath paths) state
   killSimulatedService paths
-  ensureWebBuildDependencies paths
+  ensureWebDependencies
   runWebBuildCommand paths ["--prefix", "web", "run", "build"]
   buildDir <- Config.resolveCabalBuildDir
   baseEnv <- getEnvironment
@@ -1365,33 +1365,10 @@ cleanupLegacyBootstrapRegistry = do
   _ <- tryCommand Nothing [] "docker" ["rm", "-f", legacyBootstrapRegistryName]
   pure ()
 
-ensureWebBuildDependencies :: Paths -> IO ()
-ensureWebBuildDependencies paths = do
-  let webRoot = repoRoot paths </> "web"
-      depsRoot = webRoot </> "node_modules"
-      packageLock = webRoot </> "package-lock.json"
-  depsPresent <- doesDirectoryExist depsRoot
-  packageLockPresent <- doesFileExist packageLock
-  toolchainPresent <- webBuildToolchainPresent webRoot
-  if depsPresent && packageLockPresent && toolchainPresent
-    then pure ()
-    else runWebBuildCommand paths ["--prefix", "web", "ci"]
-
 runWebBuildCommand :: Paths -> [String] -> IO ()
 runWebBuildCommand paths npmArgs = do
   (command, args) <- resolveWebNpmInvocation npmArgs
   runCommand (Just (repoRoot paths)) [] command args
-
-webBuildToolchainPresent :: FilePath -> IO Bool
-webBuildToolchainPresent webRoot =
-  and
-    <$> mapM
-      doesFileExist
-      [ webRoot </> "node_modules" </> "playwright" </> "package.json",
-        webRoot </> "node_modules" </> "purescript" </> "package.json",
-        webRoot </> "node_modules" </> "spago" </> "package.json",
-        webRoot </> "node_modules" </> "esbuild" </> "package.json"
-      ]
 
 publishClusterImages :: Paths -> FilePath -> RuntimeMode -> IO FilePath
 publishClusterImages paths renderedChartPath runtimeMode = do

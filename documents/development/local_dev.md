@@ -77,10 +77,12 @@ the shared adapter project:
 - when Docker, Kind, Helm, or kubectl are unavailable, `cluster up` falls back to the simulated
   substrate and `cluster status` reports that explicitly
 - `docker compose up` and `docker compose exec` are not supported operator workflows
+- assistant-facing repository workflow rules live in [assistant_workflow.md](assistant_workflow.md)
 
 ## Cross-References
 
 - [haskell_style.md](haskell_style.md)
+- [assistant_workflow.md](assistant_workflow.md)
 - [python_policy.md](python_policy.md)
 - [purescript_policy.md](purescript_policy.md)
 - [testing_strategy.md](testing_strategy.md)

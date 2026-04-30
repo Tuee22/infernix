@@ -27,13 +27,19 @@
 - the final chart keeps `pulsar.proxy.configData.webSocketServiceEnabled: "true"` so the internal
   daemon transport and the routed `/pulsar/ws` surface both terminate on Pulsar's real WebSocket
   endpoints
-- the admin surface is exposed through `/pulsar/admin`, and the public route rewrites to Pulsar's
-  upstream `/admin/v2` context root on the real cluster path
-- the WebSocket surface is exposed through `/pulsar/ws`; on the real cluster path, an ordinary
-  HTTP `GET /pulsar/ws/v2/...` reaches the real WebSocket servlet and returns `405 Method Not
-  Allowed` instead of a route-miss `404`
 - when the daemon starts before Pulsar admin is fully ready, schema registration retries until the
   admin API accepts the requested topic schemas
+
+## Routed Surfaces
+
+<!-- infernix:route-registry:pulsar:start -->
+- `/pulsar/admin` -> `infernix-infernix-pulsar-proxy:80`; rewrites to upstream `/`
+- `/pulsar/ws` -> `infernix-infernix-pulsar-proxy:80`; rewrites to upstream `/ws`
+<!-- infernix:route-registry:pulsar:end -->
+
+- on the real cluster path, the public `/pulsar/admin` route preserves Pulsar's `/admin/v2`
+  surface and an ordinary HTTP `GET /pulsar/ws/v2/...` reaches the real WebSocket servlet and
+  returns `405 Method Not Allowed` instead of a route-miss `404`
 
 ## Production Inference Subscription Contract
 

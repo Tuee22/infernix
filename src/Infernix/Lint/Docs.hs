@@ -10,6 +10,15 @@ import Infernix.CommandRegistry
     renderCliSurfaceFamiliesSection,
   )
 import Infernix.Config (Paths (..), discoverPaths)
+import Infernix.Routes
+  ( renderClusterBootstrapRouteChecksSection,
+    renderEdgeRoutingInventorySection,
+    renderHarborRouteSummarySection,
+    renderMinioRouteSummarySection,
+    renderPulsarRouteSummarySection,
+    renderReadmeRouteSummarySection,
+    renderWebPortalRoutesSection,
+  )
 import System.Directory (doesFileExist, doesPathExist)
 import System.FilePath (dropDrive, normalise, takeDirectory, (</>))
 
@@ -24,6 +33,7 @@ requiredDocs =
     "documents/development/chaos_testing.md",
     "documents/development/frontend_contracts.md",
     "documents/development/haskell_style.md",
+    "documents/development/assistant_workflow.md",
     "documents/development/local_dev.md",
     "documents/development/python_policy.md",
     "documents/development/purescript_policy.md",
@@ -123,6 +133,7 @@ rootDocRules =
         rootDocCanonicalHomes =
           [ "documents/README.md",
             "documents/documentation_standards.md",
+            "documents/development/assistant_workflow.md",
             "documents/development/local_dev.md",
             "DEVELOPMENT_PLAN/README.md"
           ]
@@ -133,6 +144,7 @@ rootDocRules =
         rootDocCanonicalHomes =
           [ "documents/README.md",
             "documents/documentation_standards.md",
+            "documents/development/assistant_workflow.md",
             "documents/development/local_dev.md",
             "DEVELOPMENT_PLAN/README.md"
           ]
@@ -152,6 +164,48 @@ generatedSectionRules =
         generatedSectionStartMarker = "<!-- infernix:family-overview:start -->",
         generatedSectionEndMarker = "<!-- infernix:family-overview:end -->",
         generatedSectionExpected = trimTrailingNewlines renderCliSurfaceFamiliesSection
+      },
+    GeneratedSectionRule
+      { generatedSectionPath = "README.md",
+        generatedSectionStartMarker = "<!-- infernix:route-registry:readme:start -->",
+        generatedSectionEndMarker = "<!-- infernix:route-registry:readme:end -->",
+        generatedSectionExpected = trimTrailingNewlines renderReadmeRouteSummarySection
+      },
+    GeneratedSectionRule
+      { generatedSectionPath = "documents/engineering/edge_routing.md",
+        generatedSectionStartMarker = "<!-- infernix:route-registry:edge-routing:start -->",
+        generatedSectionEndMarker = "<!-- infernix:route-registry:edge-routing:end -->",
+        generatedSectionExpected = trimTrailingNewlines renderEdgeRoutingInventorySection
+      },
+    GeneratedSectionRule
+      { generatedSectionPath = "documents/reference/web_portal_surface.md",
+        generatedSectionStartMarker = "<!-- infernix:route-registry:web-portal:start -->",
+        generatedSectionEndMarker = "<!-- infernix:route-registry:web-portal:end -->",
+        generatedSectionExpected = trimTrailingNewlines renderWebPortalRoutesSection
+      },
+    GeneratedSectionRule
+      { generatedSectionPath = "documents/tools/harbor.md",
+        generatedSectionStartMarker = "<!-- infernix:route-registry:harbor:start -->",
+        generatedSectionEndMarker = "<!-- infernix:route-registry:harbor:end -->",
+        generatedSectionExpected = trimTrailingNewlines renderHarborRouteSummarySection
+      },
+    GeneratedSectionRule
+      { generatedSectionPath = "documents/tools/minio.md",
+        generatedSectionStartMarker = "<!-- infernix:route-registry:minio:start -->",
+        generatedSectionEndMarker = "<!-- infernix:route-registry:minio:end -->",
+        generatedSectionExpected = trimTrailingNewlines renderMinioRouteSummarySection
+      },
+    GeneratedSectionRule
+      { generatedSectionPath = "documents/tools/pulsar.md",
+        generatedSectionStartMarker = "<!-- infernix:route-registry:pulsar:start -->",
+        generatedSectionEndMarker = "<!-- infernix:route-registry:pulsar:end -->",
+        generatedSectionExpected = trimTrailingNewlines renderPulsarRouteSummarySection
+      },
+    GeneratedSectionRule
+      { generatedSectionPath = "documents/operations/cluster_bootstrap_runbook.md",
+        generatedSectionStartMarker = "<!-- infernix:route-registry:cluster-bootstrap:start -->",
+        generatedSectionEndMarker = "<!-- infernix:route-registry:cluster-bootstrap:end -->",
+        generatedSectionExpected = trimTrailingNewlines renderClusterBootstrapRouteChecksSection
       }
   ]
 
