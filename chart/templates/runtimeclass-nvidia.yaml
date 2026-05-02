@@ -1,4 +1,4 @@
-{{- if eq .Values.runtimeMode "linux-cuda" }}
+{{- if eq .Values.runtimeMode "linux-gpu" }}
 apiVersion: node.k8s.io/v1
 kind: RuntimeClass
 metadata:

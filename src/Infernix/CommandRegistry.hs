@@ -60,7 +60,7 @@ data CommandSpec = CommandSpec
 helpText :: String
 helpText =
   unlines
-    ( [ "infernix [--runtime-mode apple-silicon|linux-cpu|linux-cuda]",
+    ( [ "infernix COMMAND",
         "",
         "Commands:"
       ]
@@ -87,10 +87,6 @@ renderCliReferenceCommandsSection =
   unlines
     ( ["## `infernix` (production daemon and operator workflow)", ""]
         <> concatMap renderReferenceFamily commandFamilies
-        <> [ "Runtime-mode override:",
-             "",
-             "- `infernix [--runtime-mode apple-silicon|linux-cpu|linux-cuda] COMMAND`"
-           ]
     )
   where
     renderReferenceFamily family =
@@ -141,25 +137,25 @@ commandFamilies =
       },
     CommandFamily
       { familyTopic = "cluster",
-        familyOverview = "reconciles or reports cluster state, generated config publication, and routed surfaces",
+        familyOverview = "reconciles or reports cluster state, generated substrate publication, and routed surfaces",
         familyCommands =
-          [ simpleCommand "cluster up" "reconciles Kind, Harbor-first bootstrap, generated demo config, and routed publication state" ClusterUpCommand,
+          [ simpleCommand "cluster up" "reconciles Kind, Harbor-first bootstrap, the generated substrate file, and routed publication state" ClusterUpCommand,
             simpleCommand "cluster down" "tears the cluster down while leaving durable repo-local state under `./.data/` intact" ClusterDownCommand,
-            simpleCommand "cluster status" "reports cluster presence, runtime mode, publication state, build paths, and route inventory without mutation" ClusterStatusCommand
+            simpleCommand "cluster status" "reports cluster presence, active substrate, publication state, build paths, and route inventory without mutation" ClusterStatusCommand
           ]
       },
     CommandFamily
       { familyTopic = "cache",
-        familyOverview = "inspects or reconciles manifest-backed derived cache state for the active runtime mode",
+        familyOverview = "inspects or reconciles manifest-backed derived cache state for the active substrate",
         familyCommands =
-          [ simpleCommand "cache status" "reports the manifest-backed cache inventory for the active runtime mode" CacheStatusCommand,
+          [ simpleCommand "cache status" "reports the manifest-backed cache inventory for the active substrate" CacheStatusCommand,
             optionalModelCommand
               "cache evict [--model MODEL_ID]"
-              "evicts derived cache state for one model or for the whole active runtime mode"
+              "evicts derived cache state for one model or for the whole active substrate"
               CacheEvictCommand,
             optionalModelCommand
               "cache rebuild [--model MODEL_ID]"
-              "rebuilds derived cache state from durable manifests for one model or for the whole active runtime mode"
+              "rebuilds derived cache state from durable manifests for one model or for the whole active substrate"
               CacheRebuildCommand
           ]
       },
@@ -192,7 +188,7 @@ commandFamilies =
         familyCommands =
           [ simpleCommand "test lint" "runs the focused lint entrypoints together with the strict Haskell style and Python quality gates" TestLintCommand,
             simpleCommand "test unit" "runs the Haskell unit suites and the PureScript frontend unit suites" TestUnitCommand,
-            simpleCommand "test integration" "runs the cluster-backed integration suite against the active runtime mode or matrix" TestIntegrationCommand,
+            simpleCommand "test integration" "runs the cluster-backed integration suite against the active substrate" TestIntegrationCommand,
             simpleCommand "test e2e" "runs routed Playwright coverage for every demo-visible generated catalog entry" TestE2ECommand,
             simpleCommand "test all" "runs lint, unit, integration, and routed E2E validation in sequence" TestAllCommand
           ]

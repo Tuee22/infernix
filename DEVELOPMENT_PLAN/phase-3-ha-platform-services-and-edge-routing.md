@@ -1,6 +1,6 @@
 # Phase 3: HA Platform Services and Edge Routing
 
-**Status**: Active
+**Status**: Done
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
 
 > **Purpose**: Define the mandatory local HA Harbor, MinIO, operator-managed PostgreSQL, and
@@ -10,10 +10,9 @@
 
 ## Phase Status
 
-Sprints 3.1 through 3.8 remain `Done` as the current implementation baseline, but Phase 3 is
-reopened by Sprint 3.9. The route registry, publication contract, and `/pulsar/ws -> /ws`
-rewrite contract are all represented in the current worktree, but the Apple host bridge remains in
-the supported path and the routed demo surface is not yet universally cluster-resident.
+All Phase 3 sprints are now `Done`. The route registry, publication contract, and `/pulsar/ws ->
+/ws` rewrite contract are represented in the current worktree, and the routed demo surface stays
+cluster-resident across substrates.
 
 ## HA Reconcile Surface
 
@@ -40,16 +39,9 @@ the supported path and the routed demo surface is not yet universally cluster-re
 ## Current Repo Assessment
 
 The supported cluster path runs the HA platform services and the optional demo HTTP host on the
-Kind substrate. Publication metadata originates from `./.data/runtime/publication.json`, and the
-route inventory derives from one Haskell-owned registry plus one data-driven HTTPRoute template.
-The remaining Phase 3 gap is substrate placement: the Apple host bridge is still part of the
-implemented path, and publication metadata still permits the routed demo API to swing between
-cluster-resident and host-bridge upstreams.
-
-## Remaining Work
-
-- close Sprint 3.9 so the demo app is always cluster-resident and the Apple host bridge leaves the
-  supported route contract
+Kind substrate. Publication metadata originates from `./.data/runtime/publication.json`, exposes
+the active substrate through current `runtimeMode` fields, and the route inventory derives from
+one Haskell-owned registry plus one data-driven HTTPRoute template.
 
 ## Sprint 3.1: HA MinIO Deployment [Done]
 
@@ -212,21 +204,21 @@ None.
 
 ### Objective
 
-Provide the current demo HTTP API surface through the `infernix-demo` Haskell binary and keep the
-browser entrypoint stable while the interim Apple host bridge remains in the worktree.
+Provide the current demo HTTP API surface through the `infernix-demo` Haskell binary while keeping
+one stable clustered browser entrypoint across substrates.
 
 ### Deliverables
 
 - `infernix-demo` is the single repo-owned source of the demo HTTP surface
 - the chart deploys `infernix-demo` only when the active generated `.dhall` enables `demo_ui`
 - production `infernix service` binds no HTTP listener
-- the Apple host bridge uses `infernix-demo serve --dhall PATH --port N` without changing the
-  browser entrypoint
+- Apple host-native inference still uses the host daemon without changing the clustered browser
+  entrypoint
 
 ### Validation
 
 - the routed demo workbench loads from `infernix-demo` when `demo_ui` is on
-- switching between host-native and cluster-resident `infernix-demo` does not change the browser base URL
+- keeping Apple inference host-native does not change the browser base URL
 - when `demo_ui` is off, the cluster has no demo routes
 
 ### Remaining Work
@@ -235,10 +227,9 @@ None.
 
 ---
 
-## Sprint 3.9: Cluster-Resident Demo App and Apple Host-Bridge Removal [Blocked]
+## Sprint 3.9: Cluster-Resident Demo App and Apple Host-Bridge Removal [Done]
 
-**Status**: Blocked
-**Blocked by**: Sprint 0.8, Sprint 1.10, Sprint 2.9
+**Status**: Done
 **Docs to update**: `README.md`, `documents/architecture/web_ui_architecture.md`, `documents/engineering/edge_routing.md`, `documents/reference/web_portal_surface.md`, `documents/operations/apple_silicon_runbook.md`
 
 ### Objective
@@ -268,12 +259,11 @@ bridge from the supported contract.
 
 ### Remaining Work
 
-- Phase 4 still owns the Apple host inference-daemon behavior that keeps the clustered demo app
-  useful on `apple-silicon`
+None.
 
 ---
 
-## Sprint 3.7: Mode-Stable Publication Contract [Done]
+## Sprint 3.7: Substrate-Stable Publication Contract [Done]
 
 **Status**: Done
 **Implementation**: `src/Infernix/Models.hs`, `src/Infernix/Demo/Api.hs`, `src/Infernix/Service.hs`, `src/Infernix/Cluster.hs`, `test/integration/Spec.hs`, `web/playwright/inference.spec.js`
@@ -281,21 +271,24 @@ bridge from the supported contract.
 
 ### Objective
 
-Make edge-route publication, runtime-mode reporting, and demo-config publication details line up
-so operators and browser clients keep one stable mode-aware entrypoint.
+Make edge-route publication, current `runtimeMode`-labeled status reporting, and demo-config
+publication details line up so operators and browser clients keep one stable substrate-aware
+entrypoint.
 
 ### Deliverables
 
-- `cluster status` reports runtime mode and publication details alongside edge routes
+- `cluster status` reports the active substrate through its current `runtimeMode` line together
+  with publication details and edge routes
 - the supported reconcile path writes `./.data/runtime/publication.json`
 - `/api/publication` exposes the routed publication details consumed by the browser workbench
-- Apple host bridge behavior preserves the same browser entrypoint used by the cluster-resident path
+- the publication contract preserves the same browser entrypoint used by the cluster-resident path
 
 ### Validation
 
-- `cluster status` reports runtime mode, demo-config publication details, and edge routes
+- `cluster status` reports its current `runtimeMode` line, demo-config publication details, and
+  edge routes
 - `GET /api/publication` returns the routed publication details consumed by the browser
-- switching runtime modes changes publication details without changing route prefixes
+- rebuilding for a different substrate changes publication details without changing route prefixes
 
 ### Remaining Work
 
@@ -355,7 +348,7 @@ None.
 - `documents/engineering/monitoring.md` - required if monitoring remains a supported first-class surface after route or service closure
 
 **Product or reference docs to create/update:**
-- `documents/reference/web_portal_surface.md` - browser-visible route inventory and active-mode catalog behavior
+- `documents/reference/web_portal_surface.md` - browser-visible route inventory and active-substrate catalog behavior
 - `documents/operations/apple_silicon_runbook.md` - Apple host-mode startup and bridge behavior
 
 **Cross-references to add:**

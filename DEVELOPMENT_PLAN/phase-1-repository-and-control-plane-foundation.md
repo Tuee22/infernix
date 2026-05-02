@@ -1,6 +1,6 @@
 # Phase 1: Repository and Control-Plane Foundation
 
-**Status**: Active
+**Status**: Done
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
 
 > **Purpose**: Establish the canonical repository scaffold, the two-binary topology
@@ -10,19 +10,16 @@
 
 ## Phase Status
 
-Sprints 1.1 through 1.9 remain `Done` as the current implementation baseline, but Phase 1 is
-reopened by Sprint 1.10. The worktree still closes around runtime-mode flags, per-mode generated
-`.dhall` filenames, a user-facing direct `linux-cuda` launcher, and a Linux host build story that
-the new substrate-generated `.dhall` doctrine rejects.
+All Phase 1 sprints are now `Done`. The control-plane surface closes around the generated
+`infernix-substrate.dhall` file, the public CLI no longer exposes runtime-mode overrides, and the
+supported Linux operator story is the baked-image outer-container launcher only.
 
 ## Current Repo Assessment
 
-The repo still matches the broad Phase 1 ownership contract: the control plane has a Haskell-owned
+The repo matches the Phase 1 ownership contract directly: the control plane has a Haskell-owned
 command registry, the governed root docs point at canonical `documents/` topics with explicit
-metadata, the Linux launcher uses a baked image snapshot, and Playwright workflows no longer
-depend on `npx`. The remaining Phase 1 gap is doctrinal rather than absent ownership: the CLI and
-launcher contract still let the operator think in terms of runtime-mode overrides instead of one
-compile-time generated substrate `.dhall`.
+metadata, the Linux launcher uses a baked image snapshot, and the active substrate comes only from
+the generated `.dhall` beside the binary.
 
 ## Substrate Foundation
 
@@ -30,14 +27,7 @@ This phase owns the baseline distinction between execution context and substrate
 
 - execution context answers where `infernix` runs
 - the built substrate answers which README matrix engine column is active
-- the target substrate ids are `apple-silicon`, `linux-cpu`, and `linux-gpu`
-- the current worktree still uses `apple-silicon`, `linux-cpu`, and `linux-cuda` as runtime-mode
-  ids until Sprint 1.10 and its follow-ons land
-
-## Remaining Work
-
-- close Sprint 1.10 so build-time substrate selection, launcher ownership, and CLI behavior stop
-  depending on `--runtime-mode` and `INFERNIX_RUNTIME_MODE`
+- the supported substrate ids are `apple-silicon`, `linux-cpu`, and `linux-gpu`
 
 ## Sprint 1.1: Canonical Repository Scaffold [Done]
 
@@ -160,7 +150,7 @@ static quality enforceable through canonical entrypoints.
 
 - host-native Haskell builds materialize `./.build/infernix` and `./.build/infernix-demo`
 - outer-container build output stays under `/opt/build/infernix/`
-- `cluster up` stages `infernix-demo-<mode>.dhall` under the active build root
+- `cluster up` stages `infernix-substrate.dhall` under the active build root
 - the supported web build regenerates frontend contracts, runs `spago build`, and emits
   `web/dist/app.js`
 - repo-owned Haskell validation enables strict compiler warnings and treats warnings as errors
@@ -178,7 +168,7 @@ None.
 
 ---
 
-## Sprint 1.5: Initial Runtime-Mode Selection Baseline [Done]
+## Sprint 1.5: Initial Substrate Identifier Baseline [Done]
 
 **Status**: Done
 **Implementation**: `src/Infernix/CLI.hs`, `src/Infernix/Config.hs`, `src/Infernix/Types.hs`
@@ -186,21 +176,23 @@ None.
 
 ### Objective
 
-Make the current runtime-mode selection baseline explicit so the later substrate-generated `.dhall`
-follow-on can replace one clearly named contract instead of inheriting hidden flag behavior.
+Make the substrate identifier set explicit so the later substrate-generated `.dhall` closure builds
+on one clearly named contract instead of hidden flag behavior.
 
 ### Deliverables
 
-- the canonical runtime-mode ids are `apple-silicon`, `linux-cpu`, and `linux-cuda`
-- runtime mode is selected independently of control-plane execution context
-- unsupported runtime modes fail with typed user-facing errors
-- runtime-mode selection flows into `cluster up`, `service`, and the validation commands
+- the canonical substrate ids are `apple-silicon`, `linux-cpu`, and `linux-gpu`
+- the active substrate remains independent of control-plane execution context
+- unsupported substrate ids fail with typed user-facing errors
+- the current generated file, `cluster status`, and generated browser-contract payloads serialize
+  those substrate ids under `runtimeMode` field names
 
 ### Validation
 
-- supported host-native and outer-container workflows resolve the active runtime mode correctly
-- `cluster status` reports the active runtime mode and publication targets
-- unsupported runtime modes fail before reconcile or validation begins
+- supported host-native and outer-container workflows resolve the active substrate correctly
+- `cluster status` reports the active substrate and publication targets through its current
+  `runtimeMode` line
+- unsupported substrate ids fail before reconcile or validation begins
 
 ### Remaining Work
 
@@ -345,10 +337,9 @@ None.
 
 ---
 
-## Sprint 1.10: Build-Time Substrate Selection, Flag Removal, and Launcher Reset [Blocked]
+## Sprint 1.10: Build-Time Substrate Selection, Flag Removal, and Launcher Reset [Done]
 
-**Status**: Blocked
-**Blocked by**: Sprint 0.8
+**Status**: Done
 **Docs to update**: `README.md`, `documents/development/local_dev.md`, `documents/engineering/docker_policy.md`, `documents/engineering/build_artifacts.md`, `documents/reference/cli_reference.md`, `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`
 
 ### Objective
@@ -370,7 +361,7 @@ and collapse the launcher story onto the requested Apple-host-native and Linux-C
   and `linux-gpu`
 - Apple operators do not use Compose as a user-facing launcher for ordinary CLI work; Apple E2E
   orchestration may still invoke Compose internally for the Playwright executor
-- the NVIDIA-backed Linux substrate is standardized as `linux-gpu`, with the current `linux-cuda`
+- the NVIDIA-backed Linux substrate is standardized as `linux-gpu`, with the old `linux-cuda`
   naming retired as an explicit compatibility cleanup item
 
 ### Validation
@@ -382,8 +373,7 @@ and collapse the launcher story onto the requested Apple-host-native and Linux-C
 
 ### Remaining Work
 
-- Phase 2 still owns ConfigMap publication from the built substrate file
-- Phase 4 still owns daemon behavior that consumes and watches that substrate file
+None.
 
 ## Documentation Requirements
 
@@ -404,4 +394,5 @@ and collapse the launcher story onto the requested Apple-host-native and Linux-C
 
 **Cross-references to add:**
 - keep [00-overview.md](00-overview.md) and [system-components.md](system-components.md) aligned
-  when runtime-mode ids, build-root rules, launcher doctrine, or command-registry ownership change
+  when substrate ids, serialized `runtimeMode` identifiers, build-root rules, launcher doctrine,
+  or command-registry ownership change

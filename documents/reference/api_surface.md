@@ -38,7 +38,7 @@ surface is the `.dhall` topic contract described in [../tools/pulsar.md](../tool
   `infernix-demo` binary; production `infernix service` does not bind any HTTP port and never
   serves these endpoints
 - request validation uses Haskell-owned model metadata; the same Haskell typed runtime contract is
-  shared with the non-HTTP production daemon and the filesystem-backed topic consumer
+  shared with the non-HTTP production daemon
 - invalid requests return typed user-facing errors
 - large outputs are returned as typed object references and remain retrievable through
   `GET /objects/:objectRef`
@@ -51,8 +51,8 @@ surface is the `.dhall` topic contract described in [../tools/pulsar.md](../tool
 - publication details stay mode-stable and source from the repo-local publication-state file
 - `GET /api/demo-config` and `GET /api/models` stay aligned with the generated active-mode demo
   catalog
-- the demo `/api` remains stable even when the active upstream changes between the cluster
-  `infernix-demo` workload and the Apple host bridge
+- the demo `/api` remains stable across Apple and Linux substrates because the routed demo surface
+  is always cluster-resident
 - the demo API surface is stable even when switching runtime modes because only the generated
   catalog content changes
 

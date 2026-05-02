@@ -5,6 +5,7 @@ module Main (main) where
 import Control.Concurrent (threadDelay)
 import Control.Exception (SomeException, displayException, finally, try)
 import Control.Monad (forM_, when)
+import Data.ByteString.Lazy qualified as Lazy
 import Data.Char (isAsciiUpper)
 import Data.List (find, isInfixOf, isPrefixOf, isSuffixOf, stripPrefix)
 import Data.Map.Strict qualified as Map
@@ -14,14 +15,19 @@ import Infernix.Cluster
 import Infernix.Config (Paths (..))
 import Infernix.Config qualified as Config
 import Infernix.DemoConfig (decodeDemoConfigFile)
-import Infernix.Models (requestTopicsForMode, resultTopicForMode)
+import Infernix.Models
+  ( catalogForMode,
+    encodeDemoConfig,
+    engineBindingsForMode,
+    requestTopicsForMode,
+    resultTopicForMode,
+  )
 import Infernix.Runtime.Pulsar
   ( publishInferenceRequest,
     readPublishedInferenceResultMaybe,
     schemaMarkerPath,
   )
 import Infernix.Types
-import Infernix.Workflow (platformCommandsAvailable)
 import System.Directory
 import System.Environment (lookupEnv, setEnv, unsetEnv)
 import System.Exit (ExitCode (ExitSuccess))
@@ -53,18 +59,11 @@ main = do
     putStrLn "integration tests passed"
 
 integrationRuntimeModes :: IO [RuntimeMode]
-integrationRuntimeModes = do
-  maybeRuntimeModeValue <- lookupEnv "INFERNIX_RUNTIME_MODE"
-  case maybeRuntimeModeValue of
-    Nothing -> pure [AppleSilicon, LinuxCpu, LinuxCuda]
-    Just rawValue ->
-      case parseRuntimeMode (Text.pack rawValue) of
-        Just runtimeMode -> pure [runtimeMode]
-        Nothing -> fail ("unsupported INFERNIX_RUNTIME_MODE for integration tests: " <> rawValue)
+integrationRuntimeModes =
+  (: []) <$> Config.resolveRuntimeMode Nothing
 
 exerciseRuntimeMode :: Paths -> RuntimeMode -> IO ()
 exerciseRuntimeMode paths runtimeMode = do
-  commandsAvailable <- platformCommandsAvailable
   clusterUp (Just runtimeMode)
   reportStep ("cluster state reload: " <> showRuntimeMode runtimeMode)
   maybeState <- loadClusterState paths
@@ -79,9 +78,6 @@ exerciseRuntimeMode paths runtimeMode = do
   let activeModels = models demoConfig
       activeModelIds = map (Text.unpack . modelId) activeModels
   assert (clusterPresent state) ("cluster up records cluster presence for " <> showRuntimeMode runtimeMode)
-  assert
-    (clusterSimulation state == not commandsAvailable)
-    ("cluster up reports the expected substrate mode for " <> showRuntimeMode runtimeMode)
   let baseUrl = routeBaseUrl paths state
   reportStep ("route probes: " <> showRuntimeMode runtimeMode)
   homeResponse <- httpGet (baseUrl <> "/")
@@ -162,7 +158,7 @@ exerciseRuntimeMode paths runtimeMode = do
   reportStep ("service runtime loop: " <> showRuntimeMode runtimeMode)
   validateServiceRuntimeLoop paths runtimeMode representativeModelId
 
-  when (not (clusterSimulation state) && runtimeMode == LinuxCpu) $ do
+  when (runtimeMode == LinuxCpu) $ do
     reportStep "harbor recovery"
     validateHarborRecovery state
     reportStep "minio durability"
@@ -174,7 +170,7 @@ exerciseRuntimeMode paths runtimeMode = do
     reportStep "postgres lifecycle rebinding"
     validatePostgresLifecycleRebinding paths runtimeMode state
 
-  statusOutput <- captureInfernixOutput paths runtimeMode ["cluster", "status"]
+  statusOutput <- captureInfernixOutput ["cluster", "status"]
   assert ("clusterPresent: True" `isInfixOf` statusOutput) "cluster status reports the cluster presence"
   assert (("runtimeMode: " <> showRuntimeMode runtimeMode) `isInfixOf` statusOutput) "cluster status reports the runtime mode"
   assert ("publicationStatePath: " `isInfixOf` statusOutput) "cluster status reports the publication state path"
@@ -182,7 +178,7 @@ exerciseRuntimeMode paths runtimeMode = do
   clusterDown (Just runtimeMode)
   maybeDownState <- loadClusterState paths
   assert (maybe False (not . clusterPresent) maybeDownState) "cluster down records cluster absence"
-  downStatusOutput <- captureInfernixOutput paths runtimeMode ["cluster", "status"]
+  downStatusOutput <- captureInfernixOutput ["cluster", "status"]
   assert ("clusterPresent: False" `isInfixOf` downStatusOutput) "cluster status reports cluster absence after down"
 
 validateCatalogModelInference :: String -> String -> IO ()
@@ -210,7 +206,7 @@ validateServiceRuntimeLoop paths runtimeMode representativeModelId = do
   let resultTopic = resultTopicForMode runtimeMode
   (_, _, _, processHandle) <-
     createProcess
-      (proc infernixExecutable ["--runtime-mode", showRuntimeMode runtimeMode, "service"])
+      (proc infernixExecutable ["service"])
         { cwd = Just (repoRoot paths)
         }
   waitForFile (schemaMarkerPath paths requestTopic)
@@ -292,44 +288,45 @@ validateEdgePortConflictAndRediscovery paths runtimeMode = do
       threadDelay 250000
 
 validateDemoUiDisabled :: Paths -> RuntimeMode -> IO ()
-validateDemoUiDisabled paths runtimeMode =
-  withOptionalEnv "INFERNIX_DEMO_UI" (Just "false") $ do
-    cleanupRuntimeState paths
-    clusterUp (Just runtimeMode)
-    state <- maybe (fail "cluster state was not available after demo-disabled cluster up") pure =<< loadClusterState paths
-    assert (clusterPresent state) "cluster up records cluster presence when demo_ui is disabled"
-    assert (not (any ((== "/") . path) (routes state))) "route inventory omits the browser root when demo_ui is disabled"
-    assert (not (any ((== "/api") . path) (routes state))) "route inventory omits the demo API when demo_ui is disabled"
-    let baseUrl = routeBaseUrl paths state
-    disabledHomeResult <- try (httpGet (baseUrl <> "/")) :: IO (Either IOError String)
-    disabledPublicationResult <- try (httpGet (baseUrl <> "/api/publication")) :: IO (Either IOError String)
-    harborResponse <- httpGet (baseUrl <> "/harbor")
-    pulsarAdminResponse <- httpGet (baseUrl <> "/pulsar/admin/admin/v2/clusters")
-    (minioS3Status, minioS3Response) <- httpGetWithStatus (baseUrl <> "/minio/s3/models/demo.bin")
-    (pulsarHttpStatus, pulsarHttpResponse) <- httpGetWithStatus (baseUrl <> "/pulsar/ws/v2/producer/public/default/demo")
-    assert (either (const True) (const False) disabledHomeResult) "the browser root is absent when demo_ui is disabled"
-    assert (either (const True) (const False) disabledPublicationResult) "the demo API is absent when demo_ui is disabled"
-    assert ("Harbor" `isInfixOf` harborResponse) "harbor remains published when demo_ui is disabled"
-    assert
-      ( minioS3Status `elem` [200, 401, 403]
-          && ( minioS3Status /= 200
-                 || "\"rewrittenPath\":\"/models/demo.bin\"" `isInfixOf` compact minioS3Response
-             )
-      )
-      "minio remains published when demo_ui is disabled"
-    assert
-      ( "[\"infernix-infernix-pulsar\"]" `isInfixOf` compact pulsarAdminResponse
-          || "\"rewrittenPath\":\"/admin/v2/clusters\"" `isInfixOf` compact pulsarAdminResponse
-      )
-      "pulsar admin remains published when demo_ui is disabled"
-    assert
-      ( pulsarHttpStatus `elem` [200, 405]
-          && ( pulsarHttpStatus /= 200
-                 || "\"rewrittenPath\":\"/ws/v2/producer/public/default/demo\"" `isInfixOf` compact pulsarHttpResponse
-             )
-      )
-      "pulsar websocket route remains published when demo_ui is disabled"
-    clusterDown (Just runtimeMode)
+validateDemoUiDisabled paths runtimeMode = do
+  cleanupRuntimeState paths
+  writeGeneratedDemoConfig paths runtimeMode False
+  clusterUp (Just runtimeMode)
+  state <- maybe (fail "cluster state was not available after demo-disabled cluster up") pure =<< loadClusterState paths
+  assert (clusterPresent state) "cluster up records cluster presence when demo_ui is disabled"
+  assert (not (any ((== "/") . path) (routes state))) "route inventory omits the browser root when demo_ui is disabled"
+  assert (not (any ((== "/api") . path) (routes state))) "route inventory omits the demo API when demo_ui is disabled"
+  let baseUrl = routeBaseUrl paths state
+  disabledHomeResult <- try (httpGet (baseUrl <> "/")) :: IO (Either IOError String)
+  disabledPublicationResult <- try (httpGet (baseUrl <> "/api/publication")) :: IO (Either IOError String)
+  harborResponse <- httpGet (baseUrl <> "/harbor")
+  pulsarAdminResponse <- httpGet (baseUrl <> "/pulsar/admin/admin/v2/clusters")
+  (minioS3Status, minioS3Response) <- httpGetWithStatus (baseUrl <> "/minio/s3/models/demo.bin")
+  (pulsarHttpStatus, pulsarHttpResponse) <- httpGetWithStatus (baseUrl <> "/pulsar/ws/v2/producer/public/default/demo")
+  assert (either (const True) (const False) disabledHomeResult) "the browser root is absent when demo_ui is disabled"
+  assert (either (const True) (const False) disabledPublicationResult) "the demo API is absent when demo_ui is disabled"
+  assert ("Harbor" `isInfixOf` harborResponse) "harbor remains published when demo_ui is disabled"
+  assert
+    ( minioS3Status `elem` [200, 401, 403]
+        && ( minioS3Status /= 200
+               || "\"rewrittenPath\":\"/models/demo.bin\"" `isInfixOf` compact minioS3Response
+           )
+    )
+    "minio remains published when demo_ui is disabled"
+  assert
+    ( "[\"infernix-infernix-pulsar\"]" `isInfixOf` compact pulsarAdminResponse
+        || "\"rewrittenPath\":\"/admin/v2/clusters\"" `isInfixOf` compact pulsarAdminResponse
+    )
+    "pulsar admin remains published when demo_ui is disabled"
+  assert
+    ( pulsarHttpStatus `elem` [200, 405]
+        && ( pulsarHttpStatus /= 200
+               || "\"rewrittenPath\":\"/ws/v2/producer/public/default/demo\"" `isInfixOf` compact pulsarHttpResponse
+           )
+    )
+    "pulsar websocket route remains published when demo_ui is disabled"
+  clusterDown (Just runtimeMode)
+  writeGeneratedDemoConfig paths runtimeMode True
 
 withOptionalEnv :: String -> Maybe String -> IO a -> IO a
 withOptionalEnv name maybeValue action = do
@@ -366,8 +363,8 @@ cleanupRuntimeState paths = do
       | isDoesNotExistError err = pure ()
       | otherwise = ioError err
 
-captureInfernixOutput :: Paths -> RuntimeMode -> [String] -> IO String
-captureInfernixOutput _ runtimeMode args = do
+captureInfernixOutput :: [String] -> IO String
+captureInfernixOutput args = do
   buildDir <- Config.resolveCabalBuildDir
   (exitCode, stdoutOutput, stderrOutput) <-
     readProcessWithExitCode
@@ -375,9 +372,7 @@ captureInfernixOutput _ runtimeMode args = do
       ( [ "--builddir=" <> buildDir,
           "run",
           "exe:infernix",
-          "--",
-          "--runtime-mode",
-          showRuntimeMode runtimeMode
+          "--"
         ]
           <> args
       )
@@ -458,7 +453,6 @@ routeBaseUrl paths state =
 
 routeProbeHostAndPort :: Paths -> ClusterState -> (String, Int)
 routeProbeHostAndPort paths state
-  | clusterSimulation state = ("127.0.0.1", edgePort state)
   | Config.controlPlaneContext paths == "outer-container" =
       (kindControlPlaneNodeName paths (clusterRuntimeMode state), 30090)
   | otherwise = ("127.0.0.1", edgePort state)
@@ -503,6 +497,26 @@ testRootPath suiteName = do
 assert :: Bool -> String -> IO ()
 assert True _ = pure ()
 assert False message = fail message
+
+writeGeneratedDemoConfig :: Paths -> RuntimeMode -> Bool -> IO ()
+writeGeneratedDemoConfig paths runtimeMode demoUiEnabledValue = do
+  createDirectoryIfMissing True (buildRoot paths)
+  Lazy.writeFile
+    (Config.generatedDemoConfigPath paths runtimeMode)
+    ( encodeDemoConfig
+        DemoConfig
+          { configRuntimeMode = runtimeMode,
+            configEdgePort = 0,
+            configMapName = "infernix-demo-config",
+            generatedPath = Config.generatedDemoConfigPath paths runtimeMode,
+            mountedPath = Config.watchedDemoConfigPath runtimeMode,
+            demoUiEnabled = demoUiEnabledValue,
+            requestTopics = requestTopicsForMode runtimeMode,
+            resultTopic = resultTopicForMode runtimeMode,
+            engines = engineBindingsForMode runtimeMode,
+            models = catalogForMode runtimeMode
+          }
+    )
 
 reportStep :: String -> IO ()
 reportStep message = do

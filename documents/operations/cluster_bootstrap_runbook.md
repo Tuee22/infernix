@@ -12,9 +12,9 @@
   `kind`, `kubectl`, and `helm` before it attempts the real Kind workflow
 - if Docker, Kind, Helm, or kubectl are unavailable, expect `cluster up` to use the simulated
   substrate; `cluster status` will report that mode and the published routes remain available
-- for `linux-cuda`, confirm the supported NVIDIA host satisfies the documented `nvidia-smi` and
+- for `linux-gpu`, confirm the supported NVIDIA host satisfies the documented `nvidia-smi` and
   `docker run --gpus all` preflight contract before cluster creation
-- for `linux-cuda`, also confirm the host filesystem has substantial free space before `cluster up`
+- for `linux-gpu`, also confirm the host filesystem has substantial free space before `cluster up`
   or `test all`; low disk headroom can make Kind-hosted BookKeeper ledger directories
   non-writable during the Harbor-backed rollout and prevent `infernix-service` readiness
 - confirm that the chosen edge port, active runtime mode, generated demo-config paths, and

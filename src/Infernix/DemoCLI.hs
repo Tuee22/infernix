@@ -8,36 +8,34 @@ where
 import Data.Maybe (fromMaybe)
 import Data.Text qualified as Text
 import GHC.IO.Encoding (setLocaleEncoding, utf8)
-import Infernix.CLI (extractRuntimeMode)
 import Infernix.Config (discoverPaths, ensureRepoLayout, generatedDemoConfigPath, publicationStatePath, resolveRuntimeMode)
 import Infernix.Demo.Api (DemoApiOptions (..), runDemoApiServer)
-import Infernix.Types (RuntimeMode, runtimeModeId)
+import Infernix.DemoConfig (ensureGeneratedDemoConfigFile)
+import Infernix.Types (runtimeModeId)
 import System.Environment (getArgs, lookupEnv)
 import System.Exit (exitFailure)
 
 main :: IO ()
 main = do
   setLocaleEncoding utf8
+  paths <- discoverPaths
+  ensureRepoLayout paths
+  runtimeMode <- resolveRuntimeMode Nothing
+  _ <- ensureGeneratedDemoConfigFile paths runtimeMode
   args <- getArgs
-  case extractRuntimeMode args of
-    Left message -> do
-      putStrLn message
-      exitFailure
-    Right (maybeRuntimeMode, remainingArgs) ->
-      dispatch maybeRuntimeMode remainingArgs
+  dispatch args
 
-dispatch :: Maybe RuntimeMode -> [String] -> IO ()
-dispatch _ ["--help"] = putStrLn helpText
-dispatch _ [] = putStrLn helpText
-dispatch maybeRuntimeMode ("serve" : serveArgs) =
+dispatch :: [String] -> IO ()
+dispatch ["--help"] = putStrLn helpText
+dispatch [] = putStrLn helpText
+dispatch ("serve" : serveArgs) =
   case parseServeArgs serveArgs of
     Left message -> do
       putStrLn message
       exitFailure
     Right (maybePort, maybeDhallPath) -> do
       paths <- discoverPaths
-      ensureRepoLayout paths
-      runtimeMode <- resolveRuntimeMode maybeRuntimeMode
+      runtimeMode <- resolveRuntimeMode Nothing
       let selectedDhallPath =
             fromMaybe (generatedDemoConfigPath paths runtimeMode) maybeDhallPath
       maybeBindHost <- lookupEnv "INFERNIX_BIND_HOST"
@@ -53,7 +51,7 @@ dispatch maybeRuntimeMode ("serve" : serveArgs) =
             demoConfigPath = selectedDhallPath,
             demoPublicationPath = fromMaybe (publicationStatePath paths) maybePublicationPath
           }
-dispatch _ _ = do
+dispatch _ = do
   putStrLn helpText
   exitFailure
 
@@ -75,7 +73,7 @@ parseServeArgs = go Nothing Nothing
 helpText :: String
 helpText =
   unlines
-    [ "infernix-demo [--runtime-mode apple-silicon|linux-cpu|linux-cuda] serve [--dhall PATH] [--port PORT]",
+    [ "infernix-demo serve [--dhall PATH] [--port PORT]",
       "",
       "Commands:",
       "  infernix-demo serve [--dhall PATH] [--port PORT]"

@@ -20,8 +20,8 @@ executable runs.
 ## `infernix` Families
 
 - `service` - starts the long-running production daemon that consumes Pulsar work and binds no HTTP port
-- `cluster` - reconciles or reports cluster state, generated config publication, and routed surfaces
-- `cache` - inspects or reconciles manifest-backed derived cache state for the active runtime mode
+- `cluster` - reconciles or reports cluster state, generated substrate publication, and routed surfaces
+- `cache` - inspects or reconciles manifest-backed derived cache state for the active substrate
 - `kubectl` - proxies upstream Kubernetes access through the repo-local kubeconfig
 - `lint` - runs the focused Haskell-owned static checks for files, docs, `.proto`, and chart assets
 - `test` - runs the aggregate validation entrypoints for lint, unit, integration, routed E2E, and the full suite

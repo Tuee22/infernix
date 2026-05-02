@@ -49,24 +49,13 @@ A phase or sprint can move to `Done` only when all of the following are true:
 
 ## Current Repo Assessment
 
-This plan now tracks a new substrate-driven doctrine that is not yet implemented in the current
-worktree. The repository still reflects the earlier runtime-mode and simulation contract:
-
-- the CLI still accepts `--runtime-mode`, and subprocesses still rely on `INFERNIX_RUNTIME_MODE`
-- supported code paths still stage per-mode `infernix-demo-<mode>.dhall` files instead of one
-  compile-time generated substrate file beside the binary
-- the control plane still carries simulated cluster, route, and filesystem-Pulsar fallback behavior
-- the Apple validation story still relies on the interim host `infernix-demo serve` bridge
-- the Linux GPU lane is still named `linux-cuda` in code and docs, and the user-facing launcher
-  contract still treats the direct GPU launcher as supported
-- the default validation flow still treats cross-substrate matrix coverage as a supported posture
-  and the broader repo does not yet close around one `.dhall`-driven integration suite plus
-  substrate-agnostic Playwright ownership
-
-No implementation or non-plan docs changed in this turn. Because the governed docs outside
-`DEVELOPMENT_PLAN/` still describe the prior doctrine, Phase 0 reopens in `Active` status and the
-later substrate-closure follow-ons remain open behind it. This update makes those gaps explicit
-instead of leaving stale `Done` claims in place.
+The repository now implements the substrate-generated `.dhall` doctrine described by this plan.
+The supported CLI reads the active substrate from `infernix-substrate.dhall`, cluster publication
+mirrors that exact file into `ConfigMap/infernix-demo-config`, the routed demo surface stays
+cluster-resident across substrates, Linux operator workflows close around Compose-driven outer
+containers, and validation reports only the active built substrate instead of implying a default
+cross-substrate matrix. The generated file, `cluster status`, publication JSON, and generated
+browser contracts still serialize that active substrate under `runtimeMode` field names.
 
 Monitoring is not a supported first-class surface.
 
@@ -81,21 +70,20 @@ The plan keeps these concepts separate:
 
 ### Naming Note
 
-The target doctrine standardizes the NVIDIA-backed Linux substrate as `linux-gpu`. The current
-worktree still uses `linux-cuda` in code and docs, and the follow-on phases below own that rename
-explicitly.
+The canonical NVIDIA-backed Linux substrate id is `linux-gpu`, and the implementation plus docs
+now use that id consistently.
 
 ## Phase Overview
 
 | Phase | Name | Status | Document |
 |-------|------|--------|----------|
-| 0 | Documentation and Governance | Active | [phase-0-documentation-and-governance.md](phase-0-documentation-and-governance.md) |
-| 1 | Repository and Control-Plane Foundation | Active | [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md) |
-| 2 | Kind Cluster Storage and Lifecycle | Active | [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md) |
-| 3 | HA Platform Services and Edge Routing | Active | [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md) |
-| 4 | Inference Service and Durable Runtime | Active | [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) |
-| 5 | Web UI and Shared Types | Active | [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md) |
-| 6 | Validation, E2E, and HA Hardening | Active | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) |
+| 0 | Documentation and Governance | Done | [phase-0-documentation-and-governance.md](phase-0-documentation-and-governance.md) |
+| 1 | Repository and Control-Plane Foundation | Done | [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md) |
+| 2 | Kind Cluster Storage and Lifecycle | Done | [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md) |
+| 3 | HA Platform Services and Edge Routing | Done | [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md) |
+| 4 | Inference Service and Durable Runtime | Done | [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) |
+| 5 | Web UI and Shared Types | Done | [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md) |
+| 6 | Validation, E2E, and HA Hardening | Done | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) |
 
 ## Canonical Outcome
 

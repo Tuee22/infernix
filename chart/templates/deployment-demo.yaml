@@ -21,8 +21,6 @@ spec:
           command:
             - infernix-demo
           args:
-            - --runtime-mode
-            - {{ .Values.runtimeMode | quote }}
             - serve
             - --dhall
             - "{{ .Values.demoConfig.mountPath }}/{{ .Values.demoConfig.fileName }}"
@@ -31,8 +29,6 @@ spec:
           env:
             - name: INFERNIX_BIND_HOST
               value: "0.0.0.0"
-            - name: INFERNIX_RUNTIME_MODE
-              value: {{ .Values.runtimeMode | quote }}
             - name: INFERNIX_PUBLICATION_STATE_PATH
               value: "{{ .Values.demoConfig.mountPath }}/{{ .Values.publication.fileName }}"
             - name: INFERNIX_DATA_ROOT

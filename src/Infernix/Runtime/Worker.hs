@@ -115,7 +115,7 @@ runSetupInvocation paths poetryExecutable projectDirectory installRoot runtimeMo
         [ ("POETRY_VIRTUALENVS_IN_PROJECT", "true"),
           ("INFERNIX_REPO_ROOT", repoRoot paths),
           ("INFERNIX_ENGINE_INSTALL_ROOT", installRoot),
-          ("INFERNIX_RUNTIME_MODE", Text.unpack (runtimeModeId runtimeMode))
+          ("INFERNIX_SUBSTRATE_ID", Text.unpack (runtimeModeId runtimeMode))
         ]
   processEnvironment <- workerProcessEnvironment paths envOverrides
   (_, _, maybeWorkerError, workerHandle) <-

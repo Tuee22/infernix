@@ -2,6 +2,7 @@
 
 module Infernix.DemoConfig
   ( decodeDemoConfigFile,
+    ensureGeneratedDemoConfigFile,
     renderModelListing,
     stripDemoConfigBanner,
     validateDemoConfigFile,
@@ -11,10 +12,16 @@ where
 import Data.Aeson (eitherDecodeStrict')
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Char8 qualified as ByteStringChar8
+import Data.ByteString.Lazy qualified as LazyByteString
 import Data.List (intercalate, nub)
 import Data.Text qualified as Text
+import Infernix.Config (Paths)
+import Infernix.Config qualified as Config
+import Infernix.Models (catalogForMode, encodeDemoConfig, engineBindingsForMode, requestTopicsForMode, resultTopicForMode)
 import Infernix.Types
 import Infernix.Workflow (demoConfigGeneratedBannerLine)
+import System.Directory (createDirectoryIfMissing, doesFileExist)
+import System.FilePath (takeDirectory)
 
 demoConfigBannerBytes :: ByteString.ByteString
 demoConfigBannerBytes = ByteStringChar8.pack demoConfigGeneratedBannerLine
@@ -44,6 +51,35 @@ validateDemoConfigFile filePath = do
   _ <- decodeDemoConfigFile filePath
   pure ()
 
+ensureGeneratedDemoConfigFile :: Paths -> RuntimeMode -> IO FilePath
+ensureGeneratedDemoConfigFile paths runtimeMode = do
+  let filePath = Config.generatedDemoConfigPath paths runtimeMode
+  filePresent <- doesFileExist filePath
+  if filePresent
+    then pure filePath
+    else do
+      createDirectoryIfMissing True (takeDirectory filePath)
+      ByteString.writeFile filePath (renderGeneratedDemoConfig paths runtimeMode)
+      pure filePath
+
+renderGeneratedDemoConfig :: Paths -> RuntimeMode -> ByteString.ByteString
+renderGeneratedDemoConfig paths runtimeMode =
+  LazyByteString.toStrict
+    ( encodeDemoConfig
+        DemoConfig
+          { configRuntimeMode = runtimeMode,
+            configEdgePort = 0,
+            configMapName = "infernix-demo-config",
+            generatedPath = Config.generatedDemoConfigPath paths runtimeMode,
+            mountedPath = Config.watchedDemoConfigPath runtimeMode,
+            demoUiEnabled = True,
+            requestTopics = requestTopicsForMode runtimeMode,
+            resultTopic = resultTopicForMode runtimeMode,
+            engines = engineBindingsForMode runtimeMode,
+            models = catalogForMode runtimeMode
+          }
+    )
+
 renderModelListing :: DemoConfig -> String
 renderModelListing demoConfig =
   unlines
@@ -64,8 +100,8 @@ renderModelListing demoConfig =
 
 validateDemoConfig :: DemoConfig -> Either String DemoConfig
 validateDemoConfig demoConfig
-  | configEdgePort demoConfig <= 0 || configEdgePort demoConfig > 65535 =
-      Left "edgePort must be between 1 and 65535"
+  | configEdgePort demoConfig < 0 || configEdgePort demoConfig > 65535 =
+      Left "edgePort must be between 0 and 65535"
   | Text.null (Text.strip (configMapName demoConfig)) =
       Left "configMapName must not be blank"
   | null (requestTopics demoConfig) =

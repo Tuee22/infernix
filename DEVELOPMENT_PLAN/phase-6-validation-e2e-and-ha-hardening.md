@@ -1,6 +1,6 @@
 # Phase 6: Validation, E2E, and HA Hardening
 
-**Status**: Active
+**Status**: Done
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
 
 > **Purpose**: Define the supported static-quality and single-substrate validation contract for the
@@ -12,36 +12,20 @@
 
 ## Phase Status
 
-Sprints 6.1 through 6.18 remain `Done` as the current implementation baseline, but Phase 6 is
-reopened by Sprint 6.19. The validation entrypoints, routed coverage, governed-root-document
-metadata closure, structured CLI-registry closure, and compatibility-shim cleanup are all present
-in the current worktree, but the supported test story still defaults to cross-substrate matrix
-coverage, still leaves simulation language in the broader contract, and does not yet close around
-the final one-suite integration model plus substrate-agnostic Playwright ownership.
+All Phase 6 sprints are now `Done`. The validation entrypoints, routed coverage,
+governed-root-document metadata closure, structured CLI-registry closure, and compatibility-shim
+cleanup are present in the current worktree, and the supported test story is substrate-specific.
 
 ## Current Repo Assessment
 
 The repository has lint, unit, integration, and Playwright entrypoints. The canonical testing,
-boundary, portability, storage, and Haskell-style docs are present, and the baked Linux substrate
-image carries the source-snapshot manifest needed for git-less `infernix lint files` runs. The
-routed Playwright suite exhaustively exercises every demo-visible generated catalog entry, the
-integration suite enumerates every generated active-mode catalog entry while also carrying Harbor,
-MinIO, Pulsar, and Harbor PostgreSQL recovery or lifecycle checks in code, the Apple host-native
-path reconciles its remaining supported prerequisites from the Homebrew-plus-ghcup baseline, the
-governed root docs carry the stricter metadata model, and the structured Haskell command registry
-owns parsing, help output, and the generated CLI-reference sections that docs lint enforces.
-
-The remaining Phase 6 gap is doctrinal and executional: `test all` still implies a cross-substrate
-matrix, the current implementation still follows the older runtime-mode-oriented integration
-baseline rather than the final one-suite README-driven `.dhall` contract, Apple E2E still depends
-on the current bridge-era orchestration, browser-visible E2E ownership is not yet implemented as
-substrate-agnostic enough, and simulation has not yet been removed completely from the supported
-runtime and validation contract.
-
-## Remaining Work
-
-- close Sprint 6.19 so supported validation becomes substrate-specific, unambiguous, README-driven,
-  and free of simulation code paths or cross-substrate coverage claims
+boundary, portability, storage, and Haskell-style docs are present, the baked Linux substrate
+image carries the source-snapshot manifest needed for git-less `infernix lint files` runs, the
+routed Playwright suite exhaustively exercises every demo-visible generated catalog entry for the
+active substrate, and the integration suite enumerates every generated active-substrate catalog
+entry while also carrying Harbor, MinIO, Pulsar, and Harbor PostgreSQL recovery or lifecycle
+checks in code. The generated file, `cluster status`, publication JSON, and generated browser
+contracts still expose the active substrate through `runtimeMode` fields or lines.
 
 ## Validation Surface
 
@@ -62,15 +46,13 @@ These commands are declarative and idempotent validation entrypoints. Re-running
 same contract and may reconcile supported prerequisites instead of depending on alternate setup
 commands.
 
-## Current Runtime-Mode Validation Baseline
+## Current Validation Baseline
 
 - `test unit` proves matrix typing, generated catalog rendering, and contract-generation logic
-- `test integration` validates the active runtime-mode implementation's published catalog contract,
-  routed surfaces, and routed inference execution for every generated active-mode catalog entry
-- `test e2e` exercises every demo-visible generated catalog entry for the active runtime-mode
-  implementation baseline
-- the current worktree still closes the repository by aggregating Apple, Linux CPU, and Linux CUDA
-  runs across their current supported lanes
+- `test integration` validates the active substrate's published catalog contract, routed surfaces,
+  and routed inference execution for every generated active-substrate catalog entry
+- `test e2e` exercises every demo-visible generated catalog entry for the active substrate
+- `test all` reports only the active built substrate instead of implying cross-substrate coverage
 
 ## Sprint 6.1: Static Quality Gates, Testing Doctrine, and Unit Suites [Done]
 
@@ -126,10 +108,10 @@ MinIO, Pulsar, and operator-managed PostgreSQL substrate.
 ### Deliverables
 
 - integration coverage for `cluster up`, generated demo-config publication, and routed inference
-  execution for every generated active-mode catalog entry
-- host-native integration coverage proves the routed API can move to the Apple host bridge without
-  changing the browser-visible entrypoint
-- dedicated `linux-cuda` integration coverage proves device-plugin rollout, GPU resources, and
+  execution for every generated active-substrate catalog entry
+- host-native integration coverage proves the routed API can keep one browser-visible entrypoint
+  while Apple inference remains host-native
+- dedicated `linux-gpu` integration coverage proves device-plugin rollout, GPU resources, and
   service GPU visibility
 - integration coverage proves routed cache mutation and publication surfaces stay aligned with the
   generated catalog contract
@@ -160,15 +142,15 @@ browser surface through the shared edge.
 ### Deliverables
 
 - Playwright suites live under the UI-owned `web/playwright/` surface
-- `infernix test e2e` exercises the routed browser surface launched from the substrate image on Linux
-  or the host install on Apple Silicon
+- `infernix test e2e` exercises the routed browser surface launched from the substrate image on
+  Linux or from a container-owned executor orchestrated by the host CLI on Apple Silicon
 - supported Playwright invocations use `npm --prefix web exec -- playwright ...`
 - E2E covers publication details, model selection, manual inference submission, and result rendering
 
 ### Validation
 
 - `infernix test e2e` hits the routed path rather than bypassing the edge
-- the routed Playwright suite fails if any active-mode catalog entry is skipped
+- the routed Playwright suite fails if any active-substrate catalog entry is skipped
 - Apple host E2E and Linux substrate-image E2E both pass on their supported lanes
 
 ### Remaining Work
@@ -208,7 +190,7 @@ None.
 ## Sprint 6.5: Cluster Lifecycle and Environment-Matrix Validation [Done]
 
 **Status**: Done
-**Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Config.hs`, `src/Infernix/CLI.hs`, `compose.yaml`, `kind/cluster-apple-silicon.yaml`, `kind/cluster-linux-cpu.yaml`, `kind/cluster-linux-cuda.yaml`, `test/integration/Spec.hs`, `web/playwright/inference.spec.js`, `web/test/run_playwright_matrix.mjs`
+**Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Config.hs`, `src/Infernix/CLI.hs`, `compose.yaml`, `kind/cluster-apple-silicon.yaml`, `kind/cluster-linux-cpu.yaml`, `kind/cluster-linux-gpu.yaml`, `test/integration/Spec.hs`, `web/playwright/inference.spec.js`, `web/test/run_playwright_matrix.mjs`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/operations/apple_silicon_runbook.md`
 
 ### Objective
@@ -219,8 +201,9 @@ Verify the same product contract across Apple host-native and Linux outer-contai
 
 - the codebase exposes `cluster up`, `cluster status`, and `cluster down` through both execution contexts
 - automated coverage proves repo-local kubeconfig, generated demo-config, publication mirror, and
-  publication state creation for the active runtime mode
-- `cluster status` reports runtime mode, build or data roots, publication details, and chosen edge port
+  publication state creation for the active built substrate
+- `cluster status` reports the active substrate through its current `runtimeMode` line together
+  with build or data roots, publication details, and the chosen edge port
 
 ### Validation
 
@@ -234,7 +217,7 @@ None.
 
 ---
 
-## Sprint 6.6: Current Per-Mode Exhaustive Integration and E2E Coverage Baseline [Done]
+## Sprint 6.6: Generated-Catalog Exhaustive Integration and E2E Coverage Baseline [Done]
 
 **Status**: Done
 **Implementation**: `src/Infernix/CLI.hs`, `src/Infernix/Lint/Files.hs`, `test/unit/Spec.hs`, `test/integration/Spec.hs`, `web/playwright/inference.spec.js`, `web/test/Main.purs`, `web/test/run_playwright_matrix.mjs`
@@ -242,20 +225,23 @@ None.
 
 ### Objective
 
-Make the README promise concrete for the current runtime-mode implementation baseline so the later
-single-substrate validation reset has an explicit contract to replace.
+Make the README promise concrete for the generated-catalog coverage machinery so the later
+single-substrate validation closure rests on explicit per-substrate catalog enumeration rather than
+hard-coded lane lists.
 
 ### Deliverables
 
-- `infernix test integration` enumerates every active-mode catalog entry from the generated demo config
-- `infernix test e2e` is specified to exercise every demo-visible active-mode entry through the
-  routed browser surface
+- `infernix test integration` enumerates every generated catalog entry from the active
+  build-generated demo config
+- `infernix test e2e` is specified to exercise every demo-visible generated catalog entry through
+  the routed browser surface
 - `infernix test all` aggregates lint, unit, integration, and E2E without silently dropping catalog entries
-- default matrix coverage keeps Apple and Linux CPU in scope and includes Linux CUDA on supported hosts
+- the coverage machinery derives its exercised catalog from the generated substrate file instead of
+  hard-coded per-lane model lists
 
 ### Validation
 
-- changing the active runtime mode changes the exercised catalog and engine assertions automatically
+- changing the built substrate changes the exercised catalog and engine assertions automatically
 - integration fails if any generated catalog entry is skipped
 - routed E2E fails if any demo-visible generated catalog entry is skipped once Sprint 6.3 closes
 
@@ -265,10 +251,9 @@ None.
 
 ---
 
-## Sprint 6.19: Single-Substrate Validation Closure and Simulation Removal [Blocked]
+## Sprint 6.19: Single-Substrate Validation Closure and Simulation Removal [Done]
 
-**Status**: Blocked
-**Blocked by**: Sprint 0.8, Sprint 1.10, Sprint 2.9, Sprint 3.9, Sprint 4.12, Sprint 5.8
+**Status**: Done
 **Docs to update**: `README.md`, `documents/development/local_dev.md`, `documents/development/testing_strategy.md`, `documents/development/chaos_testing.md`, `documents/engineering/testing.md`, `documents/engineering/portability.md`, `documents/reference/cli_reference.md`, `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`
 
 ### Objective
@@ -320,8 +305,7 @@ and E2E ownership in the final `.dhall`-driven terms.
 
 ### Remaining Work
 
-- none inside Phase 6 once the earlier launcher, cluster, runtime, and Playwright ownership
-  follow-ons close
+None.
 
 ---
 
@@ -380,7 +364,7 @@ toolchain from package managers instead of depending on a broad preinstalled App
   can bootstrap Poetry through the host's built-in Python and then continue all host-side Python
   management through the shared Poetry project
 - `linux-cpu` host prerequisites stop at Docker Engine plus the Docker Compose plugin
-- `linux-cuda` host prerequisites stop at Docker Engine plus the supported NVIDIA driver and
+- `linux-gpu` host prerequisites stop at Docker Engine plus the supported NVIDIA driver and
   container-toolkit setup
 - clean-host validation proves the supported commands reconcile prerequisites rather than relying on
   undocumented manual setup beyond those minimal host baselines
@@ -389,16 +373,16 @@ toolchain from package managers instead of depending on a broad preinstalled App
 
 - on a clean Apple Silicon host with only Homebrew plus ghcup present,
   `cabal --builddir=.build/cabal install --installdir=./.build --install-method=copy --overwrite-policy=always exe:infernix exe:infernix-demo`
-  succeeds, and `./.build/infernix --runtime-mode apple-silicon cluster up` reconciles the
+  succeeds, and `./.build/infernix cluster up` reconciles the
   remaining supported Apple host prerequisites through the supported package-manager path
 - Apple host validation proves the supported flow can bootstrap Poetry when absent and then run the
   adapter setup path without manual Poetry installation
 - on a clean Linux CPU host with Docker only,
-  `docker compose build infernix` plus `docker compose run --rm infernix infernix --runtime-mode linux-cpu test all`
+  `docker compose build infernix` plus `docker compose run --rm infernix infernix test all`
   passes
-- on a clean Linux CUDA host with Docker plus the supported NVIDIA host prerequisites,
-  `docker build -f docker/linux-substrate.Dockerfile --build-arg RUNTIME_MODE=linux-cuda --build-arg BASE_IMAGE=nvidia/cuda:13.2.1-cudnn-runtime-ubuntu24.04 -t infernix-linux-cuda:local .`
-  plus the direct `linux-cuda` `test all` lane passes
+- on a clean Linux GPU host with Docker plus the supported NVIDIA host prerequisites,
+  `docker build -f docker/linux-substrate.Dockerfile --build-arg RUNTIME_MODE=linux-gpu --build-arg BASE_IMAGE=nvidia/cuda:13.2.1-cudnn-runtime-ubuntu24.04 -t infernix-linux-gpu:local .`
+  plus `docker compose run --rm infernix infernix test all` passes
 
 ### Remaining Work
 
@@ -610,7 +594,7 @@ None.
 ## Sprint 6.14: Monitoring Stance Resolution and Final Doctrine Closure [Done]
 
 **Status**: Done
-**Implementation**: `documents/README.md`, `documents/engineering/testing.md`, `chart/values.yaml`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/00-overview.md`, `DEVELOPMENT_PLAN/system-components.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`, `src/Infernix/Lint/Docs.hs`
+**Implementation**: `documents/README.md`, `documents/engineering/testing.md`, `chart/values.yaml`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/00-overview.md`, `DEVELOPMENT_PLAN/system-components.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`, `src/Infernix/Cluster.hs`, `src/Infernix/Lint/Docs.hs`
 **Docs to update**: `documents/README.md`, `documents/engineering/testing.md`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/00-overview.md`, `DEVELOPMENT_PLAN/system-components.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 
 ### Objective
@@ -824,7 +808,7 @@ None.
 - `CLAUDE.md` - thin governed automation entry document with explicit supersession or canonical-home markers
 - `documents/reference/cli_reference.md` - test command reference
 - `documents/reference/cli_surface.md` - short command-family overview that links to the canonical CLI reference
-- `documents/reference/web_portal_surface.md` - browser coverage expectations and active-mode catalog behavior
+- `documents/reference/web_portal_surface.md` - browser coverage expectations and active-substrate catalog behavior
 
 **Cross-references to add:**
 - keep [phase-0-documentation-and-governance.md](phase-0-documentation-and-governance.md) aligned
@@ -835,7 +819,7 @@ None.
 - keep [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md)
   aligned when runtime-honesty wording or README-matrix interpretation changes
 - keep [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md)
-  aligned when HA claims, route assumptions, or active-mode validation rules change
+  aligned when HA claims, route assumptions, or active-substrate validation rules change
 - keep [system-components.md](system-components.md) aligned when testing-doctrine ownership,
   shared-helper closure, or the supported monitoring stance changes
 - keep [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) aligned when any pending

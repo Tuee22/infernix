@@ -17,11 +17,13 @@
 - when `INFERNIX_PULSAR_WS_BASE_URL` and `INFERNIX_PULSAR_ADMIN_URL` are set, the production
   daemon uses Pulsar's WebSocket producer or consumer endpoints plus the admin schema API for the
   configured topics
-- when those endpoints are absent, the daemon falls back to the repo-local filesystem simulation
-  rooted at `./.data/runtime/pulsar/`: request topics and the result topic are directories, and
-  schema registration is mirrored as marker files under `./.data/runtime/pulsar/schemas/`
-- result payloads remain protobuf messages in both modes: over Pulsar topics on the real path, and
-  as `.pb` files under the simulated `result_topic` directory on the fallback path
+- when those endpoints are intentionally absent in unit-level harnesses, the daemon can exercise
+  the repo-local topic spool rooted at `./.data/runtime/pulsar/`: request topics and the result
+  topic become directories, and schema registration is mirrored as marker files under
+  `./.data/runtime/pulsar/schemas/`
+- result payloads remain protobuf messages in both cases: over Pulsar topics on supported cluster
+  paths, and as `.pb` files under the harness-local `result_topic` directory on the repo-local
+  topic spool
 - because Pulsar is first enabled in the final Harbor-backed Helm phase, `cluster up` forces the
   upstream bookkeeper and cluster-initialization jobs there on the real Kind path
 - the final chart keeps `pulsar.proxy.configData.webSocketServiceEnabled: "true"` so the internal

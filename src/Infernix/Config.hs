@@ -15,10 +15,15 @@ module Infernix.Config
   )
 where
 
+import Data.Aeson (Value (Object, String), eitherDecodeStrict')
+import Data.Aeson.Key qualified as Key
+import Data.Aeson.KeyMap qualified as KeyMap
+import Data.ByteString qualified as ByteString
+import Data.ByteString.Char8 qualified as ByteStringChar8
 import Data.Maybe (fromMaybe)
 import Data.Text qualified as Text
-import Infernix.Types (RuntimeMode (..), parseRuntimeMode, runtimeModeId)
-import System.Directory (createDirectoryIfMissing, doesPathExist, getCurrentDirectory)
+import Infernix.Types (RuntimeMode (..), parseRuntimeMode)
+import System.Directory (createDirectoryIfMissing, doesFileExist, doesPathExist, getCurrentDirectory)
 import System.Environment (lookupEnv)
 import System.FilePath (isAbsolute, normalise, takeDirectory, (</>))
 import System.Info (os)
@@ -114,19 +119,19 @@ generatedKubeconfigPath paths
   | otherwise = buildRoot paths </> "infernix.kubeconfig"
 
 generatedDemoConfigPath :: Paths -> RuntimeMode -> FilePath
-generatedDemoConfigPath paths runtimeMode =
-  buildRoot paths </> ("infernix-demo-" <> modeSuffix <> ".dhall")
-  where
-    modeSuffix = Text.unpack (runtimeModeId runtimeMode)
+generatedDemoConfigPath paths _runtimeMode =
+  generatedSubstratePath paths
+
+generatedSubstratePath :: Paths -> FilePath
+generatedSubstratePath paths =
+  buildRoot paths </> "infernix-substrate.dhall"
 
 publishedConfigMapCatalogPath :: Paths -> RuntimeMode -> FilePath
-publishedConfigMapCatalogPath paths runtimeMode =
+publishedConfigMapCatalogPath paths _runtimeMode =
   runtimeRoot paths
     </> "configmaps"
     </> "infernix-demo-config"
-    </> ("infernix-demo-" <> modeSuffix <> ".dhall")
-  where
-    modeSuffix = Text.unpack (runtimeModeId runtimeMode)
+    </> "infernix-substrate.dhall"
 
 publishedConfigMapManifestPath :: Paths -> FilePath
 publishedConfigMapManifestPath paths =
@@ -150,23 +155,54 @@ resolveCabalBuildDir = do
 resolveRuntimeMode :: Maybe RuntimeMode -> IO RuntimeMode
 resolveRuntimeMode (Just runtimeMode) = pure runtimeMode
 resolveRuntimeMode Nothing = do
-  maybeEnvValue <- lookupEnv "INFERNIX_RUNTIME_MODE"
-  case maybeEnvValue of
-    Just value ->
-      case parseRuntimeMode (Text.pack value) of
-        Just runtimeMode -> pure runtimeMode
-        Nothing ->
-          ioError
-            (userError ("Unsupported runtime mode: " <> value))
-    Nothing -> pure defaultRuntimeMode
+  paths <- discoverPaths
+  let substratePath = generatedSubstratePath paths
+  substrateExists <- doesFileExist substratePath
+  if substrateExists
+    then resolveRuntimeModeFromGeneratedFile substratePath
+    else defaultRuntimeMode
 
 watchedDemoConfigPath :: RuntimeMode -> FilePath
-watchedDemoConfigPath runtimeMode =
-  "/opt/build/infernix-demo-" <> modeSuffix <> ".dhall"
-  where
-    modeSuffix = Text.unpack (runtimeModeId runtimeMode)
+watchedDemoConfigPath _runtimeMode =
+  "/opt/build/infernix/infernix-substrate.dhall"
 
-defaultRuntimeMode :: RuntimeMode
+defaultRuntimeMode :: IO RuntimeMode
 defaultRuntimeMode
-  | os == "darwin" = AppleSilicon
-  | otherwise = LinuxCpu
+  | os == "darwin" = pure AppleSilicon
+  | otherwise = do
+      maybeValue <- lookupEnv "INFERNIX_SUBSTRATE_ID"
+      case maybeValue >>= parseRuntimeMode . Text.pack of
+        Just runtimeMode -> pure runtimeMode
+        Nothing -> pure LinuxCpu
+
+resolveRuntimeModeFromGeneratedFile :: FilePath -> IO RuntimeMode
+resolveRuntimeModeFromGeneratedFile substratePath = do
+  rawValue <- ByteString.readFile substratePath
+  case eitherDecodeStrict' (stripGeneratedBanner rawValue) of
+    Right (Object objectValue) ->
+      case KeyMap.lookup (Key.fromString "runtimeMode") objectValue of
+        Just (String rawRuntimeMode) ->
+          case parseRuntimeMode rawRuntimeMode of
+            Just runtimeMode -> pure runtimeMode
+            Nothing ->
+              ioError
+                (userError ("Unsupported runtime mode in " <> substratePath <> ": " <> Text.unpack rawRuntimeMode))
+        _ ->
+          ioError
+            (userError ("Generated substrate file is missing runtimeMode: " <> substratePath))
+    Left message ->
+      ioError
+        (userError ("Invalid generated substrate file " <> substratePath <> ": " <> message))
+    Right _ ->
+      ioError
+        (userError ("Generated substrate file is not a JSON object: " <> substratePath))
+
+stripGeneratedBanner :: ByteString.ByteString -> ByteString.ByteString
+stripGeneratedBanner rawValue =
+  case dropBlankPrefix (ByteStringChar8.lines rawValue) of
+    firstLine : remainingLines
+      | ByteStringChar8.isPrefixOf (ByteStringChar8.pack "{-") (ByteStringChar8.strip firstLine) ->
+          ByteStringChar8.unlines remainingLines
+    trimmedLines -> ByteStringChar8.unlines trimmedLines
+  where
+    dropBlankPrefix = dropWhile (ByteString.null . ByteStringChar8.strip)

@@ -15,22 +15,16 @@
   Colima, Docker CLI, `kind`, `kubectl`, `helm`, Node.js, and Poetry through the supported package
   manager or built-in Python path when the active flow first needs them
 - `linux-cpu` host prerequisites stop at Docker Engine plus the Docker Compose plugin, and
-  `linux-cuda` adds only the supported NVIDIA driver and container-toolkit setup
+  `linux-gpu` adds only the supported NVIDIA driver and container-toolkit setup
 
 ## Apple Host-Native Flow
 
 ```bash
 cabal --builddir=.build/cabal install --installdir=./.build --install-method=copy --overwrite-policy=always exe:infernix exe:infernix-demo
-./.build/infernix --runtime-mode apple-silicon cluster up
-./.build/infernix --runtime-mode apple-silicon cluster status
-./.build/infernix --runtime-mode apple-silicon test all
-./.build/infernix --runtime-mode apple-silicon cluster down
-```
-
-When the demo UI is needed as a host-side bridge:
-
-```bash
-./.build/infernix-demo serve --dhall ./.build/infernix-demo-apple-silicon.dhall --port 9180
+./.build/infernix cluster up
+./.build/infernix cluster status
+./.build/infernix test all
+./.build/infernix cluster down
 ```
 
 The first supported Apple host-native command that needs Docker, Kubernetes tooling, Node.js, or
@@ -40,10 +34,10 @@ Poetry reconciles those prerequisites automatically.
 
 ```bash
 docker compose build infernix
-docker compose run --rm infernix infernix --runtime-mode linux-cpu cluster up
-docker compose run --rm infernix infernix --runtime-mode linux-cpu cluster status
-docker compose run --rm infernix infernix --runtime-mode linux-cpu test all
-docker compose run --rm infernix infernix --runtime-mode linux-cpu cluster down
+docker compose run --rm infernix infernix cluster up
+docker compose run --rm infernix infernix cluster status
+docker compose run --rm infernix infernix test all
+docker compose run --rm infernix infernix cluster down
 ```
 
 For the CUDA lane, build the shared substrate image with the CUDA base image and run it with
@@ -55,12 +49,12 @@ When exercising a Python-native engine adapter, Poetry materializes a local envi
 the shared adapter project:
 
 ```bash
-./.build/infernix --runtime-mode apple-silicon test unit
+./.build/infernix test unit
 ```
 
 ## Rules
 
-- runtime mode is selected independently of control-plane execution context
+- the active substrate comes from the generated `.dhall` beside the binary rather than a CLI flag
 - supported workflows do not use repo-owned scripts or wrapper layers
 - the target Apple host workflow has no generic Python prerequisite; Poetry and a repo-local
   adapter virtual environment materialize only when an engine-adapter test or setup path is
@@ -74,8 +68,7 @@ the shared adapter project:
 - container mode keeps build output under `/opt/build/infernix`
 - container mode runs against a baked image snapshot and bind-mounts only `./.data/` together
   with the Docker socket and the named build caches
-- when Docker, Kind, Helm, or kubectl are unavailable, `cluster up` falls back to the simulated
-  substrate and `cluster status` reports that explicitly
+- when `demo_ui` is enabled, the demo surface stays cluster-resident on Apple and Linux alike
 - `docker compose up` and `docker compose exec` are not supported operator workflows
 - assistant-facing repository workflow rules live in [assistant_workflow.md](assistant_workflow.md)
 

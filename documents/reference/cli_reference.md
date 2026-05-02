@@ -14,15 +14,15 @@
 
 ### `cluster`
 
-- `infernix cluster up` - reconciles Kind, Harbor-first bootstrap, generated demo config, and routed publication state
+- `infernix cluster up` - reconciles Kind, Harbor-first bootstrap, the generated substrate file, and routed publication state
 - `infernix cluster down` - tears the cluster down while leaving durable repo-local state under `./.data/` intact
-- `infernix cluster status` - reports cluster presence, runtime mode, publication state, build paths, and route inventory without mutation
+- `infernix cluster status` - reports cluster presence, active substrate, publication state, build paths, and route inventory without mutation
 
 ### `cache`
 
-- `infernix cache status` - reports the manifest-backed cache inventory for the active runtime mode
-- `infernix cache evict [--model MODEL_ID]` - evicts derived cache state for one model or for the whole active runtime mode
-- `infernix cache rebuild [--model MODEL_ID]` - rebuilds derived cache state from durable manifests for one model or for the whole active runtime mode
+- `infernix cache status` - reports the manifest-backed cache inventory for the active substrate
+- `infernix cache evict [--model MODEL_ID]` - evicts derived cache state for one model or for the whole active substrate
+- `infernix cache rebuild [--model MODEL_ID]` - rebuilds derived cache state from durable manifests for one model or for the whole active substrate
 
 ### `kubectl`
 
@@ -39,7 +39,7 @@
 
 - `infernix test lint` - runs the focused lint entrypoints together with the strict Haskell style and Python quality gates
 - `infernix test unit` - runs the Haskell unit suites and the PureScript frontend unit suites
-- `infernix test integration` - runs the cluster-backed integration suite against the active runtime mode or matrix
+- `infernix test integration` - runs the cluster-backed integration suite against the active substrate
 - `infernix test e2e` - runs routed Playwright coverage for every demo-visible generated catalog entry
 - `infernix test all` - runs lint, unit, integration, and routed E2E validation in sequence
 
@@ -57,10 +57,6 @@
 - `infernix internal demo-config load PATH` - loads one generated demo config and prints the rendered model listing
 - `infernix internal demo-config validate PATH` - validates one generated demo config file
 - `infernix internal pulsar-roundtrip DEMO_CONFIG_PATH MODEL_ID INPUT_TEXT` - publishes one inference request through Pulsar and waits for the matching result
-
-Runtime-mode override:
-
-- `infernix [--runtime-mode apple-silicon|linux-cpu|linux-cuda] COMMAND`
 <!-- infernix:command-registry:end -->
 
 ## `infernix-demo` (demo UI HTTP host)
@@ -77,21 +73,17 @@ Runtime-mode override:
 - `cluster status` is read-only and reports publication-state details together with route
   inventory and state paths
 - `infernix service` is the production daemon. It binds no HTTP port, consumes the active
-  `.dhall` `request_topics`, `result_topic`, and `engines` fields, uses real Pulsar
-  WebSocket or admin endpoints when `INFERNIX_PULSAR_WS_BASE_URL` and
-  `INFERNIX_PULSAR_ADMIN_URL` are set, and otherwise falls back to
-  `filesystem-pulsar-simulation`
-- `infernix-demo serve` is the only supported HTTP host in this repository; the `infernix-demo`
-  cluster workload and the host-native `infernix-demo serve` invocation provide the same demo
-  `/api` contract through `src/Infernix/Demo/Api.hs`
+  `.dhall` `request_topics`, `result_topic`, and `engines` fields and uses the Pulsar transport
+  configured for the active substrate
+- `infernix-demo serve` is the only repo-owned demo HTTP host in this repository; the routed
+  cluster-resident demo workload and direct `serve` both expose the same Haskell `/api` contract
+  through `src/Infernix/Demo/Api.hs`
 - `infernix cache status` reports the manifest-backed cache inventory for the active runtime
   mode; `cache evict` and `cache rebuild` only affect derived cache state
 - `infernix kubectl ...` wraps upstream `kubectl` and injects the repo-local kubeconfig
 - `cluster up` forwards any `INFERNIX_ENGINE_COMMAND_*` environment variables into the service
   deployment so adapter-specific engine command prefixes can be configured on the cluster path
   without rebuilding the image
-- when Docker, Kind, Helm, or kubectl are unavailable, `cluster up` falls back to the simulated
-  substrate and `cluster status` reports that explicitly
 - on the Linux outer-container cluster path, `cluster up`, `cluster status`, `kubectl`, and
   routed browser checks keep host-published Kind and edge ports on `127.0.0.1` while reaching
   Kubernetes through the private Docker `kind` network and the internal kubeconfig
@@ -105,19 +97,15 @@ Runtime-mode override:
   project compiler is newer than the current `hlint` release line
 - `infernix test unit` runs the Haskell unit suites and the PureScript frontend unit suites via
   `npm --prefix web run test:unit`
-- `infernix test e2e` launches Playwright from the host on Apple Silicon, from the active Linux
-  substrate image on Linux when the platform toolchain is available, and otherwise falls back to
-  the local npm runner
+- `infernix test integration`, `infernix test e2e`, and `infernix test all` exercise only the
+  active substrate encoded in the generated `.dhall`
+- `infernix test e2e` uses a container-owned Playwright executor on supported paths; Apple
+  host-native flows orchestrate it from the host CLI, while Linux flows run it from the active
+  substrate image
 - `infernix internal pulsar-roundtrip ...` is an internal validation helper that publishes one
   protobuf request through the configured Pulsar endpoints and waits for the matching result
-- `infernix test integration`, `infernix test e2e`, and `infernix test all` honor
-  `--runtime-mode` when supplied; without it, the current integration test binary enumerates all
-  three runtime modes, while E2E includes Linux CUDA only when the active control-plane surface
-  passes the NVIDIA preflight contract
-- pass `--runtime-mode` when a single predictable validation lane is required
-- `infernix --runtime-mode linux-cuda cluster up`, `test integration`, and `test e2e` fail fast
-  with a host-preflight error when the NVIDIA runtime prerequisites are absent
-- `--runtime-mode` accepts `apple-silicon`, `linux-cpu`, or `linux-cuda`
+- `infernix cluster up`, `test integration`, and `test e2e` fail fast on `linux-gpu` when the
+  NVIDIA runtime prerequisites are absent
 
 ## Cross-References
 

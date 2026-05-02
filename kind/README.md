@@ -7,7 +7,7 @@ This directory contains the repo-owned Kind topology assets rendered by `inferni
   `./.build/kind/registry`
 - `cluster-linux-cpu.yaml` defines the CPU validation topology with the same routed port and
   registry-host contract
-- `cluster-linux-cuda.yaml` defines the `nvkind` template for the supported `linux-cuda` lane,
+- `cluster-linux-gpu.yaml` defines the `nvkind` template for the supported `linux-gpu` lane,
   including the GPU worker labels, registry-host contract, and CDI device mount used by the
   NVIDIA-backed worker node
 

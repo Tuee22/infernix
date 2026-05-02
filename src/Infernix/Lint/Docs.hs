@@ -82,11 +82,11 @@ forbiddenPhrases =
     "python/<substrate>/adapters/",
     "python/apple-silicon/",
     "python/linux-cpu/",
-    "python/linux-cuda/",
+    "python/linux-gpu/",
     "src/Generated/Contracts.hs",
     "docker/linux-base.Dockerfile",
     "docker/linux-cpu.Dockerfile",
-    "docker/linux-cuda.Dockerfile",
+    "docker/linux-gpu.Dockerfile",
     "npx playwright",
     "Harbor admin Basic-auth"
   ]
@@ -610,7 +610,9 @@ isRepoRelativeTarget target =
     && not ("file://" `isPrefixOf` target)
     && not ("app://" `isPrefixOf` target)
     && not ("vscode://" `isPrefixOf` target)
-    && head (dropDrive target) /= '/'
+    && case dropDrive target of
+      '/' : _ -> False
+      _ -> True
 
 startsWithHeading :: String -> Bool
 startsWithHeading contents =

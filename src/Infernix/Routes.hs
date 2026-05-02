@@ -137,12 +137,9 @@ publicationRoutes demoEnabled =
         Nothing -> False
 
 publicationTargetSurface :: RouteSpec -> ApiUpstream -> Text
-publicationTargetSurface routeSpec apiUpstream =
+publicationTargetSurface routeSpec _apiUpstream =
   case (routePublicationId routeSpec, routePublicationTargetSurface routeSpec) of
-    (Just "demo", _) ->
-      case apiUpstreamMode apiUpstream of
-        "host-demo-bridge" -> "host-native demo bridge"
-        _ -> "cluster-resident demo surface"
+    (Just "demo", _) -> "cluster-resident demo surface"
     (_, Just targetSurface) -> targetSurface
     _ -> ""
 

@@ -29,7 +29,7 @@ import Data.Aeson
 import Data.ByteString.Base64 qualified as Base64
 import Data.ByteString.Char8 qualified as ByteString8
 import Data.ByteString.Lazy.Char8 qualified as LazyChar8
-import Data.List (find, isSuffixOf, nub)
+import Data.List (find, intercalate, isSuffixOf, nub)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe)
@@ -80,7 +80,7 @@ harborPrefixes = ["goharbor/", "docker.io/goharbor/", "quay.io/goharbor/"]
 
 requiredRenderedChartImageAlternatives :: [[String]]
 requiredRenderedChartImageAlternatives =
-  [ ["infernix-linux-cpu:local", "infernix-linux-cuda:local"]
+  [ ["infernix-linux-cpu:local", "infernix-linux-gpu:local"]
   ]
 
 alwaysPublishedImages :: [String]
@@ -441,9 +441,9 @@ buildHarborOverridesValue publishedImages = do
 requiredRuntimeImage :: Map String PublishedImage -> Either String PublishedImage
 requiredRuntimeImage publishedImages =
   maybe
-    (Left "required runtime image infernix-linux-cpu:local or infernix-linux-cuda:local was not published")
+    (Left "required runtime image infernix-linux-cpu:local or infernix-linux-gpu:local was not published")
     Right
-    (Map.lookup "infernix-linux-cuda:local" publishedImages `orElse` Map.lookup "infernix-linux-cpu:local" publishedImages)
+    (Map.lookup "infernix-linux-gpu:local" publishedImages `orElse` Map.lookup "infernix-linux-cpu:local" publishedImages)
 
 orElse :: Maybe a -> Maybe a -> Maybe a
 orElse maybeLeft maybeRight =
@@ -524,8 +524,7 @@ splitOn delimiter = go []
       | otherwise = go (current : acc) rest
 
 joinWith :: String -> [String] -> String
-joinWith _ [] = ""
-joinWith separator values = foldr1 (\left right -> left <> separator <> right) values
+joinWith = intercalate
 
 breakRepositoryAndTag :: String -> (String, String, String)
 breakRepositoryAndTag value =

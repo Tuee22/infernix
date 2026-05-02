@@ -8,7 +8,7 @@
 ## Executive Summary
 
 - The product contract is portable across three runtime modes: `apple-silicon`, `linux-cpu`, and
-  `linux-cuda`.
+  `linux-gpu`.
 - The execution context is not the same thing as the runtime mode: Apple uses a host-native
   control plane, while Linux uses baked outer-container launchers.
 - Harbor-first bootstrap, manual storage, operator-managed Patroni PostgreSQL, Gateway API
@@ -23,7 +23,7 @@ does not claim substrate parity where the underlying hardware or launcher model 
 
 ## Portable Platform Invariants
 
-- the supported runtime-mode ids are `apple-silicon`, `linux-cpu`, and `linux-cuda`
+- the supported runtime-mode ids are `apple-silicon`, `linux-cpu`, and `linux-gpu`
 - Harbor-first bootstrap, the `infernix-manual` storage doctrine, operator-managed Patroni
   PostgreSQL, Gateway API routing, and Pulsar-only production inference do not vary by substrate
 - the generated active-mode catalog, publication contract, route inventory, and browser-visible
@@ -36,13 +36,13 @@ does not claim substrate parity where the underlying hardware or launcher model 
 
 | Topic | Portable contract | Apple host-native detail | Linux outer-container detail |
 |-------|-------------------|--------------------------|------------------------------|
-| Control-plane launcher | `infernix` owns lifecycle and validation behavior | run `./.build/infernix ...` after direct `cabal` install into `./.build/` | run `docker compose run --rm infernix infernix ...` for `linux-cpu` or direct `docker run --gpus all ... infernix-linux-cuda:local infernix ...` for `linux-cuda` |
-| Host prerequisites | keep prerequisites minimal and explicit | Homebrew plus ghcup before build; Colima is the only supported Apple Docker environment | Docker Engine plus Compose plugin for `linux-cpu`; NVIDIA driver plus container toolkit in addition for `linux-cuda` |
+| Control-plane launcher | `infernix` owns lifecycle and validation behavior | run `./.build/infernix ...` after direct `cabal` install into `./.build/` | run `docker compose run --rm infernix infernix ...` for supported Linux workflows |
+| Host prerequisites | keep prerequisites minimal and explicit | Homebrew plus ghcup before build; Colima is the only supported Apple Docker environment | Docker Engine plus Compose plugin for `linux-cpu`; NVIDIA driver plus container toolkit in addition for `linux-gpu` |
 | Tool bootstrap after the binary exists | supported commands may reconcile remaining operator tooling | Homebrew-managed Docker CLI, `kind`, `kubectl`, `helm`, Node.js, and Poetry bootstrap may be installed on demand | the substrate image already carries the supported toolchain; runtime install is not part of the contract |
 | Build roots and kubeconfig location | outputs stay repo-local and untracked | `./.build/` and `./.build/infernix.kubeconfig` | `/opt/build/infernix/` in the image plus `./.data/runtime/infernix.kubeconfig` for durable outer-container reuse |
 | Python adapter environment | use the shared Poetry project only | `python/.venv/` may materialize on demand through the host's built-in Python plus user-local Poetry bootstrap | adapter dependencies are installed in the shared substrate image build |
-| Browser E2E runner | exercise the routed surface for the active generated catalog | Playwright runs from the host install on the supported Apple lane | Playwright runs from the baked substrate image when possible and otherwise from the local npm runner |
-| CUDA path | supported only when the host actually satisfies the NVIDIA contract | not applicable | `linux-cuda` requires the baked image, forwarded Docker socket, GPU visibility, and in-image `nvkind` |
+| Browser E2E runner | exercise the routed surface for the active generated catalog | the host CLI orchestrates a container-owned Playwright executor against the clustered routed surface | Playwright runs from the baked substrate image |
+| CUDA path | supported only when the host actually satisfies the NVIDIA contract | not applicable | `linux-gpu` requires the baked image, forwarded Docker socket, GPU visibility, and in-image `nvkind` |
 
 ## Unsupported Shortcuts
 
@@ -63,7 +63,7 @@ does not claim substrate parity where the underlying hardware or launcher model 
 
 - `infernix docs check` fails if this document loses its required structure or governed metadata.
 - `infernix test integration` and `infernix test e2e` validate the generated active-mode catalog
-  and routed surface against the selected runtime mode instead of silently substituting another
+  and routed surface against the active built substrate instead of silently substituting another
   substrate.
 - the full repository closes only when Apple, Linux CPU, and Linux CUDA all pass on their
   supported lanes.

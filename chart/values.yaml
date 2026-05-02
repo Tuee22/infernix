@@ -30,7 +30,7 @@ repoGateway:
 demoConfig:
   name: infernix-demo-config
   mountPath: /opt/build
-  fileName: infernix-demo-runtime-mode.dhall
+  fileName: infernix-substrate.dhall
   catalogPayload: |
     {}
 

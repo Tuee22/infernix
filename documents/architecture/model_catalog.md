@@ -10,8 +10,8 @@
 The model catalog is Haskell-owned typed configuration derived from the README matrix.
 
 - the service registry owns one entry for every README matrix row
-- `cluster up` selects the active runtime mode, chooses the selected engine for each supported row,
-  and emits `infernix-demo-<mode>.dhall`
+- the active generated substrate file selects the engine for each supported row and carries the
+  resulting catalog as `infernix-substrate.dhall`
 - the generated file is then published into `ConfigMap/infernix-demo-config` for cluster-resident consumers
 
 ## Entry Shape

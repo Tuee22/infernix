@@ -1,6 +1,6 @@
 # Phase 5: Web UI and Shared Types
 
-**Status**: Active
+**Status**: Done
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
 
 > **Purpose**: Define the PureScript demo UI built with spago, the Haskell-owned frontend contract
@@ -9,10 +9,9 @@
 
 ## Phase Status
 
-Sprints 5.1 through 5.7 remain `Done` as the current implementation baseline, but Phase 5 is
-reopened by Sprint 5.8. The final Linux substrate image already owns the demo bundle and
-Playwright toolchain, but the Apple path still assumes the interim host bridge and host- or
-matrix-driven Playwright execution model that the new substrate doctrine rejects.
+All Phase 5 sprints are now `Done`. The Linux substrate image owns the demo bundle and Playwright
+toolchain, the routed demo app stays cluster-resident on Apple and Linux alike, and supported E2E
+uses a container-owned Playwright executor without browser-side substrate branching.
 
 ## Current Repo Assessment
 
@@ -20,9 +19,8 @@ The repository ships the supported PureScript demo path: `web/src/Main.purs` and
 `web/src/Infernix/Web/Workbench.purs` own the browser workbench, `web/test/Main.purs` owns the
 frontend unit suite, `src/Infernix/Web/Contracts.hs` owns the handwritten browser contract, and
 `npm --prefix web run build` regenerates generated contracts and bundles the app into
-`web/dist/app.js`. The remaining Phase 5 gap is substrate ownership: the final Apple validation
-story must route through the clustered demo app while Playwright stays container-owned and
-substrate-agnostic at the browser layer.
+`web/dist/app.js`. The generated browser contracts and workbench state still expose the active
+substrate through `runtimeMode` fields.
 
 ## Substrate-Driven Demo Catalog Contract
 
@@ -30,13 +28,10 @@ substrate-agnostic at the browser layer.
 - the UI does not maintain a hidden hard-coded allowlist
 - the browser workbench exposes every model or workload entry present in the generated file
 - substrate changes alter catalog content without changing route structure
+- the generated browser contracts and routed publication payloads currently serialize the active
+  substrate under `runtimeMode` field names
 - the browser workbench and Playwright harness do not choose engines or branch on substrate ids;
   `infernix-demo` reads the active `.dhall` and owns substrate-appropriate dispatch
-
-## Remaining Work
-
-- close Sprint 5.8 so the Apple Playwright flow, clustered demo hosting, and user-facing substrate
-  instructions line up
 
 ## Sprint 5.1: Demo Web Application Host (PureScript) [Done]
 
@@ -47,7 +42,7 @@ substrate-agnostic at the browser layer.
 ### Objective
 
 Close the current web hosting baseline while keeping one stable browser entrypoint across the
-routed cluster path and the interim Apple host bridge.
+clustered routed surface on every supported substrate.
 
 ### Deliverables
 
@@ -172,15 +167,15 @@ baseline and remove `npx` from the supported workflow.
 ### Deliverables
 
 - the final Linux substrate image includes the built `web/dist/` bundle and Playwright plus browser deps
-- `infernix test e2e --runtime-mode linux-cpu|linux-cuda` launches Playwright from the substrate image
-- `infernix test e2e --runtime-mode apple-silicon` launches Playwright from the Apple host install
+- `infernix test e2e` launches Playwright from the substrate image on Linux and from a
+  container-owned executor orchestrated by the host CLI on Apple
 - the chart does not deploy a separate web workload or web image
 - supported Playwright invocations use `npm --prefix web exec -- playwright ...`
 
 ### Validation
 
 - a substrate-image build produces a working Playwright runner without a separate web image
-- Apple host E2E still passes against the host Playwright install
+- Apple host E2E still passes with container-owned Playwright against the clustered routed surface
 - Linux E2E passes with Playwright launched from the substrate image
 - `rg -n 'npx playwright' README.md documents src web/package.json` returns no supported workflow references
 
@@ -190,10 +185,9 @@ None.
 
 ---
 
-## Sprint 5.8: Clustered Demo Surface on Apple and Container-Owned Playwright Closure [Blocked]
+## Sprint 5.8: Clustered Demo Surface on Apple and Container-Owned Playwright Closure [Done]
 
-**Status**: Blocked
-**Blocked by**: Sprint 0.8, Sprint 1.10, Sprint 2.9, Sprint 3.9, Sprint 4.12
+**Status**: Done
 **Docs to update**: `README.md`, `documents/architecture/web_ui_architecture.md`, `documents/reference/web_portal_surface.md`, `documents/development/local_dev.md`, `documents/development/testing_strategy.md`
 
 ### Objective
@@ -229,11 +223,11 @@ Playwright executor.
 
 ### Remaining Work
 
-- Phase 6 still owns the final validation entrypoints and substrate-specific reporting contract
+None.
 
 ---
 
-## Sprint 5.6: Mode-Driven Demo Catalog and Workbench Parity in PureScript [Done]
+## Sprint 5.6: Substrate-Driven Demo Catalog and Workbench Parity in PureScript [Done]
 
 **Status**: Done
 **Implementation**: `web/src/Main.purs`, `web/src/Infernix/Web/Workbench.purs`, `web/playwright/inference.spec.js`, `web/test/Main.purs`
@@ -241,20 +235,21 @@ Playwright executor.
 
 ### Objective
 
-Make the browser workbench a faithful reflection of the generated catalog for the active runtime mode.
+Make the browser workbench a faithful reflection of the generated catalog for the active built
+substrate.
 
 ### Deliverables
 
 - the UI catalog is derived only from the active generated demo catalog
 - every generated catalog entry has a visible browser path covering request input, progress, and
   result presentation appropriate to that workload family
-- switching runtime modes changes the rendered catalog without frontend code changes
+- rebuilding for a different substrate changes the rendered catalog without frontend code changes
 
 ### Validation
 
 - browser-visible catalog entries match the generated demo config exactly
 - removing an entry from the generated config removes it from the UI without extra frontend edits
-- switching runtime modes changes catalog and engine metadata in the expected way
+- rebuilding for a different substrate changes catalog and engine metadata in the expected way
 
 ### Remaining Work
 
@@ -300,7 +295,7 @@ None.
 - `documents/engineering/implementation_boundaries.md` - browser-contract ownership and generated-output boundaries
 
 **Product or reference docs to create/update:**
-- `documents/reference/web_portal_surface.md` - manual inference workbench behavior, route inventory, and active-mode catalog rules
+- `documents/reference/web_portal_surface.md` - manual inference workbench behavior, route inventory, and active-substrate catalog rules
 
 **Cross-references to add:**
 - keep [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md)

@@ -40,9 +40,7 @@ Always-published operator prefixes:
 <!-- infernix:route-registry:web-portal:end -->
 
 On the real Kind path those routes are published by `Gateway/infernix-edge`,
-`EnvoyProxy/infernix-edge`, and the repo-owned HTTPRoute set. On the simulated substrate, the same
-prefixes return compatibility HTML or JSON so the route inventory and rewrite behavior remain
-testable.
+`EnvoyProxy/infernix-edge`, and the repo-owned HTTPRoute set.
 
 ## Workbench Behavior
 
@@ -51,7 +49,7 @@ testable.
 - frontend contract modules are emitted into `web/src/Generated/` by
   `infernix internal generate-purs-contracts`
 - the visible catalog comes from the generated demo catalog for the active runtime mode
-- the generated catalog is published by `cluster up` as `infernix-demo-<mode>.dhall`, mounted into
+- the generated catalog is published by `cluster up` as `infernix-substrate.dhall`, mounted into
   the `infernix-demo` workload through `ConfigMap/infernix-demo-config`, and mirrored under the
   active build root for inspection
 - the browser workbench renders the generated catalog exactly rather than maintaining a separate
@@ -59,8 +57,8 @@ testable.
 - the routed Playwright contract cross-checks `/api/models` against the serialized generated demo
   config returned by `GET /api/demo-config` and separately validates publication details from
   `/api/publication`
-- the host-native validation path launches routed Playwright from the host install; the Linux path
-  launches it from the active substrate image when the platform toolchain is available
+- supported routed E2E uses a container-owned Playwright executor; Apple host-native flows
+  orchestrate it from the host CLI, while Linux flows launch it from the active substrate image
 - the workbench surfaces the active runtime mode, control-plane context, daemon location, catalog
   source, chosen edge port, demo-config path, and routed publication inventory through
   `/api/publication`

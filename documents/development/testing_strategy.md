@@ -17,24 +17,22 @@ mode-specific coverage, matrix behavior, and operator detail behind those canoni
 - `infernix test lint` validates repository hygiene, required chart or Kind or `.proto` assets, the
   repo-owned Haskell style stack, the Haskell build path, and the shared Python adapter quality
   gate via `poetry run check-code` from the shared `python/` project when adapters are present
-- `infernix test unit` validates runtime-mode catalog counts and selection rules, CLI
-  `--runtime-mode` parsing, demo-config encode or decode behavior, cache lifecycle, the
+- `infernix test unit` validates generated catalog counts and selection rules, demo-config encode
+  or decode behavior, cache lifecycle, the
   protobuf-over-stdio Python worker path and adapter-command overrides, chart image or claim
   discovery, Harbor overlay emission, and the current PureScript generated-contract or workbench
   behavior via `spago test` driven by the non-deprecated runner in `web/test/Main.purs`
-- `infernix test integration` validates cluster lifecycle across the selected runtime-mode set,
+- `infernix test integration` validates cluster lifecycle for the active generated substrate,
   generated demo-config publication, routed demo or tool surfaces, routed inference plus cache
-  endpoints, service-path request or result publication through the filesystem-backed Pulsar
-  simulation, `cluster status`, every generated active-mode catalog entry from the mounted demo
-  config, demo-ui disablement on the `linux-cpu` lane, and edge-port rediscovery on the
-  host-native control-plane `linux-cpu` lane
+  endpoints, service-path request or result publication through the active topic contract,
+  `cluster status`, every generated active-mode catalog entry from the mounted demo config,
+  demo-ui disablement on the `linux-cpu` lane, and edge-port rediscovery on the host-native
+  control-plane `linux-cpu` lane
 - `infernix test e2e` validates the routed browser surface by comparing `/api/models` to the
   generated demo config and exercising every routed catalog entry through both the HTTP inference
   endpoint and the browser workbench
-- `infernix test all` runs lint, unit, integration, and E2E in sequence; without an explicit
-  `--runtime-mode`, the current integration test binary enumerates all three runtime modes, while
-  E2E includes `linux-cuda` only when the NVIDIA preflight contract passes
-- the supported real-cluster `linux-cuda` integration and `test all` lanes also depend on enough
+- `infernix test all` runs lint, unit, integration, and E2E in sequence for the active substrate
+- the supported real-cluster `linux-gpu` integration and `test all` lanes also depend on enough
   host disk headroom for Kind image preload, Harbor-backed image publication, and Pulsar
   BookKeeper durability; low disk headroom can block `infernix-service` readiness after cluster
   creation even when the NVIDIA preflight passes
@@ -47,41 +45,40 @@ mode-specific coverage, matrix behavior, and operator detail behind those canoni
 - `infernix test integration` serializes the active runtime mode into the generated demo config and
   publication state, then validates the routed demo API, auxiliary routed prefixes, every
   generated active-mode catalog entry, cache mutation endpoints, and the daemon request or result
-  loop for each selected runtime mode
+  loop for the active substrate
 - `infernix test integration` also validates `cluster status`, `cluster down`, and repeated
-  `cluster up` behavior for the selected runtime modes
+  `cluster up` behavior for the active substrate
 - `infernix test integration` also validates the routed `GET /api/cache`,
   `POST /api/cache/evict`, and `POST /api/cache/rebuild` contract against manifest-backed durable
   state
 - `infernix test integration` also validates that `/harbor`, `/minio/s3`, and `/pulsar/ws`
   resolve through the shared routed surface and preserve the expected rewritten-path contract
-- those routed auxiliary checks accept either the simulated rewrite payloads or the live upstream
-  Harbor, MinIO, and Pulsar responses when the suite is running on a real Kind cluster
+- those routed auxiliary checks prove the live Harbor, MinIO, and Pulsar routed surfaces that the
+  supported Kind path publishes
 - the `/pulsar/ws` contract is specific: the public prefix rewrites to Pulsar's real `/ws`
   upstream context root so routed `/pulsar/ws/v2/...` requests terminate on the WebSocket servlet
-- `infernix test integration` validates the filesystem-backed topic simulation by publishing a
-  protobuf request file and asserting a protobuf result appears on the configured result topic
+- `infernix test integration` validates the service loop by publishing a typed request through the
+  configured topic helper and asserting a matching typed result appears on the configured result
+  topic
 - on the `linux-cpu` lane, `infernix test integration` also validates `INFERNIX_DEMO_UI=false`
   and `9090`-first edge-port rediscovery on host-native control planes
-- on the non-simulated `linux-cpu` lane, `infernix test integration` also deletes a Harbor core
-  pod and verifies Harbor-backed image pulls still work, replaces a MinIO pod after writing a
-  sentinel file, restarts a Pulsar broker between two routed publish or result checks, deletes the
-  Harbor PostgreSQL primary to verify failover, and compares the deterministic Harbor PostgreSQL PV
+- on the `linux-cpu` lane, `infernix test integration` also deletes a Harbor core pod and verifies
+  Harbor-backed image pulls still work, replaces a MinIO pod after writing a sentinel file,
+  restarts a Pulsar broker between two routed publish or result checks, deletes the Harbor
+  PostgreSQL primary to verify failover, and compares the deterministic Harbor PostgreSQL PV
   inventory plus host-path mapping across `cluster down` plus `cluster up`
 - `infernix test e2e` exercises every generated catalog entry exposed through the routed surface
-  for each selected runtime mode, compares `/api/models` against the serialized generated demo
+  for the active substrate, compares `/api/models` against the serialized generated demo
   config, validates routed publication details from `/api/publication`, and fails if the browser
   workbench cannot render publication details, select a model, or submit one of those entries
-- the Apple host-native routed E2E lane also fails if the workbench cannot stay on the same base
-  URL while `/api` resolves through the host-native `infernix-demo serve` bridge
-- the Apple host-native validation path launches routed Playwright from the host install; the Linux
-  path launches it from the active substrate image when the platform toolchain is available and
-  otherwise falls back to the local npm runner
+- the Apple host-native routed E2E lane also fails if the clustered routed surface cannot use the
+  host daemon for inference while keeping one browser-visible base URL
+- the supported routed E2E path uses a container-owned Playwright executor; Apple host-native flows
+  orchestrate it from the host CLI, while Linux flows launch it from the active substrate image
 - supported Playwright launchers clear conflicting `NO_COLOR` and `FORCE_COLOR` values from the
   child environment before Playwright starts
 - changing the active runtime mode changes the generated catalog and therefore the exercised entry
   set automatically
-- pass `--runtime-mode` when a single predictable validation lane is required
 
 ## Cross-References
 

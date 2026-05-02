@@ -18,19 +18,13 @@
 
 - build both Haskell binaries with
   `cabal --builddir=.build/cabal install --installdir=./.build --install-method=copy --overwrite-policy=always exe:infernix exe:infernix-demo`
-- run `./.build/infernix --runtime-mode apple-silicon cluster up`
-- use `./.build/infernix --runtime-mode apple-silicon kubectl ...` instead of mutating global
+- run `./.build/infernix cluster up`
+- use `./.build/infernix kubectl ...` instead of mutating global
   kubeconfig
-- run `./.build/infernix --runtime-mode apple-silicon test all`
+- run `./.build/infernix test all`
 
 The first supported host-native command that needs Docker, Kubernetes tooling, Node.js, or Poetry
 reconciles those prerequisites automatically.
-
-When the demo UI is needed as a host-side equivalent of the cluster `infernix-demo` workload:
-
-- run `./.build/infernix-demo serve --dhall ./.build/infernix-demo-apple-silicon.dhall --port 9180`
-  in a separate terminal; the routed surface forwards `/`, `/api`, `/api/publication`,
-  `/api/cache`, and `/objects/<key>` to that host bridge
 
 ## Rules
 
@@ -42,8 +36,8 @@ When the demo UI is needed as a host-side equivalent of the cluster `infernix-de
   `./.build/infernix-demo`
 - `cluster up` writes `./.build/infernix.kubeconfig`
 - supported flows do not mutate `$HOME/.kube/config`
-- when the demo surface is enabled and `infernix-demo serve` runs host-native, the routed `/api`
-  reaches the Apple host bridge while the browser stays on the same base URL
+- when the demo surface is enabled, the browser stays on the clustered routed surface while the
+  Apple host daemon remains responsible for host-native inference
 - the host-native daemon uses the same Haskell worker contract as the cluster-resident daemon and
   forks Python adapters from `python/adapters/` only when the bound engine is Python-native
 - the Apple host bootstrap uses Homebrew-managed Colima, Docker CLI, `kind`, `kubectl`, `helm`,

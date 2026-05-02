@@ -1,6 +1,6 @@
 # Phase 2: Kind Cluster Storage and Lifecycle
 
-**Status**: Active
+**Status**: Done
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
 
 > **Purpose**: Define the supported Kind bootstrap path, the manual storage doctrine, the Helm
@@ -10,10 +10,10 @@
 
 ## Phase Status
 
-Sprints 2.1 through 2.8 remain `Done` as the current implementation baseline, but Phase 2 is
-reopened by Sprint 2.9. The worktree still stages per-mode `infernix-demo-<mode>.dhall` files,
-keeps the direct `linux-cuda` launcher in the supported contract, and does not yet treat the
-compile-time generated substrate file beside the binary as the single cluster publication source.
+All Phase 2 sprints are now `Done`. `cluster up` republishes the generated
+`infernix-substrate.dhall` file directly into `ConfigMap/infernix-demo-config`, the repo-local
+publication mirror records that same payload, and the Linux control-plane launcher closes around
+the baked-image outer-container flow.
 
 ## Storage Doctrine
 
@@ -29,25 +29,16 @@ These rules close in this phase and remain mandatory afterward:
 
 ## Current Generated Demo-Config Baseline
 
-- the current worktree still resolves an active runtime mode before cluster-side reconciliation
-  begins
-- the current worktree still selects the corresponding README matrix column from that runtime mode
-- `cluster up` still emits `infernix-demo-<mode>.dhall` as staging content, then publishes it into
+- cluster-side reconciliation reads the active substrate from the generated file beside the binary
+- `cluster up` republishes that exact `infernix-substrate.dhall` payload into
   `ConfigMap/infernix-demo-config`
 - generated deployment inputs are not committed as static blobs in `chart/values.yaml`
 
 ## Current Repo Assessment
 
-The storage doctrine, Helm rollout, current generated demo-config publication, Harbor-first image
-flow, route de-duplication, generated values overlay path, and in-image `nvkind` path are
-implemented on the current Kind substrate. The remaining Phase 2 gap is that cluster publication
-still derives from runtime-mode staging behavior instead of one build-generated substrate file, and
-the Linux GPU launcher contract is still split between Compose and the direct GPU path.
-
-## Remaining Work
-
-- close Sprint 2.9 so Linux cluster publication, launcher rules, and image publication align with
-  the substrate-generated `.dhall` doctrine
+The storage doctrine, Helm rollout, substrate publication, Harbor-first image flow, route
+de-duplication, generated values overlay path, and in-image `nvkind` path are implemented on the
+supported Kind substrate.
 
 ## Sprint 2.1: Kind Bootstrap and StorageClass Reset [Done]
 
@@ -65,7 +56,7 @@ Create or reuse the Kind cluster and establish the manual storage-class baseline
 - bootstrap deletes default StorageClasses before durable workloads are reconciled
 - bootstrap applies `infernix-manual`
 - bootstrap chooses the edge port by trying `9090` first and incrementing by 1 until open
-- bootstrap generates and publishes the active runtime mode's demo-config
+- bootstrap republishes the build-selected substrate file and its generated catalog contract
 
 ### Validation
 
@@ -181,7 +172,7 @@ None.
 ## Sprint 2.5: Kind Lifecycle Idempotency and Status Surface [Done]
 
 **Status**: Done
-**Implementation**: `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Lint/Chart.hs`, `compose.yaml`, `kind/cluster-apple-silicon.yaml`, `kind/cluster-linux-cpu.yaml`, `kind/cluster-linux-cuda.yaml`, `test/integration/Spec.hs`
+**Implementation**: `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Lint/Chart.hs`, `compose.yaml`, `kind/cluster-apple-silicon.yaml`, `kind/cluster-linux-cpu.yaml`, `kind/cluster-linux-gpu.yaml`, `test/integration/Spec.hs`
 **Docs to update**: `README.md`, `documents/reference/cli_reference.md`, `documents/operations/cluster_bootstrap_runbook.md`
 
 ### Objective
@@ -191,15 +182,16 @@ Make cluster reconcile, status, and teardown predictable.
 ### Deliverables
 
 - `cluster up` is declarative and idempotent
-- `cluster status` reports cluster existence, chosen edge port, runtime mode, publication
-  details, and storage-health summary without mutation
+- `cluster status` reports cluster existence, chosen edge port, the active substrate through its
+  current `runtimeMode` line, publication details, and storage-health summary without mutation
 - `cluster down` tears down Kind while preserving `./.data/`
 - the repo-owned Kind configs pin `kindest/node:v1.34.0`
 
 ### Validation
 
 - `cluster up`, `cluster status`, `cluster down`, and repeat `cluster up` work in sequence
-- status output includes the active edge port, runtime mode, and publication details
+- status output includes the active edge port, the current `runtimeMode` line, and publication
+  details
 - durable volumes rebind to the same `./.data/` paths after teardown and redeploy
 
 ### Remaining Work
@@ -208,7 +200,7 @@ None.
 
 ---
 
-## Sprint 2.6: Initial Mode-Aware `cluster up` Demo Config Staging and ConfigMap Publication [Done]
+## Sprint 2.6: Build-Generated Substrate File Staging and ConfigMap Publication [Done]
 
 **Status**: Done
 **Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Config.hs`, `src/Infernix/Models.hs`, `chart/templates/configmap-demo-catalog.yaml`, `chart/templates/deployment-service.yaml`, `chart/templates/deployment-demo.yaml`, `test/integration/Spec.hs`
@@ -216,19 +208,22 @@ None.
 
 ### Objective
 
-Make `cluster up` the canonical point where the current runtime-mode implementation baseline
-materializes and publishes its generated demo catalog.
+Make `cluster up` the canonical point where the build-generated substrate file is republished into
+the cluster and mirrored for local inspection.
 
 ### Deliverables
 
-- `cluster up` emits `infernix-demo-<mode>.dhall` according to the active runtime mode
-- the generated file contains every README-matrix row supported by that mode and no unsupported rows
+- `cluster up` republishes the exact build-generated `infernix-substrate.dhall` for the active
+  built substrate
+- the generated file contains every README-matrix row supported by that substrate and no
+  unsupported rows
 - `cluster up` creates or updates `ConfigMap/infernix-demo-config` from that generated content
 - cluster consumers use the mounted ConfigMap-backed file as their exact catalog source
 
 ### Validation
 
-- switching runtime modes changes generated filename, catalog entries, and engine bindings deterministically
+- rebuilding for a different substrate changes catalog entries and engine bindings deterministically
+  while preserving the fixed `infernix-substrate.dhall` filename
 - generated files live only under the active build root and never land in tracked source paths
 - `infernix kubectl get configmap infernix-demo-config -n <namespace> -o yaml` shows the active published catalog
 
@@ -238,10 +233,9 @@ None.
 
 ---
 
-## Sprint 2.9: Build-Generated Substrate File Publication and Linux Launcher Closure [Blocked]
+## Sprint 2.9: Build-Generated Substrate File Publication and Linux Launcher Closure [Done]
 
-**Status**: Blocked
-**Blocked by**: Sprint 0.8, Sprint 1.10
+**Status**: Done
 **Docs to update**: `README.md`, `documents/development/local_dev.md`, `documents/engineering/build_artifacts.md`, `documents/engineering/docker_policy.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/development/testing_strategy.md`
 
 ### Objective
@@ -257,7 +251,7 @@ contract around one Compose-driven outer container for both Linux substrates.
   `/opt/build/infernix/`
 - the outer-container binary also reads the same colocated substrate `.dhall` from
   `/opt/build/infernix/` when it needs to know its own substrate
-- the cluster publication contract no longer treats `infernix-demo-<mode>.dhall` filenames or
+- the cluster publication contract no longer treats `infernix-substrate.dhall` filenames or
   runtime-mode staging as the supported final shape
 - the supported Linux control-plane launcher is Compose for both `linux-cpu` and `linux-gpu`
 - the outer control-plane container never requires the NVIDIA runtime for its own process, even
@@ -276,23 +270,23 @@ contract around one Compose-driven outer container for both Linux substrates.
 
 ### Remaining Work
 
-- Phase 4 still owns daemon placement and reload behavior that consume the published substrate file
+None.
 
 ---
 
-## Sprint 2.7: GPU-Enabled Kind Runtime For `linux-cuda` [Done]
+## Sprint 2.7: GPU-Enabled Kind Runtime For `linux-gpu` [Done]
 
 **Status**: Done
-**Implementation**: `kind/cluster-linux-cuda.yaml`, `src/Infernix/Cluster.hs`, `src/Infernix/Lint/Chart.hs`, `chart/templates/deployment-service.yaml`, `chart/templates/runtimeclass-nvidia.yaml`, `test/integration/Spec.hs`
+**Implementation**: `kind/cluster-linux-gpu.yaml`, `src/Infernix/Cluster.hs`, `src/Infernix/Lint/Chart.hs`, `chart/templates/deployment-service.yaml`, `chart/templates/runtimeclass-nvidia.yaml`, `test/integration/Spec.hs`
 **Docs to update**: `documents/engineering/k8s_native_dev_policy.md`, `documents/architecture/runtime_modes.md`, `documents/development/testing_strategy.md`
 
 ### Objective
 
-Make `linux-cuda` a real GPU-backed cluster mode rather than a nominal matrix column.
+Make `linux-gpu` a real GPU-backed cluster mode rather than a nominal matrix column.
 
 ### Deliverables
 
-- `cluster up` in `linux-cuda` fails fast unless the host passes the NVIDIA preflight contract
+- `cluster up` in `linux-gpu` fails fast unless the host passes the NVIDIA preflight contract
 - the cluster installs the NVIDIA device plugin so nodes expose allocatable `nvidia.com/gpu`
 - repo-owned CUDA workloads request `nvidia.com/gpu` and use the required runtime configuration
 - cluster-resident CUDA workloads can schedule on the GPU-capable Kind substrate
@@ -309,30 +303,30 @@ None.
 
 ---
 
-## Sprint 2.8: `linux-cuda` Toolchain Closure Without Host-Visible `nvkind` Handoff [Done]
+## Sprint 2.8: `linux-gpu` Toolchain Closure Without Host-Visible `nvkind` Handoff [Done]
 
 **Status**: Done
-**Implementation**: `docker/linux-substrate.Dockerfile`, `src/Infernix/Cluster.hs`, `kind/cluster-linux-cuda.yaml`, `documents/engineering/k8s_native_dev_policy.md`
+**Implementation**: `docker/linux-substrate.Dockerfile`, `src/Infernix/Cluster.hs`, `kind/cluster-linux-gpu.yaml`, `documents/engineering/k8s_native_dev_policy.md`
 **Docs to update**: `documents/engineering/k8s_native_dev_policy.md`, `documents/engineering/docker_policy.md`, `documents/operations/cluster_bootstrap_runbook.md`
 
 ### Objective
 
-Remove the host-visible `nvkind` workaround and make the CUDA cluster lifecycle self-contained in
-the final Linux CUDA image.
+Remove the host-visible `nvkind` workaround and make the `linux-gpu` cluster lifecycle
+self-contained in the final `linux-gpu` image.
 
 ### Deliverables
 
-- `nvkind` is built in a multi-stage Docker build and copied into the CUDA substrate image
+- `nvkind` is built in a multi-stage Docker build and copied into the `linux-gpu` substrate image
 - `cluster up` does not spawn a secondary `golang` builder container through the host Docker socket
 - no host-visible `.build/tools/nvkind` bridge remains on the supported path
-- the CUDA launcher image supplies the `nvkind` binary it needs for the supported cluster lifecycle
+- the `linux-gpu` launcher image supplies the `nvkind` binary it needs for the supported cluster lifecycle
 
 ### Validation
 
-- the CUDA substrate image build produces a runnable `nvkind` binary
-- `docker run --rm --gpus all -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD/.data:/workspace/.data" infernix-linux-cuda:local infernix --runtime-mode linux-cuda cluster up`
+- the `linux-gpu` substrate image build produces a runnable `nvkind` binary
+- after building `infernix-linux-gpu:local`, `docker compose run --rm infernix infernix cluster up`
   succeeds on a supported NVIDIA host without a host-visible `nvkind` handoff path
-- repeated CUDA cluster lifecycle runs preserve GPU visibility and durable storage behavior
+- repeated `linux-gpu` cluster lifecycle runs preserve GPU visibility and durable storage behavior
 
 ### Remaining Work
 
@@ -341,7 +335,7 @@ None.
 ## Documentation Requirements
 
 **Engineering docs to create/update:**
-- `documents/engineering/k8s_native_dev_policy.md` - Kind bootstrap, Harbor-first image flow, GPU-enabled `linux-cuda`, and `nvkind` closure
+- `documents/engineering/k8s_native_dev_policy.md` - Kind bootstrap, Harbor-first image flow, GPU-enabled `linux-gpu`, and `nvkind` closure
 - `documents/engineering/k8s_storage.md` - manual PV policy, PVC ownership, and `infernix-manual`
 - `documents/engineering/build_artifacts.md` - generated demo-config staging and generated input material policy
 - `documents/engineering/storage_and_state.md` - durable-versus-derived state inventory for cluster assets
@@ -350,7 +344,7 @@ None.
 **Product or reference docs to create/update:**
 - `documents/reference/cli_reference.md` - cluster lifecycle commands
 - `documents/operations/cluster_bootstrap_runbook.md` - bootstrap, reconcile, and teardown workflow
-- `documents/development/testing_strategy.md` - active-mode generated catalog and GPU-enabled `linux-cuda` contract
+- `documents/development/testing_strategy.md` - active-substrate generated catalog and GPU-enabled `linux-gpu` contract
 
 **Cross-references to add:**
 - keep [00-overview.md](00-overview.md) and [system-components.md](system-components.md) aligned

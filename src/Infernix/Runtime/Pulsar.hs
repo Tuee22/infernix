@@ -150,7 +150,7 @@ runProductionDaemon paths runtimeMode = do
     Nothing -> do
       ensureSchemaMarkers paths demoConfig
       writeServiceReadinessMarker paths
-      putStrLn "serviceSubscriptionMode: filesystem-pulsar-simulation"
+      putStrLn "serviceSubscriptionMode: filesystem-topic-spool"
       forever $ do
         forM_ (requestTopics demoConfig) (drainTopic paths runtimeMode (resultTopic demoConfig))
         threadDelay 500000

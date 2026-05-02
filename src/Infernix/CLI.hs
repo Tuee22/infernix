@@ -2,7 +2,6 @@
 
 module Infernix.CLI
   ( main,
-    extractRuntimeMode,
     writeGeneratedPursContracts,
   )
 where
@@ -24,7 +23,12 @@ import Infernix.Cluster.Discover
 import Infernix.Cluster.PublishImages qualified as PublishImages
 import Infernix.CommandRegistry
 import Infernix.Config
-import Infernix.DemoConfig (decodeDemoConfigFile, renderModelListing, validateDemoConfigFile)
+import Infernix.DemoConfig
+  ( decodeDemoConfigFile,
+    ensureGeneratedDemoConfigFile,
+    renderModelListing,
+    validateDemoConfigFile,
+  )
 import Infernix.HostPrereqs (ensureAppleHostPrerequisites)
 import Infernix.Lint.Chart (runChartLint)
 import Infernix.Lint.Docs (runDocsLint)
@@ -47,9 +51,7 @@ import Infernix.Types
     InferenceResult (..),
     PersistentClaim (..),
     ResultPayload (..),
-    RuntimeMode (AppleSilicon, LinuxCuda),
-    allRuntimeModes,
-    parseRuntimeMode,
+    RuntimeMode (AppleSilicon, LinuxGpu),
     runtimeModeId,
   )
 import Infernix.Web.Contracts qualified as Contracts
@@ -74,59 +76,58 @@ import System.Directory
 import System.Environment (getArgs, getEnvironment, getExecutablePath)
 import System.Exit (ExitCode (ExitSuccess), exitFailure, exitWith)
 import System.FilePath (takeFileName, (</>))
-import System.Process (CreateProcess (cwd, env), createProcess, proc, readProcess, terminateProcess, waitForProcess)
+import System.Process (CreateProcess (cwd, env), createProcess, proc, readProcess, waitForProcess)
 
 main :: IO ()
 main = do
   setLocaleEncoding utf8
   syncBuildRootExecutable
+  paths <- discoverPaths
+  runtimeMode <- resolveRuntimeMode Nothing
+  _ <- ensureGeneratedDemoConfigFile paths runtimeMode
   args <- getArgs
-  case extractRuntimeMode args of
-    Left message -> do
-      putStrLn message
-      exitFailure
-    Right (maybeRuntimeMode, remainingArgs) -> dispatch maybeRuntimeMode remainingArgs
+  dispatch args
 
-dispatch :: Maybe RuntimeMode -> [String] -> IO ()
-dispatch maybeRuntimeMode args =
+dispatch :: [String] -> IO ()
+dispatch args =
   case parseCommand args of
     Left _ -> do
       putStrLn helpText
       exitFailure
     Right command -> do
-      ensureAppleHostPrerequisites maybeRuntimeMode command
+      ensureAppleHostPrerequisites Nothing command
       case command of
         ShowRootHelp -> putStrLn helpText
         ShowTopicHelp topic -> putStrLn (topicHelpText topic)
-        ServiceCommand -> runService maybeRuntimeMode
-        ClusterUpCommand -> clusterUp maybeRuntimeMode
-        ClusterDownCommand -> clusterDown maybeRuntimeMode
-        ClusterStatusCommand -> clusterStatus maybeRuntimeMode
-        CacheStatusCommand -> runCacheStatus maybeRuntimeMode
-        CacheEvictCommand maybeModelId -> runCacheEvict maybeRuntimeMode (Text.pack <$> maybeModelId)
-        CacheRebuildCommand maybeModelId -> runCacheRebuild maybeRuntimeMode (Text.pack <$> maybeModelId)
+        ServiceCommand -> runService Nothing
+        ClusterUpCommand -> clusterUp Nothing
+        ClusterDownCommand -> clusterDown Nothing
+        ClusterStatusCommand -> clusterStatus Nothing
+        CacheStatusCommand -> runCacheStatus Nothing
+        CacheEvictCommand maybeModelId -> runCacheEvict Nothing (Text.pack <$> maybeModelId)
+        CacheRebuildCommand maybeModelId -> runCacheRebuild Nothing (Text.pack <$> maybeModelId)
         KubectlCommand kubectlArgs -> runKubectlCompat kubectlArgs
         DocsCheckCommand -> runDocsLint
         LintFilesCommand -> runFilesLint
         LintDocsCommand -> runDocsLint
         LintProtoCommand -> runProtoLint
         LintChartCommand -> runChartLint
-        TestLintCommand -> runLint maybeRuntimeMode
+        TestLintCommand -> runLint Nothing
         TestUnitCommand -> do
           ensureWebDependencies
-          ensurePythonAdapterDependencies maybeRuntimeMode
-          runCabalCommand maybeRuntimeMode ["test", "infernix-unit"]
-          runWebNpmCommand maybeRuntimeMode ["--prefix", "web", "run", "test:unit"]
-        TestIntegrationCommand -> runCabalCommand maybeRuntimeMode ["test", "infernix-integration"]
-        TestE2ECommand -> runEndToEnd maybeRuntimeMode
+          ensurePythonAdapterDependencies Nothing
+          runCabalCommand Nothing ["test", "infernix-unit"]
+          runWebNpmCommand Nothing ["--prefix", "web", "run", "test:unit"]
+        TestIntegrationCommand -> runCabalCommand Nothing ["test", "infernix-integration"]
+        TestE2ECommand -> runEndToEnd Nothing
         TestAllCommand -> do
           ensureWebDependencies
-          runLint maybeRuntimeMode
-          ensurePythonAdapterDependencies maybeRuntimeMode
-          runCabalCommand maybeRuntimeMode ["test", "infernix-unit"]
-          runWebNpmCommand maybeRuntimeMode ["--prefix", "web", "run", "test:unit"]
-          runCabalCommand maybeRuntimeMode ["test", "infernix-integration"]
-          runEndToEnd maybeRuntimeMode
+          runLint Nothing
+          ensurePythonAdapterDependencies Nothing
+          runCabalCommand Nothing ["test", "infernix-unit"]
+          runWebNpmCommand Nothing ["--prefix", "web", "run", "test:unit"]
+          runCabalCommand Nothing ["test", "infernix-integration"]
+          runEndToEnd Nothing
         InternalDiscoverImagesCommand renderedChartPath ->
           mapM_ putStrLn =<< discoverChartImagesFile renderedChartPath
         InternalDiscoverClaimsCommand renderedChartPath ->
@@ -141,10 +142,10 @@ dispatch maybeRuntimeMode args =
         InternalDemoConfigValidateCommand demoConfigPath ->
           validateDemoConfigFile demoConfigPath
         InternalGeneratePursContractsCommand outputDir -> do
-          runtimeMode <- resolveRuntimeMode maybeRuntimeMode
+          runtimeMode <- resolveRuntimeMode Nothing
           writeGeneratedPursContracts runtimeMode outputDir
         InternalPulsarRoundTripCommand demoConfigPath modelIdValue inputTextValue -> do
-          runtimeMode <- resolveRuntimeMode maybeRuntimeMode
+          runtimeMode <- resolveRuntimeMode Nothing
           runInternalPulsarRoundTrip runtimeMode demoConfigPath modelIdValue inputTextValue
 
 runLint :: Maybe RuntimeMode -> IO ()
@@ -170,9 +171,7 @@ runEndToEnd maybeRuntimeMode = do
       runtimeModes <-
         case maybeRuntimeMode of
           Just runtimeMode -> pure [runtimeMode]
-          Nothing -> do
-            cudaSupported <- linuxCudaSupportedOnHost
-            pure (filter (\runtimeMode -> runtimeMode /= LinuxCuda || cudaSupported) allRuntimeModes)
+          Nothing -> (: []) <$> resolveRuntimeMode Nothing
       when (AppleSilicon `elem` runtimeModes) $ do
         ensureWebDependencies
         ensurePlaywrightBrowsers
@@ -187,100 +186,35 @@ runRuntimeModeE2E paths runtimeMode =
         case maybePort of
           Just port -> pure port
           Nothing -> ioError (userError "edge port was not published after cluster up")
-      if runtimeMode == AppleSilicon
+      let expectedDaemonLocation =
+            case runtimeMode of
+              AppleSilicon -> "control-plane-host"
+              _ -> "cluster-pod"
+      if controlPlaneContext paths == "host-native"
         then
-          withHostBridgeDemo runtimeMode edgePort $
-            runHostPlaywright runtimeMode "127.0.0.1" edgePort "control-plane-host" "host-demo-bridge"
+          runPlaywrightImage
+            runtimeMode
+            Nothing
+            (hostAccessibleRouteProbeHost runtimeMode)
+            edgePort
+            expectedDaemonLocation
+            "cluster-demo"
         else
-          if controlPlaneContext paths == "host-native"
-            then
-              runPlaywrightImage
-                runtimeMode
-                Nothing
-                "127.0.0.1"
-                edgePort
-                "cluster-pod"
-                "cluster-demo"
-            else
-              runPlaywrightImage
-                runtimeMode
-                (Just "kind")
-                (kindControlPlaneNodeName paths runtimeMode)
-                30090
-                "cluster-pod"
-                "cluster-demo"
+          runPlaywrightImage
+            runtimeMode
+            (Just "kind")
+            (kindControlPlaneNodeName paths runtimeMode)
+            30090
+            expectedDaemonLocation
+            "cluster-demo"
   )
     `finally` clusterDown (Just runtimeMode)
 
-runHostPlaywright :: RuntimeMode -> String -> Int -> String -> String -> IO ()
-runHostPlaywright runtimeMode routeProbeHost edgePort expectedDaemonLocation expectedApiUpstreamMode = do
-  waitForPlaywrightSurface routeProbeHost edgePort expectedDaemonLocation expectedApiUpstreamMode
-  paths <- discoverPaths
-  (command, args) <-
-    resolveWebNpmInvocation
-      [ "--prefix",
-        "web",
-        "exec",
-        "--",
-        "playwright",
-        "test",
-        "./playwright/inference.spec.js",
-        "--reporter=list",
-        "--timeout=30000"
-      ]
-  runCommandWithCwdAndEnvRemoving
-    (Just runtimeMode)
-    ["FORCE_COLOR", "NO_COLOR"]
-    [ ("INFERNIX_RUNTIME_MODE", Text.unpack (runtimeModeId runtimeMode)),
-      ("INFERNIX_EDGE_PORT", show edgePort),
-      ("INFERNIX_PLAYWRIGHT_HOST", routeProbeHost),
-      ("INFERNIX_EXPECT_DAEMON_LOCATION", expectedDaemonLocation),
-      ("INFERNIX_EXPECT_API_UPSTREAM_MODE", expectedApiUpstreamMode)
-    ]
-    command
-    args
-    (repoRoot paths)
-
-withHostBridgeDemo :: RuntimeMode -> Int -> IO () -> IO ()
-withHostBridgeDemo runtimeMode edgePort action = do
-  paths <- discoverPaths
-  activateHostBridgeRoute paths runtimeMode 18081
-  executablePath <- resolveDemoExecutable
-  environment <- getEnvironment
-  let processArgs =
-        [ "--runtime-mode",
-          Text.unpack (runtimeModeId runtimeMode),
-          "serve",
-          "--dhall",
-          generatedDemoConfigPath paths runtimeMode,
-          "--port",
-          "18081"
-        ]
-  (_, _, _, demoHandle) <-
-    createProcess
-      (proc executablePath processArgs)
-        { cwd = Just (repoRoot paths),
-          env =
-            Just
-              ( mergeEnvironment
-                  [ ("INFERNIX_CONTROL_PLANE_CONTEXT", "host-native"),
-                    ("INFERNIX_DAEMON_LOCATION", "control-plane-host"),
-                    ("INFERNIX_CATALOG_SOURCE", "generated-build-root"),
-                    ("INFERNIX_DEMO_CONFIG_PATH", generatedDemoConfigPath paths runtimeMode),
-                    ("INFERNIX_PUBLICATION_STATE_PATH", publicationStatePath paths),
-                    ("INFERNIX_BIND_HOST", "0.0.0.0"),
-                    ("INFERNIX_ROUTE_PROBE_BASE_URL", "http://127.0.0.1:" <> show edgePort)
-                  ]
-                  environment
-              )
-        }
-  waitForPublication edgePort "control-plane-host" "host-demo-bridge"
-  action
-    `finally` do
-      terminateProcess demoHandle
-      _ <- waitForProcess demoHandle
-      restoreClusterServiceRoute paths
-      waitForPublication edgePort "cluster-pod" "cluster-demo"
+hostAccessibleRouteProbeHost :: RuntimeMode -> String
+hostAccessibleRouteProbeHost runtimeMode =
+  case runtimeMode of
+    AppleSilicon -> "host.docker.internal"
+    _ -> "127.0.0.1"
 
 runInternalPulsarRoundTrip :: RuntimeMode -> FilePath -> String -> String -> IO ()
 runInternalPulsarRoundTrip runtimeMode demoConfigPath modelIdValue inputTextValue = do
@@ -348,7 +282,7 @@ runPlaywrightImage runtimeMode maybeNetwork routeProbeHost edgePort expectedDaem
       ]
         <> maybe [] (\networkName -> ["--network", networkName]) maybeNetwork
         <> [ "-e",
-             "INFERNIX_RUNTIME_MODE=" <> Text.unpack (runtimeModeId runtimeMode),
+             "INFERNIX_SUBSTRATE_ID=" <> Text.unpack (runtimeModeId runtimeMode),
              "-e",
              "INFERNIX_EDGE_PORT=" <> show edgePort,
              "-e",
@@ -375,34 +309,9 @@ resolvePlaywrightImage :: Paths -> RuntimeMode -> IO String
 resolvePlaywrightImage _paths runtimeMode =
   pure
     ( case runtimeMode of
-        LinuxCuda -> "infernix-linux-cuda:local"
+        LinuxGpu -> "infernix-linux-gpu:local"
         _ -> "infernix-linux-cpu:local"
     )
-
-waitForPublication :: Int -> String -> String -> IO ()
-waitForPublication edgePort expectedDaemonLocation expectedApiUpstreamMode = go (60 :: Int)
-  where
-    go remainingAttempts
-      | remainingAttempts <= 0 =
-          ioError
-            ( userError
-                ( "timed out waiting for /api/publication to report daemonLocation="
-                    <> expectedDaemonLocation
-                    <> " and apiUpstream.mode="
-                    <> expectedApiUpstreamMode
-                )
-            )
-      | otherwise = do
-          publicationPayload <- loadJsonUrl ("http://127.0.0.1:" <> show edgePort <> "/api/publication")
-          if publicationReady publicationPayload
-            then pure ()
-            else do
-              threadDelay 1000000
-              go (remainingAttempts - 1)
-    publicationReady (Just payloadValue) =
-      jsonTextAt ["daemonLocation"] payloadValue == Just (Text.pack expectedDaemonLocation)
-        && jsonTextAt ["apiUpstream", "mode"] payloadValue == Just (Text.pack expectedApiUpstreamMode)
-    publicationReady Nothing = False
 
 waitForPlaywrightSurface :: String -> Int -> String -> String -> IO ()
 waitForPlaywrightSurface host edgePort expectedDaemonLocation expectedApiUpstreamMode = go (60 :: Int)
@@ -561,19 +470,6 @@ normalizeGeneratedPursContracts runtimeMode sourceFile outputFile = do
 catchAnyIOException :: IO () -> (IOException -> IO ()) -> IO ()
 catchAnyIOException = catch
 
-extractRuntimeMode :: [String] -> Either String (Maybe RuntimeMode, [String])
-extractRuntimeMode = go Nothing []
-  where
-    go maybeRuntimeMode acc [] = Right (maybeRuntimeMode, reverse acc)
-    go _ _ ["--runtime-mode"] = Left "Missing value for --runtime-mode"
-    go _ acc ("--runtime-mode" : rawValue : rest) =
-      case parseRuntimeMode (Text.pack rawValue) of
-        Nothing -> Left ("Unsupported runtime mode: " <> rawValue)
-        Just runtimeMode ->
-          go (Just runtimeMode) acc rest
-    go maybeRuntimeMode acc (value : rest) =
-      go maybeRuntimeMode (value : acc) rest
-
 runCommand :: Maybe RuntimeMode -> FilePath -> [String] -> IO ()
 runCommand maybeRuntimeMode command args = do
   paths <- discoverPaths
@@ -583,25 +479,15 @@ runCommandWithCwd :: Maybe RuntimeMode -> FilePath -> [String] -> FilePath -> IO
 runCommandWithCwd maybeRuntimeMode =
   runCommandWithCwdAndEnv maybeRuntimeMode []
 
-resolveDemoExecutable :: IO FilePath
-resolveDemoExecutable = do
-  buildDir <- resolveCabalBuildDir
-  trimTrailingWhitespace <$> readProcess "cabal" ["--builddir=" <> buildDir, "list-bin", "exe:infernix-demo"] ""
-
 runCommandWithCwdAndEnv :: Maybe RuntimeMode -> [(String, String)] -> FilePath -> [String] -> FilePath -> IO ()
 runCommandWithCwdAndEnv maybeRuntimeMode =
   runCommandWithCwdAndEnvRemoving maybeRuntimeMode []
 
 runCommandWithCwdAndEnvRemoving :: Maybe RuntimeMode -> [String] -> [(String, String)] -> FilePath -> [String] -> FilePath -> IO ()
-runCommandWithCwdAndEnvRemoving maybeRuntimeMode removedEnvironmentNames extraEnvironment command args workingDirectory = do
+runCommandWithCwdAndEnvRemoving _maybeRuntimeMode removedEnvironmentNames extraEnvironment command args workingDirectory = do
   environment <- getEnvironment
   let augmentedEnvironment =
-        mergeEnvironment runtimeModeBindings (mergeEnvironment extraEnvironment (removeEnvironmentVariables removedEnvironmentNames environment))
-      runtimeModeBindings =
-        case maybeRuntimeMode of
-          Nothing -> []
-          Just runtimeMode ->
-            [("INFERNIX_RUNTIME_MODE", Text.unpack (runtimeModeId runtimeMode))]
+        mergeEnvironment [] (mergeEnvironment extraEnvironment (removeEnvironmentVariables removedEnvironmentNames environment))
   (_, _, _, processHandle) <-
     createProcess
       (proc command args)
@@ -622,10 +508,6 @@ mergeEnvironment overrides environment =
 removeEnvironmentVariables :: [String] -> [(String, String)] -> [(String, String)]
 removeEnvironmentVariables names =
   filter (\(name, _) -> name `notElem` names)
-
-trimTrailingWhitespace :: String -> String
-trimTrailingWhitespace =
-  reverse . dropWhile (`elem` [' ', '\n', '\r', '\t']) . reverse
 
 loadJsonUrl :: String -> IO (Maybe Value)
 loadJsonUrl url = do

@@ -8,20 +8,19 @@
 
 ## Current Repo Assessment
 
-The current worktree still implements the earlier runtime-mode and simulation doctrine. This plan
-update records a new target architecture and explicitly marks the gap instead of leaving stale
-closure claims in place.
+The repository now matches the target substrate contract recorded in this overview.
 
-| Area | Target contract | Current repo gap |
-|------|-----------------|------------------|
-| Root-document governance | the governed docs, root docs, and plan all describe the same substrate-generated `.dhall` doctrine | the docs outside `DEVELOPMENT_PLAN/` still describe runtime-mode flags, simulated fallbacks, and the Apple host bridge |
-| CLI ownership | one structured Haskell command registry owns the supported command surface without any `--runtime-mode` override | the current CLI and subprocess contract still rely on `--runtime-mode` and `INFERNIX_RUNTIME_MODE` |
-| Substrate selection | one compile-time generated `.dhall` beside the binary is the single source of truth for substrate identity and generated catalog selection | the current worktree still stages per-mode `infernix-demo-<mode>.dhall` files and resolves active mode from flags or environment |
-| Apple host-native lane | the host-built binary manages Kind, deploys the clustered demo app, and performs inference from the host daemon | the current Apple story still includes the interim host `infernix-demo serve` bridge |
-| Linux control plane | all supported Linux CLI commands run through `docker compose run --rm infernix infernix ...` | the current GPU lane still treats the direct launcher as a supported user-facing path |
-| Linux GPU naming | the NVIDIA-backed Linux substrate is standardized as `linux-gpu` | the current worktree still uses `linux-cuda` in code, Kind assets, tests, and docs |
-| Simulation stance | no simulated cluster, route, transport, or inference fallback remains in the supported runtime or validation contract | the current worktree still includes simulated cluster, route, and filesystem-Pulsar fallbacks |
-| Validation scope | integration uses one `.dhall`-driven suite over the README matrix, E2E stays substrate-agnostic at the browser layer, and `test all` validates one built substrate at a time | the current default validation flow still implies matrix-wide Apple, CPU, and GPU coverage, and the broader repo does not yet close around the one-suite integration contract |
+| Area | Supported contract | Current repo state |
+|------|--------------------|--------------------|
+| Root-document governance | the governed docs, root docs, and plan all describe the same substrate-generated `.dhall` doctrine | aligned |
+| CLI ownership | one structured Haskell command registry owns the supported command surface without any `--runtime-mode` override | implemented |
+| Substrate selection | one compile-time generated `.dhall` beside the binary is the single source of truth for substrate identity and generated catalog selection | implemented |
+| Apple host-native lane | the host-built binary manages Kind, deploys the clustered demo app, and performs inference from the host daemon | implemented |
+| Linux control plane | all supported Linux CLI commands run through `docker compose run --rm infernix infernix ...` | implemented |
+| Linux GPU naming | the NVIDIA-backed Linux substrate is standardized as `linux-gpu` | implemented |
+| Serialized substrate naming | the generated substrate file, publication JSON, `cluster status`, and browser contracts still carry the active substrate under `runtimeMode` field names | implemented |
+| Simulation stance | no simulated cluster, route, transport, or inference fallback remains in the supported runtime or validation contract | implemented for supported paths |
+| Validation scope | integration uses one `.dhall`-driven suite over the README matrix, E2E stays substrate-agnostic at the browser layer, and `test all` validates one built substrate at a time | implemented |
 
 Monitoring is not a supported first-class surface.
 
@@ -38,6 +37,9 @@ Monitoring is not a supported first-class surface.
   `apple-silicon`, `linux-cpu`, and `linux-gpu`
 - the compile-time generated substrate `.dhall` beside the binary is the single source of truth
   for substrate identity, generated catalog content, daemon placement, and validation scope
+- the generated substrate file, routed publication surface, `cluster status` output, and generated
+  browser contracts currently serialize that active substrate under `runtimeMode` field names even
+  though the supported selection contract is substrate-based
 - a build outside the outer container is always `apple-silicon`
 - a build inside the outer container on an `nvidia:cuda` base image is always `linux-gpu`
 - every other build inside the outer container is always `linux-cpu`

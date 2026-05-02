@@ -88,7 +88,10 @@ checkFile root relativePath = do
           )
           (zip [(1 :: Int) ..] (lines contents))
       newlineFailure =
-        [relativePath <> ": missing trailing newline" | not (null contents) && last contents /= '\n']
+        case reverse contents of
+          [] -> []
+          '\n' : _ -> []
+          _ -> [relativePath <> ": missing trailing newline"]
   pure (lineFailures <> newlineFailure)
 
 rstrip :: String -> String

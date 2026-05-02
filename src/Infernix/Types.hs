@@ -41,23 +41,23 @@ import Data.Time.Format (defaultTimeLocale, formatTime, parseTimeM)
 data RuntimeMode
   = AppleSilicon
   | LinuxCpu
-  | LinuxCuda
+  | LinuxGpu
   deriving (Eq, Ord, Read, Show)
 
 allRuntimeModes :: [RuntimeMode]
-allRuntimeModes = [AppleSilicon, LinuxCpu, LinuxCuda]
+allRuntimeModes = [AppleSilicon, LinuxCpu, LinuxGpu]
 
 runtimeModeId :: RuntimeMode -> Text
 runtimeModeId runtimeMode = case runtimeMode of
   AppleSilicon -> "apple-silicon"
   LinuxCpu -> "linux-cpu"
-  LinuxCuda -> "linux-cuda"
+  LinuxGpu -> "linux-gpu"
 
 parseRuntimeMode :: Text -> Maybe RuntimeMode
 parseRuntimeMode rawValue = case Text.toLower rawValue of
   "apple-silicon" -> Just AppleSilicon
   "linux-cpu" -> Just LinuxCpu
-  "linux-cuda" -> Just LinuxCuda
+  "linux-gpu" -> Just LinuxGpu
   _ -> Nothing
 
 instance ToJSON RuntimeMode where
@@ -88,7 +88,6 @@ data PersistentClaim = PersistentClaim
 
 data ClusterState = ClusterState
   { clusterPresent :: Bool,
-    clusterSimulation :: Bool,
     edgePort :: Int,
     routes :: [RouteInfo],
     storageClass :: Text,

@@ -276,7 +276,7 @@ Rules:
 - For any given substrate, a matrix row is supported when that substrate's engine column names a real
   engine rather than `Not recommended` or an empty cell.
 - The plan standardizes the NVIDIA-backed Linux substrate as `linux-gpu`. Active phase documents
-  must call out any still-unmigrated `linux-cuda` naming in the current worktree instead of
+  must call out any still-unmigrated `linux-gpu` naming in the current worktree instead of
   pretending the rename is already complete.
 - The active substrate is selected only by the compile-time generated `.dhall` that ships beside
   the built binary. Supported workflows do not override that substrate through CLI flags or

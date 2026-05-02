@@ -1,6 +1,6 @@
 # Phase 4: Inference Service and Durable Runtime
 
-**Status**: Active
+**Status**: Done
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
 
 > **Purpose**: Define the Haskell service runtime, the shared Python engine-adapter contract, the
@@ -11,28 +11,19 @@
 
 ## Phase Status
 
-Sprints 4.1 through 4.11 remain `Done` as the current implementation baseline, but Phase 4 is
-reopened by Sprint 4.12. The current worktree still keeps filesystem-backed Pulsar fallback,
-runtime-mode-selected catalog inputs, and an Apple host bridge story that the new substrate-only
-doctrine no longer accepts.
+All Phase 4 sprints are now `Done`. The active substrate comes from the generated `.dhall`, the
+clustered demo surface relies on the host daemon for `apple-silicon` inference without becoming a
+host HTTP bridge, and the supported runtime contract is expressed in substrate-owned terms.
 
 ## Current Repo Assessment
 
-The repository already has typed request or response shapes, typed runtime result metadata, a
+The repository has typed request or response shapes, typed runtime result metadata, a
 README-matrix-backed generated catalog, protobuf-backed manifest and result helpers, explicit cache
 status or eviction or rebuild flows, repo-local durable object-store state under
 `./.data/object-store/`, a shared Python adapter project whose setup entrypoints write idempotent
-bootstrap manifests and whose workers derive deterministic engine-family-specific output from
-durable bundle or manifest metadata, an opt-in real Pulsar WebSocket or admin transport path with
-filesystem fallback, and a manual inference API path served by the Haskell demo surface. The Apple
-host-native lane also has daemon-driven Poetry-project and setup-entrypoint bootstrap through
-`src/Infernix/Engines/AppleSilicon.hs`, and the shared Linux substrate image carries the
-source-snapshot manifest so `infernix lint files` remains honest in git-less image runs.
-
-The remaining Phase 4 gap is contract ownership. The final doctrine requires the compile-time
-generated substrate `.dhall` to drive daemon placement, substrate identity, and engine selection;
-requires Apple demo inference to depend on the host daemon while the routed demo app stays
-cluster-resident; and removes simulation code paths from the supported steady-state runtime.
+bootstrap manifests, and daemon placement driven by the active generated substrate file. The
+generated file, runtime result metadata, publication surface, and browser contracts still expose
+the active substrate through `RuntimeMode` or `runtimeMode` identifiers.
 
 ## Substrate Config Ownership Contract
 
@@ -44,11 +35,6 @@ This phase owns the conversion from the README-scale matrix to runtime-consumabl
 - host and cluster consumers use that same substrate file as the exact runtime catalog
 - `infernix-demo` and the integration suite both choose the active engine binding for a README row
   from that same substrate file
-
-## Remaining Work
-
-- close Sprint 4.12 so daemon placement, reload behavior, and transport ownership align with the
-  substrate-generated `.dhall` doctrine
 
 ## Sprint 4.1: Typed Configuration, Model Catalog, and Runtime Contracts [Done]
 
@@ -71,9 +57,9 @@ Make the service runtime strongly typed before transport and UI surfaces accumul
 
 ### Validation
 
-- `infernix test unit` covers runtime-mode selection, generated catalog counts, per-mode row
-  inclusion or omission, generated demo-config rendering, invalid startup handling, and protobuf
-  round-trips
+- `infernix test unit` covers generated-substrate resolution, generated catalog counts,
+  per-substrate row inclusion or omission, generated demo-config rendering, invalid startup
+  handling, and protobuf round-trips
 - `infernix test lint` passes `infernix lint proto` against the repo-owned `.proto` set
 
 ### Remaining Work
@@ -98,8 +84,8 @@ derived local cache state become authoritative.
 - the service runtime stores durable manifests, artifacts, and large outputs under the repo-local
   object-store root `./.data/object-store/`
 - the service runtime consumes inference requests and publishes results through the topic-shaped
-  Pulsar contract, using real Pulsar endpoints only when configured and otherwise falling back to
-  the filesystem simulation under `./.data/runtime/pulsar/`
+  Pulsar contract, using the configured transport on supported cluster paths and the repo-local
+  topic spool only in harness-oriented flows that intentionally omit those endpoints
 - durable runtime bundles record engine-adapter identity, authoritative source-artifact metadata,
   and selected engine-ready artifacts
 - process-isolated runtime workers honor adapter-specific command overrides when configured and
@@ -109,8 +95,8 @@ derived local cache state become authoritative.
 ### Validation
 
 - `infernix test integration` proves generated catalog publication, per-entry routed inference
-  execution for the active-mode catalog, Pulsar schema publication, and filesystem-backed topic or
-  result persistence on the validated path
+  execution for the active built substrate's catalog, Pulsar schema publication, and typed topic
+  or result persistence on the validated path
 - `infernix test unit` proves large outputs return typed object references and protobuf manifests
   round-trip through the supported storage helpers
 
@@ -129,12 +115,12 @@ None.
 ### Objective
 
 Keep one service contract while telling the truth about runtime placement: Apple inference is
-host-native by design, while Linux CPU and Linux CUDA are containerized lanes.
+host-native by design, while Linux CPU and Linux GPU are containerized lanes.
 
 ### Deliverables
 
-- `infernix service` supports host-native Apple execution for the `apple-silicon` runtime mode
-- the same executable runs in cluster pods for `linux-cpu` and `linux-cuda`
+- `infernix service` supports host-native Apple execution for the `apple-silicon` substrate
+- the same executable runs in cluster pods for `linux-cpu` and `linux-gpu`
 - service placement changes only publication context, generated-config source, and optional
   transport-endpoint wiring, not the request or result or catalog contract
 - the current validated durable object-store contract remains repo-local `./.data/object-store/`,
@@ -142,6 +128,8 @@ host-native by design, while Linux CPU and Linux CUDA are containerized lanes.
 - the shared abstraction lives at the control plane, publication, config, Pulsar, protobuf, and
   routed API or UI levels rather than a false claim of identical image layout across all lanes
 - startup reports whether the daemon is running host-side or cluster-side
+- the current generated file, publication surface, and runtime result payloads still serialize the
+  active substrate under `runtimeMode` identifiers
 
 ### Validation
 
@@ -149,7 +137,8 @@ host-native by design, while Linux CPU and Linux CUDA are containerized lanes.
   generated catalog contract as the cluster path
 - cluster-resident `infernix service` consumes the same generated catalog contract and
   route-or-publication semantics on the cluster path
-- switching runtime modes changes generated catalog content and engine bindings, not the browser base URL
+- rebuilding for a different substrate changes generated catalog content and engine bindings, not
+  the browser base URL
 
 ### Remaining Work
 
@@ -202,7 +191,8 @@ Make derived runtime state reproducible from durable sources and keep lifecycle 
 ### Deliverables
 
 - local service cache roots live under `./.data/runtime/`
-- cache directories are keyed by model identity and runtime mode
+- cache directories are keyed by model identity and substrate identifier, with current durable
+  payloads still serializing that identifier as `runtimeMode`
 - durable cache manifests under `./.data/object-store/manifests/` act as rebuild sources
 - `cache status`, `cache evict`, and `cache rebuild` are explicit operator flows
 
@@ -233,16 +223,18 @@ generated demo-catalog baseline before the later substrate-generated file reset 
 
 - the service owns a typed registry for every row in the README matrix
 - each row records workload identity, artifact or format family, reference model metadata, and
-  per-mode engine bindings
-- rows whose active-mode column is `Not recommended` are absent from that mode's generated catalog
-- across `apple-silicon`, `linux-cpu`, and `linux-cuda`, the generated catalogs cover every README
+  per-substrate engine bindings
+- rows whose selected engine for a substrate is `Not recommended` are absent from that substrate's
+  generated catalog
+- across `apple-silicon`, `linux-cpu`, and `linux-gpu`, the generated catalogs cover every README
   row that names a real engine
 
 ### Validation
 
-- unit tests prove generated catalog counts and per-mode row inclusion or omission
-- frontend contract checks prove the generated active-mode contract carries selected engines and runtime metadata
-- integration fixtures prove the published ConfigMap matches the generated active-mode catalog
+- unit tests prove generated catalog counts and per-substrate row inclusion or omission
+- frontend contract checks prove the generated active-substrate contract carries selected engines
+  and runtime metadata
+- integration fixtures prove the published ConfigMap matches the generated active-substrate catalog
 
 ### Remaining Work
 
@@ -250,10 +242,9 @@ None.
 
 ---
 
-## Sprint 4.12: Substrate-Owned Daemon Placement, Reload Control, and Fallback Removal [Blocked]
+## Sprint 4.12: Substrate-Owned Daemon Placement, Reload Control, and Fallback Removal [Done]
 
-**Status**: Blocked
-**Blocked by**: Sprint 0.8, Sprint 1.10, Sprint 2.9, Sprint 3.9
+**Status**: Done
 **Docs to update**: `README.md`, `documents/architecture/runtime_modes.md`, `documents/engineering/model_lifecycle.md`, `documents/engineering/object_storage.md`, `documents/engineering/portability.md`, `documents/engineering/testing.md`, `documents/operations/apple_silicon_runbook.md`
 
 ### Objective
@@ -290,8 +281,7 @@ the remaining supported simulation assumptions from the runtime contract.
 
 ### Remaining Work
 
-- Phase 6 still owns the validation entrypoints and reporting model that enforce this substrate-only
-  runtime contract
+None.
 
 ---
 
@@ -315,7 +305,7 @@ keeping `poetry run` as the only supported execution path.
 - `src/Infernix/Runtime/Worker.hs` forks `poetry run <entrypoint>` rather than raw `python`
 - `poetry run check-code` is the canonical Python quality gate and runs mypy strict, black check,
   and ruff strict in sequence
-- the duplicated `python/apple-silicon/`, `python/linux-cpu/`, and `python/linux-cuda/` project
+- the duplicated `python/apple-silicon/`, `python/linux-cpu/`, and `python/linux-gpu/` project
   layout is removed from the supported architecture
 
 ### Validation
@@ -379,9 +369,9 @@ produces the two real Linux runtime images and supports the image-snapshot launc
 ### Deliverables
 
 - one shared `docker/linux-substrate.Dockerfile` builds `infernix-linux-cpu` and
-  `infernix-linux-cuda`
-- build arguments cover at least the base image and runtime mode; shared build stages own the
-  common toolchain
+  `infernix-linux-gpu`
+- build arguments cover at least the base image and the substrate-selecting `RUNTIME_MODE` value;
+  shared build stages own the common toolchain
 - `docker/linux-base.Dockerfile` is removed from the supported architecture
 - the shared image definition owns ghcup-pinned GHC or Cabal, Python, Poetry, node, Playwright,
   and the Kind toolbelt
@@ -399,14 +389,13 @@ produces the two real Linux runtime images and supports the image-snapshot launc
 
 - `docker build -f docker/linux-substrate.Dockerfile --build-arg RUNTIME_MODE=linux-cpu -t infernix-linux-cpu:local .`
   succeeds on supported hosts
-- `docker build -f docker/linux-substrate.Dockerfile --build-arg RUNTIME_MODE=linux-cuda -t infernix-linux-cuda:local .`
+- `docker build -f docker/linux-substrate.Dockerfile --build-arg RUNTIME_MODE=linux-gpu -t infernix-linux-gpu:local .`
   succeeds on supported hosts
 - smoke probes from the built images confirm the expected `infernix`, `ghc`, `cabal`, `python`,
   and Playwright tooling
 - `infernix lint files` succeeds inside the baked Linux image without `.git` metadata by using the
   captured source-snapshot manifest
-- `infernix cluster up --runtime-mode linux-cpu` and `--runtime-mode linux-cuda` use the active
-  substrate image on the supported path
+- `infernix cluster up` uses the active substrate image on the supported path
 
 ### Remaining Work
 
@@ -440,10 +429,10 @@ fake container parity.
 - on a clean Apple Silicon host with ghcup installed,
   `cabal --builddir=.build/cabal install --installdir=./.build --install-method=copy --overwrite-policy=always exe:infernix exe:infernix-demo`
   succeeds without extra supported wrapper scripts
-- `./.build/infernix --runtime-mode apple-silicon cluster up` brings up the cluster and runs the
+- `./.build/infernix cluster up` brings up the cluster and runs the
   current Apple setup entrypoints before host-side service or inference execution
-- `infernix test integration --runtime-mode apple-silicon` exercises the Apple column of the README
-  matrix against the host-native runtime lane
+- `infernix test integration` exercises the Apple column of the README matrix against the
+  host-native runtime lane when the active substrate is `apple-silicon`
 
 ### Remaining Work
 
@@ -451,7 +440,7 @@ None.
 
 ---
 
-## Sprint 4.11: Per-Mode Engine Selection in the Catalog [Done]
+## Sprint 4.11: Per-Substrate Engine Selection in the Catalog [Done]
 
 **Status**: Done
 **Implementation**: `src/Infernix/Models.hs`, `src/Infernix/Types.hs`, `src/Infernix/DemoConfig.hs`, `src/Infernix/Web/Contracts.hs`, `src/Infernix/Runtime/Worker.hs`, `test/unit/Spec.hs`, `test/integration/Spec.hs`
@@ -459,24 +448,26 @@ None.
 
 ### Objective
 
-Make the per-mode engine column in the README matrix the canonical input for catalog generation.
+Make the per-substrate engine column in the README matrix the canonical input for catalog
+generation.
 
 ### Deliverables
 
-- each matrix row records explicit engine selection per runtime mode
-- the active runtime mode picks the appropriate engine binding when generating
-  `infernix-demo-<mode>.dhall`
+- each matrix row records explicit engine selection per substrate
+- the active built substrate picks the appropriate engine binding when generating
+  `infernix-substrate.dhall`
 - the generated demo config and demo-visible surfaces expose each row through the selected engine
-  for that mode
-- daemon startup fails when the active mode references an engine binding whose adapter metadata is missing
+  for that substrate while still serializing the active substrate under `runtimeMode` fields
+- daemon startup fails when the active substrate references an engine binding whose adapter
+  metadata is missing
 
 ### Validation
 
-- switching runtime modes changes per-row selected engine bindings deterministically
+- rebuilding for a different substrate changes per-row selected engine bindings deterministically
 - the generated demo-config and routed API surfaces publish the selected engine bindings for the
-  active mode
-- demo-config validation fails when the active mode references a selected engine with no matching
-  binding metadata
+  active substrate
+- demo-config validation fails when the active substrate references a selected engine with no
+  matching binding metadata
 
 ### Remaining Work
 
@@ -486,7 +477,7 @@ None.
 
 **Engineering docs to create/update:**
 - `documents/architecture/runtime_modes.md` - honest runtime model, host-native Apple lane, and Linux substrate lanes
-- `documents/architecture/model_catalog.md` - per-mode engine binding and generated catalog contract
+- `documents/architecture/model_catalog.md` - per-substrate engine binding and generated catalog contract
 - `documents/engineering/docker_policy.md` - shared Linux substrate image doctrine and snapshot launcher expectations
 - `documents/engineering/build_artifacts.md` - build roots, generated proto handling, and image-owned toolchain contract
 - `documents/engineering/model_lifecycle.md` - durable artifacts, bundle metadata, and cache semantics
@@ -495,7 +486,7 @@ None.
 - `documents/engineering/implementation_boundaries.md` - Haskell versus Python versus chart ownership
 - `documents/engineering/portability.md` - portable platform rules versus Apple or Linux substrate detail
 - `documents/development/python_policy.md` - shared Python project, `poetry run` contract, and `check-code` gate
-- `documents/development/testing_strategy.md` - per-mode integration coverage and engine-binding parity
+- `documents/development/testing_strategy.md` - per-substrate integration coverage and engine-binding parity
 - `documents/operations/apple_silicon_runbook.md` - ghcup prerequisites and daemon-driven Apple engine setup
 
 **Product or reference docs to create/update:**

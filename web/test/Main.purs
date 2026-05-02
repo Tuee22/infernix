@@ -77,12 +77,12 @@ main =
                     , daemonLocation: Just "control-plane-host"
                     , catalogSource: Just "generated-build-root"
                     , edgePort: Just 9090
-                    , apiUpstream: Just { mode: "host-demo-bridge", host: Just "127.0.0.1", port: Just 18081 }
-                    , demoConfigPath: Just "/tmp/infernix-demo.dhall"
+                    , apiUpstream: Just { mode: "cluster-demo", host: Just "infernix-demo.platform.svc.cluster.local", port: Just 80 }
+                    , demoConfigPath: Just "/tmp/infernix-substrate.dhall"
                     , generatedDemoConfigPath: Nothing
                     , mountedDemoConfigPath: Nothing
                     , routes: Just [ { path: "/api", purpose: "Demo API" } ]
-                    , upstreams: Just [ { id: "demo", routePrefix: Just "/", healthStatus: "ready", targetSurface: "host-native demo bridge", durableBackendState: "generated web bundle and Haskell demo daemon" } ]
+                    , upstreams: Just [ { id: "demo", routePrefix: Just "/", healthStatus: "ready", targetSurface: "cluster-resident demo surface", durableBackendState: "generated web bundle and Haskell demo daemon" } ]
                     }
                 )
                 runtimeMode
@@ -92,10 +92,10 @@ main =
                   , daemonLocation: "control-plane-host"
                   , catalogSource: "generated-build-root"
                   , edgePort: "9090"
-                  , apiUpstreamMode: "host-demo-bridge"
-                  , demoConfigPath: "/tmp/infernix-demo.dhall"
+                  , apiUpstreamMode: "cluster-demo"
+                  , demoConfigPath: "/tmp/infernix-substrate.dhall"
                   , routes: [ { path: "/api", purpose: "Demo API" } ]
-                  , upstreams: [ { id: "demo", routePrefix: Just "/", healthStatus: "ready", targetSurface: "host-native demo bridge", durableBackendState: "generated web bundle and Haskell demo daemon" } ]
+                  , upstreams: [ { id: "demo", routePrefix: Just "/", healthStatus: "ready", targetSurface: "cluster-resident demo surface", durableBackendState: "generated web bundle and Haskell demo daemon" } ]
                   }
               publicationSummary Nothing runtimeMode
                 `shouldEqual`
@@ -136,7 +136,7 @@ expectedModelCount mode =
   case mode of
     "apple-silicon" -> 15
     "linux-cpu" -> 12
-    "linux-cuda" -> 16
+    "linux-gpu" -> 16
     _ -> 0
 
 expectedEngineCount :: String -> Int
@@ -144,7 +144,7 @@ expectedEngineCount mode =
   case mode of
     "apple-silicon" -> 12
     "linux-cpu" -> 10
-    "linux-cuda" -> 10
+    "linux-gpu" -> 10
     _ -> 0
 
 hasEngineMetadata :: EngineBinding -> Boolean

@@ -7,7 +7,6 @@ module Infernix.Models
     engineBindingsForMode,
     encodeDemoConfig,
     findModel,
-    hostBridgeApiUpstream,
     platformClaims,
     requestTopicsForMode,
     renderPublicationState,
@@ -45,7 +44,7 @@ data MatrixRow = MatrixRow
     rowRequestLabel :: Text,
     appleBinding :: Maybe ModeBinding,
     linuxCpuBinding :: Maybe ModeBinding,
-    linuxCudaBinding :: Maybe ModeBinding
+    linuxGpuBinding :: Maybe ModeBinding
   }
 
 catalogForMode :: RuntimeMode -> [ModelDescriptor]
@@ -87,7 +86,7 @@ engineBindingForSelectedEngine _runtimeMode selectedEngineValue =
           ["vllm", "transformers", "diffusers", "torch", "tensorflow", "jax"]
       adapterType
         | pythonNative = "python-stdio"
-        | otherwise = "haskell-simulated-runner"
+        | otherwise = "native-process-runner"
       adapterLocator
         | pythonNative = "adapters/" <> adapterModuleName adapterId <> ".py"
         | otherwise = adapterId
@@ -119,7 +118,7 @@ encodeDemoConfig demoConfig =
   LazyChar8.pack (demoConfigGeneratedBanner <> renderDemoConfig demoConfig)
 
 renderConfigMapManifest :: RuntimeMode -> LazyChar8.ByteString -> String
-renderConfigMapManifest runtimeMode payload =
+renderConfigMapManifest _runtimeMode payload =
   unlines
     [ "apiVersion: v1",
       "kind: ConfigMap",
@@ -127,7 +126,7 @@ renderConfigMapManifest runtimeMode payload =
       "  name: infernix-demo-config",
       "  namespace: platform",
       "data:",
-      "  infernix-demo-" <> Text.unpack (runtimeModeId runtimeMode) <> ".dhall: |"
+      "  infernix-substrate.dhall: |"
     ]
     <> indentBlock 4 (LazyChar8.unpack payload)
 
@@ -145,14 +144,6 @@ clusterDemoApiUpstream =
     { apiUpstreamMode = "cluster-demo",
       apiUpstreamHost = "infernix-demo.platform.svc.cluster.local",
       apiUpstreamPort = 80
-    }
-
-hostBridgeApiUpstream :: Int -> ApiUpstream
-hostBridgeApiUpstream port =
-  ApiUpstream
-    { apiUpstreamMode = "host-demo-bridge",
-      apiUpstreamHost = "host.docker.internal",
-      apiUpstreamPort = port
     }
 
 renderPublicationState :: String -> ClusterState -> String
@@ -173,7 +164,7 @@ renderPublicationStateWithApiUpstream controlPlane state apiUpstream =
     <> show controlPlane
     <> ",\n"
     <> "  \"daemonLocation\": "
-    <> jsonString (daemonLocationFor apiUpstream)
+    <> jsonString (daemonLocationFor state)
     <> ",\n"
     <> "  \"catalogSource\": "
     <> jsonString "generated-build-root"
@@ -264,13 +255,14 @@ renderRouteInfo route =
     <> jsonString (purpose route)
     <> "}"
 
-daemonLocationFor :: ApiUpstream -> Text
-daemonLocationFor apiUpstream =
-  case apiUpstreamMode apiUpstream of
-    "host-demo-bridge" -> "control-plane-host"
-    "host-daemon-bridge" -> "control-plane-host"
-    "disabled" -> "disabled"
-    _ -> "cluster-pod"
+daemonLocationFor :: ClusterState -> Text
+daemonLocationFor state =
+  case clusterRuntimeMode state of
+    AppleSilicon -> "control-plane-host"
+    _ ->
+      if clusterPresent state
+        then "cluster-pod"
+        else "disabled"
 
 stateHasDemoUi :: ClusterState -> Bool
 stateHasDemoUi state =
@@ -319,15 +311,15 @@ bindingForMode :: RuntimeMode -> MatrixRow -> Maybe ModeBinding
 bindingForMode runtimeMode row = case runtimeMode of
   AppleSilicon -> appleBinding row
   LinuxCpu -> linuxCpuBinding row
-  LinuxCuda -> linuxCudaBinding row
+  LinuxGpu -> linuxGpuBinding row
 
 laneFor :: RuntimeMode -> Bool -> Text
 laneFor runtimeMode requiresGpu = case runtimeMode of
   AppleSilicon -> "apple-silicon-host"
   LinuxCpu -> "kind-linux-cpu"
-  LinuxCuda
-    | requiresGpu -> "kind-linux-cuda-gpu"
-    | otherwise -> "kind-linux-cuda-shared"
+  LinuxGpu
+    | requiresGpu -> "kind-linux-gpu-gpu"
+    | otherwise -> "kind-linux-gpu-shared"
 
 matrixRows :: [MatrixRow]
 matrixRows =
@@ -614,7 +606,7 @@ mkRow ::
   Maybe ModeBinding ->
   Maybe ModeBinding ->
   MatrixRow
-mkRow rowIdValue modelIdValue displayNameValue familyValue descriptionValue artifactTypeValue referenceModelValue downloadUrlValue notesValue requestLabelValue appleValue linuxCpuValue linuxCudaValue =
+mkRow rowIdValue modelIdValue displayNameValue familyValue descriptionValue artifactTypeValue referenceModelValue downloadUrlValue notesValue requestLabelValue appleValue linuxCpuValue linuxGpuValue =
   MatrixRow
     { rowId = rowIdValue,
       rowModelId = modelIdValue,
@@ -628,7 +620,7 @@ mkRow rowIdValue modelIdValue displayNameValue familyValue descriptionValue arti
       rowRequestLabel = requestLabelValue,
       appleBinding = appleValue,
       linuxCpuBinding = linuxCpuValue,
-      linuxCudaBinding = linuxCudaValue
+      linuxGpuBinding = linuxGpuValue
     }
 
 renderDemoConfig :: DemoConfig -> String

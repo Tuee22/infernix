@@ -26,7 +26,7 @@ requiredFiles =
     "chart/templates/service-demo.yaml",
     "kind/cluster-apple-silicon.yaml",
     "kind/cluster-linux-cpu.yaml",
-    "kind/cluster-linux-cuda.yaml"
+    "kind/cluster-linux-gpu.yaml"
   ]
 
 requiredPhrases :: [(FilePath, [String])]
@@ -120,7 +120,7 @@ requiredPhrases =
       ["storageClassName:", "infernix.io/workload: service", ".Values.service.dataPvc.name"]
     ),
     ( "chart/templates/runtimeclass-nvidia.yaml",
-      ["RuntimeClass", "name: nvidia", "handler: nvidia", ".Values.runtimeMode", "linux-cuda"]
+      ["RuntimeClass", "name: nvidia", "handler: nvidia", ".Values.runtimeMode", "linux-gpu"]
     ),
     ("chart/templates/service-demo.yaml", [".Values.demo.enabled", "name: infernix-demo", "targetPort: {{ .Values.demo.port }}"])
   ]

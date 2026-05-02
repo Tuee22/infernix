@@ -24,8 +24,9 @@
   project consumes them through matching auto-generated Python protobuf modules in
   `tools/generated_proto/`
 - the production daemon (`infernix service`) keeps the topic-shaped request or result contract and
-  uses real Pulsar WebSocket or admin endpoints when the Pulsar environment variables are present;
-  without them it falls back to the filesystem simulation under `./.data/runtime/pulsar/`
+  uses the Pulsar transport configured for the active substrate; unit-level harnesses can still
+  exercise the repo-local topic spool under `./.data/runtime/pulsar/` when those endpoints are
+  intentionally absent
 - engine workers are Haskell processes; for Python-native engines, the worker forks the named
   adapter entrypoint and exchanges typed protobuf worker messages over stdio. The worker passes the
   durable artifact bundle, source manifest, cache manifest, and engine install root into that

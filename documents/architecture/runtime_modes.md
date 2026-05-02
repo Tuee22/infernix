@@ -25,22 +25,22 @@ demo catalog entries, service binding, and validation.
 |--------------|-------------------|-----------------------------------------------|
 | Apple Silicon / Metal | `apple-silicon` | `Best Apple Silicon engine` |
 | Ubuntu 24.04 / CPU | `linux-cpu` | `Best Linux CPU engine` |
-| Ubuntu 24.04 / NVIDIA CUDA Container | `linux-cuda` | `Best Linux CUDA engine` |
+| Ubuntu 24.04 / NVIDIA CUDA Container | `linux-gpu` | `Best Linux CUDA engine` |
 
-`cluster up` resolves the active runtime mode before reconciliation begins, renders
-`infernix-demo-<mode>.dhall`, and publishes that exact content into the repo-local publication
-mirror or `ConfigMap/infernix-demo-config`.
+The active runtime mode is encoded in `infernix-substrate.dhall` beside the built binary.
+`cluster up` republishes that exact file into the repo-local publication mirror and
+`ConfigMap/infernix-demo-config`.
 
 ## Generated Demo Config Contract
 
 The generated demo catalog is the source of truth for the active runtime mode.
 
-- `infernix-demo-<mode>.dhall` records every README matrix row supported by that mode and omits
+- `infernix-substrate.dhall` records every README matrix row supported by that mode and omits
   rows whose selected engine is `Not recommended`
 - each generated entry records the selected engine, request shape, runtime lane, and workload
   metadata
-- in containerized execution contexts, `ConfigMap/infernix-demo-config` is mounted read-only at
-  `/opt/build/`, and the watched file lives at `/opt/build/infernix-demo-<mode>.dhall`
+- in containerized execution contexts, `ConfigMap/infernix-demo-config` is mounted read-only
+  beside the binary, and the watched file lives at `/opt/build/infernix/infernix-substrate.dhall`
 - `infernix test integration` and `infernix test e2e` enumerate every generated catalog entry for
   the active runtime mode rather than using a smoke subset
 
@@ -48,13 +48,13 @@ The generated demo catalog is the source of truth for the active runtime mode.
 
 Service placement is a separate concept from runtime mode.
 
-- Apple host-native service placement runs `infernix service` on the host and can repoint the
-  routed `/api` surface through the Apple host bridge while the browser stays on the shared edge URL
+- Apple host-native service placement runs `infernix service` on the host while the routed demo
+  surface stays cluster-resident
 - the same production daemon runs in every placement and consumes the same generated
   `request_topics`, `result_topic`, and `engines` fields from the active `.dhall`
 - when Pulsar endpoint env vars are present, the daemon uses the real Pulsar WebSocket or admin
-  transport for those topic fields; otherwise it falls back to the filesystem simulation under
-  `./.data/runtime/pulsar/`
+  transport for those topic fields; unit-level harnesses can still exercise the repo-local topic
+  spool under `./.data/runtime/pulsar/` when those endpoints are intentionally absent
 - host-native and cluster-resident placements both launch the same process-isolated engine-worker
   contract and honor the same adapter-specific command overrides
 - switching runtime modes changes generated catalog content and engine bindings, not the service

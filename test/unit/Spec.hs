@@ -9,7 +9,7 @@ import Data.Map.Strict qualified as Map
 import Data.Maybe (isJust, isNothing)
 import Data.Text qualified as Text
 import Data.Time (getCurrentTime)
-import Infernix.CLI (extractRuntimeMode, writeGeneratedPursContracts)
+import Infernix.CLI (writeGeneratedPursContracts)
 import Infernix.Cluster (writeGeneratedKindConfig)
 import Infernix.Cluster.Discover
 import Infernix.Cluster.PublishImages
@@ -49,17 +49,12 @@ main = do
   unitTestRoot <- testRootPath "unit"
   assert (length (catalogForMode AppleSilicon) == 15) "apple-silicon catalog count matches the matrix"
   assert (length (catalogForMode LinuxCpu) == 12) "linux-cpu catalog count matches the matrix"
-  assert (length (catalogForMode LinuxCuda) == 16) "linux-cuda catalog count matches the matrix"
-  assert (isJust (findModel LinuxCuda "llm-qwen25-awq")) "linux-cuda includes the AWQ row"
+  assert (length (catalogForMode LinuxGpu) == 16) "linux-gpu catalog count matches the matrix"
+  assert (isJust (findModel LinuxGpu "llm-qwen25-awq")) "linux-gpu includes the AWQ row"
   assert (isNothing (findModel AppleSilicon "llm-qwen25-awq")) "apple-silicon omits unsupported AWQ rows"
   assert
-    (extractRuntimeMode ["--runtime-mode", "linux-cpu", "cluster", "status"] == Right (Just LinuxCpu, ["cluster", "status"]))
-    "CLI parsing accepts --runtime-mode before the command family"
-  assert
-    (extractRuntimeMode ["cluster", "status", "--runtime-mode", "linux-cuda"] == Right (Just LinuxCuda, ["cluster", "status"]))
-    "CLI parsing accepts --runtime-mode after the command family"
-  assert (extractRuntimeMode ["--runtime-mode"] == Left "Missing value for --runtime-mode") "CLI parsing rejects a missing runtime mode value"
-  assert (extractRuntimeMode ["--runtime-mode", "bogus"] == Left "Unsupported runtime mode: bogus") "CLI parsing rejects unsupported runtime modes"
+    (parseCommand ["cluster", "status"] == Right ClusterStatusCommand)
+    "the structured command registry parses cluster commands without a runtime-mode prefix"
   assert
     (parseCommand ["internal", "discover", "images", "rendered-chart.yaml"] == Right (InternalDiscoverImagesCommand "rendered-chart.yaml"))
     "the structured command registry parses internal discovery commands from the same definition used by the docs"
@@ -69,6 +64,9 @@ main = do
   assert
     ("- `test` - runs the aggregate validation entrypoints" `isInfixOf` renderCliSurfaceFamiliesSection)
     "the generated CLI surface overview includes the test family summary"
+  assert
+    ("--runtime-mode" `notElem` words renderCliReferenceCommandsSection)
+    "the generated CLI reference no longer documents a runtime-mode override"
   assert
     ("`/harbor/api`" `isInfixOf` renderReadmeRouteSummarySection)
     "the README route summary includes the Harbor API prefix from the route registry"
@@ -89,7 +87,7 @@ main = do
     "apple host prerequisite planning does not install unrelated tools for docs-only commands"
   assertUniqueModelIds AppleSilicon
   assertUniqueModelIds LinuxCpu
-  assertUniqueModelIds LinuxCuda
+  assertUniqueModelIds LinuxGpu
   withTestRoot unitTestRoot $ do
     withOptionalEnv "INFERNIX_BUILD_ROOT" Nothing $ do
       paths <- discoverPaths
@@ -176,10 +174,10 @@ main = do
       let demoConfig =
             DemoConfig
               { configRuntimeMode = LinuxCpu,
-                configEdgePort = 9090,
+                configEdgePort = 0,
                 configMapName = "infernix-demo-config",
-                generatedPath = "./.build/infernix-demo-linux-cpu.dhall",
-                mountedPath = "/opt/build/infernix-demo-linux-cpu.dhall",
+                generatedPath = "./.build/infernix-substrate.dhall",
+                mountedPath = "/opt/build/infernix/infernix-substrate.dhall",
                 demoUiEnabled = True,
                 requestTopics = requestTopicsForMode LinuxCpu,
                 resultTopic = resultTopicForMode LinuxCpu,
@@ -297,12 +295,14 @@ main = do
             markerExists <- doesFileExist overrideMarkerPath
             assert markerExists "adapter-specific command overrides invoke the configured worker wrapper"
 
-    writeFile "invalid-demo-config.dhall" "{\"runtimeMode\":\"apple-silicon\",\"models\":[]}\n"
-    invalidConfigResult <- try (decodeDemoConfigFile "invalid-demo-config.dhall") :: IO (Either IOError DemoConfig)
+    let invalidDemoConfigPath = unitTestRoot </> "invalid-demo-config.dhall"
+    writeFile invalidDemoConfigPath "{\"runtimeMode\":\"apple-silicon\",\"models\":[]}\n"
+    invalidConfigResult <- try (decodeDemoConfigFile invalidDemoConfigPath) :: IO (Either IOError DemoConfig)
     assert (either (const True) (const False) invalidConfigResult) "invalid demo configs are rejected"
 
-    writeFile "rendered-chart.yaml" sampleRenderedChart
-    discoveredImages <- discoverChartImagesFile "rendered-chart.yaml"
+    let renderedChartPath = unitTestRoot </> "rendered-chart.yaml"
+    writeFile renderedChartPath sampleRenderedChart
+    discoveredImages <- discoverChartImagesFile renderedChartPath
     assert
       ( discoveredImages
           == [ "docker.io/library/busybox:1.36",
@@ -311,7 +311,7 @@ main = do
              ]
       )
       "rendered chart image discovery returns sorted unique image refs"
-    discoveredClaims <- discoverChartClaimsFile "rendered-chart.yaml"
+    discoveredClaims <- discoverChartClaimsFile renderedChartPath
     assert (length discoveredClaims == 3) "rendered chart claim discovery finds explicit and StatefulSet claims"
     assert
       ( map pvcName discoveredClaims
@@ -322,8 +322,10 @@ main = do
       )
       "rendered chart claim discovery preserves normalized PVC names"
 
-    writeFile "harbor-overlay.yaml" sampleHarborOverlay
-    overlayImages <- discoverHarborOverlayImageRefsFile "harbor-overlay.yaml"
+    let harborOverlayPath = unitTestRoot </> "harbor-overlay.yaml"
+        generatedHarborOverlayPath = unitTestRoot </> "generated-harbor-overrides.yaml"
+    writeFile harborOverlayPath sampleHarborOverlay
+    overlayImages <- discoverHarborOverlayImageRefsFile harborOverlayPath
     assert
       ( overlayImages
           == [ "harbor.local/library/infernix-linux-cpu:sha256-runtime",
@@ -335,8 +337,8 @@ main = do
              ]
       )
       "Harbor overlay discovery returns the routed image refs"
-    writeHarborOverridesFile samplePublishedImages "generated-harbor-overrides.yaml"
-    generatedOverlayImages <- discoverHarborOverlayImageRefsFile "generated-harbor-overrides.yaml"
+    writeHarborOverridesFile samplePublishedImages generatedHarborOverlayPath
+    generatedOverlayImages <- discoverHarborOverlayImageRefsFile generatedHarborOverlayPath
     assert
       ( generatedOverlayImages
           == [ "harbor.local/library/infernix-linux-cpu:sha256-runtime",

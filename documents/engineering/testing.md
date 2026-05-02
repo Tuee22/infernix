@@ -84,7 +84,7 @@
 - the supported Node-based web validation paths stay warning-free by avoiding deprecated
   `runSpec` or `runSpecT` entrypoints and by clearing conflicting `NO_COLOR` or `FORCE_COLOR`
   pairs before Playwright starts
-- the default E2E matrix always covers Apple and Linux CPU, and Linux CUDA joins E2E only when the
-  supported NVIDIA preflight contract passes
-- the current integration test binary enumerates Apple, Linux CPU, and Linux CUDA unless
-  `--runtime-mode` or `INFERNIX_RUNTIME_MODE` narrows the lane
+- `infernix test integration`, `infernix test e2e`, and `infernix test all` report only the
+  active substrate encoded in the generated `.dhall`
+- supported Apple E2E keeps the host CLI in charge of orchestration while the actual Playwright
+  executor runs in a container against the clustered routed surface

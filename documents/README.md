@@ -26,7 +26,7 @@
   toolchain (purs, spago), the `purescript-spec` test framework, and the Haskell-owned generated
   contract derivation consumed by the demo UI
 - [development/testing_strategy.md](development/testing_strategy.md) records operator-facing
-  validation-lane detail, matrix selection, and implemented coverage beneath the canonical testing
+  validation-lane detail, active-substrate selection, and implemented coverage beneath the canonical testing
   doctrine
 - [development/chaos_testing.md](development/chaos_testing.md) records the current HA-failure
   validation status and the Phase 6 ownership for that coverage
@@ -43,7 +43,7 @@
   contract
 - [tools/pulsar.md](tools/pulsar.md) records the production inference subscription and dispatch
   contract (`request_topics`, `result_topic`, `engines` in the active `.dhall`) together with the
-  current filesystem-backed daemon simulation
+  repo-local topic-spool harness used by unit-level validation
 - [reference/cli_reference.md](reference/cli_reference.md) records the canonical CLI surface for
   both `infernix` and `infernix-demo`
 - [research/README.md](research/README.md) reserves the non-authoritative research subtree used for

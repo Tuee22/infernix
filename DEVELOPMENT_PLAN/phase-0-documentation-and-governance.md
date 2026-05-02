@@ -1,6 +1,6 @@
 # Phase 0: Documentation and Governance
 
-**Status**: Active
+**Status**: Done
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
 
 > **Purpose**: Establish the governed `documents/` suite, the standards that keep the plan and
@@ -14,22 +14,10 @@ lint rules established here.
 
 ## Current Repo Assessment
 
-The governed `documents/` suite exists, `documents/documentation_standards.md` governs canonical
-topic ownership, and the repo-local docs validator is part of the supported workflow. Later phases
-extend that governed suite across the shared Linux substrate image, the shared Python adapter
-project, the command registry, the route registry, testing doctrine, portability, implementation
-boundaries, and the governed-root-document metadata model.
-
-This plan update reopens Phase 0. The governed docs outside `DEVELOPMENT_PLAN/` still describe the
-earlier runtime-mode, simulated-substrate, Apple host-bridge, and Linux direct-GPU-launcher
-doctrine. The plan now tracks a substrate-generated `.dhall` single-source-of-truth model, so the
-governed docs and root workflow entrypoints must be realigned before later implementation phases
-can close honestly against that new contract.
-
-## Remaining Work
-
-- close Sprint 0.8 so the governed docs, root docs, and plan all describe the same substrate
-  selection, launcher, daemon-placement, and validation doctrine
+The governed `documents/` suite, the governed root docs, and the development plan now describe the
+same substrate-generated `.dhall` doctrine. The canonical docs align on clustered demo hosting,
+Compose-only Linux control-plane launchers, active-substrate validation, and the final route and
+publication ownership model.
 
 ## Sprint 0.1: `documents/` Suite Scaffold [Done]
 
@@ -100,8 +88,8 @@ Create the initial canonical document set for the supported platform contract.
 ### Deliverables
 
 - core architecture, development, engineering, operations, reference, and tool docs exist
-- the docs suite covers the supported CLI, runtime-mode contract, cluster lifecycle, storage
-  doctrine, routing, model catalog, and demo UI surface
+- the docs suite covers the supported CLI, substrate contract, generated catalog, cluster
+  lifecycle, storage doctrine, routing, model catalog, and demo UI surface
 - later phases can update one canonical document per topic instead of inventing new topic homes
 
 ### Validation
@@ -142,7 +130,7 @@ None.
 
 ---
 
-## Sprint 0.5: Runtime-Mode Matrix Documentation Realignment [Done]
+## Sprint 0.5: Substrate Matrix Documentation Realignment [Done]
 
 **Status**: Done
 **Implementation**: `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/00-overview.md`, `DEVELOPMENT_PLAN/system-components.md`, `documents/architecture/runtime_modes.md`, `documents/architecture/model_catalog.md`, `documents/development/testing_strategy.md`, `documents/engineering/build_artifacts.md`
@@ -150,17 +138,19 @@ None.
 
 ### Objective
 
-Align the plan and docs around the runtime-mode matrix and generated catalog contract.
+Align the plan and docs around the substrate matrix and generated catalog contract.
 
 ### Deliverables
 
-- the plan distinguishes execution context from runtime mode
+- the plan distinguishes execution context from supported substrate
 - the README matrix is treated as the source of truth for generated catalog selection
-- the governed docs reference the active-mode generated demo-config and validation rules
+- the governed docs reference the build-generated substrate file, its generated catalog, and the
+  current `runtimeMode`-labeled publication surfaces
 
 ### Validation
 
-- the plan and governed docs use the same runtime-mode vocabulary
+- the plan and governed docs use aligned substrate vocabulary while acknowledging the current
+  `runtimeMode` serialization used by generated payloads
 - the generated demo-config contract is described consistently across the listed docs
 
 ### Remaining Work
@@ -228,9 +218,9 @@ None.
 
 ---
 
-## Sprint 0.8: Substrate Doctrine Documentation Reset [Active]
+## Sprint 0.8: Substrate Doctrine Documentation Reset [Done]
 
-**Status**: Active
+**Status**: Done
 **Implementation**: `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/00-overview.md`, `DEVELOPMENT_PLAN/system-components.md`, `DEVELOPMENT_PLAN/development_plan_standards.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 **Docs to update**: `README.md`, `AGENTS.md`, `CLAUDE.md`, `documents/architecture/overview.md`, `documents/architecture/runtime_modes.md`, `documents/development/local_dev.md`, `documents/development/testing_strategy.md`, `documents/engineering/build_artifacts.md`, `documents/engineering/docker_policy.md`, `documents/engineering/portability.md`, `documents/engineering/testing.md`, `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/reference/cli_reference.md`
 
@@ -270,8 +260,7 @@ implementation follow-ons claim closure against it.
 
 ### Remaining Work
 
-- `README.md`, `AGENTS.md`, and `CLAUDE.md` still reflect the earlier launcher and validation story
-- the governed docs listed above still need substrate-language, launcher, and validation updates
+None.
 
 ## Documentation Requirements
 

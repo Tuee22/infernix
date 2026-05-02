@@ -60,7 +60,7 @@ parallel long-form workflow contracts.
 - Apple host paths materialize `python/.venv/` only on demand, after `infernix` bootstraps a
   user-local `poetry` executable through the host's built-in Python when necessary
 - Linux substrate images install adapter dependencies during image build, and Linux host
-  prerequisites stop at Docker plus the NVIDIA host prerequisites for `linux-cuda`
+  prerequisites stop at Docker plus the NVIDIA host prerequisites for `linux-gpu`
 - the demo UI is PureScript; frontend contracts are emitted into `web/src/Generated/` by
   `infernix internal generate-purs-contracts`, which derives them through `purescript-bridge`
   from dedicated Haskell browser-contract ADTs in `src/Infernix/Web/Contracts.hs`

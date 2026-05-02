@@ -55,7 +55,7 @@ This repository serves two aligned purposes:
   `purescript-spec` view and contract tests, and Playwright launched from the shared Linux
   substrate image or the host (Apple Silicon)
 - one shared Linux substrate build definition (`docker/linux-substrate.Dockerfile`) emits
-  `infernix-linux-cpu` and `infernix-linux-cuda`, each with ghcup-pinned GHC 9.14.1 + Cabal
+  `infernix-linux-cpu` and `infernix-linux-gpu`, each with ghcup-pinned GHC 9.14.1 + Cabal
   3.16.1.0, Python 3 + Poetry, node, Playwright, `nvkind`, and the Kind/kubectl/Helm/Docker
   toolbelt baked in. Apple Silicon has no Dockerfile; the operator pre-installs ghcup and the
   daemon installs engine deps via system `clang` and `brew`
@@ -156,7 +156,7 @@ Current status:
   through the host's built-in Python when it is absent and then materialize `python/.venv/` on
   demand
 - `linux-cpu` keeps its host prerequisites at Docker Engine plus the Docker Compose plugin, and
-  `linux-cuda` adds the documented NVIDIA driver and container-toolkit requirements on top of that
+  `linux-gpu` adds the documented NVIDIA driver and container-toolkit requirements on top of that
 
 The Linux install examples below assume an Ubuntu 24.04 host.
 
@@ -275,9 +275,9 @@ Notes:
 
 - the NVIDIA driver is the main manual step because the right installation path depends on the
   host kernel, Secure Boot posture, and fleet policy; the repo assumes that driver is already
-  working before `linux-cuda` validation starts
-- the supported `linux-cuda` lane does not need host-installed `kind`, `kubectl`, `helm`, Node.js,
-  or GHC because the baked `infernix-linux-cuda:local` image carries them
+  working before `linux-gpu` validation starts
+- the supported `linux-gpu` lane does not need host-installed `kind`, `kubectl`, `helm`, Node.js,
+  or GHC because the baked `infernix-linux-gpu:local` image carries them
 - plan for substantial free disk space before `cluster up` or `test all`; the Kind preload plus
   Harbor-backed rollout is materially heavier than the CPU lane
 - everything beyond Docker plus the NVIDIA host prerequisites happens inside the shared Linux
@@ -310,26 +310,23 @@ Apple Silicon has no Dockerfile. The operator pre-installs `ghcup` with GHC 9.14
 cabal --builddir=.build/cabal install --installdir=./.build --install-method=copy --overwrite-policy=always exe:infernix exe:infernix-demo
 
 # Bring up the Kind HA demo ground.
-./.build/infernix --runtime-mode apple-silicon cluster up
+./.build/infernix cluster up
 
 # Print the edge port, route inventory, and publication details, then open
 # http://127.0.0.1:<edge-port>/ in a browser.
-./.build/infernix --runtime-mode apple-silicon cluster status
-
-# Optional: serve the same demo UI directly from the host on a dedicated port.
-./.build/infernix-demo serve --dhall ./.build/infernix-demo-apple-silicon.dhall --port 9180
+./.build/infernix cluster status
 
 # Run the full suite.
-./.build/infernix --runtime-mode apple-silicon test all
+./.build/infernix test all
 
 # Or run each suite directly.
-./.build/infernix --runtime-mode apple-silicon test lint
-./.build/infernix --runtime-mode apple-silicon test unit
-./.build/infernix --runtime-mode apple-silicon test integration
-./.build/infernix --runtime-mode apple-silicon test e2e
+./.build/infernix test lint
+./.build/infernix test unit
+./.build/infernix test integration
+./.build/infernix test e2e
 
 # Tear down while preserving authoritative data under ./.data.
-./.build/infernix --runtime-mode apple-silicon cluster down
+./.build/infernix cluster down
 ```
 
 `cluster up` writes `./.build/infernix.kubeconfig` and never touches `$HOME/.kube/config`. On
@@ -350,23 +347,23 @@ launcher, the in-cluster workload image source, and the routed Playwright execut
 docker compose build infernix
 
 # Bring up the Kind HA demo ground.
-docker compose run --rm infernix infernix --runtime-mode linux-cpu cluster up
+docker compose run --rm infernix infernix cluster up
 
 # Print the edge port, route inventory, and publication details, then open
 # http://127.0.0.1:<edge-port>/ in a browser.
-docker compose run --rm infernix infernix --runtime-mode linux-cpu cluster status
+docker compose run --rm infernix infernix cluster status
 
 # Run the full suite.
-docker compose run --rm infernix infernix --runtime-mode linux-cpu test all
+docker compose run --rm infernix infernix test all
 
 # Or run each suite directly.
-docker compose run --rm infernix infernix --runtime-mode linux-cpu test lint
-docker compose run --rm infernix infernix --runtime-mode linux-cpu test unit
-docker compose run --rm infernix infernix --runtime-mode linux-cpu test integration
-docker compose run --rm infernix infernix --runtime-mode linux-cpu test e2e
+docker compose run --rm infernix infernix test lint
+docker compose run --rm infernix infernix test unit
+docker compose run --rm infernix infernix test integration
+docker compose run --rm infernix infernix test e2e
 
 # Tear down.
-docker compose run --rm infernix infernix --runtime-mode linux-cpu cluster down
+docker compose run --rm infernix infernix cluster down
 ```
 
 The Linux launcher bind-mounts only `./.data/`, the Docker socket, and named build caches. The
@@ -375,67 +372,67 @@ baked image owns the full toolchain, so the supported runtime path does not inst
 
 ### Linux CUDA (substrate container)
 
-The `linux-cuda` substrate ships one baked image snapshot, `infernix-linux-cuda:local`, built
+The `linux-gpu` substrate ships one baked image snapshot, `infernix-linux-gpu:local`, built
 from `docker/linux-substrate.Dockerfile` with a CUDA base image. The image includes `nvkind` and
-the GPU validation toolchain needed by the supported `linux-cuda` cluster lifecycle.
+the GPU validation toolchain needed by the supported `linux-gpu` cluster lifecycle.
 
 **Prerequisites**: complete the Linux CUDA host setup in [System Prerequisites](#system-prerequisites).
 
 ```bash
-# Build the linux-cuda substrate image.
+# Build the linux-gpu substrate image.
 docker build -f docker/linux-substrate.Dockerfile \
-  --build-arg RUNTIME_MODE=linux-cuda \
+  --build-arg RUNTIME_MODE=linux-gpu \
   --build-arg BASE_IMAGE=nvidia/cuda:13.2.1-cudnn-runtime-ubuntu24.04 \
-  -t infernix-linux-cuda:local .
+  -t infernix-linux-gpu:local .
 
 # Bring up the GPU-enabled Kind HA demo ground.
 docker run --rm --gpus all \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v "$PWD/.data:/workspace/.data" \
-  infernix-linux-cuda:local infernix --runtime-mode linux-cuda cluster up
+  infernix-linux-gpu:local infernix cluster up
 
 # Print the edge port, route inventory, and publication details, then open
 # http://127.0.0.1:<edge-port>/ in a browser.
 docker run --rm --gpus all \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v "$PWD/.data:/workspace/.data" \
-  infernix-linux-cuda:local infernix --runtime-mode linux-cuda cluster status
+  infernix-linux-gpu:local infernix cluster status
 
 # Confirm GPU visibility from the cluster service deployment.
 docker run --rm --gpus all \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v "$PWD/.data:/workspace/.data" \
-  infernix-linux-cuda:local infernix --runtime-mode linux-cuda kubectl -n platform exec deployment/infernix-service -- nvidia-smi -L
+  infernix-linux-gpu:local infernix kubectl -n platform exec deployment/infernix-service -- nvidia-smi -L
 
 # Run the full suite.
 docker run --rm --gpus all \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v "$PWD/.data:/workspace/.data" \
-  infernix-linux-cuda:local infernix --runtime-mode linux-cuda test all
+  infernix-linux-gpu:local infernix test all
 
 # Or run each suite directly.
 docker run --rm --gpus all \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v "$PWD/.data:/workspace/.data" \
-  infernix-linux-cuda:local infernix --runtime-mode linux-cuda test lint
+  infernix-linux-gpu:local infernix test lint
 docker run --rm --gpus all \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v "$PWD/.data:/workspace/.data" \
-  infernix-linux-cuda:local infernix --runtime-mode linux-cuda test unit
+  infernix-linux-gpu:local infernix test unit
 docker run --rm --gpus all \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v "$PWD/.data:/workspace/.data" \
-  infernix-linux-cuda:local infernix --runtime-mode linux-cuda test integration
+  infernix-linux-gpu:local infernix test integration
 docker run --rm --gpus all \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v "$PWD/.data:/workspace/.data" \
-  infernix-linux-cuda:local infernix --runtime-mode linux-cuda test e2e
+  infernix-linux-gpu:local infernix test e2e
 
 # Tear down.
 docker run --rm --gpus all \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v "$PWD/.data:/workspace/.data" \
-  infernix-linux-cuda:local infernix --runtime-mode linux-cuda cluster down
+  infernix-linux-gpu:local infernix cluster down
 ```
 
 The CUDA substrate image bundles CUDA-aware engine builds such as `llama.cpp` CUDA and `vLLM` at

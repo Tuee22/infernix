@@ -30,7 +30,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     CABAL_VERSION=${CABAL_VERSION} \
     INFERNIX_BUILD_ROOT=/opt/build/infernix \
     INFERNIX_CABAL_BUILDDIR=/opt/build/infernix/cabal \
-    INFERNIX_RUNTIME_MODE=${RUNTIME_MODE} \
+    INFERNIX_SUBSTRATE_ID=${RUNTIME_MODE} \
     PATH=/root/.local/bin:/root/.ghcup/bin:/root/.cabal/bin:${PATH}
 
 RUN apt-get update \
@@ -114,6 +114,7 @@ RUN mkdir -p /workspace/tools/generated_proto \
          --overwrite-policy=always \
          exe:infernix \
          exe:infernix-demo \
+    && infernix --help >/dev/null \
     && npm --prefix web run build \
     && poetry --directory python run check-code
 

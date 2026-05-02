@@ -8,18 +8,18 @@
 
 ## Current Repo Assessment
 
-- the repo already ships the two-binary Haskell topology, Envoy Gateway assets, the PureScript
-  demo UI, the split runtime modules under `src/Infernix/Runtime/`, the shared Python project,
-  the shared Linux substrate Dockerfile, the baked source-snapshot manifest used by git-less
+- the repo ships the two-binary Haskell topology, Envoy Gateway assets, the PureScript demo UI,
+  the split runtime modules under `src/Infernix/Runtime/`, the shared Python project, the shared
+  Linux substrate Dockerfile, the baked source-snapshot manifest used by git-less
   `infernix lint files` runs, the route registry, and the snapshot launcher
-- the current worktree still exposes runtime-mode flags, per-mode generated `.dhall` filenames,
-  simulated cluster, route, and filesystem-Pulsar fallback behavior, the Apple host bridge, and
-  the direct `linux-cuda` launcher as part of the implemented baseline
-- this plan now targets a compile-time generated substrate `.dhall` single-source-of-truth model,
-  a clustered demo app across substrates, Compose-only Linux CLI launchers, and substrate-specific
-  validation reporting
-- the governed root docs and `documents/` suite outside `DEVELOPMENT_PLAN/` have not yet been
-  updated in this turn, so the broader documentation reset remains an explicit open dependency
+- the supported CLI reads the active substrate from `infernix-substrate.dhall` without a
+  user-facing runtime-mode flag
+- the generated substrate file, `cluster status`, publication JSON, demo config, and generated
+  browser contracts still expose that active substrate through `runtimeMode` field names
+- cluster publication mirrors that exact substrate file into `ConfigMap/infernix-demo-config` and
+  keeps the routed demo surface cluster-resident across substrates
+- Linux operator workflows close around Compose-driven outer containers, and validation reports
+  only the active built substrate
 - Monitoring is not a supported first-class surface.
 
 ## Operator and Host Components
@@ -40,14 +40,14 @@
 
 | Component | Current content | Purpose | Gap |
 |-----------|-----------------|---------|-----|
-| Linux substrate image definition | `docker/linux-substrate.Dockerfile` | one shared build definition produces the Linux control-plane image and the Linux daemon image family while owning ghcup, Poetry, Node.js 22+, Playwright, and the Kind toolbelt | the current repo still expresses the GPU lane as `linux-cuda` and still treats direct GPU launch as supported |
-| Compose launcher | `compose.yaml` | one-command outer-container launcher for supported Linux workflows | the target doctrine still needs the launcher and docs reset that removes any user-facing direct GPU path |
-| Shared Python adapter project | `python/pyproject.toml`, `python/adapters/` | single dependency boundary and adapter tree for Python-native engines | the current adapter contract is deterministic and metadata-driven; later phases still need to remove the remaining simulation implementation paths from the supported runtime and validation contract |
-| Apple host prerequisite bootstrap | governed docs plus Haskell bootstrap logic | minimize Apple pre-existing host installs and let `infernix` reconcile supported Homebrew-managed tools and Poetry bootstrap | the current docs still need to align Apple host bootstrap with the clustered demo-app and container-owned Playwright doctrine |
-| Testing doctrine docs | `documents/engineering/testing.md` and `documents/development/testing_strategy.md` | keep one canonical testing doctrine together with one operator-facing detail layer | the docs still describe cross-substrate matrix coverage, substrate-specific test branching, and simulated fallback behavior as part of the supported story |
-| Browser-contract source | `src/Infernix/Web/Contracts.hs`, `web/package.json` | keeps handwritten Haskell contract source out of `Generated/` while preserving generated PureScript output there | no material ownership gap remains beyond the reopened substrate-doctrine docs reset |
-| Helm deployment assets | `chart/Chart.yaml`, `chart/values.yaml`, `chart/templates/` | hold repo-owned workloads, ConfigMaps, Gateway resources, and third-party chart dependencies | the target contract still needs the cluster-resident demo-app-only Apple story and the build-generated substrate-file publication closure |
-| Kind topology assets | `kind/cluster-apple-silicon.yaml`, `kind/cluster-linux-cpu.yaml`, `kind/cluster-linux-cuda.yaml` | substrate-specific Kind shapes, including the current GPU-enabled `linux-cuda` lane | the target doctrine still needs the `linux-gpu` naming migration and the removal of cross-substrate simulation assumptions |
+| Linux substrate image definition | `docker/linux-substrate.Dockerfile` | one shared build definition produces the Linux control-plane image and the Linux daemon image family while owning ghcup, Poetry, Node.js 22+, Playwright, and the Kind toolbelt | none |
+| Compose launcher | `compose.yaml` | one-command outer-container launcher for supported Linux workflows | none |
+| Shared Python adapter project | `python/pyproject.toml`, `python/adapters/` | single dependency boundary and adapter tree for Python-native engines | none in the supported operator contract |
+| Apple host prerequisite bootstrap | governed docs plus Haskell bootstrap logic | minimize Apple pre-existing host installs and let `infernix` reconcile supported Homebrew-managed tools and Poetry bootstrap | none |
+| Testing doctrine docs | `documents/engineering/testing.md` and `documents/development/testing_strategy.md` | keep one canonical testing doctrine together with one operator-facing detail layer | none |
+| Browser-contract source | `src/Infernix/Web/Contracts.hs`, `web/package.json` | keeps handwritten Haskell contract source out of `Generated/` while preserving generated PureScript output there | none |
+| Helm deployment assets | `chart/Chart.yaml`, `chart/values.yaml`, `chart/templates/` | hold repo-owned workloads, ConfigMaps, Gateway resources, and third-party chart dependencies | none |
+| Kind topology assets | `kind/cluster-apple-silicon.yaml`, `kind/cluster-linux-cpu.yaml`, `kind/cluster-linux-gpu.yaml` | substrate-specific Kind shapes, including the GPU-enabled `linux-gpu` lane | none |
 | Protobuf contract assets | `proto/infernix/...` plus on-demand generated `tools/generated_proto/` stubs | define canonical runtime, manifest, and event schema boundaries | generated stubs must stay untracked |
 
 ## Cluster and Publication Components
@@ -57,7 +57,7 @@
 | Kind and Helm lifecycle | Haskell control-plane orchestration in `cluster up` | host-native Apple CLI or Linux outer container | create or reuse Kind, reset StorageClasses, reconcile PVs, deploy Harbor first, publish the built substrate `.dhall`, publish images, and deploy the final chart | `./.data/runtime/cluster-state.state`, `./.data/kind/...` |
 | Harbor image preparation | Harbor plus Haskell image publication flow | Kind cluster plus control plane | bootstrap Harbor, mirror required images, and publish repo-owned images before later rollout | Harbor state under `./.data/kind/...` |
 | PostgreSQL substrate | Percona Kubernetes operator plus Patroni PostgreSQL | Kind cluster | only supported in-cluster PostgreSQL contract for Harbor and later services | `./.data/kind/...` |
-| Publication state | repo-local JSON plus routed `/api/publication` surface | repo-local state and demo API | reports control-plane context, daemon location, active substrate, routes, and upstream health metadata | `./.data/runtime/publication.json` |
+| Publication state | repo-local JSON plus routed `/api/publication` surface | repo-local state and demo API | reports control-plane context, daemon location, the active substrate through its current `runtimeMode` field, routes, and upstream health metadata | `./.data/runtime/publication.json` |
 | Edge Gateway controller | Helm-installed Envoy Gateway controller | Kind cluster | owns all browser-visible and host-consumed routing | none |
 | Cluster Gateway resource | `GatewayClass/infernix-gateway` plus `Gateway/infernix-edge` | Kind cluster | single localhost-bound HTTP listener on the chosen edge port | none |
 | HTTPRoute rendering | data-driven `chart/templates/httproutes.yaml` from the Haskell route registry | Kind cluster | publishes the route inventory for demo, Harbor, MinIO, and Pulsar surfaces | none |
@@ -73,7 +73,7 @@
 | Component | Entry point | Purpose |
 |-----------|-------------|---------|
 | Cluster reconcile | `infernix cluster up` | reconcile Kind, storage, Harbor-first bootstrap, image publication, built substrate-file publication, publication state, and edge port |
-| Cluster status | `infernix cluster status` | report cluster presence, active substrate, publication state, build or data roots, and route inventory without mutation |
+| Cluster status | `infernix cluster status` | report cluster presence, the active substrate through its current `runtimeMode` line, publication state, build or data roots, and route inventory without mutation |
 | Kubernetes wrapper | `infernix kubectl ...` | scoped wrapper around upstream `kubectl` against the repo-local kubeconfig |
 | Cache lifecycle | `infernix cache status`, `infernix cache evict`, `infernix cache rebuild` | inspect or reconcile derived runtime cache state without mutating authoritative sources |
 | Focused lint | `infernix lint files`, `infernix lint docs`, `infernix lint proto`, `infernix lint chart` | run the repo-owned focused lint entrypoints for files, docs, `.proto`, and chart assets |
@@ -106,9 +106,9 @@
 
 | Substrate | Canonical substrate id | Supported contract | Current repo gap |
 |-----------|------------------------|--------------------|------------------|
-| Apple Silicon / Metal | `apple-silicon` | host-native control plane and host-native inference daemon, clustered demo app, shared config and route contracts | the current repo still relies on runtime-mode overrides and the interim host bridge |
-| Linux / CPU | `linux-cpu` | containerized Linux lane built from the shared substrate Dockerfile and driven entirely through Compose | the current repo still defaults validation to a cross-substrate matrix rather than a substrate-specific run |
-| Linux / NVIDIA GPU | `linux-gpu` | GPU-enabled Kind lane built from the shared substrate Dockerfile and deployed from the same CUDA-based image used by the outer container | the current repo still names the lane `linux-cuda` and still treats the direct launcher as supported |
+| Apple Silicon / Metal | `apple-silicon` | host-native control plane and host-native inference daemon, clustered demo app, shared config and route contracts | none |
+| Linux / CPU | `linux-cpu` | containerized Linux lane built from the shared substrate Dockerfile and driven entirely through Compose | none |
+| Linux / NVIDIA GPU | `linux-gpu` | GPU-enabled Kind lane built from the shared substrate Dockerfile and deployed from the same CUDA-based image used by the outer container | none |
 
 ## Serialization Boundaries
 

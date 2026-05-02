@@ -10,8 +10,8 @@
 - Apple host-native flows use Colima plus the host Docker CLI, but Linux control-plane execution
   runs through baked substrate images instead of live repo-mounted containers.
 - `docker compose run --rm infernix infernix ...` is the supported `linux-cpu` launcher, and
-  direct `docker run --gpus all infernix-linux-cuda:local infernix ...` is the supported
-  `linux-cuda` launcher.
+  direct `docker run --gpus all infernix-linux-gpu:local infernix ...` is the supported
+  `linux-gpu` launcher.
 - The outer-container contract does not include `docker compose up`, `docker compose exec`, or a
   bootstrap helper-registry sidecar.
 
@@ -28,7 +28,7 @@ any retired helper-registry container cleanup.
 - on the Apple host-native control-plane path, `./.build/infernix` reconciles Homebrew-managed
   Colima and the Docker CLI before it attempts real cluster work
 - on `linux-cpu`, host prerequisites stop at Docker Engine plus the Docker Compose plugin
-- on `linux-cuda`, host prerequisites stop at the `linux-cpu` Docker baseline plus the supported
+- on `linux-gpu`, host prerequisites stop at the `linux-cpu` Docker baseline plus the supported
   NVIDIA driver and container-toolkit setup
 - every remaining control-plane, web, Poetry, Playwright, and Kubernetes toolchain dependency for
   Linux lives inside the shared substrate images
@@ -38,8 +38,8 @@ any retired helper-registry container cleanup.
 - `docker compose build infernix` refreshes the supported Linux CPU outer-container image
 - `docker compose run --rm infernix infernix ...` is the supported Linux CPU outer control-plane
   entrypoint
-- `docker build -f docker/linux-substrate.Dockerfile --build-arg RUNTIME_MODE=linux-cuda --build-arg BASE_IMAGE=nvidia/cuda:13.2.1-cudnn-runtime-ubuntu24.04 -t infernix-linux-cuda:local .`
-  and `docker run --rm --gpus all ... infernix-linux-cuda:local infernix ...` are the supported
+- `docker build -f docker/linux-substrate.Dockerfile --build-arg RUNTIME_MODE=linux-gpu --build-arg BASE_IMAGE=nvidia/cuda:13.2.1-cudnn-runtime-ubuntu24.04 -t infernix-linux-gpu:local .`
+  and `docker run --rm --gpus all ... infernix-linux-gpu:local infernix ...` are the supported
   CUDA launcher equivalents
 - the launcher container forwards the Docker socket
 - the launcher container bind-mounts only `./.data/`
@@ -70,9 +70,9 @@ any retired helper-registry container cleanup.
 
 - `docker/linux-substrate.Dockerfile` is the shared Linux image definition
 - `RUNTIME_MODE=linux-cpu` with `BASE_IMAGE=ubuntu:24.04` produces `infernix-linux-cpu:local`
-- `RUNTIME_MODE=linux-cuda` with
+- `RUNTIME_MODE=linux-gpu` with
   `BASE_IMAGE=nvidia/cuda:13.2.1-cudnn-runtime-ubuntu24.04` produces
-  `infernix-linux-cuda:local`
+  `infernix-linux-gpu:local`
 - the shared image installs Node.js 22+, the web toolchain, Playwright browser deps, the shared
   Poetry project, generated protobuf stubs, and the `nvkind` binary during image build
 - Apple Silicon has no Dockerfile; the host-native workflow builds and runs the binaries directly

@@ -13,7 +13,7 @@ spec:
       labels:
         app.kubernetes.io/name: infernix-service
     spec:
-{{- if eq .Values.runtimeMode "linux-cuda" }}
+{{- if eq .Values.runtimeMode "linux-gpu" }}
       runtimeClassName: nvidia
       nodeSelector:
         infernix.runtime/gpu: "true"
@@ -27,8 +27,6 @@ spec:
           args:
 {{ toYaml .Values.service.args | nindent 12 }}
           env:
-            - name: INFERNIX_RUNTIME_MODE
-              value: {{ .Values.runtimeMode | quote }}
             - name: INFERNIX_CONTROL_PLANE_CONTEXT
               value: {{ .Values.controlPlaneContext | quote }}
             - name: INFERNIX_DAEMON_LOCATION
@@ -67,7 +65,7 @@ spec:
             - name: {{ $name }}
               value: {{ $value | quote }}
 {{- end }}
-{{- if eq .Values.runtimeMode "linux-cuda" }}
+{{- if eq .Values.runtimeMode "linux-gpu" }}
           resources:
             limits:
               nvidia.com/gpu: "1"
