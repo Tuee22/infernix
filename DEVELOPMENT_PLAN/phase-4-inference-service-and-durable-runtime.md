@@ -1,16 +1,20 @@
 # Phase 4: Inference Service and Durable Runtime
 
-**Status**: Done
+**Status**: Active
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
 
 > **Purpose**: Define the Haskell service runtime, the shared Python engine-adapter contract, the
 > Pulsar-driven production inference surface, the demo-only HTTP API surface served by
-> `infernix-demo`, the model and artifact contracts, the shared Linux substrate image, and the
-> Apple host-native engine bootstrap that together make the runtime model honest and durable.
+> `infernix-demo`, the model and artifact contracts, the shared Linux substrate image, the
+> substrate-generated `.dhall` control contract, and the Apple host-native inference bootstrap that
+> together make the runtime model honest and durable.
 
 ## Phase Status
 
-Sprints 4.1 through 4.11 are `Done`.
+Sprints 4.1 through 4.11 remain `Done` as the current implementation baseline, but Phase 4 is
+reopened by Sprint 4.12. The current worktree still keeps filesystem-backed Pulsar fallback,
+runtime-mode-selected catalog inputs, and an Apple host bridge story that the new substrate-only
+doctrine no longer accepts.
 
 ## Current Repo Assessment
 
@@ -23,21 +27,28 @@ durable bundle or manifest metadata, an opt-in real Pulsar WebSocket or admin tr
 filesystem fallback, and a manual inference API path served by the Haskell demo surface. The Apple
 host-native lane also has daemon-driven Poetry-project and setup-entrypoint bootstrap through
 `src/Infernix/Engines/AppleSilicon.hs`, and the shared Linux substrate image carries the
-source-snapshot manifest so `infernix lint files` remains honest in git-less image runs. The Apple
-host bootstrap also aligns with the closed clean-host contract from Phase 6 Sprint 6.8:
-Homebrew plus ghcup remain the only pre-existing host requirements, `infernix` reconciles the
-remaining supported Homebrew-managed operator tools on demand, and Poetry bootstraps through the
-host's built-in Python when adapter paths first need it. No material Phase 4 runtime or bootstrap
-implementation gap remains in the current worktree.
+source-snapshot manifest so `infernix lint files` remains honest in git-less image runs.
 
-## Matrix Ownership Contract
+The remaining Phase 4 gap is contract ownership. The final doctrine requires the compile-time
+generated substrate `.dhall` to drive daemon placement, substrate identity, and engine selection;
+requires Apple demo inference to depend on the host daemon while the routed demo app stays
+cluster-resident; and removes simulation code paths from the supported steady-state runtime.
 
-This phase owns the conversion from the README-scale matrix to runtime-consumable catalog state.
+## Substrate Config Ownership Contract
+
+This phase owns the conversion from the README-scale matrix to runtime-consumable substrate state.
 
 - the service owns the typed registry that represents matrix rows
-- the active runtime mode selects the engine column for each supported row
-- `cluster up` emits that active-mode selection as `infernix-demo-<mode>.dhall` staging content
-- cluster consumers use the published ConfigMap-backed file as the exact runtime catalog
+- the built substrate selects the engine column for each supported row
+- the compile-time generated substrate `.dhall` carries that selected catalog beside the binary
+- host and cluster consumers use that same substrate file as the exact runtime catalog
+- `infernix-demo` and the integration suite both choose the active engine binding for a README row
+  from that same substrate file
+
+## Remaining Work
+
+- close Sprint 4.12 so daemon placement, reload behavior, and transport ownership align with the
+  substrate-generated `.dhall` doctrine
 
 ## Sprint 4.1: Typed Configuration, Model Catalog, and Runtime Contracts [Done]
 
@@ -207,7 +218,7 @@ None.
 
 ---
 
-## Sprint 4.6: Comprehensive Matrix Registry, Generated Demo `.dhall`, and ConfigMap Publication [Done]
+## Sprint 4.6: Comprehensive Matrix Registry and Initial Generated Demo `.dhall` Baseline [Done]
 
 **Status**: Done
 **Implementation**: `src/Infernix/Models.hs`, `test/unit/Spec.hs`, `test/integration/Spec.hs`, `web/test/Main.purs`
@@ -215,8 +226,8 @@ None.
 
 ### Objective
 
-Turn the README matrix into the typed source of truth that drives runtime binding, generated demo
-catalogs, and later test enumeration.
+Turn the README matrix into the typed source of truth that drives the current runtime binding and
+generated demo-catalog baseline before the later substrate-generated file reset lands.
 
 ### Deliverables
 
@@ -236,6 +247,51 @@ catalogs, and later test enumeration.
 ### Remaining Work
 
 None.
+
+---
+
+## Sprint 4.12: Substrate-Owned Daemon Placement, Reload Control, and Fallback Removal [Blocked]
+
+**Status**: Blocked
+**Blocked by**: Sprint 0.8, Sprint 1.10, Sprint 2.9, Sprint 3.9
+**Docs to update**: `README.md`, `documents/architecture/runtime_modes.md`, `documents/engineering/model_lifecycle.md`, `documents/engineering/object_storage.md`, `documents/engineering/portability.md`, `documents/engineering/testing.md`, `documents/operations/apple_silicon_runbook.md`
+
+### Objective
+
+Make daemon behavior derive entirely from the compile-time generated substrate `.dhall` and remove
+the remaining supported simulation assumptions from the runtime contract.
+
+### Deliverables
+
+- `infernix service` derives its active substrate from the colocated substrate `.dhall` and no
+  longer accepts `--runtime-mode` or `INFERNIX_RUNTIME_MODE`
+- `infernix-demo` and any runtime-owned manual inference entrypoint choose the engine binding for a
+  given README row only from the colocated or ConfigMap-backed substrate `.dhall`
+- the Apple host daemon is the authoritative inference engine for `apple-silicon`, and the routed
+  clustered demo app depends on that host daemon being live
+- Linux `linux-cpu` and `linux-gpu` daemons run only as cluster-resident workloads on their
+  deployed substrate images
+- the daemon watches the substrate `.dhall`, reloads or restarts when it changes, and purges
+  running inference-engine state during that reload
+- the supported steady-state runtime removes simulated cluster, route, transport, and inference
+  fallback code paths from the final contract rather than merely refusing to count them as evidence
+- startup and publication reporting name substrate and daemon placement unambiguously
+
+### Validation
+
+- Apple host-native `infernix service` reports `apple-silicon` from the generated substrate file
+  and the routed demo surface fails fast when that daemon is absent
+- Linux substrate daemons read the mounted ConfigMap-backed substrate file beside the binary and do
+  not rely on runtime-mode flags or environment overrides
+- manual inference through `infernix-demo` and service-loop execution both use the engine binding
+  selected in `.dhall` for the active README row
+- runtime validation fails if the service or demo app falls back to simulated route, transport, or
+  substrate behavior on a supposedly supported final lane
+
+### Remaining Work
+
+- Phase 6 still owns the validation entrypoints and reporting model that enforce this substrate-only
+  runtime contract
 
 ---
 

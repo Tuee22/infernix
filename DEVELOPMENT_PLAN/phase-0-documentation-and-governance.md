@@ -1,6 +1,6 @@
 # Phase 0: Documentation and Governance
 
-**Status**: Done
+**Status**: Active
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
 
 > **Purpose**: Establish the governed `documents/` suite, the standards that keep the plan and
@@ -19,6 +19,17 @@ topic ownership, and the repo-local docs validator is part of the supported work
 extend that governed suite across the shared Linux substrate image, the shared Python adapter
 project, the command registry, the route registry, testing doctrine, portability, implementation
 boundaries, and the governed-root-document metadata model.
+
+This plan update reopens Phase 0. The governed docs outside `DEVELOPMENT_PLAN/` still describe the
+earlier runtime-mode, simulated-substrate, Apple host-bridge, and Linux direct-GPU-launcher
+doctrine. The plan now tracks a substrate-generated `.dhall` single-source-of-truth model, so the
+governed docs and root workflow entrypoints must be realigned before later implementation phases
+can close honestly against that new contract.
+
+## Remaining Work
+
+- close Sprint 0.8 so the governed docs, root docs, and plan all describe the same substrate
+  selection, launcher, daemon-placement, and validation doctrine
 
 ## Sprint 0.1: `documents/` Suite Scaffold [Done]
 
@@ -214,6 +225,53 @@ model, build-artifact hygiene, and the later DRY cleanup direction.
 ### Remaining Work
 
 None.
+
+---
+
+## Sprint 0.8: Substrate Doctrine Documentation Reset [Active]
+
+**Status**: Active
+**Implementation**: `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/00-overview.md`, `DEVELOPMENT_PLAN/system-components.md`, `DEVELOPMENT_PLAN/development_plan_standards.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
+**Docs to update**: `README.md`, `AGENTS.md`, `CLAUDE.md`, `documents/architecture/overview.md`, `documents/architecture/runtime_modes.md`, `documents/development/local_dev.md`, `documents/development/testing_strategy.md`, `documents/engineering/build_artifacts.md`, `documents/engineering/docker_policy.md`, `documents/engineering/portability.md`, `documents/engineering/testing.md`, `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/reference/cli_reference.md`
+
+### Objective
+
+Realign the governed docs around the substrate-generated `.dhall` doctrine before the later
+implementation follow-ons claim closure against it.
+
+### Deliverables
+
+- the governed docs describe substrates rather than user-selected runtime-mode flags as the final
+  supported selection contract
+- Apple operator docs describe host-native cluster control, host-native inference, and the
+  cluster-resident demo app without the interim host bridge as a final doctrine
+- Linux operator docs describe Compose as the single supported outer-container launcher for both
+  `linux-cpu` and `linux-gpu`, with no supported Linux host-native build or CLI flow
+- validation docs describe single-substrate integration and E2E ownership rather than default
+  cross-substrate matrix coverage or simulated fallback evidence
+- validation docs describe the comprehensive model, format, and engine matrix in `README.md` as the
+  authoritative integration-test coverage ledger, with one `.dhall`-driven integration suite that
+  chooses the active engine per supported row or reference
+- validation docs describe Playwright as substrate-agnostic at the browser layer and make
+  `infernix-demo` responsible for reading the active `.dhall` and dispatching the correct engine
+- governed docs describe simulation as removed from the supported runtime and validation contract,
+  not merely unsupported evidence
+- root guidance names the compile-time generated substrate `.dhall` as the single source of truth
+  for active substrate, generated catalog, daemon placement, and validation scope
+
+### Validation
+
+- `infernix lint docs` passes after the governed docs and root docs are updated
+- `infernix docs check` fails if the governed docs or root docs keep stale runtime-mode or
+  simulation doctrine once this sprint lands
+- `infernix docs check` fails if the governed docs still describe browser-side substrate selection,
+  separate per-substrate integration suites, or any simulated fallback as part of the supported
+  contract
+
+### Remaining Work
+
+- `README.md`, `AGENTS.md`, and `CLAUDE.md` still reflect the earlier launcher and validation story
+- the governed docs listed above still need substrate-language, launcher, and validation updates
 
 ## Documentation Requirements
 

@@ -1,38 +1,43 @@
 # Phase 1: Repository and Control-Plane Foundation
 
-**Status**: Done
+**Status**: Active
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
 
 > **Purpose**: Establish the canonical repository scaffold, the two-binary topology
 > (`infernix` plus `infernix-demo` sharing `infernix-lib`), the supported control-plane execution
-> contexts, the runtime-mode selection baseline, generated-artifact hygiene, and the repository
+> contexts, the substrate-selection baseline, generated-artifact hygiene, and the repository
 > ownership rules that later phases build on.
 
 ## Phase Status
 
-The phase-one foundation remains closed in the current worktree: generated-artifact hygiene, the
-command-registry foundation, governed root-doc alignment, and the snapshot-style outer-container
-launcher are all implemented, and the later closures that tightened root-document metadata,
-collapsed the CLI registry into one structured definition, moved assistant workflow doctrine into
-a canonical `documents/` home, and removed the last duplicate cluster-local web-dependency
-readiness probe are also reflected here.
+Sprints 1.1 through 1.9 remain `Done` as the current implementation baseline, but Phase 1 is
+reopened by Sprint 1.10. The worktree still closes around runtime-mode flags, per-mode generated
+`.dhall` filenames, a user-facing direct `linux-cuda` launcher, and a Linux host build story that
+the new substrate-generated `.dhall` doctrine rejects.
 
 ## Current Repo Assessment
 
-The repo matches the broad Phase 1 contract: the control plane has a Haskell-owned
+The repo still matches the broad Phase 1 ownership contract: the control plane has a Haskell-owned
 command registry, the governed root docs point at canonical `documents/` topics with explicit
 metadata, the Linux launcher uses a baked image snapshot, and Playwright workflows no longer
-depend on `npx`. No material Phase 1 follow-on gap remains in the current worktree.
+depend on `npx`. The remaining Phase 1 gap is doctrinal rather than absent ownership: the CLI and
+launcher contract still let the operator think in terms of runtime-mode overrides instead of one
+compile-time generated substrate `.dhall`.
 
-## Runtime-Mode Foundation
+## Substrate Foundation
 
-This phase owns the baseline distinction between execution context and runtime mode.
+This phase owns the baseline distinction between execution context and substrate.
 
 - execution context answers where `infernix` runs
-- runtime mode answers which README matrix engine column is active
-- the canonical runtime-mode ids are `apple-silicon`, `linux-cpu`, and `linux-cuda`
-- later phases consume those ids when staging `infernix-demo-<mode>.dhall`, selecting engine
-  bindings, building runtime images, and reporting test results
+- the built substrate answers which README matrix engine column is active
+- the target substrate ids are `apple-silicon`, `linux-cpu`, and `linux-gpu`
+- the current worktree still uses `apple-silicon`, `linux-cpu`, and `linux-cuda` as runtime-mode
+  ids until Sprint 1.10 and its follow-ons land
+
+## Remaining Work
+
+- close Sprint 1.10 so build-time substrate selection, launcher ownership, and CLI behavior stop
+  depending on `--runtime-mode` and `INFERNIX_RUNTIME_MODE`
 
 ## Sprint 1.1: Canonical Repository Scaffold [Done]
 
@@ -173,7 +178,7 @@ None.
 
 ---
 
-## Sprint 1.5: Runtime-Mode Selection and Naming Contract [Done]
+## Sprint 1.5: Initial Runtime-Mode Selection Baseline [Done]
 
 **Status**: Done
 **Implementation**: `src/Infernix/CLI.hs`, `src/Infernix/Config.hs`, `src/Infernix/Types.hs`
@@ -181,8 +186,8 @@ None.
 
 ### Objective
 
-Make runtime-mode selection explicit so later phases can build the active mode's catalog, engine
-bindings, and validation matrix deterministically.
+Make the current runtime-mode selection baseline explicit so the later substrate-generated `.dhall`
+follow-on can replace one clearly named contract instead of inheriting hidden flag behavior.
 
 ### Deliverables
 
@@ -337,6 +342,48 @@ supported browser workflow.
 ### Remaining Work
 
 None.
+
+---
+
+## Sprint 1.10: Build-Time Substrate Selection, Flag Removal, and Launcher Reset [Blocked]
+
+**Status**: Blocked
+**Blocked by**: Sprint 0.8
+**Docs to update**: `README.md`, `documents/development/local_dev.md`, `documents/engineering/docker_policy.md`, `documents/engineering/build_artifacts.md`, `documents/reference/cli_reference.md`, `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`
+
+### Objective
+
+Replace user-selected runtime-mode overrides with one compile-time generated substrate `.dhall`
+and collapse the launcher story onto the requested Apple-host-native and Linux-Compose doctrines.
+
+### Deliverables
+
+- the supported CLI removes `--runtime-mode` and all use of `INFERNIX_RUNTIME_MODE`
+- the build emits one substrate `.dhall` beside the binary and the CLI reads that file as the
+  single source of truth for active substrate
+- Cabal build rules derive the substrate from build context:
+  host build outside the outer container means `apple-silicon`; container build on a
+  `nvidia:cuda` base image means `linux-gpu`; every other container build means `linux-cpu`
+- Apple Silicon remains the only supported host build path outside a container
+- Linux host-native `infernix` execution is not a supported operator surface
+- Linux outer-container commands use Compose as the only supported launcher for both `linux-cpu`
+  and `linux-gpu`
+- Apple operators do not use Compose as a user-facing launcher for ordinary CLI work; Apple E2E
+  orchestration may still invoke Compose internally for the Playwright executor
+- the NVIDIA-backed Linux substrate is standardized as `linux-gpu`, with the current `linux-cuda`
+  naming retired as an explicit compatibility cleanup item
+
+### Validation
+
+- `./.build/infernix --help` no longer documents `--runtime-mode`
+- supported Apple host-native commands run without any runtime-mode flag or environment override
+- supported Linux containerized commands run through `docker compose run --rm infernix infernix ...`
+  without any runtime-mode flag or environment override
+
+### Remaining Work
+
+- Phase 2 still owns ConfigMap publication from the built substrate file
+- Phase 4 still owns daemon behavior that consumes and watches that substrate file
 
 ## Documentation Requirements
 

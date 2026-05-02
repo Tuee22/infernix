@@ -4,91 +4,77 @@
 **Referenced by**: [README.md](README.md), [system-components.md](system-components.md)
 
 > **Purpose**: Capture the architecture baseline, hard constraints, control-plane topology,
-> runtime-mode contract, and canonical repository shape that every `infernix` phase depends on.
+> substrate contract, and canonical repository shape that every `infernix` phase depends on.
 
 ## Current Repo Assessment
 
-The supported architecture matches the tightened DRY model closely. No material implementation or
-documentation gap remains in the current worktree, and the final supported Phase-6 validation
-rerun is clean. The table below separates the supported contract from the current validation state.
+The current worktree still implements the earlier runtime-mode and simulation doctrine. This plan
+update records a new target architecture and explicitly marks the gap instead of leaving stale
+closure claims in place.
 
-| Area | Supported contract | Current repo gap |
-|------|--------------------|------------------|
-| Root-document governance | `README.md` is orientation only; `documents/` owns canonical topic docs; `AGENTS.md` and `CLAUDE.md` are thin governed entry documents | no material governed-root-document gap remains in the worktree |
-| CLI ownership | one structured Haskell command registry owns supported command parsing, help text, and the generated canonical CLI reference sections | no material CLI-ownership gap remains in the worktree |
-| Shared workflow helpers | one Haskell helper module owns web dependency readiness, platform-command availability checks, and shared generated-file banner constants | no material shared-workflow-helper gap remains in the worktree |
-| Control-plane execution | Apple host-native control plane plus Linux outer-container control plane | the current worktree implements the Apple host-native path, the `linux-cpu` outer-container launcher, and the supported direct `linux-cuda` launcher; no material control-plane implementation gap remains |
-| Host prerequisite minimization | Apple requires only Homebrew plus ghcup before building `infernix`; Colima is the only supported Apple Docker environment; `linux-cpu` requires Docker Engine plus the Docker Compose plugin; `linux-cuda` adds only the supported NVIDIA driver or container-toolkit setup; `infernix` reconciles every remaining supported host tool through package managers | no material host-prerequisite gap remains in the worktree |
-| Runtime honesty | one host-native Apple inference lane plus two Linux substrate images | no material runtime-honesty gap remains in the governed docs or current worktree |
-| Linux image layout | one shared `docker/linux-substrate.Dockerfile` builds `infernix-linux-cpu` and `infernix-linux-cuda` | the shared image definition and source-snapshot manifest are present; no material Linux-image implementation gap remains in the worktree |
-| Pulsar production transport | `src/Infernix/Runtime/Pulsar.hs` uses Pulsar WebSocket and admin surfaces when configured, with filesystem simulation only as the fallback path | no material transport gap remains in the worktree |
-| Python adapter boundary | one `python/pyproject.toml` and one `python/adapters/` tree | the shared project is present; the current adapter contract consumes durable bundle or manifest metadata plus idempotent setup manifests to produce deterministic engine-family-specific worker output, and no material repository-shape gap remains in the worktree |
-| Browser-contract ownership | handwritten Haskell contract ADTs live outside any `Generated/` directory; only emitted PureScript stays under `web/src/Generated/` | no material browser-contract ownership gap remains in the worktree |
-| Route or publication contract | one Haskell route registry drives rendered HTTPRoutes, publication state, chart lint, and docs | no material route or publication gap remains in the worktree |
-| Generated deployment inputs | `chart/values.yaml` holds stable defaults only; generated demo-config and publication payloads are ephemeral inputs | no material generated-input gap remains in the worktree |
-| Validation doctrine | one canonical testing doctrine plus one canonical Haskell-style guide describe enforced rules, review guidance, validation entrypoints, and the enforcement model they rely on | no material validation-doctrine gap remains in the worktree |
-| Engineering doctrine depth | broad engineering docs answer the rule, current-versus-target, validation, and substrate-versus-platform questions directly | the canonical engineering docs follow that broader structure and docs lint enforces it; no material doctrine-depth gap remains in the worktree |
-| Imported-practice scope | `mattandjames`-derived follow-ons apply only to repository governance, CLI ownership, launcher boundaries, and doctrine structure; product-specific features or docs from that repo remain out of scope | no material imported-practice-scoping gap remains in the worktree |
-| Residual compatibility cleanup | supported paths stop reading or deleting retired result, cache-manifest, generated-contract, and helper-registry state | supported code paths use protobuf-backed result and cache-manifest files, `web/src/Generated/Contracts.purs` is the only generated frontend-contract output, and Harbor-first bootstrap carries no helper-registry cleanup shims; no material compatibility gap remains in the worktree |
-| Monitoring stance | the supported platform either owns one canonical monitoring doctrine or explicitly treats monitoring as unsupported | Monitoring is not a supported first-class surface. The dormant `victoria-metrics-k8s-stack` chart toggle is removed, and no material monitoring-stance gap remains in the current worktree |
+| Area | Target contract | Current repo gap |
+|------|-----------------|------------------|
+| Root-document governance | the governed docs, root docs, and plan all describe the same substrate-generated `.dhall` doctrine | the docs outside `DEVELOPMENT_PLAN/` still describe runtime-mode flags, simulated fallbacks, and the Apple host bridge |
+| CLI ownership | one structured Haskell command registry owns the supported command surface without any `--runtime-mode` override | the current CLI and subprocess contract still rely on `--runtime-mode` and `INFERNIX_RUNTIME_MODE` |
+| Substrate selection | one compile-time generated `.dhall` beside the binary is the single source of truth for substrate identity and generated catalog selection | the current worktree still stages per-mode `infernix-demo-<mode>.dhall` files and resolves active mode from flags or environment |
+| Apple host-native lane | the host-built binary manages Kind, deploys the clustered demo app, and performs inference from the host daemon | the current Apple story still includes the interim host `infernix-demo serve` bridge |
+| Linux control plane | all supported Linux CLI commands run through `docker compose run --rm infernix infernix ...` | the current GPU lane still treats the direct launcher as a supported user-facing path |
+| Linux GPU naming | the NVIDIA-backed Linux substrate is standardized as `linux-gpu` | the current worktree still uses `linux-cuda` in code, Kind assets, tests, and docs |
+| Simulation stance | no simulated cluster, route, transport, or inference fallback remains in the supported runtime or validation contract | the current worktree still includes simulated cluster, route, and filesystem-Pulsar fallbacks |
+| Validation scope | integration uses one `.dhall`-driven suite over the README matrix, E2E stays substrate-agnostic at the browser layer, and `test all` validates one built substrate at a time | the current default validation flow still implies matrix-wide Apple, CPU, and GPU coverage, and the broader repo does not yet close around the one-suite integration contract |
+
+Monitoring is not a supported first-class surface.
 
 ## Supported Outcome
 
-`infernix` is a Kind-forward local inference platform that:
+`infernix` closes around these rules:
 
-- ships two Haskell executables sharing one Cabal library `infernix-lib`: `infernix` for the
-  production daemon, cluster lifecycle, validation, and internal helpers; and `infernix-demo` for
-  the optional demo HTTP host
-- uses one parser-driven Haskell command registry as the source of truth for CLI parsing, help
-  text, and the canonical CLI reference
-- treats Apple Silicon as a host-native inference lane by design and treats `linux-cpu` plus
-  `linux-cuda` as the two containerized Linux runtime lanes
-- reduces the intended Apple pre-existing host requirements to Homebrew plus ghcup, treats Colima
-  as the only supported Apple Docker environment, and lets `infernix` reconcile the remaining
-  Homebrew-managed Apple host tools plus Poetry bootstrap as needed
-- uses one Kind cluster as the supported local cluster substrate
-- deploys Harbor first through Helm on a pristine cluster, allowing Harbor and only
-  Harbor-required support services such as MinIO and PostgreSQL to pull from public registries
-  before Harbor is ready
-- requires every later non-Harbor workload to pull from Harbor after bootstrap completes
-- deploys Harbor, MinIO, Pulsar, and every in-cluster PostgreSQL dependency through one
-  Helm-owned cluster path, with PostgreSQL always delivered as Patroni clusters managed by the
-  Percona Kubernetes operator
-- deletes default StorageClasses and uses only the repo-owned manual `infernix-manual` storage
-  class for every PVC-backed workload
-- creates PVs manually under `./.data/`, binds them explicitly to named PVCs, and keeps that rule
-  for operator-managed PostgreSQL claims as well as direct chart workloads
-- serves the demo UI from `infernix-demo`, implemented in PureScript and built with spago, when
-  the active generated `.dhall` enables `demo_ui`
-- exposes browser-visible surfaces through Envoy Gateway API resources and repo-owned HTTPRoute
-  manifests only; the demo cluster is local-only and carries no auth filter
-- accepts production inference work by Pulsar subscription only; production `infernix service`
-  binds no HTTP listener
-- restricts Python to one shared Poetry project under `python/pyproject.toml` and one adapter tree
-  under `python/adapters/`; all adapter execution runs through `poetry run`
-- keeps Haskell authoritative for frontend contracts through
-  `infernix internal generate-purs-contracts`, with handwritten browser-contract ADTs living at
-  `src/Infernix/Web/Contracts.hs`
-- builds the Linux lanes from one shared `docker/linux-substrate.Dockerfile` that emits the two
-  real runtime images `infernix-linux-cpu` and `infernix-linux-cuda`
-- uses a Linux outer-container launcher that runs against a baked image snapshot and bind-mounts
-  only `./.data/`
-- keeps Linux host prerequisites minimal: Docker Engine plus the Docker Compose plugin for
-  `linux-cpu`, and Docker Engine plus the supported NVIDIA driver or container-toolkit setup for
-  `linux-cuda`
-- keeps generated artifacts out of git, including generated proto stubs, `*.pyc`,
-  `__pycache__/`, Poetry lockfiles, `web/spago.lock`, `web/dist/`, and `web/src/Generated/`
-- limits `mattandjames`-inspired follow-ons to repository-governance, CLI, launcher-boundary, and
-  doctrine-structure work; the supported contract does not import that repo's offline-browser or
-  Keycloak flows, single-runtime `llama-server` stack, IndexedDB-specific docs, checked-in
-  generated PureScript policy, or container-only execution rule
+- two repo-owned Haskell executables still share one Cabal library `infernix-lib`: `infernix` for
+  the production daemon, cluster lifecycle, validation, and internal helpers; `infernix-demo` for
+  the routed demo HTTP host
+- one structured Haskell command registry owns parsing, help text, and the canonical CLI
+  reference, and the final command surface carries no `--runtime-mode` override
+- the product standardizes three substrates:
+  `apple-silicon`, `linux-cpu`, and `linux-gpu`
+- the compile-time generated substrate `.dhall` beside the binary is the single source of truth
+  for substrate identity, generated catalog content, daemon placement, and validation scope
+- a build outside the outer container is always `apple-silicon`
+- a build inside the outer container on an `nvidia:cuda` base image is always `linux-gpu`
+- every other build inside the outer container is always `linux-cpu`
+- Apple Silicon is the only supported host-native build path outside a container
+- on Apple Silicon, the host-built binary manages Kind, deploys the clustered demo app, and
+  performs inference host-side; the host inference daemon must be running for the demo to work
+- on Linux substrates, all supported CLI commands run through
+  `docker compose run --rm infernix infernix ...`; there is no supported Linux host-native CLI
+  story outside the outer container
+- `linux-cpu` remains the only substrate meaningfully portable across unrelated host hardware; Apple
+  operators may exercise it through Colima's amd64 VM, and arm64 Linux is a first-class CPU-only
+  host shape
+- `linux-gpu` assumes an amd64 Linux environment paired with a CUDA-capable device, but the outer
+  control-plane container itself never requires the NVIDIA runtime
+- simulation is removed completely from supported runtime and validation paths; there are no
+  simulated cluster, route, transport, or inference fallbacks on a supported substrate
+- one substrate-aware integration suite traverses the comprehensive model, format, and engine
+  matrix in `README.md`, reads the active substrate from `.dhall`, and chooses the corresponding
+  engine binding for every supported row or reference
+- Playwright E2E is substrate-agnostic at the browser layer and relies on `infernix-demo` reading
+  the active `.dhall` to dispatch the correct engine behind the routed demo API
+- the routed demo app is cluster-resident across substrates; the Apple host bridge is not part of
+  the final steady-state contract
+- Harbor-first bootstrap, Gateway-owned routing, mandatory local HA platform services,
+  operator-managed Patroni PostgreSQL, manual `infernix-manual` storage, Haskell-owned frontend
+  contracts, the shared Python adapter project, and untracked generated outputs all remain
+  mandatory doctrine
+- supported validation is substrate-specific: integration, E2E, and `test all` exercise only the
+  built and deployed substrate and report that substrate explicitly
 
 ## Topology Baseline
 
 ```mermaid
 flowchart TB
-    apple["Apple host-native infernix CLI"]
-    linux["Linux outer-container infernix CLI"]
+    appleCli["Apple host-native infernix CLI"]
+    appleDaemon["Apple host-native infernix service"]
+    linuxCli["Linux outer-container infernix CLI"]
     data["Host .data"]
     requester["Inference requester (Pulsar publisher)"]
 
@@ -96,8 +82,7 @@ flowchart TB
         gateway["Envoy Gateway controller + Gateway/infernix-edge"]
         routes["HTTPRoute set rendered from Haskell route registry"]
         demo["infernix-demo"]
-        service["infernix service"]
-        adapters["python/adapters/ via poetry run"]
+        linuxService["infernix service (linux substrates only)"]
         harbor["Harbor"]
         minio["MinIO"]
         pgop["Percona PostgreSQL operator"]
@@ -105,17 +90,18 @@ flowchart TB
         pulsar["Pulsar"]
     end
 
-    apple --> gateway
-    linux --> gateway
+    appleCli --> gateway
+    appleCli --> appleDaemon
+    linuxCli --> gateway
     requester --> pulsar
     gateway --> routes
     routes --> demo
     routes --> harbor
     routes --> minio
     routes --> pulsar
-    pulsar --> service
-    service --> adapters
-    service --> minio
+    demo -. apple-silicon inference .-> appleDaemon
+    pulsar --> linuxService
+    pulsar -. apple-silicon inference .-> appleDaemon
     harbor --> postgres
     pgop --> postgres
     data --> kind
@@ -123,9 +109,9 @@ flowchart TB
 
 ## Canonical Repository Shape
 
-The authoritative repository shape closes toward the layout below.
-Generated-only paths such as `web/src/Generated/` and `tools/generated_proto/` materialize on
-demand and stay untracked even though they are part of the supported shape.
+The authoritative repository shape closes toward the layout below. Generated-only paths such as
+`web/src/Generated/` and `tools/generated_proto/` materialize on demand and stay untracked even
+though they are part of the supported shape.
 
 ```text
 infernix/
@@ -190,184 +176,187 @@ infernix/
 │   └── generated_proto/
 ├── test/
 ├── .build/
+│   ├── infernix
+│   ├── infernix-demo
+│   └── infernix-substrate.dhall
 └── .data/
 ```
 
-## Execution Contexts and Runtime Modes
+## Execution Contexts and Substrates
 
-The plan keeps control-plane execution context separate from runtime mode.
+The plan keeps control-plane execution context separate from substrate.
 
 ### Control-Plane Execution Contexts
 
 | Context | Canonical launcher | Purpose |
 |---------|--------------------|---------|
 | Apple host-native control plane | `./.build/infernix ...` | canonical operator surface on Apple Silicon |
-| Linux outer-container control plane | `docker compose run --rm infernix infernix ...` for `linux-cpu`; direct `docker run --gpus all ... infernix-linux-cuda:local infernix ...` for `linux-cuda` | image-snapshot launcher for Linux workflows |
+| Linux outer-container control plane | `docker compose run --rm infernix infernix ...` | image-snapshot launcher for Linux CPU and Linux GPU workflows |
 
-### Runtime Modes
+### Supported Substrates
 
-| Runtime mode | Canonical mode id | Engine column from README matrix | Typical role |
-|--------------|-------------------|----------------------------------|--------------|
-| Apple Silicon / Metal | `apple-silicon` | Best Apple Silicon engine | host-native inference lane |
-| Ubuntu 24.04 / CPU | `linux-cpu` | Best Linux CPU engine | containerized Linux CPU lane |
-| Ubuntu 24.04 / NVIDIA CUDA Container | `linux-cuda` | Best Linux CUDA engine | containerized Linux GPU lane |
+| Substrate | Canonical substrate id | Typical role |
+|-----------|------------------------|--------------|
+| Apple Silicon / Metal | `apple-silicon` | host-native inference lane |
+| Linux / CPU | `linux-cpu` | containerized CPU lane |
+| Linux / NVIDIA GPU | `linux-gpu` | containerized CUDA-backed lane |
 
 ## Hard Constraints
 
 ### 0. Documentation-First Construction Rule
 
-- Phase 0 remains the closed bootstrap for governed docs.
+- Phase 0 remains the reopened documentation and governance gate for this doctrine reset.
 - New documentation gaps land as explicit follow-on work in later phases.
 - `README.md` stays an orientation layer.
 - governed root docs carry explicit status, supersession, and canonical-home markers when they
   distinguish canonical guidance from entry-document summaries
-- Canonical topic ownership moves into `documents/`:
-  - runtime modes: `documents/architecture/runtime_modes.md`
-  - local operator workflow: `documents/development/local_dev.md`
-  - route contract: `documents/engineering/edge_routing.md`
-  - CLI inventory: `documents/reference/cli_reference.md`
-  - Python adapter doctrine: `documents/development/python_policy.md`
+- the current canonical topic ownership under `documents/` remains in place until the later
+  substrate-language updates land, even where a path such as
+  `documents/architecture/runtime_modes.md` still carries legacy naming
 
 ### 1. Two Haskell Executables Sharing One Library
 
-- `infernix` and `infernix-demo` are the only supported repo-owned Haskell executables.
-- Both link one shared Cabal library `infernix-lib`.
-- Tests and helpers do not become extra supported executables.
+- `infernix` and `infernix-demo` are the only supported repo-owned Haskell executables
+- both link one shared Cabal library `infernix-lib`
+- tests and helpers do not become extra supported executables
 
 ### 2. Dual Control-Plane Execution Contexts
 
-- Apple host-native control plane is the canonical operator surface.
-- Linux outer-container control plane is a convenience launcher around a baked image snapshot.
-- Supported Linux launcher docs use `docker compose run --rm infernix infernix ...` for
-  `linux-cpu` and direct `docker run --gpus all ... infernix-linux-cuda:local infernix ...` for
-  `linux-cuda`.
-- Apple host-native `cluster up` writes the repo-local kubeconfig to `./.build/infernix.kubeconfig`.
-- Linux outer-container `cluster up` writes the repo-local kubeconfig to
-  `./.data/runtime/infernix.kubeconfig` so fresh launcher containers reuse the same durable
-  cluster handle.
-- `docker compose up` and `docker compose exec` are not supported operator workflows.
-- The Linux launcher bind-mounts only `./.data/` once its cleanup sprint closes.
+- Apple host-native control plane is the canonical operator surface on Apple Silicon
+- Linux outer-container control plane is the only supported Linux CLI surface
+- Apple operators do not use Compose as a user-facing launcher for ordinary CLI work
+- Apple E2E orchestration may still invoke the outer container internally for Playwright
+- Linux host-native `infernix` execution outside a container is not a supported operator workflow
 
-### 3. Three Supported Runtime Modes
+### 3. Three Supported Substrates
 
-- `apple-silicon`, `linux-cpu`, and `linux-cuda` are the canonical runtime-mode ids.
-- Runtime mode selects the README matrix column.
-- Control-plane execution context and runtime mode remain separate concepts.
+- `apple-silicon`, `linux-cpu`, and `linux-gpu` are the canonical substrate ids
+- the built substrate selects the README matrix column
+- control-plane execution context and substrate remain separate concepts
+- `linux-cpu` is the only substrate that remains meaningfully portable across unrelated host
+  hardware
 
-### 3a. `linux-cuda` Requires GPU-Enabled Kind
+### 4. Compile-Time Generated Substrate `.dhall` SSoT
 
-- `linux-cuda` closes only when Kind exposes `nvidia.com/gpu` resources to Kubernetes.
-- The CUDA lane uses an in-image `nvkind` toolchain, not a host-visible binary handoff.
-
-### 4. Generated Mode-Specific Demo `.dhall` and ConfigMap Publication
-
-- `cluster up` emits `infernix-demo-<mode>.dhall` for the active runtime mode.
-- The generated file is staging content and is published into `ConfigMap/infernix-demo-config`.
-- On the Linux outer-container control-plane path, the generated staging file lives under
-  `/opt/build/infernix/infernix-demo-<mode>.dhall`.
-- Cluster-resident consumers mount that ConfigMap read-only at `/opt/build/`.
-- Cluster-resident consumers read the active mode's mounted file from
-  `/opt/build/infernix-demo-<mode>.dhall`.
-- The mounted file is the exact source of truth for demo-visible catalog entries.
+- Cabal generates the substrate `.dhall` at compile time
+- the generated file lives beside the built binary
+- the generated file records the active substrate explicitly
+- the generated file also carries the generated demo catalog for that substrate
+- the binary watches that file and reloads or restarts on changes, purging running inference
+  engines
 
 ### 5. Manual Storage Doctrine
 
-- All default StorageClasses are deleted during bootstrap.
-- `infernix-manual` is the only supported persistent StorageClass.
-- PVs are created only by `infernix` lifecycle code and map deterministically into `./.data/`.
-- Hand-authored standalone durable PVC manifests are forbidden.
+- all default StorageClasses are deleted during bootstrap
+- `infernix-manual` is the only supported persistent StorageClass
+- PVs are created only by `infernix` lifecycle code and map deterministically into `./.data/`
+- hand-authored standalone durable PVC manifests are forbidden
 
 ### 5a. Protobuf Manifest and Event Contract
 
-- Repo-owned `.proto` schemas define runtime manifests and Pulsar payloads.
-- Haskell uses generated `proto-lens` bindings.
-- Python adapters consume matching generated protobuf modules.
+- repo-owned `.proto` schemas define runtime manifests and Pulsar payloads
+- Haskell uses generated `proto-lens` bindings
+- Python adapters consume matching generated protobuf modules
 
 ### 5b. Operator-Managed PostgreSQL Doctrine
 
-- Every in-cluster PostgreSQL dependency uses Patroni under the Percona Kubernetes operator.
-- Charts that can self-deploy PostgreSQL disable that path and point to operator-managed clusters.
+- every in-cluster PostgreSQL dependency uses Patroni under the Percona Kubernetes operator
+- charts that can self-deploy PostgreSQL disable that path and point to operator-managed clusters
 
-### 6. Cluster-Resident Demo UI
+### 6. Cluster-Resident Demo UI With Host-Owned Apple Inference
 
-- The demo UI is served only by `infernix-demo`.
-- When `demo_ui` is false in the active generated `.dhall`, no demo UI or demo API route is
-  published.
+- the demo UI is served only by `infernix-demo`
+- when `demo_ui` is false in the active generated `.dhall`, no demo UI or demo API route is
+  published
+- when `demo_ui` is true, the demo app is cluster-resident across substrates
+- on `apple-silicon`, the routed demo surface still depends on the host inference daemon being live
 
 ### 7. Local Harbor Is The Cluster Image Source
 
-- Harbor and only Harbor-required bootstrap services may pull upstream before Harbor is ready.
-- Every remaining non-Harbor workload pulls from Harbor afterward.
+- Harbor and only Harbor-required bootstrap services may pull upstream before Harbor is ready
+- every remaining non-Harbor workload pulls from Harbor afterward
 
 ### 7a. Mandatory Local HA Service Topology
 
-- Harbor, MinIO, Pulsar, and PostgreSQL close only on the mandatory local HA topology.
-- No alternate single-replica supported profile is introduced.
+- Harbor, MinIO, Pulsar, and PostgreSQL close only on the mandatory local HA topology
+- no alternate single-replica supported profile is introduced
 
 ### 8. Stable Edge Port and Route Prefixes via Envoy Gateway API
 
-- Routing is owned by Envoy Gateway API resources and repo-owned HTTPRoute manifests.
-- The route inventory comes from one Haskell route registry.
-- `cluster up` tries port `9090` first and increments by 1 until it finds an open localhost port.
+- routing is owned by Envoy Gateway API resources and repo-owned HTTPRoute manifests
+- the route inventory comes from one Haskell route registry
+- `cluster up` tries port `9090` first and increments by 1 until it finds an open localhost port
 
 ### 8a. `cluster up` Is A Reconcile Flow
 
 - `infernix cluster up` reconciles cluster, storage, image publication, generated config, and edge
-  port selection.
-- `infernix cluster down` preserves durable state under `./.data/`.
+  port selection
+- `infernix cluster down` preserves durable state under `./.data/`
 
-### 8b. Integration and E2E Cover The Entire Active-Mode Catalog
+### 8b. Integration and E2E Cover The Built Substrate Only
 
-- `infernix test integration` validates the active-mode generated catalog contract, routed
-  surfaces, and routed inference execution for every generated active-mode catalog entry.
-- `infernix test e2e` exercises every demo-visible generated catalog entry for the active mode.
-- integration no longer hardcodes a representative model request; active-mode catalog coverage is
-  explicit across the full validation surface
+- `infernix test integration` validates the built substrate's generated catalog contract, routed
+  surfaces, and routed inference execution for every generated catalog entry on that substrate
+- the comprehensive model, format, and engine matrix in `README.md` is the authoritative
+  integration-test coverage ledger
+- one substrate-aware integration suite reads the active substrate from `.dhall`, selects the
+  corresponding engine binding for each supported README row or reference, and carries at least one
+  integration assertion for every such row
+- `infernix test e2e` exercises the routed browser surface for that same built substrate without
+  branching on substrate or engine in browser code
+- validation reports the single substrate it exercised and does not imply matrix-wide coverage it
+  did not run
 
 ### 9. Haskell Types Own Frontend Contracts
 
-- Handwritten browser-contract ADTs live in `src/Infernix/Web/Contracts.hs`.
-- Generated PureScript contract output lives in `web/src/Generated/`.
-- No handwritten duplicate DTO layer exists on the frontend.
+- handwritten browser-contract ADTs live in `src/Infernix/Web/Contracts.hs`
+- generated PureScript contract output lives in `web/src/Generated/`
+- no handwritten duplicate DTO layer exists on the frontend
 
-### 10. Playwright Lives In The Substrate Image (Linux) or On The Host (Apple Silicon)
+### 10. Playwright Lives In The Outer Container
 
-- On Linux, Playwright runs from the final substrate image.
-- On Apple Silicon, Playwright runs from the operator host.
-- Supported workflows use `npm --prefix web exec -- playwright ...`; `npx` is not part of the
-  supported final workflow.
+- on Linux, Playwright runs from the final outer-container image
+- on Apple Silicon, the host CLI still delegates routed Playwright execution to the outer container
+- browser and Playwright code do not branch on substrate id or engine family; `infernix-demo`
+  reads the active `.dhall` and owns substrate-appropriate engine dispatch
+- supported workflows use `npm --prefix web exec -- playwright ...`; `npx` is not part of the
+  supported final workflow
 
 ### 11. Container Build Output Stays Under `/opt/build/infernix`
 
-- Linux outer-container build output stays under `/opt/build/infernix/`.
-- Cluster-mounted runtime config remains mounted separately at `/opt/build/`.
-- The outer-container launcher does not rely on a live repo bind mount once the snapshot model is
-  closed.
+- Linux outer-container build output stays under `/opt/build/infernix/`
+- the outer-container launcher does not rely on a live repo bind mount once the snapshot model is
+  closed
+- the substrate `.dhall` sits beside the outer-container binary at that path and is also the source
+  material for cluster ConfigMap publication
 
 ### 12. Apple Host Build Output Stays Under `./.build`
 
-- Host-native compiled artifacts stay under `./.build/`.
-- `cluster up` writes the repo-local kubeconfig to `./.build/infernix.kubeconfig`.
+- host-native compiled artifacts stay under `./.build/`
+- the Apple substrate `.dhall` sits beside `./.build/infernix`
+- `cluster up` writes the repo-local kubeconfig to `./.build/infernix.kubeconfig`
 
 ### 13. Python Restriction
 
-- Custom platform logic is Haskell.
-- Python is allowed only under `python/adapters/`.
-- Each adapter is invoked only through `poetry run`.
-- The canonical Python quality gate is `poetry run check-code`.
-- On Apple Silicon, Poetry may materialize `python/.venv/` on demand.
+- custom platform logic is Haskell
+- Python is allowed only under `python/adapters/`
+- each adapter is invoked only through `poetry run`
+- the canonical Python quality gate is `poetry run check-code`
+- on Apple Silicon, Poetry may materialize `python/.venv/` on demand
 
 ### 14. Production Surface Is Pulsar-Only
 
-- Production inference requests arrive by Pulsar topics only.
-- Production `infernix service` binds no HTTP listener.
-- The demo HTTP API is a demo-only surface owned by `infernix-demo`.
+- production inference requests arrive by Pulsar topics only
+- production `infernix service` binds no HTTP listener
+- the demo HTTP API is a demo-only surface owned by `infernix-demo`
+- simulated cluster, route, transport, and inference fallback behavior are not part of the
+  supported final contract
 
 ### 15. Frontend Language Is PureScript
 
-- The demo UI is implemented in PureScript.
-- The supported browser test framework is `purescript-spec`.
-- The supported browser bundle is built with spago.
+- the demo UI is implemented in PureScript
+- the supported browser test framework is `purescript-spec`
+- the supported browser bundle is built with spago
 
 ## Command Surface Baseline
 
@@ -397,10 +386,10 @@ through the registry-backed surface above.
 
 ## Completion Rules
 
-- Later phases may refine earlier foundations, but they may not contradict them.
-- If a cleanup changes the supported end state, earlier phase text must be rewritten so later
-  phases extend the narrative instead of undoing it.
-- `Done` claims require validation, aligned docs, and no hidden remaining work.
+- later phases may refine earlier foundations, but they may not contradict them
+- if a cleanup changes the supported end state, earlier phase text must be rewritten so later
+  phases extend the narrative instead of undoing it
+- `Done` claims require validation, aligned docs, and no hidden remaining work
 
 ## Cross-References
 

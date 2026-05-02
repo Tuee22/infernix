@@ -15,7 +15,14 @@
 
 ## Pending Removal
 
-None.
+| Location | Why it is slated for removal | Owning phase or sprint |
+|----------|-------------------------------|------------------------|
+| `--runtime-mode` parsing and `INFERNIX_RUNTIME_MODE` handling across `src/Infernix/CLI.hs`, `src/Infernix/Config.hs`, tests, and governed docs | The generated substrate `.dhall` beside the binary is the single source of truth for active substrate, so user-selected runtime overrides are obsolete in the final contract | Phase 0 Sprint 0.8; Phase 1 Sprint 1.10; Phase 4 Sprint 4.12; Phase 6 Sprint 6.19 |
+| Per-mode generated catalog files and publication paths such as `infernix-demo-<mode>.dhall` | The final control contract publishes one compile-time generated `infernix-substrate.dhall` beside the binary and mirrors that exact file into the cluster ConfigMap | Phase 0 Sprint 0.8; Phase 1 Sprint 1.10; Phase 2 Sprint 2.9 |
+| Apple host-demo bridge behavior, direct host `infernix-demo serve` launch guidance, and any remaining host-bridge route publication language | The final Apple doctrine keeps the demo app cluster-resident and uses the host only for the Apple inference daemon and host CLI orchestration | Phase 0 Sprint 0.8; Phase 3 Sprint 3.9; Phase 5 Sprint 5.8 |
+| User-facing direct `linux-cuda` launcher guidance and any requirement for the outer control-plane container itself to request the NVIDIA runtime | Supported Linux control-plane commands must run through Compose, and the outer container does not need direct CUDA access even when the deployed substrate is GPU-backed | Phase 0 Sprint 0.8; Phase 1 Sprint 1.10; Phase 2 Sprint 2.9 |
+| `linux-cuda` substrate naming across code, Kind assets, tests, and docs | The final canonical substrate id is `linux-gpu`, so the current `linux-cuda` label is legacy naming that must be retired explicitly | Phase 0 Sprint 0.8; Phase 1 Sprint 1.10; Phase 2 Sprint 2.9; Phase 6 Sprint 6.19 |
+| Simulated cluster, route, transport, and inference fallback behavior | The final runtime and validation doctrine removes simulation completely from the supported contract; the only broadly portable lane is the real `linux-cpu` outer-container workflow rather than any simulated surrogate | Phase 0 Sprint 0.8; Phase 4 Sprint 4.12; Phase 6 Sprint 6.19 |
 
 ## Completed
 

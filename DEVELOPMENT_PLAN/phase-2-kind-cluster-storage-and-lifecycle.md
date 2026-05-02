@@ -1,19 +1,19 @@
 # Phase 2: Kind Cluster Storage and Lifecycle
 
-**Status**: Done
+**Status**: Active
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
 
 > **Purpose**: Define the supported Kind bootstrap path, the manual storage doctrine, the Helm
 > deployment model, the Harbor bootstrap and Harbor-backed image flow embedded in `cluster up`,
-> the mode-aware generated demo-config behavior tied to cluster reconcile, and the `linux-cuda`
-> lifecycle closure.
+> the generated substrate `.dhall` publication behavior tied to cluster reconcile, and the Linux
+> GPU lifecycle closure.
 
 ## Phase Status
 
-Sprints 2.1 through 2.8 are `Done`. The storage doctrine, Kind bootstrap, manual PV
-reconciliation, Harbor-first image flow, lifecycle surface, generated demo-config publication,
-GPU-enabled Kind lane, generated values overlay path, and in-image `nvkind` closure are all
-present in the current worktree.
+Sprints 2.1 through 2.8 remain `Done` as the current implementation baseline, but Phase 2 is
+reopened by Sprint 2.9. The worktree still stages per-mode `infernix-demo-<mode>.dhall` files,
+keeps the direct `linux-cuda` launcher in the supported contract, and does not yet treat the
+compile-time generated substrate file beside the binary as the single cluster publication source.
 
 ## Storage Doctrine
 
@@ -27,20 +27,27 @@ These rules close in this phase and remain mandatory afterward:
 - each durable PV maps to `./.data/kind/<namespace>/<release>/<workload>/<ordinal>/<claim>`
 - `infernix cluster down` never deletes or mutates anything under `./.data/`
 
-## Mode-Aware Cluster Input Contract
+## Current Generated Demo-Config Baseline
 
-- `cluster up` resolves the active runtime mode before cluster-side reconciliation begins
-- the active runtime mode selects the corresponding engine column from the README matrix
-- `cluster up` emits `infernix-demo-<mode>.dhall` as staging content, then publishes it into
+- the current worktree still resolves an active runtime mode before cluster-side reconciliation
+  begins
+- the current worktree still selects the corresponding README matrix column from that runtime mode
+- `cluster up` still emits `infernix-demo-<mode>.dhall` as staging content, then publishes it into
   `ConfigMap/infernix-demo-config`
 - generated deployment inputs are not committed as static blobs in `chart/values.yaml`
 
 ## Current Repo Assessment
 
-The storage doctrine, Helm rollout, generated demo-config publication, Harbor-first image flow,
-route de-duplication, generated values overlay path, and in-image `nvkind` path are implemented on
-the current Kind substrate. No remaining Phase 2 lifecycle implementation gap is open in the
-current worktree.
+The storage doctrine, Helm rollout, current generated demo-config publication, Harbor-first image
+flow, route de-duplication, generated values overlay path, and in-image `nvkind` path are
+implemented on the current Kind substrate. The remaining Phase 2 gap is that cluster publication
+still derives from runtime-mode staging behavior instead of one build-generated substrate file, and
+the Linux GPU launcher contract is still split between Compose and the direct GPU path.
+
+## Remaining Work
+
+- close Sprint 2.9 so Linux cluster publication, launcher rules, and image publication align with
+  the substrate-generated `.dhall` doctrine
 
 ## Sprint 2.1: Kind Bootstrap and StorageClass Reset [Done]
 
@@ -201,7 +208,7 @@ None.
 
 ---
 
-## Sprint 2.6: Mode-Aware `cluster up` Demo Config Staging and ConfigMap Publication [Done]
+## Sprint 2.6: Initial Mode-Aware `cluster up` Demo Config Staging and ConfigMap Publication [Done]
 
 **Status**: Done
 **Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Config.hs`, `src/Infernix/Models.hs`, `chart/templates/configmap-demo-catalog.yaml`, `chart/templates/deployment-service.yaml`, `chart/templates/deployment-demo.yaml`, `test/integration/Spec.hs`
@@ -209,8 +216,8 @@ None.
 
 ### Objective
 
-Make `cluster up` the canonical point where the active runtime mode's generated demo catalog is
-materialized and published.
+Make `cluster up` the canonical point where the current runtime-mode implementation baseline
+materializes and publishes its generated demo catalog.
 
 ### Deliverables
 
@@ -228,6 +235,48 @@ materialized and published.
 ### Remaining Work
 
 None.
+
+---
+
+## Sprint 2.9: Build-Generated Substrate File Publication and Linux Launcher Closure [Blocked]
+
+**Status**: Blocked
+**Blocked by**: Sprint 0.8, Sprint 1.10
+**Docs to update**: `README.md`, `documents/development/local_dev.md`, `documents/engineering/build_artifacts.md`, `documents/engineering/docker_policy.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/development/testing_strategy.md`
+
+### Objective
+
+Publish the exact build-generated substrate `.dhall` into the cluster and close the Linux launcher
+contract around one Compose-driven outer container for both Linux substrates.
+
+### Deliverables
+
+- `cluster up` publishes the exact substrate `.dhall` baked beside the outer-container binary into
+  `ConfigMap/infernix-demo-config`
+- Linux cluster-resident consumers mount that ConfigMap beside the deployed binary under
+  `/opt/build/infernix/`
+- the outer-container binary also reads the same colocated substrate `.dhall` from
+  `/opt/build/infernix/` when it needs to know its own substrate
+- the cluster publication contract no longer treats `infernix-demo-<mode>.dhall` filenames or
+  runtime-mode staging as the supported final shape
+- the supported Linux control-plane launcher is Compose for both `linux-cpu` and `linux-gpu`
+- the outer control-plane container never requires the NVIDIA runtime for its own process, even
+  when the built image targets `linux-gpu`
+- the same built `linux-gpu` image is the artifact mirrored to Harbor and deployed as the cluster
+  daemon image
+
+### Validation
+
+- `docker compose run --rm infernix infernix cluster up` publishes the built substrate file into
+  the ConfigMap without any runtime-mode override
+- `infernix kubectl get configmap infernix-demo-config -n platform -o yaml` shows the exact built
+  substrate payload
+- supported Linux GPU lifecycle and validation flows no longer require a direct user-facing
+  `docker run --gpus all ...` launcher
+
+### Remaining Work
+
+- Phase 4 still owns daemon placement and reload behavior that consume the published substrate file
 
 ---
 

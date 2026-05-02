@@ -1,6 +1,6 @@
 # Phase 5: Web UI and Shared Types
 
-**Status**: Done
+**Status**: Active
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
 
 > **Purpose**: Define the PureScript demo UI built with spago, the Haskell-owned frontend contract
@@ -9,9 +9,10 @@
 
 ## Phase Status
 
-Sprints 5.1 through 5.7 are `Done`. The final Linux substrate image now owns the demo bundle,
-Playwright toolchain, and routed `linux-cpu` plus supported direct `linux-cuda` E2E execution
-paths.
+Sprints 5.1 through 5.7 remain `Done` as the current implementation baseline, but Phase 5 is
+reopened by Sprint 5.8. The final Linux substrate image already owns the demo bundle and
+Playwright toolchain, but the Apple path still assumes the interim host bridge and host- or
+matrix-driven Playwright execution model that the new substrate doctrine rejects.
 
 ## Current Repo Assessment
 
@@ -19,15 +20,23 @@ The repository ships the supported PureScript demo path: `web/src/Main.purs` and
 `web/src/Infernix/Web/Workbench.purs` own the browser workbench, `web/test/Main.purs` owns the
 frontend unit suite, `src/Infernix/Web/Contracts.hs` owns the handwritten browser contract, and
 `npm --prefix web run build` regenerates generated contracts and bundles the app into
-`web/dist/app.js`. No remaining Phase 5 implementation or dependency gap remains in the current
-worktree.
+`web/dist/app.js`. The remaining Phase 5 gap is substrate ownership: the final Apple validation
+story must route through the clustered demo app while Playwright stays container-owned and
+substrate-agnostic at the browser layer.
 
-## Demo Catalog Contract
+## Substrate-Driven Demo Catalog Contract
 
-- the demo UI catalog comes only from the active runtime mode's generated demo catalog
+- the demo UI catalog comes only from the active substrate's generated demo catalog
 - the UI does not maintain a hidden hard-coded allowlist
 - the browser workbench exposes every model or workload entry present in the generated file
-- mode changes alter catalog content without changing route structure
+- substrate changes alter catalog content without changing route structure
+- the browser workbench and Playwright harness do not choose engines or branch on substrate ids;
+  `infernix-demo` reads the active `.dhall` and owns substrate-appropriate dispatch
+
+## Remaining Work
+
+- close Sprint 5.8 so the Apple Playwright flow, clustered demo hosting, and user-facing substrate
+  instructions line up
 
 ## Sprint 5.1: Demo Web Application Host (PureScript) [Done]
 
@@ -37,8 +46,8 @@ worktree.
 
 ### Objective
 
-Close the web hosting contract while keeping one stable browser entrypoint across the routed
-cluster path and the Apple host bridge.
+Close the current web hosting baseline while keeping one stable browser entrypoint across the
+routed cluster path and the interim Apple host bridge.
 
 ### Deliverables
 
@@ -149,7 +158,7 @@ None.
 
 ---
 
-## Sprint 5.5: Web Runtime Image and Playwright Dependency Ownership [Done]
+## Sprint 5.5: Current Web Runtime Image and Playwright Dependency Ownership Baseline [Done]
 
 **Status**: Done
 **Implementation**: `docker/linux-substrate.Dockerfile`, `web/playwright/`, `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `chart/templates/deployment-demo.yaml`, `chart/templates/deployment-service.yaml`
@@ -157,8 +166,8 @@ None.
 
 ### Objective
 
-Fold the packaged PureScript demo bundle and the Playwright executor into the final Linux
-substrate image and remove `npx` from the supported workflow.
+Fold the packaged PureScript demo bundle and the Playwright executor into the current Linux
+baseline and remove `npx` from the supported workflow.
 
 ### Deliverables
 
@@ -178,6 +187,49 @@ substrate image and remove `npx` from the supported workflow.
 ### Remaining Work
 
 None.
+
+---
+
+## Sprint 5.8: Clustered Demo Surface on Apple and Container-Owned Playwright Closure [Blocked]
+
+**Status**: Blocked
+**Blocked by**: Sprint 0.8, Sprint 1.10, Sprint 2.9, Sprint 3.9, Sprint 4.12
+**Docs to update**: `README.md`, `documents/architecture/web_ui_architecture.md`, `documents/reference/web_portal_surface.md`, `documents/development/local_dev.md`, `documents/development/testing_strategy.md`
+
+### Objective
+
+Keep the demo app clustered on Apple while retaining the outer container as the only supported
+Playwright executor.
+
+### Deliverables
+
+- the routed demo app remains cluster-resident on Apple and Linux substrates alike
+- Apple host-native E2E orchestration runs from the host CLI while the actual Playwright executor
+  runs inside `docker compose run --rm infernix infernix ...`
+- user-facing Apple docs describe `cluster up` as the way to launch the demo surface instead of a
+  direct host `infernix-demo serve` workflow
+- Linux user-facing docs continue to describe Compose as the single launcher for demo, integration,
+  and E2E workflows
+- the Playwright suite and browser helpers do not branch on substrate id or engine family; they
+  interact only with the routed demo surface and rely on `infernix-demo` to read `.dhall` and
+  dispatch the correct engine
+- README-level substrate instructions cover how to launch the demo app, how to keep the Apple host
+  daemon running for inference, and how E2E execution differs between Apple and Linux
+
+### Validation
+
+- Apple routed E2E passes while the host inference daemon is live and the Playwright executor runs
+  inside the outer container
+- Linux routed E2E passes through the same container-owned Playwright executor without any host
+  daemon management
+- Apple and Linux routed E2E pass through the same browser-visible flows without substrate-specific
+  Playwright branching; only launcher or orchestration differs
+- docs validation fails if the user-facing docs still treat host `infernix-demo serve` as the final
+  Apple demo-app launch story or describe browser-side substrate selection
+
+### Remaining Work
+
+- Phase 6 still owns the final validation entrypoints and substrate-specific reporting contract
 
 ---
 

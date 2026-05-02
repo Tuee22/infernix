@@ -93,7 +93,7 @@ DEVELOPMENT_PLAN/
 
 [system-components.md](system-components.md) is the authoritative inventory for:
 
-- operator surfaces and execution modes
+- operator surfaces, execution contexts, and supported substrates
 - cluster services and edge routing
 - runtime binaries and container roles
 - serialization boundaries
@@ -122,8 +122,8 @@ Each phase document must contain sprint-level sections in this format:
 ### Remaining Work
 ```
 
-Additional sections such as `Architecture`, `Execution Modes`, `Storage Doctrine`, or `Route Map`
-are encouraged when they clarify closure criteria.
+Additional sections such as `Architecture`, `Execution Contexts`, `Substrate Contract`,
+`Storage Doctrine`, or `Route Map` are encouraged when they clarify closure criteria.
 
 ### H. Documentation Requirements Section
 
@@ -177,7 +177,7 @@ finished-product document.
 - `00-overview.md`, all phase files, and `system-components.md` use the same phase names and
   current-state claims.
 - `README.md` still reflects the authoritative intended product shape, canonical CLI surface,
-  storage doctrine, operator workflows, runtime-mode envelope, and validation direction described by
+  storage doctrine, operator workflows, substrate envelope, and validation direction described by
   the plan, even when those capabilities are not fully implemented yet.
 - `README.md`, `AGENTS.md`, and `CLAUDE.md` are governed root documents. When a sprint owns
   root-document governance, it explicitly states which file is canonical for a topic and which
@@ -201,16 +201,16 @@ command uses:
 
 ```bash
 ./.build/infernix cluster up
-./.build/infernix kubectl get pods -A
+./.build/infernix service
 ./.build/infernix test integration
 ```
 
 **Containerized Linux outer control plane**
 
 ```bash
+docker compose build infernix
 docker compose run --rm infernix infernix cluster up
 docker compose run --rm infernix infernix test integration
-docker run --rm --gpus all -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD/.data:/workspace/.data" infernix-linux-cuda:local infernix --runtime-mode linux-cuda cluster up
 ```
 
 Rules:
@@ -221,8 +221,8 @@ Rules:
 - Apple Silicon host builds place the compiled `infernix` binary and other generated build
   artifacts under `./.build/`, and supported host-native command examples use `./.build/infernix`.
 - Plan documents do not introduce repo-owned scripts or wrappers for supported build or launch
-  flows; they spell out direct `cabal`, `docker compose`, `docker run`, and `infernix`
-  invocations when explicit flags are required.
+  flows; they spell out direct `cabal`, `docker compose`, and `infernix` invocations when explicit
+  flags are required.
 - On Apple Silicon, `cluster up` writes the repo-local kubeconfig to `./.build/infernix.kubeconfig`
   and must not mutate `$HOME/.kube/config` or the user's global current context.
 - On the Linux outer-container path, `cluster up` writes the repo-local kubeconfig to
@@ -233,77 +233,98 @@ Rules:
 - On Apple Silicon, the intended minimal pre-existing host prerequisites are Homebrew plus ghcup.
 - Colima is the only supported Docker environment on Apple Silicon and is installed from Homebrew
   on the supported path.
+- When Apple operators intentionally exercise the `linux-cpu` substrate, they do so through the
+  containerized Linux workflow inside Colima's amd64 VM and accept that the Apple GPU is out of
+  scope for that path.
 - After the binary exists, the Apple host workflow is allowed to let `infernix` reconcile the
   remaining Homebrew-managed operator tools needed by the active path and bootstrap Poetry through
   the host's system Python when adapter flows first need it; the repo-local adapter virtual
   environment still materializes only when an engine-adapter path is exercised explicitly.
-- Containerized Linux uses Compose as the supported one-command launcher for `linux-cpu`, while
-  `linux-cuda` uses a direct `docker run --gpus all infernix-linux-cuda:local ...` launcher with
-  the Docker socket forwarded and `./.data/` bind mounted on the supported path.
+- Supported Linux control-plane commands always run through
+  `docker compose run --rm infernix infernix ...`; there is no supported Linux host-native
+  `infernix` workflow outside the outer container.
+- On Apple Silicon, operators do not use Compose as a user-facing launcher for ordinary CLI work.
+  The Apple host CLI may still invoke `docker compose run --rm infernix infernix ...` internally
+  when it needs the container-owned Playwright executor during routed E2E validation.
 - On Linux CPU, host prerequisites stop at Docker Engine plus the Docker Compose plugin.
-- On Linux CUDA, host prerequisites stop at Docker Engine plus the supported NVIDIA driver and
+- On Linux GPU, host prerequisites stop at Docker Engine plus the supported NVIDIA driver and
   container-toolkit setup.
+- The outer control-plane container does not require direct NVIDIA runtime access. The supported
+  Compose launcher never requests the NVIDIA container runtime for its own process.
+- `--runtime-mode` and `INFERNIX_RUNTIME_MODE` are not part of the supported final contract. The
+  built binary reads its active substrate from the generated `.dhall` that ships beside it.
 - `docker compose up` and `docker compose exec` are not supported outer-control-plane workflows.
 
-### L. Runtime Mode Matrix Contract
+### L. Substrate Contract
 
-The plan distinguishes control-plane execution context from supported runtime mode.
+The plan distinguishes control-plane execution context from supported substrate.
 
-Runtime modes are the product-facing inference lanes:
+Substrates are the product-facing inference lanes:
 
-| Runtime mode | Canonical mode id | Engine column selected from the README matrix |
-|--------------|-------------------|-----------------------------------------------|
-| Apple Silicon / Metal | `apple-silicon` | `Best Apple Silicon engine` |
-| Ubuntu 24.04 / CPU | `linux-cpu` | `Best Linux CPU engine` |
-| Ubuntu 24.04 / NVIDIA CUDA Container | `linux-cuda` | `Best Linux CUDA engine` |
+| Substrate | Canonical substrate id | Build-time selection rule |
+|-----------|------------------------|---------------------------|
+| Apple Silicon / Metal | `apple-silicon` | Cabal build runs outside the outer container |
+| Linux / CPU | `linux-cpu` | Cabal build runs inside the outer container and the active base image is not `nvidia:cuda` |
+| Linux / NVIDIA GPU | `linux-gpu` | Cabal build runs inside the outer container and the active base image is `nvidia:cuda` |
 
 Rules:
 
 - Plan documents, `system-components.md`, and the governed docs must explicitly distinguish the two
-  execution contexts from the three runtime modes.
+  execution contexts from the three supported substrates.
 - The comprehensive model, format, and engine matrix in the root README is the authoritative target
-  coverage envelope for runtime-mode planning.
-- For any given runtime mode, a matrix row is supported when that mode's engine column names a real
+  coverage envelope for substrate planning.
+- For any given substrate, a matrix row is supported when that substrate's engine column names a real
   engine rather than `Not recommended` or an empty cell.
-- `linux-cuda` closes only when the Kind-backed cluster path exposes NVIDIA container runtime
+- The plan standardizes the NVIDIA-backed Linux substrate as `linux-gpu`. Active phase documents
+  must call out any still-unmigrated `linux-cuda` naming in the current worktree instead of
+  pretending the rename is already complete.
+- The active substrate is selected only by the compile-time generated `.dhall` that ships beside
+  the built binary. Supported workflows do not override that substrate through CLI flags or
+  environment variables.
+- `linux-cpu` is the only substrate that remains meaningfully portable across unrelated host
+  hardware. Apple operators may validate it through the outer-container workflow, and arm64 Linux
+  hosts are first-class citizens for that CPU-only lane so long as the supported containerized
+  workflow is followed.
+- `linux-gpu` closes only when the Kind-backed cluster path exposes NVIDIA container runtime
   support, advertises `nvidia.com/gpu` resources to Kubernetes, and can schedule CUDA workloads on
   that substrate.
-- Later-phase completion claims must not narrow the matrix to a hand-picked smoke subset once
-  broad mode support is claimed.
+- Later-phase completion claims remove simulated cluster, route, transport, and inference fallback
+  behavior from the supported contract rather than treating simulation as a weaker substitute once
+  real substrate support is claimed.
 
-### M. Generated Demo `.dhall` and ConfigMap Contract
+### M. Generated Substrate `.dhall` and ConfigMap Contract
 
-`cluster up` generates the demo configuration for the active runtime mode as staging content and
-publishes it into the cluster as a ConfigMap for cluster-resident consumers.
+The supported build always generates one substrate `.dhall` beside the built binary, and Linux
+cluster deployment republishes that same file through a ConfigMap for cluster-resident consumers.
 
 Rules:
 
-- Apple host mode may stage the active mode's generated file under `./.build/` when the host-native
-  daemon path needs it.
-- Outer-container Linux stages the active mode's generated file ephemerally, then creates or
-  updates the cluster ConfigMap; the outer container does not treat a static container file as the
-  runtime input.
-- The generated filename uses the active runtime-mode id, for example
-  `infernix-demo-apple-silicon.dhall`, `infernix-demo-linux-cpu.dhall`, or
-  `infernix-demo-linux-cuda.dhall`.
-- The generated file enumerates every demo-visible model or workload supported in the active
-  runtime mode and records the matrix row identity, artifact or format family, selected engine,
-  request or result contract identifiers, and any mode-specific runtime-lane metadata needed by the
-  service, web UI, or tests.
-- `cluster up` creates or updates `ConfigMap/infernix-demo-config` from that generated content.
-- In containerized execution contexts, cluster-resident consumers mount
-  `ConfigMap/infernix-demo-config` read-only at `/opt/build/`.
-- The outer-container control plane stages generated files under its active build root, while
-  cluster-resident consumers read the active-mode `.dhall` from
-  `/opt/build/infernix-demo-<mode>.dhall` via the mounted ConfigMap path.
-- Cluster-resident consumers consume the active mode's file from that mounted path rather than
-  from an image-baked static file.
-- Rows whose active-mode engine cell is `Not recommended` are omitted from that mode's generated
-  demo catalog.
-- Across the full set of generated mode-specific demo `.dhall` files, every row in the README
-  matrix appears in at least one generated catalog.
-- The ConfigMap-backed mounted demo `.dhall` file is the exact source of truth for which models
-  appear in the demo UI for the active runtime mode and which engine binding those models use.
+- The `.dhall` is generated at Cabal compile time rather than during `cluster up`.
+- A build performed outside the outer container emits an Apple-host-native substrate file under
+  `./.build/` beside `./.build/infernix`.
+- A build performed inside the outer container emits a Linux substrate file under
+  `/opt/build/infernix/` beside `/opt/build/infernix/infernix`.
+- The generated filename stays stable for a given build artifact, for example
+  `infernix-substrate.dhall`, rather than encoding a user-selected runtime flag.
+- The generated file records the active substrate explicitly and enumerates every demo-visible model
+  or workload supported by that substrate together with the matrix row identity, artifact or format
+  family, selected engine, request or result contract identifiers, and any substrate-specific
+  runtime metadata needed by the service, web UI, or tests.
+- `cluster up` creates or updates `ConfigMap/infernix-demo-config` from the exact generated file
+  baked beside the outer-container binary when the active substrate is `linux-cpu` or `linux-gpu`.
+- Linux cluster-resident consumers mount that ConfigMap read-only beside the cluster-resident
+  binary under `/opt/build/infernix/`.
+- Apple host-native consumers read the file directly from `./.build/`.
+- The binary watches its substrate `.dhall` and reloads or restarts when the file changes; that
+  reload purges any running inference-engine state.
+- Rows whose active-substrate engine cell is `Not recommended` are omitted from that substrate's
+  generated catalog.
+- Across the full set of generated substrate `.dhall` files, every row in the README matrix
+  appears in at least one generated catalog.
+- The mounted or colocated substrate `.dhall` is the exact source of truth for which models appear
+  in the demo UI, which engine binding they use, which launcher contract applies, which substrate
+  the binary reports, and which engine binding the integration suite and demo app select for a
+  given README row.
 
 ### N. Storage Doctrine Closure
 
@@ -354,7 +375,7 @@ Rules:
 - Every repo-owned lifecycle, validation, and docs command other than `infernix service` is
   declarative and idempotent.
 - `infernix cluster up` reconciles cluster, storage, image, Helm, mandatory local HA service state,
-  the active runtime mode's demo-config staging and ConfigMap publication, and the chosen edge port
+  the active substrate's generated `.dhall` publication, and the chosen edge port
   to the requested target rather than performing one-shot bootstrap steps.
 - `infernix cluster up` chooses the edge port by attempting `9090` first and incrementing by 1
   until an open port is found, records the chosen port under `./.data/runtime/edge-port.json`, and
@@ -368,6 +389,9 @@ Rules:
 - `infernix kubectl ...` is a scoped wrapper around upstream `kubectl`, automatically injecting the
   repo-local kubeconfig from the active build-output location; it is not a separate lifecycle
   orchestration surface.
+- Supported CLI behavior never accepts `--runtime-mode` or `INFERNIX_RUNTIME_MODE`. The CLI reads
+  the active substrate from the colocated generated `.dhall`, and phase documents must call out any
+  still-open compatibility shims explicitly until they are removed.
 - `infernix lint ...`, `infernix test ...`, and `infernix docs check` may reuse or reconcile
   prerequisites, but they do not depend on alternate imperative setup commands outside the
   supported CLI surface.
@@ -376,24 +400,42 @@ Rules:
 
 ### P. Integration and E2E Coverage Contract
 
-Mode-aware validation is explicit.
+Substrate-specific validation is explicit.
 
-- `infernix test integration` for a given active runtime mode currently validates the published
-  catalog contract, routed surfaces, cache lifecycle, every generated active-mode catalog entry,
-  and a service-loop roundtrip for that mode.
+- `infernix test integration` for a given built substrate validates only that substrate's published
+  catalog contract, routed surfaces, cache lifecycle, every generated active-substrate catalog
+  entry, and the supported service-loop roundtrip for that substrate.
+- The comprehensive model, format, and engine matrix in the root `README.md` is the authoritative
+  integration-test coverage ledger. For the active substrate, every row or reference whose engine
+  cell names a real engine has at least one integration assertion.
+- The repository does not carry separate per-substrate integration suites. One integration suite
+  reads the active substrate from the generated `.dhall`, traverses the README-derived matrix rows,
+  and chooses each row's engine binding from that same file.
+- Supported validation removes simulated cluster, route, transport, and inference fallback
+  behavior from the supported execution path. Test results name the single substrate they exercised
+  and do not imply coverage that was not run.
 - when an owning phase calls out real-cluster HA or lifecycle assertions, the supported
-  non-simulated lane also owns those pod-replacement, durability, failover, or rebinding checks.
-- `infernix test e2e` for a given active runtime mode exercises every demo-visible catalog entry
+  non-Apple-cluster lane also owns those pod-replacement, durability, failover, or rebinding
+  checks on the deployed substrate rather than any simulated fallback.
+- `infernix test e2e` for a given built substrate exercises every demo-visible catalog entry
   present in that same generated file through the routed web surface unless a narrower exception is
   called out explicitly in the owning phase document.
-- Exhaustive per-entry integration coverage is claimed only once the owning phase documents that
-  broader contract explicitly and keeps any remaining supported-lane validation work in `Active`
-  status until those reruns close.
-- Integration and E2E checks use the engine binding encoded in the mounted ConfigMap-backed demo
-  `.dhall`, which must match the appropriate mode column from the README matrix.
-- `infernix test all` aggregates lint, unit, integration, and E2E for the active runtime mode; the
-  full Apple, CPU, and CUDA matrix closes only when those mode-specific runs all pass on their
-  supported lanes.
+- Playwright is substrate-agnostic at the browser layer. The browser suite does not branch on
+  substrate id or engine family; `infernix-demo` reads the generated `.dhall` and chooses the
+  correct engine binding for the active substrate behind the routed demo API.
+- On Apple Silicon, the supported host CLI owns test orchestration. It starts the host inference
+  daemon when needed, runs host-side integration logic directly, and may invoke
+  `docker compose run --rm infernix infernix test e2e` internally for the container-owned
+  Playwright executor while the host daemon remains live.
+- On Linux substrates, all supported CLI and test commands run through
+  `docker compose run --rm infernix infernix ...`, and test flows do not manage a host daemon
+  because inference runs from the deployed cluster daemon.
+- Integration checks use the engine binding encoded in the colocated or ConfigMap-backed substrate
+  `.dhall`, which must match the appropriate substrate column from the README matrix. E2E checks
+  rely on the demo app to honor that same file rather than selecting engines in browser code.
+- `infernix test all` aggregates lint, unit, integration, and E2E for the built substrate only.
+  Repository closure requires separate substrate-specific reruns instead of one default matrix run
+  that silently covers Apple, CPU, and GPU together.
 
 ### Q. Haskell Quality Gate Contract
 
