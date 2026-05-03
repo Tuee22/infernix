@@ -256,6 +256,9 @@ one Compose-driven outer container for both Linux substrates.
 - the cluster publication contract uses the same stable `infernix-substrate.dhall` filename in the
   repo-local mirror and in-cluster mount
 - the supported Linux control-plane launcher is Compose for both `linux-cpu` and `linux-gpu`
+- `compose.yaml` selects the active `infernix-linux-<mode>:local` snapshot through
+  `INFERNIX_COMPOSE_*` launcher variables while keeping the supported `docker compose run --rm infernix infernix ...`
+  surface unchanged
 - the outer control-plane container never requires the NVIDIA runtime for its own process, even
   when the built image targets `linux-gpu`
 - the same built `linux-gpu` image is the artifact mirrored to Harbor and deployed as the cluster
@@ -267,8 +270,11 @@ one Compose-driven outer container for both Linux substrates.
   into the ConfigMap without any runtime-mode flag
 - `infernix kubectl get configmap infernix-demo-config -n platform -o yaml` shows the current
   `infernix-substrate.dhall` key and the staged payload
-- supported Linux GPU lifecycle and validation flows no longer require a direct user-facing
-  `docker run --gpus all ...` launcher
+- with `INFERNIX_COMPOSE_IMAGE=infernix-linux-gpu:local`,
+  `INFERNIX_COMPOSE_SUBSTRATE=linux-gpu`, and
+  `INFERNIX_COMPOSE_BASE_IMAGE=nvidia/cuda:13.2.1-cudnn-runtime-ubuntu24.04`,
+  `docker compose build infernix` plus `docker compose run --rm infernix infernix cluster up`
+  exercises the same supported launcher surface for `linux-gpu`
 
 ### Remaining Work
 
@@ -326,7 +332,10 @@ self-contained in the final `linux-gpu` image.
 ### Validation
 
 - the `linux-gpu` substrate image build produces a runnable `nvkind` binary
-- after building `infernix-linux-gpu:local`, `docker compose run --rm infernix infernix cluster up`
+- after exporting `INFERNIX_COMPOSE_IMAGE=infernix-linux-gpu:local`,
+  `INFERNIX_COMPOSE_SUBSTRATE=linux-gpu`, and
+  `INFERNIX_COMPOSE_BASE_IMAGE=nvidia/cuda:13.2.1-cudnn-runtime-ubuntu24.04`,
+  `docker compose build infernix` plus `docker compose run --rm infernix infernix cluster up`
   succeeds on a supported NVIDIA host without a host-visible `nvkind` handoff path
 - repeated `linux-gpu` cluster lifecycle runs preserve GPU visibility and durable storage behavior
 

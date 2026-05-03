@@ -172,14 +172,16 @@ baseline and remove `npx` from the supported workflow.
 
 - the final Linux substrate image includes the built `web/dist/` bundle and Playwright plus browser deps
 - `infernix test e2e` launches Playwright from the substrate image on Linux and from a
-  container-owned executor orchestrated by the host CLI on Apple
+  direct `docker run` of the Playwright-capable Linux substrate image orchestrated by the host CLI
+  on Apple
 - the chart does not deploy a separate web workload or web image
 - supported Playwright invocations use `npm --prefix web exec -- playwright ...`
 
 ### Validation
 
 - a substrate-image build produces a working Playwright runner without a separate web image
-- Apple host E2E still passes with container-owned Playwright against the clustered routed surface
+- Apple host E2E still passes with direct containerized Playwright execution against the clustered
+  routed surface
 - Linux E2E passes with Playwright launched from the substrate image
 - `rg -n 'npx playwright' README.md documents src web/package.json` returns no supported workflow references
 
@@ -192,18 +194,19 @@ None.
 ## Sprint 5.8: Clustered Demo Surface on Apple and Container-Owned Playwright Closure [Done]
 
 **Status**: Done
+**Implementation**: `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `web/playwright/inference.spec.js`, `web/test/run_playwright_matrix.mjs`
 **Docs to update**: `README.md`, `documents/architecture/web_ui_architecture.md`, `documents/reference/web_portal_surface.md`, `documents/development/local_dev.md`, `documents/development/testing_strategy.md`
 
 ### Objective
 
-Keep the demo app clustered on Apple while retaining the outer container as the only supported
-Playwright executor.
+Keep the demo app clustered on Apple while retaining a containerized Linux image as the only
+supported Playwright executor.
 
 ### Deliverables
 
 - the routed demo app remains cluster-resident on Apple and Linux substrates alike
 - Apple host-native E2E orchestration runs from the host CLI while the actual Playwright executor
-  runs inside `docker compose run --rm infernix infernix ...`
+  runs through a direct `docker run` of the Playwright-capable Linux substrate image
 - user-facing Apple docs describe `cluster up` as the way to launch the demo surface instead of a
   direct host `infernix-demo serve` workflow
 - Linux user-facing docs continue to describe Compose as the single launcher for demo, integration,
@@ -217,7 +220,7 @@ Playwright executor.
 ### Validation
 
 - Apple routed E2E passes while the host inference daemon is live and the Playwright executor runs
-  inside the outer container
+  inside that direct containerized image path
 - Linux routed E2E passes through the same container-owned Playwright executor without any host
   daemon management
 - Apple and Linux routed E2E pass through the same browser-visible flows without substrate-specific

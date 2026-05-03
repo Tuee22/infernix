@@ -34,7 +34,7 @@
 | Component | Technology | Deployment | Purpose | Durable state |
 |-----------|------------|------------|---------|---------------|
 | Apple host control plane | `./.build/infernix` plus direct `cabal` materialization against operator-installed ghcup | host-native | canonical operator surface on Apple Silicon; host-native cluster lifecycle owner; host-native inference daemon owner; repo-local kubeconfig owner | `./.build/`, `./.data/` |
-| Linux outer-container control plane | `docker compose run --rm infernix infernix ...` | Linux container | only supported Linux CLI surface for `linux-cpu` and `linux-gpu`; forwards Docker socket and bind-mounts only `./.data/` on the supported path | `./.data/`, `./.data/runtime/infernix.kubeconfig`, `/opt/build/infernix/`, `/root/.cabal` |
+| Linux outer-container control plane | `docker compose run --rm infernix infernix ...` | Linux container | only supported Linux CLI surface for `linux-cpu` and `linux-gpu`; selects the active `infernix-linux-<mode>:local` snapshot through `INFERNIX_COMPOSE_*` launcher variables while forwarding the Docker socket and bind-mounting only `./.data/` on the supported path | `./.data/`, `./.data/runtime/infernix.kubeconfig`, `/opt/build/infernix/`, `/root/.cabal` |
 | Command registry | structured Haskell parser or dispatcher registry | host or outer container | owns the supported command inventory, `--help` output, and the generated CLI-reference sections that docs lint enforces | none |
 | Substrate configuration | staged banner-prefixed JSON payload at the legacy `infernix-substrate.dhall` path | host or outer container | primary source of truth for active substrate, generated catalog content, daemon placement, active engine dispatch, and test scope once the file has been staged | `./.build/infernix-substrate.dhall`, `/opt/build/infernix/infernix-substrate.dhall` |
 | Route registry | Haskell-owned route inventory | host or outer container during render or reconcile | records public prefixes, backend identity, rewrite rules, visibility, and publication metadata | none |
@@ -48,7 +48,7 @@
 | Component | Current content | Purpose | Gap |
 |-----------|-----------------|---------|-----|
 | Linux substrate image definition | `docker/linux-substrate.Dockerfile` | one shared build definition produces the Linux control-plane image and the Linux daemon image family while owning ghcup, Poetry, Node.js 22+, Playwright, and the Kind toolbelt | none |
-| Compose launcher | `compose.yaml` | one-command outer-container launcher for supported Linux workflows | none |
+| Compose launcher | `compose.yaml` | env-configurable outer-container launcher for supported Linux workflows | none |
 | Shared Python adapter project | `python/pyproject.toml`, `python/adapters/` | single dependency boundary and adapter tree for Python-native engines | none in the supported operator contract |
 | Apple host prerequisite bootstrap | governed docs plus Haskell bootstrap logic | minimize Apple pre-existing host installs and let `infernix` reconcile supported Homebrew-managed tools and Poetry bootstrap | none |
 | Testing doctrine docs | `documents/engineering/testing.md` and `documents/development/testing_strategy.md` | keep one canonical testing doctrine together with one operator-facing detail layer | none |

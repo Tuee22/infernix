@@ -58,7 +58,8 @@ On the real Kind path those routes are published by `Gateway/infernix-edge`,
   config returned by `GET /api/demo-config` and separately validates publication details from
   `/api/publication`
 - supported routed E2E uses a container-owned Playwright executor; Apple host-native flows
-  orchestrate it from the host CLI, while Linux flows launch it from the active substrate image
+  orchestrate it from the host CLI through a direct `docker run` of the Playwright-capable Linux
+  substrate image, while Linux flows launch it from the active substrate image
 - the workbench surfaces the active runtime mode, control-plane context, daemon location, catalog
   source, chosen edge port, demo-config path, and routed publication inventory through
   `/api/publication`

@@ -233,6 +233,7 @@ None.
 ## Sprint 3.9: Cluster-Resident Demo App and Apple Host-Bridge Removal [Done]
 
 **Status**: Done
+**Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Demo/Api.hs`, `src/Infernix/Service.hs`, `chart/templates/deployment-demo.yaml`, `test/integration/Spec.hs`, `web/playwright/inference.spec.js`
 **Docs to update**: `README.md`, `documents/architecture/web_ui_architecture.md`, `documents/engineering/edge_routing.md`, `documents/reference/web_portal_surface.md`, `documents/operations/apple_silicon_runbook.md`
 
 ### Objective

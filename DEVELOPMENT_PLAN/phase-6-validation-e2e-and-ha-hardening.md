@@ -281,7 +281,7 @@ and E2E ownership in the final `.dhall`-driven terms.
 - Apple host-native `test integration` is launched directly from the host CLI and manages the host
   inference daemon for the duration of the test when that daemon is needed
 - Apple host-native `test e2e` is launched from the host CLI while the actual Playwright executor
-  runs through `docker compose run --rm infernix infernix ...`
+  runs through a direct `docker run` of the Playwright-capable Linux substrate image
 - Linux substrate test commands all run through `docker compose run --rm infernix infernix ...`,
   and those flows do not manage a host daemon because inference runs from the cluster daemon
 - Playwright remains substrate-agnostic at the browser layer: the browser suite does not branch on
@@ -295,7 +295,8 @@ and E2E ownership in the final `.dhall`-driven terms.
 ### Validation
 
 - Apple host-native `test all` reports `apple-silicon` only, starts the host daemon as needed, and
-  delegates Playwright execution to the outer container without changing the reported substrate
+  delegates Playwright execution to that direct containerized image path without changing the
+  reported substrate
 - Linux `test all` reports only the built Linux substrate and runs entirely through the outer
   container launcher
 - for any given built substrate, integration validation fails if a README row or reference whose
@@ -362,7 +363,7 @@ toolchain from package managers instead of depending on a broad preinstalled App
   installs or starts Colima through Homebrew-managed tooling
 - after the Apple binary exists, `infernix` can reconcile the remaining supported Homebrew-managed
   operator tools needed by the active path, including the Docker CLI, `kind`, `kubectl`, `helm`,
-  Node.js, and Playwright prerequisites
+  and Node.js
 - when Apple adapter flows first need Poetry and the `poetry` executable is absent, `infernix`
   can bootstrap Poetry through the host's built-in Python and then continue all host-side Python
   management through the shared Poetry project
@@ -384,8 +385,11 @@ toolchain from package managers instead of depending on a broad preinstalled App
   `docker compose build infernix` plus `docker compose run --rm infernix infernix test all`
   passes
 - on a clean Linux GPU host with Docker plus the supported NVIDIA host prerequisites,
-  `docker build -f docker/linux-substrate.Dockerfile --build-arg RUNTIME_MODE=linux-gpu --build-arg BASE_IMAGE=nvidia/cuda:13.2.1-cudnn-runtime-ubuntu24.04 -t infernix-linux-gpu:local .`
-  plus `docker compose run --rm infernix infernix test all` passes
+  exporting `INFERNIX_COMPOSE_IMAGE=infernix-linux-gpu:local`,
+  `INFERNIX_COMPOSE_SUBSTRATE=linux-gpu`, and
+  `INFERNIX_COMPOSE_BASE_IMAGE=nvidia/cuda:13.2.1-cudnn-runtime-ubuntu24.04`, then running
+  `docker compose build infernix` plus `docker compose run --rm infernix infernix test all`,
+  passes
 
 ### Remaining Work
 

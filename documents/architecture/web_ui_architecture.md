@@ -27,7 +27,8 @@ image on the real cluster path. The chart workload entrypoint selects which exec
 
 On Linux, the substrate image also owns the web build prerequisites and the routed Playwright
 executor. There is no separate web-only image on the supported path. On Apple Silicon, the host
-CLI orchestrates the same container-owned Playwright executor against the clustered routed surface.
+CLI orchestrates a direct `docker run` of that same Playwright-capable Linux substrate image
+against the clustered routed surface.
 
 ## PureScript Application
 
@@ -56,7 +57,9 @@ CLI orchestrates the same container-owned Playwright executor against the cluste
 - E2E coverage exhaustively hits every generated catalog entry through the routed surface and
   separately exercises browser UI interaction for publication-detail rendering, model selection,
   submission, object-reference results, and daemon-location reporting
-- supported routed E2E uses a container-owned Playwright executor on Apple and Linux alike
+- supported routed E2E uses a container-owned Playwright executor on Apple and Linux alike; Apple
+  host-native orchestration reaches it through a direct `docker run` of the Playwright-capable
+  Linux substrate image
 
 ## Cross-References
 

@@ -63,8 +63,10 @@ and mounts that same filename in cluster workloads at
 though the payload is banner-prefixed JSON. Validation already reports only the active built
 substrate instead of implying a default cross-substrate matrix, and the generated file,
 `cluster status`, publication JSON, and generated browser contracts still serialize that active
-substrate under `runtimeMode` field names. The supported Linux outer-container
-`infernix test all` rerun now passes, so the reopened plan items are closed.
+substrate under `runtimeMode` field names. The supported Linux outer-container validation stack
+rerun now passes component-by-component: `infernix lint docs`, the Haskell and PureScript unit
+suites, `infernix test integration`, and `infernix test e2e` all passed, so the reopened plan
+items are closed.
 
 Monitoring is not a supported first-class surface.
 
@@ -122,7 +124,8 @@ The supported platform now closes around these rules:
   on the cluster, and performs inference host-side; the host inference daemon must be running for
   the routed demo surface to work
 - on Apple Silicon, Compose is not a user-facing launcher for ordinary CLI work; the host CLI may
-  still invoke `docker compose run --rm infernix infernix ...` internally for routed Playwright E2E
+  still invoke a direct `docker run` of the Playwright-capable Linux substrate image internally
+  for routed Playwright E2E
 - on Linux substrates, all supported CLI commands run through
   `docker compose run --rm infernix infernix ...`; there is no supported Linux host-native build or
   CLI surface outside the outer container

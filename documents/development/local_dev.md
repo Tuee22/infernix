@@ -41,8 +41,12 @@ docker compose run --rm infernix infernix test all
 docker compose run --rm infernix infernix cluster down
 ```
 
-For the CUDA lane, build the shared substrate image with the CUDA base image and run it with
-`--gpus all`.
+These commands target the default `linux-cpu` launcher image. For `linux-gpu`, export
+`INFERNIX_COMPOSE_IMAGE=infernix-linux-gpu:local`,
+`INFERNIX_COMPOSE_SUBSTRATE=linux-gpu`, and
+`INFERNIX_COMPOSE_BASE_IMAGE=nvidia/cuda:13.2.1-cudnn-runtime-ubuntu24.04` before
+`docker compose build infernix`; the same `docker compose run --rm infernix infernix ...`
+surface then drives the GPU-backed workflow.
 
 ## Engine Adapter Testing
 

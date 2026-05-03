@@ -182,9 +182,6 @@ runEndToEnd maybeRuntimeMode = do
         case maybeRuntimeMode of
           Just runtimeMode -> pure [runtimeMode]
           Nothing -> (: []) <$> resolveRuntimeMode Nothing
-      when (AppleSilicon `elem` runtimeModes) $ do
-        ensureWebDependencies
-        ensurePlaywrightBrowsers
       mapM_ (runRuntimeModeE2E paths) runtimeModes
 
 runRuntimeModeE2E :: Paths -> RuntimeMode -> IO ()

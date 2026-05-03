@@ -9,8 +9,9 @@
 ## Current Repo Assessment
 
 The repository now implements the substrate-file architecture described in this overview. The
-supported Linux outer-container `infernix test all` rerun now passes, so the reopened plan items
-are closed.
+supported Linux outer-container validation stack rerun now passes component-by-component:
+`infernix lint docs`, the Haskell and PureScript unit suites, `infernix test integration`, and
+`infernix test e2e` all passed, so the reopened plan items are closed.
 
 | Area | Supported contract | Current repo state |
 |------|--------------------|--------------------|
@@ -335,10 +336,11 @@ The plan keeps control-plane execution context separate from substrate.
 - generated PureScript contract output lives in `web/src/Generated/`
 - no handwritten duplicate DTO layer exists on the frontend
 
-### 10. Playwright Lives In The Outer Container
+### 10. Playwright Runs From The Built Linux Image
 
 - on Linux, Playwright runs from the final outer-container image
-- on Apple Silicon, the host CLI still delegates routed Playwright execution to the outer container
+- on Apple Silicon, the host CLI still delegates routed Playwright execution to a direct
+  `docker run` of the Playwright-capable Linux substrate image
 - browser and Playwright code do not branch on substrate id or engine family; `infernix-demo`
   reads the active `.dhall` and owns substrate-appropriate engine dispatch
 - supported workflows use `npm --prefix web exec -- playwright ...`; `npx` is not part of the

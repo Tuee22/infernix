@@ -376,71 +376,48 @@ baked image owns the full toolchain, so the supported runtime path does not inst
 ### Linux CUDA (substrate container)
 
 The `linux-gpu` substrate ships one baked image snapshot, `infernix-linux-gpu:local`, built
-from `docker/linux-substrate.Dockerfile` with a CUDA base image. The image includes `nvkind` and
-the GPU validation toolchain needed by the supported `linux-gpu` cluster lifecycle.
+from `docker/linux-substrate.Dockerfile` with a CUDA base image. The same supported Compose
+launcher surface used on Linux CPU selects that image through environment variables while keeping
+the outer control-plane container itself off the NVIDIA runtime path.
 
 **Prerequisites**: complete the Linux CUDA host setup in [System Prerequisites](#system-prerequisites).
 
 ```bash
-# Build the linux-gpu substrate image.
-docker build -f docker/linux-substrate.Dockerfile \
-  --build-arg RUNTIME_MODE=linux-gpu \
-  --build-arg BASE_IMAGE=nvidia/cuda:13.2.1-cudnn-runtime-ubuntu24.04 \
-  -t infernix-linux-gpu:local .
+# Select the linux-gpu launcher image for this shell.
+export INFERNIX_COMPOSE_IMAGE=infernix-linux-gpu:local
+export INFERNIX_COMPOSE_SUBSTRATE=linux-gpu
+export INFERNIX_COMPOSE_BASE_IMAGE=nvidia/cuda:13.2.1-cudnn-runtime-ubuntu24.04
+
+# Build the linux-gpu substrate image snapshot.
+docker compose build infernix
 
 # Bring up the GPU-enabled Kind HA demo ground.
-docker run --rm --gpus all \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v "$PWD/.data:/workspace/.data" \
-  infernix-linux-gpu:local infernix cluster up
+docker compose run --rm infernix infernix cluster up
 
 # Print the edge port, route inventory, and publication details, then open
 # http://127.0.0.1:<edge-port>/ in a browser.
-docker run --rm --gpus all \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v "$PWD/.data:/workspace/.data" \
-  infernix-linux-gpu:local infernix cluster status
+docker compose run --rm infernix infernix cluster status
 
 # Confirm GPU visibility from the cluster service deployment.
-docker run --rm --gpus all \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v "$PWD/.data:/workspace/.data" \
-  infernix-linux-gpu:local infernix kubectl -n platform exec deployment/infernix-service -- nvidia-smi -L
+docker compose run --rm infernix infernix kubectl -n platform exec deployment/infernix-service -- nvidia-smi -L
 
 # Run the full suite.
-docker run --rm --gpus all \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v "$PWD/.data:/workspace/.data" \
-  infernix-linux-gpu:local infernix test all
+docker compose run --rm infernix infernix test all
 
 # Or run each suite directly.
-docker run --rm --gpus all \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v "$PWD/.data:/workspace/.data" \
-  infernix-linux-gpu:local infernix test lint
-docker run --rm --gpus all \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v "$PWD/.data:/workspace/.data" \
-  infernix-linux-gpu:local infernix test unit
-docker run --rm --gpus all \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v "$PWD/.data:/workspace/.data" \
-  infernix-linux-gpu:local infernix test integration
-docker run --rm --gpus all \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v "$PWD/.data:/workspace/.data" \
-  infernix-linux-gpu:local infernix test e2e
+docker compose run --rm infernix infernix test lint
+docker compose run --rm infernix infernix test unit
+docker compose run --rm infernix infernix test integration
+docker compose run --rm infernix infernix test e2e
 
 # Tear down.
-docker run --rm --gpus all \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v "$PWD/.data:/workspace/.data" \
-  infernix-linux-gpu:local infernix cluster down
+docker compose run --rm infernix infernix cluster down
 ```
 
 The CUDA substrate image bundles CUDA-aware engine builds such as `llama.cpp` CUDA and `vLLM` at
 image build time. `cluster up` installs the Envoy Gateway controller, the NVIDIA device plugin,
-and `RuntimeClass/nvidia` before scheduling the GPU-requesting service workload.
+and `RuntimeClass/nvidia` before scheduling the GPU-requesting service workload. When you switch
+back to the CPU lane, unset the `INFERNIX_COMPOSE_*` overrides or start a fresh shell.
 
 ## CLI Surface
 
@@ -583,9 +560,9 @@ contracts.
 - on Linux substrates, the substrate container also carries the spago plus purs toolchain
   (used at image build time to bundle the demo UI) plus Playwright browser dependencies
   (Chromium, Firefox, WebKit) for routed E2E execution. There is no separate web-only image
-- on Apple Silicon, `infernix test e2e` runs Playwright from the operator's host node install
-  (`npm --prefix web exec -- playwright install --with-deps chromium firefox webkit` is the
-  one-time setup step)
+- on Apple Silicon, `infernix test e2e` stays container-owned: the host CLI launches a direct
+  `docker run` of the Playwright-capable Linux substrate image against the clustered routed
+  surface
 - the `infernix-demo` workload is deployed through repo-owned Helm chart templates and values, and
   is gated by the `.dhall` `demo_ui` flag; production deployments leave it off
 - the demo UI catalog is derived from the generated mode-specific demo `.dhall` file for the active
@@ -593,8 +570,9 @@ contracts.
 - repo-owned `purescript-spec` suites under `web/test/` cover generated contracts, publication
   rendering, and view behavior; `infernix test unit` runs `spago test` alongside the Haskell unit
   suites
-- Playwright runs from the per-substrate container on Linux substrates and from the host node
-  install on Apple Silicon; the test orchestration lives in the Haskell integration test suite
+- Playwright stays container-owned on supported paths: it runs from the per-substrate image on
+  Linux and from that same direct containerized image path on Apple Silicon; the test
+  orchestration lives in the Haskell integration test suite
 - the demo UI can submit manual inference requests against any registered model in the active demo
   catalog; the production inference surface remains Pulsar topics named in the active `.dhall`
 - the demo UI, demo API surface, generated PureScript contracts, and validation suites must expand

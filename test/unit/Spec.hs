@@ -81,6 +81,16 @@ main = do
   assert
     ("`/minio/s3` -> `infernix-minio:9000`" `isInfixOf` renderChartRouteRegistryCommentSection)
     "the chart route summary includes the MinIO S3 backend from the route registry"
+  composeLauncherContents <- readFile "compose.yaml"
+  assert
+    ("${INFERNIX_COMPOSE_IMAGE:-infernix-linux-cpu:local}" `isInfixOf` composeLauncherContents)
+    "compose defaults to the linux-cpu launcher image while allowing image selection"
+  assert
+    ("${INFERNIX_COMPOSE_SUBSTRATE:-linux-cpu}" `isInfixOf` composeLauncherContents)
+    "compose build defaults to the linux-cpu substrate while allowing linux-gpu selection"
+  assert
+    ("${INFERNIX_COMPOSE_BASE_IMAGE:-ubuntu:24.04}" `isInfixOf` composeLauncherContents)
+    "compose build keeps the default CPU base image while allowing the linux-gpu CUDA base image"
   assert
     (appleHostRequirementIds AppleSilicon ClusterUpCommand == ["docker", "colima", "kind", "kubectl", "helm", "node", "poetry"])
     "apple host prerequisite planning includes the full cluster and adapter toolchain for apple-silicon cluster up"

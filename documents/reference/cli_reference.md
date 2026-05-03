@@ -104,8 +104,9 @@
 - `infernix test integration`, `infernix test e2e`, and `infernix test all` exercise only the
   active substrate encoded in the generated `.dhall`
 - `infernix test e2e` uses a container-owned Playwright executor on supported paths; Apple
-  host-native flows orchestrate it from the host CLI, while Linux flows run it from the active
-  substrate image
+  host-native flows orchestrate it from the host CLI through a direct `docker run` of the
+  Playwright-capable Linux substrate image, while Linux flows run it from the active substrate
+  image
 - `infernix internal pulsar-roundtrip ...` is an internal validation helper that publishes one
   protobuf request through the configured Pulsar endpoints and waits for the matching result
 - `infernix cluster up`, `test integration`, and `test e2e` fail fast on `linux-gpu` when the

@@ -1,13 +1,13 @@
 services:
   infernix:
-    image: infernix-linux-cpu:local
+    image: "${INFERNIX_COMPOSE_IMAGE:-infernix-linux-cpu:local}"
     build:
       context: .
       dockerfile: docker/linux-substrate.Dockerfile
       args:
-        RUNTIME_MODE: linux-cpu
-        DEMO_UI: "true"
-        BASE_IMAGE: ubuntu:24.04
+        RUNTIME_MODE: "${INFERNIX_COMPOSE_SUBSTRATE:-linux-cpu}"
+        DEMO_UI: "${INFERNIX_COMPOSE_DEMO_UI:-true}"
+        BASE_IMAGE: "${INFERNIX_COMPOSE_BASE_IMAGE:-ubuntu:24.04}"
     command: ["infernix", "--help"]
     environment:
       INFERNIX_BUILD_ROOT: /opt/build/infernix

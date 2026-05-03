@@ -9,18 +9,20 @@
 
 - Apple host-native flows use Colima plus the host Docker CLI, but Linux control-plane execution
   runs through baked substrate images instead of live repo-mounted containers.
-- `docker compose run --rm infernix infernix ...` is the supported `linux-cpu` launcher, and
-  direct `docker run --gpus all infernix-linux-gpu:local infernix ...` is the supported
-  `linux-gpu` launcher.
+- `docker compose run --rm infernix infernix ...` is the supported Linux control-plane launcher
+  shape for both `linux-cpu` and `linux-gpu`; `INFERNIX_COMPOSE_IMAGE`,
+  `INFERNIX_COMPOSE_SUBSTRATE`, and `INFERNIX_COMPOSE_BASE_IMAGE` select the active built
+  snapshot when the default CPU lane is not in play.
 - The outer-container contract does not include `docker compose up`, `docker compose exec`, or a
   bootstrap helper-registry sidecar.
 
 ## Current Status
 
 The current worktree follows the one-image-family policy directly: both supported Linux runtime
-lanes come from `docker/linux-substrate.Dockerfile`, `cluster up` reuses the already-built
-`infernix-linux-<mode>:local` snapshots, and the Harbor-first bootstrap path no longer depends on
-any retired helper-registry container cleanup.
+lanes come from `docker/linux-substrate.Dockerfile`, `compose.yaml` defaults to the CPU snapshot
+while allowing explicit selection of the GPU snapshot, `cluster up` reuses the already-built
+`infernix-linux-<mode>:local` images, and the Harbor-first bootstrap path no longer depends on any
+retired helper-registry container cleanup.
 
 ## Host Prerequisite Boundary
 
@@ -35,12 +37,14 @@ any retired helper-registry container cleanup.
 
 ## Supported Usage
 
-- `docker compose build infernix` refreshes the supported Linux CPU outer-container image
-- `docker compose run --rm infernix infernix ...` is the supported Linux CPU outer control-plane
-  entrypoint
-- `docker build -f docker/linux-substrate.Dockerfile --build-arg RUNTIME_MODE=linux-gpu --build-arg BASE_IMAGE=nvidia/cuda:13.2.1-cudnn-runtime-ubuntu24.04 -t infernix-linux-gpu:local .`
-  and `docker run --rm --gpus all ... infernix-linux-gpu:local infernix ...` are the supported
-  CUDA launcher equivalents
+- `docker compose build infernix` refreshes the default Linux CPU outer-container image
+- `docker compose run --rm infernix infernix ...` is the supported Linux outer control-plane
+  entrypoint for both `linux-cpu` and `linux-gpu`
+- exporting `INFERNIX_COMPOSE_IMAGE=infernix-linux-gpu:local`,
+  `INFERNIX_COMPOSE_SUBSTRATE=linux-gpu`, and
+  `INFERNIX_COMPOSE_BASE_IMAGE=nvidia/cuda:13.2.1-cudnn-runtime-ubuntu24.04` before
+  `docker compose build infernix` prepares the supported `linux-gpu` snapshot for that same
+  Compose-driven control plane
 - the launcher container forwards the Docker socket
 - the launcher container bind-mounts only `./.data/`
 - the launcher container sets `/opt/build/infernix` as the supported outer build root
@@ -63,8 +67,9 @@ any retired helper-registry container cleanup.
 - the Linux substrate images also preinstall the compatible ghcup-managed GHC used to bootstrap
   `hlint` for the Haskell style gate when the active project compiler is newer than the current
   `hlint` release line
-- routed Playwright execution is delegated to the host on Apple Silicon and to the active Linux
-  substrate image on Linux
+- routed Playwright execution stays container-owned on supported paths: on Apple Silicon the host
+  CLI may invoke a direct `docker run` of the Playwright-capable Linux substrate image, while on
+  Linux the active substrate image owns the executor on the supported outer-container path
 
 ## Image Set
 

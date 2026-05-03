@@ -36,13 +36,13 @@ does not claim substrate parity where the underlying hardware or launcher model 
 
 | Topic | Portable contract | Apple host-native detail | Linux outer-container detail |
 |-------|-------------------|--------------------------|------------------------------|
-| Control-plane launcher | `infernix` owns lifecycle and validation behavior | run `./.build/infernix ...` after direct `cabal` install into `./.build/` | run `docker compose run --rm infernix infernix ...` for supported Linux workflows |
+| Control-plane launcher | `infernix` owns lifecycle and validation behavior | run `./.build/infernix ...` after direct `cabal` install into `./.build/` | run `docker compose run --rm infernix infernix ...` for supported Linux workflows; set `INFERNIX_COMPOSE_*` when selecting the `linux-gpu` snapshot |
 | Host prerequisites | keep prerequisites minimal and explicit | Homebrew plus ghcup before build; Colima is the only supported Apple Docker environment | Docker Engine plus Compose plugin for `linux-cpu`; NVIDIA driver plus container toolkit in addition for `linux-gpu` |
 | Tool bootstrap after the binary exists | supported commands may reconcile remaining operator tooling | Homebrew-managed Docker CLI, `kind`, `kubectl`, `helm`, Node.js, and Poetry bootstrap may be installed on demand | the substrate image already carries the supported toolchain; runtime install is not part of the contract |
 | Build roots and kubeconfig location | outputs stay repo-local and untracked | `./.build/`, `./.build/infernix.kubeconfig`, and explicit `./.build/infernix internal materialize-substrate apple-silicon` staging | `/opt/build/infernix/` in the image plus `./.data/runtime/infernix.kubeconfig` for durable outer-container reuse |
 | Python adapter environment | use the shared Poetry project only | `python/.venv/` may materialize on demand through the host's built-in Python plus user-local Poetry bootstrap | adapter dependencies are installed in the shared substrate image build |
-| Browser E2E runner | exercise the routed surface for the active generated catalog | the host CLI orchestrates a container-owned Playwright executor against the clustered routed surface | Playwright runs from the baked substrate image |
-| CUDA path | supported only when the host actually satisfies the NVIDIA contract | not applicable | `linux-gpu` requires the baked image, forwarded Docker socket, GPU visibility, and in-image `nvkind` |
+| Browser E2E runner | exercise the routed surface for the active generated catalog | the host CLI orchestrates a direct `docker run` of the container-owned Playwright executor against the clustered routed surface | Playwright runs from the baked substrate image on the supported Compose-driven outer-container path |
+| CUDA path | supported only when the host actually satisfies the NVIDIA contract | not applicable | `linux-gpu` requires the Compose-selected baked image, forwarded Docker socket, GPU visibility, and in-image `nvkind` |
 
 ## Unsupported Shortcuts
 
