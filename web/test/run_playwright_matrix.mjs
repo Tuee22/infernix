@@ -39,9 +39,6 @@ function loadPublishedEdgePort() {
 }
 
 function loadActiveSubstrateId() {
-  if (process.env.INFERNIX_SUBSTRATE_ID) {
-    return process.env.INFERNIX_SUBSTRATE_ID;
-  }
   const rawValue = readFileSync(generatedSubstratePath, "utf8").replace(/^\s*\{-[^\n]*\}\s*\n/, "");
   return JSON.parse(rawValue).runtimeMode;
 }
@@ -57,7 +54,6 @@ try {
     cwd: webRoot,
     stdio: "inherit",
     env: sanitizedPlaywrightEnv({
-      INFERNIX_SUBSTRATE_ID: substrateId,
       INFERNIX_EDGE_PORT: edgePort,
       INFERNIX_PLAYWRIGHT_HOST: playwrightHost,
     }),

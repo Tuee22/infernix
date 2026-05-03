@@ -31,9 +31,6 @@
 - `/harbor` -> `infernix-harbor-portal:80`; rewrites to upstream `/`
 <!-- infernix:route-registry:harbor:end -->
 
-- on the simulated substrate, the Harbor prefixes remain published as compatibility routes for
-  validation even though no live Harbor deployment exists
-
 ## Cross-References
 
 - [minio.md](minio.md)

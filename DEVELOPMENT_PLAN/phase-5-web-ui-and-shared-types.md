@@ -9,9 +9,10 @@
 
 ## Phase Status
 
-All Phase 5 sprints are now `Done`. The Linux substrate image owns the demo bundle and Playwright
-toolchain, the routed demo app stays cluster-resident on Apple and Linux alike, and supported E2E
-uses a container-owned Playwright executor without browser-side substrate branching.
+Phase 5 is complete. The Linux substrate image owns the demo bundle and Playwright toolchain, the
+routed demo app stays cluster-resident on Apple and Linux alike, supported E2E uses a
+container-owned Playwright executor without browser-side substrate branching, the explicit
+materialization path can emit demo-off substrate files, and the supported validation rerun passed.
 
 ## Current Repo Assessment
 
@@ -20,7 +21,9 @@ The repository ships the supported PureScript demo path: `web/src/Main.purs` and
 frontend unit suite, `src/Infernix/Web/Contracts.hs` owns the handwritten browser contract, and
 `npm --prefix web run build` regenerates generated contracts and bundles the app into
 `web/dist/app.js`. The generated browser contracts and workbench state still expose the active
-substrate through `runtimeMode` fields.
+substrate through `runtimeMode` fields. The code can honor `demo_ui = false`, and the supported
+materialization path now emits that shape with `--demo-ui false`. The supported validation rerun
+passed, so this phase is done.
 
 ## Substrate-Driven Demo Catalog Contract
 
@@ -56,7 +59,8 @@ clustered routed surface on every supported substrate.
 
 - the browser workbench loads through the routed surface and consumes the active generated catalog
 - `cluster up` deploys `infernix-demo` through Helm when `demo_ui` is on
-- when `demo_ui` is off, `/` is absent from the route inventory
+- when the supported materialization path stages a file with `--demo-ui false`, `/` is absent from
+  the route inventory
 
 ### Remaining Work
 

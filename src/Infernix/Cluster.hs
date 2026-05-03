@@ -33,7 +33,7 @@ import Infernix.Cluster.Discover
 import Infernix.Cluster.PublishImages qualified as PublishImages
 import Infernix.Config (Paths (..))
 import Infernix.Config qualified as Config
-import Infernix.DemoConfig (decodeDemoConfigFile, ensureGeneratedDemoConfigFile)
+import Infernix.DemoConfig (decodeDemoConfigFile)
 import Infernix.Engines.AppleSilicon (ensureAppleSiliconRuntimeReady)
 import Infernix.Models
 import Infernix.Routes (routeHelmValues)
@@ -201,7 +201,7 @@ clusterUpWithPlatform :: Paths -> RuntimeMode -> IO ()
 clusterUpWithPlatform paths runtimeMode = do
   let controlPlane = Config.controlPlaneContext paths
   requestedPort <- chooseEdgePort paths
-  generatedConfigPath <- ensureGeneratedDemoConfigFile paths runtimeMode
+  generatedConfigPath <- requireGeneratedDemoConfigFile paths runtimeMode
   generatedConfig <- decodeDemoConfigFile generatedConfigPath
   requestedPayload <- Lazy.readFile generatedConfigPath
   let demoUiEnabledValue = demoUiEnabled generatedConfig
@@ -216,10 +216,10 @@ clusterUpWithPlatform paths runtimeMode = do
             claims = seedClaims,
             clusterRuntimeMode = runtimeMode,
             kubeconfigPath = Config.generatedKubeconfigPath paths,
-            generatedDemoConfigPath = Config.generatedDemoConfigPath paths runtimeMode,
-            publishedDemoConfigPath = Config.publishedConfigMapCatalogPath paths runtimeMode,
+            generatedDemoConfigPath = Config.generatedDemoConfigPath paths,
+            publishedDemoConfigPath = Config.publishedConfigMapCatalogPath paths,
             publishedConfigMapManifestPath = Config.publishedConfigMapManifestPath paths,
-            mountedDemoConfigPath = Config.watchedDemoConfigPath runtimeMode,
+            mountedDemoConfigPath = Config.watchedDemoConfigPath,
             updatedAt = claimDiscoveryTime
           }
   claimDiscoveryValuesPath <- writeHelmValuesFile paths controlPlane claimDiscoveryState requestedPayload FinalPhase
@@ -236,17 +236,17 @@ clusterUpWithPlatform paths runtimeMode = do
   waitForKubernetesApi paths runtimeMode
   configureRuntimeModeCluster paths runtimeMode
   let demoConfigPath = generatedConfigPath
-      publishedCatalogPath = Config.publishedConfigMapCatalogPath paths runtimeMode
+      publishedCatalogPath = Config.publishedConfigMapCatalogPath paths
       configMapManifestPath = Config.publishedConfigMapManifestPath paths
       publicationPath = Config.publicationStatePath paths
-      mountedCatalogPath = Config.watchedDemoConfigPath runtimeMode
+      mountedCatalogPath = Config.watchedDemoConfigPath
       payload = requestedPayload
   createDirectoryIfMissing True (buildRoot paths)
   createDirectoryIfMissing True (takeDirectory publishedCatalogPath)
   createDirectoryIfMissing True (takeDirectory configMapManifestPath)
   createDirectoryIfMissing True (takeDirectory publicationPath)
   Lazy.writeFile publishedCatalogPath payload
-  writeFile configMapManifestPath (renderConfigMapManifest runtimeMode payload)
+  writeFile configMapManifestPath (renderConfigMapManifest payload)
   now <- getCurrentTime
   let seedState =
         ClusterState
@@ -299,6 +299,34 @@ clusterUpWithPlatform paths runtimeMode = do
   putStrLn ("publishedDemoConfigPath: " <> publishedCatalogPath)
   putStrLn ("mountedDemoConfigPath: " <> mountedCatalogPath)
 
+requireGeneratedDemoConfigFile :: Paths -> RuntimeMode -> IO FilePath
+requireGeneratedDemoConfigFile paths expectedRuntimeMode = do
+  let filePath = Config.generatedDemoConfigPath paths
+  filePresent <- doesFileExist filePath
+  unless filePresent $
+    ioError
+      ( userError
+          ( unlines
+              [ "Missing generated substrate file: " <> filePath,
+                "Restage it before running cluster operations.",
+                "Example: infernix internal materialize-substrate " <> Text.unpack (runtimeModeId expectedRuntimeMode)
+              ]
+          )
+      )
+  demoConfig <- decodeDemoConfigFile filePath
+  unless (configRuntimeMode demoConfig == expectedRuntimeMode) $
+    ioError
+      ( userError
+          ( unlines
+              [ "Generated substrate file runtime mismatch: " <> filePath,
+                "expected: " <> Text.unpack (runtimeModeId expectedRuntimeMode),
+                "actual: " <> Text.unpack (runtimeModeId (configRuntimeMode demoConfig)),
+                "Restage the file for the active substrate before running cluster operations."
+              ]
+          )
+      )
+  pure filePath
+
 clusterDown :: Maybe RuntimeMode -> IO ()
 clusterDown maybeRuntimeMode = do
   paths <- Config.discoverPaths
@@ -343,8 +371,8 @@ clusterStatus maybeRuntimeMode = do
       putStrLn ("runtimeMode: " <> Text.unpack (runtimeModeId runtimeMode))
       putStrLn ("buildRoot: " <> buildRoot paths)
       putStrLn ("dataRoot: " <> dataRoot paths)
-      putStrLn ("expectedDemoConfigPath: " <> Config.generatedDemoConfigPath paths runtimeMode)
-      putStrLn ("expectedMountedDemoConfigPath: " <> Config.watchedDemoConfigPath runtimeMode)
+      putStrLn ("expectedDemoConfigPath: " <> Config.generatedDemoConfigPath paths)
+      putStrLn ("expectedMountedDemoConfigPath: " <> Config.watchedDemoConfigPath)
     Just state -> do
       actualPresent <-
         do
@@ -1076,10 +1104,10 @@ applyBootstrapState paths runtimeMode demoUiEnabledValue claimInventory = do
             claims = claimInventory,
             clusterRuntimeMode = runtimeMode,
             kubeconfigPath = Config.generatedKubeconfigPath paths,
-            generatedDemoConfigPath = Config.generatedDemoConfigPath paths runtimeMode,
-            publishedDemoConfigPath = Config.publishedConfigMapCatalogPath paths runtimeMode,
+            generatedDemoConfigPath = Config.generatedDemoConfigPath paths,
+            publishedDemoConfigPath = Config.publishedConfigMapCatalogPath paths,
             publishedConfigMapManifestPath = Config.publishedConfigMapManifestPath paths,
-            mountedDemoConfigPath = Config.watchedDemoConfigPath runtimeMode,
+            mountedDemoConfigPath = Config.watchedDemoConfigPath,
             updatedAt = now
           }
   applyNamespace state "platform"
@@ -2500,7 +2528,7 @@ renderHelmValues controlPlane state demoConfigPayload deployPhase engineCommandO
         "  publishedNodePort: 30090",
         "  listenerPort: 80",
         "demoConfig:",
-        "  fileName: infernix-demo-" <> Text.unpack (runtimeModeId (clusterRuntimeMode state)) <> ".dhall",
+        "  fileName: infernix-substrate.dhall",
         "  catalogPayload: |",
         indentBlock 4 (LazyChar8.unpack demoConfigPayload),
         "demo:",

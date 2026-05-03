@@ -7,11 +7,12 @@
 
 ## Bring-Up
 
+- confirm the active build root already carries `infernix-substrate.dhall`; on Apple host-native
+  flows stage it with `./.build/infernix internal materialize-substrate apple-silicon`, and the
+  supported Linux image build stages it while baking the substrate image
 - run `infernix cluster up`
 - on the Apple host-native path, the command reconciles Homebrew-managed Colima, Docker CLI,
   `kind`, `kubectl`, and `helm` before it attempts the real Kind workflow
-- if Docker, Kind, Helm, or kubectl are unavailable, expect `cluster up` to use the simulated
-  substrate; `cluster status` will report that mode and the published routes remain available
 - for `linux-gpu`, confirm the supported NVIDIA host satisfies the documented `nvidia-smi` and
   `docker run --gpus all` preflight contract before cluster creation
 - for `linux-gpu`, also confirm the host filesystem has substantial free space before `cluster up`
@@ -52,9 +53,6 @@
 - `curl http://127.0.0.1:<port>/pulsar/admin/admin/v2/clusters` checks the `/pulsar/admin -> /` rewrite into Pulsar's `/admin/v2` surface.
 - `curl http://127.0.0.1:<port>/pulsar/ws/v2/producer/public/default/demo` checks the `/pulsar/ws -> /ws` rewrite and returns `405 Method Not Allowed` on the real cluster path.
 <!-- infernix:route-registry:cluster-bootstrap:end -->
-
-- on the simulated substrate, those same routes return compatibility payloads proving the published
-  route and rewrite behavior rather than live Harbor, MinIO, or Pulsar content
 
 ## Teardown
 

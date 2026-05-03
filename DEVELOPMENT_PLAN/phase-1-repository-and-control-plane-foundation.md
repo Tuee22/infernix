@@ -10,16 +10,18 @@
 
 ## Phase Status
 
-All Phase 1 sprints are now `Done`. The control-plane surface closes around the generated
-`infernix-substrate.dhall` file, the public CLI no longer exposes runtime-mode overrides, and the
-supported Linux operator story is the baked-image outer-container launcher only.
+Phase 1 is complete. The supported validation rerun passed, the public CLI no longer exposes
+runtime-mode overrides, the Linux operator story is the baked-image outer-container launcher only,
+and substrate-file staging now closes through explicit materialization helpers without any
+file-absent fallback path.
 
 ## Current Repo Assessment
 
 The repo matches the Phase 1 ownership contract directly: the control plane has a Haskell-owned
 command registry, the governed root docs point at canonical `documents/` topics with explicit
-metadata, the Linux launcher uses a baked image snapshot, and the active substrate comes only from
-the generated `.dhall` beside the binary.
+metadata, the Linux launcher uses a baked image snapshot, and `infernix-substrate.dhall` is staged
+under the build root through explicit helper invocations instead of file-absent fallback logic.
+The supported validation rerun passed, so this phase is done.
 
 ## Substrate Foundation
 
@@ -340,21 +342,24 @@ None.
 ## Sprint 1.10: Build-Time Substrate Selection, Flag Removal, and Launcher Reset [Done]
 
 **Status**: Done
+**Implementation**: `src/Infernix/Config.hs`, `src/Infernix/DemoConfig.hs`, `src/Infernix/CLI.hs`, `docker/linux-substrate.Dockerfile`, `compose.yaml`
 **Docs to update**: `README.md`, `documents/development/local_dev.md`, `documents/engineering/docker_policy.md`, `documents/engineering/build_artifacts.md`, `documents/reference/cli_reference.md`, `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`
 
 ### Objective
 
-Replace user-selected runtime-mode overrides with one compile-time generated substrate `.dhall`
-and collapse the launcher story onto the requested Apple-host-native and Linux-Compose doctrines.
+Replace user-selected runtime-mode overrides with one staged substrate file and collapse the
+launcher story onto the requested Apple-host-native and Linux-Compose doctrines.
 
 ### Deliverables
 
 - the supported CLI removes `--runtime-mode` and all use of `INFERNIX_RUNTIME_MODE`
-- the build emits one substrate `.dhall` beside the binary and the CLI reads that file as the
-  single source of truth for active substrate
-- Cabal build rules derive the substrate from build context:
-  host build outside the outer container means `apple-silicon`; container build on a
-  `nvidia:cuda` base image means `linux-gpu`; every other container build means `linux-cpu`
+- the build or explicit staging flow emits one substrate file under the active build root and the
+  CLI reads that file as the primary source of truth for active substrate
+- Apple host-native workflows stage `./.build/infernix-substrate.dhall` with
+  `./.build/infernix internal materialize-substrate apple-silicon [--demo-ui true|false]`
+- Linux image builds stage `/opt/build/infernix/infernix-substrate.dhall` with
+  `infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>`
+- supported runtime, cluster, and validation entrypoints fail fast when the staged file is absent
 - Apple Silicon remains the only supported host build path outside a container
 - Linux host-native `infernix` execution is not a supported operator surface
 - Linux outer-container commands use Compose as the only supported launcher for both `linux-cpu`
@@ -367,9 +372,10 @@ and collapse the launcher story onto the requested Apple-host-native and Linux-C
 ### Validation
 
 - `./.build/infernix --help` no longer documents `--runtime-mode`
-- supported Apple host-native commands run without any runtime-mode flag or environment override
+- `./.build/infernix internal materialize-substrate apple-silicon` stages the active substrate
+  without any runtime-mode flag or user-facing environment override
 - supported Linux containerized commands run through `docker compose run --rm infernix infernix ...`
-  without any runtime-mode flag or environment override
+  without any runtime-mode flag or user-facing environment override
 
 ### Remaining Work
 

@@ -18,6 +18,8 @@
 
 - build both Haskell binaries with
   `cabal --builddir=.build/cabal install --installdir=./.build --install-method=copy --overwrite-policy=always exe:infernix exe:infernix-demo`
+- stage the active substrate file with
+  `./.build/infernix internal materialize-substrate apple-silicon`
 - run `./.build/infernix cluster up`
 - use `./.build/infernix kubectl ...` instead of mutating global
   kubeconfig
@@ -34,6 +36,9 @@ reconciles those prerequisites automatically.
 - supported Apple host workflows do not use repo-owned scripts; the direct `cabal` command keeps
   Cabal output under `./.build/cabal` and materializes `./.build/infernix` and
   `./.build/infernix-demo`
+- supported Apple host workflows stage `./.build/infernix-substrate.dhall` explicitly through
+  `./.build/infernix internal materialize-substrate apple-silicon`; add `--demo-ui false` when
+  preparing a demo-off config
 - `cluster up` writes `./.build/infernix.kubeconfig`
 - supported flows do not mutate `$HOME/.kube/config`
 - when the demo surface is enabled, the browser stays on the clustered routed surface while the

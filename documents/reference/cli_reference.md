@@ -54,6 +54,7 @@
 - `infernix internal discover claims RENDERED_CHART` - prints the persistent-claim inventory discovered in a rendered chart manifest
 - `infernix internal discover harbor-overlay OVERLAY` - prints the Harbor-backed image references discovered in a rendered override payload
 - `infernix internal publish-chart-images RENDERED_CHART OUTPUT` - publishes the chart image inventory into a Harbor override file
+- `infernix internal materialize-substrate RUNTIME_MODE [--demo-ui true|false]` - writes the generated substrate file for one explicit substrate id into the active build root
 - `infernix internal demo-config load PATH` - loads one generated demo config and prints the rendered model listing
 - `infernix internal demo-config validate PATH` - validates one generated demo config file
 - `infernix internal pulsar-roundtrip DEMO_CONFIG_PATH MODEL_ID INPUT_TEXT` - publishes one inference request through Pulsar and waits for the matching result
@@ -72,6 +73,9 @@
   `infernix-demo serve` are the only long-running daemon entrypoints
 - `cluster status` is read-only and reports publication-state details together with route
   inventory and state paths
+- `infernix internal materialize-substrate ...` is the supported way to restage
+  `infernix-substrate.dhall`; `cluster up`, `service`, and the validation entrypoints do not
+  regenerate it on first command execution
 - `infernix service` is the production daemon. It binds no HTTP port, consumes the active
   `.dhall` `request_topics`, `result_topic`, and `engines` fields and uses the Pulsar transport
   configured for the active substrate

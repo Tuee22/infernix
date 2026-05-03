@@ -12,9 +12,10 @@
 
 ## Phase Status
 
-All Phase 6 sprints are now `Done`. The validation entrypoints, routed coverage,
-governed-root-document metadata closure, structured CLI-registry closure, and compatibility-shim
-cleanup are present in the current worktree, and the supported test story is substrate-specific.
+Phase 6 is complete. The validation entrypoints, routed coverage, governed-root-document metadata
+closure, structured CLI-registry closure, and the earlier compatibility-shim cleanup are present
+in the current worktree, the supported test story is substrate-specific, and the full supported
+validation rerun passed.
 
 ## Current Repo Assessment
 
@@ -24,8 +25,9 @@ image carries the source-snapshot manifest needed for git-less `infernix lint fi
 routed Playwright suite exhaustively exercises every demo-visible generated catalog entry for the
 active substrate, and the integration suite enumerates every generated active-substrate catalog
 entry while also carrying Harbor, MinIO, Pulsar, and Harbor PostgreSQL recovery or lifecycle
-checks in code. The generated file, `cluster status`, publication JSON, and generated browser
-contracts still expose the active substrate through `runtimeMode` fields or lines.
+checks in code. The staged file, `cluster status`, publication JSON, and generated browser
+contracts still expose the active substrate through `runtimeMode` fields or lines. The supported
+full validation rerun passed, so this phase is done.
 
 ## Validation Surface
 
@@ -254,6 +256,7 @@ None.
 ## Sprint 6.19: Single-Substrate Validation Closure and Simulation Removal [Done]
 
 **Status**: Done
+**Implementation**: `src/Infernix/Config.hs`, `src/Infernix/CLI.hs`, `web/test/run_playwright_matrix.mjs`, `docker/linux-substrate.Dockerfile`, `test/integration/Spec.hs`, `test/unit/Spec.hs`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/00-overview.md`, `DEVELOPMENT_PLAN/system-components.md`
 **Docs to update**: `README.md`, `documents/development/local_dev.md`, `documents/development/testing_strategy.md`, `documents/development/chaos_testing.md`, `documents/engineering/testing.md`, `documents/engineering/portability.md`, `documents/reference/cli_reference.md`, `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`
 
 ### Objective

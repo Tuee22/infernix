@@ -14,10 +14,13 @@ lint rules established here.
 
 ## Current Repo Assessment
 
-The governed `documents/` suite, the governed root docs, and the development plan now describe the
-same substrate-generated `.dhall` doctrine. The canonical docs align on clustered demo hosting,
-Compose-only Linux control-plane launchers, active-substrate validation, and the final route and
-publication ownership model.
+The governed `documents/` suite, root docs, and development plan now describe the same explicit
+staged-substrate doctrine: Apple host workflows stage `./.build/infernix-substrate.dhall` through
+`./.build/infernix internal materialize-substrate apple-silicon`, Linux image builds stage
+`/opt/build/infernix/infernix-substrate.dhall` through the same helper family, cluster workloads
+mount the shared `infernix-substrate.dhall` filename, and `--demo-ui false` is the supported way
+to emit a demo-off substrate file. `infernix lint docs` and `infernix docs check` now pass against
+that governed-doc set, so the reopened documentation sprint is closed.
 
 ## Sprint 0.1: `documents/` Suite Scaffold [Done]
 
@@ -246,14 +249,16 @@ implementation follow-ons claim closure against it.
   `infernix-demo` responsible for reading the active `.dhall` and dispatching the correct engine
 - governed docs describe simulation as removed from the supported runtime and validation contract,
   not merely unsupported evidence
-- root guidance names the compile-time generated substrate `.dhall` as the single source of truth
+- root guidance names the explicitly materialized substrate `.dhall` as the single source of truth
   for active substrate, generated catalog, daemon placement, and validation scope
 
 ### Validation
 
-- `infernix lint docs` passes after the governed docs and root docs are updated
-- `infernix docs check` fails if the governed docs or root docs keep stale runtime-mode or
-  simulation doctrine once this sprint lands
+- `infernix lint docs` passes after the governed docs and root docs are updated to describe the
+  current staged-substrate flow honestly
+- `infernix docs check` fails if the governed docs or root docs claim Cabal compile-time substrate
+  generation, first-command auto-generation, file-absent fallback, or runtime-specific in-cluster
+  substrate filenames that the code no longer uses
 - `infernix docs check` fails if the governed docs still describe browser-side substrate selection,
   separate per-substrate integration suites, or any simulated fallback as part of the supported
   contract

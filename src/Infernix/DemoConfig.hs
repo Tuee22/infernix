@@ -2,7 +2,7 @@
 
 module Infernix.DemoConfig
   ( decodeDemoConfigFile,
-    ensureGeneratedDemoConfigFile,
+    materializeGeneratedDemoConfigFile,
     renderModelListing,
     stripDemoConfigBanner,
     validateDemoConfigFile,
@@ -20,7 +20,7 @@ import Infernix.Config qualified as Config
 import Infernix.Models (catalogForMode, encodeDemoConfig, engineBindingsForMode, requestTopicsForMode, resultTopicForMode)
 import Infernix.Types
 import Infernix.Workflow (demoConfigGeneratedBannerLine)
-import System.Directory (createDirectoryIfMissing, doesFileExist)
+import System.Directory (createDirectoryIfMissing)
 import System.FilePath (takeDirectory)
 
 demoConfigBannerBytes :: ByteString.ByteString
@@ -51,28 +51,24 @@ validateDemoConfigFile filePath = do
   _ <- decodeDemoConfigFile filePath
   pure ()
 
-ensureGeneratedDemoConfigFile :: Paths -> RuntimeMode -> IO FilePath
-ensureGeneratedDemoConfigFile paths runtimeMode = do
-  let filePath = Config.generatedDemoConfigPath paths runtimeMode
-  filePresent <- doesFileExist filePath
-  if filePresent
-    then pure filePath
-    else do
-      createDirectoryIfMissing True (takeDirectory filePath)
-      ByteString.writeFile filePath (renderGeneratedDemoConfig paths runtimeMode)
-      pure filePath
+materializeGeneratedDemoConfigFile :: Paths -> RuntimeMode -> Bool -> IO FilePath
+materializeGeneratedDemoConfigFile paths runtimeMode demoUiEnabledValue = do
+  let filePath = Config.generatedDemoConfigPath paths
+  createDirectoryIfMissing True (takeDirectory filePath)
+  ByteString.writeFile filePath (renderGeneratedDemoConfig paths runtimeMode demoUiEnabledValue)
+  pure filePath
 
-renderGeneratedDemoConfig :: Paths -> RuntimeMode -> ByteString.ByteString
-renderGeneratedDemoConfig paths runtimeMode =
+renderGeneratedDemoConfig :: Paths -> RuntimeMode -> Bool -> ByteString.ByteString
+renderGeneratedDemoConfig paths runtimeMode demoUiEnabledValue =
   LazyByteString.toStrict
     ( encodeDemoConfig
         DemoConfig
           { configRuntimeMode = runtimeMode,
             configEdgePort = 0,
             configMapName = "infernix-demo-config",
-            generatedPath = Config.generatedDemoConfigPath paths runtimeMode,
-            mountedPath = Config.watchedDemoConfigPath runtimeMode,
-            demoUiEnabled = True,
+            generatedPath = Config.generatedDemoConfigPath paths,
+            mountedPath = Config.watchedDemoConfigPath,
+            demoUiEnabled = demoUiEnabledValue,
             requestTopics = requestTopicsForMode runtimeMode,
             resultTopic = resultTopicForMode runtimeMode,
             engines = engineBindingsForMode runtimeMode,

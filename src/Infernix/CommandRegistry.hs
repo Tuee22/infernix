@@ -11,8 +11,11 @@ module Infernix.CommandRegistry
   )
 where
 
+import Data.Char (toLower)
 import Data.List (find)
 import Data.Maybe (mapMaybe)
+import Data.Text qualified as Text
+import Infernix.Types (RuntimeMode, parseRuntimeMode)
 
 data Command
   = ShowRootHelp
@@ -39,6 +42,7 @@ data Command
   | InternalDiscoverClaimsCommand FilePath
   | InternalDiscoverHarborOverlayCommand FilePath
   | InternalPublishChartImagesCommand FilePath FilePath
+  | InternalMaterializeSubstrateCommand RuntimeMode Bool
   | InternalDemoConfigLoadCommand FilePath
   | InternalDemoConfigValidateCommand FilePath
   | InternalGeneratePursContractsCommand FilePath
@@ -202,7 +206,7 @@ commandFamilies =
       },
     CommandFamily
       { familyTopic = "internal",
-        familyOverview = "runs build-time helpers for contract generation, chart discovery, demo-config inspection, and Pulsar round-trip validation",
+        familyOverview = "runs build-time helpers for contract generation, chart discovery, substrate materialization, demo-config inspection, and Pulsar round-trip validation",
         familyCommands =
           [ singlePathCommand
               "internal generate-purs-contracts PATH"
@@ -229,6 +233,19 @@ commandFamilies =
               "publishes the chart image inventory into a Harbor override file"
               InternalPublishChartImagesCommand
               ["internal", "publish-chart-images"],
+            CommandSpec
+              { commandUsageSuffix = "internal materialize-substrate RUNTIME_MODE [--demo-ui true|false]",
+                commandDescription = "writes the generated substrate file for one explicit substrate id into the active build root",
+                commandParse = \case
+                  ["internal", "materialize-substrate", rawRuntimeMode] ->
+                    flip InternalMaterializeSubstrateCommand True
+                      <$> parseRuntimeModeArg rawRuntimeMode
+                  ["internal", "materialize-substrate", rawRuntimeMode, "--demo-ui", rawDemoUiEnabled] ->
+                    InternalMaterializeSubstrateCommand
+                      <$> parseRuntimeModeArg rawRuntimeMode
+                      <*> parseDemoUiArg rawDemoUiEnabled
+                  _ -> Nothing
+              },
             singlePathCommand
               "internal demo-config load PATH"
               "loads one generated demo config and prints the rendered model listing"
@@ -316,3 +333,16 @@ twoPathCommand usageSuffix description constructor prefix =
 
 commandWithPrefix :: String -> String
 commandWithPrefix commandSuffix = "infernix " <> commandSuffix
+
+parseRuntimeModeArg :: String -> Maybe RuntimeMode
+parseRuntimeModeArg =
+  parseRuntimeMode . Text.pack
+
+parseDemoUiArg :: String -> Maybe Bool
+parseDemoUiArg rawValue =
+  case map toLower rawValue of
+    "true" -> Just True
+    "false" -> Just False
+    "on" -> Just True
+    "off" -> Just False
+    _ -> Nothing

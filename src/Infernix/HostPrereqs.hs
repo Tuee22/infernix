@@ -33,8 +33,8 @@ ensureAppleHostPrerequisites :: Maybe RuntimeMode -> Command -> IO ()
 ensureAppleHostPrerequisites maybeRuntimeMode command = do
   paths <- discoverPaths
   when (os == "darwin" && controlPlaneContext paths == "host-native") $ do
-    runtimeMode <- resolveRuntimeMode maybeRuntimeMode
-    let requirements = appleHostRequirements runtimeMode command
+    resolvedRuntimeMode <- runtimeModeForApplePrereqs maybeRuntimeMode command
+    let requirements = appleHostRequirements resolvedRuntimeMode command
     unless (null requirements) $ do
       brewExecutable <- requireBrewExecutable
       ensureBrewPrefixOnPath brewExecutable
@@ -45,15 +45,34 @@ ensureAppleHostPrerequisites maybeRuntimeMode command = do
 
 appleHostRequirementIds :: RuntimeMode -> Command -> [String]
 appleHostRequirementIds runtimeMode command =
-  map requirementId (appleHostRequirements runtimeMode command)
+  map requirementId (appleHostRequirements (Just runtimeMode) command)
 
-appleHostRequirements :: RuntimeMode -> Command -> [AppleHostRequirement]
-appleHostRequirements runtimeMode command =
+appleHostRequirements :: Maybe RuntimeMode -> Command -> [AppleHostRequirement]
+appleHostRequirements maybeRuntimeMode command =
   nub
     ( clusterToolRequirements command
         <> webToolRequirements command
-        <> pythonToolRequirements runtimeMode command
+        <> maybe [] (`pythonToolRequirements` command) maybeRuntimeMode
     )
+
+runtimeModeForApplePrereqs :: Maybe RuntimeMode -> Command -> IO (Maybe RuntimeMode)
+runtimeModeForApplePrereqs maybeRuntimeMode command
+  | commandNeedsPythonPrereqs command =
+      case maybeRuntimeMode of
+        Just runtimeMode -> pure (Just runtimeMode)
+        Nothing -> Just <$> resolveRuntimeMode Nothing
+  | otherwise = pure maybeRuntimeMode
+
+commandNeedsPythonPrereqs :: Command -> Bool
+commandNeedsPythonPrereqs = \case
+  ServiceCommand -> True
+  ClusterUpCommand -> True
+  TestLintCommand -> True
+  TestUnitCommand -> True
+  TestIntegrationCommand -> True
+  TestE2ECommand -> True
+  TestAllCommand -> True
+  _ -> False
 
 clusterToolRequirements :: Command -> [AppleHostRequirement]
 clusterToolRequirements = \case

@@ -8,20 +8,16 @@ where
 import Data.Maybe (fromMaybe)
 import Data.Text qualified as Text
 import GHC.IO.Encoding (setLocaleEncoding, utf8)
-import Infernix.Config (discoverPaths, ensureRepoLayout, generatedDemoConfigPath, publicationStatePath, resolveRuntimeMode)
+import Infernix.Config (discoverPaths, ensureRepoLayout, generatedDemoConfigPath, publicationStatePath)
 import Infernix.Demo.Api (DemoApiOptions (..), runDemoApiServer)
-import Infernix.DemoConfig (ensureGeneratedDemoConfigFile)
-import Infernix.Types (runtimeModeId)
+import Infernix.DemoConfig (decodeDemoConfigFile)
+import Infernix.Types (DemoConfig (configRuntimeMode), runtimeModeId)
 import System.Environment (getArgs, lookupEnv)
 import System.Exit (exitFailure)
 
 main :: IO ()
 main = do
   setLocaleEncoding utf8
-  paths <- discoverPaths
-  ensureRepoLayout paths
-  runtimeMode <- resolveRuntimeMode Nothing
-  _ <- ensureGeneratedDemoConfigFile paths runtimeMode
   args <- getArgs
   dispatch args
 
@@ -35,9 +31,11 @@ dispatch ("serve" : serveArgs) =
       exitFailure
     Right (maybePort, maybeDhallPath) -> do
       paths <- discoverPaths
-      runtimeMode <- resolveRuntimeMode Nothing
       let selectedDhallPath =
-            fromMaybe (generatedDemoConfigPath paths runtimeMode) maybeDhallPath
+            fromMaybe (generatedDemoConfigPath paths) maybeDhallPath
+      ensureRepoLayout paths
+      demoConfig <- decodeDemoConfigFile selectedDhallPath
+      let runtimeMode = configRuntimeMode demoConfig
       maybeBindHost <- lookupEnv "INFERNIX_BIND_HOST"
       maybePublicationPath <- lookupEnv "INFERNIX_PUBLICATION_STATE_PATH"
       putStrLn ("demoRuntimeMode: " <> Text.unpack (runtimeModeId runtimeMode))

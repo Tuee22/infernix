@@ -5,7 +5,6 @@ module Main (main) where
 import Control.Concurrent (threadDelay)
 import Control.Exception (SomeException, displayException, finally, try)
 import Control.Monad (forM_, when)
-import Data.ByteString.Lazy qualified as Lazy
 import Data.Char (isAsciiUpper)
 import Data.List (find, isInfixOf, isPrefixOf, isSuffixOf, stripPrefix)
 import Data.Map.Strict qualified as Map
@@ -16,10 +15,7 @@ import Infernix.Config (Paths (..))
 import Infernix.Config qualified as Config
 import Infernix.DemoConfig (decodeDemoConfigFile)
 import Infernix.Models
-  ( catalogForMode,
-    encodeDemoConfig,
-    engineBindingsForMode,
-    requestTopicsForMode,
+  ( requestTopicsForMode,
     resultTopicForMode,
   )
 import Infernix.Runtime.Pulsar
@@ -290,7 +286,7 @@ validateEdgePortConflictAndRediscovery paths runtimeMode = do
 validateDemoUiDisabled :: Paths -> RuntimeMode -> IO ()
 validateDemoUiDisabled paths runtimeMode = do
   cleanupRuntimeState paths
-  writeGeneratedDemoConfig paths runtimeMode False
+  materializeGeneratedSubstrate runtimeMode False
   clusterUp (Just runtimeMode)
   state <- maybe (fail "cluster state was not available after demo-disabled cluster up") pure =<< loadClusterState paths
   assert (clusterPresent state) "cluster up records cluster presence when demo_ui is disabled"
@@ -326,7 +322,7 @@ validateDemoUiDisabled paths runtimeMode = do
     )
     "pulsar websocket route remains published when demo_ui is disabled"
   clusterDown (Just runtimeMode)
-  writeGeneratedDemoConfig paths runtimeMode True
+  materializeGeneratedSubstrate runtimeMode True
 
 withOptionalEnv :: String -> Maybe String -> IO a -> IO a
 withOptionalEnv name maybeValue action = do
@@ -498,25 +494,21 @@ assert :: Bool -> String -> IO ()
 assert True _ = pure ()
 assert False message = fail message
 
-writeGeneratedDemoConfig :: Paths -> RuntimeMode -> Bool -> IO ()
-writeGeneratedDemoConfig paths runtimeMode demoUiEnabledValue = do
-  createDirectoryIfMissing True (buildRoot paths)
-  Lazy.writeFile
-    (Config.generatedDemoConfigPath paths runtimeMode)
-    ( encodeDemoConfig
-        DemoConfig
-          { configRuntimeMode = runtimeMode,
-            configEdgePort = 0,
-            configMapName = "infernix-demo-config",
-            generatedPath = Config.generatedDemoConfigPath paths runtimeMode,
-            mountedPath = Config.watchedDemoConfigPath runtimeMode,
-            demoUiEnabled = demoUiEnabledValue,
-            requestTopics = requestTopicsForMode runtimeMode,
-            resultTopic = resultTopicForMode runtimeMode,
-            engines = engineBindingsForMode runtimeMode,
-            models = catalogForMode runtimeMode
-          }
-    )
+materializeGeneratedSubstrate :: RuntimeMode -> Bool -> IO ()
+materializeGeneratedSubstrate runtimeMode demoUiEnabledValue = do
+  let demoUiFlag =
+        if demoUiEnabledValue
+          then "true"
+          else "false"
+  _ <-
+    captureInfernixOutput
+      [ "internal",
+        "materialize-substrate",
+        showRuntimeMode runtimeMode,
+        "--demo-ui",
+        demoUiFlag
+      ]
+  pure ()
 
 reportStep :: String -> IO ()
 reportStep message = do

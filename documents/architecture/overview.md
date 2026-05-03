@@ -25,8 +25,7 @@ documentation suite.
   frontend contracts emitted by `infernix internal generate-purs-contracts` through
   `purescript-bridge` from dedicated browser-contract ADTs
 - chart assets target Harbor, MinIO, Pulsar, Envoy Gateway, and operator-managed PostgreSQL on the
-  real Kind path; when the required platform commands are unavailable, `cluster up` falls back to a
-  simulated substrate that still publishes the demo and portal route inventory for validation
+  real Kind path; supported workflows fail fast when the required platform commands are unavailable
 - Harbor is always the first deployed service on a pristine cluster, and only Harbor plus
   Harbor-required backend services such as MinIO and PostgreSQL may pull from public container
   repositories before Harbor is ready

@@ -23,10 +23,8 @@
 - `/minio/console` -> `infernix-minio-console:9090`; rewrites to upstream `/`
 - `/minio/s3` -> `infernix-minio:9000`; rewrites to upstream `/`
 <!-- infernix:route-registry:minio:end -->
-
-- on the simulated substrate, those routes remain published as compatibility surfaces for rewrite
-  validation; on the real cluster path, `/minio/console/browser` returns the live MinIO console
-  HTML and `/minio/s3/...` reaches the live S3 surface
+- on the real cluster path, `/minio/console/browser` returns the live MinIO console HTML and
+  `/minio/s3/...` reaches the live S3 surface
 
 ## Cross-References
 

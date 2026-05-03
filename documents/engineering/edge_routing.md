@@ -11,8 +11,7 @@
   route-aware docs, and route validation expectations.
 - The routed surface always publishes Harbor, MinIO, and Pulsar, and publishes the demo routes
   only when the active generated config enables the demo UI.
-- The same prefixes and rewrites stay visible on the simulated substrate so route behavior remains
-  testable without a real platform toolchain.
+- Supported workflows fail fast instead of substituting a simulated route surface.
 
 ## Current Status
 
@@ -42,13 +41,9 @@ helper-registry route or namespace.
 <!-- infernix:route-registry:edge-routing:end -->
 
 - when the demo surface is enabled, `/` and the demo `/api*` and `/objects/` routes target the
-  `infernix-demo` workload; on the Apple host-native path, the same demo surface can be served by
-  `infernix-demo serve --dhall PATH --port N` and reached through the same base URL via the host
-  bridge
+  `infernix-demo` workload; direct `infernix-demo serve --dhall PATH --port N` still exposes the
+  same Haskell demo API surface outside the routed cluster path when used intentionally
 - `/api/publication` reports daemon location plus routed-upstream health and backing-state details
-- when the platform toolchain is unavailable and `cluster up` uses the simulated substrate, the
-  same route prefixes are still published and served by compatibility handlers so route and
-  rewrite behavior remain testable
 
 ## Gateway Ownership
 

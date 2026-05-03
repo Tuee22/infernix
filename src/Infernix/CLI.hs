@@ -25,7 +25,7 @@ import Infernix.CommandRegistry
 import Infernix.Config
 import Infernix.DemoConfig
   ( decodeDemoConfigFile,
-    ensureGeneratedDemoConfigFile,
+    materializeGeneratedDemoConfigFile,
     renderModelListing,
     validateDemoConfigFile,
   )
@@ -82,71 +82,81 @@ main :: IO ()
 main = do
   setLocaleEncoding utf8
   syncBuildRootExecutable
-  paths <- discoverPaths
-  runtimeMode <- resolveRuntimeMode Nothing
-  _ <- ensureGeneratedDemoConfigFile paths runtimeMode
   args <- getArgs
-  dispatch args
-
-dispatch :: [String] -> IO ()
-dispatch args =
   case parseCommand args of
     Left _ -> do
       putStrLn helpText
       exitFailure
     Right command -> do
-      ensureAppleHostPrerequisites Nothing command
-      case command of
-        ShowRootHelp -> putStrLn helpText
-        ShowTopicHelp topic -> putStrLn (topicHelpText topic)
-        ServiceCommand -> runService Nothing
-        ClusterUpCommand -> clusterUp Nothing
-        ClusterDownCommand -> clusterDown Nothing
-        ClusterStatusCommand -> clusterStatus Nothing
-        CacheStatusCommand -> runCacheStatus Nothing
-        CacheEvictCommand maybeModelId -> runCacheEvict Nothing (Text.pack <$> maybeModelId)
-        CacheRebuildCommand maybeModelId -> runCacheRebuild Nothing (Text.pack <$> maybeModelId)
-        KubectlCommand kubectlArgs -> runKubectlCompat kubectlArgs
-        DocsCheckCommand -> runDocsLint
-        LintFilesCommand -> runFilesLint
-        LintDocsCommand -> runDocsLint
-        LintProtoCommand -> runProtoLint
-        LintChartCommand -> runChartLint
-        TestLintCommand -> runLint Nothing
-        TestUnitCommand -> do
-          ensureWebDependencies
-          ensurePythonAdapterDependencies Nothing
-          runCabalCommand Nothing ["test", "infernix-unit"]
-          runWebNpmCommand Nothing ["--prefix", "web", "run", "test:unit"]
-        TestIntegrationCommand -> runCabalCommand Nothing ["test", "infernix-integration"]
-        TestE2ECommand -> runEndToEnd Nothing
-        TestAllCommand -> do
-          ensureWebDependencies
-          runLint Nothing
-          ensurePythonAdapterDependencies Nothing
-          runCabalCommand Nothing ["test", "infernix-unit"]
-          runWebNpmCommand Nothing ["--prefix", "web", "run", "test:unit"]
-          runCabalCommand Nothing ["test", "infernix-integration"]
-          runEndToEnd Nothing
-        InternalDiscoverImagesCommand renderedChartPath ->
-          mapM_ putStrLn =<< discoverChartImagesFile renderedChartPath
-        InternalDiscoverClaimsCommand renderedChartPath ->
-          mapM_ (putStrLn . renderPersistentClaimLine) =<< discoverChartClaimsFile renderedChartPath
-        InternalDiscoverHarborOverlayCommand overlayPath ->
-          mapM_ putStrLn =<< discoverHarborOverlayImageRefsFile overlayPath
-        InternalPublishChartImagesCommand renderedChartPath outputPath ->
-          PublishImages.publishChartImagesFile PublishImages.defaultHarborPublishOptions renderedChartPath outputPath
-        InternalDemoConfigLoadCommand demoConfigPath -> do
-          demoConfig <- decodeDemoConfigFile demoConfigPath
-          putStr (renderModelListing demoConfig)
-        InternalDemoConfigValidateCommand demoConfigPath ->
-          validateDemoConfigFile demoConfigPath
-        InternalGeneratePursContractsCommand outputDir -> do
-          runtimeMode <- resolveRuntimeMode Nothing
-          writeGeneratedPursContracts runtimeMode outputDir
-        InternalPulsarRoundTripCommand demoConfigPath modelIdValue inputTextValue -> do
-          runtimeMode <- resolveRuntimeMode Nothing
-          runInternalPulsarRoundTrip runtimeMode demoConfigPath modelIdValue inputTextValue
+      ensureAppleHostPrerequisites (commandRuntimeMode command) command
+      dispatch command
+
+dispatch :: Command -> IO ()
+dispatch command =
+  case command of
+    ShowRootHelp -> putStrLn helpText
+    ShowTopicHelp topic -> putStrLn (topicHelpText topic)
+    ServiceCommand -> runService Nothing
+    ClusterUpCommand -> clusterUp Nothing
+    ClusterDownCommand -> clusterDown Nothing
+    ClusterStatusCommand -> clusterStatus Nothing
+    CacheStatusCommand -> runCacheStatus Nothing
+    CacheEvictCommand maybeModelId -> runCacheEvict Nothing (Text.pack <$> maybeModelId)
+    CacheRebuildCommand maybeModelId -> runCacheRebuild Nothing (Text.pack <$> maybeModelId)
+    KubectlCommand kubectlArgs -> runKubectlCompat kubectlArgs
+    DocsCheckCommand -> runDocsLint
+    LintFilesCommand -> runFilesLint
+    LintDocsCommand -> runDocsLint
+    LintProtoCommand -> runProtoLint
+    LintChartCommand -> runChartLint
+    TestLintCommand -> runLint Nothing
+    TestUnitCommand -> do
+      ensureWebDependencies
+      ensurePythonAdapterDependencies Nothing
+      runCabalCommand Nothing ["test", "infernix-unit"]
+      runWebNpmCommand Nothing ["--prefix", "web", "run", "test:unit"]
+    TestIntegrationCommand -> runCabalCommand Nothing ["test", "infernix-integration"]
+    TestE2ECommand -> runEndToEnd Nothing
+    TestAllCommand -> do
+      ensureWebDependencies
+      runLint Nothing
+      ensurePythonAdapterDependencies Nothing
+      runCabalCommand Nothing ["test", "infernix-unit"]
+      runWebNpmCommand Nothing ["--prefix", "web", "run", "test:unit"]
+      runCabalCommand Nothing ["test", "infernix-integration"]
+      runEndToEnd Nothing
+    InternalDiscoverImagesCommand renderedChartPath ->
+      mapM_ putStrLn =<< discoverChartImagesFile renderedChartPath
+    InternalDiscoverClaimsCommand renderedChartPath ->
+      mapM_ (putStrLn . renderPersistentClaimLine) =<< discoverChartClaimsFile renderedChartPath
+    InternalDiscoverHarborOverlayCommand overlayPath ->
+      mapM_ putStrLn =<< discoverHarborOverlayImageRefsFile overlayPath
+    InternalPublishChartImagesCommand renderedChartPath outputPath ->
+      PublishImages.publishChartImagesFile PublishImages.defaultHarborPublishOptions renderedChartPath outputPath
+    InternalMaterializeSubstrateCommand runtimeMode demoUiEnabledValue -> do
+      paths <- discoverPaths
+      ensureRepoLayout paths
+      materializedPath <- materializeGeneratedDemoConfigFile paths runtimeMode demoUiEnabledValue
+      putStrLn ("runtimeMode: " <> Text.unpack (runtimeModeId runtimeMode))
+      putStrLn ("demoUiEnabled: " <> show demoUiEnabledValue)
+      putStrLn ("generatedDemoConfigPath: " <> materializedPath)
+    InternalDemoConfigLoadCommand demoConfigPath -> do
+      demoConfig <- decodeDemoConfigFile demoConfigPath
+      putStr (renderModelListing demoConfig)
+    InternalDemoConfigValidateCommand demoConfigPath ->
+      validateDemoConfigFile demoConfigPath
+    InternalGeneratePursContractsCommand outputDir -> do
+      runtimeMode <- resolveRuntimeMode Nothing
+      writeGeneratedPursContracts runtimeMode outputDir
+    InternalPulsarRoundTripCommand demoConfigPath modelIdValue inputTextValue -> do
+      demoConfig <- decodeDemoConfigFile demoConfigPath
+      runInternalPulsarRoundTrip (configRuntimeMode demoConfig) demoConfigPath modelIdValue inputTextValue
+
+commandRuntimeMode :: Command -> Maybe RuntimeMode
+commandRuntimeMode command =
+  case command of
+    InternalMaterializeSubstrateCommand runtimeMode _ -> Just runtimeMode
+    _ -> Nothing
 
 runLint :: Maybe RuntimeMode -> IO ()
 runLint maybeRuntimeMode = do
@@ -282,8 +292,6 @@ runPlaywrightImage runtimeMode maybeNetwork routeProbeHost edgePort expectedDaem
       ]
         <> maybe [] (\networkName -> ["--network", networkName]) maybeNetwork
         <> [ "-e",
-             "INFERNIX_SUBSTRATE_ID=" <> Text.unpack (runtimeModeId runtimeMode),
-             "-e",
              "INFERNIX_EDGE_PORT=" <> show edgePort,
              "-e",
              "INFERNIX_PLAYWRIGHT_HOST=" <> routeProbeHost,

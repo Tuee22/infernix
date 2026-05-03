@@ -49,13 +49,22 @@ A phase or sprint can move to `Done` only when all of the following are true:
 
 ## Current Repo Assessment
 
-The repository now implements the substrate-generated `.dhall` doctrine described by this plan.
-The supported CLI reads the active substrate from `infernix-substrate.dhall`, cluster publication
-mirrors that exact file into `ConfigMap/infernix-demo-config`, the routed demo surface stays
-cluster-resident across substrates, Linux operator workflows close around Compose-driven outer
-containers, and validation reports only the active built substrate instead of implying a default
-cross-substrate matrix. The generated file, `cluster status`, publication JSON, and generated
-browser contracts still serialize that active substrate under `runtimeMode` field names.
+The repository now implements the substrate-file doctrine described by this plan. Supported flows
+stage one `infernix-substrate.dhall` beside the active build root through explicit
+`infernix internal materialize-substrate ...` helpers: Apple operators run
+`./.build/infernix internal materialize-substrate apple-silicon`, and Linux substrate images stage
+`/opt/build/infernix/infernix-substrate.dhall` during Docker build with
+`infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>`. Supported
+runtime, cluster, and validation entrypoints fail fast if the staged file is absent instead of
+falling back to host detection or `INFERNIX_SUBSTRATE_ID`. Cluster publication mirrors the exact
+payload locally under `./.data/runtime/configmaps/infernix-demo-config/infernix-substrate.dhall`
+and mounts that same filename in cluster workloads at
+`/opt/build/infernix/infernix-substrate.dhall`. The file keeps the legacy `.dhall` filename even
+though the payload is banner-prefixed JSON. Validation already reports only the active built
+substrate instead of implying a default cross-substrate matrix, and the generated file,
+`cluster status`, publication JSON, and generated browser contracts still serialize that active
+substrate under `runtimeMode` field names. The supported Linux outer-container
+`infernix test all` rerun now passes, so the reopened plan items are closed.
 
 Monitoring is not a supported first-class surface.
 
@@ -66,7 +75,7 @@ The plan keeps these concepts separate:
 | Concept | Values | Meaning |
 |---------|--------|---------|
 | Control-plane execution context | Apple host-native, Linux outer-container | where `infernix` runs |
-| Supported substrate | `apple-silicon`, `linux-cpu`, `linux-gpu` | which compile-time generated substrate `.dhall` the built binary carries |
+| Supported substrate | `apple-silicon`, `linux-cpu`, `linux-gpu` | which staged `infernix-substrate.dhall` payload the active build root carries |
 
 ### Naming Note
 
@@ -96,12 +105,18 @@ The supported platform now closes around these rules:
   reference, but it no longer exposes `--runtime-mode` or any equivalent substrate override
 - the product contract standardizes three substrates:
   `apple-silicon`, `linux-cpu`, and `linux-gpu`
-- the active substrate is chosen only by a compile-time generated `.dhall` that ships beside the
-  built binary and acts as the single source of truth for substrate identity, generated catalog
-  content, daemon placement, and test scope
-- Cabal generates that `.dhall` at build time using this rule:
-  host build outside the outer container means `apple-silicon`; build inside a container whose base
-  image is `nvidia:cuda` means `linux-gpu`; every other container build means `linux-cpu`
+- the active substrate is read from the staged `infernix-substrate.dhall` file beside the active
+  build root, and that staged payload is the primary source of truth for substrate identity,
+  generated catalog content, daemon placement, and test scope
+- Apple host-native workflows stage or restage `./.build/infernix-substrate.dhall` explicitly with
+  `./.build/infernix internal materialize-substrate apple-silicon [--demo-ui true|false]`
+- Linux substrate images stage `/opt/build/infernix/infernix-substrate.dhall` during image build
+  with `infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>`
+- supported runtime, cluster, and validation entrypoints fail fast if the staged substrate file is
+  absent instead of regenerating it on first command execution or falling back to env or host
+  detection
+- the staged substrate file retains the legacy `.dhall` filename even though the current payload is
+  banner-prefixed JSON produced by Haskell runtime helpers
 - Apple host-native operation is the only supported host build path outside a container
 - on Apple Silicon, the host-built `./.build/infernix` binary manages Kind, deploys the demo app
   on the cluster, and performs inference host-side; the host inference daemon must be running for
@@ -118,12 +133,15 @@ The supported platform now closes around these rules:
   control-plane container itself does not require the NVIDIA runtime
 - for `linux-gpu`, the outer control-plane image is still built from the CUDA base image, and that
   same built image is the artifact pushed to Harbor and deployed as the cluster daemon
-- the generated substrate `.dhall` lives beside the binary:
-  `./.build/` on Apple and `/opt/build/infernix/` in the outer container; Linux cluster deployment
-  republishes that same file through `ConfigMap/infernix-demo-config` and mounts it beside the
-  cluster-resident binary
+- the staged substrate file lives under the active build root:
+  `./.build/infernix-substrate.dhall` on Apple and `/opt/build/infernix/infernix-substrate.dhall`
+  in the outer container; Linux cluster deployment republishes that payload through
+  `ConfigMap/infernix-demo-config` and mounts the same filename inside cluster workloads at
+  `/opt/build/infernix/infernix-substrate.dhall`
 - the binary watches its substrate `.dhall` and reloads or restarts on changes; reload purges any
   running inference-engine state
+- the supported materialization path can emit `demo_ui = false` with
+  `--demo-ui false`; omitting that flag keeps the default demo-enabled output
 - the routed demo app is cluster-resident across substrates; the interim Apple host bridge is not
   part of the final contract
 - simulation is removed completely from supported runtime and validation paths; there are no

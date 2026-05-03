@@ -19,8 +19,11 @@
 ## Preflight Expectations
 
 - supported validation starts from the supported execution context for the selected runtime mode
+- supported validation expects the generated substrate file for that runtime mode to exist before
+  the suite starts
 - Apple host-native flows expect the built binary plus the minimal Homebrew-plus-ghcup baseline;
-  supported commands may reconcile the remaining host tools on demand
+  supported commands may reconcile the remaining host tools on demand, and the staged host config
+  comes from `./.build/infernix internal materialize-substrate apple-silicon`
 - Linux CPU flows expect Docker Engine plus the Docker Compose plugin
 - Linux CUDA flows expect the Linux CPU Docker baseline plus the supported NVIDIA driver and
   container-toolkit setup

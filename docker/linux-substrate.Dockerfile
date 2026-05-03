@@ -10,6 +10,7 @@ FROM ${BASE_IMAGE}
 
 ARG BASE_IMAGE
 ARG RUNTIME_MODE=linux-cpu
+ARG DEMO_UI=true
 ARG GHC_VERSION=9.14.1
 ARG STYLE_GHC_VERSION=9.6.7
 ARG CABAL_VERSION=3.16.1.0
@@ -30,7 +31,6 @@ ENV DEBIAN_FRONTEND=noninteractive \
     CABAL_VERSION=${CABAL_VERSION} \
     INFERNIX_BUILD_ROOT=/opt/build/infernix \
     INFERNIX_CABAL_BUILDDIR=/opt/build/infernix/cabal \
-    INFERNIX_SUBSTRATE_ID=${RUNTIME_MODE} \
     PATH=/root/.local/bin:/root/.ghcup/bin:/root/.cabal/bin:${PATH}
 
 RUN apt-get update \
@@ -114,7 +114,7 @@ RUN mkdir -p /workspace/tools/generated_proto \
          --overwrite-policy=always \
          exe:infernix \
          exe:infernix-demo \
-    && infernix --help >/dev/null \
+    && infernix internal materialize-substrate ${RUNTIME_MODE} --demo-ui ${DEMO_UI} \
     && npm --prefix web run build \
     && poetry --directory python run check-code
 

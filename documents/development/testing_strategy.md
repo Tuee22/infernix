@@ -26,8 +26,9 @@ mode-specific coverage, matrix behavior, and operator detail behind those canoni
   generated demo-config publication, routed demo or tool surfaces, routed inference plus cache
   endpoints, service-path request or result publication through the active topic contract,
   `cluster status`, every generated active-mode catalog entry from the mounted demo config,
-  demo-ui disablement on the `linux-cpu` lane, and edge-port rediscovery on the host-native
-  control-plane `linux-cpu` lane
+  demo-ui disablement on the `linux-cpu` lane via
+  `infernix internal materialize-substrate linux-cpu --demo-ui false`, and edge-port rediscovery
+  on the host-native control-plane `linux-cpu` lane
 - `infernix test e2e` validates the routed browser surface by comparing `/api/models` to the
   generated demo config and exercising every routed catalog entry through both the HTTP inference
   endpoint and the browser workbench
@@ -60,8 +61,9 @@ mode-specific coverage, matrix behavior, and operator detail behind those canoni
 - `infernix test integration` validates the service loop by publishing a typed request through the
   configured topic helper and asserting a matching typed result appears on the configured result
   topic
-- on the `linux-cpu` lane, `infernix test integration` also validates `INFERNIX_DEMO_UI=false`
-  and `9090`-first edge-port rediscovery on host-native control planes
+- on the `linux-cpu` lane, `infernix test integration` also validates
+  `infernix internal materialize-substrate linux-cpu --demo-ui false` and `9090`-first
+  edge-port rediscovery on host-native control planes
 - on the `linux-cpu` lane, `infernix test integration` also deletes a Harbor core pod and verifies
   Harbor-backed image pulls still work, replaces a MinIO pod after writing a sentinel file,
   restarts a Pulsar broker between two routed publish or result checks, deletes the Harbor

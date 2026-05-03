@@ -11,9 +11,10 @@
 
 ## Phase Status
 
-All Phase 4 sprints are now `Done`. The active substrate comes from the generated `.dhall`, the
-clustered demo surface relies on the host daemon for `apple-silicon` inference without becoming a
-host HTTP bridge, and the supported runtime contract is expressed in substrate-owned terms.
+Phase 4 is complete. The active substrate comes from the staged substrate file, the clustered demo
+surface relies on the host daemon for `apple-silicon` inference without becoming a host HTTP
+bridge, the supported runtime contract is expressed in substrate-owned terms, and the supported
+validation rerun passed.
 
 ## Current Repo Assessment
 
@@ -21,9 +22,11 @@ The repository has typed request or response shapes, typed runtime result metada
 README-matrix-backed generated catalog, protobuf-backed manifest and result helpers, explicit cache
 status or eviction or rebuild flows, repo-local durable object-store state under
 `./.data/object-store/`, a shared Python adapter project whose setup entrypoints write idempotent
-bootstrap manifests, and daemon placement driven by the active generated substrate file. The
-generated file, runtime result metadata, publication surface, and browser contracts still expose
-the active substrate through `RuntimeMode` or `runtimeMode` identifiers.
+bootstrap manifests, explicit substrate-materialization helpers, and daemon placement driven by the
+staged substrate file. That file still keeps a legacy `.dhall` name while carrying banner-prefixed
+JSON. The staged file, runtime result metadata, publication surface, and browser contracts still
+expose the active substrate through `RuntimeMode` or `runtimeMode` identifiers. The supported
+validation rerun passed, so this phase is done.
 
 ## Substrate Config Ownership Contract
 
@@ -31,7 +34,7 @@ This phase owns the conversion from the README-scale matrix to runtime-consumabl
 
 - the service owns the typed registry that represents matrix rows
 - the built substrate selects the engine column for each supported row
-- the compile-time generated substrate `.dhall` carries that selected catalog beside the binary
+- the staged substrate file carries that selected catalog beside the active build root
 - host and cluster consumers use that same substrate file as the exact runtime catalog
 - `infernix-demo` and the integration suite both choose the active engine binding for a README row
   from that same substrate file
@@ -245,19 +248,23 @@ None.
 ## Sprint 4.12: Substrate-Owned Daemon Placement, Reload Control, and Fallback Removal [Done]
 
 **Status**: Done
+**Implementation**: `src/Infernix/Config.hs`, `src/Infernix/DemoConfig.hs`, `src/Infernix/Service.hs`, `src/Infernix/DemoCLI.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Runtime/Pulsar.hs`, `docker/linux-substrate.Dockerfile`, `web/test/run_playwright_matrix.mjs`
 **Docs to update**: `README.md`, `documents/architecture/runtime_modes.md`, `documents/engineering/model_lifecycle.md`, `documents/engineering/object_storage.md`, `documents/engineering/portability.md`, `documents/engineering/testing.md`, `documents/operations/apple_silicon_runbook.md`
 
 ### Objective
 
-Make daemon behavior derive entirely from the compile-time generated substrate `.dhall` and remove
-the remaining supported simulation assumptions from the runtime contract.
+Make daemon behavior derive entirely from the staged substrate file and remove the remaining
+file-absent substrate-selection fallback from the runtime contract.
 
 ### Deliverables
 
-- `infernix service` derives its active substrate from the colocated substrate `.dhall` and no
-  longer accepts `--runtime-mode` or `INFERNIX_RUNTIME_MODE`
+- `infernix service` derives its active substrate from the staged substrate file when present and
+  no longer accepts `--runtime-mode` or `INFERNIX_RUNTIME_MODE`
 - `infernix-demo` and any runtime-owned manual inference entrypoint choose the engine binding for a
   given README row only from the colocated or ConfigMap-backed substrate `.dhall`
+- Apple host and Linux image-build workflows stage that substrate file through
+  `infernix internal materialize-substrate ...`, and supported runtime entrypoints fail fast if it
+  is absent
 - the Apple host daemon is the authoritative inference engine for `apple-silicon`, and the routed
   clustered demo app depends on that host daemon being live
 - Linux `linux-cpu` and `linux-gpu` daemons run only as cluster-resident workloads on their
@@ -272,8 +279,8 @@ the remaining supported simulation assumptions from the runtime contract.
 
 - Apple host-native `infernix service` reports `apple-silicon` from the generated substrate file
   and the routed demo surface fails fast when that daemon is absent
-- Linux substrate daemons read the mounted ConfigMap-backed substrate file beside the binary and do
-  not rely on runtime-mode flags or environment overrides
+- Linux substrate daemons read the mounted ConfigMap-backed substrate file at
+  `/opt/build/infernix/infernix-substrate.dhall` and do not rely on runtime-mode flags
 - manual inference through `infernix-demo` and service-loop execution both use the engine binding
   selected in `.dhall` for the active README row
 - runtime validation fails if the service or demo app falls back to simulated route, transport, or

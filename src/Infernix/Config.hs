@@ -26,7 +26,7 @@ import Infernix.Types (RuntimeMode (..), parseRuntimeMode)
 import System.Directory (createDirectoryIfMissing, doesFileExist, doesPathExist, getCurrentDirectory)
 import System.Environment (lookupEnv)
 import System.FilePath (isAbsolute, normalise, takeDirectory, (</>))
-import System.Info (os)
+import System.IO.Error (mkIOError, userErrorType)
 
 data Paths = Paths
   { repoRoot :: FilePath,
@@ -118,16 +118,15 @@ generatedKubeconfigPath paths
   | controlPlaneContext paths == "outer-container" = runtimeRoot paths </> "infernix.kubeconfig"
   | otherwise = buildRoot paths </> "infernix.kubeconfig"
 
-generatedDemoConfigPath :: Paths -> RuntimeMode -> FilePath
-generatedDemoConfigPath paths _runtimeMode =
-  generatedSubstratePath paths
+generatedDemoConfigPath :: Paths -> FilePath
+generatedDemoConfigPath = generatedSubstratePath
 
 generatedSubstratePath :: Paths -> FilePath
 generatedSubstratePath paths =
   buildRoot paths </> "infernix-substrate.dhall"
 
-publishedConfigMapCatalogPath :: Paths -> RuntimeMode -> FilePath
-publishedConfigMapCatalogPath paths _runtimeMode =
+publishedConfigMapCatalogPath :: Paths -> FilePath
+publishedConfigMapCatalogPath paths =
   runtimeRoot paths
     </> "configmaps"
     </> "infernix-demo-config"
@@ -156,24 +155,15 @@ resolveRuntimeMode :: Maybe RuntimeMode -> IO RuntimeMode
 resolveRuntimeMode (Just runtimeMode) = pure runtimeMode
 resolveRuntimeMode Nothing = do
   paths <- discoverPaths
-  let substratePath = generatedSubstratePath paths
+  let substratePath = generatedDemoConfigPath paths
   substrateExists <- doesFileExist substratePath
   if substrateExists
     then resolveRuntimeModeFromGeneratedFile substratePath
-    else defaultRuntimeMode
+    else ioError (missingGeneratedSubstrateFileError substratePath)
 
-watchedDemoConfigPath :: RuntimeMode -> FilePath
-watchedDemoConfigPath _runtimeMode =
+watchedDemoConfigPath :: FilePath
+watchedDemoConfigPath =
   "/opt/build/infernix/infernix-substrate.dhall"
-
-defaultRuntimeMode :: IO RuntimeMode
-defaultRuntimeMode
-  | os == "darwin" = pure AppleSilicon
-  | otherwise = do
-      maybeValue <- lookupEnv "INFERNIX_SUBSTRATE_ID"
-      case maybeValue >>= parseRuntimeMode . Text.pack of
-        Just runtimeMode -> pure runtimeMode
-        Nothing -> pure LinuxCpu
 
 resolveRuntimeModeFromGeneratedFile :: FilePath -> IO RuntimeMode
 resolveRuntimeModeFromGeneratedFile substratePath = do
@@ -206,3 +196,19 @@ stripGeneratedBanner rawValue =
     trimmedLines -> ByteStringChar8.unlines trimmedLines
   where
     dropBlankPrefix = dropWhile (ByteString.null . ByteStringChar8.strip)
+
+missingGeneratedSubstrateFileError :: FilePath -> IOError
+missingGeneratedSubstrateFileError substratePath =
+  mkIOError
+    userErrorType
+    ( unlines
+        [ "Missing generated substrate file: " <> substratePath,
+          "Build or restage the active substrate before running supported infernix commands.",
+          "Examples:",
+          "  cabal --builddir=.build/cabal install --installdir=./.build --install-method=copy --overwrite-policy=always exe:infernix exe:infernix-demo",
+          "  infernix internal materialize-substrate apple-silicon",
+          "  docker compose build infernix"
+        ]
+    )
+    Nothing
+    Nothing

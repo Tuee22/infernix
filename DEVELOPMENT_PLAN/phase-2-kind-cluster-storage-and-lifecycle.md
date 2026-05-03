@@ -10,10 +10,11 @@
 
 ## Phase Status
 
-All Phase 2 sprints are now `Done`. `cluster up` republishes the generated
-`infernix-substrate.dhall` file directly into `ConfigMap/infernix-demo-config`, the repo-local
-publication mirror records that same payload, and the Linux control-plane launcher closes around
-the baked-image outer-container flow.
+Phase 2 is complete. `cluster up` republishes the staged substrate payload into
+`ConfigMap/infernix-demo-config`, the repo-local publication mirror records that payload, the
+chart mounts the shared `/opt/build/infernix/infernix-substrate.dhall` path, the Linux
+control-plane launcher closes around the baked-image outer-container flow, and the supported
+validation rerun passed.
 
 ## Storage Doctrine
 
@@ -36,9 +37,10 @@ These rules close in this phase and remain mandatory afterward:
 
 ## Current Repo Assessment
 
-The storage doctrine, Helm rollout, substrate publication, Harbor-first image flow, route
-de-duplication, generated values overlay path, and in-image `nvkind` path are implemented on the
-supported Kind substrate.
+The storage doctrine, Helm rollout, Harbor-first image flow, route de-duplication, generated
+values overlay path, in-image `nvkind` path, and shared substrate-publication filename are
+implemented on the supported Kind substrate. The supported validation rerun passed, so this phase
+is done.
 
 ## Sprint 2.1: Kind Bootstrap and StorageClass Reset [Done]
 
@@ -236,23 +238,23 @@ None.
 ## Sprint 2.9: Build-Generated Substrate File Publication and Linux Launcher Closure [Done]
 
 **Status**: Done
+**Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Models.hs`, `chart/templates/configmap-demo-catalog.yaml`, `chart/templates/deployment-service.yaml`, `chart/templates/deployment-demo.yaml`, `compose.yaml`, `docker/linux-substrate.Dockerfile`
 **Docs to update**: `README.md`, `documents/development/local_dev.md`, `documents/engineering/build_artifacts.md`, `documents/engineering/docker_policy.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/development/testing_strategy.md`
 
 ### Objective
 
-Publish the exact build-generated substrate `.dhall` into the cluster and close the Linux launcher
-contract around one Compose-driven outer container for both Linux substrates.
+Publish the staged substrate payload into the cluster and close the Linux launcher contract around
+one Compose-driven outer container for both Linux substrates.
 
 ### Deliverables
 
-- `cluster up` publishes the exact substrate `.dhall` baked beside the outer-container binary into
-  `ConfigMap/infernix-demo-config`
-- Linux cluster-resident consumers mount that ConfigMap beside the deployed binary under
-  `/opt/build/infernix/`
-- the outer-container binary also reads the same colocated substrate `.dhall` from
-  `/opt/build/infernix/` when it needs to know its own substrate
-- the cluster publication contract no longer treats `infernix-substrate.dhall` filenames or
-  runtime-mode staging as the supported final shape
+- `cluster up` publishes the staged substrate payload into `ConfigMap/infernix-demo-config`
+- Linux cluster-resident consumers mount that ConfigMap at
+  `/opt/build/infernix/infernix-substrate.dhall`
+- the outer-container control plane also stages the same payload under
+  `/opt/build/infernix/infernix-substrate.dhall` when it needs to know its own substrate
+- the cluster publication contract uses the same stable `infernix-substrate.dhall` filename in the
+  repo-local mirror and in-cluster mount
 - the supported Linux control-plane launcher is Compose for both `linux-cpu` and `linux-gpu`
 - the outer control-plane container never requires the NVIDIA runtime for its own process, even
   when the built image targets `linux-gpu`
@@ -261,10 +263,10 @@ contract around one Compose-driven outer container for both Linux substrates.
 
 ### Validation
 
-- `docker compose run --rm infernix infernix cluster up` publishes the built substrate file into
-  the ConfigMap without any runtime-mode override
-- `infernix kubectl get configmap infernix-demo-config -n platform -o yaml` shows the exact built
-  substrate payload
+- `docker compose run --rm infernix infernix cluster up` publishes the staged substrate payload
+  into the ConfigMap without any runtime-mode flag
+- `infernix kubectl get configmap infernix-demo-config -n platform -o yaml` shows the current
+  `infernix-substrate.dhall` key and the staged payload
 - supported Linux GPU lifecycle and validation flows no longer require a direct user-facing
   `docker run --gpus all ...` launcher
 

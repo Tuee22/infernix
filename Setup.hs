@@ -1,5 +1,6 @@
 import Data.List (isPrefixOf)
-import Data.ProtoLens.Setup (defaultMainGeneratingProtos)
+import Data.ProtoLens.Setup (generatingProtos)
+import Distribution.Simple (defaultMainWithHooks, simpleUserHooks)
 import System.Directory (createDirectoryIfMissing, doesFileExist, doesPathExist, findExecutable, getCurrentDirectory)
 import System.Environment (getEnv, lookupEnv, setEnv)
 import System.FilePath (isAbsolute, takeDirectory, (</>))
@@ -50,7 +51,7 @@ main = do
             pure toolBinary
   prependPath toolBinDir
   ensureToolVisible toolPath
-  defaultMainGeneratingProtos "proto"
+  defaultMainWithHooks (generatingProtos "proto" simpleUserHooks)
 
 prependPath :: FilePath -> IO ()
 prependPath entry = do

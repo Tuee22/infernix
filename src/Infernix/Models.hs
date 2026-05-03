@@ -117,8 +117,8 @@ encodeDemoConfig :: DemoConfig -> LazyChar8.ByteString
 encodeDemoConfig demoConfig =
   LazyChar8.pack (demoConfigGeneratedBanner <> renderDemoConfig demoConfig)
 
-renderConfigMapManifest :: RuntimeMode -> LazyChar8.ByteString -> String
-renderConfigMapManifest _runtimeMode payload =
+renderConfigMapManifest :: LazyChar8.ByteString -> String
+renderConfigMapManifest payload =
   unlines
     [ "apiVersion: v1",
       "kind: ConfigMap",

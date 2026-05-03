@@ -64,10 +64,10 @@ runAppleSetupStep paths step =
               [ ("POETRY_VIRTUALENVS_IN_PROJECT", "true"),
                 ("INFERNIX_REPO_ROOT", repoRoot paths),
                 ("INFERNIX_ENGINE_INSTALL_ROOT", engineInstallRoot),
-                ("INFERNIX_SUBSTRATE_ID", "apple-silicon")
+                ("INFERNIX_ACTIVE_SUBSTRATE", "apple-silicon")
               ]
                 <> filter
-                  (\(name, _) -> name `notElem` ["POETRY_VIRTUALENVS_IN_PROJECT", "INFERNIX_REPO_ROOT", "INFERNIX_ENGINE_INSTALL_ROOT", "INFERNIX_SUBSTRATE_ID"])
+                  (\(name, _) -> name `notElem` ["POETRY_VIRTUALENVS_IN_PROJECT", "INFERNIX_REPO_ROOT", "INFERNIX_ENGINE_INSTALL_ROOT", "INFERNIX_ACTIVE_SUBSTRATE"])
                   baseEnvironment
         (exitCode, _, stderrOutput) <-
           readCreateProcessWithExitCode

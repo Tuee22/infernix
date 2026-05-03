@@ -21,6 +21,7 @@
 
 ```bash
 cabal --builddir=.build/cabal install --installdir=./.build --install-method=copy --overwrite-policy=always exe:infernix exe:infernix-demo
+./.build/infernix internal materialize-substrate apple-silicon
 ./.build/infernix cluster up
 ./.build/infernix cluster status
 ./.build/infernix test all
@@ -55,6 +56,10 @@ the shared adapter project:
 ## Rules
 
 - the active substrate comes from the generated `.dhall` beside the binary rather than a CLI flag
+- supported staging is explicit: Apple host workflows run
+  `./.build/infernix internal materialize-substrate apple-silicon` after `cabal install`, and the
+  Linux image build runs `infernix internal materialize-substrate <substrate>` while baking
+  `/opt/build/infernix/infernix-substrate.dhall`
 - supported workflows do not use repo-owned scripts or wrapper layers
 - the target Apple host workflow has no generic Python prerequisite; Poetry and a repo-local
   adapter virtual environment materialize only when an engine-adapter test or setup path is

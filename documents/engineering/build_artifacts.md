@@ -50,7 +50,10 @@ under `web/src/Generated/`, and runtime result or cache-manifest state uses prot
 
 ## Generated Demo Config Publication
 
-- `cluster up` stages `infernix-substrate.dhall` in the active build root
+- Apple host flows stage `infernix-substrate.dhall` with
+  `./.build/infernix internal materialize-substrate apple-silicon`
+- Linux image builds stage `/opt/build/infernix/infernix-substrate.dhall` with
+  `infernix internal materialize-substrate <substrate> --demo-ui <true|false>`
 - the same content is then mirrored under `./.data/runtime/configmaps/infernix-demo-config/` and
   published into `ConfigMap/infernix-demo-config` on the real cluster path
 - in containerized execution contexts, the ConfigMap-backed file is mounted beside the binary
@@ -60,6 +63,8 @@ under `web/src/Generated/`, and runtime result or cache-manifest state uses prot
 
 - repo-owned scripts or wrappers are not part of the supported build or launcher workflow
 - generated demo-config files live under the active build root, not tracked source paths
+- `cluster up`, `service`, and the validation entrypoints require the generated substrate file to
+  exist already; they do not regenerate it on first command execution
 - kubeconfig output is repo-local and execution-context-specific: Apple host mode uses
   `./.build/infernix.kubeconfig`, while Linux outer-container mode uses the durable
   `./.data/runtime/infernix.kubeconfig`

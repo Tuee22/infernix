@@ -6,6 +6,7 @@ services:
       dockerfile: docker/linux-substrate.Dockerfile
       args:
         RUNTIME_MODE: linux-cpu
+        DEMO_UI: "true"
         BASE_IMAGE: ubuntu:24.04
     command: ["infernix", "--help"]
     environment:

@@ -59,6 +59,11 @@ main = do
     (parseCommand ["internal", "discover", "images", "rendered-chart.yaml"] == Right (InternalDiscoverImagesCommand "rendered-chart.yaml"))
     "the structured command registry parses internal discovery commands from the same definition used by the docs"
   assert
+    ( parseCommand ["internal", "materialize-substrate", "linux-cpu", "--demo-ui", "false"]
+        == Right (InternalMaterializeSubstrateCommand LinuxCpu False)
+    )
+    "the structured command registry parses explicit substrate materialization commands"
+  assert
     ("### `cluster`" `isInfixOf` renderCliReferenceCommandsSection)
     "the generated CLI reference includes the cluster family heading"
   assert

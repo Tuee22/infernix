@@ -26,7 +26,7 @@ executable runs.
 - `lint` - runs the focused Haskell-owned static checks for files, docs, `.proto`, and chart assets
 - `test` - runs the aggregate validation entrypoints for lint, unit, integration, routed E2E, and the full suite
 - `docs` - validates the governed documentation suite and the development-plan shape
-- `internal` - runs build-time helpers for contract generation, chart discovery, demo-config inspection, and Pulsar round-trip validation
+- `internal` - runs build-time helpers for contract generation, chart discovery, substrate materialization, demo-config inspection, and Pulsar round-trip validation
 <!-- infernix:family-overview:end -->
 
 ## `infernix-demo` Families

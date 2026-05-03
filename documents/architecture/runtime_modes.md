@@ -28,6 +28,10 @@ demo catalog entries, service binding, and validation.
 | Ubuntu 24.04 / NVIDIA CUDA Container | `linux-gpu` | `Best Linux CUDA engine` |
 
 The active runtime mode is encoded in `infernix-substrate.dhall` beside the built binary.
+Apple host builds stage that file explicitly with
+`./.build/infernix internal materialize-substrate apple-silicon`, and Linux image builds stage it
+during `docker/linux-substrate.Dockerfile` with
+`infernix internal materialize-substrate <substrate> --demo-ui <true|false>`.
 `cluster up` republishes that exact file into the repo-local publication mirror and
 `ConfigMap/infernix-demo-config`.
 
@@ -39,6 +43,8 @@ The generated demo catalog is the source of truth for the active runtime mode.
   rows whose selected engine is `Not recommended`
 - each generated entry records the selected engine, request shape, runtime lane, and workload
   metadata
+- `infernix internal materialize-substrate <runtime-mode>` is the supported staging command, and
+  `--demo-ui false` emits a demo-off config without hand-editing the file
 - in containerized execution contexts, `ConfigMap/infernix-demo-config` is mounted read-only
   beside the binary, and the watched file lives at `/opt/build/infernix/infernix-substrate.dhall`
 - `infernix test integration` and `infernix test e2e` enumerate every generated catalog entry for

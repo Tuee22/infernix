@@ -133,14 +133,14 @@ runProductionDaemon paths runtimeMode = do
           )
           maybeCatalogSourceOverride
       selectedDemoConfigPath =
-        fromMaybe (Infernix.Config.generatedDemoConfigPath paths runtimeMode) maybeDemoConfigOverride
+        fromMaybe (Infernix.Config.generatedDemoConfigPath paths) maybeDemoConfigOverride
   demoConfig <- decodeDemoConfigFile selectedDemoConfigPath
   putStrLn ("serviceControlPlaneContext: " <> controlPlane)
   putStrLn ("serviceDaemonLocation: " <> daemonLocation)
   putStrLn ("serviceCatalogSource: " <> catalogSource)
   putStrLn ("serviceRuntimeMode: " <> Text.unpack (runtimeModeId runtimeMode))
   putStrLn ("serviceDemoConfigPath: " <> selectedDemoConfigPath)
-  putStrLn ("serviceMountedDemoConfigPath: " <> watchedDemoConfigPath runtimeMode)
+  putStrLn ("serviceMountedDemoConfigPath: " <> watchedDemoConfigPath)
   putStrLn ("serviceRequestTopics: " <> intercalate "," (map Text.unpack (requestTopics demoConfig)))
   putStrLn ("serviceResultTopic: " <> Text.unpack (resultTopic demoConfig))
   putStrLn ("serviceEngineBindingCount: " <> show (length (engines demoConfig)))

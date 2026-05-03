@@ -94,7 +94,7 @@ def run_setup_bootstrap(adapter_id: str) -> int:
     bootstrap_manifest = {
         "adapterId": adapter_id,
         "repoRoot": str(_repo_root()),
-        "runtimeMode": os.environ.get("INFERNIX_SUBSTRATE_ID", "unknown"),
+        "runtimeMode": os.environ.get("INFERNIX_ACTIVE_SUBSTRATE", "unknown"),
         "updatedAt": datetime.now(UTC).isoformat(),
     }
     (install_root / "bootstrap.json").write_text(

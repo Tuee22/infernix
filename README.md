@@ -309,6 +309,9 @@ Apple Silicon has no Dockerfile. The operator pre-installs `ghcup` with GHC 9.14
 # Build both Haskell binaries directly into ./.build/.
 cabal --builddir=.build/cabal install --installdir=./.build --install-method=copy --overwrite-policy=always exe:infernix exe:infernix-demo
 
+# Stage the active substrate file beside the build root.
+./.build/infernix internal materialize-substrate apple-silicon
+
 # Bring up the Kind HA demo ground.
 ./.build/infernix cluster up
 
@@ -478,9 +481,10 @@ around upstream `kubectl`, not a parallel lifecycle surface.
 
 - `cluster up` is the supported HA testing and demo-ground bring-up command
 - `cluster up` declaratively reconciles Kind, manual storage, Harbor-backed images, Helm workloads,
-  repo-local kubeconfig, and generated mode-specific demo configuration
-- `cluster up` generates the mode-specific demo `.dhall` file that defines the demo catalog and the
-  engine binding for each demo-visible model on the active mode
+  repo-local kubeconfig, and publication of the already-staged substrate configuration
+- `infernix internal materialize-substrate <runtime-mode> [--demo-ui true|false]` stages the
+  active demo `.dhall` file that defines the demo catalog and the engine binding for each
+  demo-visible model on that substrate
 - `cluster up` bootstraps Harbor first through Helm and allows Harbor plus only the storage or
   support services Harbor needs during bootstrap, including MinIO and PostgreSQL, to pull from
   public container repositories
@@ -534,7 +538,11 @@ rebuildable.
 - a `.dhall` configuration defines the runtime contract for supported service flows; the active
   `.dhall` names `request_topics : List Text`, `result_topic : Text`, `engines : List EngineBinding`,
   and the optional `demo_ui : Bool` flag that gates the `infernix-demo` workload
-- `cluster up` produces a mode-specific demo `.dhall` file as a build artifact for the active mode
+- Apple host flows stage that file with
+  `./.build/infernix internal materialize-substrate apple-silicon`
+- Linux image builds stage that file with
+  `infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>` during
+  `docker/linux-substrate.Dockerfile`
 - the generated demo `.dhall` file enumerates the demo-visible models and workloads for that mode
   and binds each one to its engine or runtime lane
 - the generated demo `.dhall` file is the exact source of truth for which models and engine bindings

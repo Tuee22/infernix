@@ -252,7 +252,9 @@ Rules:
 - The outer control-plane container does not require direct NVIDIA runtime access. The supported
   Compose launcher never requests the NVIDIA container runtime for its own process.
 - `--runtime-mode` and `INFERNIX_RUNTIME_MODE` are not part of the supported final contract. The
-  built binary reads its active substrate from the generated `.dhall` that ships beside it.
+  staged substrate file beside the active build root is the primary and only supported source of
+  truth. Supported runtime, cluster, and validation entrypoints fail fast if it is absent, and the
+  repo stages or restages it through `infernix internal materialize-substrate ...`.
 - `docker compose up` and `docker compose exec` are not supported outer-control-plane workflows.
 
 ### L. Substrate Contract
@@ -261,11 +263,11 @@ The plan distinguishes control-plane execution context from supported substrate.
 
 Substrates are the product-facing inference lanes:
 
-| Substrate | Canonical substrate id | Build-time selection rule |
-|-----------|------------------------|---------------------------|
-| Apple Silicon / Metal | `apple-silicon` | Cabal build runs outside the outer container |
-| Linux / CPU | `linux-cpu` | Cabal build runs inside the outer container and the active base image is not `nvidia:cuda` |
-| Linux / NVIDIA GPU | `linux-gpu` | Cabal build runs inside the outer container and the active base image is `nvidia:cuda` |
+| Substrate | Canonical substrate id | Current staging rule |
+|-----------|------------------------|----------------------|
+| Apple Silicon / Metal | `apple-silicon` | host-native workflows stage `./.build/infernix-substrate.dhall` with `./.build/infernix internal materialize-substrate apple-silicon [--demo-ui true|false]` |
+| Linux / CPU | `linux-cpu` | outer-container images stage `/opt/build/infernix/infernix-substrate.dhall` with `infernix internal materialize-substrate linux-cpu --demo-ui <true|false>` |
+| Linux / NVIDIA GPU | `linux-gpu` | outer-container images stage `/opt/build/infernix/infernix-substrate.dhall` with `infernix internal materialize-substrate linux-gpu --demo-ui <true|false>` |
 
 Rules:
 
@@ -278,9 +280,9 @@ Rules:
 - The plan standardizes the NVIDIA-backed Linux substrate as `linux-gpu`. Active phase documents
   must call out any still-unmigrated `linux-gpu` naming in the current worktree instead of
   pretending the rename is already complete.
-- The active substrate is selected only by the compile-time generated `.dhall` that ships beside
-  the built binary. Supported workflows do not override that substrate through CLI flags or
-  environment variables.
+- The staged substrate file beside the active build root is the primary substrate selector.
+  Supported runtime, cluster, and validation commands read that file only and fail fast if it is
+  absent or mismatched for the requested deployment path.
 - `linux-cpu` is the only substrate that remains meaningfully portable across unrelated host
   hardware. Apple operators may validate it through the outer-container workflow, and arm64 Linux
   hosts are first-class citizens for that CPU-only lane so long as the supported containerized
@@ -292,28 +294,36 @@ Rules:
   behavior from the supported contract rather than treating simulation as a weaker substitute once
   real substrate support is claimed.
 
-### M. Generated Substrate `.dhall` and ConfigMap Contract
+### M. Generated Substrate File and ConfigMap Contract
 
-The supported build always generates one substrate `.dhall` beside the built binary, and Linux
-cluster deployment republishes that same file through a ConfigMap for cluster-resident consumers.
+The supported build or explicit restaging flow stages one substrate file under the active build
+root, and Linux cluster deployment republishes that payload through a ConfigMap for
+cluster-resident consumers.
 
 Rules:
 
-- The `.dhall` is generated at Cabal compile time rather than during `cluster up`.
-- A build performed outside the outer container emits an Apple-host-native substrate file under
-  `./.build/` beside `./.build/infernix`.
-- A build performed inside the outer container emits a Linux substrate file under
-  `/opt/build/infernix/` beside `/opt/build/infernix/infernix`.
+- Phase documents must state whether the current implementation stages the substrate file during
+  Cabal compile time, during image build, or through an explicit helper command. Claiming
+  compile-time generation requires an implementation path that actually does so before runtime
+  entrypoints execute.
+- A supported Apple host workflow stages or restages the substrate file under `./.build/` with
+  `./.build/infernix internal materialize-substrate apple-silicon [--demo-ui true|false]`.
+- A supported outer-container workflow stages or restages the Linux substrate file under
+  `/opt/build/infernix/` with `infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>`.
+- Supported runtime, cluster, and validation entrypoints do not regenerate the file on first
+  command execution; they fail fast if it has not been staged yet.
 - The generated filename stays stable for a given build artifact, for example
   `infernix-substrate.dhall`, rather than encoding a user-selected runtime flag.
 - The generated file records the active substrate explicitly and enumerates every demo-visible model
   or workload supported by that substrate together with the matrix row identity, artifact or format
   family, selected engine, request or result contract identifiers, and any substrate-specific
   runtime metadata needed by the service, web UI, or tests.
-- `cluster up` creates or updates `ConfigMap/infernix-demo-config` from the exact generated file
-  baked beside the outer-container binary when the active substrate is `linux-cpu` or `linux-gpu`.
+- The supported materialization path accepts `--demo-ui true|false`, and phase docs must keep the
+  chosen default versus explicit override behavior honest.
+- `cluster up` creates or updates `ConfigMap/infernix-demo-config` from the staged substrate file
+  or its exact payload when the active substrate is `linux-cpu` or `linux-gpu`.
 - Linux cluster-resident consumers mount that ConfigMap read-only beside the cluster-resident
-  binary under `/opt/build/infernix/`.
+  runtime entrypoint at `/opt/build/infernix/infernix-substrate.dhall`.
 - Apple host-native consumers read the file directly from `./.build/`.
 - The binary watches its substrate `.dhall` and reloads or restarts when the file changes; that
   reload purges any running inference-engine state.
@@ -390,8 +400,9 @@ Rules:
   repo-local kubeconfig from the active build-output location; it is not a separate lifecycle
   orchestration surface.
 - Supported CLI behavior never accepts `--runtime-mode` or `INFERNIX_RUNTIME_MODE`. The CLI reads
-  the active substrate from the colocated generated `.dhall`, and phase documents must call out any
-  still-open compatibility shims explicitly until they are removed.
+  the active substrate from the staged substrate file, and supported build workflows stage or
+  restage that file through `infernix internal materialize-substrate ...` instead of any
+  file-absent fallback path.
 - `infernix lint ...`, `infernix test ...`, and `infernix docs check` may reuse or reconcile
   prerequisites, but they do not depend on alternate imperative setup commands outside the
   supported CLI surface.

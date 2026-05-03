@@ -10,9 +10,10 @@
 
 ## Phase Status
 
-All Phase 3 sprints are now `Done`. The route registry, publication contract, and `/pulsar/ws ->
-/ws` rewrite contract are represented in the current worktree, and the routed demo surface stays
-cluster-resident across substrates.
+Phase 3 is complete. The route registry, publication-state rendering, `/pulsar/ws -> /ws` rewrite
+contract, shared in-cluster substrate filename, and explicit demo-off staging path are represented
+in the current worktree, the routed demo surface stays cluster-resident across substrates, and the
+supported validation rerun passed.
 
 ## HA Reconcile Surface
 
@@ -41,7 +42,9 @@ cluster-resident across substrates.
 The supported cluster path runs the HA platform services and the optional demo HTTP host on the
 Kind substrate. Publication metadata originates from `./.data/runtime/publication.json`, exposes
 the active substrate through current `runtimeMode` fields, and the route inventory derives from
-one Haskell-owned registry plus one data-driven HTTPRoute template.
+one Haskell-owned registry plus one data-driven HTTPRoute template. Demo-off routing is supported
+through the explicit substrate-materialization helper with `--demo-ui false`. The supported
+validation rerun passed, so this phase is done.
 
 ## Sprint 3.1: HA MinIO Deployment [Done]
 
