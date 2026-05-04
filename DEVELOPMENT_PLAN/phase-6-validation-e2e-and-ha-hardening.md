@@ -14,8 +14,7 @@
 
 Phase 6 is complete. The validation entrypoints, routed coverage, governed-root-document metadata
 closure, structured CLI-registry closure, and the earlier compatibility-shim cleanup are present
-in the current worktree, the supported test story is substrate-specific, and the full supported
-validation rerun passed.
+in the current worktree, and the supported test story is substrate-specific.
 
 ## Current Repo Assessment
 
@@ -26,8 +25,8 @@ routed Playwright suite exhaustively exercises every demo-visible generated cata
 active substrate, and the integration suite enumerates every generated active-substrate catalog
 entry while also carrying Harbor, MinIO, Pulsar, and Harbor PostgreSQL recovery or lifecycle
 checks in code. The staged file, `cluster status`, publication JSON, and generated browser
-contracts still expose the active substrate through `runtimeMode` fields or lines. The supported
-full validation rerun passed, so this phase is done.
+contracts still expose the active substrate through `runtimeMode` fields or lines. Those surfaces
+define the current Phase 6 contract.
 
 ## Validation Surface
 

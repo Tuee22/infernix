@@ -16,26 +16,33 @@
 
 ## Supported Flow
 
-- build both Haskell binaries with
-  `cabal --builddir=.build/cabal install --installdir=./.build --install-method=copy --overwrite-policy=always exe:infernix exe:infernix-demo`
-- stage the active substrate file with
-  `./.build/infernix internal materialize-substrate apple-silicon`
-- run `./.build/infernix cluster up`
+- run `./bootstrap/apple-silicon.sh up`
+- run `./bootstrap/apple-silicon.sh status`
+- run `./bootstrap/apple-silicon.sh test`
 - use `./.build/infernix kubectl ...` instead of mutating global
   kubeconfig
-- run `./.build/infernix test all`
+- run `./bootstrap/apple-silicon.sh down` when tearing the cluster down
 
 The first supported host-native command that needs Docker, Kubernetes tooling, Node.js, or Poetry
 reconciles those prerequisites automatically.
+
+Direct reference path:
+
+- build both Haskell binaries with
+  `cabal --builddir=.build/cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes`
+- stage the active substrate file with
+  `./.build/infernix internal materialize-substrate apple-silicon`
+- run `./.build/infernix cluster up`
+- run `./.build/infernix test all`
 
 ## Rules
 
 - the Apple host operator workflow has no generic Python prerequisite; Poetry and a repo-local
   adapter virtual environment materialize only when an engine-adapter validation or setup path is
   exercised explicitly
-- supported Apple host workflows do not use repo-owned scripts; the direct `cabal` command keeps
-  Cabal output under `./.build/cabal` and materializes `./.build/infernix` and
-  `./.build/infernix-demo`
+- supported Apple host shell is limited to `./bootstrap/apple-silicon.sh`; the direct `cabal`
+  command still keeps Cabal output under `./.build/cabal` and materializes `./.build/infernix`
+  and `./.build/infernix-demo`
 - supported Apple host workflows stage `./.build/infernix-substrate.dhall` explicitly through
   `./.build/infernix internal materialize-substrate apple-silicon`; add `--demo-ui false` when
   preparing a demo-off config

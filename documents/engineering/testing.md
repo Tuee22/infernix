@@ -61,7 +61,8 @@
 ## Unsupported Paths
 
 - ad hoc wrapper scripts or alternate validation entrypoints in place of the canonical `infernix`
-  commands
+  commands; the supported `bootstrap/*.sh` layer may invoke those canonical commands, but it does
+  not define a second validation contract
 - silently narrowing integration or E2E coverage to one representative model when the generated
   active-mode catalog contains more entries
 - quietly swapping to another runtime mode when required substrate preflights are absent

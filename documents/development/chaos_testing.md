@@ -8,7 +8,7 @@
 
 ## Current Status
 
-- the real non-simulated `linux-cpu` integration lane now includes supported automated HA-failure
+- the real-cluster `linux-cpu` integration lane now includes supported automated HA-failure
   checks for Harbor, MinIO, Patroni PostgreSQL, and Pulsar
 - Harbor coverage deletes one `infernix-harbor-core` pod, waits for the deployment rollout, then
   proves a fresh `imagePullPolicy: Always` pod can still pull the Harbor-backed `infernix-service`
@@ -21,11 +21,11 @@
   become ready, and separately compares the deterministic Harbor PostgreSQL PV inventory plus
   host-path mapping across `cluster down` plus `cluster up`
 - the fresh outer-container `linux-cpu` rerun of that HA coverage passed on April 29, 2026
-- simulated lanes still exercise route, publication, cache, and service-loop behavior without
-  claiming live HA-failure coverage
-- HA-failure ownership lives on the non-simulated Kind-backed lane rather than a separate Apple-only
-  matrix: the Apple host-native workflow reuses the same routed Harbor, MinIO, Patroni PostgreSQL,
-  and Pulsar cluster services while keeping inference host-native
+- HA-failure ownership lives on the real Kind-backed lane rather than a separate Apple-only matrix:
+  the Apple host-native workflow reuses the same routed Harbor, MinIO, Patroni PostgreSQL, and
+  Pulsar cluster services while keeping inference host-native
+- route, publication, cache, and service-loop coverage that does not require pod-failure injection
+  remains owned by the ordinary unit, integration, and routed E2E entrypoints
 
 ## Cross-References
 

@@ -9,9 +9,9 @@
 ## Current Repo Assessment
 
 The repository now implements the substrate-file architecture described in this overview. The
-supported Linux outer-container validation stack rerun now passes component-by-component:
-`infernix lint docs`, the Haskell and PureScript unit suites, `infernix test integration`, and
-`infernix test e2e` all passed, so the reopened plan items are closed.
+supported validation contract is active-substrate specific: `infernix lint docs`, the Haskell and
+PureScript unit suites, `infernix test integration`, and `infernix test e2e` all target the
+currently staged substrate instead of implying a default cross-substrate rerun.
 
 | Area | Supported contract | Current repo state |
 |------|--------------------|--------------------|
@@ -50,6 +50,9 @@ Monitoring is not a supported first-class surface.
   `./.build/infernix internal materialize-substrate apple-silicon [--demo-ui true|false]`, and
   Linux substrate images stage `/opt/build/infernix/infernix-substrate.dhall` during image build
   with `infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>`
+- repo-owned shell is limited to the `bootstrap/*.sh` stage-0 host bootstrap surface, which may
+  reconcile supported host prerequisites idempotently before handing off to the direct `cabal`,
+  `docker compose`, or `infernix` command surface
 - supported runtime, cluster, and validation entrypoints fail fast if the staged substrate file is
   absent instead of regenerating it on first command execution or falling back to env or host
   detection

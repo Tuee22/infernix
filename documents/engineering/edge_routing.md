@@ -41,8 +41,9 @@ helper-registry route or namespace.
 <!-- infernix:route-registry:edge-routing:end -->
 
 - when the demo surface is enabled, `/` and the demo `/api*` and `/objects/` routes target the
-  `infernix-demo` workload; direct `infernix-demo serve --dhall PATH --port N` still exposes the
-  same Haskell demo API surface outside the routed cluster path when used intentionally
+  `infernix-demo` workload; direct `infernix-demo serve [--dhall PATH] [--port PORT]` still
+  exposes the same Haskell demo API surface outside the routed cluster path when used
+  intentionally
 - `/api/publication` reports daemon location plus routed-upstream health and backing-state details
 
 ## Gateway Ownership

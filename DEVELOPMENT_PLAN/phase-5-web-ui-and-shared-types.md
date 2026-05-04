@@ -12,7 +12,7 @@
 Phase 5 is complete. The Linux substrate image owns the demo bundle and Playwright toolchain, the
 routed demo app stays cluster-resident on Apple and Linux alike, supported E2E uses a
 container-owned Playwright executor without browser-side substrate branching, the explicit
-materialization path can emit demo-off substrate files, and the supported validation rerun passed.
+materialization path can emit demo-off substrate files.
 
 ## Current Repo Assessment
 
@@ -22,8 +22,8 @@ frontend unit suite, `src/Infernix/Web/Contracts.hs` owns the handwritten browse
 `npm --prefix web run build` regenerates generated contracts and bundles the app into
 `web/dist/app.js`. The generated browser contracts and workbench state still expose the active
 substrate through `runtimeMode` fields. The code can honor `demo_ui = false`, and the supported
-materialization path now emits that shape with `--demo-ui false`. The supported validation rerun
-passed, so this phase is done.
+materialization path now emits that shape with `--demo-ui false`. Those surfaces define the
+current Phase 5 contract.
 
 ## Substrate-Driven Demo Catalog Contract
 

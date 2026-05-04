@@ -36,7 +36,7 @@ does not claim substrate parity where the underlying hardware or launcher model 
 
 | Topic | Portable contract | Apple host-native detail | Linux outer-container detail |
 |-------|-------------------|--------------------------|------------------------------|
-| Control-plane launcher | `infernix` owns lifecycle and validation behavior | run `./.build/infernix ...` after direct `cabal` install into `./.build/` | run `docker compose run --rm infernix infernix ...` for supported Linux workflows; set `INFERNIX_COMPOSE_*` when selecting the `linux-gpu` snapshot |
+| Control-plane launcher | `infernix` owns lifecycle and validation behavior | use `./bootstrap/apple-silicon.sh <command>` as the supported stage-0 entrypoint; the direct reference surface remains `./.build/infernix ...` after host build into `./.build/` | use `./bootstrap/linux-cpu.sh <command>` or `./bootstrap/linux-gpu.sh <command>` as the supported stage-0 entrypoint; the direct reference surface remains `docker compose run --rm infernix infernix ...`, with `INFERNIX_COMPOSE_*` selecting `linux-gpu` |
 | Host prerequisites | keep prerequisites minimal and explicit | Homebrew plus ghcup before build; Colima is the only supported Apple Docker environment | Docker Engine plus Compose plugin for `linux-cpu`; NVIDIA driver plus container toolkit in addition for `linux-gpu` |
 | Tool bootstrap after the binary exists | supported commands may reconcile remaining operator tooling | Homebrew-managed Docker CLI, `kind`, `kubectl`, `helm`, Node.js, and Poetry bootstrap may be installed on demand | the substrate image already carries the supported toolchain; runtime install is not part of the contract |
 | Build roots and kubeconfig location | outputs stay repo-local and untracked | `./.build/`, `./.build/infernix.kubeconfig`, and explicit `./.build/infernix internal materialize-substrate apple-silicon` staging | `/opt/build/infernix/` in the image plus `./.data/runtime/infernix.kubeconfig` for durable outer-container reuse |
@@ -46,7 +46,8 @@ does not claim substrate parity where the underlying hardware or launcher model 
 
 ## Unsupported Shortcuts
 
-- repo-owned scripts or wrapper layers for supported workflows
+- ad hoc repo-owned scripts or wrapper layers beyond the supported `bootstrap/*.sh` stage-0
+  entrypoints
 - `docker compose up` or `docker compose exec` as operator entrypoints
 - per-substrate Python projects, handwritten source under `Generated/`, or a separate web runtime image
 - pretending Apple host-native inference and Linux outer-container inference are interchangeable

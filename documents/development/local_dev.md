@@ -8,19 +8,31 @@
 
 ## Current Status
 
-- Apple clean-host support reduces pre-existing host requirements to Homebrew plus ghcup, treats
-  Colima as the only supported Docker environment, and lets `infernix` reconcile the remaining
-  supported Homebrew-managed tools plus Poetry bootstrap on demand
+- Apple clean-host support reduces pre-existing host requirements to Homebrew plus ghcup, exposes
+  `./bootstrap/apple-silicon.sh` as the supported stage-0 entrypoint, treats Colima as the only
+  supported Docker environment, and lets `infernix` reconcile the remaining supported
+  Homebrew-managed tools plus Poetry bootstrap on demand
 - after `./.build/infernix` exists on Apple Silicon, supported host-native commands reconcile
   Colima, Docker CLI, `kind`, `kubectl`, `helm`, Node.js, and Poetry through the supported package
   manager or built-in Python path when the active flow first needs them
-- `linux-cpu` host prerequisites stop at Docker Engine plus the Docker Compose plugin, and
-  `linux-gpu` adds only the supported NVIDIA driver and container-toolkit setup
+- `linux-cpu` and `linux-gpu` expose repo-owned `bootstrap/*.sh` entrypoints that keep host
+  prerequisites probe-driven and idempotent; the CPU path stops at Docker Engine plus the Docker
+  Compose plugin, and the GPU path adds only the supported NVIDIA driver and container-toolkit
+  setup
 
 ## Apple Host-Native Flow
 
 ```bash
-cabal --builddir=.build/cabal install --installdir=./.build --install-method=copy --overwrite-policy=always exe:infernix exe:infernix-demo
+./bootstrap/apple-silicon.sh up
+./bootstrap/apple-silicon.sh status
+./bootstrap/apple-silicon.sh test
+./bootstrap/apple-silicon.sh down
+```
+
+Direct reference path:
+
+```bash
+cabal --builddir=.build/cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes
 ./.build/infernix internal materialize-substrate apple-silicon
 ./.build/infernix cluster up
 ./.build/infernix cluster status
@@ -34,6 +46,15 @@ Poetry reconciles those prerequisites automatically.
 ## Containerized Linux Flow
 
 ```bash
+./bootstrap/linux-cpu.sh up
+./bootstrap/linux-cpu.sh status
+./bootstrap/linux-cpu.sh test
+./bootstrap/linux-cpu.sh down
+```
+
+Direct reference path:
+
+```bash
 docker compose build infernix
 docker compose run --rm infernix infernix cluster up
 docker compose run --rm infernix infernix cluster status
@@ -41,12 +62,13 @@ docker compose run --rm infernix infernix test all
 docker compose run --rm infernix infernix cluster down
 ```
 
-These commands target the default `linux-cpu` launcher image. For `linux-gpu`, export
-`INFERNIX_COMPOSE_IMAGE=infernix-linux-gpu:local`,
+For `linux-gpu`, use `./bootstrap/linux-gpu.sh ...` as the supported entrypoint. The underlying
+reference path exports `INFERNIX_COMPOSE_IMAGE=infernix-linux-gpu:local`,
 `INFERNIX_COMPOSE_SUBSTRATE=linux-gpu`, and
-`INFERNIX_COMPOSE_BASE_IMAGE=nvidia/cuda:13.2.1-cudnn-runtime-ubuntu24.04` before
-`docker compose build infernix`; the same `docker compose run --rm infernix infernix ...`
-surface then drives the GPU-backed workflow.
+`INFERNIX_COMPOSE_BASE_IMAGE=nvidia/cuda:13.2.1-cudnn-runtime-ubuntu24.04` before the same
+`docker compose run --rm infernix infernix ...` surface. If the host does not already pass
+`nvidia-smi -L`, the supported bootstrap installs the recommended Ubuntu compute driver, stops,
+and instructs the operator to reboot before rerunning the same command.
 
 ## Engine Adapter Testing
 
@@ -64,13 +86,15 @@ the shared adapter project:
   `./.build/infernix internal materialize-substrate apple-silicon` after `cabal install`, and the
   Linux image build runs `infernix internal materialize-substrate <substrate>` while baking
   `/opt/build/infernix/infernix-substrate.dhall`
-- supported workflows do not use repo-owned scripts or wrapper layers
+- supported repo-owned shell is limited to the `bootstrap/*.sh` stage-0 entrypoints; they prepare
+  the host and then hand off to the direct `cabal`, `docker compose`, or `infernix` command
+  surface
 - the target Apple host workflow has no generic Python prerequisite; Poetry and a repo-local
   adapter virtual environment materialize only when an engine-adapter test or setup path is
   exercised, and `infernix` bootstraps a user-local `poetry` executable through the host's
   built-in Python when that path first needs it
 - Colima is the only supported Docker environment on Apple Silicon
-- Apple host builds call `cabal` directly with `--builddir=.build/cabal` and
+- the Apple direct reference build calls `cabal` with `--builddir=.build/cabal` and
   `--installdir=./.build`, which keeps Cabal output under `./.build/` and materializes
   `./.build/infernix` and `./.build/infernix-demo`
 - Apple mode uses the repo-local kubeconfig under `./.build/`

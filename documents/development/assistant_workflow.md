@@ -23,12 +23,15 @@ parallel long-form workflow contracts.
 - use `documents/` as the canonical home for architecture, development, engineering, operations,
   and reference guidance
 - update `README.md`, `AGENTS.md`, and `CLAUDE.md` together when root workflow guidance changes
-- do not add repo-owned scripts or wrappers for supported workflows
+- keep repo-owned shell limited to the supported `bootstrap/*.sh` stage-0 host bootstrap surface;
+  control-plane behavior and validation remain Haskell- or Compose-owned
 
 ## Supported Build And Operator Workflows
 
+- prefer the supported stage-0 bootstrap entrypoints:
+  `./bootstrap/apple-silicon.sh`, `./bootstrap/linux-cpu.sh`, and `./bootstrap/linux-gpu.sh`
 - use direct host builds:
-  `cabal --builddir=.build/cabal install --installdir=./.build --install-method=copy --overwrite-policy=always exe:infernix exe:infernix-demo`
+  `cabal --builddir=.build/cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes`
 - on the supported Linux outer-container path, `cluster up` reuses the already-built
   `infernix-linux-<mode>:local` snapshot instead of rebuilding the identical runtime image inside
   the launcher
@@ -65,9 +68,9 @@ parallel long-form workflow contracts.
   `infernix internal generate-purs-contracts`, which derives them through `purescript-bridge`
   from dedicated Haskell browser-contract ADTs in `src/Infernix/Web/Contracts.hs`
 - the demo UI is built with spago and tested with `purescript-spec`
-- the tracked repository carries no repo-owned `.sh` files and no committed generated artifacts
-  such as Poetry lockfiles, generated protobuf stubs, `*.pyc`, `web/spago.lock`, or
-  `web/src/Generated/`
+- the tracked repository limits repo-owned shell to `bootstrap/*.sh` and carries no committed
+  generated artifacts such as Poetry lockfiles, generated protobuf stubs, `*.pyc`,
+  `web/spago.lock`, or `web/src/Generated/`
 
 ## Validation Before Handoff
 

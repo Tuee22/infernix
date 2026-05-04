@@ -121,8 +121,9 @@ Rules:
 - keep one canonical home per topic
 - move implementation status discussion into `DEVELOPMENT_PLAN/`
 - keep examples aligned with the supported `infernix` CLI surface
-- document direct `cabal`, `docker compose`, and `infernix` invocations rather than repo-owned
-  scripts or wrapper layers
+- document the supported `bootstrap/*.sh` stage-0 entrypoints together with the direct `cabal`,
+  `docker compose`, and `infernix` commands they drive; do not add extra wrapper layers beyond
+  that bounded bootstrap surface
 
 ## Update Rules
 

@@ -14,8 +14,8 @@
   Harbor's required backend services before Harbor becomes pull-ready
 - the chart values reserve the `infernix-runtime` and `infernix-results` buckets for the real
   cluster path
-- the real non-simulated `linux-cpu` integration lane writes a sentinel file through the MinIO
-  data volume, replaces one MinIO pod, and asserts the sentinel remains readable afterward
+- the real-cluster `linux-cpu` integration lane writes a sentinel file through the MinIO data
+  volume, replaces one MinIO pod, and asserts the sentinel remains readable afterward
 
 ## Routed Surfaces
 

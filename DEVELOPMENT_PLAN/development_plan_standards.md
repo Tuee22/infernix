@@ -220,9 +220,9 @@ Rules:
   must call out compatibility layers explicitly until that is true.
 - Apple Silicon host builds place the compiled `infernix` binary and other generated build
   artifacts under `./.build/`, and supported host-native command examples use `./.build/infernix`.
-- Plan documents do not introduce repo-owned scripts or wrappers for supported build or launch
-  flows; they spell out direct `cabal`, `docker compose`, and `infernix` invocations when explicit
-  flags are required.
+- Plan documents may reference the bounded `bootstrap/*.sh` stage-0 entrypoints for supported host
+  provisioning, but they still spell out the underlying direct `cabal`, `docker compose`, and
+  `infernix` invocations when explicit flags or substrate mechanics matter.
 - On Apple Silicon, `cluster up` writes the repo-local kubeconfig to `./.build/infernix.kubeconfig`
   and must not mutate `$HOME/.kube/config` or the user's global current context.
 - On the Linux outer-container path, `cluster up` writes the repo-local kubeconfig to

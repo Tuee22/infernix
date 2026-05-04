@@ -25,8 +25,8 @@ under `web/src/Generated/`, and runtime result or cache-manifest state uses prot
 ## Build Roots
 
 - the repo-local operator binaries live at `./.build/infernix` and `./.build/infernix-demo`
-- supported Apple host Cabal workflows call `cabal` directly with `--builddir=./.build/cabal` and
-  `--installdir=./.build`
+- the supported Apple host bootstrap ultimately calls
+  `cabal --builddir=./.build/cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes`
 - supported outer-container Cabal workflows use `/opt/build/infernix`
 - on the outer-container path, the baked launcher binaries remain `/usr/local/bin/infernix` and
   `/usr/local/bin/infernix-demo`; `/opt/build/infernix` holds generated state and refreshed
@@ -61,7 +61,8 @@ under `web/src/Generated/`, and runtime result or cache-manifest state uses prot
 
 ## Rules
 
-- repo-owned scripts or wrappers are not part of the supported build or launcher workflow
+- repo-owned shell is limited to the `bootstrap/*.sh` stage-0 host bootstrap entrypoints; build
+  and launcher ownership stays with the direct `cabal`, `docker compose`, and `infernix` surfaces
 - generated demo-config files live under the active build root, not tracked source paths
 - `cluster up`, `service`, and the validation entrypoints require the generated substrate file to
   exist already; they do not regenerate it on first command execution

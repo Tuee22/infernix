@@ -59,9 +59,9 @@ This repository serves two aligned purposes:
   3.16.1.0, Python 3 + Poetry, node, Playwright, `nvkind`, and the Kind/kubectl/Helm/Docker
   toolbelt baked in. Apple Silicon has no Dockerfile; the operator pre-installs ghcup and the
   daemon installs engine deps via system `clang` and `brew`
-- no `.sh` files anywhere in the repo; no committed built artifacts (`poetry.lock`, generated
-  proto, `.mypy_cache`, `.ruff_cache`, `*.pyc`, `web/dist/`, `web/spago.lock`,
-  `web/src/Generated/`)
+- repo-owned shell is limited to the `bootstrap/*.sh` stage-0 host bootstrap entrypoints; no
+  committed built artifacts (`poetry.lock`, generated proto, `.mypy_cache`, `.ruff_cache`,
+  `*.pyc`, `web/dist/`, `web/spago.lock`, `web/src/Generated/`)
 
 ## What Infernix Does
 
@@ -120,9 +120,9 @@ The supported local platform is built around:
   toolchain and Playwright; the chart workload entrypoint selects which exe runs
   (`infernix service` or `infernix-demo serve`). Apple Silicon has no Dockerfile — the daemon
   builds engines on the host via system `clang` and `brew`
-- one direct host Cabal install path on Apple Silicon (operator-installed ghcup pinned to GHC
-  9.14.1 + Cabal 3.16.1.0) that keeps host-native artifacts under `./.build/` without
-  repo-owned scripts
+- one Apple host bootstrap entrypoint, `./bootstrap/apple-silicon.sh`, that idempotently
+  reconciles Homebrew plus ghcup before driving the direct host-native Cabal install path and
+  keeping host-native artifacts under `./.build/`
 - one repo-local kubeconfig managed under the active build-output location rather than the user's
   global kubeconfig
 
@@ -140,14 +140,46 @@ separately through `daemonLocation: control-plane-host`. Production deployments 
 off and accept inference work via Pulsar subscription only. The local Kind and HA substrate is the
 validation and operator baseline for Apple, CPU, and CUDA runtime targets.
 
+## Getting Started
+
+Use the substrate bootstrap that matches the host you actually want to run:
+
+```bash
+# Apple Silicon / Metal host-native lane.
+./bootstrap/apple-silicon.sh up
+
+# Ubuntu 24.04 CPU lane.
+./bootstrap/linux-cpu.sh up
+
+# Ubuntu 24.04 NVIDIA lane.
+./bootstrap/linux-gpu.sh up
+```
+
+Each bootstrap entrypoint is designed to be safe to rerun. It probes the current host state,
+installs only the missing supported prerequisites for that substrate, builds or reuses the
+supported launcher path, and then runs the requested control-plane command.
+
+After a successful run, each script prints the next commands for that substrate, including:
+
+- `doctor` to re-check prerequisites
+- `status` to print the edge port and route inventory
+- `test` to run `infernix test all`
+- `down` to tear down the cluster while preserving repo-local durable state
+- `purge` to remove repo-local state and local launcher artifacts after confirmation
+
+On `linux-gpu`, if `nvidia-smi` does not already work on the host, the bootstrap installs the
+recommended Ubuntu compute driver, stops, and tells you to reboot and run the same command again.
+
 ## System Prerequisites
 
-Use the host package manager or installer that matches the supported execution context:
+The supported stage-0 entrypoints are the substrate bootstraps under `bootstrap/`:
 
-- on Apple Silicon, the intended pre-existing host prerequisites are only Homebrew plus `ghcup`
-- on Linux CPU, the intended host prerequisites stop at Docker Engine plus the Docker Compose plugin
-- on Linux CUDA, the intended host prerequisites stop at Docker Engine plus the supported NVIDIA
-  driver and container-toolkit setup
+- on Apple Silicon, run `./bootstrap/apple-silicon.sh doctor`
+- on Linux CPU, run `./bootstrap/linux-cpu.sh doctor`
+- on Linux CUDA, run `./bootstrap/linux-gpu.sh doctor`
+
+The manual package-manager commands below remain the reference path that those bootstrap scripts
+drive or mirror.
 
 Current status:
 
@@ -164,6 +196,12 @@ The Linux install examples below assume an Ubuntu 24.04 host.
 
 ### Apple Silicon host prerequisites
 
+Preferred path:
+
+```bash
+./bootstrap/apple-silicon.sh doctor
+```
+
 Required before building `./.build/infernix` on the host:
 
 - Homebrew
@@ -175,10 +213,10 @@ Supported install path:
 # Homebrew (official installer).
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 
-# Userland tools managed by Homebrew.
+# Install ghcup from Homebrew.
+brew install ghcup
 
-# Haskell toolchain managed by ghcup rather than Homebrew.
-curl --proto '=https' --tlsv1.2 -sSf https://get-ghcup.haskell.org | sh
+# Haskell toolchain version selection remains ghcup-managed.
 ghcup install ghc 9.14.1
 ghcup set ghc 9.14.1
 ghcup install cabal 3.16.1.0
@@ -187,8 +225,8 @@ ghcup set cabal 3.16.1.0
 
 Notes:
 
-- `ghcup` is the supported manual install because the Apple host-native workflow depends on an
-  explicitly selected GHC and Cabal pair
+- Homebrew-managed `ghcup` is the supported bootstrap because the Apple host-native workflow still
+  depends on an explicitly selected GHC and Cabal pair
 - Colima is the only supported Docker environment on Apple Silicon; once `./.build/infernix`
   exists, supported commands install it from Homebrew together with the Docker CLI, `kind`,
   `kubectl`, `helm`, Node.js, and any other operator-facing tools needed by the active path
@@ -196,6 +234,12 @@ Notes:
   when `poetry` is absent, after which all host-side Python configuration continues through Poetry
 
 ### Linux CPU host prerequisites
+
+Preferred path:
+
+```bash
+./bootstrap/linux-cpu.sh doctor
+```
 
 Required on the host:
 
@@ -241,6 +285,12 @@ Notes:
 
 ### Linux CUDA host prerequisites
 
+Preferred path:
+
+```bash
+./bootstrap/linux-gpu.sh doctor
+```
+
 Required on the host:
 
 - everything from the Linux CPU host prerequisites
@@ -265,19 +315,21 @@ curl -fsSL https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-contai
   sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list > /dev/null
 sudo apt-get update
 sudo apt-get install -y nvidia-container-toolkit
-sudo nvidia-ctk runtime configure --runtime=docker
+sudo nvidia-ctk runtime configure --runtime=docker --set-as-default --cdi.enabled
+sudo nvidia-ctk config --set accept-nvidia-visible-devices-as-volume-mounts=true --in-place
 sudo systemctl restart docker
 
 # Verify both the host GPU and Docker GPU handoff.
 nvidia-smi -L
 docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi -L
+docker run --rm --gpus all -v /dev/null:/var/run/nvidia-container-devices/all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi -L
 ```
 
 Notes:
 
-- the NVIDIA driver is the main manual step because the right installation path depends on the
-  host kernel, Secure Boot posture, and fleet policy; the repo assumes that driver is already
-  working before `linux-gpu` validation starts
+- the supported `linux-gpu` bootstrap can install the recommended Ubuntu compute driver when the
+  host does not already satisfy `nvidia-smi`, but that path intentionally stops for a reboot
+  before continuing
 - the supported `linux-gpu` lane does not need host-installed `kind`, `kubectl`, `helm`, Node.js,
   or GHC because the baked `infernix-linux-gpu:local` image carries them
 - plan for substantial free disk space before `cluster up` or `test all`; the Kind preload plus
@@ -302,42 +354,30 @@ edge port plus the published route inventory, and the demo UI is available at
 
 ### Apple Silicon (host-native)
 
-Apple Silicon has no Dockerfile. The operator pre-installs `ghcup` with GHC 9.14.1 + Cabal
-3.16.1.0 active, and the host toolchain owns the `apple-silicon` runtime lane directly.
-
-**Prerequisites**: complete the Apple Silicon host setup in [System Prerequisites](#system-prerequisites).
+Apple Silicon has no Dockerfile. The supported entrypoint is the repo-owned bootstrap:
 
 ```bash
-# Build both Haskell binaries directly into ./.build/.
-cabal --builddir=.build/cabal install --installdir=./.build --install-method=copy --overwrite-policy=always exe:infernix exe:infernix-demo
+./bootstrap/apple-silicon.sh up
+./bootstrap/apple-silicon.sh status
+./bootstrap/apple-silicon.sh test
+./bootstrap/apple-silicon.sh down
+```
 
-# Stage the active substrate file beside the build root.
+Direct reference commands:
+
+```bash
+cabal --builddir=.build/cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes
 ./.build/infernix internal materialize-substrate apple-silicon
-
-# Bring up the Kind HA demo ground.
 ./.build/infernix cluster up
-
-# Print the edge port, route inventory, and publication details, then open
-# http://127.0.0.1:<edge-port>/ in a browser.
 ./.build/infernix cluster status
-
-# Run the full suite.
 ./.build/infernix test all
-
-# Or run each suite directly.
-./.build/infernix test lint
-./.build/infernix test unit
-./.build/infernix test integration
-./.build/infernix test e2e
-
-# Tear down while preserving authoritative data under ./.data.
 ./.build/infernix cluster down
 ```
 
-`cluster up` writes `./.build/infernix.kubeconfig` and never touches `$HOME/.kube/config`. On
-the supported minimal-prerequisites path, the binary reconciles Colima plus the remaining
-Homebrew-managed operator tools and bootstraps Poetry through the host's built-in Python before an
-adapter setup or validation path first needs the shared `python/.venv/`.
+`cluster up` writes `./.build/infernix.kubeconfig` and never touches `$HOME/.kube/config`. On the
+supported minimal-prerequisites path, the bootstrap and then the binary reconcile Homebrew-managed
+operator tools and Poetry bootstrap before an adapter setup or validation path first needs the
+shared `python/.venv/`.
 
 ### Linux CPU (outer container)
 
@@ -345,29 +385,22 @@ The `linux-cpu` substrate ships one baked image snapshot, `infernix-linux-cpu:lo
 `docker/linux-substrate.Dockerfile` with `BASE_IMAGE=ubuntu:24.04`. The same image acts as the
 launcher, the in-cluster workload image source, and the routed Playwright executor.
 
-**Prerequisites**: complete the Linux CPU host setup in [System Prerequisites](#system-prerequisites).
+Supported bootstrap path:
 
 ```bash
-# Build the shared Linux substrate image snapshot.
+./bootstrap/linux-cpu.sh up
+./bootstrap/linux-cpu.sh status
+./bootstrap/linux-cpu.sh test
+./bootstrap/linux-cpu.sh down
+```
+
+Direct reference commands:
+
+```bash
 docker compose build infernix
-
-# Bring up the Kind HA demo ground.
 docker compose run --rm infernix infernix cluster up
-
-# Print the edge port, route inventory, and publication details, then open
-# http://127.0.0.1:<edge-port>/ in a browser.
 docker compose run --rm infernix infernix cluster status
-
-# Run the full suite.
 docker compose run --rm infernix infernix test all
-
-# Or run each suite directly.
-docker compose run --rm infernix infernix test lint
-docker compose run --rm infernix infernix test unit
-docker compose run --rm infernix infernix test integration
-docker compose run --rm infernix infernix test e2e
-
-# Tear down.
 docker compose run --rm infernix infernix cluster down
 ```
 
@@ -382,37 +415,30 @@ from `docker/linux-substrate.Dockerfile` with a CUDA base image. The same suppor
 launcher surface used on Linux CPU selects that image through environment variables while keeping
 the outer control-plane container itself off the NVIDIA runtime path.
 
-**Prerequisites**: complete the Linux CUDA host setup in [System Prerequisites](#system-prerequisites).
+Supported bootstrap path:
 
 ```bash
-# Select the linux-gpu launcher image for this shell.
+./bootstrap/linux-gpu.sh up
+./bootstrap/linux-gpu.sh status
+./bootstrap/linux-gpu.sh test
+./bootstrap/linux-gpu.sh down
+```
+
+On a host that does not already pass `nvidia-smi -L`, the first `doctor`, `up`, or `test` run may
+install the recommended Ubuntu compute driver, stop, and instruct you to reboot before rerunning
+the same command.
+
+Direct reference commands:
+
+```bash
 export INFERNIX_COMPOSE_IMAGE=infernix-linux-gpu:local
 export INFERNIX_COMPOSE_SUBSTRATE=linux-gpu
 export INFERNIX_COMPOSE_BASE_IMAGE=nvidia/cuda:13.2.1-cudnn-runtime-ubuntu24.04
-
-# Build the linux-gpu substrate image snapshot.
 docker compose build infernix
-
-# Bring up the GPU-enabled Kind HA demo ground.
 docker compose run --rm infernix infernix cluster up
-
-# Print the edge port, route inventory, and publication details, then open
-# http://127.0.0.1:<edge-port>/ in a browser.
 docker compose run --rm infernix infernix cluster status
-
-# Confirm GPU visibility from the cluster service deployment.
 docker compose run --rm infernix infernix kubectl -n platform exec deployment/infernix-service -- nvidia-smi -L
-
-# Run the full suite.
 docker compose run --rm infernix infernix test all
-
-# Or run each suite directly.
-docker compose run --rm infernix infernix test lint
-docker compose run --rm infernix infernix test unit
-docker compose run --rm infernix infernix test integration
-docker compose run --rm infernix infernix test e2e
-
-# Tear down.
 docker compose run --rm infernix infernix cluster down
 ```
 
@@ -433,8 +459,8 @@ The canonical supported CLI surfaces are split between the two binaries.
 - `infernix cluster down`
 - `infernix cluster status`
 - `infernix cache status`
-- `infernix cache evict`
-- `infernix cache rebuild`
+- `infernix cache evict [--model MODEL_ID]`
+- `infernix cache rebuild [--model MODEL_ID]`
 - `infernix kubectl ...`
 - `infernix lint files`, `infernix lint docs`, `infernix lint proto`, `infernix lint chart`
 - `infernix test lint`
@@ -446,11 +472,13 @@ The canonical supported CLI surfaces are split between the two binaries.
 - `infernix internal generate-purs-contracts`
 - `infernix internal discover {images,claims,harbor-overlay}`
 - `infernix internal publish-chart-images`
+- `infernix internal materialize-substrate <runtime-mode> [--demo-ui true|false]`
 - `infernix internal demo-config {load,validate}`
+- `infernix internal pulsar-roundtrip DEMO_CONFIG_PATH MODEL_ID INPUT_TEXT`
 
 `infernix-demo` (demo UI HTTP host, gated by `.dhall` `demo_ui` flag):
 
-- `infernix-demo serve --dhall PATH --port N`
+- `infernix-demo serve [--dhall PATH] [--port PORT]`
 
 Every repo-owned lifecycle, cache, validation, and docs command other than `infernix service` and
 `infernix-demo serve` is declarative and idempotent. `infernix kubectl ...` is a scoped wrapper
@@ -485,8 +513,7 @@ around upstream `kubectl`, not a parallel lifecycle surface.
   as needed for local Kind scheduling
 - `cluster down` removes cluster state without deleting authoritative data under `./.data/`
 - MinIO is the durable source of truth for manifests, durable model artifacts, and large outputs
-- Pulsar is the durable transport for inference requests, status, cancellation, and result
-  publication
+- Pulsar is the durable transport for inference requests and result publication
 - artifact flow uses two stages: upstream acquisition into MinIO, then local materialization from
   MinIO into runtime cache
 - engine workers remain process-isolated and own their own batching, execution scheduling, and
@@ -538,9 +565,10 @@ rebuildable.
 
 ## Messaging and Lane Model
 
-- Pulsar topic families remain in scope: `inference.request.*`, `inference.cancel.*`,
-  `inference.result.*`, `inference.status.*`, `inference.failure.*`, and
-  `inference.control.*`
+- the supported production topic contract currently centers on the configured request topics and
+  result topic carried in the active `.dhall`; the generated defaults are one
+  `inference.request.<runtime-mode>` topic family and one `inference.result.<runtime-mode>` topic
+  family per active substrate
 - request routing is lane-oriented: one engine, one model, one device class or allocation, one
   runtime-owned execution stream
 - engine-specific workers remain responsible for batching and execution internals after Infernix

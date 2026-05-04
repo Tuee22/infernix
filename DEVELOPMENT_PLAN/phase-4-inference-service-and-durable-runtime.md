@@ -14,7 +14,7 @@
 Phase 4 is complete. The active substrate comes from the staged substrate file, the direct
 `infernix service` lane remains host-side on `apple-silicon` while clustered `apple-silicon`
 workloads currently reuse the `linux-cpu` image family, the supported runtime contract is
-expressed in substrate-owned terms, and the supported validation rerun passed.
+expressed in substrate-owned terms.
 
 ## Current Repo Assessment
 
@@ -30,7 +30,7 @@ workload and cluster-resident repo workloads currently use `infernix-linux-cpu:l
 staged file, runtime result metadata, publication surface, and browser contracts still expose the
 active substrate through `RuntimeMode` or `runtimeMode` identifiers, while publication also keeps
 the direct Apple service-daemon location distinct from the routed `cluster-demo` API upstream. The
-supported validation rerun passed, so this phase is done.
+current worktree therefore matches the Phase 4 runtime contract.
 
 ## Substrate Config Ownership Contract
 

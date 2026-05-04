@@ -38,7 +38,8 @@
 
 - `Module shape:` keep ownership boundaries obvious; Haskell modules own the control plane, route
   registry, validation entrypoints, and service orchestration rather than delegating those concerns
-  to shell wrappers or sidecar scripts.
+  to shell wrappers or sidecar scripts. The only supported shell exception is the thin
+  `bootstrap/*.sh` stage-0 host bootstrap surface.
 - `Function shape:` prefer small typed helpers and explicit data flow over long imperative
   functions that interleave parsing, shell invocation, mutation, and rendering.
 - `Effect boundaries:` keep `IO`, process execution, filesystem mutation, and environment probing

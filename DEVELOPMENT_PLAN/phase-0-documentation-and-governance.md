@@ -19,8 +19,8 @@ staged-substrate doctrine: Apple host workflows stage `./.build/infernix-substra
 `./.build/infernix internal materialize-substrate apple-silicon`, Linux image builds stage
 `/opt/build/infernix/infernix-substrate.dhall` through the same helper family, cluster workloads
 mount the shared `infernix-substrate.dhall` filename, and `--demo-ui false` is the supported way
-to emit a demo-off substrate file. `infernix lint docs` and `infernix docs check` now pass against
-that governed-doc set, so the reopened documentation sprint is closed.
+to emit a demo-off substrate file. `infernix lint docs` and `infernix docs check` are the
+governed validation entrypoints that keep that documentation contract aligned.
 
 ## Sprint 0.1: `documents/` Suite Scaffold [Done]
 

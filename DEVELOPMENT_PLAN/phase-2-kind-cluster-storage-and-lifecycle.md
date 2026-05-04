@@ -13,8 +13,7 @@
 Phase 2 is complete. `cluster up` republishes the staged substrate payload into
 `ConfigMap/infernix-demo-config`, the repo-local publication mirror records that payload, the
 chart mounts the shared `/opt/build/infernix/infernix-substrate.dhall` path, the Linux
-control-plane launcher closes around the baked-image outer-container flow, and the supported
-validation rerun passed.
+control-plane launcher closes around the baked-image outer-container flow.
 
 ## Storage Doctrine
 
@@ -39,8 +38,7 @@ These rules close in this phase and remain mandatory afterward:
 
 The storage doctrine, Helm rollout, Harbor-first image flow, route de-duplication, generated
 values overlay path, in-image `nvkind` path, and shared substrate-publication filename are
-implemented on the supported Kind substrate. The supported validation rerun passed, so this phase
-is done.
+implemented on the supported Kind substrate. Those surfaces define the current Phase 2 contract.
 
 ## Sprint 2.1: Kind Bootstrap and StorageClass Reset [Done]
 

@@ -10,10 +10,9 @@
 
 ## Phase Status
 
-Phase 1 is complete. The supported validation rerun passed, the public CLI no longer exposes
-runtime-mode overrides, the Linux operator story is the baked-image outer-container launcher only,
-and substrate-file staging now closes through explicit materialization helpers without any
-file-absent fallback path.
+Phase 1 is complete. The public CLI no longer exposes runtime-mode overrides, the Linux operator
+story is the baked-image outer-container launcher only, and substrate-file staging now closes
+through explicit materialization helpers without any file-absent fallback path.
 
 ## Current Repo Assessment
 
@@ -21,7 +20,7 @@ The repo matches the Phase 1 ownership contract directly: the control plane has 
 command registry, the governed root docs point at canonical `documents/` topics with explicit
 metadata, the Linux launcher uses a baked image snapshot, and `infernix-substrate.dhall` is staged
 under the build root through explicit helper invocations instead of file-absent fallback logic.
-The supported validation rerun passed, so this phase is done.
+Those ownership surfaces define the current Phase 1 contract.
 
 ## Substrate Foundation
 
@@ -218,7 +217,7 @@ Retire custom control-plane Python tooling in favor of Haskell modules under `in
   chart lint are Haskell-owned
 - `tools/` no longer carries repo-owned custom-logic Python on the supported path
 - Python remains only as the engine-adapter boundary governed by later runtime phases
-- the repo carries no repo-owned `.sh` wrappers on the supported path
+- repo-owned shell is limited to the supported `bootstrap/*.sh` stage-0 host bootstrap surface
 
 ### Validation
 

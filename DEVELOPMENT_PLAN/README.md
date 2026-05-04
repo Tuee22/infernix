@@ -63,10 +63,8 @@ and mounts that same filename in cluster workloads at
 though the payload is banner-prefixed JSON. Validation already reports only the active built
 substrate instead of implying a default cross-substrate matrix, and the generated file,
 `cluster status`, publication JSON, and generated browser contracts still serialize that active
-substrate under `runtimeMode` field names. The supported Linux outer-container validation stack
-rerun now passes component-by-component: `infernix lint docs`, the Haskell and PureScript unit
-suites, `infernix test integration`, and `infernix test e2e` all passed, so the reopened plan
-items are closed.
+substrate under `runtimeMode` field names. The plan therefore closes around one active-substrate
+validation contract rather than a default cross-substrate rerun story.
 
 Monitoring is not a supported first-class surface.
 

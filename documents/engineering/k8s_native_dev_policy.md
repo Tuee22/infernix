@@ -11,9 +11,10 @@
 - `infernix cluster up` is the only supported cluster reconcile entrypoint
 - `infernix cluster down` is the only supported teardown entrypoint
 - `infernix cluster status` is read-only
-- when Docker, Kind, Helm, or kubectl are unavailable, `cluster up` falls back to the simulated
-  substrate and `cluster status` reports that explicitly
-- repo-owned Kind configs live under `kind/` and define the Apple, CPU, and CUDA cluster shapes
+- when Docker, Kind, Helm, or kubectl are unavailable, `cluster up` fails fast instead of
+  simulating another substrate
+- repo-owned Kind configs live under `kind/` and define the Apple, CPU, and `linux-gpu` cluster
+  shapes
 - repo-owned Helm charts and values live under `chart/`, self-bootstrap the declared Helm
   repositories, and deploy the repo-owned Gateway API, demo, service, publication, and PVC
   workloads on the real cluster path

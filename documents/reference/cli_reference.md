@@ -62,7 +62,7 @@
 
 ## `infernix-demo` (demo UI HTTP host)
 
-- `infernix-demo serve --dhall PATH --port N`
+- `infernix-demo serve [--dhall PATH] [--port PORT]`
 
 ## Rules
 

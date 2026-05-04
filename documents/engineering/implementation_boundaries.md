@@ -57,8 +57,9 @@ assets stay under `chart/`, and generated outputs remain untracked.
   second command or workflow registry.
 - Generated directories such as `web/src/Generated/`, `tools/generated_proto/`, and `web/dist/`
   are rebuild targets, not review surfaces for handwritten logic.
-- Supported workflows do not introduce repo-owned shell wrappers or duplicate helper scripts when a
-  Haskell module already owns the behavior.
+- Supported repo-owned shell is limited to the `bootstrap/*.sh` stage-0 host bootstrap surface;
+  it may reconcile prerequisites and invoke the supported command surface, but it does not become
+  a second lifecycle or validation implementation.
 
 ## Validation
 

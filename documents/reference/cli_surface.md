@@ -31,7 +31,7 @@ executable runs.
 
 ## `infernix-demo` Families
 
-- `serve --dhall PATH --port N` starts the demo HTTP API host
+- `serve [--dhall PATH] [--port PORT]` starts the demo HTTP API host
 
 ## Cross-References
 
