@@ -6,6 +6,7 @@ module Infernix.Models
     engineBindingForSelectedEngine,
     engineBindingsForMode,
     encodeDemoConfig,
+    expectedDaemonLocationForRuntime,
     findModel,
     platformClaims,
     requestTopicsForMode,
@@ -257,12 +258,15 @@ renderRouteInfo route =
 
 daemonLocationFor :: ClusterState -> Text
 daemonLocationFor state =
-  case clusterRuntimeMode state of
+  if clusterPresent state
+    then expectedDaemonLocationForRuntime (clusterRuntimeMode state)
+    else "disabled"
+
+expectedDaemonLocationForRuntime :: RuntimeMode -> Text
+expectedDaemonLocationForRuntime runtimeMode =
+  case runtimeMode of
     AppleSilicon -> "control-plane-host"
-    _ ->
-      if clusterPresent state
-        then "cluster-pod"
-        else "disabled"
+    _ -> "cluster-pod"
 
 stateHasDemoUi :: ClusterState -> Bool
 stateHasDemoUi state =

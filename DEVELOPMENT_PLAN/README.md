@@ -120,9 +120,9 @@ The supported platform now closes around these rules:
 - the staged substrate file retains the legacy `.dhall` filename even though the current payload is
   banner-prefixed JSON produced by Haskell runtime helpers
 - Apple host-native operation is the only supported host build path outside a container
-- on Apple Silicon, the host-built `./.build/infernix` binary manages Kind, deploys the demo app
-  on the cluster, and performs inference host-side; the host inference daemon must be running for
-  the routed demo surface to work
+- on Apple Silicon, the host-built `./.build/infernix` binary manages Kind, deploys the clustered
+  demo workloads, and still owns the direct host-side `infernix service` lane; the routed demo and
+  Playwright paths do not manage a separate host daemon in the current code path
 - on Apple Silicon, Compose is not a user-facing launcher for ordinary CLI work; the host CLI may
   still invoke a direct `docker run` of the Playwright-capable Linux substrate image internally
   for routed Playwright E2E

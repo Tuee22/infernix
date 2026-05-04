@@ -25,6 +25,9 @@
 - cluster publication mirrors the staged payload locally as `infernix-substrate.dhall`, and the
   rendered chart mounts that same filename inside cluster workloads at
   `/opt/build/infernix/infernix-substrate.dhall`
+- on `apple-silicon`, cluster-resident repo workloads currently reuse the `infernix-linux-cpu:local`
+  image family even though the staged substrate, publication metadata, and browser contracts still
+  report `apple-silicon`
 - Linux operator workflows close around Compose-driven outer containers, validation reports only
   the active built substrate, and the supported materialization path can emit `demo_ui = false`
 - Monitoring is not a supported first-class surface.
@@ -33,7 +36,7 @@
 
 | Component | Technology | Deployment | Purpose | Durable state |
 |-----------|------------|------------|---------|---------------|
-| Apple host control plane | `./.build/infernix` plus direct `cabal` materialization against operator-installed ghcup | host-native | canonical operator surface on Apple Silicon; host-native cluster lifecycle owner; host-native inference daemon owner; repo-local kubeconfig owner | `./.build/`, `./.data/` |
+| Apple host control plane | `./.build/infernix` plus direct `cabal` materialization against operator-installed ghcup | host-native | canonical operator surface on Apple Silicon; host-native cluster lifecycle owner; host-native direct `infernix service` owner; repo-local kubeconfig owner | `./.build/`, `./.data/` |
 | Linux outer-container control plane | `docker compose run --rm infernix infernix ...` | Linux container | only supported Linux CLI surface for `linux-cpu` and `linux-gpu`; selects the active `infernix-linux-<mode>:local` snapshot through `INFERNIX_COMPOSE_*` launcher variables while forwarding the Docker socket and bind-mounting only `./.data/` on the supported path | `./.data/`, `./.data/runtime/infernix.kubeconfig`, `/opt/build/infernix/`, `/root/.cabal` |
 | Command registry | structured Haskell parser or dispatcher registry | host or outer container | owns the supported command inventory, `--help` output, and the generated CLI-reference sections that docs lint enforces | none |
 | Substrate configuration | staged banner-prefixed JSON payload at the legacy `infernix-substrate.dhall` path | host or outer container | primary source of truth for active substrate, generated catalog content, daemon placement, active engine dispatch, and test scope once the file has been staged | `./.build/infernix-substrate.dhall`, `/opt/build/infernix/infernix-substrate.dhall` |
@@ -64,14 +67,14 @@
 | Kind and Helm lifecycle | Haskell control-plane orchestration in `cluster up` | host-native Apple CLI or Linux outer container | create or reuse Kind, reset StorageClasses, reconcile PVs, deploy Harbor first, publish the staged substrate payload, publish images, and deploy the final chart | `./.data/runtime/cluster-state.state`, `./.data/kind/...` |
 | Harbor image preparation | Harbor plus Haskell image publication flow | Kind cluster plus control plane | bootstrap Harbor, mirror required images, and publish repo-owned images before later rollout | Harbor state under `./.data/kind/...` |
 | PostgreSQL substrate | Percona Kubernetes operator plus Patroni PostgreSQL | Kind cluster | only supported in-cluster PostgreSQL contract for Harbor and later services | `./.data/kind/...` |
-| Publication state | repo-local JSON plus routed `/api/publication` surface | repo-local state and demo API | reports control-plane context, daemon location, the active substrate through its current `runtimeMode` field, routes, and upstream health metadata | `./.data/runtime/publication.json` |
+| Publication state | repo-local JSON plus routed `/api/publication` surface | repo-local state and demo API | reports control-plane context, the direct `infernix service` daemon location, the routed demo API upstream mode, the active substrate through its current `runtimeMode` field, routes, and upstream health metadata | `./.data/runtime/publication.json` |
 | Edge Gateway controller | Helm-installed Envoy Gateway controller | Kind cluster | owns all browser-visible and host-consumed routing | none |
 | Cluster Gateway resource | `GatewayClass/infernix-gateway` plus `Gateway/infernix-edge` | Kind cluster | single localhost-bound HTTP listener on the chosen edge port | none |
 | HTTPRoute rendering | data-driven `chart/templates/httproutes.yaml` from the Haskell route registry | Kind cluster | publishes the route inventory for demo, Harbor, MinIO, and Pulsar surfaces | none |
 | Substrate-file publication | generated `ConfigMap/infernix-demo-config` plus repo-local mirror | Kind cluster and repo-local state | republishes the staged substrate payload for cluster consumers and local inspection tooling through the shared `infernix-substrate.dhall` filename | `./.data/runtime/configmaps/infernix-demo-config/` |
-| Service runtime host | `infernix service` plus `src/Infernix/Runtime/{Cache,Worker,Pulsar}.hs` | host process on `apple-silicon`; cluster pod on `linux-cpu` and `linux-gpu` | Pulsar consumer, durable cache owner, and engine-worker supervisor | `./.data/runtime/`, object-store state under `./.data/object-store/` |
-| Demo UI host | `infernix-demo` deployment | cluster pod | serves `/`, `/api`, `/api/publication`, `/api/cache`, and `/objects/` when demo is enabled | none |
-| Web runtime executor | PureScript bundle plus Playwright in the Linux outer-container image | Linux outer container | serves the browser bundle from the clustered demo app and runs routed E2E coverage from the containerized Playwright executor | test artifacts under `./.data/` |
+| Service runtime host | `infernix service` plus `src/Infernix/Runtime/{Cache,Worker,Pulsar}.hs` | direct host process or cluster pod | direct `infernix service` stays host-native on `apple-silicon`; repo-owned cluster workloads currently run from Linux substrate images, with `apple-silicon` selecting the `infernix-linux-cpu` image family for clustered `infernix-service` and `infernix-demo` | `./.data/runtime/`, object-store state under `./.data/object-store/` |
+| Demo UI host | `infernix-demo` deployment | cluster pod | serves `/`, `/api`, `/api/publication`, `/api/cache`, and `/objects/` when demo is enabled; routed manual inference currently executes in-process from that clustered workload rather than through a separate host-side bridge | none |
+| Web runtime executor | PureScript bundle plus Playwright in the Linux outer-container image | Linux outer-container image; executed via direct `docker run`, orchestrated by the Compose-launched control plane on Linux and by the host CLI on Apple E2E | serves the browser bundle from the clustered demo app and runs routed E2E coverage from the containerized Playwright executor | test artifacts under `./.data/` |
 | Engine adapter set | `python/adapters/` invoked via `poetry run` from the Haskell worker | host child process or cluster child process | Python-native engine boundary over typed protobuf-over-stdio | optional Apple venv under `python/.venv/` |
 | Python quality gate | `poetry run check-code` | host or Linux outer-container image | runs mypy strict, black check, and ruff strict against the shared adapter tree | none |
 

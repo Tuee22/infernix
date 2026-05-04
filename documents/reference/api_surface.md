@@ -37,6 +37,8 @@ surface is the `.dhall` topic contract described in [../tools/pulsar.md](../tool
 - the demo API surface is implemented in Haskell as `src/Infernix/Demo/Api.hs` and exposed by the
   `infernix-demo` binary; production `infernix service` does not bind any HTTP port and never
   serves these endpoints
+- `POST /api/inference` executes in-process inside `infernix-demo` on the routed demo path; it
+  does not proxy through a separate host-side demo bridge
 - request validation uses Haskell-owned model metadata; the same Haskell typed runtime contract is
   shared with the non-HTTP production daemon
 - invalid requests return typed user-facing errors
@@ -49,6 +51,9 @@ surface is the `.dhall` topic contract described in [../tools/pulsar.md](../tool
   source-artifact URI or kind metadata, and selected-artifact inventory while keeping derived cache
   directories rebuildable
 - publication details stay mode-stable and source from the repo-local publication-state file
+- on Apple, that publication payload still reports the direct `infernix service` lane as
+  `daemonLocation: control-plane-host` while `apiUpstream.mode` stays `cluster-demo` for the
+  routed demo API
 - `GET /api/demo-config` and `GET /api/models` stay aligned with the generated active-mode demo
   catalog
 - the demo `/api` remains stable across Apple and Linux substrates because the routed demo surface

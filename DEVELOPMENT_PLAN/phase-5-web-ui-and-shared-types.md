@@ -214,13 +214,14 @@ supported Playwright executor.
 - the Playwright suite and browser helpers do not branch on substrate id or engine family; they
   interact only with the routed demo surface and rely on `infernix-demo` to read `.dhall` and
   dispatch the correct engine
-- README-level substrate instructions cover how to launch the demo app, how to keep the Apple host
-  daemon running for inference, and how E2E execution differs between Apple and Linux
+- README-level substrate instructions cover how to launch the demo app, how the direct Apple
+  `infernix service` lane differs from the clustered demo and E2E path, and how E2E execution
+  differs between Apple and Linux
 
 ### Validation
 
-- Apple routed E2E passes while the host inference daemon is live and the Playwright executor runs
-  inside that direct containerized image path
+- Apple routed E2E passes from the host CLI while the Playwright executor runs inside that direct
+  containerized image path
 - Linux routed E2E passes through the same container-owned Playwright executor without any host
   daemon management
 - Apple and Linux routed E2E pass through the same browser-visible flows without substrate-specific

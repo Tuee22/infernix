@@ -34,6 +34,7 @@ import Infernix.Lint.Chart (runChartLint)
 import Infernix.Lint.Docs (runDocsLint)
 import Infernix.Lint.Files (runFilesLint)
 import Infernix.Lint.Proto (runProtoLint)
+import Infernix.Models (expectedDaemonLocationForRuntime)
 import Infernix.Python
   ( ensurePoetryExecutable,
     ensurePoetryProjectReady,
@@ -193,10 +194,7 @@ runRuntimeModeE2E paths runtimeMode =
         case maybePort of
           Just port -> pure port
           Nothing -> ioError (userError "edge port was not published after cluster up")
-      let expectedDaemonLocation =
-            case runtimeMode of
-              AppleSilicon -> "control-plane-host"
-              _ -> "cluster-pod"
+      let expectedDaemonLocation = Text.unpack (expectedDaemonLocationForRuntime runtimeMode)
       if controlPlaneContext paths == "host-native"
         then
           runPlaywrightImage

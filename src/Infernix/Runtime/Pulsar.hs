@@ -38,6 +38,7 @@ import Data.Text.Encoding qualified as TextEncoding
 import Data.Time (getCurrentTime)
 import Infernix.Config
 import Infernix.DemoConfig (decodeDemoConfigFile)
+import Infernix.Models (expectedDaemonLocationForRuntime)
 import Infernix.Runtime (executeInference)
 import Infernix.Types
 import Lens.Family2 (set, view)
@@ -120,10 +121,7 @@ runProductionDaemon paths runtimeMode = do
   let controlPlane = fromMaybe (controlPlaneContext paths) maybeControlPlaneOverride
       daemonLocation =
         fromMaybe
-          ( if controlPlane == "host-native"
-              then "control-plane-host"
-              else "cluster-pod"
-          )
+          (Text.unpack (expectedDaemonLocationForRuntime runtimeMode))
           maybeDaemonLocationOverride
       catalogSource =
         fromMaybe

@@ -73,8 +73,9 @@ mode-specific coverage, matrix behavior, and operator detail behind those canoni
   for the active substrate, compares `/api/models` against the serialized generated demo
   config, validates routed publication details from `/api/publication`, and fails if the browser
   workbench cannot render publication details, select a model, or submit one of those entries
-- the Apple host-native routed E2E lane also fails if the clustered routed surface cannot use the
-  host daemon for inference while keeping one browser-visible base URL
+- the Apple host-native routed E2E lane also fails if the clustered routed surface cannot keep
+  `apiUpstream.mode = cluster-demo`, preserve one browser-visible base URL, and still report the
+  direct Apple service lane separately through `daemonLocation = control-plane-host`
 - the supported routed E2E path uses a container-owned Playwright executor; Apple host-native
   flows orchestrate it from the host CLI through a direct `docker run` of the Playwright-capable
   Linux substrate image, while Linux flows launch it from the active substrate image

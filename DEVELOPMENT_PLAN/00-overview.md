@@ -19,7 +19,7 @@ supported Linux outer-container validation stack rerun now passes component-by-c
 | CLI ownership | one structured Haskell command registry owns the supported command surface without any `--runtime-mode` override | implemented |
 | Substrate selection | one staged substrate file beside the active build root is the primary source of truth for substrate identity and generated catalog selection | implemented |
 | Staged substrate-file format | the substrate file and its mirrors use one explicit and consistent file format and filename contract | implemented; the current contract is a shared `infernix-substrate.dhall` filename carrying banner-prefixed JSON on local and cluster-mounted paths |
-| Apple host-native lane | the host-built binary manages Kind, deploys the clustered demo app, and performs inference from the host daemon | implemented |
+| Apple host-native lane | the host-built binary manages Kind, deploys the clustered demo workloads, and still owns the direct host-side `infernix service` lane | implemented |
 | Linux control plane | all supported Linux CLI commands run through `docker compose run --rm infernix infernix ...` | implemented |
 | Linux GPU naming | the NVIDIA-backed Linux substrate is standardized as `linux-gpu` | implemented |
 | Serialized substrate naming | the generated substrate file, publication JSON, `cluster status`, and browser contracts still carry the active substrate under `runtimeMode` field names | implemented |
@@ -56,8 +56,9 @@ Monitoring is not a supported first-class surface.
 - the staged file retains the legacy `.dhall` filename even though the current payload is
   banner-prefixed JSON produced by Haskell helpers
 - Apple Silicon is the only supported host-native build path outside a container
-- on Apple Silicon, the host-built binary manages Kind, deploys the clustered demo app, and
-  performs inference host-side; the host inference daemon must be running for the demo to work
+- on Apple Silicon, the host-built binary manages Kind, deploys the clustered demo workloads, and
+  still owns the direct host-side `infernix service` lane; the routed demo and Playwright paths do
+  not manage a separate host daemon in the current code path
 - on Linux substrates, all supported CLI commands run through
   `docker compose run --rm infernix infernix ...`; there is no supported Linux host-native CLI
   story outside the outer container
@@ -241,7 +242,8 @@ The plan keeps control-plane execution context separate from substrate.
 - Apple host-native control plane is the canonical operator surface on Apple Silicon
 - Linux outer-container control plane is the only supported Linux CLI surface
 - Apple operators do not use Compose as a user-facing launcher for ordinary CLI work
-- Apple E2E orchestration may still invoke the outer container internally for Playwright
+- Apple E2E orchestration may still invoke a direct `docker run` of the Playwright-capable Linux
+  substrate image internally
 - Linux host-native `infernix` execution outside a container is not a supported operator workflow
 
 ### 3. Three Supported Substrates
@@ -292,7 +294,8 @@ The plan keeps control-plane execution context separate from substrate.
 - when `demo_ui` is false in the active staged file, no demo UI or demo API route is published;
   the supported materialization path can emit that production-off value with `--demo-ui false`
 - when `demo_ui` is true, the demo app is cluster-resident across substrates
-- on `apple-silicon`, the routed demo surface still depends on the host inference daemon being live
+- on `apple-silicon`, the routed demo surface remains cluster-resident while the direct host-side
+  `infernix service` lane stays distinct from that browser-facing path
 
 ### 7. Local Harbor Is The Cluster Image Source
 

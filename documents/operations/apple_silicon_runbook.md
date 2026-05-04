@@ -41,8 +41,12 @@ reconciles those prerequisites automatically.
   preparing a demo-off config
 - `cluster up` writes `./.build/infernix.kubeconfig`
 - supported flows do not mutate `$HOME/.kube/config`
-- when the demo surface is enabled, the browser stays on the clustered routed surface while the
-  Apple host daemon remains responsible for host-native inference
+- when the demo surface is enabled, the browser stays on the clustered routed surface; the direct
+  `infernix service` lane remains host-native while routed manual inference executes inside the
+  clustered `infernix-demo` workload in the current code path
+- `/api/publication` still reports the direct Apple service lane as
+  `daemonLocation: control-plane-host` while the routed demo API remains
+  `apiUpstream.mode: cluster-demo`
 - the host-native daemon uses the same Haskell worker contract as the cluster-resident daemon and
   forks Python adapters from `python/adapters/` only when the bound engine is Python-native
 - the Apple host bootstrap uses Homebrew-managed Colima, Docker CLI, `kind`, `kubectl`, `helm`,

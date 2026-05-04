@@ -50,6 +50,15 @@ main = do
   assert (length (catalogForMode AppleSilicon) == 15) "apple-silicon catalog count matches the matrix"
   assert (length (catalogForMode LinuxCpu) == 12) "linux-cpu catalog count matches the matrix"
   assert (length (catalogForMode LinuxGpu) == 16) "linux-gpu catalog count matches the matrix"
+  assert
+    (expectedDaemonLocationForRuntime AppleSilicon == "control-plane-host")
+    "apple-silicon publication reports the host-native service daemon location"
+  assert
+    (expectedDaemonLocationForRuntime LinuxCpu == "cluster-pod")
+    "linux-cpu publication reports the cluster-resident service daemon location"
+  assert
+    (expectedDaemonLocationForRuntime LinuxGpu == "cluster-pod")
+    "linux-gpu publication reports the cluster-resident service daemon location"
   assert (isJust (findModel LinuxGpu "llm-qwen25-awq")) "linux-gpu includes the AWQ row"
   assert (isNothing (findModel AppleSilicon "llm-qwen25-awq")) "apple-silicon omits unsupported AWQ rows"
   assert

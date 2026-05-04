@@ -651,7 +651,8 @@ Remove the known non-failing warning noise from the supported web-validation pat
   deprecated `runSpec` or `runSpecT` entrypoints
 - the Playwright matrix launcher sanitizes its child-process environment so supported runs do not
   pass both `NO_COLOR` and `FORCE_COLOR`
-- the Apple host-native Playwright launch path applies the same color-env sanitization
+- the Apple host-native containerized Playwright path avoids forwarding conflicting `NO_COLOR` and
+  `FORCE_COLOR` values into the executor
 - the governed testing docs describe the supported runner and env-sanitization posture for the web
   test path
 

@@ -11,10 +11,10 @@
 
 ## Phase Status
 
-Phase 4 is complete. The active substrate comes from the staged substrate file, the clustered demo
-surface relies on the host daemon for `apple-silicon` inference without becoming a host HTTP
-bridge, the supported runtime contract is expressed in substrate-owned terms, and the supported
-validation rerun passed.
+Phase 4 is complete. The active substrate comes from the staged substrate file, the direct
+`infernix service` lane remains host-side on `apple-silicon` while clustered `apple-silicon`
+workloads currently reuse the `linux-cpu` image family, the supported runtime contract is
+expressed in substrate-owned terms, and the supported validation rerun passed.
 
 ## Current Repo Assessment
 
@@ -24,9 +24,13 @@ status or eviction or rebuild flows, repo-local durable object-store state under
 `./.data/object-store/`, a shared Python adapter project whose setup entrypoints write idempotent
 bootstrap manifests, explicit substrate-materialization helpers, and daemon placement driven by the
 staged substrate file. That file still keeps a legacy `.dhall` name while carrying banner-prefixed
-JSON. The staged file, runtime result metadata, publication surface, and browser contracts still
-expose the active substrate through `RuntimeMode` or `runtimeMode` identifiers. The supported
-validation rerun passed, so this phase is done.
+JSON. On `apple-silicon`, the direct `infernix service` entrypoint remains host-native, but the
+clustered `infernix-demo` path executes routed manual inference in-process from the cluster
+workload and cluster-resident repo workloads currently use `infernix-linux-cpu:local` images. The
+staged file, runtime result metadata, publication surface, and browser contracts still expose the
+active substrate through `RuntimeMode` or `runtimeMode` identifiers, while publication also keeps
+the direct Apple service-daemon location distinct from the routed `cluster-demo` API upstream. The
+supported validation rerun passed, so this phase is done.
 
 ## Substrate Config Ownership Contract
 
@@ -248,7 +252,7 @@ None.
 ## Sprint 4.12: Substrate-Owned Daemon Placement, Reload Control, and Fallback Removal [Done]
 
 **Status**: Done
-**Implementation**: `src/Infernix/Config.hs`, `src/Infernix/DemoConfig.hs`, `src/Infernix/Service.hs`, `src/Infernix/DemoCLI.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Runtime/Pulsar.hs`, `docker/linux-substrate.Dockerfile`, `web/test/run_playwright_matrix.mjs`
+**Implementation**: `src/Infernix/Config.hs`, `src/Infernix/DemoConfig.hs`, `src/Infernix/Service.hs`, `src/Infernix/DemoCLI.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Models.hs`, `src/Infernix/Runtime/Pulsar.hs`, `docker/linux-substrate.Dockerfile`, `web/test/run_playwright_matrix.mjs`, `test/unit/Spec.hs`
 **Docs to update**: `README.md`, `documents/architecture/runtime_modes.md`, `documents/engineering/model_lifecycle.md`, `documents/engineering/object_storage.md`, `documents/engineering/portability.md`, `documents/engineering/testing.md`, `documents/operations/apple_silicon_runbook.md`
 
 ### Objective
@@ -265,8 +269,12 @@ file-absent substrate-selection fallback from the runtime contract.
 - Apple host and Linux image-build workflows stage that substrate file through
   `infernix internal materialize-substrate ...`, and supported runtime entrypoints fail fast if it
   is absent
-- the Apple host daemon is the authoritative inference engine for `apple-silicon`, and the routed
-  clustered demo app depends on that host daemon being live
+- the direct `infernix service` entrypoint remains host-side for `apple-silicon`, while the routed
+  clustered demo app reads the same staged `.dhall` and executes manual inference without a
+  host-side demo bridge or separately managed host daemon in the current code path
+- cluster-resident repo workloads on `apple-silicon` currently reuse the
+  `infernix-linux-cpu:local` image family while still resolving `apple-silicon` from the staged
+  substrate file
 - Linux `linux-cpu` and `linux-gpu` daemons run only as cluster-resident workloads on their
   deployed substrate images
 - the daemon watches the substrate `.dhall`, reloads or restarts when it changes, and purges
@@ -277,8 +285,9 @@ file-absent substrate-selection fallback from the runtime contract.
 
 ### Validation
 
-- Apple host-native `infernix service` reports `apple-silicon` from the generated substrate file
-  and the routed demo surface fails fast when that daemon is absent
+- Apple host-native `infernix service` reports `apple-silicon` from the generated substrate file,
+  and routed manual inference continues to succeed through the clustered `infernix-demo` surface
+  without a host-side demo bridge
 - Linux substrate daemons read the mounted ConfigMap-backed substrate file at
   `/opt/build/infernix/infernix-substrate.dhall` and do not rely on runtime-mode flags
 - manual inference through `infernix-demo` and service-loop execution both use the engine binding
@@ -378,7 +387,9 @@ produces the two real Linux runtime images and supports the image-snapshot launc
 - one shared `docker/linux-substrate.Dockerfile` builds `infernix-linux-cpu` and
   `infernix-linux-gpu`
 - build arguments cover at least the base image and the substrate-selecting `RUNTIME_MODE` value;
-  shared build stages own the common toolchain
+  shared build stages own the common toolchain, and `compose.yaml` selects those inputs through
+  `INFERNIX_COMPOSE_*` launcher variables without changing the supported `docker compose run --rm infernix infernix ...`
+  surface
 - `docker/linux-base.Dockerfile` is removed from the supported architecture
 - the shared image definition owns ghcup-pinned GHC or Cabal, Python, Poetry, node, Playwright,
   and the Kind toolbelt
@@ -394,15 +405,19 @@ produces the two real Linux runtime images and supports the image-snapshot launc
 
 ### Validation
 
-- `docker build -f docker/linux-substrate.Dockerfile --build-arg RUNTIME_MODE=linux-cpu -t infernix-linux-cpu:local .`
-  succeeds on supported hosts
-- `docker build -f docker/linux-substrate.Dockerfile --build-arg RUNTIME_MODE=linux-gpu -t infernix-linux-gpu:local .`
-  succeeds on supported hosts
+- `docker compose build infernix` succeeds on supported Linux CPU hosts and produces the default
+  `infernix-linux-cpu:local` snapshot
+- after exporting `INFERNIX_COMPOSE_IMAGE=infernix-linux-gpu:local`,
+  `INFERNIX_COMPOSE_SUBSTRATE=linux-gpu`, and
+  `INFERNIX_COMPOSE_BASE_IMAGE=nvidia/cuda:13.2.1-cudnn-runtime-ubuntu24.04`,
+  `docker compose build infernix` succeeds on supported Linux GPU hosts and produces the
+  `infernix-linux-gpu:local` snapshot
 - smoke probes from the built images confirm the expected `infernix`, `ghc`, `cabal`, `python`,
   and Playwright tooling
 - `infernix lint files` succeeds inside the baked Linux image without `.git` metadata by using the
   captured source-snapshot manifest
-- `infernix cluster up` uses the active substrate image on the supported path
+- `docker compose run --rm infernix infernix cluster up` uses the active built substrate image on
+  the supported path
 
 ### Remaining Work
 

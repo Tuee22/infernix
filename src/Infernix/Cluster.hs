@@ -1759,7 +1759,7 @@ waitForRoutedPublicationSurface :: Paths -> ClusterState -> IO ()
 waitForRoutedPublicationSurface paths state = do
   when (clusterStateHasDemoUi state) $ do
     let publicationUrl = clusterEdgeBaseUrl paths state <> "/api/publication"
-        expectedRuntimeMode = Text.unpack (runtimeModeId (clusterRuntimeMode state))
+        expectedRuntimeMode = clusterRuntimeMode state
     result <-
       retryCommandOutput
         120
@@ -1770,7 +1770,13 @@ waitForRoutedPublicationSurface paths state = do
       Right _ -> pure ()
       Left err ->
         ioError
-          (userError ("routed publication surface never became ready for " <> expectedRuntimeMode <> ":\n" <> err))
+          ( userError
+              ( "routed publication surface never became ready for "
+                  <> Text.unpack (runtimeModeId expectedRuntimeMode)
+                  <> ":\n"
+                  <> err
+              )
+          )
 
 waitForWorkloadRollout :: ClusterState -> Int -> String -> IO ()
 waitForWorkloadRollout state timeoutSeconds workload =
@@ -2030,7 +2036,7 @@ mergePersistentClaims existingClaims newClaims =
     persistentVolumeClaimName
     (Map.elems (Map.fromList [(persistentVolumeClaimName persistentClaim, persistentClaim) | persistentClaim <- existingClaims <> newClaims]))
 
-probePublicationRoute :: String -> String -> IO (Either String String)
+probePublicationRoute :: String -> RuntimeMode -> IO (Either String String)
 probePublicationRoute publicationUrl expectedRuntimeMode = do
   response <- tryCommand Nothing [] "curl" ["-fsS", publicationUrl]
   pure $
@@ -2042,11 +2048,12 @@ probePublicationRoute publicationUrl expectedRuntimeMode = do
             then Right "ready"
             else Left "publication route not ready"
 
-routedPublicationReady :: String -> Value -> Bool
+routedPublicationReady :: RuntimeMode -> Value -> Bool
 routedPublicationReady expectedRuntimeMode publicationPayload =
-  lookupJsonStringPath ["daemonLocation"] publicationPayload == Just "cluster-pod"
+  lookupJsonStringPath ["daemonLocation"] publicationPayload
+    == Just (Text.unpack (expectedDaemonLocationForRuntime expectedRuntimeMode))
     && lookupJsonStringPath ["apiUpstream", "mode"] publicationPayload == Just "cluster-demo"
-    && lookupJsonStringPath ["runtimeMode"] publicationPayload == Just expectedRuntimeMode
+    && lookupJsonStringPath ["runtimeMode"] publicationPayload == Just (Text.unpack (runtimeModeId expectedRuntimeMode))
 
 requireJsonArrayPath :: [Text.Text] -> Value -> Either String [Value]
 requireJsonArrayPath pathSegments value =

@@ -365,7 +365,8 @@ launcher story onto the requested Apple-host-native and Linux-Compose doctrines.
 - Linux outer-container commands use Compose as the only supported launcher for both `linux-cpu`
   and `linux-gpu`
 - Apple operators do not use Compose as a user-facing launcher for ordinary CLI work; Apple E2E
-  orchestration may still invoke Compose internally for the Playwright executor
+  orchestration may still invoke a direct `docker run` of the Playwright-capable Linux substrate
+  image internally for the Playwright executor
 - the NVIDIA-backed Linux substrate is standardized as `linux-gpu`, with the old `linux-cuda`
   naming retired as an explicit compatibility cleanup item
 

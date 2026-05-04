@@ -243,6 +243,9 @@ Rules:
 - Supported Linux control-plane commands always run through
   `docker compose run --rm infernix infernix ...`; there is no supported Linux host-native
   `infernix` workflow outside the outer container.
+- When the active Linux snapshot differs from the default `linux-cpu` image, phase docs call out
+  the `INFERNIX_COMPOSE_*` launcher variables that select the built image and Dockerfile build
+  arguments while keeping that same supported Compose command surface unchanged.
 - On Apple Silicon, operators do not use Compose as a user-facing launcher for ordinary CLI work.
   The Apple host CLI may still invoke a direct `docker run` of the Playwright-capable Linux
   substrate image internally when it needs the container-owned Playwright executor during routed
@@ -436,9 +439,9 @@ Substrate-specific validation is explicit.
   substrate id or engine family; `infernix-demo` reads the generated `.dhall` and chooses the
   correct engine binding for the active substrate behind the routed demo API.
 - On Apple Silicon, the supported host CLI owns test orchestration. It starts the host inference
-  daemon when needed, runs host-side integration logic directly, and may invoke
-  a direct `docker run` of the Playwright-capable Linux substrate image internally for the
-  container-owned Playwright executor while the host daemon remains live.
+  daemon when the service-loop checks need it, runs host-side integration logic directly, and may
+  invoke a direct `docker run` of the Playwright-capable Linux substrate image internally for the
+  container-owned Playwright executor.
 - On Linux substrates, all supported CLI and test commands run through
   `docker compose run --rm infernix infernix ...`, and test flows do not manage a host daemon
   because inference runs from the deployed cluster daemon.

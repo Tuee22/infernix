@@ -56,6 +56,12 @@ Service placement is a separate concept from runtime mode.
 
 - Apple host-native service placement runs `infernix service` on the host while the routed demo
   surface stays cluster-resident
+- on `apple-silicon`, the clustered `infernix-demo` path and the cluster-resident repo workloads
+  currently run from the `infernix-linux-cpu:local` image family while still reading the staged
+  `apple-silicon` substrate file
+- `/api/publication` therefore reports the direct Apple service lane as
+  `daemonLocation: control-plane-host` while the routed demo API remains
+  `apiUpstream.mode: cluster-demo`
 - the same production daemon runs in every placement and consumes the same generated
   `request_topics`, `result_topic`, and `engines` fields from the active `.dhall`
 - when Pulsar endpoint env vars are present, the daemon uses the real Pulsar WebSocket or admin
