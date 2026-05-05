@@ -30,11 +30,11 @@ The demo UI is served by the `infernix-demo` Haskell binary and gated by the act
   non-zero exits explicitly instead of relying on deprecated `runSpec` entrypoints
 - the npm-managed PureScript toolchain is installed either in `web/node_modules/` on the host
   path or in the active Linux substrate image build, both on Node.js 22+
-- supported routed Playwright E2E stays container-owned: on Apple Silicon the host CLI
-  orchestrates a direct `docker run` of the Playwright-capable Linux substrate image, while on
-  Linux the active substrate image owns the executor on the supported outer-container path;
-  supported Playwright launchers sanitize conflicting `NO_COLOR` and `FORCE_COLOR` values before
-  spawning the child process
+- supported routed Playwright E2E stays container-owned through the dedicated
+  `infernix-playwright:local` image; on Apple Silicon the host CLI invokes
+  `docker compose run --rm playwright` directly, and on Linux the outer container forwards the
+  same compose invocation through the mounted host docker socket; supported Playwright launchers
+  sanitize conflicting `NO_COLOR` and `FORCE_COLOR` values before spawning the child process
 
 ## Source Layout
 

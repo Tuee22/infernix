@@ -15,6 +15,7 @@ import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.ByteString.Lazy.Char8 qualified as LazyChar8
 import Data.List (intercalate, isInfixOf, isPrefixOf)
+import Data.Maybe (fromMaybe)
 import Data.Text qualified as Text
 import Data.Vector qualified as Vector
 import GHC.IO.Encoding (setLocaleEncoding, utf8)
@@ -52,14 +53,12 @@ import Infernix.Types
     InferenceResult (..),
     PersistentClaim (..),
     ResultPayload (..),
-    RuntimeMode (AppleSilicon, LinuxGpu),
+    RuntimeMode (AppleSilicon),
     runtimeModeId,
   )
 import Infernix.Web.Contracts qualified as Contracts
 import Infernix.Workflow
-  ( ensurePlaywrightBrowsers,
-    ensureWebDependencies,
-    platformCommandsAvailableForE2E,
+  ( ensureWebDependencies,
     resolveWebNpmInvocation,
   )
 import Language.PureScript.Bridge (buildBridge, defaultBridge, writePSTypesWith)
@@ -116,16 +115,18 @@ dispatch command =
       ensurePythonAdapterDependencies Nothing
       runCabalCommand Nothing ["test", "infernix-unit"]
       runWebNpmCommand Nothing ["--prefix", "web", "run", "test:unit"]
-    TestIntegrationCommand -> runCabalCommand Nothing ["test", "infernix-integration"]
-    TestE2ECommand -> runEndToEnd Nothing
+    TestIntegrationCommand ->
+      runClusterOwnedValidation Nothing (runCabalCommand Nothing ["test", "infernix-integration"])
+    TestE2ECommand ->
+      runClusterOwnedValidation Nothing (runEndToEnd Nothing)
     TestAllCommand -> do
       ensureWebDependencies
       runLint Nothing
       ensurePythonAdapterDependencies Nothing
       runCabalCommand Nothing ["test", "infernix-unit"]
       runWebNpmCommand Nothing ["--prefix", "web", "run", "test:unit"]
-      runCabalCommand Nothing ["test", "infernix-integration"]
-      runEndToEnd Nothing
+      runClusterOwnedValidation Nothing (runCabalCommand Nothing ["test", "infernix-integration"])
+      runClusterOwnedValidation Nothing (runEndToEnd Nothing)
     InternalDiscoverImagesCommand renderedChartPath ->
       mapM_ putStrLn =<< discoverChartImagesFile renderedChartPath
     InternalDiscoverClaimsCommand renderedChartPath ->
@@ -169,21 +170,20 @@ runLint maybeRuntimeMode = do
   runPythonQualityIfPresent maybeRuntimeMode
   runCabalCommand maybeRuntimeMode ["build", "all"]
 
+runClusterOwnedValidation :: Maybe RuntimeMode -> IO a -> IO a
+runClusterOwnedValidation maybeRuntimeMode action = do
+  clusterDown maybeRuntimeMode
+  action
+    `finally` clusterDown maybeRuntimeMode
+
 runEndToEnd :: Maybe RuntimeMode -> IO ()
 runEndToEnd maybeRuntimeMode = do
-  commandsAvailable <- platformCommandsAvailableForE2E
-  if not commandsAvailable
-    then do
-      ensureWebDependencies
-      ensurePlaywrightBrowsers
-      runWebNpmCommand maybeRuntimeMode ["--prefix", "web", "run", "test:e2e"]
-    else do
-      paths <- discoverPaths
-      runtimeModes <-
-        case maybeRuntimeMode of
-          Just runtimeMode -> pure [runtimeMode]
-          Nothing -> (: []) <$> resolveRuntimeMode Nothing
-      mapM_ (runRuntimeModeE2E paths) runtimeModes
+  paths <- discoverPaths
+  runtimeModes <-
+    case maybeRuntimeMode of
+      Just runtimeMode -> pure [runtimeMode]
+      Nothing -> (: []) <$> resolveRuntimeMode Nothing
+  mapM_ (runRuntimeModeE2E paths) runtimeModes
 
 runRuntimeModeE2E :: Paths -> RuntimeMode -> IO ()
 runRuntimeModeE2E paths runtimeMode =
@@ -277,44 +277,22 @@ printInternalPulsarResult resultValue = do
 runPlaywrightImage :: RuntimeMode -> Maybe String -> String -> Int -> String -> String -> IO ()
 runPlaywrightImage runtimeMode maybeNetwork routeProbeHost edgePort expectedDaemonLocation expectedApiUpstreamMode = do
   paths <- discoverPaths
-  imageRef <- resolvePlaywrightImage paths runtimeMode
   waitForPlaywrightSurface routeProbeHost edgePort expectedDaemonLocation expectedApiUpstreamMode
-  runCommand
+  let networkValue = fromMaybe "bridge" maybeNetwork
+      composeFile = repoRoot paths </> "compose.yaml"
+      composeEnv =
+        [ ("INFERNIX_PLAYWRIGHT_NETWORK", networkValue),
+          ("INFERNIX_EDGE_PORT", show edgePort),
+          ("INFERNIX_PLAYWRIGHT_HOST", routeProbeHost),
+          ("INFERNIX_EXPECT_DAEMON_LOCATION", expectedDaemonLocation),
+          ("INFERNIX_EXPECT_API_UPSTREAM_MODE", expectedApiUpstreamMode)
+        ]
+  runCommandWithCwdAndEnv
     (Just runtimeMode)
+    composeEnv
     "docker"
-    ( [ "run",
-        "--rm"
-      ]
-        <> maybe [] (\networkName -> ["--network", networkName]) maybeNetwork
-        <> [ "-e",
-             "INFERNIX_EDGE_PORT=" <> show edgePort,
-             "-e",
-             "INFERNIX_PLAYWRIGHT_HOST=" <> routeProbeHost,
-             "-e",
-             "INFERNIX_EXPECT_DAEMON_LOCATION=" <> expectedDaemonLocation,
-             "-e",
-             "INFERNIX_EXPECT_API_UPSTREAM_MODE=" <> expectedApiUpstreamMode,
-             imageRef,
-             "npm",
-             "--prefix",
-             "web",
-             "exec",
-             "--",
-             "playwright",
-             "test",
-             "./playwright/inference.spec.js",
-             "--reporter=list",
-             "--timeout=30000"
-           ]
-    )
-
-resolvePlaywrightImage :: Paths -> RuntimeMode -> IO String
-resolvePlaywrightImage _paths runtimeMode =
-  pure
-    ( case runtimeMode of
-        LinuxGpu -> "infernix-linux-gpu:local"
-        _ -> "infernix-linux-cpu:local"
-    )
+    ["compose", "-f", composeFile, "run", "--rm", "playwright"]
+    (repoRoot paths)
 
 waitForPlaywrightSurface :: String -> Int -> String -> String -> IO ()
 waitForPlaywrightSurface host edgePort expectedDaemonLocation expectedApiUpstreamMode = go (60 :: Int)
@@ -418,9 +396,7 @@ renderPersistentClaimLine persistentClaim =
     ]
 
 runCabalCommand :: Maybe RuntimeMode -> [String] -> IO ()
-runCabalCommand maybeRuntimeMode args = do
-  buildDir <- resolveCabalBuildDir
-  runCommand maybeRuntimeMode "cabal" (("--builddir=" <> buildDir) : args)
+runCabalCommand maybeRuntimeMode = runCommand maybeRuntimeMode "cabal"
 
 runWebNpmCommand :: Maybe RuntimeMode -> [String] -> IO ()
 runWebNpmCommand maybeRuntimeMode npmArgs = do

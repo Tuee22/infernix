@@ -29,9 +29,10 @@ demo catalog entries, service binding, and validation.
 
 The active runtime mode is encoded in `infernix-substrate.dhall` beside the built binary.
 Apple host builds stage that file explicitly with
-`./.build/infernix internal materialize-substrate apple-silicon`, and Linux image builds stage it
-during `docker/linux-substrate.Dockerfile` with
-`infernix internal materialize-substrate <substrate> --demo-ui <true|false>`.
+`./.build/infernix internal materialize-substrate apple-silicon`, and Linux outer-container
+workflows stage `./.build/outer-container/build/infernix-substrate.dhall` on the host through the
+bind-mounted build tree with
+`docker compose run --rm infernix infernix internal materialize-substrate <substrate> --demo-ui <true|false>`.
 `cluster up` republishes that exact file into the repo-local publication mirror and
 `ConfigMap/infernix-demo-config`.
 

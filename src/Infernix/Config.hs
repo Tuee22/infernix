@@ -9,7 +9,6 @@ module Infernix.Config
     publicationStatePath,
     publishedConfigMapCatalogPath,
     publishedConfigMapManifestPath,
-    resolveCabalBuildDir,
     resolveRuntimeMode,
     watchedDemoConfigPath,
   )
@@ -20,7 +19,6 @@ import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Char8 qualified as ByteStringChar8
-import Data.Maybe (fromMaybe)
 import Data.Text qualified as Text
 import Infernix.Types (RuntimeMode (..), parseRuntimeMode)
 import System.Directory (createDirectoryIfMissing, doesFileExist, doesPathExist, getCurrentDirectory)
@@ -146,11 +144,6 @@ helmEnvironment paths =
     ("HELM_DATA_HOME", helmDataRoot paths)
   ]
 
-resolveCabalBuildDir :: IO FilePath
-resolveCabalBuildDir = do
-  maybeValue <- lookupEnv "INFERNIX_CABAL_BUILDDIR"
-  pure (fromMaybe ".build/cabal" maybeValue)
-
 resolveRuntimeMode :: Maybe RuntimeMode -> IO RuntimeMode
 resolveRuntimeMode (Just runtimeMode) = pure runtimeMode
 resolveRuntimeMode Nothing = do
@@ -205,7 +198,7 @@ missingGeneratedSubstrateFileError substratePath =
         [ "Missing generated substrate file: " <> substratePath,
           "Build or restage the active substrate before running supported infernix commands.",
           "Examples:",
-          "  cabal --builddir=.build/cabal install --installdir=./.build --install-method=copy --overwrite-policy=always exe:infernix exe:infernix-demo",
+          "  cabal install --installdir=./.build --install-method=copy --overwrite-policy=always exe:infernix exe:infernix-demo",
           "  infernix internal materialize-substrate apple-silicon",
           "  docker compose build infernix"
         ]

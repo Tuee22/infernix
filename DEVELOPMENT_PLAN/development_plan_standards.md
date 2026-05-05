@@ -247,9 +247,9 @@ Rules:
   the `INFERNIX_COMPOSE_*` launcher variables that select the built image and Dockerfile build
   arguments while keeping that same supported Compose command surface unchanged.
 - On Apple Silicon, operators do not use Compose as a user-facing launcher for ordinary CLI work.
-  The Apple host CLI may still invoke a direct `docker run` of the Playwright-capable Linux
-  substrate image internally when it needs the container-owned Playwright executor during routed
-  E2E validation.
+  The Apple host CLI invokes `docker compose run --rm playwright` against the dedicated
+  `infernix-playwright:local` image when it needs the container-owned Playwright executor during
+  routed E2E validation.
 - On Linux CPU, host prerequisites stop at Docker Engine plus the Docker Compose plugin.
 - On Linux GPU, host prerequisites stop at Docker Engine plus the supported NVIDIA driver and
   container-toolkit setup.
@@ -270,8 +270,8 @@ Substrates are the product-facing inference lanes:
 | Substrate | Canonical substrate id | Current staging rule |
 |-----------|------------------------|----------------------|
 | Apple Silicon / Metal | `apple-silicon` | host-native workflows stage `./.build/infernix-substrate.dhall` with `./.build/infernix internal materialize-substrate apple-silicon [--demo-ui true|false]` |
-| Linux / CPU | `linux-cpu` | outer-container images stage `/opt/build/infernix/infernix-substrate.dhall` with `infernix internal materialize-substrate linux-cpu --demo-ui <true|false>` |
-| Linux / NVIDIA GPU | `linux-gpu` | outer-container images stage `/opt/build/infernix/infernix-substrate.dhall` with `infernix internal materialize-substrate linux-gpu --demo-ui <true|false>` |
+| Linux / CPU | `linux-cpu` | outer-container workflows stage `./.build/outer-container/build/infernix-substrate.dhall` on the host with `docker compose run --rm infernix infernix internal materialize-substrate linux-cpu --demo-ui <true|false>` |
+| Linux / NVIDIA GPU | `linux-gpu` | outer-container workflows stage `./.build/outer-container/build/infernix-substrate.dhall` on the host with `docker compose run --rm infernix infernix internal materialize-substrate linux-gpu --demo-ui <true|false>` |
 
 Rules:
 
@@ -313,7 +313,8 @@ Rules:
 - A supported Apple host workflow stages or restages the substrate file under `./.build/` with
   `./.build/infernix internal materialize-substrate apple-silicon [--demo-ui true|false]`.
 - A supported outer-container workflow stages or restages the Linux substrate file under
-  `/opt/build/infernix/` with `infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>`.
+  `./.build/outer-container/build/` on the host through the bind-mounted build tree with
+  `docker compose run --rm infernix infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>`.
 - Supported runtime, cluster, and validation entrypoints do not regenerate the file on first
   command execution; they fail fast if it has not been staged yet.
 - The generated filename stays stable for a given build artifact, for example
@@ -439,9 +440,9 @@ Substrate-specific validation is explicit.
   substrate id or engine family; `infernix-demo` reads the generated `.dhall` and chooses the
   correct engine binding for the active substrate behind the routed demo API.
 - On Apple Silicon, the supported host CLI owns test orchestration. It starts the host inference
-  daemon when the service-loop checks need it, runs host-side integration logic directly, and may
-  invoke a direct `docker run` of the Playwright-capable Linux substrate image internally for the
-  container-owned Playwright executor.
+  daemon when the service-loop checks need it, runs host-side integration logic directly, and
+  invokes `docker compose run --rm playwright` against the dedicated `infernix-playwright:local`
+  image for the container-owned Playwright executor.
 - On Linux substrates, all supported CLI and test commands run through
   `docker compose run --rm infernix infernix ...`, and test flows do not manage a host daemon
   because inference runs from the deployed cluster daemon.

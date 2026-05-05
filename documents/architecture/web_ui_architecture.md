@@ -25,10 +25,11 @@ When the flag is on:
 `infernix` and `infernix-demo` share one Cabal library `infernix-lib` and ship in the same runtime
 image on the real cluster path. The chart workload entrypoint selects which executable runs.
 
-On Linux, the substrate image also owns the web build prerequisites and the routed Playwright
-executor. There is no separate web-only image on the supported path. On Apple Silicon, the host
-CLI orchestrates a direct `docker run` of that same Playwright-capable Linux substrate image
-against the clustered routed surface.
+On Linux, the substrate image owns the web build prerequisites and the baked `web/dist/` bundle.
+Routed Playwright execution lives in a separate dedicated `infernix-playwright:local` image built
+from `docker/playwright.Dockerfile`. On Apple Silicon, the host CLI invokes
+`docker compose run --rm playwright` directly against that dedicated image; on Linux substrates,
+the outer container forwards the same compose invocation through the mounted host docker socket.
 
 ## PureScript Application
 
@@ -57,9 +58,10 @@ against the clustered routed surface.
 - E2E coverage exhaustively hits every generated catalog entry through the routed surface and
   separately exercises browser UI interaction for publication-detail rendering, model selection,
   submission, object-reference results, and daemon-location reporting
-- supported routed E2E uses a container-owned Playwright executor on Apple and Linux alike; Apple
-  host-native orchestration reaches it through a direct `docker run` of the Playwright-capable
-  Linux substrate image
+- supported routed E2E uses the dedicated `infernix-playwright:local` container on Apple and Linux
+  alike, invoked via `docker compose run --rm playwright`; Apple host-native orchestration reaches
+  it directly while the Linux outer-container path forwards the call through the mounted host
+  docker socket
 
 ## Cross-References
 

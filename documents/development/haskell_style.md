@@ -64,8 +64,7 @@
 
 ## Validation
 
-- `cabal --builddir=.build/cabal test infernix-haskell-style` is the mechanical formatter and
-  linter gate
+- `cabal test infernix-haskell-style` is the mechanical formatter and linter gate
 - `infernix test lint` is the canonical static-quality entrypoint
 - supported validation is fail-fast and stops on drift instead of rewriting tracked files
 

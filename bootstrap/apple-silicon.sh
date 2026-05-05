@@ -51,10 +51,11 @@ Available Apple Silicon commands:
   ${SCRIPT_LABEL} purge
 
 Direct reference commands:
-  cabal --builddir=.build/cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes
+  cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes
   ./.build/infernix internal materialize-substrate apple-silicon
   ./.build/infernix cluster up
   ./.build/infernix cluster status
+  docker compose build playwright
   ./.build/infernix test all
   ./.build/infernix cluster down
 
@@ -115,7 +116,7 @@ ensure_build_prerequisites() {
 
 build_launcher() {
   ensure_build_prerequisites
-  bootstrap::run cabal --builddir=.build/cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes
+  bootstrap::run cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes
   bootstrap::run ./.build/infernix internal materialize-substrate apple-silicon
 }
 
@@ -146,6 +147,7 @@ command_status() {
 
 command_test() {
   build_launcher
+  bootstrap::run docker compose build playwright
   bootstrap::run ./.build/infernix test all
 }
 

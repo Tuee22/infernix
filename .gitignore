@@ -36,6 +36,7 @@ web/dist/
 web/output/
 web/.spago/
 web/spago.lock
+web/package-lock.json
 web/src/Generated/
 web/.parcel-cache/
 web/playwright-report/

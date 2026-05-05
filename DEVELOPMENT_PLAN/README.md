@@ -52,15 +52,16 @@ A phase or sprint can move to `Done` only when all of the following are true:
 The repository now implements the substrate-file doctrine described by this plan. Supported flows
 stage one `infernix-substrate.dhall` beside the active build root through explicit
 `infernix internal materialize-substrate ...` helpers: Apple operators run
-`./.build/infernix internal materialize-substrate apple-silicon`, and Linux substrate images stage
-`/opt/build/infernix/infernix-substrate.dhall` during Docker build with
-`infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>`. Supported
-runtime, cluster, and validation entrypoints fail fast if the staged file is absent instead of
-falling back to host detection or `INFERNIX_SUBSTRATE_ID`. Cluster publication mirrors the exact
-payload locally under `./.data/runtime/configmaps/infernix-demo-config/infernix-substrate.dhall`
-and mounts that same filename in cluster workloads at
-`/opt/build/infernix/infernix-substrate.dhall`. The file keeps the legacy `.dhall` filename even
-though the payload is banner-prefixed JSON. Validation already reports only the active built
+`./.build/infernix internal materialize-substrate apple-silicon`, and Linux outer-container
+operators run
+`docker compose run --rm infernix infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>`
+which writes `./.build/outer-container/build/infernix-substrate.dhall` on the host through the
+host-anchored `./.build/` bind mount. Supported runtime, cluster, and validation entrypoints fail
+fast if the staged file is absent instead of falling back to host detection or
+`INFERNIX_SUBSTRATE_ID`. Cluster publication mirrors the exact payload locally under
+`./.data/runtime/configmaps/infernix-demo-config/infernix-substrate.dhall` and mounts the same
+filename inside cluster workloads at `/opt/build/infernix/infernix-substrate.dhall`. The file keeps
+the legacy `.dhall` filename even though the payload is banner-prefixed JSON. Validation already reports only the active built
 substrate instead of implying a default cross-substrate matrix, and the generated file,
 `cluster status`, publication JSON, and generated browser contracts still serialize that active
 substrate under `runtimeMode` field names. The plan therefore closes around one active-substrate
@@ -110,8 +111,9 @@ The supported platform now closes around these rules:
   generated catalog content, daemon placement, and test scope
 - Apple host-native workflows stage or restage `./.build/infernix-substrate.dhall` explicitly with
   `./.build/infernix internal materialize-substrate apple-silicon [--demo-ui true|false]`
-- Linux substrate images stage `/opt/build/infernix/infernix-substrate.dhall` during image build
-  with `infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>`
+- Linux outer-container workflows stage or restage `./.build/outer-container/build/infernix-substrate.dhall`
+  on the host through the bind-mounted build tree with
+  `docker compose run --rm infernix infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>`
 - supported runtime, cluster, and validation entrypoints fail fast if the staged substrate file is
   absent instead of regenerating it on first command execution or falling back to env or host
   detection
@@ -121,9 +123,9 @@ The supported platform now closes around these rules:
 - on Apple Silicon, the host-built `./.build/infernix` binary manages Kind, deploys the clustered
   demo workloads, and still owns the direct host-side `infernix service` lane; the routed demo and
   Playwright paths do not manage a separate host daemon in the current code path
-- on Apple Silicon, Compose is not a user-facing launcher for ordinary CLI work; the host CLI may
-  still invoke a direct `docker run` of the Playwright-capable Linux substrate image internally
-  for routed Playwright E2E
+- on Apple Silicon, Compose is not a user-facing launcher for ordinary CLI work; the host CLI
+  invokes `docker compose run --rm playwright` against the dedicated `infernix-playwright:local`
+  image for routed Playwright E2E
 - on Linux substrates, all supported CLI commands run through
   `docker compose run --rm infernix infernix ...`; there is no supported Linux host-native build or
   CLI surface outside the outer container
@@ -135,9 +137,9 @@ The supported platform now closes around these rules:
 - for `linux-gpu`, the outer control-plane image is still built from the CUDA base image, and that
   same built image is the artifact pushed to Harbor and deployed as the cluster daemon
 - the staged substrate file lives under the active build root:
-  `./.build/infernix-substrate.dhall` on Apple and `/opt/build/infernix/infernix-substrate.dhall`
-  in the outer container; Linux cluster deployment republishes that payload through
-  `ConfigMap/infernix-demo-config` and mounts the same filename inside cluster workloads at
+  `./.build/infernix-substrate.dhall` on Apple and `./.build/outer-container/build/infernix-substrate.dhall`
+  on the host on the Linux outer-container path; Linux cluster deployment republishes that payload
+  through `ConfigMap/infernix-demo-config` and mounts the same filename inside cluster workloads at
   `/opt/build/infernix/infernix-substrate.dhall`
 - the binary watches its substrate `.dhall` and reloads or restarts on changes; reload purges any
   running inference-engine state

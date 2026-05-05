@@ -16,11 +16,12 @@ lint rules established here.
 
 The governed `documents/` suite, root docs, and development plan now describe the same explicit
 staged-substrate doctrine: Apple host workflows stage `./.build/infernix-substrate.dhall` through
-`./.build/infernix internal materialize-substrate apple-silicon`, Linux image builds stage
-`/opt/build/infernix/infernix-substrate.dhall` through the same helper family, cluster workloads
-mount the shared `infernix-substrate.dhall` filename, and `--demo-ui false` is the supported way
-to emit a demo-off substrate file. `infernix lint docs` and `infernix docs check` are the
-governed validation entrypoints that keep that documentation contract aligned.
+`./.build/infernix internal materialize-substrate apple-silicon`, Linux outer-container workflows
+stage `./.build/outer-container/build/infernix-substrate.dhall` on the host through
+`docker compose run --rm infernix infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>`,
+cluster workloads mount the shared `infernix-substrate.dhall` filename, and `--demo-ui false` is the
+supported way to emit a demo-off substrate file. `infernix lint docs` and `infernix docs check` are
+the governed validation entrypoints that keep that documentation contract aligned.
 
 ## Sprint 0.1: `documents/` Suite Scaffold [Done]
 

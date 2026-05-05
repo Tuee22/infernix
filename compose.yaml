@@ -10,15 +10,29 @@ services:
         BASE_IMAGE: "${INFERNIX_COMPOSE_BASE_IMAGE:-ubuntu:24.04}"
     command: ["infernix", "--help"]
     environment:
-      INFERNIX_BUILD_ROOT: /opt/build/infernix
-      INFERNIX_CABAL_BUILDDIR: /opt/build/infernix/cabal
+      INFERNIX_BUILD_ROOT: /workspace/.build/outer-container/build
+      INFERNIX_HOST_REPO_ROOT: "${INFERNIX_HOST_REPO_ROOT:-${PWD}}"
     volumes:
       - ./.data:/workspace/.data
-      - infernix-build:/opt/build
-      - infernix-cabal-home:/root/.cabal
+      - ./.build:/workspace/.build
+      - ./compose.yaml:/workspace/compose.yaml:ro
       - /var/run/docker.sock:/var/run/docker.sock
     working_dir: /workspace
 
-volumes:
-  infernix-build:
-  infernix-cabal-home:
+  playwright:
+    image: infernix-playwright:local
+    build:
+      context: .
+      dockerfile: docker/playwright.Dockerfile
+    network_mode: "${INFERNIX_PLAYWRIGHT_NETWORK:-bridge}"
+    environment:
+      INFERNIX_EDGE_PORT: "${INFERNIX_EDGE_PORT:-30090}"
+      INFERNIX_PLAYWRIGHT_HOST: "${INFERNIX_PLAYWRIGHT_HOST:-host.docker.internal}"
+      INFERNIX_EXPECT_DAEMON_LOCATION: "${INFERNIX_EXPECT_DAEMON_LOCATION:-cluster}"
+      INFERNIX_EXPECT_API_UPSTREAM_MODE: "${INFERNIX_EXPECT_API_UPSTREAM_MODE:-cluster-demo}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - "${INFERNIX_HOST_REPO_ROOT:-.}/web/playwright:/workspace/web/playwright:ro"
+      - "${INFERNIX_HOST_REPO_ROOT:-.}/.data:/workspace/.data"
+    working_dir: /workspace

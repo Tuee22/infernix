@@ -29,7 +29,7 @@ reconciles those prerequisites automatically.
 Direct reference path:
 
 - build both Haskell binaries with
-  `cabal --builddir=.build/cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes`
+  `cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes`
 - stage the active substrate file with
   `./.build/infernix internal materialize-substrate apple-silicon`
 - run `./.build/infernix cluster up`
@@ -41,8 +41,9 @@ Direct reference path:
   adapter virtual environment materialize only when an engine-adapter validation or setup path is
   exercised explicitly
 - supported Apple host shell is limited to `./bootstrap/apple-silicon.sh`; the direct `cabal`
-  command still keeps Cabal output under `./.build/cabal` and materializes `./.build/infernix`
-  and `./.build/infernix-demo`
+  command lets cabal use its natural `dist-newstyle` builddir at the project root and only
+  overrides `--installdir=./.build` so the materialized `./.build/infernix` and
+  `./.build/infernix-demo` binaries land where the supported CLI surface expects them
 - supported Apple host workflows stage `./.build/infernix-substrate.dhall` explicitly through
   `./.build/infernix internal materialize-substrate apple-silicon`; add `--demo-ui false` when
   preparing a demo-off config

@@ -103,7 +103,7 @@ listTrackedGeneratedFailures paths = do
   gitDirectoryPresent <- doesDirectoryExist (root </> ".git")
   if gitDirectoryPresent
     then listTrackedGeneratedFailuresFromGit root
-    else listTrackedGeneratedFailuresFromSnapshotManifest paths
+    else listTrackedGeneratedFailuresFromSnapshotManifest
 
 listTrackedGeneratedFailuresFromGit :: FilePath -> IO [String]
 listTrackedGeneratedFailuresFromGit root = do
@@ -124,9 +124,9 @@ listTrackedGeneratedFailuresFromGit root = do
             )
         )
 
-listTrackedGeneratedFailuresFromSnapshotManifest :: Paths -> IO [String]
-listTrackedGeneratedFailuresFromSnapshotManifest paths = do
-  let manifestPath = sourceSnapshotManifestPath paths
+listTrackedGeneratedFailuresFromSnapshotManifest :: IO [String]
+listTrackedGeneratedFailuresFromSnapshotManifest = do
+  let manifestPath = sourceSnapshotManifestPath
   manifestPresent <- doesFileExist manifestPath
   if manifestPresent
     then do
@@ -145,8 +145,8 @@ listTrackedGeneratedFailuresFromSnapshotManifest paths = do
             )
         )
 
-sourceSnapshotManifestPath :: Paths -> FilePath
-sourceSnapshotManifestPath paths = buildRoot paths </> "source-snapshot-files.txt"
+sourceSnapshotManifestPath :: FilePath
+sourceSnapshotManifestPath = "/opt/infernix/source-snapshot-files.txt"
 
 isTrackedGeneratedPath :: FilePath -> Bool
 isTrackedGeneratedPath relativePath =

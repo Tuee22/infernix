@@ -76,9 +76,10 @@ mode-specific coverage, matrix behavior, and operator detail behind those canoni
 - the Apple host-native routed E2E lane also fails if the clustered routed surface cannot keep
   `apiUpstream.mode = cluster-demo`, preserve one browser-visible base URL, and still report the
   direct Apple service lane separately through `daemonLocation = control-plane-host`
-- the supported routed E2E path uses a container-owned Playwright executor; Apple host-native
-  flows orchestrate it from the host CLI through a direct `docker run` of the Playwright-capable
-  Linux substrate image, while Linux flows launch it from the active substrate image
+- the supported routed E2E path uses the dedicated `infernix-playwright:local` image invoked via
+  `docker compose run --rm playwright`; Apple host-native flows run that compose invocation
+  directly from the host CLI while Linux flows forward it from the outer container through the
+  mounted host docker socket
 - supported Playwright launchers clear conflicting `NO_COLOR` and `FORCE_COLOR` values from the
   child environment before Playwright starts
 - changing the active runtime mode changes the generated catalog and therefore the exercised entry

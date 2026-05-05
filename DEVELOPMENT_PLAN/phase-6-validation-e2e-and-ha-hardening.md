@@ -54,6 +54,10 @@ commands.
   and routed inference execution for every generated active-substrate catalog entry
 - `test e2e` exercises every demo-visible generated catalog entry for the active substrate
 - `test all` reports only the active built substrate instead of implying cross-substrate coverage
+- `test integration`, `test e2e`, and `test all` own cluster lifecycle around each test phase:
+  the supported entrypoint runs `cluster down` first, executes the test action, and runs
+  `cluster down` again unconditionally afterwards so reruns start from a clean cluster state
+  without depending on prior operator setup
 
 ## Sprint 6.1: Static Quality Gates, Testing Doctrine, and Unit Suites [Done]
 
@@ -85,7 +89,7 @@ contracts, and generated-catalog logic, and put the validation doctrine in canon
 ### Validation
 
 - `infernix test lint` passes when repo-owned lint, docs, and compiler-warning policy are satisfied
-- Haskell formatting or lint drift fails `cabal --builddir=.build/cabal test infernix-haskell-style`
+- Haskell formatting or lint drift fails `cabal test infernix-haskell-style`
 - `infernix test unit` runs both Haskell and frontend unit suites
 - docs validation fails if canonical testing or boundary docs drift from the supported implementation
 
@@ -143,8 +147,14 @@ browser surface through the shared edge.
 ### Deliverables
 
 - Playwright suites live under the UI-owned `web/playwright/` surface
-- `infernix test e2e` exercises the routed browser surface launched from the substrate image on
-  Linux or from a container-owned executor orchestrated by the host CLI on Apple Silicon
+- `infernix test e2e` exercises the routed browser surface through `docker compose run --rm playwright`,
+  using the same `infernix-playwright:local` image on every substrate; on Apple Silicon the host
+  CLI runs it directly, on Linux substrates the outer container runs it against the host docker
+  daemon
+- `INFERNIX_PLAYWRIGHT_NETWORK`, `INFERNIX_EDGE_PORT`, `INFERNIX_PLAYWRIGHT_HOST`,
+  `INFERNIX_EXPECT_DAEMON_LOCATION`, and `INFERNIX_EXPECT_API_UPSTREAM_MODE` flow into the playwright
+  service through compose env so the same spec covers Apple, `linux-cpu`, and `linux-gpu` without
+  branching in browser code
 - supported Playwright invocations use `npm --prefix web exec -- playwright ...`
 - E2E covers publication details, model selection, manual inference submission, and result rendering
 
@@ -152,7 +162,7 @@ browser surface through the shared edge.
 
 - `infernix test e2e` hits the routed path rather than bypassing the edge
 - the routed Playwright suite fails if any active-substrate catalog entry is skipped
-- Apple host E2E and Linux substrate-image E2E both pass on their supported lanes
+- Apple and Linux routed E2E both pass through the same compose-driven Playwright service
 
 ### Remaining Work
 
@@ -205,12 +215,18 @@ Verify the same product contract across Apple host-native and Linux outer-contai
   publication state creation for the active built substrate
 - `cluster status` reports the active substrate through its current `runtimeMode` line together
   with build or data roots, publication details, and the chosen edge port
+- `infernix test integration`, `infernix test e2e`, and `infernix test all` own cluster lifecycle
+  around each test phase: the supported entrypoint runs `cluster down`, executes the test action,
+  and runs `cluster down` again unconditionally afterwards so reruns start from a clean cluster
+  state without depending on prior operator setup
 
 ### Validation
 
 - `infernix test integration` proves the host-native lane creates the expected repo-local state
 - validation proves the Linux outer-container lane can reach the cluster through its supported path
 - repeated `cluster up` or `cluster down` behavior and `9090`-first edge-port rediscovery remain stable
+- supported `infernix test ...` reruns leave behind no residual cluster state because each phase is
+  bracketed by `cluster down` even when the test action fails partway through
 
 ### Remaining Work
 
@@ -280,7 +296,8 @@ and E2E ownership in the final `.dhall`-driven terms.
 - Apple host-native `test integration` is launched directly from the host CLI and manages the host
   inference daemon for the duration of the test when that daemon is needed
 - Apple host-native `test e2e` is launched from the host CLI while the actual Playwright executor
-  runs through a direct `docker run` of the Playwright-capable Linux substrate image
+  runs through `docker compose run --rm playwright` against the dedicated `infernix-playwright:local`
+  image
 - Linux substrate test commands all run through `docker compose run --rm infernix infernix ...`,
   and those flows do not manage a host daemon because inference runs from the cluster daemon
 - Playwright remains substrate-agnostic at the browser layer: the browser suite does not branch on
@@ -294,7 +311,7 @@ and E2E ownership in the final `.dhall`-driven terms.
 ### Validation
 
 - Apple host-native `test all` reports `apple-silicon` only, starts the host daemon as needed, and
-  delegates Playwright execution to that direct containerized image path without changing the
+  delegates Playwright execution to the compose-driven `playwright` service without changing the
   reported substrate
 - Linux `test all` reports only the built Linux substrate and runs entirely through the outer
   container launcher
@@ -375,7 +392,7 @@ toolchain from package managers instead of depending on a broad preinstalled App
 ### Validation
 
 - on a clean Apple Silicon host with only Homebrew plus ghcup present,
-  `cabal --builddir=.build/cabal install --installdir=./.build --install-method=copy --overwrite-policy=always exe:infernix exe:infernix-demo`
+  `cabal install --installdir=./.build --install-method=copy --overwrite-policy=always exe:infernix exe:infernix-demo`
   succeeds, and `./.build/infernix cluster up` reconciles the
   remaining supported Apple host prerequisites through the supported package-manager path
 - Apple host validation proves the supported flow can bootstrap Poetry when absent and then run the
@@ -588,7 +605,7 @@ That import is explicitly about repository governance and doctrine shape, not ab
 - `infernix docs check` fails when the named doctrine docs lose their required
   summary-or-current-status-or-validation structure or contradict their enforced metadata contract
 - `infernix test lint` still passes once the deeper doc structure and Haskell-guide references land
-- `cabal --builddir=.build/cabal test infernix-haskell-style` remains the implementation-aligned
+- `cabal test infernix-haskell-style` remains the implementation-aligned
   Haskell style gate described by the guide
 
 ### Remaining Work

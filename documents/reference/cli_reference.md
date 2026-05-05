@@ -96,17 +96,17 @@
   warning gate, the `ormolu` and `hlint` style stack via the Cabal test target, and the active
   substrate's Python adapter quality gate via `poetry run check-code` when adapters are present;
   `infernix lint files` uses tracked files from `.git` when available and otherwise falls back to
-  the baked `/opt/build/infernix/source-snapshot-files.txt` manifest on git-less Linux image runs;
+  the baked `/opt/infernix/source-snapshot-files.txt` manifest on git-less Linux image runs;
   the style gate may bootstrap `hlint` through a ghcup-managed compatible GHC when the active
   project compiler is newer than the current `hlint` release line
 - `infernix test unit` runs the Haskell unit suites and the PureScript frontend unit suites via
   `npm --prefix web run test:unit`
 - `infernix test integration`, `infernix test e2e`, and `infernix test all` exercise only the
   active substrate encoded in the generated `.dhall`
-- `infernix test e2e` uses a container-owned Playwright executor on supported paths; Apple
-  host-native flows orchestrate it from the host CLI through a direct `docker run` of the
-  Playwright-capable Linux substrate image, while Linux flows run it from the active substrate
-  image
+- `infernix test e2e` uses the dedicated `infernix-playwright:local` container on every substrate,
+  invoked via `docker compose run --rm playwright`; Apple host-native flows run that compose
+  invocation directly while Linux flows forward it from the outer container through the mounted
+  host docker socket; Docker, kind, kubectl, and helm are hard prerequisites on every substrate
 - `infernix internal pulsar-roundtrip ...` is an internal validation helper that publishes one
   protobuf request through the configured Pulsar endpoints and waits for the matching result
 - `infernix cluster up`, `test integration`, and `test e2e` fail fast on `linux-gpu` when the

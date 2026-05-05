@@ -150,7 +150,7 @@ static quality enforceable through canonical entrypoints.
 ### Deliverables
 
 - host-native Haskell builds materialize `./.build/infernix` and `./.build/infernix-demo`
-- outer-container build output stays under `/opt/build/infernix/`
+- outer-container build output stays under `./.build/outer-container/` through a host-anchored bind mount
 - `cluster up` stages `infernix-substrate.dhall` under the active build root
 - the supported web build regenerates frontend contracts, runs `spago build`, and emits
   `web/dist/app.js`
@@ -309,7 +309,7 @@ None.
 ## Sprint 1.9: Outer-Container Snapshot Launcher and Playwright Invocation Cleanup [Done]
 
 **Status**: Done
-**Implementation**: `compose.yaml`, `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `web/package.json`, `documents/engineering/docker_policy.md`, `documents/development/local_dev.md`
+**Implementation**: `compose.yaml`, `docker/linux-substrate.Dockerfile`, `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Config.hs`, `web/package.json`, `documents/engineering/docker_policy.md`, `documents/development/local_dev.md`
 **Docs to update**: `documents/engineering/docker_policy.md`, `documents/development/local_dev.md`, `documents/development/testing_strategy.md`, `README.md`
 
 ### Objective
@@ -319,17 +319,21 @@ supported browser workflow.
 
 ### Deliverables
 
-- `compose.yaml` runs against a baked image snapshot and bind-mounts only `./.data/`
-- the Linux launcher keeps named volumes for `/opt/build` and `/root/.cabal`
+- `compose.yaml` runs against a baked image snapshot and bind-mounts `./.data/`, `./.build/`, and `./compose.yaml` together with the Docker socket
+- the only outer-container build state surfaced on the host through `./.build/outer-container/build/` is the staged substrate file and the source snapshot manifest; cabal-home and the cabal builddir stay at the toolchain's natural in-image locations (`/root/.cabal/`, `dist-newstyle/`) and are not bind-mounted, so the supported CLI never overrides cabal's default builddir or `CABAL_DIR`
+- the substrate image uses `tini` as its `ENTRYPOINT` for clean signal handling and zombie reaping rather than running a custom launcher wrapper script
 - the repo-wide `.:/workspace` bind mount and `web/node_modules` runtime volume are removed
 - operators rebuild the image when source changes instead of relying on live repo mounts
 - supported Playwright workflows use `npm --prefix web exec -- playwright ...` rather than `npx`
 
 ### Validation
 
-- `docker compose run --rm infernix infernix cluster status` works without a repo bind mount
-- the launcher container sees `./.data/`, `/opt/build`, `/root/.cabal`, and the Docker socket only
-- `npm --prefix web exec -- playwright --version` succeeds on supported paths
+- `docker compose run --rm infernix infernix cluster status` works against the host-anchored `./.build/` and `./.data/` bind mounts
+- the launcher container sees `./.data/`, `./.build/`, the live `./compose.yaml`, and the Docker socket only
+- `docker volume ls` lists no `infernix-build` or `infernix-cabal-home` named volumes
+- `docker compose down -v` leaves `./.build/` and `./.data/` intact on the host
+- `docker run --rm --entrypoint=cat infernix-linux-cpu:local /etc/os-release` and similar smoke probes show `tini` runs as PID 1 and forwards signals to the wrapped process
+- a fresh `docker compose run --rm infernix infernix test unit` against an empty `./.build/outer-container/` succeeds because cabal-home and the cabal builddir live at the toolchain's natural in-image locations and survive the bind mount untouched
 - `rg -n 'npx playwright' README.md documents src web/package.json` returns no supported workflow references
 
 ### Remaining Work
@@ -356,16 +360,17 @@ launcher story onto the requested Apple-host-native and Linux-Compose doctrines.
   CLI reads that file as the primary source of truth for active substrate
 - Apple host-native workflows stage `./.build/infernix-substrate.dhall` with
   `./.build/infernix internal materialize-substrate apple-silicon [--demo-ui true|false]`
-- Linux image builds stage `/opt/build/infernix/infernix-substrate.dhall` with
-  `infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>`
+- Linux outer-container workflows stage `./.build/outer-container/build/infernix-substrate.dhall`
+  through the host-anchored `./.build/` bind mount with
+  `docker compose run --rm infernix infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>`
 - supported runtime, cluster, and validation entrypoints fail fast when the staged file is absent
 - Apple Silicon remains the only supported host build path outside a container
 - Linux host-native `infernix` execution is not a supported operator surface
 - Linux outer-container commands use Compose as the only supported launcher for both `linux-cpu`
   and `linux-gpu`
 - Apple operators do not use Compose as a user-facing launcher for ordinary CLI work; Apple E2E
-  orchestration may still invoke a direct `docker run` of the Playwright-capable Linux substrate
-  image internally for the Playwright executor
+  orchestration invokes `docker compose run --rm playwright` against the dedicated
+  `infernix-playwright:local` image during routed E2E validation
 - the NVIDIA-backed Linux substrate is standardized as `linux-gpu`, with the old `linux-cuda`
   naming retired as an explicit compatibility cleanup item
 

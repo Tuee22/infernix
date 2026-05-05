@@ -7,8 +7,9 @@
 
 ## TL;DR
 
-- Host-native builds write repo-local outputs under `./.build/`, while supported outer-container
-  flows use `/opt/build/infernix` plus durable repo-local state under `./.data/`.
+- Host-native builds write repo-local outputs under `./.build/`; supported outer-container flows
+  also write under `./.build/outer-container/` on the host through a `./.build:/workspace/.build`
+  bind mount, plus durable repo-local state under `./.data/`.
 - Generated frontend contracts live only under `web/src/Generated/`, and generated browser bundles
   live under `web/dist/`.
 - Runtime inference results reload only from protobuf-backed `./.data/runtime/results/*.pb`
@@ -18,25 +19,32 @@
 
 The current worktree follows the supported artifact layout directly: the host path stages
 `./.build/infernix` and `./.build/infernix-demo`, the Linux substrate images own
-`/usr/local/bin/infernix*` together with `/opt/build/infernix`, generated frontend contracts stay
-under `web/src/Generated/`, and runtime result or cache-manifest state uses protobuf-backed
-`*.pb` files instead of legacy text-state fallbacks.
+`/usr/local/bin/infernix*` while outer-container build state lives under
+`./.build/outer-container/` on the host through the `./.build:/workspace/.build` bind mount,
+generated frontend contracts stay under `web/src/Generated/`, and runtime result or
+cache-manifest state uses protobuf-backed `*.pb` files instead of legacy text-state fallbacks.
 
 ## Build Roots
 
 - the repo-local operator binaries live at `./.build/infernix` and `./.build/infernix-demo`
 - the supported Apple host bootstrap ultimately calls
-  `cabal --builddir=./.build/cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes`
-- supported outer-container Cabal workflows use `/opt/build/infernix`
+  `cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes`,
+  which lets cabal use its natural `dist-newstyle` builddir at the project root while installing
+  the launcher binaries under `./.build/`
+- on the supported outer-container path, cabal-home and the cabal builddir live at the toolchain's
+  natural in-image locations (`/root/.cabal/`, `dist-newstyle/`); they are not bind-mounted to the
+  host, and `${INFERNIX_BUILD_ROOT}=/workspace/.build/outer-container/build` only carries the
+  staged substrate file
 - on the outer-container path, the baked launcher binaries remain `/usr/local/bin/infernix` and
-  `/usr/local/bin/infernix-demo`; `/opt/build/infernix` holds generated state and refreshed
-  compatibility copies, not the authoritative image snapshot
-- the Linux substrate image also captures `/opt/build/infernix/source-snapshot-files.txt`, a
-  sorted source snapshot recorded before later generated outputs appear inside the image
+  `/usr/local/bin/infernix-demo`; the substrate image uses `tini` as its `ENTRYPOINT` for clean
+  signal handling and zombie reaping
+- the substrate image captures the sorted source snapshot at
+  `/opt/infernix/source-snapshot-files.txt`, which sits outside the bind-mounted `./.build/` tree
+  so it stays in the image overlay where git-less `infernix lint files` runs can read it
 - `cluster up` writes `./.build/infernix.kubeconfig` on the host path
 - `cluster up` writes `./.data/runtime/infernix.kubeconfig` on the outer-container path
 - the active generated substrate file lives at `./.build/infernix-substrate.dhall` on the host
-  path and `/opt/build/infernix/infernix-substrate.dhall` in the outer-container image
+  path and `./.build/outer-container/build/infernix-substrate.dhall` in the outer-container image
 - `cluster up` writes `./.data/runtime/publication.json` as the publication inventory consumed by
   routed status surfaces
 - the web build stages `web/src/Generated/Contracts.purs`, written by
@@ -52,12 +60,13 @@ under `web/src/Generated/`, and runtime result or cache-manifest state uses prot
 
 - Apple host flows stage `infernix-substrate.dhall` with
   `./.build/infernix internal materialize-substrate apple-silicon`
-- Linux image builds stage `/opt/build/infernix/infernix-substrate.dhall` with
-  `infernix internal materialize-substrate <substrate> --demo-ui <true|false>`
+- Linux outer-container flows stage `./.build/outer-container/build/infernix-substrate.dhall` on
+  the host through the bind-mounted build tree with
+  `docker compose run --rm infernix infernix internal materialize-substrate <substrate> --demo-ui <true|false>`
 - the same content is then mirrored under `./.data/runtime/configmaps/infernix-demo-config/` and
   published into `ConfigMap/infernix-demo-config` on the real cluster path
 - in containerized execution contexts, the ConfigMap-backed file is mounted beside the binary
-- the watched container path is `/opt/build/infernix/infernix-substrate.dhall`
+- the cluster pod's ConfigMap-backed mount path is `/opt/build/infernix/infernix-substrate.dhall`
 
 ## Rules
 
@@ -70,7 +79,8 @@ under `web/src/Generated/`, and runtime result or cache-manifest state uses prot
   `./.build/infernix.kubeconfig`, while Linux outer-container mode uses the durable
   `./.data/runtime/infernix.kubeconfig`
 - `infernix lint files` uses tracked files from `.git` when VCS metadata is present and otherwise
-  uses `/opt/build/infernix/source-snapshot-files.txt` on git-less Linux image runs
+  uses `/opt/infernix/source-snapshot-files.txt` baked into the substrate image on git-less Linux
+  image runs
 - publication state lives under `./.data/runtime/` and is regenerated by `cluster up`,
   `cluster down`, or publication-surface refresh
 - generated PureScript contract modules stage under `web/src/Generated/` and the `spago bundle`
@@ -83,8 +93,8 @@ under `web/src/Generated/`, and runtime result or cache-manifest state uses prot
   environment at `python/.venv/`, and Linux substrate image builds run the same shared install
 - the supported web build runs on Node.js 22+ on both the host and Linux substrate-image paths
 - `.gitignore` and `.dockerignore` mirror the generated-artifact ignore set: Poetry lockfiles,
-  generated protobuf stubs, `*.pyc`, `web/spago.lock`, `web/src/Generated/`, `web/dist/`, and
-  `python/.venv/` are not tracked
+  generated protobuf stubs, `*.pyc`, `web/spago.lock`, `web/package-lock.json`,
+  `web/src/Generated/`, `web/dist/`, and `python/.venv/` are not tracked
 
 ## Validation
 

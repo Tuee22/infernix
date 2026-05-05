@@ -1,10 +1,8 @@
 module Infernix.Workflow
   ( demoConfigGeneratedBanner,
     demoConfigGeneratedBannerLine,
-    ensurePlaywrightBrowsers,
     ensureWebDependencies,
     platformCommandsAvailable,
-    platformCommandsAvailableForE2E,
     resolveWebNpmInvocation,
   )
 where
@@ -36,22 +34,10 @@ ensureWebDependencies = do
       (command, args) <- resolveWebNpmInvocation ["--prefix", "web", "ci"]
       runWorkflowCommand (repoRoot paths) command args
 
-ensurePlaywrightBrowsers :: IO ()
-ensurePlaywrightBrowsers = do
-  paths <- discoverPaths
-  (command, args) <- resolveWebNpmInvocation ["exec", "--", "playwright", "install", "chromium"]
-  runWorkflowCommand (repoRoot paths </> "web") command args
-
 platformCommandsAvailable :: IO Bool
 platformCommandsAvailable = do
   availableCommands <- mapM findExecutable ["docker", "helm", "kind", "kubectl"]
   pure (all isJust availableCommands)
-
-platformCommandsAvailableForE2E :: IO Bool
-platformCommandsAvailableForE2E = do
-  platformReady <- platformCommandsAvailable
-  maybeDocker <- findExecutable "docker"
-  pure (platformReady && isJust maybeDocker)
 
 webToolchainPresent :: FilePath -> IO Bool
 webToolchainPresent webRoot =

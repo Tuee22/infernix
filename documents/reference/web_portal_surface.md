@@ -57,9 +57,10 @@ On the real Kind path those routes are published by `Gateway/infernix-edge`,
 - the routed Playwright contract cross-checks `/api/models` against the serialized generated demo
   config returned by `GET /api/demo-config` and separately validates publication details from
   `/api/publication`
-- supported routed E2E uses a container-owned Playwright executor; Apple host-native flows
-  orchestrate it from the host CLI through a direct `docker run` of the Playwright-capable Linux
-  substrate image, while Linux flows launch it from the active substrate image
+- supported routed E2E uses the dedicated `infernix-playwright:local` container, invoked via
+  `docker compose run --rm playwright`; Apple host-native flows run that compose invocation
+  directly while Linux flows forward it from the outer container through the mounted host docker
+  socket
 - the workbench surfaces the active runtime mode, control-plane context, daemon location, catalog
   source, chosen edge port, demo-config path, and routed publication inventory through
   `/api/publication`

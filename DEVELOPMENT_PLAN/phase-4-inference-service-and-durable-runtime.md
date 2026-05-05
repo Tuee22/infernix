@@ -266,9 +266,12 @@ file-absent substrate-selection fallback from the runtime contract.
   no longer accepts `--runtime-mode` or `INFERNIX_RUNTIME_MODE`
 - `infernix-demo` and any runtime-owned manual inference entrypoint choose the engine binding for a
   given README row only from the colocated or ConfigMap-backed substrate `.dhall`
-- Apple host and Linux image-build workflows stage that substrate file through
-  `infernix internal materialize-substrate ...`, and supported runtime entrypoints fail fast if it
-  is absent
+- Apple host workflows stage that substrate file through
+  `./.build/infernix internal materialize-substrate apple-silicon [--demo-ui true|false]`, Linux
+  outer-container workflows stage it through
+  `docker compose run --rm infernix infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>`
+  onto the host-anchored `./.build/outer-container/build/` bind mount, and supported runtime
+  entrypoints fail fast if it is absent
 - the direct `infernix service` entrypoint remains host-side for `apple-silicon`, while the routed
   clustered demo app reads the same staged `.dhall` and executes manual inference without a
   host-side demo bridge or separately managed host daemon in the current code path
@@ -391,15 +394,19 @@ produces the two real Linux runtime images and supports the image-snapshot launc
   `INFERNIX_COMPOSE_*` launcher variables without changing the supported `docker compose run --rm infernix infernix ...`
   surface
 - `docker/linux-base.Dockerfile` is removed from the supported architecture
-- the shared image definition owns ghcup-pinned GHC or Cabal, Python, Poetry, node, Playwright,
-  and the Kind toolbelt
+- the shared substrate image definition owns ghcup-pinned GHC or Cabal, Python, Poetry, the
+  Node-based web bundle build, and the Kind toolbelt; routed Playwright execution lives in the
+  separate `docker/playwright.Dockerfile` image so the substrate image carries no browser-runtime
+  weight
 - on the supported Linux outer-container path, `cluster up` reuses the already-built
   `infernix-linux-<mode>:local` snapshot instead of rebuilding the identical runtime image inside
   the launcher
 - the CUDA image bakes in the `nvkind` binary through a multi-stage build rather than a host
   handoff path
-- the baked image captures `/opt/build/infernix/source-snapshot-files.txt` before later generated
-  outputs appear so git-less image runs of `infernix lint files` validate only the source snapshot
+- the baked image captures `/opt/infernix/source-snapshot-files.txt` before later generated
+  outputs appear so git-less image runs of `infernix lint files` validate only the source
+  snapshot; the manifest is intentionally outside the bind-mounted `./.build/` tree so it stays in
+  the image overlay
 - inside the Linux runtime image, the daemon does not run `apt`, `pip`, `cabal build`, or compiler
   toolchains at runtime
 
@@ -413,7 +420,7 @@ produces the two real Linux runtime images and supports the image-snapshot launc
   `docker compose build infernix` succeeds on supported Linux GPU hosts and produces the
   `infernix-linux-gpu:local` snapshot
 - smoke probes from the built images confirm the expected `infernix`, `ghc`, `cabal`, `python`,
-  and Playwright tooling
+  and Node toolchain
 - `infernix lint files` succeeds inside the baked Linux image without `.git` metadata by using the
   captured source-snapshot manifest
 - `docker compose run --rm infernix infernix cluster up` uses the active built substrate image on
@@ -449,7 +456,7 @@ fake container parity.
 ### Validation
 
 - on a clean Apple Silicon host with ghcup installed,
-  `cabal --builddir=.build/cabal install --installdir=./.build --install-method=copy --overwrite-policy=always exe:infernix exe:infernix-demo`
+  `cabal install --installdir=./.build --install-method=copy --overwrite-policy=always exe:infernix exe:infernix-demo`
   succeeds without extra supported wrapper scripts
 - `./.build/infernix cluster up` brings up the cluster and runs the
   current Apple setup entrypoints before host-side service or inference execution

@@ -32,7 +32,7 @@
 Direct reference path:
 
 ```bash
-cabal --builddir=.build/cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes
+cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes
 ./.build/infernix internal materialize-substrate apple-silicon
 ./.build/infernix cluster up
 ./.build/infernix cluster status
@@ -84,8 +84,10 @@ the shared adapter project:
 - the active substrate comes from the generated `.dhall` beside the binary rather than a CLI flag
 - supported staging is explicit: Apple host workflows run
   `./.build/infernix internal materialize-substrate apple-silicon` after `cabal install`, and the
-  Linux image build runs `infernix internal materialize-substrate <substrate>` while baking
-  `/opt/build/infernix/infernix-substrate.dhall`
+  Linux outer-container path runs
+  `docker compose run --rm infernix infernix internal materialize-substrate <substrate>` to write
+  `./.build/outer-container/build/infernix-substrate.dhall` on the host through the bind-mounted
+  build tree
 - supported repo-owned shell is limited to the `bootstrap/*.sh` stage-0 entrypoints; they prepare
   the host and then hand off to the direct `cabal`, `docker compose`, or `infernix` command
   surface
@@ -94,13 +96,21 @@ the shared adapter project:
   exercised, and `infernix` bootstraps a user-local `poetry` executable through the host's
   built-in Python when that path first needs it
 - Colima is the only supported Docker environment on Apple Silicon
-- the Apple direct reference build calls `cabal` with `--builddir=.build/cabal` and
-  `--installdir=./.build`, which keeps Cabal output under `./.build/` and materializes
+- the Apple direct reference build calls `cabal` with `--installdir=./.build` and lets cabal use
+  its natural `dist-newstyle` builddir at the project root, which materializes
   `./.build/infernix` and `./.build/infernix-demo`
 - Apple mode uses the repo-local kubeconfig under `./.build/`
-- container mode keeps build output under `/opt/build/infernix`
-- container mode runs against a baked image snapshot and bind-mounts only `./.data/` together
-  with the Docker socket and the named build caches
+- container mode keeps the staged substrate file under `./.build/outer-container/build/` on the
+  host through the `./.build:/workspace/.build` bind mount, while cabal-home and the cabal
+  builddir live at the toolchain's natural in-image locations rather than on any bind-mounted
+  host path
+- container mode runs against a baked image snapshot and bind-mounts `./.data/`, `./.build/`, and
+  the host `compose.yaml` (read-only) together with the Docker socket; no docker-managed named
+  volumes back the outer-container build root, and the substrate image uses `tini` as its
+  entrypoint for clean signal handling
+- when the outer container shells out to `docker compose run --rm playwright` for routed E2E, it
+  forwards `INFERNIX_HOST_REPO_ROOT` so the host docker daemon resolves the playwright service's
+  bind mounts against the host repo root
 - when `demo_ui` is enabled, the demo surface stays cluster-resident on Apple and Linux alike
 - `docker compose up` and `docker compose exec` are not supported operator workflows
 - assistant-facing repository workflow rules live in [assistant_workflow.md](assistant_workflow.md)

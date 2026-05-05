@@ -332,6 +332,14 @@ pulsar:
       enabled: false
     affinity:
       anti_affinity: false
+    configData:
+      # Local host-path PVs share the developer's backing filesystem. Favor
+      # absolute remaining space over the upstream default 95% utilization cap
+      # so repeat cluster down/up cycles still recover on very full developer
+      # hosts while a small amount of writable space still remains.
+      diskUsageLwmThreshold: "0.999"
+      diskUsageWarnThreshold: "0.9995"
+      diskUsageThreshold: "0.9999"
     volumes:
       journal:
         storageClassName: infernix-manual

@@ -13,16 +13,25 @@
   shape for both `linux-cpu` and `linux-gpu`; `INFERNIX_COMPOSE_IMAGE`,
   `INFERNIX_COMPOSE_SUBSTRATE`, and `INFERNIX_COMPOSE_BASE_IMAGE` select the active built
   snapshot when the default CPU lane is not in play.
+- Routed Playwright execution closes through the dedicated `infernix-playwright:local` image
+  invoked via `docker compose run --rm playwright`; the substrate image carries no
+  browser-runtime weight.
+- Outer-container build state lives under `./.build/outer-container/` on the host through a
+  single `./.build:/workspace/.build` bind mount; no docker-managed named volumes back the
+  outer-container build root or cabal package cache.
 - The outer-container contract does not include `docker compose up`, `docker compose exec`, or a
   bootstrap helper-registry sidecar.
 
 ## Current Status
 
-The current worktree follows the one-image-family policy directly: both supported Linux runtime
-lanes come from `docker/linux-substrate.Dockerfile`, `compose.yaml` defaults to the CPU snapshot
-while allowing explicit selection of the GPU snapshot, `cluster up` reuses the already-built
-`infernix-linux-<mode>:local` images, and the Harbor-first bootstrap path no longer depends on any
-retired helper-registry container cleanup.
+The current worktree follows the two-image-family policy directly: the substrate image family
+(`infernix-linux-cpu:local` and `infernix-linux-gpu:local`) comes from
+`docker/linux-substrate.Dockerfile` and owns the control plane plus the baked `web/dist/` bundle;
+the dedicated `infernix-playwright:local` image comes from `docker/playwright.Dockerfile` and owns
+routed E2E execution for every substrate. `compose.yaml` defines an `infernix` service for the
+control plane and a `playwright` service for routed E2E, and bind-mounts `./.data/`, `./.build/`,
+and the host `compose.yaml` into the `infernix` service together with the Docker socket. The
+Harbor-first bootstrap path no longer depends on any retired helper-registry container cleanup.
 
 ## Host Prerequisite Boundary
 
@@ -32,27 +41,41 @@ retired helper-registry container cleanup.
 - on `linux-cpu`, host prerequisites stop at Docker Engine plus the Docker Compose plugin
 - on `linux-gpu`, host prerequisites stop at the `linux-cpu` Docker baseline plus the supported
   NVIDIA driver and container-toolkit setup
-- every remaining control-plane, web, Poetry, Playwright, and Kubernetes toolchain dependency for
-  Linux lives inside the shared substrate images
+- every remaining control-plane, web, Poetry, and Kubernetes toolchain dependency for Linux lives
+  inside the shared substrate image; the Playwright runtime and browsers live inside the dedicated
+  `infernix-playwright:local` image instead of the substrate image
 
 ## Supported Usage
 
 - `docker compose build infernix` refreshes the default Linux CPU outer-container image
+- `docker compose build playwright` refreshes the dedicated Playwright image
 - `docker compose run --rm infernix infernix ...` is the supported Linux outer control-plane
   entrypoint for both `linux-cpu` and `linux-gpu`
+- `docker compose run --rm playwright` is the supported routed E2E executor invocation; the same
+  service definition serves Apple Silicon (host-direct invocation) and the Linux substrates (the
+  outer container forwards the call through the mounted host docker socket)
 - exporting `INFERNIX_COMPOSE_IMAGE=infernix-linux-gpu:local`,
   `INFERNIX_COMPOSE_SUBSTRATE=linux-gpu`, and
   `INFERNIX_COMPOSE_BASE_IMAGE=nvidia/cuda:13.2.1-cudnn-runtime-ubuntu24.04` before
   `docker compose build infernix` prepares the supported `linux-gpu` snapshot for that same
   Compose-driven control plane
-- the launcher container forwards the Docker socket
-- the launcher container bind-mounts only `./.data/`
-- the launcher container sets `/opt/build/infernix` as the supported outer build root
+- the `infernix` launcher container forwards the Docker socket and bind-mounts `./.data/`,
+  `./.build/`, and the host `./compose.yaml` (read-only) into `/workspace/`
+- the `infernix` launcher container sets `/workspace/.build/outer-container/build` as the
+  supported outer build root for the staged substrate file and the source snapshot manifest,
+  while cabal-home and the cabal builddir live at the toolchain's natural in-image locations
+  (`/root/.cabal/`, `dist-newstyle/`) and are not bind-mounted to the host
+- the substrate image uses `tini` as its `ENTRYPOINT` so PID 1 forwards signals cleanly and reaps
+  zombie processes for cluster lifecycle commands
+- when the outer container shells out to `docker compose run --rm playwright`, it forwards
+  `INFERNIX_HOST_REPO_ROOT` so the host docker daemon resolves the playwright service's bind
+  mounts against the host repo root
 - the baked launcher binaries under `/usr/local/bin/` are authoritative; any compatibility copies
-  refreshed into `/opt/build/infernix` do not take precedence on `PATH`
-- the shared substrate images bake `/opt/build/infernix/source-snapshot-files.txt` before later
+  refreshed under `${INFERNIX_BUILD_ROOT}` do not take precedence on `PATH`
+- the shared substrate images bake `/opt/infernix/source-snapshot-files.txt` before later
   generated outputs are created so git-less image runs of `infernix lint files` validate the
-  source snapshot rather than the mutated runtime tree
+  source snapshot rather than the mutated runtime tree; the manifest sits outside the bind-mounted
+  `./.build/` tree so it stays in the image overlay
 - on the supported outer-container path, `cluster up` reuses the already-built
   `infernix-linux-<mode>:local` snapshot instead of rebuilding the same runtime image again inside
   the launcher
@@ -67,20 +90,25 @@ retired helper-registry container cleanup.
 - the Linux substrate images also preinstall the compatible ghcup-managed GHC used to bootstrap
   `hlint` for the Haskell style gate when the active project compiler is newer than the current
   `hlint` release line
-- routed Playwright execution stays container-owned on supported paths: on Apple Silicon the host
-  CLI may invoke a direct `docker run` of the Playwright-capable Linux substrate image, while on
-  Linux the active substrate image owns the executor on the supported outer-container path
 
 ## Image Set
 
-- `docker/linux-substrate.Dockerfile` is the shared Linux image definition
+- `docker/linux-substrate.Dockerfile` is the shared Linux substrate image definition; it produces
+  the control-plane and cluster-resident daemon images and bakes the demo bundle but carries no
+  browser-runtime weight
 - `RUNTIME_MODE=linux-cpu` with `BASE_IMAGE=ubuntu:24.04` produces `infernix-linux-cpu:local`
 - `RUNTIME_MODE=linux-gpu` with
   `BASE_IMAGE=nvidia/cuda:13.2.1-cudnn-runtime-ubuntu24.04` produces
   `infernix-linux-gpu:local`
-- the shared image installs Node.js 22+, the web toolchain, Playwright browser deps, the shared
-  Poetry project, generated protobuf stubs, and the `nvkind` binary during image build
-- Apple Silicon has no Dockerfile; the host-native workflow builds and runs the binaries directly
+- the substrate image installs Node.js 22+, the shared Poetry project, generated protobuf stubs,
+  the built `web/dist/` bundle, and the `nvkind` binary during image build, and regenerates
+  `web/package-lock.json` through `npm install` rather than tracking it under version control
+- `docker/playwright.Dockerfile` is the dedicated Playwright image definition; it produces
+  `infernix-playwright:local` from `mcr.microsoft.com/playwright:v1.57.0-noble` and owns the
+  Playwright runtime, browsers, and browser-runtime libs
+- Apple Silicon has no substrate Dockerfile; the host-native workflow builds and runs the
+  `./.build/infernix` and `./.build/infernix-demo` binaries directly, and routed Playwright still
+  comes from the shared `infernix-playwright:local` image through `docker compose run --rm playwright`
 
 ## Unsupported Usage
 
@@ -92,9 +120,14 @@ retired helper-registry container cleanup.
 
 - `infernix docs check` fails if this governed Docker-policy document loses its required structure
   or metadata contract.
+- `docker compose build infernix` and `docker compose build playwright` succeed on supported hosts
+  and produce both image families.
+- `docker volume ls` lists no `infernix-build` or `infernix-cabal-home` named volumes after a
+  supported `compose down -v` sequence; outer-container build state stays under `./.build/outer-container/`
+  on the host instead.
 - `infernix test integration` and `infernix test e2e` exercise the supported outer-container
   launchers, routed surfaces, and image-reuse behavior on the Linux lanes when those lanes are
-  selected.
+  selected; routed E2E closes through `docker compose run --rm playwright` on every substrate.
 - `infernix test all` reruns the full supported matrix entrypoints without reintroducing a live
   repo-mounted or helper-registry-based container workflow.
 

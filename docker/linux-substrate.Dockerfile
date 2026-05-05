@@ -17,6 +17,7 @@ ARG CABAL_VERSION=3.16.1.0
 ARG KIND_VERSION=v0.29.0
 ARG KUBECTL_VERSION=v1.34.0
 ARG HELM_VERSION=v3.18.6
+ARG UBUNTU_APT_MIRROR=http://mirrors.edge.kernel.org/ubuntu/
 
 ENV DEBIAN_FRONTEND=noninteractive \
     BOOTSTRAP_HASKELL_NONINTERACTIVE=1 \
@@ -29,9 +30,14 @@ ENV DEBIAN_FRONTEND=noninteractive \
     GHC_VERSION=${GHC_VERSION} \
     STYLE_GHC_VERSION=${STYLE_GHC_VERSION} \
     CABAL_VERSION=${CABAL_VERSION} \
-    INFERNIX_BUILD_ROOT=/opt/build/infernix \
-    INFERNIX_CABAL_BUILDDIR=/opt/build/infernix/cabal \
+    INFERNIX_BUILD_ROOT=/workspace/.build/outer-container/build \
     PATH=/root/.local/bin:/root/.ghcup/bin:/root/.cabal/bin:${PATH}
+
+RUN sed -i \
+      -e "s#http://archive.ubuntu.com/ubuntu/#${UBUNTU_APT_MIRROR}#g" \
+      -e "s#http://security.ubuntu.com/ubuntu/#${UBUNTU_APT_MIRROR}#g" \
+      /etc/apt/sources.list.d/ubuntu.sources \
+    && printf 'Acquire::ForceIPv4 "true";\nAcquire::Retries "5";\n' >/etc/apt/apt.conf.d/99infernix-network
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -39,8 +45,10 @@ RUN apt-get update \
         ca-certificates \
         curl \
         docker.io \
+        docker-compose-v2 \
         git \
         gnupg \
+        libatomic1 \
         libffi-dev \
         libgmp-dev \
         libncurses-dev \
@@ -52,6 +60,7 @@ RUN apt-get update \
         python3-dev \
         python3-pip \
         python3-venv \
+        tini \
         xz-utils \
         zlib1g-dev \
     && mkdir -p /etc/apt/keyrings \
@@ -93,14 +102,13 @@ WORKDIR /workspace
 
 COPY . /workspace
 
-RUN mkdir -p /opt/build/infernix \
+RUN mkdir -p ${INFERNIX_BUILD_ROOT} /opt/infernix \
     && cd /workspace \
-    && find . -type f | sed 's#^\\./##' | LC_ALL=C sort > /opt/build/infernix/source-snapshot-files.txt
+    && find . -type f | sed 's#^\\./##' | LC_ALL=C sort > /opt/infernix/source-snapshot-files.txt
 
 RUN mkdir -p /workspace/tools/generated_proto \
     && cabal update \
-    && npm --prefix web ci \
-    && npm --prefix web exec -- playwright install --with-deps chromium firefox webkit \
+    && npm --prefix web install --no-audit --no-fund \
     && poetry install --directory python \
     && poetry --directory python run python -m grpc_tools.protoc \
          -I /workspace/proto \
@@ -108,7 +116,8 @@ RUN mkdir -p /workspace/tools/generated_proto \
          /workspace/proto/infernix/api/inference_service.proto \
          /workspace/proto/infernix/manifest/runtime_manifest.proto \
          /workspace/proto/infernix/runtime/inference.proto \
-    && cabal --builddir=/opt/build/infernix/cabal install \
+    && cabal build all \
+    && cabal install \
          --installdir=/usr/local/bin \
          --install-method=copy \
          --overwrite-policy=always \
@@ -118,4 +127,5 @@ RUN mkdir -p /workspace/tools/generated_proto \
     && npm --prefix web run build \
     && poetry --directory python run check-code
 
+ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["infernix", "--help"]

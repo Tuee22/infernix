@@ -9,10 +9,11 @@
 
 ## Phase Status
 
-Phase 5 is complete. The Linux substrate image owns the demo bundle and Playwright toolchain, the
-routed demo app stays cluster-resident on Apple and Linux alike, supported E2E uses a
-container-owned Playwright executor without browser-side substrate branching, the explicit
-materialization path can emit demo-off substrate files.
+Phase 5 is complete. The Linux substrate image owns the demo bundle, the dedicated
+`docker/playwright.Dockerfile` image owns the routed Playwright executor, the routed demo app
+stays cluster-resident on Apple and Linux alike, supported E2E uses a container-owned Playwright
+executor without browser-side substrate branching, the explicit materialization path can emit
+demo-off substrate files.
 
 ## Current Repo Assessment
 
@@ -157,32 +158,36 @@ None.
 
 ---
 
-## Sprint 5.5: Current Web Runtime Image and Playwright Dependency Ownership Baseline [Done]
+## Sprint 5.5: Web Runtime Image and Dedicated Playwright Container [Done]
 
 **Status**: Done
-**Implementation**: `docker/linux-substrate.Dockerfile`, `web/playwright/`, `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `chart/templates/deployment-demo.yaml`, `chart/templates/deployment-service.yaml`
+**Implementation**: `docker/linux-substrate.Dockerfile`, `docker/playwright.Dockerfile`, `compose.yaml`, `web/playwright/`, `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `chart/templates/deployment-demo.yaml`, `chart/templates/deployment-service.yaml`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/architecture/web_ui_architecture.md`
 
 ### Objective
 
-Fold the packaged PureScript demo bundle and the Playwright executor into the current Linux
-baseline and remove `npx` from the supported workflow.
+Bake the packaged PureScript demo bundle into the Linux substrate image and home the routed
+Playwright executor in a dedicated single-purpose image used by every substrate.
 
 ### Deliverables
 
-- the final Linux substrate image includes the built `web/dist/` bundle and Playwright plus browser deps
-- `infernix test e2e` launches Playwright from the substrate image on Linux and from a
-  direct `docker run` of the Playwright-capable Linux substrate image orchestrated by the host CLI
-  on Apple
+- the final Linux substrate image includes the built `web/dist/` bundle and the Node toolchain
+  needed to regenerate it; it carries no browser-runtime weight
+- routed Playwright execution runs from the dedicated `infernix-playwright:local` image built by
+  `docker/playwright.Dockerfile`, which owns Node, the Playwright runtime, and the three browsers
+- `infernix test e2e` invokes that Playwright image through `docker compose run --rm playwright`
+  on every substrate; on Apple Silicon the host CLI runs it directly, on Linux substrates the
+  outer container runs it through the mounted host docker socket
 - the chart does not deploy a separate web workload or web image
 - supported Playwright invocations use `npm --prefix web exec -- playwright ...`
 
 ### Validation
 
-- a substrate-image build produces a working Playwright runner without a separate web image
-- Apple host E2E still passes with direct containerized Playwright execution against the clustered
-  routed surface
-- Linux E2E passes with Playwright launched from the substrate image
+- `docker compose build infernix && docker compose build playwright` succeeds and produces both
+  images on supported Linux paths
+- Apple routed E2E passes with `docker compose run --rm playwright` invoked from the host CLI
+- Linux routed E2E passes with `docker compose run --rm playwright` invoked from the outer
+  container against the host docker daemon
 - `rg -n 'npx playwright' README.md documents src web/package.json` returns no supported workflow references
 
 ### Remaining Work
@@ -205,8 +210,12 @@ supported Playwright executor.
 ### Deliverables
 
 - the routed demo app remains cluster-resident on Apple and Linux substrates alike
-- Apple host-native E2E orchestration runs from the host CLI while the actual Playwright executor
-  runs through a direct `docker run` of the Playwright-capable Linux substrate image
+- Apple host-native E2E orchestration runs from the host CLI and invokes
+  `docker compose run --rm playwright` for the dedicated `infernix-playwright:local` image
+- Linux outer-container E2E orchestration runs `docker compose run --rm playwright` from inside
+  the outer container against the host docker daemon mounted through `/var/run/docker.sock`
+- Docker is a hard prerequisite for `infernix test e2e` on every substrate; the CLI no longer
+  carries a host-native npm fallback
 - user-facing Apple docs describe `cluster up` as the way to launch the demo surface instead of a
   direct host `infernix-demo serve` workflow
 - Linux user-facing docs continue to describe Compose as the single launcher for demo, integration,
@@ -220,12 +229,14 @@ supported Playwright executor.
 
 ### Validation
 
-- Apple routed E2E passes from the host CLI while the Playwright executor runs inside that direct
-  containerized image path
-- Linux routed E2E passes through the same container-owned Playwright executor without any host
+- Apple routed E2E passes from the host CLI through `docker compose run --rm playwright` against
+  the clustered routed surface
+- Linux routed E2E passes through the same compose-driven Playwright executor without any host
   daemon management
 - Apple and Linux routed E2E pass through the same browser-visible flows without substrate-specific
   Playwright branching; only launcher or orchestration differs
+- `infernix test e2e` fails fast with an actionable message when Docker, kind, kubectl, or helm
+  are not available on the host
 - docs validation fails if the user-facing docs still treat host `infernix-demo serve` as the final
   Apple demo-app launch story or describe browser-side substrate selection
 

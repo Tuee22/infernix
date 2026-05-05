@@ -366,7 +366,7 @@ Apple Silicon has no Dockerfile. The supported entrypoint is the repo-owned boot
 Direct reference commands:
 
 ```bash
-cabal --builddir=.build/cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes
+cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes
 ./.build/infernix internal materialize-substrate apple-silicon
 ./.build/infernix cluster up
 ./.build/infernix cluster status
@@ -546,9 +546,10 @@ rebuildable.
   and the optional `demo_ui : Bool` flag that gates the `infernix-demo` workload
 - Apple host flows stage that file with
   `./.build/infernix internal materialize-substrate apple-silicon`
-- Linux image builds stage that file with
-  `infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>` during
-  `docker/linux-substrate.Dockerfile`
+- Linux outer-container flows stage that file on the host with
+  `docker compose run --rm infernix infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>`,
+  which writes `./.build/outer-container/build/infernix-substrate.dhall` through the
+  bind-mounted build tree
 - the generated demo `.dhall` file enumerates the demo-visible models and workloads for that mode
   and binds each one to its engine or runtime lane
 - the generated demo `.dhall` file is the exact source of truth for which models and engine bindings
@@ -587,12 +588,14 @@ contracts.
 - the demo UI host is the `infernix-demo` Haskell binary (separate executable from `infernix`,
   shares `infernix-lib`, ships in the same per-substrate OCI image on Linux); it serves
   `web/dist/` produced by `spago bundle`
-- on Linux substrates, the substrate container also carries the spago plus purs toolchain
-  (used at image build time to bundle the demo UI) plus Playwright browser dependencies
-  (Chromium, Firefox, WebKit) for routed E2E execution. There is no separate web-only image
-- on Apple Silicon, `infernix test e2e` stays container-owned: the host CLI launches a direct
-  `docker run` of the Playwright-capable Linux substrate image against the clustered routed
-  surface
+- on Linux substrates, the substrate container carries the spago plus purs toolchain (used at
+  image build time to bundle the demo UI); the substrate image carries no browser-runtime weight,
+  and routed Playwright execution lives in a dedicated `infernix-playwright:local` image built
+  from `docker/playwright.Dockerfile`
+- on every substrate, `infernix test e2e` invokes the dedicated Playwright image through
+  `docker compose run --rm playwright`; on Apple Silicon the host CLI runs that compose service
+  directly, on Linux substrates the outer container runs it through the mounted host docker
+  socket
 - the `infernix-demo` workload is deployed through repo-owned Helm chart templates and values, and
   is gated by the `.dhall` `demo_ui` flag; production deployments leave it off
 - the demo UI catalog is derived from the generated mode-specific demo `.dhall` file for the active
@@ -600,9 +603,9 @@ contracts.
 - repo-owned `purescript-spec` suites under `web/test/` cover generated contracts, publication
   rendering, and view behavior; `infernix test unit` runs `spago test` alongside the Haskell unit
   suites
-- Playwright stays container-owned on supported paths: it runs from the per-substrate image on
-  Linux and from that same direct containerized image path on Apple Silicon; the test
-  orchestration lives in the Haskell integration test suite
+- Playwright stays container-owned on supported paths: routed E2E always runs from the dedicated
+  `infernix-playwright:local` image through `docker compose run --rm playwright`, regardless of
+  substrate; the test orchestration lives in the Haskell integration test suite
 - the demo UI can submit manual inference requests against any registered model in the active demo
   catalog; the production inference surface remains Pulsar topics named in the active `.dhall`
 - the demo UI, demo API surface, generated PureScript contracts, and validation suites must expand

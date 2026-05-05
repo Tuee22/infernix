@@ -91,4 +91,8 @@
 - `infernix test integration`, `infernix test e2e`, and `infernix test all` report only the
   active substrate encoded in the generated `.dhall`
 - supported Apple E2E keeps the host CLI in charge of orchestration while the actual Playwright
-  executor runs in a container against the clustered routed surface
+  executor runs through `docker compose run --rm playwright` against the dedicated
+  `infernix-playwright:local` image; the Linux outer-container path forwards the same compose
+  invocation through the mounted host docker socket
+- `infernix test e2e` requires Docker, kind, kubectl, and helm on every substrate; there is no
+  host-native npm fallback path

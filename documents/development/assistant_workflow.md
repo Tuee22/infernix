@@ -31,7 +31,7 @@ parallel long-form workflow contracts.
 - prefer the supported stage-0 bootstrap entrypoints:
   `./bootstrap/apple-silicon.sh`, `./bootstrap/linux-cpu.sh`, and `./bootstrap/linux-gpu.sh`
 - use direct host builds:
-  `cabal --builddir=.build/cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes`
+  `cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes`
 - on the supported Linux outer-container path, `cluster up` reuses the already-built
   `infernix-linux-<mode>:local` snapshot instead of rebuilding the identical runtime image inside
   the launcher

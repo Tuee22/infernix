@@ -48,11 +48,14 @@ Monitoring is not a supported first-class surface.
 - the current staging flow is explicit rather than Cabal-compile-time closure:
   Apple host-native workflows stage `./.build/infernix-substrate.dhall` with
   `./.build/infernix internal materialize-substrate apple-silicon [--demo-ui true|false]`, and
-  Linux substrate images stage `/opt/build/infernix/infernix-substrate.dhall` during image build
-  with `infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>`
+  Linux outer-container workflows stage `./.build/outer-container/build/infernix-substrate.dhall`
+  on the host through the bind-mounted build tree with
+  `docker compose run --rm infernix infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>`
 - repo-owned shell is limited to the `bootstrap/*.sh` stage-0 host bootstrap surface, which may
-  reconcile supported host prerequisites idempotently before handing off to the direct `cabal`,
-  `docker compose`, or `infernix` command surface
+  reconcile supported host prerequisites, build the active substrate launcher and dedicated
+  `infernix-playwright:local` images, and stage the substrate file under the active build root
+  through `infernix internal materialize-substrate ...` idempotently before handing off to the
+  direct `cabal`, `docker compose`, or `infernix` command surface
 - supported runtime, cluster, and validation entrypoints fail fast if the staged substrate file is
   absent instead of regenerating it on first command execution or falling back to env or host
   detection
@@ -244,9 +247,8 @@ The plan keeps control-plane execution context separate from substrate.
 
 - Apple host-native control plane is the canonical operator surface on Apple Silicon
 - Linux outer-container control plane is the only supported Linux CLI surface
-- Apple operators do not use Compose as a user-facing launcher for ordinary CLI work
-- Apple E2E orchestration may still invoke a direct `docker run` of the Playwright-capable Linux
-  substrate image internally
+- Apple operators do not use Compose as a user-facing launcher for ordinary CLI work, but the
+  Apple host CLI invokes `docker compose run --rm playwright` for routed E2E
 - Linux host-native `infernix` execution outside a container is not a supported operator workflow
 
 ### 3. Three Supported Substrates
@@ -264,8 +266,9 @@ The plan keeps control-plane execution context separate from substrate.
   Cabal compile rules alone
 - Apple host-native workflows stage or restage the file with
   `./.build/infernix internal materialize-substrate apple-silicon [--demo-ui true|false]`
-- Linux substrate images stage or restage the file during image build with
-  `infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>`
+- Linux outer-container workflows stage or restage the file under `./.build/outer-container/build/`
+  on the host with
+  `docker compose run --rm infernix infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>`
 - supported runtime, cluster, and validation entrypoints fail fast if the staged file is absent
 - the staged file records the active substrate explicitly
 - the staged file also carries the generated demo catalog for that substrate
@@ -342,23 +345,30 @@ The plan keeps control-plane execution context separate from substrate.
 - generated PureScript contract output lives in `web/src/Generated/`
 - no handwritten duplicate DTO layer exists on the frontend
 
-### 10. Playwright Runs From The Built Linux Image
+### 10. Playwright Runs From The Dedicated Playwright Image
 
-- on Linux, Playwright runs from the final outer-container image
-- on Apple Silicon, the host CLI still delegates routed Playwright execution to a direct
-  `docker run` of the Playwright-capable Linux substrate image
+- routed Playwright execution runs from the dedicated `infernix-playwright:local` image built by
+  `docker/playwright.Dockerfile` on every substrate
+- on Apple Silicon, the host CLI invokes `docker compose run --rm playwright` directly against the
+  host docker daemon
+- on Linux substrates, the outer container invokes the same `docker compose run --rm playwright`
+  through the mounted host docker socket
 - browser and Playwright code do not branch on substrate id or engine family; `infernix-demo`
   reads the active `.dhall` and owns substrate-appropriate engine dispatch
 - supported workflows use `npm --prefix web exec -- playwright ...`; `npx` is not part of the
   supported final workflow
 
-### 11. Container Build Output Stays Under `/opt/build/infernix`
+### 11. Container Build Output Stays Under `./.build/outer-container/`
 
-- Linux outer-container build output stays under `/opt/build/infernix/`
-- the outer-container launcher does not rely on a live repo bind mount once the snapshot model is
-  closed
-- the substrate `.dhall` sits beside the outer-container binary at that path and is also the source
-  material for cluster ConfigMap publication
+- Linux outer-container build output stays under `./.build/outer-container/` on the host through
+  a host-anchored bind mount; cabal builddir, cabal package cache, and the staged substrate file
+  all live inside that tree
+- the outer-container launcher does not rely on a live repo bind mount for source code; the only
+  bind mounts are `./.data/`, `./.build/`, the host `compose.yaml`, and the Docker socket
+- the staged outer-container substrate `.dhall` sits at
+  `./.build/outer-container/build/infernix-substrate.dhall` on the host and is the source material
+  for cluster ConfigMap publication, which mounts the file at `/opt/build/infernix/infernix-substrate.dhall`
+  inside cluster-resident pods
 
 ### 12. Apple Host Build Output Stays Under `./.build`
 

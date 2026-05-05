@@ -249,8 +249,9 @@ one Compose-driven outer container for both Linux substrates.
 - `cluster up` publishes the staged substrate payload into `ConfigMap/infernix-demo-config`
 - Linux cluster-resident consumers mount that ConfigMap at
   `/opt/build/infernix/infernix-substrate.dhall`
-- the outer-container control plane also stages the same payload under
-  `/opt/build/infernix/infernix-substrate.dhall` when it needs to know its own substrate
+- the outer-container control plane stages the same payload on the host at
+  `./.build/outer-container/build/infernix-substrate.dhall` through the host-anchored bind mount
+  when it needs to know its own substrate
 - the cluster publication contract uses the same stable `infernix-substrate.dhall` filename in the
   repo-local mirror and in-cluster mount
 - the supported Linux control-plane launcher is Compose for both `linux-cpu` and `linux-gpu`

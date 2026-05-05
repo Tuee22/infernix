@@ -1179,7 +1179,7 @@ buildClusterImages paths runtimeMode = do
       putStrLn ("building cluster images for " <> runtimeModeName)
       runCommand
         (Just (repoRoot paths))
-        []
+        [("DOCKER_BUILDKIT", "1")]
         "docker"
         (dockerBuildArgs imageRef)
 

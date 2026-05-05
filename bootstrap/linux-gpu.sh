@@ -10,6 +10,7 @@ COMPOSE_IMAGE="infernix-linux-gpu:local"
 COMPOSE_SUBSTRATE="linux-gpu"
 COMPOSE_BASE_IMAGE="nvidia/cuda:13.2.1-cudnn-runtime-ubuntu24.04"
 NVIDIA_PROBE_IMAGE="nvidia/cuda:12.4.1-base-ubuntu22.04"
+COMPOSE_PROJECT="infernix-linux-gpu"
 
 show_help() {
   cat <<EOF
@@ -54,6 +55,8 @@ Available Linux GPU commands:
 
 Direct reference commands:
   INFERNIX_COMPOSE_IMAGE=${COMPOSE_IMAGE} INFERNIX_COMPOSE_SUBSTRATE=${COMPOSE_SUBSTRATE} INFERNIX_COMPOSE_BASE_IMAGE=${COMPOSE_BASE_IMAGE} docker compose build infernix
+  INFERNIX_COMPOSE_IMAGE=${COMPOSE_IMAGE} INFERNIX_COMPOSE_SUBSTRATE=${COMPOSE_SUBSTRATE} INFERNIX_COMPOSE_BASE_IMAGE=${COMPOSE_BASE_IMAGE} docker compose build playwright
+  INFERNIX_COMPOSE_IMAGE=${COMPOSE_IMAGE} INFERNIX_COMPOSE_SUBSTRATE=${COMPOSE_SUBSTRATE} INFERNIX_COMPOSE_BASE_IMAGE=${COMPOSE_BASE_IMAGE} docker compose run --rm infernix infernix internal materialize-substrate ${COMPOSE_SUBSTRATE} --demo-ui true
   INFERNIX_COMPOSE_IMAGE=${COMPOSE_IMAGE} INFERNIX_COMPOSE_SUBSTRATE=${COMPOSE_SUBSTRATE} INFERNIX_COMPOSE_BASE_IMAGE=${COMPOSE_BASE_IMAGE} docker compose run --rm infernix infernix cluster up
   INFERNIX_COMPOSE_IMAGE=${COMPOSE_IMAGE} INFERNIX_COMPOSE_SUBSTRATE=${COMPOSE_SUBSTRATE} INFERNIX_COMPOSE_BASE_IMAGE=${COMPOSE_BASE_IMAGE} docker compose run --rm infernix infernix cluster status
   INFERNIX_COMPOSE_IMAGE=${COMPOSE_IMAGE} INFERNIX_COMPOSE_SUBSTRATE=${COMPOSE_SUBSTRATE} INFERNIX_COMPOSE_BASE_IMAGE=${COMPOSE_BASE_IMAGE} docker compose run --rm infernix infernix test all
@@ -66,9 +69,11 @@ EOF
 }
 
 compose_env() {
-  INFERNIX_COMPOSE_IMAGE="${COMPOSE_IMAGE}" \
+  COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT}" \
+    INFERNIX_COMPOSE_IMAGE="${COMPOSE_IMAGE}" \
     INFERNIX_COMPOSE_SUBSTRATE="${COMPOSE_SUBSTRATE}" \
     INFERNIX_COMPOSE_BASE_IMAGE="${COMPOSE_BASE_IMAGE}" \
+    INFERNIX_HOST_REPO_ROOT="${BOOTSTRAP_REPO_ROOT}" \
     "$@"
 }
 
@@ -238,16 +243,35 @@ image_present() {
   docker image inspect "${COMPOSE_IMAGE}" >/dev/null 2>&1
 }
 
+playwright_image_present() {
+  docker image inspect infernix-playwright:local >/dev/null 2>&1
+}
+
 ensure_launcher_image() {
   ensure_host_prerequisites
-  if image_present; then
+  if ! image_present; then
+    bootstrap::run compose_env docker compose build infernix
+  fi
+  if ! playwright_image_present; then
+    bootstrap::run compose_env docker compose build playwright
+  fi
+}
+
+substrate_staged() {
+  [[ -f ./.build/outer-container/build/infernix-substrate.dhall ]]
+}
+
+ensure_substrate_staged() {
+  if substrate_staged; then
     return 0
   fi
-  bootstrap::run compose_env docker compose build infernix
+  bootstrap::run compose_env docker compose run --rm infernix \
+    infernix internal materialize-substrate "${COMPOSE_SUBSTRATE}" --demo-ui true
 }
 
 run_infernix() {
   ensure_launcher_image
+  ensure_substrate_staged
   bootstrap::run compose_env docker compose run --rm infernix infernix "$@"
 }
 
@@ -262,6 +286,7 @@ best_effort_compose_down() {
 best_effort_remove_image() {
   if docker_ready; then
     docker image rm -f "${COMPOSE_IMAGE}" || true
+    docker image rm -f infernix-playwright:local || true
     return 0
   fi
   bootstrap::warn "Skipping Docker image removal because Docker is not currently usable from this shell."
@@ -300,7 +325,7 @@ command_purge() {
   best_effort_compose_down
   best_effort_remove_image
   bootstrap::run rm -rf ./.build ./.data
-  bootstrap::info "Removed ./.build, ./.data, and ${COMPOSE_IMAGE}."
+  bootstrap::info "Removed ./.build, ./.data, ${COMPOSE_IMAGE}, and infernix-playwright:local."
 }
 
 main() {
