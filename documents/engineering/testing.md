@@ -24,10 +24,10 @@
 - Apple host-native flows expect the built binary plus the minimal Homebrew-plus-ghcup baseline;
   supported commands may reconcile the remaining host tools on demand, and the staged host config
   comes from `./.build/infernix internal materialize-substrate apple-silicon`
-- Linux CPU flows expect Docker Engine plus the Docker Compose plugin
-- Linux CUDA flows expect the Linux CPU Docker baseline plus the supported NVIDIA driver and
+- `linux-cpu` flows expect Docker Engine plus the Docker Compose plugin
+- `linux-gpu` flows expect the `linux-cpu` Docker baseline plus the supported NVIDIA driver and
   container-toolkit setup
-- real-cluster Linux CUDA validation also expects enough disk headroom for Kind image preload,
+- real-cluster `linux-gpu` validation also expects enough disk headroom for Kind image preload,
   Harbor-backed rollout, and Pulsar BookKeeper durability
 
 ## Canonical Entry Points

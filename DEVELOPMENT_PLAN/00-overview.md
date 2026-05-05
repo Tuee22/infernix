@@ -11,7 +11,10 @@
 The repository now implements the substrate-file architecture described in this overview. The
 supported validation contract is active-substrate specific: `infernix lint docs`, the Haskell and
 PureScript unit suites, `infernix test integration`, and `infernix test e2e` all target the
-currently staged substrate instead of implying a default cross-substrate rerun.
+currently staged substrate instead of implying a default cross-substrate rerun. The current Linux
+outer-container reruns are not fully closed: `linux-cpu` can leave `cluster up` stuck at
+`cluster not yet reconciled`, and `linux-gpu` can reuse a stale staged `linux-cpu` substrate file
+instead of restaging `linux-gpu`.
 
 | Area | Supported contract | Current repo state |
 |------|--------------------|--------------------|
@@ -20,12 +23,12 @@ currently staged substrate instead of implying a default cross-substrate rerun.
 | Substrate selection | one staged substrate file beside the active build root is the primary source of truth for substrate identity and generated catalog selection | implemented |
 | Staged substrate-file format | the substrate file and its mirrors use one explicit and consistent file format and filename contract | implemented; the current contract is a shared `infernix-substrate.dhall` filename carrying banner-prefixed JSON on local and cluster-mounted paths |
 | Apple host-native lane | the host-built binary manages Kind, deploys the clustered demo workloads, and still owns the direct host-side `infernix service` lane | implemented |
-| Linux control plane | all supported Linux CLI commands run through `docker compose run --rm infernix infernix ...` | implemented |
+| Linux control plane | all supported Linux CLI commands run through `docker compose run --rm infernix infernix ...` | partially implemented; the supported launcher surface exists, but the current `linux-cpu` rerun can stall in unreconciled `cluster up`, and the `linux-gpu` bootstrap can reuse a stale staged CPU substrate |
 | Linux GPU naming | the NVIDIA-backed Linux substrate is standardized as `linux-gpu` | implemented |
 | Serialized substrate naming | the generated substrate file, publication JSON, `cluster status`, and browser contracts still carry the active substrate under `runtimeMode` field names | implemented |
 | Demo UI gating | the staged substrate file can disable the clustered demo surface | implemented; the supported materialization path accepts `--demo-ui false` |
-| Simulation stance | no simulated cluster, route, transport, or inference fallback remains in the supported runtime or validation contract | implemented for supported paths |
-| Validation scope | integration uses one `.dhall`-driven suite over the README matrix, E2E stays substrate-agnostic at the browser layer, and `test all` validates one built substrate at a time | implemented |
+| Simulation stance | no simulated cluster, route, transport, or inference fallback remains in the supported runtime or validation contract | partially implemented; supported entrypoints no longer use simulated cluster bring-up, but `src/Infernix/Demo/Api.hs` still carries tool-route placeholder handlers and integration still accepts their `rewrittenPath` responses |
+| Validation scope | integration uses one `.dhall`-driven suite over the README matrix, E2E stays substrate-agnostic at the browser layer, and `test all` validates one built substrate at a time | partially implemented; the active-substrate contract is in place, but the supported Linux CPU and GPU lifecycle reruns still fail before full `test all` closure |
 
 Monitoring is not a supported first-class surface.
 
@@ -33,9 +36,10 @@ Monitoring is not a supported first-class surface.
 
 `infernix` closes around these rules:
 
-- two repo-owned Haskell executables still share one Cabal library `infernix-lib`: `infernix` for
-  the production daemon, cluster lifecycle, validation, and internal helpers; `infernix-demo` for
-  the routed demo HTTP host
+- two repo-owned Haskell executables share the default Cabal library exposed by the `infernix`
+  package (declared in `infernix.cabal` without an explicit library name and depended on as
+  `infernix`): `infernix` for the production daemon, cluster lifecycle, validation, and internal
+  helpers; `infernix-demo` for the routed demo HTTP host
 - one structured Haskell command registry owns parsing, help text, and the canonical CLI
   reference, and the final command surface carries no `--runtime-mode` override
 - the product standardizes three substrates:
@@ -73,8 +77,10 @@ Monitoring is not a supported first-class surface.
   host shape
 - `linux-gpu` assumes an amd64 Linux environment paired with a CUDA-capable device, but the outer
   control-plane container itself never requires the NVIDIA runtime
-- simulation is removed completely from supported runtime and validation paths; there are no
-  simulated cluster, route, transport, or inference fallbacks on a supported substrate
+- supported entrypoints no longer use simulated cluster bring-up or cross-substrate default
+  validation reruns, but the repo still carries direct tool-route placeholder handlers in
+  `src/Infernix/Demo/Api.hs`, and `test/integration/Spec.hs` still accepts their `rewrittenPath`
+  responses instead of requiring only the real routed upstream behavior
 - one substrate-aware integration suite traverses the comprehensive model, format, and engine
   matrix in `README.md`, reads the active substrate from `.dhall`, and chooses the corresponding
   engine binding for every supported row or reference
@@ -240,7 +246,8 @@ The plan keeps control-plane execution context separate from substrate.
 ### 1. Two Haskell Executables Sharing One Library
 
 - `infernix` and `infernix-demo` are the only supported repo-owned Haskell executables
-- both link one shared Cabal library `infernix-lib`
+- both link the default Cabal library exposed by the `infernix` package (declared in
+  `infernix.cabal` without an explicit library name and depended on as `infernix`)
 - tests and helpers do not become extra supported executables
 
 ### 2. Dual Control-Plane Execution Contexts
@@ -361,8 +368,8 @@ The plan keeps control-plane execution context separate from substrate.
 ### 11. Container Build Output Stays Under `./.build/outer-container/`
 
 - Linux outer-container build output stays under `./.build/outer-container/` on the host through
-  a host-anchored bind mount; cabal builddir, cabal package cache, and the staged substrate file
-  all live inside that tree
+  a host-anchored bind mount; the staged substrate file lives in that tree while cabal builddir,
+  cabal package cache, and the source snapshot manifest stay in the image overlay
 - the outer-container launcher does not rely on a live repo bind mount for source code; the only
   bind mounts are `./.data/`, `./.build/`, the host `compose.yaml`, and the Docker socket
 - the staged outer-container substrate `.dhall` sits at

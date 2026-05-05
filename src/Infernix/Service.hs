@@ -13,6 +13,7 @@ runService maybeRuntimeMode = do
   paths <- discoverPaths
   ensureRepoLayout paths
   runtimeMode <- resolveRuntimeMode maybeRuntimeMode
+  ensureSupportedRuntimeModeForExecutionContext paths runtimeMode
   whenAppleRuntimeReady paths runtimeMode
   runProductionDaemon paths runtimeMode
 

@@ -23,8 +23,9 @@
 - `/minio/console` -> `infernix-minio-console:9090`; rewrites to upstream `/`
 - `/minio/s3` -> `infernix-minio:9000`; rewrites to upstream `/`
 <!-- infernix:route-registry:minio:end -->
-- on the real cluster path, `/minio/console/browser` returns the live MinIO console HTML and
-  `/minio/s3/...` reaches the live S3 surface
+- the supported Gateway contract targets the live MinIO console and S3 surfaces; current
+  integration still accepts the direct `infernix-demo` `rewrittenPath` compatibility payloads for
+  these probes when they appear, and Phase 6 tracks tightening that validation
 
 ## Cross-References
 

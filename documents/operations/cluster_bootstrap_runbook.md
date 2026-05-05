@@ -9,7 +9,9 @@
 
 - confirm the active build root already carries `infernix-substrate.dhall`; on Apple host-native
   flows stage it with `./.build/infernix internal materialize-substrate apple-silicon`, and the
-  supported Linux image build stages it while baking the substrate image
+  supported Linux outer-container path stages it with
+  `docker compose run --rm infernix infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>`
+  before cluster bring-up
 - run `infernix cluster up`
 - on the Apple host-native path, the command reconciles Homebrew-managed Colima, Docker CLI,
   `kind`, `kubectl`, and `helm` before it attempts the real Kind workflow
@@ -53,6 +55,10 @@
 - `curl http://127.0.0.1:<port>/pulsar/admin/admin/v2/clusters` checks the `/pulsar/admin -> /` rewrite into Pulsar's `/admin/v2` surface.
 - `curl http://127.0.0.1:<port>/pulsar/ws/v2/producer/public/default/demo` checks the `/pulsar/ws -> /ws` rewrite and returns `405 Method Not Allowed` on the real cluster path.
 <!-- infernix:route-registry:cluster-bootstrap:end -->
+
+Current validation still accepts the direct `infernix-demo` `rewrittenPath` compatibility payloads
+for those tool-route probes when they appear; Phase 6 tracks tightening the automated checks so
+they require only the real upstream responses described above.
 
 ## Teardown
 

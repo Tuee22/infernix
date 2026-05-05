@@ -49,9 +49,11 @@ main = do
     mapM_ (exerciseRuntimeMode paths) runtimeModes
     when (LinuxCpu `elem` runtimeModes) $ do
       validateDemoUiDisabled paths LinuxCpu
-      if Config.controlPlaneContext paths == "outer-container"
-        then pure ()
-        else validateEdgePortConflictAndRediscovery paths LinuxCpu
+    case runtimeModes of
+      runtimeMode : _
+        | Config.controlPlaneContext paths /= "outer-container" ->
+            validateEdgePortConflictAndRediscovery paths runtimeMode
+      _ -> pure ()
     putStrLn "integration tests passed"
 
 integrationRuntimeModes :: IO [RuntimeMode]

@@ -122,6 +122,11 @@ main = do
       assert
         (generatedKubeconfigPath paths == buildRoot paths </> "infernix.kubeconfig")
         "host-native kubeconfig stays under the build root"
+      ensureSupportedRuntimeModeForExecutionContext paths AppleSilicon
+      hostNativeLinuxCpuResult <- try (ensureSupportedRuntimeModeForExecutionContext paths LinuxCpu) :: IO (Either IOError ())
+      assert
+        (either (isInfixOf "Unsupported host-native runtime mode: linux-cpu" . show) (const False) hostNativeLinuxCpuResult)
+        "host-native execution rejects the linux-cpu substrate"
       withOptionalEnv "INFERNIX_BUILD_ROOT" (Just "/opt/build/infernix") $ do
         outerPaths <- discoverPaths
         assert
@@ -130,6 +135,11 @@ main = do
         assert
           (generatedKubeconfigPath outerPaths == runtimeRoot outerPaths </> "infernix.kubeconfig")
           "outer-container kubeconfig persists under the durable runtime root"
+        ensureSupportedRuntimeModeForExecutionContext outerPaths LinuxCpu
+        outerContainerAppleResult <- try (ensureSupportedRuntimeModeForExecutionContext outerPaths AppleSilicon) :: IO (Either IOError ())
+        assert
+          (either (isInfixOf "Unsupported outer-container runtime mode: apple-silicon" . show) (const False) outerContainerAppleResult)
+          "outer-container execution rejects the apple-silicon substrate"
       now <- getCurrentTime
       let legacyOnlyResult =
             InferenceResult

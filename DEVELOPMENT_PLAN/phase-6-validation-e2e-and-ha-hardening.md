@@ -1,6 +1,6 @@
 # Phase 6: Validation, E2E, and HA Hardening
 
-**Status**: Done
+**Status**: Active
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
 
 > **Purpose**: Define the supported static-quality and single-substrate validation contract for the
@@ -12,9 +12,15 @@
 
 ## Phase Status
 
-Phase 6 is complete. The validation entrypoints, routed coverage, governed-root-document metadata
-closure, structured CLI-registry closure, and the earlier compatibility-shim cleanup are present
-in the current worktree, and the supported test story is substrate-specific.
+Phase 6 remains active. The validation entrypoints, routed coverage, governed-root-document
+metadata closure, structured CLI-registry closure, and the earlier compatibility-shim cleanup are
+present in the current worktree, and the supported test story is substrate-specific. Remaining
+work is explicit: the repo still carries direct `infernix-demo` placeholder handlers for the
+Harbor, MinIO, and Pulsar tool routes, and integration still accepts those compatibility payloads
+instead of requiring only the real routed upstream behavior. The supported `linux-cpu`
+outer-container rerun can still leave `cluster up` stuck at `cluster not yet reconciled`, and the
+current `linux-gpu` bootstrap scripts can reuse a stale staged `linux-cpu` substrate file instead
+of restaging `linux-gpu`.
 
 ## Current Repo Assessment
 
@@ -25,8 +31,17 @@ routed Playwright suite exhaustively exercises every demo-visible generated cata
 active substrate, and the integration suite enumerates every generated active-substrate catalog
 entry while also carrying Harbor, MinIO, Pulsar, and Harbor PostgreSQL recovery or lifecycle
 checks in code. The staged file, `cluster status`, publication JSON, and generated browser
-contracts still expose the active substrate through `runtimeMode` fields or lines. Those surfaces
-define the current Phase 6 contract.
+contracts still expose the active substrate through `runtimeMode` fields or lines. Phase 6 is not
+yet fully closed because `src/Infernix/Demo/Api.hs` still serves direct placeholder payloads for
+`/harbor`, `/minio/*`, and `/pulsar/*` when that binary is reached outside the intended HTTPRoute
+mapping, and `test/integration/Spec.hs` still treats those `rewrittenPath` responses as success
+for the routed tool-route probes. The latest supported Linux reruns also leave two lifecycle
+blockers open: `./bootstrap/linux-cpu.sh up` can hang while `status` keeps reporting `cluster not
+yet reconciled`, and the `bootstrap/linux-cpu.sh` and `bootstrap/linux-gpu.sh` staging guards
+currently check only for the existence of
+`./.build/outer-container/build/infernix-substrate.dhall`, which lets the GPU lane reuse a stale
+`linux-cpu` staged file and target the wrong Kind cluster. Those surfaces define the current
+Phase 6 contract.
 
 ## Validation Surface
 
@@ -198,9 +213,9 @@ None.
 
 ---
 
-## Sprint 6.5: Cluster Lifecycle and Environment-Matrix Validation [Done]
+## Sprint 6.5: Cluster Lifecycle and Environment-Matrix Validation [Active]
 
-**Status**: Done
+**Status**: Active
 **Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Config.hs`, `src/Infernix/CLI.hs`, `compose.yaml`, `kind/cluster-apple-silicon.yaml`, `kind/cluster-linux-cpu.yaml`, `kind/cluster-linux-gpu.yaml`, `test/integration/Spec.hs`, `web/playwright/inference.spec.js`, `web/test/run_playwright_matrix.mjs`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/operations/apple_silicon_runbook.md`
 
@@ -222,15 +237,25 @@ Verify the same product contract across Apple host-native and Linux outer-contai
 
 ### Validation
 
-- `infernix test integration` proves the host-native lane creates the expected repo-local state
-- validation proves the Linux outer-container lane can reach the cluster through its supported path
-- repeated `cluster up` or `cluster down` behavior and `9090`-first edge-port rediscovery remain stable
-- supported `infernix test ...` reruns leave behind no residual cluster state because each phase is
-  bracketed by `cluster down` even when the test action fails partway through
+- validation closes when `infernix test integration` proves the host-native lane creates the
+  expected repo-local state
+- validation closes when the Linux outer-container lane reaches the cluster successfully through
+  its supported path
+- validation closes when repeated `cluster up` or `cluster down` behavior and `9090`-first
+  edge-port rediscovery remain stable
+- validation closes when supported `infernix test ...` reruns leave behind no residual cluster
+  state because each phase is bracketed by `cluster down` even when the test action fails partway
+  through
 
 ### Remaining Work
 
-None.
+- diagnose and correct the current `linux-cpu` outer-container rerun in which
+  `./bootstrap/linux-cpu.sh up` can hang while `./bootstrap/linux-cpu.sh status` continues to
+  report `cluster not yet reconciled`
+- make the supported Linux lifecycle validation prove that repo workloads fully reconcile on the
+  CPU lane instead of stopping after Kind node readiness
+- restore a stable supported cleanup path for failed Linux lifecycle reruns so the launcher does
+  not leave behind hung outer-container processes while the repo reports `cluster already absent`
 
 ---
 
@@ -268,10 +293,10 @@ None.
 
 ---
 
-## Sprint 6.19: Single-Substrate Validation Closure and Simulation Removal [Done]
+## Sprint 6.19: Single-Substrate Validation Closure and Simulation Removal [Active]
 
-**Status**: Done
-**Implementation**: `src/Infernix/Config.hs`, `src/Infernix/CLI.hs`, `web/test/run_playwright_matrix.mjs`, `docker/linux-substrate.Dockerfile`, `test/integration/Spec.hs`, `test/unit/Spec.hs`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/00-overview.md`, `DEVELOPMENT_PLAN/system-components.md`
+**Status**: Active
+**Implementation**: `src/Infernix/Config.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Demo/Api.hs`, `web/test/run_playwright_matrix.mjs`, `docker/linux-substrate.Dockerfile`, `test/integration/Spec.hs`, `test/unit/Spec.hs`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/00-overview.md`, `DEVELOPMENT_PLAN/system-components.md`
 **Docs to update**: `README.md`, `documents/development/local_dev.md`, `documents/development/testing_strategy.md`, `documents/development/chaos_testing.md`, `documents/engineering/testing.md`, `documents/engineering/portability.md`, `documents/reference/cli_reference.md`, `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`
 
 ### Objective
@@ -318,6 +343,9 @@ and E2E ownership in the final `.dhall`-driven terms.
 - for any given built substrate, integration validation fails if a README row or reference whose
   substrate column names a real engine is not covered by at least one integration assertion using
   the engine selected from `.dhall`
+- routed tool-route validation fails if Harbor, MinIO, or Pulsar probes succeed only through the
+  direct `infernix-demo` compatibility payloads instead of the real Gateway-backed upstream
+  surfaces
 - E2E validation fails if browser-side test code branches on substrate id or engine family instead
   of relying on the demo app's `.dhall`-driven dispatch
 - docs and test output fail if validation still claims Apple, CPU, and GPU coverage from one
@@ -325,7 +353,12 @@ and E2E ownership in the final `.dhall`-driven terms.
 
 ### Remaining Work
 
-None.
+- remove or explicitly fence off the direct placeholder handlers in
+  `src/Infernix/Demo/Api.hs` for `/harbor`, `/minio/*`, and `/pulsar/*` so the demo binary no
+  longer doubles as a compatibility target for tool-route probes on the supported validation path
+- tighten `test/integration/Spec.hs` so Harbor, MinIO, and Pulsar route probes require the real
+  routed upstream behavior instead of accepting `rewrittenPath` payloads
+- keep the plan and the route-validation docs aligned until that cleanup lands
 
 ---
 
@@ -360,10 +393,10 @@ None.
 
 ---
 
-## Sprint 6.8: Minimal Host Prerequisites and Clean-Host Bootstrap Closure [Done]
+## Sprint 6.8: Minimal Host Prerequisites and Clean-Host Bootstrap Closure [Active]
 
-**Status**: Done
-**Implementation**: `README.md`, `AGENTS.md`, `CLAUDE.md`, `src/Infernix/HostPrereqs.hs`, `src/Infernix/Engines/AppleSilicon.hs`, `src/Infernix/Python.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/CLI.hs`, `documents/development/local_dev.md`, `documents/operations/apple_silicon_runbook.md`, `documents/development/python_policy.md`, `documents/engineering/portability.md`, `documents/engineering/docker_policy.md`
+**Status**: Active
+**Implementation**: `README.md`, `AGENTS.md`, `CLAUDE.md`, `bootstrap/linux-cpu.sh`, `bootstrap/linux-gpu.sh`, `src/Infernix/HostPrereqs.hs`, `src/Infernix/Engines/AppleSilicon.hs`, `src/Infernix/Python.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/CLI.hs`, `documents/development/local_dev.md`, `documents/operations/apple_silicon_runbook.md`, `documents/development/python_policy.md`, `documents/engineering/portability.md`, `documents/engineering/docker_policy.md`
 **Docs to update**: `README.md`, `AGENTS.md`, `CLAUDE.md`, `documents/development/local_dev.md`, `documents/operations/apple_silicon_runbook.md`, `documents/development/python_policy.md`, `documents/engineering/portability.md`, `documents/engineering/docker_policy.md`, `documents/operations/cluster_bootstrap_runbook.md`
 
 ### Objective
@@ -391,17 +424,17 @@ toolchain from package managers instead of depending on a broad preinstalled App
 
 ### Validation
 
-- on a clean Apple Silicon host with only Homebrew plus ghcup present,
+- validation closes when, on a clean Apple Silicon host with only Homebrew plus ghcup present,
   `cabal install --installdir=./.build --install-method=copy --overwrite-policy=always exe:infernix exe:infernix-demo`
-  succeeds, and `./.build/infernix cluster up` reconciles the
-  remaining supported Apple host prerequisites through the supported package-manager path
-- Apple host validation proves the supported flow can bootstrap Poetry when absent and then run the
-  adapter setup path without manual Poetry installation
-- on a clean Linux CPU host with Docker only,
+  succeeds and `./.build/infernix cluster up` reconciles the remaining supported Apple host
+  prerequisites through the supported package-manager path
+- validation closes when Apple host validation proves the supported flow can bootstrap Poetry when
+  absent and then run the adapter setup path without manual Poetry installation
+- validation closes when, on a clean Linux CPU host with Docker only,
   `docker compose build infernix` plus `docker compose run --rm infernix infernix test all`
   passes
-- on a clean Linux GPU host with Docker plus the supported NVIDIA host prerequisites,
-  exporting `INFERNIX_COMPOSE_IMAGE=infernix-linux-gpu:local`,
+- validation closes when, on a clean Linux GPU host with Docker plus the supported NVIDIA host
+  prerequisites, exporting `INFERNIX_COMPOSE_IMAGE=infernix-linux-gpu:local`,
   `INFERNIX_COMPOSE_SUBSTRATE=linux-gpu`, and
   `INFERNIX_COMPOSE_BASE_IMAGE=nvidia/cuda:13.2.1-cudnn-runtime-ubuntu24.04`, then running
   `docker compose build infernix` plus `docker compose run --rm infernix infernix test all`,
@@ -409,7 +442,13 @@ toolchain from package managers instead of depending on a broad preinstalled App
 
 ### Remaining Work
 
-None.
+- make `bootstrap/linux-cpu.sh` and `bootstrap/linux-gpu.sh` validate the identity of the staged
+  `./.build/outer-container/build/infernix-substrate.dhall` payload instead of checking only that
+  the path exists
+- ensure the supported GPU bootstrap path restages `linux-gpu` whenever the existing staged file
+  still carries `linux-cpu`, so GPU commands do not target the CPU Kind cluster or image family
+- rerun the supported clean-host Linux CPU and Linux GPU validation surfaces successfully after the
+  staging and lifecycle fixes land
 
 ---
 

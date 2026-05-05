@@ -7,7 +7,8 @@
 
 ## Binaries
 
-The repository ships two Haskell executables sharing one Cabal library `infernix-lib`:
+The repository ships two Haskell executables sharing the default Cabal library exposed by the
+`infernix` package:
 
 - `infernix` - production daemon and operator workflow
 - `infernix-demo` - demo UI HTTP host (gated by `.dhall` `demo_ui`; absent from production

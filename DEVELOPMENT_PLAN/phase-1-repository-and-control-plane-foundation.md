@@ -4,9 +4,9 @@
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
 
 > **Purpose**: Establish the canonical repository scaffold, the two-binary topology
-> (`infernix` plus `infernix-demo` sharing `infernix-lib`), the supported control-plane execution
-> contexts, the substrate-selection baseline, generated-artifact hygiene, and the repository
-> ownership rules that later phases build on.
+> (`infernix` plus `infernix-demo` sharing the default Cabal library exposed by the `infernix`
+> package), the supported control-plane execution contexts, the substrate-selection baseline,
+> generated-artifact hygiene, and the repository ownership rules that later phases build on.
 
 ## Phase Status
 
@@ -85,7 +85,8 @@ host while keeping both on one shared library.
   - `lint files|docs|proto|chart`
   - `test lint|unit|integration|e2e|all`
   - `docs check`
-- both executables link one shared Cabal library `infernix-lib`
+- both executables link the default Cabal library exposed by the `infernix` package
+  (declared in `infernix.cabal` without an explicit library name and depended on as `infernix`)
 - cluster helpers and test helpers do not become extra supported executables
 
 ### Validation
@@ -209,7 +210,8 @@ None.
 
 ### Objective
 
-Retire custom control-plane Python tooling in favor of Haskell modules under `infernix-lib`.
+Retire custom control-plane Python tooling in favor of Haskell modules under the shared
+`infernix` Cabal library.
 
 ### Deliverables
 
@@ -320,7 +322,7 @@ supported browser workflow.
 ### Deliverables
 
 - `compose.yaml` runs against a baked image snapshot and bind-mounts `./.data/`, `./.build/`, and `./compose.yaml` together with the Docker socket
-- the only outer-container build state surfaced on the host through `./.build/outer-container/build/` is the staged substrate file and the source snapshot manifest; cabal-home and the cabal builddir stay at the toolchain's natural in-image locations (`/root/.cabal/`, `dist-newstyle/`) and are not bind-mounted, so the supported CLI never overrides cabal's default builddir or `CABAL_DIR`
+- the only outer-container build state surfaced on the host through `./.build/outer-container/build/` is the staged substrate file; the source snapshot manifest lives separately at `/opt/infernix/source-snapshot-files.txt` in the image overlay, and cabal-home plus the cabal builddir stay at the toolchain's natural in-image locations (`/root/.cabal/`, `dist-newstyle/`) and are not bind-mounted, so the supported CLI never overrides cabal's default builddir or `CABAL_DIR`
 - the substrate image uses `tini` as its `ENTRYPOINT` for clean signal handling and zombie reaping rather than running a custom launcher wrapper script
 - the repo-wide `.:/workspace` bind mount and `web/node_modules` runtime volume are removed
 - operators rebuild the image when source changes instead of relying on live repo mounts

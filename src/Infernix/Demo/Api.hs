@@ -293,13 +293,21 @@ cacheEntryValue options manifest = do
           "materialized" .= materialized,
           "engineAdapterId" .= engineBindingAdapterId (engineBindingForSelectedEngine (cacheRuntimeMode manifest) (cacheSelectedEngine manifest)),
           "engineAdapterAvailability" .= ("available" :: String),
-          "sourceArtifactManifestUri" .= cacheDurableSourceUri manifest,
+          "sourceArtifactManifestUri" .= sourceArtifactManifestUri manifest,
           "sourceArtifactSelectionMode" .= ("engine-specific-direct-artifact" :: String),
           "sourceArtifactAuthoritativeUri" .= cacheDurableSourceUri manifest,
           "sourceArtifactAuthoritativeKind" .= ("bundle" :: String),
           "sourceArtifactSelectedArtifacts" .= [object ["artifactKind" .= ("bundle" :: String), "uri" .= cacheDurableSourceUri manifest]]
         ]
     )
+
+sourceArtifactManifestUri :: CacheManifest -> Text.Text
+sourceArtifactManifestUri manifest =
+  "s3://infernix-runtime/source-artifacts/"
+    <> runtimeModeId (cacheRuntimeMode manifest)
+    <> "/"
+    <> cacheModelId manifest
+    <> "/source.json"
 
 serveObject :: DemoApiOptions -> [Text.Text] -> (Response -> IO responseReceived) -> IO responseReceived
 serveObject options objectSegments respond = do

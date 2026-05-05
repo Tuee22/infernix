@@ -15,7 +15,9 @@
 
 ## Pending Removal
 
-None.
+| Location | Why it was slated for removal | Owning phase or sprint |
+|----------|-------------------------------|------------------------|
+| `src/Infernix/Demo/Api.hs` direct placeholder handlers for `/harbor`, `/minio/*`, and `/pulsar/*`, plus the matching `rewrittenPath` acceptance in `test/integration/Spec.hs` and route-validation docs | The Gateway-owned edge contract should prove real Harbor, MinIO, and Pulsar upstream behavior on the supported path; compatibility placeholder payloads currently let validation pass without that stronger guarantee | Phase 6 Sprint 6.19 |
 
 ## Completed
 
@@ -28,7 +30,7 @@ None.
 | Apple host-demo bridge behavior, direct host `infernix-demo serve` launch guidance, and any remaining host-bridge route publication language | The final Apple doctrine keeps the demo app cluster-resident and uses the host only for the Apple inference daemon and host CLI orchestration | Phase 0 Sprint 0.8; Phase 3 Sprint 3.9; Phase 5 Sprint 5.8 |
 | User-facing direct `linux-gpu` launcher guidance and any requirement for the outer control-plane container itself to request the NVIDIA runtime | Supported Linux control-plane commands must run through Compose, and the outer container does not need direct CUDA access even when the deployed substrate is GPU-backed | Phase 0 Sprint 0.8; Phase 1 Sprint 1.10; Phase 2 Sprint 2.9 |
 | `linux-cuda` substrate naming across code, Kind assets, tests, and docs | The final canonical substrate id is `linux-gpu`, so the old `linux-cuda` label is legacy naming that must be retired explicitly | Phase 0 Sprint 0.8; Phase 1 Sprint 1.10; Phase 2 Sprint 2.9; Phase 6 Sprint 6.19 |
-| Simulated cluster, route, transport, and inference fallback behavior | The final runtime and validation doctrine removes simulation completely from the supported contract; the only broadly portable lane is the real `linux-cpu` outer-container workflow rather than any simulated surrogate | Phase 0 Sprint 0.8; Phase 4 Sprint 4.12; Phase 6 Sprint 6.19 |
+| Simulated cluster bring-up fallback behavior | The supported operator contract requires real Kind lifecycle on supported entrypoints; the only broadly portable lane is the real `linux-cpu` outer-container workflow rather than a simulated cluster surrogate | Phase 0 Sprint 0.8; Phase 4 Sprint 4.12; Phase 6 Sprint 6.19 |
 | Legacy `default.state` cache-manifest fallback in `src/Infernix/Runtime/Cache.hs` | The supported durable cache-manifest contract is protobuf-backed `default.pb` state only, so the old text-state fallback kept an obsolete cache-manifest format alive in code | Phase 6 Sprint 6.17 |
 | Legacy inference-result fallback in `src/Infernix/Runtime.hs` that read `./.data/runtime/results/*.state` when the protobuf result file was absent | The supported durable result contract is protobuf-backed `*.pb` state only, so the old text-state fallback kept an obsolete result format alive in code | Phase 6 Sprint 6.17 |
 | Legacy generated-contract cleanup in `src/Infernix/CLI.hs` that deleted `web/src/Infernix/Web/Contracts.purs` during PureScript contract generation | The supported handwritten Haskell contract home moved to `src/Infernix/Web/Contracts.hs`, and generated PureScript output now belongs only under `web/src/Generated/`, so the retired output path should stop participating in supported builds | Phase 6 Sprint 6.17 |

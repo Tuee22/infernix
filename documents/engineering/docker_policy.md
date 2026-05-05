@@ -62,9 +62,10 @@ Harbor-first bootstrap path no longer depends on any retired helper-registry con
 - the `infernix` launcher container forwards the Docker socket and bind-mounts `./.data/`,
   `./.build/`, and the host `./compose.yaml` (read-only) into `/workspace/`
 - the `infernix` launcher container sets `/workspace/.build/outer-container/build` as the
-  supported outer build root for the staged substrate file and the source snapshot manifest,
-  while cabal-home and the cabal builddir live at the toolchain's natural in-image locations
-  (`/root/.cabal/`, `dist-newstyle/`) and are not bind-mounted to the host
+  supported outer build root for the staged substrate file, while the source snapshot manifest
+  lives separately at `/opt/infernix/source-snapshot-files.txt` in the image overlay and
+  cabal-home plus the cabal builddir stay at the toolchain's natural in-image locations
+  (`/root/.cabal/`, `dist-newstyle/`) rather than on any bind-mounted host path
 - the substrate image uses `tini` as its `ENTRYPOINT` so PID 1 forwards signals cleanly and reaps
   zombie processes for cluster lifecycle commands
 - when the outer container shells out to `docker compose run --rm playwright`, it forwards

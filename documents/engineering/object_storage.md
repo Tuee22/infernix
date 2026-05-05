@@ -9,7 +9,7 @@
 
 - the current runtime persists durable object-store state under `./.data/object-store/`
 - runtime artifact bundles live under `./.data/object-store/artifacts/<runtime-mode>/<model-id>/`
-- source-artifact manifests and copied payloads live under
+- source-artifact manifests live under
   `./.data/object-store/source-artifacts/<runtime-mode>/<model-id>/`
 - large outputs live under `./.data/object-store/results/` and are surfaced back to clients as
   object references when the inline payload threshold is exceeded

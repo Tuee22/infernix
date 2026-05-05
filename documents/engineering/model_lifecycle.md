@@ -8,17 +8,17 @@
 
 ## Rules
 
-- the current validated runtime persists durable artifacts, protobuf runtime manifests, runtime
-  results, and large outputs under the repo-local object-store root `./.data/object-store/`
+- the current validated runtime persists durable artifacts, protobuf runtime manifests, and large
+  outputs under the repo-local object-store root `./.data/object-store/`, while protobuf-backed
+  runtime-result records live under `./.data/runtime/results/*.pb`
 - the Haskell worker layer (`src/Infernix/Runtime/{Pulsar,Worker,Cache}.hs`) stores engine-specific
   runtime artifact bundles under `artifacts/<runtime-mode>/<model-id>/bundle.json` and durable
   source-artifact manifests under `source-artifacts/<runtime-mode>/<model-id>/source.json`
 - those durable bundles also record engine-adapter id, type, locator, and availability together
   with the authoritative source-artifact URI or kind selected for the current worker path
-- when the source URL is a local file, the worker layer copies the payload into
-  `source-artifacts/<runtime-mode>/<model-id>/payload.bin`; when the source URL is remote, the
-  worker layer materializes direct upstream payloads or provider metadata into the same durable
-  prefix
+- the current validated runtime records source-selection metadata in
+  `source-artifacts/<runtime-mode>/<model-id>/source.json`; it does not publish a separate
+  `payload.bin` compatibility file on the supported path
 - repo-owned `.proto` schemas define the contract for durable manifests and topic payloads;
   Haskell consumes them through `proto-lens`-generated bindings, and the shared Python adapter
   project consumes them through matching auto-generated Python protobuf modules in

@@ -31,8 +31,14 @@
 - on `apple-silicon`, cluster-resident repo workloads currently reuse the `infernix-linux-cpu:local`
   image family even though the staged substrate, publication metadata, and browser contracts still
   report `apple-silicon`
+- `src/Infernix/Demo/Api.hs` still carries direct placeholder handlers for `/harbor`,
+  `/minio/*`, and `/pulsar/*`, and `test/integration/Spec.hs` still accepts those
+  `rewrittenPath` payloads for the routed tool-route probes
 - Linux operator workflows close around Compose-driven outer containers, validation reports only
-  the active built substrate, and the supported materialization path can emit `demo_ui = false`
+  the active built substrate, and the supported materialization path can emit `demo_ui = false`,
+  but the current `linux-cpu` rerun can leave `cluster up` stuck at `cluster not yet reconciled`
+  and the current `linux-gpu` bootstrap scripts can reuse a stale staged `linux-cpu` substrate
+  file instead of restaging `linux-gpu`
 - Monitoring is not a supported first-class surface.
 
 ## Operator and Host Components
@@ -77,7 +83,7 @@
 | HTTPRoute rendering | data-driven `chart/templates/httproutes.yaml` from the Haskell route registry | Kind cluster | publishes the route inventory for demo, Harbor, MinIO, and Pulsar surfaces | none |
 | Substrate-file publication | generated `ConfigMap/infernix-demo-config` plus repo-local mirror | Kind cluster and repo-local state | republishes the staged substrate payload for cluster consumers and local inspection tooling through the shared `infernix-substrate.dhall` filename | `./.data/runtime/configmaps/infernix-demo-config/` |
 | Service runtime host | `infernix service` plus `src/Infernix/Runtime/{Cache,Worker,Pulsar}.hs` | direct host process or cluster pod | direct `infernix service` stays host-native on `apple-silicon`; repo-owned cluster workloads currently run from Linux substrate images, with `apple-silicon` selecting the `infernix-linux-cpu` image family for clustered `infernix-service` and `infernix-demo` | `./.data/runtime/`, object-store state under `./.data/object-store/` |
-| Demo UI host | `infernix-demo` deployment | cluster pod | serves `/`, `/api`, `/api/publication`, `/api/cache`, and `/objects/` when demo is enabled; routed manual inference currently executes in-process from that clustered workload rather than through a separate host-side bridge | none |
+| Demo UI host | `infernix-demo` deployment | cluster pod | serves `/`, `/api`, `/api/publication`, `/api/cache`, and `/objects/` when demo is enabled; routed manual inference currently executes in-process from that clustered workload rather than through a separate host-side bridge; the binary still carries direct compatibility handlers for `/harbor`, `/minio/*`, and `/pulsar/*` when reached outside the intended HTTPRoute mapping | none |
 | Web runtime executor | PureScript bundle baked into the Linux substrate image plus the dedicated `infernix-playwright:local` Playwright image | substrate image runs cluster-resident as the demo app; Playwright image is invoked via `docker compose run --rm playwright`, directly from the host CLI on Apple Silicon and from inside the outer container against the host docker daemon on Linux substrates | serves the browser bundle from the clustered demo app and runs routed E2E coverage from the dedicated Playwright executor | test artifacts under `./.data/` |
 | Engine adapter set | `python/adapters/` invoked via `poetry run` from the Haskell worker | host child process or cluster child process | Python-native engine boundary over typed protobuf-over-stdio | optional Apple venv under `python/.venv/` |
 | Python quality gate | `poetry run check-code` | host or Linux outer-container image | runs mypy strict, black check, and ruff strict against the shared adapter tree | none |
@@ -121,8 +127,8 @@
 | Substrate | Canonical substrate id | Supported contract | Current repo gap |
 |-----------|------------------------|--------------------|------------------|
 | Apple Silicon / Metal | `apple-silicon` | host-native control plane and host-native inference daemon, clustered demo app, shared config and route contracts | none |
-| Linux / CPU | `linux-cpu` | containerized Linux lane built from the shared substrate Dockerfile and driven entirely through Compose | none |
-| Linux / NVIDIA GPU | `linux-gpu` | GPU-enabled Kind lane built from the shared substrate Dockerfile and deployed from the same CUDA-based image used by the outer container | none |
+| Linux / CPU | `linux-cpu` | containerized Linux lane built from the shared substrate Dockerfile and driven entirely through Compose | current supported reruns can leave `cluster up` stuck at `cluster not yet reconciled` even after Kind nodes become ready |
+| Linux / NVIDIA GPU | `linux-gpu` | GPU-enabled Kind lane built from the shared substrate Dockerfile and deployed from the same CUDA-based image used by the outer container | the bootstrap path can reuse a stale `./.build/outer-container/build/infernix-substrate.dhall` file and accidentally target `linux-cpu` instead of restaging `linux-gpu` |
 
 ## Serialization Boundaries
 
@@ -144,7 +150,7 @@
 | Generated Linux substrate file | explicit helper invocation runs `docker compose run --rm infernix infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>` | `./.build/outer-container/build/infernix-substrate.dhall` on the host through the bind mount (visible inside the outer container as `/workspace/.build/outer-container/build/infernix-substrate.dhall`) | outer-container staging path; the authoritative launcher binary remains `/usr/local/bin/infernix` inside the substrate image |
 | Generated Linux kubeconfig | `cluster up` | `./.data/runtime/infernix.kubeconfig` | durable repo-local kubeconfig reused across fresh outer-container invocations |
 | Cluster-mounted substrate file | Helm deployment plus ConfigMap mount | `/opt/build/infernix/infernix-substrate.dhall` | cluster-resident `infernix service` and `infernix-demo` consume the shared staged filename under `/opt/build/infernix/` |
-| Outer-container build root | containerized build or runtime | `./.build/outer-container/build/` on the host (mapped to `/workspace/.build/outer-container/build/` in the outer container) | host-anchored substrate-file root used by the outer-container control plane; carries the staged substrate file and the source snapshot only |
+| Outer-container build root | containerized build or runtime | `./.build/outer-container/build/` on the host (mapped to `/workspace/.build/outer-container/build/` in the outer container) | host-anchored substrate-file root used by the outer-container control plane; carries the staged substrate file only |
 | Source snapshot manifest | Linux outer-container image build | `/opt/infernix/source-snapshot-files.txt` inside the substrate image | sorted source snapshot captured from the baked image context before later generated outputs so git-less image runs of `infernix lint files` validate only the baked source tree; the manifest is intentionally outside the bind-mounted `./.build/` tree so it stays in the image overlay |
 | Outer-container cabal-home and builddir | Linux outer-container image overlay | the toolchain's natural in-image locations (`/root/.cabal/`, `dist-newstyle/`) | populated during `docker compose build infernix`; not bind-mounted to the host so cabal package state stays in the image overlay |
 | Durable runtime artifact bundles | service runtime and cache materialization | `./.data/object-store/artifacts/<substrate>/<model-id>/bundle.json` | durable worker input metadata |

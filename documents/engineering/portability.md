@@ -18,8 +18,8 @@
 ## Current Status
 
 The current worktree implements the intended split directly: Apple remains the only supported
-host-native inference lane, Linux CPU and Linux CUDA remain the containerized lanes, and the repo
-does not claim substrate parity where the underlying hardware or launcher model differs.
+host-native inference lane, while `linux-cpu` and `linux-gpu` remain the containerized lanes, and
+the repo does not claim substrate parity where the underlying hardware or launcher model differs.
 
 ## Portable Platform Invariants
 
@@ -66,5 +66,5 @@ does not claim substrate parity where the underlying hardware or launcher model 
 - `infernix test integration` and `infernix test e2e` validate the generated active-mode catalog
   and routed surface against the active built substrate instead of silently substituting another
   substrate.
-- the full repository closes only when Apple, Linux CPU, and Linux CUDA all pass on their
-  supported lanes.
+- the full repository closes only when `apple-silicon`, `linux-cpu`, and `linux-gpu` all pass on
+  their supported lanes.

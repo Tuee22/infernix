@@ -188,6 +188,7 @@ clusterUp maybeRuntimeMode = do
   paths <- Config.discoverPaths
   Config.ensureRepoLayout paths
   runtimeMode <- Config.resolveRuntimeMode maybeRuntimeMode
+  Config.ensureSupportedRuntimeModeForExecutionContext paths runtimeMode
   when (runtimeMode == AppleSilicon) (ensureAppleSiliconRuntimeReady paths)
   commandsAvailable <- platformCommandsAvailable
   unless commandsAvailable $
@@ -374,24 +375,13 @@ clusterStatus maybeRuntimeMode = do
       putStrLn ("expectedDemoConfigPath: " <> Config.generatedDemoConfigPath paths)
       putStrLn ("expectedMountedDemoConfigPath: " <> Config.watchedDemoConfigPath)
     Just state -> do
-      actualPresent <-
-        do
-          present <- kindClusterExists paths (clusterRuntimeMode state)
-          when present $
-            ensureOuterContainerKindNetworkAccess paths (clusterRuntimeMode state)
-          pure present
+      actualPresent <- kindClusterExists paths (clusterRuntimeMode state)
       cacheEntries <- countLeafEntries (modelCacheRoot paths)
       resultCount <- countLeafEntries (resultsRoot paths)
       objectCount <- countLeafEntries (objectStoreRoot paths)
       durableManifestCount <- countLeafEntries (objectStoreRoot paths </> "manifests")
-      nodeCount <-
-        if actualPresent
-          then countNonEmptyLines <$> kubectlOutput state ["get", "nodes", "--no-headers"]
-          else pure 0
-      podCount <-
-        if actualPresent
-          then countNonEmptyLines <$> kubectlOutput state ["get", "pods", "-A", "--no-headers"]
-          else pure 0
+      nodeCount <- kubectlLineCountIfReachable state ["get", "nodes", "--no-headers"]
+      podCount <- kubectlLineCountIfReachable state ["get", "pods", "-A", "--no-headers"]
       putStrLn ("clusterPresent: " <> show actualPresent)
       putStrLn ("controlPlaneContext: " <> Config.controlPlaneContext paths)
       putStrLn ("runtimeMode: " <> Text.unpack (runtimeModeId (clusterRuntimeMode state)))
@@ -427,11 +417,8 @@ loadClusterState paths = do
     then do
       maybeState <- readStateFileMaybe (clusterStatePath paths)
       case maybeState of
-        Just state -> do
-          let normalizedState = normalizeClusterStatePaths paths state
-          when (normalizedState /= state) $
-            writeStateFile (clusterStatePath paths) normalizedState
-          pure (Just normalizedState)
+        Just state ->
+          pure (Just (normalizeClusterStatePaths paths state))
         Nothing -> pure Nothing
     else pure Nothing
 
@@ -2711,6 +2698,14 @@ clusterEdgePort paths state
 
 kubectlOutput :: ClusterState -> [String] -> IO String
 kubectlOutput state args = captureCommand Nothing [] "kubectl" (kubeconfigArgs state <> args)
+
+kubectlLineCountIfReachable :: ClusterState -> [String] -> IO Int
+kubectlLineCountIfReachable state args = do
+  result <- tryCommand Nothing [] "kubectl" (kubeconfigArgs state <> args)
+  pure $
+    case result of
+      Right output -> countNonEmptyLines output
+      Left _ -> 0
 
 kubeconfigArgs :: ClusterState -> [String]
 kubeconfigArgs state = ["--kubeconfig", kubeconfigPath state]

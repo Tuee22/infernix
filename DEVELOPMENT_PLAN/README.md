@@ -60,12 +60,20 @@ host-anchored `./.build/` bind mount. Supported runtime, cluster, and validation
 fast if the staged file is absent instead of falling back to host detection or
 `INFERNIX_SUBSTRATE_ID`. Cluster publication mirrors the exact payload locally under
 `./.data/runtime/configmaps/infernix-demo-config/infernix-substrate.dhall` and mounts the same
-filename inside cluster workloads at `/opt/build/infernix/infernix-substrate.dhall`. The file keeps
-the legacy `.dhall` filename even though the payload is banner-prefixed JSON. Validation already reports only the active built
-substrate instead of implying a default cross-substrate matrix, and the generated file,
+filename inside cluster workloads at `/opt/build/infernix/infernix-substrate.dhall`. The file
+keeps the legacy `.dhall` filename even though the payload is banner-prefixed JSON. Validation
+already reports only the active built substrate instead of implying a default cross-substrate
+matrix, and the generated file,
 `cluster status`, publication JSON, and generated browser contracts still serialize that active
 substrate under `runtimeMode` field names. The plan therefore closes around one active-substrate
-validation contract rather than a default cross-substrate rerun story.
+validation contract rather than a default cross-substrate rerun story, but Phase 6 remains active:
+`src/Infernix/Demo/Api.hs` still carries direct placeholder handlers for the Harbor, MinIO, and
+Pulsar tool routes, and `test/integration/Spec.hs` still accepts their `rewrittenPath` payloads
+instead of requiring only the real routed upstream behavior, the latest supported `linux-cpu`
+outer-container reruns can leave `cluster up` stuck at `cluster not yet reconciled`, and the
+current `linux-gpu` bootstrap scripts can reuse a stale
+`./.build/outer-container/build/infernix-substrate.dhall` file and accidentally run the GPU lane
+against `linux-cpu`.
 
 Monitoring is not a supported first-class surface.
 
@@ -93,15 +101,16 @@ now use that id consistently.
 | 3 | HA Platform Services and Edge Routing | Done | [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md) |
 | 4 | Inference Service and Durable Runtime | Done | [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) |
 | 5 | Web UI and Shared Types | Done | [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md) |
-| 6 | Validation, E2E, and HA Hardening | Done | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) |
+| 6 | Validation, E2E, and HA Hardening | Active | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) |
 
 ## Canonical Outcome
 
 The supported platform now closes around these rules:
 
-- two repo-owned Haskell executables still share one Cabal library `infernix-lib`: `infernix` for
-  the production daemon, cluster lifecycle, validation, and internal helpers; `infernix-demo` for
-  the routed demo HTTP host
+- two repo-owned Haskell executables share the default Cabal library exposed by the `infernix`
+  package (declared in `infernix.cabal` without an explicit library name and depended on as
+  `infernix`): `infernix` for the production daemon, cluster lifecycle, validation, and internal
+  helpers; `infernix-demo` for the routed demo HTTP host
 - one structured Haskell command registry owns parsing, help text, and the canonical CLI
   reference, but it no longer exposes `--runtime-mode` or any equivalent substrate override
 - the product contract standardizes three substrates:
@@ -147,8 +156,11 @@ The supported platform now closes around these rules:
   `--demo-ui false`; omitting that flag keeps the default demo-enabled output
 - the routed demo app is cluster-resident across substrates; the interim Apple host bridge is not
   part of the final contract
-- simulation is removed completely from supported runtime and validation paths; there are no
-  simulated cluster, route, transport, or inference fallbacks on a supported substrate
+- supported entrypoints no longer carry the old cross-substrate default matrix or cluster bring-up
+  fallbacks, but route hardening remains open: `src/Infernix/Demo/Api.hs` still carries direct
+  placeholder handlers for `/harbor`, `/minio/*`, and `/pulsar/*`, and
+  `test/integration/Spec.hs` still accepts their `rewrittenPath` responses instead of requiring
+  only the real routed upstream behavior
 - integration coverage is driven by the comprehensive model, format, and engine matrix in
   `README.md`: one substrate-aware integration suite reads the active substrate from `.dhall`,
   chooses the corresponding engine binding for each supported row or reference, and runs at least

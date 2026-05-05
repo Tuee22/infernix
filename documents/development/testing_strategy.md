@@ -9,6 +9,23 @@ The canonical validation entrypoints, fail-fast rules, and supported boundaries 
 [../engineering/testing.md](../engineering/testing.md). This page records the implemented
 mode-specific coverage, matrix behavior, and operator detail behind those canonical entrypoints.
 
+## TL;DR
+
+- host-native validation is supported only on the `apple-silicon` lane; `linux-cpu` and
+  `linux-gpu` validate through the Linux outer-container control plane
+- the active staged substrate remains the source of truth for validation scope, generated catalog
+  selection, and routed demo-surface expectations
+- the auxiliary routed-prefix checks already prove publication, but some assertions still accept the
+  current `infernix-demo` compatibility payloads until the stricter upstream-only checks land
+
+## Current Status
+
+- the implemented lane matrix is host-native `apple-silicon`, outer-container `linux-cpu`, and
+  real-cluster `linux-gpu`
+- the routed auxiliary checks below describe current behavior precisely: `/harbor`, `/minio/s3`,
+  and `/pulsar/ws` publication is already required, but some assertions still accept compatibility
+  payloads while Phase 6 tracks tightening them to live upstream-only responses
+
 ## Validation Layers
 
 - `infernix docs check` validates governed docs, README or plan cross-references, required CLI
@@ -28,7 +45,7 @@ mode-specific coverage, matrix behavior, and operator detail behind those canoni
   `cluster status`, every generated active-mode catalog entry from the mounted demo config,
   demo-ui disablement on the `linux-cpu` lane via
   `infernix internal materialize-substrate linux-cpu --demo-ui false`, and edge-port rediscovery
-  on the host-native control-plane `linux-cpu` lane
+  on the host-native `apple-silicon` lane
 - `infernix test e2e` validates the routed browser surface by comparing `/api/models` to the
   generated demo config and exercising every routed catalog entry through both the HTTP inference
   endpoint and the browser workbench
@@ -53,17 +70,20 @@ mode-specific coverage, matrix behavior, and operator detail behind those canoni
   `POST /api/cache/evict`, and `POST /api/cache/rebuild` contract against manifest-backed durable
   state
 - `infernix test integration` also validates that `/harbor`, `/minio/s3`, and `/pulsar/ws`
-  resolve through the shared routed surface and preserve the expected rewritten-path contract
-- those routed auxiliary checks prove the live Harbor, MinIO, and Pulsar routed surfaces that the
-  supported Kind path publishes
-- the `/pulsar/ws` contract is specific: the public prefix rewrites to Pulsar's real `/ws`
-  upstream context root so routed `/pulsar/ws/v2/...` requests terminate on the WebSocket servlet
+  resolve through the shared routed surface, but the current assertions still accept the direct
+  `infernix-demo` `rewrittenPath` compatibility payloads when they appear
+- those routed auxiliary checks therefore prove route publication today, while Phase 6 still tracks
+  tightening them to require only the live Harbor, MinIO, and Pulsar upstream responses
+- the target `/pulsar/ws` contract remains specific: the public prefix rewrites to Pulsar's real
+  `/ws` upstream context root so routed `/pulsar/ws/v2/...` requests terminate on the WebSocket
+  servlet
 - `infernix test integration` validates the service loop by publishing a typed request through the
   configured topic helper and asserting a matching typed result appears on the configured result
   topic
 - on the `linux-cpu` lane, `infernix test integration` also validates
-  `infernix internal materialize-substrate linux-cpu --demo-ui false` and `9090`-first
-  edge-port rediscovery on host-native control planes
+  `infernix internal materialize-substrate linux-cpu --demo-ui false`
+- on the host-native `apple-silicon` lane, `infernix test integration` also validates
+  `9090`-first edge-port rediscovery
 - on the `linux-cpu` lane, `infernix test integration` also deletes a Harbor core pod and verifies
   Harbor-backed image pulls still work, replaces a MinIO pod after writing a sentinel file,
   restarts a Pulsar broker between two routed publish or result checks, deletes the Harbor

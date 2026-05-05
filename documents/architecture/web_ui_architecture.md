@@ -22,8 +22,9 @@ When the flag is on:
 
 ## Image Topology
 
-`infernix` and `infernix-demo` share one Cabal library `infernix-lib` and ship in the same runtime
-image on the real cluster path. The chart workload entrypoint selects which executable runs.
+`infernix` and `infernix-demo` share the default Cabal library exposed by the `infernix` package
+and ship in the same runtime image on the real cluster path. The chart workload entrypoint selects
+which executable runs.
 
 On Linux, the substrate image owns the web build prerequisites and the baked `web/dist/` bundle.
 Routed Playwright execution lives in a separate dedicated `infernix-playwright:local` image built

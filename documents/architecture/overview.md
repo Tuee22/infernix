@@ -8,12 +8,12 @@
 ## Platform Shape
 
 `infernix` is a Kind-first local inference platform built around two repo-owned Haskell
-executables sharing one Cabal library, an optional PureScript demo UI, and one governed
-documentation suite.
+executables that share the default Cabal library exposed by the `infernix` package, an optional
+PureScript demo UI, and one governed documentation suite.
 
-- two Haskell executables share `infernix-lib`: `infernix` owns the production daemon, cluster
-  lifecycle, validation, docs checks, and the no-HTTP production daemon; `infernix-demo` owns the
-  demo HTTP API host
+- two Haskell executables share the default Cabal library exposed by the `infernix` package:
+  `infernix` owns the production daemon, cluster lifecycle, validation, docs checks, and the
+  no-HTTP production daemon; `infernix-demo` owns the demo HTTP API host
 - production deployments accept inference work by topic subscription only; `infernix service`
   binds no HTTP listener and the cluster has no `infernix-demo` workload when the active `.dhall`
   `demo_ui` flag is off
@@ -41,7 +41,8 @@ The supported repository layout is described in
 [../../DEVELOPMENT_PLAN/00-overview.md](../../DEVELOPMENT_PLAN/00-overview.md) and uses these
 major roots:
 
-- `app/` and `src/` for the Haskell control plane and `infernix-lib` library
+- `app/` and `src/` for the Haskell control plane and the default library exposed by the
+  `infernix` package
 - `python/` for the shared adapter package and shared `pyproject.toml`
 - `web/` for the PureScript demo application built with `spago` and the Playwright E2E assets
 - `chart/` and `kind/` for cluster reconciliation inputs, including the locked Harbor, Pulsar,

@@ -28,11 +28,11 @@ This repository serves two aligned purposes:
 
 ## Highlights
 
-- two Haskell executables sharing one Cabal library `infernix-lib`: `infernix` (production
-  daemon, cluster lifecycle, Pulsar inference dispatcher, static-quality gate, internal helpers)
-  and `infernix-demo` (demo UI HTTP host). Routing is owned by the Helm-installed Envoy Gateway
-  controller plus repo-owned HTTPRoute manifests; `infernix` itself is no longer a routing
-  process
+- two Haskell executables sharing the default Cabal library exposed by the `infernix` package:
+  `infernix` (production daemon, cluster lifecycle, Pulsar inference dispatcher, static-quality
+  gate, internal helpers) and `infernix-demo` (demo UI HTTP host). Routing is owned by the
+  Helm-installed Envoy Gateway controller plus repo-owned HTTPRoute manifests; `infernix` itself
+  is no longer a routing process
 - production deployments accept inference work by Pulsar subscription only; the production
   `infernix service` binds no HTTP listener and the cluster has no `infernix-demo` workload when
   the demo UI is off
@@ -586,8 +586,8 @@ contracts.
   PureScript modules in `web/src/Generated/` are emitted by
   `infernix internal generate-purs-contracts` through `purescript-bridge`
 - the demo UI host is the `infernix-demo` Haskell binary (separate executable from `infernix`,
-  shares `infernix-lib`, ships in the same per-substrate OCI image on Linux); it serves
-  `web/dist/` produced by `spago bundle`
+  shares the default Cabal library exposed by the `infernix` package, ships in the same
+  per-substrate OCI image on Linux); it serves `web/dist/` produced by `spago bundle`
 - on Linux substrates, the substrate container carries the spago plus purs toolchain (used at
   image build time to bundle the demo UI); the substrate image carries no browser-runtime weight,
   and routed Playwright execution lives in a dedicated `infernix-playwright:local` image built

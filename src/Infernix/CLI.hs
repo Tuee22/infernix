@@ -88,6 +88,7 @@ main = do
       putStrLn helpText
       exitFailure
     Right command -> do
+      validateCommandExecutionContext command
       ensureAppleHostPrerequisites (commandRuntimeMode command) command
       dispatch command
 
@@ -159,6 +160,31 @@ commandRuntimeMode command =
   case command of
     InternalMaterializeSubstrateCommand runtimeMode _ -> Just runtimeMode
     _ -> Nothing
+
+validateCommandExecutionContext :: Command -> IO ()
+validateCommandExecutionContext command = do
+  paths <- discoverPaths
+  maybeRuntimeMode <- runtimeModeForCommand command
+  maybe (pure ()) (ensureSupportedRuntimeModeForExecutionContext paths) maybeRuntimeMode
+  where
+    runtimeModeForCommand selectedCommand =
+      case selectedCommand of
+        ServiceCommand -> activeRuntimeMode
+        ClusterUpCommand -> activeRuntimeMode
+        ClusterStatusCommand -> activeRuntimeMode
+        CacheStatusCommand -> activeRuntimeMode
+        CacheEvictCommand _ -> activeRuntimeMode
+        CacheRebuildCommand _ -> activeRuntimeMode
+        KubectlCommand _ -> activeRuntimeMode
+        TestLintCommand -> activeRuntimeMode
+        TestUnitCommand -> activeRuntimeMode
+        TestIntegrationCommand -> activeRuntimeMode
+        TestE2ECommand -> activeRuntimeMode
+        TestAllCommand -> activeRuntimeMode
+        InternalMaterializeSubstrateCommand runtimeMode _ -> pure (Just runtimeMode)
+        InternalGeneratePursContractsCommand _ -> activeRuntimeMode
+        _ -> pure Nothing
+    activeRuntimeMode = Just <$> resolveRuntimeMode Nothing
 
 runLint :: Maybe RuntimeMode -> IO ()
 runLint maybeRuntimeMode = do
@@ -287,8 +313,9 @@ runPlaywrightImage runtimeMode maybeNetwork routeProbeHost edgePort expectedDaem
           ("INFERNIX_EXPECT_DAEMON_LOCATION", expectedDaemonLocation),
           ("INFERNIX_EXPECT_API_UPSTREAM_MODE", expectedApiUpstreamMode)
         ]
-  runCommandWithCwdAndEnv
+  runCommandWithCwdAndEnvRemoving
     (Just runtimeMode)
+    ["FORCE_COLOR", "NO_COLOR"]
     composeEnv
     "docker"
     ["compose", "-f", composeFile, "run", "--rm", "playwright"]

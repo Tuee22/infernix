@@ -2,6 +2,7 @@ module Infernix.Config
   ( Paths (..),
     controlPlaneContext,
     discoverPaths,
+    ensureSupportedRuntimeModeForExecutionContext,
     ensureRepoLayout,
     generatedDemoConfigPath,
     generatedKubeconfigPath,
@@ -20,7 +21,7 @@ import Data.Aeson.KeyMap qualified as KeyMap
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Char8 qualified as ByteStringChar8
 import Data.Text qualified as Text
-import Infernix.Types (RuntimeMode (..), parseRuntimeMode)
+import Infernix.Types (RuntimeMode (..), parseRuntimeMode, runtimeModeId)
 import System.Directory (createDirectoryIfMissing, doesFileExist, doesPathExist, getCurrentDirectory)
 import System.Environment (lookupEnv)
 import System.FilePath (isAbsolute, normalise, takeDirectory, (</>))
@@ -111,6 +112,34 @@ controlPlaneContext paths
   | normalise (buildRoot paths) == normalise (repoRoot paths </> ".build") = "host-native"
   | otherwise = "outer-container"
 
+ensureSupportedRuntimeModeForExecutionContext :: Paths -> RuntimeMode -> IO ()
+ensureSupportedRuntimeModeForExecutionContext paths runtimeMode =
+  case (controlPlaneContext paths, runtimeMode) of
+    ("host-native", AppleSilicon) -> pure ()
+    ("host-native", _) ->
+      ioError
+        ( userError
+            ( unlines
+                [ "Unsupported host-native runtime mode: " <> Text.unpack (runtimeModeId runtimeMode),
+                  "The supported host-native control-plane workflow stages only `apple-silicon` under `./.build/`.",
+                  "Use the Linux outer-container workflow for `linux-cpu` and `linux-gpu`:"
+                    <> " `./bootstrap/linux-cpu.sh ...` or `./bootstrap/linux-gpu.sh ...`."
+                ]
+            )
+        )
+    ("outer-container", AppleSilicon) ->
+      ioError
+        ( userError
+            ( unlines
+                [ "Unsupported outer-container runtime mode: apple-silicon",
+                  "The supported outer-container workflow stages only `linux-cpu` or `linux-gpu` under `./.build/outer-container/build/`.",
+                  "Use the Apple host-native workflow for `apple-silicon`: `./bootstrap/apple-silicon.sh ...`."
+                ]
+            )
+        )
+    ("outer-container", _) -> pure ()
+    _ -> pure ()
+
 generatedKubeconfigPath :: Paths -> FilePath
 generatedKubeconfigPath paths
   | controlPlaneContext paths == "outer-container" = runtimeRoot paths </> "infernix.kubeconfig"
@@ -200,7 +229,7 @@ missingGeneratedSubstrateFileError substratePath =
           "Examples:",
           "  cabal install --installdir=./.build --install-method=copy --overwrite-policy=always exe:infernix exe:infernix-demo",
           "  infernix internal materialize-substrate apple-silicon",
-          "  docker compose build infernix"
+          "  docker compose run --rm infernix infernix internal materialize-substrate <runtime-mode> --demo-ui true"
         ]
     )
     Nothing

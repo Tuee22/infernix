@@ -39,9 +39,10 @@
 - `/pulsar/ws` -> `infernix-infernix-pulsar-proxy:80`; rewrites to upstream `/ws`
 <!-- infernix:route-registry:pulsar:end -->
 
-- on the real cluster path, the public `/pulsar/admin` route preserves Pulsar's `/admin/v2`
-  surface and an ordinary HTTP `GET /pulsar/ws/v2/...` reaches the real WebSocket servlet and
-  returns `405 Method Not Allowed` instead of a route-miss `404`
+- the supported Gateway contract targets Pulsar's real `/admin/v2` and `/ws` surfaces; current
+  integration still accepts the direct `infernix-demo` `rewrittenPath` compatibility payloads for
+  these probes when they appear, and Phase 6 tracks tightening that validation to the real
+  upstream-only behavior
 
 ## Production Inference Subscription Contract
 
