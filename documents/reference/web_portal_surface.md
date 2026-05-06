@@ -67,8 +67,9 @@ On the real Kind path those routes are published by `Gateway/infernix-edge`,
 - the user can browse any generated model entry, inspect its selected engine and request shape,
   and submit a manual inference request through the demo `/api`
 - manual inference requests execute in-process from the clustered `infernix-demo` workload on the
-  current routed path; `/api/publication` still reports the direct Apple `infernix service` lane
-  separately through `daemonLocation`
+  current routed path; on Apple the same clustered lifecycle also deploys `infernix-service`
+  in-cluster even though `/api/publication` currently still serializes
+  `daemonLocation: control-plane-host`
 - manual inference requests execute through the same Haskell worker dispatch used by the
   production daemon, including shared Python adapters under `python/adapters/` when the bound
   engine is Python-native

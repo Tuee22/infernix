@@ -121,13 +121,15 @@ None.
 
 ### Objective
 
-Keep one service contract while telling the truth about runtime placement: Apple inference is
-host-native by design, while Linux CPU and Linux GPU are containerized lanes.
+Keep one service contract while telling the truth about current execution context and placement:
+Apple control-plane commands are host-native, but the supported clustered lifecycle deploys the
+service in-cluster on every runtime mode.
 
 ### Deliverables
 
-- `infernix service` supports host-native Apple execution for the `apple-silicon` substrate
-- the same executable runs in cluster pods for `linux-cpu` and `linux-gpu`
+- `infernix service` supports direct host-native Apple execution for the `apple-silicon`
+  substrate when operators invoke it outside the clustered lifecycle
+- the same executable runs in cluster pods for `apple-silicon`, `linux-cpu`, and `linux-gpu`
 - service placement changes only publication context, generated-config source, and optional
   transport-endpoint wiring, not the request or result or catalog contract
 - the current validated durable object-store contract remains repo-local `./.data/object-store/`,
@@ -505,7 +507,7 @@ None.
 ## Documentation Requirements
 
 **Engineering docs to create/update:**
-- `documents/architecture/runtime_modes.md` - honest runtime model, host-native Apple lane, and Linux substrate lanes
+- `documents/architecture/runtime_modes.md` - honest runtime model, host-native Apple control-plane lane, and Linux substrate lanes
 - `documents/architecture/model_catalog.md` - per-substrate engine binding and generated catalog contract
 - `documents/engineering/docker_policy.md` - shared Linux substrate image doctrine and snapshot launcher expectations
 - `documents/engineering/build_artifacts.md` - build roots, generated proto handling, and image-owned toolchain contract

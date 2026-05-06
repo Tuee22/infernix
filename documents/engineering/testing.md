@@ -81,8 +81,8 @@
 
 - validation fails on hard-gate violations; supported workflows do not silently rewrite tracked
   source
-- the Haskell style gate may bootstrap `hlint` through a ghcup-managed compatible GHC when the
-  active project compiler is newer than the currently supported `hlint` release
+- the Haskell style gate uses the project-pinned `ghc-9.14.1` toolchain and fails fast when a
+  compatible `hlint` release is unavailable
 - runtime-mode-specific tests fail when required platform preflights are absent rather than
   quietly switching to another mode
 - the supported Node-based web validation paths stay warning-free by avoiding deprecated

@@ -55,21 +55,26 @@ The generated demo catalog is the source of truth for the active runtime mode.
 
 Service placement is a separate concept from runtime mode.
 
-- Apple host-native service placement runs `infernix service` on the host while the routed demo
-  surface stays cluster-resident
+- Apple host-native execution context means the supported `cluster up`, `cluster status`, and
+  validation commands run through `./.build/infernix` on the host; it does not mean the supported
+  clustered service daemon stays host-resident after reconcile
+- `cluster up` currently deploys `infernix-service` in-cluster on every supported runtime mode,
+  and deploys `infernix-demo` alongside it when `demo_ui` is enabled
 - on `apple-silicon`, the clustered `infernix-demo` path and the cluster-resident repo workloads
   currently run from the `infernix-linux-cpu:local` image family while still reading the staged
   `apple-silicon` substrate file
-- `/api/publication` therefore reports the direct Apple service lane as
+- the direct `infernix service` command remains available as a manual Apple host daemon entrypoint
+  outside the clustered lifecycle and consumes the same generated `request_topics`,
+  `result_topic`, and `engines` fields from the active `.dhall`
+- `/api/publication` on Apple currently still serializes
   `daemonLocation: control-plane-host` while the routed demo API remains
-  `apiUpstream.mode: cluster-demo`
-- the same production daemon runs in every placement and consumes the same generated
-  `request_topics`, `result_topic`, and `engines` fields from the active `.dhall`
+  `apiUpstream.mode: cluster-demo`; treat that field as current publication output rather than
+  authoritative deployed placement
 - when Pulsar endpoint env vars are present, the daemon uses the real Pulsar WebSocket or admin
   transport for those topic fields; unit-level harnesses can still exercise the repo-local topic
   spool under `./.data/runtime/pulsar/` when those endpoints are intentionally absent
-- host-native and cluster-resident placements both launch the same process-isolated engine-worker
-  contract and honor the same adapter-specific command overrides
+- direct host runs and cluster-resident placements both launch the same process-isolated
+  engine-worker contract and honor the same adapter-specific command overrides
 - switching runtime modes changes generated catalog content and engine bindings, not the service
   placement contract
 

@@ -88,9 +88,8 @@ Harbor-first bootstrap path no longer depends on any retired helper-registry con
 - the Linux substrate images carry the runtime and validation dependencies needed to launch the
   control plane, build the web bundle, run `poetry install`, regenerate protobuf stubs, and execute
   `poetry run check-code`
-- the Linux substrate images also preinstall the compatible ghcup-managed GHC used to bootstrap
-  `hlint` for the Haskell style gate when the active project compiler is newer than the current
-  `hlint` release line
+- the Linux substrate images preinstall the project-pinned ghcup-managed `ghc-9.14.1` toolchain
+  used across build and validation flows
 
 ## Image Set
 

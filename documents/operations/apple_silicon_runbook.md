@@ -49,14 +49,18 @@ Direct reference path:
   preparing a demo-off config
 - `cluster up` writes `./.build/infernix.kubeconfig`
 - supported flows do not mutate `$HOME/.kube/config`
-- when the demo surface is enabled, the browser stays on the clustered routed surface; the direct
-  `infernix service` lane remains host-native while routed manual inference executes inside the
-  clustered `infernix-demo` workload in the current code path
-- `/api/publication` still reports the direct Apple service lane as
+- the Apple host-native path describes where the Haskell build and control-plane commands run;
+  `cluster up` still deploys `infernix-service` in-cluster and adds `infernix-demo` when
+  `demo_ui` is enabled
+- on `apple-silicon`, those cluster-resident repo workloads currently run from the
+  `infernix-linux-cpu:local` image family while reading the staged `apple-silicon` substrate file
+- `/api/publication` on Apple currently still serializes
   `daemonLocation: control-plane-host` while the routed demo API remains
-  `apiUpstream.mode: cluster-demo`
-- the host-native daemon uses the same Haskell worker contract as the cluster-resident daemon and
-  forks Python adapters from `python/adapters/` only when the bound engine is Python-native
+  `apiUpstream.mode: cluster-demo`; treat that field as current publication output rather than
+  actual service placement
+- the direct `infernix service` host run uses the same Haskell worker contract as the
+  cluster-resident daemon and forks Python adapters from `python/adapters/` only when the bound
+  engine is Python-native
 - the Apple host bootstrap uses Homebrew-managed Colima, Docker CLI, `kind`, `kubectl`, `helm`,
   Node.js, and related operator tools rather than a broader manual prerequisite list
 - `infernix service` runs `ensureAppleSiliconRuntimeReady` before the daemon loop. That flow

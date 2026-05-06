@@ -133,12 +133,14 @@ The supported local platform is built around:
 <!-- infernix:route-registry:readme:end -->
 
 The optional demo UI runs in the cluster as the `infernix-demo` workload when the active `.dhall`
-`demo_ui` flag is on, even when the production `infernix service` daemon runs host-native on Apple
-Silicon. On the current Apple path, routed manual inference stays inside the clustered
-`infernix-demo` workload; `/api/publication` still reports the direct `infernix service` lane
-separately through `daemonLocation: control-plane-host`. Production deployments leave the demo flag
-off and accept inference work via Pulsar subscription only. The local Kind and HA substrate is the
-validation and operator baseline for Apple, CPU, and CUDA runtime targets.
+`demo_ui` flag is on. On the current Apple path, `./.build/infernix` still builds and drives the
+control plane from the host, but `cluster up` deploys both `infernix-service` and
+`infernix-demo` in-cluster, with those repo workloads currently using the
+`infernix-linux-cpu:local` image family while consuming the staged `apple-silicon` substrate.
+`/api/publication` on Apple still serializes `daemonLocation: control-plane-host` even though the
+clustered service is deployed in Kind. Production deployments leave the demo flag off and accept
+inference work via Pulsar subscription only. The local Kind and HA substrate is the validation and
+operator baseline for Apple, CPU, and CUDA runtime targets.
 
 ## Getting Started
 

@@ -5,6 +5,7 @@ license:            MIT
 license-file:       LICENSE
 maintainer:         noreply@example.com
 author:             Infernix
+tested-with:        ghc ==9.14.1
 category:           Development
 build-type:         Custom
 extra-source-files:

@@ -51,9 +51,10 @@ surface is the `.dhall` topic contract described in [../tools/pulsar.md](../tool
   source-artifact URI or kind metadata, and selected-artifact inventory while keeping derived cache
   directories rebuildable
 - publication details stay mode-stable and source from the repo-local publication-state file
-- on Apple, that publication payload still reports the direct `infernix service` lane as
-  `daemonLocation: control-plane-host` while `apiUpstream.mode` stays `cluster-demo` for the
-  routed demo API
+- on Apple, the supported clustered lifecycle still deploys `infernix-service` in-cluster;
+  `/api/publication` nonetheless currently serializes
+  `daemonLocation: control-plane-host` while `apiUpstream.mode` stays `cluster-demo` because the
+  publication payload is keyed off the runtime mode rather than discovered from deployed placement
 - `GET /api/demo-config` and `GET /api/models` stay aligned with the generated active-mode demo
   catalog
 - the demo `/api` remains stable across Apple and Linux substrates because the routed demo surface

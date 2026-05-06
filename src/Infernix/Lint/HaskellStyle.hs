@@ -6,13 +6,12 @@ where
 import Control.Exception (IOException, try)
 import Control.Monad (when)
 import Data.List (sort)
-import Data.Maybe (fromMaybe, isJust)
+import Data.Maybe (fromMaybe)
 import Infernix.Config (Paths (..), discoverPaths)
 import System.Directory
   ( createDirectoryIfMissing,
     doesDirectoryExist,
     doesFileExist,
-    findExecutable,
     getTemporaryDirectory,
     listDirectory,
     removeFile,
@@ -52,43 +51,14 @@ installFormatterTools paths = do
     primaryInstallResult <- try (installFormatterToolsWithCommand paths "cabal" (formatterInstallArgs paths)) :: IO (Either IOException ())
     case primaryInstallResult of
       Right () -> pure ()
-      Left primaryErr -> installFormatterToolsWithFallback paths primaryErr
-
-installFormatterToolsWithFallback :: Paths -> IOException -> IO ()
-installFormatterToolsWithFallback paths primaryErr = do
-  ghcupAvailable <- isJust <$> findExecutable "ghcup"
-  if not ghcupAvailable
-    then
-      ioError
-        ( userError
-            ( "haskell-style-check: formatter bootstrap failed with the active toolchain and ghcup is unavailable\n"
-                <> "primary error:\n"
-                <> show primaryErr
-            )
-        )
-    else do
-      fallbackInstallResult <-
-        try
-          ( installFormatterToolsWithCommand
-              paths
-              "ghcup"
-              ( ["run", "--install", "--ghc", formatterBootstrapGhcVersion, "--", "cabal"]
-                  <> formatterInstallArgs paths
+      Left primaryErr ->
+        ioError
+          ( userError
+              ( "haskell-style-check: formatter bootstrap failed with the pinned project compiler ghc-9.14.1\n"
+                  <> "error:\n"
+                  <> show primaryErr
               )
-          ) ::
-          IO (Either IOException ())
-      case fallbackInstallResult of
-        Right () -> pure ()
-        Left fallbackErr ->
-          ioError
-            ( userError
-                ( "haskell-style-check: formatter bootstrap failed with both the active toolchain and the ghcup fallback"
-                    <> "\nactive toolchain error:\n"
-                    <> show primaryErr
-                    <> "\nghcup fallback error:\n"
-                    <> show fallbackErr
-                )
-            )
+          )
 
 installFormatterToolsWithCommand :: Paths -> FilePath -> [String] -> IO ()
 installFormatterToolsWithCommand paths =
@@ -113,9 +83,6 @@ formatterToolsBuildRoot paths = formatterToolsRoot paths </> "cabal"
 
 formatterToolsBinRoot :: Paths -> FilePath
 formatterToolsBinRoot paths = formatterToolsRoot paths </> "bin"
-
-formatterBootstrapGhcVersion :: String
-formatterBootstrapGhcVersion = "9.6.7"
 
 checkCabalManifest :: Paths -> IO ()
 checkCabalManifest paths = do

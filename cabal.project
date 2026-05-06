@@ -1,5 +1,6 @@
 packages: .
 write-ghc-environment-files: never
+with-compiler: ghc-9.14.1
 
 allow-newer:
     binary:containers

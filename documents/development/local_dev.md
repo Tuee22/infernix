@@ -56,6 +56,7 @@ Direct reference path:
 
 ```bash
 docker compose build infernix
+docker compose run --rm infernix infernix internal materialize-substrate linux-cpu
 docker compose run --rm infernix infernix cluster up
 docker compose run --rm infernix infernix cluster status
 docker compose run --rm infernix infernix test all
@@ -66,9 +67,11 @@ For `linux-gpu`, use `./bootstrap/linux-gpu.sh ...` as the supported entrypoint.
 reference path exports `INFERNIX_COMPOSE_IMAGE=infernix-linux-gpu:local`,
 `INFERNIX_COMPOSE_SUBSTRATE=linux-gpu`, and
 `INFERNIX_COMPOSE_BASE_IMAGE=nvidia/cuda:13.2.1-cudnn-runtime-ubuntu24.04` before the same
-`docker compose run --rm infernix infernix ...` surface. If the host does not already pass
-`nvidia-smi -L`, the supported bootstrap installs the recommended Ubuntu compute driver, stops,
-and instructs the operator to reboot before rerunning the same command.
+`docker compose run --rm infernix infernix ...` surface, including
+`docker compose run --rm infernix infernix internal materialize-substrate linux-gpu` before
+cluster lifecycle or validation commands. If the host does not already pass `nvidia-smi -L`, the
+supported bootstrap installs the recommended Ubuntu compute driver, stops, and instructs the
+operator to reboot before rerunning the same command.
 
 ## Engine Adapter Testing
 
@@ -85,9 +88,9 @@ the shared adapter project:
 - supported staging is explicit: Apple host workflows run
   `./.build/infernix internal materialize-substrate apple-silicon` after `cabal install`, and the
   Linux outer-container path runs
-  `docker compose run --rm infernix infernix internal materialize-substrate <substrate>` to write
-  `./.build/outer-container/build/infernix-substrate.dhall` on the host through the bind-mounted
-  build tree
+  `docker compose run --rm infernix infernix internal materialize-substrate <runtime-mode>` to
+  write `./.build/outer-container/build/infernix-substrate.dhall` on the host through the
+  bind-mounted build tree before supported cluster lifecycle or validation commands start
 - supported repo-owned shell is limited to the `bootstrap/*.sh` stage-0 entrypoints; they prepare
   the host and then hand off to the direct `cabal`, `docker compose`, or `infernix` command
   surface; on Linux they also restage the active substrate file idempotently before supported

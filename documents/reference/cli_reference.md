@@ -96,9 +96,9 @@
   warning gate, the `ormolu` and `hlint` style stack via the Cabal test target, and the active
   substrate's Python adapter quality gate via `poetry run check-code` when adapters are present;
   `infernix lint files` uses tracked files from `.git` when available and otherwise falls back to
-  the baked `/opt/infernix/source-snapshot-files.txt` manifest on git-less Linux image runs;
-  the style gate may bootstrap `hlint` through a ghcup-managed compatible GHC when the active
-  project compiler is newer than the current `hlint` release line
+  the baked `/opt/infernix/source-snapshot-files.txt` manifest on git-less Linux image runs; the
+  style gate uses the project-pinned `ghc-9.14.1` toolchain and fails fast when a compatible
+  `hlint` release is unavailable
 - `infernix test unit` runs the Haskell unit suites and the PureScript frontend unit suites via
   `npm --prefix web run test:unit`
 - `infernix test integration`, `infernix test e2e`, and `infernix test all` exercise only the
