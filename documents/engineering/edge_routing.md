@@ -11,18 +11,17 @@
   route-aware docs, and route validation expectations.
 - The routed surface always publishes Harbor, MinIO, and Pulsar, and publishes the demo routes
   only when the active generated config enables the demo UI.
-- Gateway owns the supported routed surface, but the current repo still carries direct
-  `infernix-demo` placeholder handlers for the Harbor, MinIO, and Pulsar tool routes when that
-  binary is reached outside the intended HTTPRoute mapping.
+- Gateway owns the supported routed surface, and direct `infernix-demo` execution intentionally
+  exposes only the demo-owned HTTP surface outside the intended HTTPRoute mapping.
 
 ## Current Status
 
 The current worktree uses the registry-backed route contract directly: the generated route table in
 this document comes from the Haskell route registry, `cluster status` and `/api/publication`
 publish the same routed surface, and the Harbor-first bootstrap path no longer carries a separate
-helper-registry route or namespace. Integration currently accepts either the real upstream tool
-responses or the `rewrittenPath` compatibility payloads still served by direct `infernix-demo`
-handling for those prefixes; tightening that to real-upstream-only remains open in Phase 6.
+helper-registry route or namespace. Integration now requires the real Harbor, MinIO, and Pulsar
+upstream responses on the tool-route probes rather than any direct `infernix-demo`
+compatibility payload.
 
 ## Route Inventory
 
@@ -47,7 +46,8 @@ handling for those prefixes; tightening that to real-upstream-only remains open 
 - when the demo surface is enabled, `/` and the demo `/api*` and `/objects/` routes target the
   `infernix-demo` workload; direct `infernix-demo serve [--dhall PATH] [--port PORT]` still
   exposes the same Haskell demo API surface outside the routed cluster path when used
-  intentionally
+  intentionally, but it no longer doubles as a compatibility target for Harbor, MinIO, or Pulsar
+  tool-route probes
 - `/api/publication` reports daemon location plus routed-upstream health and backing-state details
 
 ## Gateway Ownership
@@ -73,8 +73,8 @@ handling for those prefixes; tightening that to real-upstream-only remains open 
 - `infernix docs check` fails if this document loses its governed metadata, required structure, or
   the registry-generated route-inventory section.
 - `infernix test integration` exercises the published Harbor, MinIO, Pulsar, publication, and
-  demo routes; today it still accepts the `rewrittenPath` compatibility payloads on the tool-route
-  probes, and Phase 6 tracks tightening those checks to real-upstream-only behavior.
+  demo routes and requires the real Harbor, MinIO, and Pulsar upstream responses on the
+  tool-route probes.
 - `infernix test e2e` verifies the routed demo surface through the shared edge port when the demo
   UI is enabled for the selected runtime mode.
 

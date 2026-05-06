@@ -39,10 +39,8 @@
 - `/pulsar/ws` -> `infernix-infernix-pulsar-proxy:80`; rewrites to upstream `/ws`
 <!-- infernix:route-registry:pulsar:end -->
 
-- the supported Gateway contract targets Pulsar's real `/admin/v2` and `/ws` surfaces; current
-  integration still accepts the direct `infernix-demo` `rewrittenPath` compatibility payloads for
-  these probes when they appear, and Phase 6 tracks tightening that validation to the real
-  upstream-only behavior
+- the supported Gateway contract targets Pulsar's real `/admin/v2` and `/ws` surfaces, and
+  integration requires those real upstream responses on the shared edge
 
 ## Production Inference Subscription Contract
 

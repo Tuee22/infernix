@@ -17,7 +17,7 @@
 - no PVC-backed Helm workload relies on dynamic provisioning or an implicit default storage class
 - `cluster up` renders the Helm release shape, discovers the durable PVC inventory from that owned
   chart or operator input, and prepares one matching PV per durable claim before workload rollout
-- durable PV paths follow `./.data/kind/<namespace>/<release>/<workload>/<ordinal>/<claim>`
+- durable PV paths follow `./.data/kind/<runtime-mode>/<namespace>/<release>/<workload>/<ordinal>/<claim>`
 - the durable claim inventory includes service, Harbor, MinIO, Pulsar, and any operator-managed
   PostgreSQL claims under that same path doctrine
 

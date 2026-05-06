@@ -25,10 +25,10 @@ caches, and Playwright output are derived.
 
 | State class | Owner | Authoritative home | Durability | Rebuild rule |
 |-------------|-------|--------------------|------------|--------------|
-| PVC-backed cluster data for Harbor, MinIO, Pulsar, and PostgreSQL | `infernix cluster up` storage reconciliation plus the workload itself | `./.data/kind/...` | durable | do not delete implicitly; supported lifecycle reruns rebind the same deterministic host paths |
-| Harbor registry content and Harbor metadata | Harbor plus operator-managed PostgreSQL | Harbor PVCs under `./.data/kind/...` | durable | loss is a platform failure, not a cache miss |
-| MinIO objects | MinIO plus the service runtime | MinIO PVCs under `./.data/kind/...` | durable | objects may be republished deliberately, but they are not treated as disposable cache |
-| Pulsar ledgers and BookKeeper journals | Pulsar | Pulsar PVCs under `./.data/kind/...` | durable | deletion resets message durability and is therefore explicit operator intent |
+| PVC-backed cluster data for Harbor, MinIO, Pulsar, and PostgreSQL | `infernix cluster up` storage reconciliation plus the workload itself | `./.data/kind/<runtime-mode>/<namespace>/<release>/<workload>/<ordinal>/<claim>` | durable | do not delete implicitly; supported lifecycle reruns rebind the same deterministic host paths within the active runtime lane |
+| Harbor registry content and Harbor metadata | Harbor plus operator-managed PostgreSQL | Harbor PVCs under `./.data/kind/<runtime-mode>/...` | durable | loss is a platform failure, not a cache miss |
+| MinIO objects | MinIO plus the service runtime | MinIO PVCs under `./.data/kind/<runtime-mode>/...` | durable | objects may be republished deliberately, but they are not treated as disposable cache |
+| Pulsar ledgers and BookKeeper journals | Pulsar | Pulsar PVCs under `./.data/kind/<runtime-mode>/...` | durable | deletion resets message durability and is therefore explicit operator intent |
 | Inference-result records | Haskell service runtime plus routed reload handlers | `./.data/runtime/results/*.pb` | durable and user-visible | reload only from protobuf-backed result files; retired `*.state` files are not part of the supported contract |
 | Source-artifact manifests | Haskell service runtime | `./.data/object-store/source-artifacts/` | durable | these manifests are authoritative artifact-selection inputs |
 | Runtime artifact bundles | Haskell service runtime | `./.data/object-store/artifacts/` | durable | bundles are durable worker inputs and are not rebuilt from cache directories alone |

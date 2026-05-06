@@ -5,6 +5,8 @@ module Infernix.Cluster.PublishImages
     PublishedImage,
     buildHarborOverridesValue,
     contentAddressTagFromInspectPayload,
+    dockerHubMirrorRef,
+    ensureLocalImageAvailable,
     defaultHarborPublishOptions,
     normalizeRepositoryPath,
     publishChartImagesFile,
@@ -128,7 +130,7 @@ publishChartImagesFile options renderedChartPath outputPath = do
 
 publishImage :: Manager -> HarborPublishOptions -> String -> IO (String, PublishedImage)
 publishImage manager options sourceImage = do
-  ensureLocalImage sourceImage
+  ensureLocalImageAvailable sourceImage
   targetTag <- contentAddressTag sourceImage
   let repositoryPath = normalizeRepositoryPath sourceImage
       publishedRepository = harborHost options <> "/" <> harborProject options <> "/" <> repositoryPath
@@ -136,12 +138,67 @@ publishImage manager options sourceImage = do
   publishIfNeeded manager options sourceImage clientRepository repositoryPath targetTag
   pure (sourceImage, (publishedRepository, targetTag))
 
-ensureLocalImage :: String -> IO ()
-ensureLocalImage imageRef = do
+ensureLocalImageAvailable :: String -> IO ()
+ensureLocalImageAvailable imageRef = do
   maybePresent <- tryRunCommand "docker" ["image", "inspect", imageRef] ""
   case maybePresent of
     Right _ -> pure ()
-    Left _ -> runCommand "docker" ["pull", imageRef] ""
+    Left _ -> pullImageWithFallback imageRef
+
+pullImageWithFallback :: String -> IO ()
+pullImageWithFallback imageRef = do
+  pullResult <- tryRunCommand "docker" ["pull", imageRef] ""
+  case pullResult of
+    Right _ -> pure ()
+    Left pullFailure ->
+      case dockerHubMirrorRef imageRef of
+        Nothing ->
+          failWith ("docker pull failed for " <> imageRef <> "\n" <> pullFailure)
+        Just mirrorRef -> do
+          mirrorPullResult <- tryRunCommand "docker" ["pull", mirrorRef] ""
+          case mirrorPullResult of
+            Right _ -> runCommand "docker" ["tag", mirrorRef, imageRef] ""
+            Left mirrorFailure ->
+              failWith
+                ( "docker pull failed for "
+                    <> imageRef
+                    <> "\n"
+                    <> pullFailure
+                    <> "\nmirror fallback failed for "
+                    <> mirrorRef
+                    <> "\n"
+                    <> mirrorFailure
+                )
+
+dockerHubMirrorRef :: String -> Maybe String
+dockerHubMirrorRef imageRef =
+  ("mirror.gcr.io/" <>) <$> normalizedDockerHubPath imageRef
+  where
+    normalizedDockerHubPath rawImage =
+      case stripRegistryPrefix rawImage of
+        Just pathValue -> Just (ensureLibraryPrefix pathValue)
+        Nothing ->
+          if usesImplicitDockerHub rawImage
+            then Just (ensureLibraryPrefix rawImage)
+            else Nothing
+
+    stripRegistryPrefix rawImage =
+      case break (== '/') rawImage of
+        ("docker.io", '/' : pathValue) -> Just pathValue
+        _ -> Nothing
+
+    usesImplicitDockerHub rawImage =
+      case break (== '/') rawImage of
+        (_, []) -> True
+        (registryOrNamespace, _ : _) -> not (hasExplicitRegistryComponent registryOrNamespace)
+
+    hasExplicitRegistryComponent component =
+      '.' `elem` component || ':' `elem` component || component == "localhost"
+
+    ensureLibraryPrefix pathValue =
+      case break (== '/') pathValue of
+        (_, []) -> "library/" <> pathValue
+        _ -> pathValue
 
 publishIfNeeded :: Manager -> HarborPublishOptions -> String -> String -> String -> String -> IO ()
 publishIfNeeded manager options sourceImage clientRepository repositoryPath targetTag = do
@@ -168,7 +225,8 @@ pushImageWithRetries manager options targetRef = go (4 :: Int) ""
             Right _ -> pure ()
             Left failureMessage -> do
               tagPresent <- harborTagExists manager options repositoryPath targetTag
-              if tagPresent
+              registryPullable <- registryPullSucceeds targetRef
+              if tagPresent || registryPullable
                 then pure ()
                 else do
                   let attemptsUsed = 5 - remainingAttempts
@@ -184,6 +242,10 @@ pushImageWithRetries manager options targetRef = go (4 :: Int) ""
                       threadDelay (attemptsUsed * 5000000)
                       go (remainingAttempts - 1) failureMessage
                     else go 0 failureMessage
+
+registryPullSucceeds :: String -> IO Bool
+registryPullSucceeds imageRef =
+  either (const False) (const True) <$> tryRunCommand "docker" ["pull", imageRef] ""
 
 verifyRegistryPull :: Manager -> HarborPublishOptions -> String -> IO ()
 verifyRegistryPull manager options targetRef = do

@@ -171,14 +171,13 @@ ensure_launcher_image() {
   fi
 }
 
-substrate_staged() {
-  [[ -f ./.build/outer-container/build/infernix-substrate.dhall ]]
+force_launcher_image_build() {
+  ensure_host_prerequisites
+  bootstrap::run compose_env docker compose build infernix
+  bootstrap::run compose_env docker compose build playwright
 }
 
 ensure_substrate_staged() {
-  if substrate_staged; then
-    return 0
-  fi
   bootstrap::run compose_env docker compose run --rm infernix \
     infernix internal materialize-substrate "${COMPOSE_SUBSTRATE}" --demo-ui true
 }
@@ -212,7 +211,7 @@ command_doctor() {
 }
 
 command_build() {
-  ensure_launcher_image
+  force_launcher_image_build
   bootstrap::info "Linux CPU launcher image is ready."
 }
 

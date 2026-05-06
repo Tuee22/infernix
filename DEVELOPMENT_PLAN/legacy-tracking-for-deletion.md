@@ -15,9 +15,7 @@
 
 ## Pending Removal
 
-| Location | Why it was slated for removal | Owning phase or sprint |
-|----------|-------------------------------|------------------------|
-| `src/Infernix/Demo/Api.hs` direct placeholder handlers for `/harbor`, `/minio/*`, and `/pulsar/*`, plus the matching `rewrittenPath` acceptance in `test/integration/Spec.hs` and route-validation docs | The Gateway-owned edge contract should prove real Harbor, MinIO, and Pulsar upstream behavior on the supported path; compatibility placeholder payloads currently let validation pass without that stronger guarantee | Phase 6 Sprint 6.19 |
+None.
 
 ## Completed
 
@@ -25,6 +23,7 @@
 |----------|-------------------------------|------------------------|
 | `--runtime-mode` parsing and `INFERNIX_RUNTIME_MODE` handling across `src/Infernix/CLI.hs`, `src/Infernix/Config.hs`, tests, and governed docs | The generated substrate `.dhall` beside the binary is the single source of truth for active substrate, so user-selected runtime overrides are obsolete in the final contract | Phase 0 Sprint 0.8; Phase 1 Sprint 1.10; Phase 4 Sprint 4.12; Phase 6 Sprint 6.19 |
 | `INFERNIX_SUBSTRATE_ID` fallback in `src/Infernix/Config.hs`, `docker/linux-substrate.Dockerfile`, `web/test/run_playwright_matrix.mjs`, `src/Infernix/CLI.hs`, and `python/adapters/common.py` | The staged substrate file is the supported substrate selector, so the env fallback was an obsolete second selection path whenever that file was absent | Phase 1 Sprint 1.10; Phase 4 Sprint 4.12; Phase 6 Sprint 6.19 |
+| `src/Infernix/Demo/Api.hs` direct placeholder handlers for `/harbor`, `/minio/*`, and `/pulsar/*`, plus the matching `rewrittenPath` acceptance in `test/integration/Spec.hs` and route-validation docs | The Gateway-owned edge contract should prove real Harbor, MinIO, and Pulsar upstream behavior on the supported path; compatibility placeholder payloads let validation pass without that stronger guarantee until the route hardening landed | Phase 6 Sprint 6.19 |
 | Runtime-specific in-cluster demo-config filenames such as `infernix-demo-linux-cpu.dhall` emitted from `src/Infernix/Cluster.hs` and mounted by `chart/templates/deployment-*.yaml` | The repo-local mirror and plan treat `infernix-substrate.dhall` as the canonical staged filename, so the runtime-specific cluster key or mount name was a publication divergence that had to be removed explicitly | Phase 2 Sprint 2.9; Phase 3 Sprint 3.7 |
 | Hardcoded `demoUiEnabled = True` in `src/Infernix/DemoConfig.hs` auto-generated substrate files | The codebase could honor `demo_ui = false` when given an explicit staged file, but the supported generation path forced the demo surface on until explicit materialization support for `--demo-ui false` landed | Phase 5 Sprint 5.1; Phase 6 Sprint 6.19 |
 | Apple host-demo bridge behavior, direct host `infernix-demo serve` launch guidance, and any remaining host-bridge route publication language | The final Apple doctrine keeps the demo app cluster-resident and uses the host only for the Apple inference daemon and host CLI orchestration | Phase 0 Sprint 0.8; Phase 3 Sprint 3.9; Phase 5 Sprint 5.8 |

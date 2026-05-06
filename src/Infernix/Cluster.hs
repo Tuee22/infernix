@@ -14,7 +14,7 @@ where
 
 import Control.Concurrent (threadDelay)
 import Control.Exception (IOException, bracket, try)
-import Control.Monad (unless, when)
+import Control.Monad (filterM, unless, when)
 import Data.Aeson (Value (..), eitherDecode)
 import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KeyMap
@@ -206,37 +206,7 @@ clusterUpWithPlatform paths runtimeMode = do
   generatedConfig <- decodeDemoConfigFile generatedConfigPath
   requestedPayload <- Lazy.readFile generatedConfigPath
   let demoUiEnabledValue = demoUiEnabled generatedConfig
-  createDirectoryIfMissing True (buildRoot paths)
-  claimDiscoveryTime <- getCurrentTime
-  let claimDiscoveryState =
-        ClusterState
-          { clusterPresent = True,
-            edgePort = requestedPort,
-            routes = routeInventory demoUiEnabledValue,
-            storageClass = "infernix-manual",
-            claims = seedClaims,
-            clusterRuntimeMode = runtimeMode,
-            kubeconfigPath = Config.generatedKubeconfigPath paths,
-            generatedDemoConfigPath = Config.generatedDemoConfigPath paths,
-            publishedDemoConfigPath = Config.publishedConfigMapCatalogPath paths,
-            publishedConfigMapManifestPath = Config.publishedConfigMapManifestPath paths,
-            mountedDemoConfigPath = Config.watchedDemoConfigPath,
-            updatedAt = claimDiscoveryTime
-          }
-  claimDiscoveryValuesPath <- writeHelmValuesFile paths controlPlane claimDiscoveryState requestedPayload FinalPhase
-  claimDiscoveryRenderedChartPath <- renderHelmChart paths runtimeMode [claimDiscoveryValuesPath]
-  discoveredClaims <- discoverPersistentClaims paths claimDiscoveryRenderedChartPath
-  discoveredRoutes <- discoverChartRoutesFile claimDiscoveryRenderedChartPath
-  mapM_ (ensureClaimDirectoryReady paths) discoveredClaims
-  (edgePortValue, kubeconfigContents, clusterCreated) <- ensureKindCluster paths runtimeMode requestedPort
-  when (clusterCreated && not (kindUsesHostBindMounts paths)) $
-    prepareKindNodeRuntimePaths paths runtimeMode
-  writeFile (edgePortPath paths) (show edgePortValue)
-  writeTextFile (Config.generatedKubeconfigPath paths) (Text.pack kubeconfigContents)
-  ensureOuterContainerKindNetworkAccess paths runtimeMode
-  waitForKubernetesApi paths runtimeMode
-  configureRuntimeModeCluster paths runtimeMode
-  let demoConfigPath = generatedConfigPath
+      demoConfigPath = generatedConfigPath
       publishedCatalogPath = Config.publishedConfigMapCatalogPath paths
       configMapManifestPath = Config.publishedConfigMapManifestPath paths
       publicationPath = Config.publicationStatePath paths
@@ -248,12 +218,12 @@ clusterUpWithPlatform paths runtimeMode = do
   createDirectoryIfMissing True (takeDirectory publicationPath)
   Lazy.writeFile publishedCatalogPath payload
   writeFile configMapManifestPath (renderConfigMapManifest payload)
-  now <- getCurrentTime
-  let seedState =
+  claimDiscoveryTime <- getCurrentTime
+  let provisionalState =
         ClusterState
-          { clusterPresent = True,
-            edgePort = edgePortValue,
-            routes = discoveredRoutes,
+          { clusterPresent = False,
+            edgePort = requestedPort,
+            routes = routeInventory demoUiEnabledValue,
             storageClass = "infernix-manual",
             claims = seedClaims,
             clusterRuntimeMode = runtimeMode,
@@ -262,8 +232,43 @@ clusterUpWithPlatform paths runtimeMode = do
             publishedDemoConfigPath = publishedCatalogPath,
             publishedConfigMapManifestPath = configMapManifestPath,
             mountedDemoConfigPath = mountedCatalogPath,
-            updatedAt = now
+            updatedAt = claimDiscoveryTime
           }
+  writeFile publicationPath (renderPublicationState controlPlane provisionalState)
+  writeStateFile (clusterStatePath paths) provisionalState
+  claimDiscoveryValuesPath <- writeHelmValuesFile paths controlPlane provisionalState payload FinalPhase
+  claimDiscoveryRenderedChartPath <- renderHelmChart paths runtimeMode [claimDiscoveryValuesPath]
+  discoveredClaims <- discoverPersistentClaims paths claimDiscoveryRenderedChartPath
+  discoveredRoutes <- discoverChartRoutesFile claimDiscoveryRenderedChartPath
+  mapM_ (ensureClaimDirectoryReady paths runtimeMode) discoveredClaims
+  (edgePortValue, kubeconfigContents, clusterCreated) <- ensureKindCluster paths runtimeMode requestedPort
+  when (clusterCreated && not (kindUsesHostBindMounts paths)) $
+    prepareKindNodeRuntimePaths paths runtimeMode
+  writeFile (edgePortPath paths) (show edgePortValue)
+  writeTextFile (Config.generatedKubeconfigPath paths) (Text.pack kubeconfigContents)
+  activeStateTime <- getCurrentTime
+  let activeState =
+        ClusterState
+          { clusterPresent = True,
+            edgePort = edgePortValue,
+            routes = discoveredRoutes,
+            storageClass = "infernix-manual",
+            claims = discoveredClaims,
+            clusterRuntimeMode = runtimeMode,
+            kubeconfigPath = Config.generatedKubeconfigPath paths,
+            generatedDemoConfigPath = demoConfigPath,
+            publishedDemoConfigPath = publishedCatalogPath,
+            publishedConfigMapManifestPath = configMapManifestPath,
+            mountedDemoConfigPath = mountedCatalogPath,
+            updatedAt = activeStateTime
+          }
+  writeFile publicationPath (renderPublicationState controlPlane activeState)
+  writeStateFile (clusterStatePath paths) activeState
+  ensureOuterContainerKindNetworkAccess paths runtimeMode
+  waitForKubernetesApi paths runtimeMode
+  configureRuntimeModeCluster paths runtimeMode
+  now <- getCurrentTime
+  let seedState = activeState {claims = seedClaims, updatedAt = now}
   warmupValuesPath <- writeHelmValuesFile paths controlPlane seedState payload WarmupPhase
   bootstrapValuesPath <- writeHelmValuesFile paths controlPlane seedState payload BootstrapPhase
   harborFinalValuesPath <- writeHelmValuesFile paths controlPlane seedState payload HarborFinalPhase
@@ -274,11 +279,13 @@ clusterUpWithPlatform paths runtimeMode = do
   applyBootstrapState paths runtimeMode demoUiEnabledValue discoveredClaims
   let initialState = seedState {claims = discoveredClaims}
   writeFile publicationPath (renderPublicationState controlPlane initialState)
+  writeStateFile (clusterStatePath paths) initialState
   ensureHelmDependencies paths
   ensureEnvoyGatewayCrdsInstalled paths initialState
   reconcilePersistentVolumes initialState
   deployChart paths initialState [warmupValuesPath] False
   state <- reconcileOperatorManagedPersistentVolumes paths initialState
+  writeStateFile (clusterStatePath paths) state
   repairHarborDatabaseMigrationState state
   bootstrapHarborWithRepair paths state [bootstrapValuesPath]
   buildClusterImages paths runtimeMode
@@ -328,17 +335,38 @@ requireGeneratedDemoConfigFile paths expectedRuntimeMode = do
       )
   pure filePath
 
+resolveCommandRuntimeMode :: Paths -> Maybe RuntimeMode -> Maybe ClusterState -> IO RuntimeMode
+resolveCommandRuntimeMode _ (Just runtimeMode) _ = pure runtimeMode
+resolveCommandRuntimeMode paths Nothing maybeState = do
+  let substratePath = Config.generatedDemoConfigPath paths
+  substrateExists <- doesFileExist substratePath
+  if substrateExists
+    then configRuntimeMode <$> decodeDemoConfigFile substratePath
+    else case maybeState of
+      Just state -> pure (clusterRuntimeMode state)
+      Nothing ->
+        ioError
+          ( userError
+              ( unlines
+                  [ "Missing generated substrate file: " <> substratePath,
+                    "Restage it before running cluster operations."
+                  ]
+              )
+          )
+
+matchingClusterState :: RuntimeMode -> Maybe ClusterState -> Maybe ClusterState
+matchingClusterState runtimeMode maybeState =
+  case maybeState of
+    Just state
+      | clusterRuntimeMode state == runtimeMode -> Just state
+    _ -> Nothing
+
 clusterDown :: Maybe RuntimeMode -> IO ()
 clusterDown maybeRuntimeMode = do
   paths <- Config.discoverPaths
-  maybeState <- loadClusterState paths
-  runtimeMode <-
-    case maybeRuntimeMode of
-      Just requestedRuntimeMode -> pure requestedRuntimeMode
-      Nothing ->
-        case maybeState of
-          Just state -> pure (clusterRuntimeMode state)
-          Nothing -> Config.resolveRuntimeMode Nothing
+  recordedState <- loadClusterState paths
+  runtimeMode <- resolveCommandRuntimeMode paths maybeRuntimeMode recordedState
+  let maybeState = matchingClusterState runtimeMode recordedState
   clusterExists <- kindClusterExists paths runtimeMode
   when clusterExists $ do
     unless (kindUsesHostBindMounts paths) $
@@ -364,10 +392,11 @@ clusterDown maybeRuntimeMode = do
 clusterStatus :: Maybe RuntimeMode -> IO ()
 clusterStatus maybeRuntimeMode = do
   paths <- Config.discoverPaths
-  maybeState <- loadClusterState paths
+  recordedState <- loadClusterState paths
+  runtimeMode <- resolveCommandRuntimeMode paths maybeRuntimeMode recordedState
+  let maybeState = matchingClusterState runtimeMode recordedState
   case maybeState of
     Nothing -> do
-      runtimeMode <- Config.resolveRuntimeMode maybeRuntimeMode
       putStrLn "cluster not yet reconciled"
       putStrLn ("runtimeMode: " <> Text.unpack (runtimeModeId runtimeMode))
       putStrLn ("buildRoot: " <> buildRoot paths)
@@ -375,6 +404,7 @@ clusterStatus maybeRuntimeMode = do
       putStrLn ("expectedDemoConfigPath: " <> Config.generatedDemoConfigPath paths)
       putStrLn ("expectedMountedDemoConfigPath: " <> Config.watchedDemoConfigPath)
     Just state -> do
+      ensureOuterContainerKindNetworkAccess paths (clusterRuntimeMode state)
       actualPresent <- kindClusterExists paths (clusterRuntimeMode state)
       cacheEntries <- countLeafEntries (modelCacheRoot paths)
       resultCount <- countLeafEntries (resultsRoot paths)
@@ -425,7 +455,9 @@ loadClusterState paths = do
 runKubectlCompat :: [String] -> IO ()
 runKubectlCompat args = do
   paths <- Config.discoverPaths
-  maybeState <- loadClusterState paths
+  recordedState <- loadClusterState paths
+  runtimeMode <- resolveCommandRuntimeMode paths Nothing recordedState
+  let maybeState = matchingClusterState runtimeMode recordedState
   case maybeState of
     Nothing -> putStrLn "No cluster state is available. Run `infernix cluster up` first."
     Just state
@@ -555,18 +587,22 @@ portIsFree candidatePort = do
       IO (Either IOException ())
   pure (either (const False) (const True) bindResult)
 
-claimDirectory :: Paths -> PersistentClaim -> FilePath
-claimDirectory paths persistentClaim =
-  kindRoot paths
+kindRuntimeRoot :: Paths -> RuntimeMode -> FilePath
+kindRuntimeRoot paths runtimeMode =
+  kindRoot paths </> Text.unpack (runtimeModeId runtimeMode)
+
+claimDirectory :: Paths -> RuntimeMode -> PersistentClaim -> FilePath
+claimDirectory paths runtimeMode persistentClaim =
+  kindRuntimeRoot paths runtimeMode
     </> Text.unpack (namespace persistentClaim)
     </> Text.unpack (release persistentClaim)
     </> Text.unpack (workload persistentClaim)
     </> show (ordinal persistentClaim)
     </> Text.unpack (claim persistentClaim)
 
-ensureClaimDirectoryReady :: Paths -> PersistentClaim -> IO ()
-ensureClaimDirectoryReady paths persistentClaim = do
-  let directoryPath = claimDirectory paths persistentClaim
+ensureClaimDirectoryReady :: Paths -> RuntimeMode -> PersistentClaim -> IO ()
+ensureClaimDirectoryReady paths runtimeMode persistentClaim = do
+  let directoryPath = claimDirectory paths runtimeMode persistentClaim
   createDirectoryIfMissing True directoryPath
   -- Harbor and MinIO reuse these persisted hostPath trees as non-root users on Linux.
   runCommand Nothing [] "chmod" ["-R", "a+rwX", directoryPath]
@@ -1172,31 +1208,36 @@ buildClusterImages paths runtimeMode = do
 
 preloadBootstrapSupportImagesOnKindNodes :: Paths -> RuntimeMode -> FilePath -> IO ()
 preloadBootstrapSupportImagesOnKindNodes paths runtimeMode renderedChartPath = do
-  imageRefs <- bootstrapSupportImageRefs paths renderedChartPath
-  let uniqueImageRefs = List.nub (filter (not . null) (map trim imageRefs))
-  unless (null uniqueImageRefs) $ do
-    putStrLn "preloading bootstrap-support images on Kind nodes"
-    mapM_ ensureLocalImageRef uniqueImageRefs
-    runCommand
-      Nothing
-      []
-      "kind"
-      (["load", "docker-image", "--name", kindClusterName paths runtimeMode] <> uniqueImageRefs)
-
-bootstrapSupportImageRefs :: Paths -> FilePath -> IO [String]
-bootstrapSupportImageRefs _paths renderedChartPath =
-  filter isBootstrapSupportImageRef <$> discoverChartImagesFile renderedChartPath
+  discoveredImageRefs <- discoverChartImagesFile renderedChartPath
+  preloadImageRefs <-
+    mapM
+      resolveBootstrapSupportImageRef
+      ( List.nub
+          (filter shouldPreloadBootstrapImageRef (map trim discoveredImageRefs))
+      )
+  let resolvedImageRefs = List.nub (catMaybes preloadImageRefs)
+  unless (null resolvedImageRefs) $ do
+    putStrLn "preloading bootstrap support images on Kind nodes"
+    mapM_ (preloadBootstrapSupportImageOnKindNodes paths runtimeMode) resolvedImageRefs
   where
-    isBootstrapSupportImageRef imageRef =
+    shouldPreloadBootstrapImageRef imageRef =
       not (null imageRef)
-        && imageRef /= "infernix-linux-cpu:local"
-        && imageRef /= "infernix-linux-gpu:local"
+        && not ("localhost:30002/" `List.isPrefixOf` imageRef)
+        && not ("localhost:30880/" `List.isPrefixOf` imageRef)
+    resolveBootstrapSupportImageRef imageRef = do
+      let candidateRefs = List.nub (imageRef : maybe [] pure (List.stripPrefix "docker.io/" imageRef))
+      presentCandidates <- filterM (\candidateRef -> maybeCommand ["docker", "image", "inspect", candidateRef]) candidateRefs
+      case presentCandidates of
+        resolvedRef : _ -> pure (Just resolvedRef)
+        [] -> do
+          putStrLn ("pulling bootstrap support image " <> imageRef)
+          PublishImages.ensureLocalImageAvailable imageRef
+          pure (Just imageRef)
 
-ensureLocalImageRef :: String -> IO ()
-ensureLocalImageRef imageRef = do
-  imagePresent <- maybeCommand ["docker", "image", "inspect", imageRef]
-  unless imagePresent $
-    runCommand Nothing [] "docker" ["pull", imageRef]
+preloadBootstrapSupportImageOnKindNodes :: Paths -> RuntimeMode -> String -> IO ()
+preloadBootstrapSupportImageOnKindNodes paths runtimeMode imageRef = do
+  let clusterName = kindClusterName paths runtimeMode
+  runCommand Nothing [] "kind" ["load", "docker-image", "--name", clusterName, imageRef]
 
 publishClusterImages :: Paths -> FilePath -> RuntimeMode -> IO FilePath
 publishClusterImages paths renderedChartPath runtimeMode = do
@@ -1848,7 +1889,7 @@ reconcileOperatorManagedPersistentVolumes :: Paths -> ClusterState -> IO Cluster
 reconcileOperatorManagedPersistentVolumes paths state = do
   waitForWorkloadRollout state 900 postgresOperatorDeployment
   operatorClaims <- waitForOperatorManagedPersistentClaims state harborPostgresExpectedOperatorClaims
-  mapM_ (ensureClaimDirectoryReady paths) operatorClaims
+  mapM_ (ensureClaimDirectoryReady paths (clusterRuntimeMode state)) operatorClaims
   unless (kindUsesHostBindMounts paths) $
     prepareKindNodeClaimDirectories paths (clusterRuntimeMode state) operatorClaims
   let updatedState = state {claims = mergePersistentClaims (claims state) operatorClaims}
@@ -2149,7 +2190,7 @@ writeGeneratedKindConfig paths runtimeMode edgePortValue = do
         buildRoot paths
           </> "kind"
           </> ("cluster-" <> Text.unpack (runtimeModeId runtimeMode) <> ".generated.yaml")
-  hostKindRoot <- resolveHostKindRoot paths
+  hostKindRoot <- resolveHostKindRoot paths runtimeMode
   writeRegistryHostsConfig paths runtimeMode
   hostRegistryHostsDirectory <- resolveHostRegistryHostsRoot paths
   writeTextFile outputPath (Text.pack (renderKindConfig paths runtimeMode edgePortValue hostKindRoot hostRegistryHostsDirectory))
@@ -2174,10 +2215,10 @@ writeRegistryHostsConfig paths runtimeMode = do
       createDirectoryIfMissing True registryDirectory
       writeFile hostsFile hostsToml
 
-resolveHostKindRoot :: Paths -> IO FilePath
-resolveHostKindRoot paths = do
+resolveHostKindRoot :: Paths -> RuntimeMode -> IO FilePath
+resolveHostKindRoot paths runtimeMode = do
   maybeOverride <- lookupEnv "INFERNIX_HOST_KIND_ROOT"
-  pure (fromMaybe (kindRoot paths) maybeOverride)
+  pure (fromMaybe (kindRuntimeRoot paths runtimeMode) maybeOverride)
 
 resolveHostRegistryHostsRoot :: Paths -> IO FilePath
 resolveHostRegistryHostsRoot paths = do
@@ -2270,7 +2311,7 @@ kindUsesHostBindMounts paths =
 
 prepareKindNodeRuntimePaths :: Paths -> RuntimeMode -> IO ()
 prepareKindNodeRuntimePaths paths runtimeMode = do
-  let localKindRoot = kindRoot paths
+  let localKindRoot = kindRuntimeRoot paths runtimeMode
       localRegistryHostsRoot = repoRoot paths </> ".build" </> "kind" </> "registry"
       registryDirectoryInNode = "/etc/containerd/certs.d/localhost:30002"
       registryHostsPath = localRegistryHostsRoot </> "localhost:30002" </> "hosts.toml"
@@ -2307,7 +2348,7 @@ prepareKindNodeClaimDirectories paths runtimeMode persistentClaims = do
 
 syncKindNodeRuntimePathsToHost :: Paths -> RuntimeMode -> Maybe ClusterState -> IO ()
 syncKindNodeRuntimePathsToHost paths runtimeMode maybeState = do
-  let localKindRoot = kindRoot paths
+  let localKindRoot = kindRuntimeRoot paths runtimeMode
   createDirectoryIfMissing True localKindRoot
   syncedClaims <- case maybeState of
     Just state | not (null (claims state)) -> syncClaimDirectoriesFromOwningNodes paths state
@@ -2321,7 +2362,7 @@ syncClaimDirectoriesFromOwningNodes paths state = do
   claimNodeBindings <- discoverClaimNodeBindings state
   claimSyncResults <-
     mapM
-      (\persistentClaim -> syncClaimDirectoryFromOwningNode paths persistentClaim claimNodeBindings)
+      (\persistentClaim -> syncClaimDirectoryFromOwningNode paths state persistentClaim claimNodeBindings)
       (claims state)
   pure (or claimSyncResults)
 
@@ -2349,13 +2390,13 @@ discoverClaimNodeBindings state = do
     claimNodeBindingsTemplate =
       "go-template={{range .items}}{{ $node := .spec.nodeName }}{{range .spec.volumes}}{{if .persistentVolumeClaim}}{{printf \"%s\\t%s\\n\" .persistentVolumeClaim.claimName $node}}{{end}}{{end}}{{end}}"
 
-syncClaimDirectoryFromOwningNode :: Paths -> PersistentClaim -> Map.Map String String -> IO Bool
-syncClaimDirectoryFromOwningNode paths persistentClaim claimNodeBindings =
+syncClaimDirectoryFromOwningNode :: Paths -> ClusterState -> PersistentClaim -> Map.Map String String -> IO Bool
+syncClaimDirectoryFromOwningNode paths state persistentClaim claimNodeBindings =
   case Map.lookup (persistentVolumeClaimName persistentClaim) claimNodeBindings of
     Nothing -> pure False
     Just nodeName -> do
       let containerDirectory = nodeMountedClaimPath persistentClaim
-          localDirectory = claimDirectory paths persistentClaim
+          localDirectory = claimDirectory paths (clusterRuntimeMode state) persistentClaim
       containerExists <- containerDirectoryExists nodeName containerDirectory
       if containerExists
         then do

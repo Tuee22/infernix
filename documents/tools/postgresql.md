@@ -15,7 +15,7 @@
   the supported topology
 - PostgreSQL claims explicitly use `storageClassName: infernix-manual`, which is backed by
   `kubernetes.io/no-provisioner`, and those claims bind to manually created PVs under
-  `./.data/kind/...`
+  `./.data/kind/<runtime-mode>/<namespace>/<release>/<workload>/<ordinal>/<claim>`
 - `infernix test integration` validates PostgreSQL readiness, replacement-primary failover, and
   repeat lifecycle reuse of the same deterministic manually managed PV inventory and host paths
 - Harbor PostgreSQL bootstrap may recycle one startup pod once when that pod remains `Running`

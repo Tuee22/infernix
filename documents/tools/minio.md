@@ -23,9 +23,8 @@
 - `/minio/console` -> `infernix-minio-console:9090`; rewrites to upstream `/`
 - `/minio/s3` -> `infernix-minio:9000`; rewrites to upstream `/`
 <!-- infernix:route-registry:minio:end -->
-- the supported Gateway contract targets the live MinIO console and S3 surfaces; current
-  integration still accepts the direct `infernix-demo` `rewrittenPath` compatibility payloads for
-  these probes when they appear, and Phase 6 tracks tightening that validation
+- the supported Gateway contract targets the live MinIO console and S3 surfaces, and integration
+  requires those real upstream responses on the shared edge
 
 ## Cross-References
 

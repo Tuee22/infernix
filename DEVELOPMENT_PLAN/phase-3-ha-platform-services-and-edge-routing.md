@@ -12,10 +12,9 @@
 
 Phase 3 is complete. The route registry, publication-state rendering, `/pulsar/ws -> /ws` rewrite
 contract, shared in-cluster substrate filename, and explicit demo-off staging path are represented
-in the current worktree, and the routed demo surface stays cluster-resident across substrates.
-Phase 6 still owns one follow-on cleanup item: the direct `infernix-demo` placeholder handlers for
-the Harbor, MinIO, and Pulsar tool routes remain in the codebase outside the intended HTTPRoute
-mapping.
+in the current worktree, the routed demo surface stays cluster-resident across substrates, and the
+supported tool-route contract now depends on the real Harbor, MinIO, and Pulsar upstreams rather
+than direct `infernix-demo` compatibility handlers outside the intended HTTPRoute mapping.
 
 ## HA Reconcile Surface
 
@@ -47,10 +46,9 @@ the active substrate through current `runtimeMode` fields, and the route invento
 one Haskell-owned registry plus one data-driven HTTPRoute template. That publication payload also
 distinguishes the direct `infernix service` daemon location from the routed `cluster-demo` API
 upstream. Demo-off routing is supported through the explicit substrate-materialization helper with
-`--demo-ui false`. The current repo still carries direct placeholder handlers for `/harbor`,
-`/minio/*`, and `/pulsar/*` inside `src/Infernix/Demo/Api.hs` when that binary is reached outside
-the intended routed contract; Phase 6 tracks removing or fencing off that compatibility surface.
-Those surfaces define the current Phase 3 contract.
+`--demo-ui false`. Direct `infernix-demo` execution is limited to the demo-owned HTTP surface when
+used intentionally outside the routed cluster path, so Harbor, MinIO, and Pulsar probes now
+depend on the intended HTTPRoute mapping. Those surfaces define the current Phase 3 contract.
 
 ## Sprint 3.1: HA MinIO Deployment [Done]
 

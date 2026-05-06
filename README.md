@@ -176,7 +176,7 @@ The supported stage-0 entrypoints are the substrate bootstraps under `bootstrap/
 
 - on Apple Silicon, run `./bootstrap/apple-silicon.sh doctor`
 - on Linux CPU, run `./bootstrap/linux-cpu.sh doctor`
-- on Linux CUDA, run `./bootstrap/linux-gpu.sh doctor`
+- on Linux GPU, run `./bootstrap/linux-gpu.sh doctor`
 
 The manual package-manager commands below remain the reference path that those bootstrap scripts
 drive or mirror.
@@ -283,7 +283,7 @@ Notes:
   baked `infernix-linux-cpu:local` image carries the repo-supported toolchain
 - everything beyond Docker happens inside the shared Linux substrate image build or runtime path
 
-### Linux CUDA host prerequisites
+### Linux GPU host prerequisites
 
 Preferred path:
 
@@ -382,8 +382,9 @@ shared `python/.venv/`.
 ### Linux CPU (outer container)
 
 The `linux-cpu` substrate ships one baked image snapshot, `infernix-linux-cpu:local`, built from
-`docker/linux-substrate.Dockerfile` with `BASE_IMAGE=ubuntu:24.04`. The same image acts as the
-launcher, the in-cluster workload image source, and the routed Playwright executor.
+`docker/linux-substrate.Dockerfile` with `BASE_IMAGE=ubuntu:24.04`. That image acts as the
+Compose-launched control plane and the in-cluster workload image source, while routed E2E uses the
+dedicated `infernix-playwright:local` image.
 
 Supported bootstrap path:
 
@@ -398,17 +399,20 @@ Direct reference commands:
 
 ```bash
 docker compose build infernix
+docker compose build playwright
+docker compose run --rm infernix infernix internal materialize-substrate linux-cpu --demo-ui true
 docker compose run --rm infernix infernix cluster up
 docker compose run --rm infernix infernix cluster status
 docker compose run --rm infernix infernix test all
 docker compose run --rm infernix infernix cluster down
 ```
 
-The Linux launcher bind-mounts only `./.data/`, the Docker socket, and named build caches. The
-baked image owns the full toolchain, so the supported runtime path does not install anything via
-`apt`, `pip`, or ad hoc host-side `cabal build`.
+The Linux launcher bind-mounts `./.data/`, `./.build/`, the host `compose.yaml`, and the Docker
+socket. The baked image owns the full toolchain, so the supported runtime path does not install
+anything via `apt`, `pip`, or ad hoc host-side `cabal build`, and the bootstrap restages the
+active substrate file before supported lifecycle and test commands.
 
-### Linux CUDA (substrate container)
+### Linux GPU (outer container)
 
 The `linux-gpu` substrate ships one baked image snapshot, `infernix-linux-gpu:local`, built
 from `docker/linux-substrate.Dockerfile` with a CUDA base image. The same supported Compose
@@ -435,6 +439,8 @@ export INFERNIX_COMPOSE_IMAGE=infernix-linux-gpu:local
 export INFERNIX_COMPOSE_SUBSTRATE=linux-gpu
 export INFERNIX_COMPOSE_BASE_IMAGE=nvidia/cuda:13.2.1-cudnn-runtime-ubuntu24.04
 docker compose build infernix
+docker compose build playwright
+docker compose run --rm infernix infernix internal materialize-substrate linux-gpu --demo-ui true
 docker compose run --rm infernix infernix cluster up
 docker compose run --rm infernix infernix cluster status
 docker compose run --rm infernix infernix kubectl -n platform exec deployment/infernix-service -- nvidia-smi -L
@@ -531,7 +537,7 @@ Local durability is explicit.
 - PVCs are created only by Helm-owned durable workloads, including operator-managed claims
   reconciled from repo-owned Helm releases
 - PVs are created only by `infernix` lifecycle logic and bind explicitly to their intended claims
-- PVs bind deterministically into `./.data/kind/<namespace>/<release>/<workload>/<ordinal>/<claim>`
+- PVs bind deterministically into `./.data/kind/<runtime-mode>/<namespace>/<release>/<workload>/<ordinal>/<claim>`
 - explicit PV-to-PVC binding guarantees clean `cluster down` and `cluster up` rebinding behavior
 - storage reconciliation is part of `cluster up`; there is no separate storage reconcile command
 - every in-cluster PostgreSQL deployment uses a Patroni cluster managed by the Percona Kubernetes operator

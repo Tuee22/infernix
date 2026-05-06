@@ -12,6 +12,9 @@
   supported Linux outer-container path stages it with
   `docker compose run --rm infernix infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>`
   before cluster bring-up
+- the repo-owned `bootstrap/linux-cpu.sh` and `bootstrap/linux-gpu.sh` entrypoints restage that
+  active Linux substrate file before supported lifecycle and test commands so lane switches do not
+  reuse a stale staged payload
 - run `infernix cluster up`
 - on the Apple host-native path, the command reconciles Homebrew-managed Colima, Docker CLI,
   `kind`, `kubectl`, and `helm` before it attempts the real Kind workflow
@@ -56,9 +59,8 @@
 - `curl http://127.0.0.1:<port>/pulsar/ws/v2/producer/public/default/demo` checks the `/pulsar/ws -> /ws` rewrite and returns `405 Method Not Allowed` on the real cluster path.
 <!-- infernix:route-registry:cluster-bootstrap:end -->
 
-Current validation still accepts the direct `infernix-demo` `rewrittenPath` compatibility payloads
-for those tool-route probes when they appear; Phase 6 tracks tightening the automated checks so
-they require only the real upstream responses described above.
+Those probes validate the real Gateway-backed upstream responses only; direct `infernix-demo`
+execution is not a supported compatibility fallback for the Harbor, MinIO, or Pulsar tool routes.
 
 ## Teardown
 

@@ -95,7 +95,7 @@ exerciseRuntimeMode paths runtimeMode = do
     minioConsoleResponse <- httpGet (baseUrl <> "/minio/console/browser")
     (minioS3Status, minioS3Response) <- httpGetWithStatus (baseUrl <> "/minio/s3/models/demo.bin")
     pulsarAdminResponse <- httpGet (baseUrl <> "/pulsar/admin/admin/v2/clusters")
-    (pulsarHttpStatus, pulsarHttpResponse) <- httpGetWithStatus (baseUrl <> "/pulsar/ws/v2/producer/public/default/demo")
+    (pulsarHttpStatus, _) <- httpGetWithStatus (baseUrl <> "/pulsar/ws/v2/producer/public/default/demo")
     assert ("Infernix" `isInfixOf` homeResponse) "demo root serves the browser entrypoint"
     assert (("\"runtimeMode\": \"" <> showRuntimeMode runtimeMode <> "\"") `isInfixOf` publicationResponse) "publication reports the active runtime mode"
     assert ("\"clusterpresent\": true" `isInfixOf` mapToLowerAscii publicationResponse) "publication reports cluster presence"
@@ -119,35 +119,19 @@ exerciseRuntimeMode paths runtimeMode = do
       "model listing returns every generated active-mode catalog entry"
     assert ("Harbor" `isInfixOf` harborResponse) "harbor route is published"
     assert
-      ( harborApiStatus == 200
-          && ( "\"rewrittenPath\":\"/api/v2.0/projects\"" `isInfixOf` compact harborApiResponse
-                 || "\"name\":\"library\"" `isInfixOf` compact harborApiResponse
-             )
-      )
+      (harborApiStatus == 200 && "\"name\":\"library\"" `isInfixOf` compact harborApiResponse)
       "harbor API routes strip the /harbor prefix and reach the live Harbor project API on the cluster path"
     assert
-      ( "\"rewrittenPath\":\"/browser\"" `isInfixOf` compact minioConsoleResponse
-          || "MinIO Console" `isInfixOf` minioConsoleResponse
-      )
+      ("MinIO Console" `isInfixOf` minioConsoleResponse)
       "minio console routes strip the /minio/console prefix and reach the live MinIO console on the cluster path"
     assert
-      ( minioS3Status `elem` [200, 401, 403]
-          && ( minioS3Status /= 200
-                 || "\"rewrittenPath\":\"/models/demo.bin\"" `isInfixOf` compact minioS3Response
-             )
-      )
-      "minio S3 route stays published and preserves the simulated rewrite contract when it returns a 200 response"
+      (minioS3Status `elem` [200, 401, 403, 404] && "\"rewrittenPath\"" `notElemString` compact minioS3Response)
+      "minio S3 route stays published and reaches the live MinIO S3 upstream on the cluster path"
     assert
-      ( "[\"infernix-infernix-pulsar\"]" `isInfixOf` compact pulsarAdminResponse
-          || "\"rewrittenPath\":\"/admin/v2/clusters\"" `isInfixOf` compact pulsarAdminResponse
-      )
+      ("[\"infernix-infernix-pulsar\"]" `isInfixOf` compact pulsarAdminResponse)
       "pulsar admin routes preserve the upstream admin/v2 context root"
     assert
-      ( pulsarHttpStatus `elem` [200, 405]
-          && ( pulsarHttpStatus /= 200
-                 || "\"rewrittenPath\":\"/ws/v2/producer/public/default/demo\"" `isInfixOf` compact pulsarHttpResponse
-             )
-      )
+      (pulsarHttpStatus == 405)
       "pulsar HTTP routes preserve the websocket context root and reach the real servlet on the cluster path"
     reportStep ("per-model inference: " <> showRuntimeMode runtimeMode)
     forM_ activeModelIds (validateCatalogModelInference baseUrl)
@@ -180,6 +164,8 @@ exerciseRuntimeMode paths runtimeMode = do
     assert ("clusterPresent: True" `isInfixOf` statusOutput) "cluster status reports the cluster presence"
     assert (("runtimeMode: " <> showRuntimeMode runtimeMode) `isInfixOf` statusOutput) "cluster status reports the runtime mode"
     assert ("publicationStatePath: " `isInfixOf` statusOutput) "cluster status reports the publication state path"
+    assert ("kubernetesNodeCount: 0" `notElemString` statusOutput) "cluster status reports reachable Kubernetes nodes"
+    assert ("kubernetesPodCount: 0" `notElemString` statusOutput) "cluster status reports reachable Kubernetes pods"
 
   maybeDownState <- loadClusterState paths
   assert (maybe False (not . clusterPresent) maybeDownState) "cluster down records cluster absence"
@@ -313,28 +299,18 @@ validateDemoUiDisabled paths runtimeMode =
         harborResponse <- httpGet (baseUrl <> "/harbor")
         pulsarAdminResponse <- httpGet (baseUrl <> "/pulsar/admin/admin/v2/clusters")
         (minioS3Status, minioS3Response) <- httpGetWithStatus (baseUrl <> "/minio/s3/models/demo.bin")
-        (pulsarHttpStatus, pulsarHttpResponse) <- httpGetWithStatus (baseUrl <> "/pulsar/ws/v2/producer/public/default/demo")
+        (pulsarHttpStatus, _) <- httpGetWithStatus (baseUrl <> "/pulsar/ws/v2/producer/public/default/demo")
         assert (either (const True) (const False) disabledHomeResult) "the browser root is absent when demo_ui is disabled"
         assert (either (const True) (const False) disabledPublicationResult) "the demo API is absent when demo_ui is disabled"
         assert ("Harbor" `isInfixOf` harborResponse) "harbor remains published when demo_ui is disabled"
         assert
-          ( minioS3Status `elem` [200, 401, 403]
-              && ( minioS3Status /= 200
-                     || "\"rewrittenPath\":\"/models/demo.bin\"" `isInfixOf` compact minioS3Response
-                 )
-          )
+          (minioS3Status `elem` [200, 401, 403, 404] && "\"rewrittenPath\"" `notElemString` compact minioS3Response)
           "minio remains published when demo_ui is disabled"
         assert
-          ( "[\"infernix-infernix-pulsar\"]" `isInfixOf` compact pulsarAdminResponse
-              || "\"rewrittenPath\":\"/admin/v2/clusters\"" `isInfixOf` compact pulsarAdminResponse
-          )
+          ("[\"infernix-infernix-pulsar\"]" `isInfixOf` compact pulsarAdminResponse)
           "pulsar admin remains published when demo_ui is disabled"
         assert
-          ( pulsarHttpStatus `elem` [200, 405]
-              && ( pulsarHttpStatus /= 200
-                     || "\"rewrittenPath\":\"/ws/v2/producer/public/default/demo\"" `isInfixOf` compact pulsarHttpResponse
-                 )
-          )
+          (pulsarHttpStatus == 405)
           "pulsar websocket route remains published when demo_ui is disabled"
   )
     `finally` materializeGeneratedSubstrate runtimeMode True
@@ -453,6 +429,9 @@ extractJsonStringField fieldName payload =
 
 compact :: String -> String
 compact = filter (`notElem` [' ', '\n', '\r', '\t'])
+
+notElemString :: String -> String -> Bool
+notElemString needle haystack = not (needle `isInfixOf` haystack)
 
 routeBaseUrl :: Paths -> ClusterState -> String
 routeBaseUrl paths state =

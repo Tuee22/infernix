@@ -15,16 +15,15 @@ mode-specific coverage, matrix behavior, and operator detail behind those canoni
   `linux-gpu` validate through the Linux outer-container control plane
 - the active staged substrate remains the source of truth for validation scope, generated catalog
   selection, and routed demo-surface expectations
-- the auxiliary routed-prefix checks already prove publication, but some assertions still accept the
-  current `infernix-demo` compatibility payloads until the stricter upstream-only checks land
+- the auxiliary routed-prefix checks require the live Harbor, MinIO, and Pulsar upstream
+  responses on the shared edge
 
 ## Current Status
 
 - the implemented lane matrix is host-native `apple-silicon`, outer-container `linux-cpu`, and
   real-cluster `linux-gpu`
 - the routed auxiliary checks below describe current behavior precisely: `/harbor`, `/minio/s3`,
-  and `/pulsar/ws` publication is already required, but some assertions still accept compatibility
-  payloads while Phase 6 tracks tightening them to live upstream-only responses
+  and `/pulsar/ws` publication is required through the live upstream services only
 
 ## Validation Layers
 
@@ -70,10 +69,7 @@ mode-specific coverage, matrix behavior, and operator detail behind those canoni
   `POST /api/cache/evict`, and `POST /api/cache/rebuild` contract against manifest-backed durable
   state
 - `infernix test integration` also validates that `/harbor`, `/minio/s3`, and `/pulsar/ws`
-  resolve through the shared routed surface, but the current assertions still accept the direct
-  `infernix-demo` `rewrittenPath` compatibility payloads when they appear
-- those routed auxiliary checks therefore prove route publication today, while Phase 6 still tracks
-  tightening them to require only the live Harbor, MinIO, and Pulsar upstream responses
+  resolve through the shared routed surface through the live Harbor, MinIO, and Pulsar upstreams
 - the target `/pulsar/ws` contract remains specific: the public prefix rewrites to Pulsar's real
   `/ws` upstream context root so routed `/pulsar/ws/v2/...` requests terminate on the WebSocket
   servlet

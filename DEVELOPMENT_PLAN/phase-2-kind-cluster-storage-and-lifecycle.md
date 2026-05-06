@@ -24,7 +24,7 @@ These rules close in this phase and remain mandatory afterward:
 - every PVC-backed workload explicitly sets `storageClassName: infernix-manual`
 - durable PVs are created only by the storage-reconciliation step embedded in
   `infernix cluster up`
-- each durable PV maps to `./.data/kind/<namespace>/<release>/<workload>/<ordinal>/<claim>`
+- each durable PV maps to `./.data/kind/<runtime-mode>/<namespace>/<release>/<workload>/<ordinal>/<claim>`
 - `infernix cluster down` never deletes or mutates anything under `./.data/`
 
 ## Current Generated Demo-Config Baseline

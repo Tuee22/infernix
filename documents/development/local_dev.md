@@ -90,7 +90,8 @@ the shared adapter project:
   build tree
 - supported repo-owned shell is limited to the `bootstrap/*.sh` stage-0 entrypoints; they prepare
   the host and then hand off to the direct `cabal`, `docker compose`, or `infernix` command
-  surface
+  surface; on Linux they also restage the active substrate file idempotently before supported
+  lifecycle and test commands
 - the target Apple host workflow has no generic Python prerequisite; Poetry and a repo-local
   adapter virtual environment materialize only when an engine-adapter test or setup path is
   exercised, and `infernix` bootstraps a user-local `poetry` executable through the host's

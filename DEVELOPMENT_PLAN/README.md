@@ -66,14 +66,13 @@ already reports only the active built substrate instead of implying a default cr
 matrix, and the generated file,
 `cluster status`, publication JSON, and generated browser contracts still serialize that active
 substrate under `runtimeMode` field names. The plan therefore closes around one active-substrate
-validation contract rather than a default cross-substrate rerun story, but Phase 6 remains active:
-`src/Infernix/Demo/Api.hs` still carries direct placeholder handlers for the Harbor, MinIO, and
-Pulsar tool routes, and `test/integration/Spec.hs` still accepts their `rewrittenPath` payloads
-instead of requiring only the real routed upstream behavior, the latest supported `linux-cpu`
-outer-container reruns can leave `cluster up` stuck at `cluster not yet reconciled`, and the
-current `linux-gpu` bootstrap scripts can reuse a stale
-`./.build/outer-container/build/infernix-substrate.dhall` file and accidentally run the GPU lane
-against `linux-cpu`.
+validation contract rather than a default cross-substrate rerun story. The worktree now removes
+the direct Harbor, MinIO, and Pulsar tool-route compatibility handlers, requires the real routed
+upstream behavior in integration, persists Linux cluster state before later rollout phases, and
+restages the active Linux substrate payload on each supported bootstrap invocation. Phase 6 is now
+done because the supported `bootstrap/linux-cpu.sh` and `bootstrap/linux-gpu.sh` lifecycles have
+been rerun end-to-end against those changes, including their supported `doctor`, `build`, `up`,
+`status`, `down`, and `test` surfaces.
 
 Monitoring is not a supported first-class surface.
 
@@ -101,7 +100,7 @@ now use that id consistently.
 | 3 | HA Platform Services and Edge Routing | Done | [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md) |
 | 4 | Inference Service and Durable Runtime | Done | [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) |
 | 5 | Web UI and Shared Types | Done | [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md) |
-| 6 | Validation, E2E, and HA Hardening | Active | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) |
+| 6 | Validation, E2E, and HA Hardening | Done | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) |
 
 ## Canonical Outcome
 
@@ -156,11 +155,9 @@ The supported platform now closes around these rules:
   `--demo-ui false`; omitting that flag keeps the default demo-enabled output
 - the routed demo app is cluster-resident across substrates; the interim Apple host bridge is not
   part of the final contract
-- supported entrypoints no longer carry the old cross-substrate default matrix or cluster bring-up
-  fallbacks, but route hardening remains open: `src/Infernix/Demo/Api.hs` still carries direct
-  placeholder handlers for `/harbor`, `/minio/*`, and `/pulsar/*`, and
-  `test/integration/Spec.hs` still accepts their `rewrittenPath` responses instead of requiring
-  only the real routed upstream behavior
+- supported entrypoints no longer carry the old cross-substrate default matrix, cluster bring-up
+  fallbacks, or direct tool-route compatibility handlers; routed Harbor, MinIO, and Pulsar checks
+  require the real Gateway-backed upstream behavior
 - integration coverage is driven by the comprehensive model, format, and engine matrix in
   `README.md`: one substrate-aware integration suite reads the active substrate from `.dhall`,
   chooses the corresponding engine binding for each supported row or reference, and runs at least

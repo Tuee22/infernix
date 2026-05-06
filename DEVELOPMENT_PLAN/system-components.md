@@ -31,14 +31,16 @@
 - on `apple-silicon`, cluster-resident repo workloads currently reuse the `infernix-linux-cpu:local`
   image family even though the staged substrate, publication metadata, and browser contracts still
   report `apple-silicon`
-- `src/Infernix/Demo/Api.hs` still carries direct placeholder handlers for `/harbor`,
-  `/minio/*`, and `/pulsar/*`, and `test/integration/Spec.hs` still accepts those
-  `rewrittenPath` payloads for the routed tool-route probes
 - Linux operator workflows close around Compose-driven outer containers, validation reports only
-  the active built substrate, and the supported materialization path can emit `demo_ui = false`,
-  but the current `linux-cpu` rerun can leave `cluster up` stuck at `cluster not yet reconciled`
-  and the current `linux-gpu` bootstrap scripts can reuse a stale staged `linux-cpu` substrate
-  file instead of restaging `linux-gpu`
+  the active built substrate, and the supported materialization path can emit `demo_ui = false`
+- direct `infernix-demo` execution no longer doubles as a compatibility target for Harbor, MinIO,
+  or Pulsar tool-route probes; those checks now require the real Gateway-backed upstream behavior
+- the supported Linux bootstrap entrypoints now restage the active substrate before lifecycle and
+  test commands, and `cluster up` persists repo-local cluster state before later rollout phases so
+  `cluster status` and cleanup can still observe an in-progress Linux reconciliation
+- supported end-to-end `linux-cpu` and `linux-gpu` lifecycle reruns now pass on the governed
+  bootstrap surfaces, including the stricter real-upstream route assertions and the restaged Linux
+  substrate flows
 - Monitoring is not a supported first-class surface.
 
 ## Operator and Host Components
@@ -74,16 +76,16 @@
 
 | Component | Technology | Deployment | Purpose | Durable state |
 |-----------|------------|------------|---------|---------------|
-| Kind and Helm lifecycle | Haskell control-plane orchestration in `cluster up` | host-native Apple CLI or Linux outer container | create or reuse Kind, reset StorageClasses, reconcile PVs, deploy Harbor first, publish the staged substrate payload, publish images, and deploy the final chart | `./.data/runtime/cluster-state.state`, `./.data/kind/...` |
-| Harbor image preparation | Harbor plus Haskell image publication flow | Kind cluster plus control plane | bootstrap Harbor, mirror required images, and publish repo-owned images before later rollout | Harbor state under `./.data/kind/...` |
-| PostgreSQL substrate | Percona Kubernetes operator plus Patroni PostgreSQL | Kind cluster | only supported in-cluster PostgreSQL contract for Harbor and later services | `./.data/kind/...` |
+| Kind and Helm lifecycle | Haskell control-plane orchestration in `cluster up` | host-native Apple CLI or Linux outer container | create or reuse Kind, reset StorageClasses, reconcile PVs, deploy Harbor first, publish the staged substrate payload, publish images, and deploy the final chart | `./.data/runtime/cluster-state.state`, `./.data/kind/<runtime-mode>/...` |
+| Harbor image preparation | Harbor plus Haskell image publication flow | Kind cluster plus control plane | bootstrap Harbor, mirror required images, and publish repo-owned images before later rollout | Harbor state under `./.data/kind/<runtime-mode>/...` |
+| PostgreSQL substrate | Percona Kubernetes operator plus Patroni PostgreSQL | Kind cluster | only supported in-cluster PostgreSQL contract for Harbor and later services | `./.data/kind/<runtime-mode>/...` |
 | Publication state | repo-local JSON plus routed `/api/publication` surface | repo-local state and demo API | reports control-plane context, the direct `infernix service` daemon location, the routed demo API upstream mode, the active substrate through its current `runtimeMode` field, routes, and upstream health metadata | `./.data/runtime/publication.json` |
 | Edge Gateway controller | Helm-installed Envoy Gateway controller | Kind cluster | owns all browser-visible and host-consumed routing | none |
 | Cluster Gateway resource | `GatewayClass/infernix-gateway` plus `Gateway/infernix-edge` | Kind cluster | single localhost-bound HTTP listener on the chosen edge port | none |
 | HTTPRoute rendering | data-driven `chart/templates/httproutes.yaml` from the Haskell route registry | Kind cluster | publishes the route inventory for demo, Harbor, MinIO, and Pulsar surfaces | none |
 | Substrate-file publication | generated `ConfigMap/infernix-demo-config` plus repo-local mirror | Kind cluster and repo-local state | republishes the staged substrate payload for cluster consumers and local inspection tooling through the shared `infernix-substrate.dhall` filename | `./.data/runtime/configmaps/infernix-demo-config/` |
 | Service runtime host | `infernix service` plus `src/Infernix/Runtime/{Cache,Worker,Pulsar}.hs` | direct host process or cluster pod | direct `infernix service` stays host-native on `apple-silicon`; repo-owned cluster workloads currently run from Linux substrate images, with `apple-silicon` selecting the `infernix-linux-cpu` image family for clustered `infernix-service` and `infernix-demo` | `./.data/runtime/`, object-store state under `./.data/object-store/` |
-| Demo UI host | `infernix-demo` deployment | cluster pod | serves `/`, `/api`, `/api/publication`, `/api/cache`, and `/objects/` when demo is enabled; routed manual inference currently executes in-process from that clustered workload rather than through a separate host-side bridge; the binary still carries direct compatibility handlers for `/harbor`, `/minio/*`, and `/pulsar/*` when reached outside the intended HTTPRoute mapping | none |
+| Demo UI host | `infernix-demo` deployment | cluster pod | serves `/`, `/api`, `/api/publication`, `/api/cache`, and `/objects/` when demo is enabled; routed manual inference currently executes in-process from that clustered workload rather than through a separate host-side bridge; direct `infernix-demo` execution intentionally exposes only the demo-owned HTTP surface outside the intended HTTPRoute mapping | none |
 | Web runtime executor | PureScript bundle baked into the Linux substrate image plus the dedicated `infernix-playwright:local` Playwright image | substrate image runs cluster-resident as the demo app; Playwright image is invoked via `docker compose run --rm playwright`, directly from the host CLI on Apple Silicon and from inside the outer container against the host docker daemon on Linux substrates | serves the browser bundle from the clustered demo app and runs routed E2E coverage from the dedicated Playwright executor | test artifacts under `./.data/` |
 | Engine adapter set | `python/adapters/` invoked via `poetry run` from the Haskell worker | host child process or cluster child process | Python-native engine boundary over typed protobuf-over-stdio | optional Apple venv under `python/.venv/` |
 | Python quality gate | `poetry run check-code` | host or Linux outer-container image | runs mypy strict, black check, and ruff strict against the shared adapter tree | none |
@@ -127,8 +129,8 @@
 | Substrate | Canonical substrate id | Supported contract | Current repo gap |
 |-----------|------------------------|--------------------|------------------|
 | Apple Silicon / Metal | `apple-silicon` | host-native control plane and host-native inference daemon, clustered demo app, shared config and route contracts | none |
-| Linux / CPU | `linux-cpu` | containerized Linux lane built from the shared substrate Dockerfile and driven entirely through Compose | current supported reruns can leave `cluster up` stuck at `cluster not yet reconciled` even after Kind nodes become ready |
-| Linux / NVIDIA GPU | `linux-gpu` | GPU-enabled Kind lane built from the shared substrate Dockerfile and deployed from the same CUDA-based image used by the outer container | the bootstrap path can reuse a stale `./.build/outer-container/build/infernix-substrate.dhall` file and accidentally target `linux-cpu` instead of restaging `linux-gpu` |
+| Linux / CPU | `linux-cpu` | containerized Linux lane built from the shared substrate Dockerfile and driven entirely through Compose | supported end-to-end bootstrap rerun validation remains in progress after the earlier cluster-state persistence fix landed |
+| Linux / NVIDIA GPU | `linux-gpu` | GPU-enabled Kind lane built from the shared substrate Dockerfile and deployed from the same CUDA-based image used by the outer container | supported end-to-end bootstrap rerun validation remains in progress after per-command substrate restaging landed |
 
 ## Serialization Boundaries
 
@@ -144,7 +146,7 @@
 
 | State class | Authority | Durable home | Notes |
 |-------------|-----------|--------------|-------|
-| Durable PV directories | storage reconciliation in `cluster up` | `./.data/kind/...` | deterministic host path layout for every PVC-backed workload |
+| Durable PV directories | storage reconciliation in `cluster up` | `./.data/kind/<runtime-mode>/<namespace>/<release>/<workload>/<ordinal>/<claim>` | deterministic host path layout for every PVC-backed workload |
 | Generated Apple substrate file | `./.build/infernix internal materialize-substrate apple-silicon [--demo-ui true|false]` | `./.build/infernix-substrate.dhall` | Apple host path beside the build root; the file is staged explicitly rather than by Cabal compile rules alone |
 | Generated Apple kubeconfig | `cluster up` | `./.build/infernix.kubeconfig` | repo-local kubeconfig used by `infernix kubectl` on Apple |
 | Generated Linux substrate file | explicit helper invocation runs `docker compose run --rm infernix infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>` | `./.build/outer-container/build/infernix-substrate.dhall` on the host through the bind mount (visible inside the outer container as `/workspace/.build/outer-container/build/infernix-substrate.dhall`) | outer-container staging path; the authoritative launcher binary remains `/usr/local/bin/infernix` inside the substrate image |

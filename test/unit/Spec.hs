@@ -15,6 +15,7 @@ import Infernix.Cluster.Discover
 import Infernix.Cluster.PublishImages
   ( PublishedImage,
     contentAddressTagFromInspectPayload,
+    dockerHubMirrorRef,
     normalizeRepositoryPath,
     writeHarborOverridesFile,
   )
@@ -390,6 +391,15 @@ main = do
     assert
       (normalizeRepositoryPath "localhost:30002/library/infernix-service@sha256:deadbeef" == "library/infernix-service")
       "repository normalization removes digests and loopback Harbor prefixes"
+    assert
+      (dockerHubMirrorRef "docker.io/percona/percona-pgbackrest:2.58.0-1" == Just "mirror.gcr.io/percona/percona-pgbackrest:2.58.0-1")
+      "docker hub fallback maps explicit docker.io refs to mirror.gcr.io"
+    assert
+      (dockerHubMirrorRef "busybox:1.36" == Just "mirror.gcr.io/library/busybox:1.36")
+      "docker hub fallback adds the implicit library namespace for single-segment refs"
+    assert
+      (isNothing (dockerHubMirrorRef "ghcr.io/example/image:1.0.0"))
+      "docker hub fallback ignores non-Docker-Hub registries"
     assert
       (contentAddressTagFromInspectPayload sampleDockerImageInspect == Right "sha256-deadbeef")
       "docker inspect parsing prefers repo digests for content-addressed tags"

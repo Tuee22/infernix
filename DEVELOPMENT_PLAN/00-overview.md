@@ -11,10 +11,11 @@
 The repository now implements the substrate-file architecture described in this overview. The
 supported validation contract is active-substrate specific: `infernix lint docs`, the Haskell and
 PureScript unit suites, `infernix test integration`, and `infernix test e2e` all target the
-currently staged substrate instead of implying a default cross-substrate rerun. The current Linux
-outer-container reruns are not fully closed: `linux-cpu` can leave `cluster up` stuck at
-`cluster not yet reconciled`, and `linux-gpu` can reuse a stale staged `linux-cpu` substrate file
-instead of restaging `linux-gpu`.
+currently staged substrate instead of implying a default cross-substrate rerun. The worktree now
+removes the direct tool-route compatibility payloads, persists Linux cluster state before later
+rollout phases, and restages the active Linux substrate before each supported bootstrap command.
+Phase 6 is now done because the supported `linux-cpu` and `linux-gpu` lifecycle reruns finished
+cleanly against those changes.
 
 | Area | Supported contract | Current repo state |
 |------|--------------------|--------------------|
@@ -23,12 +24,12 @@ instead of restaging `linux-gpu`.
 | Substrate selection | one staged substrate file beside the active build root is the primary source of truth for substrate identity and generated catalog selection | implemented |
 | Staged substrate-file format | the substrate file and its mirrors use one explicit and consistent file format and filename contract | implemented; the current contract is a shared `infernix-substrate.dhall` filename carrying banner-prefixed JSON on local and cluster-mounted paths |
 | Apple host-native lane | the host-built binary manages Kind, deploys the clustered demo workloads, and still owns the direct host-side `infernix service` lane | implemented |
-| Linux control plane | all supported Linux CLI commands run through `docker compose run --rm infernix infernix ...` | partially implemented; the supported launcher surface exists, but the current `linux-cpu` rerun can stall in unreconciled `cluster up`, and the `linux-gpu` bootstrap can reuse a stale staged CPU substrate |
+| Linux control plane | all supported Linux CLI commands run through `docker compose run --rm infernix infernix ...` | implemented and validated through the supported `linux-cpu` and `linux-gpu` bootstrap lifecycles |
 | Linux GPU naming | the NVIDIA-backed Linux substrate is standardized as `linux-gpu` | implemented |
 | Serialized substrate naming | the generated substrate file, publication JSON, `cluster status`, and browser contracts still carry the active substrate under `runtimeMode` field names | implemented |
 | Demo UI gating | the staged substrate file can disable the clustered demo surface | implemented; the supported materialization path accepts `--demo-ui false` |
-| Simulation stance | no simulated cluster, route, transport, or inference fallback remains in the supported runtime or validation contract | partially implemented; supported entrypoints no longer use simulated cluster bring-up, but `src/Infernix/Demo/Api.hs` still carries tool-route placeholder handlers and integration still accepts their `rewrittenPath` responses |
-| Validation scope | integration uses one `.dhall`-driven suite over the README matrix, E2E stays substrate-agnostic at the browser layer, and `test all` validates one built substrate at a time | partially implemented; the active-substrate contract is in place, but the supported Linux CPU and GPU lifecycle reruns still fail before full `test all` closure |
+| Simulation stance | no simulated cluster, route, transport, or inference fallback remains in the supported runtime or validation contract | implemented in code; direct tool-route compatibility handlers are removed and integration now requires live upstream responses |
+| Validation scope | integration uses one `.dhall`-driven suite over the README matrix, E2E stays substrate-agnostic at the browser layer, and `test all` validates one built substrate at a time | implemented and validated through the supported Linux CPU and GPU lifecycle reruns |
 
 Monitoring is not a supported first-class surface.
 
@@ -77,10 +78,8 @@ Monitoring is not a supported first-class surface.
   host shape
 - `linux-gpu` assumes an amd64 Linux environment paired with a CUDA-capable device, but the outer
   control-plane container itself never requires the NVIDIA runtime
-- supported entrypoints no longer use simulated cluster bring-up or cross-substrate default
-  validation reruns, but the repo still carries direct tool-route placeholder handlers in
-  `src/Infernix/Demo/Api.hs`, and `test/integration/Spec.hs` still accepts their `rewrittenPath`
-  responses instead of requiring only the real routed upstream behavior
+- supported entrypoints no longer use simulated cluster bring-up, direct tool-route compatibility
+  handlers, or cross-substrate default validation reruns
 - one substrate-aware integration suite traverses the comprehensive model, format, and engine
   matrix in `README.md`, reads the active substrate from `.dhall`, and chooses the corresponding
   engine binding for every supported row or reference

@@ -80,65 +80,6 @@ application :: DemoApiOptions -> Application
 application options request respond = do
   demoEnabled <- demoUiEnabled <$> decodeDemoConfigFile (demoConfigPath options)
   case pathInfo request of
-    "harbor" : harborSegments
-      | requestMethod request == methodGet ->
-          serveHarborRoute harborSegments respond
-    ["minio", "console"]
-      | requestMethod request == methodGet ->
-          respond (jsonResponse status200 (object ["status" .= ("ready" :: String), "targetUrl" .= ("minio-console" :: String), "rewrittenPath" .= ("/" :: String)]))
-    "minio" : "console" : consoleSegments
-      | requestMethod request == methodGet ->
-          respond
-            ( jsonResponse
-                status200
-                ( object
-                    [ "label" .= ("minio-console" :: String),
-                      "rewrittenPath" .= prefixedPath consoleSegments
-                    ]
-                )
-            )
-    ["minio", "s3"]
-      | requestMethod request == methodGet ->
-          respond (jsonResponse status200 (object ["status" .= ("ready" :: String), "targetUrl" .= ("minio-s3" :: String), "rewrittenPath" .= ("/" :: String)]))
-    "minio" : "s3" : s3Segments
-      | requestMethod request == methodGet ->
-          respond
-            ( jsonResponse
-                status200
-                ( object
-                    [ "label" .= ("minio-s3" :: String),
-                      "rewrittenPath" .= prefixedPath s3Segments
-                    ]
-                )
-            )
-    ["pulsar", "admin"]
-      | requestMethod request == methodGet ->
-          respond (jsonResponse status200 (object ["status" .= ("ready" :: String), "brokersHealth" .= ("ready" :: String), "rewrittenPath" .= ("/" :: String)]))
-    "pulsar" : "admin" : adminSegments
-      | requestMethod request == methodGet ->
-          respond
-            ( jsonResponse
-                status200
-                ( object
-                    [ "label" .= ("pulsar-admin" :: String),
-                      "rewrittenPath" .= prefixedPath adminSegments
-                    ]
-                )
-            )
-    ["pulsar", "ws"]
-      | requestMethod request == methodGet ->
-          respond (jsonResponse status200 (object ["status" .= ("ready" :: String), "brokersHealth" .= ("ready" :: String), "rewrittenPath" .= ("/ws" :: String)]))
-    "pulsar" : "ws" : wsSegments
-      | requestMethod request == methodGet ->
-          respond
-            ( jsonResponse
-                status200
-                ( object
-                    [ "label" .= ("pulsar-http" :: String),
-                      "rewrittenPath" .= prefixedPath ("ws" : wsSegments)
-                    ]
-                )
-            )
     ["healthz"]
       | requestMethod request == methodGet && demoEnabled ->
           respond (textResponse status200 "ok")
@@ -360,39 +301,5 @@ textResponse :: Status -> String -> Response
 textResponse responseStatus body =
   responseLBS responseStatus [(hContentType, "text/plain; charset=utf-8")] (LazyByteString.fromStrict (ByteStringChar8.pack body))
 
-htmlResponse :: String -> Response
-htmlResponse body =
-  responseLBS status200 [(hContentType, "text/html; charset=utf-8")] (LazyByteString.fromStrict (ByteStringChar8.pack body))
-
 fromStringHost :: String -> HostPreference
 fromStringHost = fromString
-
-serveHarborRoute :: [Text.Text] -> (Response -> IO responseReceived) -> IO responseReceived
-serveHarborRoute segments respond =
-  case segments of
-    [] ->
-      respond (htmlResponse "<!doctype html><title>Harbor</title><h1>Harbor</h1><p>Route published through Gateway/infernix-edge.</p>")
-    "api" : apiSegments ->
-      respond
-        ( jsonResponse
-            status200
-            ( object
-                [ "label" .= ("harbor-api" :: String),
-                  "rewrittenPath" .= prefixedPath ("api" : apiSegments)
-                ]
-            )
-        )
-    _ ->
-      respond
-        ( jsonResponse
-            status200
-            ( object
-                [ "label" .= ("harbor-ui" :: String),
-                  "rewrittenPath" .= prefixedPath segments
-                ]
-            )
-        )
-
-prefixedPath :: [Text.Text] -> String
-prefixedPath [] = "/"
-prefixedPath segments = "/" <> joinPathSegments segments
