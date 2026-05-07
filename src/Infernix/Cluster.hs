@@ -41,10 +41,10 @@ import Infernix.Storage
 import Infernix.Types
 import Infernix.Workflow (platformCommandsAvailable)
 import Network.Socket qualified as Socket
-import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, findExecutable, listDirectory, removePathForcibly)
+import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, findExecutable, listDirectory, removePathForcibly, renameFile)
 import System.Environment (getEnvironment, lookupEnv)
 import System.Exit (ExitCode (..))
-import System.FilePath (takeDirectory, (</>))
+import System.FilePath (takeDirectory, takeFileName, (</>))
 import System.Process
   ( CreateProcess (cwd, env),
     proc,
@@ -82,6 +82,9 @@ helmDependencyArchives =
 
 envoyGatewayDependencyArchive :: FilePath
 envoyGatewayDependencyArchive = "chart/charts/gateway-helm-v1.7.2.tgz"
+
+helmDependencyArchivesDirectory :: Paths -> FilePath
+helmDependencyArchivesDirectory paths = repoRoot paths </> "chart/charts"
 
 finalPhaseDeployments :: ClusterState -> [String]
 finalPhaseDeployments state =
@@ -179,6 +182,20 @@ harborPostgresUserName = "harbor"
 harborPostgresUserSecretName :: String
 harborPostgresUserSecretName = "infernix-harbor-db-user"
 
+pulsarZookeeperPodNames :: [String]
+pulsarZookeeperPodNames =
+  [ "infernix-infernix-pulsar-zookeeper-0",
+    "infernix-infernix-pulsar-zookeeper-1",
+    "infernix-infernix-pulsar-zookeeper-2"
+  ]
+
+pulsarBootstrapDirtyLogMarkers :: [String]
+pulsarBootstrapDirtyLogMarkers =
+  [ "The current epoch",
+    "older than the last zxid",
+    "Unable to load database on disk"
+  ]
+
 clusterStateHasDemoUi :: ClusterState -> Bool
 clusterStateHasDemoUi state =
   any ((`elem` ["/", "/api", "/objects"]) . path) (routes state)
@@ -196,7 +213,27 @@ clusterUp maybeRuntimeMode = do
       ( userError
           "cluster up requires Docker, Helm, Kind, and kubectl on the supported path; simulation is no longer available."
       )
-  clusterUpWithPlatform paths runtimeMode
+  clusterUpWithPulsarBootstrapRepair paths runtimeMode
+
+clusterUpWithPulsarBootstrapRepair :: Paths -> RuntimeMode -> IO ()
+clusterUpWithPulsarBootstrapRepair paths runtimeMode = go False
+  where
+    go repairAttempted = do
+      result <- try (clusterUpWithPlatform paths runtimeMode)
+      case result of
+        Right _ -> pure ()
+        Left err
+          | repairAttempted -> ioError err
+          | otherwise -> do
+              maybeRepairReason <- detectDirtyPulsarBootstrapState paths runtimeMode
+              case maybeRepairReason of
+                Nothing -> ioError err
+                Just repairReason -> do
+                  putStrLn ("cluster up detected inconsistent retained Pulsar state: " <> repairReason)
+                  clusterDown (Just runtimeMode)
+                  resetPulsarClaimDirectories paths runtimeMode
+                  putStrLn "retrying cluster up after resetting retained Pulsar claim roots"
+                  go True
 
 clusterUpWithPlatform :: Paths -> RuntimeMode -> IO ()
 clusterUpWithPlatform paths runtimeMode = do
@@ -1486,14 +1523,14 @@ waitForHarborPostgresPodsReady state = go totalAttempts False ""
       let dataPodCount =
             length
               [ ()
-                | startupPod <- startupPods,
-                  "harbor-postgresql-instance" `List.isPrefixOf` harborPostgresStartupPodName startupPod
+              | startupPod <- startupPods,
+                "harbor-postgresql-instance" `List.isPrefixOf` harborPostgresStartupPodName startupPod
               ]
           repoHostCount =
             length
               [ ()
-                | startupPod <- startupPods,
-                  "harbor-postgresql-repo-host-" `List.isPrefixOf` harborPostgresStartupPodName startupPod
+              | startupPod <- startupPods,
+                "harbor-postgresql-repo-host-" `List.isPrefixOf` harborPostgresStartupPodName startupPod
               ]
           allStartupPodsPresent =
             dataPodCount >= harborPostgresExpectedDataClaims
@@ -1515,8 +1552,8 @@ waitForHarborPostgresPodsReady state = go totalAttempts False ""
                         <> " ["
                         <> harborPostgresStartupPodStatus startupPod
                         <> "]"
-                      | startupPod <- startupPods,
-                        not (harborPostgresStartupPodReady startupPod)
+                    | startupPod <- startupPods,
+                      not (harborPostgresStartupPodReady startupPod)
                     ]
       if null currentError
         then pure ()
@@ -1602,8 +1639,8 @@ restartHarborPostgresStartupPodsIfStuck state allStartupPodsPresent attemptsElap
   where
     unreadyPodNames =
       [ harborPostgresStartupPodName startupPod
-        | startupPod <- startupPods,
-          not (harborPostgresStartupPodReady startupPod)
+      | startupPod <- startupPods,
+        not (harborPostgresStartupPodReady startupPod)
       ]
     shouldRestart =
       not (null unreadyPodNames)
@@ -1783,6 +1820,84 @@ waitForFinalPhaseRollouts state = do
   mapM_ (waitForWorkloadRollout state 900) (finalPhaseDeployments state)
   waitForHarborDatabaseReadyWithRepair state
 
+detectDirtyPulsarBootstrapState :: Paths -> RuntimeMode -> IO (Maybe String)
+detectDirtyPulsarBootstrapState paths runtimeMode = do
+  maybeState <- loadClusterState paths
+  clusterExists <- kindClusterExists paths runtimeMode
+  case matchingClusterState runtimeMode maybeState of
+    Just state
+      | clusterPresent state && clusterExists ->
+          inspectPods state pulsarZookeeperPodNames
+    _ -> pure Nothing
+  where
+    inspectPods _ [] = pure Nothing
+    inspectPods state (podName : remainingPods) = do
+      dirtyPod <- pulsarBootstrapLogShowsDirtyState state podName
+      if dirtyPod
+        then
+          pure
+            ( Just
+                ( podName
+                    <> " reported stale epoch/zxid metadata on its retained volume"
+                )
+            )
+        else inspectPods state remainingPods
+
+pulsarBootstrapLogShowsDirtyState :: ClusterState -> String -> IO Bool
+pulsarBootstrapLogShowsDirtyState state podName = do
+  previousLogsDirty <- podLogsContainDirtyMarker state podName True
+  if previousLogsDirty
+    then pure True
+    else podLogsContainDirtyMarker state podName False
+
+podLogsContainDirtyMarker :: ClusterState -> String -> Bool -> IO Bool
+podLogsContainDirtyMarker state podName usePreviousLogs = do
+  result <-
+    tryCommand
+      Nothing
+      []
+      "kubectl"
+      ( kubeconfigArgs state
+          <> [ "-n",
+               "platform",
+               "logs",
+               podName,
+               "--tail=200"
+             ]
+          <> previousArgs
+      )
+  pure
+    ( case result of
+        Right output -> pulsarBootstrapLogIndicatesDirtyState output
+        Left _ -> False
+    )
+  where
+    previousArgs
+      | usePreviousLogs = ["--previous"]
+      | otherwise = []
+
+pulsarBootstrapLogIndicatesDirtyState :: String -> Bool
+pulsarBootstrapLogIndicatesDirtyState output =
+  any (`List.isInfixOf` output) pulsarBootstrapDirtyLogMarkers
+
+resetPulsarClaimDirectories :: Paths -> RuntimeMode -> IO ()
+resetPulsarClaimDirectories paths runtimeMode = do
+  maybeState <- loadClusterState paths
+  case matchingClusterState runtimeMode maybeState of
+    Nothing -> pure ()
+    Just state -> do
+      let pulsarClaims = filter isPulsarPersistentClaim (claims state)
+      unless (null pulsarClaims) $
+        putStrLn "resetting retained Pulsar claim roots"
+      mapM_ (resetClaimDirectory state) pulsarClaims
+  where
+    isPulsarPersistentClaim persistentClaim =
+      "pulsar-" `List.isPrefixOf` Text.unpack (workload persistentClaim)
+    resetClaimDirectory state persistentClaim = do
+      let directoryPath = claimDirectory paths (clusterRuntimeMode state) persistentClaim
+      directoryPresent <- doesDirectoryExist directoryPath
+      when directoryPresent (removePathForcibly directoryPath)
+
 waitForRoutedPublicationSurface :: Paths -> ClusterState -> IO ()
 waitForRoutedPublicationSurface paths state = do
   when (clusterStateHasDemoUi state) $ do
@@ -1825,24 +1940,88 @@ waitForWorkloadRollout state timeoutSeconds workload =
 
 ensureHelmDependencies :: Paths -> IO ()
 ensureHelmDependencies paths = do
-  dependenciesPresent <- and <$> mapM (doesFileExist . (repoRoot paths </>)) helmDependencyArchives
-  if dependenciesPresent
-    then pure ()
-    else do
-      result <- tryCommand (Just (repoRoot paths)) (Config.helmEnvironment paths) "helm" ["dependency", "build", "--skip-refresh", "chart"]
-      case result of
-        Right _ -> pure ()
-        Left err
-          | missingHelmRepoMetadata err ->
-              do
-                ensureHelmRepositoryDefinitions paths
-                runCommand (Just (repoRoot paths)) (Config.helmEnvironment paths) "helm" ["dependency", "build", "chart"]
-          | otherwise ->
-              ioError (userError ("command failed: helm dependency build --skip-refresh chart\n" <> err))
-  where
-    missingHelmRepoMetadata err =
-      "no repository definition" `List.isInfixOf` err
-        || "no cached repository" `List.isInfixOf` err
+  createDirectoryIfMissing True (helmDependencyArchivesDirectory paths)
+  mapM_ (ensureHelmDependencyArchivePresent paths) helmDependencyArchives
+
+ensureHelmDependencyArchivePresent :: Paths -> FilePath -> IO ()
+ensureHelmDependencyArchivePresent paths archiveRelativePath = do
+  let archivePath = repoRoot paths </> archiveRelativePath
+  archivePresent <- doesFileExist archivePath
+  unless archivePresent $ do
+    let archiveName = takeFileName archiveRelativePath
+        fetchDirectory = helmDependencyArchivesDirectory paths </> (".fetch-" <> archiveName)
+        fetchedArchivePath = fetchDirectory </> archiveName
+    fetchDirectoryPresent <- doesDirectoryExist fetchDirectory
+    when fetchDirectoryPresent (removePathForcibly fetchDirectory)
+    createDirectoryIfMissing True fetchDirectory
+    fetchHelmDependencyArchive paths archiveRelativePath fetchDirectory
+    fetchedArchivePresent <- doesFileExist fetchedArchivePath
+    unless fetchedArchivePresent $
+      ioError
+        ( userError
+            ( "Helm dependency fetch did not produce the expected archive:\n"
+                <> fetchedArchivePath
+            )
+        )
+    renameFile fetchedArchivePath archivePath
+    removePathForcibly fetchDirectory
+
+fetchHelmDependencyArchive :: Paths -> FilePath -> FilePath -> IO ()
+fetchHelmDependencyArchive paths archiveRelativePath destinationDirectory =
+  case archiveRelativePath of
+    "chart/charts/harbor-1.18.3.tgz" ->
+      fetchChartFromHelmRepository paths "harbor" "1.18.3" "https://helm.goharbor.io" destinationDirectory
+    "chart/charts/pg-operator-2.9.0.tgz" ->
+      fetchChartFromHelmRepository paths "pg-operator" "2.9.0" "https://percona.github.io/percona-helm-charts" destinationDirectory
+    "chart/charts/pg-db-2.9.0.tgz" ->
+      fetchChartFromHelmRepository paths "pg-db" "2.9.0" "https://percona.github.io/percona-helm-charts" destinationDirectory
+    "chart/charts/pulsar-4.5.0.tgz" ->
+      fetchChartFromHelmRepository paths "pulsar" "4.5.0" "https://pulsar.apache.org/charts" destinationDirectory
+    "chart/charts/minio-17.0.21.tgz" ->
+      runCommand
+        Nothing
+        []
+        "curl"
+        [ "-fsSL",
+          "https://charts.bitnami.com/bitnami/minio-17.0.21.tgz",
+          "-o",
+          destinationDirectory </> "minio-17.0.21.tgz"
+        ]
+    "chart/charts/gateway-helm-v1.7.2.tgz" ->
+      runCommand
+        Nothing
+        (Config.helmEnvironment paths)
+        "helm"
+        [ "pull",
+          "oci://docker.io/envoyproxy/gateway-helm",
+          "--version",
+          "v1.7.2",
+          "--destination",
+          destinationDirectory
+        ]
+    _ ->
+      ioError
+        ( userError
+            ( "Unsupported Helm dependency archive path:\n"
+                <> archiveRelativePath
+            )
+        )
+
+fetchChartFromHelmRepository :: Paths -> String -> String -> String -> FilePath -> IO ()
+fetchChartFromHelmRepository paths chartName version repositoryUrl destinationDirectory =
+  runCommand
+    Nothing
+    (Config.helmEnvironment paths)
+    "helm"
+    [ "pull",
+      chartName,
+      "--repo",
+      repositoryUrl,
+      "--version",
+      version,
+      "--destination",
+      destinationDirectory
+    ]
 
 ensureEnvoyGatewayCrdsInstalled :: Paths -> ClusterState -> IO ()
 ensureEnvoyGatewayCrdsInstalled paths state = do
@@ -2528,9 +2707,9 @@ engineCommandOverridesFromEnvironment = do
     ( List.sortOn
         fst
         [ (name, value)
-          | (name, value) <- environment,
-            "INFERNIX_ENGINE_COMMAND_" `List.isPrefixOf` name,
-            not (null value)
+        | (name, value) <- environment,
+          "INFERNIX_ENGINE_COMMAND_" `List.isPrefixOf` name,
+          not (null value)
         ]
     )
 

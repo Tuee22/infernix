@@ -145,8 +145,8 @@ validateDemoConfig demoConfig
     runtimeMismatch model = runtimeMode model /= configRuntimeMode demoConfig
     missingEngineBindings =
       [ Text.unpack engineName
-        | engineName <- nub (map selectedEngine (models demoConfig)),
-          engineName `notElem` map engineBindingName (engines demoConfig)
+      | engineName <- nub (map selectedEngine (models demoConfig)),
+        engineName `notElem` map engineBindingName (engines demoConfig)
       ]
     duplicateModelIds = duplicates (map (Text.unpack . modelId) (models demoConfig))
     duplicateMatrixRows = duplicates (map (Text.unpack . matrixRowId) (models demoConfig))

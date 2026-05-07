@@ -15,6 +15,7 @@ services:
     volumes:
       - ./.data:/workspace/.data
       - ./.build:/workspace/.build
+      - ./chart/charts:/workspace/chart/charts
       - ./compose.yaml:/workspace/compose.yaml:ro
       - /var/run/docker.sock:/var/run/docker.sock
     working_dir: /workspace

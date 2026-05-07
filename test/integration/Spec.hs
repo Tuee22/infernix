@@ -657,8 +657,8 @@ postgresPvcBindings state = do
   pure
     ( Map.fromList
         [ binding
-          | lineValue <- bindingLines,
-            Just binding <- [parsePvcBinding lineValue]
+        | lineValue <- bindingLines,
+          Just binding <- [parsePvcBinding lineValue]
         ]
     )
 
@@ -680,8 +680,8 @@ postgresPersistentVolumeInventory state = do
   pure
     ( Map.fromList
         [ inventoryEntry
-          | lineValue <- inventoryLines,
-            Just inventoryEntry <- [parsePersistentVolumeInventory lineValue]
+        | lineValue <- inventoryLines,
+          Just inventoryEntry <- [parsePersistentVolumeInventory lineValue]
         ]
     )
 

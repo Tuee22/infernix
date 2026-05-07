@@ -12,6 +12,7 @@ ARG BASE_IMAGE
 ARG RUNTIME_MODE=linux-cpu
 ARG DEMO_UI=true
 ARG GHC_VERSION=9.14.1
+ARG FORMATTER_GHC_VERSION=9.12.4
 ARG CABAL_VERSION=3.16.1.0
 ARG KIND_VERSION=v0.29.0
 ARG KUBECTL_VERSION=v1.34.0
@@ -27,6 +28,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
     GHC_VERSION=${GHC_VERSION} \
+    FORMATTER_GHC_VERSION=${FORMATTER_GHC_VERSION} \
     CABAL_VERSION=${CABAL_VERSION} \
     INFERNIX_BUILD_ROOT=/workspace/.build/outer-container/build \
     PATH=/root/.local/bin:/root/.ghcup/bin:/root/.cabal/bin:${PATH}
@@ -74,11 +76,13 @@ RUN apt-get update \
 RUN python3 -m pip install --break-system-packages poetry
 
 RUN curl https://get-ghcup.haskell.org -sSf | sh \
+    && ghcup install ghc ${FORMATTER_GHC_VERSION} \
     && ghcup install ghc ${GHC_VERSION} \
     && ghcup set ghc ${GHC_VERSION} \
     && ghcup install cabal ${CABAL_VERSION} \
     && ghcup set cabal ${CABAL_VERSION} \
     && mkdir -p /opt/ghc \
+    && ln -sfn /root/.ghcup/ghc/${FORMATTER_GHC_VERSION} /opt/ghc/${FORMATTER_GHC_VERSION} \
     && ln -sfn /root/.ghcup/ghc/${GHC_VERSION} /opt/ghc/${GHC_VERSION}
 
 RUN curl -fsSL -o /usr/local/bin/kind https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64 \

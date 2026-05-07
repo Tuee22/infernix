@@ -12,11 +12,18 @@
 
 ## Phase Status
 
-Phase 6 is complete. The validation entrypoints, routed coverage, governed-root-document metadata
+Phase 6 is done. The validation entrypoints, routed coverage, governed-root-document metadata
 closure, structured CLI-registry closure, route-hardening cleanup, and Linux lifecycle fixes are
-present in the current worktree, the supported test story is substrate-specific, and the full
-supported `bootstrap/linux-cpu.sh` and `bootstrap/linux-gpu.sh` lifecycles now rerun cleanly
-end-to-end on the final source.
+present in the current worktree, and the supported test story is substrate-specific. The worktree
+now also carries the formatter-toolchain closure: `src/Infernix/Lint/HaskellStyle.hs` drives
+`ormolu` and `hlint` through the dedicated compatible formatter compiler `ghc-9.12.4`, and the
+Linux substrate image now preinstalls that compiler beside the project `ghc-9.14.1` toolchain.
+The supported Linux outer-container launcher now reuses a persistent `chart/charts/` archive
+cache, hydrates MinIO through the supported direct tarball path instead of Docker Hub-backed OCI
+metadata, and repairs the known stale retained Pulsar or ZooKeeper epoch mismatch by resetting
+only the Pulsar claim roots and retrying once. The governed `linux-cpu` and `linux-gpu`
+bootstrap lifecycles both rerun cleanly through `doctor`, `build`, `up`, `status`, `test`, and
+`down`.
 
 ## Current Repo Assessment
 
@@ -28,12 +35,13 @@ active substrate, and the integration suite enumerates every generated active-su
 entry while also carrying Harbor, MinIO, Pulsar, and Harbor PostgreSQL recovery or lifecycle
 checks in code. The staged file, `cluster status`, publication JSON, and generated browser
 contracts still expose the active substrate through `runtimeMode` fields or lines. The worktree
-now removes direct Harbor, MinIO, and Pulsar compatibility handlers from `src/Infernix/Demo/Api.hs`,
-tightens `test/integration/Spec.hs` to require the real routed upstream behavior, persists
-cluster state before later Linux rollout phases, and restages the active Linux substrate on each
-supported bootstrap invocation. Phase 6 is now closed because those fixes pass through the full
-supported `linux-cpu` and `linux-gpu` lifecycle reruns, including their supported `doctor`,
-`build`, `up`, `status`, `down`, and `test` entrypoints.
+now removes direct Harbor, MinIO, and Pulsar compatibility handlers from
+`src/Infernix/Demo/Api.hs`, tightens `test/integration/Spec.hs` to require the real routed
+upstream behavior, persists cluster state before later Linux rollout phases, restages the active
+Linux substrate on each supported bootstrap invocation, reuses a persistent Linux chart-archive
+cache, and performs the targeted Pulsar claim-root reset when the known retained ZooKeeper
+epoch-state corruption blocks bootstrap. The governed `linux-cpu` and `linux-gpu` reruns are both
+fully green again through the supported bootstrap surfaces.
 
 ## Validation Surface
 
@@ -818,6 +826,90 @@ consistently across the remaining governed engineering surfaces.
 - `infernix docs check` fails if the plan or governed docs overclaim full doctrine-depth closure
   before the remaining structure and lint enforcement land
 - `infernix test lint` continues to pass once the broadened docs-lint structure rules are in place
+
+### Remaining Work
+
+None.
+
+---
+
+## Sprint 6.20: Haskell Style Toolchain Compatibility Closure [Done]
+
+**Status**: Done
+**Implementation**: `src/Infernix/Lint/HaskellStyle.hs`, `docker/linux-substrate.Dockerfile`, `documents/development/haskell_style.md`, `documents/reference/cli_reference.md`, `documents/engineering/testing.md`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/system-components.md`
+**Docs to update**: `documents/development/haskell_style.md`, `documents/reference/cli_reference.md`, `documents/engineering/testing.md`, `documents/engineering/docker_policy.md`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/system-components.md`
+
+### Objective
+
+Restore the supported Haskell style gate on the governed bootstrap surfaces now that the current
+`ormolu` and `hlint` releases still target `ghc-9.12` while the project build and runtime
+toolchain have moved to `ghc-9.14.1`.
+
+### Deliverables
+
+- `src/Infernix/Lint/HaskellStyle.hs` bootstraps `ormolu` and `hlint` with a dedicated compatible
+  formatter toolchain instead of assuming the project compiler can build those tools
+- the Linux substrate image carries whatever additional formatter-toolchain prerequisite the
+  supported `bootstrap/linux-cpu.sh test` and `bootstrap/linux-gpu.sh test` surfaces need so the
+  governed runtime path does not redownload that compiler on every ephemeral container run
+- the Haskell-style, CLI-reference, testing, and Docker-policy docs describe the final
+  formatter-toolchain rule honestly instead of claiming the style gate uses the project compiler
+- the plan and component inventory stop overclaiming full lifecycle rerun closure before the
+  supported `linux-cpu` and `linux-gpu` `test` surfaces pass again
+
+### Validation
+
+- `bootstrap/linux-cpu.sh test` passes on the supported outer-container path
+- `bootstrap/linux-gpu.sh test` passes on the supported outer-container path
+- `infernix lint docs` fails if the Haskell-style, CLI-reference, testing, or Docker-policy docs
+  drift from the implemented formatter-toolchain contract
+
+### Remaining Work
+
+None.
+
+---
+
+## Sprint 6.21: Linux Bootstrap Determinism Closure [Done]
+
+**Status**: Done
+**Implementation**: `src/Infernix/Cluster.hs`, `compose.yaml`, `documents/development/local_dev.md`, `documents/engineering/docker_policy.md`, `documents/engineering/storage_and_state.md`, `documents/operations/cluster_bootstrap_runbook.md`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/system-components.md`, `DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md`
+**Docs to update**: `documents/development/local_dev.md`, `documents/engineering/docker_policy.md`, `documents/engineering/storage_and_state.md`, `documents/operations/cluster_bootstrap_runbook.md`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/system-components.md`
+
+### Objective
+
+Close the last Linux bootstrap determinism gap by persisting the supported Helm dependency archive
+cache across fresh outer-container invocations, removing the Docker Hub-backed MinIO OCI
+indirection from that cache-fill path, and repairing the known stale retained Pulsar or
+ZooKeeper epoch mismatch without requiring manual lane cleanup.
+
+### Deliverables
+
+- the supported Linux outer-container launcher bind-mounts a reusable host cache for
+  `chart/charts/` so fresh `docker compose run --rm infernix ...` invocations can reuse the same
+  chart dependency archives
+- `src/Infernix/Cluster.hs` stops relying on `helm dependency build` to discover the MinIO chart
+  through Docker Hub-backed OCI metadata and instead hydrates the governed archive cache with the
+  supported direct MinIO tarball URL together with the remaining top-level chart archives
+- `cluster up` detects the known stale retained Pulsar or ZooKeeper epoch mismatch, resets only
+  the retained Pulsar claim roots for the affected runtime lane, and retries once so governed
+  reruns do not depend on manual local cleanup
+- the governed local-development, Docker-policy, and plan docs describe the reusable chart-archive
+  cache honestly instead of implying every outer-container rerun reconstructs the same dependency
+  bundle from the network, and the storage plus bootstrap docs record the targeted Pulsar repair
+  path as explicit durability repair rather than cache cleanup
+- the final governed `linux-cpu` and `linux-gpu` bootstrap lifecycle reruns pass without depending
+  on a cached Docker Hub OCI allowance for the MinIO chart or manual Pulsar state cleanup
+
+### Validation
+
+- `bootstrap/linux-cpu.sh doctor`, `build`, `up`, `status`, `test`, and `down` pass on the
+  supported outer-container path
+- `bootstrap/linux-gpu.sh doctor`, `build`, `up`, `status`, `test`, and `down` pass on the
+  supported outer-container path, including the targeted Pulsar repair path when stale retained
+  ZooKeeper epoch state is present
+- `infernix lint docs` fails if the governed local-development, Docker-policy, storage, bootstrap,
+  or plan docs drift from the supported Linux bootstrap determinism contract
 
 ### Remaining Work
 

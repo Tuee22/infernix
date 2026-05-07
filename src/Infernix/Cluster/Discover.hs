@@ -114,9 +114,9 @@ containerImages podSpec containerKey =
   case lookupValuePath [containerKey] podSpec of
     Just (Array containers) ->
       [ Text.unpack imageRef
-        | container <- Vector.toList containers,
-          Just imageRef <- [lookupTextPath ["image"] container],
-          not (Text.null imageRef)
+      | container <- Vector.toList containers,
+        Just imageRef <- [lookupTextPath ["image"] container],
+        not (Text.null imageRef)
       ]
     _ -> []
 
@@ -125,12 +125,12 @@ customResourceImages document =
   case lookupTextPath ["kind"] document of
     Just "PerconaPGCluster" ->
       [ Text.unpack imageRef
-        | Just imageRef <-
-            [ lookupTextPath ["spec", "image"] document,
-              lookupTextPath ["spec", "proxy", "pgBouncer", "image"] document,
-              lookupTextPath ["spec", "backups", "pgbackrest", "image"] document
-            ],
-          not (Text.null imageRef)
+      | Just imageRef <-
+          [ lookupTextPath ["spec", "image"] document,
+            lookupTextPath ["spec", "proxy", "pgBouncer", "image"] document,
+            lookupTextPath ["spec", "backups", "pgbackrest", "image"] document
+          ],
+        not (Text.null imageRef)
       ]
     _ -> []
 
@@ -228,7 +228,7 @@ templateClaims namespaceValue releaseValue workloadValue statefulSetName replica
           pvcName = Text.pack (templateName <> "-" <> statefulSetName <> "-" <> show ordinalValue),
           requestedStorage = Text.pack requestedSize
         }
-      | ordinalValue <- [0 .. replicas - 1]
+    | ordinalValue <- [0 .. replicas - 1]
     ]
 
 validatePerconaPostgresqlCluster :: Value -> IO ()

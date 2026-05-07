@@ -108,10 +108,14 @@ the shared adapter project:
   host through the `./.build:/workspace/.build` bind mount, while cabal-home and the cabal
   builddir live at the toolchain's natural in-image locations rather than on any bind-mounted
   host path
-- container mode runs against a baked image snapshot and bind-mounts `./.data/`, `./.build/`, and
-  the host `compose.yaml` (read-only) together with the Docker socket; no docker-managed named
-  volumes back the outer-container build root, and the substrate image uses `tini` as its
-  entrypoint for clean signal handling
+- container mode runs against a baked image snapshot and bind-mounts `./.data/`, `./.build/`,
+  `./chart/charts/`, and the host `compose.yaml` (read-only) together with the Docker socket; no
+  docker-managed named volumes back the outer-container build root, and the substrate image uses
+  `tini` as its entrypoint for clean signal handling
+- on the Linux outer-container path, `./chart/charts/` is the supported host-persisted cache for
+  the top-level Harbor, PostgreSQL, Pulsar, MinIO, and Envoy Gateway chart archives so fresh
+  `docker compose run --rm infernix ...` invocations can reuse the same dependency bundle instead
+  of reconstructing it from the network every time
 - when the outer container shells out to `docker compose run --rm playwright` for routed E2E, it
   forwards `INFERNIX_HOST_REPO_ROOT` so the host docker daemon resolves the playwright service's
   bind mounts against the host repo root

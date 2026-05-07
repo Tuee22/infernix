@@ -391,8 +391,8 @@ repoDigestTag inspection =
   find
     (not . null)
     [ replaceColon digestValue
-      | repoDigestValue <- dockerRepoDigests inspection,
-        Just (_, digestValue) <- [breakOn '@' repoDigestValue]
+    | repoDigestValue <- dockerRepoDigests inspection,
+      Just (_, digestValue) <- [breakOn '@' repoDigestValue]
     ]
 
 normalizeRepositoryPath :: String -> String

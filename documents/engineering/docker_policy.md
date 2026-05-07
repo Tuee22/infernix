@@ -30,8 +30,9 @@ The current worktree follows the two-image-family policy directly: the substrate
 the dedicated `infernix-playwright:local` image comes from `docker/playwright.Dockerfile` and owns
 routed E2E execution for every substrate. `compose.yaml` defines an `infernix` service for the
 control plane and a `playwright` service for routed E2E, and bind-mounts `./.data/`, `./.build/`,
-and the host `compose.yaml` into the `infernix` service together with the Docker socket. The
-Harbor-first bootstrap path no longer depends on any retired helper-registry container cleanup.
+`./chart/charts/`, and the host `compose.yaml` into the `infernix` service together with the
+Docker socket. The Harbor-first bootstrap path no longer depends on any retired helper-registry
+container cleanup.
 
 ## Host Prerequisite Boundary
 
@@ -60,12 +61,16 @@ Harbor-first bootstrap path no longer depends on any retired helper-registry con
   `docker compose build infernix` prepares the supported `linux-gpu` snapshot for that same
   Compose-driven control plane
 - the `infernix` launcher container forwards the Docker socket and bind-mounts `./.data/`,
-  `./.build/`, and the host `./compose.yaml` (read-only) into `/workspace/`
+  `./.build/`, `./chart/charts/`, and the host `./compose.yaml` (read-only) into `/workspace/`
 - the `infernix` launcher container sets `/workspace/.build/outer-container/build` as the
   supported outer build root for the staged substrate file, while the source snapshot manifest
   lives separately at `/opt/infernix/source-snapshot-files.txt` in the image overlay and
   cabal-home plus the cabal builddir stay at the toolchain's natural in-image locations
   (`/root/.cabal/`, `dist-newstyle/`) rather than on any bind-mounted host path
+- the supported Linux launcher also reuses `./chart/charts/` as the host-persisted cache for the
+  top-level Harbor, PostgreSQL, Pulsar, MinIO, and Envoy Gateway chart archives so fresh
+  `docker compose run --rm infernix ...` invocations do not reconstruct that dependency bundle
+  from the network every time
 - the substrate image uses `tini` as its `ENTRYPOINT` so PID 1 forwards signals cleanly and reaps
   zombie processes for cluster lifecycle commands
 - when the outer container shells out to `docker compose run --rm playwright`, it forwards
@@ -88,8 +93,9 @@ Harbor-first bootstrap path no longer depends on any retired helper-registry con
 - the Linux substrate images carry the runtime and validation dependencies needed to launch the
   control plane, build the web bundle, run `poetry install`, regenerate protobuf stubs, and execute
   `poetry run check-code`
-- the Linux substrate images preinstall the project-pinned ghcup-managed `ghc-9.14.1` toolchain
-  used across build and validation flows
+- the Linux substrate images preinstall the project `ghc-9.14.1` toolchain together with the
+  dedicated formatter-toolchain compiler `ghc-9.12.4` that the Haskell style gate uses through
+  `ghcup run`
 
 ## Image Set
 

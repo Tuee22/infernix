@@ -38,9 +38,15 @@
 - the supported Linux bootstrap entrypoints now restage the active substrate before lifecycle and
   test commands, and `cluster up` persists repo-local cluster state before later rollout phases so
   `cluster status` and cleanup can still observe an in-progress Linux reconciliation
-- supported end-to-end `linux-cpu` and `linux-gpu` lifecycle reruns now pass on the governed
-  bootstrap surfaces, including the stricter real-upstream route assertions and the restaged Linux
-  substrate flows
+- the full supported `linux-cpu` lifecycle now reruns cleanly on the governed bootstrap surface,
+  including the stricter real-upstream route assertions, the restaged Linux substrate flow, and
+  the dedicated `ghc-9.12.4` formatter toolchain that the style gate now uses beside the project
+  `ghc-9.14.1` compiler
+- the governed `linux-gpu` lifecycle now also reruns cleanly, the supported Linux launcher keeps a
+  reusable `chart/charts/` cache on the host instead of reconstructing Helm archives inside
+  ephemeral containers, the MinIO dependency hydrates through the supported direct tarball path,
+  and `cluster up` now repairs the known stale retained Pulsar or ZooKeeper epoch mismatch by
+  resetting only the Pulsar claim roots and retrying once
 - Monitoring is not a supported first-class surface.
 
 ## Operator and Host Components
@@ -48,7 +54,7 @@
 | Component | Technology | Deployment | Purpose | Durable state |
 |-----------|------------|------------|---------|---------------|
 | Apple host control plane | `./.build/infernix` plus direct `cabal` materialization against operator-installed ghcup | host-native | canonical operator surface on Apple Silicon; host-native cluster lifecycle owner; host-native direct `infernix service` owner; repo-local kubeconfig owner | `./.build/`, `./.data/` |
-| Linux outer-container control plane | `docker compose run --rm infernix infernix ...` | Linux container | only supported Linux CLI surface for `linux-cpu` and `linux-gpu`; selects the active `infernix-linux-<mode>:local` snapshot through `INFERNIX_COMPOSE_*` launcher variables, forwards the Docker socket, and bind-mounts `./.data/`, `./.build/`, and the host `compose.yaml` so the staged substrate file under `./.build/outer-container/build/` is visible from the host while cabal package state stays in the image overlay at the toolchain's natural locations | `./.data/`, `./.data/runtime/infernix.kubeconfig`, `./.build/outer-container/build/infernix-substrate.dhall` |
+| Linux outer-container control plane | `docker compose run --rm infernix infernix ...` | Linux container | only supported Linux CLI surface for `linux-cpu` and `linux-gpu`; selects the active `infernix-linux-<mode>:local` snapshot through `INFERNIX_COMPOSE_*` launcher variables, forwards the Docker socket, and bind-mounts `./.data/`, `./.build/`, `./chart/charts/`, and the host `compose.yaml` so the staged substrate file under `./.build/outer-container/build/` is visible from the host while reusable Helm chart archives survive fresh launcher containers and cabal package state stays in the image overlay at the toolchain's natural locations | `./.data/`, `./.data/runtime/infernix.kubeconfig`, `./.build/outer-container/build/infernix-substrate.dhall`, `./chart/charts/` |
 | Command registry | structured Haskell parser or dispatcher registry | host or outer container | owns the supported command inventory, `--help` output, and the generated CLI-reference sections that docs lint enforces | none |
 | Substrate configuration | staged banner-prefixed JSON payload at the legacy `infernix-substrate.dhall` path | host or outer container | primary source of truth for active substrate, generated catalog content, daemon placement, active engine dispatch, and test scope once the file has been staged | `./.build/infernix-substrate.dhall` on Apple; `./.build/outer-container/build/infernix-substrate.dhall` on the Linux outer-container path; cluster pods mount the same payload at `/opt/build/infernix/infernix-substrate.dhall` |
 | Route registry | Haskell-owned route inventory | host or outer container during render or reconcile | records public prefixes, backend identity, rewrite rules, visibility, and publication metadata | none |
@@ -76,7 +82,7 @@
 
 | Component | Technology | Deployment | Purpose | Durable state |
 |-----------|------------|------------|---------|---------------|
-| Kind and Helm lifecycle | Haskell control-plane orchestration in `cluster up` | host-native Apple CLI or Linux outer container | create or reuse Kind, reset StorageClasses, reconcile PVs, deploy Harbor first, publish the staged substrate payload, publish images, and deploy the final chart | `./.data/runtime/cluster-state.state`, `./.data/kind/<runtime-mode>/...` |
+| Kind and Helm lifecycle | Haskell control-plane orchestration in `cluster up` | host-native Apple CLI or Linux outer container | create or reuse Kind, reset StorageClasses, reconcile PVs, deploy Harbor first, publish the staged substrate payload, publish images, deploy the final chart, and retry once with a targeted Pulsar claim-root reset when retained ZooKeeper state is self-inconsistent | `./.data/runtime/cluster-state.state`, `./.data/kind/<runtime-mode>/...` |
 | Harbor image preparation | Harbor plus Haskell image publication flow | Kind cluster plus control plane | bootstrap Harbor, mirror required images, and publish repo-owned images before later rollout | Harbor state under `./.data/kind/<runtime-mode>/...` |
 | PostgreSQL substrate | Percona Kubernetes operator plus Patroni PostgreSQL | Kind cluster | only supported in-cluster PostgreSQL contract for Harbor and later services | `./.data/kind/<runtime-mode>/...` |
 | Publication state | repo-local JSON plus routed `/api/publication` surface | repo-local state and demo API | reports control-plane context, the direct `infernix service` daemon location, the routed demo API upstream mode, the active substrate through its current `runtimeMode` field, routes, and upstream health metadata | `./.data/runtime/publication.json` |
@@ -151,6 +157,7 @@
 | Generated Apple kubeconfig | `cluster up` | `./.build/infernix.kubeconfig` | repo-local kubeconfig used by `infernix kubectl` on Apple |
 | Generated Linux substrate file | explicit helper invocation runs `docker compose run --rm infernix infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>` | `./.build/outer-container/build/infernix-substrate.dhall` on the host through the bind mount (visible inside the outer container as `/workspace/.build/outer-container/build/infernix-substrate.dhall`) | outer-container staging path; the authoritative launcher binary remains `/usr/local/bin/infernix` inside the substrate image |
 | Generated Linux kubeconfig | `cluster up` | `./.data/runtime/infernix.kubeconfig` | durable repo-local kubeconfig reused across fresh outer-container invocations |
+| Helm dependency archive cache | `cluster up`, `test integration`, `test all`, and any supported chart-reconcile path that calls `ensureHelmDependencies` | `./chart/charts/` on the host for the Linux outer-container path; `chart/charts/` in the Apple host worktree | cached top-level Helm dependency archives for Harbor, PostgreSQL, Pulsar, MinIO, and Envoy Gateway so fresh launcher containers reuse the same chart bundle instead of rehydrating every dependency from the network |
 | Cluster-mounted substrate file | Helm deployment plus ConfigMap mount | `/opt/build/infernix/infernix-substrate.dhall` | cluster-resident `infernix service` and `infernix-demo` consume the shared staged filename under `/opt/build/infernix/` |
 | Outer-container build root | containerized build or runtime | `./.build/outer-container/build/` on the host (mapped to `/workspace/.build/outer-container/build/` in the outer container) | host-anchored substrate-file root used by the outer-container control plane; carries the staged substrate file only |
 | Source snapshot manifest | Linux outer-container image build | `/opt/infernix/source-snapshot-files.txt` inside the substrate image | sorted source snapshot captured from the baked image context before later generated outputs so git-less image runs of `infernix lint files` validate only the baked source tree; the manifest is intentionally outside the bind-mounted `./.build/` tree so it stays in the image overlay |

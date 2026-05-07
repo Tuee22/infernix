@@ -69,10 +69,16 @@ substrate under `runtimeMode` field names. The plan therefore closes around one 
 validation contract rather than a default cross-substrate rerun story. The worktree now removes
 the direct Harbor, MinIO, and Pulsar tool-route compatibility handlers, requires the real routed
 upstream behavior in integration, persists Linux cluster state before later rollout phases, and
-restages the active Linux substrate payload on each supported bootstrap invocation. Phase 6 is now
-done because the supported `bootstrap/linux-cpu.sh` and `bootstrap/linux-gpu.sh` lifecycles have
-been rerun end-to-end against those changes, including their supported `doctor`, `build`, `up`,
-`status`, `down`, and `test` surfaces.
+restages the active Linux substrate payload on each supported bootstrap invocation. The supported
+`linux-cpu` and `linux-gpu` bootstrap lifecycles now rerun cleanly through `doctor`, `build`,
+`up`, `status`, `test`, and `down`, and the formatter-toolchain closure is present in the
+worktree: the Haskell style bootstrap now drives `ormolu` and `hlint` through the dedicated
+compatible formatter compiler `ghc-9.12.4`, while the Linux substrate image preinstalls that
+compiler beside the project `ghc-9.14.1` toolchain. The supported Linux outer-container launcher
+now reuses a persistent `chart/charts/` archive cache, hydrates the MinIO dependency through the
+supported direct tarball path instead of Docker Hub-backed OCI metadata, and detects the known
+stale Pulsar or ZooKeeper epoch mismatch by resetting only the retained Pulsar claim roots and
+retrying `cluster up` once. Phase 6 is therefore closed on the governed Linux bootstrap surfaces.
 
 Monitoring is not a supported first-class surface.
 

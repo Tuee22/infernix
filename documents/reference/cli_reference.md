@@ -97,8 +97,8 @@
   substrate's Python adapter quality gate via `poetry run check-code` when adapters are present;
   `infernix lint files` uses tracked files from `.git` when available and otherwise falls back to
   the baked `/opt/infernix/source-snapshot-files.txt` manifest on git-less Linux image runs; the
-  style gate uses the project-pinned `ghc-9.14.1` toolchain and fails fast when a compatible
-  `hlint` release is unavailable
+  style gate uses the dedicated compatible formatter toolchain `ghc-9.12.4` through `ghcup run`
+  while the project build and runtime toolchain stays on `ghc-9.14.1`
 - `infernix test unit` runs the Haskell unit suites and the PureScript frontend unit suites via
   `npm --prefix web run test:unit`
 - `infernix test integration`, `infernix test e2e`, and `infernix test all` exercise only the

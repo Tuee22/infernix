@@ -113,8 +113,8 @@ listTrackedGeneratedFailuresFromGit root = do
     ExitSuccess ->
       pure
         [ relativePath <> ": tracked generated artifact"
-          | relativePath <- lines stdoutOutput,
-            isTrackedGeneratedPath relativePath
+        | relativePath <- lines stdoutOutput,
+          isTrackedGeneratedPath relativePath
         ]
     _ ->
       ioError
@@ -133,9 +133,9 @@ listTrackedGeneratedFailuresFromSnapshotManifest = do
       manifestEntries <- lines <$> readFile manifestPath
       pure
         [ relativePath <> ": tracked generated artifact"
-          | relativePath <- manifestEntries,
-            not (null relativePath),
-            isTrackedGeneratedPath relativePath
+        | relativePath <- manifestEntries,
+          not (null relativePath),
+          isTrackedGeneratedPath relativePath
         ]
     else
       ioError

@@ -45,6 +45,10 @@ caches, and Playwright output are derived.
   not a normal cleanup event.
 - `cluster down` plus `cluster up` must preserve the deterministic PV inventory and host-path
   binding for the durable Harbor PostgreSQL state and the other PVC-backed workloads.
+- when retained Pulsar ZooKeeper state is self-inconsistent and blocks `cluster up`, the supported
+  control plane may log a targeted reset of the Pulsar claim roots for that runtime lane and retry
+  once; treat that path as explicit durability repair that discards prior Pulsar message history
+  in that lane
 - Supported inference-result reloads depend on protobuf-backed `*.pb` records only; legacy
   `*.state` compatibility files are not part of the rebuild or reload contract.
 - Publication mirrors, repo-local kubeconfig files, edge-port records, and generated demo-config
@@ -58,6 +62,8 @@ caches, and Playwright output are derived.
 
 - Delete durable state only through explicit operator intent such as supported cluster teardown,
   targeted data reset, or manual local cleanup that accepts data loss.
+- when `cluster up` logs the targeted Pulsar claim-root reset described above, treat it as
+  operator-visible data loss for the affected runtime lane rather than as implicit cache cleanup.
 - Do not hand-edit derived publication mirrors, generated demo-config files, or frontend generated
   outputs; regenerate them from the owning command instead.
 - Keep generated build output, generated contracts, generated protobuf bindings, and test artifacts

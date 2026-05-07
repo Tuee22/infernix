@@ -16,6 +16,9 @@
   active Linux substrate file before supported lifecycle and test commands so lane switches do not
   reuse a stale staged payload
 - run `infernix cluster up`
+- if retained Pulsar ZooKeeper state is self-inconsistent, `cluster up` logs a targeted Pulsar
+  claim-root reset and retries once; treat that retry as explicit durability repair for the
+  affected runtime lane because prior Pulsar message history there is discarded
 - on the Apple host-native path, the command reconciles Homebrew-managed Colima, Docker CLI,
   `kind`, `kubectl`, and `helm` before it attempts the real Kind workflow
 - for `linux-gpu`, confirm the supported NVIDIA host satisfies the documented `nvidia-smi` and

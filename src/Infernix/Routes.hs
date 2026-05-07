@@ -37,7 +37,7 @@ data RouteSpec = RouteSpec
 routeInventory :: Bool -> [RouteInfo]
 routeInventory demoEnabled =
   [ RouteInfo (routePathPrefix routeSpec) (routePurpose routeSpec)
-    | routeSpec <- publishedRoutes demoEnabled
+  | routeSpec <- publishedRoutes demoEnabled
   ]
 
 routePublicationUpstreams :: Bool -> ApiUpstream -> [PublicationUpstream]
@@ -49,9 +49,9 @@ routePublicationUpstreams demoEnabled apiUpstream =
         publicationUpstreamHealthStatus = "published",
         publicationUpstreamDurableBackendState = durableState
       }
-    | routeSpec <- publicationRoutes demoEnabled,
-      Just upstreamId <- [routePublicationId routeSpec],
-      Just durableState <- [routePublicationDurableState routeSpec]
+  | routeSpec <- publicationRoutes demoEnabled,
+    Just upstreamId <- [routePublicationId routeSpec],
+    Just durableState <- [routePublicationDurableState routeSpec]
   ]
 
 routeHelmValues :: Bool -> [String]
