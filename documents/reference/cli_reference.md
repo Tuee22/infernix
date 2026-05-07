@@ -88,9 +88,12 @@
 - `cluster up` forwards any `INFERNIX_ENGINE_COMMAND_*` environment variables into the service
   deployment so adapter-specific engine command prefixes can be configured on the cluster path
   without rebuilding the image
-- on the Linux outer-container cluster path, `cluster up`, `cluster status`, `kubectl`, and
-  routed browser checks keep host-published Kind and edge ports on `127.0.0.1` while reaching
-  Kubernetes through the private Docker `kind` network and the internal kubeconfig
+- on the Linux outer-container cluster path, `cluster up`, `cluster status`, and `kubectl` keep
+  host-published Kind and edge ports on `127.0.0.1` while reaching Kubernetes through the private
+  Docker `kind` network and the internal kubeconfig
+- on the Linux outer-container routed browser path, the forwarded Playwright executor joins the
+  private Docker `kind` network, targets the Kind control-plane container DNS name, and probes the
+  shared edge on port `30090` instead of looping back through `127.0.0.1`
 - `infernix lint files|docs|proto|chart` run the canonical Haskell-implemented static checks
   (`src/Infernix/Lint/*`); `infernix test lint` runs them together with the strict Haskell
   warning gate, the `ormolu` and `hlint` style stack via the Cabal test target, and the active
@@ -106,7 +109,10 @@
 - `infernix test e2e` uses the dedicated `infernix-playwright:local` container on every substrate,
   invoked via `docker compose run --rm playwright`; Apple host-native flows run that compose
   invocation directly while Linux flows forward it from the outer container through the mounted
-  host docker socket; Docker, kind, kubectl, and helm are hard prerequisites on every substrate
+  host docker socket; Docker is required on every substrate, there is no host-native npm fallback
+  path, Apple host-native flows reconcile `kind`, `kubectl`, `helm`, Node.js, and Poetry on
+  demand after `./.build/infernix` exists, and Linux flows rely on the documented outer-container
+  host baseline
 - `infernix internal pulsar-roundtrip ...` is an internal validation helper that publishes one
   protobuf request through the configured Pulsar endpoints and waits for the matching result
 - `infernix cluster up`, `test integration`, and `test e2e` fail fast on `linux-gpu` when the

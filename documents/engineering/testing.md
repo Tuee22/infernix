@@ -7,8 +7,10 @@
 
 ## Executive Summary
 
-- `infernix docs check`, `infernix test lint`, `infernix test unit`, `infernix test integration`,
-  `infernix test e2e`, and `infernix test all` are the only supported validation entrypoints.
+- the supported validation surface includes the focused `infernix lint files`, `infernix lint docs`,
+  `infernix lint proto`, and `infernix lint chart` checks together with the aggregate
+  `infernix docs check`, `infernix test lint`, `infernix test unit`,
+  `infernix test integration`, `infernix test e2e`, and `infernix test all` entrypoints
 - Validation is fail-fast: it reports drift or missing prerequisites and stops instead of silently
   rewriting tracked source or substituting another lane.
 - Integration and routed E2E coverage derive their target set from the active generated catalog,
@@ -34,6 +36,10 @@
 
 | Entry point | Responsibility |
 |-------------|----------------|
+| `infernix lint files` | validate tracked-file hygiene and generated-artifact placement |
+| `infernix lint docs` | run the governed documentation validator directly |
+| `infernix lint proto` | validate the protobuf contract set |
+| `infernix lint chart` | validate Helm chart ownership and route-registry alignment |
 | `infernix docs check` | validate the governed docs suite, metadata, required doctrine structure, generated sections, phase-plan shape, and monitoring-stance alignment |
 | `infernix test lint` | run repo hygiene, chart, docs, proto, Haskell style, build, and Python quality checks |
 | `infernix test unit` | own Haskell and PureScript unit coverage, including generated-catalog logic and the protobuf-over-stdio worker boundary |
@@ -43,6 +49,9 @@
 
 ## Validation Obligations
 
+- `infernix lint files`, `infernix lint docs`, `infernix lint proto`, and `infernix lint chart`
+  provide the focused validation entrypoints for repository hygiene, governed docs, protobuf
+  schemas, and chart ownership when a narrower check is the supported tool for the task at hand.
 - `infernix docs check` proves that the governed docs and the development plan still match the
   supported contract, including the required structure for broad doctrine docs.
 - `infernix test lint` proves repo-owned static quality, the Haskell style gate, the Haskell build
@@ -94,5 +103,7 @@
   executor runs through `docker compose run --rm playwright` against the dedicated
   `infernix-playwright:local` image; the Linux outer-container path forwards the same compose
   invocation through the mounted host docker socket
-- `infernix test e2e` requires Docker, kind, kubectl, and helm on every substrate; there is no
-  host-native npm fallback path
+- `infernix test e2e` requires Docker on every substrate and has no host-native npm fallback
+  path; on Apple host-native flows the supported command reconciles `kind`, `kubectl`, `helm`,
+  Node.js, and Poetry on demand after `./.build/infernix` exists, while Linux flows rely on the
+  documented outer-container host baseline

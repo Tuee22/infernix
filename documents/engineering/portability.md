@@ -29,7 +29,8 @@ the repo does not claim substrate parity where the underlying hardware or launch
 - the generated active-mode catalog, publication contract, route inventory, and browser-visible
   base URL stay stable across supported runtime modes
 - Python-native adapters always run through the shared `python/` Poetry project
-- supported validation entrypoints remain `infernix docs check`, `infernix test lint`,
+- supported validation surfaces remain `infernix lint files`, `infernix lint docs`,
+  `infernix lint proto`, `infernix lint chart`, `infernix docs check`, `infernix test lint`,
   `infernix test unit`, `infernix test integration`, `infernix test e2e`, and `infernix test all`
 
 ## Supported Substrate Detail
