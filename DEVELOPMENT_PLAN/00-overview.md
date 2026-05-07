@@ -14,8 +14,11 @@ PureScript unit suites, `infernix test integration`, and `infernix test e2e` all
 currently staged substrate instead of implying a default cross-substrate rerun. The worktree now
 removes the direct tool-route compatibility payloads, persists Linux cluster state before later
 rollout phases, and restages the active Linux substrate before each supported bootstrap command.
-Phase 6 is now done because the supported `linux-cpu` and `linux-gpu` lifecycle reruns finished
-cleanly against those changes.
+On `apple-silicon`, the direct `infernix service` lane remains host-native, but `cluster up`
+currently deploys both `infernix-service` and `infernix-demo` from the `infernix-linux-cpu:local`
+image family while routed manual inference stays inside the clustered demo path. Phase 6 is now
+done because the supported `linux-cpu` and `linux-gpu` lifecycle reruns finished cleanly against
+those changes.
 
 | Area | Supported contract | Current repo state |
 |------|--------------------|--------------------|
@@ -23,7 +26,7 @@ cleanly against those changes.
 | CLI ownership | one structured Haskell command registry owns the supported command surface without any `--runtime-mode` override | implemented |
 | Substrate selection | one staged substrate file beside the active build root is the primary source of truth for substrate identity and generated catalog selection | implemented |
 | Staged substrate-file format | the substrate file and its mirrors use one explicit and consistent file format and filename contract | implemented; the current contract is a shared `infernix-substrate.dhall` filename carrying banner-prefixed JSON on local and cluster-mounted paths |
-| Apple host-native lane | the host-built binary manages Kind, deploys the clustered demo workloads, and still owns the direct host-side `infernix service` lane | implemented |
+| Apple host-native lane | the host-built binary manages Kind, deploys the clustered service and demo workloads, and still owns the direct host-side `infernix service` lane | implemented |
 | Linux control plane | all supported Linux CLI commands run through `docker compose run --rm infernix infernix ...` | implemented and validated through the supported `linux-cpu` and `linux-gpu` bootstrap lifecycles |
 | Linux GPU naming | the NVIDIA-backed Linux substrate is standardized as `linux-gpu` | implemented |
 | Serialized substrate naming | the generated substrate file, publication JSON, `cluster status`, and browser contracts still carry the active substrate under `runtimeMode` field names | implemented |
@@ -67,9 +70,9 @@ Monitoring is not a supported first-class surface.
 - the staged file retains the legacy `.dhall` filename even though the current payload is
   banner-prefixed JSON produced by Haskell helpers
 - Apple Silicon is the only supported host-native build path outside a container
-- on Apple Silicon, the host-built binary manages Kind, deploys the clustered demo workloads, and
-  still owns the direct host-side `infernix service` lane; the routed demo and Playwright paths do
-  not manage a separate host daemon in the current code path
+- on Apple Silicon, the host-built binary manages Kind, deploys the clustered service and demo
+  workloads, and still owns the direct host-side `infernix service` lane; the routed demo and
+  Playwright paths do not manage a separate host daemon in the current code path
 - on Linux substrates, all supported CLI commands run through
   `docker compose run --rm infernix infernix ...`; there is no supported Linux host-native CLI
   story outside the outer container
@@ -110,7 +113,7 @@ flowchart TB
         gateway["Envoy Gateway controller + Gateway/infernix-edge"]
         routes["HTTPRoute set rendered from Haskell route registry"]
         demo["infernix-demo"]
-        linuxService["infernix service (linux substrates only)"]
+        clusterService["infernix service (cluster workload on every substrate)"]
         harbor["Harbor"]
         minio["MinIO"]
         pgop["Percona PostgreSQL operator"]
@@ -127,13 +130,17 @@ flowchart TB
     routes --> harbor
     routes --> minio
     routes --> pulsar
-    demo -. apple-silicon inference .-> appleDaemon
-    pulsar --> linuxService
-    pulsar -. apple-silicon inference .-> appleDaemon
+    demo --> clusterService
+    pulsar --> clusterService
     harbor --> postgres
     pgop --> postgres
     data --> kind
 ```
+
+Current code nuance: `cluster up` deploys `infernix-service` in-cluster on every supported
+substrate. On `apple-silicon`, that clustered workload currently reuses the
+`infernix-linux-cpu:local` image family even though the direct `infernix service` entrypoint
+remains host-native and publication still reports `daemonLocation: control-plane-host`.
 
 ## Canonical Repository Shape
 

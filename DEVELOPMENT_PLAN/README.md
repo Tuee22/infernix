@@ -65,7 +65,10 @@ keeps the legacy `.dhall` filename even though the payload is banner-prefixed JS
 already reports only the active built substrate instead of implying a default cross-substrate
 matrix, and the generated file,
 `cluster status`, publication JSON, and generated browser contracts still serialize that active
-substrate under `runtimeMode` field names. The plan therefore closes around one active-substrate
+substrate under `runtimeMode` field names. On `apple-silicon`, the direct `infernix service` lane
+remains host-native, but `cluster up` currently deploys both `infernix-service` and
+`infernix-demo` from the `infernix-linux-cpu:local` image family while routed manual inference
+stays inside the clustered demo path. The plan therefore closes around one active-substrate
 validation contract rather than a default cross-substrate rerun story. The worktree now removes
 the direct Harbor, MinIO, and Pulsar tool-route compatibility handlers, requires the real routed
 upstream behavior in integration, persists Linux cluster state before later rollout phases, and
@@ -135,8 +138,8 @@ The supported platform now closes around these rules:
   banner-prefixed JSON produced by Haskell runtime helpers
 - Apple host-native operation is the only supported host build path outside a container
 - on Apple Silicon, the host-built `./.build/infernix` binary manages Kind, deploys the clustered
-  demo workloads, and still owns the direct host-side `infernix service` lane; the routed demo and
-  Playwright paths do not manage a separate host daemon in the current code path
+  service and demo workloads, and still owns the direct host-side `infernix service` lane; the
+  routed demo and Playwright paths do not manage a separate host daemon in the current code path
 - on Apple Silicon, Compose is not a user-facing launcher for ordinary CLI work; the host CLI
   invokes `docker compose run --rm playwright` against the dedicated `infernix-playwright:local`
   image for routed Playwright E2E

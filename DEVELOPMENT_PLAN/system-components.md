@@ -134,7 +134,7 @@
 
 | Substrate | Canonical substrate id | Supported contract | Current repo gap |
 |-----------|------------------------|--------------------|------------------|
-| Apple Silicon / Metal | `apple-silicon` | host-native control plane and host-native inference daemon, clustered demo app, shared config and route contracts | none |
+| Apple Silicon / Metal | `apple-silicon` | host-native control plane, direct host-native daemon lane, and clustered service or demo workloads sharing the same substrate file and route contracts | none |
 | Linux / CPU | `linux-cpu` | containerized Linux lane built from the shared substrate Dockerfile and driven entirely through Compose | none |
 | Linux / NVIDIA GPU | `linux-gpu` | GPU-enabled Kind lane built from the shared substrate Dockerfile and deployed from the same CUDA-based image used by the outer container | none |
 
