@@ -47,6 +47,16 @@
   ephemeral containers, the MinIO dependency hydrates through the supported direct tarball path,
   and `cluster up` now repairs the known stale retained Pulsar or ZooKeeper epoch mismatch by
   resetting only the Pulsar claim roots and retrying once
+- the Apple clean-host bootstrap now verifies same-process ghcup-managed `ghc` and `cabal`
+  resolution before direct `cabal install`, reconciles Homebrew `protoc`, reconciles Colima to
+  the supported `8 CPU / 16 GiB` profile before Docker-backed work, and lets Apple adapter setup
+  or validation paths reconcile Homebrew `python@3.12` plus a user-local Poetry bootstrap on
+  demand
+- the governed Apple lifecycle now reruns cleanly through `doctor`, `build`, `up`, `status`,
+  `test`, and `down`; routed Apple Playwright readiness probes `127.0.0.1` from the host while
+  the browser container joins the private Docker `kind` network and targets the Kind
+  control-plane DNS, and retained Kind state is replayed into and out of the worker rather than
+  bind-mounted
 - Monitoring is not a supported first-class surface.
 
 ## Operator and Host Components
@@ -92,7 +102,7 @@
 | Substrate-file publication | generated `ConfigMap/infernix-demo-config` plus repo-local mirror | Kind cluster and repo-local state | republishes the staged substrate payload for cluster consumers and local inspection tooling through the shared `infernix-substrate.dhall` filename | `./.data/runtime/configmaps/infernix-demo-config/` |
 | Service runtime host | `infernix service` plus `src/Infernix/Runtime/{Cache,Worker,Pulsar}.hs` | direct host process or cluster pod | direct `infernix service` stays host-native on `apple-silicon`; repo-owned cluster workloads currently run from Linux substrate images, with `apple-silicon` selecting the `infernix-linux-cpu` image family for clustered `infernix-service` and `infernix-demo` | `./.data/runtime/`, object-store state under `./.data/object-store/` |
 | Demo UI host | `infernix-demo` deployment | cluster pod | serves `/`, `/api`, `/api/publication`, `/api/cache`, and `/objects/` when demo is enabled; routed manual inference currently executes in-process from that clustered workload rather than through a separate host-side bridge; direct `infernix-demo` execution intentionally exposes only the demo-owned HTTP surface outside the intended HTTPRoute mapping | none |
-| Web runtime executor | PureScript bundle baked into the Linux substrate image plus the dedicated `infernix-playwright:local` Playwright image | substrate image runs cluster-resident as the demo app; Playwright image is invoked via `docker compose run --rm playwright`, directly from the host CLI on Apple Silicon and from inside the outer container against the host docker daemon on Linux substrates | serves the browser bundle from the clustered demo app and runs routed E2E coverage from the dedicated Playwright executor | test artifacts under `./.data/` |
+| Web runtime executor | PureScript bundle baked into the Linux substrate image plus the dedicated `infernix-playwright:local` Playwright image | substrate image runs cluster-resident as the demo app; Playwright image is invoked via `docker compose run --rm playwright`, directly from the host CLI on Apple Silicon and from inside the outer container against the host docker daemon on Linux substrates. On Apple, host-side readiness probes `127.0.0.1:<edge-port>` while the browser container joins the `kind` network and targets the Kind control-plane DNS on port `30090` | serves the browser bundle from the clustered demo app and runs routed E2E coverage from the dedicated Playwright executor | test artifacts under `./.data/` |
 | Engine adapter set | `python/adapters/` invoked via `poetry run` from the Haskell worker | host child process or cluster child process | Python-native engine boundary over typed protobuf-over-stdio | optional Apple venv under `python/.venv/` |
 | Python quality gate | `poetry run check-code` | host or Linux outer-container image | runs mypy strict, black check, and ruff strict against the shared adapter tree | none |
 

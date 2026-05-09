@@ -139,7 +139,8 @@ handleInference options request respond = do
     Nothing ->
       respond (jsonResponse status400 (ErrorResponse "invalid_request" "Unable to decode JSON request body."))
     Just inferenceRequest -> do
-      result <- executeInference (demoPaths options) (demoRuntimeMode options) inferenceRequest
+      activeRuntimeMode <- currentDemoRuntimeMode options
+      result <- executeInference (demoPaths options) activeRuntimeMode inferenceRequest
       case result of
         Left err ->
           respond (jsonResponse status400 err)
@@ -149,18 +150,19 @@ handleInference options request respond = do
 handleCacheMutation :: DemoApiOptions -> Request -> CacheMutation -> (Response -> IO responseReceived) -> IO responseReceived
 handleCacheMutation options request mutation respond = do
   maybeModelId <- decodeModelId request
+  activeRuntimeMode <- currentDemoRuntimeMode options
   case mutation of
     EvictCache -> do
-      evictedCount <- evictCache (demoPaths options) (demoRuntimeMode options) maybeModelId
-      cachePayload <- buildCachePayload options
+      evictedCount <- evictCache (demoPaths options) activeRuntimeMode maybeModelId
+      cachePayload <- buildCachePayload options activeRuntimeMode
       respond
         ( jsonResponse
             status200
             (object ["evictedCount" .= evictedCount, "entries" .= cachePayload])
         )
     RebuildCache -> do
-      rebuiltEntries <- rebuildCache (demoPaths options) (demoRuntimeMode options) maybeModelId
-      cachePayload <- buildCachePayload options
+      rebuiltEntries <- rebuildCache (demoPaths options) activeRuntimeMode maybeModelId
+      cachePayload <- buildCachePayload options activeRuntimeMode
       respond
         ( jsonResponse
             status200
@@ -208,12 +210,17 @@ serveInferenceResult options requestIdValue respond = do
 
 serveCacheStatus :: DemoApiOptions -> (Response -> IO responseReceived) -> IO responseReceived
 serveCacheStatus options respond = do
-  cachePayload <- buildCachePayload options
+  activeRuntimeMode <- currentDemoRuntimeMode options
+  cachePayload <- buildCachePayload options activeRuntimeMode
   respond (jsonResponse status200 cachePayload)
 
-buildCachePayload :: DemoApiOptions -> IO [Value]
-buildCachePayload options = do
-  manifests <- listCacheManifests (demoPaths options) (demoRuntimeMode options)
+currentDemoRuntimeMode :: DemoApiOptions -> IO RuntimeMode
+currentDemoRuntimeMode options =
+  configRuntimeMode <$> decodeDemoConfigFile (demoConfigPath options)
+
+buildCachePayload :: DemoApiOptions -> RuntimeMode -> IO [Value]
+buildCachePayload options runtimeMode = do
+  manifests <- listCacheManifests (demoPaths options) runtimeMode
   mapM (cacheEntryValue options) manifests
 
 cacheEntryValue :: DemoApiOptions -> CacheManifest -> IO Value

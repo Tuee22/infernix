@@ -20,6 +20,13 @@
 The current worktree implements the intended split directly: Apple remains the only supported
 host-native inference lane, while `linux-cpu` and `linux-gpu` remain the containerized lanes, and
 the repo does not claim substrate parity where the underlying hardware or launcher model differs.
+The Linux bootstrap surfaces treat login-shell and reboot boundaries as explicit rerun
+checkpoints, and the Apple clean-host lane now verifies same-process ghcup-managed tool activation
+before direct host build handoff while still keeping Colima sizing, Docker reachability, and
+Apple-only adapter prerequisites substrate-specific. The Apple routed Playwright lane probes the
+published host edge on `127.0.0.1` but runs the dedicated browser container on the private Docker
+`kind` network against the Kind control-plane DNS, and retained Apple Kind state is replayed
+between `./.data/kind/apple-silicon/` and the worker instead of being bind-mounted.
 
 ## Portable Platform Invariants
 
@@ -39,10 +46,12 @@ the repo does not claim substrate parity where the underlying hardware or launch
 |-------|-------------------|--------------------------|------------------------------|
 | Control-plane launcher | `infernix` owns lifecycle and validation behavior | use `./bootstrap/apple-silicon.sh <command>` as the supported stage-0 entrypoint; the direct reference surface remains `./.build/infernix ...` after host build into `./.build/` | use `./bootstrap/linux-cpu.sh <command>` or `./bootstrap/linux-gpu.sh <command>` as the supported stage-0 entrypoint; the direct reference surface remains `docker compose run --rm infernix infernix ...`, with `INFERNIX_COMPOSE_*` selecting `linux-gpu` |
 | Host prerequisites | keep prerequisites minimal and explicit | Homebrew plus ghcup before build; Colima is the only supported Apple Docker environment | Docker Engine plus Compose plugin for `linux-cpu`; NVIDIA driver plus container toolkit in addition for `linux-gpu` |
-| Tool bootstrap after the binary exists | supported commands may reconcile remaining operator tooling | Homebrew-managed Docker CLI, `kind`, `kubectl`, `helm`, Node.js, and Poetry bootstrap may be installed on demand | the substrate image already carries the supported toolchain; runtime install is not part of the contract |
+| Bootstrap activation boundary | stage-0 bootstrap surfaces continue in the current process only after they can verify the executable they need next, and they stop for explicit rerun when a new shell or reboot is required | the bootstrap verifies the selected ghcup-managed `ghc` and `cabal` executables plus Homebrew `protoc` before direct `cabal install`, so the supported clean-host first run does not depend on a second bootstrap invocation | Linux bootstraps stop for Docker group-membership re-entry and NVIDIA-driver reboot, then continue through the same bootstrap surface on rerun |
+| Tool bootstrap after the binary exists | supported commands may reconcile remaining operator tooling | Homebrew-managed Docker CLI, `kind`, `kubectl`, `helm`, Node.js, Homebrew `python@3.12`, and Poetry bootstrap may be installed on demand | the substrate image already carries the supported toolchain; runtime install is not part of the contract |
+| Apple Docker profile | Docker-backed lifecycle and validation work uses one supported local Docker envelope | Colima is the only supported Apple Docker environment, and Apple lifecycle code reconciles it to at least `8 CPU / 16 GiB` before Kind- or Playwright-backed work proceeds | not applicable |
 | Build roots and kubeconfig location | outputs stay repo-local and untracked | `./.build/`, `./.build/infernix.kubeconfig`, and explicit `./.build/infernix internal materialize-substrate apple-silicon` staging | `./.build/outer-container/` on the host through the `./.build:/workspace/.build` bind mount, plus `./.data/runtime/infernix.kubeconfig` for durable outer-container reuse |
-| Python adapter environment | use the shared Poetry project only | `python/.venv/` may materialize on demand through the host's built-in Python plus user-local Poetry bootstrap | adapter dependencies are installed in the shared substrate image build |
-| Browser E2E runner | exercise the routed surface for the active generated catalog | the host CLI orchestrates `docker compose run --rm playwright` against the dedicated `infernix-playwright:local` image | the outer container forwards `docker compose run --rm playwright` through the mounted host docker socket against the same dedicated Playwright image |
+| Python adapter environment | use the shared Poetry project only | `python/.venv/` may materialize on demand after Apple adapter paths reconcile Homebrew `python@3.12` plus a user-local Poetry bootstrap | adapter dependencies are installed in the shared substrate image build |
+| Browser E2E runner | exercise the routed surface for the active generated catalog | the host CLI probes routed readiness on `127.0.0.1:<edge-port>` and then orchestrates `docker compose run --rm playwright` on the private Docker `kind` network against the Kind control-plane DNS using the dedicated `infernix-playwright:local` image | the outer container forwards `docker compose run --rm playwright` through the mounted host docker socket against the same dedicated Playwright image |
 | CUDA path | supported only when the host actually satisfies the NVIDIA contract | not applicable | `linux-gpu` requires the Compose-selected baked image, forwarded Docker socket, GPU visibility, and in-image `nvkind` |
 
 ## Unsupported Shortcuts

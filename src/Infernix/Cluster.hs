@@ -281,6 +281,8 @@ clusterUpWithPlatform paths runtimeMode = do
   (edgePortValue, kubeconfigContents, clusterCreated) <- ensureKindCluster paths runtimeMode requestedPort
   when (clusterCreated && not (kindUsesHostBindMounts paths)) $
     prepareKindNodeRuntimePaths paths runtimeMode
+  unless (kindUsesHostBindMounts paths) $
+    prepareKindNodeClaimDirectories paths runtimeMode discoveredClaims
   writeFile (edgePortPath paths) (show edgePortValue)
   writeTextFile (Config.generatedKubeconfigPath paths) (Text.pack kubeconfigContents)
   activeStateTime <- getCurrentTime
@@ -641,11 +643,19 @@ ensureClaimDirectoryReady :: Paths -> RuntimeMode -> PersistentClaim -> IO ()
 ensureClaimDirectoryReady paths runtimeMode persistentClaim = do
   let directoryPath = claimDirectory paths runtimeMode persistentClaim
   createDirectoryIfMissing True directoryPath
-  -- Harbor and MinIO reuse these persisted hostPath trees as non-root users on Linux.
+  -- Repo-local claim mirrors stay broadly writable so Apple can sync them into Linux Kind nodes
+  -- even though the macOS host filesystem cannot model those node-local container owners.
   runCommand Nothing [] "chmod" ["-R", "a+rwX", directoryPath]
   case claimOwner persistentClaim of
     Nothing -> pure ()
-    Just owner -> runCommand Nothing [] "chown" ["-R", owner, directoryPath]
+    Just owner
+      | hostClaimOwnershipAlignmentSupported paths ->
+          runCommand Nothing [] "chown" ["-R", owner, directoryPath]
+      | otherwise -> pure ()
+
+hostClaimOwnershipAlignmentSupported :: Paths -> Bool
+hostClaimOwnershipAlignmentSupported paths =
+  Config.controlPlaneContext paths == "outer-container"
 
 claimOwner :: PersistentClaim -> Maybe String
 claimOwner claimSpec
@@ -1239,11 +1249,13 @@ buildClusterImages paths runtimeMode = do
       putStrLn ("building cluster images for " <> runtimeModeName)
       runCommand
         (Just (repoRoot paths))
-        [("DOCKER_BUILDKIT", "1")]
+        []
         "docker"
         (dockerBuildArgs imageRef)
 
 preloadBootstrapSupportImagesOnKindNodes :: Paths -> RuntimeMode -> FilePath -> IO ()
+preloadBootstrapSupportImagesOnKindNodes _paths AppleSilicon _renderedChartPath =
+  putStrLn "skipping bootstrap support image preload on apple-silicon; Kind nodes pull supported bootstrap images directly"
 preloadBootstrapSupportImagesOnKindNodes paths runtimeMode renderedChartPath = do
   discoveredImageRefs <- discoverChartImagesFile renderedChartPath
   preloadImageRefs <-
@@ -1259,6 +1271,8 @@ preloadBootstrapSupportImagesOnKindNodes paths runtimeMode renderedChartPath = d
   where
     shouldPreloadBootstrapImageRef imageRef =
       not (null imageRef)
+        && imageRef /= clusterWorkloadImageRef runtimeMode
+        && imageRef /= "docker.io/" <> clusterWorkloadImageRef runtimeMode
         && not ("localhost:30002/" `List.isPrefixOf` imageRef)
         && not ("localhost:30880/" `List.isPrefixOf` imageRef)
     resolveBootstrapSupportImageRef imageRef = do
@@ -2485,8 +2499,9 @@ renderKindConfig paths runtimeMode edgePortValue hostKindRoot registryHostsDirec
       | otherwise = "JoinConfiguration"
 
 kindUsesHostBindMounts :: Paths -> Bool
-kindUsesHostBindMounts paths =
-  Config.controlPlaneContext paths /= "outer-container"
+-- The supported control planes now sync runtime state into Kind nodes explicitly rather than
+-- relying on host bind mounts, which avoids macOS uid/gid incompatibilities on Apple.
+kindUsesHostBindMounts _paths = False
 
 prepareKindNodeRuntimePaths :: Paths -> RuntimeMode -> IO ()
 prepareKindNodeRuntimePaths paths runtimeMode = do
@@ -2494,14 +2509,25 @@ prepareKindNodeRuntimePaths paths runtimeMode = do
       localRegistryHostsRoot = repoRoot paths </> ".build" </> "kind" </> "registry"
       registryDirectoryInNode = "/etc/containerd/certs.d/localhost:30002"
       registryHostsPath = localRegistryHostsRoot </> "localhost:30002" </> "hosts.toml"
+      controlPlaneNodeName = kindControlPlaneNodeName paths runtimeMode
   createDirectoryIfMissing True localKindRoot
   registryHostsContents <- readFile registryHostsPath
   nodeNames <- kindNodeNames paths runtimeMode
-  mapM_ (primeNode localKindRoot registryDirectoryInNode registryHostsContents) nodeNames
+  mapM_
+    ( primeNode
+        localKindRoot
+        controlPlaneNodeName
+        registryDirectoryInNode
+        registryHostsContents
+    )
+    nodeNames
   where
-    primeNode localKindRoot registryDirectoryInNode registryHostsContents nodeName = do
+    primeNode localKindRoot controlPlaneNodeName registryDirectoryInNode registryHostsContents nodeName = do
       runCommand Nothing [] "docker" ["exec", nodeName, "mkdir", "-p", nodeMountedKindRoot]
-      copyDirectoryContentsToContainer localKindRoot nodeName nodeMountedKindRoot
+      -- Stateful platform workloads schedule on worker nodes, so replay retained runtime data only
+      -- there instead of copying large claim trees into the tainted control-plane node.
+      unless (nodeName == controlPlaneNodeName) $
+        copyDirectoryContentsToContainer localKindRoot nodeName nodeMountedKindRoot
       runCommand Nothing [] "docker" ["exec", nodeName, "mkdir", "-p", registryDirectoryInNode]
       runCommandWithInput
         Nothing

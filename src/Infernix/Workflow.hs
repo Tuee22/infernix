@@ -31,7 +31,8 @@ ensureWebDependencies = do
   if depsDirectoryPresent && toolchainPresent && hostNodeReady
     then pure ()
     else do
-      (command, args) <- resolveWebNpmInvocation ["--prefix", "web", "ci"]
+      (command, args) <-
+        resolveWebNpmInvocation ["--prefix", "web", "install", "--no-audit", "--no-fund"]
       runWorkflowCommand (repoRoot paths) command args
 
 platformCommandsAvailable :: IO Bool

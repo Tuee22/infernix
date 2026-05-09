@@ -24,8 +24,8 @@ non-Python binding.
 ## Toolchain
 
 - the shared Poetry project lives at `python/pyproject.toml`
-- on the intended Apple clean-host path, `infernix` may bootstrap the `poetry` executable through
-  the host's built-in Python when adapter setup or validation first needs it
+- on the intended Apple clean-host path, `infernix` may reconcile Homebrew `python@3.12` and then
+  bootstrap the `poetry` executable when adapter setup or validation first needs it
 - outside the cluster, `poetry install --directory python` materializes a repo-local Poetry
   environment for adapter validation on the Apple host path
 - Linux substrate image builds run `poetry install --directory python` during the image build and
@@ -35,8 +35,8 @@ non-Python binding.
 
 Current status:
 
-- on the Apple host-native path, `infernix` bootstraps a user-local `poetry` executable through
-  the host's built-in Python when adapter setup or validation first needs it
+- on the Apple host-native path, `infernix` reconciles Homebrew `python@3.12` and bootstraps a
+  user-local `poetry` executable when adapter setup or validation first needs it
 - once `poetry` exists, the shared project still materializes `python/.venv/` only on demand
 
 ## Quality Gate

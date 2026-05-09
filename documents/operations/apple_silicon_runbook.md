@@ -9,10 +9,14 @@
 
 - the supported Apple clean-host contract reduces pre-existing host requirements to Homebrew plus
   ghcup before the binary is built
+- the Apple stage-0 bootstrap verifies the selected ghcup-managed `ghc` and `cabal` executables
+  plus Homebrew `protoc` before direct `cabal install`, so the supported clean-host first run does
+  not depend on rerunning the same bootstrap command after Cabal is first installed
 - Colima is the only supported Docker environment on Apple Silicon
 - after `./.build/infernix` exists, supported commands reconcile Homebrew-managed Colima, Docker
-  CLI, `kind`, `kubectl`, `helm`, and Node.js on demand, and adapter setup or validation paths
-  bootstrap Poetry through the host's built-in Python when it is absent
+  CLI, `kind`, `kubectl`, `helm`, and Node.js on demand, reconcile Colima to the supported
+  `8 CPU / 16 GiB` profile before Docker-backed work, and let adapter setup or validation paths
+  reconcile Homebrew `python@3.12` plus a user-local Poetry bootstrap when needed
 
 ## Supported Flow
 
@@ -23,8 +27,8 @@
   kubeconfig
 - run `./bootstrap/apple-silicon.sh down` when tearing the cluster down
 
-The first supported host-native command that needs Docker, Kubernetes tooling, Node.js, or Poetry
-reconciles those prerequisites automatically.
+The first supported host-native command that needs Docker, Kubernetes tooling, Node.js, Python, or
+Poetry reconciles those prerequisites automatically.
 
 Direct reference path:
 
@@ -44,6 +48,11 @@ Direct reference path:
   command lets cabal use its natural `dist-newstyle` builddir at the project root and only
   overrides `--installdir=./.build` so the materialized `./.build/infernix` and
   `./.build/infernix-demo` binaries land where the supported CLI surface expects them
+- supported Apple bootstrap commands are restartable stage-0 entrypoints: when host prerequisite
+  reconciliation crosses a real new-shell or reboot boundary, rerun the same
+  `./bootstrap/apple-silicon.sh <command>` surface rather than jumping straight to a later direct
+  command; same-process tool installation continues only after the bootstrap verifies the required
+  executable explicitly
 - supported Apple host workflows stage `./.build/infernix-substrate.dhall` explicitly through
   `./.build/infernix internal materialize-substrate apple-silicon`; add `--demo-ui false` when
   preparing a demo-off config
@@ -63,12 +72,21 @@ Direct reference path:
   engine is Python-native
 - the Apple host bootstrap uses Homebrew-managed Colima, Docker CLI, `kind`, `kubectl`, `helm`,
   Node.js, and related operator tools rather than a broader manual prerequisite list
+- the Apple host bootstrap reconciles Colima to at least `8 CPU / 16 GiB` before Docker-backed
+  lifecycle or validation work proceeds
+- routed Apple E2E readiness probes use the published host edge on `127.0.0.1:<edge-port>`, but
+  the dedicated Playwright container joins the private Docker `kind` network and targets the Kind
+  control-plane DNS instead of `host.docker.internal`
+- retained Apple Kind state under `./.data/kind/apple-silicon/` is replayed into and out of the
+  worker instead of being bind-mounted, so large retained state can make `up`, `test`, and
+  `down` noticeably slower than Linux
 - `infernix service` runs `ensureAppleSiliconRuntimeReady` before the daemon loop. That flow
   ensures the shared `python/` project is installed, creates repo-local engine roots under
   `./.data/engines/`, and invokes each `poetry run setup-*` entrypoint for the active mode's
   Python-native engine bindings
-- the Apple bootstrap also installs Poetry through the host's built-in Python when the `poetry`
-  executable is absent, after which the shared `python/.venv/` still materializes only on demand
+- the Apple bootstrap also reconciles Homebrew `python@3.12` plus a user-local Poetry bootstrap
+  when the `poetry` executable is absent, after which the shared `python/.venv/` still
+  materializes only on demand
 - the current `setup-*` entrypoints remain idempotent preflight hooks layered on top of that
   prerequisite bootstrap and shared-project install flow
 

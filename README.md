@@ -94,9 +94,10 @@ the HA testing and demo ground used to validate and demonstrate them.
 | Ubuntu 24.04 / CPU | containerized Linux CPU path | CPU-only validation, fallback, and non-GPU workloads under the same manifests, messaging, and runtime contract | `llama.cpp`, `whisper.cpp`, `PyTorch` CPU, `ONNX Runtime` CPU, JVM-hosted tools |
 | Ubuntu 24.04 / NVIDIA CUDA Container | pinned CUDA container lane with NVIDIA runtime | high-throughput GPU execution under the same manifests, messaging, and runtime contract | `vLLM`, `PyTorch` CUDA, `Diffusers` or `ComfyUI`, `CTranslate2`, `TensorFlow` CUDA, `JAX/XLA`, `llama.cpp` when GGUF is the right artifact |
 
-On Apple Silicon, the operator workflow has no Python prerequisite. Poetry and a repo-local
-adapter virtual environment materialize only when the Python adapter validation surface is
-exercised explicitly (for example `infernix test unit` or `infernix test all`).
+On Apple Silicon, the operator workflow has no generic Python prerequisite before the host build.
+When Apple adapter setup or validation paths are exercised, `infernix` reconciles Homebrew
+`python@3.12`, bootstraps a user-local `poetry` executable if needed, and materializes
+`python/.venv/` on demand.
 
 Infernix uses one operator, artifact, and browser-demo contract across Apple, CPU, and CUDA runtime
 classes.
@@ -158,8 +159,9 @@ Use the substrate bootstrap that matches the host you actually want to run:
 ```
 
 Each bootstrap entrypoint is designed to be safe to rerun. It probes the current host state,
-installs only the missing supported prerequisites for that substrate, builds or reuses the
-supported launcher path, and then runs the requested control-plane command.
+installs only the missing supported prerequisites for that substrate, verifies any same-process
+tool it just installed before continuing, builds or reuses the supported launcher path, and then
+runs the requested control-plane command.
 
 After a successful run, each script prints the next commands for that substrate, including:
 
@@ -186,11 +188,16 @@ drive or mirror.
 Current status:
 
 - after `./.build/infernix` exists on Apple Silicon, supported host-native commands reconcile
-  Colima, Docker CLI, `kind`, `kubectl`, `helm`, and Node.js through Homebrew when the active path
-  needs them
-- Apple host-native adapter setup and validation paths bootstrap a user-local `poetry` executable
-  through the host's built-in Python when it is absent and then materialize `python/.venv/` on
-  demand
+  the supported Colima `8 CPU / 16 GiB` profile, Docker CLI, `kind`, `kubectl`, `helm`, Node.js,
+  Homebrew `python@3.12`, and Poetry through the supported package-manager or user-local bootstrap
+  path when the active flow needs them
+- Apple host-native adapter setup and validation paths materialize `python/.venv/` on demand after
+  reconciling Homebrew `python@3.12` and a user-local Poetry bootstrap when needed
+- Apple routed Playwright validation probes the published edge from the host on `127.0.0.1` but
+  runs the dedicated browser container on the private Docker `kind` network against the Kind
+  control-plane DNS; because Apple retained Kind state is replayed into and out of the worker
+  rather than bind-mounted, large `./.data/kind/apple-silicon/` trees can make `up`, `test`, and
+  `down` slower than Linux
 - `linux-cpu` keeps its host prerequisites at Docker Engine plus the Docker Compose plugin, and
   `linux-gpu` adds the documented NVIDIA driver and container-toolkit requirements on top of that
 
@@ -231,9 +238,11 @@ Notes:
   depends on an explicitly selected GHC and Cabal pair
 - Colima is the only supported Docker environment on Apple Silicon; once `./.build/infernix`
   exists, supported commands install it from Homebrew together with the Docker CLI, `kind`,
-  `kubectl`, `helm`, Node.js, and any other operator-facing tools needed by the active path
-- Apple adapter setup and validation commands bootstrap Poetry through the host's built-in Python
-  when `poetry` is absent, after which all host-side Python configuration continues through Poetry
+  `kubectl`, `helm`, Node.js, Homebrew `python@3.12`, and any other operator-facing tools needed
+  by the active path; Docker-backed Apple flows reconcile Colima to at least `8 CPU / 16 GiB`
+- Apple adapter setup and validation commands reconcile Homebrew `python@3.12` plus a user-local
+  Poetry bootstrap when `poetry` is absent, after which all host-side Python configuration
+  continues through Poetry
 
 ### Linux CPU host prerequisites
 

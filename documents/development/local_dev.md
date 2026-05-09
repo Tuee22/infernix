@@ -12,9 +12,13 @@
   `./bootstrap/apple-silicon.sh` as the supported stage-0 entrypoint, treats Colima as the only
   supported Docker environment, and lets `infernix` reconcile the remaining supported
   Homebrew-managed tools plus Poetry bootstrap on demand
+- the Apple stage-0 bootstrap now verifies the selected ghcup-managed `ghc` and `cabal`
+  executables plus Homebrew `protoc` before direct `cabal install`, so the clean-host first run
+  no longer depends on rerunning the same bootstrap command after Cabal is first installed
 - after `./.build/infernix` exists on Apple Silicon, supported host-native commands reconcile
-  Colima, Docker CLI, `kind`, `kubectl`, `helm`, Node.js, and Poetry through the supported package
-  manager or built-in Python path when the active flow first needs them
+  the supported Colima `8 CPU / 16 GiB` profile, Docker CLI, `kind`, `kubectl`, `helm`, Node.js,
+  Homebrew `python@3.12`, and Poetry through the supported package-manager or user-local bootstrap
+  path when the active flow first needs them
 - `linux-cpu` and `linux-gpu` expose repo-owned `bootstrap/*.sh` entrypoints that keep host
   prerequisites probe-driven and idempotent; the CPU path stops at Docker Engine plus the Docker
   Compose plugin, and the GPU path adds only the supported NVIDIA driver and container-toolkit
@@ -40,8 +44,8 @@ cabal install --installdir=./.build --install-method=copy --overwrite-policy=alw
 ./.build/infernix cluster down
 ```
 
-The first supported Apple host-native command that needs Docker, Kubernetes tooling, Node.js, or
-Poetry reconciles those prerequisites automatically.
+The first supported Apple host-native command that needs Docker, Kubernetes tooling, Node.js,
+Python, or Poetry reconciles those prerequisites automatically.
 
 ## Containerized Linux Flow
 
@@ -95,11 +99,23 @@ the shared adapter project:
   the host and then hand off to the direct `cabal`, `docker compose`, or `infernix` command
   surface; on Linux they also restage the active substrate file idempotently before supported
   lifecycle and test commands
+- supported stage-0 bootstrap entrypoints are restartable host prerequisite reconcilers: they
+  continue in the current process only after they can verify a usable executable for any tool they
+  just installed or selected, and they stop at explicit new-shell or reboot boundaries so the
+  operator reruns the same bootstrap command instead of skipping ahead to a later direct command
 - the target Apple host workflow has no generic Python prerequisite; Poetry and a repo-local
   adapter virtual environment materialize only when an engine-adapter test or setup path is
-  exercised, and `infernix` bootstraps a user-local `poetry` executable through the host's
-  built-in Python when that path first needs it
+  exercised, and `infernix` reconciles Homebrew `python@3.12` plus a user-local `poetry`
+  executable when that path first needs it
 - Colima is the only supported Docker environment on Apple Silicon
+- supported Apple Docker-backed paths reconcile Colima to at least `8 CPU / 16 GiB` before Kind,
+  Harbor, MinIO, Pulsar, or Playwright work begins
+- on Apple, routed E2E readiness probes use the published host edge on `127.0.0.1:<edge-port>`,
+  but the dedicated Playwright container runs on the private Docker `kind` network against the
+  Kind control-plane DNS instead of `host.docker.internal`
+- on Apple, retained Kind state under `./.data/kind/apple-silicon/` is replayed into and out of
+  the worker instead of being bind-mounted, so large retained state can make `up`, `test`, and
+  `down` noticeably slower than Linux
 - the Apple direct reference build calls `cabal` with `--installdir=./.build` and lets cabal use
   its natural `dist-newstyle` builddir at the project root, which materializes
   `./.build/infernix` and `./.build/infernix-demo`

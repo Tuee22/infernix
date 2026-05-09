@@ -16,9 +16,16 @@ removes the direct tool-route compatibility payloads, persists Linux cluster sta
 rollout phases, and restages the active Linux substrate before each supported bootstrap command.
 On `apple-silicon`, the direct `infernix service` lane remains host-native, but `cluster up`
 currently deploys both `infernix-service` and `infernix-demo` from the `infernix-linux-cpu:local`
-image family while routed manual inference stays inside the clustered demo path. Phase 6 is now
-done because the supported `linux-cpu` and `linux-gpu` lifecycle reruns finished cleanly against
-those changes.
+image family while routed manual inference stays inside the clustered demo path. The Linux
+bootstrap lifecycles now rerun cleanly through their governed surfaces, and the Apple clean-host
+bootstrap hardening is now present in code: the stage-0 entrypoint verifies same-process
+ghcup-managed `ghc` and `cabal` resolution before direct `cabal install`, reconciles Homebrew
+`protoc`, reconciles Colima to the supported `8 CPU / 16 GiB` profile before Docker-backed work,
+and lets Apple adapter setup or validation paths reconcile Homebrew `python@3.12` plus a
+user-local Poetry bootstrap on demand. Routed Apple Playwright readiness now probes `127.0.0.1`
+from the host while the browser container joins the private Docker `kind` network and targets the
+Kind control-plane DNS, and the governed Apple lifecycle reruns cleanly through `doctor`,
+`build`, `up`, `status`, `test`, and `down`.
 
 | Area | Supported contract | Current repo state |
 |------|--------------------|--------------------|
@@ -27,6 +34,7 @@ those changes.
 | Substrate selection | one staged substrate file beside the active build root is the primary source of truth for substrate identity and generated catalog selection | implemented |
 | Staged substrate-file format | the substrate file and its mirrors use one explicit and consistent file format and filename contract | implemented; the current contract is a shared `infernix-substrate.dhall` filename carrying banner-prefixed JSON on local and cluster-mounted paths |
 | Apple host-native lane | the host-built binary manages Kind, deploys the clustered service and demo workloads, and still owns the direct host-side `infernix service` lane | implemented |
+| Apple stage-0 bootstrap determinism | a first-run Apple bootstrap verifies newly installed same-process tool resolution before handing off to direct `cabal` work | implemented and validated through the governed Apple `doctor`, `build`, `up`, `status`, `test`, and `down` lifecycle |
 | Linux control plane | all supported Linux CLI commands run through `docker compose run --rm infernix infernix ...` | implemented and validated through the supported `linux-cpu` and `linux-gpu` bootstrap lifecycles |
 | Linux GPU naming | the NVIDIA-backed Linux substrate is standardized as `linux-gpu` | implemented |
 | Serialized substrate naming | the generated substrate file, publication JSON, `cluster status`, and browser contracts still carry the active substrate under `runtimeMode` field names | implemented |
@@ -64,6 +72,10 @@ Monitoring is not a supported first-class surface.
   `infernix-playwright:local` images, and stage the substrate file under the active build root
   through `infernix internal materialize-substrate ...` idempotently before handing off to the
   direct `cabal`, `docker compose`, or `infernix` command surface
+- supported stage-0 bootstrap entrypoints are restartable prerequisite reconcilers: they continue
+  in the current process only after verifying the required executable they just installed or
+  selected, and they stop at explicit new-shell or reboot boundaries so the operator reruns the
+  same bootstrap command instead of jumping ahead to a later direct command
 - supported runtime, cluster, and validation entrypoints fail fast if the staged substrate file is
   absent instead of regenerating it on first command execution or falling back to env or host
   detection

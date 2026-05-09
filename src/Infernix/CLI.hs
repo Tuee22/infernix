@@ -53,7 +53,7 @@ import Infernix.Types
     InferenceResult (..),
     PersistentClaim (..),
     ResultPayload (..),
-    RuntimeMode (AppleSilicon),
+    RuntimeMode,
     runtimeModeId,
   )
 import Infernix.Web.Contracts qualified as Contracts
@@ -225,9 +225,11 @@ runRuntimeModeE2E paths runtimeMode =
         then
           runPlaywrightImage
             runtimeMode
-            Nothing
-            (hostAccessibleRouteProbeHost runtimeMode)
+            (Just "kind")
+            "127.0.0.1"
             edgePort
+            (kindControlPlaneNodeName paths runtimeMode)
+            30090
             expectedDaemonLocation
             "cluster-demo"
         else
@@ -236,16 +238,12 @@ runRuntimeModeE2E paths runtimeMode =
             (Just "kind")
             (kindControlPlaneNodeName paths runtimeMode)
             30090
+            (kindControlPlaneNodeName paths runtimeMode)
+            30090
             expectedDaemonLocation
             "cluster-demo"
   )
     `finally` clusterDown (Just runtimeMode)
-
-hostAccessibleRouteProbeHost :: RuntimeMode -> String
-hostAccessibleRouteProbeHost runtimeMode =
-  case runtimeMode of
-    AppleSilicon -> "host.docker.internal"
-    _ -> "127.0.0.1"
 
 runInternalPulsarRoundTrip :: RuntimeMode -> FilePath -> String -> String -> IO ()
 runInternalPulsarRoundTrip runtimeMode demoConfigPath modelIdValue inputTextValue = do
@@ -300,16 +298,16 @@ printInternalPulsarResult resultValue = do
       putStrLn ("objectRef: " <> Text.unpack objectRefValue)
     _ -> pure ()
 
-runPlaywrightImage :: RuntimeMode -> Maybe String -> String -> Int -> String -> String -> IO ()
-runPlaywrightImage runtimeMode maybeNetwork routeProbeHost edgePort expectedDaemonLocation expectedApiUpstreamMode = do
+runPlaywrightImage :: RuntimeMode -> Maybe String -> String -> Int -> String -> Int -> String -> String -> IO ()
+runPlaywrightImage runtimeMode maybeNetwork readinessHost readinessPort playwrightHost playwrightPort expectedDaemonLocation expectedApiUpstreamMode = do
   paths <- discoverPaths
-  waitForPlaywrightSurface routeProbeHost edgePort expectedDaemonLocation expectedApiUpstreamMode
+  waitForPlaywrightSurface readinessHost readinessPort expectedDaemonLocation expectedApiUpstreamMode
   let networkValue = fromMaybe "bridge" maybeNetwork
       composeFile = repoRoot paths </> "compose.yaml"
       composeEnv =
         [ ("INFERNIX_PLAYWRIGHT_NETWORK", networkValue),
-          ("INFERNIX_EDGE_PORT", show edgePort),
-          ("INFERNIX_PLAYWRIGHT_HOST", routeProbeHost),
+          ("INFERNIX_EDGE_PORT", show playwrightPort),
+          ("INFERNIX_PLAYWRIGHT_HOST", playwrightHost),
           ("INFERNIX_EXPECT_DAEMON_LOCATION", expectedDaemonLocation),
           ("INFERNIX_EXPECT_API_UPSTREAM_MODE", expectedApiUpstreamMode)
         ]

@@ -102,7 +102,7 @@ main = do
     ("${INFERNIX_COMPOSE_BASE_IMAGE:-ubuntu:24.04}" `isInfixOf` composeLauncherContents)
     "compose build keeps the default CPU base image while allowing the linux-gpu CUDA base image"
   assert
-    (appleHostRequirementIds AppleSilicon ClusterUpCommand == ["docker", "colima", "kind", "kubectl", "helm", "node", "poetry"])
+    (appleHostRequirementIds AppleSilicon ClusterUpCommand == ["docker", "colima", "kind", "kubectl", "helm", "node", "python", "poetry"])
     "apple host prerequisite planning includes the full cluster and adapter toolchain for apple-silicon cluster up"
   assert
     (appleHostRequirementIds LinuxCpu TestAllCommand == ["docker", "colima", "kind", "kubectl", "helm", "node"])

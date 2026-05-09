@@ -1,4 +1,5 @@
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module Infernix.HostPrereqs
   ( appleHostRequirementIds,
@@ -7,6 +8,8 @@ module Infernix.HostPrereqs
 where
 
 import Control.Monad (unless, void, when)
+import Data.Aeson (FromJSON (parseJSON), eitherDecode, withObject, (.:))
+import Data.ByteString.Lazy.Char8 qualified as LazyChar8
 import Data.List (isInfixOf, nub)
 import Infernix.CommandRegistry (Command (..))
 import Infernix.Config (controlPlaneContext, discoverPaths, resolveRuntimeMode)
@@ -26,8 +29,36 @@ data AppleHostRequirement
   | AppleKubectl
   | AppleHelm
   | AppleNode
+  | ApplePython
   | ApplePoetry
   deriving (Eq, Show)
+
+data ColimaProfile = ColimaProfile
+  { colimaStatus :: String,
+    colimaCpus :: Int,
+    colimaMemoryBytes :: Integer
+  }
+
+instance FromJSON ColimaProfile where
+  parseJSON =
+    withObject "ColimaProfile" $ \objectValue ->
+      ColimaProfile
+        <$> objectValue .: "status"
+        <*> objectValue .: "cpus"
+        <*> objectValue .: "memory"
+
+supportedColimaCpuCount :: Int
+supportedColimaCpuCount = 8
+
+supportedColimaMemoryGiB :: Int
+supportedColimaMemoryGiB = 16
+
+gibibyte :: Integer
+gibibyte = 1024 * 1024 * 1024
+
+supportedColimaMemoryBytes :: Integer
+supportedColimaMemoryBytes =
+  fromIntegral supportedColimaMemoryGiB * gibibyte
 
 ensureAppleHostPrerequisites :: Maybe RuntimeMode -> Command -> IO ()
 ensureAppleHostPrerequisites maybeRuntimeMode command = do
@@ -108,13 +139,13 @@ pythonToolRequirements runtimeMode command
   | runtimeMode /= AppleSilicon = []
   | otherwise =
       case command of
-        ServiceCommand -> [ApplePoetry]
-        ClusterUpCommand -> [ApplePoetry]
-        TestLintCommand -> [ApplePoetry]
-        TestUnitCommand -> [ApplePoetry]
-        TestIntegrationCommand -> [ApplePoetry]
-        TestE2ECommand -> [ApplePoetry]
-        TestAllCommand -> [ApplePoetry]
+        ServiceCommand -> [ApplePython, ApplePoetry]
+        ClusterUpCommand -> [ApplePython, ApplePoetry]
+        TestLintCommand -> [ApplePython, ApplePoetry]
+        TestUnitCommand -> [ApplePython, ApplePoetry]
+        TestIntegrationCommand -> [ApplePython, ApplePoetry]
+        TestE2ECommand -> [ApplePython, ApplePoetry]
+        TestAllCommand -> [ApplePython, ApplePoetry]
         _ -> []
 
 requiresDockerDaemon :: [AppleHostRequirement] -> Bool
@@ -201,25 +232,123 @@ ensureHomebrewManagedTool brewExecutable requirement = do
 
 ensureColimaDockerReady :: IO ()
 ensureColimaDockerReady = do
+  profile <- readColimaProfile
   dockerReady <- commandSucceeds "docker" ["info"]
-  unless dockerReady $ do
-    putStrLn "starting Colima for the Apple host-native Docker environment"
-    (exitCode, _, stderrOutput) <- readCreateProcessWithExitCode (proc "colima" ["start"]) ""
-    case exitCode of
-      ExitSuccess -> do
-        dockerReadyAfterStart <- commandSucceeds "docker" ["info"]
-        unless dockerReadyAfterStart $
+  case (colimaProfileRunning profile, colimaProfileSatisfiesMinimums profile, dockerReady) of
+    (True, True, True) -> pure ()
+    (True, True, False) -> do
+      putStrLn "restarting Colima because the Docker daemon is not reachable through the supported Apple host-native environment"
+      stopColima
+      startSupportedColima
+    (True, False, _) -> do
+      putStrLn
+        ( "restarting Colima with the supported Apple profile ("
+            <> supportedColimaProfileSummary
+            <> "); current profile is "
+            <> colimaProfileSummary profile
+        )
+      stopColima
+      startSupportedColima
+    (False, _, _) -> do
+      putStrLn
+        ( "starting Colima for the Apple host-native Docker environment with the supported profile ("
+            <> supportedColimaProfileSummary
+            <> ")"
+        )
+      startSupportedColima
+  dockerReadyAfterStart <- commandSucceeds "docker" ["info"]
+  unless dockerReadyAfterStart $
+    ioError
+      ( userError
+          "Colima is running but `docker info` still failed afterward."
+      )
+  updatedProfile <- readColimaProfile
+  unless (colimaProfileRunning updatedProfile && colimaProfileSatisfiesMinimums updatedProfile) $
+    ioError
+      ( userError
+          ( "Colima did not reach the supported Apple profile after reconciliation. "
+              <> "Expected at least "
+              <> supportedColimaProfileSummary
+              <> " but found "
+              <> colimaProfileSummary updatedProfile
+              <> "."
+          )
+      )
+
+readColimaProfile :: IO ColimaProfile
+readColimaProfile = do
+  (exitCode, stdoutOutput, stderrOutput) <-
+    readCreateProcessWithExitCode (proc "colima" ["list", "--json"]) ""
+  case exitCode of
+    ExitSuccess ->
+      case eitherDecode (LazyChar8.pack stdoutOutput) of
+        Right profile -> pure profile
+        Left decodeError ->
           ioError
             ( userError
-                "Colima started but `docker info` still failed afterward."
+                ( "failed to parse `colima list --json`\n"
+                    <> decodeError
+                )
             )
-      _ ->
-        ioError
-          ( userError
-              ( "failed to start Colima for the Apple host-native Docker environment\n"
-                  <> stderrOutput
-              )
-          )
+    _ ->
+      ioError
+        ( userError
+            ( "failed to inspect the Colima profile for the Apple host-native Docker environment\n"
+                <> stderrOutput
+            )
+        )
+
+colimaProfileRunning :: ColimaProfile -> Bool
+colimaProfileRunning profile =
+  colimaStatus profile == "Running"
+
+colimaProfileSatisfiesMinimums :: ColimaProfile -> Bool
+colimaProfileSatisfiesMinimums profile =
+  colimaCpus profile >= supportedColimaCpuCount
+    && colimaMemoryBytes profile >= supportedColimaMemoryBytes
+
+colimaProfileSummary :: ColimaProfile -> String
+colimaProfileSummary profile =
+  show (colimaCpus profile)
+    <> " CPU / "
+    <> show (colimaMemoryBytes profile `div` gibibyte)
+    <> " GiB memory"
+
+supportedColimaProfileSummary :: String
+supportedColimaProfileSummary =
+  show supportedColimaCpuCount
+    <> " CPU / "
+    <> show supportedColimaMemoryGiB
+    <> " GiB memory"
+
+stopColima :: IO ()
+stopColima = do
+  (exitCode, _, stderrOutput) <- readCreateProcessWithExitCode (proc "colima" ["stop"]) ""
+  case exitCode of
+    ExitSuccess -> pure ()
+    _ ->
+      ioError
+        ( userError
+            ( "failed to stop Colima for Apple host-native Docker reconciliation\n"
+                <> stderrOutput
+            )
+        )
+
+startSupportedColima :: IO ()
+startSupportedColima = do
+  (exitCode, _, stderrOutput) <-
+    readCreateProcessWithExitCode
+      (proc "colima" ["start", "--cpu", show supportedColimaCpuCount, "--memory", show supportedColimaMemoryGiB])
+      ""
+  case exitCode of
+    ExitSuccess -> pure ()
+    _ ->
+      ioError
+        ( userError
+            ( "failed to start Colima for the Apple host-native Docker environment\n"
+                <> stderrOutput
+            )
+        )
 
 commandSucceeds :: FilePath -> [String] -> IO Bool
 commandSucceeds commandName args = do
@@ -234,6 +363,7 @@ homebrewFormula = \case
   AppleKubectl -> "kubernetes-cli"
   AppleHelm -> "helm"
   AppleNode -> "node"
+  ApplePython -> "python@3.12"
   ApplePoetry -> error "Poetry is not installed through Homebrew on the supported Apple path"
 
 providedCommand :: AppleHostRequirement -> String
@@ -244,6 +374,7 @@ providedCommand = \case
   AppleKubectl -> "kubectl"
   AppleHelm -> "helm"
   AppleNode -> "node"
+  ApplePython -> "python3.12"
   ApplePoetry -> "poetry"
 
 requirementId :: AppleHostRequirement -> String
@@ -254,6 +385,7 @@ requirementId = \case
   AppleKubectl -> "kubectl"
   AppleHelm -> "helm"
   AppleNode -> "node"
+  ApplePython -> "python"
   ApplePoetry -> "poetry"
 
 firstExistingPath :: [FilePath] -> IO (Maybe FilePath)

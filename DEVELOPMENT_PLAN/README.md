@@ -81,7 +81,16 @@ compiler beside the project `ghc-9.14.1` toolchain. The supported Linux outer-co
 now reuses a persistent `chart/charts/` archive cache, hydrates the MinIO dependency through the
 supported direct tarball path instead of Docker Hub-backed OCI metadata, and detects the known
 stale Pulsar or ZooKeeper epoch mismatch by resetting only the retained Pulsar claim roots and
-retrying `cluster up` once. Phase 6 is therefore closed on the governed Linux bootstrap surfaces.
+retrying `cluster up` once. The current worktree now also carries the Apple clean-host bootstrap
+closure in code: the stage-0 entrypoint verifies the selected ghcup-managed `ghc` and `cabal`
+executables before direct `cabal install`, reconciles Homebrew `protoc`, reconciles Colima to the
+supported `8 CPU / 16 GiB` profile before Docker-backed work, and lets Apple adapter setup or
+validation paths reconcile Homebrew `python@3.12` plus a user-local Poetry bootstrap on demand.
+The governed Apple host-native lifecycle now reruns cleanly through `doctor`, `build`, `up`,
+`status`, `test`, and `down`; routed Apple Playwright readiness probes `127.0.0.1` from the host
+while the browser container joins the private Docker `kind` network and targets the Kind
+control-plane DNS, and the dedicated Playwright image no longer bakes a conflicting `NO_COLOR`
+default.
 
 Monitoring is not a supported first-class surface.
 

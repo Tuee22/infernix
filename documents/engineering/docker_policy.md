@@ -90,6 +90,9 @@ container cleanup.
 - cluster-backed outer-container commands join the private Docker `kind` network and use
   `kind get kubeconfig --internal` plus control-plane container DNS for Kubernetes access instead
   of `host.docker.internal`
+- on the host-native Apple lane, the dedicated Playwright container also joins the private Docker
+  `kind` network and targets the Kind control-plane DNS instead of `host.docker.internal`; only
+  the host-side routed-surface readiness probe uses the published edge on `127.0.0.1`
 - the Linux substrate images carry the runtime and validation dependencies needed to launch the
   control plane, build the web bundle, run `poetry install`, regenerate protobuf stubs, and execute
   `poetry run check-code`

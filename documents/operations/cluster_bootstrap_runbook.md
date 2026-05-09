@@ -12,6 +12,10 @@
   supported Linux outer-container path stages it with
   `docker compose run --rm infernix infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>`
   before cluster bring-up
+- treat the supported `bootstrap/*.sh` entrypoints as restartable prerequisite reconcilers: when
+  host preparation reports a required new shell or reboot boundary, rerun the same bootstrap
+  command from the start after satisfying that boundary instead of continuing from a later direct
+  `infernix` command
 - the repo-owned `bootstrap/linux-cpu.sh` and `bootstrap/linux-gpu.sh` entrypoints restage that
   active Linux substrate file before supported lifecycle and test commands so lane switches do not
   reuse a stale staged payload
@@ -20,7 +24,13 @@
   claim-root reset and retries once; treat that retry as explicit durability repair for the
   affected runtime lane because prior Pulsar message history there is discarded
 - on the Apple host-native path, the command reconciles Homebrew-managed Colima, Docker CLI,
-  `kind`, `kubectl`, and `helm` before it attempts the real Kind workflow
+  `kind`, `kubectl`, and `helm` before it attempts the real Kind workflow, reconciles Colima to
+  the supported `8 CPU / 16 GiB` profile before Docker-backed work, and verifies the selected
+  ghcup-managed `ghc` and `cabal` executables plus Homebrew `protoc` before direct host build
+  handoff
+- on Apple, retained Kind state under `./.data/kind/apple-silicon/` is replayed into and out of
+  the worker instead of being bind-mounted, so large retained state can make `cluster up` and
+  `cluster down` slower than the Linux lanes even when the supported flow is healthy
 - for `linux-gpu`, confirm the supported NVIDIA host satisfies the documented `nvidia-smi` and
   `docker run --gpus all` preflight contract before cluster creation
 - for `linux-gpu`, also confirm the host filesystem has substantial free space before `cluster up`
@@ -68,6 +78,8 @@ execution is not a supported compatibility fallback for the Harbor, MinIO, or Pu
 ## Teardown
 
 - run `infernix cluster down`
+- on Apple, expect teardown to copy retained Kind claim data back out of the worker before the
+  cluster disappears when durable state exists
 - expect durable state under `./.data/` to remain intact
 
 ## Cross-References

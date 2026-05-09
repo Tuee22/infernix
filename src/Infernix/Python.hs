@@ -9,31 +9,21 @@ module Infernix.Python
 where
 
 import Control.Monad (unless)
-import Data.ByteString.Lazy qualified as Lazy
 import Infernix.Config (Paths (..), controlPlaneContext)
 import Infernix.Types (RuntimeMode)
-import Network.HTTP.Client (httpLbs, parseRequest, responseBody, responseStatus)
-import Network.HTTP.Client.TLS (getGlobalManager)
-import Network.HTTP.Types.Status (statusCode)
 import System.Directory
   ( createDirectoryIfMissing,
     doesDirectoryExist,
     doesFileExist,
     findExecutable,
     getHomeDirectory,
-    getTemporaryDirectory,
     listDirectory,
-    removeFile,
   )
 import System.Environment (getEnvironment, lookupEnv, setEnv)
 import System.Exit (ExitCode (ExitSuccess))
 import System.FilePath (takeDirectory, (</>))
-import System.IO (hClose, openTempFile)
 import System.Info (os)
 import System.Process (CreateProcess (cwd, env), proc, readCreateProcessWithExitCode)
-
-poetryInstallerUrl :: String
-poetryInstallerUrl = "https://install.python-poetry.org"
 
 pythonProjectDirectory :: Paths -> RuntimeMode -> FilePath
 pythonProjectDirectory paths _runtimeMode =
@@ -168,82 +158,95 @@ bootstrapPoetryOnAppleHost = do
       pure executablePath
     Nothing -> do
       pythonExecutable <- requireAppleBootstrapPython
-      installerScriptPath <- downloadPoetryInstaller
-      (exitCode, _, stderrOutput) <-
+      poetryHome <- resolvedPoetryHome
+      let poetryVenv = poetryHome </> "venv"
+          poetryExecutable = poetryVenv </> "bin" </> "poetry"
+          poetryPython = poetryVenv </> "bin" </> "python"
+      createDirectoryIfMissing True poetryHome
+      (venvExitCode, _, venvStderrOutput) <-
         readCreateProcessWithExitCode
-          (proc pythonExecutable [installerScriptPath, "--yes"])
+          (proc pythonExecutable ["-m", "venv", "--clear", "--symlinks", poetryVenv])
           ""
-      removeFile installerScriptPath
-      case exitCode of
+      case venvExitCode of
         ExitSuccess -> do
-          refreshedCandidatePaths <- poetryCandidatePaths
-          maybeInstalled <- firstExistingPath refreshedCandidatePaths
-          case maybeInstalled of
-            Just executablePath -> do
-              prependDirectoryToPath (directoryOf executablePath)
-              pure executablePath
-            Nothing ->
+          (pipExitCode, _, pipStderrOutput) <-
+            readCreateProcessWithExitCode
+              (proc poetryPython ["-m", "pip", "install", "--upgrade", "pip", "poetry"])
+              ""
+          case pipExitCode of
+            ExitSuccess -> do
+              refreshedCandidatePaths <- poetryCandidatePaths
+              maybeInstalled <- firstExistingPath refreshedCandidatePaths
+              case maybeInstalled of
+                Just installedExecutable -> do
+                  prependDirectoryToPath (directoryOf installedExecutable)
+                  pure installedExecutable
+                Nothing -> do
+                  installed <- doesFileExist poetryExecutable
+                  if installed
+                    then do
+                      prependDirectoryToPath (directoryOf poetryExecutable)
+                      pure poetryExecutable
+                    else
+                      ioError
+                        ( userError
+                            "Poetry bootstrap completed but no poetry executable was found in the expected user-local locations."
+                        )
+            _ ->
               ioError
                 ( userError
-                    "Poetry bootstrap completed but no poetry executable was found in the expected user-local locations."
+                    ( "failed to install Poetry into the Apple host bootstrap venv\n"
+                        <> pipStderrOutput
+                    )
                 )
         _ ->
           ioError
             ( userError
-                ( "failed to bootstrap Poetry with the Apple host Python\n"
-                    <> stderrOutput
+                ( "failed to create the Apple host Poetry bootstrap venv with "
+                    <> pythonExecutable
+                    <> "\n"
+                    <> venvStderrOutput
                 )
             )
 
 requireAppleBootstrapPython :: IO FilePath
 requireAppleBootstrapPython = do
-  maybeSystemPython <- firstExistingPath ["/usr/bin/python3"]
-  case maybeSystemPython of
+  maybeCompatibleOnPath <- firstCompatibleCommandOnPath ["python3.13", "python3.12", "python3"]
+  case maybeCompatibleOnPath of
     Just executablePath -> pure executablePath
     Nothing -> do
-      maybePythonOnPath <- findOnPath "python3"
-      case maybePythonOnPath of
+      maybeCompatibleFallback <-
+        firstCompatiblePath
+          [ "/opt/homebrew/bin/python3.13",
+            "/opt/homebrew/bin/python3.12",
+            "/usr/bin/python3"
+          ]
+      case maybeCompatibleFallback of
         Just executablePath -> pure executablePath
         Nothing ->
           ioError
             ( userError
-                "Apple host-native Poetry bootstrap requires the host's built-in python3 executable."
+                "Apple host-native Poetry bootstrap requires a compatible Python 3.12+ executable. The supported Apple host prerequisite reconciliation installs python@3.12 through Homebrew when adapter flows need it."
             )
 
-downloadPoetryInstaller :: IO FilePath
-downloadPoetryInstaller = do
-  tempDirectory <- getTemporaryDirectory
-  (installerPath, installerHandle) <- openTempFile tempDirectory "infernix-poetry-installer.py"
-  hClose installerHandle
-  request <- parseRequest poetryInstallerUrl
-  manager <- getGlobalManager
-  response <- httpLbs request manager
-  if statusCode (responseStatus response) >= 400
-    then do
-      removeFile installerPath
-      ioError
-        ( userError
-            ( "failed to download the Poetry installer from "
-                <> poetryInstallerUrl
-            )
-        )
-    else do
-      Lazy.writeFile installerPath (responseBody response)
-      pure installerPath
-
-poetryCandidatePaths :: IO [FilePath]
-poetryCandidatePaths = do
+resolvedPoetryHome :: IO FilePath
+resolvedPoetryHome = do
   homeDirectory <- getHomeDirectory
   maybePoetryHome <- lookupEnv "POETRY_HOME"
   pure $
     case maybePoetryHome of
-      Just poetryHome ->
-        [ poetryHome </> "bin" </> "poetry",
-          homeDirectory </> ".local" </> "bin" </> "poetry"
-        ]
-      Nothing ->
-        [ homeDirectory </> ".local" </> "bin" </> "poetry"
-        ]
+      Just poetryHome -> poetryHome
+      Nothing -> homeDirectory </> ".local" </> "share" </> "pypoetry"
+
+poetryCandidatePaths :: IO [FilePath]
+poetryCandidatePaths = do
+  homeDirectory <- getHomeDirectory
+  poetryHome <- resolvedPoetryHome
+  pure
+    [ poetryHome </> "bin" </> "poetry",
+      poetryHome </> "venv" </> "bin" </> "poetry",
+      homeDirectory </> ".local" </> "bin" </> "poetry"
+    ]
 
 prependDirectoryToPath :: FilePath -> IO ()
 prependDirectoryToPath directoryPath = do
@@ -261,6 +264,38 @@ findOnPath = findExecutable
 
 directoryOf :: FilePath -> FilePath
 directoryOf = takeDirectory
+
+pythonSupportsApplePoetryBootstrap :: FilePath -> IO Bool
+pythonSupportsApplePoetryBootstrap executablePath = do
+  (exitCode, _, _) <-
+    readCreateProcessWithExitCode
+      (proc executablePath ["-c", "import sys; raise SystemExit(0 if (3, 12) <= sys.version_info[:2] < (4, 0) else 1)"])
+      ""
+  pure (exitCode == ExitSuccess)
+
+firstCompatibleCommandOnPath :: [FilePath] -> IO (Maybe FilePath)
+firstCompatibleCommandOnPath [] = pure Nothing
+firstCompatibleCommandOnPath (commandName : remainingNames) = do
+  maybeExecutable <- findOnPath commandName
+  case maybeExecutable of
+    Just executablePath -> do
+      compatible <- pythonSupportsApplePoetryBootstrap executablePath
+      if compatible
+        then pure (Just executablePath)
+        else firstCompatibleCommandOnPath remainingNames
+    Nothing -> firstCompatibleCommandOnPath remainingNames
+
+firstCompatiblePath :: [FilePath] -> IO (Maybe FilePath)
+firstCompatiblePath [] = pure Nothing
+firstCompatiblePath (pathValue : remainingPaths) = do
+  exists <- doesFileExist pathValue
+  if not exists
+    then firstCompatiblePath remainingPaths
+    else do
+      compatible <- pythonSupportsApplePoetryBootstrap pathValue
+      if compatible
+        then pure (Just pathValue)
+        else firstCompatiblePath remainingPaths
 
 firstExistingPath :: [FilePath] -> IO (Maybe FilePath)
 firstExistingPath [] = pure Nothing

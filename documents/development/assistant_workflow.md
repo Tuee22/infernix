@@ -61,7 +61,7 @@ parallel long-form workflow contracts.
   prerequisites are Homebrew plus ghcup, and `infernix` reconciles the remaining Homebrew-managed
   tools plus Poetry bootstrap when adapter flows need them
 - Apple host paths materialize `python/.venv/` only on demand, after `infernix` bootstraps a
-  user-local `poetry` executable through the host's built-in Python when necessary
+  user-local `poetry` executable after reconciling Homebrew `python@3.12` when necessary
 - Linux substrate images install adapter dependencies during image build, and Linux host
   prerequisites stop at Docker plus the NVIDIA host prerequisites for `linux-gpu`
 - the demo UI is PureScript; frontend contracts are emitted into `web/src/Generated/` by

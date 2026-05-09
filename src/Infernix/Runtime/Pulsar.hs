@@ -12,7 +12,7 @@ module Infernix.Runtime.Pulsar
 where
 
 import Control.Concurrent (forkIO, threadDelay)
-import Control.Exception (SomeException, displayException, try)
+import Control.Exception (SomeAsyncException, SomeException, displayException, fromException, throwIO, try)
 import Control.Monad (forM_, forever, unless, when)
 import Data.Aeson
   ( FromJSON (parseJSON),
@@ -293,16 +293,19 @@ ensureRegisteredSchemasWithRetry paths transport demoConfig =
       registrationResult <- try @SomeException (ensureRegisteredSchemas paths transport demoConfig)
       case registrationResult of
         Right _ -> pure ()
-        Left err -> do
-          hPutStrLn
-            stderr
-            ( "pulsar schema registration attempt "
-                <> show attempt
-                <> " failed:\n"
-                <> displayException err
-            )
-          threadDelay 1000000
-          retry (attempt + 1)
+        Left err ->
+          case fromException err :: Maybe SomeAsyncException of
+            Just asyncErr -> throwIO asyncErr
+            Nothing -> do
+              hPutStrLn
+                stderr
+                ( "pulsar schema registration attempt "
+                    <> show attempt
+                    <> " failed:\n"
+                    <> displayException err
+                )
+              threadDelay 1000000
+              retry (attempt + 1)
 
 requirePulsarAdminBaseUrl :: PulsarTransport -> IO String
 requirePulsarAdminBaseUrl transport =

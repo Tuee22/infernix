@@ -4,8 +4,7 @@ FROM ${BASE_IMAGE}
 ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
-    NPM_CONFIG_UPDATE_NOTIFIER=false \
-    NO_COLOR=1
+    NPM_CONFIG_UPDATE_NOTIFIER=false
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends build-essential python3 \

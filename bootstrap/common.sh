@@ -72,11 +72,56 @@ bootstrap::ensure_sudo_session() {
 
 bootstrap::prepend_path() {
   local entry="$1"
-  [[ -d "${entry}" ]] || return 0
+  [[ -n "${entry}" ]] || return 0
   case ":${PATH}:" in
     *":${entry}:"*) ;;
     *) export PATH="${entry}:${PATH}" ;;
   esac
+  bootstrap::refresh_command_cache
+}
+
+bootstrap::refresh_command_cache() {
+  hash -r 2>/dev/null || true
+}
+
+bootstrap::resolve_command() {
+  command -v "$1" 2>/dev/null || return 1
+}
+
+bootstrap::require_command() {
+  local command_name="$1"
+  local expected_path="$2"
+  local description="$3"
+  shift 3
+  local verify_args=("$@")
+  local resolved
+
+  bootstrap::prepend_path "$(dirname "${expected_path}")"
+  [[ -x "${expected_path}" ]] || bootstrap::die "${description} is expected at ${expected_path} after bootstrap setup."
+  resolved="$(bootstrap::resolve_command "${command_name}")" \
+    || bootstrap::die "${description} is not visible on PATH after bootstrap setup. PATH=${PATH}"
+  if [[ "${#verify_args[@]}" -gt 0 ]]; then
+    "${resolved}" "${verify_args[@]}" >/dev/null 2>&1 \
+      || bootstrap::die "${description} at ${resolved} failed verification via \`${command_name} ${verify_args[*]}\`."
+  fi
+  printf '%s\n' "${resolved}"
+}
+
+bootstrap::require_command_version() {
+  local command_name="$1"
+  local expected_path="$2"
+  local expected_version="$3"
+  shift 3
+  local version_args=("$@")
+  local resolved
+  local actual_version
+
+  resolved="$(bootstrap::require_command "${command_name}" "${expected_path}" "${command_name}" "${version_args[@]}")"
+  actual_version="$("${resolved}" "${version_args[@]}")" \
+    || bootstrap::die "Failed to read ${command_name} version from ${resolved}."
+  [[ "${actual_version}" == "${expected_version}" ]] \
+    || bootstrap::die "Expected ${command_name} ${expected_version}, got ${actual_version} from ${resolved}."
+  printf '%s\n' "${resolved}"
 }
 
 bootstrap::confirm_destructive() {

@@ -97,8 +97,12 @@ mode-specific coverage, matrix behavior, and operator detail behind those canoni
   `docker compose run --rm playwright`; Apple host-native flows run that compose invocation
   directly from the host CLI while Linux flows forward it from the outer container through the
   mounted host docker socket
+- on the host-native Apple lane, routed E2E readiness probes use the published host edge on
+  `127.0.0.1:<edge-port>`, but the dedicated Playwright container joins the private Docker `kind`
+  network and targets the Kind control-plane DNS instead of `host.docker.internal`
 - supported Playwright launchers clear conflicting `NO_COLOR` and `FORCE_COLOR` values from the
-  child environment before Playwright starts
+  child environment before Playwright starts, and the dedicated Playwright image does not
+  reintroduce its own conflicting `NO_COLOR` default
 - changing the active runtime mode changes the generated catalog and therefore the exercised entry
   set automatically
 

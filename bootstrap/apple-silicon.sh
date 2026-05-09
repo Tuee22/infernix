@@ -8,6 +8,9 @@ source "${SCRIPT_DIR}/common.sh"
 SCRIPT_LABEL="./bootstrap/apple-silicon.sh"
 APPLE_GHC_VERSION="9.14.1"
 APPLE_CABAL_VERSION="3.16.1.0"
+APPLE_GHC_BIN=""
+APPLE_CABAL_BIN=""
+APPLE_PROTOC_BIN=""
 
 show_help() {
   cat <<EOF
@@ -25,7 +28,7 @@ Usage:
 
 Commands:
   help    Show this help text.
-  doctor  Ensure Homebrew, ghcup, GHC ${APPLE_GHC_VERSION}, and Cabal ${APPLE_CABAL_VERSION}.
+  doctor  Ensure Homebrew, ghcup, GHC ${APPLE_GHC_VERSION}, Cabal ${APPLE_CABAL_VERSION}, and `protoc`.
   build   Ensure prerequisites, build both binaries, and stage the Apple substrate file.
   up      Ensure prerequisites, build, stage the substrate file, and run \`cluster up\`.
   status  Show \`cluster status\`.
@@ -34,7 +37,8 @@ Commands:
   purge   Destructive cleanup: tear down the cluster and remove ./.build/ and ./.data/.
 
 This script is safe to re-run. It prefers the supported Apple Silicon path:
-Homebrew + ghcup + direct host-native \`./.build/infernix\`.
+Homebrew + ghcup + direct host-native \`./.build/infernix\`, while reconciling build-time
+Homebrew tools such as \`protoc\` before the first direct Cabal handoff.
 EOF
 }
 
@@ -106,17 +110,28 @@ ensure_ghcup_toolchain() {
     bootstrap::run ghcup install cabal "${APPLE_CABAL_VERSION}"
   fi
   bootstrap::run ghcup set cabal "${APPLE_CABAL_VERSION}"
+
+  APPLE_GHC_BIN="$(bootstrap::require_command_version ghc "${HOME}/.ghcup/bin/ghc" "${APPLE_GHC_VERSION}" --numeric-version)"
+  APPLE_CABAL_BIN="$(bootstrap::require_command_version cabal "${HOME}/.ghcup/bin/cabal" "${APPLE_CABAL_VERSION}" --numeric-version)"
+}
+
+ensure_protobuf_compiler() {
+  local protobuf_prefix
+  ensure_brew_formula protobuf
+  protobuf_prefix="$(brew --prefix protobuf)"
+  APPLE_PROTOC_BIN="$(bootstrap::require_command protoc "${protobuf_prefix}/bin/protoc" "Protocol Buffers compiler" --version)"
 }
 
 ensure_build_prerequisites() {
   bootstrap::require_macos
   ensure_homebrew
   ensure_ghcup_toolchain
+  ensure_protobuf_compiler
 }
 
 build_launcher() {
   ensure_build_prerequisites
-  bootstrap::run cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes
+  bootstrap::run "${APPLE_CABAL_BIN}" install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes
   bootstrap::run ./.build/infernix internal materialize-substrate apple-silicon
 }
 

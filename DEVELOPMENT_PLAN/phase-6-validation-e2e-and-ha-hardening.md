@@ -13,17 +13,20 @@
 ## Phase Status
 
 Phase 6 is done. The validation entrypoints, routed coverage, governed-root-document metadata
-closure, structured CLI-registry closure, route-hardening cleanup, and Linux lifecycle fixes are
-present in the current worktree, and the supported test story is substrate-specific. The worktree
-now also carries the formatter-toolchain closure: `src/Infernix/Lint/HaskellStyle.hs` drives
-`ormolu` and `hlint` through the dedicated compatible formatter compiler `ghc-9.12.4`, and the
-Linux substrate image now preinstalls that compiler beside the project `ghc-9.14.1` toolchain.
-The supported Linux outer-container launcher now reuses a persistent `chart/charts/` archive
-cache, hydrates MinIO through the supported direct tarball path instead of Docker Hub-backed OCI
-metadata, and repairs the known stale retained Pulsar or ZooKeeper epoch mismatch by resetting
-only the Pulsar claim roots and retrying once. The governed `linux-cpu` and `linux-gpu`
-bootstrap lifecycles both rerun cleanly through `doctor`, `build`, `up`, `status`, `test`, and
-`down`.
+closure, structured CLI-registry closure, route-hardening cleanup, and supported bootstrap
+lifecycle fixes are present in the current worktree, and the supported test story is
+substrate-specific. The worktree now also carries the formatter-toolchain closure:
+`src/Infernix/Lint/HaskellStyle.hs` drives `ormolu` and `hlint` through the dedicated compatible
+formatter compiler `ghc-9.12.4`, and the Linux substrate image now preinstalls that compiler
+beside the project `ghc-9.14.1` toolchain. The supported Linux outer-container launcher now
+reuses a persistent `chart/charts/` archive cache, hydrates MinIO through the supported direct
+tarball path instead of Docker Hub-backed OCI metadata, and repairs the known stale retained
+Pulsar or ZooKeeper epoch mismatch by resetting only the Pulsar claim roots and retrying once.
+The governed `linux-cpu`, `linux-gpu`, and Apple host-native bootstrap lifecycles rerun cleanly
+through `doctor`, `build`, `up`, `status`, `test`, and `down`, and the Apple routed Playwright
+lane now probes readiness from the host on `127.0.0.1` while the browser container joins the
+private Docker `kind` network and targets the Kind control-plane DNS without reintroducing the
+older `NO_COLOR` warning conflict.
 
 ## Current Repo Assessment
 
@@ -40,8 +43,12 @@ now removes direct Harbor, MinIO, and Pulsar compatibility handlers from
 upstream behavior, persists cluster state before later Linux rollout phases, restages the active
 Linux substrate on each supported bootstrap invocation, reuses a persistent Linux chart-archive
 cache, and performs the targeted Pulsar claim-root reset when the known retained ZooKeeper
-epoch-state corruption blocks bootstrap. The governed `linux-cpu` and `linux-gpu` reruns are both
-fully green again through the supported bootstrap surfaces.
+epoch-state corruption blocks bootstrap. The governed `linux-cpu`, `linux-gpu`, and Apple reruns
+are fully green through the supported bootstrap surfaces. On Apple, routed Playwright no longer
+times out on `host.docker.internal`: host-side readiness probes `127.0.0.1:<edge-port>`, the
+browser container joins the private Docker `kind` network and targets the Kind control-plane DNS
+on port `30090`, and the dedicated Playwright image no longer bakes a conflicting `NO_COLOR`
+default.
 
 ## Validation Surface
 
@@ -407,8 +414,8 @@ toolchain from package managers instead of depending on a broad preinstalled App
   operator tools needed by the active path, including the Docker CLI, `kind`, `kubectl`, `helm`,
   and Node.js
 - when Apple adapter flows first need Poetry and the `poetry` executable is absent, `infernix`
-  can bootstrap Poetry through the host's built-in Python and then continue all host-side Python
-  management through the shared Poetry project
+  can reconcile Homebrew `python@3.12`, bootstrap Poetry into a user-local environment, and then
+  continue all host-side Python management through the shared Poetry project
 - `linux-cpu` host prerequisites stop at Docker Engine plus the Docker Compose plugin
 - `linux-gpu` host prerequisites stop at Docker Engine plus the supported NVIDIA driver and
   container-toolkit setup
@@ -910,6 +917,66 @@ ZooKeeper epoch mismatch without requiring manual lane cleanup.
   ZooKeeper epoch state is present
 - `infernix lint docs` fails if the governed local-development, Docker-policy, storage, bootstrap,
   or plan docs drift from the supported Linux bootstrap determinism contract
+
+### Remaining Work
+
+None.
+
+---
+
+## Sprint 6.22: Apple Bootstrap Lifecycle Closure [Done]
+
+**Status**: Done
+**Implementation**: `bootstrap/apple-silicon.sh`, `bootstrap/common.sh`, `src/Infernix/CLI.hs`, `src/Infernix/HostPrereqs.hs`, `src/Infernix/Python.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Workflow.hs`, `src/Infernix/Demo/Api.hs`, `src/Infernix/Runtime/Pulsar.hs`, `docker/playwright.Dockerfile`, `test/unit/Spec.hs`
+**Docs to update**: `README.md`, `AGENTS.md`, `CLAUDE.md`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/00-overview.md`, `DEVELOPMENT_PLAN/system-components.md`, `documents/development/assistant_workflow.md`, `documents/development/local_dev.md`, `documents/development/python_policy.md`, `documents/development/testing_strategy.md`, `documents/engineering/docker_policy.md`, `documents/engineering/portability.md`, `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`
+
+### Objective
+
+Close the remaining Apple clean-host lifecycle gaps so the governed stage-0 entrypoint can carry a
+supported Apple host through first-run tool activation, host prerequisite reconciliation,
+cluster-backed validation, and teardown without relying on the earlier rerun workaround or
+substrate-mismatched compatibility shims.
+
+### Deliverables
+
+- `bootstrap/apple-silicon.sh` stops depending on ambient `PATH` side effects to discover freshly
+  installed ghcup-managed tools in the same process and instead resolves or verifies the selected
+  `ghc`, `cabal`, and Homebrew `protoc` executables explicitly before direct host build handoff
+- shared bootstrap helper logic defines the restartable-entrypoint rule explicitly: same-process
+  tool installs continue only after the bootstrap verifies command resolution and version, while
+  new-shell or reboot requirements stop with a rerun instruction for the same bootstrap command
+- Apple host prerequisite reconciliation can install or verify Homebrew `python@3.12`, a
+  user-local Poetry bootstrap, Node.js, and the supported Colima profile on demand when Apple
+  lifecycle or adapter-validation paths need them
+- Apple Kind lifecycle code no longer relies on unsupported host bind-mount ownership assumptions,
+  no longer preloads unsupported bootstrap images onto Kind nodes on the Apple lane, and keeps the
+  routed demo API aligned with the active staged runtime mode during routed validation
+- routed Apple Playwright validation probes publication readiness from the host on
+  `127.0.0.1:<edge-port>` but runs the browser container on the private Docker `kind` network
+  against the Kind control-plane DNS on port `30090`, so the Apple lane no longer depends on
+  `host.docker.internal`
+- the dedicated Playwright image no longer bakes a conflicting `NO_COLOR` default back into the
+  routed E2E lane
+- the governed local-development, portability, Python-policy, Apple runbook, cluster-bootstrap,
+  assistant-workflow, and root orientation docs describe the implemented Apple lifecycle contract
+  instead of the older rerun workaround or built-in-Python bootstrap story
+- the supported Apple clean-host validation lane closes without a second manual invocation after
+  the first ghcup-managed `cabal 3.16.1.0` install
+
+### Validation
+
+- on a clean Apple Silicon host with Homebrew plus ghcup present,
+  `./bootstrap/apple-silicon.sh build` reaches direct Cabal handoff on the first invocation after
+  it installs or selects `cabal 3.16.1.0`
+- the supported Apple lifecycle rerun closes through
+  `./bootstrap/apple-silicon.sh doctor`, `build`, `up`, `status`, `test`, and `down`
+- the Apple bootstrap fails fast with actionable messages if the resolved ghcup-managed toolchain,
+  Homebrew `protoc`, or supported Colima profile still cannot be used in the current process
+- the supported Apple routed Playwright lane passes without timing out on
+  `host.docker.internal`, and the later Playwright image rebuild does not reintroduce the prior
+  `NO_COLOR`/`FORCE_COLOR` warning conflict
+- `infernix lint docs` fails if the governed local-development, Python-policy, portability, or
+  runbook docs drift from the implemented Apple lifecycle contract
 
 ### Remaining Work
 

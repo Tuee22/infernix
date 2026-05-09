@@ -31,4 +31,6 @@ The canonical assistant workflow lives in
 [documents/development/assistant_workflow.md](documents/development/assistant_workflow.md). This
 root file is only the entry point. Supported stage-0 host bootstrap entrypoints live under
 `bootstrap/` and are documented in [README.md](README.md) and
-[documents/development/local_dev.md](documents/development/local_dev.md).
+[documents/development/local_dev.md](documents/development/local_dev.md). Those bootstrap
+entrypoints are restartable prerequisite reconcilers: they verify same-process tool activation
+before continuing and stop at explicit rerun boundaries when a new shell or reboot is required.
