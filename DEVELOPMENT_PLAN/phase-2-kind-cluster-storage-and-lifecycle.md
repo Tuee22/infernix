@@ -12,8 +12,8 @@
 
 Phase 2 is complete. `cluster up` republishes the staged substrate payload into
 `ConfigMap/infernix-demo-config`, the repo-local publication mirror records that payload, the
-chart mounts the shared `/opt/build/infernix/infernix-substrate.dhall` path, the Linux
-control-plane launcher closes around the baked-image outer-container flow.
+chart mounts the shared `/opt/build/infernix-substrate.dhall` path, and the Linux control-plane
+launcher closes around the baked-image outer-container flow.
 
 ## Storage Doctrine
 
@@ -200,7 +200,7 @@ None.
 
 ---
 
-## Sprint 2.6: Build-Generated Substrate File Staging and ConfigMap Publication [Done]
+## Sprint 2.6: Explicit Substrate File Staging and ConfigMap Publication [Done]
 
 **Status**: Done
 **Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Config.hs`, `src/Infernix/Models.hs`, `chart/templates/configmap-demo-catalog.yaml`, `chart/templates/deployment-service.yaml`, `chart/templates/deployment-demo.yaml`, `test/integration/Spec.hs`
@@ -208,13 +208,12 @@ None.
 
 ### Objective
 
-Make `cluster up` the canonical point where the build-generated substrate file is republished into
-the cluster and mirrored for local inspection.
+Make `cluster up` the canonical point where the explicitly staged substrate file is republished
+into the cluster and mirrored for local inspection.
 
 ### Deliverables
 
-- `cluster up` republishes the exact build-generated `infernix-substrate.dhall` for the active
-  built substrate
+- `cluster up` republishes the exact staged `infernix-substrate.dhall` for the active substrate
 - the generated file contains every README-matrix row supported by that substrate and no
   unsupported rows
 - `cluster up` creates or updates `ConfigMap/infernix-demo-config` from that generated content
@@ -233,7 +232,7 @@ None.
 
 ---
 
-## Sprint 2.9: Build-Generated Substrate File Publication and Linux Launcher Closure [Done]
+## Sprint 2.9: Staged Substrate File Publication and Linux Launcher Closure [Done]
 
 **Status**: Done
 **Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Models.hs`, `chart/templates/configmap-demo-catalog.yaml`, `chart/templates/deployment-service.yaml`, `chart/templates/deployment-demo.yaml`, `compose.yaml`, `docker/linux-substrate.Dockerfile`
@@ -248,7 +247,7 @@ one Compose-driven outer container for both Linux substrates.
 
 - `cluster up` publishes the staged substrate payload into `ConfigMap/infernix-demo-config`
 - Linux cluster-resident consumers mount that ConfigMap at
-  `/opt/build/infernix/infernix-substrate.dhall`
+  `/opt/build/infernix-substrate.dhall`
 - the outer-container control plane stages the same payload on the host at
   `./.build/outer-container/build/infernix-substrate.dhall` through the host-anchored bind mount
   when it needs to know its own substrate

@@ -14,33 +14,37 @@ PureScript unit suites, `infernix test integration`, and `infernix test e2e` all
 currently staged substrate instead of implying a default cross-substrate rerun. The worktree now
 removes the direct tool-route compatibility payloads, persists Linux cluster state before later
 rollout phases, and restages the active Linux substrate before each supported bootstrap command.
-On `apple-silicon`, the direct `infernix service` lane remains host-native, but `cluster up`
-currently deploys both `infernix-service` and `infernix-demo` from the `infernix-linux-cpu:local`
-image family while routed manual inference stays inside the clustered demo path. The Linux
-bootstrap lifecycles now rerun cleanly through their governed surfaces, and the Apple clean-host
-bootstrap hardening is now present in code: the stage-0 entrypoint verifies same-process
-ghcup-managed `ghc` and `cabal` resolution before direct `cabal install`, reconciles Homebrew
-`protoc`, reconciles Colima to the supported `8 CPU / 16 GiB` profile before Docker-backed work,
-and lets Apple adapter setup or validation paths reconcile Homebrew `python@3.12` plus a
-user-local Poetry bootstrap on demand. Routed Apple Playwright readiness now probes `127.0.0.1`
-from the host while the browser container joins the private Docker `kind` network and targets the
-Kind control-plane DNS, and the governed Apple lifecycle reruns cleanly through `doctor`,
-`build`, `up`, `status`, `test`, and `down`.
+The intended Apple product shape is now implemented and validated: `apple-silicon` keeps
+inference host-native for performance while Kind continues to host Harbor, MinIO, Pulsar,
+PostgreSQL, Envoy Gateway, and the optional routed demo surface. `cluster up` no longer deploys
+`infernix-service` on the Apple lane, routed manual inference bridges through Pulsar into the
+host-native daemon, publication exposes `daemonLocation: control-plane-host` plus
+`inferenceDispatchMode: pulsar-bridge-to-host-daemon`, and the runtime worker now uses explicit
+supported runners instead of placeholder or fallback execution. The Linux bootstrap lifecycles
+rerun cleanly through their governed surfaces, and the Apple clean-host bootstrap hardening is now
+present in code and validation: the stage-0 entrypoint verifies same-process ghcup-managed `ghc`
+and `cabal` resolution before direct `cabal install`, reconciles Homebrew `protoc`, reconciles
+Colima to the supported `8 CPU / 16 GiB` profile before Docker-backed work, and lets Apple
+adapter setup or validation paths reconcile Homebrew `python@3.12` plus a user-local Poetry
+bootstrap on demand. Routed Apple Playwright readiness probes `127.0.0.1` from the host while
+the browser container joins the private Docker `kind` network and targets the Kind control-plane
+DNS, and the governed Apple lifecycle reruns cleanly through `doctor`, `build`, `up`, `status`,
+`test`, and `down`.
 
 | Area | Supported contract | Current repo state |
 |------|--------------------|--------------------|
-| Root-document governance | the governed docs, root docs, and plan all describe the same staged-substrate doctrine | implemented |
+| Root-document governance | the governed docs, root docs, and plan all describe the same staged-substrate doctrine and Apple topology | implemented and validated |
 | CLI ownership | one structured Haskell command registry owns the supported command surface without any `--runtime-mode` override | implemented |
 | Substrate selection | one staged substrate file beside the active build root is the primary source of truth for substrate identity and generated catalog selection | implemented |
 | Staged substrate-file format | the substrate file and its mirrors use one explicit and consistent file format and filename contract | implemented; the current contract is a shared `infernix-substrate.dhall` filename carrying banner-prefixed JSON on local and cluster-mounted paths |
-| Apple host-native lane | the host-built binary manages Kind, deploys the clustered service and demo workloads, and still owns the direct host-side `infernix service` lane | implemented |
+| Apple host-native lane | the host-built binary manages Kind, keeps the Apple inference daemon host-native, and may still expose clustered support services and a clustered routed demo surface | implemented and validated; the clustered demo surface now bridges into the host daemon and Apple no longer deploys `infernix-service` in Kind |
 | Apple stage-0 bootstrap determinism | a first-run Apple bootstrap verifies newly installed same-process tool resolution before handing off to direct `cabal` work | implemented and validated through the governed Apple `doctor`, `build`, `up`, `status`, `test`, and `down` lifecycle |
 | Linux control plane | all supported Linux CLI commands run through `docker compose run --rm infernix infernix ...` | implemented and validated through the supported `linux-cpu` and `linux-gpu` bootstrap lifecycles |
 | Linux GPU naming | the NVIDIA-backed Linux substrate is standardized as `linux-gpu` | implemented |
 | Serialized substrate naming | the generated substrate file, publication JSON, `cluster status`, and browser contracts still carry the active substrate under `runtimeMode` field names | implemented |
 | Demo UI gating | the staged substrate file can disable the clustered demo surface | implemented; the supported materialization path accepts `--demo-ui false` |
-| Simulation stance | no simulated cluster, route, transport, or inference fallback remains in the supported runtime or validation contract | implemented in code; direct tool-route compatibility handlers are removed and integration now requires live upstream responses |
-| Validation scope | integration uses one `.dhall`-driven suite over the README matrix, E2E stays substrate-agnostic at the browser layer, and `test all` validates one built substrate at a time | implemented and validated through the supported Linux CPU and GPU lifecycle reruns |
+| Simulation stance | no simulated cluster, route, transport, or inference fallback remains in the supported runtime or validation contract | implemented and validated |
+| Validation scope | integration uses one `.dhall`-driven suite over the README matrix, E2E stays substrate-agnostic at the browser layer, and `test all` validates one built substrate at a time | implemented and validated across the governed Linux and Apple lifecycle reruns |
 
 Monitoring is not a supported first-class surface.
 
@@ -82,9 +86,13 @@ Monitoring is not a supported first-class surface.
 - the staged file retains the legacy `.dhall` filename even though the current payload is
   banner-prefixed JSON produced by Haskell helpers
 - Apple Silicon is the only supported host-native build path outside a container
-- on Apple Silicon, the host-built binary manages Kind, deploys the clustered service and demo
-  workloads, and still owns the direct host-side `infernix service` lane; the routed demo and
-  Playwright paths do not manage a separate host daemon in the current code path
+- on Apple Silicon, the host-built binary manages Kind, deploys the mandatory cluster support
+  services and optional routed demo workload, and still owns the direct host-side
+  `infernix service` lane
+- on Apple Silicon, the canonical inference executor is the host-native `infernix service`
+  process; clustered Apple workloads may consume the same staged substrate file and route
+  contracts, but they do not replace host-native Apple inference or claim direct Metal or unified
+  memory access
 - on Linux substrates, all supported CLI commands run through
   `docker compose run --rm infernix infernix ...`; there is no supported Linux host-native CLI
   story outside the outer container
@@ -100,8 +108,8 @@ Monitoring is not a supported first-class surface.
   engine binding for every supported row or reference
 - Playwright E2E is substrate-agnostic at the browser layer and relies on `infernix-demo` reading
   the active `.dhall` to dispatch the correct engine behind the routed demo API
-- the routed demo app is cluster-resident across substrates; the Apple host bridge is not part of
-  the final steady-state contract
+- the routed demo app remains cluster-resident when enabled, but the Apple routed path closes
+  around an explicit host-inference bridge rather than cluster-resident Apple service parity
 - the supported materialization path can emit `demo_ui = false` with `--demo-ui false`; omitting
   that flag keeps the default demo-enabled output
 - Harbor-first bootstrap, Gateway-owned routing, mandatory local HA platform services,
@@ -125,7 +133,7 @@ flowchart TB
         gateway["Envoy Gateway controller + Gateway/infernix-edge"]
         routes["HTTPRoute set rendered from Haskell route registry"]
         demo["infernix-demo"]
-        clusterService["infernix service (cluster workload on every substrate)"]
+        linuxService["infernix service (cluster workload on linux-cpu/linux-gpu)"]
         harbor["Harbor"]
         minio["MinIO"]
         pgop["Percona PostgreSQL operator"]
@@ -142,17 +150,19 @@ flowchart TB
     routes --> harbor
     routes --> minio
     routes --> pulsar
-    demo --> clusterService
-    pulsar --> clusterService
+    demo --> appleDaemon
+    demo --> linuxService
+    pulsar --> appleDaemon
+    pulsar --> linuxService
     harbor --> postgres
     pgop --> postgres
     data --> kind
 ```
 
-Current code nuance: `cluster up` deploys `infernix-service` in-cluster on every supported
-substrate. On `apple-silicon`, that clustered workload currently reuses the
-`infernix-linux-cpu:local` image family even though the direct `infernix service` entrypoint
-remains host-native and publication still reports `daemonLocation: control-plane-host`.
+Current code nuance: `cluster up` keeps the Apple support stack and `infernix-demo` clustered, but
+the canonical `infernix service` executor remains host-native on `apple-silicon`. On Linux
+substrates, both the demo workload and the daemon continue to run from the shared substrate image
+family.
 
 ## Canonical Repository Shape
 
@@ -326,7 +336,10 @@ The plan keeps control-plane execution context separate from substrate.
   the supported materialization path can emit that production-off value with `--demo-ui false`
 - when `demo_ui` is true, the demo app is cluster-resident across substrates
 - on `apple-silicon`, the routed demo surface remains cluster-resident while the direct host-side
-  `infernix service` lane stays distinct from that browser-facing path
+  `infernix service` lane remains the canonical inference executor for Apple-native engines
+- on `apple-silicon`, routed manual inference closes through an explicit bridge from the clustered
+  demo surface into the host-native daemon rather than through cluster-resident Apple service
+  parity
 
 ### 7. Local Harbor Is The Cluster Image Source
 
@@ -392,7 +405,7 @@ The plan keeps control-plane execution context separate from substrate.
   bind mounts are `./.data/`, `./.build/`, the host `compose.yaml`, and the Docker socket
 - the staged outer-container substrate `.dhall` sits at
   `./.build/outer-container/build/infernix-substrate.dhall` on the host and is the source material
-  for cluster ConfigMap publication, which mounts the file at `/opt/build/infernix/infernix-substrate.dhall`
+  for cluster ConfigMap publication, which mounts the file at `/opt/build/infernix-substrate.dhall`
   inside cluster-resident pods
 
 ### 12. Apple Host Build Output Stays Under `./.build`

@@ -12,7 +12,9 @@
 - source-artifact manifests live under
   `./.data/object-store/source-artifacts/<runtime-mode>/<model-id>/`
 - large outputs live under `./.data/object-store/results/` and are surfaced back to clients as
-  object references when the inline payload threshold is exceeded
+  object references when the inline payload threshold is exceeded; when the clustered demo bridge
+  receives a large inline result from the daemon, it rewrites that payload into the demo pod's own
+  local object store before serving the browser-visible `/objects/:objectRef` link
 - switching runtime modes changes engine bindings and generated catalog content, not the local
   object-store contract
 - the chart and routed portal inventory still reserve `/minio/s3` for the real Kind-backed object

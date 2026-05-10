@@ -52,6 +52,7 @@ publication:
 routes: []
 
 service:
+  enabled: false
   image:
     repository: infernix-linux-cpu
     tag: local

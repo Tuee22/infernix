@@ -66,7 +66,7 @@ cache-manifest state uses protobuf-backed `*.pb` files instead of legacy text-st
 - the same content is then mirrored under `./.data/runtime/configmaps/infernix-demo-config/` and
   published into `ConfigMap/infernix-demo-config` on the real cluster path
 - in containerized execution contexts, the ConfigMap-backed file is mounted beside the binary
-- the cluster pod's ConfigMap-backed mount path is `/opt/build/infernix/infernix-substrate.dhall`
+- the cluster pod's ConfigMap-backed mount path is `/opt/build/infernix-substrate.dhall`
 
 ## Rules
 

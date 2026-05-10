@@ -71,101 +71,107 @@ withClusterLifecycle runtimeMode action =
 exerciseRuntimeMode :: Paths -> RuntimeMode -> IO ()
 exerciseRuntimeMode paths runtimeMode = do
   withClusterLifecycle runtimeMode $ do
-    reportStep ("cluster state reload: " <> showRuntimeMode runtimeMode)
-    maybeState <- loadClusterState paths
-    state <- maybe (fail "cluster state was not available after cluster up") pure maybeState
-    reportStep ("demo config decode: " <> showRuntimeMode runtimeMode)
-    demoConfig <- decodeDemoConfigFile (generatedDemoConfigPath state)
-    reportStep ("demo config loaded: " <> showRuntimeMode runtimeMode)
-    representativeModelId <-
-      case map (Text.unpack . modelId) (models demoConfig) of
-        modelIdValue : _ -> pure modelIdValue
-        [] -> fail "generated demo config did not publish any models"
-    let activeModels = models demoConfig
-        activeModelIds = map (Text.unpack . modelId) activeModels
-    assert (clusterPresent state) ("cluster up records cluster presence for " <> showRuntimeMode runtimeMode)
-    let baseUrl = routeBaseUrl paths state
-    reportStep ("route probes: " <> showRuntimeMode runtimeMode)
-    homeResponse <- httpGet (baseUrl <> "/")
-    publicationResponse <- httpGet (baseUrl <> "/api/publication")
-    demoConfigResponse <- httpGet (baseUrl <> "/api/demo-config")
-    modelsResponse <- httpGet (baseUrl <> "/api/models")
-    harborResponse <- httpGet (baseUrl <> "/harbor")
-    (harborApiStatus, harborApiResponse) <- httpGetWithStatus (baseUrl <> "/harbor/api/v2.0/projects")
-    minioConsoleResponse <- httpGet (baseUrl <> "/minio/console/browser")
-    (minioS3Status, minioS3Response) <- httpGetWithStatus (baseUrl <> "/minio/s3/models/demo.bin")
-    pulsarAdminResponse <- httpGet (baseUrl <> "/pulsar/admin/admin/v2/clusters")
-    (pulsarHttpStatus, _) <- httpGetWithStatus (baseUrl <> "/pulsar/ws/v2/producer/public/default/demo")
-    assert ("Infernix" `isInfixOf` homeResponse) "demo root serves the browser entrypoint"
-    assert (("\"runtimeMode\": \"" <> showRuntimeMode runtimeMode <> "\"") `isInfixOf` publicationResponse) "publication reports the active runtime mode"
-    assert ("\"clusterpresent\": true" `isInfixOf` mapToLowerAscii publicationResponse) "publication reports cluster presence"
-    assert ("\"demo_ui\":true" `isInfixOf` compact demoConfigResponse) "demo config reports the enabled demo UI flag"
-    assert
-      ( ("\"request_topics\":[\"persistent://public/default/inference.request." <> showRuntimeMode runtimeMode <> "\"]")
-          `isInfixOf` compact demoConfigResponse
-      )
-      "demo config reports the active request topic"
-    assert
-      ( ("\"result_topic\":\"persistent://public/default/inference.result." <> showRuntimeMode runtimeMode <> "\"")
-          `isInfixOf` compact demoConfigResponse
-      )
-      "demo config reports the active result topic"
-    assert ("\"engines\":[" `isInfixOf` compact demoConfigResponse) "demo config reports engine bindings"
-    assert ("\"adapterEntrypoint\":\"" `isInfixOf` compact demoConfigResponse) "demo config publishes adapter entrypoints"
-    assert ("\"projectDirectory\":\"python\"" `isInfixOf` compact demoConfigResponse) "demo config publishes the shared Python project directory"
-    assert ("\"modelId\"" `isInfixOf` modelsResponse) "model listing returns JSON models"
-    assert
-      (all (\modelIdValue -> ("\"modelId\":\"" <> modelIdValue <> "\"") `isInfixOf` compact modelsResponse) activeModelIds)
-      "model listing returns every generated active-mode catalog entry"
-    assert ("Harbor" `isInfixOf` harborResponse) "harbor route is published"
-    assert
-      (harborApiStatus == 200 && "\"name\":\"library\"" `isInfixOf` compact harborApiResponse)
-      "harbor API routes strip the /harbor prefix and reach the live Harbor project API on the cluster path"
-    assert
-      ("MinIO Console" `isInfixOf` minioConsoleResponse)
-      "minio console routes strip the /minio/console prefix and reach the live MinIO console on the cluster path"
-    assert
-      (minioS3Status `elem` [200, 401, 403, 404] && "\"rewrittenPath\"" `notElemString` compact minioS3Response)
-      "minio S3 route stays published and reaches the live MinIO S3 upstream on the cluster path"
-    assert
-      ("[\"infernix-infernix-pulsar\"]" `isInfixOf` compact pulsarAdminResponse)
-      "pulsar admin routes preserve the upstream admin/v2 context root"
-    assert
-      (pulsarHttpStatus == 405)
-      "pulsar HTTP routes preserve the websocket context root and reach the real servlet on the cluster path"
-    reportStep ("per-model inference: " <> showRuntimeMode runtimeMode)
-    forM_ activeModelIds (validateCatalogModelInference baseUrl)
-    reportStep ("cache lifecycle: " <> showRuntimeMode runtimeMode)
-    cacheResponse <- httpGet (baseUrl <> "/api/cache")
-    assert
-      (all (\modelIdValue -> ("\"modelId\":\"" <> modelIdValue <> "\"") `isInfixOf` compact cacheResponse) activeModelIds)
-      "cache status reports every materialized generated catalog entry"
-    evictResponse <- httpPostJson (baseUrl <> "/api/cache/evict") ("{\"modelId\":\"" <> representativeModelId <> "\"}")
-    assert ("\"evictedCount\":1" `isInfixOf` compact evictResponse) "cache eviction reports one removed entry"
-    rebuildResponse <- httpPostJson (baseUrl <> "/api/cache/rebuild") ("{\"modelId\":\"" <> representativeModelId <> "\"}")
-    assert ("\"rebuiltCount\":1" `isInfixOf` compact rebuildResponse) "cache rebuild reports one restored entry"
+    withRuntimeServiceDaemonIfNeeded paths runtimeMode $ do
+      reportStep ("cluster state reload: " <> showRuntimeMode runtimeMode)
+      maybeState <- loadClusterState paths
+      state <- maybe (fail "cluster state was not available after cluster up") pure maybeState
+      reportStep ("demo config decode: " <> showRuntimeMode runtimeMode)
+      demoConfig <- decodeDemoConfigFile (generatedDemoConfigPath state)
+      reportStep ("demo config loaded: " <> showRuntimeMode runtimeMode)
+      representativeModelId <-
+        case map (Text.unpack . modelId) (models demoConfig) of
+          modelIdValue : _ -> pure modelIdValue
+          [] -> fail "generated demo config did not publish any models"
+      let activeModels = models demoConfig
+          activeModelIds = map (Text.unpack . modelId) activeModels
+          expectedDispatchMode = expectedInferenceDispatchMode runtimeMode
+      assert (clusterPresent state) ("cluster up records cluster presence for " <> showRuntimeMode runtimeMode)
+      let baseUrl = routeBaseUrl paths state
+      reportStep ("route probes: " <> showRuntimeMode runtimeMode)
+      homeResponse <- httpGet (baseUrl <> "/")
+      publicationResponse <- httpGet (baseUrl <> "/api/publication")
+      demoConfigResponse <- httpGet (baseUrl <> "/api/demo-config")
+      modelsResponse <- httpGet (baseUrl <> "/api/models")
+      harborResponse <- httpGet (baseUrl <> "/harbor")
+      (harborApiStatus, harborApiResponse) <- httpGetWithStatus (baseUrl <> "/harbor/api/v2.0/projects")
+      minioConsoleResponse <- httpGet (baseUrl <> "/minio/console/browser")
+      (minioS3Status, minioS3Response) <- httpGetWithStatus (baseUrl <> "/minio/s3/models/demo.bin")
+      pulsarAdminResponse <- httpGet (baseUrl <> "/pulsar/admin/admin/v2/clusters")
+      (pulsarHttpStatus, _) <- httpGetWithStatus (baseUrl <> "/pulsar/ws/v2/producer/public/default/demo")
+      assert ("Infernix" `isInfixOf` homeResponse) "demo root serves the browser entrypoint"
+      assert (("\"runtimeMode\": \"" <> showRuntimeMode runtimeMode <> "\"") `isInfixOf` publicationResponse) "publication reports the active runtime mode"
+      assert ("\"clusterpresent\": true" `isInfixOf` mapToLowerAscii publicationResponse) "publication reports cluster presence"
+      assert
+        (("\"inferenceDispatchMode\":\"" <> expectedDispatchMode <> "\"") `isInfixOf` compact publicationResponse)
+        "publication reports the runtime-specific inference dispatch mode"
+      assert ("\"demo_ui\":true" `isInfixOf` compact demoConfigResponse) "demo config reports the enabled demo UI flag"
+      assert
+        ( ("\"request_topics\":[\"persistent://public/default/inference.request." <> showRuntimeMode runtimeMode <> "\"]")
+            `isInfixOf` compact demoConfigResponse
+        )
+        "demo config reports the active request topic"
+      assert
+        ( ("\"result_topic\":\"persistent://public/default/inference.result." <> showRuntimeMode runtimeMode <> "\"")
+            `isInfixOf` compact demoConfigResponse
+        )
+        "demo config reports the active result topic"
+      assert ("\"engines\":[" `isInfixOf` compact demoConfigResponse) "demo config reports engine bindings"
+      assert ("\"adapterEntrypoint\":\"" `isInfixOf` compact demoConfigResponse) "demo config publishes adapter entrypoints"
+      assert ("\"projectDirectory\":\"python\"" `isInfixOf` compact demoConfigResponse) "demo config publishes the shared Python project directory"
+      assert ("\"modelId\"" `isInfixOf` modelsResponse) "model listing returns JSON models"
+      assert
+        (all (\modelIdValue -> ("\"modelId\":\"" <> modelIdValue <> "\"") `isInfixOf` compact modelsResponse) activeModelIds)
+        "model listing returns every generated active-mode catalog entry"
+      assert ("Harbor" `isInfixOf` harborResponse) "harbor route is published"
+      assert
+        (harborApiStatus == 200 && "\"name\":\"library\"" `isInfixOf` compact harborApiResponse)
+        "harbor API routes strip the /harbor prefix and reach the live Harbor project API on the cluster path"
+      assert
+        ("MinIO Console" `isInfixOf` minioConsoleResponse)
+        "minio console routes strip the /minio/console prefix and reach the live MinIO console on the cluster path"
+      assert
+        (minioS3Status `elem` [200, 401, 403, 404] && "\"rewrittenPath\"" `notElemString` compact minioS3Response)
+        "minio S3 route stays published and reaches the live MinIO S3 upstream on the cluster path"
+      assert
+        ("[\"infernix-infernix-pulsar\"]" `isInfixOf` compact pulsarAdminResponse)
+        "pulsar admin routes preserve the upstream admin/v2 context root"
+      assert
+        (pulsarHttpStatus == 405)
+        "pulsar HTTP routes preserve the websocket context root and reach the real servlet on the cluster path"
+      reportStep ("per-model inference: " <> showRuntimeMode runtimeMode)
+      forM_ activeModelIds (validateCatalogModelInference baseUrl)
+      reportStep ("cache lifecycle: " <> showRuntimeMode runtimeMode)
+      cacheResponse <- httpGet (baseUrl <> "/api/cache")
+      assert
+        (all (\modelIdValue -> ("\"modelId\":\"" <> modelIdValue <> "\"") `isInfixOf` compact cacheResponse) activeModelIds)
+        "cache status reports every materialized generated catalog entry"
+      evictResponse <- httpPostJson (baseUrl <> "/api/cache/evict") ("{\"modelId\":\"" <> representativeModelId <> "\"}")
+      assert ("\"evictedCount\":1" `isInfixOf` compact evictResponse) "cache eviction reports one removed entry"
+      rebuildResponse <- httpPostJson (baseUrl <> "/api/cache/rebuild") ("{\"modelId\":\"" <> representativeModelId <> "\"}")
+      assert ("\"rebuiltCount\":1" `isInfixOf` compact rebuildResponse) "cache rebuild reports one restored entry"
 
-    reportStep ("service runtime loop: " <> showRuntimeMode runtimeMode)
-    validateServiceRuntimeLoop paths runtimeMode representativeModelId
+      reportStep ("service runtime loop: " <> showRuntimeMode runtimeMode)
+      validateServiceRuntimeLoop paths runtimeMode representativeModelId (requiresHostServiceHarness paths runtimeMode)
 
-    when (runtimeMode == LinuxCpu) $ do
-      reportStep "harbor recovery"
-      validateHarborRecovery state
-      reportStep "minio durability"
-      validateMinioDurability state
-      reportStep "routed pulsar recovery"
-      validateRoutedPulsarRecovery paths state runtimeMode activeModelIds
-      reportStep "postgres failover"
-      validatePostgresFailover state
-      reportStep "postgres lifecycle rebinding"
-      validatePostgresLifecycleRebinding paths runtimeMode state
+      when (runtimeMode == LinuxCpu) $ do
+        reportStep "harbor recovery"
+        validateHarborRecovery state
+        reportStep "minio durability"
+        validateMinioDurability state
+        reportStep "routed pulsar recovery"
+        validateRoutedPulsarRecovery paths state runtimeMode activeModelIds
+        reportStep "postgres failover"
+        validatePostgresFailover state
+        reportStep "postgres lifecycle rebinding"
+        validatePostgresLifecycleRebinding paths runtimeMode state
 
-    statusOutput <- captureInfernixOutput ["cluster", "status"]
-    assert ("clusterPresent: True" `isInfixOf` statusOutput) "cluster status reports the cluster presence"
-    assert (("runtimeMode: " <> showRuntimeMode runtimeMode) `isInfixOf` statusOutput) "cluster status reports the runtime mode"
-    assert ("publicationStatePath: " `isInfixOf` statusOutput) "cluster status reports the publication state path"
-    assert ("kubernetesNodeCount: 0" `notElemString` statusOutput) "cluster status reports reachable Kubernetes nodes"
-    assert ("kubernetesPodCount: 0" `notElemString` statusOutput) "cluster status reports reachable Kubernetes pods"
+      statusOutput <- captureInfernixOutput ["cluster", "status"]
+      assert ("clusterPresent: True" `isInfixOf` statusOutput) "cluster status reports the cluster presence"
+      assert (("runtimeMode: " <> showRuntimeMode runtimeMode) `isInfixOf` statusOutput) "cluster status reports the runtime mode"
+      assert (("publicationInferenceDispatchMode: " <> expectedDispatchMode) `isInfixOf` statusOutput) "cluster status reports the inference dispatch mode"
+      assert ("publicationStatePath: " `isInfixOf` statusOutput) "cluster status reports the publication state path"
+      assert ("kubernetesNodeCount: 0" `notElemString` statusOutput) "cluster status reports reachable Kubernetes nodes"
+      assert ("kubernetesPodCount: 0" `notElemString` statusOutput) "cluster status reports reachable Kubernetes pods"
 
   maybeDownState <- loadClusterState paths
   assert (maybe False (not . clusterPresent) maybeDownState) "cluster down records cluster absence"
@@ -187,47 +193,55 @@ validateCatalogModelInference baseUrl modelIdValue = do
     (("\"requestId\":\"" <> requestIdValue <> "\"") `isInfixOf` compact storedResult)
     ("stored results can be reloaded for " <> modelIdValue)
 
-validateServiceRuntimeLoop :: Paths -> RuntimeMode -> String -> IO ()
-validateServiceRuntimeLoop paths runtimeMode representativeModelId = do
+validateServiceRuntimeLoop :: Paths -> RuntimeMode -> String -> Bool -> IO ()
+validateServiceRuntimeLoop paths runtimeMode representativeModelId daemonAlreadyRunning = do
   infernixExecutable <- resolveInfernixExecutable
   requestTopic <-
     case requestTopicsForMode runtimeMode of
       topic : _ -> pure topic
       [] -> fail ("no request topics configured for " <> showRuntimeMode runtimeMode)
   let resultTopic = resultTopicForMode runtimeMode
-  (_, _, _, processHandle) <-
-    createProcess
-      (proc infernixExecutable ["service"])
-        { cwd = Just (repoRoot paths)
-        }
-  waitForFile (schemaMarkerPath paths requestTopic)
-  waitForFile (schemaMarkerPath paths resultTopic)
-  _ <-
-    publishInferenceRequest
-      paths
-      runtimeMode
-      requestTopic
-      InferenceRequest
-        { requestModelId = Text.pack representativeModelId,
-          inputText = "service daemon request path"
-        }
-  maybeResult <- waitForPublishedResult paths resultTopic representativeModelId
-  case maybeResult of
-    Nothing -> fail ("service daemon did not publish a result for " <> showRuntimeMode runtimeMode)
-    Just resultValue -> do
-      assert (resultModelId resultValue == Text.pack representativeModelId) "service daemon publishes the selected model id"
-      assert (resultRuntimeMode resultValue == runtimeMode) "service daemon preserves the runtime mode in published results"
-  terminateProcess processHandle
-  _ <- waitForProcess processHandle
-  pure ()
+  let withDaemon
+        | daemonAlreadyRunning = id
+        | otherwise = withSpawnedDaemon infernixExecutable
+  withDaemon $ do
+    waitForFile (schemaMarkerPath paths requestTopic)
+    waitForFile (schemaMarkerPath paths resultTopic)
+    requestIdValue <-
+      publishInferenceRequest
+        paths
+        runtimeMode
+        requestTopic
+        InferenceRequest
+          { requestModelId = Text.pack representativeModelId,
+            inputText = "service daemon request path"
+          }
+    maybeResult <- waitForPublishedResult paths runtimeMode resultTopic requestIdValue
+    case maybeResult of
+      Nothing -> fail ("service daemon did not publish a result for " <> showRuntimeMode runtimeMode)
+      Just resultValue -> do
+        assert (resultModelId resultValue == Text.pack representativeModelId) "service daemon publishes the selected model id"
+        assert (resultRuntimeMode resultValue == runtimeMode) "service daemon preserves the runtime mode in published results"
+  where
+    withSpawnedDaemon infernixExecutable action = do
+      (_, _, _, processHandle) <-
+        createProcess
+          (proc infernixExecutable ["service"])
+            { cwd = Just (repoRoot paths)
+            }
+      action
+        `finally` do
+          terminateProcess processHandle
+          _ <- waitForProcess processHandle
+          pure ()
 
-waitForPublishedResult :: Paths -> Text.Text -> String -> IO (Maybe InferenceResult)
-waitForPublishedResult paths resultTopic modelIdValue = go (60 :: Int)
+waitForPublishedResult :: Paths -> RuntimeMode -> Text.Text -> Text.Text -> IO (Maybe InferenceResult)
+waitForPublishedResult paths runtimeMode resultTopic requestIdValue = go (60 :: Int)
   where
     go remainingAttempts
       | remainingAttempts <= 0 = pure Nothing
       | otherwise = do
-          maybeResult <- readPublishedInferenceResultMaybe paths resultTopic (Text.pack modelIdValue <> "-request")
+          maybeResult <- readPublishedInferenceResultMaybe paths runtimeMode resultTopic requestIdValue
           case maybeResult of
             Just resultValue -> pure (Just resultValue)
             Nothing -> do
@@ -580,7 +594,7 @@ publishAndRequireResult paths runtimeMode modelIdValue inputValue = do
       topic : _ -> pure topic
       [] -> fail ("no request topic configured for " <> showRuntimeMode runtimeMode)
   let resultTopic = resultTopicForMode runtimeMode
-  _ <-
+  requestIdValue <-
     publishInferenceRequest
       paths
       runtimeMode
@@ -589,11 +603,40 @@ publishAndRequireResult paths runtimeMode modelIdValue inputValue = do
         { requestModelId = Text.pack modelIdValue,
           inputText = Text.pack inputValue
         }
-  maybeResult <- waitForPublishedResult paths resultTopic modelIdValue
+  maybeResult <- waitForPublishedResult paths runtimeMode resultTopic requestIdValue
   case maybeResult of
     Nothing -> fail ("pulsar roundtrip did not publish a result for " <> modelIdValue)
     Just resultValue ->
       assert (resultModelId resultValue == Text.pack modelIdValue) ("pulsar roundtrip preserves the selected model id for " <> modelIdValue)
+
+withRuntimeServiceDaemonIfNeeded :: Paths -> RuntimeMode -> IO a -> IO a
+withRuntimeServiceDaemonIfNeeded paths runtimeMode action
+  | requiresHostServiceHarness paths runtimeMode = withRuntimeServiceDaemon paths action
+  | otherwise = action
+
+requiresHostServiceHarness :: Paths -> RuntimeMode -> Bool
+requiresHostServiceHarness paths runtimeMode =
+  Config.controlPlaneContext paths /= "outer-container" && runtimeMode == AppleSilicon
+
+withRuntimeServiceDaemon :: Paths -> IO a -> IO a
+withRuntimeServiceDaemon paths action = do
+  infernixExecutable <- resolveInfernixExecutable
+  (_, _, _, processHandle) <-
+    createProcess
+      (proc infernixExecutable ["service"])
+        { cwd = Just (repoRoot paths)
+        }
+  action
+    `finally` do
+      terminateProcess processHandle
+      _ <- waitForProcess processHandle
+      pure ()
+
+expectedInferenceDispatchMode :: RuntimeMode -> String
+expectedInferenceDispatchMode runtimeMode =
+  case runtimeMode of
+    AppleSilicon -> "pulsar-bridge-to-host-daemon"
+    _ -> "pulsar-bridge-to-cluster-daemon"
 
 publishAndRequireResultWithRetry :: Paths -> RuntimeMode -> String -> String -> IO ()
 publishAndRequireResultWithRetry paths runtimeMode modelIdValue inputValue = go (24 :: Int) Nothing

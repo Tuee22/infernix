@@ -236,6 +236,10 @@ Rules:
 - When Apple operators intentionally exercise the `linux-cpu` substrate, they do so through the
   containerized Linux workflow inside Colima's amd64 VM and accept that the Apple GPU is out of
   scope for that path.
+- On `apple-silicon`, the canonical `infernix service` placement is a host-native daemon so the
+  Apple lane can use Metal-capable or unified-memory-aware engine backends directly; phase docs
+  must not describe Kind, Docker, or other containerized Apple workloads as equivalent Apple GPU
+  execution environments.
 - After the binary exists, the Apple host workflow is allowed to let `infernix` reconcile the
   remaining Homebrew-managed operator tools needed by the active path and bootstrap Poetry through
   the host's system Python when adapter flows first need it; the repo-local adapter virtual
@@ -281,6 +285,14 @@ Rules:
   coverage envelope for substrate planning.
 - For any given substrate, a matrix row is supported when that substrate's engine column names a real
   engine rather than `Not recommended` or an empty cell.
+- `apple-silicon` is an explicit hybrid substrate: the control plane and inference daemon remain
+  host-native, while Kind may still host Harbor, MinIO, Pulsar, operator-managed PostgreSQL,
+  Envoy Gateway, and the optional routed demo app. Apple-focused phase docs must distinguish that
+  hybrid topology from the fully cluster-resident Linux daemon lanes.
+- Apple phase docs must not imply that Kind or other containerized Apple workloads have direct
+  Metal or unified-memory parity with the host-native Apple daemon. If a cluster-resident Apple
+  workload exists, it is a support or browser surface rather than the canonical Apple inference
+  executor.
 - The plan standardizes the NVIDIA-backed Linux substrate as `linux-gpu`. Active phase documents
   must call out any still-unmigrated `linux-gpu` naming in the current worktree instead of
   pretending the rename is already complete.
@@ -326,10 +338,14 @@ Rules:
 - The supported materialization path accepts `--demo-ui true|false`, and phase docs must keep the
   chosen default versus explicit override behavior honest.
 - `cluster up` creates or updates `ConfigMap/infernix-demo-config` from the staged substrate file
-  or its exact payload when the active substrate is `linux-cpu` or `linux-gpu`.
-- Linux cluster-resident consumers mount that ConfigMap read-only beside the cluster-resident
-  runtime entrypoint at `/opt/build/infernix/infernix-substrate.dhall`.
-- Apple host-native consumers read the file directly from `./.build/`.
+  or its exact payload whenever the active deployment path includes cluster-resident consumers of
+  the generated catalog, including Linux daemon workloads and any Apple cluster-resident demo or
+  support workload.
+- Cluster-resident consumers mount that ConfigMap read-only beside the relevant runtime entrypoint
+  at `/opt/build/infernix-substrate.dhall`.
+- Apple host-native consumers read the same staged file directly from `./.build/`, even when the
+  Apple topology also republishes the payload into the cluster for a routed demo or other support
+  surface.
 - The binary watches its substrate `.dhall` and reloads or restarts when the file changes; that
   reload purges any running inference-engine state.
 - Rows whose active-substrate engine cell is `Not recommended` are omitted from that substrate's
@@ -440,9 +456,10 @@ Substrate-specific validation is explicit.
   substrate id or engine family; `infernix-demo` reads the generated `.dhall` and chooses the
   correct engine binding for the active substrate behind the routed demo API.
 - On Apple Silicon, the supported host CLI owns test orchestration. It starts the host inference
-  daemon when the service-loop checks need it, runs host-side integration logic directly, and
-  invokes `docker compose run --rm playwright` against the dedicated `infernix-playwright:local`
-  image for the container-owned Playwright executor.
+  daemon when the service-loop checks need it, runs host-side integration logic directly, proves
+  the Apple host-inference bridge used by routed cluster surfaces when that bridge is part of the
+  active topology, and invokes `docker compose run --rm playwright` against the dedicated
+  `infernix-playwright:local` image for the container-owned Playwright executor.
 - On Linux substrates, all supported CLI and test commands run through
   `docker compose run --rm infernix infernix ...`, and test flows do not manage a host daemon
   because inference runs from the deployed cluster daemon.

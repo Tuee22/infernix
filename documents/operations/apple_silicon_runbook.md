@@ -58,18 +58,19 @@ Direct reference path:
   preparing a demo-off config
 - `cluster up` writes `./.build/infernix.kubeconfig`
 - supported flows do not mutate `$HOME/.kube/config`
-- the Apple host-native path describes where the Haskell build and control-plane commands run;
-  `cluster up` still deploys `infernix-service` in-cluster and adds `infernix-demo` when
-  `demo_ui` is enabled
-- on `apple-silicon`, those cluster-resident repo workloads currently run from the
-  `infernix-linux-cpu:local` image family while reading the staged `apple-silicon` substrate file
-- `/api/publication` on Apple currently still serializes
-  `daemonLocation: control-plane-host` while the routed demo API remains
-  `apiUpstream.mode: cluster-demo`; treat that field as current publication output rather than
-  actual service placement
-- the direct `infernix service` host run uses the same Haskell worker contract as the
-  cluster-resident daemon and forks Python adapters from `python/adapters/` only when the bound
-  engine is Python-native
+- the Apple host-native path describes where the Haskell build, control-plane commands, and
+  inference daemon run; `cluster up` adds `infernix-demo` when `demo_ui` is enabled but keeps the
+  supported Apple inference daemon on the host
+- on `apple-silicon`, the clustered demo workload still runs from the `infernix-linux-cpu:local`
+  image family while reading the staged `apple-silicon` substrate file, but `cluster up` no
+  longer deploys `infernix-service` inside Kind on the Apple lane
+- `/api/publication` keeps the routed demo API on `apiUpstream.mode: cluster-demo`, reports
+  `daemonLocation: control-plane-host`, and publishes
+  `inferenceDispatchMode: pulsar-bridge-to-host-daemon` so the routed demo surface can advertise
+  the host-backed inference lane explicitly
+- the direct `infernix service` host run uses the same Haskell worker contract as the Linux
+  cluster daemon, auto-discovers the routed Pulsar edge from published cluster state when needed,
+  and forks Python adapters from `python/adapters/` only when the bound engine is Python-native
 - the Apple host bootstrap uses Homebrew-managed Colima, Docker CLI, `kind`, `kubectl`, `helm`,
   Node.js, and related operator tools rather than a broader manual prerequisite list
 - the Apple host bootstrap reconciles Colima to at least `8 CPU / 16 GiB` before Docker-backed

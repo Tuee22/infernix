@@ -103,6 +103,9 @@
   executor runs through `docker compose run --rm playwright` against the dedicated
   `infernix-playwright:local` image; the Linux outer-container path forwards the same compose
   invocation through the mounted host docker socket
+- supported Apple integration and E2E own the host daemon lifecycle when the routed demo surface
+  needs it, so the validation contract proves the routed Apple bridge against the host daemon
+  rather than an in-cluster Apple service pod
 - `infernix test e2e` requires Docker on every substrate and has no host-native npm fallback
   path; on Apple host-native flows the supported command reconciles `kind`, `kubectl`, `helm`,
   Node.js, and Poetry on demand after `./.build/infernix` exists, while Linux flows rely on the

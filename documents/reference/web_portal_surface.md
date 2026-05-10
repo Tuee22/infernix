@@ -62,14 +62,14 @@ On the real Kind path those routes are published by `Gateway/infernix-edge`,
   directly while Linux flows forward it from the outer container through the mounted host docker
   socket
 - the workbench surfaces the active runtime mode, control-plane context, daemon location, catalog
-  source, chosen edge port, demo-config path, and routed publication inventory through
+  source, chosen edge port, inference dispatch mode, demo-config path, and routed publication
+  inventory through
   `/api/publication`
 - the user can browse any generated model entry, inspect its selected engine and request shape,
   and submit a manual inference request through the demo `/api`
-- manual inference requests execute in-process from the clustered `infernix-demo` workload on the
-  current routed path; on Apple the same clustered lifecycle also deploys `infernix-service`
-  in-cluster even though `/api/publication` currently still serializes
-  `daemonLocation: control-plane-host`
+- manual inference requests always enter through the clustered `infernix-demo` workload, but the
+  routed deployment bridges them through Pulsar into the active daemon lane: Apple uses the
+  host-native daemon and Linux uses the cluster-resident daemon
 - manual inference requests execute through the same Haskell worker dispatch used by the
   production daemon, including shared Python adapters under `python/adapters/` when the bound
   engine is Python-native

@@ -35,7 +35,7 @@ import Infernix.Lint.Chart (runChartLint)
 import Infernix.Lint.Docs (runDocsLint)
 import Infernix.Lint.Files (runFilesLint)
 import Infernix.Lint.Proto (runProtoLint)
-import Infernix.Models (expectedDaemonLocationForRuntime)
+import Infernix.Models (expectedDaemonLocationForRuntime, expectedInferenceDispatchModeForRuntime)
 import Infernix.Python
   ( ensurePoetryExecutable,
     ensurePoetryProjectReady,
@@ -53,7 +53,7 @@ import Infernix.Types
     InferenceResult (..),
     PersistentClaim (..),
     ResultPayload (..),
-    RuntimeMode,
+    RuntimeMode (AppleSilicon),
     runtimeModeId,
   )
 import Infernix.Web.Contracts qualified as Contracts
@@ -76,7 +76,7 @@ import System.Directory
 import System.Environment (getArgs, getEnvironment, getExecutablePath)
 import System.Exit (ExitCode (ExitSuccess), exitFailure, exitWith)
 import System.FilePath (takeFileName, (</>))
-import System.Process (CreateProcess (cwd, env), createProcess, proc, readProcess, waitForProcess)
+import System.Process (CreateProcess (cwd, env), createProcess, proc, readProcess, terminateProcess, waitForProcess)
 
 main :: IO ()
 main = do
@@ -215,33 +215,37 @@ runRuntimeModeE2E :: Paths -> RuntimeMode -> IO ()
 runRuntimeModeE2E paths runtimeMode =
   ( do
       clusterUp (Just runtimeMode)
+      let expectedInferenceDispatchMode = Text.unpack (expectedInferenceDispatchModeForRuntime runtimeMode)
       maybePort <- readEdgePortMaybe paths
       edgePort <-
         case maybePort of
           Just port -> pure port
           Nothing -> ioError (userError "edge port was not published after cluster up")
       let expectedDaemonLocation = Text.unpack (expectedDaemonLocationForRuntime runtimeMode)
-      if controlPlaneContext paths == "host-native"
-        then
-          runPlaywrightImage
-            runtimeMode
-            (Just "kind")
-            "127.0.0.1"
-            edgePort
-            (kindControlPlaneNodeName paths runtimeMode)
-            30090
-            expectedDaemonLocation
-            "cluster-demo"
-        else
-          runPlaywrightImage
-            runtimeMode
-            (Just "kind")
-            (kindControlPlaneNodeName paths runtimeMode)
-            30090
-            (kindControlPlaneNodeName paths runtimeMode)
-            30090
-            expectedDaemonLocation
-            "cluster-demo"
+      withRuntimeServiceDaemonIfNeeded paths runtimeMode $
+        if controlPlaneContext paths == "host-native"
+          then
+            runPlaywrightImage
+              runtimeMode
+              (Just "kind")
+              "127.0.0.1"
+              edgePort
+              (kindControlPlaneNodeName paths runtimeMode)
+              30090
+              expectedDaemonLocation
+              expectedInferenceDispatchMode
+              "cluster-demo"
+          else
+            runPlaywrightImage
+              runtimeMode
+              (Just "kind")
+              (kindControlPlaneNodeName paths runtimeMode)
+              30090
+              (kindControlPlaneNodeName paths runtimeMode)
+              30090
+              expectedDaemonLocation
+              expectedInferenceDispatchMode
+              "cluster-demo"
   )
     `finally` clusterDown (Just runtimeMode)
 
@@ -258,9 +262,8 @@ runInternalPulsarRoundTrip runtimeMode demoConfigPath modelIdValue inputTextValu
           { requestModelId = Text.pack modelIdValue,
             inputText = Text.pack inputTextValue
           }
-      requestIdValue = Text.pack modelIdValue <> "-request"
-  _ <- publishInferenceRequest paths runtimeMode requestTopicValue requestValue
-  maybeResult <- waitForInternalPulsarResult paths (resultTopic demoConfig) requestIdValue
+  requestIdValue <- publishInferenceRequest paths runtimeMode requestTopicValue requestValue
+  maybeResult <- waitForInternalPulsarResult paths runtimeMode (resultTopic demoConfig) requestIdValue
   case maybeResult of
     Nothing ->
       ioError
@@ -271,13 +274,13 @@ runInternalPulsarRoundTrip runtimeMode demoConfigPath modelIdValue inputTextValu
         )
     Just resultValue -> printInternalPulsarResult resultValue
 
-waitForInternalPulsarResult :: Paths -> Text.Text -> Text.Text -> IO (Maybe InferenceResult)
-waitForInternalPulsarResult paths resultTopicValue requestIdValue = go (120 :: Int)
+waitForInternalPulsarResult :: Paths -> RuntimeMode -> Text.Text -> Text.Text -> IO (Maybe InferenceResult)
+waitForInternalPulsarResult paths runtimeMode resultTopicValue requestIdValue = go (120 :: Int)
   where
     go remainingAttempts
       | remainingAttempts <= 0 = pure Nothing
       | otherwise = do
-          maybeResult <- readPublishedInferenceResultMaybe paths resultTopicValue requestIdValue
+          maybeResult <- readPublishedInferenceResultMaybe paths runtimeMode resultTopicValue requestIdValue
           case maybeResult of
             Just resultValue -> pure (Just resultValue)
             Nothing -> do
@@ -298,10 +301,10 @@ printInternalPulsarResult resultValue = do
       putStrLn ("objectRef: " <> Text.unpack objectRefValue)
     _ -> pure ()
 
-runPlaywrightImage :: RuntimeMode -> Maybe String -> String -> Int -> String -> Int -> String -> String -> IO ()
-runPlaywrightImage runtimeMode maybeNetwork readinessHost readinessPort playwrightHost playwrightPort expectedDaemonLocation expectedApiUpstreamMode = do
+runPlaywrightImage :: RuntimeMode -> Maybe String -> String -> Int -> String -> Int -> String -> String -> String -> IO ()
+runPlaywrightImage runtimeMode maybeNetwork readinessHost readinessPort playwrightHost playwrightPort expectedDaemonLocation expectedInferenceDispatchMode expectedApiUpstreamMode = do
   paths <- discoverPaths
-  waitForPlaywrightSurface readinessHost readinessPort expectedDaemonLocation expectedApiUpstreamMode
+  waitForPlaywrightSurface readinessHost readinessPort expectedDaemonLocation expectedInferenceDispatchMode expectedApiUpstreamMode
   let networkValue = fromMaybe "bridge" maybeNetwork
       composeFile = repoRoot paths </> "compose.yaml"
       composeEnv =
@@ -309,6 +312,7 @@ runPlaywrightImage runtimeMode maybeNetwork readinessHost readinessPort playwrig
           ("INFERNIX_EDGE_PORT", show playwrightPort),
           ("INFERNIX_PLAYWRIGHT_HOST", playwrightHost),
           ("INFERNIX_EXPECT_DAEMON_LOCATION", expectedDaemonLocation),
+          ("INFERNIX_EXPECT_INFERENCE_DISPATCH_MODE", expectedInferenceDispatchMode),
           ("INFERNIX_EXPECT_API_UPSTREAM_MODE", expectedApiUpstreamMode)
         ]
   runCommandWithCwdAndEnvRemoving
@@ -319,8 +323,8 @@ runPlaywrightImage runtimeMode maybeNetwork readinessHost readinessPort playwrig
     ["compose", "-f", composeFile, "run", "--rm", "playwright"]
     (repoRoot paths)
 
-waitForPlaywrightSurface :: String -> Int -> String -> String -> IO ()
-waitForPlaywrightSurface host edgePort expectedDaemonLocation expectedApiUpstreamMode = go (60 :: Int)
+waitForPlaywrightSurface :: String -> Int -> String -> String -> String -> IO ()
+waitForPlaywrightSurface host edgePort expectedDaemonLocation expectedInferenceDispatchMode expectedApiUpstreamMode = go (60 :: Int)
   where
     go remainingAttempts
       | remainingAttempts <= 0 =
@@ -356,6 +360,7 @@ waitForPlaywrightSurface host edgePort expectedDaemonLocation expectedApiUpstrea
               maybeInference <- postJsonUrl (baseUrl <> "/api/inference") payloadBody
               pure
                 ( jsonTextAt ["daemonLocation"] publicationPayload == Just (Text.pack expectedDaemonLocation)
+                    && jsonTextAt ["inferenceDispatchMode"] publicationPayload == Just (Text.pack expectedInferenceDispatchMode)
                     && jsonTextAt ["apiUpstream", "mode"] publicationPayload == Just (Text.pack expectedApiUpstreamMode)
                     && "Infernix" `isInfixOf` homeBody
                     && maybe False (\inferencePayload -> jsonTextAt ["resultModelId"] inferencePayload == Just firstModel) maybeInference
@@ -406,6 +411,26 @@ printCacheManifest manifest =
         <> Text.unpack (cacheDurableSourceUri manifest)
         <> ")"
     )
+
+withRuntimeServiceDaemonIfNeeded :: Paths -> RuntimeMode -> IO a -> IO a
+withRuntimeServiceDaemonIfNeeded paths runtimeMode action =
+  case (controlPlaneContext paths, runtimeMode) of
+    ("host-native", AppleSilicon) -> withRuntimeServiceDaemon paths action
+    _ -> action
+
+withRuntimeServiceDaemon :: Paths -> IO a -> IO a
+withRuntimeServiceDaemon paths action = do
+  infernixExecutable <- getExecutablePath
+  (_, _, _, processHandle) <-
+    createProcess
+      (proc infernixExecutable ["service"])
+        { cwd = Just (repoRoot paths)
+        }
+  action
+    `finally` do
+      terminateProcess processHandle
+      _ <- waitForProcess processHandle
+      pure ()
 
 renderPersistentClaimLine :: PersistentClaim -> String
 renderPersistentClaimLine persistentClaim =

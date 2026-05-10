@@ -344,7 +344,7 @@ None.
 
 ---
 
-## Sprint 1.10: Build-Time Substrate Selection, Flag Removal, and Launcher Reset [Done]
+## Sprint 1.10: Explicit Substrate Staging, Flag Removal, and Launcher Reset [Done]
 
 **Status**: Done
 **Implementation**: `src/Infernix/Config.hs`, `src/Infernix/DemoConfig.hs`, `src/Infernix/CLI.hs`, `docker/linux-substrate.Dockerfile`, `compose.yaml`

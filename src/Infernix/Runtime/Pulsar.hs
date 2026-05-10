@@ -11,12 +11,14 @@ module Infernix.Runtime.Pulsar
   )
 where
 
+import Control.Applicative ((<|>))
 import Control.Concurrent (forkIO, threadDelay)
 import Control.Exception (SomeAsyncException, SomeException, displayException, fromException, throwIO, try)
 import Control.Monad (forM_, forever, unless, when)
 import Data.Aeson
   ( FromJSON (parseJSON),
     Value,
+    eitherDecode,
     eitherDecodeStrict',
     encode,
     object,
@@ -35,11 +37,13 @@ import Data.ProtoLens (Message, decodeMessage, defMessage, encodeMessage)
 import Data.ProtoLens.Field (field)
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
-import Data.Time (getCurrentTime)
+import Data.Text.IO qualified as TextIO
+import Data.Time (defaultTimeLocale, formatTime, getCurrentTime)
 import Infernix.Config
 import Infernix.DemoConfig (decodeDemoConfigFile)
 import Infernix.Models (expectedDaemonLocationForRuntime)
 import Infernix.Runtime (executeInference)
+import Infernix.Storage (readEdgePortMaybe)
 import Infernix.Types
 import Lens.Family2 (set, view)
 import Network.HTTP.Client
@@ -99,6 +103,11 @@ data PulsarEnvelope = PulsarEnvelope
     envelopePayload :: Text.Text
   }
 
+data HostDiscoveredPublication = HostDiscoveredPublication
+  { hostPublicationClusterPresent :: Bool,
+    hostPublicationEdgePort :: Maybe Int
+  }
+
 instance FromJSON ProducerResponse where
   parseJSON = withObject "ProducerResponse" $ \value ->
     ProducerResponse
@@ -111,13 +120,19 @@ instance FromJSON PulsarEnvelope where
       <$> value .: "messageId"
       <*> value .: "payload"
 
+instance FromJSON HostDiscoveredPublication where
+  parseJSON = withObject "HostDiscoveredPublication" $ \value ->
+    HostDiscoveredPublication
+      <$> value .: "clusterPresent"
+      <*> value .:? "edgePort"
+
 runProductionDaemon :: Paths -> RuntimeMode -> IO ()
 runProductionDaemon paths runtimeMode = do
   maybeControlPlaneOverride <- lookupEnv "INFERNIX_CONTROL_PLANE_CONTEXT"
   maybeDaemonLocationOverride <- lookupEnv "INFERNIX_DAEMON_LOCATION"
   maybeCatalogSourceOverride <- lookupEnv "INFERNIX_CATALOG_SOURCE"
   maybeDemoConfigOverride <- lookupEnv "INFERNIX_DEMO_CONFIG_PATH"
-  maybeTransport <- discoverPulsarTransport
+  maybeTransport <- discoverPulsarTransport paths runtimeMode
   let controlPlane = fromMaybe (controlPlaneContext paths) maybeControlPlaneOverride
       daemonLocation =
         fromMaybe
@@ -163,11 +178,11 @@ runProductionDaemon paths runtimeMode = do
         (forkIO . consumeTopicForever transport paths runtimeMode (resultTopic demoConfig))
       forever (threadDelay 60000000)
 
-publishInferenceRequest :: Paths -> RuntimeMode -> Text.Text -> InferenceRequest -> IO FilePath
+publishInferenceRequest :: Paths -> RuntimeMode -> Text.Text -> InferenceRequest -> IO Text.Text
 publishInferenceRequest paths runtimeMode topic requestValue = do
-  maybeTransport <- discoverPulsarTransport
-  let requestIdValue = requestModelId requestValue <> "-request"
-      protoPayload =
+  maybeTransport <- discoverPulsarTransport paths runtimeMode
+  requestIdValue <- generatePublishedRequestId
+  let protoPayload =
         set (field @"requestId") requestIdValue $
           set (field @"requestModelId") (requestModelId requestValue) $
             set (field @"inputText") (inputText requestValue) $
@@ -177,14 +192,14 @@ publishInferenceRequest paths runtimeMode topic requestValue = do
       createDirectoryIfMissing True (topicDirectoryPath paths topic)
       let outputPath = topicDirectoryPath paths topic </> Text.unpack requestIdValue <.> "pb"
       writeInferenceRequestFile outputPath protoPayload
-      pure outputPath
+      pure requestIdValue
     Just transport -> do
       publishTopicPayload transport topic requestIdValue (encodeMessage protoPayload)
-      pure ("pulsar://" <> Text.unpack topic <> "/" <> Text.unpack requestIdValue)
+      pure requestIdValue
 
-readPublishedInferenceResultMaybe :: Paths -> Text.Text -> Text.Text -> IO (Maybe InferenceResult)
-readPublishedInferenceResultMaybe paths topic requestIdValue = do
-  maybeTransport <- discoverPulsarTransport
+readPublishedInferenceResultMaybe :: Paths -> RuntimeMode -> Text.Text -> Text.Text -> IO (Maybe InferenceResult)
+readPublishedInferenceResultMaybe paths runtimeMode topic requestIdValue = do
+  maybeTransport <- discoverPulsarTransport paths runtimeMode
   case maybeTransport of
     Nothing -> do
       let outputPath = topicDirectoryPath paths topic </> Text.unpack requestIdValue <.> "pb"
@@ -257,12 +272,15 @@ topicDirectoryPath :: Paths -> Text.Text -> FilePath
 topicDirectoryPath paths topicValue =
   runtimeRoot paths </> "pulsar" </> "topics" </> sanitizeTopic topicValue
 
-discoverPulsarTransport :: IO (Maybe PulsarTransport)
-discoverPulsarTransport = do
+discoverPulsarTransport :: Paths -> RuntimeMode -> IO (Maybe PulsarTransport)
+discoverPulsarTransport paths runtimeMode = do
   maybeWebSocketBase <- lookupEnv "INFERNIX_PULSAR_WS_BASE_URL"
   maybeAdminBase <- lookupEnv "INFERNIX_PULSAR_ADMIN_URL"
   case trimWhitespace =<< maybeWebSocketBase of
-    Nothing -> pure Nothing
+    Nothing ->
+      case (controlPlaneContext paths, runtimeMode) of
+        ("host-native", AppleSilicon) -> discoverAppleHostPulsarTransport paths
+        _ -> pure Nothing
     Just rawWebSocketBase ->
       case parsePulsarWebSocketBase rawWebSocketBase of
         Left err ->
@@ -273,6 +291,45 @@ discoverPulsarTransport = do
                 PulsarTransport
                   { pulsarAdminBaseUrl = trimWhitespace =<< maybeAdminBase,
                     pulsarWebSocketBase = parsedWebSocketBase
+                  }
+            )
+
+discoverAppleHostPulsarTransport :: Paths -> IO (Maybe PulsarTransport)
+discoverAppleHostPulsarTransport paths = do
+  let publicationPath = publicationStatePath paths
+  publicationPresent <- doesFileExist publicationPath
+  if not publicationPresent
+    then pure Nothing
+    else do
+      publicationPayload <- Lazy.readFile publicationPath
+      case eitherDecode publicationPayload of
+        Left _ -> pure Nothing
+        Right publication ->
+          if not (hostPublicationClusterPresent (publication :: HostDiscoveredPublication))
+            then pure Nothing
+            else do
+              maybeEdgePort <- readEdgePortMaybe paths
+              let selectedPort = maybeEdgePort <|> hostPublicationEdgePort publication
+              case selectedPort of
+                Nothing -> pure Nothing
+                Just edgePortValue ->
+                  buildLoopbackTransport edgePortValue
+  where
+    buildLoopbackTransport edgePortValue =
+      case parsePulsarWebSocketBase ("ws://127.0.0.1:" <> show edgePortValue <> "/pulsar/ws/v2") of
+        Left err ->
+          ioError
+            ( userError
+                ( "failed to construct the Apple host-native Pulsar websocket endpoint from the published edge port:\n"
+                    <> err
+                )
+            )
+        Right websocketBase ->
+          pure
+            ( Just
+                PulsarTransport
+                  { pulsarAdminBaseUrl = Just ("http://127.0.0.1:" <> show edgePortValue <> "/pulsar/admin/admin/v2"),
+                    pulsarWebSocketBase = websocketBase
                   }
             )
 
@@ -452,11 +509,9 @@ readPublishedInferenceResultViaPulsar transport topicValue wantedRequestId = do
   let readerName = "infernix-read-" <> sanitizeTopic wantedRequestId
       readerPath = buildReaderSocketPath (pulsarWebSocketBase transport) topicRef readerName
   runPulsarWebSocketClient (pulsarWebSocketBase transport) readerPath $ \connection ->
-    readMatchingResult connection (100 :: Int)
+    readMatchingResult connection
   where
-    readMatchingResult _ remainingMessages
-      | remainingMessages <= 0 = pure Nothing
-    readMatchingResult connection remainingMessages = do
+    readMatchingResult connection = do
       maybeRawEnvelope <- timeout 200000 (receiveJsonFrame "Pulsar reader message" connection)
       case maybeRawEnvelope of
         Nothing -> pure Nothing
@@ -469,19 +524,22 @@ readPublishedInferenceResultViaPulsar transport topicValue wantedRequestId = do
               | requestId resultValue == wantedRequestId ->
                   pure (Just resultValue)
             _ ->
-              readMatchingResult connection (remainingMessages - 1)
+              readMatchingResult connection
 
 publishedResultFromRequest :: Paths -> RuntimeMode -> ProtoInference.InferenceRequest -> IO InferenceResult
 publishedResultFromRequest paths runtimeMode protoRequest = do
   domainResult <- executeInference paths runtimeMode (protoRequestToDomain protoRequest)
   now <- getCurrentTime
-  pure $
-    case domainResult of
-      Right resultValue ->
+  case domainResult of
+    Right resultValue -> do
+      inlinedPayload <- inlinePublishedPayload paths (payload resultValue)
+      pure
         resultValue
-          { requestId = view ProtoInferenceFields.requestId protoRequest
+          { requestId = view ProtoInferenceFields.requestId protoRequest,
+            payload = inlinedPayload
           }
-      Left errorValue ->
+    Left errorValue ->
+      pure
         InferenceResult
           { requestId = view ProtoInferenceFields.requestId protoRequest,
             resultModelId = view ProtoInferenceFields.requestModelId protoRequest,
@@ -492,6 +550,14 @@ publishedResultFromRequest paths runtimeMode protoRequest = do
             payload = ResultPayload {inlineOutput = Just (message errorValue), objectRef = Nothing},
             createdAt = now
           }
+
+inlinePublishedPayload :: Paths -> ResultPayload -> IO ResultPayload
+inlinePublishedPayload paths payloadValue =
+  case objectRef payloadValue of
+    Just objectRefValue -> do
+      objectContents <- TextIO.readFile (objectStoreRoot paths </> Text.unpack objectRefValue)
+      pure ResultPayload {inlineOutput = Just objectContents, objectRef = Nothing}
+    Nothing -> pure payloadValue
 
 decodeEnvelopePayload :: (Message a) => String -> PulsarEnvelope -> IO a
 decodeEnvelopePayload payloadLabel envelope = do
@@ -569,6 +635,7 @@ buildConsumerSocketPath websocketBase topicRef subscriptionName consumerName =
     websocketBase
     ("consumer/" <> renderTopicPath topicRef <> "/" <> subscriptionName)
     [ ("subscriptionType", "Exclusive"),
+      ("subscriptionInitialPosition", "Earliest"),
       ("receiverQueueSize", "1"),
       ("consumerName", consumerName)
     ]
@@ -801,6 +868,10 @@ trimWhitespace :: String -> Maybe String
 trimWhitespace rawValue =
   let trimmed = dropWhileEnd (`elem` [' ', '\n', '\r', '\t']) (dropWhile (`elem` [' ', '\n', '\r', '\t']) rawValue)
    in if null trimmed then Nothing else Just trimmed
+
+generatePublishedRequestId :: IO Text.Text
+generatePublishedRequestId =
+  Text.pack . formatTime defaultTimeLocale "req-%Y%m%d%H%M%S%q" <$> getCurrentTime
 
 trimTrailingSlash :: String -> String
 trimTrailingSlash = reverse . dropWhile (== '/') . reverse

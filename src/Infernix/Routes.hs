@@ -40,12 +40,12 @@ routeInventory demoEnabled =
   | routeSpec <- publishedRoutes demoEnabled
   ]
 
-routePublicationUpstreams :: Bool -> ApiUpstream -> [PublicationUpstream]
-routePublicationUpstreams demoEnabled apiUpstream =
+routePublicationUpstreams :: Bool -> ApiUpstream -> Text -> [PublicationUpstream]
+routePublicationUpstreams demoEnabled apiUpstream inferenceDispatchMode =
   [ PublicationUpstream
       { publicationUpstreamId = upstreamId,
         publicationUpstreamRoutePrefix = routePathPrefix routeSpec,
-        publicationUpstreamTargetSurface = publicationTargetSurface routeSpec apiUpstream,
+        publicationUpstreamTargetSurface = publicationTargetSurface routeSpec apiUpstream inferenceDispatchMode,
         publicationUpstreamHealthStatus = "published",
         publicationUpstreamDurableBackendState = durableState
       }
@@ -136,10 +136,10 @@ publicationRoutes demoEnabled =
         Just _ -> True
         Nothing -> False
 
-publicationTargetSurface :: RouteSpec -> ApiUpstream -> Text
-publicationTargetSurface routeSpec _apiUpstream =
+publicationTargetSurface :: RouteSpec -> ApiUpstream -> Text -> Text
+publicationTargetSurface routeSpec _apiUpstream inferenceDispatchMode =
   case (routePublicationId routeSpec, routePublicationTargetSurface routeSpec) of
-    (Just "demo", _) -> "cluster-resident demo surface"
+    (Just "demo", _) -> "cluster-resident demo surface via " <> inferenceDispatchMode
     (_, Just targetSurface) -> targetSurface
     _ -> ""
 

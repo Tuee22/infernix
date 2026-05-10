@@ -18,8 +18,8 @@
 
 The current repository already follows this split: Kind PV data, object-store metadata, MinIO
 objects, Pulsar ledgers, protobuf-backed inference-result files, and Patroni-backed PostgreSQL
-state are durable, while `./.build/`, `/opt/build/infernix/`, generated publication mirrors,
-caches, and Playwright output are derived.
+state are durable, while `./.build/`, `/opt/build/`, generated publication mirrors, caches, and
+Playwright output are derived.
 
 ## Owner And Durability Table
 
@@ -35,7 +35,7 @@ caches, and Playwright output are derived.
 | Cache manifests used to rebuild model caches | Haskell service runtime | `./.data/object-store/manifests/<runtime-mode>/<model-id>/default.pb` | durable | rebuild the derived cache from these protobuf-backed manifests rather than inventing alternate cache metadata |
 | Publication state and generated ConfigMap mirrors | cluster lifecycle and demo activation | `./.data/runtime/publication.json`, `./.data/runtime/configmaps/infernix-demo-config/` | derived but user-visible | regenerate from `cluster up`, `cluster down`, or the active generated demo config |
 | Repo-local kubeconfig and chosen edge-port record | cluster lifecycle | `./.build/infernix.kubeconfig`, `./.data/runtime/infernix.kubeconfig`, `./.data/runtime/edge-port.json` | derived | recreate from the supported control-plane lifecycle |
-| Build roots and staged generated demo config | build or cluster lifecycle | `./.build/`, `/opt/build/infernix/` | derived | rebuild from source and the active runtime mode |
+| Build roots and staged generated demo config | build or cluster lifecycle | `./.build/`, `/opt/build/` | derived | rebuild from source and the active runtime mode |
 | Runtime model cache | Haskell service runtime | `./.data/runtime/model-cache/...` | derived | rebuild from durable manifests and artifacts |
 | Apple adapter virtualenv and Playwright artifacts | Poetry or validation tooling | `python/.venv/`, `./.data/test-artifacts/playwright/` | derived | recreate from the shared Python project or rerun the validation lane |
 

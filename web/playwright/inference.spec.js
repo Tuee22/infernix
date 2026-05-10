@@ -4,6 +4,7 @@ const edgePort = Number(process.env.INFERNIX_EDGE_PORT ?? "9090");
 const edgeHost = process.env.INFERNIX_PLAYWRIGHT_HOST ?? "127.0.0.1";
 const baseUrl = `http://${edgeHost}:${edgePort}`;
 const expectedDaemonLocation = process.env.INFERNIX_EXPECT_DAEMON_LOCATION;
+const expectedInferenceDispatchMode = process.env.INFERNIX_EXPECT_INFERENCE_DISPATCH_MODE;
 const expectedApiUpstreamMode = process.env.INFERNIX_EXPECT_API_UPSTREAM_MODE;
 
 async function loadSerializedCatalog(request) {
@@ -30,6 +31,9 @@ test("active mode catalog is fully exercised through the routed HTTP surface", a
   expect(publication.workerExecutionMode).toBe("process-isolated-engine-workers");
   expect(publication.workerAdapterMode).toBe("engine-specific-runner-defaults");
   expect(publication.artifactAcquisitionMode).toBe("engine-ready-artifact-manifests");
+  if (expectedInferenceDispatchMode) {
+    expect(publication.inferenceDispatchMode).toBe(expectedInferenceDispatchMode);
+  }
 
   for (const model of models) {
     const inferenceResponse = await request.post(`${baseUrl}/api/inference`, {
@@ -56,6 +60,9 @@ test("manual inference workbench renders generated catalog entries and result st
   await expect(page.locator("#daemon-location")).not.toHaveText("loading…");
   if (expectedDaemonLocation) {
     await expect(page.locator("#daemon-location")).toHaveText(expectedDaemonLocation);
+  }
+  if (expectedInferenceDispatchMode) {
+    await expect(page.locator("#inference-dispatch-mode")).toHaveText(expectedInferenceDispatchMode);
   }
   await expect(page.locator("#catalog-source")).not.toHaveText("loading…");
   if (expectedApiUpstreamMode) {

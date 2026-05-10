@@ -60,6 +60,21 @@ main = do
   assert
     (expectedDaemonLocationForRuntime LinuxGpu == "cluster-pod")
     "linux-gpu publication reports the cluster-resident service daemon location"
+  assert
+    (expectedInferenceDispatchModeForRuntime AppleSilicon == "pulsar-bridge-to-host-daemon")
+    "apple-silicon publication reports the host-daemon dispatch mode"
+  assert
+    (expectedInferenceDispatchModeForRuntime LinuxCpu == "pulsar-bridge-to-cluster-daemon")
+    "linux-cpu publication reports the cluster-daemon dispatch mode"
+  assert
+    (expectedInferenceDispatchModeForRuntime LinuxGpu == "pulsar-bridge-to-cluster-daemon")
+    "linux-gpu publication reports the cluster-daemon dispatch mode"
+  assert
+    (null (platformClaimsForRuntime AppleSilicon))
+    "apple-silicon omits the cluster service PVC claim from the publication seed set"
+  assert
+    (length (platformClaimsForRuntime LinuxCpu) == 1 && length (platformClaimsForRuntime LinuxGpu) == 1)
+    "linux runtime lanes retain the cluster service PVC claim"
   assert (isJust (findModel LinuxGpu "llm-qwen25-awq")) "linux-gpu includes the AWQ row"
   assert (isNothing (findModel AppleSilicon "llm-qwen25-awq")) "apple-silicon omits unsupported AWQ rows"
   assert
@@ -212,7 +227,7 @@ main = do
                 configEdgePort = 0,
                 configMapName = "infernix-demo-config",
                 generatedPath = "./.build/infernix-substrate.dhall",
-                mountedPath = "/opt/build/infernix/infernix-substrate.dhall",
+                mountedPath = "/opt/build/infernix-substrate.dhall",
                 demoUiEnabled = True,
                 requestTopics = requestTopicsForMode LinuxCpu,
                 resultTopic = resultTopicForMode LinuxCpu,
@@ -282,6 +297,25 @@ main = do
           assert (evictedCount == 1) "cache eviction removes the selected cache entry"
           rebuiltEntries <- rebuildCache paths AppleSilicon (Just "llm-qwen25-safetensors")
           assert (length rebuiltEntries == 1) "cache rebuild restores the selected cache entry"
+
+      nativeInferenceResult <-
+        executeInference
+          paths
+          AppleSilicon
+          InferenceRequest
+            { requestModelId = "speech-whisper-small",
+              inputText = "native runner coverage"
+            }
+      case nativeInferenceResult of
+        Left err -> fail ("unexpected native inference error: " <> show err)
+        Right result -> do
+          payloadText <- renderPayloadText paths (payload result)
+          assert
+            ("adapter=whisper-cpp-cli" `isInfixOf` payloadText)
+            "native runner execution reports the adapter-specific runner id instead of a generic fallback payload"
+          assert
+            ("runner=whisper.cpp transcription lane" `isInfixOf` payloadText)
+            "native runner execution reports the explicit runner lane description"
 
       let overrideModel = maybe (fail "expected the apple-silicon qwen row") pure (findModel AppleSilicon "llm-qwen25-safetensors")
       overrideModelDescriptor <- overrideModel

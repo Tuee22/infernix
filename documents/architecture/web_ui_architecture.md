@@ -17,14 +17,24 @@ When the flag is on:
 - the browser loads `/` from the `infernix-demo` workload through the published routed surface
 - the browser calls `/api`, `/api/publication`, `/api/cache`, and `/objects/<key>` on the same
   routed edge port; all of them are served by `infernix-demo`
+- manual inference always enters through that clustered `infernix-demo` surface, but the daemon
+  lane behind it is substrate-specific: `apple-silicon` bridges through Pulsar into the
+  host-native `infernix service` process, while `linux-cpu` and `linux-gpu` bridge into the
+  cluster-resident daemon
+- `/api/publication` exposes that distinction through `daemonLocation` and
+  `inferenceDispatchMode`
 - the visible catalog comes from the generated active-mode demo catalog rather than a
   hand-maintained UI allowlist
 
 ## Image Topology
 
 `infernix` and `infernix-demo` share the default Cabal library exposed by the `infernix` package
-and ship in the same runtime image on the real cluster path. The chart workload entrypoint selects
-which executable runs.
+and ship in the same runtime image family on the cluster path. The chart workload entrypoint
+selects which executable runs where that executable is deployed.
+
+On Apple Silicon, the cluster deploys `infernix-demo` plus the support-service stack, while the
+canonical `infernix service` daemon remains a host-native process. On Linux substrates, both the
+demo workload and the `infernix service` daemon run from the cluster-resident substrate image.
 
 On Linux, the substrate image owns the web build prerequisites and the baked `web/dist/` bundle.
 Routed Playwright execution lives in a separate dedicated `infernix-playwright:local` image built
@@ -58,7 +68,8 @@ the outer container forwards the same compose invocation through the mounted hos
   guidance, and result-state rendering
 - E2E coverage exhaustively hits every generated catalog entry through the routed surface and
   separately exercises browser UI interaction for publication-detail rendering, model selection,
-  submission, object-reference results, and daemon-location reporting
+  submission, object-reference results, daemon-location reporting, and inference-dispatch-mode
+  reporting
 - supported routed E2E uses the dedicated `infernix-playwright:local` container on Apple and Linux
   alike, invoked via `docker compose run --rm playwright`; Apple host-native orchestration reaches
   it directly while the Linux outer-container path forwards the call through the mounted host

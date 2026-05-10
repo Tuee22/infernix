@@ -74,6 +74,7 @@ type Refs =
   , runtimeModeValue :: Element.Element
   , controlPlaneContext :: Element.Element
   , daemonLocation :: Element.Element
+  , inferenceDispatchMode :: Element.Element
   , catalogSource :: Element.Element
   , edgePort :: Element.Element
   , apiUpstreamMode :: Element.Element
@@ -124,6 +125,7 @@ captureRefs htmlDocument = do
   runtimeModeValue <- requireElement htmlDocument "runtime-mode"
   controlPlaneContext <- requireElement htmlDocument "control-plane-context"
   daemonLocation <- requireElement htmlDocument "daemon-location"
+  inferenceDispatchMode <- requireElement htmlDocument "inference-dispatch-mode"
   catalogSource <- requireElement htmlDocument "catalog-source"
   edgePort <- requireElement htmlDocument "edge-port"
   apiUpstreamMode <- requireElement htmlDocument "api-upstream-mode"
@@ -154,6 +156,7 @@ captureRefs htmlDocument = do
     , runtimeModeValue
     , controlPlaneContext
     , daemonLocation
+    , inferenceDispatchMode
     , catalogSource
     , edgePort
     , apiUpstreamMode
@@ -336,6 +339,7 @@ renderPublication stateRef refs = do
   setText refs.runtimeModeValue summary.runtimeMode
   setText refs.controlPlaneContext summary.controlPlaneContext
   setText refs.daemonLocation summary.daemonLocation
+  setText refs.inferenceDispatchMode summary.inferenceDispatchMode
   setText refs.catalogSource summary.catalogSource
   setText refs.edgePort summary.edgePort
   setText refs.apiUpstreamMode summary.apiUpstreamMode
