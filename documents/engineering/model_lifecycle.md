@@ -39,7 +39,9 @@
 - the demo `/api/cache` surface operates on the manifest-backed durable contract exposed by the
   Haskell worker, including engine-runner metadata and selected-artifact inventory derived from the
   durable bundle
-- the service returns typed object references when outputs exceed inline limits
+- the service returns typed object references when outputs exceed inline limits, and the clustered
+  demo bridge localizes those large outputs back into its own object-store root before persisting
+  the browser-visible result record
 
 ## Cross-References
 

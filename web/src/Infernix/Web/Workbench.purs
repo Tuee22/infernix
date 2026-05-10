@@ -87,6 +87,7 @@ type Publication =
   { runtimeMode :: Maybe String
   , controlPlaneContext :: Maybe String
   , daemonLocation :: Maybe String
+  , inferenceDispatchMode :: Maybe String
   , catalogSource :: Maybe String
   , edgePort :: Maybe Int
   , apiUpstream :: Maybe ApiUpstream
@@ -101,6 +102,7 @@ type PublicationSummary =
   { runtimeMode :: String
   , controlPlaneContext :: String
   , daemonLocation :: String
+  , inferenceDispatchMode :: String
   , catalogSource :: String
   , edgePort :: String
   , apiUpstreamMode :: String
@@ -204,6 +206,7 @@ publicationSummary maybePublication fallbackRuntimeMode =
   { runtimeMode: fromMaybe fallbackRuntimeMode (maybePublication >>= _.runtimeMode)
   , controlPlaneContext: fromMaybe "Unavailable" (maybePublication >>= _.controlPlaneContext)
   , daemonLocation: fromMaybe "Unavailable" (maybePublication >>= _.daemonLocation)
+  , inferenceDispatchMode: fromMaybe "Unavailable" (maybePublication >>= _.inferenceDispatchMode)
   , catalogSource: fromMaybe "Unavailable" (maybePublication >>= _.catalogSource)
   , edgePort:
       case maybePublication >>= _.edgePort of

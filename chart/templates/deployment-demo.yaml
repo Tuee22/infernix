@@ -29,10 +29,16 @@ spec:
           env:
             - name: INFERNIX_BIND_HOST
               value: "0.0.0.0"
+            - name: INFERNIX_DEMO_BRIDGE_MODE
+              value: "pulsar-daemon"
             - name: INFERNIX_PUBLICATION_STATE_PATH
               value: "{{ .Values.demoConfig.mountPath }}/{{ .Values.publication.fileName }}"
             - name: INFERNIX_DATA_ROOT
               value: "/srv/infernix/.data"
+            - name: INFERNIX_PULSAR_ADMIN_URL
+              value: {{ .Values.service.pulsar.adminUrl | quote }}
+            - name: INFERNIX_PULSAR_WS_BASE_URL
+              value: {{ .Values.service.pulsar.webSocketBaseUrl | quote }}
           ports:
             - containerPort: {{ .Values.demo.port }}
           volumeMounts:

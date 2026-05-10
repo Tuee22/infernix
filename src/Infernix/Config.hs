@@ -185,7 +185,7 @@ resolveRuntimeMode Nothing = do
 
 watchedDemoConfigPath :: FilePath
 watchedDemoConfigPath =
-  "/opt/build/infernix/infernix-substrate.dhall"
+  "/opt/build/infernix-substrate.dhall"
 
 resolveRuntimeModeFromGeneratedFile :: FilePath -> IO RuntimeMode
 resolveRuntimeModeFromGeneratedFile substratePath = do

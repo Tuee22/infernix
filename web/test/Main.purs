@@ -75,6 +75,7 @@ main =
                     { runtimeMode: Just runtimeMode
                     , controlPlaneContext: Just "host-native"
                     , daemonLocation: Just "control-plane-host"
+                    , inferenceDispatchMode: Just "pulsar-bridge-to-host-daemon"
                     , catalogSource: Just "generated-build-root"
                     , edgePort: Just 9090
                     , apiUpstream: Just { mode: "cluster-demo", host: Just "infernix-demo.platform.svc.cluster.local", port: Just 80 }
@@ -90,6 +91,7 @@ main =
                   { runtimeMode
                   , controlPlaneContext: "host-native"
                   , daemonLocation: "control-plane-host"
+                  , inferenceDispatchMode: "pulsar-bridge-to-host-daemon"
                   , catalogSource: "generated-build-root"
                   , edgePort: "9090"
                   , apiUpstreamMode: "cluster-demo"
@@ -102,6 +104,7 @@ main =
                   { runtimeMode
                   , controlPlaneContext: "Unavailable"
                   , daemonLocation: "Unavailable"
+                  , inferenceDispatchMode: "Unavailable"
                   , catalogSource: "Unavailable"
                   , edgePort: "Not published"
                   , apiUpstreamMode: "Unavailable"

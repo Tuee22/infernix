@@ -17,7 +17,7 @@ Runtime contract:
 - `infernix cluster up` bootstraps the declared Helm repositories, renders this chart, and deploys
   it on the active Kind cluster
 - cluster-resident service and `infernix-demo` workloads mount `ConfigMap/infernix-demo-config`
-  read-only at `/opt/build/infernix/infernix-substrate.dhall`
+  read-only at `/opt/build/infernix-substrate.dhall`
 - `chart/templates/deployment-demo.yaml` and `chart/templates/service-demo.yaml` gate the
   `infernix-demo` workload on `.Values.demo.enabled`, driven from the active `.dhall` `demo_ui`
   flag

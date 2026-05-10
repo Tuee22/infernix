@@ -7,8 +7,9 @@ module Infernix.Models
     engineBindingsForMode,
     encodeDemoConfig,
     expectedDaemonLocationForRuntime,
+    expectedInferenceDispatchModeForRuntime,
     findModel,
-    platformClaims,
+    platformClaimsForRuntime,
     requestTopicsForMode,
     renderPublicationState,
     renderPublicationStateWithApiUpstream,
@@ -131,10 +132,11 @@ renderConfigMapManifest payload =
     ]
     <> indentBlock 4 (LazyChar8.unpack payload)
 
-platformClaims :: [PersistentClaim]
-platformClaims =
-  [ PersistentClaim "platform" "infernix" "service" 0 "data" "infernix-service-0-data" "5Gi"
-  ]
+platformClaimsForRuntime :: RuntimeMode -> [PersistentClaim]
+platformClaimsForRuntime runtimeMode =
+  case runtimeMode of
+    AppleSilicon -> []
+    _ -> [PersistentClaim "platform" "infernix" "service" 0 "data" "infernix-service-0-data" "5Gi"]
 
 routeInventory :: Bool -> [RouteInfo]
 routeInventory = Routes.routeInventory
@@ -206,6 +208,9 @@ renderPublicationStateWithApiUpstream controlPlane state apiUpstream =
     <> "  \"artifactAcquisitionMode\": "
     <> jsonString "engine-ready-artifact-manifests"
     <> ",\n"
+    <> "  \"inferenceDispatchMode\": "
+    <> jsonString (inferenceDispatchModeFor state)
+    <> ",\n"
     <> "  \"apiUpstream\": "
     <> renderApiUpstream apiUpstream
     <> ",\n"
@@ -213,14 +218,14 @@ renderPublicationStateWithApiUpstream controlPlane state apiUpstream =
     <> show (show (updatedAt state))
     <> ",\n"
     <> "  \"upstreams\": [\n"
-    <> intercalate ",\n" (map renderPublicationUpstream (publicationUpstreams (stateHasDemoUi state) apiUpstream))
+    <> intercalate ",\n" (map renderPublicationUpstream (publicationUpstreams (stateHasDemoUi state) apiUpstream (inferenceDispatchModeFor state)))
     <> "\n  ],\n"
     <> "  \"routes\": [\n"
     <> intercalate ",\n" (map renderRouteInfo (routes state))
     <> "\n  ]\n"
     <> "}\n"
 
-publicationUpstreams :: Bool -> ApiUpstream -> [PublicationUpstream]
+publicationUpstreams :: Bool -> ApiUpstream -> Text -> [PublicationUpstream]
 publicationUpstreams = Routes.routePublicationUpstreams
 
 renderApiUpstream :: ApiUpstream -> String
@@ -268,9 +273,20 @@ expectedDaemonLocationForRuntime runtimeMode =
     AppleSilicon -> "control-plane-host"
     _ -> "cluster-pod"
 
+expectedInferenceDispatchModeForRuntime :: RuntimeMode -> Text
+expectedInferenceDispatchModeForRuntime runtimeMode =
+  case runtimeMode of
+    AppleSilicon -> "pulsar-bridge-to-host-daemon"
+    _ -> "pulsar-bridge-to-cluster-daemon"
+
 stateHasDemoUi :: ClusterState -> Bool
 stateHasDemoUi state =
   any ((`elem` ["/", "/api", "/objects"]) . path) (routes state)
+
+inferenceDispatchModeFor :: ClusterState -> Text
+inferenceDispatchModeFor state
+  | stateHasDemoUi state = expectedInferenceDispatchModeForRuntime (clusterRuntimeMode state)
+  | otherwise = "disabled"
 
 disabledApiUpstream :: ApiUpstream
 disabledApiUpstream =

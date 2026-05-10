@@ -18,13 +18,13 @@ govern this plan.
 | [development_plan_standards.md](development_plan_standards.md) | Maintenance rules for the development plan |
 | [00-overview.md](00-overview.md) | Architecture baseline, hard constraints, substrate contract, and canonical repository shape |
 | [system-components.md](system-components.md) | Authoritative component inventory and state-location map |
-| [phase-0-documentation-and-governance.md](phase-0-documentation-and-governance.md) | `documents/` suite bootstrap plus the reopened substrate-doctrine documentation reset |
+| [phase-0-documentation-and-governance.md](phase-0-documentation-and-governance.md) | `documents/` suite bootstrap plus the substrate-doctrine documentation reset |
 | [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md) | Repository scaffold, CLI contract, build-root doctrine, launcher ownership, and substrate-selection closure |
 | [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md) | Kind bootstrap, manual PV doctrine, Harbor-first image flow, substrate `.dhall` publication, and Linux launcher closure |
-| [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md) | Mandatory local HA platform services, Envoy Gateway ownership, publication contract, and cluster-resident demo routing |
-| [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) | Haskell runtime, shared Python adapter project, substrate-owned daemon placement, reloadable `.dhall` control, and Pulsar production inference |
-| [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md) | PureScript demo UI, generated frontend contracts, clustered demo hosting, and Playwright ownership |
-| [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) | Static quality, README-matrix-driven single-substrate validation, root-doc closure, and HA validation |
+| [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md) | Mandatory local HA platform services, Envoy Gateway ownership, publication contract, and the Apple host-inference bridge for routed demo traffic |
+| [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) | Haskell runtime, shared Python adapter project, Apple host-native inference ownership, Linux cluster daemon lanes, reloadable `.dhall` control, and Pulsar production inference |
+| [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md) | PureScript demo UI, generated frontend contracts, clustered demo hosting, Apple host-backed browser dispatch, and Playwright ownership |
+| [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) | Static quality, README-matrix-driven single-substrate validation, Apple host-daemon bridge coverage, root-doc closure, and HA validation |
 | [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) | Explicit cleanup and removal ledger |
 
 ## Status Vocabulary
@@ -60,37 +60,37 @@ host-anchored `./.build/` bind mount. Supported runtime, cluster, and validation
 fast if the staged file is absent instead of falling back to host detection or
 `INFERNIX_SUBSTRATE_ID`. Cluster publication mirrors the exact payload locally under
 `./.data/runtime/configmaps/infernix-demo-config/infernix-substrate.dhall` and mounts the same
-filename inside cluster workloads at `/opt/build/infernix/infernix-substrate.dhall`. The file
-keeps the legacy `.dhall` filename even though the payload is banner-prefixed JSON. Validation
-already reports only the active built substrate instead of implying a default cross-substrate
-matrix, and the generated file,
-`cluster status`, publication JSON, and generated browser contracts still serialize that active
-substrate under `runtimeMode` field names. On `apple-silicon`, the direct `infernix service` lane
-remains host-native, but `cluster up` currently deploys both `infernix-service` and
-`infernix-demo` from the `infernix-linux-cpu:local` image family while routed manual inference
-stays inside the clustered demo path. The plan therefore closes around one active-substrate
-validation contract rather than a default cross-substrate rerun story. The worktree now removes
-the direct Harbor, MinIO, and Pulsar tool-route compatibility handlers, requires the real routed
-upstream behavior in integration, persists Linux cluster state before later rollout phases, and
-restages the active Linux substrate payload on each supported bootstrap invocation. The supported
-`linux-cpu` and `linux-gpu` bootstrap lifecycles now rerun cleanly through `doctor`, `build`,
-`up`, `status`, `test`, and `down`, and the formatter-toolchain closure is present in the
-worktree: the Haskell style bootstrap now drives `ormolu` and `hlint` through the dedicated
-compatible formatter compiler `ghc-9.12.4`, while the Linux substrate image preinstalls that
-compiler beside the project `ghc-9.14.1` toolchain. The supported Linux outer-container launcher
-now reuses a persistent `chart/charts/` archive cache, hydrates the MinIO dependency through the
-supported direct tarball path instead of Docker Hub-backed OCI metadata, and detects the known
-stale Pulsar or ZooKeeper epoch mismatch by resetting only the retained Pulsar claim roots and
-retrying `cluster up` once. The current worktree now also carries the Apple clean-host bootstrap
-closure in code: the stage-0 entrypoint verifies the selected ghcup-managed `ghc` and `cabal`
-executables before direct `cabal install`, reconciles Homebrew `protoc`, reconciles Colima to the
-supported `8 CPU / 16 GiB` profile before Docker-backed work, and lets Apple adapter setup or
-validation paths reconcile Homebrew `python@3.12` plus a user-local Poetry bootstrap on demand.
-The governed Apple host-native lifecycle now reruns cleanly through `doctor`, `build`, `up`,
-`status`, `test`, and `down`; routed Apple Playwright readiness probes `127.0.0.1` from the host
-while the browser container joins the private Docker `kind` network and targets the Kind
-control-plane DNS, and the dedicated Playwright image no longer bakes a conflicting `NO_COLOR`
-default.
+filename inside cluster workloads at `/opt/build/infernix-substrate.dhall`. The file keeps the
+legacy `.dhall` filename even though the payload is banner-prefixed JSON. Validation reports only
+the active built substrate instead of implying a default cross-substrate matrix, and the
+generated file, `cluster status`, publication JSON, and generated browser contracts still
+serialize that active substrate under `runtimeMode` field names. The Apple hybrid contract is now
+closed in code and validation: on `apple-silicon`, `cluster up` keeps Harbor, MinIO, Pulsar,
+PostgreSQL, Envoy Gateway, and the optional clustered `infernix-demo` surface in Kind while
+leaving `infernix service` host-native; routed manual inference enters the clustered demo surface
+and bridges through Pulsar into the host daemon; `cluster up` no longer deploys
+`infernix-service` on the Apple lane; publication exposes
+`inferenceDispatchMode: pulsar-bridge-to-host-daemon`; and the runtime worker dispatches through
+explicit supported runners while unsupported adapters fail fast instead of returning synthetic
+success. The worktree removes the direct Harbor, MinIO, and Pulsar tool-route compatibility
+handlers, requires the real routed upstream behavior in integration, persists Linux cluster state
+before later rollout phases, and restages the active Linux substrate payload on each supported
+bootstrap invocation. The governed `linux-cpu`, `linux-gpu`, and Apple host-native bootstrap
+lifecycles now all rerun cleanly through `doctor`, `build`, `up`, `status`, `test`, and `down`.
+The formatter-toolchain closure remains in place: the Haskell style bootstrap drives `ormolu` and
+`hlint` through the dedicated compatible formatter compiler `ghc-9.12.4`, while the Linux
+substrate image preinstalls that compiler beside the project `ghc-9.14.1` toolchain. The
+supported Linux outer-container launcher reuses a persistent `chart/charts/` archive cache,
+hydrates the MinIO dependency through the supported direct tarball path instead of Docker
+Hub-backed OCI metadata, and detects the known stale Pulsar or ZooKeeper epoch mismatch by
+resetting only the retained Pulsar claim roots and retrying `cluster up` once. The Apple
+clean-host bootstrap verifies the selected ghcup-managed `ghc` and `cabal` executables before
+direct `cabal install`, reconciles Homebrew `protoc`, reconciles Colima to the supported
+`8 CPU / 16 GiB` profile before Docker-backed work, and lets Apple adapter setup or validation
+paths reconcile Homebrew `python@3.12` plus a user-local Poetry bootstrap on demand. Routed Apple
+Playwright readiness probes `127.0.0.1` from the host while the browser container joins the
+private Docker `kind` network and targets the Kind control-plane DNS, and the dedicated
+Playwright image no longer bakes a conflicting `NO_COLOR` default.
 
 Monitoring is not a supported first-class surface.
 
@@ -146,9 +146,16 @@ The supported platform now closes around these rules:
 - the staged substrate file retains the legacy `.dhall` filename even though the current payload is
   banner-prefixed JSON produced by Haskell runtime helpers
 - Apple host-native operation is the only supported host build path outside a container
-- on Apple Silicon, the host-built `./.build/infernix` binary manages Kind, deploys the clustered
-  service and demo workloads, and still owns the direct host-side `infernix service` lane; the
-  routed demo and Playwright paths do not manage a separate host daemon in the current code path
+- on Apple Silicon, the host-built `./.build/infernix` binary manages Kind, deploys the mandatory
+  cluster support services and optional routed demo workload, and owns the direct host-side
+  `infernix service` lane
+- on Apple Silicon, the canonical inference executor is the host-native `infernix service`
+  process; clustered Apple workloads may consume the same staged substrate file and route
+  contracts, but they do not replace host-native Apple inference or claim direct Metal or unified
+  memory access
+- when the demo UI is enabled on Apple Silicon, the routed demo surface may stay cluster-resident,
+  but the supported steady-state path bridges routed inference into the host-native Apple daemon
+  rather than keeping Apple inference inside a cluster-resident repo workload
 - on Apple Silicon, Compose is not a user-facing launcher for ordinary CLI work; the host CLI
   invokes `docker compose run --rm playwright` against the dedicated `infernix-playwright:local`
   image for routed Playwright E2E
@@ -164,15 +171,15 @@ The supported platform now closes around these rules:
   same built image is the artifact pushed to Harbor and deployed as the cluster daemon
 - the staged substrate file lives under the active build root:
   `./.build/infernix-substrate.dhall` on Apple and `./.build/outer-container/build/infernix-substrate.dhall`
-  on the host on the Linux outer-container path; Linux cluster deployment republishes that payload
-  through `ConfigMap/infernix-demo-config` and mounts the same filename inside cluster workloads at
-  `/opt/build/infernix/infernix-substrate.dhall`
+  on the host on the Linux outer-container path; cluster deployment republishes that payload
+  through `ConfigMap/infernix-demo-config` whenever the active topology has cluster-resident
+  consumers and mounts the same filename inside those workloads at `/opt/build/infernix-substrate.dhall`
 - the binary watches its substrate `.dhall` and reloads or restarts on changes; reload purges any
   running inference-engine state
 - the supported materialization path can emit `demo_ui = false` with
   `--demo-ui false`; omitting that flag keeps the default demo-enabled output
-- the routed demo app is cluster-resident across substrates; the interim Apple host bridge is not
-  part of the final contract
+- the routed demo app remains cluster-resident when enabled, but the Apple routed path closes
+  around an explicit host-inference bridge rather than cluster-resident Apple service parity
 - supported entrypoints no longer carry the old cross-substrate default matrix, cluster bring-up
   fallbacks, or direct tool-route compatibility handlers; routed Harbor, MinIO, and Pulsar checks
   require the real Gateway-backed upstream behavior
@@ -196,10 +203,10 @@ The supported platform now closes around these rules:
 | 0 | none | realigns the governed docs suite and root guidance before later substrate-closure work can honestly claim implementation or validation completion |
 | 1 | 0 | launcher ownership, substrate selection, and CLI flag removal depend on the reopened documentation baseline |
 | 2 | 0-1 | cluster lifecycle and generated substrate-file publication depend on the updated launcher and substrate-selection contract |
-| 3 | 0-2 | cluster-resident demo routing depends on the new cluster lifecycle and generated substrate-file publication |
-| 4 | 0-3 | daemon placement, reload behavior, and transport closure depend on the settled cluster and routing substrate |
-| 5 | 0-4 | demo-host and Playwright ownership depend on the daemon-placement and routed demo-surface contract |
-| 6 | 0-5 | validation depends on the settled launcher, daemon, UI, and routed substrate contracts |
+| 3 | 0-2 | the Apple host-inference bridge plus the routed demo and publication contract depend on the new cluster lifecycle and generated substrate-file publication |
+| 4 | 0-3 | Apple host-daemon ownership, Linux cluster daemons, reload behavior, and transport closure depend on the settled cluster and routing substrate |
+| 5 | 0-4 | demo-host and Playwright ownership depend on the Apple host-daemon contract and routed demo-surface contract |
+| 6 | 0-5 | validation depends on the settled launcher, daemon-placement, UI, Apple bridge, and routed substrate contracts |
 
 ## Cross-References
 

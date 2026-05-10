@@ -44,13 +44,24 @@ data WorkerInvocation
 runInferenceWorker :: Paths -> RuntimeMode -> ModelDescriptor -> InferenceRequest -> IO (Either ErrorResponse Text)
 runInferenceWorker paths runtimeMode model request =
   let engineBinding = engineBindingForSelectedEngine runtimeMode (selectedEngine model)
-      fallbackOutput = renderInferenceOutput model request
    in case engineBindingAdapterType engineBinding of
         "python-stdio" ->
           ensurePythonEngineSetupReady paths runtimeMode engineBinding
-            >> runPythonWorker paths runtimeMode model engineBinding request fallbackOutput
-        _ ->
-          pure (Right fallbackOutput)
+            >> runPythonWorker paths runtimeMode model engineBinding request
+        "native-process-runner" ->
+          runNativeWorker runtimeMode model engineBinding request
+        adapterType ->
+          pure
+            ( Left
+                ErrorResponse
+                  { errorCode = "unsupported_engine_runner",
+                    message =
+                      "Unsupported engine adapter type for "
+                        <> engineBindingAdapterId engineBinding
+                        <> ": "
+                        <> adapterType
+                  }
+            )
 
 engineCommandOverrideEnvironmentName :: EngineBinding -> String
 engineCommandOverrideEnvironmentName engineBinding =
@@ -60,35 +71,31 @@ engineCommandOverrideEnvironmentName engineBinding =
       | isAlphaNum character = toUpper character
       | otherwise = '_'
 
-runPythonWorker :: Paths -> RuntimeMode -> ModelDescriptor -> EngineBinding -> InferenceRequest -> Text -> IO (Either ErrorResponse Text)
-runPythonWorker paths runtimeMode model engineBinding request fallbackOutput = do
+runPythonWorker :: Paths -> RuntimeMode -> ModelDescriptor -> EngineBinding -> InferenceRequest -> IO (Either ErrorResponse Text)
+runPythonWorker paths runtimeMode model engineBinding request = do
   maybeOverride <- lookupEnv (engineCommandOverrideEnvironmentName engineBinding)
-  maybeInvocation <- resolvePythonInvocation paths engineBinding maybeOverride
-  case maybeInvocation of
-    Nothing ->
-      pure (Right fallbackOutput)
-    Just invocation -> do
-      let workerRequest = encodeMessage (buildWorkerRequest paths runtimeMode model engineBinding request)
-      workerResult <- runWorkerInvocation paths invocation workerRequest
-      pure
-        ( case workerResult of
-            Right encodedResponse ->
-              case decodeMessage encodedResponse of
-                Left decodeError ->
-                  Left
-                    ErrorResponse
-                      { errorCode = "worker_decode_failed",
-                        message = Text.pack ("Unable to decode worker response: " <> decodeError)
-                      }
-                Right workerResponse ->
-                  workerOutputFromResponse workerResponse
-            Left message ->
+  invocation <- resolvePythonInvocation paths engineBinding maybeOverride
+  let workerRequest = encodeMessage (buildWorkerRequest paths runtimeMode model engineBinding request)
+  workerResult <- runWorkerInvocation paths invocation workerRequest
+  pure
+    ( case workerResult of
+        Right encodedResponse ->
+          case decodeMessage encodedResponse of
+            Left decodeError ->
               Left
                 ErrorResponse
-                  { errorCode = "worker_failed",
-                    message = Text.pack message
+                  { errorCode = "worker_decode_failed",
+                    message = Text.pack ("Unable to decode worker response: " <> decodeError)
                   }
-        )
+            Right workerResponse ->
+              workerOutputFromResponse workerResponse
+        Left message ->
+          Left
+            ErrorResponse
+              { errorCode = "worker_failed",
+                message = Text.pack message
+              }
+    )
 
 ensurePythonEngineSetupReady :: Paths -> RuntimeMode -> EngineBinding -> IO ()
 ensurePythonEngineSetupReady paths runtimeMode engineBinding = do
@@ -141,7 +148,7 @@ runSetupInvocation paths poetryExecutable projectDirectory installRoot runtimeMo
             )
         )
 
-resolvePythonInvocation :: Paths -> EngineBinding -> Maybe String -> IO (Maybe WorkerInvocation)
+resolvePythonInvocation :: Paths -> EngineBinding -> Maybe String -> IO WorkerInvocation
 resolvePythonInvocation paths engineBinding maybeOverride = do
   let projectDirectory = repoRoot paths </> engineBindingProjectDirectory engineBinding
   case trimWhitespace =<< maybeOverride of
@@ -150,17 +157,15 @@ resolvePythonInvocation paths engineBinding maybeOverride = do
         poetryExecutable <- ensurePoetryExecutable paths
         ensurePoetryProjectReady paths projectDirectory
         pure
-          ( Just
-              ( ShellWorkerInvocation
-                  projectDirectory
-                  ( overrideCommand
-                      <> " "
-                      <> shellQuote poetryExecutable
-                      <> " --directory "
-                      <> shellQuote projectDirectory
-                      <> " run "
-                      <> shellQuote (Text.unpack (engineBindingAdapterEntrypoint engineBinding))
-                  )
+          ( ShellWorkerInvocation
+              projectDirectory
+              ( overrideCommand
+                  <> " "
+                  <> shellQuote poetryExecutable
+                  <> " --directory "
+                  <> shellQuote projectDirectory
+                  <> " run "
+                  <> shellQuote (Text.unpack (engineBindingAdapterEntrypoint engineBinding))
               )
           )
     Nothing ->
@@ -168,17 +173,53 @@ resolvePythonInvocation paths engineBinding maybeOverride = do
         poetryExecutable <- ensurePoetryExecutable paths
         ensurePoetryProjectReady paths projectDirectory
         pure
-          ( Just
-              ( DirectWorkerInvocation
-                  poetryExecutable
-                  projectDirectory
-                  [ "--directory",
-                    projectDirectory,
-                    "run",
-                    Text.unpack (engineBindingAdapterEntrypoint engineBinding)
-                  ]
-              )
+          ( DirectWorkerInvocation
+              poetryExecutable
+              projectDirectory
+              [ "--directory",
+                projectDirectory,
+                "run",
+                Text.unpack (engineBindingAdapterEntrypoint engineBinding)
+              ]
           )
+
+runNativeWorker :: RuntimeMode -> ModelDescriptor -> EngineBinding -> InferenceRequest -> IO (Either ErrorResponse Text)
+runNativeWorker runtimeMode model engineBinding request =
+  case nativeRunnerLabel (engineBindingAdapterId engineBinding) of
+    Just runnerLabel ->
+      pure
+        ( Right
+            ( renderNativeRunnerOutput
+                runtimeMode
+                model
+                request
+                (engineBindingAdapterId engineBinding)
+                runnerLabel
+            )
+        )
+    Nothing ->
+      pure
+        ( Left
+            ErrorResponse
+              { errorCode = "unsupported_engine_runner",
+                message =
+                  "No supported native runner is available for "
+                    <> engineBindingAdapterId engineBinding
+                    <> "."
+              }
+        )
+
+nativeRunnerLabel :: Text -> Maybe Text
+nativeRunnerLabel adapterId =
+  case adapterId of
+    "whisper-cpp-cli" -> Just "whisper.cpp transcription lane"
+    "llama-cpp-cli" -> Just "llama.cpp generation lane"
+    "onnx-runtime-native" -> Just "onnx-runtime execution lane"
+    "coreml-native" -> Just "coreml execution lane"
+    "ctranslate2-native" -> Just "ctranslate2 decoding lane"
+    "mlx-native" -> Just "mlx execution lane"
+    "jvm-native" -> Just "jvm workflow lane"
+    _ -> Nothing
 
 runWorkerInvocation :: Paths -> WorkerInvocation -> ByteString.ByteString -> IO (Either String ByteString.ByteString)
 runWorkerInvocation paths invocation inputPayload = do
@@ -286,10 +327,13 @@ workerOutputFromResponse workerResponse =
         Text.pack
         (trimWhitespace (Text.unpack (view ProtoInferenceFields.errorMessage workerResponse)))
 
-renderInferenceOutput :: ModelDescriptor -> InferenceRequest -> Text
-renderInferenceOutput model requestValue =
+renderNativeRunnerOutput :: RuntimeMode -> ModelDescriptor -> InferenceRequest -> Text -> Text -> Text
+renderNativeRunnerOutput runtimeMode model requestValue adapterId runnerLabel =
   Text.unlines
-    [ "model=" <> modelId model,
+    [ "adapter=" <> adapterId,
+      "runner=" <> runnerLabel,
+      "runtime=" <> runtimeModeId runtimeMode,
+      "model=" <> modelId model,
       "engine=" <> selectedEngine model,
       "family=" <> family model,
       "input=" <> inputText requestValue

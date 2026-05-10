@@ -1,10 +1,12 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module Infernix.Runtime
-  ( evictCache,
+  ( buildPayload,
+    evictCache,
     executeInference,
     listCacheManifests,
     loadInferenceResult,
+    persistInferenceResult,
     rebuildCache,
   )
 where
@@ -63,7 +65,7 @@ executeInference paths runtimeMode request = case findModel runtimeMode (request
                       payload = payload,
                       createdAt = now
                     }
-            writeInferenceResultProto (inferenceResultPath paths requestIdValue) result
+            persistInferenceResult paths result
             pure (Right result)
 
 loadInferenceResult :: Paths -> Text -> IO (Maybe InferenceResult)
@@ -87,6 +89,10 @@ buildPayload paths requestIdValue outputText
           { inlineOutput = Just outputText,
             objectRef = Nothing
           }
+
+persistInferenceResult :: Paths -> InferenceResult -> IO ()
+persistInferenceResult paths resultValue =
+  writeInferenceResultProto (inferenceResultPath paths (requestId resultValue)) resultValue
 
 inferenceResultPath :: Paths -> Text -> FilePath
 inferenceResultPath paths requestIdValue =

@@ -15,18 +15,21 @@
 Phase 6 is done. The validation entrypoints, routed coverage, governed-root-document metadata
 closure, structured CLI-registry closure, route-hardening cleanup, and supported bootstrap
 lifecycle fixes are present in the current worktree, and the supported test story is
-substrate-specific. The worktree now also carries the formatter-toolchain closure:
-`src/Infernix/Lint/HaskellStyle.hs` drives `ormolu` and `hlint` through the dedicated compatible
-formatter compiler `ghc-9.12.4`, and the Linux substrate image now preinstalls that compiler
-beside the project `ghc-9.14.1` toolchain. The supported Linux outer-container launcher now
-reuses a persistent `chart/charts/` archive cache, hydrates MinIO through the supported direct
-tarball path instead of Docker Hub-backed OCI metadata, and repairs the known stale retained
-Pulsar or ZooKeeper epoch mismatch by resetting only the Pulsar claim roots and retrying once.
-The governed `linux-cpu`, `linux-gpu`, and Apple host-native bootstrap lifecycles rerun cleanly
-through `doctor`, `build`, `up`, `status`, `test`, and `down`, and the Apple routed Playwright
-lane now probes readiness from the host on `127.0.0.1` while the browser container joins the
-private Docker `kind` network and targets the Kind control-plane DNS without reintroducing the
-older `NO_COLOR` warning conflict.
+substrate-specific. The Apple routed path now validates the intended host-native inference
+doctrine end to end: routed manual inference bridges through Pulsar into the host daemon, the
+browser suite verifies `daemonLocation` and `inferenceDispatchMode`, and supported engine runners
+fail fast on unsupported adapters instead of returning placeholder success. The worktree also
+carries the formatter-toolchain closure: `src/Infernix/Lint/HaskellStyle.hs` drives `ormolu` and
+`hlint` through the dedicated compatible formatter compiler `ghc-9.12.4`, and the Linux
+substrate image preinstalls that compiler beside the project `ghc-9.14.1` toolchain. The
+supported Linux outer-container launcher reuses a persistent `chart/charts/` archive cache,
+hydrates MinIO through the supported direct tarball path instead of Docker Hub-backed OCI
+metadata, and repairs the known stale retained Pulsar or ZooKeeper epoch mismatch by resetting
+only the Pulsar claim roots and retrying once. The governed `linux-cpu`, `linux-gpu`, and Apple
+host-native bootstrap lifecycles rerun cleanly through `doctor`, `build`, `up`, `status`, `test`,
+and `down`, and the Apple routed Playwright lane probes readiness from the host on `127.0.0.1`
+while the browser container joins the private Docker `kind` network and targets the Kind
+control-plane DNS without reintroducing the older `NO_COLOR` warning conflict.
 
 ## Current Repo Assessment
 
@@ -43,12 +46,13 @@ now removes direct Harbor, MinIO, and Pulsar compatibility handlers from
 upstream behavior, persists cluster state before later Linux rollout phases, restages the active
 Linux substrate on each supported bootstrap invocation, reuses a persistent Linux chart-archive
 cache, and performs the targeted Pulsar claim-root reset when the known retained ZooKeeper
-epoch-state corruption blocks bootstrap. The governed `linux-cpu`, `linux-gpu`, and Apple reruns
-are fully green through the supported bootstrap surfaces. On Apple, routed Playwright no longer
-times out on `host.docker.internal`: host-side readiness probes `127.0.0.1:<edge-port>`, the
-browser container joins the private Docker `kind` network and targets the Kind control-plane DNS
-on port `30090`, and the dedicated Playwright image no longer bakes a conflicting `NO_COLOR`
-default.
+epoch-state corruption blocks bootstrap. The governed `linux-cpu` and `linux-gpu` reruns are
+green through the supported bootstrap surfaces. Apple bootstrap, integration, and browser
+orchestration reruns are also green, and the routed Apple path now validates the intended
+host-native inference doctrine end to end. On Apple, routed Playwright no longer times out on
+`host.docker.internal`: host-side readiness probes `127.0.0.1:<edge-port>`, the browser
+container joins the private Docker `kind` network and targets the Kind control-plane DNS on port
+`30090`, and the dedicated Playwright image no longer bakes a conflicting `NO_COLOR` default.
 
 ## Validation Surface
 
@@ -124,7 +128,7 @@ None.
 ## Sprint 6.2: Extensive Integration Suites [Done]
 
 **Status**: Done
-**Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Demo/Api.hs`, `src/Infernix/Runtime.hs`, `test/integration/Spec.hs`
+**Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Demo/Api.hs`, `src/Infernix/Runtime.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Worker.hs`, `test/integration/Spec.hs`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/operations/cluster_bootstrap_runbook.md`
 
 ### Objective
@@ -158,7 +162,7 @@ None.
 ## Sprint 6.3: Routed Playwright E2E Coverage [Done]
 
 **Status**: Done
-**Implementation**: `src/Infernix/CLI.hs`, `web/playwright/inference.spec.js`, `web/test/run_playwright_matrix.mjs`, `web/package.json`
+**Implementation**: `src/Infernix/CLI.hs`, `web/playwright/inference.spec.js`, `web/src/Infernix/Web/Workbench.purs`, `web/src/Main.purs`, `web/src/index.html`, `web/test/Main.purs`, `web/test/run_playwright_matrix.mjs`, `web/package.json`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/reference/web_portal_surface.md`
 
 ### Objective
@@ -276,8 +280,8 @@ hard-coded lane lists.
 
 ### Deliverables
 
-- `infernix test integration` enumerates every generated catalog entry from the active
-  build-generated demo config
+- `infernix test integration` enumerates every generated catalog entry from the active staged
+  demo config
 - `infernix test e2e` is specified to exercise every demo-visible generated catalog entry through
   the routed browser surface
 - `infernix test all` aggregates lint, unit, integration, and E2E without silently dropping catalog entries
@@ -299,7 +303,7 @@ None.
 ## Sprint 6.19: Single-Substrate Validation Closure and Simulation Removal [Done]
 
 **Status**: Done
-**Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Config.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Demo/Api.hs`, `bootstrap/linux-cpu.sh`, `bootstrap/linux-gpu.sh`, `web/test/run_playwright_matrix.mjs`, `docker/linux-substrate.Dockerfile`, `test/integration/Spec.hs`, `test/unit/Spec.hs`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/00-overview.md`, `DEVELOPMENT_PLAN/system-components.md`, `DEVELOPMENT_PLAN/phase-3-ha-platform-services-and-edge-routing.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
+**Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Config.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Demo/Api.hs`, `src/Infernix/Runtime.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Worker.hs`, `bootstrap/linux-cpu.sh`, `bootstrap/linux-gpu.sh`, `web/test/run_playwright_matrix.mjs`, `docker/linux-substrate.Dockerfile`, `test/integration/Spec.hs`, `test/unit/Spec.hs`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/00-overview.md`, `DEVELOPMENT_PLAN/system-components.md`, `DEVELOPMENT_PLAN/phase-3-ha-platform-services-and-edge-routing.md`, `DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md`, `DEVELOPMENT_PLAN/phase-5-web-ui-and-shared-types.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 **Docs to update**: `README.md`, `documents/development/local_dev.md`, `documents/development/testing_strategy.md`, `documents/development/chaos_testing.md`, `documents/engineering/testing.md`, `documents/engineering/portability.md`, `documents/engineering/edge_routing.md`, `documents/reference/cli_reference.md`, `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/tools/minio.md`, `documents/tools/pulsar.md`
 
 ### Objective
@@ -979,6 +983,10 @@ substrate-mismatched compatibility shims.
   runbook docs drift from the implemented Apple lifecycle contract
 
 ### Remaining Work
+
+None.
+
+## Remaining Work
 
 None.
 

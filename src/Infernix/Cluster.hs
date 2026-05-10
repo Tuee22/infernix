@@ -58,8 +58,14 @@ clusterStatePath paths = runtimeRoot paths </> "cluster-state.state"
 nodeMountedKindRoot :: FilePath
 nodeMountedKindRoot = "/var/infernix-data"
 
-seedClaims :: [PersistentClaim]
-seedClaims = platformClaims
+seedClaims :: RuntimeMode -> [PersistentClaim]
+seedClaims = platformClaimsForRuntime
+
+clusterServiceEnabled :: RuntimeMode -> Bool
+clusterServiceEnabled runtimeMode =
+  case runtimeMode of
+    AppleSilicon -> False
+    _ -> True
 
 helmRepositories :: [(String, String)]
 helmRepositories =
@@ -92,9 +98,8 @@ finalPhaseDeployments state =
     <> [deployment | clusterStateHasDemoUi state, deployment <- ["deployment/infernix-demo"]]
   where
     baseDeployments =
-      [ "deployment/infernix-minio-console",
-        "deployment/infernix-service"
-      ]
+      ["deployment/infernix-minio-console"]
+        <> [deployment | clusterServiceEnabled (clusterRuntimeMode state), deployment <- ["deployment/infernix-service"]]
 
 finalPhaseStatefulSets :: [String]
 finalPhaseStatefulSets =
@@ -262,7 +267,7 @@ clusterUpWithPlatform paths runtimeMode = do
             edgePort = requestedPort,
             routes = routeInventory demoUiEnabledValue,
             storageClass = "infernix-manual",
-            claims = seedClaims,
+            claims = seedClaims runtimeMode,
             clusterRuntimeMode = runtimeMode,
             kubeconfigPath = Config.generatedKubeconfigPath paths,
             generatedDemoConfigPath = demoConfigPath,
@@ -307,7 +312,7 @@ clusterUpWithPlatform paths runtimeMode = do
   waitForKubernetesApi paths runtimeMode
   configureRuntimeModeCluster paths runtimeMode
   now <- getCurrentTime
-  let seedState = activeState {claims = seedClaims, updatedAt = now}
+  let seedState = activeState {claims = seedClaims runtimeMode, updatedAt = now}
   warmupValuesPath <- writeHelmValuesFile paths controlPlane seedState payload WarmupPhase
   bootstrapValuesPath <- writeHelmValuesFile paths controlPlane seedState payload BootstrapPhase
   harborFinalValuesPath <- writeHelmValuesFile paths controlPlane seedState payload HarborFinalPhase
@@ -527,9 +532,17 @@ publicationStateSummaryLines publicationPath = do
     else do
       contents <- readFile publicationPath
       pure
-        ( maybe [] (\mode -> ["publicationApiUpstreamMode: " <> mode]) (publicationApiUpstreamMode contents)
+        ( maybe [] (\mode -> ["publicationInferenceDispatchMode: " <> mode]) (publicationInferenceDispatchMode contents)
+            <> maybe [] (\mode -> ["publicationApiUpstreamMode: " <> mode]) (publicationApiUpstreamMode contents)
             <> publicationUpstreamLines contents
         )
+
+publicationInferenceDispatchMode :: String -> Maybe String
+publicationInferenceDispatchMode contents =
+  firstJsonStringField
+    "\"inferenceDispatchMode\":"
+    "inferenceDispatchMode"
+    (lines contents)
 
 publicationApiUpstreamMode :: String -> Maybe String
 publicationApiUpstreamMode contents =
@@ -2273,6 +2286,8 @@ routedPublicationReady :: RuntimeMode -> Value -> Bool
 routedPublicationReady expectedRuntimeMode publicationPayload =
   lookupJsonStringPath ["daemonLocation"] publicationPayload
     == Just (Text.unpack (expectedDaemonLocationForRuntime expectedRuntimeMode))
+    && lookupJsonStringPath ["inferenceDispatchMode"] publicationPayload
+      == Just (Text.unpack (expectedInferenceDispatchModeForRuntime expectedRuntimeMode))
     && lookupJsonStringPath ["apiUpstream", "mode"] publicationPayload == Just "cluster-demo"
     && lookupJsonStringPath ["runtimeMode"] publicationPayload == Just (Text.unpack (runtimeModeId expectedRuntimeMode))
 
@@ -2783,6 +2798,7 @@ renderHelmValues controlPlane state demoConfigPayload deployPhase engineCommandO
         "  payloadJson: |",
         indentBlock 4 (renderPublicationState controlPlane state),
         "service:",
+        "  enabled: " <> yamlBool (clusterServiceEnabled (clusterRuntimeMode state)),
         "  replicaCount: " <> show (repoWorkloadReplicaCount deployPhase),
         "  image:",
         "    repository: " <> clusterWorkloadImageRepository (clusterRuntimeMode state),

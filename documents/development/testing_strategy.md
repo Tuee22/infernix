@@ -90,9 +90,10 @@ mode-specific coverage, matrix behavior, and operator detail behind those canoni
   config, validates routed publication details from `/api/publication`, and fails if the browser
   workbench cannot render publication details, select a model, or submit one of those entries
 - the Apple host-native routed E2E lane also fails if the clustered routed surface cannot keep
-  `apiUpstream.mode = cluster-demo`, preserve one browser-visible base URL, and still match the
-  current Apple publication payload `daemonLocation = control-plane-host` even though the same
-  clustered lifecycle also deploys `infernix-service` in-cluster
+  `apiUpstream.mode = cluster-demo`, preserve one browser-visible base URL, match the Apple
+  publication payload `daemonLocation = control-plane-host`, advertise
+  `inferenceDispatchMode = pulsar-bridge-to-host-daemon`, and still complete routed manual
+  inference through the host daemon
 - the supported routed E2E path uses the dedicated `infernix-playwright:local` image invoked via
   `docker compose run --rm playwright`; Apple host-native flows run that compose invocation
   directly from the host CLI while Linux flows forward it from the outer container through the

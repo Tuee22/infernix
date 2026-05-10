@@ -46,9 +46,11 @@ compatibility payload.
 - when the demo surface is enabled, `/` and the demo `/api*` and `/objects/` routes target the
   `infernix-demo` workload; direct `infernix-demo serve [--dhall PATH] [--port PORT]` still
   exposes the same Haskell demo API surface outside the routed cluster path when used
-  intentionally, but it no longer doubles as a compatibility target for Harbor, MinIO, or Pulsar
-  tool-route probes
-- `/api/publication` reports daemon location plus routed-upstream health and backing-state details
+  intentionally, but the supported routed Apple story keeps that HTTP host cluster-resident and
+  bridges manual inference through Pulsar into the host daemon instead of treating direct `serve`
+  as the browser baseline
+- `/api/publication` reports daemon location, `inferenceDispatchMode`, and routed-upstream health
+  plus backing-state details
 
 ## Gateway Ownership
 

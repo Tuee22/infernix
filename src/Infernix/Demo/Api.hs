@@ -2,10 +2,12 @@
 
 module Infernix.Demo.Api
   ( DemoApiOptions (..),
+    DemoBridgeMode (..),
     runDemoApiServer,
   )
 where
 
+import Control.Concurrent (threadDelay)
 import Data.Aeson
   ( FromJSON (parseJSON),
     ToJSON,
@@ -20,19 +22,25 @@ import Data.Aeson
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Char8 qualified as ByteStringChar8
 import Data.ByteString.Lazy qualified as LazyByteString
+import Data.Char (isSpace)
+import Data.Maybe (fromMaybe)
 import Data.String (fromString)
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
 import Infernix.Config (Paths (..))
 import Infernix.DemoConfig (decodeDemoConfigFile)
-import Infernix.Models (engineBindingForSelectedEngine)
+import Infernix.Models (engineBindingForSelectedEngine, findModel)
 import Infernix.Runtime
-  ( evictCache,
+  ( buildPayload,
+    evictCache,
     executeInference,
     listCacheManifests,
     loadInferenceResult,
+    persistInferenceResult,
     rebuildCache,
   )
+import Infernix.Runtime.Cache (materializeCache)
+import Infernix.Runtime.Pulsar (publishInferenceRequest, readPublishedInferenceResultMaybe)
 import Infernix.Types
 import Network.HTTP.Types
   ( Status,
@@ -61,11 +69,17 @@ import System.FilePath (takeExtension, (</>))
 data DemoApiOptions = DemoApiOptions
   { demoPaths :: Paths,
     demoRuntimeMode :: RuntimeMode,
+    demoBridgeMode :: DemoBridgeMode,
     demoBindHost :: String,
     demoPort :: Int,
     demoConfigPath :: FilePath,
     demoPublicationPath :: FilePath
   }
+
+data DemoBridgeMode
+  = DirectDemoInference
+  | PulsarDaemonBridge
+  deriving (Eq, Show)
 
 runDemoApiServer :: DemoApiOptions -> IO ()
 runDemoApiServer options = do
@@ -140,12 +154,106 @@ handleInference options request respond = do
       respond (jsonResponse status400 (ErrorResponse "invalid_request" "Unable to decode JSON request body."))
     Just inferenceRequest -> do
       activeRuntimeMode <- currentDemoRuntimeMode options
-      result <- executeInference (demoPaths options) activeRuntimeMode inferenceRequest
-      case result of
-        Left err ->
-          respond (jsonResponse status400 err)
-        Right inferenceResult ->
-          respond (jsonResponse status200 inferenceResult)
+      case demoBridgeMode options of
+        DirectDemoInference -> do
+          result <- executeInference (demoPaths options) activeRuntimeMode inferenceRequest
+          case result of
+            Left err ->
+              respond (jsonResponse status400 err)
+            Right inferenceResult ->
+              respond (jsonResponse status200 inferenceResult)
+        PulsarDaemonBridge ->
+          handleInferenceViaPulsar options activeRuntimeMode inferenceRequest respond
+
+handleInferenceViaPulsar :: DemoApiOptions -> RuntimeMode -> InferenceRequest -> (Response -> IO responseReceived) -> IO responseReceived
+handleInferenceViaPulsar options runtimeMode inferenceRequest respond =
+  case validateInferenceRequest runtimeMode inferenceRequest of
+    Left err ->
+      respond (jsonResponse status400 err)
+    Right model -> do
+      demoConfig <- decodeDemoConfigFile (demoConfigPath options)
+      case requestTopics demoConfig of
+        [] ->
+          respond
+            ( jsonResponse
+                status500
+                (ErrorResponse "missing_request_topic" "The active demo config does not declare any request topics.")
+            )
+        requestTopic : _ -> do
+          materializeCache (demoPaths options) runtimeMode model
+          requestIdValue <- publishInferenceRequest (demoPaths options) runtimeMode requestTopic inferenceRequest
+          maybePublishedResult <- waitForPublishedResult (demoPaths options) runtimeMode (resultTopic demoConfig) requestIdValue
+          case maybePublishedResult of
+            Nothing ->
+              respond
+                ( jsonResponse
+                    status500
+                    (ErrorResponse "daemon_timeout" "The inference daemon did not publish a result in time.")
+                )
+            Just publishedResult ->
+              if status publishedResult /= "completed"
+                then respond (jsonResponse status400 (publishedResultError publishedResult))
+                else do
+                  localizedResult <- localizePublishedResult options publishedResult
+                  case localizedResult of
+                    Left err ->
+                      respond (jsonResponse status500 err)
+                    Right resultValue -> do
+                      persistInferenceResult (demoPaths options) resultValue
+                      respond (jsonResponse status200 resultValue)
+
+validateInferenceRequest :: RuntimeMode -> InferenceRequest -> Either ErrorResponse ModelDescriptor
+validateInferenceRequest runtimeMode inferenceRequest =
+  case findModel runtimeMode (requestModelId inferenceRequest) of
+    Nothing ->
+      Left (ErrorResponse "unknown_model" "The requested model is not registered.")
+    Just model
+      | Text.all isSpace (inputText inferenceRequest) ->
+          Left (ErrorResponse "invalid_request" "The request input must not be blank.")
+      | otherwise ->
+          Right model
+
+waitForPublishedResult :: Paths -> RuntimeMode -> Text.Text -> Text.Text -> IO (Maybe InferenceResult)
+waitForPublishedResult paths runtimeMode topic requestIdValue = go (120 :: Int)
+  where
+    go remainingAttempts
+      | remainingAttempts <= 0 = pure Nothing
+      | otherwise = do
+          maybeResult <- readPublishedInferenceResultMaybe paths runtimeMode topic requestIdValue
+          case maybeResult of
+            Just resultValue -> pure (Just resultValue)
+            Nothing -> do
+              threadDelay 250000
+              go (remainingAttempts - 1)
+
+localizePublishedResult :: DemoApiOptions -> InferenceResult -> IO (Either ErrorResponse InferenceResult)
+localizePublishedResult options publishedResult =
+  case objectRef (payload publishedResult) of
+    Just _ ->
+      pure
+        ( Left
+            ( ErrorResponse
+                "unsupported_result_payload"
+                "The daemon returned an external object reference that the clustered demo surface cannot serve."
+            )
+        )
+    Nothing -> do
+      localizedPayload <-
+        buildPayload
+          (demoPaths options)
+          (requestId publishedResult)
+          (fromMaybe "" (inlineOutput (payload publishedResult)))
+      pure (Right publishedResult {payload = localizedPayload})
+
+publishedResultError :: InferenceResult -> ErrorResponse
+publishedResultError resultValue =
+  ErrorResponse
+    { errorCode = "worker_failed",
+      message =
+        fromMaybe
+          "The inference daemon reported a failure."
+          (inlineOutput (payload resultValue))
+    }
 
 handleCacheMutation :: DemoApiOptions -> Request -> CacheMutation -> (Response -> IO responseReceived) -> IO responseReceived
 handleCacheMutation options request mutation respond = do

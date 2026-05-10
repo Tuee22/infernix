@@ -14,14 +14,16 @@ lint rules established here.
 
 ## Current Repo Assessment
 
-The governed `documents/` suite, root docs, and development plan now describe the same explicit
-staged-substrate doctrine: Apple host workflows stage `./.build/infernix-substrate.dhall` through
-`./.build/infernix internal materialize-substrate apple-silicon`, Linux outer-container workflows
-stage `./.build/outer-container/build/infernix-substrate.dhall` on the host through
+The governed `documents/` suite, root docs, and development plan now describe the same
+staged-substrate mechanics and the same final Apple product shape. The repository and README
+matrix still point at `apple-silicon` as the Apple-native inference lane, and the governed docs
+now match that contract explicitly: Apple host workflows stage `./.build/infernix-substrate.dhall`
+through `./.build/infernix internal materialize-substrate apple-silicon`, Linux outer-container
+workflows stage `./.build/outer-container/build/infernix-substrate.dhall` on the host through
 `docker compose run --rm infernix infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>`,
-cluster workloads mount the shared `infernix-substrate.dhall` filename, and `--demo-ui false` is the
-supported way to emit a demo-off substrate file. `infernix lint docs` and `infernix docs check` are
-the governed validation entrypoints that keep that documentation contract aligned.
+and the routed Apple path is described consistently as host-native inference plus clustered support
+services and an optional clustered demo surface that bridges into the host daemon. `infernix lint docs`
+and `infernix docs check` remain the governed validation entrypoints for that closure.
 
 ## Sprint 0.1: `documents/` Suite Scaffold [Done]
 
@@ -148,8 +150,8 @@ Align the plan and docs around the substrate matrix and generated catalog contra
 
 - the plan distinguishes execution context from supported substrate
 - the README matrix is treated as the source of truth for generated catalog selection
-- the governed docs reference the build-generated substrate file, its generated catalog, and the
-  current `runtimeMode`-labeled publication surfaces
+- the governed docs reference the staged substrate file, its generated catalog, and the current
+  `runtimeMode`-labeled publication surfaces
 
 ### Validation
 
@@ -237,8 +239,13 @@ implementation follow-ons claim closure against it.
 
 - the governed docs describe substrates rather than user-selected runtime-mode flags as the final
   supported selection contract
-- Apple operator docs describe host-native cluster control, host-native inference, and the
-  cluster-resident demo app without the interim host bridge as a final doctrine
+- Apple operator docs describe the Apple lane as a hybrid topology: host-native control plane,
+  host-native inference daemon, cluster-resident support services, and an optional cluster-resident
+  routed demo surface
+- Apple docs distinguish the retired direct host `infernix-demo serve` story from the supported
+  Apple host-inference bridge used when the routed demo surface stays in the cluster
+- Apple docs do not describe Kind, Docker, or other containerized Apple workloads as having
+  Metal or unified-memory parity with the host daemon
 - Linux operator docs describe Compose as the single supported outer-container launcher for both
   `linux-cpu` and `linux-gpu`, with no supported Linux host-native build or CLI flow
 - validation docs describe single-substrate integration and E2E ownership rather than default
@@ -260,11 +267,18 @@ implementation follow-ons claim closure against it.
 - `infernix docs check` fails if the governed docs or root docs claim Cabal compile-time substrate
   generation, first-command auto-generation, file-absent fallback, or runtime-specific in-cluster
   substrate filenames that the code no longer uses
+- `infernix docs check` fails if the governed docs still describe Apple clustered repo workloads
+  as the canonical Apple inference executor or describe the retired direct host
+  `infernix-demo serve` path as the final routed demo contract
 - `infernix docs check` fails if the governed docs still describe browser-side substrate selection,
   separate per-substrate integration suites, or any simulated fallback as part of the supported
   contract
 
 ### Remaining Work
+
+None.
+
+## Remaining Work
 
 None.
 

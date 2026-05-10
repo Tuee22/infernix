@@ -47,6 +47,8 @@ requiredPhrases =
         "publication:",
         "engineAdapters:",
         "commandEnv:",
+        "service:",
+        "enabled:",
         "30002",
         "30011",
         "30650",
@@ -60,8 +62,11 @@ requiredPhrases =
         "name: infernix-demo",
         "- infernix-demo",
         "--dhall",
+        "INFERNIX_DEMO_BRIDGE_MODE",
         "INFERNIX_PUBLICATION_STATE_PATH",
         "INFERNIX_DATA_ROOT",
+        "INFERNIX_PULSAR_ADMIN_URL",
+        "INFERNIX_PULSAR_WS_BASE_URL",
         "emptyDir: {}"
       ]
     ),
@@ -93,7 +98,8 @@ requiredPhrases =
       ]
     ),
     ( "chart/templates/deployment-service.yaml",
-      [ "demoConfig.mountPath",
+      [ ".Values.service.enabled",
+        "demoConfig.mountPath",
         "INFERNIX_DEMO_CONFIG_PATH",
         "INFERNIX_PUBLICATION_STATE_PATH",
         "INFERNIX_MINIO_ENDPOINT",
@@ -117,7 +123,11 @@ requiredPhrases =
       ]
     ),
     ( "chart/templates/persistentvolumeclaim-service-data.yaml",
-      ["storageClassName:", "infernix.io/workload: service", ".Values.service.dataPvc.name"]
+      [ ".Values.service.enabled",
+        "storageClassName:",
+        "infernix.io/workload: service",
+        ".Values.service.dataPvc.name"
+      ]
     ),
     ( "chart/templates/runtimeclass-nvidia.yaml",
       ["RuntimeClass", "name: nvidia", "handler: nvidia", ".Values.runtimeMode", "linux-gpu"]
