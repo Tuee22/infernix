@@ -9,11 +9,13 @@
 ## Current Repo Assessment
 
 The repository now implements the substrate-file architecture described in this overview. The
-supported validation contract is active-substrate specific: `infernix lint docs`, the Haskell and
-PureScript unit suites, `infernix test integration`, and `infernix test e2e` all target the
-currently staged substrate instead of implying a default cross-substrate rerun. The worktree now
-removes the direct tool-route compatibility payloads, persists Linux cluster state before later
-rollout phases, and restages the active Linux substrate before each supported bootstrap command.
+governed validation surface now splits cleanly between substrate-agnostic checks and built-
+substrate checks: `infernix lint docs` and `infernix test unit` validate docs or module behavior,
+while `infernix test integration`, `infernix test e2e`, and `infernix test all` exercise only
+the currently staged substrate instead of implying a default cross-substrate rerun. The worktree
+now removes the direct tool-route compatibility payloads, persists Linux cluster state before
+later rollout phases, and restages the active Linux substrate before each supported bootstrap
+command.
 The intended Apple product shape is now implemented and validated: `apple-silicon` keeps
 inference host-native for performance while Kind continues to host Harbor, MinIO, Pulsar,
 PostgreSQL, Envoy Gateway, and the optional routed demo surface. `cluster up` no longer deploys
@@ -220,22 +222,39 @@ infernix/
 │   ├── test/
 │   └── playwright/
 ├── chart/
+│   ├── Chart.yaml
+│   ├── README.md
+│   ├── values.yaml
 │   └── templates/
+│       ├── configmap-demo-catalog.yaml
+│       ├── configmap-publication-state.yaml
+│       ├── deployment-demo.yaml
+│       ├── deployment-service.yaml
+│       ├── envoyproxy.yaml
 │       ├── gatewayclass.yaml
 │       ├── gateway.yaml
 │       ├── httproutes.yaml
-│       ├── configmap-demo-catalog.yaml
-│       └── configmap-publication-state.yaml
+│       ├── persistentvolumeclaim-service-data.yaml
+│       ├── runtimeclass-nvidia.yaml
+│       └── service-demo.yaml
 ├── kind/
+│   ├── README.md
+│   ├── cluster-apple-silicon.yaml
+│   ├── cluster-linux-cpu.yaml
+│   └── cluster-linux-gpu.yaml
 ├── docker/
-│   └── linux-substrate.Dockerfile
+│   ├── linux-substrate.Dockerfile
+│   └── playwright.Dockerfile
 ├── tools/
 │   └── generated_proto/
 ├── test/
 ├── .build/
 │   ├── infernix
 │   ├── infernix-demo
-│   └── infernix-substrate.dhall
+│   ├── infernix-substrate.dhall
+│   └── outer-container/
+│       └── build/
+│           └── infernix-substrate.dhall
 └── .data/
 ```
 

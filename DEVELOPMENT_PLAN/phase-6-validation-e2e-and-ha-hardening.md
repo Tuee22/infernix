@@ -300,72 +300,6 @@ None.
 
 ---
 
-## Sprint 6.19: Single-Substrate Validation Closure and Simulation Removal [Done]
-
-**Status**: Done
-**Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Config.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Demo/Api.hs`, `src/Infernix/Runtime.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Worker.hs`, `bootstrap/linux-cpu.sh`, `bootstrap/linux-gpu.sh`, `web/test/run_playwright_matrix.mjs`, `docker/linux-substrate.Dockerfile`, `test/integration/Spec.hs`, `test/unit/Spec.hs`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/00-overview.md`, `DEVELOPMENT_PLAN/system-components.md`, `DEVELOPMENT_PLAN/phase-3-ha-platform-services-and-edge-routing.md`, `DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md`, `DEVELOPMENT_PLAN/phase-5-web-ui-and-shared-types.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
-**Docs to update**: `README.md`, `documents/development/local_dev.md`, `documents/development/testing_strategy.md`, `documents/development/chaos_testing.md`, `documents/engineering/testing.md`, `documents/engineering/portability.md`, `documents/engineering/edge_routing.md`, `documents/reference/cli_reference.md`, `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/tools/minio.md`, `documents/tools/pulsar.md`
-
-### Objective
-
-Make every supported test command exercise only the built and deployed substrate, remove
-simulation from the supported runtime and validation contract completely, and describe integration
-and E2E ownership in the final `.dhall`-driven terms.
-
-### Deliverables
-
-- `infernix test integration`, `infernix test e2e`, and `infernix test all` exercise only the
-  substrate encoded in the generated `.dhall`
-- the supported default test story no longer runs a cross-substrate Apple or CPU or GPU matrix from
-  one invocation
-- the comprehensive model, format, and engine matrix in `README.md` is the authoritative
-  integration-test coverage ledger
-- one integration suite traverses those README rows or references, reads the active substrate from
-  `.dhall`, chooses the corresponding engine binding for each supported row, and carries at least
-  one assertion for every such row
-- the repository does not maintain separate integration suites per substrate; substrate choice
-  happens only through the generated `.dhall`
-- Apple host-native `test integration` is launched directly from the host CLI and manages the host
-  inference daemon for the duration of the test when that daemon is needed
-- Apple host-native `test e2e` is launched from the host CLI while the actual Playwright executor
-  runs through `docker compose run --rm playwright` against the dedicated `infernix-playwright:local`
-  image
-- Linux substrate test commands all run through `docker compose run --rm infernix infernix ...`,
-  and those flows do not manage a host daemon because inference runs from the cluster daemon
-- Playwright remains substrate-agnostic at the browser layer: the browser suite does not branch on
-  substrate id or engine family, and it relies on `infernix-demo` to read `.dhall` and dispatch
-  the correct engine behind the routed demo API
-- test results report the built substrate unambiguously and never imply matrix-wide coverage they
-  did not execute
-- supported runtime and validation code carry no simulated cluster, route, transport, or inference
-  fallback behavior on the supported path
-- supported Linux bootstrap entrypoints restage the active substrate file before lifecycle and
-  test commands so lane switches cannot reuse a stale staged payload
-
-### Validation
-
-- Apple host-native `test all` reports `apple-silicon` only, starts the host daemon as needed, and
-  delegates Playwright execution to the compose-driven `playwright` service without changing the
-  reported substrate
-- Linux `test all` reports only the built Linux substrate and runs entirely through the outer
-  container launcher
-- for any given built substrate, integration validation fails if a README row or reference whose
-  substrate column names a real engine is not covered by at least one integration assertion using
-  the engine selected from `.dhall`
-- routed tool-route validation fails if Harbor, MinIO, or Pulsar probes succeed only through the
-  direct `infernix-demo` compatibility payloads instead of the real Gateway-backed upstream
-  surfaces
-- E2E validation fails if browser-side test code branches on substrate id or engine family instead
-  of relying on the demo app's `.dhall`-driven dispatch
-- docs and test output fail if validation still claims Apple, CPU, and GPU coverage from one
-  default matrix invocation or keeps simulation in the supported contract
-
-### Remaining Work
-
-None.
-
----
-
 ## Sprint 6.7: Operator-Managed PostgreSQL Failure and Lifecycle Coverage [Done]
 
 **Status**: Done
@@ -837,6 +771,72 @@ consistently across the remaining governed engineering surfaces.
 - `infernix docs check` fails if the plan or governed docs overclaim full doctrine-depth closure
   before the remaining structure and lint enforcement land
 - `infernix test lint` continues to pass once the broadened docs-lint structure rules are in place
+
+### Remaining Work
+
+None.
+
+---
+
+## Sprint 6.19: Single-Substrate Validation Closure and Simulation Removal [Done]
+
+**Status**: Done
+**Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Config.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Demo/Api.hs`, `src/Infernix/Runtime.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Worker.hs`, `bootstrap/linux-cpu.sh`, `bootstrap/linux-gpu.sh`, `web/test/run_playwright_matrix.mjs`, `docker/linux-substrate.Dockerfile`, `test/integration/Spec.hs`, `test/unit/Spec.hs`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/00-overview.md`, `DEVELOPMENT_PLAN/system-components.md`, `DEVELOPMENT_PLAN/phase-3-ha-platform-services-and-edge-routing.md`, `DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md`, `DEVELOPMENT_PLAN/phase-5-web-ui-and-shared-types.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
+**Docs to update**: `README.md`, `documents/development/local_dev.md`, `documents/development/testing_strategy.md`, `documents/development/chaos_testing.md`, `documents/engineering/testing.md`, `documents/engineering/portability.md`, `documents/engineering/edge_routing.md`, `documents/reference/cli_reference.md`, `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/tools/minio.md`, `documents/tools/pulsar.md`
+
+### Objective
+
+Make every supported test command exercise only the built and deployed substrate, remove
+simulation from the supported runtime and validation contract completely, and describe integration
+and E2E ownership in the final `.dhall`-driven terms.
+
+### Deliverables
+
+- `infernix test integration`, `infernix test e2e`, and `infernix test all` exercise only the
+  substrate encoded in the generated `.dhall`
+- the supported default test story no longer runs a cross-substrate Apple or CPU or GPU matrix from
+  one invocation
+- the comprehensive model, format, and engine matrix in `README.md` is the authoritative
+  integration-test coverage ledger
+- one integration suite traverses those README rows or references, reads the active substrate from
+  `.dhall`, chooses the corresponding engine binding for each supported row, and carries at least
+  one assertion for every such row
+- the repository does not maintain separate integration suites per substrate; substrate choice
+  happens only through the generated `.dhall`
+- Apple host-native `test integration` is launched directly from the host CLI and manages the host
+  inference daemon for the duration of the test when that daemon is needed
+- Apple host-native `test e2e` is launched from the host CLI while the actual Playwright executor
+  runs through `docker compose run --rm playwright` against the dedicated `infernix-playwright:local`
+  image
+- Linux substrate test commands all run through `docker compose run --rm infernix infernix ...`,
+  and those flows do not manage a host daemon because inference runs from the cluster daemon
+- Playwright remains substrate-agnostic at the browser layer: the browser suite does not branch on
+  substrate id or engine family, and it relies on `infernix-demo` to read `.dhall` and dispatch
+  the correct engine behind the routed demo API
+- test results report the built substrate unambiguously and never imply matrix-wide coverage they
+  did not execute
+- supported runtime and validation code carry no simulated cluster, route, transport, or inference
+  fallback behavior on the supported path
+- supported Linux bootstrap entrypoints restage the active substrate file before lifecycle and
+  test commands so lane switches cannot reuse a stale staged payload
+
+### Validation
+
+- Apple host-native `test all` reports `apple-silicon` only, starts the host daemon as needed, and
+  delegates Playwright execution to the compose-driven `playwright` service without changing the
+  reported substrate
+- Linux `test all` reports only the built Linux substrate and runs entirely through the outer
+  container launcher
+- for any given built substrate, integration validation fails if a README row or reference whose
+  substrate column names a real engine is not covered by at least one integration assertion using
+  the engine selected from `.dhall`
+- routed tool-route validation fails if Harbor, MinIO, or Pulsar probes succeed only through the
+  direct `infernix-demo` compatibility payloads instead of the real Gateway-backed upstream
+  surfaces
+- E2E validation fails if browser-side test code branches on substrate id or engine family instead
+  of relying on the demo app's `.dhall`-driven dispatch
+- docs and test output fail if validation still claims Apple, CPU, and GPU coverage from one
+  default matrix invocation or keeps simulation in the supported contract
 
 ### Remaining Work
 

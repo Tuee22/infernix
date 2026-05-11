@@ -232,54 +232,6 @@ None.
 
 ---
 
-## Sprint 2.9: Staged Substrate File Publication and Linux Launcher Closure [Done]
-
-**Status**: Done
-**Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Models.hs`, `chart/templates/configmap-demo-catalog.yaml`, `chart/templates/deployment-service.yaml`, `chart/templates/deployment-demo.yaml`, `compose.yaml`, `docker/linux-substrate.Dockerfile`
-**Docs to update**: `README.md`, `documents/development/local_dev.md`, `documents/engineering/build_artifacts.md`, `documents/engineering/docker_policy.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/development/testing_strategy.md`
-
-### Objective
-
-Publish the staged substrate payload into the cluster and close the Linux launcher contract around
-one Compose-driven outer container for both Linux substrates.
-
-### Deliverables
-
-- `cluster up` publishes the staged substrate payload into `ConfigMap/infernix-demo-config`
-- Linux cluster-resident consumers mount that ConfigMap at
-  `/opt/build/infernix-substrate.dhall`
-- the outer-container control plane stages the same payload on the host at
-  `./.build/outer-container/build/infernix-substrate.dhall` through the host-anchored bind mount
-  when it needs to know its own substrate
-- the cluster publication contract uses the same stable `infernix-substrate.dhall` filename in the
-  repo-local mirror and in-cluster mount
-- the supported Linux control-plane launcher is Compose for both `linux-cpu` and `linux-gpu`
-- `compose.yaml` selects the active `infernix-linux-<mode>:local` snapshot through
-  `INFERNIX_COMPOSE_*` launcher variables while keeping the supported `docker compose run --rm infernix infernix ...`
-  surface unchanged
-- the outer control-plane container never requires the NVIDIA runtime for its own process, even
-  when the built image targets `linux-gpu`
-- the same built `linux-gpu` image is the artifact mirrored to Harbor and deployed as the cluster
-  daemon image
-
-### Validation
-
-- `docker compose run --rm infernix infernix cluster up` publishes the staged substrate payload
-  into the ConfigMap without any runtime-mode flag
-- `infernix kubectl get configmap infernix-demo-config -n platform -o yaml` shows the current
-  `infernix-substrate.dhall` key and the staged payload
-- with `INFERNIX_COMPOSE_IMAGE=infernix-linux-gpu:local`,
-  `INFERNIX_COMPOSE_SUBSTRATE=linux-gpu`, and
-  `INFERNIX_COMPOSE_BASE_IMAGE=nvidia/cuda:13.2.1-cudnn-runtime-ubuntu24.04`,
-  `docker compose build infernix` plus `docker compose run --rm infernix infernix cluster up`
-  exercises the same supported launcher surface for `linux-gpu`
-
-### Remaining Work
-
-None.
-
----
-
 ## Sprint 2.7: GPU-Enabled Kind Runtime For `linux-gpu` [Done]
 
 **Status**: Done
@@ -340,6 +292,54 @@ self-contained in the final `linux-gpu` image.
 ### Remaining Work
 
 None.
+
+## Sprint 2.9: Staged Substrate File Publication and Linux Launcher Closure [Done]
+
+**Status**: Done
+**Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Models.hs`, `chart/templates/configmap-demo-catalog.yaml`, `chart/templates/deployment-service.yaml`, `chart/templates/deployment-demo.yaml`, `compose.yaml`, `docker/linux-substrate.Dockerfile`
+**Docs to update**: `README.md`, `documents/development/local_dev.md`, `documents/engineering/build_artifacts.md`, `documents/engineering/docker_policy.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/development/testing_strategy.md`
+
+### Objective
+
+Publish the staged substrate payload into the cluster and close the Linux launcher contract around
+one Compose-driven outer container for both Linux substrates.
+
+### Deliverables
+
+- `cluster up` publishes the staged substrate payload into `ConfigMap/infernix-demo-config`
+- Linux cluster-resident consumers mount that ConfigMap at
+  `/opt/build/infernix-substrate.dhall`
+- the outer-container control plane stages the same payload on the host at
+  `./.build/outer-container/build/infernix-substrate.dhall` through the host-anchored bind mount
+  when it needs to know its own substrate
+- the cluster publication contract uses the same stable `infernix-substrate.dhall` filename in the
+  repo-local mirror and in-cluster mount
+- the supported Linux control-plane launcher is Compose for both `linux-cpu` and `linux-gpu`
+- `compose.yaml` selects the active `infernix-linux-<mode>:local` snapshot through
+  `INFERNIX_COMPOSE_*` launcher variables while keeping the supported `docker compose run --rm infernix infernix ...`
+  surface unchanged
+- the outer control-plane container never requires the NVIDIA runtime for its own process, even
+  when the built image targets `linux-gpu`
+- the same built `linux-gpu` image is the artifact mirrored to Harbor and deployed as the cluster
+  daemon image
+
+### Validation
+
+- `docker compose run --rm infernix infernix cluster up` publishes the staged substrate payload
+  into the ConfigMap without any runtime-mode flag
+- `infernix kubectl get configmap infernix-demo-config -n platform -o yaml` shows the current
+  `infernix-substrate.dhall` key and the staged payload
+- with `INFERNIX_COMPOSE_IMAGE=infernix-linux-gpu:local`,
+  `INFERNIX_COMPOSE_SUBSTRATE=linux-gpu`, and
+  `INFERNIX_COMPOSE_BASE_IMAGE=nvidia/cuda:13.2.1-cudnn-runtime-ubuntu24.04`,
+  `docker compose build infernix` plus `docker compose run --rm infernix infernix cluster up`
+  exercises the same supported launcher surface for `linux-gpu`
+
+### Remaining Work
+
+None.
+
+---
 
 ## Documentation Requirements
 

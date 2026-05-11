@@ -28,7 +28,7 @@ Usage:
 
 Commands:
   help    Show this help text.
-  doctor  Ensure Homebrew, ghcup, GHC ${APPLE_GHC_VERSION}, Cabal ${APPLE_CABAL_VERSION}, and `protoc`.
+  doctor  Ensure Homebrew, ghcup, GHC ${APPLE_GHC_VERSION}, Cabal ${APPLE_CABAL_VERSION}, and \`protoc\`.
   build   Ensure prerequisites, build both binaries, and stage the Apple substrate file.
   up      Ensure prerequisites, build, stage the substrate file, and run \`cluster up\`.
   status  Show \`cluster status\`.

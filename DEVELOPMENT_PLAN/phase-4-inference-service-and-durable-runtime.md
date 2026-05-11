@@ -260,61 +260,6 @@ None.
 
 ---
 
-## Sprint 4.12: Substrate-Owned Daemon Placement, Reload Control, and Fallback Removal [Done]
-
-**Status**: Done
-**Implementation**: `src/Infernix/Config.hs`, `src/Infernix/DemoConfig.hs`, `src/Infernix/Service.hs`, `src/Infernix/DemoCLI.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Models.hs`, `src/Infernix/Runtime.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Worker.hs`, `docker/linux-substrate.Dockerfile`, `web/test/run_playwright_matrix.mjs`, `test/integration/Spec.hs`, `test/unit/Spec.hs`
-**Docs to update**: `README.md`, `documents/architecture/runtime_modes.md`, `documents/engineering/model_lifecycle.md`, `documents/engineering/object_storage.md`, `documents/engineering/portability.md`, `documents/engineering/testing.md`, `documents/operations/apple_silicon_runbook.md`
-
-### Objective
-
-Make daemon behavior derive entirely from the staged substrate file and remove the remaining
-file-absent substrate-selection fallback from the runtime contract.
-
-### Deliverables
-
-- `infernix service` derives its active substrate from the staged substrate file when present and
-  no longer accepts `--runtime-mode` or `INFERNIX_RUNTIME_MODE`
-- `infernix-demo` and any runtime-owned manual inference entrypoint choose the engine binding for a
-  given README row only from the colocated or ConfigMap-backed substrate `.dhall`
-- Apple host workflows stage that substrate file through
-  `./.build/infernix internal materialize-substrate apple-silicon [--demo-ui true|false]`, Linux
-  outer-container workflows stage it through
-  `docker compose run --rm infernix infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>`
-  onto the host-anchored `./.build/outer-container/build/` bind mount, and supported runtime
-  entrypoints fail fast if it is absent
-- the direct `infernix service` entrypoint remains host-side for `apple-silicon`, while the routed
-  clustered demo app reads the same staged `.dhall` and bridges manual inference into that
-  host-native daemon rather than executing Apple inference inside a cluster-resident repo workload
-- cluster-resident Apple workloads, when present, consume the mounted staged substrate file only
-  for catalog or route behavior; they do not stand in for the canonical Apple inference executor
-- Linux `linux-cpu` and `linux-gpu` daemons run only as cluster-resident workloads on their
-  deployed substrate images
-- the daemon watches the substrate `.dhall`, reloads or restarts when it changes, and purges
-  running inference-engine state during that reload
-- the supported steady-state runtime removes simulated cluster, route, transport, and inference
-  fallback code paths from the final contract rather than merely refusing to count them as evidence
-- startup and publication reporting name substrate, daemon placement, and any routed Apple bridge
-  mode unambiguously
-
-### Validation
-
-- Apple host-native `infernix service` reports `apple-silicon` from the generated substrate file,
-  and routed manual inference continues to succeed through the clustered `infernix-demo` surface
-  by reaching the host-native daemon
-- Linux substrate daemons read the mounted ConfigMap-backed substrate file at
-  `/opt/build/infernix-substrate.dhall` and do not rely on runtime-mode flags
-- manual inference through `infernix-demo` and service-loop execution both use the engine binding
-  selected in `.dhall` for the active README row
-- runtime validation fails if the service or demo app falls back to simulated route, transport, or
-  substrate behavior or to placeholder engine execution on a supposedly supported final lane
-
-### Remaining Work
-
-None.
-
----
-
 ## Sprint 4.7: Shared Python Adapter Project and Poetry-Driven Quality Gate [Done]
 
 **Status**: Done
@@ -516,6 +461,61 @@ None.
 ## Remaining Work
 
 None.
+
+## Sprint 4.12: Substrate-Owned Daemon Placement, Reload Control, and Fallback Removal [Done]
+
+**Status**: Done
+**Implementation**: `src/Infernix/Config.hs`, `src/Infernix/DemoConfig.hs`, `src/Infernix/Service.hs`, `src/Infernix/DemoCLI.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Models.hs`, `src/Infernix/Runtime.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Worker.hs`, `docker/linux-substrate.Dockerfile`, `web/test/run_playwright_matrix.mjs`, `test/integration/Spec.hs`, `test/unit/Spec.hs`
+**Docs to update**: `README.md`, `documents/architecture/runtime_modes.md`, `documents/engineering/model_lifecycle.md`, `documents/engineering/object_storage.md`, `documents/engineering/portability.md`, `documents/engineering/testing.md`, `documents/operations/apple_silicon_runbook.md`
+
+### Objective
+
+Make daemon behavior derive entirely from the staged substrate file and remove the remaining
+file-absent substrate-selection fallback from the runtime contract.
+
+### Deliverables
+
+- `infernix service` derives its active substrate from the staged substrate file when present and
+  no longer accepts `--runtime-mode` or `INFERNIX_RUNTIME_MODE`
+- `infernix-demo` and any runtime-owned manual inference entrypoint choose the engine binding for a
+  given README row only from the colocated or ConfigMap-backed substrate `.dhall`
+- Apple host workflows stage that substrate file through
+  `./.build/infernix internal materialize-substrate apple-silicon [--demo-ui true|false]`, Linux
+  outer-container workflows stage it through
+  `docker compose run --rm infernix infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>`
+  onto the host-anchored `./.build/outer-container/build/` bind mount, and supported runtime
+  entrypoints fail fast if it is absent
+- the direct `infernix service` entrypoint remains host-side for `apple-silicon`, while the routed
+  clustered demo app reads the same staged `.dhall` and bridges manual inference into that
+  host-native daemon rather than executing Apple inference inside a cluster-resident repo workload
+- cluster-resident Apple workloads, when present, consume the mounted staged substrate file only
+  for catalog or route behavior; they do not stand in for the canonical Apple inference executor
+- Linux `linux-cpu` and `linux-gpu` daemons run only as cluster-resident workloads on their
+  deployed substrate images
+- the daemon watches the substrate `.dhall`, reloads or restarts when it changes, and purges
+  running inference-engine state during that reload
+- the supported steady-state runtime removes simulated cluster, route, transport, and inference
+  fallback code paths from the final contract rather than merely refusing to count them as evidence
+- startup and publication reporting name substrate, daemon placement, and any routed Apple bridge
+  mode unambiguously
+
+### Validation
+
+- Apple host-native `infernix service` reports `apple-silicon` from the generated substrate file,
+  and routed manual inference continues to succeed through the clustered `infernix-demo` surface
+  by reaching the host-native daemon
+- Linux substrate daemons read the mounted ConfigMap-backed substrate file at
+  `/opt/build/infernix-substrate.dhall` and do not rely on runtime-mode flags
+- manual inference through `infernix-demo` and service-loop execution both use the engine binding
+  selected in `.dhall` for the active README row
+- runtime validation fails if the service or demo app falls back to simulated route, transport, or
+  substrate behavior or to placeholder engine execution on a supposedly supported final lane
+
+### Remaining Work
+
+None.
+
+---
 
 ## Documentation Requirements
 

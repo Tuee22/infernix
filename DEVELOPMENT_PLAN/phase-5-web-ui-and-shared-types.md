@@ -198,58 +198,6 @@ None.
 
 ---
 
-## Sprint 5.8: Clustered Demo Surface on Apple and Container-Owned Playwright Closure [Done]
-
-**Status**: Done
-**Implementation**: `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Demo/Api.hs`, `web/playwright/inference.spec.js`, `web/src/Infernix/Web/Workbench.purs`, `web/src/Main.purs`, `web/src/index.html`, `web/test/Main.purs`, `web/test/run_playwright_matrix.mjs`
-**Docs to update**: `README.md`, `documents/architecture/web_ui_architecture.md`, `documents/reference/web_portal_surface.md`, `documents/development/local_dev.md`, `documents/development/testing_strategy.md`
-
-### Objective
-
-Keep the demo app clustered on Apple while making the Apple browser path explicitly host-backed
-for inference and retaining a containerized Linux image as the only supported Playwright executor.
-
-### Deliverables
-
-- the routed demo app remains cluster-resident on Apple and Linux substrates alike
-- Apple host-native E2E orchestration runs from the host CLI and invokes
-  `docker compose run --rm playwright` for the dedicated `infernix-playwright:local` image
-- Linux outer-container E2E orchestration runs `docker compose run --rm playwright` from inside
-  the outer container against the host docker daemon mounted through `/var/run/docker.sock`
-- Docker is a hard prerequisite for `infernix test e2e` on every substrate; the CLI no longer
-  carries a host-native npm fallback
-- user-facing Apple docs describe `cluster up` as the way to launch the demo surface instead of a
-  direct host `infernix-demo serve` workflow, while also making the routed Apple inference path
-  explicitly host-backed
-- Linux user-facing docs continue to describe Compose as the single launcher for demo, integration,
-  and E2E workflows
-- the Playwright suite and browser helpers do not branch on substrate id or engine family; they
-  interact only with the routed demo surface and rely on `infernix-demo` to read `.dhall` and
-  dispatch the correct engine or bridge mode
-- README-level substrate instructions cover how to launch the demo app, how the direct Apple
-  `infernix service` lane differs from the clustered demo and E2E path, how the Apple host-backed
-  inference bridge fits into that story, and how E2E execution differs between Apple and Linux
-
-### Validation
-
-- Apple routed E2E passes from the host CLI through `docker compose run --rm playwright` against
-  the clustered routed surface
-- Linux routed E2E passes through the same compose-driven Playwright executor without any host
-  daemon management
-- Apple and Linux routed E2E pass through the same browser-visible flows without substrate-specific
-  Playwright branching; only launcher or orchestration differs
-- `infernix test e2e` fails fast with an actionable message when Docker, kind, kubectl, or helm
-  are not available on the host
-- docs validation fails if the user-facing docs still treat host `infernix-demo serve` as the final
-  Apple demo-app launch story, describe browser-side substrate selection, or describe clustered
-  Apple repo workloads as the final Apple inference executor
-
-### Remaining Work
-
-None.
-
----
-
 ## Sprint 5.6: Substrate-Driven Demo Catalog and Workbench Parity in PureScript [Done]
 
 **Status**: Done
@@ -311,6 +259,58 @@ None.
 ## Remaining Work
 
 None.
+
+## Sprint 5.8: Clustered Demo Surface on Apple and Container-Owned Playwright Closure [Done]
+
+**Status**: Done
+**Implementation**: `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Demo/Api.hs`, `web/playwright/inference.spec.js`, `web/src/Infernix/Web/Workbench.purs`, `web/src/Main.purs`, `web/src/index.html`, `web/test/Main.purs`, `web/test/run_playwright_matrix.mjs`
+**Docs to update**: `README.md`, `documents/architecture/web_ui_architecture.md`, `documents/reference/web_portal_surface.md`, `documents/development/local_dev.md`, `documents/development/testing_strategy.md`
+
+### Objective
+
+Keep the demo app clustered on Apple while making the Apple browser path explicitly host-backed
+for inference and retaining a containerized Linux image as the only supported Playwright executor.
+
+### Deliverables
+
+- the routed demo app remains cluster-resident on Apple and Linux substrates alike
+- Apple host-native E2E orchestration runs from the host CLI and invokes
+  `docker compose run --rm playwright` for the dedicated `infernix-playwright:local` image
+- Linux outer-container E2E orchestration runs `docker compose run --rm playwright` from inside
+  the outer container against the host docker daemon mounted through `/var/run/docker.sock`
+- Docker is a hard prerequisite for `infernix test e2e` on every substrate; the CLI no longer
+  carries a host-native npm fallback
+- user-facing Apple docs describe `cluster up` as the way to launch the demo surface instead of a
+  direct host `infernix-demo serve` workflow, while also making the routed Apple inference path
+  explicitly host-backed
+- Linux user-facing docs continue to describe Compose as the single launcher for demo, integration,
+  and E2E workflows
+- the Playwright suite and browser helpers do not branch on substrate id or engine family; they
+  interact only with the routed demo surface and rely on `infernix-demo` to read `.dhall` and
+  dispatch the correct engine or bridge mode
+- README-level substrate instructions cover how to launch the demo app, how the direct Apple
+  `infernix service` lane differs from the clustered demo and E2E path, how the Apple host-backed
+  inference bridge fits into that story, and how E2E execution differs between Apple and Linux
+
+### Validation
+
+- Apple routed E2E passes from the host CLI through `docker compose run --rm playwright` against
+  the clustered routed surface
+- Linux routed E2E passes through the same compose-driven Playwright executor without any host
+  daemon management
+- Apple and Linux routed E2E pass through the same browser-visible flows without substrate-specific
+  Playwright branching; only launcher or orchestration differs
+- `infernix test e2e` fails fast with an actionable message when Docker, kind, kubectl, or helm
+  are not available on the host
+- docs validation fails if the user-facing docs still treat host `infernix-demo serve` as the final
+  Apple demo-app launch story, describe browser-side substrate selection, or describe clustered
+  Apple repo workloads as the final Apple inference executor
+
+### Remaining Work
+
+None.
+
+---
 
 ## Documentation Requirements
 

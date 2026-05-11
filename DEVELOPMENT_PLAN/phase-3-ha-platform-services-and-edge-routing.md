@@ -240,47 +240,6 @@ None.
 
 ---
 
-## Sprint 3.9: Clustered Demo Surface and Apple Host-Inference Bridge [Done]
-
-**Status**: Done
-**Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Demo/Api.hs`, `src/Infernix/Service.hs`, `chart/templates/deployment-demo.yaml`, `test/integration/Spec.hs`, `web/playwright/inference.spec.js`
-**Docs to update**: `README.md`, `documents/architecture/web_ui_architecture.md`, `documents/engineering/edge_routing.md`, `documents/reference/web_portal_surface.md`, `documents/operations/apple_silicon_runbook.md`
-
-### Objective
-
-Keep the routed demo surface cluster-resident while making the Apple host-inference bridge an
-explicit part of the supported Apple contract.
-
-### Deliverables
-
-- when `demo_ui` is enabled, the routed demo app always runs from the cluster deployment
-- Apple host-native operators still use the same browser base URL, and the routed demo surface
-  keeps its clustered HTTP host instead of swinging back to a host-side `infernix-demo serve`
-  process
-- on `apple-silicon`, routed manual inference bridges from the clustered `infernix-demo` surface
-  into the host-native `infernix service` daemon instead of remaining inside cluster-resident repo
-  workloads
-- publication metadata reports the Apple host-inference bridge explicitly and distinguishes it from
-  the Linux cluster-daemon upstream modes
-- route-oriented docs and validation stop accepting cluster-resident Apple service parity as the
-  final Apple inference doctrine
-
-### Validation
-
-- `cluster up` deploys the demo app on the cluster for Apple and Linux substrates whenever
-  `demo_ui` is enabled
-- routed Apple integration and E2E flows keep one browser base URL while using the Apple
-  host-inference bridge instead of in-cluster Apple service execution
-- `infernix docs check` and route-oriented validation fail if the docs still describe direct host
-  `infernix-demo serve` or cluster-resident Apple service parity as the final routed Apple
-  contract
-
-### Remaining Work
-
-None.
-
----
-
 ## Sprint 3.7: Substrate-Stable Publication Contract [Done]
 
 **Status**: Done
@@ -356,6 +315,47 @@ None.
 ## Remaining Work
 
 None.
+
+## Sprint 3.9: Clustered Demo Surface and Apple Host-Inference Bridge [Done]
+
+**Status**: Done
+**Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Demo/Api.hs`, `src/Infernix/Service.hs`, `chart/templates/deployment-demo.yaml`, `test/integration/Spec.hs`, `web/playwright/inference.spec.js`
+**Docs to update**: `README.md`, `documents/architecture/web_ui_architecture.md`, `documents/engineering/edge_routing.md`, `documents/reference/web_portal_surface.md`, `documents/operations/apple_silicon_runbook.md`
+
+### Objective
+
+Keep the routed demo surface cluster-resident while making the Apple host-inference bridge an
+explicit part of the supported Apple contract.
+
+### Deliverables
+
+- when `demo_ui` is enabled, the routed demo app always runs from the cluster deployment
+- Apple host-native operators still use the same browser base URL, and the routed demo surface
+  keeps its clustered HTTP host instead of swinging back to a host-side `infernix-demo serve`
+  process
+- on `apple-silicon`, routed manual inference bridges from the clustered `infernix-demo` surface
+  into the host-native `infernix service` daemon instead of remaining inside cluster-resident repo
+  workloads
+- publication metadata reports the Apple host-inference bridge explicitly and distinguishes it from
+  the Linux cluster-daemon upstream modes
+- route-oriented docs and validation stop accepting cluster-resident Apple service parity as the
+  final Apple inference doctrine
+
+### Validation
+
+- `cluster up` deploys the demo app on the cluster for Apple and Linux substrates whenever
+  `demo_ui` is enabled
+- routed Apple integration and E2E flows keep one browser base URL while using the Apple
+  host-inference bridge instead of in-cluster Apple service execution
+- `infernix docs check` and route-oriented validation fail if the docs still describe direct host
+  `infernix-demo serve` or cluster-resident Apple service parity as the final routed Apple
+  contract
+
+### Remaining Work
+
+None.
+
+---
 
 ## Documentation Requirements
 
