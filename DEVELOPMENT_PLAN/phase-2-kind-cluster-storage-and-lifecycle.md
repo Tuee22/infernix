@@ -1,21 +1,19 @@
 # Phase 2: Kind Cluster Storage and Lifecycle
 
-**Status**: Active
+**Status**: Done
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
 
 > **Purpose**: Define the supported Kind bootstrap path, the manual storage doctrine, the Helm
 > deployment model, the Harbor bootstrap and Harbor-backed image flow embedded in `cluster up`,
 > the generated substrate `.dhall` publication behavior tied to cluster reconcile, and the Linux
-> GPU lifecycle closure together with the remaining lifecycle-progress hardening work.
+> GPU lifecycle closure together with the lifecycle-progress and retained-state hardening closure.
 
 ## Phase Status
 
-Phase 2 is reopened around the remaining false-negative hardening work in the shared cluster
-lifecycle path. The Kind bootstrap, manual PV doctrine, Harbor-first image flow, shared substrate
-publication path, and Linux outer-container launcher contract implemented in this worktree remain
-closed in Sprints 2.1–2.9. Sprint 2.10 is now `Active` because the current lifecycle still hides
-too much progress during long first-run image-build, Harbor-publication, Kind-worker preload, and
-Apple teardown data-sync phases.
+Phase 2 is closed around the supported shared cluster lifecycle. The Kind bootstrap, manual PV
+doctrine, Harbor-first image flow, shared substrate publication path, Linux outer-container
+launcher contract, lifecycle progress surface, and retained-state repair behavior implemented in
+this worktree are now closed in Sprints 2.1–2.11.
 
 ## Storage Doctrine
 
@@ -40,17 +38,16 @@ These rules close in this phase and remain mandatory afterward:
 
 The storage doctrine, Helm rollout, Harbor-first image flow, route de-duplication, generated
 values overlay path, in-image `nvkind` path, and shared substrate-publication filename are
-implemented on the supported Kind substrate. Those surfaces define the current Phase 2 contract,
-but the May 12, 2026 Apple bootstrap investigation showed that the same lifecycle can still be
-misclassified as failed while it is making real progress. On a cold Apple lane, `cluster up`
-spent long silent windows after `building cluster images for linux-cpu`, during Harbor-backed
-`docker push` publication, and during `preloading Harbor-backed final images on the Kind worker`
-while `docker exec ... crictl pull` hydrated large images such as
-`apachepulsar/pulsar-all` and `infernix-linux-cpu`. `cluster down` also spent a long silent window
-serially replaying retained worker state back to `./.data/` through `docker cp` before Kind
-deletion began. The underlying lifecycle converged, but `cluster up`, `cluster down`, and
-`cluster status` do not yet expose enough progress to protect operators or test harnesses from
-false-negative timeout or abandonment decisions.
+implemented on the supported Kind substrate. The May 12, 2026 Apple bootstrap investigation is
+now closed in code and validation: `cluster up`, `cluster down`, and `cluster status` expose the
+active lifecycle action, phase, child-operation detail, and heartbeat during the monitored Docker
+build, Harbor publication, Kind-worker preload, and Apple retained-state replay windows; staged
+`infernix-substrate.dhall` writes are atomic so concurrent status readers do not observe truncated
+payloads; and retained-state Apple reruns automatically reinitialize stopped Harbor PostgreSQL
+replicas from the current Patroni leader when timeline drift leaves replicas unready after
+promotion. On May 12, 2026, the supported `./bootstrap/apple-silicon.sh` lifecycle reran cleanly
+through `doctor`, `build`, `up`, `status`, `test`, and `down`, with `status` reporting in-progress
+phase data during both `up` and `down`.
 
 ## Sprint 2.1: Kind Bootstrap and StorageClass Reset [Done]
 
@@ -353,10 +350,10 @@ None.
 
 ---
 
-## Sprint 2.10: Lifecycle Progress Surfaces and False-Negative Hardening [Active]
+## Sprint 2.10: Lifecycle Progress Surfaces and False-Negative Hardening [Done]
 
-**Status**: Active
-**Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Cluster/PublishImages.hs`
+**Status**: Done
+**Implementation**: `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Cluster/PublishImages.hs`, `src/Infernix/ProcessMonitor.hs`
 **Docs to update**: `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/reference/cli_reference.md`, `documents/reference/cli_surface.md`
 
 ### Objective
@@ -390,19 +387,48 @@ distinguish real failure from ongoing first-run progress.
 
 ### Remaining Work
 
-- stream or periodically summarize progress for long-running `docker build`, Harbor publication,
-  and Kind-worker `crictl pull` subprocesses instead of waiting for final subprocess exit
-- surface the active reconcile or teardown phase and the current long-running child operation
-  through the supported status path
-- encode inactivity-aware cold-versus-warm lifecycle expectations so first-run image hydration is
-  not misclassified as product failure
+None.
+
+---
+
+## Sprint 2.11: Retained-State Harbor PostgreSQL and Atomic Staging Closure [Done]
+
+**Status**: Done
+**Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/DemoConfig.hs`
+**Docs to update**: `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`
+
+### Objective
+
+Close the retained-state Apple rerun gaps discovered while validating Sprint 2.10 so supported
+status reads remain reliable and retained Harbor PostgreSQL replicas recover without manual repair.
+
+### Deliverables
+
+- generated `infernix-substrate.dhall` writes are atomic, preventing concurrent `cluster status`
+  or publication readers from seeing truncated JSON while lifecycle work is still publishing state
+- retained-state `cluster up` detects a ready Harbor PostgreSQL leader with stopped unready
+  replicas and reinitializes those replicas from the leader through Patroni
+- supported Apple reruns no longer require manual Harbor PostgreSQL replica surgery when timeline
+  drift leaves retained replicas stopped after promotion
+
+### Validation
+
+- concurrent `./bootstrap/apple-silicon.sh status` during supported `up` or `down` runs continues
+  to read the staged substrate file successfully while lifecycle progress is in flight
+- a retained-state `./bootstrap/apple-silicon.sh up` can log the targeted Harbor PostgreSQL
+  replica repair and reach ready Harbor PostgreSQL members
+- the supported Apple lifecycle reruns cleanly through `./bootstrap/apple-silicon.sh doctor`,
+  `build`, `up`, `status`, `test`, and `down`
+
+### Remaining Work
+
+None.
 
 ---
 
 ## Remaining Work
 
-- Sprint 2.10 remains open to surface long-running lifecycle progress and close the false-negative
-  hardening gap in the shared `cluster up` and `cluster down` paths.
+None.
 
 ---
 

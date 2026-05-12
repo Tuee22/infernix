@@ -23,6 +23,10 @@
 - if retained Pulsar ZooKeeper state is self-inconsistent, `cluster up` logs a targeted Pulsar
   claim-root reset and retries once; treat that retry as explicit durability repair for the
   affected runtime lane because prior Pulsar message history there is discarded
+- if retained Harbor PostgreSQL replicas stay stopped after leader promotion, `cluster up` may
+  log a targeted Patroni replica reinitialization from the current leader and wait for those
+  replicas to resync; treat that as supported retained-state repair rather than hard bootstrap
+  failure
 - on the Apple host-native path, the command reconciles Homebrew-managed Colima, Docker CLI,
   `kind`, `kubectl`, and `helm` before it attempts the real Kind workflow, reconciles Colima to
   the supported `8 CPU / 16 GiB` profile before Docker-backed work, and verifies the selected
@@ -31,6 +35,9 @@
 - on Apple, retained Kind state under `./.data/kind/apple-silicon/` is replayed into and out of
   the worker instead of being bind-mounted, so large retained state can make `cluster up` and
   `cluster down` slower than the Linux lanes even when the supported flow is healthy
+- on May 12, 2026, a cold Apple investigation confirmed that long waits in retained-state replay,
+  Docker build finalization, Harbor publication, and Kind-worker image preload were healthy
+  convergence rather than hard failure
 - for `linux-gpu`, confirm the supported NVIDIA host satisfies the documented `nvidia-smi` and
   `docker run --gpus all` preflight contract before cluster creation
 - for `linux-gpu`, also confirm the host filesystem has substantial free space before `cluster up`
@@ -38,6 +45,15 @@
   non-writable during the Harbor-backed rollout and prevent `infernix-service` readiness
 - confirm that the chosen edge port, active runtime mode, generated demo-config paths, and
   build-root publication details are printed
+- when `cluster up` appears quiet, run `infernix cluster status` before abandoning it
+- the supported progress surface reports `lifecycleStatus`, the active `lifecyclePhase`, the
+  current `lifecycleDetail`, and heartbeat timestamps while `cluster up` or `cluster down` is
+  still running
+- treat elapsed wall time alone as insufficient evidence of failure; during the monitored
+  subprocess phases, a heartbeat that continues to refresh roughly every 30 seconds indicates the
+  supported path is still progressing
+- the current monitored long-running subprocess phases are the shared runtime `docker build`,
+  Harbor image publication, Kind-worker Harbor preload, and Apple retained-state replay steps
 - on the real Kind path, confirm that Harbor is the first deployed service on a pristine cluster
   and that only Harbor-required backend services pull from public container repositories before
   Harbor is ready
@@ -80,6 +96,8 @@ execution is not a supported compatibility fallback for the Harbor, MinIO, or Pu
 - run `infernix cluster down`
 - on Apple, expect teardown to copy retained Kind claim data back out of the worker before the
   cluster disappears when durable state exists
+- when teardown looks quiet, use `infernix cluster status` to confirm whether the active phase is
+  still `replay-retained-state` or has advanced to `delete-kind-cluster`
 - expect durable state under `./.data/` to remain intact
 
 ## Cross-References

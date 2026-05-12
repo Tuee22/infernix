@@ -1,28 +1,26 @@
 # Phase 6: Validation, E2E, and HA Hardening
 
-**Status**: Active
+**Status**: Done
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
 
 > **Purpose**: Define the supported static-quality and single-substrate validation contract for the
 > two-binary topology, the README-matrix-driven integration suite, the Pulsar-driven production
 > inference surface, the demo UI host, the substrate-generated catalog, the mandatory HA behavior
-> of Harbor, MinIO, operator-managed PostgreSQL, and Pulsar, and the remaining
-> repository-hardening and false-negative-doctrine follow-ons that keep governed root docs,
+> of Harbor, MinIO, operator-managed PostgreSQL, and Pulsar, and the repository-hardening plus
+> false-negative-doctrine closure that keeps governed root docs,
 > route-aware docs, and the CLI surface mechanically aligned with implementation.
 
 ## Phase Status
 
-Phase 6 is reopened around the remaining false-negative validation and documentation hardening
-work. Sprints 6.1–6.22 remain `Done`: the validation entrypoints, routed coverage,
-governed-root-document metadata closure, structured CLI-registry closure, route-hardening
-cleanup, and supported bootstrap lifecycle fixes are present in the current worktree, and the
-supported test story is substrate-specific. Sprint 6.23 is now `Active` because the supported
-Apple and shared-cluster lifecycle still needs explicit doctrine for distinguishing real failure
-from slow-but-progressing convergence. The Apple routed path validates the intended host-native
-inference doctrine end to end: routed manual inference bridges through Pulsar into the host
-daemon, the browser suite verifies `daemonLocation` and `inferenceDispatchMode`, and supported
-engine runners fail fast on unsupported adapters instead of returning placeholder success. The
-worktree also carries the formatter-toolchain closure that is actually implemented today:
+Phase 6 is closed around the implemented validation and doctrine surface. Sprints 6.1–6.23 are
+now `Done`: the validation entrypoints, routed coverage, governed-root-document metadata closure,
+structured CLI-registry closure, route-hardening cleanup, supported bootstrap lifecycle fixes, and
+false-negative doctrine closure are present in the current worktree, and the supported test story
+is substrate-specific. The Apple routed path validates the intended host-native inference doctrine
+end to end: routed manual inference bridges through Pulsar into the host daemon, the browser suite
+verifies `daemonLocation` and `inferenceDispatchMode`, and supported engine runners fail fast on
+unsupported adapters instead of returning placeholder success. The worktree also carries the
+formatter-toolchain closure that is actually implemented today:
 `src/Infernix/Lint/HaskellStyle.hs` drives `ormolu` and `hlint` through the dedicated compatible
 formatter compiler `ghc-9.12.4`, and the Linux substrate image preinstalls that compiler beside
 the project `ghc-9.14.1` toolchain. The supported Linux outer-container launcher reuses a
@@ -52,12 +50,14 @@ and `down`; this plan change carries that validation result forward. On Apple, r
 no longer times out on `host.docker.internal`: host-side
 readiness probes `127.0.0.1:<edge-port>`, the browser container joins the private Docker `kind`
 network and targets the Kind control-plane DNS on port `30090`, and the dedicated Playwright
-image no longer bakes a conflicting `NO_COLOR` default. On May 12, 2026, a cold Apple lifecycle
-investigation reproduced the same shared `cluster up` path and proved that the earlier apparent
-failure was a false negative: the lifecycle eventually converged through slow Docker build
-finalization, Harbor publication, Kind-worker image preloading, and Apple teardown state replay,
-but the current validation and operator doctrine still leaves those long-running phases too opaque
-for reliable failure classification without external inspection.
+image no longer bakes a conflicting `NO_COLOR` default. On May 12, 2026, the supported Apple
+lifecycle reran cleanly through `./bootstrap/apple-silicon.sh doctor`, `build`, `up`, `status`,
+`test`, and `down` on the patched shared lifecycle: `cluster status` reported the active
+in-progress lifecycle phase, child-operation detail, and heartbeat while `up` and `down` were
+still running; the governed testing doctrine, operator-facing testing strategy, lifecycle
+runbooks, and CLI references now use the same inactivity-aware interpretation contract; and
+retained-state Harbor PostgreSQL replicas recovered through the supported targeted reinitialization
+path when timeline drift left replicas stopped after promotion.
 
 ## Validation Surface
 
@@ -995,10 +995,10 @@ None.
 
 ---
 
-## Sprint 6.23: False-Negative Validation Doctrine and Documentation Closure [Active]
+## Sprint 6.23: False-Negative Validation Doctrine and Documentation Closure [Done]
 
-**Status**: Active
-**Implementation**: `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/00-overview.md`, `DEVELOPMENT_PLAN/system-components.md`, `documents/development/testing_strategy.md`, `documents/engineering/testing.md`, `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/reference/cli_reference.md`, `documents/reference/cli_surface.md`
+**Status**: Done
+**Implementation**: `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/00-overview.md`, `DEVELOPMENT_PLAN/system-components.md`, `documents/development/testing_strategy.md`, `documents/engineering/testing.md`, `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/reference/cli_reference.md`, `documents/reference/cli_surface.md`, `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Cluster/PublishImages.hs`, `src/Infernix/ProcessMonitor.hs`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/engineering/testing.md`, `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/reference/cli_reference.md`, `documents/reference/cli_surface.md`
 
 ### Objective
@@ -1025,22 +1025,21 @@ failure.
   reference docs drift from the supported false-negative classification contract
 - the plan and governed docs describe the same long-running lifecycle phases and the same operator
   interpretation rules
-- once the supporting lifecycle surfaces land, the supported validation harness can report
-  timeout-while-still-progressing distinctly from hard lifecycle failure
+- the supported Apple bootstrap lifecycle reruns cleanly through `./bootstrap/apple-silicon.sh doctor`,
+  `build`, `up`, `status`, `test`, and `down` while `cluster status` reports active progress
+  fields during the in-progress `up` and `down` windows
+- the supported validation harness can now report timeout-while-still-progressing distinctly from
+  hard lifecycle failure because the lifecycle surface exposes active phase and heartbeat data
 
 ### Remaining Work
 
-- update the governed testing, runbook, and CLI docs so they describe the real cold-start Apple
-  lifecycle honestly instead of implying silence is equivalent to failure
-- align the validation harness and lifecycle status surfaces with inactivity-aware failure
-  classification once the corresponding lifecycle instrumentation lands
+None.
 
 ---
 
 ## Remaining Work
 
-- Sprint 6.23 remains open to close the false-negative doctrine gap across the plan, governed
-  runbooks, testing docs, and validation surfaces.
+None.
 
 ## Documentation Requirements
 

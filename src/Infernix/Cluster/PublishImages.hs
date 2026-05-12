@@ -37,6 +37,7 @@ import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe)
 import Data.Yaml qualified as Yaml
 import Infernix.Cluster.Discover (discoverChartImagesFile)
+import Infernix.ProcessMonitor qualified as ProcessMonitor
 import Network.HTTP.Client
   ( Manager,
     Request,
@@ -65,6 +66,8 @@ data HarborPublishOptions = HarborPublishOptions
   deriving (Eq, Show)
 
 type PublishedImage = (String, String)
+
+type CommandMonitorFactory = String -> IO (Maybe ProcessMonitor.CommandMonitor)
 
 defaultHarborPublishOptions :: HarborPublishOptions
 defaultHarborPublishOptions =
@@ -109,15 +112,15 @@ loginAttempts = 6
 pullVerifyAttempts :: Int
 pullVerifyAttempts = 6
 
-publishChartImagesFile :: HarborPublishOptions -> FilePath -> FilePath -> IO ()
-publishChartImagesFile options renderedChartPath outputPath = do
+publishChartImagesFile :: HarborPublishOptions -> CommandMonitorFactory -> FilePath -> FilePath -> IO ()
+publishChartImagesFile options commandMonitorFactory renderedChartPath outputPath = do
   manager <- newManager tlsManagerSettings
   images <- discoverChartImagesFile renderedChartPath
   let chartPublishableImages = filter (not . isHarborImage) images
       publishableImages = nub (alwaysPublishedImages <> chartPublishableImages)
   mapM_ (requireOnePresent chartPublishableImages) requiredRenderedChartImageAlternatives
   loginHarborWithRetries manager options
-  publishedImages <- mapM (publishImage manager options) publishableImages
+  publishedImages <- mapM (publishImage manager options commandMonitorFactory) publishableImages
   writeHarborOverridesFile (Map.fromList publishedImages) outputPath
   where
     requireOnePresent imageSet imageRefs
@@ -128,26 +131,27 @@ publishChartImagesFile options renderedChartPath outputPath = do
                 <> show imageRefs
             )
 
-publishImage :: Manager -> HarborPublishOptions -> String -> IO (String, PublishedImage)
-publishImage manager options sourceImage = do
-  ensureLocalImageAvailable sourceImage
+publishImage :: Manager -> HarborPublishOptions -> CommandMonitorFactory -> String -> IO (String, PublishedImage)
+publishImage manager options commandMonitorFactory sourceImage = do
+  ensureLocalImageAvailable commandMonitorFactory sourceImage
   targetTag <- contentAddressTag sourceImage
   let repositoryPath = normalizeRepositoryPath sourceImage
       publishedRepository = harborHost options <> "/" <> harborProject options <> "/" <> repositoryPath
       clientRepository = harborClientHost options <> "/" <> harborProject options <> "/" <> repositoryPath
-  publishIfNeeded manager options sourceImage clientRepository repositoryPath targetTag
+  publishIfNeeded manager options commandMonitorFactory sourceImage clientRepository repositoryPath targetTag
   pure (sourceImage, (publishedRepository, targetTag))
 
-ensureLocalImageAvailable :: String -> IO ()
-ensureLocalImageAvailable imageRef = do
+ensureLocalImageAvailable :: CommandMonitorFactory -> String -> IO ()
+ensureLocalImageAvailable commandMonitorFactory imageRef = do
   maybePresent <- tryRunCommand "docker" ["image", "inspect", imageRef] ""
   case maybePresent of
     Right _ -> pure ()
-    Left _ -> pullImageWithFallback imageRef
+    Left _ -> pullImageWithFallback commandMonitorFactory imageRef
 
-pullImageWithFallback :: String -> IO ()
-pullImageWithFallback imageRef = do
-  pullResult <- tryRunCommand "docker" ["pull", imageRef] ""
+pullImageWithFallback :: CommandMonitorFactory -> String -> IO ()
+pullImageWithFallback commandMonitorFactory imageRef = do
+  initialMonitor <- commandMonitorFactory ("docker pull " <> imageRef)
+  pullResult <- tryRunCommandMaybeMonitored "docker" ["pull", imageRef] "" initialMonitor
   case pullResult of
     Right _ -> pure ()
     Left pullFailure ->
@@ -155,7 +159,8 @@ pullImageWithFallback imageRef = do
         Nothing ->
           failWith ("docker pull failed for " <> imageRef <> "\n" <> pullFailure)
         Just mirrorRef -> do
-          mirrorPullResult <- tryRunCommand "docker" ["pull", mirrorRef] ""
+          mirrorMonitor <- commandMonitorFactory ("docker pull " <> mirrorRef)
+          mirrorPullResult <- tryRunCommandMaybeMonitored "docker" ["pull", mirrorRef] "" mirrorMonitor
           case mirrorPullResult of
             Right _ -> runCommand "docker" ["tag", mirrorRef, imageRef] ""
             Left mirrorFailure ->
@@ -200,19 +205,19 @@ dockerHubMirrorRef imageRef =
         (_, []) -> "library/" <> pathValue
         _ -> pathValue
 
-publishIfNeeded :: Manager -> HarborPublishOptions -> String -> String -> String -> String -> IO ()
-publishIfNeeded manager options sourceImage clientRepository repositoryPath targetTag = do
+publishIfNeeded :: Manager -> HarborPublishOptions -> CommandMonitorFactory -> String -> String -> String -> String -> IO ()
+publishIfNeeded manager options commandMonitorFactory sourceImage clientRepository repositoryPath targetTag = do
   let targetRef = clientRepository <> ":" <> targetTag
   runCommand "docker" ["tag", sourceImage, targetRef] ""
   tagPresent <- harborTagExists manager options repositoryPath targetTag
   if tagPresent
-    then verifyRegistryPull manager options targetRef
+    then verifyRegistryPull manager options commandMonitorFactory targetRef
     else do
-      pushImageWithRetries manager options targetRef
-      verifyRegistryPull manager options targetRef
+      pushImageWithRetries manager options commandMonitorFactory targetRef
+      verifyRegistryPull manager options commandMonitorFactory targetRef
 
-pushImageWithRetries :: Manager -> HarborPublishOptions -> String -> IO ()
-pushImageWithRetries manager options targetRef = go (4 :: Int) ""
+pushImageWithRetries :: Manager -> HarborPublishOptions -> CommandMonitorFactory -> String -> IO ()
+pushImageWithRetries manager options commandMonitorFactory targetRef = go (4 :: Int) ""
   where
     (targetRepository, _, targetTag) = breakRepositoryAndTag targetRef
     repositoryPath = normalizeRepositoryPath targetRepository
@@ -220,7 +225,8 @@ pushImageWithRetries manager options targetRef = go (4 :: Int) ""
       | remainingAttempts <= 0 =
           failWith ("docker push failed for " <> targetRef <> "\n" <> lastFailure)
       | otherwise = do
-          result <- tryRunCommand "docker" ["push", targetRef] ""
+          monitor <- commandMonitorFactory ("docker push " <> targetRef)
+          result <- tryRunCommandMaybeMonitored "docker" ["push", targetRef] "" monitor
           case result of
             Right _ -> pure ()
             Left failureMessage -> do
@@ -247,8 +253,8 @@ registryPullSucceeds :: String -> IO Bool
 registryPullSucceeds imageRef =
   either (const False) (const True) <$> tryRunCommand "docker" ["pull", imageRef] ""
 
-verifyRegistryPull :: Manager -> HarborPublishOptions -> String -> IO ()
-verifyRegistryPull manager options targetRef = do
+verifyRegistryPull :: Manager -> HarborPublishOptions -> CommandMonitorFactory -> String -> IO ()
+verifyRegistryPull manager options commandMonitorFactory targetRef = do
   waitForRegistry manager options
   go pullVerifyAttempts ""
   where
@@ -256,7 +262,8 @@ verifyRegistryPull manager options targetRef = do
       | remainingAttempts <= 0 =
           failWith ("docker pull verification failed for " <> targetRef <> "\n" <> lastFailure)
       | otherwise = do
-          result <- tryRunCommand "docker" ["pull", targetRef] ""
+          monitor <- commandMonitorFactory ("docker pull verify " <> targetRef)
+          result <- tryRunCommandMaybeMonitored "docker" ["pull", targetRef] "" monitor
           case result of
             Right _ -> pure ()
             Left failureMessage ->
@@ -556,6 +563,13 @@ tryRunCommand command args inputPayload = do
       case exitCode of
         ExitSuccess -> pure (Right stdoutOutput)
         _ -> pure (Left (stdoutOutput <> stderrOutput))
+
+tryRunCommandMaybeMonitored :: FilePath -> [String] -> String -> Maybe ProcessMonitor.CommandMonitor -> IO (Either String String)
+tryRunCommandMaybeMonitored command args inputPayload maybeMonitor
+  | null inputPayload =
+      ProcessMonitor.tryCommandMonitored Nothing [] command args maybeMonitor
+  | otherwise =
+      tryRunCommand command args inputPayload
 
 urlEncodeString :: String -> String
 urlEncodeString = ByteString8.unpack . urlEncode True . ByteString8.pack

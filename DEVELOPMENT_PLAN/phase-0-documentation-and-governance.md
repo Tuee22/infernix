@@ -29,12 +29,12 @@ support services and an optional clustered demo surface that bridges into the ho
 that closure.
 
 Phase 0 remains closed because the governance baseline, canonical topic ownership, and docs-lint
-contract are all in place. The May 12, 2026 Apple bootstrap investigation still opened concrete
-follow-on documentation work in later phases: the governed runbooks and testing docs must describe
-the real first-run convergence windows in `cluster up` and `cluster down`, name the long-running
-Docker build, Harbor publication, Kind-worker preload, and Apple teardown data-sync phases
-explicitly, and distinguish false-negative timeout or abandonment decisions from hard product
-failure. Phase 2 Sprint 2.10 and Phase 6 Sprint 6.23 own that follow-on work.
+contract are all in place. The May 12, 2026 Apple bootstrap investigation did surface concrete
+follow-on documentation work in later phases, and that work is now closed: the governed runbooks,
+testing docs, CLI references, and plan all describe the real first-run convergence windows in
+`cluster up` and `cluster down`, name the long-running Docker build, Harbor publication,
+Kind-worker preload, and Apple teardown data-sync phases explicitly, and use inactivity-aware
+language instead of treating wall-clock duration alone as product failure.
 
 ## Sprint 0.1: `documents/` Suite Scaffold [Done]
 

@@ -16,7 +16,7 @@
 
 - `infernix cluster up` - reconciles Kind, Harbor-first bootstrap, the generated substrate file, and routed publication state
 - `infernix cluster down` - tears the cluster down while leaving durable repo-local state under `./.data/` intact
-- `infernix cluster status` - reports cluster presence, active substrate, publication state, build paths, and route inventory without mutation
+- `infernix cluster status` - reports cluster presence, lifecycle phase, active substrate, publication state, build paths, and route inventory without mutation
 
 ### `cache`
 
@@ -72,7 +72,7 @@
   `docs check`, and `internal ...` are declarative CLI entrypoints; `infernix service` and
   `infernix-demo serve` are the only long-running daemon entrypoints
 - `cluster status` is read-only and reports publication-state details together with route
-  inventory and state paths
+  inventory, state paths, and lifecycle-progress fields
 - `infernix internal materialize-substrate ...` is the supported way to restage
   `infernix-substrate.dhall`; `cluster up`, `service`, and the validation entrypoints do not
   regenerate it on first command execution
@@ -117,6 +117,22 @@
   protobuf request through the configured Pulsar endpoints and waits for the matching result
 - `infernix cluster up`, `test integration`, and `test e2e` fail fast on `linux-gpu` when the
   NVIDIA runtime prerequisites are absent
+
+## Lifecycle Progress Surface
+
+- `infernix cluster status` reports `lifecycleStatus: idle` together with `lifecyclePhase:
+  not-yet-reconciled`, `steady-state`, or `cluster-absent` when no lifecycle action is running
+- while `cluster up` or `cluster down` is active, `cluster status` reports `lifecycleStatus:
+  in-progress` plus `lifecycleAction`, `lifecyclePhase`, `lifecycleDetail`,
+  `lifecycleHeartbeatAt`, and `lifecycleHeartbeatAgeSeconds`
+- the monitored long-running subprocess phases refresh `lifecycleHeartbeatAt` roughly every 30
+  seconds while they are still progressing; the current implementation applies that heartbeat
+  contract to the long Docker build, Harbor image publication, Kind-worker Harbor preload, and
+  Apple retained-state replay steps
+- elapsed wall time alone is not treated as failure on the supported path; treat a lifecycle
+  action as still progressing while the current `lifecycleHeartbeatAt` continues to refresh, and
+  treat it as stalled only when the command exits non-zero or the heartbeat stops moving across
+  multiple monitor intervals
 
 ## Cross-References
 

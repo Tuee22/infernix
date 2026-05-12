@@ -24,6 +24,9 @@ mode-specific coverage, matrix behavior, and operator detail behind those canoni
   real-cluster `linux-gpu`
 - the routed auxiliary checks below describe current behavior precisely: `/harbor`, `/minio/s3`,
   and `/pulsar/ws` publication is required through the live upstream services only
+- the implemented lifecycle progress surface now persists the active phase, child operation, and
+  heartbeat in `cluster status` while supported `cluster up` or `cluster down` work is still in
+  flight
 
 ## Validation Layers
 
@@ -53,6 +56,18 @@ mode-specific coverage, matrix behavior, and operator detail behind those canoni
   host disk headroom for Kind image preload, Harbor-backed image publication, and Pulsar
   BookKeeper durability; low disk headroom can block `infernix-service` readiness after cluster
   creation even when the NVIDIA preflight passes
+
+## Lifecycle Interpretation
+
+- on May 12, 2026, a cold Apple rerun showed that long waits in `cluster up` and `cluster down`
+  can still be healthy when the lifecycle is building images, publishing them into Harbor,
+  preloading them onto the Kind worker, or replaying retained state
+- the supported operator check during those waits is `infernix cluster status`
+- when that status surface reports `lifecycleStatus: in-progress`, use `lifecyclePhase`,
+  `lifecycleDetail`, and `lifecycleHeartbeatAt` to distinguish real progress from a stale wait
+- the current implementation refreshes the heartbeat roughly every 30 seconds during the monitored
+  long-running subprocess phases, so a heartbeat that keeps moving is treated as progress rather
+  than failure even when the wall-clock duration is large
 
 ## Active-Mode Coverage Rules
 

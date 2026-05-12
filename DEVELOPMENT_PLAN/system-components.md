@@ -56,15 +56,16 @@
   the supported `8 CPU / 16 GiB` profile before Docker-backed work, and lets Apple adapter setup
   or validation paths reconcile Homebrew `python@3.12` plus a user-local Poetry bootstrap on
   demand
-- on May 11, 2026, the governed Apple lifecycle reran cleanly through `doctor`, `build`, `up`,
+- on May 12, 2026, the governed Apple lifecycle reran cleanly through `doctor`, `build`, `up`,
   `status`, `test`, and `down`; routed Apple Playwright readiness probes `127.0.0.1` from the
   host while the browser container joins the private Docker `kind` network and targets the Kind
   control-plane DNS, and retained Kind state is replayed into and out of the worker rather than
   bind-mounted
-- on May 12, 2026, a cold Apple lifecycle investigation confirmed that the shared `cluster up`
-  and `cluster down` paths do converge, but they still expose false-negative risk because the
-  current operator surfaces do not report enough progress during Docker build finalization,
-  Harbor publication, Kind-worker image preload, or retained-state replay
+- the shared lifecycle now exposes `lifecycleStatus`, `lifecyclePhase`, `lifecycleDetail`, and
+  heartbeat timestamps during monitored Docker build, Harbor publication, Kind-worker preload, and
+  Apple retained-state replay work; staged substrate publication is atomic for concurrent readers;
+  and retained-state Apple reruns automatically reinitialize stopped Harbor PostgreSQL replicas
+  from the current Patroni leader when timeline drift leaves replicas unready after promotion
 - Monitoring is not a supported first-class surface.
 
 ## Operator and Host Components
@@ -74,7 +75,7 @@
 | Apple host control plane | `./.build/infernix` plus direct `cabal` materialization against operator-installed ghcup | host-native | canonical operator surface on Apple Silicon; host-native cluster lifecycle owner; host-native Apple inference-daemon owner; repo-local kubeconfig owner | `./.build/`, `./.data/` |
 | Linux outer-container control plane | `docker compose run --rm infernix infernix ...` | Linux container | only supported Linux CLI surface for `linux-cpu` and `linux-gpu`; selects the active `infernix-linux-<mode>:local` snapshot through `INFERNIX_COMPOSE_*` launcher variables, forwards the Docker socket, and bind-mounts `./.data/`, `./.build/`, `./chart/charts/`, and the host `compose.yaml` so the staged substrate file under `./.build/outer-container/build/` is visible from the host while reusable Helm chart archives survive fresh launcher containers and cabal package state stays in the image overlay at the toolchain's natural locations | `./.data/`, `./.data/runtime/infernix.kubeconfig`, `./.build/outer-container/build/infernix-substrate.dhall`, `./chart/charts/` |
 | Command registry | structured Haskell parser or dispatcher registry | host or outer container | owns the supported command inventory, `--help` output, and the generated CLI-reference sections that docs lint enforces | none |
-| Substrate configuration | staged banner-prefixed JSON payload at the legacy `infernix-substrate.dhall` path | host or outer container | primary source of truth for active substrate, generated catalog content, daemon placement, active engine dispatch, routed Apple bridge behavior, and test scope once the file has been staged | `./.build/infernix-substrate.dhall` on Apple; `./.build/outer-container/build/infernix-substrate.dhall` on the Linux outer-container path; cluster pods mount the same payload at `/opt/build/infernix-substrate.dhall` |
+| Substrate configuration | staged banner-prefixed JSON payload at the legacy `infernix-substrate.dhall` path | host or outer container | primary source of truth for active substrate, generated catalog content, daemon placement, active engine dispatch, routed Apple bridge behavior, and test scope once the file has been staged; materialization writes the staged file atomically so concurrent readers never observe a partial payload | `./.build/infernix-substrate.dhall` on Apple; `./.build/outer-container/build/infernix-substrate.dhall` on the Linux outer-container path; cluster pods mount the same payload at `/opt/build/infernix-substrate.dhall` |
 | Route registry | Haskell-owned route inventory | host or outer container during render or reconcile | records public prefixes, backend identity, rewrite rules, visibility, and publication metadata | none |
 | Automation entry documents | `AGENTS.md`, `CLAUDE.md`, and their governed canonical-home links into `documents/` | repo source | point assistant users at canonical workflow rules without turning root entry docs into competing topic homes | none |
 | Frontend contract generator | `infernix internal generate-purs-contracts` | host or outer container during web build | emits generated PureScript contracts from handwritten Haskell browser-contract ADTs | `web/src/Generated/` |
@@ -100,9 +101,9 @@
 
 | Component | Technology | Deployment | Purpose | Durable state |
 |-----------|------------|------------|---------|---------------|
-| Kind and Helm lifecycle | Haskell control-plane orchestration in `cluster up` | host-native Apple CLI or Linux outer container | create or reuse Kind, reset StorageClasses, reconcile PVs, deploy Harbor first, publish the staged substrate payload, publish images, deploy the final chart, and retry once with a targeted Pulsar claim-root reset when retained ZooKeeper state is self-inconsistent; current open gap: the supported operator surface does not yet expose enough in-progress phase detail to prevent false-negative failure classification during cold-start image build, publication, or preload work | `./.data/runtime/cluster-state.state`, `./.data/kind/<runtime-mode>/...` |
+| Kind and Helm lifecycle | Haskell control-plane orchestration in `cluster up` | host-native Apple CLI or Linux outer container | create or reuse Kind, reset StorageClasses, reconcile PVs, deploy Harbor first, publish the staged substrate payload, publish images, deploy the final chart, expose in-progress lifecycle phase, detail, and heartbeat state for status observers, retry once with a targeted Pulsar claim-root reset when retained ZooKeeper state is self-inconsistent, and reinitialize stopped retained Harbor PostgreSQL replicas from the current Patroni leader when timeline drift leaves replicas unready after promotion | `./.data/runtime/cluster-state.state`, `./.data/kind/<runtime-mode>/...` |
 | Harbor image preparation | Harbor plus Haskell image publication flow | Kind cluster plus control plane | bootstrap Harbor, mirror required images, and publish repo-owned images before later rollout | Harbor state under `./.data/kind/<runtime-mode>/...` |
-| PostgreSQL substrate | Percona Kubernetes operator plus Patroni PostgreSQL | Kind cluster | only supported in-cluster PostgreSQL contract for Harbor and later services | `./.data/kind/<runtime-mode>/...` |
+| PostgreSQL substrate | Percona Kubernetes operator plus Patroni PostgreSQL | Kind cluster | only supported in-cluster PostgreSQL contract for Harbor and later services; retained-state reruns may trigger targeted Patroni replica reinitialization from the current leader when stopped replicas need a fresh base backup after timeline advancement | `./.data/kind/<runtime-mode>/...` |
 | Publication state | repo-local JSON plus routed `/api/publication` surface | repo-local state and demo API | reports control-plane context, the direct `infernix service` daemon location, the routed demo API upstream mode, any Apple host-inference bridge mode, the active substrate through its current `runtimeMode` field, routes, and upstream health metadata | `./.data/runtime/publication.json` |
 | Edge Gateway controller | Helm-installed Envoy Gateway controller | Kind cluster | owns all browser-visible and host-consumed routing | none |
 | Cluster Gateway resource | `GatewayClass/infernix-gateway` plus `Gateway/infernix-edge` | Kind cluster | single localhost-bound HTTP listener on the chosen edge port | none |
@@ -118,8 +119,8 @@
 
 | Component | Entry point | Purpose |
 |-----------|-------------|---------|
-| Cluster reconcile | `infernix cluster up` | reconcile Kind, storage, Harbor-first bootstrap, image publication, staged substrate-file publication, publication state, and edge port; current open gap: cold-start progress is still too opaque during long Docker build, Harbor publication, and Kind-worker preload phases |
-| Cluster status | `infernix cluster status` | report cluster presence, the active substrate through its current `runtimeMode` line, publication state, build or data roots, and route inventory without mutation; current open gap: it does not yet expose the active in-progress lifecycle phase or long-running child operation |
+| Cluster reconcile | `infernix cluster up` | reconcile Kind, storage, Harbor-first bootstrap, image publication, staged substrate-file publication, publication state, and edge port while recording the active lifecycle phase, child operation, and heartbeat for supported status observers; retained-state Apple reruns may automatically repair stopped Harbor PostgreSQL replicas from the current Patroni leader when timeline drift leaves replicas unready |
+| Cluster status | `infernix cluster status` | report cluster presence, the active substrate through its current `runtimeMode` line, publication state, build or data roots, route inventory, and the active in-progress lifecycle action, phase, detail, and heartbeat fields without mutation |
 | Kubernetes wrapper | `infernix kubectl ...` | scoped wrapper around upstream `kubectl` against the repo-local kubeconfig |
 | Cache lifecycle | `infernix cache status`, `infernix cache evict`, `infernix cache rebuild` | inspect or reconcile derived runtime cache state without mutating authoritative sources |
 | Focused lint | `infernix lint files`, `infernix lint docs`, `infernix lint proto`, `infernix lint chart` | run the repo-owned focused lint entrypoints for files, docs, `.proto`, and chart assets |

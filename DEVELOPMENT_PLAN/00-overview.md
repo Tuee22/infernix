@@ -38,11 +38,13 @@ adapter setup or validation paths reconcile Homebrew `python@3.12` plus a user-l
 bootstrap on demand. Routed Apple Playwright readiness probes `127.0.0.1` from the host while
 the browser container joins the private Docker `kind` network and targets the Kind control-plane
 DNS, and the governed Apple lifecycle reruns cleanly through `doctor`, `build`, `up`, `status`,
-`test`, and `down`. On May 12, 2026, a cold Apple lifecycle investigation confirmed that the
-shared `cluster up` path does converge, but it still leaves false-negative risk because the
-current operator and validation surfaces do not expose enough progress during long Docker build
-finalization, Harbor publication, Kind-worker preload, and teardown state-replay phases. Phase 2
-Sprint 2.10 and Phase 6 Sprint 6.23 now track that follow-on work.
+`test`, and `down`. The May 12, 2026 Apple lifecycle follow-on is now closed: the shared cluster
+lifecycle persists explicit phase, child-operation detail, and heartbeat data in `cluster status`
+during monitored Docker build, Harbor publication, Kind-worker preload, and Apple retained-state
+replay steps; generated substrate-file publication is atomic so concurrent readers do not observe
+truncated payloads; and retained-state Apple reruns automatically reinitialize stopped Harbor
+PostgreSQL replicas from the current Patroni leader when timeline drift leaves replicas unready
+after promotion.
 
 | Area | Supported contract | Current repo state |
 |------|--------------------|--------------------|
@@ -52,7 +54,7 @@ Sprint 2.10 and Phase 6 Sprint 6.23 now track that follow-on work.
 | Staged substrate-file format | the substrate file and its mirrors use one explicit and consistent file format and filename contract | implemented; the current contract is a shared `infernix-substrate.dhall` filename carrying banner-prefixed JSON on local and cluster-mounted paths |
 | Apple host-native lane | the host-built binary manages Kind, keeps the Apple inference daemon host-native, and may still expose clustered support services and a clustered routed demo surface | implemented and validated; the clustered demo surface now bridges into the host daemon and Apple no longer deploys `infernix-service` in Kind |
 | Apple stage-0 bootstrap determinism | a first-run Apple bootstrap verifies newly installed same-process tool resolution before handing off to direct `cabal` work | implemented and validated through the governed Apple `doctor`, `build`, `up`, `status`, `test`, and `down` lifecycle |
-| Lifecycle false-negative protection | supported lifecycle surfaces report long-running build, publication, preload, and teardown phases clearly enough that operators do not mistake progress for failure | not yet closed; the lifecycle converges, but the current `cluster up`, `cluster down`, and validation doctrine still leave long opaque first-run windows tracked in Phase 2 Sprint 2.10 and Phase 6 Sprint 6.23 |
+| Lifecycle false-negative protection | supported lifecycle surfaces report long-running build, publication, preload, and teardown phases clearly enough that operators do not mistake progress for failure | implemented and validated; `cluster status` now reports in-progress lifecycle phase, detail, and heartbeat fields during the monitored long-running phases, and the governed docs use the same inactivity-aware interpretation contract |
 | Linux control plane | all supported Linux CLI commands run through `docker compose run --rm infernix infernix ...` | implemented and validated through the supported `linux-cpu` and `linux-gpu` bootstrap lifecycles |
 | Linux GPU naming | the NVIDIA-backed Linux substrate is standardized as `linux-gpu` | implemented |
 | Serialized substrate naming | the generated substrate file, publication JSON, `cluster status`, and browser contracts still carry the active substrate under `runtimeMode` field names | implemented |

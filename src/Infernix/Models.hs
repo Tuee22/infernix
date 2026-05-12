@@ -208,6 +208,10 @@ renderPublicationStateWithApiUpstream controlPlane state apiUpstream =
     <> "  \"artifactAcquisitionMode\": "
     <> jsonString "engine-ready-artifact-manifests"
     <> ",\n"
+    <> "  \"lifecycleStatus\": "
+    <> jsonString (Text.pack (lifecycleStatusFor state))
+    <> lifecycleProgressJsonFields state
+    <> ",\n"
     <> "  \"inferenceDispatchMode\": "
     <> jsonString (inferenceDispatchModeFor state)
     <> ",\n"
@@ -287,6 +291,30 @@ inferenceDispatchModeFor :: ClusterState -> Text
 inferenceDispatchModeFor state
   | stateHasDemoUi state = expectedInferenceDispatchModeForRuntime (clusterRuntimeMode state)
   | otherwise = "disabled"
+
+lifecycleStatusFor :: ClusterState -> String
+lifecycleStatusFor state =
+  case lifecycleProgress state of
+    Just _ -> "in-progress"
+    Nothing -> "idle"
+
+lifecycleProgressJsonFields :: ClusterState -> String
+lifecycleProgressJsonFields state =
+  case lifecycleProgress state of
+    Nothing -> ""
+    Just progress ->
+      ",\n"
+        <> "  \"lifecycleAction\": "
+        <> show (lifecycleAction progress)
+        <> ",\n"
+        <> "  \"lifecyclePhase\": "
+        <> show (lifecyclePhase progress)
+        <> ",\n"
+        <> "  \"lifecycleDetail\": "
+        <> show (lifecycleDetail progress)
+        <> ",\n"
+        <> "  \"lifecycleHeartbeatAt\": "
+        <> show (show (lifecycleHeartbeatAt progress))
 
 disabledApiUpstream :: ApiUpstream
 disabledApiUpstream =

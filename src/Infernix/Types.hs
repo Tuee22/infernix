@@ -9,6 +9,7 @@ module Infernix.Types
     ErrorResponse (..),
     InferenceRequest (..),
     InferenceResult (..),
+    LifecycleProgress (..),
     ModelDescriptor (..),
     PersistentClaim (..),
     PublicationUpstream (..),
@@ -86,6 +87,14 @@ data PersistentClaim = PersistentClaim
   }
   deriving (Eq, Read, Show)
 
+data LifecycleProgress = LifecycleProgress
+  { lifecycleAction :: String,
+    lifecyclePhase :: String,
+    lifecycleDetail :: String,
+    lifecycleHeartbeatAt :: UTCTime
+  }
+  deriving (Eq, Read, Show)
+
 data ClusterState = ClusterState
   { clusterPresent :: Bool,
     edgePort :: Int,
@@ -98,6 +107,7 @@ data ClusterState = ClusterState
     publishedDemoConfigPath :: FilePath,
     publishedConfigMapManifestPath :: FilePath,
     mountedDemoConfigPath :: FilePath,
+    lifecycleProgress :: Maybe LifecycleProgress,
     updatedAt :: UTCTime
   }
   deriving (Eq, Read, Show)

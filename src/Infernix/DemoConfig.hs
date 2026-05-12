@@ -9,6 +9,7 @@ module Infernix.DemoConfig
   )
 where
 
+import Control.Exception (IOException, bracketOnError, catch)
 import Data.Aeson (eitherDecodeStrict')
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Char8 qualified as ByteStringChar8
@@ -20,8 +21,9 @@ import Infernix.Config qualified as Config
 import Infernix.Models (catalogForMode, encodeDemoConfig, engineBindingsForMode, requestTopicsForMode, resultTopicForMode)
 import Infernix.Types
 import Infernix.Workflow (demoConfigGeneratedBannerLine)
-import System.Directory (createDirectoryIfMissing)
+import System.Directory (createDirectoryIfMissing, removeFile, renameFile)
 import System.FilePath (takeDirectory)
+import System.IO (hClose, openBinaryTempFile)
 
 demoConfigBannerBytes :: ByteString.ByteString
 demoConfigBannerBytes = ByteStringChar8.pack demoConfigGeneratedBannerLine
@@ -54,9 +56,27 @@ validateDemoConfigFile filePath = do
 materializeGeneratedDemoConfigFile :: Paths -> RuntimeMode -> Bool -> IO FilePath
 materializeGeneratedDemoConfigFile paths runtimeMode demoUiEnabledValue = do
   let filePath = Config.generatedDemoConfigPath paths
-  createDirectoryIfMissing True (takeDirectory filePath)
-  ByteString.writeFile filePath (renderGeneratedDemoConfig paths runtimeMode demoUiEnabledValue)
+  let outputDirectory = takeDirectory filePath
+      payload = renderGeneratedDemoConfig paths runtimeMode demoUiEnabledValue
+  createDirectoryIfMissing True outputDirectory
+  bracketOnError
+    (openBinaryTempFile outputDirectory "infernix-substrate.dhall.tmp")
+    ( \(temporaryPath, handle) -> do
+        ignoreIo (hClose handle)
+        ignoreIo (removeFile temporaryPath)
+    )
+    ( \(temporaryPath, handle) -> do
+        ByteString.hPut handle payload
+        hClose handle
+        renameFile temporaryPath filePath
+    )
   pure filePath
+
+ignoreIo :: IO () -> IO ()
+ignoreIo action = action `catch` ignoreIOException
+
+ignoreIOException :: IOException -> IO ()
+ignoreIOException _ = pure ()
 
 renderGeneratedDemoConfig :: Paths -> RuntimeMode -> Bool -> ByteString.ByteString
 renderGeneratedDemoConfig paths runtimeMode demoUiEnabledValue =

@@ -141,11 +141,11 @@ commandFamilies =
       },
     CommandFamily
       { familyTopic = "cluster",
-        familyOverview = "reconciles or reports cluster state, generated substrate publication, and routed surfaces",
+        familyOverview = "reconciles or reports cluster state, lifecycle progress, generated substrate publication, and routed surfaces",
         familyCommands =
           [ simpleCommand "cluster up" "reconciles Kind, Harbor-first bootstrap, the generated substrate file, and routed publication state" ClusterUpCommand,
             simpleCommand "cluster down" "tears the cluster down while leaving durable repo-local state under `./.data/` intact" ClusterDownCommand,
-            simpleCommand "cluster status" "reports cluster presence, active substrate, publication state, build paths, and route inventory without mutation" ClusterStatusCommand
+            simpleCommand "cluster status" "reports cluster presence, lifecycle phase, active substrate, publication state, build paths, and route inventory without mutation" ClusterStatusCommand
           ]
       },
     CommandFamily

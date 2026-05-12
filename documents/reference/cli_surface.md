@@ -21,7 +21,7 @@ executable runs.
 ## `infernix` Families
 
 - `service` - starts the long-running production daemon that consumes Pulsar work and binds no HTTP port
-- `cluster` - reconciles or reports cluster state, generated substrate publication, and routed surfaces
+- `cluster` - reconciles or reports cluster state, lifecycle progress, generated substrate publication, and routed surfaces
 - `cache` - inspects or reconciles manifest-backed derived cache state for the active substrate
 - `kubectl` - proxies upstream Kubernetes access through the repo-local kubeconfig
 - `lint` - runs the focused Haskell-owned static checks for files, docs, `.proto`, and chart assets
@@ -33,6 +33,13 @@ executable runs.
 ## `infernix-demo` Families
 
 - `serve [--dhall PATH] [--port PORT]` starts the demo HTTP API host
+
+## Lifecycle Status
+
+- `cluster status` is the supported progress check during `cluster up` and `cluster down`
+- when a lifecycle action is active, the status surface reports the current phase, the current
+  child operation, and a heartbeat timestamp instead of leaving Apple bring-up or teardown in an
+  opaque wait state
 
 ## Cross-References
 

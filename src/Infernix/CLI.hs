@@ -135,7 +135,7 @@ dispatch command =
     InternalDiscoverHarborOverlayCommand overlayPath ->
       mapM_ putStrLn =<< discoverHarborOverlayImageRefsFile overlayPath
     InternalPublishChartImagesCommand renderedChartPath outputPath ->
-      PublishImages.publishChartImagesFile PublishImages.defaultHarborPublishOptions renderedChartPath outputPath
+      PublishImages.publishChartImagesFile PublishImages.defaultHarborPublishOptions (\_ -> pure Nothing) renderedChartPath outputPath
     InternalMaterializeSubstrateCommand runtimeMode demoUiEnabledValue -> do
       paths <- discoverPaths
       ensureRepoLayout paths

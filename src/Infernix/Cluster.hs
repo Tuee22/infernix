@@ -27,7 +27,7 @@ import Data.List qualified as List
 import Data.Map.Strict qualified as Map
 import Data.Maybe (catMaybes, fromMaybe, mapMaybe)
 import Data.Text qualified as Text
-import Data.Time (getCurrentTime)
+import Data.Time (UTCTime, diffUTCTime, getCurrentTime)
 import Data.Vector qualified as Vector
 import Infernix.Cluster.Discover
 import Infernix.Cluster.PublishImages qualified as PublishImages
@@ -36,6 +36,7 @@ import Infernix.Config qualified as Config
 import Infernix.DemoConfig (decodeDemoConfigFile)
 import Infernix.Engines.AppleSilicon (ensureAppleSiliconRuntimeReady)
 import Infernix.Models
+import Infernix.ProcessMonitor qualified as ProcessMonitor
 import Infernix.Routes (routeHelmValues)
 import Infernix.Storage
 import Infernix.Types
@@ -166,11 +167,17 @@ postgresOperatorDeployment = "deployment/infernix-postgres-operator"
 harborPostgresClusterName :: String
 harborPostgresClusterName = "harbor-postgresql"
 
+harborPostgresPatroniClusterName :: String
+harborPostgresPatroniClusterName = "harbor-postgresql-ha"
+
 harborPostgresExpectedDataClaims :: Int
 harborPostgresExpectedDataClaims = 3
 
 harborPostgresStartupRepairGraceAttempts :: Int
 harborPostgresStartupRepairGraceAttempts = 18
+
+harborPostgresReplicaReinitGraceAttempts :: Int
+harborPostgresReplicaReinitGraceAttempts = harborPostgresStartupRepairGraceAttempts + 6
 
 harborPostgresExpectedOperatorClaims :: Int
 harborPostgresExpectedOperatorClaims = 4
@@ -204,6 +211,92 @@ pulsarBootstrapDirtyLogMarkers =
 clusterStateHasDemoUi :: ClusterState -> Bool
 clusterStateHasDemoUi state =
   any ((`elem` ["/", "/api", "/objects"]) . path) (routes state)
+
+persistClusterState :: Paths -> ClusterState -> IO ()
+persistClusterState paths state = do
+  let publicationPath = Config.publicationStatePath paths
+  createDirectoryIfMissing True (takeDirectory publicationPath)
+  writeStateFile (clusterStatePath paths) state
+  writeFile publicationPath (renderPublicationState (Config.controlPlaneContext paths) state)
+
+setLifecycleProgress :: Paths -> ClusterState -> String -> String -> String -> Bool -> IO ClusterState
+setLifecycleProgress paths state action phase detail emitMarker = do
+  now <- getCurrentTime
+  let updatedState =
+        state
+          { lifecycleProgress =
+              Just
+                LifecycleProgress
+                  { lifecycleAction = action,
+                    lifecyclePhase = phase,
+                    lifecycleDetail = detail,
+                    lifecycleHeartbeatAt = now
+                  },
+            updatedAt = now
+          }
+  persistClusterState paths updatedState
+  when emitMarker $
+    putStrLn (action <> " phase: " <> phase <> " - " <> detail)
+  pure updatedState
+
+startLifecyclePhase :: Paths -> ClusterState -> String -> String -> String -> IO ClusterState
+startLifecyclePhase paths state action phase detail =
+  setLifecycleProgress paths state action phase detail True
+
+touchLifecycleProgress :: Paths -> ClusterState -> IO ()
+touchLifecycleProgress paths state =
+  case lifecycleProgress state of
+    Nothing -> pure ()
+    Just progress -> do
+      _ <-
+        setLifecycleProgress
+          paths
+          state
+          (lifecycleAction progress)
+          (lifecyclePhase progress)
+          (lifecycleDetail progress)
+          False
+      pure ()
+
+clearLifecycleProgress :: Paths -> ClusterState -> IO ClusterState
+clearLifecycleProgress paths state = do
+  now <- getCurrentTime
+  let updatedState =
+        state
+          { lifecycleProgress = Nothing,
+            updatedAt = now
+          }
+  persistClusterState paths updatedState
+  pure updatedState
+
+lifecycleMonitorLabel :: ClusterState -> String
+lifecycleMonitorLabel state =
+  case lifecycleProgress state of
+    Just progress ->
+      lifecycleAction progress <> " phase " <> lifecyclePhase progress <> ": " <> lifecycleDetail progress
+    Nothing -> "long-running lifecycle command"
+
+lifecycleCommandMonitor :: Paths -> ClusterState -> ProcessMonitor.CommandMonitor
+lifecycleCommandMonitor paths state =
+  ProcessMonitor.CommandMonitor
+    { ProcessMonitor.monitorLabel = lifecycleMonitorLabel state,
+      ProcessMonitor.monitorIntervalMicros = 30000000,
+      ProcessMonitor.monitorHeartbeat = \_elapsedSeconds -> touchLifecycleProgress paths state
+    }
+
+runCommandMonitored :: Paths -> ClusterState -> Maybe FilePath -> [(String, String)] -> FilePath -> [String] -> IO ()
+runCommandMonitored paths state maybeWorkingDirectory envOverrides command args = do
+  result <-
+    ProcessMonitor.tryCommandMonitored
+      maybeWorkingDirectory
+      envOverrides
+      command
+      args
+      (Just (lifecycleCommandMonitor paths state))
+  case result of
+    Right _ -> pure ()
+    Left err ->
+      ioError (userError ("command failed: " <> command <> " " <> unwords args <> "\n" <> err))
 
 clusterUp :: Maybe RuntimeMode -> IO ()
 clusterUp maybeRuntimeMode = do
@@ -261,7 +354,7 @@ clusterUpWithPlatform paths runtimeMode = do
   Lazy.writeFile publishedCatalogPath payload
   writeFile configMapManifestPath (renderConfigMapManifest payload)
   claimDiscoveryTime <- getCurrentTime
-  let provisionalState =
+  let provisionalState0 =
         ClusterState
           { clusterPresent = False,
             edgePort = requestedPort,
@@ -274,24 +367,37 @@ clusterUpWithPlatform paths runtimeMode = do
             publishedDemoConfigPath = publishedCatalogPath,
             publishedConfigMapManifestPath = configMapManifestPath,
             mountedDemoConfigPath = mountedCatalogPath,
+            lifecycleProgress = Nothing,
             updatedAt = claimDiscoveryTime
           }
-  writeFile publicationPath (renderPublicationState controlPlane provisionalState)
-  writeStateFile (clusterStatePath paths) provisionalState
+  provisionalState <-
+    startLifecyclePhase
+      paths
+      provisionalState0
+      "cluster-up"
+      "discover-persistent-claims"
+      "rendering Helm inputs and discovering durable claim roots"
   claimDiscoveryValuesPath <- writeHelmValuesFile paths controlPlane provisionalState payload FinalPhase
   claimDiscoveryRenderedChartPath <- renderHelmChart paths runtimeMode [claimDiscoveryValuesPath]
   discoveredClaims <- discoverPersistentClaims paths claimDiscoveryRenderedChartPath
   discoveredRoutes <- discoverChartRoutesFile claimDiscoveryRenderedChartPath
   mapM_ (ensureClaimDirectoryReady paths runtimeMode) discoveredClaims
+  clusterPrepareState <-
+    startLifecyclePhase
+      paths
+      provisionalState
+      "cluster-up"
+      "prepare-kind-cluster"
+      "creating or reusing the Kind cluster and replaying retained runtime data into nodes"
   (edgePortValue, kubeconfigContents, clusterCreated) <- ensureKindCluster paths runtimeMode requestedPort
   when (clusterCreated && not (kindUsesHostBindMounts paths)) $
-    prepareKindNodeRuntimePaths paths runtimeMode
+    prepareKindNodeRuntimePaths paths clusterPrepareState runtimeMode
   unless (kindUsesHostBindMounts paths) $
-    prepareKindNodeClaimDirectories paths runtimeMode discoveredClaims
+    prepareKindNodeClaimDirectories paths clusterPrepareState runtimeMode discoveredClaims
   writeFile (edgePortPath paths) (show edgePortValue)
   writeTextFile (Config.generatedKubeconfigPath paths) (Text.pack kubeconfigContents)
   activeStateTime <- getCurrentTime
-  let activeState =
+  let activeState0 =
         ClusterState
           { clusterPresent = True,
             edgePort = edgePortValue,
@@ -304,10 +410,16 @@ clusterUpWithPlatform paths runtimeMode = do
             publishedDemoConfigPath = publishedCatalogPath,
             publishedConfigMapManifestPath = configMapManifestPath,
             mountedDemoConfigPath = mountedCatalogPath,
+            lifecycleProgress = Nothing,
             updatedAt = activeStateTime
           }
-  writeFile publicationPath (renderPublicationState controlPlane activeState)
-  writeStateFile (clusterStatePath paths) activeState
+  activeState <-
+    startLifecyclePhase
+      paths
+      activeState0
+      "cluster-up"
+      "wait-for-kubernetes-api"
+      "waiting for the repo-local Kind kubeconfig and Kubernetes API to become reachable"
   ensureOuterContainerKindNetworkAccess paths runtimeMode
   waitForKubernetesApi paths runtimeMode
   configureRuntimeModeCluster paths runtimeMode
@@ -319,30 +431,84 @@ clusterUpWithPlatform paths runtimeMode = do
   finalValuesPath <- writeHelmValuesFile paths controlPlane seedState payload FinalPhase
   renderedChartPath <- renderHelmChart paths runtimeMode [finalValuesPath]
   when clusterCreated $
-    preloadBootstrapSupportImagesOnKindNodes paths runtimeMode renderedChartPath
+    do
+      bootstrapPreloadState <-
+        startLifecyclePhase
+          paths
+          seedState
+          "cluster-up"
+          "preload-bootstrap-images"
+          "preloading bootstrap support images onto Kind nodes"
+      preloadBootstrapSupportImagesOnKindNodes paths bootstrapPreloadState runtimeMode renderedChartPath
   applyBootstrapState paths runtimeMode demoUiEnabledValue discoveredClaims
   let initialState = seedState {claims = discoveredClaims}
-  writeFile publicationPath (renderPublicationState controlPlane initialState)
-  writeStateFile (clusterStatePath paths) initialState
+  initialStateWithDependencies <-
+    startLifecyclePhase
+      paths
+      initialState
+      "cluster-up"
+      "ensure-helm-dependencies"
+      "reusing or hydrating the top-level Helm dependency archive cache"
   ensureHelmDependencies paths
-  ensureEnvoyGatewayCrdsInstalled paths initialState
-  reconcilePersistentVolumes initialState
-  deployChart paths initialState [warmupValuesPath] False
-  state <- reconcileOperatorManagedPersistentVolumes paths initialState
-  writeStateFile (clusterStatePath paths) state
-  repairHarborDatabaseMigrationState state
-  bootstrapHarborWithRepair paths state [bootstrapValuesPath]
-  buildClusterImages paths runtimeMode
-  imageOverridesPath <- publishClusterImages paths renderedChartPath runtimeMode
-  deployChart paths state [harborFinalValuesPath, imageOverridesPath] True
-  waitForHarborFinalPhaseRollouts state
-  waitForGatewayApiCrds state
-  preloadHarborBackedImagesOnKindWorker paths runtimeMode imageOverridesPath
-  deployChart paths state [finalValuesPath, imageOverridesPath] True
-  waitForFinalPhaseRollouts state
-  waitForRoutedPublicationSurface paths state
-  finalState <- refreshPersistentClaims state
-  writeStateFile (clusterStatePath paths) finalState
+  storageReconcileState <-
+    startLifecyclePhase
+      paths
+      initialStateWithDependencies
+      "cluster-up"
+      "reconcile-storage-and-warmup"
+      "installing Gateway prerequisites, reconciling persistent volumes, and applying the warmup chart"
+  ensureEnvoyGatewayCrdsInstalled paths storageReconcileState
+  reconcilePersistentVolumes storageReconcileState
+  deployChart paths storageReconcileState [warmupValuesPath] False
+  state0 <- reconcileOperatorManagedPersistentVolumes paths storageReconcileState
+  persistClusterState paths state0
+  harborBootstrapState <-
+    startLifecyclePhase
+      paths
+      state0
+      "cluster-up"
+      "bootstrap-harbor"
+      "repairing Harbor bootstrap state and waiting for the Harbor registry to become ready"
+  repairHarborDatabaseMigrationState harborBootstrapState
+  bootstrapHarborWithRepair paths harborBootstrapState [bootstrapValuesPath]
+  buildState <-
+    startLifecyclePhase
+      paths
+      harborBootstrapState
+      "cluster-up"
+      "build-cluster-images"
+      ("docker build " <> clusterWorkloadImageRef runtimeMode)
+  buildClusterImages paths buildState runtimeMode
+  imageOverridesPath <- publishClusterImages paths buildState renderedChartPath runtimeMode
+  harborFinalState <-
+    startLifecyclePhase
+      paths
+      buildState
+      "cluster-up"
+      "deploy-harbor-final-phase"
+      "deploying Harbor-backed platform workloads and waiting for Harbor plus Gateway rollouts"
+  deployChart paths harborFinalState [harborFinalValuesPath, imageOverridesPath] True
+  waitForHarborFinalPhaseRollouts harborFinalState
+  waitForGatewayApiCrds harborFinalState
+  preloadHarborBackedImagesOnKindWorker paths harborFinalState runtimeMode imageOverridesPath
+  finalDeployState <-
+    startLifecyclePhase
+      paths
+      harborFinalState
+      "cluster-up"
+      "deploy-final-phase"
+      "deploying the final chart and waiting for routed workloads to become ready"
+  deployChart paths finalDeployState [finalValuesPath, imageOverridesPath] True
+  waitForFinalPhaseRollouts finalDeployState
+  routedPublicationState <-
+    startLifecyclePhase
+      paths
+      finalDeployState
+      "cluster-up"
+      "wait-for-routed-publication"
+      "probing the routed publication surface on the chosen edge before declaring success"
+  waitForRoutedPublicationSurface paths routedPublicationState
+  _ <- refreshPersistentClaims routedPublicationState >>= clearLifecycleProgress paths
   putStrLn "cluster up complete"
   putStrLn ("controlPlaneContext: " <> controlPlane)
   putStrLn ("runtimeMode: " <> Text.unpack (runtimeModeId runtimeMode))
@@ -413,24 +579,44 @@ clusterDown maybeRuntimeMode = do
   let maybeState = matchingClusterState runtimeMode recordedState
   clusterExists <- kindClusterExists paths runtimeMode
   when clusterExists $ do
-    unless (kindUsesHostBindMounts paths) $
-      syncKindNodeRuntimePathsToHost paths runtimeMode maybeState
-    deleteKindCluster paths runtimeMode
+    case maybeState of
+      Just state
+        | not (kindUsesHostBindMounts paths) -> do
+            replayState <-
+              startLifecyclePhase
+                paths
+                state
+                "cluster-down"
+                "replay-retained-state"
+                "replaying retained Kind runtime data back into the repo-local data root"
+            syncKindNodeRuntimePathsToHost paths runtimeMode (Just replayState)
+      _ ->
+        unless (kindUsesHostBindMounts paths) $
+          syncKindNodeRuntimePathsToHost paths runtimeMode maybeState
+    case maybeState of
+      Just state -> do
+        deleteState <-
+          startLifecyclePhase
+            paths
+            state
+            "cluster-down"
+            "delete-kind-cluster"
+            "deleting the Kind cluster after retained-state replay is complete"
+        deleteKindCluster paths (clusterRuntimeMode deleteState)
+      Nothing -> deleteKindCluster paths runtimeMode
   case maybeState of
     Nothing -> putStrLn "cluster already absent"
     Just state
       | clusterRuntimeMode state /= runtimeMode -> putStrLn "cluster down complete"
       | otherwise -> do
           now <- getCurrentTime
-          let updatedState =
-                state
-                  { clusterPresent = False,
-                    updatedAt = now
-                  }
-          writeStateFile (clusterStatePath paths) updatedState
-          writeFile
-            (Config.publicationStatePath paths)
-            (renderPublicationState (Config.controlPlaneContext paths) updatedState)
+          _ <-
+            clearLifecycleProgress
+              paths
+              state
+                { clusterPresent = False,
+                  updatedAt = now
+                }
           putStrLn "cluster down complete"
 
 clusterStatus :: Maybe RuntimeMode -> IO ()
@@ -443,6 +629,8 @@ clusterStatus maybeRuntimeMode = do
     Nothing -> do
       putStrLn "cluster not yet reconciled"
       putStrLn ("runtimeMode: " <> Text.unpack (runtimeModeId runtimeMode))
+      putStrLn "lifecycleStatus: idle"
+      putStrLn "lifecyclePhase: not-yet-reconciled"
       putStrLn ("buildRoot: " <> buildRoot paths)
       putStrLn ("dataRoot: " <> dataRoot paths)
       putStrLn ("expectedDemoConfigPath: " <> Config.generatedDemoConfigPath paths)
@@ -450,6 +638,7 @@ clusterStatus maybeRuntimeMode = do
     Just state -> do
       ensureOuterContainerKindNetworkAccess paths (clusterRuntimeMode state)
       actualPresent <- kindClusterExists paths (clusterRuntimeMode state)
+      now <- getCurrentTime
       cacheEntries <- countLeafEntries (modelCacheRoot paths)
       resultCount <- countLeafEntries (resultsRoot paths)
       objectCount <- countLeafEntries (objectStoreRoot paths)
@@ -472,6 +661,7 @@ clusterStatus maybeRuntimeMode = do
       putStrLn ("modelCacheRoot: " <> modelCacheRoot paths)
       putStrLn ("durableManifestRoot: " <> objectStoreRoot paths </> "manifests")
       putStrLn ("storageHealth: " <> show (length (claims state)) <> " chart-owned claim roots prepared")
+      mapM_ putStrLn (lifecycleStatusLines now actualPresent state)
       publicationSummaryLines <- publicationStateSummaryLines (Config.publicationStatePath paths)
       putStrLn ("kubernetesNodeCount: " <> show nodeCount)
       putStrLn ("kubernetesPodCount: " <> show podCount)
@@ -483,6 +673,31 @@ clusterStatus maybeRuntimeMode = do
       mapM_
         (\route -> putStrLn ("route: " <> Text.unpack (path route) <> " -> " <> Text.unpack (purpose route)))
         (routes state)
+
+lifecycleStatusLines :: UTCTime -> Bool -> ClusterState -> [String]
+lifecycleStatusLines now actualPresent state =
+  case lifecycleProgress state of
+    Nothing ->
+      [ "lifecycleStatus: idle",
+        "lifecyclePhase: " <> idleLifecyclePhase actualPresent
+      ]
+    Just progress ->
+      let heartbeatAgeSeconds :: Integer
+          heartbeatAgeSeconds =
+            max 0 (round (diffUTCTime now (lifecycleHeartbeatAt progress)))
+       in [ "lifecycleStatus: in-progress",
+            "lifecycleAction: " <> lifecycleAction progress,
+            "lifecyclePhase: " <> lifecyclePhase progress,
+            "lifecycleDetail: " <> lifecycleDetail progress,
+            "lifecycleHeartbeatAt: " <> show (lifecycleHeartbeatAt progress),
+            "lifecycleHeartbeatAgeSeconds: " <> show heartbeatAgeSeconds
+          ]
+
+idleLifecyclePhase :: Bool -> String
+idleLifecyclePhase actualPresent =
+  if actualPresent
+    then "steady-state"
+    else "cluster-absent"
 
 loadClusterState :: Paths -> IO (Maybe ClusterState)
 loadClusterState paths = do
@@ -1191,6 +1406,7 @@ applyBootstrapState paths runtimeMode demoUiEnabledValue claimInventory = do
             publishedDemoConfigPath = Config.publishedConfigMapCatalogPath paths,
             publishedConfigMapManifestPath = Config.publishedConfigMapManifestPath paths,
             mountedDemoConfigPath = Config.watchedDemoConfigPath,
+            lifecycleProgress = Nothing,
             updatedAt = now
           }
   applyNamespace state "platform"
@@ -1235,8 +1451,8 @@ applyStorageClass state =
         ]
     )
 
-buildClusterImages :: Paths -> RuntimeMode -> IO ()
-buildClusterImages paths runtimeMode = do
+buildClusterImages :: Paths -> ClusterState -> RuntimeMode -> IO ()
+buildClusterImages paths state runtimeMode = do
   let runtimeModeName = Text.unpack (runtimeModeId (clusterWorkloadRuntimeMode runtimeMode))
       imageRef = clusterWorkloadImageRef runtimeMode
       baseImage =
@@ -1260,16 +1476,18 @@ buildClusterImages paths runtimeMode = do
     then putStrLn ("reusing baked cluster image for " <> runtimeModeName <> ": " <> imageRef)
     else do
       putStrLn ("building cluster images for " <> runtimeModeName)
-      runCommand
+      runCommandMonitored
+        paths
+        state
         (Just (repoRoot paths))
         []
         "docker"
         (dockerBuildArgs imageRef)
 
-preloadBootstrapSupportImagesOnKindNodes :: Paths -> RuntimeMode -> FilePath -> IO ()
-preloadBootstrapSupportImagesOnKindNodes _paths AppleSilicon _renderedChartPath =
+preloadBootstrapSupportImagesOnKindNodes :: Paths -> ClusterState -> RuntimeMode -> FilePath -> IO ()
+preloadBootstrapSupportImagesOnKindNodes _paths _state AppleSilicon _renderedChartPath =
   putStrLn "skipping bootstrap support image preload on apple-silicon; Kind nodes pull supported bootstrap images directly"
-preloadBootstrapSupportImagesOnKindNodes paths runtimeMode renderedChartPath = do
+preloadBootstrapSupportImagesOnKindNodes paths state runtimeMode renderedChartPath = do
   discoveredImageRefs <- discoverChartImagesFile renderedChartPath
   preloadImageRefs <-
     mapM
@@ -1280,7 +1498,18 @@ preloadBootstrapSupportImagesOnKindNodes paths runtimeMode renderedChartPath = d
   let resolvedImageRefs = List.nub (catMaybes preloadImageRefs)
   unless (null resolvedImageRefs) $ do
     putStrLn "preloading bootstrap support images on Kind nodes"
-    mapM_ (preloadBootstrapSupportImageOnKindNodes paths runtimeMode) resolvedImageRefs
+    mapM_
+      ( \imageRef -> do
+          imageState <-
+            startLifecyclePhase
+              paths
+              state
+              "cluster-up"
+              "preload-bootstrap-images"
+              ("loading bootstrap support image " <> imageRef <> " onto Kind nodes")
+          preloadBootstrapSupportImageOnKindNodes paths imageState runtimeMode imageRef
+      )
+      resolvedImageRefs
   where
     shouldPreloadBootstrapImageRef imageRef =
       not (null imageRef)
@@ -1295,16 +1524,16 @@ preloadBootstrapSupportImagesOnKindNodes paths runtimeMode renderedChartPath = d
         resolvedRef : _ -> pure (Just resolvedRef)
         [] -> do
           putStrLn ("pulling bootstrap support image " <> imageRef)
-          PublishImages.ensureLocalImageAvailable imageRef
+          PublishImages.ensureLocalImageAvailable (\_ -> pure Nothing) imageRef
           pure (Just imageRef)
 
-preloadBootstrapSupportImageOnKindNodes :: Paths -> RuntimeMode -> String -> IO ()
-preloadBootstrapSupportImageOnKindNodes paths runtimeMode imageRef = do
+preloadBootstrapSupportImageOnKindNodes :: Paths -> ClusterState -> RuntimeMode -> String -> IO ()
+preloadBootstrapSupportImageOnKindNodes paths state runtimeMode imageRef = do
   let clusterName = kindClusterName paths runtimeMode
-  runCommand Nothing [] "kind" ["load", "docker-image", "--name", clusterName, imageRef]
+  runCommandMonitored paths state Nothing [] "kind" ["load", "docker-image", "--name", clusterName, imageRef]
 
-publishClusterImages :: Paths -> FilePath -> RuntimeMode -> IO FilePath
-publishClusterImages paths renderedChartPath runtimeMode = do
+publishClusterImages :: Paths -> ClusterState -> FilePath -> RuntimeMode -> IO FilePath
+publishClusterImages paths state renderedChartPath runtimeMode = do
   let outputPath =
         buildRoot paths
           </> ("harbor-image-overrides-" <> Text.unpack (runtimeModeId runtimeMode) <> ".yaml")
@@ -1312,18 +1541,33 @@ publishClusterImages paths renderedChartPath runtimeMode = do
     PublishImages.defaultHarborPublishOptions
       { PublishImages.harborApiHost = harborApiHost paths runtimeMode
       }
+    ( \detail -> do
+        detailState <- startLifecyclePhase paths state "cluster-up" "publish-harbor-images" detail
+        pure (Just (lifecycleCommandMonitor paths detailState))
+    )
     renderedChartPath
     outputPath
   pure outputPath
 
-preloadHarborBackedImagesOnKindWorker :: Paths -> RuntimeMode -> FilePath -> IO ()
-preloadHarborBackedImagesOnKindWorker paths runtimeMode imageOverridesPath = do
+preloadHarborBackedImagesOnKindWorker :: Paths -> ClusterState -> RuntimeMode -> FilePath -> IO ()
+preloadHarborBackedImagesOnKindWorker paths state runtimeMode imageOverridesPath = do
   imageRefs <- harborOverlayImageRefs paths imageOverridesPath
   let workerContainer = kindClusterName paths runtimeMode <> "-worker"
       uniqueImageRefs = List.nub (filter shouldPreloadOnWorker (map trim imageRefs))
   unless (null uniqueImageRefs) $ do
     putStrLn "preloading Harbor-backed final images on the Kind worker"
-    mapM_ (preloadHarborImageOnNode workerContainer) uniqueImageRefs
+    mapM_
+      ( \imageRef -> do
+          imageState <-
+            startLifecyclePhase
+              paths
+              state
+              "cluster-up"
+              "preload-harbor-images"
+              ("preloading Harbor-backed image " <> imageRef <> " on " <> workerContainer)
+          preloadHarborImageOnNode paths imageState workerContainer imageRef
+      )
+      uniqueImageRefs
   where
     shouldPreloadOnWorker imageRef = not (null imageRef)
 
@@ -1331,39 +1575,47 @@ harborOverlayImageRefs :: Paths -> FilePath -> IO [String]
 harborOverlayImageRefs _paths imageOverridesPath =
   filter (not . null) <$> discoverHarborOverlayImageRefsFile imageOverridesPath
 
-preloadHarborImageOnNode :: String -> String -> IO ()
-preloadHarborImageOnNode nodeContainer imageRef = do
-  result <-
-    retryCommandOutput
-      12
-      5000000
-      ("preload Harbor image " <> imageRef <> " on " <> nodeContainer)
-      ( tryCommand
+preloadHarborImageOnNode :: Paths -> ClusterState -> String -> String -> IO ()
+preloadHarborImageOnNode paths state nodeContainer imageRef = go (12 :: Int) ""
+  where
+    commandArgs =
+      [ "exec",
+        nodeContainer,
+        "crictl",
+        "--runtime-endpoint",
+        "unix:///run/containerd/containerd.sock",
+        "pull",
+        "--creds",
+        harborAdminUser <> ":" <> harborAdminPassword,
+        imageRef
+      ]
+    go remainingAttempts lastFailure = do
+      result <-
+        ProcessMonitor.tryCommandMonitored
           Nothing
           []
           "docker"
-          [ "exec",
-            nodeContainer,
-            "crictl",
-            "--runtime-endpoint",
-            "unix:///run/containerd/containerd.sock",
-            "pull",
-            "--creds",
-            harborAdminUser <> ":" <> harborAdminPassword,
-            imageRef
-          ]
-      )
-  case result of
-    Right _ -> pure ()
-    Left err ->
-      ioError
-        ( userError
-            ( "Kind worker could not preload Harbor-backed image "
-                <> imageRef
-                <> ":\n"
-                <> err
-            )
-        )
+          commandArgs
+          (Just (lifecycleCommandMonitor paths state))
+      case result of
+        Right _ -> pure ()
+        Left err
+          | remainingAttempts > 1 -> do
+              threadDelay 5000000
+              go (remainingAttempts - 1) (chooseError err lastFailure)
+          | otherwise ->
+              ioError
+                ( userError
+                    ( "Kind worker could not preload Harbor-backed image "
+                        <> imageRef
+                        <> ":\n"
+                        <> chooseError err lastFailure
+                    )
+                )
+
+    chooseError current previous
+      | null current = previous
+      | otherwise = current
 
 maybeCommand :: [String] -> IO Bool
 maybeCommand [] = pure False
@@ -1541,11 +1793,11 @@ waitForHarborDatabaseReadyWithRepair state = do
     )
 
 waitForHarborPostgresPodsReady :: ClusterState -> IO ()
-waitForHarborPostgresPodsReady state = go totalAttempts False ""
+waitForHarborPostgresPodsReady state = go totalAttempts False False ""
   where
     totalAttempts = 72 :: Int
 
-    go remainingAttempts restartIssued lastError = do
+    go remainingAttempts restartIssued reinitIssued lastError = do
       startupPods <- harborPostgresStartupPods state
       let dataPodCount =
             length
@@ -1603,8 +1855,21 @@ waitForHarborPostgresPodsReady state = go totalAttempts False ""
                       allStartupPodsPresent
                       attemptsElapsed
                       startupPods
+              reinitialized <-
+                if reinitIssued || restarted
+                  then pure False
+                  else
+                    reinitializeHarborPostgresReplicasIfStuck
+                      state
+                      attemptsElapsed
+                      (restartIssued || restarted)
+                      startupPods
               threadDelay 5000000
-              go (remainingAttempts - 1) (restartIssued || restarted) (chooseError currentError lastError)
+              go
+                (remainingAttempts - 1)
+                (restartIssued || restarted)
+                (reinitIssued || reinitialized)
+                (chooseError currentError lastError)
 
     chooseError current previous
       | null current = previous
@@ -1680,6 +1945,52 @@ restartHarborPostgresStartupPodsIfStuck state _allStartupPodsPresent attemptsEla
                || harborPostgresStartupPodStatus startupPod == "Error"
                || harborPostgresStartupPodStatus startupPod == "Init:Error"
            )
+
+reinitializeHarborPostgresReplicasIfStuck :: ClusterState -> Int -> Bool -> [HarborPostgresStartupPod] -> IO Bool
+reinitializeHarborPostgresReplicasIfStuck state attemptsElapsed restartIssued startupPods = do
+  primaryPodName <- harborPostgresPrimaryPodNameMaybe state
+  if shouldReinitialize primaryPodName
+    then do
+      putStrLn
+        ( "repairing Harbor PostgreSQL replicas from leader: "
+            <> List.intercalate ", " (replicaPodNames primaryPodName)
+        )
+      runCommand
+        Nothing
+        []
+        "kubectl"
+        ( kubeconfigArgs state
+            <> [ "-n",
+                 "platform",
+                 "exec",
+                 primaryPodName,
+                 "-c",
+                 "database",
+                 "--",
+                 "patronictl",
+                 "-k",
+                 "reinit",
+                 harborPostgresPatroniClusterName
+               ]
+            <> replicaPodNames primaryPodName
+            <> ["--force", "--wait", "--from-leader"]
+        )
+      pure True
+    else pure False
+  where
+    stuckDataPodNames =
+      [ harborPostgresStartupPodName startupPod
+      | startupPod <- startupPods,
+        not (harborPostgresStartupPodReady startupPod),
+        "harbor-postgresql-instance" `List.isPrefixOf` harborPostgresStartupPodName startupPod
+      ]
+    replicaPodNames primaryPodName =
+      filter (/= primaryPodName) stuckDataPodNames
+    shouldReinitialize primaryPodName =
+      restartIssued
+        && attemptsElapsed >= harborPostgresReplicaReinitGraceAttempts
+        && not (null primaryPodName)
+        && not (null (replicaPodNames primaryPodName))
 
 waitForHarborPostgresPrimaryPod :: ClusterState -> IO String
 waitForHarborPostgresPrimaryPod state = go (72 :: Int)
@@ -2096,7 +2407,7 @@ reconcileOperatorManagedPersistentVolumes paths state = do
   operatorClaims <- waitForOperatorManagedPersistentClaims state harborPostgresExpectedOperatorClaims
   mapM_ (ensureClaimDirectoryReady paths (clusterRuntimeMode state)) operatorClaims
   unless (kindUsesHostBindMounts paths) $
-    prepareKindNodeClaimDirectories paths (clusterRuntimeMode state) operatorClaims
+    prepareKindNodeClaimDirectories paths state (clusterRuntimeMode state) operatorClaims
   let updatedState = state {claims = mergePersistentClaims (claims state) operatorClaims}
   reconcilePersistentVolumes updatedState
   waitForPersistentClaimsBound updatedState operatorClaims
@@ -2517,8 +2828,8 @@ kindUsesHostBindMounts :: Paths -> Bool
 -- relying on host bind mounts, which avoids macOS uid/gid incompatibilities on Apple.
 kindUsesHostBindMounts _paths = False
 
-prepareKindNodeRuntimePaths :: Paths -> RuntimeMode -> IO ()
-prepareKindNodeRuntimePaths paths runtimeMode = do
+prepareKindNodeRuntimePaths :: Paths -> ClusterState -> RuntimeMode -> IO ()
+prepareKindNodeRuntimePaths paths state runtimeMode = do
   let localKindRoot = kindRuntimeRoot paths runtimeMode
       localRegistryHostsRoot = repoRoot paths </> ".build" </> "kind" </> "registry"
       registryDirectoryInNode = "/etc/containerd/certs.d/localhost:30002"
@@ -2540,8 +2851,15 @@ prepareKindNodeRuntimePaths paths runtimeMode = do
       runCommand Nothing [] "docker" ["exec", nodeName, "mkdir", "-p", nodeMountedKindRoot]
       -- Stateful platform workloads schedule on worker nodes, so replay retained runtime data only
       -- there instead of copying large claim trees into the tainted control-plane node.
-      unless (nodeName == controlPlaneNodeName) $
-        copyDirectoryContentsToContainer localKindRoot nodeName nodeMountedKindRoot
+      unless (nodeName == controlPlaneNodeName) $ do
+        copyState <-
+          startLifecyclePhase
+            paths
+            state
+            "cluster-up"
+            "prepare-kind-cluster"
+            ("syncing retained Kind runtime data into " <> nodeName)
+        copyDirectoryContentsToContainer paths (Just copyState) localKindRoot nodeName nodeMountedKindRoot
       runCommand Nothing [] "docker" ["exec", nodeName, "mkdir", "-p", registryDirectoryInNode]
       runCommandWithInput
         Nothing
@@ -2550,8 +2868,8 @@ prepareKindNodeRuntimePaths paths runtimeMode = do
         ["exec", "-i", nodeName, "cp", "/dev/stdin", registryDirectoryInNode </> "hosts.toml"]
         registryHostsContents
 
-prepareKindNodeClaimDirectories :: Paths -> RuntimeMode -> [PersistentClaim] -> IO ()
-prepareKindNodeClaimDirectories paths runtimeMode persistentClaims = do
+prepareKindNodeClaimDirectories :: Paths -> ClusterState -> RuntimeMode -> [PersistentClaim] -> IO ()
+prepareKindNodeClaimDirectories paths _state runtimeMode persistentClaims = do
   nodeNames <- kindNodeNames paths runtimeMode
   mapM_ (prepareOnNode nodeNames) persistentClaims
   where
@@ -2574,7 +2892,22 @@ syncKindNodeRuntimePathsToHost paths runtimeMode maybeState = do
     _ -> pure False
   unless syncedClaims $ do
     nodeNames <- kindNodeNames paths runtimeMode
-    mapM_ (\nodeName -> copyDirectoryContentsFromContainer nodeName nodeMountedKindRoot localKindRoot) nodeNames
+    mapM_
+      ( \nodeName -> do
+          maybeCopyState <-
+            case maybeState of
+              Just state ->
+                Just
+                  <$> startLifecyclePhase
+                    paths
+                    state
+                    "cluster-down"
+                    "replay-retained-state"
+                    ("copying retained Kind runtime data from " <> nodeName <> " back to the host")
+              Nothing -> pure Nothing
+          copyDirectoryContentsFromContainer paths maybeCopyState nodeName nodeMountedKindRoot localKindRoot
+      )
+      nodeNames
 
 syncClaimDirectoriesFromOwningNodes :: Paths -> ClusterState -> IO Bool
 syncClaimDirectoriesFromOwningNodes paths state = do
@@ -2622,7 +2955,14 @@ syncClaimDirectoryFromOwningNode paths state persistentClaim claimNodeBindings =
           localDirectoryExists <- doesDirectoryExist localDirectory
           when localDirectoryExists (removePathForcibly localDirectory)
           createDirectoryIfMissing True localDirectory
-          copyDirectoryContentsFromContainer nodeName containerDirectory localDirectory
+          copyState <-
+            startLifecyclePhase
+              paths
+              state
+              "cluster-down"
+              "replay-retained-state"
+              ("copying claim " <> persistentVolumeClaimName persistentClaim <> " from " <> nodeName <> " back to the host")
+          copyDirectoryContentsFromContainer paths (Just copyState) nodeName containerDirectory localDirectory
           pure True
         else pure False
 
@@ -2639,25 +2979,45 @@ kindNodeNames paths runtimeMode =
   filter (not . null) . lines
     <$> captureCommand Nothing [] "kind" ["get", "nodes", "--name", kindClusterName paths runtimeMode]
 
-copyDirectoryContentsToContainer :: FilePath -> String -> FilePath -> IO ()
-copyDirectoryContentsToContainer localDirectory nodeName containerDirectory = do
+copyDirectoryContentsToContainer :: Paths -> Maybe ClusterState -> FilePath -> String -> FilePath -> IO ()
+copyDirectoryContentsToContainer paths maybeState localDirectory nodeName containerDirectory = do
   hasEntries <- directoryHasEntries localDirectory
   when hasEntries $
-    runCommand
-      Nothing
-      []
-      "docker"
-      ["cp", localDirectory </> ".", nodeName <> ":" <> containerDirectory]
+    case maybeState of
+      Just state ->
+        runCommandMonitored
+          paths
+          state
+          Nothing
+          []
+          "docker"
+          ["cp", localDirectory </> ".", nodeName <> ":" <> containerDirectory]
+      Nothing ->
+        runCommand
+          Nothing
+          []
+          "docker"
+          ["cp", localDirectory </> ".", nodeName <> ":" <> containerDirectory]
 
-copyDirectoryContentsFromContainer :: String -> FilePath -> FilePath -> IO ()
-copyDirectoryContentsFromContainer nodeName containerDirectory localDirectory = do
+copyDirectoryContentsFromContainer :: Paths -> Maybe ClusterState -> String -> FilePath -> FilePath -> IO ()
+copyDirectoryContentsFromContainer paths maybeState nodeName containerDirectory localDirectory = do
   hasEntries <- containerDirectoryHasEntries nodeName containerDirectory
   when hasEntries $
-    runCommand
-      Nothing
-      []
-      "docker"
-      ["cp", (nodeName <> ":" <> containerDirectory) </> ".", localDirectory]
+    case maybeState of
+      Just state ->
+        runCommandMonitored
+          paths
+          state
+          Nothing
+          []
+          "docker"
+          ["cp", (nodeName <> ":" <> containerDirectory) </> ".", localDirectory]
+      Nothing ->
+        runCommand
+          Nothing
+          []
+          "docker"
+          ["cp", (nodeName <> ":" <> containerDirectory) </> ".", localDirectory]
 
 directoryHasEntries :: FilePath -> IO Bool
 directoryHasEntries directory = do

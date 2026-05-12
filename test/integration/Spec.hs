@@ -168,6 +168,7 @@ exerciseRuntimeMode paths runtimeMode = do
       statusOutput <- captureInfernixOutput ["cluster", "status"]
       assert ("clusterPresent: True" `isInfixOf` statusOutput) "cluster status reports the cluster presence"
       assert (("runtimeMode: " <> showRuntimeMode runtimeMode) `isInfixOf` statusOutput) "cluster status reports the runtime mode"
+      assert ("lifecycleStatus: idle" `isInfixOf` statusOutput) "cluster status reports idle lifecycle state after successful reconcile"
       assert (("publicationInferenceDispatchMode: " <> expectedDispatchMode) `isInfixOf` statusOutput) "cluster status reports the inference dispatch mode"
       assert ("publicationStatePath: " `isInfixOf` statusOutput) "cluster status reports the publication state path"
       assert ("kubernetesNodeCount: 0" `notElemString` statusOutput) "cluster status reports reachable Kubernetes nodes"
@@ -177,6 +178,7 @@ exerciseRuntimeMode paths runtimeMode = do
   assert (maybe False (not . clusterPresent) maybeDownState) "cluster down records cluster absence"
   downStatusOutput <- captureInfernixOutput ["cluster", "status"]
   assert ("clusterPresent: False" `isInfixOf` downStatusOutput) "cluster status reports cluster absence after down"
+  assert ("lifecyclePhase: cluster-absent" `isInfixOf` downStatusOutput) "cluster status reports the idle absent lifecycle phase after down"
 
 validateCatalogModelInference :: String -> String -> IO ()
 validateCatalogModelInference baseUrl modelIdValue = do

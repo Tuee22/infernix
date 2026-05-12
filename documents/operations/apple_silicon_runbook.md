@@ -17,6 +17,13 @@
   CLI, `kind`, `kubectl`, `helm`, and Node.js on demand, reconcile Colima to the supported
   `8 CPU / 16 GiB` profile before Docker-backed work, and let adapter setup or validation paths
   reconcile Homebrew `python@3.12` plus a user-local Poetry bootstrap when needed
+- on May 12, 2026, a cold Apple lifecycle investigation confirmed that long first-run waits can
+  still be healthy while the supported path is replaying retained Kind data, building the shared
+  runtime image, publishing it through Harbor, or preloading Harbor-backed images onto the Kind
+  worker
+- retained-state Apple reruns may also log a targeted Harbor PostgreSQL replica reinitialization
+  from the current Patroni leader when stopped replicas need a fresh base backup after timeline
+  advancement; treat that as supported retained-state repair rather than an unexpected failure mode
 
 ## Supported Flow
 
@@ -38,6 +45,24 @@ Direct reference path:
   `./.build/infernix internal materialize-substrate apple-silicon`
 - run `./.build/infernix cluster up`
 - run `./.build/infernix test all`
+
+## Cold Start Expectations
+
+- use `./bootstrap/apple-silicon.sh status` or `./.build/infernix cluster status` before treating
+  a long `up`, `test`, or `down` run as failed
+- cold or retained-state Apple runs can spend minutes in `prepare-kind-cluster`,
+  `build-cluster-images`, `publish-harbor-images`, `preload-harbor-images`, and
+  `replay-retained-state`
+- when `cluster status` reports `lifecycleStatus: in-progress`, the supported surface also reports
+  `lifecycleAction`, `lifecyclePhase`, `lifecycleDetail`, `lifecycleHeartbeatAt`, and
+  `lifecycleHeartbeatAgeSeconds`
+- the supported Apple doctrine is inactivity-aware: wall-clock duration alone is not failure
+- during the monitored long-running subprocess phases, the lifecycle heartbeat refreshes roughly
+  every 30 seconds; treat that as active progress, and treat the action as stalled only when the
+  command exits non-zero or the heartbeat stops refreshing across multiple intervals
+- if a retained-state rerun logs Harbor PostgreSQL replica repair from the current leader, treat
+  that as an expected recovery step on the supported path and wait for the same heartbeat-driven
+  progress rules instead of treating the repair itself as hard failure
 
 ## Rules
 
