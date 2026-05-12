@@ -20,11 +20,11 @@ govern this plan.
 | [system-components.md](system-components.md) | Authoritative component inventory and state-location map |
 | [phase-0-documentation-and-governance.md](phase-0-documentation-and-governance.md) | `documents/` suite bootstrap plus the substrate-doctrine documentation reset |
 | [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md) | Repository scaffold, CLI contract, build-root doctrine, launcher ownership, and substrate-selection closure |
-| [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md) | Kind bootstrap, manual PV doctrine, Harbor-first image flow, substrate `.dhall` publication, and Linux launcher closure |
+| [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md) | Kind bootstrap, manual PV doctrine, Harbor-first image flow, substrate `.dhall` publication, Linux launcher closure, and lifecycle-progress hardening |
 | [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md) | Mandatory local HA platform services, Envoy Gateway ownership, publication contract, and the Apple host-inference bridge for routed demo traffic |
 | [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) | Haskell runtime, shared Python adapter project, Apple host-native inference ownership, Linux cluster daemon lanes, staged `.dhall` control, and Pulsar production inference |
 | [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md) | PureScript demo UI, generated frontend contracts, clustered demo hosting, Apple host-backed browser dispatch, and Playwright ownership |
-| [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) | Static quality, README-matrix-driven single-substrate validation, Apple host-daemon bridge coverage, root-doc closure, and HA validation |
+| [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) | Static quality, README-matrix-driven single-substrate validation, Apple host-daemon bridge coverage, root-doc closure, HA validation, and false-negative doctrine hardening |
 | [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) | Explicit cleanup and removal ledger |
 
 ## Status Vocabulary
@@ -49,11 +49,14 @@ A phase or sprint can move to `Done` only when all of the following are true:
 
 ## Current Repo Assessment
 
-All phases 0–6 are now closed around the implementation that actually exists in this worktree.
-The repository already implements the staged-substrate architecture, the Apple host-native
-inference lane, the baked Linux outer-container launcher, the mandatory HA platform services, the
-Gateway-owned routed edge, the shared Python adapter project, the Haskell-owned browser-contract
-generation path, and the substrate-specific validation surface described below.
+Phase 0 and phases 1, 3, 4, and 5 remain closed around the implementation that actually exists in
+this worktree. Phases 2 and 6 are reopened as `Active` follow-on work because the shared cluster
+lifecycle and its validation doctrine still leave false-negative risk during long first-run Apple
+and shared-image hydration paths. The repository already implements the staged-substrate
+architecture, the Apple host-native inference lane, the baked Linux outer-container launcher, the
+mandatory HA platform services, the Gateway-owned routed edge, the shared Python adapter project,
+the Haskell-owned browser-contract generation path, and the substrate-specific validation surface
+described below.
 
 The repository already implements the substrate-file doctrine described by this plan. Supported flows
 stage one `infernix-substrate.dhall` beside the active build root through explicit
@@ -98,6 +101,13 @@ Playwright readiness probes `127.0.0.1` from the host while the browser containe
 private Docker `kind` network and targets the Kind control-plane DNS, and the dedicated
 Playwright image no longer bakes a conflicting `NO_COLOR` default.
 
+On May 12, 2026, the Apple lifecycle investigation confirmed that the earlier apparent
+`bootstrap/apple-silicon.sh up` failure was a false negative: the shared `cluster up` path did
+converge, but it spent long silent windows in Docker build finalization, Harbor publication,
+Kind-worker image preload, and teardown state replay. Phase 2 Sprint 2.10 and Phase 6 Sprint 6.23
+now track the missing progress surfaces, inactivity-aware failure doctrine, and required governed
+doc updates.
+
 Monitoring is not a supported first-class surface.
 
 ## Execution Contexts and Substrates
@@ -120,11 +130,11 @@ now use that id consistently.
 |-------|------|--------|----------|
 | 0 | Documentation and Governance | Done | [phase-0-documentation-and-governance.md](phase-0-documentation-and-governance.md) |
 | 1 | Repository and Control-Plane Foundation | Done | [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md) |
-| 2 | Kind Cluster Storage and Lifecycle | Done | [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md) |
+| 2 | Kind Cluster Storage and Lifecycle | Active | [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md) |
 | 3 | HA Platform Services and Edge Routing | Done | [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md) |
 | 4 | Inference Service and Durable Runtime | Done | [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) |
 | 5 | Web UI and Shared Types | Done | [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md) |
-| 6 | Validation, E2E, and HA Hardening | Done | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) |
+| 6 | Validation, E2E, and HA Hardening | Active | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) |
 
 ## Canonical Outcome
 

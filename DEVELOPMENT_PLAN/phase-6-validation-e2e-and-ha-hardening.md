@@ -1,26 +1,28 @@
 # Phase 6: Validation, E2E, and HA Hardening
 
-**Status**: Done
+**Status**: Active
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
 
 > **Purpose**: Define the supported static-quality and single-substrate validation contract for the
 > two-binary topology, the README-matrix-driven integration suite, the Pulsar-driven production
 > inference surface, the demo UI host, the substrate-generated catalog, the mandatory HA behavior
 > of Harbor, MinIO, operator-managed PostgreSQL, and Pulsar, and the remaining
-> repository-hardening follow-ons that keep governed root docs, route-aware docs, and the CLI
-> surface mechanically aligned with implementation.
+> repository-hardening and false-negative-doctrine follow-ons that keep governed root docs,
+> route-aware docs, and the CLI surface mechanically aligned with implementation.
 
 ## Phase Status
 
-Phase 6 is closed around the substrate-specific validation surface implemented in this worktree.
-Sprints 6.1–6.22 remain `Done`: the validation entrypoints, routed coverage, governed-root-
-document metadata closure, structured CLI-registry closure, route-hardening cleanup, and
-supported bootstrap lifecycle fixes are present in the current worktree, and the supported test
-story is substrate-specific. The Apple routed path validates the intended host-native inference
-doctrine end to end: routed manual inference bridges through Pulsar into the host daemon, the
-browser suite verifies `daemonLocation` and `inferenceDispatchMode`, and supported engine runners
-fail fast on unsupported adapters instead of returning placeholder success. The worktree also
-carries the formatter-toolchain closure that is actually implemented today:
+Phase 6 is reopened around the remaining false-negative validation and documentation hardening
+work. Sprints 6.1–6.22 remain `Done`: the validation entrypoints, routed coverage,
+governed-root-document metadata closure, structured CLI-registry closure, route-hardening
+cleanup, and supported bootstrap lifecycle fixes are present in the current worktree, and the
+supported test story is substrate-specific. Sprint 6.23 is now `Active` because the supported
+Apple and shared-cluster lifecycle still needs explicit doctrine for distinguishing real failure
+from slow-but-progressing convergence. The Apple routed path validates the intended host-native
+inference doctrine end to end: routed manual inference bridges through Pulsar into the host
+daemon, the browser suite verifies `daemonLocation` and `inferenceDispatchMode`, and supported
+engine runners fail fast on unsupported adapters instead of returning placeholder success. The
+worktree also carries the formatter-toolchain closure that is actually implemented today:
 `src/Infernix/Lint/HaskellStyle.hs` drives `ormolu` and `hlint` through the dedicated compatible
 formatter compiler `ghc-9.12.4`, and the Linux substrate image preinstalls that compiler beside
 the project `ghc-9.14.1` toolchain. The supported Linux outer-container launcher reuses a
@@ -50,7 +52,12 @@ and `down`; this plan change carries that validation result forward. On Apple, r
 no longer times out on `host.docker.internal`: host-side
 readiness probes `127.0.0.1:<edge-port>`, the browser container joins the private Docker `kind`
 network and targets the Kind control-plane DNS on port `30090`, and the dedicated Playwright
-image no longer bakes a conflicting `NO_COLOR` default.
+image no longer bakes a conflicting `NO_COLOR` default. On May 12, 2026, a cold Apple lifecycle
+investigation reproduced the same shared `cluster up` path and proved that the earlier apparent
+failure was a false negative: the lifecycle eventually converged through slow Docker build
+finalization, Harbor publication, Kind-worker image preloading, and Apple teardown state replay,
+but the current validation and operator doctrine still leaves those long-running phases too opaque
+for reliable failure classification without external inspection.
 
 ## Validation Surface
 
@@ -988,9 +995,52 @@ None.
 
 ---
 
+## Sprint 6.23: False-Negative Validation Doctrine and Documentation Closure [Active]
+
+**Status**: Active
+**Implementation**: `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/00-overview.md`, `DEVELOPMENT_PLAN/system-components.md`, `documents/development/testing_strategy.md`, `documents/engineering/testing.md`, `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/reference/cli_reference.md`, `documents/reference/cli_surface.md`
+**Docs to update**: `documents/development/testing_strategy.md`, `documents/engineering/testing.md`, `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/reference/cli_reference.md`, `documents/reference/cli_surface.md`
+
+### Objective
+
+Close the doctrine gap that lets slow lifecycle convergence be misreported or abandoned as a hard
+failure.
+
+### Deliverables
+
+- the governed testing and runbook docs distinguish hard failure from long-running convergence that
+  is still making progress in Docker, Harbor, Kind-worker preload, or teardown data-sync steps
+- the supported validation doctrine uses inactivity-aware language instead of elapsed-wall-time
+  language alone when it describes lifecycle failure classification
+- Apple and cluster runbooks describe cold-versus-warm expectations and name the concrete
+  first-run phases that can take minutes without emitting steady log lines
+- CLI reference docs describe the supported status or progress surfaces operators use before
+  concluding that a lifecycle action actually failed
+- the plan, runbooks, and testing docs cite the May 12, 2026 Apple investigation as the proof
+  point that this gap is real in the current worktree
+
+### Validation
+
+- `infernix lint docs` fails if the testing doctrine, Apple runbook, cluster runbook, or CLI
+  reference docs drift from the supported false-negative classification contract
+- the plan and governed docs describe the same long-running lifecycle phases and the same operator
+  interpretation rules
+- once the supporting lifecycle surfaces land, the supported validation harness can report
+  timeout-while-still-progressing distinctly from hard lifecycle failure
+
+### Remaining Work
+
+- update the governed testing, runbook, and CLI docs so they describe the real cold-start Apple
+  lifecycle honestly instead of implying silence is equivalent to failure
+- align the validation harness and lifecycle status surfaces with inactivity-aware failure
+  classification once the corresponding lifecycle instrumentation lands
+
+---
+
 ## Remaining Work
 
-None.
+- Sprint 6.23 remains open to close the false-negative doctrine gap across the plan, governed
+  runbooks, testing docs, and validation surfaces.
 
 ## Documentation Requirements
 
@@ -1008,7 +1058,7 @@ None.
 - `documents/engineering/storage_and_state.md` - owner or durability table, failure-mode rules, and cleanup contracts
 - `documents/engineering/monitoring.md` - create only if monitoring becomes a supported first-class surface in a later change
 - `documents/operations/cluster_bootstrap_runbook.md` - test prerequisites and cluster reuse rules
-- `documents/operations/apple_silicon_runbook.md` - Apple matrix expectations
+- `documents/operations/apple_silicon_runbook.md` - Apple matrix expectations and cold-start lifecycle timing doctrine
 - `documents/tools/postgresql.md` - PostgreSQL operator readiness and failover rules
 - `documents/engineering/docker_policy.md` - Colima-only Apple Docker guidance and minimal Linux host prerequisites
 - `documents/development/python_policy.md` - Poetry bootstrap boundary for Apple hosts
@@ -1031,6 +1081,8 @@ None.
   aligned when runtime-honesty wording or README-matrix interpretation changes
 - keep [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md)
   aligned when HA claims, route assumptions, or active-substrate validation rules change
+- keep [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md)
+  aligned when lifecycle progress surfaces or long-running convergence doctrine changes
 - keep [system-components.md](system-components.md) aligned when testing-doctrine ownership,
   shared-helper closure, or the supported monitoring stance changes
 - keep [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) aligned when any pending

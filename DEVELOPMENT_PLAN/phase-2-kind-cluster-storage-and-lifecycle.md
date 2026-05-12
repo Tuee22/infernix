@@ -1,18 +1,21 @@
 # Phase 2: Kind Cluster Storage and Lifecycle
 
-**Status**: Done
+**Status**: Active
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
 
 > **Purpose**: Define the supported Kind bootstrap path, the manual storage doctrine, the Helm
 > deployment model, the Harbor bootstrap and Harbor-backed image flow embedded in `cluster up`,
 > the generated substrate `.dhall` publication behavior tied to cluster reconcile, and the Linux
-> GPU lifecycle closure.
+> GPU lifecycle closure together with the remaining lifecycle-progress hardening work.
 
 ## Phase Status
 
-Phase 2 is closed around the Kind bootstrap, manual PV doctrine, Harbor-first image flow, shared
-substrate publication path, and Linux outer-container launcher contract implemented in this
-worktree. Sprints 2.1–2.9 remain `Done` and there is no additional open Phase 2 backlog.
+Phase 2 is reopened around the remaining false-negative hardening work in the shared cluster
+lifecycle path. The Kind bootstrap, manual PV doctrine, Harbor-first image flow, shared substrate
+publication path, and Linux outer-container launcher contract implemented in this worktree remain
+closed in Sprints 2.1–2.9. Sprint 2.10 is now `Active` because the current lifecycle still hides
+too much progress during long first-run image-build, Harbor-publication, Kind-worker preload, and
+Apple teardown data-sync phases.
 
 ## Storage Doctrine
 
@@ -37,7 +40,17 @@ These rules close in this phase and remain mandatory afterward:
 
 The storage doctrine, Helm rollout, Harbor-first image flow, route de-duplication, generated
 values overlay path, in-image `nvkind` path, and shared substrate-publication filename are
-implemented on the supported Kind substrate. Those surfaces define the current Phase 2 contract.
+implemented on the supported Kind substrate. Those surfaces define the current Phase 2 contract,
+but the May 12, 2026 Apple bootstrap investigation showed that the same lifecycle can still be
+misclassified as failed while it is making real progress. On a cold Apple lane, `cluster up`
+spent long silent windows after `building cluster images for linux-cpu`, during Harbor-backed
+`docker push` publication, and during `preloading Harbor-backed final images on the Kind worker`
+while `docker exec ... crictl pull` hydrated large images such as
+`apachepulsar/pulsar-all` and `infernix-linux-cpu`. `cluster down` also spent a long silent window
+serially replaying retained worker state back to `./.data/` through `docker cp` before Kind
+deletion began. The underlying lifecycle converged, but `cluster up`, `cluster down`, and
+`cluster status` do not yet expose enough progress to protect operators or test harnesses from
+false-negative timeout or abandonment decisions.
 
 ## Sprint 2.1: Kind Bootstrap and StorageClass Reset [Done]
 
@@ -340,9 +353,56 @@ None.
 
 ---
 
+## Sprint 2.10: Lifecycle Progress Surfaces and False-Negative Hardening [Active]
+
+**Status**: Active
+**Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Cluster/PublishImages.hs`
+**Docs to update**: `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/reference/cli_reference.md`, `documents/reference/cli_surface.md`
+
+### Objective
+
+Make long-running lifecycle convergence observable enough that operators and test harnesses can
+distinguish real failure from ongoing first-run progress.
+
+### Deliverables
+
+- `cluster up` surfaces explicit lifecycle phase markers for the shared image-build, Harbor
+  publication, and Kind-worker preload steps instead of leaving multi-minute silent windows
+- `cluster down` surfaces the retained-state replay and Kind-deletion phases explicitly instead of
+  presenting teardown as one opaque wait
+- the cluster lifecycle records enough active-phase detail that `cluster status` can report the
+  current reconcile or teardown stage while work is still in progress
+- lifecycle failure handling uses inactivity-aware doctrine for long-running phases rather than
+  treating elapsed wall time alone as evidence of failure
+- the Apple and shared-cluster runbooks describe cold-versus-warm lifecycle expectations honestly,
+  including the large-image publication and preload phases that can dominate first-run timing
+
+### Validation
+
+- a cold `./bootstrap/apple-silicon.sh up` surfaces the image-build, Harbor-publication, and
+  Kind-worker preload phases explicitly while it is still making forward progress
+- `./bootstrap/apple-silicon.sh down` surfaces the retained-state replay phase before Kind
+  deletion when the Apple worker still owns durable cluster data
+- the supported status surface shows the in-progress lifecycle phase instead of only the last
+  completed steady-state snapshot once the relevant code lands
+- `infernix lint docs` fails if the Apple or cluster runbooks or CLI references drift from the
+  supported progress-surface and failure-classification contract
+
+### Remaining Work
+
+- stream or periodically summarize progress for long-running `docker build`, Harbor publication,
+  and Kind-worker `crictl pull` subprocesses instead of waiting for final subprocess exit
+- surface the active reconcile or teardown phase and the current long-running child operation
+  through the supported status path
+- encode inactivity-aware cold-versus-warm lifecycle expectations so first-run image hydration is
+  not misclassified as product failure
+
+---
+
 ## Remaining Work
 
-None.
+- Sprint 2.10 remains open to surface long-running lifecycle progress and close the false-negative
+  hardening gap in the shared `cluster up` and `cluster down` paths.
 
 ---
 
@@ -357,9 +417,14 @@ None.
 
 **Product or reference docs to create/update:**
 - `documents/reference/cli_reference.md` - cluster lifecycle commands
-- `documents/operations/cluster_bootstrap_runbook.md` - bootstrap, reconcile, and teardown workflow
+- `documents/reference/cli_surface.md` - short cluster-lifecycle and status-surface overview
+- `documents/operations/apple_silicon_runbook.md` - Apple first-run bootstrap and teardown timing expectations
+- `documents/operations/cluster_bootstrap_runbook.md` - bootstrap, reconcile, teardown, and
+  long-running image publication or preload workflow
 - `documents/development/testing_strategy.md` - active-substrate generated catalog and GPU-enabled `linux-gpu` contract
 
 **Cross-references to add:**
 - keep [00-overview.md](00-overview.md) and [system-components.md](system-components.md) aligned
   when storage, image-flow, generated-input, or GPU-lifecycle assumptions change
+- keep [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md)
+  aligned when lifecycle progress surfaces or failure-classification doctrine changes

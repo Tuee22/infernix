@@ -158,6 +158,10 @@ Important rule for this repository bootstrap stage:
     prove
   - answer these questions directly: what is the rule, what is current versus target, how is it
     validated, and what is local substrate detail versus true platform contract
+- When lifecycle or validation doctrine changes how operators distinguish slow convergence from
+  real failure, the owning sprint or phase explicitly updates the Apple or cluster runbooks, the
+  testing doctrine docs, and any CLI or status references that describe the supported operator
+  interpretation of those long-running phases.
 
 ### I. Explicit Cleanup and Removal Ledger
 

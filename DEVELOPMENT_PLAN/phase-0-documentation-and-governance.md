@@ -28,6 +28,14 @@ support services and an optional clustered demo surface that bridges into the ho
 `infernix lint docs` and `infernix docs check` remain the governed validation entrypoints for
 that closure.
 
+Phase 0 remains closed because the governance baseline, canonical topic ownership, and docs-lint
+contract are all in place. The May 12, 2026 Apple bootstrap investigation still opened concrete
+follow-on documentation work in later phases: the governed runbooks and testing docs must describe
+the real first-run convergence windows in `cluster up` and `cluster down`, name the long-running
+Docker build, Harbor publication, Kind-worker preload, and Apple teardown data-sync phases
+explicitly, and distinguish false-negative timeout or abandonment decisions from hard product
+failure. Phase 2 Sprint 2.10 and Phase 6 Sprint 6.23 own that follow-on work.
+
 ## Sprint 0.1: `documents/` Suite Scaffold [Done]
 
 **Status**: Done
@@ -292,6 +300,7 @@ None.
 **Engineering docs to create/update:**
 - `documents/documentation_standards.md` - canonical ownership and summary-versus-source rules
 - `documents/README.md` - docs-suite index and entry points
+- `documents/engineering/testing.md` - canonical failure-classification and validation doctrine
 - `documents/engineering/build_artifacts.md` - build-artifact, generated-output, and
   forbidden-surfaces doctrine
 - `documents/engineering/edge_routing.md` - routing ownership baseline
@@ -308,14 +317,21 @@ None.
 - `documents/development/haskell_style.md` - current `ormolu` + `hlint` + `cabal format` style
   stack
 - `documents/development/testing_strategy.md` - operator-facing validation detail for the current
-  lifecycle and matrix
+  lifecycle, cold-versus-warm expectations, and matrix
 - `documents/reference/cli_reference.md` - canonical CLI command inventory
+- `documents/reference/cli_surface.md` - short command-family overview and status-surface summary
 - `documents/architecture/runtime_modes.md` - staged-substrate runtime and daemon-placement
   contract
+- `documents/operations/apple_silicon_runbook.md` - Apple lifecycle expectations, long-running
+  convergence phases, and teardown behavior
 - `documents/operations/cluster_bootstrap_runbook.md` - supported cluster reconcile and teardown
-  workflow
+  workflow, long-running image publication or preload phases, and false-negative guardrails
 
 **Cross-references to add:**
 - keep [DEVELOPMENT_PLAN/README.md](README.md), [00-overview.md](00-overview.md), and
   [system-components.md](system-components.md) aligned when documentation governance or
   architecture-baseline language changes
+- keep [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md)
+  and [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md)
+  aligned when the supported docs suite changes how operators classify slow convergence versus
+  real lifecycle failure

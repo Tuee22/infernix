@@ -61,6 +61,10 @@
   host while the browser container joins the private Docker `kind` network and targets the Kind
   control-plane DNS, and retained Kind state is replayed into and out of the worker rather than
   bind-mounted
+- on May 12, 2026, a cold Apple lifecycle investigation confirmed that the shared `cluster up`
+  and `cluster down` paths do converge, but they still expose false-negative risk because the
+  current operator surfaces do not report enough progress during Docker build finalization,
+  Harbor publication, Kind-worker image preload, or retained-state replay
 - Monitoring is not a supported first-class surface.
 
 ## Operator and Host Components
@@ -96,7 +100,7 @@
 
 | Component | Technology | Deployment | Purpose | Durable state |
 |-----------|------------|------------|---------|---------------|
-| Kind and Helm lifecycle | Haskell control-plane orchestration in `cluster up` | host-native Apple CLI or Linux outer container | create or reuse Kind, reset StorageClasses, reconcile PVs, deploy Harbor first, publish the staged substrate payload, publish images, deploy the final chart, and retry once with a targeted Pulsar claim-root reset when retained ZooKeeper state is self-inconsistent | `./.data/runtime/cluster-state.state`, `./.data/kind/<runtime-mode>/...` |
+| Kind and Helm lifecycle | Haskell control-plane orchestration in `cluster up` | host-native Apple CLI or Linux outer container | create or reuse Kind, reset StorageClasses, reconcile PVs, deploy Harbor first, publish the staged substrate payload, publish images, deploy the final chart, and retry once with a targeted Pulsar claim-root reset when retained ZooKeeper state is self-inconsistent; current open gap: the supported operator surface does not yet expose enough in-progress phase detail to prevent false-negative failure classification during cold-start image build, publication, or preload work | `./.data/runtime/cluster-state.state`, `./.data/kind/<runtime-mode>/...` |
 | Harbor image preparation | Harbor plus Haskell image publication flow | Kind cluster plus control plane | bootstrap Harbor, mirror required images, and publish repo-owned images before later rollout | Harbor state under `./.data/kind/<runtime-mode>/...` |
 | PostgreSQL substrate | Percona Kubernetes operator plus Patroni PostgreSQL | Kind cluster | only supported in-cluster PostgreSQL contract for Harbor and later services | `./.data/kind/<runtime-mode>/...` |
 | Publication state | repo-local JSON plus routed `/api/publication` surface | repo-local state and demo API | reports control-plane context, the direct `infernix service` daemon location, the routed demo API upstream mode, any Apple host-inference bridge mode, the active substrate through its current `runtimeMode` field, routes, and upstream health metadata | `./.data/runtime/publication.json` |
@@ -114,8 +118,8 @@
 
 | Component | Entry point | Purpose |
 |-----------|-------------|---------|
-| Cluster reconcile | `infernix cluster up` | reconcile Kind, storage, Harbor-first bootstrap, image publication, staged substrate-file publication, publication state, and edge port |
-| Cluster status | `infernix cluster status` | report cluster presence, the active substrate through its current `runtimeMode` line, publication state, build or data roots, and route inventory without mutation |
+| Cluster reconcile | `infernix cluster up` | reconcile Kind, storage, Harbor-first bootstrap, image publication, staged substrate-file publication, publication state, and edge port; current open gap: cold-start progress is still too opaque during long Docker build, Harbor publication, and Kind-worker preload phases |
+| Cluster status | `infernix cluster status` | report cluster presence, the active substrate through its current `runtimeMode` line, publication state, build or data roots, and route inventory without mutation; current open gap: it does not yet expose the active in-progress lifecycle phase or long-running child operation |
 | Kubernetes wrapper | `infernix kubectl ...` | scoped wrapper around upstream `kubectl` against the repo-local kubeconfig |
 | Cache lifecycle | `infernix cache status`, `infernix cache evict`, `infernix cache rebuild` | inspect or reconcile derived runtime cache state without mutating authoritative sources |
 | Focused lint | `infernix lint files`, `infernix lint docs`, `infernix lint proto`, `infernix lint chart` | run the repo-owned focused lint entrypoints for files, docs, `.proto`, and chart assets |
