@@ -1,7 +1,6 @@
 # Phase 6: Validation, E2E, and HA Hardening
 
-**Status**: Blocked
-**Blocked by**: Phase 0 Sprint 0.9
+**Status**: Done
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
 
 > **Purpose**: Define the supported static-quality and single-substrate validation contract for the
@@ -13,29 +12,21 @@
 
 ## Phase Status
 
-Phase 6 is reopened to land the lint, format, and test-stanza doctrine items it owns, but it is
-currently blocked on Phase 0 Sprint 0.9 because the documentation-distribution gate has not
-closed yet. Sprints 6.1–6.22 remain `Done`: the validation entrypoints, routed coverage,
-governed-root-document metadata closure, structured CLI-registry closure, route-hardening
-cleanup, and supported bootstrap lifecycle fixes are present in the current worktree, and the
-supported test story is substrate-specific. Sprints 6.23–6.27 add the formatter switch from
-`ormolu` to `fourmolu` with a committed `fourmolu.yaml`, the committed `.hlint.yaml` project hint
-set, paired check / `--write` semantics on every validator, the
-`infernix-daemon-lifecycle` test-suite stanza that exercises the Phase 4 daemon, and an explicit
-Pulumi exception that documents why `infernix` does not adopt that part of the doctrine. The
-Apple routed path validates the intended host-native inference doctrine end to end: routed manual
-inference bridges through Pulsar into the host daemon, the browser suite verifies
-`daemonLocation` and `inferenceDispatchMode`, and supported engine runners fail fast on
-unsupported adapters instead of returning placeholder success. The worktree also carries the
-formatter-toolchain closure: `src/Infernix/Lint/HaskellStyle.hs` drives `ormolu` and `hlint`
-through the dedicated compatible formatter compiler `ghc-9.12.4`, and the Linux substrate image
-preinstalls that compiler beside the project `ghc-9.14.1` toolchain. The supported Linux
-outer-container launcher reuses a persistent `chart/charts/` archive cache, hydrates MinIO
-through the supported direct tarball path instead of Docker Hub-backed OCI metadata, and repairs
-the known stale retained Pulsar or ZooKeeper epoch mismatch by resetting only the Pulsar claim
-roots and retrying once. The supported Apple host-native bootstrap lifecycle reran cleanly on
-May 11, 2026 through `doctor`, `build`, `up`, `status`, `test`, and `down`, and this phase
-records the date-specific validation state while the remaining doctrine work stays blocked.
+Phase 6 is closed around the substrate-specific validation surface implemented in this worktree.
+Sprints 6.1–6.22 remain `Done`: the validation entrypoints, routed coverage, governed-root-
+document metadata closure, structured CLI-registry closure, route-hardening cleanup, and
+supported bootstrap lifecycle fixes are present in the current worktree, and the supported test
+story is substrate-specific. The Apple routed path validates the intended host-native inference
+doctrine end to end: routed manual inference bridges through Pulsar into the host daemon, the
+browser suite verifies `daemonLocation` and `inferenceDispatchMode`, and supported engine runners
+fail fast on unsupported adapters instead of returning placeholder success. The worktree also
+carries the formatter-toolchain closure that is actually implemented today:
+`src/Infernix/Lint/HaskellStyle.hs` drives `ormolu` and `hlint` through the dedicated compatible
+formatter compiler `ghc-9.12.4`, and the Linux substrate image preinstalls that compiler beside
+the project `ghc-9.14.1` toolchain. The supported Linux outer-container launcher reuses a
+persistent `chart/charts/` archive cache, hydrates MinIO through the supported direct tarball
+path instead of Docker Hub-backed OCI metadata, and repairs the known stale retained Pulsar or
+ZooKeeper epoch mismatch by resetting only the Pulsar claim roots and retrying once.
 
 ## Current Repo Assessment
 
@@ -55,9 +46,8 @@ cache, and performs the targeted Pulsar claim-root reset when the known retained
 epoch-state corruption blocks bootstrap. The governed `linux-cpu` and `linux-gpu` reruns are
 green through the supported bootstrap surfaces. On May 11, 2026, the supported Apple lifecycle
 reran cleanly through `./bootstrap/apple-silicon.sh doctor`, `build`, `up`, `status`, `test`,
-and `down`; this plan change carries that validation result forward while the remaining doctrine
-work stays blocked. On Apple, routed Playwright no longer times out on `host.docker.internal`:
-host-side
+and `down`; this plan change carries that validation result forward. On Apple, routed Playwright
+no longer times out on `host.docker.internal`: host-side
 readiness probes `127.0.0.1:<edge-port>`, the browser container joins the private Docker `kind`
 network and targets the Kind control-plane DNS on port `30090`, and the dedicated Playwright
 image no longer bakes a conflicting `NO_COLOR` default.
@@ -998,192 +988,9 @@ None.
 
 ---
 
-## Sprint 6.23: Replace `ormolu` with `fourmolu` and Pin Formatter Toolchain [Blocked]
-
-**Status**: Blocked
-**Blocked by**: Phase 0 Sprint 0.9
-**Implementation**: `fourmolu.yaml` (new), `src/Infernix/Lint/HaskellStyle.hs`, `docker/linux-substrate.Dockerfile`, `bootstrap/apple-silicon.sh`
-**Docs to update**: `documents/development/haskell_style.md`
-
-### Objective
-
-Switch the canonical Haskell formatter from `ormolu` to `fourmolu` per the new doctrine, with a
-committed `fourmolu.yaml` and a pinned isolated formatter compiler under
-`.build/<project>-style-tools/bin/`.
-
-### Deliverables
-
-- a committed root `fourmolu.yaml` pinning `indentation: 2`, `column-limit: 100`,
-  `function-arrows: leading`, `comma-style: leading`, `import-export-style: leading`,
-  `indent-wheres: false`, `record-brace-space: true`, `newlines-between-decls: 1`,
-  `haddock-style: single-line`, `let-style: auto`, `in-style: right-align`, `unicode: never`,
-  `respectful: true`
-- `src/Infernix/Lint/HaskellStyle.hs` drives `fourmolu --mode check`; the paired
-  `infernix lint haskell --write` runs `fourmolu --mode inplace`
-- the pinned formatter compiler still lives under `.build/<project>-style-tools/bin/`, installed
-  by the lint pass itself through `ghcup run` plus `cabal install`; the bootstrap scripts and
-  the Linux substrate Dockerfile carry the compatible formatter compiler beside the project
-  `ghc-9.14.1` toolchain
-- legacy `ormolu` config and call sites are removed and the removal is ledgered in
-  [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md)
-
-### Validation
-
-- `cabal test infernix-haskell-style` exercises the new formatter
-- `infernix lint haskell` (check) plus `infernix lint haskell --write` (apply) round-trip
-  cleanly on the current worktree
-
-### Remaining Work
-
-As listed in deliverables until landed.
-
----
-
-## Sprint 6.24: `.hlint.yaml` Project Hint Set [Blocked]
-
-**Status**: Blocked
-**Blocked by**: Phase 0 Sprint 0.9
-**Implementation**: `.hlint.yaml` (new), `src/Infernix/Lint/HaskellStyle.hs`
-**Docs to update**: `documents/development/haskell_style.md`
-
-### Objective
-
-Anchor the doctrine's `hlint` configuration in a committed `.hlint.yaml` so the supported lint
-surface uses the same rule set across hosts and CI.
-
-### Deliverables
-
-- a committed root `.hlint.yaml` enables `--with-group=default` plus `--with-group=extra`, keeps
-  `Use guards`, `Redundant case`, `Use let`, `Eta reduce`, `Avoid lambda`, `Use bracket`,
-  `Use when`, `Use unless` enabled, and adds the doctrine's project-specific custom warnings
-  for nested-case anti-patterns
-- `infernix lint haskell` runs `hlint` against this config
-- the readability and nesting goal stated in the doctrine is referenced from
-  `documents/development/haskell_style.md` together with the column-limit lever and the hlint
-  custom-warning lever
-
-### Validation
-
-- `cabal test infernix-haskell-style` exercises `hlint` with the committed config
-- an inline test or fixture confirms the custom nested-case warnings fire on the patterns they
-  target
-
-### Remaining Work
-
-As listed in deliverables until landed.
-
----
-
-## Sprint 6.25: Paired check / `--write` Semantics on Every Validator [Blocked]
-
-**Status**: Blocked
-**Blocked by**: Phase 0 Sprint 0.9
-**Implementation**: `src/Infernix/Lint/Files.hs`, `src/Infernix/Lint/Docs.hs`, `src/Infernix/Lint/Chart.hs`, `src/Infernix/Lint/Proto.hs`, `src/Infernix/Lint/HaskellStyle.hs`, `src/Infernix/CLI.hs`
-**Docs to update**: `documents/engineering/build_artifacts.md`, `documents/development/haskell_style.md`, `documents/reference/cli_reference.md`
-
-### Objective
-
-Land the doctrine's paired check / write contract: every `infernix lint <target>` and
-`infernix docs check` command has a sibling `--write` mode that fixes what can be fixed, and
-every drift error carries the required path / marker key / remedy hint.
-
-### Deliverables
-
-- `infernix lint files --write` strips trailing whitespace and adds final newlines on offending
-  files
-- `infernix lint docs --write` regenerates marker-delimited sections (kept as an alias for
-  `infernix docs generate` so contributors do not need to memorize a separate writer)
-- `infernix lint haskell --write` runs `fourmolu --mode inplace` and `cabal format` in place;
-  `hlint` hints remain advisory because they require restructuring
-- every drift error message from these validators names the path that drifted, the marker key
-  (or matched pattern key for negative-space lint), and a literal remedy hint
-
-### Validation
-
-- golden tests cover at least one drift error per validator and assert the error contract
-  (path + key + remedy)
-- a `lint` run followed by the paired `--write` followed by a second `lint` run produces a clean
-  worktree
-
-### Remaining Work
-
-As listed in deliverables until landed.
-
----
-
-## Sprint 6.26: Daemon Lifecycle Test Stanza [Blocked]
-
-**Status**: Blocked
-**Blocked by**: Phase 0 Sprint 0.9
-**Implementation**: `infernix.cabal`, `test/daemon-lifecycle/`, `src/Infernix/Service.hs`
-**Docs to update**: `documents/development/testing_strategy.md`
-
-### Objective
-
-Add a dedicated Cabal `test-suite infernix-daemon-lifecycle` stanza that exercises the Phase 4
-daemon lifecycle end to end through a real subprocess.
-
-### Deliverables
-
-- `infernix.cabal` adds `test-suite infernix-daemon-lifecycle` with `type: exitcode-stdio-1.0`,
-  parallel to the existing `infernix-unit`, `infernix-integration`, and `infernix-haskell-style`
-  stanzas
-- tests spawn `infernix service` via `typed-process`, poll `/readyz` (no `threadDelay`-based
-  probes, no filesystem readiness markers), exercise the Pulsar protocol surface, send SIGTERM,
-  assert graceful shutdown within the configured drain deadline, and assert exit code 0
-- a second SIGTERM (or a deadline timeout) forces exit and the test asserts that path too
-- `infernix test all` runs this stanza alongside the other three
-
-### Validation
-
-- `cabal test infernix-daemon-lifecycle` passes against the Phase 4 daemon
-- `infernix test all` reports the new stanza explicitly in its output
-
-### Remaining Work
-
-As listed in deliverables until landed.
-
----
-
-## Sprint 6.27: Pulumi Exception Recorded [Blocked]
-
-**Status**: Blocked
-**Blocked by**: Phase 0 Sprint 0.9
-**Implementation**: `src/Infernix/Lint/Docs.hs`
-**Docs to update**: `documents/development/testing_strategy.md`, `00-overview.md`, `development_plan_standards.md` (§S already added in the standards update)
-
-### Objective
-
-Record `infernix`'s explicit exception from the Haskell CLI doctrine's standardization on
-`pulumi`-orchestrated infrastructure tests, and add a docs-lint check that prevents the
-exception from drifting silently.
-
-### Deliverables
-
-- `documents/development/testing_strategy.md` states the exception verbatim: `infernix` does not
-  adopt Pulumi-orchestrated infrastructure tests because the supported substrates are local
-  Kind clusters owned by `infernix cluster up` itself; no `infernix-pulumi` test-suite stanza
-  is part of the supported contract
-- `00-overview.md` carries the same exception under its hard-constraints baseline
-- `src/Infernix/Lint/Docs.hs` rejects plan or governed-doc text that names `pulumi` as part of
-  the supported contract while still allowing the exception statement itself
-
-### Validation
-
-- `infernix lint docs` fails on a contrived edit that adds a `pulumi` test stanza to
-  `testing_strategy.md` outside the exception block
-- `infernix docs check` passes on the worktree where the exception is documented correctly
-
-### Remaining Work
-
-As listed in deliverables until landed.
-
 ## Remaining Work
 
-- Sprints 6.23–6.27 are all `Blocked` on Phase 0 Sprint 0.9. The committed `fourmolu.yaml` and
-  `.hlint.yaml` do not exist; paired `--write` modes are missing on most validators; there is no
-  `infernix-daemon-lifecycle` test-suite stanza; and the Pulumi exception is not yet documented
-  in `testing_strategy.md` or enforced by `infernix lint docs`.
+None.
 
 ## Documentation Requirements
 

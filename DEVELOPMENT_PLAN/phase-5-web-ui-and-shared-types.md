@@ -1,7 +1,6 @@
 # Phase 5: Web UI and Shared Types
 
-**Status**: Blocked
-**Blocked by**: Phase 0 Sprint 0.9
+**Status**: Done
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
 
 > **Purpose**: Define the PureScript demo UI built with spago, the Haskell-owned frontend contract
@@ -10,18 +9,10 @@
 
 ## Phase Status
 
-Phase 5 is reopened to land the unified `GeneratedSectionRule` plus
-`trackedGeneratedPathRegistry` discipline that brings the existing PureScript contract generation
-onto the doctrine's two-category generated-artifacts split, but it is currently blocked on Phase
-0 Sprint 0.9 because the documentation-distribution gate has not closed yet. Sprints 5.1–5.8
-remain `Done`: the Linux substrate image owns the demo bundle, the dedicated
-`docker/playwright.Dockerfile` image owns the routed Playwright executor, the routed demo app
-stays cluster-resident on Apple and Linux alike, supported E2E uses a container-owned Playwright
-executor without browser-side substrate branching, the explicit materialization path can emit
-demo-off substrate files, and the Apple browser path now closes around the host-backed inference
-bridge instead of in-cluster Apple service parity. Sprint 5.9 adds the full-generation registry
-so generated PureScript files under `web/src/Generated/` cannot be hand-edited and `infernix docs
-generate` writes them idempotently once the blocker clears.
+Phase 5 is closed around the PureScript demo UI, the Haskell-owned browser-contract source, the
+generated contract path under `web/src/Generated/`, the clustered demo hosting rule, and the
+container-owned routed Playwright executor implemented in this worktree. Sprints 5.1–5.8 remain
+`Done` and there is no additional open Phase 5 backlog.
 
 ## Current Repo Assessment
 
@@ -319,50 +310,9 @@ None.
 
 ---
 
-## Sprint 5.9: Generated PureScript Contracts Under Unified GeneratedSectionRule Discipline [Blocked]
-
-**Status**: Blocked
-**Blocked by**: Phase 0 Sprint 0.9
-**Implementation**: `src/Infernix/Lint/Docs.hs`, `src/Infernix/Lint/Chart.hs`, `src/Infernix/Lint/Files.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Web/Contracts.hs`
-**Docs to update**: `documents/engineering/build_artifacts.md`, `documents/development/frontend_contracts.md`
-
-### Objective
-
-Bring the existing `GeneratedSectionRule` registry in `src/Infernix/Lint/Docs.hs` and
-`src/Infernix/Lint/Chart.hs` onto the doctrine's two-category split: partial generation (a slice
-between markers inside a hand-maintained file) stays on the existing registry; full generation
-(an entire file owned by code, currently the PureScript output under `web/src/Generated/`) moves
-to a separate `trackedGeneratedPathRegistry` enforced by `infernix lint files`.
-
-### Deliverables
-
-- `trackedGeneratedPathRegistry :: [PathPattern]` lists every fully generated path: today the
-  generated PureScript contract output under `web/src/Generated/`, plus any proto-derived
-  modules under `tools/generated_proto/`
-- `infernix lint files` (extended in Phase 1 Sprint 1.17) refuses to allow hand edits to any
-  path matching this registry
-- `infernix docs generate` writes the generated PureScript output idempotently from the typed
-  Haskell `Contracts` ADT
-- the existing `GeneratedSectionRule` type and registry stay; the two registries share the same
-  data shape and error-message contract
-
-### Validation
-
-- hand-editing a generated `.purs` file under `web/src/Generated/` fails `infernix lint files`
-- `infernix docs generate` is idempotent: a second run produces no diff
-- `tasty-golden` covers a sample of the generated PureScript output to catch accidental contract
-  drift
-
-### Remaining Work
-
-As listed in deliverables until landed.
-
 ## Remaining Work
 
-- Sprint 5.9 is `Blocked` on Phase 0 Sprint 0.9. The generated PureScript contract output under
-  `web/src/Generated/` is enforced through hardcoded path lists rather than a
-  `trackedGeneratedPathRegistry`, and the two-category generated-artifacts split is not yet
-  expressed in code.
+None.
 
 ---
 

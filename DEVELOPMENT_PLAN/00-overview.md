@@ -6,24 +6,12 @@
 > **Purpose**: Capture the architecture baseline, hard constraints, control-plane topology,
 > substrate contract, and canonical repository shape that every `infernix` phase depends on.
 
-## Doctrine Reopen
+## Architecture Baseline
 
-Phases 0–6 are reopened to adopt the Haskell CLI tool doctrine that arrived as
-`HASKELL_CLI_TOOL.md` at the repo root. The reopen does not contradict any earlier closure: the
-substrate-file architecture, two-binary topology, Apple host-native inference lane, mandatory
-local HA platform services, Harbor-first image flow, manual storage doctrine, Pulsar-only
-production surface, and Gateway-owned routing all remain. The reopen adds an explicit
-architecture contract on top: typed `Command` ADT plus first-class `CommandSpec` registry, GADT-
-indexed state machines, typed `Subprocess` values, smart constructors for paired resources,
-Plan/Apply discipline, Prerequisites as a typed effect DAG, capability classes plus
-`AsServiceError`, first-class `RetryPolicy` values, an `AppError` ADT with `ErrorKind`, reconciler
-discipline, the seven-step daemon lifecycle with `/healthz` / `/readyz` / `/metrics` endpoints and
-`co-log` structured JSON logging, a daemon Dhall config with `BootConfig` / `LiveConfig` SIGHUP
-hot reload, at-least-once event processing, a `GeneratedSectionRule` plus
-`trackedGeneratedPathRegistry` two-category generated-artifacts split, a `forbiddenPathRegistry`
-negative-space lint, the `fourmolu` plus `hlint` plus `cabal format` quality gate, and an
-`infernix-daemon-lifecycle` Cabal `test-suite` stanza. `infernix` does not adopt the doctrine's
-Pulumi-orchestrated infrastructure tests; that exception is explicit.
+The repository closes around the staged-substrate architecture that is already implemented: the
+two-binary topology, Apple host-native inference lane, mandatory local HA platform services,
+Harbor-first image flow, manual storage doctrine, Pulsar-only production surface, Gateway-owned
+routing, Haskell-owned frontend contracts, and substrate-specific validation surface below.
 
 ## Current Repo Assessment
 
@@ -139,47 +127,15 @@ Monitoring is not a supported first-class surface.
   mandatory doctrine
 - supported validation is substrate-specific: integration, E2E, and `test all` exercise only the
   built and deployed substrate and report that substrate explicitly
-- the Haskell CLI architecture doctrine is adopted: typed `Command` ADT plus first-class
-  `CommandSpec` registry as the single source of truth for parsing, help, generated docs, JSON
-  command schema, command tree, and shell completion; GADT-indexed state machines for the
-  inference request lifecycle with singleton witnesses; typed `Subprocess` values with the
-  two-function `runStreaming` / `capture` interpreter as the only IO boundary for subprocess
-  execution; smart constructors deriving paired Kubernetes resources from a single seed;
-  Plan/Apply discipline with mandatory `--dry-run` and `--plan-file` on every state-changing
-  command; Prerequisites as a typed effect DAG anchored on a single `prerequisiteRegistry` with a
-  remedy-hint error contract; capability classes plus subsystem-specific newtypes wrapping a
-  unified `ServiceError` plus an `AsServiceError` typeclass enabling generic retry; first-class
-  `RetryPolicy` values with pure backoff and explicit error classification; an `AppError` ADT
-  with `ErrorKind = Recoverable | Fatal` rendered at the boundary only; and reconciler discipline
-  as the canonical mutation entrypoint with no install / upgrade / repair / force-install split
-- the daemon discipline is adopted: the seven-step lifecycle load → prereq → acquire → ready →
-  serve → drain → exit through nested `bracket` and `withAsync`; `/healthz`, `/readyz`, and
-  `/metrics` HTTP endpoints on a dedicated admin port; structured JSON logging on stderr via
-  `co-log` with typed `field` helpers; a daemon Dhall config split into `BootConfig` (immutable
-  after startup) and `LiveConfig` (hot-reloadable) with a `schemaVersion :: Natural` field and
-  SIGHUP-driven atomic swap through a dedicated `TBQueue` worker; a typed `Env` record
-  (`envBootConfig`, `envLiveConfig`, `envLogger`, `envMetrics`, `envShutdown`, `envResources`)
-  with test hooks for deterministic async testing; and at-least-once event processing through a
-  `processed_at` column with idempotent handlers and `created_at ASC` ordering
-- the build-artifacts discipline is adopted: a `GeneratedSectionRule` registry for partial
-  generation between sentinel markers in hand-maintained files, a separate
-  `trackedGeneratedPathRegistry` for fully generated paths under `web/src/Generated/` and
-  `tools/generated_proto/`, paired check / `--write` semantics on every validator, and a
-  `forbiddenPathRegistry` (negative-space lint) that blocks `.github/workflows/`, `.husky/`,
-  `.githooks/`, `.pre-commit-config.yaml`, and duplicate root `Makefile` / `justfile` /
-  `Taskfile.yml`
-- the lint, format, and code-quality stack standardizes on `fourmolu` (with a committed
-  `fourmolu.yaml` pinning `column-limit: 100` and the other doctrine fields), `hlint` with
-  `--with-group=default` plus `--with-group=extra` plus a committed `.hlint.yaml`, and
-  `cabal format` round-trip checks; the pinned formatter compiler lives under
-  `.build/<project>-style-tools/` isolated from the project's main `ghc-9.14.1` toolchain
-- the toolchain is pinned: `with-compiler: ghc-9.14.1` in `cabal.project`,
-  `tested-with: ghc ==9.14.1` in `infernix.cabal`, and `Cabal 3.16.1.0` as the version contract
-- the test surface adds an `infernix-daemon-lifecycle` Cabal `test-suite` stanza alongside
-  `infernix-unit`, `infernix-integration`, and `infernix-haskell-style`; `infernix` does not
-  adopt the doctrine's Pulumi-orchestrated infrastructure tests because supported substrates are
-  local Kind clusters owned by `infernix cluster up` itself, and that exception is explicit in
-  `documents/development/testing_strategy.md` and `development_plan_standards.md` §S
+- the supported control plane keeps one Haskell-owned command registry, imperative cluster or host
+  prerequisite orchestration, the current `ormolu` plus `hlint` plus `cabal format` style stack,
+  and the existing files or docs or chart or proto validation entrypoints rather than layering on
+  an additional architecture-doctrine backlog
+- the direct `infernix service` daemon remains startup-configured and Pulsar-driven without a
+  separate admin-HTTP, hot-reload, or typed-event-ledger subsystem in the supported contract
+- the test surface remains the current three Cabal stanzas plus the frontend unit suite:
+  `infernix-unit`, `infernix-integration`, and `infernix-haskell-style`, exercised through the
+  supported `infernix test lint|unit|integration|e2e|all` command surface
 
 ## Topology Baseline
 
@@ -387,8 +343,8 @@ The plan keeps control-plane execution context separate from substrate.
 - the staged file records the active substrate explicitly
 - the staged file also carries the generated demo catalog for that substrate
 - the current payload is banner-prefixed JSON under a legacy `.dhall` filename
-- the binary watches that file and reloads or restarts on changes, purging running inference
-  engines
+- the current daemon reads that file at startup; automatic file-watching or reload is not part of
+  the supported contract
 
 ### 5. Manual Storage Doctrine
 
@@ -514,92 +470,6 @@ The plan keeps control-plane execution context separate from substrate.
 - the demo UI is implemented in PureScript
 - the supported browser test framework is `purescript-spec`
 - the supported browser bundle is built with spago
-
-### 16. Haskell CLI Architecture Doctrine
-
-- typed `Command` ADT plus first-class `CommandSpec` registry is the single source of truth for
-  parsing, help, generated docs, JSON command schema, command tree, and shell completion
-- state machines with more than two states use GADTs with phantom type parameters and singleton
-  witnesses for runtime discovery (`InferenceCmd` is the canonical example)
-- subprocess invocations are pure typed `Subprocess` values; `runStreaming` and `capture` are the
-  only supported IO interpreter functions
-- smart constructors derive paired Kubernetes resources (PV plus PVC) from a single seed with
-  DNS-1123 naming helpers and hash-suffix collision avoidance
-- every state-changing command splits into a pure `build` builder and an effectful `apply`
-  interpreter with mandatory `--dry-run` and `--plan-file <path>` flags
-- prerequisites are encoded as a typed effect DAG anchored on a single `prerequisiteRegistry`
-  with an error contract that names `nodeId`, description, and remedy hint
-- domain errors use an `AppError` ADT with `ErrorKind = Recoverable | Fatal` and render at the
-  CLI or daemon boundary only
-- subsystem boundaries expose capability classes; subsystem-specific error newtypes wrap a
-  unified `ServiceError`, and an `AsServiceError` typeclass enables generic retry across services
-- retry policies are first-class typed values with pure backoff calculation and explicit error
-  classification
-- reconcilers are the canonical mutation entrypoint; there is no separate install / upgrade /
-  repair / force-install split and no `--force` or `--reinstall` flag
-
-### 17. Daemon Discipline
-
-- `infernix service` follows the seven-step lifecycle load → prereq → acquire → ready → serve →
-  drain → exit through nested `bracket` and `withAsync`; `forkIO` is forbidden on daemon code
-  paths
-- `/healthz`, `/readyz`, and `/metrics` HTTP endpoints expose liveness, readiness, and Prometheus
-  metrics on a dedicated admin port distinct from any protocol surface
-- daemon stderr emits one structured JSON line per event via `co-log` with typed `field`
-  helpers; `putStrLn` and `print` are forbidden on daemon code paths
-- daemon configuration is a single Dhall file split into `BootConfig` (immutable after startup)
-  and `LiveConfig` (hot-reloadable via SIGHUP through a dedicated `TBQueue` worker); the file
-  carries a `schemaVersion :: Natural` field; YAML, JSON, and TOML for daemon config are
-  forbidden
-- the daemon `Env` record carries `envBootConfig`, `envLiveConfig` (as `TVar LiveConfig`),
-  `envLogger`, `envMetrics`, `envShutdown` (as `TMVar ()`), `envResources`, and observable test
-  hooks that are no-ops in production
-- at-least-once Pulsar event processing tracks delivery via a `processed_at TIMESTAMP NULL`
-  column on the durable event table; handlers are idempotent; events are processed in
-  `created_at ASC` order and never deleted after processing
-
-### 18. Generated Artifacts and Negative-Space Lint
-
-- a single `GeneratedSectionRule` registry is the source of truth for partial generation between
-  sentinel markers in hand-maintained files; markers follow the doctrine syntax per file type
-- a separate `trackedGeneratedPathRegistry` lists fully generated paths (today
-  `web/src/Generated/` and `tools/generated_proto/`); `infernix lint files` refuses hand edits
-  to those paths
-- every validator has a paired `--write` writer that fixes what can be auto-fixed; check and
-  write commands consume the same registry; drift errors name path, marker key, and remedy hint
-- a `forbiddenPathRegistry` (negative-space lint) blocks `.github/workflows/`, `.husky/`,
-  `.githooks/`, `.pre-commit-config.yaml`, and duplicate root `Makefile` / `justfile` /
-  `Taskfile.yml`; forbidden-path errors carry the same error contract as generated-section
-  drift
-
-### 19. Toolchain Pin and Lint Stack
-
-- `with-compiler: ghc-9.14.1` is pinned in `cabal.project`, `tested-with: ghc ==9.14.1` is
-  declared in `infernix.cabal`, and `Cabal 3.16.1.0` is the version contract
-- `fourmolu` is the canonical Haskell source formatter, configured by a committed root
-  `fourmolu.yaml` that pins `column-limit: 100` along with the other doctrine fields
-- `hlint` runs with `--with-group=default` plus `--with-group=extra` against a committed root
-  `.hlint.yaml` that carries project-specific custom warnings for nested-case anti-patterns
-- `cabal format` round-trips the `.cabal` file through a temp-file byte-equality check; the
-  check surface does not rewrite tracked source in place
-- the pinned formatter compiler is isolated from the project's main compiler under
-  `.build/<project>-style-tools/bin/`, installed by the lint pass itself through `ghcup run`
-  plus `cabal install`
-- the standard library stack includes `optparse-applicative`, `dhall`, `prettyprinter` (plus
-  ansi variants), `ansi-terminal`, `path` plus `path-io`, `typed-process`, `safe-exceptions`,
-  `co-log`, `async` plus `stm`, `aeson`, `text`, and `bytestring`; test stack includes `tasty`,
-  `tasty-hunit`, `tasty-quickcheck`, `tasty-golden`, and `temporary`
-
-### 20. Pulumi Exception
-
-- the Haskell CLI doctrine names `pulumi` as the standard infrastructure-test orchestration
-  tool; `infernix` does not adopt that part of the doctrine
-- supported substrates are local Kind clusters owned by `infernix cluster up` itself, and
-  cloud-provisioned infrastructure is not part of the supported product contract
-- there is no supported `infernix-pulumi` test-suite stanza, no `pulumi` dependency in
-  `infernix.cabal`, and no Pulumi-orchestrated test path on the supported validation surface
-- `infernix lint docs` rejects plan or governed-doc text that names `pulumi` as part of the
-  supported contract while still allowing the exception statement itself
 
 ## Command Surface Baseline
 

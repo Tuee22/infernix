@@ -346,8 +346,9 @@ Rules:
 - Apple host-native consumers read the same staged file directly from `./.build/`, even when the
   Apple topology also republishes the payload into the cluster for a routed demo or other support
   surface.
-- The binary watches its substrate `.dhall` and reloads or restarts when the file changes; that
-  reload purges any running inference-engine state.
+- The binary reads its staged substrate `.dhall` at startup; automatic file-watching or reload is
+  not part of the supported contract unless the implementation, validation, and governed docs are
+  updated together.
 - Rows whose active-substrate engine cell is `Not recommended` are omitted from that substrate's
   generated catalog.
 - Across the full set of generated substrate `.dhall` files, every row in the README matrix
@@ -488,16 +489,13 @@ Static quality and compiler hygiene are first-class repository requirements.
   shape, function shape, effect-boundary clarity, and typed control flow.
 - The Haskell style guide states the fail-fast rule explicitly: supported validation fails on
   hard-gate violations and does not silently rewrite tracked source.
-- `fourmolu` is the canonical Haskell source formatter. A committed root `fourmolu.yaml` pins
-  `column-limit: 100` together with the other doctrine-prescribed fields (`indentation: 2`,
-  `function-arrows: leading`, `comma-style: leading`, `import-export-style: leading`,
-  `indent-wheres: false`, `record-brace-space: true`, `newlines-between-decls: 1`,
-  `haddock-style: single-line`, `let-style: auto`, `in-style: right-align`, `unicode: never`,
-  `respectful: true`). The pinned formatter compiler is isolated from the project's main compiler
-  and lives under `.build/<project>-style-tools/`, installed by the lint pass itself through
-  `ghcup run` plus `cabal install`.
-- `hlint` runs with `--with-group=default` plus `--with-group=extra`, with project-specific
-  rules accumulated in a committed root `.hlint.yaml`.
+- `ormolu` is the canonical Haskell source formatter on the supported path. The style gate
+  bootstraps a dedicated compatible toolchain under `.build/haskell-style-tools/bin/`, using the
+  formatter compiler version required by `src/Infernix/Lint/HaskellStyle.hs` rather than the
+  project's main compiler.
+- `hlint` runs through that same repo-owned style bootstrap against the supported Haskell source
+  roots; the plan must not claim a committed root `.hlint.yaml` until the repository actually
+  carries one.
 - `cabal format` round-trips the `.cabal` file through a temp-file byte-equality check; the check
   surface does not rewrite tracked source in place.
 - Repo-owned validation enables strict compiler warnings and treats warnings as errors on supported
@@ -505,69 +503,38 @@ Static quality and compiler hygiene are first-class repository requirements.
 - If the repository later adopts additional external formatters or linters, the plan must be updated
   atomically with that implementation change so the named tools match reality.
 
-### R. Haskell CLI Architecture Contract
+### R. Supported Control-Plane Architecture Contract
 
-The supported repository inherits the Haskell CLI architecture doctrine. The canonical content for
-each item below lives in the governed document named beside it; this section lists the obligations
-the plan enforces by reference and uses those governed homes as the source of truth.
+The standards govern current repository truth, not imported doctrine. When the plan names control-
+plane architecture patterns, they must match the implementation that actually exists in the
+worktree and the governed docs that describe it.
 
-- typed `Command` ADT plus first-class `CommandSpec` registry is the single source of truth for
-  parsing, help text, generated docs, command tree, JSON command schema, and shell completion
-  metadata (`documents/engineering/implementation_boundaries.md`)
-- state machines with more than two states use GADTs with phantom type parameters and singleton
-  witnesses for runtime discovery (`documents/engineering/implementation_boundaries.md`)
-- subprocess invocations are pure typed `Subprocess` values; the only supported IO interpreter
-  functions are `runStreaming` and `capture`
-  (`documents/engineering/implementation_boundaries.md`)
-- smart constructors derive paired resources (such as a Kubernetes PV plus its PVC) from a single
-  seed, with DNS-1123 naming helpers and hash-suffix collision avoidance
-  (`documents/engineering/k8s_storage.md`)
-- every state-changing command splits into a pure `build :: Inputs -> Either AppError Plan`
-  builder and an effectful `apply :: Env -> Plan -> IO ExitCode` interpreter, with mandatory
-  `--dry-run` and `--plan-file <path>` flags (`documents/engineering/implementation_boundaries.md`)
-- prerequisites are encoded as a typed DAG with a single `prerequisiteRegistry`, pure transitive
-  closure, and an error-message contract that names `nodeId`, description, and remedy hint
-  (`documents/engineering/implementation_boundaries.md`)
-- domain errors use an `AppError` ADT with `ErrorKind = Recoverable | Fatal` and render at the CLI
-  or daemon boundary only (`documents/engineering/implementation_boundaries.md`)
-- subsystem boundaries (object storage, cache, database, message queue) expose capability classes;
-  subsystem-specific error newtypes wrap a unified `ServiceError`, and an `AsServiceError`
-  typeclass enables generic retry across services
-  (`documents/engineering/implementation_boundaries.md`)
-- retry policies are first-class typed values with pure backoff calculation and explicit error
-  classification (`documents/engineering/implementation_boundaries.md`)
-- the production daemon lives in the same binary as the CLI, runs the seven-step lifecycle
-  load → prereq → acquire → ready → serve → drain → exit through nested `bracket` and
-  `withAsync`, exposes `/healthz`, `/readyz`, and `/metrics` on a dedicated admin port, and emits
-  structured JSON log lines via `co-log` to stderr only
-  (`documents/engineering/daemon_lifecycle.md`)
-- daemon configuration is a Dhall file split into `BootConfig` and `LiveConfig`; SIGHUP triggers
-  hot reload of `LiveConfig` only through a dedicated `TBQueue` worker; the file carries a
-  `schemaVersion :: Natural` field that mismatches keep the running config
-  (`documents/engineering/daemon_lifecycle.md`)
-- at-least-once event handlers are idempotent and track delivery via a `processed_at` column on
-  the durable event table; event ordering is `created_at ASC`
-  (`documents/engineering/storage_and_state.md`)
-- reconcilers are the canonical mutation entrypoint; there is no separate `install` / `upgrade` /
-  `repair` / `force-install` split and no `--force` or `--reinstall` flag
-  (`documents/engineering/implementation_boundaries.md`)
-- the `GeneratedSectionRule` registry is the single source of truth for partial generation in
-  hand-maintained files; full generation uses a separate tracked-generated-paths registry; every
-  validator has a paired `--write` writer with an error-message contract that names path, marker
-  key, and remedy (`documents/engineering/build_artifacts.md`)
-- a `forbiddenPathRegistry` (negative-space lint) blocks parallel-workflow surfaces such as
-  `.github/workflows/`, `.husky/`, `.githooks/`, `.pre-commit-config.yaml`, and duplicate root
-  `Makefile` / `justfile` / `Taskfile.yml` (`documents/engineering/build_artifacts.md`)
+- One Haskell-owned command registry remains the supported source of truth for parsing, help text,
+  generated CLI-reference sections, and the operator command families documented in the plan.
+- State-changing lifecycle and runtime flows are described in terms of the implemented imperative
+  reconcile or bootstrap paths. The plan must not claim generic `Plan` / `Apply`, mandatory
+  `--dry-run`, `--plan-file`, or similar doctrine-only surfaces until those surfaces exist.
+- Runtime and daemon docs describe the current startup-configured, Pulsar-driven `infernix service`
+  contract. The plan must not imply dedicated admin-HTTP endpoints, structured JSON logging,
+  SIGHUP reload, separate daemon-config files, or typed event-ledger subsystems unless they are
+  implemented and validated.
+- Architecture docs may call out typed runtime, storage, route, publication, or adapter
+  boundaries that exist today, but they do not treat unimplemented capability-class, retry-policy,
+  GADT state-machine, or paired-resource-constructor doctrine as active repository requirements.
+- Generated-artifact and lint docs describe the implemented `web/src/Generated/` and
+  `tools/generated_proto/` paths plus the current `lint files`, `lint docs`, `lint proto`,
+  `lint chart`, and `docs check` behavior. The plan must not claim broader generated-path or
+  negative-space registries until the implementation actually carries them.
 
-### S. Pulumi Exception
+### S. Imported Practices and Explicit Non-Adoption
 
-The Haskell CLI doctrine names `pulumi` as the standard infrastructure-test orchestration tool.
-`infernix` does not adopt this part of the doctrine.
+When the plan cites another repository or doctrine, it must distinguish imported maintenance ideas
+from unsupported product features, runtime surfaces, or validation requirements.
 
-- The supported substrates close on local Kind clusters owned by `infernix cluster up` itself, and
-  cloud-provisioned infrastructure is not part of the supported product contract.
-- There is no supported `infernix-pulumi` test-suite stanza, no `pulumi` dependency in
-  `infernix.cabal`, and no Pulumi-orchestrated test path on the supported validation surface.
-- This exception is documented in `documents/development/testing_strategy.md` and the
-  `00-overview.md` rules baseline, and `infernix lint docs` rejects plan or governed-doc text that
-  names `pulumi` as part of the supported contract.
+- The supported validation surface closes on local Kind clusters owned by `infernix cluster up`
+  itself. Cloud-provisioned infrastructure is not part of the supported product contract.
+- The supported validation surface does not include Pulumi-orchestrated infrastructure tests, an
+  `infernix-pulumi` test-suite stanza, or a `pulumi` dependency in `infernix.cabal`.
+- Non-adopted external doctrine items must not be treated as current blockers, deliverables, or
+  completion criteria unless the repository later implements them and updates the plan, governed
+  docs, and validation surface in the same change.

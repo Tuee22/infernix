@@ -1653,7 +1653,7 @@ harborPostgresStartupPods state =
         _ -> False
 
 restartHarborPostgresStartupPodsIfStuck :: ClusterState -> Bool -> Int -> [HarborPostgresStartupPod] -> IO Bool
-restartHarborPostgresStartupPodsIfStuck state allStartupPodsPresent attemptsElapsed startupPods =
+restartHarborPostgresStartupPodsIfStuck state _allStartupPodsPresent attemptsElapsed startupPods =
   if shouldRestart
     then do
       runCommand
@@ -1671,7 +1671,6 @@ restartHarborPostgresStartupPodsIfStuck state allStartupPodsPresent attemptsElap
       ]
     shouldRestart =
       not (null unreadyPodNames)
-        && allStartupPodsPresent
         && ( any podLooksStuck startupPods
                || attemptsElapsed >= harborPostgresStartupRepairGraceAttempts
            )

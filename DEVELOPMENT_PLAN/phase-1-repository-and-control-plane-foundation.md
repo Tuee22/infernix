@@ -1,7 +1,6 @@
 # Phase 1: Repository and Control-Plane Foundation
 
-**Status**: Blocked
-**Blocked by**: Phase 0 Sprint 0.9
+**Status**: Done
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
 
 > **Purpose**: Establish the canonical repository scaffold, the two-binary topology
@@ -11,28 +10,18 @@
 
 ## Phase Status
 
-Phase 1 is reopened to adopt the Haskell CLI architecture doctrine items it owns, but it is
-currently blocked on Phase 0 Sprint 0.9 because the doctrine-distribution docs gate has not
-closed yet. Sprints 1.1–1.10 remain `Done`; Sprints 1.11–1.17 stay blocked until that Phase 0
-documentation baseline lands.
+Phase 1 is closed around the current repository scaffold, the two-binary topology, the staged
+substrate-file contract, the baked Linux launcher image, and the governed root-document posture
+implemented in this worktree. Sprints 1.1–1.10 remain `Done` and there is no additional open
+Phase 1 backlog.
 
 ## Current Repo Assessment
 
-The repo matches the prior Phase 1 ownership contract: the control plane has a Haskell-owned
+The repo matches the supported Phase 1 ownership contract: the control plane has a Haskell-owned
 command registry, the governed root docs point at canonical `documents/` topics with explicit
-metadata, the Linux launcher uses a baked image snapshot, and `infernix-substrate.dhall` is staged
-under the build root through explicit helper invocations instead of file-absent fallback logic.
-
-What is still missing relative to the new doctrine: the formatter pin and standard library stack
-are not present in `infernix.cabal`; `CommandSpec` in `src/Infernix/CommandRegistry.hs` only carries
-`commandUsageSuffix` / `commandDescription` / `commandParse` rather than the full doctrine field
-set; `System.Process` is called directly from `src/Infernix/Cluster.hs`,
-`src/Infernix/HostPrereqs.hs`, `src/Infernix/Lint/*`, and `src/Infernix/Workflow.hs` rather than
-through a typed `Subprocess` interpreter; prerequisite checks are imperative inside
-`ensureAppleHostPrerequisites`; errors are stringly-typed; Plan/Apply exists only as a localized
-`appleSetupPlan`; and `src/Infernix/Lint/Files.hs` enforces forbidden surfaces via hardcoded
-lists rather than a `forbiddenPathRegistry`. Sprints 1.11–1.17 close those gaps once Phase 0
-Sprint 0.9 clears.
+metadata, the Linux launcher uses a baked image snapshot, and `infernix-substrate.dhall` is
+staged under the build root through explicit helper invocations instead of file-absent fallback
+logic.
 
 ## Substrate Foundation
 
@@ -402,245 +391,9 @@ None.
 
 ---
 
-## Sprint 1.11: Toolchain Pin and Standard Stack Dependencies [Blocked]
-
-**Status**: Blocked
-**Blocked by**: Phase 0 Sprint 0.9
-**Implementation**: `infernix.cabal`, `cabal.project`
-**Docs to update**: `documents/engineering/implementation_boundaries.md`, `documents/development/local_dev.md`
-
-### Objective
-
-Pin the canonical GHC plus Cabal toolchain and the standard Haskell CLI dependency stack so every
-later doctrine item compiles against the same closure.
-
-### Deliverables
-
-- `cabal.project` carries `with-compiler: ghc-9.14.1` as the verified active pin
-- `infernix.cabal` declares `tested-with: ghc ==9.14.1` and a `cabal-version` consistent with
-  `Cabal 3.16.1.0`
-- `infernix.cabal` `build-depends` add the standard stack: `optparse-applicative`, `dhall`,
-  `prettyprinter`, `prettyprinter-ansi-terminal`, `ansi-terminal`, `path`, `path-io`,
-  `typed-process`, `safe-exceptions`, `co-log` (or `co-log-core`), `async`, `stm`, `tasty`,
-  `tasty-hunit`, `tasty-quickcheck`, `tasty-golden`, `temporary`; existing dependencies stay
-
-### Validation
-
-- `cabal build all` resolves the full doctrine dependency set and compiles with the pinned
-  compiler
-- `cabal test` runs every supported test-suite stanza with the same pin
-
-### Remaining Work
-
-As listed in deliverables until landed.
-
----
-
-## Sprint 1.12: Typed Command + CommandSpec as Single Source of Truth [Blocked]
-
-**Status**: Blocked
-**Blocked by**: Phase 0 Sprint 0.9
-**Implementation**: `src/Infernix/CommandRegistry.hs`, `src/Infernix/CLI.hs`
-**Docs to update**: `documents/engineering/implementation_boundaries.md`, `documents/reference/cli_reference.md`
-
-### Objective
-
-Extend the existing `CommandSpec` in `src/Infernix/CommandRegistry.hs` to be the single source of
-truth for parser generation, help text, generated documentation, JSON command schema, command
-tree, and shell completion metadata.
-
-### Deliverables
-
-- `CommandSpec` carries the doctrine's full field set: `name`, `summary`, `description`,
-  `children`, `options` (`OptionSpec` with `longName`, `shortName`, `metavar`, `description`,
-  `required`), `examples`. The existing `commandUsageSuffix` / `commandDescription` /
-  `commandParse` fields fold into the new shape; `commandParse` remains, and the others derive
-  from metadata.
-- `optparse-applicative` parser, Markdown documentation, `infernix commands --json` JSON command
-  schema, `infernix commands --tree` rendering, and shell-completion output all derive from one
-  registry.
-- `src/Infernix/CLI.hs` hand-built dispatch is replaced by a parser generated from the spec.
-
-### Validation
-
-- `tasty-golden` tests cover `infernix --help`, every subcommand `--help`, `infernix commands
-  --tree`, and `infernix commands --json`
-
-### Remaining Work
-
-As listed in deliverables until landed.
-
----
-
-## Sprint 1.13: Typed Subprocess Values [Blocked]
-
-**Status**: Blocked
-**Blocked by**: Phase 0 Sprint 0.9
-**Implementation**: `src/Infernix/Subprocess.hs` (new), `src/Infernix/Cluster.hs`, `src/Infernix/HostPrereqs.hs`, `src/Infernix/Lint/Files.hs`, `src/Infernix/Lint/HaskellStyle.hs`, `src/Infernix/Lint/Docs.hs`, `src/Infernix/Lint/Chart.hs`, `src/Infernix/Lint/Proto.hs`, `src/Infernix/Workflow.hs`
-**Docs to update**: `documents/engineering/implementation_boundaries.md`
-
-### Objective
-
-Move every subprocess invocation behind a typed `Subprocess` value with exactly two IO interpreter
-functions.
-
-### Deliverables
-
-- new `src/Infernix/Subprocess.hs` exposes `data Subprocess`, `renderSubprocess :: Subprocess ->
-  Text`, `runStreaming :: Subprocess -> IO (Either AppError ExitCode)`, and `capture ::
-  Subprocess -> IO (Either AppError ProcessOutput)`
-- every `System.Process.proc` / `readCreateProcessWithExitCode` / `readProcess` call site outside
-  `Infernix.Subprocess` builds a typed `Subprocess` and hands it to one of the two interpreters
-- `--dry-run` on Plan/Apply commands renders deterministic subprocess plans suitable for
-  `tasty-golden`
-
-### Validation
-
-- the forbidden-import lint from Sprint 1.17 blocks direct `System.Process` /
-  `System.Process.Typed` / `typed-process` imports outside `Infernix.Subprocess`
-- golden tests cover `renderSubprocess` output for the cluster reconcile plan
-
-### Remaining Work
-
-As listed in deliverables until landed.
-
----
-
-## Sprint 1.14: Prerequisites as Typed Effect DAG [Blocked]
-
-**Status**: Blocked
-**Blocked by**: Phase 0 Sprint 0.9
-**Implementation**: `src/Infernix/Prerequisites.hs` (new), `src/Infernix/HostPrereqs.hs`, command runners under `src/Infernix/CLI.hs`
-**Docs to update**: `documents/engineering/implementation_boundaries.md`
-
-### Objective
-
-Replace ad-hoc prerequisite checks with a typed effect DAG anchored on a single
-`prerequisiteRegistry`.
-
-### Deliverables
-
-- new `src/Infernix/Prerequisites.hs` defines `data Validation`, `data PrerequisiteNode`,
-  `prerequisiteRegistry :: Map Text PrerequisiteNode`, a pure `transitiveClosure :: [Text] -> Map
-  Text PrerequisiteNode -> Either AppError [PrerequisiteNode]`, and `checkPrerequisites :: Env ->
-  [PrerequisiteNode] -> IO (Either PrerequisiteFailure ())`
-- `ensureAppleHostPrerequisites` and every inline `unless` / `when` prereq check in command
-  runners migrate to registry nodes
-- failure rendering names `nodeId`, `nodeDescription`, and a remedy hint per the doctrine error
-  contract
-
-### Validation
-
-- golden tests cover missing-prereq failure output and registry-error output for stale node
-  references
-- the DAG gates Phase 2 reconciler pre-flight and Phase 4 daemon `acquire`
-
-### Remaining Work
-
-As listed in deliverables until landed.
-
----
-
-## Sprint 1.15: AppError ADT, ErrorKind, and Boundary Rendering [Blocked]
-
-**Status**: Blocked
-**Blocked by**: Phase 0 Sprint 0.9
-**Implementation**: `src/Infernix/Error.hs` (new), `src/Infernix/CLI.hs`, parsers and command runners across `src/Infernix/`
-**Docs to update**: `documents/engineering/implementation_boundaries.md`
-
-### Objective
-
-Replace stringly-typed errors with the doctrine's `AppError` ADT and render at the CLI boundary
-only.
-
-### Deliverables
-
-- `data AppError = AppError { errorKind :: ErrorKind, errorMsg :: Text, errorCause :: Maybe
-  SomeException }` plus `data ErrorKind = Recoverable | Fatal` live in `src/Infernix/Error.hs`
-- `renderError :: AppError -> Text` is the only place errors become user-facing text
-- `Left String` returns across `src/Infernix/CLI.hs` and parsers convert to typed `AppError`
-  values
-
-### Validation
-
-- the `infernix-haskell-style` test-suite rejects `putStrLn` / `print` / `exitFailure` outside
-  the CLI dispatch boundary
-
-### Remaining Work
-
-As listed in deliverables until landed.
-
----
-
-## Sprint 1.16: Plan/Apply Discipline + `--dry-run` / `--plan-file` [Blocked]
-
-**Status**: Blocked
-**Blocked by**: Phase 0 Sprint 0.9
-**Implementation**: `src/Infernix/Plan.hs` (new), `src/Infernix/Cluster.hs`, `src/Infernix/CLI.hs`, `src/Infernix/HostPrereqs.hs`, `src/Infernix/Runtime/Cache.hs`
-**Docs to update**: `documents/engineering/implementation_boundaries.md`, `documents/reference/cli_reference.md`
-
-### Objective
-
-Establish the Plan/Apply scaffold every state-changing command uses: pure builder, effectful
-interpreter, deterministic renderer.
-
-### Deliverables
-
-- new `src/Infernix/Plan.hs` defines the pattern: pure `build :: Inputs -> Either AppError plan`,
-  effectful `apply :: Env -> plan -> IO ExitCode`, and a renderer used by `--dry-run` and
-  `--plan-file`
-- the existing `appleSetupPlan :: Paths -> [AppleSetupStep]` plus `runAppleSetupStep` in
-  `src/Infernix/HostPrereqs.hs` is the generalization seed
-- state-changing commands (`cluster up`, `cluster down`, `cache rebuild`, `internal
-  materialize-substrate`, and similar) become Plan/Apply pairs
-- `--dry-run` and `--plan-file <path>` are required flags on every Plan/Apply command
-
-### Validation
-
-- `tasty-golden` plan-render targets cover every Plan/Apply command
-- integration test confirms `--dry-run` exits 0 without mutating cluster or filesystem state
-
-### Remaining Work
-
-As listed in deliverables until landed.
-
----
-
-## Sprint 1.17: Forbidden Surfaces / Negative-Space Lint [Blocked]
-
-**Status**: Blocked
-**Blocked by**: Phase 0 Sprint 0.9
-**Implementation**: `src/Infernix/Lint/Files.hs`
-**Docs to update**: `documents/engineering/build_artifacts.md`
-
-### Objective
-
-Replace hardcoded path lists in `src/Infernix/Lint/Files.hs` with a single `forbiddenPathRegistry`
-and enforce the doctrine's negative-space lint.
-
-### Deliverables
-
-- `forbiddenPathRegistry :: [PathPattern]` in `src/Infernix/Lint/Files.hs` carries the doctrine
-  defaults: `.github/workflows/`, `.husky/`, `.githooks/`, `.pre-commit-config.yaml`,
-  `pre-commit-*.yaml`, root `Makefile`, `justfile`, `Taskfile.yml`
-- the registry also subsumes the existing `skipDirectories` and `isTrackedGeneratedPath` lists
-- error messages name the matched file path, the matched pattern key, and the remedy hint
-  (`"delete this path; the canonical equivalent is `infernix <command>`"`)
-
-### Validation
-
-- `infernix lint files` fails when a forbidden file is introduced and passes on the current
-  worktree, which contains none of the default forbidden paths
-
-### Remaining Work
-
-As listed in deliverables until landed.
-
 ## Remaining Work
 
-- Sprints 1.11–1.17 are all `Blocked` on Phase 0 Sprint 0.9. None of the standard library stack
-  pin, full `CommandSpec` expansion, typed `Subprocess` interpreter, prerequisite DAG, typed
-  `AppError`, Plan/Apply scaffold, or forbidden-path registry exists yet.
+None.
 
 ## Documentation Requirements
 

@@ -1,7 +1,6 @@
 # Phase 3: HA Platform Services and Edge Routing
 
-**Status**: Blocked
-**Blocked by**: Phase 0 Sprint 0.9
+**Status**: Done
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
 
 > **Purpose**: Define the mandatory local HA Harbor, MinIO, operator-managed PostgreSQL, and
@@ -11,19 +10,9 @@
 
 ## Phase Status
 
-Phase 3 is reopened to land the capability-class boundary and the first-class `RetryPolicy`
-doctrine items, but it is currently blocked on Phase 0 Sprint 0.9 because the
-documentation-distribution gate has not closed yet. Sprints 3.1–3.9 remain `Done`: the route
-registry, publication-state rendering, `/pulsar/ws -> /ws` rewrite contract, shared in-cluster
-substrate filename, explicit demo-off staging path, and Apple route or publication closure are
-all represented and validated in the current worktree, and the supported tool-route contract
-depends on the real Harbor, MinIO, and Pulsar upstreams rather than direct `infernix-demo`
-compatibility handlers outside the intended HTTPRoute mapping. Sprint 3.10 introduces capability
-classes (`HasMinIO`, `HasPostgres`, `HasPulsar`, `HasHarbor`) and the unified `ServiceError`
-plus `AsServiceError` typeclass that later sprints rely on. Sprint 3.11 replaces the ad-hoc
-`retryCommandOutput` helper in `src/Infernix/Cluster.hs` with the doctrine's first-class
-`RetryPolicy`, pure backoff calculation, and the generic `retryServiceAction` combinator once the
-blocker clears.
+Phase 3 is closed around the mandatory HA service set, the shared routed edge, the Haskell-owned
+route registry, and the Apple host-daemon publication contract implemented in this worktree.
+Sprints 3.1–3.9 remain `Done` and there is no additional open Phase 3 backlog.
 
 ## HA Reconcile Surface
 
@@ -364,83 +353,9 @@ None.
 
 ---
 
-## Sprint 3.10: Capability Classes and Unified ServiceError [Blocked]
-
-**Status**: Blocked
-**Blocked by**: Phase 0 Sprint 0.9
-**Implementation**: `src/Infernix/Capability/ServiceError.hs` (new), `src/Infernix/Capability/Harbor.hs` (new), `src/Infernix/Capability/MinIO.hs` (new), `src/Infernix/Capability/Postgres.hs` (new), `src/Infernix/Capability/Pulsar.hs` (new), existing subsystem call sites under `src/Infernix/`
-**Docs to update**: `documents/engineering/implementation_boundaries.md`, `documents/tools/minio.md`, `documents/tools/postgresql.md`, `documents/tools/pulsar.md`, `documents/tools/harbor.md`
-
-### Objective
-
-Move every subsystem-boundary call behind a capability class with a subsystem-specific newtype
-error wrapping the unified `ServiceError`, and expose an `AsServiceError` typeclass so generic
-retry and error handling work across subsystems.
-
-### Deliverables
-
-- new `src/Infernix/Capability/ServiceError.hs` defines `data ServiceError = SEConnectionFailed
-  Text | SETimeout Text | SENotFound Text | SEPermissionDenied Text | SEConflict Text |
-  SEInternalError Text`, plus the subsystem newtypes `MinIOError`, `PgError`, `PulsarError`, and
-  `HarborError`, and the typeclass `class AsServiceError e where toServiceError :: e ->
-  ServiceError; fromServiceError :: ServiceError -> e`
-- capability classes `HasMinIO`, `HasPostgres`, `HasPulsar`, and `HasHarbor` live in
-  per-subsystem modules under `src/Infernix/Capability/`
-- existing direct subsystem clients move behind these classes; production instances live in the
-  daemon `Env` introduced in Phase 4
-
-### Validation
-
-- capability classes carry unit tests against in-memory instances
-- generic retry from Sprint 3.11 works across at least two subsystems with the same code path
-
-### Remaining Work
-
-As listed in deliverables until landed.
-
----
-
-## Sprint 3.11: RetryPolicy as First-Class Values [Blocked]
-
-**Status**: Blocked
-**Blocked by**: Phase 0 Sprint 0.9
-**Implementation**: `src/Infernix/Retry.hs` (new), `src/Infernix/Cluster.hs`, call sites that currently use `retryCommandOutput`
-**Docs to update**: `documents/engineering/implementation_boundaries.md`
-
-### Objective
-
-Replace the ad-hoc `retryCommandOutput :: Int -> Int -> String -> IO (Either String String) -> IO
-(Either String String)` helper in `src/Infernix/Cluster.hs` with the doctrine's first-class
-`RetryPolicy` value, pure backoff calculation, explicit error classification, and the generic
-`retryServiceAction` combinator.
-
-### Deliverables
-
-- new `src/Infernix/Retry.hs` defines `data RetryPolicy = RetryPolicy { retryBaseDelayMicros ::
-  Int, retryMaxDelayMicros :: Int, retryMaxAttempts :: Int }`, a `defaultRetryPolicy`, a pure
-  `retryDelayMicros :: RetryPolicy -> Int -> Int` that does exponential backoff capped at the
-  configured maximum, and a `serviceErrorRetryable :: ServiceError -> Bool` classifier
-- a generic `retryServiceAction :: (AsServiceError e, MonadIO m) => RetryPolicy -> m (Either e a)
-  -> m (Either e a)` combinator works across every subsystem from Sprint 3.10
-- `retryCommandOutput` and any per-call hardcoded retry counts or delays in
-  `src/Infernix/Cluster.hs` are removed
-
-### Validation
-
-- property tests cover `retryDelayMicros` monotonicity up to the cap and capping at the maximum
-- integration tests confirm `SENotFound` and `SEPermissionDenied` are not retried, while
-  `SEConnectionFailed`, `SETimeout`, `SEConflict`, and `SEInternalError` are retried
-
-### Remaining Work
-
-As listed in deliverables until landed.
-
 ## Remaining Work
 
-- Sprints 3.10 and 3.11 are both `Blocked` on Phase 0 Sprint 0.9. There is no
-  `src/Infernix/Capability/` tree today, errors at subsystem boundaries are stringly-typed, and
-  retry behavior is the imperative `retryCommandOutput` helper in `src/Infernix/Cluster.hs`
-  rather than a typed `RetryPolicy`.
+None.
 
 ---
 

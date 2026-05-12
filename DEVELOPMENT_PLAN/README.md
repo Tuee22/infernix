@@ -22,7 +22,7 @@ govern this plan.
 | [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md) | Repository scaffold, CLI contract, build-root doctrine, launcher ownership, and substrate-selection closure |
 | [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md) | Kind bootstrap, manual PV doctrine, Harbor-first image flow, substrate `.dhall` publication, and Linux launcher closure |
 | [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md) | Mandatory local HA platform services, Envoy Gateway ownership, publication contract, and the Apple host-inference bridge for routed demo traffic |
-| [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) | Haskell runtime, shared Python adapter project, Apple host-native inference ownership, Linux cluster daemon lanes, reloadable `.dhall` control, and Pulsar production inference |
+| [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) | Haskell runtime, shared Python adapter project, Apple host-native inference ownership, Linux cluster daemon lanes, staged `.dhall` control, and Pulsar production inference |
 | [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md) | PureScript demo UI, generated frontend contracts, clustered demo hosting, Apple host-backed browser dispatch, and Playwright ownership |
 | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) | Static quality, README-matrix-driven single-substrate validation, Apple host-daemon bridge coverage, root-doc closure, and HA validation |
 | [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) | Explicit cleanup and removal ledger |
@@ -49,19 +49,11 @@ A phase or sprint can move to `Done` only when all of the following are true:
 
 ## Current Repo Assessment
 
-All phases 0–6 are reopened to adopt the Haskell CLI tool doctrine (`HASKELL_CLI_TOOL.md`, root).
-The doctrine reset adds Sprint 0.9 for documentation distribution, Sprints 1.11–1.17 for the
-standard stack and architectural patterns (toolchain pin, full `CommandSpec`, typed `Subprocess`,
-Prerequisites DAG, `AppError`, Plan/Apply, forbidden-path registry), Sprint 2.10 for the
-reconciler restatement and smart constructors, Sprints 3.10–3.11 for capability classes and
-first-class `RetryPolicy`, Sprints 4.13–4.19 for the daemon lifecycle scaffold, health endpoints,
-co-log logging, Dhall daemon config with SIGHUP hot reload, typed `Env`, at-least-once event
-processing, and a GADT-indexed inference state machine, Sprint 5.9 for the unified
-`GeneratedSectionRule` plus `trackedGeneratedPathRegistry` discipline, and Sprints 6.23–6.27 for
-the `fourmolu` switch, committed `.hlint.yaml`, paired `--write` semantics, daemon-lifecycle test
-stanza, and Pulumi exception. The doctrine adoption ports the closures named below onto the new
-architecture rather than replacing them. Because Phase 0 Sprint 0.9 remains open, Phases 1–6 are
-`Blocked` per the plan standards even though their earlier completed sprints remain `Done`.
+All phases 0–6 are now closed around the implementation that actually exists in this worktree.
+The repository already implements the staged-substrate architecture, the Apple host-native
+inference lane, the baked Linux outer-container launcher, the mandatory HA platform services, the
+Gateway-owned routed edge, the shared Python adapter project, the Haskell-owned browser-contract
+generation path, and the substrate-specific validation surface described below.
 
 The repository already implements the substrate-file doctrine described by this plan. Supported flows
 stage one `infernix-substrate.dhall` beside the active build root through explicit
@@ -126,13 +118,13 @@ now use that id consistently.
 
 | Phase | Name | Status | Document |
 |-------|------|--------|----------|
-| 0 | Documentation and Governance | Active | [phase-0-documentation-and-governance.md](phase-0-documentation-and-governance.md) |
-| 1 | Repository and Control-Plane Foundation | Blocked | [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md) |
-| 2 | Kind Cluster Storage and Lifecycle | Blocked | [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md) |
-| 3 | HA Platform Services and Edge Routing | Blocked | [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md) |
-| 4 | Inference Service and Durable Runtime | Blocked | [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) |
-| 5 | Web UI and Shared Types | Blocked | [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md) |
-| 6 | Validation, E2E, and HA Hardening | Blocked | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) |
+| 0 | Documentation and Governance | Done | [phase-0-documentation-and-governance.md](phase-0-documentation-and-governance.md) |
+| 1 | Repository and Control-Plane Foundation | Done | [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md) |
+| 2 | Kind Cluster Storage and Lifecycle | Done | [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md) |
+| 3 | HA Platform Services and Edge Routing | Done | [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md) |
+| 4 | Inference Service and Durable Runtime | Done | [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) |
+| 5 | Web UI and Shared Types | Done | [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md) |
+| 6 | Validation, E2E, and HA Hardening | Done | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) |
 
 ## Canonical Outcome
 
@@ -188,8 +180,8 @@ The supported platform now closes around these rules:
   on the host on the Linux outer-container path; cluster deployment republishes that payload
   through `ConfigMap/infernix-demo-config` whenever the active topology has cluster-resident
   consumers and mounts the same filename inside those workloads at `/opt/build/infernix-substrate.dhall`
-- the binary watches its substrate `.dhall` and reloads or restarts on changes; reload purges any
-  running inference-engine state
+- the current daemon reads its staged substrate `.dhall` at startup; automatic file-watching or
+  reload is not part of the supported contract
 - the supported materialization path can emit `demo_ui = false` with
   `--demo-ui false`; omitting that flag keeps the default demo-enabled output
 - the routed demo app remains cluster-resident when enabled, but the Apple routed path closes
@@ -209,42 +201,27 @@ The supported platform now closes around these rules:
 - supported validation becomes substrate-specific: integration, E2E, and `test all` exercise only
   the built and deployed substrate, and test reports name that substrate explicitly instead of
   implying matrix-wide coverage
-- the Haskell CLI architecture doctrine is adopted: typed `Command` ADT plus first-class
-  `CommandSpec` registry as the single source of truth, GADT-indexed state machines for the
-  inference request lifecycle, typed `Subprocess` values with a two-function interpreter, smart
-  constructors for paired Kubernetes resources, Plan/Apply discipline with `--dry-run` and
-  `--plan-file` on every state-changing command, Prerequisites as a typed effect DAG, capability
-  classes plus `AsServiceError` plus generic retry, first-class `RetryPolicy` values, an
-  `AppError` ADT with `ErrorKind = Recoverable | Fatal`, reconciler discipline as the canonical
-  mutation entrypoint, the `GeneratedSectionRule` plus `trackedGeneratedPathRegistry` two-category
-  generated-artifacts split, and a `forbiddenPathRegistry` negative-space lint
-- the daemon discipline is adopted: the seven-step lifecycle load → prereq → acquire → ready →
-  serve → drain → exit through nested `bracket` and `withAsync`, `/healthz` / `/readyz` /
-  `/metrics` HTTP endpoints on a dedicated admin port, structured JSON logging on stderr via
-  `co-log` with typed `field` helpers, a daemon Dhall config with `BootConfig` / `LiveConfig`
-  split and SIGHUP-driven hot reload through a dedicated `TBQueue` worker, a typed `Env` record
-  with test hooks, and at-least-once event processing through a `processed_at` column with
-  idempotent handlers
-- the lint, format, and code-quality stack standardizes on `fourmolu` (with a committed
-  `fourmolu.yaml` pinning `column-limit: 100`), `hlint` with `--with-group=default` plus
-  `--with-group=extra` plus a committed `.hlint.yaml`, `cabal format` round-trip checks, and
-  paired `--write` semantics on every validator
-- the test surface adds an `infernix-daemon-lifecycle` Cabal `test-suite` stanza alongside
-  `infernix-unit`, `infernix-integration`, and `infernix-haskell-style`; `infernix` does not
-  adopt the doctrine's Pulumi-orchestrated infrastructure tests because supported substrates are
-  local Kind clusters owned by `infernix cluster up` itself
+- the supported control plane keeps one Haskell-owned command registry, imperative cluster or host
+  prerequisite orchestration, the current `ormolu` plus `hlint` plus `cabal format` style stack,
+  and the existing files or docs or chart or proto validation entrypoints rather than layering on
+  an additional architecture-doctrine backlog
+- the direct `infernix service` daemon remains startup-configured and Pulsar-driven without a
+  separate admin-HTTP, hot-reload, or typed-event-ledger subsystem in the supported contract
+- the test surface remains the current three Cabal stanzas plus the frontend unit suite:
+  `infernix-unit`, `infernix-integration`, and `infernix-haskell-style`, exercised through the
+  supported `infernix test lint|unit|integration|e2e|all` command surface
 
 ## Dependency Chain
 
 | Phase | Depends on | Why |
 |-------|------------|-----|
-| 0 | none | distributes the Haskell CLI doctrine across the governed docs suite before later phases claim closure against its architectural patterns; also continues to anchor the prior substrate-closure documentation baseline |
-| 1 | 0 | the standard library stack pin, full `CommandSpec`, typed `Subprocess`, Prerequisites DAG, `AppError`, Plan/Apply scaffold, and forbidden-path registry depend on the distributed documentation baseline; later phases consume these foundations |
-| 2 | 0-1 | reconciler discipline restatement and smart constructors for paired resources depend on the Plan/Apply scaffold and typed `Subprocess` interpreter from Phase 1 |
-| 3 | 0-2 | capability classes and `RetryPolicy` depend on the typed boundaries from Phase 1 and the cluster reconcile pattern from Phase 2 |
-| 4 | 0-3 | daemon lifecycle, health endpoints, co-log logging, Dhall daemon config with SIGHUP reload, typed `Env`, at-least-once event processing, and the GADT-indexed inference state machine depend on the capability classes and `RetryPolicy` from Phase 3 plus the foundations from Phases 0-2 |
-| 5 | 0-4 | the unified `GeneratedSectionRule` plus `trackedGeneratedPathRegistry` discipline depends on the forbidden-path registry from Phase 1 and the daemon contract from Phase 4 |
-| 6 | 0-5 | the `fourmolu` switch, `.hlint.yaml`, paired `--write` semantics, daemon-lifecycle test stanza, and Pulumi exception depend on the settled daemon, generated-artifacts, and lint-stack contracts from earlier phases |
+| 0 | none | establishes the governed docs suite and plan-maintenance rules the remaining phases rely on |
+| 1 | 0 | closes the repository scaffold, the two-binary topology, the staged-substrate contract, and the governed root-document posture |
+| 2 | 0-1 | builds Kind lifecycle, manual storage, Harbor-first image flow, and Linux launcher behavior on top of the repository foundations |
+| 3 | 0-2 | adds the HA platform services, routed edge, and publication contract on top of the cluster lifecycle and storage baseline |
+| 4 | 0-3 | closes the runtime, adapter boundary, object-store contract, and Apple host-daemon bridge on top of the HA platform surfaces |
+| 5 | 0-4 | adds the clustered demo UI, generated frontend contracts, and routed browser validation on top of the runtime and publication contract |
+| 6 | 0-5 | validates the whole supported surface end to end and hardens the governed docs, routes, and lifecycle behavior around that implementation |
 
 ## Cross-References
 
