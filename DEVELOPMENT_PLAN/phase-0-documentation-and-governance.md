@@ -1,6 +1,6 @@
 # Phase 0: Documentation and Governance
 
-**Status**: Done
+**Status**: Active
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
 
 > **Purpose**: Establish the governed `documents/` suite, the standards that keep the plan and
@@ -14,12 +14,23 @@ lint rules established here.
 
 ## Current Repo Assessment
 
-The governed `documents/` suite, root docs, and development plan now describe the same
-staged-substrate mechanics and the same final Apple product shape. The repository and README
-matrix still point at `apple-silicon` as the Apple-native inference lane, and the governed docs
-now match that contract explicitly: Apple host workflows stage `./.build/infernix-substrate.dhall`
-through `./.build/infernix internal materialize-substrate apple-silicon`, Linux outer-container
-workflows stage `./.build/outer-container/build/infernix-substrate.dhall` on the host through
+Phase 0 is reopened to distribute the Haskell CLI tool doctrine
+(`HASKELL_CLI_TOOL.md`, root) across the governed `documents/` suite and to retire that root file
+once the distribution lands. Sprints 0.1–0.8 remain `Done`. Sprint 0.9 owns the doctrine
+distribution: the canonical homes are `documents/development/haskell_style.md`,
+`documents/development/testing_strategy.md`, `documents/engineering/implementation_boundaries.md`,
+`documents/engineering/build_artifacts.md`, `documents/engineering/k8s_storage.md`,
+`documents/engineering/storage_and_state.md`, the new
+`documents/engineering/daemon_lifecycle.md`, `documents/reference/cli_reference.md`,
+`documents/architecture/runtime_modes.md`, and `documents/operations/cluster_bootstrap_runbook.md`.
+
+Earlier phase 0 closure remains accurate: the governed `documents/` suite, root docs, and
+development plan describe the same staged-substrate mechanics and the same final Apple product
+shape. The repository and README matrix still point at `apple-silicon` as the Apple-native
+inference lane, and the governed docs match that contract explicitly: Apple host workflows stage
+`./.build/infernix-substrate.dhall` through `./.build/infernix internal materialize-substrate
+apple-silicon`, Linux outer-container workflows stage
+`./.build/outer-container/build/infernix-substrate.dhall` on the host through
 `docker compose run --rm infernix infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>`,
 and the routed Apple path is described consistently as host-native inference plus clustered support
 services and an optional clustered demo surface that bridges into the host daemon. `infernix lint docs`
@@ -278,22 +289,119 @@ implementation follow-ons claim closure against it.
 
 None.
 
+---
+
+## Sprint 0.9: Haskell CLI Doctrine Documentation Distribution [Planned]
+
+**Status**: Planned
+**Implementation**: `documents/development/haskell_style.md`, `documents/development/testing_strategy.md`, `documents/engineering/implementation_boundaries.md`, `documents/engineering/build_artifacts.md`, `documents/engineering/k8s_storage.md`, `documents/engineering/storage_and_state.md`, `documents/engineering/daemon_lifecycle.md` (new), `documents/reference/cli_reference.md`, `documents/architecture/runtime_modes.md`, `documents/operations/cluster_bootstrap_runbook.md`, `README.md`, `AGENTS.md`, `CLAUDE.md`, `src/Infernix/Lint/Docs.hs`
+**Docs to update**: `documents/development/haskell_style.md`, `documents/development/testing_strategy.md`, `documents/engineering/implementation_boundaries.md`, `documents/engineering/build_artifacts.md`, `documents/engineering/k8s_storage.md`, `documents/engineering/storage_and_state.md`, `documents/engineering/daemon_lifecycle.md`, `documents/reference/cli_reference.md`, `documents/architecture/runtime_modes.md`, `documents/operations/cluster_bootstrap_runbook.md`, `README.md`, `AGENTS.md`, `CLAUDE.md`
+
+### Objective
+
+Distribute every section of the root `HASKELL_CLI_TOOL.md` design notes into the canonical
+governed-doc homes listed below, then retire the root file. The doctrine becomes plural homes
+within the existing `documents/` suite rather than a single new canonical file.
+
+### Distribution Map
+
+| Doctrine area | Canonical home |
+|---|---|
+| Standard library stack, toolchain pin (GHC 9.14.1 / Cabal 3.16.1.0), `exitcode-stdio-1.0` | `documents/engineering/implementation_boundaries.md` |
+| Library-first layout, thin `Main.hs`, typed `Command` ADT, `CommandSpec` SoT | `documents/engineering/implementation_boundaries.md` |
+| GADT-indexed state machines plus singleton witnesses | `documents/engineering/implementation_boundaries.md` |
+| Subprocesses as Typed Values (two-function interpreter `runStreaming` / `capture`) | `documents/engineering/implementation_boundaries.md` |
+| Smart constructors for paired resources (PV+PVC) plus DNS-1123 naming helpers | `documents/engineering/k8s_storage.md` |
+| Plan/Apply discipline with `--dry-run` and `--plan-file` | `documents/engineering/implementation_boundaries.md` |
+| Prerequisites as Typed Effects (DAG, registry, transitive closure, error-message contract) | `documents/engineering/implementation_boundaries.md` |
+| Output rules (stdout primary, stderr diagnostics, `--format` and `--color` flags) | `documents/reference/cli_reference.md` |
+| `AppError` ADT plus boundary rendering plus `ErrorKind = Recoverable \| Fatal` | `documents/engineering/implementation_boundaries.md` |
+| Capability classes, `ServiceError`, `AsServiceError`, generic retry combinator | `documents/engineering/implementation_boundaries.md` |
+| `RetryPolicy` as first-class values, pure backoff, error classification | `documents/engineering/implementation_boundaries.md` |
+| Daemon lifecycle (load → prereq → acquire → ready → serve → drain → exit), bracket discipline, structured concurrency, `forkIO` ban, `TMVar` shutdown | `documents/engineering/daemon_lifecycle.md` (new) |
+| `/healthz`, `/readyz`, `/metrics` HTTP endpoints | `documents/engineering/daemon_lifecycle.md` (cross-link from `documents/architecture/runtime_modes.md`) |
+| `co-log` structured JSON logging plus typed `field` helpers | `documents/engineering/daemon_lifecycle.md` |
+| `Env` record (boot / live / logger / metrics / shutdown / resources plus test hooks) | `documents/engineering/daemon_lifecycle.md` |
+| Dhall daemon config, `BootConfig` / `LiveConfig` split, SIGHUP via `TBQueue` worker, `schemaVersion` | `documents/engineering/daemon_lifecycle.md` |
+| At-least-once event processing (`processed_at`, idempotent handlers, `created_at ASC`) | `documents/engineering/storage_and_state.md` |
+| Reconcilers as canonical mutation entrypoint (no install / upgrade / repair / force split) | `documents/engineering/implementation_boundaries.md` (cross-link from `documents/operations/cluster_bootstrap_runbook.md`) |
+| Generated Artifacts discipline (markers, `GeneratedSectionRule`, paired check/write, determinism, extension protocol, project-level standards subsection) | `documents/engineering/build_artifacts.md` |
+| Forbidden Surfaces / Negative-Space Lint, `forbiddenPathRegistry` | `documents/engineering/build_artifacts.md` |
+| Lint / format / code-quality stack: `fourmolu`, `fourmolu.yaml`, `hlint`, `.hlint.yaml`, `cabal format` round-trip, pinned formatter compiler under `.build/<project>-style-tools/`, paired `--write`, style as Cabal `test-suite` | `documents/development/haskell_style.md` |
+| Test categories, separate Cabal `test-suite` stanzas (`infernix-unit`, `infernix-integration`, `infernix-haskell-style`, `infernix-daemon-lifecycle`), explicit Pulumi exception | `documents/development/testing_strategy.md` |
+| Daemon Lifecycle Tests category | `documents/development/testing_strategy.md` |
+| CLI introspection (`tool commands`, `--tree`, `--json`, `help <command>`) | `documents/reference/cli_reference.md` |
+
+### Deliverables
+
+- governed docs match the doctrine in every canonical home above
+- `fourmolu` replaces `ormolu` language across `documents/development/haskell_style.md` and any
+  governed text that still names the legacy formatter
+- the toolchain pin `ghc-9.14.1` plus `Cabal 3.16.1.0` is documented in
+  `documents/engineering/implementation_boundaries.md`
+- the new `documents/engineering/daemon_lifecycle.md` exists and is cross-linked from
+  `documents/architecture/runtime_modes.md` and
+  `documents/operations/cluster_bootstrap_runbook.md`
+- `documents/reference/cli_reference.md` carries the output-rules and CLI-introspection contract
+- `documents/development/testing_strategy.md` lists exactly the four supported test-suite stanzas
+  (`infernix-unit`, `infernix-integration`, `infernix-haskell-style`,
+  `infernix-daemon-lifecycle`) and records the explicit Pulumi exception
+- root `HASKELL_CLI_TOOL.md` is deleted and the deletion is ledgered in
+  [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md)
+- root `README.md`, `AGENTS.md`, and `CLAUDE.md` link into the new homes rather than duplicating
+  doctrine content
+
+### Validation
+
+- `infernix lint docs` passes after the distributed governed docs and root docs are updated
+- `infernix docs check` fails if any governed doc still names `ormolu` as canonical, omits the
+  fourmolu pin, references the deleted root `HASKELL_CLI_TOOL.md`, or claims a `pulumi` stanza is
+  part of the supported contract
+- `src/Infernix/Lint/Docs.hs` gains validators for those drift conditions
+
+### Remaining Work
+
+As listed in deliverables until landed.
+
 ## Remaining Work
 
-None.
+- Sprint 0.9 is `Planned` and not yet executed; the root `HASKELL_CLI_TOOL.md` still exists, the
+  governed docs still describe the pre-doctrine formatter and test-stanza shape, and the new
+  `documents/engineering/daemon_lifecycle.md` does not yet exist.
 
 ## Documentation Requirements
 
 **Engineering docs to create/update:**
 - `documents/documentation_standards.md` - canonical ownership and summary-versus-source rules
 - `documents/README.md` - docs-suite index and entry points
-- `documents/engineering/build_artifacts.md` - build-artifact and generated-output doctrine
+- `documents/engineering/build_artifacts.md` - build-artifact, generated-output, and
+  forbidden-surfaces doctrine
 - `documents/engineering/edge_routing.md` - routing ownership baseline
+- `documents/engineering/implementation_boundaries.md` - typed Command + CommandSpec, typed
+  Subprocess, Plan/Apply, Prerequisites DAG, AppError, capability classes, RetryPolicy,
+  reconciler discipline, GADT state machines
+- `documents/engineering/k8s_storage.md` - smart constructors for paired resources, DNS-1123
+  naming helpers
+- `documents/engineering/storage_and_state.md` - at-least-once event processing with
+  `processed_at` tracking
+- `documents/engineering/daemon_lifecycle.md` (new) - seven-step daemon lifecycle, health
+  endpoints, co-log structured logging, BootConfig/LiveConfig split, SIGHUP hot reload, Env
+  record with test hooks
 
 **Product or reference docs to create/update:**
 - `README.md` - orientation layer aligned with the governed docs
 - `AGENTS.md` - governed automation entry document
 - `CLAUDE.md` - governed automation entry document
+- `documents/development/haskell_style.md` - fourmolu + hlint + cabal format stack,
+  `fourmolu.yaml` and `.hlint.yaml` pinning, paired `--write` semantics, style as Cabal
+  test-suite stanza
+- `documents/development/testing_strategy.md` - test-suite stanzas including
+  `infernix-daemon-lifecycle`, daemon-lifecycle test category, explicit Pulumi exception
+- `documents/reference/cli_reference.md` - stdout/stderr output rules, `--format` and
+  `--color` flag contract, CLI introspection commands
+- `documents/architecture/runtime_modes.md` - cross-link to `daemon_lifecycle.md`
+- `documents/operations/cluster_bootstrap_runbook.md` - cross-link to reconciler discipline in
+  `implementation_boundaries.md`
 
 **Cross-references to add:**
 - keep [DEVELOPMENT_PLAN/README.md](README.md), [00-overview.md](00-overview.md), and

@@ -56,9 +56,9 @@
   the supported `8 CPU / 16 GiB` profile before Docker-backed work, and lets Apple adapter setup
   or validation paths reconcile Homebrew `python@3.12` plus a user-local Poetry bootstrap on
   demand
-- the governed Apple lifecycle now reruns cleanly through `doctor`, `build`, `up`, `status`,
-  `test`, and `down`; routed Apple Playwright readiness probes `127.0.0.1` from the host while
-  the browser container joins the private Docker `kind` network and targets the Kind
+- on May 11, 2026, the governed Apple lifecycle reran cleanly through `doctor`, `build`, `up`,
+  `status`, `test`, and `down`; routed Apple Playwright readiness probes `127.0.0.1` from the
+  host while the browser container joins the private Docker `kind` network and targets the Kind
   control-plane DNS, and retained Kind state is replayed into and out of the worker rather than
   bind-mounted
 - Monitoring is not a supported first-class surface.
@@ -127,6 +127,20 @@
 | Unit validation | `infernix test unit` | validate Haskell runtime behavior plus PureScript unit suites |
 | Integration validation | `infernix test integration` | validate the built substrate's published catalog contract through one substrate-aware integration suite that traverses the README matrix rows, selects the active engine from the generated `.dhall`, covers every generated active-substrate catalog entry, and carries the supported real-cluster HA or lifecycle assertions |
 | Routed E2E validation | `infernix test e2e` | exercise the real routed browser surface for the built substrate through a substrate-agnostic Playwright suite that relies on `infernix-demo` to read the generated `.dhall` and dispatch the correct engine |
+| Typed subprocess interpreter | `src/Infernix/Subprocess.hs` (planned, Phase 1 Sprint 1.13) | builds typed `Subprocess` values in pure code and runs them through one of two boundary functions (`runStreaming`, `capture`); the only supported IO path for subprocess execution across cluster lifecycle, lint, host prereqs, and workflow code |
+| Prerequisite registry | `src/Infernix/Prerequisites.hs` (planned, Phase 1 Sprint 1.14) | single `prerequisiteRegistry :: Map Text PrerequisiteNode` plus pure `transitiveClosure`; gates `apply` for one-shot commands and `acquire` for the daemon, with `nodeId` + description + remedy hint in every failure |
+| Plan/Apply runner | `src/Infernix/Plan.hs` (planned, Phase 1 Sprint 1.16) | pure `build :: Inputs -> Either AppError plan` plus effectful `apply :: Env -> plan -> IO ExitCode` plus a deterministic renderer used by `--dry-run` and `--plan-file <path>` on every state-changing command |
+| Capability-class layer | `src/Infernix/Capability/` (planned, Phase 3 Sprint 3.10) | per-subsystem classes (`HasMinIO`, `HasPostgres`, `HasPulsar`, `HasHarbor`) plus subsystem newtypes wrapping a unified `ServiceError`; `AsServiceError` typeclass enables generic retry |
+| Retry policy | `src/Infernix/Retry.hs` (planned, Phase 3 Sprint 3.11) | typed `RetryPolicy` value, pure `retryDelayMicros` exponential-backoff calculator, `serviceErrorRetryable` classifier, and the `retryServiceAction` combinator that works across every capability class |
+| Daemon admin server | `/healthz`, `/readyz`, `/metrics` on a dedicated admin port (planned, Phase 4 Sprint 4.14) | liveness, readiness (200 only after `acquire`, 503 during startup or drain), and Prometheus-text metrics for the `infernix service` daemon |
+| Structured daemon logger | `co-log` (or `co-log-core`) handle in `src/Infernix/Logger.hs` (planned, Phase 4 Sprint 4.15) | typed `field` helper plus JSON-per-line output to stderr; `putStrLn` and `print` are forbidden on daemon code paths |
+| Daemon configuration split | `BootConfig` (immutable after startup) plus `LiveConfig` (hot-reloadable via SIGHUP through a dedicated `TBQueue` worker), both decoded from a single Dhall file (planned, Phase 4 Sprint 4.16) | `BootConfig` carries listen host/port, pool sizes, drain deadline, `schemaVersion :: Natural`; `LiveConfig` carries log level, rate limits, feature flags, routing |
+| At-least-once event ledger column | `processed_at TIMESTAMP NULL` on the durable event table in operator-managed Patroni Postgres (planned, Phase 4 Sprint 4.18) | tracks delivery state for the durable Pulsar consumer; handlers are idempotent; events are processed `created_at ASC` and never deleted |
+| Inference request state machine | GADT-indexed `InferenceCmd (s :: InferenceStatus) (s' :: InferenceStatus) a` plus singleton witnesses in `src/Infernix/Runtime/State.hs` (planned, Phase 4 Sprint 4.19) | encodes the queued → claimed → in-progress → completed | failed | cancelled transition graph at the type level; invalid transitions are compile errors |
+| Forbidden-path registry | `forbiddenPathRegistry :: [PathPattern]` in `src/Infernix/Lint/Files.hs` (planned, Phase 1 Sprint 1.17) | negative-space lint; blocks `.github/workflows/`, `.husky/`, `.githooks/`, `.pre-commit-config.yaml`, and duplicate root `Makefile` / `justfile` / `Taskfile.yml` with the same error contract as generated-section drift |
+| Tracked-generated path registry | `trackedGeneratedPathRegistry :: [PathPattern]` consumed by `infernix lint files` and `infernix docs generate` (planned, Phase 5 Sprint 5.9) | full-generation half of the doctrine's two-category split; covers `web/src/Generated/` and `tools/generated_proto/`; refuses hand edits and writes idempotently |
+| Pinned formatter config | root `fourmolu.yaml` (planned, Phase 6 Sprint 6.23) | committed `column-limit: 100` plus the other doctrine fields; the canonical Haskell source formatter replaces `ormolu` |
+| Pinned hlint config | root `.hlint.yaml` (planned, Phase 6 Sprint 6.24) | `--with-group=default` plus `--with-group=extra` plus project-specific custom warnings for nested-case anti-patterns |
 
 ## Browser and API Surface
 
@@ -161,6 +175,7 @@
 | Browser <-> demo API | external (demo only) | JSON over HTTP | handwritten Haskell browser-contract ADTs plus generated PureScript bindings | production deployments do not expose this surface |
 | Inference requester <-> Pulsar | external | protobuf over Pulsar topics | repo-owned `.proto` schemas with Haskell and Python generated bindings | production inference surface |
 | Haskell worker <-> Python adapter | internal child-process boundary | protobuf over stdio | `src/Infernix/Runtime/Worker.hs` plus `python/adapters/` | invoked only through `poetry run` |
+| Daemon Dhall config -> running daemon | filesystem to in-process state | Dhall decoded via `Dhall.inputFile` (planned, Phase 4 Sprint 4.16) | `src/Infernix/Config/Daemon.hs` | distinct from `infernix-substrate.dhall`; the config file carries a `schemaVersion :: Natural`; SIGHUP triggers atomic swap of `LiveConfig` only; `BootConfig` drift is logged-and-ignored; YAML / JSON / TOML for daemon config is forbidden |
 
 ## State and Artifact Locations
 

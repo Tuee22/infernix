@@ -1,6 +1,7 @@
 # Phase 4: Inference Service and Durable Runtime
 
-**Status**: Done
+**Status**: Blocked
+**Blocked by**: Phase 0 Sprint 0.9
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
 
 > **Purpose**: Define the Haskell service runtime, the shared Python engine-adapter contract, the
@@ -11,10 +12,18 @@
 
 ## Phase Status
 
-Phase 4 is done. The active substrate comes from the staged substrate file, the runtime contract is
-expressed in substrate-owned terms, the Apple host-native inference lane is closed around the
-Pulsar bridge from the clustered demo surface into the host daemon, and supported engine execution
-now uses explicit runner implementations instead of placeholder or fallback paths.
+Phase 4 is reopened to land the daemon discipline this phase owns, but it is currently blocked on
+Phase 0 Sprint 0.9 because the documentation-distribution gate has not closed yet. Sprints 4.1–
+4.12 remain `Done`: the active substrate comes from the staged substrate file, the runtime
+contract is expressed in substrate-owned terms, the Apple host-native inference lane is closed
+around the Pulsar bridge from the clustered demo surface into the host daemon, and supported
+engine execution now uses explicit runner implementations instead of placeholder or fallback
+paths. Sprints 4.13–4.19 add the doctrine-required daemon lifecycle scaffold (load → prereq →
+acquire → ready → serve → drain → exit), the `/healthz` / `/readyz` / `/metrics` admin
+endpoints, structured JSON logging through `co-log`, the daemon Dhall config with `BootConfig`
+plus `LiveConfig` SIGHUP hot reload, the typed `Env` record with test hooks, at-least-once
+Pulsar event processing with `processed_at` tracking, and a GADT-indexed state machine for the
+inference request lifecycle once the blocker clears.
 
 ## Current Repo Assessment
 
@@ -514,6 +523,265 @@ file-absent substrate-selection fallback from the runtime contract.
 ### Remaining Work
 
 None.
+
+---
+
+## Sprint 4.13: Daemon Lifecycle Scaffold [Blocked]
+
+**Status**: Blocked
+**Blocked by**: Phase 0 Sprint 0.9
+**Implementation**: `src/Infernix/Service.hs`, `src/Infernix/Pulsar.hs`
+**Docs to update**: `documents/engineering/daemon_lifecycle.md`, `documents/architecture/runtime_modes.md`
+
+### Objective
+
+Rebuild `infernix service` around the doctrine's seven-step lifecycle so resource acquisition,
+readiness, serve, drain, and exit are explicit, bracketed, and signal-driven.
+
+### Deliverables
+
+- `src/Infernix/Service.hs` (currently a 25-line shim into `Pulsar.hs::runProductionDaemon`)
+  hosts the lifecycle entry point load → prereq → acquire → ready → serve → drain → exit
+- every resource acquisition uses `bracket` or `bracketOnError`; worker concurrency uses
+  `withAsync` / `race` / `replicateConcurrently`; `forkIO` is forbidden on daemon code paths
+- SIGTERM and SIGINT install handlers that fill a shared `TMVar ()`; the main loop and workers
+  observe the shutdown signal via `race`; a second SIGTERM (or SIGKILL) terminates immediately
+- drain is bounded (default 30 seconds, configurable via `LiveConfig` introduced in Sprint 4.16);
+  the daemon stops accepting new work, finishes in-flight requests up to the deadline, then
+  closes
+
+### Validation
+
+- the daemon-lifecycle test stanza added in Phase 6 Sprint 6.26 spawns `infernix service`, polls
+  `/readyz`, sends SIGTERM, and asserts graceful shutdown within the drain deadline
+
+### Remaining Work
+
+As listed in deliverables until landed.
+
+---
+
+## Sprint 4.14: Health Endpoints (`/healthz`, `/readyz`, `/metrics`) [Blocked]
+
+**Status**: Blocked
+**Blocked by**: Phase 0 Sprint 0.9
+**Implementation**: `src/Infernix/Service.hs`, `src/Infernix/Service/Admin.hs` (new)
+**Docs to update**: `documents/engineering/daemon_lifecycle.md`, `documents/architecture/runtime_modes.md`
+
+### Objective
+
+Expose the doctrine's three required HTTP health endpoints on a dedicated admin port distinct
+from any protocol surface.
+
+### Deliverables
+
+- `/healthz` (liveness) returns 200 while the process is alive
+- `/readyz` (readiness) returns 200 only after `acquire` completes and 503 during startup or
+  drain
+- `/metrics` exposes Prometheus-text exposition; client library choice integrates with `co-log`
+  and the daemon `Env`
+- the admin server starts as part of the lifecycle's `ready` step and stops as part of `drain`
+
+### Validation
+
+- `tasty-golden` tests cover `/healthz` and `/readyz` response shapes
+- the daemon-lifecycle test polls `/readyz` instead of `threadDelay`-based probes
+
+### Remaining Work
+
+As listed in deliverables until landed.
+
+---
+
+## Sprint 4.15: Structured JSON Logging via `co-log` [Blocked]
+
+**Status**: Blocked
+**Blocked by**: Phase 0 Sprint 0.9
+**Implementation**: `src/Infernix/Logger.hs` (new), `src/Infernix/Service.hs`, `src/Infernix/Pulsar.hs`, daemon-path call sites
+**Docs to update**: `documents/engineering/daemon_lifecycle.md`
+
+### Objective
+
+Replace `putStrLn` / `print` on daemon code paths with structured JSON logging via `co-log` and
+the doctrine's typed `field` helpers.
+
+### Deliverables
+
+- new `src/Infernix/Logger.hs` wraps `co-log` (or `co-log-core`) and exposes the typed `field ::
+  ToJSON a => Text -> a -> (Text, Aeson.Value)` helper plus `logDebug` / `logInfo` / `logWarn` /
+  `logError` convenience wrappers
+- daemon stderr emits one JSON line per event with `timestamp`, `level`, `event`, and `details`
+- every `putStrLn` / `print` on daemon code paths (in `src/Infernix/Pulsar.hs`,
+  `src/Infernix/Service.hs`, and related worker modules) is replaced
+- the log level is set by `BootConfig` at startup and refreshed from `LiveConfig` on every hot
+  reload (Sprint 4.16)
+
+### Validation
+
+- integration tests assert daemon stderr is line-delimited JSON
+- unit tests assert the `field` helper is type-safe (compile-time check)
+
+### Remaining Work
+
+As listed in deliverables until landed.
+
+---
+
+## Sprint 4.16: Dhall Daemon Config, `BootConfig` / `LiveConfig` Split, SIGHUP Hot Reload [Blocked]
+
+**Status**: Blocked
+**Blocked by**: Phase 0 Sprint 0.9
+**Implementation**: `src/Infernix/Config/Daemon.hs` (new), `src/Infernix/Service.hs`, supporting `.dhall` types and defaults committed under the daemon config tree
+**Docs to update**: `documents/engineering/daemon_lifecycle.md`
+
+### Objective
+
+Land the daemon configuration discipline: a single Dhall file, a compile-time split between
+`BootConfig` (immutable after startup) and `LiveConfig` (hot-reloadable), and SIGHUP-driven
+atomic swap through a dedicated `TBQueue ()` worker.
+
+### Deliverables
+
+- `data Config = Config { configBoot :: BootConfig, configLive :: LiveConfig }` is decoded from
+  a single `.dhall` file by `Dhall.inputFile`
+- `BootConfig` carries listen host and port, pool sizes, drain deadline, and `schemaVersion ::
+  Natural`; `LiveConfig` carries log level, rate limits, feature flags, and the routing table
+- SIGHUP installs a signal handler that enqueues a reload request on a `TBQueue ()`; a dedicated
+  reload worker spawned via `withAsync` re-decodes the file, validates `schemaVersion`, rejects
+  `BootConfig` drift (log at warn level, emit `config_boot_changes_ignored`, keep the running
+  `BootConfig`), and atomically `writeTVar envLiveConfig` on success
+- `fsnotify` / `inotify` / `mtime` polling and YAML / JSON / TOML for daemon config are forbidden
+- the daemon config is distinct from `infernix-substrate.dhall`, which remains the substrate
+  selector and continues to carry banner-prefixed JSON under its legacy filename
+
+### Validation
+
+- the daemon-lifecycle test edits the daemon Dhall config, sends SIGHUP, and asserts `LiveConfig`
+  updates atomically while `BootConfig` drift is logged-and-ignored
+- golden tests cover the reload-failure log shapes (`config_reload_failed`,
+  `config_boot_changes_ignored`, `config_schema_mismatch`, `config_reloaded`)
+
+### Remaining Work
+
+As listed in deliverables until landed.
+
+---
+
+## Sprint 4.17: `Env` Record with Test Hooks [Blocked]
+
+**Status**: Blocked
+**Blocked by**: Phase 0 Sprint 0.9
+**Implementation**: `src/Infernix/Env.hs` (new or expanded), `src/Infernix/Service.hs`, daemon worker modules
+**Docs to update**: `documents/engineering/daemon_lifecycle.md`
+
+### Objective
+
+Standardize the daemon `Env` record around the doctrine's prescribed baseline and add observable
+test hooks so async behavior is testable without typeclass mocking or `threadDelay`.
+
+### Deliverables
+
+- `data Env = Env { envBootConfig :: BootConfig, envLiveConfig :: TVar LiveConfig, envLogger ::
+  Logger, envMetrics :: MetricsRegistry, envShutdown :: TMVar (), envResources :: Resources,
+  envAfterConsumerClaim :: UUID -> IO (), envBeforeMessageAck :: MessageId -> IO (),
+  envOnConnectionEstablished :: ConnectionId -> IO () }`
+- a production factory builds `Env` with no-op hooks (`const (pure ())`); a `mkTestEnv` factory
+  injects observable hooks
+- `Env` is threaded via `ReaderT Env IO`; global `IORef`s for any of these fields are forbidden
+
+### Validation
+
+- daemon worker tests use injected hooks instead of `threadDelay` to observe async ordering
+- a forbidden-import or style check rejects global `IORef`s for daemon-owned state
+
+### Remaining Work
+
+As listed in deliverables until landed.
+
+---
+
+## Sprint 4.18: At-Least-Once Pulsar Event Processing [Blocked]
+
+**Status**: Blocked
+**Blocked by**: Phase 0 Sprint 0.9
+**Implementation**: `src/Infernix/Pulsar.hs`, `src/Infernix/Events.hs` (new), Patroni Postgres durable event table migration
+**Docs to update**: `documents/engineering/storage_and_state.md`
+
+### Objective
+
+Land the at-least-once event-processing discipline for the durable inference-request consumer:
+idempotent handlers, immutable event records, and an explicit `processed_at` column tracking
+delivery state.
+
+### Deliverables
+
+- the durable event table in the operator-managed Patroni Postgres gains a `processed_at
+  TIMESTAMP NULL` column; the migration is reconciled by `infernix cluster up`
+- new `src/Infernix/Events.hs` exposes `recordEvent`, `markEventProcessed`, and
+  `fetchUnprocessedEvents` with the doctrine's signatures and SQL shape
+- handlers process unprocessed events in `created_at ASC` order, perform side effects
+  idempotently, and call `markEventProcessed` after success; events are never deleted after
+  processing
+- the at-least-once invariant is documented inline at the handler entry point
+
+### Validation
+
+- integration tests against a real durable Pulsar topic and Patroni Postgres assert duplicate
+  delivery does not produce duplicate side effects
+- handler idempotency tests cover the natural-identifier and event-ID-deduplication strategies
+
+### Remaining Work
+
+As listed in deliverables until landed.
+
+---
+
+## Sprint 4.19: GADT-Indexed State Machine for Inference Request Lifecycle [Blocked]
+
+**Status**: Blocked
+**Blocked by**: Phase 0 Sprint 0.9
+**Implementation**: `src/Infernix/Runtime/State.hs` (new or expanded), `src/Infernix/Runtime.hs`, `src/Infernix/Pulsar.hs`
+**Docs to update**: `documents/engineering/implementation_boundaries.md`
+
+### Objective
+
+Lift the inference request lifecycle (queued → claimed → in-progress → completed | failed |
+cancelled) onto a GADT-indexed state machine with singleton witnesses so invalid transitions
+become compile errors.
+
+### Deliverables
+
+- new `data InferenceStatus = Queued | Claimed | InProgress | Completed | Failed | Cancelled`
+  plus singleton `data SInferenceStatus (s :: InferenceStatus)` with constructors `SQueued`,
+  `SClaimed`, `SInProgress`, `SCompleted`, `SFailed`, `SCancelled`
+- `data InferenceCmd (s :: InferenceStatus) (s' :: InferenceStatus) a where ...` carries the
+  legal transitions: `Claim :: ... -> InferenceCmd 'Queued 'Claimed ()`, `Start :: ... ->
+  InferenceCmd 'Claimed 'InProgress ()`, `Complete :: ... -> InferenceCmd 'InProgress
+  'Completed Result`, `Fail :: ... -> InferenceCmd 'InProgress 'Failed Reason`, `Cancel :: ...
+  -> InferenceCmd 'Queued 'Cancelled ()` and similar
+- existential wrapping `data SomeInferenceRequest where SomeInferenceRequest ::
+  SInferenceStatus s -> InferenceHandle s -> SomeInferenceRequest` recovers type information for
+  DB-loaded requests
+- the existing `RuntimeMode`-adjacent simple ADTs that represent inference status fold into the
+  GADT or are removed
+
+### Validation
+
+- compile-time tests (using `should fail to typecheck` style or doctests) assert that invalid
+  transitions like "completing a queued request" do not compile
+- runtime golden tests cover the legal transition graph end-to-end through the Pulsar consumer
+
+### Remaining Work
+
+As listed in deliverables until landed.
+
+## Remaining Work
+
+- Sprints 4.13–4.19 are all `Blocked` on Phase 0 Sprint 0.9. `src/Infernix/Service.hs` is still
+  a 25-line shim, there are no `/healthz` / `/readyz` / `/metrics` endpoints, daemon logging is
+  plain `putStrLn` and `print`, there is no daemon Dhall config or SIGHUP reload path, the typed
+  `Env` record with test hooks does not exist, the Patroni Postgres event table has no
+  `processed_at` column, and the inference status enum is a plain ADT rather than a GADT.
 
 ---
 

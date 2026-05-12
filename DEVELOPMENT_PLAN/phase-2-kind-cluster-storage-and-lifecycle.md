@@ -1,6 +1,7 @@
 # Phase 2: Kind Cluster Storage and Lifecycle
 
-**Status**: Done
+**Status**: Blocked
+**Blocked by**: Phase 0 Sprint 0.9
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
 
 > **Purpose**: Define the supported Kind bootstrap path, the manual storage doctrine, the Helm
@@ -10,10 +11,16 @@
 
 ## Phase Status
 
-Phase 2 is complete. `cluster up` republishes the staged substrate payload into
-`ConfigMap/infernix-demo-config`, the repo-local publication mirror records that payload, the
-chart mounts the shared `/opt/build/infernix-substrate.dhall` path, and the Linux control-plane
-launcher closes around the baked-image outer-container flow.
+Phase 2 is reopened to land the reconciler-discipline and smart-constructor doctrine items it
+owns, but it is currently blocked on Phase 0 Sprint 0.9 because the documentation-distribution
+gate has not closed yet. Sprints 2.1–2.9 remain `Done`: `cluster up` already republishes the
+staged substrate payload into `ConfigMap/infernix-demo-config`, the repo-local publication mirror
+records that payload, the chart mounts the shared `/opt/build/infernix-substrate.dhall` path, and
+the Linux control-plane launcher closes around the baked-image outer-container flow. Sprint 2.10
+adds the explicit reconciler-discipline restatement of `cluster up` / `cluster down` (no
+`--force`, no install / upgrade / repair siblings; check-before-mutate steps) and introduces the
+`mkStorageBinding` smart constructor for `infernix-manual` PV plus PVC pairs derived from a
+single seed once the blocker clears.
 
 ## Storage Doctrine
 
@@ -338,6 +345,61 @@ one Compose-driven outer container for both Linux substrates.
 ### Remaining Work
 
 None.
+
+---
+
+## Sprint 2.10: Reconciler Discipline and Smart Constructors for Paired Resources [Blocked]
+
+**Status**: Blocked
+**Blocked by**: Phase 0 Sprint 0.9
+**Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Storage.hs`, `src/Infernix/Plan.hs` (from Sprint 1.16), `chart/templates/persistentvolumeclaim-service-data.yaml`
+**Docs to update**: `documents/engineering/k8s_storage.md`, `documents/engineering/implementation_boundaries.md`, `documents/operations/cluster_bootstrap_runbook.md`
+
+### Objective
+
+Restate `infernix cluster up` and `infernix cluster down` as the canonical reconcile entrypoints
+per the Haskell CLI doctrine, port them onto the Plan/Apply scaffold from Sprint 1.16, and
+introduce smart constructors for paired Kubernetes resources so a single seed derives both halves
+of a binding.
+
+### Deliverables
+
+- `infernix cluster up` and `infernix cluster down` are documented as the only mutation
+  entrypoints for cluster lifecycle: no `--force`, no `--reinstall`, and no separate `install` /
+  `upgrade` / `repair` / `force-install` siblings; re-running is the repair; every internal step
+  is checked-before-mutated and safe to skip when its postcondition is already satisfied
+- `applyBootstrapState`, `applyNamespace`, and `applyStorageClass` in `src/Infernix/Cluster.hs`
+  port onto the Plan/Apply scaffold; the cluster reconcile emits a typed `ClusterPlan` (or a
+  richer step ADT) whose steps are typed `Subprocess` values from Sprint 1.13 and that supports
+  `--dry-run`
+- new `mkStorageBinding :: namespace -> release -> workload -> claimTemplate -> ordinal ->
+  storageClass -> capacity -> [accessModes] -> StorageBinding` smart constructor derives a paired
+  `PlannedPV` plus `ExpectedPVC` for `infernix-manual` storage from a single seed, with
+  `boundedResourceName` / `sanitizeResourceName` / `hashSuffix` helpers enforcing DNS-1123
+  naming
+- the `infernix-service` durable claim chart materializes through `mkStorageBinding` instead of
+  hand-authored standalone PVC YAML
+
+### Validation
+
+- `tasty-golden` plan-render targets cover a fresh-cluster reconcile (non-empty plan) and a
+  steady-state reconcile (empty plan)
+- integration tests verify that re-running `infernix cluster up` against a steady-state cluster
+  is a no-op and that the generated PV name equals `"pv-"` plus the SHA256-derived suffix of
+  `namespace/claim`
+- property tests verify `boundedResourceName` always returns a DNS-1123-valid name under or at
+  63 characters
+
+### Remaining Work
+
+As listed in deliverables until landed.
+
+## Remaining Work
+
+- Sprint 2.10 is `Blocked` on Phase 0 Sprint 0.9. `infernix cluster up` and `infernix cluster
+  down` are not yet expressed as Plan/Apply pairs, and there is no `mkStorageBinding` smart
+  constructor; the storage class is created and the durable PV is materialized through monolithic
+  imperative functions today.
 
 ---
 
