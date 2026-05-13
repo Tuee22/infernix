@@ -34,11 +34,12 @@
 
 ## Lifecycle Failure Classification
 
-- on May 12, 2026, a cold Apple lifecycle investigation confirmed that long first-run waits in
-  Docker build finalization, Harbor publication, Kind-worker image preload, and retained-state
-  replay were real convergence, not hard product failure; the monitored Apple
-  `build-cluster-images` phase stayed healthy well past twenty minutes before Harbor publication
-  began on that rerun
+- on May 13, 2026, an Apple lifecycle investigation confirmed that long waits in Docker build
+  finalization, Harbor publication, Kind-worker image preload, and retained-state replay were real
+  convergence, not hard product failure; the monitored Apple `build-cluster-images` phase stayed
+  healthy well past thirty minutes before Harbor publication began, Harbor Docker pushes used
+  readiness-gated bounded retries across transient registry resets, and the full `test all` lane
+  still completed lint, unit, integration, and browser coverage
 - the supported doctrine is inactivity-aware: elapsed wall time alone is not enough to classify
   `cluster up`, `cluster down`, `test integration`, `test e2e`, or `test all` as failed when the
   active path still owns cluster lifecycle

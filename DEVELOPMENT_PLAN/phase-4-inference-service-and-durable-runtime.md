@@ -458,10 +458,6 @@ generation.
 
 None.
 
-## Remaining Work
-
-None.
-
 ## Sprint 4.12: Substrate-Owned Daemon Placement, Startup Selection, and Fallback Removal [Done]
 
 **Status**: Done

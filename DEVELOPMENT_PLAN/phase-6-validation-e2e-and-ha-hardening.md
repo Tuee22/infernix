@@ -12,14 +12,15 @@
 
 ## Phase Status
 
-Phase 6 is closed around the implemented validation and doctrine surface. Sprints 6.1–6.23 are
+Phase 6 is closed around the implemented validation and doctrine surface. Sprints 6.1–6.24 are
 now `Done`: the validation entrypoints, routed coverage, governed-root-document metadata closure,
 structured CLI-registry closure, route-hardening cleanup, supported bootstrap lifecycle fixes, and
-false-negative doctrine closure are present in the current worktree, and the supported test story
-is substrate-specific. The Apple routed path validates the intended host-native inference doctrine
-end to end: routed manual inference bridges through Pulsar into the host daemon, the browser suite
-verifies `daemonLocation` and `inferenceDispatchMode`, and supported engine runners fail fast on
-unsupported adapters instead of returning placeholder success. The worktree also carries the
+false-negative doctrine plus Harbor publication retry closures are present in the current
+worktree, and the supported test story is substrate-specific. The Apple routed path validates the
+intended host-native inference doctrine end to end: routed manual inference bridges through Pulsar
+into the host daemon, the browser suite verifies `daemonLocation` and `inferenceDispatchMode`, and
+supported engine runners fail fast on unsupported adapters instead of returning placeholder
+success. The worktree also carries the
 formatter-toolchain closure that is actually implemented today:
 `src/Infernix/Lint/HaskellStyle.hs` drives `ormolu` and `hlint` through the dedicated compatible
 formatter compiler `ghc-9.12.4`, and the Linux substrate image preinstalls that compiler beside
@@ -49,17 +50,20 @@ cleanly through `./bootstrap/apple-silicon.sh doctor`, `build`, `up`, `status`, 
 `down`. On Apple, routed Playwright no longer times out on `host.docker.internal`: host-side
 readiness probes `127.0.0.1:<edge-port>`, the browser container joins the private Docker `kind`
 network and targets the Kind control-plane DNS on port `30090`, and the dedicated Playwright
-image no longer bakes a conflicting `NO_COLOR` default. On May 12, 2026, the supported Apple
+image no longer bakes a conflicting `NO_COLOR` default. On May 13, 2026, the supported Apple
 lifecycle reran cleanly through `./bootstrap/apple-silicon.sh doctor`, `build`, `up`, `status`,
 `test`, and `down` on the patched shared lifecycle: `cluster status` reported the active
 in-progress lifecycle phase, child-operation detail, and heartbeat while `up` and `down` were
-still running; the governed testing doctrine, operator-facing testing strategy, lifecycle
-runbooks, and CLI references now use the same inactivity-aware interpretation contract; and
-retained-state Harbor PostgreSQL replicas recovered through the supported targeted reinitialization
-path when timeline drift left replicas stopped after promotion. That cold rerun also confirmed
-that Apple `build-cluster-images` can remain healthy well past twenty minutes before Harbor
-publication begins and that the governed `test` lane may perform multiple internal cluster
-bring-up or teardown cycles before the outer bootstrap command returns.
+still running; steady-state status reported two nodes and sixty-five pods; final post-teardown
+status returned `clusterPresent: False`, `lifecycleStatus: idle`, and
+`lifecyclePhase: cluster-absent`; the governed testing doctrine, operator-facing testing strategy,
+lifecycle runbooks, and CLI references use the same inactivity-aware interpretation contract; and
+retained-state Harbor PostgreSQL replicas recovered through the supported targeted
+reinitialization path when timeline drift leaves replicas stopped after promotion. That rerun also
+confirmed that Apple `build-cluster-images` can remain healthy well past thirty minutes before
+Harbor publication begins, that Harbor image pushes are readiness-gated with bounded retries
+across transient registry resets, and that the governed `test` lane may perform multiple internal
+cluster bring-up or teardown cycles before the outer bootstrap command returns.
 
 ## Validation Surface
 
@@ -681,6 +685,9 @@ model, testing doctrine, and shared workflow-helper contract stop overclaiming c
 - `documents/engineering/testing.md` remains the sole canonical testing doctrine, and
   `documents/development/testing_strategy.md` is reduced to supporting operator-detail guidance
   instead of a second authoritative canonical validation surface
+- the obsolete root-level `HASKELL_CLI_TOOL.md` imported-doctrine note is removed so CLI,
+  style-guide, generated-section, and non-adoption guidance lives only in governed documents and
+  implementation-owned registries
 - `src/Infernix/Workflow.hs` owns the demo-config generated-banner constant and
   `src/Infernix/DemoConfig.hs` consumes that shared literal instead of keeping a parallel copy
 - docs lint and the cleanup ledger both record the closure so those stale guidance or duplicate
@@ -1018,7 +1025,7 @@ failure.
   first-run phases that can take minutes without emitting steady log lines
 - CLI reference docs describe the supported status or progress surfaces operators use before
   concluding that a lifecycle action actually failed
-- the plan, runbooks, and testing docs cite the May 12, 2026 Apple lifecycle rerun as the proof
+- the plan, runbooks, and testing docs cite the May 13, 2026 Apple lifecycle rerun as the proof
   point for the supported false-negative doctrine on the current worktree
 
 ### Validation
@@ -1032,6 +1039,43 @@ failure.
   fields during the in-progress `up` and `down` windows
 - the supported validation harness can now report timeout-while-still-progressing distinctly from
   hard lifecycle failure because the lifecycle surface exposes active phase and heartbeat data
+
+### Remaining Work
+
+None.
+
+---
+
+## Sprint 6.24: Harbor Publication Retry Hardening [Done]
+
+**Status**: Done
+**Implementation**: `src/Infernix/Cluster/PublishImages.hs`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/00-overview.md`, `DEVELOPMENT_PLAN/system-components.md`, `documents/development/testing_strategy.md`, `documents/engineering/testing.md`, `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`
+**Docs to update**: `documents/development/testing_strategy.md`, `documents/engineering/testing.md`, `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`
+
+### Objective
+
+Close the transient Harbor Docker-push failure mode exposed by the supported Apple lifecycle when
+large chart images briefly reset the registry connection during publication.
+
+### Deliverables
+
+- Docker pushes wait for Harbor registry readiness before every push attempt
+- Harbor image publication now uses eight bounded push attempts with capped retry backoff
+- a failed push still exits successfully when the expected tag is already present or a registry
+  pull proves the content became available despite the client-side push failure
+- plan, testing, and runbook docs record the May 13, 2026 Apple lifecycle proof point with the
+  current steady-state pod count and the supported retry interpretation
+
+### Validation
+
+- `PATH=/Users/matt/.ghcup/bin:$PATH /Users/matt/.ghcup/bin/cabal test infernix-unit` passes
+- `./bootstrap/apple-silicon.sh doctor`, `build`, `up`, `status`, `test`, and `down` pass on May
+  13, 2026 after the retry hardening
+- the full `./bootstrap/apple-silicon.sh test` lifecycle exercises the large Pulsar Harbor
+  publication path, integration coverage, routed Playwright E2E, retained-state replay, and final
+  cluster teardown successfully
+- final `./bootstrap/apple-silicon.sh status` reports `clusterPresent: False`,
+  `lifecycleStatus: idle`, and `lifecyclePhase: cluster-absent`
 
 ### Remaining Work
 
@@ -1057,7 +1101,8 @@ None.
 - `documents/engineering/implementation_boundaries.md` - ownership matrix, adapter-local versus shared-contract types, instance placement, and module-boundary rules
 - `documents/engineering/portability.md` - portable invariants versus substrate-specific detail, plus explicit current-status and validation sections where target direction still appears
 - `documents/engineering/storage_and_state.md` - owner or durability table, failure-mode rules, and cleanup contracts
-- `documents/engineering/monitoring.md` - create only if monitoring becomes a supported first-class surface in a later change
+- no `documents/engineering/monitoring.md` exists while monitoring remains unsupported; create it
+  only if monitoring becomes a supported first-class surface in a later change
 - `documents/operations/cluster_bootstrap_runbook.md` - test prerequisites and cluster reuse rules
 - `documents/operations/apple_silicon_runbook.md` - Apple matrix expectations and cold-start lifecycle timing doctrine
 - `documents/tools/postgresql.md` - PostgreSQL operator readiness and failover rules

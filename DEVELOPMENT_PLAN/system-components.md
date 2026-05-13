@@ -63,11 +63,13 @@
   and retained-state Apple reruns automatically reinitialize stopped Harbor PostgreSQL replicas
   from the current Patroni leader when timeline drift leaves replicas unready after promotion
 - Phase 6 records clean governed bootstrap reruns for `linux-cpu`, `linux-gpu`, and the
-  supported Apple lifecycle, including an Apple rerun on May 12, 2026 through `doctor`, `build`,
-  `up`, `status`, `test`, and `down`; that cold rerun also confirmed that Apple
-  `build-cluster-images` can stay healthy well past twenty minutes before Harbor publication
-  begins and that the governed `test` lane may perform multiple internal cluster bring-up or
-  teardown cycles before the outer bootstrap command returns
+  supported Apple lifecycle, including the latest Apple rerun on May 13, 2026 through `doctor`,
+  `build`, `up`, `status`, `test`, and `down`; that rerun also confirmed that Apple
+  `build-cluster-images` can stay healthy well past thirty minutes before Harbor publication
+  begins, that Harbor image pushes are readiness-gated with bounded retries across transient
+  registry resets, that steady-state status reports two nodes and sixty-five pods, and that the
+  governed `test` lane may perform multiple internal cluster bring-up or teardown cycles before
+  the outer bootstrap command returns
 - Monitoring is not a supported first-class surface.
 
 ## Operator and Host Components
@@ -104,7 +106,7 @@
 | Component | Technology | Deployment | Purpose | Durable state |
 |-----------|------------|------------|---------|---------------|
 | Kind and Helm lifecycle | Haskell control-plane orchestration in `cluster up` | host-native Apple CLI or Linux outer container | create or reuse Kind, reset StorageClasses, reconcile PVs, deploy Harbor first, publish the staged substrate payload, publish images, deploy the final chart, expose in-progress lifecycle phase, detail, and heartbeat state for status observers, retry once with a targeted Pulsar claim-root reset when retained ZooKeeper state is self-inconsistent, and reinitialize stopped retained Harbor PostgreSQL replicas from the current Patroni leader when timeline drift leaves replicas unready after promotion | `./.data/runtime/cluster-state.state`, `./.data/kind/<runtime-mode>/...` |
-| Harbor image preparation | Harbor plus Haskell image publication flow | Kind cluster plus control plane | bootstrap Harbor, mirror required images, and publish repo-owned images before later rollout | Harbor state under `./.data/kind/<runtime-mode>/...` |
+| Harbor image preparation | Harbor plus Haskell image publication flow | Kind cluster plus control plane | bootstrap Harbor, mirror required images, and publish repo-owned images before later rollout; Docker pushes wait for registry readiness before each attempt and use bounded retries with capped backoff so transient Harbor resets during large-image publication do not fail the lifecycle prematurely | Harbor state under `./.data/kind/<runtime-mode>/...` |
 | PostgreSQL substrate | Percona Kubernetes operator plus Patroni PostgreSQL | Kind cluster | only supported in-cluster PostgreSQL contract for Harbor and later services; retained-state reruns may trigger targeted Patroni replica reinitialization from the current leader when stopped replicas need a fresh base backup after timeline advancement | `./.data/kind/<runtime-mode>/...` |
 | Publication state | repo-local JSON plus routed `/api/publication` surface | repo-local state and demo API | reports control-plane context, the direct `infernix service` daemon location, the routed demo API upstream mode, any Apple host-inference bridge mode, the active substrate through its current `runtimeMode` field, routes, and upstream health metadata | `./.data/runtime/publication.json` |
 | Edge Gateway controller | Helm-installed Envoy Gateway controller | Kind cluster | owns all browser-visible and host-consumed routing | none |

@@ -59,11 +59,12 @@ mode-specific coverage, matrix behavior, and operator detail behind those canoni
 
 ## Lifecycle Interpretation
 
-- on May 12, 2026, a cold Apple rerun showed that long waits in `cluster up` and `cluster down`
-  can still be healthy when the lifecycle is building images, publishing them into Harbor,
-  preloading them onto the Kind worker, or replaying retained state; the monitored Apple
-  `build-cluster-images` phase stayed healthy well past twenty minutes before Harbor publication
-  began on that rerun
+- on May 13, 2026, an Apple lifecycle rerun showed that long waits in `cluster up` and
+  `cluster down` can still be healthy when the lifecycle is building images, publishing them into
+  Harbor, preloading them onto the Kind worker, or replaying retained state; the monitored Apple
+  `build-cluster-images` phase stayed healthy well past thirty minutes before Harbor publication
+  began, and the large Pulsar image publication path completed with readiness-gated bounded
+  Docker-push retries in place
 - the supported operator check during those waits is `infernix cluster status`
 - when that status surface reports `lifecycleStatus: in-progress`, use `lifecyclePhase`,
   `lifecycleDetail`, and `lifecycleHeartbeatAt` to distinguish real progress from a stale wait

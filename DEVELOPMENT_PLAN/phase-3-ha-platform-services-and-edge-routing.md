@@ -308,10 +308,6 @@ rendered HTTPRoute set, publication metadata, and chart-facing route inputs.
 
 None.
 
-## Remaining Work
-
-None.
-
 ## Sprint 3.9: Clustered Demo Surface and Apple Host-Inference Bridge [Done]
 
 **Status**: Done
@@ -369,7 +365,8 @@ None.
 - `documents/tools/postgresql.md` - Percona operator and Patroni deployment rules
 - `documents/tools/pulsar.md` - Pulsar deployment and routed surfaces
 - `documents/tools/harbor.md` - Harbor deployment and routed portal or API split
-- `documents/engineering/monitoring.md` - required if monitoring remains a supported first-class surface after route or service closure
+- no monitoring engineering doc is created while monitoring remains unsupported; Monitoring is not
+  a supported first-class surface.
 
 **Product or reference docs to create/update:**
 - `documents/reference/web_portal_surface.md` - browser-visible route inventory and active-substrate catalog behavior

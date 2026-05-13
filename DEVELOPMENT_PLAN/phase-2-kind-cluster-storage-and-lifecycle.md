@@ -44,12 +44,14 @@ monitored Docker build, Harbor publication, Kind-worker preload, and Apple retai
 windows; staged `infernix-substrate.dhall` writes are atomic so concurrent status readers do not
 observe truncated payloads; and retained-state Apple reruns automatically reinitialize stopped
 Harbor PostgreSQL replicas from the current Patroni leader when timeline drift leaves replicas
-unready after promotion. Phase 6 records a clean supported `./bootstrap/apple-silicon.sh`
-lifecycle rerun on May 12, 2026 through `doctor`, `build`, `up`, `status`, `test`, and `down`,
-with `status` reporting in-progress phase data during both `up` and `down`; that cold rerun also
-confirmed that Apple `build-cluster-images` can stay healthy well past twenty minutes before
-Harbor publication begins and that the governed `test` lane may perform multiple internal cluster
-bring-up or teardown cycles before the outer bootstrap command returns.
+unready after promotion. Phase 6 records the latest clean supported
+`./bootstrap/apple-silicon.sh` lifecycle rerun on May 13, 2026 through `doctor`, `build`, `up`,
+`status`, `test`, and `down`, with `status` reporting in-progress phase data during both `up`
+and `down`; that rerun also confirmed that Apple `build-cluster-images` can stay healthy well
+past thirty minutes before Harbor publication begins, that Harbor image pushes are
+readiness-gated with bounded retries across transient registry resets, that steady-state status
+reports two nodes and sixty-five pods, and that the governed `test` lane may perform multiple
+internal cluster bring-up or teardown cycles before the outer bootstrap command returns.
 
 ## Sprint 2.1: Kind Bootstrap and StorageClass Reset [Done]
 
@@ -367,6 +369,8 @@ distinguish real failure from ongoing first-run progress.
 
 - `cluster up` surfaces explicit lifecycle phase markers for the shared image-build, Harbor
   publication, and Kind-worker preload steps instead of leaving multi-minute silent windows
+- Harbor image publication waits for registry readiness before Docker push attempts and retries
+  transient push resets with bounded backoff before treating publication as failed
 - `cluster down` surfaces the retained-state replay and Kind-deletion phases explicitly instead of
   presenting teardown as one opaque wait
 - the cluster lifecycle records enough active-phase detail that `cluster status` can report the
@@ -380,6 +384,8 @@ distinguish real failure from ongoing first-run progress.
 
 - a cold `./bootstrap/apple-silicon.sh up` surfaces the image-build, Harbor-publication, and
   Kind-worker preload phases explicitly while it is still making forward progress
+- the May 13, 2026 supported Apple lifecycle rerun exercises the large Pulsar image publication
+  path through Harbor and completes after the bounded Docker-push retry hardening
 - `./bootstrap/apple-silicon.sh down` surfaces the retained-state replay phase before Kind
   deletion when the Apple worker still owns durable cluster data
 - the supported status surface shows the in-progress lifecycle phase instead of only the last

@@ -152,7 +152,9 @@ static quality enforceable through canonical entrypoints.
 ### Deliverables
 
 - host-native Haskell builds materialize `./.build/infernix` and `./.build/infernix-demo`
-- outer-container build output stays under `./.build/outer-container/` through a host-anchored bind mount
+- outer-container staged substrate output stays under `./.build/outer-container/` through a
+  host-anchored bind mount, while cabal package state and cabal's build directory stay in the
+  image overlay
 - `cluster up` stages `infernix-substrate.dhall` under the active build root
 - the supported web build regenerates frontend contracts, runs `spago build`, and emits
   `web/dist/app.js`
@@ -161,7 +163,9 @@ static quality enforceable through canonical entrypoints.
 
 ### Validation
 
-- `find . -maxdepth 2 -name dist-newstyle` returns no repo-owned build tree on supported paths
+- direct Apple host builds install `./.build/infernix` and `./.build/infernix-demo`; any
+  `dist-newstyle/` tree is Cabal's disposable untracked build cache rather than a repo-owned
+  generated source path
 - `npm --prefix web run build` regenerates frontend contracts and emits `web/dist/app.js`
 - `infernix test lint` fails on docs drift, warning regressions, or build-artifact policy drift
 
@@ -335,7 +339,8 @@ supported browser workflow.
 - the launcher container sees `./.data/`, `./.build/`, the live `./compose.yaml`, and the Docker socket only
 - `docker volume ls` lists no `infernix-build` or `infernix-cabal-home` named volumes
 - `docker compose down -v` leaves `./.build/` and `./.data/` intact on the host
-- `docker run --rm --entrypoint=cat infernix-linux-cpu:local /etc/os-release` and similar smoke probes show `tini` runs as PID 1 and forwards signals to the wrapped process
+- `docker inspect infernix-linux-cpu:local --format '{{json .Config.Entrypoint}}'` shows
+  `/usr/bin/tini`, and smoke probes confirm normal launched commands run through that entrypoint
 - a fresh `docker compose run --rm infernix infernix test unit` against an empty `./.build/outer-container/` succeeds because cabal-home and the cabal builddir live at the toolchain's natural in-image locations and survive the bind mount untouched
 - `rg -n 'npx playwright' README.md documents src web/package.json` returns no supported workflow references
 

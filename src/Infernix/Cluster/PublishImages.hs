@@ -17,6 +17,7 @@ where
 import Control.Applicative ((<|>))
 import Control.Concurrent (threadDelay)
 import Control.Exception (SomeException, try)
+import Control.Monad (unless)
 import Data.Aeson
   ( FromJSON (parseJSON),
     Value,
@@ -111,6 +112,15 @@ loginAttempts = 6
 
 pullVerifyAttempts :: Int
 pullVerifyAttempts = 6
+
+pushAttempts :: Int
+pushAttempts = 8
+
+pushRetryBaseDelayMicros :: Int
+pushRetryBaseDelayMicros = 5000000
+
+pushRetryMaxDelayMicros :: Int
+pushRetryMaxDelayMicros = 30000000
 
 publishChartImagesFile :: HarborPublishOptions -> CommandMonitorFactory -> FilePath -> FilePath -> IO ()
 publishChartImagesFile options commandMonitorFactory renderedChartPath outputPath = do
@@ -217,7 +227,7 @@ publishIfNeeded manager options commandMonitorFactory sourceImage clientReposito
       verifyRegistryPull manager options commandMonitorFactory targetRef
 
 pushImageWithRetries :: Manager -> HarborPublishOptions -> CommandMonitorFactory -> String -> IO ()
-pushImageWithRetries manager options commandMonitorFactory targetRef = go (4 :: Int) ""
+pushImageWithRetries manager options commandMonitorFactory targetRef = go pushAttempts ""
   where
     (targetRepository, _, targetTag) = breakRepositoryAndTag targetRef
     repositoryPath = normalizeRepositoryPath targetRepository
@@ -225,6 +235,7 @@ pushImageWithRetries manager options commandMonitorFactory targetRef = go (4 :: 
       | remainingAttempts <= 0 =
           failWith ("docker push failed for " <> targetRef <> "\n" <> lastFailure)
       | otherwise = do
+          waitForRegistry manager options
           monitor <- commandMonitorFactory ("docker push " <> targetRef)
           result <- tryRunCommandMaybeMonitored "docker" ["push", targetRef] "" monitor
           case result of
@@ -235,7 +246,7 @@ pushImageWithRetries manager options commandMonitorFactory targetRef = go (4 :: 
               if tagPresent || registryPullable
                 then pure ()
                 else do
-                  let attemptsUsed = 5 - remainingAttempts
+                  let attemptsUsed = pushAttempts - remainingAttempts + 1
                   if remainingAttempts > 1
                     then do
                       putStrLn
@@ -243,11 +254,19 @@ pushImageWithRetries manager options commandMonitorFactory targetRef = go (4 :: 
                             <> targetRef
                             <> " after attempt "
                             <> show attemptsUsed
-                            <> "/4 failed"
+                            <> "/"
+                            <> show pushAttempts
+                            <> " failed"
                         )
-                      threadDelay (attemptsUsed * 5000000)
+                      ready <- registryReady manager (harborApiHost options)
+                      unless ready (waitForRegistry manager options)
+                      threadDelay (pushRetryDelayMicros attemptsUsed)
                       go (remainingAttempts - 1) failureMessage
                     else go 0 failureMessage
+
+pushRetryDelayMicros :: Int -> Int
+pushRetryDelayMicros attemptsUsed =
+  min pushRetryMaxDelayMicros (attemptsUsed * pushRetryBaseDelayMicros)
 
 registryPullSucceeds :: String -> IO Bool
 registryPullSucceeds imageRef =

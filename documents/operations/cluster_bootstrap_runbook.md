@@ -35,10 +35,11 @@
 - on Apple, retained Kind state under `./.data/kind/apple-silicon/` is replayed into and out of
   the worker instead of being bind-mounted, so large retained state can make `cluster up` and
   `cluster down` slower than the Linux lanes even when the supported flow is healthy
-- on May 12, 2026, a cold Apple investigation confirmed that long waits in retained-state replay,
+- on May 13, 2026, an Apple investigation confirmed that long waits in retained-state replay,
   Docker build finalization, Harbor publication, and Kind-worker image preload were healthy
   convergence rather than hard failure; the monitored Apple `build-cluster-images` phase stayed
-  healthy well past twenty minutes before Harbor publication began on that rerun
+  healthy well past thirty minutes before Harbor publication began, and Harbor Docker pushes used
+  readiness-gated bounded retries across transient registry resets during large-image publication
 - for `linux-gpu`, confirm the supported NVIDIA host satisfies the documented `nvidia-smi` and
   `docker run --gpus all` preflight contract before cluster creation
 - for `linux-gpu`, also confirm the host filesystem has substantial free space before `cluster up`
@@ -55,6 +56,9 @@
   supported path is still progressing
 - the current monitored long-running subprocess phases are the shared runtime `docker build`,
   Harbor image publication, Kind-worker Harbor preload, and Apple retained-state replay steps
+- Harbor image publication waits for registry readiness before Docker push attempts and retries
+  transient push resets with bounded backoff; treat registry-reset logs during large image pushes
+  as recoverable until the command exhausts that retry budget
 - on the governed Apple lane, `infernix test all` may trigger multiple internal cluster bring-up
   or teardown cycles before the outer command returns; apply the same heartbeat-driven failure
   classification to those internal rounds

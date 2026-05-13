@@ -17,11 +17,13 @@
   CLI, `kind`, `kubectl`, `helm`, and Node.js on demand, reconcile Colima to the supported
   `8 CPU / 16 GiB` profile before Docker-backed work, and let adapter setup or validation paths
   reconcile Homebrew `python@3.12` plus a user-local Poetry bootstrap when needed
-- on May 12, 2026, a cold Apple lifecycle investigation confirmed that long first-run waits can
-  still be healthy while the supported path is replaying retained Kind data, building the shared
-  runtime image, publishing it through Harbor, or preloading Harbor-backed images onto the Kind
-  worker; the monitored `build-cluster-images` phase stayed healthy well past twenty minutes
-  before Harbor publication began on that rerun
+- on May 13, 2026, an Apple lifecycle investigation confirmed that long waits can still be
+  healthy while the supported path is replaying retained Kind data, building the shared runtime
+  image, publishing it through Harbor, or preloading Harbor-backed images onto the Kind worker;
+  the monitored `build-cluster-images` phase stayed healthy well past thirty minutes before Harbor
+  publication began, Harbor Docker pushes used readiness-gated bounded retries across transient
+  registry resets, steady-state status reported two nodes and sixty-five pods, and final
+  post-teardown status reported `clusterPresent: False`
 - retained-state Apple reruns may also log a targeted Harbor PostgreSQL replica reinitialization
   from the current Patroni leader when stopped replicas need a fresh base backup after timeline
   advancement; treat that as supported retained-state repair rather than an unexpected failure mode
@@ -55,6 +57,9 @@ Direct reference path:
   `build-cluster-images`, `publish-harbor-images`, `preload-harbor-images`, and
   `replay-retained-state`; a cold `build-cluster-images` phase can remain healthy well past
   twenty minutes before Harbor publication begins
+- `publish-harbor-images` includes readiness-gated bounded retries for Docker push failures, so a
+  transient registry reset during large-image publication is not a hard failure unless the retry
+  budget is exhausted and the image is still neither tagged nor pullable
 - `./bootstrap/apple-silicon.sh test` is not a single cluster round-trip: the governed test lane
   may perform multiple internal cluster bring-up or teardown cycles through integration and E2E
   before the outer bootstrap command returns

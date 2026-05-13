@@ -254,10 +254,6 @@ directories mean generated output only.
 
 None.
 
-## Remaining Work
-
-None.
-
 ## Sprint 5.8: Clustered Demo Surface on Apple and Container-Owned Playwright Closure [Done]
 
 **Status**: Done

@@ -42,11 +42,14 @@ and Apple retained-state replay steps; generated substrate-file publication is a
 concurrent readers do not observe truncated payloads; and retained-state Apple reruns
 automatically reinitialize stopped Harbor PostgreSQL replicas from the current Patroni leader when
 timeline drift leaves replicas unready after promotion. Phase 6 records clean governed bootstrap
-reruns for the supported Linux and Apple lifecycle surfaces, including an Apple rerun on
-May 12, 2026 through `doctor`, `build`, `up`, `status`, `test`, and `down`; that cold rerun also
-confirmed that Apple `build-cluster-images` can stay healthy well past twenty minutes before
-Harbor publication begins and that the governed `test` lane may perform multiple internal cluster
-bring-up or teardown cycles before the outer bootstrap command returns.
+reruns for the supported Linux and Apple lifecycle surfaces, including the latest Apple rerun on
+May 13, 2026 through `doctor`, `build`, `up`, `status`, `test`, and `down`; that rerun also
+confirmed that Apple `build-cluster-images` can stay healthy well past thirty minutes before
+Harbor publication begins, that Harbor image pushes are readiness-gated with bounded retries
+across transient registry resets, that steady-state status reports two nodes and sixty-five pods,
+that the governed `test` lane may perform multiple internal cluster bring-up or teardown cycles
+before the outer bootstrap command returns, and that final post-teardown status returns
+`clusterPresent: False`, `lifecycleStatus: idle`, and `lifecyclePhase: cluster-absent`.
 
 | Area | Supported contract | Current repo state |
 |------|--------------------|--------------------|
