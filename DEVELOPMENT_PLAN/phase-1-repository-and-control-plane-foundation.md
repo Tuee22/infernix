@@ -21,7 +21,9 @@ The repo matches the supported Phase 1 ownership contract: the control plane has
 command registry, the governed root docs point at canonical `documents/` topics with explicit
 metadata, the Linux launcher uses a baked image snapshot, and `infernix-substrate.dhall` is
 staged under the build root through explicit helper invocations instead of file-absent fallback
-logic.
+logic. The Linux substrate Dockerfile also materializes a build-arg-selected copy inside the image
+overlay during image build, but supported Compose runs bind-mount the host `./.build/` tree over
+that location and restage the host-visible file before lifecycle or aggregate test commands.
 
 ## Substrate Foundation
 
@@ -128,9 +130,12 @@ different products.
 
 ### Validation
 
-- `./.build/infernix cluster status` executes without an outer container on Apple Silicon
-- `./.build/infernix kubectl get nodes` works without manually setting `KUBECONFIG`
-- `docker compose run --rm infernix infernix cluster status` executes on the Linux outer path
+- after `./.build/infernix internal materialize-substrate apple-silicon`,
+  `./.build/infernix cluster status` executes without an outer container on Apple Silicon
+- after the Apple cluster is present, `./.build/infernix kubectl get nodes` works without
+  manually setting `KUBECONFIG`
+- after `docker compose run --rm infernix infernix internal materialize-substrate linux-cpu --demo-ui true`,
+  `docker compose run --rm infernix infernix cluster status` executes on the Linux outer path
 
 ### Remaining Work
 
@@ -326,7 +331,8 @@ supported browser workflow.
 
 ### Deliverables
 
-- `compose.yaml` runs against a baked image snapshot and bind-mounts `./.data/`, `./.build/`, and `./compose.yaml` together with the Docker socket
+- `compose.yaml` runs against a baked image snapshot and bind-mounts `./.data/`, `./.build/`,
+  `./chart/charts/`, and `./compose.yaml` together with the Docker socket
 - the only outer-container build state surfaced on the host through `./.build/outer-container/build/` is the staged substrate file; the source snapshot manifest lives separately at `/opt/infernix/source-snapshot-files.txt` in the image overlay, and cabal-home plus the cabal builddir stay at the toolchain's natural in-image locations (`/root/.cabal/`, `dist-newstyle/`) and are not bind-mounted, so the supported CLI never overrides cabal's default builddir or `CABAL_DIR`
 - the substrate image uses `tini` as its `ENTRYPOINT` for clean signal handling and zombie reaping rather than running a custom launcher wrapper script
 - the repo-wide `.:/workspace` bind mount and `web/node_modules` runtime volume are removed
@@ -335,13 +341,19 @@ supported browser workflow.
 
 ### Validation
 
-- `docker compose run --rm infernix infernix cluster status` works against the host-anchored `./.build/` and `./.data/` bind mounts
-- the launcher container sees `./.data/`, `./.build/`, the live `./compose.yaml`, and the Docker socket only
+- after `docker compose run --rm infernix infernix internal materialize-substrate linux-cpu --demo-ui true`,
+  `docker compose run --rm infernix infernix cluster status` works against the host-anchored
+  `./.build/` and `./.data/` bind mounts
+- the launcher container sees `./.data/`, `./.build/`, `./chart/charts/`, the live
+  `./compose.yaml`, and the Docker socket only
 - `docker volume ls` lists no `infernix-build` or `infernix-cabal-home` named volumes
 - `docker compose down -v` leaves `./.build/` and `./.data/` intact on the host
 - `docker inspect infernix-linux-cpu:local --format '{{json .Config.Entrypoint}}'` shows
   `/usr/bin/tini`, and smoke probes confirm normal launched commands run through that entrypoint
-- a fresh `docker compose run --rm infernix infernix test unit` against an empty `./.build/outer-container/` succeeds because cabal-home and the cabal builddir live at the toolchain's natural in-image locations and survive the bind mount untouched
+- after `docker compose run --rm infernix infernix internal materialize-substrate linux-cpu --demo-ui true`,
+  a fresh `docker compose run --rm infernix infernix test unit` against an otherwise empty
+  `./.build/outer-container/` succeeds because cabal-home and the cabal builddir live at the
+  toolchain's natural in-image locations and survive the bind mount untouched
 - `rg -n 'npx playwright' README.md documents src web/package.json` returns no supported workflow references
 
 ### Remaining Work
@@ -365,13 +377,17 @@ launcher story onto the requested Apple-host-native and Linux-Compose doctrines.
 
 - the supported CLI removes `--runtime-mode` and all use of `INFERNIX_RUNTIME_MODE`
 - the build or explicit staging flow emits one substrate file under the active build root and the
-  CLI reads that file as the primary source of truth for active substrate
+  CLI reads that file as the primary source of truth for active substrate; the Linux Dockerfile's
+  image-local copy exists for image-build-time work, while supported Compose commands rely on the
+  explicitly restaged host-visible copy
 - Apple host-native workflows stage `./.build/infernix-substrate.dhall` with
   `./.build/infernix internal materialize-substrate apple-silicon [--demo-ui true|false]`
 - Linux outer-container workflows stage `./.build/outer-container/build/infernix-substrate.dhall`
   through the host-anchored `./.build/` bind mount with
   `docker compose run --rm infernix infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>`
-- supported runtime, cluster, and validation entrypoints fail fast when the staged file is absent
+- supported runtime, cluster, cache, Kubernetes-wrapper, frontend-contract generation, and
+  aggregate `infernix test ...` entrypoints fail fast when the staged file is absent; focused
+  `infernix lint ...` and `infernix docs check` remain substrate-file independent
 - Apple Silicon remains the only supported host build path outside a container
 - Linux host-native `infernix` execution is not a supported operator surface
 - Linux outer-container commands use Compose as the only supported launcher for both `linux-cpu`
@@ -389,6 +405,9 @@ launcher story onto the requested Apple-host-native and Linux-Compose doctrines.
   without any runtime-mode flag or user-facing environment override
 - supported Linux containerized commands run through `docker compose run --rm infernix infernix ...`
   without any runtime-mode flag or user-facing environment override
+- supported Linux lifecycle and aggregate test commands are preceded by
+  `docker compose run --rm infernix infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>`
+  so the host bind-mounted build root carries the active substrate file
 
 ### Remaining Work
 

@@ -87,6 +87,9 @@ commands.
 ## Current Validation Baseline
 
 - `test unit` proves matrix typing, generated catalog rendering, and contract-generation logic
+- supported `test lint` and `test unit` commands still require a staged substrate file for
+  command-level execution-context validation, while their assertions remain static or unit scoped
+  and do not claim real-cluster matrix coverage
 - `test integration` validates the active substrate's published catalog contract, routed surfaces,
   and routed inference execution for every generated active-substrate catalog entry
 - `test e2e` exercises every demo-visible generated catalog entry for the active substrate
@@ -375,19 +378,22 @@ toolchain from package managers instead of depending on a broad preinstalled App
 
 - validation closes when, on a clean Apple Silicon host with only Homebrew plus ghcup present,
   `cabal install --installdir=./.build --install-method=copy --overwrite-policy=always exe:infernix exe:infernix-demo`
-  succeeds and `./.build/infernix cluster up` reconciles the remaining supported Apple host
+  succeeds, `./.build/infernix internal materialize-substrate apple-silicon` stages the active
+  substrate, and `./.build/infernix cluster up` reconciles the remaining supported Apple host
   prerequisites through the supported package-manager path
 - validation closes when Apple host validation proves the supported flow can bootstrap Poetry when
   absent and then run the adapter setup path without manual Poetry installation
 - validation closes when, on a clean Linux CPU host with Docker only,
-  `docker compose build infernix` plus `docker compose run --rm infernix infernix test all`
-  passes
+  `docker compose build infernix`,
+  `docker compose run --rm infernix infernix internal materialize-substrate linux-cpu --demo-ui true`,
+  and `docker compose run --rm infernix infernix test all` pass
 - validation closes when, on a clean Linux GPU host with Docker plus the supported NVIDIA host
   prerequisites, exporting `INFERNIX_COMPOSE_IMAGE=infernix-linux-gpu:local`,
   `INFERNIX_COMPOSE_SUBSTRATE=linux-gpu`, and
   `INFERNIX_COMPOSE_BASE_IMAGE=nvidia/cuda:13.2.1-cudnn-runtime-ubuntu24.04`, then running
-  `docker compose build infernix` plus `docker compose run --rm infernix infernix test all`,
-  passes
+  `docker compose build infernix`,
+  `docker compose run --rm infernix infernix internal materialize-substrate linux-gpu --demo-ui true`,
+  and `docker compose run --rm infernix infernix test all` pass
 
 ### Remaining Work
 
@@ -612,8 +618,10 @@ from the supported contract.
 - the repository carries one explicit supported-contract decision for monitoring instead of a
   dangling placeholder
 - Monitoring is not a supported first-class surface.
-- governed docs and the plan say so explicitly, the dormant `victoria-metrics-k8s-stack` chart
-  value is removed, and the cleanup is recorded in `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
+- governed docs and the plan say so explicitly, the dormant `victoria-metrics-k8s-stack` value is
+  removed from repo-owned `chart/values.yaml`, the Haskell cluster renderer keeps only an explicit
+  disabled upstream Pulsar override so generated Helm values cannot imply monitoring support, and
+  the cleanup is recorded in `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 - the docs index and system component inventory point at the chosen monitoring stance so readers do
   not infer support from leftover config alone
 - `src/Infernix/Lint/Docs.hs` checks that the governed docs, plan docs, and chart values stay

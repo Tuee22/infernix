@@ -265,8 +265,11 @@ Rules:
   Compose launcher never requests the NVIDIA container runtime for its own process.
 - `--runtime-mode` and `INFERNIX_RUNTIME_MODE` are not part of the supported final contract. The
   staged substrate file beside the active build root is the primary and only supported source of
-  truth. Supported runtime, cluster, and validation entrypoints fail fast if it is absent, and the
-  repo stages or restages it through `infernix internal materialize-substrate ...`.
+  truth for commands that need an active substrate. Supported runtime, cluster, cache,
+  Kubernetes-wrapper, frontend-contract generation, and aggregate `infernix test ...` entrypoints
+  fail fast if it is absent, and the repo stages or restages it through
+  `infernix internal materialize-substrate ...`. Focused `infernix lint ...` and
+  `infernix docs check` entrypoints remain substrate-file independent.
 - `docker compose up` and `docker compose exec` are not supported outer-control-plane workflows.
 
 ### L. Substrate Contract
@@ -301,8 +304,10 @@ Rules:
   must call out any still-unmigrated `linux-gpu` naming in the current worktree instead of
   pretending the rename is already complete.
 - The staged substrate file beside the active build root is the primary substrate selector.
-  Supported runtime, cluster, and validation commands read that file only and fail fast if it is
-  absent or mismatched for the requested deployment path.
+  Supported runtime, cluster, cache, Kubernetes-wrapper, frontend-contract generation, and
+  aggregate `infernix test ...` commands read that file only and fail fast if it is absent or
+  mismatched for the requested deployment path. Focused `infernix lint ...` and
+  `infernix docs check` commands remain substrate-file independent.
 - `linux-cpu` is the only substrate that remains meaningfully portable across unrelated host
   hardware. Apple operators may validate it through the outer-container workflow, and arm64 Linux
   hosts are first-class citizens for that CPU-only lane so long as the supported containerized
@@ -331,8 +336,11 @@ Rules:
 - A supported outer-container workflow stages or restages the Linux substrate file under
   `./.build/outer-container/build/` on the host through the bind-mounted build tree with
   `docker compose run --rm infernix infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>`.
-- Supported runtime, cluster, and validation entrypoints do not regenerate the file on first
-  command execution; they fail fast if it has not been staged yet.
+- Supported runtime, cluster, cache, Kubernetes-wrapper, frontend-contract generation, and
+  aggregate `infernix test ...` entrypoints do not regenerate the file on first command
+  execution; they fail fast if it has not been staged yet. Focused `infernix lint ...` and
+  `infernix docs check` entrypoints remain substrate-file independent unless their implementation
+  is changed together with this plan.
 - The generated filename stays stable for a given build artifact, for example
   `infernix-substrate.dhall`, rather than encoding a user-selected runtime flag.
 - The generated file records the active substrate explicitly and enumerates every demo-visible model
@@ -425,10 +433,14 @@ Rules:
 - `infernix kubectl ...` is a scoped wrapper around upstream `kubectl`, automatically injecting the
   repo-local kubeconfig from the active build-output location; it is not a separate lifecycle
   orchestration surface.
-- Supported CLI behavior never accepts `--runtime-mode` or `INFERNIX_RUNTIME_MODE`. The CLI reads
-  the active substrate from the staged substrate file, and supported build workflows stage or
-  restage that file through `infernix internal materialize-substrate ...` instead of any
+- Supported CLI behavior never accepts `--runtime-mode` or `INFERNIX_RUNTIME_MODE`. Commands that
+  need an active substrate read it from the staged substrate file, and supported build workflows
+  stage or restage that file through `infernix internal materialize-substrate ...` instead of any
   file-absent fallback path.
+- Focused `infernix lint files`, `infernix lint docs`, `infernix lint proto`,
+  `infernix lint chart`, and `infernix docs check` remain substrate-file independent; aggregate
+  `infernix test ...` commands still validate the active staged substrate before running so lane
+  mismatches fail early.
 - `infernix lint ...`, `infernix test ...`, and `infernix docs check` may reuse or reconcile
   prerequisites, but they do not depend on alternate imperative setup commands outside the
   supported CLI surface.

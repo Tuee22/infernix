@@ -363,6 +363,9 @@ produces the two real Linux runtime images and supports the image-snapshot launc
   outputs appear so git-less image runs of `infernix lint files` validate only the source
   snapshot; the manifest is intentionally outside the bind-mounted `./.build/` tree so it stays in
   the image overlay
+- the baked image materializes a build-arg-selected substrate file inside the image overlay during
+  image build, while supported Compose-launched operator commands still restage the host-visible
+  `./.build/outer-container/build/infernix-substrate.dhall` after the host bind mount is applied
 - inside the Linux runtime image, the daemon does not run `apt`, `pip`, `cabal build`, or compiler
   toolchains at runtime
 
@@ -379,7 +382,8 @@ produces the two real Linux runtime images and supports the image-snapshot launc
   and Node toolchain
 - `infernix lint files` succeeds inside the baked Linux image without `.git` metadata by using the
   captured source-snapshot manifest
-- `docker compose run --rm infernix infernix cluster up` uses the active built substrate image on
+- after `docker compose run --rm infernix infernix internal materialize-substrate linux-cpu --demo-ui true`,
+  `docker compose run --rm infernix infernix cluster up` uses the active built substrate image on
   the supported path
 
 ### Remaining Work
@@ -414,8 +418,9 @@ fake container parity.
 - on a clean Apple Silicon host with ghcup installed,
   `cabal install --installdir=./.build --install-method=copy --overwrite-policy=always exe:infernix exe:infernix-demo`
   succeeds without extra supported wrapper scripts
-- `./.build/infernix cluster up` brings up the cluster and runs the
-  current Apple setup entrypoints before host-side service or inference execution
+- after `./.build/infernix internal materialize-substrate apple-silicon`, the
+  `./.build/infernix cluster up` command brings up the cluster and runs the current Apple setup
+  entrypoints before host-side service or inference execution
 - `infernix test integration` exercises the Apple column of the README matrix against the
   host-native runtime lane when the active substrate is `apple-silicon`
 

@@ -73,8 +73,10 @@ Create or reuse the Kind cluster and establish the manual storage-class baseline
 
 ### Validation
 
-- `./.build/infernix cluster up` creates or reuses the Kind cluster on Apple Silicon
-- `docker compose run --rm infernix infernix cluster up` does the same on the `linux-cpu` outer
+- after `./.build/infernix internal materialize-substrate apple-silicon`, the
+  `./.build/infernix cluster up` command creates or reuses the Kind cluster on Apple Silicon
+- after `docker compose run --rm infernix infernix internal materialize-substrate linux-cpu --demo-ui true`,
+  `docker compose run --rm infernix infernix cluster up` does the same on the `linux-cpu` outer
   path
 - `infernix kubectl get storageclass` shows `infernix-manual` and no default class after bootstrap
 
@@ -298,8 +300,10 @@ self-contained in the final `linux-gpu` image.
 - after exporting `INFERNIX_COMPOSE_IMAGE=infernix-linux-gpu:local`,
   `INFERNIX_COMPOSE_SUBSTRATE=linux-gpu`, and
   `INFERNIX_COMPOSE_BASE_IMAGE=nvidia/cuda:13.2.1-cudnn-runtime-ubuntu24.04`,
-  `docker compose build infernix` plus `docker compose run --rm infernix infernix cluster up`
-  succeeds on a supported NVIDIA host without a host-visible `nvkind` handoff path
+  `docker compose build infernix`,
+  `docker compose run --rm infernix infernix internal materialize-substrate linux-gpu --demo-ui true`,
+  and `docker compose run --rm infernix infernix cluster up` succeed on a supported NVIDIA host
+  without a host-visible `nvkind` handoff path
 - repeated `linux-gpu` cluster lifecycle runs preserve GPU visibility and durable storage behavior
 
 ### Remaining Work
@@ -338,15 +342,18 @@ one Compose-driven outer container for both Linux substrates.
 
 ### Validation
 
-- `docker compose run --rm infernix infernix cluster up` publishes the staged substrate payload
+- after `docker compose run --rm infernix infernix internal materialize-substrate linux-cpu --demo-ui true`,
+  `docker compose run --rm infernix infernix cluster up` publishes the staged substrate payload
   into the ConfigMap without any runtime-mode flag
 - `infernix kubectl get configmap infernix-demo-config -n platform -o yaml` shows the current
   `infernix-substrate.dhall` key and the staged payload
 - with `INFERNIX_COMPOSE_IMAGE=infernix-linux-gpu:local`,
   `INFERNIX_COMPOSE_SUBSTRATE=linux-gpu`, and
   `INFERNIX_COMPOSE_BASE_IMAGE=nvidia/cuda:13.2.1-cudnn-runtime-ubuntu24.04`,
-  `docker compose build infernix` plus `docker compose run --rm infernix infernix cluster up`
-  exercises the same supported launcher surface for `linux-gpu`
+  `docker compose build infernix`,
+  `docker compose run --rm infernix infernix internal materialize-substrate linux-gpu --demo-ui true`,
+  and `docker compose run --rm infernix infernix cluster up` exercise the same supported launcher
+  surface for `linux-gpu`
 
 ### Remaining Work
 

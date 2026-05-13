@@ -21,8 +21,13 @@
   on the Linux outer-container path, which writes
   `./.build/outer-container/build/infernix-substrate.dhall` on the host through the bind-mounted
   build tree
-- supported runtime, cluster, and validation entrypoints fail fast if the staged substrate file is
-  absent
+- supported runtime, cluster, cache, Kubernetes-wrapper, frontend-contract generation, and
+  aggregate `infernix test ...` entrypoints fail fast if the staged substrate file is absent;
+  focused `infernix lint ...` and `infernix docs check` remain substrate-file independent
+- the Linux substrate image also materializes a build-arg-selected substrate file inside the image
+  overlay during `docker compose build infernix`, but supported Compose runs bind-mount the host
+  `./.build/` tree over that path and therefore restage the host-visible file explicitly before
+  lifecycle or aggregate test commands
 - the staged substrate file, `cluster status`, publication JSON, demo config, and generated
   browser contracts still expose that active substrate through `runtimeMode` field names
 - cluster publication mirrors the staged payload locally as `infernix-substrate.dhall`, and the
@@ -90,7 +95,7 @@
 
 | Component | Current content | Purpose | Gap |
 |-----------|-----------------|---------|-----|
-| Linux substrate image definition | `docker/linux-substrate.Dockerfile` | one shared build definition produces the Linux control-plane image and the Linux daemon image family while owning ghcup, Poetry, Node.js 22+ for the demo bundle, and the Kind toolbelt; carries no browser-runtime weight; cabal-home and the cabal builddir live at the toolchain's natural in-image locations rather than under any bind-mounted host path; the image uses `tini` as its `ENTRYPOINT` for clean signal handling and zombie reaping | none |
+| Linux substrate image definition | `docker/linux-substrate.Dockerfile` | one shared build definition produces the Linux control-plane image and the Linux daemon image family while owning ghcup, Poetry, Node.js 22+ for the demo bundle, and the Kind toolbelt; materializes a build-arg-selected substrate file inside the image overlay before web build and Python quality checks; carries no browser-runtime weight; cabal-home and the cabal builddir live at the toolchain's natural in-image locations rather than under any bind-mounted host path; the image uses `tini` as its `ENTRYPOINT` for clean signal handling and zombie reaping | none |
 | Playwright image definition | `docker/playwright.Dockerfile` | dedicated single-purpose image (`infernix-playwright:local`) that owns Node, the Playwright runtime, and the three browsers, used by every substrate for routed E2E through `docker compose run --rm playwright` | none |
 | Compose launcher | `compose.yaml` | env-configurable outer-container launcher for supported Linux workflows; defines the `infernix` service for the control plane and the `playwright` service for routed Playwright execution | none |
 | Shared Python adapter project | `python/pyproject.toml`, `python/adapters/` | single dependency boundary and adapter tree for Python-native engines | none in the supported operator contract |
@@ -128,12 +133,12 @@
 | Kubernetes wrapper | `infernix kubectl ...` | scoped wrapper around upstream `kubectl` against the repo-local kubeconfig |
 | Cache lifecycle | `infernix cache status`, `infernix cache evict`, `infernix cache rebuild` | inspect or reconcile derived runtime cache state without mutating authoritative sources |
 | Focused lint | `infernix lint files`, `infernix lint docs`, `infernix lint proto`, `infernix lint chart` | run the repo-owned focused lint entrypoints for files, docs, `.proto`, and chart assets |
-| Aggregate static validation | `infernix test lint` | run the focused lint entrypoints together with Haskell style/build and Python quality checks |
+| Aggregate static validation | `infernix test lint` | validate the active staged substrate at command entry, then run the focused lint entrypoints together with Haskell style/build and Python quality checks |
 | Docs validation | `infernix docs check` | validate the governed docs suite and phase-plan shape through the canonical docs linter |
 | Service runtime | `infernix service` | consume the staged substrate file at startup and own inference for the active substrate |
 | Demo UI runtime | `infernix-demo` deployment | serve the demo-only HTTP surface against the active generated substrate catalog |
 | Frontend contract generation | `infernix internal generate-purs-contracts` | generate the supported PureScript contract module from Haskell source |
-| Unit validation | `infernix test unit` | validate Haskell runtime behavior plus PureScript unit suites |
+| Unit validation | `infernix test unit` | validate the active staged substrate at command entry, then run Haskell runtime behavior checks plus PureScript unit suites without claiming cluster matrix coverage |
 | Integration validation | `infernix test integration` | validate the built substrate's published catalog contract through one substrate-aware integration suite that traverses the README matrix rows, selects the active engine from the generated `.dhall`, covers every generated active-substrate catalog entry, and carries the supported real-cluster HA or lifecycle assertions |
 | Routed E2E validation | `infernix test e2e` | exercise the real routed browser surface for the built substrate through a substrate-agnostic Playwright suite that relies on `infernix-demo` to read the generated `.dhall` and dispatch the correct engine |
 | Style toolchain bootstrap | `src/Infernix/Lint/HaskellStyle.hs` | bootstrap the dedicated formatter compiler under `.build/haskell-style-tools/bin/` and run `ormolu`, `hlint`, and `cabal format` checks |
@@ -179,7 +184,7 @@
 | Durable PV directories | storage reconciliation in `cluster up` | `./.data/kind/<runtime-mode>/<namespace>/<release>/<workload>/<ordinal>/<claim>` | deterministic host path layout for every PVC-backed workload |
 | Generated Apple substrate file | `./.build/infernix internal materialize-substrate apple-silicon [--demo-ui true|false]` | `./.build/infernix-substrate.dhall` | Apple host path beside the build root; the file is staged explicitly rather than by Cabal compile rules alone |
 | Generated Apple kubeconfig | `cluster up` | `./.build/infernix.kubeconfig` | repo-local kubeconfig used by `infernix kubectl` on Apple |
-| Generated Linux substrate file | explicit helper invocation runs `docker compose run --rm infernix infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>` | `./.build/outer-container/build/infernix-substrate.dhall` on the host through the bind mount (visible inside the outer container as `/workspace/.build/outer-container/build/infernix-substrate.dhall`) | outer-container staging path; the authoritative launcher binary remains `/usr/local/bin/infernix` inside the substrate image |
+| Generated Linux substrate file | explicit helper invocation runs `docker compose run --rm infernix infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>`; the Dockerfile also creates an image-local build-arg-selected copy during image build | `./.build/outer-container/build/infernix-substrate.dhall` on the host through the bind mount (visible inside the outer container as `/workspace/.build/outer-container/build/infernix-substrate.dhall`) | outer-container staging path; supported Compose commands use the host-visible copy because the `./.build/` bind mount hides the image-local copy; the authoritative launcher binary remains `/usr/local/bin/infernix` inside the substrate image |
 | Generated Linux kubeconfig | `cluster up` | `./.data/runtime/infernix.kubeconfig` | durable repo-local kubeconfig reused across fresh outer-container invocations |
 | Helm dependency archive cache | `cluster up`, `test integration`, `test all`, and any supported chart-reconcile path that calls `ensureHelmDependencies` | `./chart/charts/` on the host for the Linux outer-container path; `chart/charts/` in the Apple host worktree | cached top-level Helm dependency archives for Harbor, PostgreSQL, Pulsar, MinIO, and Envoy Gateway so fresh launcher containers reuse the same chart bundle instead of rehydrating every dependency from the network |
 | Cluster-mounted substrate file | Helm deployment plus ConfigMap mount | `/opt/build/infernix-substrate.dhall` | cluster-resident consumers such as `infernix-demo` and Linux `infernix service` workloads consume the shared staged filename under `/opt/build/`; the Apple host daemon reads the colocated host copy under `./.build/` |

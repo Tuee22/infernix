@@ -62,9 +62,14 @@ stage one `infernix-substrate.dhall` beside the active build root through explic
 operators run
 `docker compose run --rm infernix infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>`
 which writes `./.build/outer-container/build/infernix-substrate.dhall` on the host through the
-host-anchored `./.build/` bind mount. Supported runtime, cluster, and validation entrypoints fail
-fast if the staged file is absent instead of falling back to host detection or
-`INFERNIX_SUBSTRATE_ID`. Cluster publication mirrors the exact payload locally under
+host-anchored `./.build/` bind mount. The Linux substrate Dockerfile also materializes a
+build-arg-selected substrate file inside the image overlay during image build, but supported
+Compose runs bind-mount the host `./.build/` tree over that location and therefore restage the
+host-visible file explicitly before lifecycle or aggregate test commands. Supported runtime,
+cluster, cache, Kubernetes-wrapper, frontend-contract generation, and aggregate `infernix test ...`
+entrypoints fail fast if the staged file is absent instead of falling back to host detection or
+`INFERNIX_SUBSTRATE_ID`; focused `infernix lint ...` and `infernix docs check` remain
+substrate-file independent. Cluster publication mirrors the exact payload locally under
 `./.data/runtime/configmaps/infernix-demo-config/infernix-substrate.dhall` and mounts the same
 filename inside cluster workloads at `/opt/build/infernix-substrate.dhall`. The file keeps the
 legacy `.dhall` filename even though the payload is banner-prefixed JSON. Validation reports only
@@ -160,9 +165,14 @@ The supported platform now closes around these rules:
 - Linux outer-container workflows stage or restage `./.build/outer-container/build/infernix-substrate.dhall`
   on the host through the bind-mounted build tree with
   `docker compose run --rm infernix infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>`
-- supported runtime, cluster, and validation entrypoints fail fast if the staged substrate file is
-  absent instead of regenerating it on first command execution or falling back to env or host
-  detection
+- the Linux substrate Dockerfile materializes a build-arg-selected copy inside the image overlay,
+  but the supported outer-container command surface bind-mounts the host `./.build/` tree and
+  therefore relies on the explicit host-visible restaging step before lifecycle or aggregate test
+  commands
+- supported runtime, cluster, cache, Kubernetes-wrapper, frontend-contract generation, and
+  aggregate `infernix test ...` entrypoints fail fast if the staged substrate file is absent
+  instead of regenerating it on first command execution or falling back to env or host detection;
+  focused `infernix lint ...` and `infernix docs check` remain substrate-file independent
 - the staged substrate file retains the legacy `.dhall` filename even though the current payload is
   banner-prefixed JSON produced by Haskell runtime helpers
 - Apple host-native operation is the only supported host build path outside a container

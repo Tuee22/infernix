@@ -16,13 +16,15 @@ routing, Haskell-owned frontend contracts, and substrate-specific validation sur
 ## Current Repo Assessment
 
 The repository implements the substrate-file architecture described in this overview. The
-governed validation surface now splits cleanly between substrate-agnostic checks and built-
-substrate checks: `infernix lint docs` and `infernix test unit` validate docs or module behavior,
-while `infernix test integration`, `infernix test e2e`, and `infernix test all` exercise only
-the currently staged substrate instead of implying a default cross-substrate rerun. The worktree
-omits the direct tool-route compatibility payloads, persists Linux cluster state before
-later rollout phases, and restages the active Linux substrate before each supported bootstrap
-command.
+governed validation surface now splits cleanly between focused substrate-file-independent lint or
+docs checks and test commands that validate the active staged substrate before running:
+`infernix lint docs` and `infernix docs check` validate documentation without reading the staged
+substrate file, `infernix test unit` validates module behavior after command-level substrate
+context is present, and `infernix test integration`, `infernix test e2e`, and `infernix test all`
+exercise only the currently staged substrate instead of implying a default cross-substrate rerun.
+The worktree omits the direct tool-route compatibility payloads, persists Linux cluster state
+before later rollout phases, and restages the active Linux substrate before each supported
+bootstrap command.
 The Apple product shape described by this plan is implemented: `apple-silicon` keeps
 inference host-native for performance while Kind continues to host Harbor, MinIO, Pulsar,
 PostgreSQL, Envoy Gateway, and the optional routed demo surface. `cluster up` no longer deploys
@@ -86,12 +88,16 @@ Monitoring is not a supported first-class surface.
 - the generated substrate file, routed publication surface, `cluster status` output, and generated
   browser contracts currently serialize that active substrate under `runtimeMode` field names even
   though the supported selection contract is substrate-based
-- the current staging flow is explicit rather than Cabal-compile-time closure:
+- the current supported operator staging flow is explicit rather than Cabal-compile-time closure:
   Apple host-native workflows stage `./.build/infernix-substrate.dhall` with
   `./.build/infernix internal materialize-substrate apple-silicon [--demo-ui true|false]`, and
   Linux outer-container workflows stage `./.build/outer-container/build/infernix-substrate.dhall`
   on the host through the bind-mounted build tree with
   `docker compose run --rm infernix infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>`
+- the Linux substrate Dockerfile also materializes a build-arg-selected substrate file inside the
+  image overlay during image build; supported Compose runs bind-mount the host `./.build/` tree
+  over that location, so lifecycle and aggregate test commands rely on the explicit host-visible
+  restaging step
 - repo-owned shell is limited to the `bootstrap/*.sh` stage-0 host bootstrap surface, which may
   reconcile supported host prerequisites, build the active substrate launcher and dedicated
   `infernix-playwright:local` images, and stage the substrate file under the active build root
@@ -101,9 +107,10 @@ Monitoring is not a supported first-class surface.
   in the current process only after verifying the required executable they just installed or
   selected, and they stop at explicit new-shell or reboot boundaries so the operator reruns the
   same bootstrap command instead of jumping ahead to a later direct command
-- supported runtime, cluster, and validation entrypoints fail fast if the staged substrate file is
-  absent instead of regenerating it on first command execution or falling back to env or host
-  detection
+- supported runtime, cluster, cache, Kubernetes-wrapper, frontend-contract generation, and
+  aggregate `infernix test ...` entrypoints fail fast if the staged substrate file is absent
+  instead of regenerating it on first command execution or falling back to env or host detection;
+  focused `infernix lint ...` and `infernix docs check` remain substrate-file independent
 - the staged file retains the legacy `.dhall` filename even though the current payload is
   banner-prefixed JSON produced by Haskell helpers
 - Apple Silicon is the only supported host-native build path outside a container
@@ -344,14 +351,18 @@ The plan keeps control-plane execution context separate from substrate.
 ### 4. Staged Substrate File SSoT
 
 - the repo stages one `infernix-substrate.dhall` file under the active build root
-- the current implementation materializes that file through an explicit helper command rather than
-  Cabal compile rules alone
+- the current supported operator implementation materializes that file through an explicit helper
+  command rather than Cabal compile rules alone
 - Apple host-native workflows stage or restage the file with
   `./.build/infernix internal materialize-substrate apple-silicon [--demo-ui true|false]`
 - Linux outer-container workflows stage or restage the file under `./.build/outer-container/build/`
   on the host with
   `docker compose run --rm infernix infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>`
-- supported runtime, cluster, and validation entrypoints fail fast if the staged file is absent
+- the Linux substrate image also creates a build-arg-selected copy during image build, but the
+  supported Compose bind mount hides that image-local copy from host-launched operator commands
+- supported runtime, cluster, cache, Kubernetes-wrapper, frontend-contract generation, and
+  aggregate `infernix test ...` entrypoints fail fast if the staged file is absent; focused
+  `infernix lint ...` and `infernix docs check` do not require it
 - the staged file records the active substrate explicitly
 - the staged file also carries the generated demo catalog for that substrate
 - the current payload is banner-prefixed JSON under a legacy `.dhall` filename
