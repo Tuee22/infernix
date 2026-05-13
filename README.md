@@ -52,13 +52,13 @@ This repository serves two aligned purposes:
   containers
 - one validation surface spanning repo-owned Haskell `ormolu`/`cabal format`/`hlint`,
   `poetry run check-code` against `python/adapters/`, unit tests, integration tests,
-  `purescript-spec` view and contract tests, and Playwright launched from the shared Linux
-  substrate image or the host (Apple Silicon)
+  `purescript-spec` view and contract tests, and Playwright launched from the dedicated
+  `infernix-playwright:local` image
 - one shared Linux substrate build definition (`docker/linux-substrate.Dockerfile`) emits
   `infernix-linux-cpu` and `infernix-linux-gpu`, each with ghcup-pinned GHC 9.14.1 + Cabal
-  3.16.1.0, Python 3 + Poetry, node, Playwright, `nvkind`, and the Kind/kubectl/Helm/Docker
-  toolbelt baked in. Apple Silicon has no Dockerfile; the operator pre-installs ghcup and the
-  daemon installs engine deps via system `clang` and `brew`
+  3.16.1.0, Python 3 + Poetry, node, the demo UI build toolchain, `nvkind`, and the
+  Kind/kubectl/Helm/Docker toolbelt baked in. Apple Silicon has no Dockerfile; the operator
+  pre-installs ghcup and the daemon installs engine deps via system `clang` and `brew`
 - repo-owned shell is limited to the `bootstrap/*.sh` stage-0 host bootstrap entrypoints; no
   committed built artifacts (`poetry.lock`, generated proto, `.mypy_cache`, `.ruff_cache`,
   `*.pyc`, `web/dist/`, `web/spago.lock`, `web/src/Generated/`)
@@ -118,8 +118,8 @@ The supported local platform is built around:
   PostgreSQL dependency
 - one local Harbor registry used by every non-Harbor cluster pod after Harbor bootstrap completes
 - one OCI image per Linux substrate carrying both `infernix` and `infernix-demo` plus the engine
-  toolchain and Playwright; the chart workload entrypoint selects which exe runs
-  (`infernix service` or `infernix-demo serve`). Apple Silicon has no Dockerfile — the daemon
+  toolchain and the demo UI build toolchain; the chart workload entrypoint selects which exe runs
+  (`infernix service` or `infernix-demo serve`). Apple Silicon has no Dockerfile: the daemon
   builds engines on the host via system `clang` and `brew`
 - one Apple host bootstrap entrypoint, `./bootstrap/apple-silicon.sh`, that idempotently
   reconciles Homebrew plus ghcup before driving the direct host-native Cabal install path and

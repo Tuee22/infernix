@@ -38,16 +38,18 @@ These rules close in this phase and remain mandatory afterward:
 
 The storage doctrine, Helm rollout, Harbor-first image flow, route de-duplication, generated
 values overlay path, in-image `nvkind` path, and shared substrate-publication filename are
-implemented on the supported Kind substrate. The May 12, 2026 Apple bootstrap investigation is
-now closed in code and validation: `cluster up`, `cluster down`, and `cluster status` expose the
-active lifecycle action, phase, child-operation detail, and heartbeat during the monitored Docker
-build, Harbor publication, Kind-worker preload, and Apple retained-state replay windows; staged
-`infernix-substrate.dhall` writes are atomic so concurrent status readers do not observe truncated
-payloads; and retained-state Apple reruns automatically reinitialize stopped Harbor PostgreSQL
-replicas from the current Patroni leader when timeline drift leaves replicas unready after
-promotion. On May 12, 2026, the supported `./bootstrap/apple-silicon.sh` lifecycle reran cleanly
-through `doctor`, `build`, `up`, `status`, `test`, and `down`, with `status` reporting in-progress
-phase data during both `up` and `down`.
+implemented on the supported Kind substrate. `cluster up`, `cluster down`, and `cluster status`
+expose the active lifecycle action, phase, child-operation detail, and heartbeat during the
+monitored Docker build, Harbor publication, Kind-worker preload, and Apple retained-state replay
+windows; staged `infernix-substrate.dhall` writes are atomic so concurrent status readers do not
+observe truncated payloads; and retained-state Apple reruns automatically reinitialize stopped
+Harbor PostgreSQL replicas from the current Patroni leader when timeline drift leaves replicas
+unready after promotion. Phase 6 records a clean supported `./bootstrap/apple-silicon.sh`
+lifecycle rerun on May 12, 2026 through `doctor`, `build`, `up`, `status`, `test`, and `down`,
+with `status` reporting in-progress phase data during both `up` and `down`; that cold rerun also
+confirmed that Apple `build-cluster-images` can stay healthy well past twenty minutes before
+Harbor publication begins and that the governed `test` lane may perform multiple internal cluster
+bring-up or teardown cycles before the outer bootstrap command returns.
 
 ## Sprint 2.1: Kind Bootstrap and StorageClass Reset [Done]
 

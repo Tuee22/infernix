@@ -32,22 +32,21 @@ ZooKeeper epoch mismatch by resetting only the Pulsar claim roots and retrying o
 
 The repository has lint, unit, integration, and Playwright entrypoints. The canonical testing,
 boundary, portability, storage, and Haskell-style docs are present, the baked Linux substrate
-image carries the source-snapshot manifest needed for git-less `infernix lint files` runs, the
-routed Playwright suite exhaustively exercises every demo-visible generated catalog entry for the
-active substrate, and the integration suite enumerates every generated active-substrate catalog
-entry while also carrying Harbor, MinIO, Pulsar, and Harbor PostgreSQL recovery or lifecycle
-checks in code. The staged file, `cluster status`, publication JSON, and generated browser
-contracts still expose the active substrate through `runtimeMode` fields or lines. The worktree
-now removes direct Harbor, MinIO, and Pulsar compatibility handlers from
+image definition writes the source-snapshot manifest needed for git-less `infernix lint files`
+runs, the routed Playwright suite exhaustively exercises every demo-visible generated catalog
+entry for the active substrate, and the integration suite enumerates every generated
+active-substrate catalog entry while also carrying Harbor, MinIO, Pulsar, and Harbor PostgreSQL
+recovery or lifecycle checks in code. The staged file, `cluster status`, publication JSON, and
+generated browser contracts still expose the active substrate through `runtimeMode` fields or
+lines. The worktree omits direct Harbor, MinIO, and Pulsar compatibility handlers from
 `src/Infernix/Demo/Api.hs`, tightens `test/integration/Spec.hs` to require the real routed
 upstream behavior, persists cluster state before later Linux rollout phases, restages the active
 Linux substrate on each supported bootstrap invocation, reuses a persistent Linux chart-archive
 cache, and performs the targeted Pulsar claim-root reset when the known retained ZooKeeper
-epoch-state corruption blocks bootstrap. The governed `linux-cpu` and `linux-gpu` reruns are
-green through the supported bootstrap surfaces. On May 11, 2026, the supported Apple lifecycle
-reran cleanly through `./bootstrap/apple-silicon.sh doctor`, `build`, `up`, `status`, `test`,
-and `down`; this plan change carries that validation result forward. On Apple, routed Playwright
-no longer times out on `host.docker.internal`: host-side
+epoch-state corruption blocks bootstrap. Recorded validation for this phase covers the governed
+`linux-cpu` and `linux-gpu` bootstrap surfaces. Recorded Apple validation on May 11, 2026 reran
+cleanly through `./bootstrap/apple-silicon.sh doctor`, `build`, `up`, `status`, `test`, and
+`down`. On Apple, routed Playwright no longer times out on `host.docker.internal`: host-side
 readiness probes `127.0.0.1:<edge-port>`, the browser container joins the private Docker `kind`
 network and targets the Kind control-plane DNS on port `30090`, and the dedicated Playwright
 image no longer bakes a conflicting `NO_COLOR` default. On May 12, 2026, the supported Apple
@@ -57,7 +56,10 @@ in-progress lifecycle phase, child-operation detail, and heartbeat while `up` an
 still running; the governed testing doctrine, operator-facing testing strategy, lifecycle
 runbooks, and CLI references now use the same inactivity-aware interpretation contract; and
 retained-state Harbor PostgreSQL replicas recovered through the supported targeted reinitialization
-path when timeline drift left replicas stopped after promotion.
+path when timeline drift left replicas stopped after promotion. That cold rerun also confirmed
+that Apple `build-cluster-images` can remain healthy well past twenty minutes before Harbor
+publication begins and that the governed `test` lane may perform multiple internal cluster
+bring-up or teardown cycles before the outer bootstrap command returns.
 
 ## Validation Surface
 
@@ -1016,8 +1018,8 @@ failure.
   first-run phases that can take minutes without emitting steady log lines
 - CLI reference docs describe the supported status or progress surfaces operators use before
   concluding that a lifecycle action actually failed
-- the plan, runbooks, and testing docs cite the May 12, 2026 Apple investigation as the proof
-  point that this gap is real in the current worktree
+- the plan, runbooks, and testing docs cite the May 12, 2026 Apple lifecycle rerun as the proof
+  point for the supported false-negative doctrine on the current worktree
 
 ### Validation
 

@@ -20,7 +20,8 @@
 - on May 12, 2026, a cold Apple lifecycle investigation confirmed that long first-run waits can
   still be healthy while the supported path is replaying retained Kind data, building the shared
   runtime image, publishing it through Harbor, or preloading Harbor-backed images onto the Kind
-  worker
+  worker; the monitored `build-cluster-images` phase stayed healthy well past twenty minutes
+  before Harbor publication began on that rerun
 - retained-state Apple reruns may also log a targeted Harbor PostgreSQL replica reinitialization
   from the current Patroni leader when stopped replicas need a fresh base backup after timeline
   advancement; treat that as supported retained-state repair rather than an unexpected failure mode
@@ -50,9 +51,13 @@ Direct reference path:
 
 - use `./bootstrap/apple-silicon.sh status` or `./.build/infernix cluster status` before treating
   a long `up`, `test`, or `down` run as failed
-- cold or retained-state Apple runs can spend minutes in `prepare-kind-cluster`,
+- cold or retained-state Apple runs can spend many minutes in `prepare-kind-cluster`,
   `build-cluster-images`, `publish-harbor-images`, `preload-harbor-images`, and
-  `replay-retained-state`
+  `replay-retained-state`; a cold `build-cluster-images` phase can remain healthy well past
+  twenty minutes before Harbor publication begins
+- `./bootstrap/apple-silicon.sh test` is not a single cluster round-trip: the governed test lane
+  may perform multiple internal cluster bring-up or teardown cycles through integration and E2E
+  before the outer bootstrap command returns
 - when `cluster status` reports `lifecycleStatus: in-progress`, the supported surface also reports
   `lifecycleAction`, `lifecyclePhase`, `lifecycleDetail`, `lifecycleHeartbeatAt`, and
   `lifecycleHeartbeatAgeSeconds`

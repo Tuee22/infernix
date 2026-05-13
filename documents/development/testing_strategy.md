@@ -61,13 +61,18 @@ mode-specific coverage, matrix behavior, and operator detail behind those canoni
 
 - on May 12, 2026, a cold Apple rerun showed that long waits in `cluster up` and `cluster down`
   can still be healthy when the lifecycle is building images, publishing them into Harbor,
-  preloading them onto the Kind worker, or replaying retained state
+  preloading them onto the Kind worker, or replaying retained state; the monitored Apple
+  `build-cluster-images` phase stayed healthy well past twenty minutes before Harbor publication
+  began on that rerun
 - the supported operator check during those waits is `infernix cluster status`
 - when that status surface reports `lifecycleStatus: in-progress`, use `lifecyclePhase`,
   `lifecycleDetail`, and `lifecycleHeartbeatAt` to distinguish real progress from a stale wait
 - the current implementation refreshes the heartbeat roughly every 30 seconds during the monitored
   long-running subprocess phases, so a heartbeat that keeps moving is treated as progress rather
   than failure even when the wall-clock duration is large
+- `infernix test all` may perform multiple internal cluster bring-up or teardown cycles before the
+  outer Apple bootstrap `test` command returns; apply the same progress interpretation to those
+  managed internal rounds
 
 ## Active-Mode Coverage Rules
 

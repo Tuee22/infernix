@@ -36,7 +36,9 @@
 
 - on May 12, 2026, a cold Apple lifecycle investigation confirmed that long first-run waits in
   Docker build finalization, Harbor publication, Kind-worker image preload, and retained-state
-  replay were real convergence, not hard product failure
+  replay were real convergence, not hard product failure; the monitored Apple
+  `build-cluster-images` phase stayed healthy well past twenty minutes before Harbor publication
+  began on that rerun
 - the supported doctrine is inactivity-aware: elapsed wall time alone is not enough to classify
   `cluster up`, `cluster down`, `test integration`, `test e2e`, or `test all` as failed when the
   active path still owns cluster lifecycle
@@ -47,6 +49,8 @@
 - the current implementation refreshes that heartbeat roughly every 30 seconds during the
   long-running Docker build, Harbor image publication, Kind-worker Harbor preload, and Apple
   retained-state replay subprocess phases
+- the same inactivity-aware classification applies when supported integration or E2E lanes own
+  internal cluster bring-up or teardown rounds inside `infernix test all`
 - treat the supported path as stalled only when the command exits non-zero or the heartbeat stops
   refreshing across multiple monitor intervals during one of those monitored phases
 

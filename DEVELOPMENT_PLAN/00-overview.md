@@ -20,31 +20,33 @@ governed validation surface now splits cleanly between substrate-agnostic checks
 substrate checks: `infernix lint docs` and `infernix test unit` validate docs or module behavior,
 while `infernix test integration`, `infernix test e2e`, and `infernix test all` exercise only
 the currently staged substrate instead of implying a default cross-substrate rerun. The worktree
-now removes the direct tool-route compatibility payloads, persists Linux cluster state before
+omits the direct tool-route compatibility payloads, persists Linux cluster state before
 later rollout phases, and restages the active Linux substrate before each supported bootstrap
 command.
-The intended Apple product shape is now implemented and validated: `apple-silicon` keeps
+The Apple product shape described by this plan is implemented: `apple-silicon` keeps
 inference host-native for performance while Kind continues to host Harbor, MinIO, Pulsar,
 PostgreSQL, Envoy Gateway, and the optional routed demo surface. `cluster up` no longer deploys
 `infernix-service` on the Apple lane, routed manual inference bridges through Pulsar into the
 host-native daemon, publication exposes `daemonLocation: control-plane-host` plus
-`inferenceDispatchMode: pulsar-bridge-to-host-daemon`, and the runtime worker now uses explicit
-supported runners instead of placeholder or fallback execution. The Linux bootstrap lifecycles
-rerun cleanly through their governed surfaces, and the Apple clean-host bootstrap hardening is now
-present in code and validation: the stage-0 entrypoint verifies same-process ghcup-managed `ghc`
+`inferenceDispatchMode: pulsar-bridge-to-host-daemon`, and the runtime worker uses explicit
+supported runners instead of placeholder or fallback execution. The Apple clean-host bootstrap
+hardening is present in code: the stage-0 entrypoint verifies same-process ghcup-managed `ghc`
 and `cabal` resolution before direct `cabal install`, reconciles Homebrew `protoc`, reconciles
 Colima to the supported `8 CPU / 16 GiB` profile before Docker-backed work, and lets Apple
 adapter setup or validation paths reconcile Homebrew `python@3.12` plus a user-local Poetry
 bootstrap on demand. Routed Apple Playwright readiness probes `127.0.0.1` from the host while
 the browser container joins the private Docker `kind` network and targets the Kind control-plane
-DNS, and the governed Apple lifecycle reruns cleanly through `doctor`, `build`, `up`, `status`,
-`test`, and `down`. The May 12, 2026 Apple lifecycle follow-on is now closed: the shared cluster
-lifecycle persists explicit phase, child-operation detail, and heartbeat data in `cluster status`
-during monitored Docker build, Harbor publication, Kind-worker preload, and Apple retained-state
-replay steps; generated substrate-file publication is atomic so concurrent readers do not observe
-truncated payloads; and retained-state Apple reruns automatically reinitialize stopped Harbor
-PostgreSQL replicas from the current Patroni leader when timeline drift leaves replicas unready
-after promotion.
+DNS. The shared cluster lifecycle persists explicit phase, child-operation detail, and heartbeat
+data in `cluster status` during monitored Docker build, Harbor publication, Kind-worker preload,
+and Apple retained-state replay steps; generated substrate-file publication is atomic so
+concurrent readers do not observe truncated payloads; and retained-state Apple reruns
+automatically reinitialize stopped Harbor PostgreSQL replicas from the current Patroni leader when
+timeline drift leaves replicas unready after promotion. Phase 6 records clean governed bootstrap
+reruns for the supported Linux and Apple lifecycle surfaces, including an Apple rerun on
+May 12, 2026 through `doctor`, `build`, `up`, `status`, `test`, and `down`; that cold rerun also
+confirmed that Apple `build-cluster-images` can stay healthy well past twenty minutes before
+Harbor publication begins and that the governed `test` lane may perform multiple internal cluster
+bring-up or teardown cycles before the outer bootstrap command returns.
 
 | Area | Supported contract | Current repo state |
 |------|--------------------|--------------------|

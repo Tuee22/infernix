@@ -70,20 +70,18 @@ filename inside cluster workloads at `/opt/build/infernix-substrate.dhall`. The 
 legacy `.dhall` filename even though the payload is banner-prefixed JSON. Validation reports only
 the active built substrate instead of implying a default cross-substrate matrix, and the
 generated file, `cluster status`, publication JSON, and generated browser contracts still
-serialize that active substrate under `runtimeMode` field names. The Apple hybrid contract is now
-closed in code and validation: on `apple-silicon`, `cluster up` keeps Harbor, MinIO, Pulsar,
-PostgreSQL, Envoy Gateway, and the optional clustered `infernix-demo` surface in Kind while
-leaving `infernix service` host-native; routed manual inference enters the clustered demo surface
-and bridges through Pulsar into the host daemon; `cluster up` no longer deploys
-`infernix-service` on the Apple lane; publication exposes
-`inferenceDispatchMode: pulsar-bridge-to-host-daemon`; and the runtime worker dispatches through
-explicit supported runners while unsupported adapters fail fast instead of returning synthetic
-success. The worktree removes the direct Harbor, MinIO, and Pulsar tool-route compatibility
+serialize that active substrate under `runtimeMode` field names. The Apple hybrid contract is
+implemented on `apple-silicon`: `cluster up` keeps Harbor, MinIO, Pulsar, PostgreSQL, Envoy
+Gateway, and the optional clustered `infernix-demo` surface in Kind while leaving
+`infernix service` host-native; routed manual inference enters the clustered demo surface and
+bridges through Pulsar into the host daemon; `cluster up` no longer deploys `infernix-service`
+on the Apple lane; publication exposes `inferenceDispatchMode: pulsar-bridge-to-host-daemon`;
+and the runtime worker dispatches through explicit supported runners while unsupported adapters
+fail fast instead of returning synthetic success. The worktree omits the direct Harbor, MinIO,
+and Pulsar tool-route compatibility
 handlers, requires the real routed upstream behavior in integration, persists Linux cluster state
 before later rollout phases, and restages the active Linux substrate payload on each supported
-bootstrap invocation. The governed `linux-cpu`, `linux-gpu`, and Apple host-native bootstrap
-lifecycles now all rerun cleanly through `doctor`, `build`, `up`, `status`, `test`, and `down`.
-The formatter-toolchain closure remains in place: the Haskell style bootstrap drives `ormolu` and
+bootstrap invocation. The formatter-toolchain closure remains in place: the Haskell style bootstrap drives `ormolu` and
 `hlint` through the dedicated compatible formatter compiler `ghc-9.12.4`, while the Linux
 substrate image preinstalls that compiler beside the project `ghc-9.14.1` toolchain. The
 supported Linux outer-container launcher reuses a persistent `chart/charts/` archive cache,
@@ -103,10 +101,14 @@ Apple retained-state replay steps; generated substrate publication writes the st
 `infernix-substrate.dhall` atomically so concurrent status readers do not observe truncated
 payloads; and retained-state Apple reruns automatically reinitialize stopped Harbor PostgreSQL
 replicas from the current Patroni leader when timeline drift leaves replicas unready after
-promotion. On May 12, 2026, the supported Apple bootstrap lifecycle reran cleanly through
-`./bootstrap/apple-silicon.sh doctor`, `build`, `up`, `status`, `test`, and `down`, and the final
-post-teardown status returned `clusterPresent: False`, `lifecycleStatus: idle`, and
-`lifecyclePhase: cluster-absent`.
+promotion. Phase 6 records clean governed bootstrap reruns for `linux-cpu`, `linux-gpu`, and the
+supported Apple lifecycle, including an Apple rerun on May 12, 2026 through
+`./bootstrap/apple-silicon.sh doctor`, `build`, `up`, `status`, `test`, and `down`, with the
+final post-teardown status returning `clusterPresent: False`, `lifecycleStatus: idle`, and
+`lifecyclePhase: cluster-absent`. That cold Apple rerun also confirmed that
+`build-cluster-images` can remain healthy well past twenty minutes before Harbor publication
+begins, and that the governed `test` lane may perform multiple internal cluster bring-up or
+teardown cycles before the outer bootstrap command returns.
 
 Monitoring is not a supported first-class surface.
 

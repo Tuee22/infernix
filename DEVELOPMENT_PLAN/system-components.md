@@ -10,7 +10,7 @@
 
 - the repo ships the two-binary Haskell topology, Envoy Gateway assets, the PureScript demo UI,
   the split runtime modules under `src/Infernix/Runtime/`, the shared Python project, the shared
-  Linux substrate Dockerfile, the baked source-snapshot manifest used by git-less
+  Linux substrate Dockerfile that bakes the source-snapshot manifest used by git-less
   `infernix lint files` runs, the route registry, and the snapshot launcher
 - the supported CLI reads the active substrate from `infernix-substrate.dhall` once that file has
   been staged, without a user-facing runtime-mode flag
@@ -31,7 +31,7 @@
 - the intended Apple product shape is a hybrid lane: `apple-silicon` keeps inference host-native
   for Apple GPU and unified-memory access while Kind continues to host Harbor, MinIO, Pulsar,
   PostgreSQL, Envoy Gateway, and the optional routed demo surface
-- the current worktree closes that Apple hybrid lane: `cluster up` no longer deploys
+- the current worktree implements that Apple hybrid lane: `cluster up` no longer deploys
   `infernix-service` on `apple-silicon`, routed manual inference bridges from the clustered demo
   surface into the host daemon, publication exposes `inferenceDispatchMode`, and unsupported
   engine adapters fail fast instead of returning synthetic inference success
@@ -42,30 +42,32 @@
 - the supported Linux bootstrap entrypoints now restage the active substrate before lifecycle and
   test commands, and `cluster up` persists repo-local cluster state before later rollout phases so
   `cluster status` and cleanup can still observe an in-progress Linux reconciliation
-- the full supported `linux-cpu` lifecycle now reruns cleanly on the governed bootstrap surface,
-  including the stricter real-upstream route assertions, the restaged Linux substrate flow, and
-  the dedicated `ghc-9.12.4` formatter toolchain that the style gate now uses beside the project
-  `ghc-9.14.1` compiler
-- the governed `linux-gpu` lifecycle now also reruns cleanly, the supported Linux launcher keeps a
-  reusable `chart/charts/` cache on the host instead of reconstructing Helm archives inside
-  ephemeral containers, the MinIO dependency hydrates through the supported direct tarball path,
-  and `cluster up` now repairs the known stale retained Pulsar or ZooKeeper epoch mismatch by
-  resetting only the Pulsar claim roots and retrying once
+- the supported `linux-cpu` and `linux-gpu` surfaces use the stricter real-upstream route
+  assertions, the restaged Linux substrate flow, and the dedicated `ghc-9.12.4` formatter
+  toolchain beside the project `ghc-9.14.1` compiler
+- the supported Linux launcher keeps a reusable `chart/charts/` cache on the host instead of
+  reconstructing Helm archives inside ephemeral containers, the MinIO dependency hydrates through
+  the supported direct tarball path, and `cluster up` repairs the known stale retained Pulsar or
+  ZooKeeper epoch mismatch by resetting only the Pulsar claim roots and retrying once
 - the Apple clean-host bootstrap now verifies same-process ghcup-managed `ghc` and `cabal`
   resolution before direct `cabal install`, reconciles Homebrew `protoc`, reconciles Colima to
   the supported `8 CPU / 16 GiB` profile before Docker-backed work, and lets Apple adapter setup
   or validation paths reconcile Homebrew `python@3.12` plus a user-local Poetry bootstrap on
   demand
-- on May 12, 2026, the governed Apple lifecycle reran cleanly through `doctor`, `build`, `up`,
-  `status`, `test`, and `down`; routed Apple Playwright readiness probes `127.0.0.1` from the
-  host while the browser container joins the private Docker `kind` network and targets the Kind
-  control-plane DNS, and retained Kind state is replayed into and out of the worker rather than
-  bind-mounted
+- routed Apple Playwright readiness probes `127.0.0.1` from the host while the browser container
+  joins the private Docker `kind` network and targets the Kind control-plane DNS, and retained
+  Kind state is replayed into and out of the worker rather than bind-mounted
 - the shared lifecycle now exposes `lifecycleStatus`, `lifecyclePhase`, `lifecycleDetail`, and
   heartbeat timestamps during monitored Docker build, Harbor publication, Kind-worker preload, and
   Apple retained-state replay work; staged substrate publication is atomic for concurrent readers;
   and retained-state Apple reruns automatically reinitialize stopped Harbor PostgreSQL replicas
   from the current Patroni leader when timeline drift leaves replicas unready after promotion
+- Phase 6 records clean governed bootstrap reruns for `linux-cpu`, `linux-gpu`, and the
+  supported Apple lifecycle, including an Apple rerun on May 12, 2026 through `doctor`, `build`,
+  `up`, `status`, `test`, and `down`; that cold rerun also confirmed that Apple
+  `build-cluster-images` can stay healthy well past twenty minutes before Harbor publication
+  begins and that the governed `test` lane may perform multiple internal cluster bring-up or
+  teardown cycles before the outer bootstrap command returns
 - Monitoring is not a supported first-class surface.
 
 ## Operator and Host Components
