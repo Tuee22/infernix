@@ -398,7 +398,7 @@ distinguish real failure from ongoing first-run progress.
 - `./bootstrap/apple-silicon.sh down` surfaces the retained-state replay phase before Kind
   deletion when the Apple worker still owns durable cluster data
 - the supported status surface shows the in-progress lifecycle phase instead of only the last
-  completed steady-state snapshot once the relevant code lands
+  completed steady-state snapshot during monitored lifecycle work
 - `infernix lint docs` fails if the Apple or cluster runbooks or CLI references drift from the
   supported progress-surface and failure-classification contract
 

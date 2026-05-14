@@ -23,8 +23,8 @@ inference lane, and the plan now records the clarified contract explicitly: Appl
 apple-silicon`, Linux outer-container workflows stage
 `./.build/outer-container/build/infernix-substrate.dhall` on the host through
 `docker compose run --rm infernix infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>`,
-and the routed Apple path is now being clarified as clustered service orchestration plus
-host-native inference execution: cluster daemons remain present, and Apple inference batches move
+and the routed Apple path is clustered service orchestration plus host-native inference execution:
+cluster daemons remain present, and Apple inference batches move
 through Pulsar into same-binary host daemons.
 `infernix lint docs` and `infernix docs check` remain the governed validation entrypoints for
 that closure.
@@ -243,8 +243,8 @@ None.
 
 ### Objective
 
-Realign the governed docs around the substrate-generated `.dhall` doctrine before the later
-implementation follow-ons claim closure against it.
+Realign the governed docs around the substrate-generated `.dhall` doctrine that later
+implementation follow-ons close against.
 
 ### Deliverables
 

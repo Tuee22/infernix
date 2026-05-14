@@ -602,7 +602,7 @@ That import is explicitly about repository governance and doctrine shape, not ab
 
 - `infernix docs check` fails when the named doctrine docs lose their required
   summary-or-current-status-or-validation structure or contradict their enforced metadata contract
-- `infernix test lint` still passes once the deeper doc structure and Haskell-guide references land
+- `infernix test lint` passes with the deeper doc structure and Haskell-guide references in place
 - `cabal test infernix-haskell-style` remains the implementation-aligned
   Haskell style gate described by the guide
 
@@ -677,7 +677,7 @@ Remove the known non-failing warning noise from the supported web-validation pat
 - `infernix test unit` passes without the PureScript `runSpec` deprecation warning
 - `infernix test e2e` passes without the Node warning about `NO_COLOR` being ignored because
   `FORCE_COLOR` is set
-- `infernix test all` continues to pass after the warning cleanup lands
+- `infernix test all` continues to pass with the warning cleanup in place
 
 ### Remaining Work
 
@@ -749,7 +749,7 @@ state alive in supported code paths so Phase 6 can close without hidden cleanup 
 - `src/Infernix/Cluster.hs` stops removing the retired `infernix-bootstrap-registry` container and
   `./.build/kind/registry/localhost:30001` namespace as part of supported Harbor-first bootstrap
 - unit, integration, and docs validation cover the shim-free behavior, and the cleanup ledger
-  records those surfaces as fully closed once the implementation lands
+  records those surfaces as fully closed
 
 ### Validation
 
@@ -792,17 +792,17 @@ consistently across the remaining governed engineering surfaces.
   current-status note required by its final scope
 - `src/Infernix/Lint/Docs.hs` extends its document-structure rules so `infernix docs check`
   enforces the required broad-doctrine sections for those remaining engineering docs
-- the plan and governed docs stop claiming that the broader engineering-doc structure is fully
-  closed before those remaining docs and lint rules land
+- the plan and governed docs claim broader engineering-doc structure closure only with the
+  required docs and lint rules in place
 
 ### Validation
 
 - `infernix docs check` fails if `documents/engineering/build_artifacts.md`,
   `documents/engineering/docker_policy.md`, or `documents/engineering/edge_routing.md` lose the
-  required broad-doctrine sections once Sprint 6.18 lands
-- `infernix docs check` fails if the plan or governed docs overclaim full doctrine-depth closure
-  before the remaining structure and lint enforcement land
-- `infernix test lint` continues to pass once the broadened docs-lint structure rules are in place
+  required broad-doctrine sections
+- `infernix docs check` fails if the plan or governed docs overclaim doctrine-depth closure
+  without the required structure and lint enforcement
+- `infernix test lint` continues to pass with the broadened docs-lint structure rules in place
 
 ### Remaining Work
 
@@ -1137,8 +1137,8 @@ same-binary host daemon fed by Pulsar batches.
   a cluster daemon
 - publication and browser-visible metadata distinguish cluster daemon location from inference
   executor location, so `daemonLocation` no longer implies that Apple lacks a cluster daemon
-- Pulsar at-most-once consumption is the ownership boundary for clean fan-in, batching, inference,
-  and fan-out
+- Pulsar-owned topics, exclusive subscriptions, acknowledgements, and negative acknowledgements
+  form the ownership boundary for clean fan-in, batching, inference, and fan-out
 - legacy plan language that says Apple `cluster up` does not deploy `infernix-service` is removed
 
 ### Validation

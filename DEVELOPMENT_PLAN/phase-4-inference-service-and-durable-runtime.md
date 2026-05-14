@@ -239,8 +239,8 @@ None.
 
 ### Objective
 
-Turn the README matrix into the typed source of truth that drives the current runtime binding and
-generated demo-catalog baseline before the later substrate-generated file reset lands.
+Turn the README matrix into the typed source of truth that drives the runtime binding and
+substrate-generated demo-catalog baseline.
 
 ### Deliverables
 

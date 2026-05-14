@@ -183,7 +183,7 @@
 | Staged substrate file -> ConfigMap publication | control plane | real ConfigMap data plus repo-local mirror | `infernix cluster up` | the repo-local mirror stores `infernix-substrate.dhall`, and cluster-resident consumers, including Apple and Linux cluster daemons plus the routed demo surface, mount the same filename at `/opt/build/infernix-substrate.dhall`; Apple host daemons read a host-role config from the host build root |
 | Browser <-> demo API | external (demo only) | JSON over HTTP | handwritten Haskell browser-contract ADTs plus generated PureScript bindings | production deployments do not expose this surface |
 | Inference requester <-> Pulsar | external | protobuf over Pulsar topics | repo-owned `.proto` schemas with Haskell and Python generated bindings | production inference surface |
-| Apple cluster daemon -> Apple host daemon | internal production path | protobuf batches over a dedicated Pulsar topic | `src/Infernix/Runtime/Pulsar.hs` plus host-role `.dhall` config | Apple cluster daemons hand batched inference work to host daemons; Pulsar at-most-once consumption keeps batch ownership unambiguous |
+| Apple cluster daemon -> Apple host daemon | internal production path | protobuf batches over a dedicated Pulsar topic | `src/Infernix/Runtime/Pulsar.hs` plus host-role `.dhall` config | Apple cluster daemons hand batched inference work to host daemons; Pulsar-owned topics, exclusive subscriptions, and acknowledgement handling keep batch ownership unambiguous |
 | Haskell worker <-> Python adapter | internal child-process boundary | protobuf over stdio | `src/Infernix/Runtime/Worker.hs` plus `python/adapters/` | invoked only through `poetry run` |
 
 ## State and Artifact Locations

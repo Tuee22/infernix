@@ -334,9 +334,9 @@ The plan keeps control-plane execution context separate from substrate.
 - `README.md` stays an orientation layer.
 - governed root docs carry explicit status, supersession, and canonical-home markers when they
   distinguish canonical guidance from entry-document summaries
-- the current canonical topic ownership under `documents/` remains in place until the later
-  substrate-language updates land, even where a path such as
-  `documents/architecture/runtime_modes.md` still carries legacy naming
+- the canonical topic ownership under `documents/` remains in place, and
+  `documents/architecture/runtime_modes.md` remains the current runtime or substrate architecture
+  home despite the legacy filename and `runtimeMode` field names
 
 ### 1. Two Haskell Executables Sharing One Library
 
@@ -414,7 +414,8 @@ The plan keeps control-plane execution context separate from substrate.
 - the staged `.dhall` tells each daemon its substrate, whether it is a cluster or host daemon, and,
   for host daemons, the Pulsar connection details and batch topic it consumes
 - in multi-node topologies, the contract allows multiple anti-affined cluster daemons and one Apple
-  host inference engine per node; Pulsar at-most-once semantics keep batch ownership clear
+  host inference engine per node; Pulsar-owned topics, exclusive subscriptions, and
+  acknowledgement handling keep batch ownership clear
 
 ### 7. Local Harbor Is The Cluster Image Source
 

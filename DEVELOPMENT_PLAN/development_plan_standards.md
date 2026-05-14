@@ -4,7 +4,7 @@
 **Referenced by**: [README.md](README.md)
 
 > **Purpose**: Define how the `infernix` development plan is organized, updated, and kept aligned
-> with implementation, validation, and the future `documents/` suite.
+> with implementation, validation, and the governed `documents/` suite.
 
 ## Core Principles
 
@@ -144,11 +144,11 @@ Use this format:
 - align the relevant plan and README entry points
 ```
 
-Important rule for this repository bootstrap stage:
+Historical Phase 0 bootstrap rule preserved for ordered-plan readability:
 
-- Until Phase 0 lands, the paths under `documents/` may not exist yet.
-- They still appear in `Docs to update` and `Documentation Requirements` because the plan must make
-  future documentation obligations explicit before the suite exists.
+- Before Phase 0 closed, paths under `documents/` did not necessarily exist yet.
+- They still appeared in `Docs to update` and `Documentation Requirements` because the plan had to
+  make documentation obligations explicit before the suite existed.
 - When a phase creates or materially rewrites a broad engineering document, the owning sprint or
   phase calls out the intended document structure when it matters to closure criteria:
   - add a `TL;DR` or `Executive Summary` when the topic is broad
@@ -174,7 +174,7 @@ ledger for obsolete paths, duplicate guidance, and stale compatibility surfaces.
 
 ### J. README and Documents Harmony
 
-The plan and future `documents/` suite must agree on current-state implementation status. The root
+The plan and governed `documents/` suite must agree on current-state implementation status. The root
 README is exempt from current-state status parity because it is intentionally written as the
 finished-product document.
 
@@ -191,8 +191,8 @@ finished-product document.
   distinguish canonical guidance from reference-only guidance.
 - Root documents that are not canonical for a topic summarize and link to the canonical
   `documents/` home instead of restating the full contract.
-- Once Phase 0 lands, `documents/documentation_standards.md` governs the docs suite while this file
-  remains authoritative for the plan itself.
+- Since Phase 0 has landed, `documents/documentation_standards.md` governs the docs suite while
+  this file remains authoritative for the plan itself.
 - When root-level workflow guidance changes, update `README.md`, `AGENTS.md`, and `CLAUDE.md` in
   the same change when needed.
 
@@ -310,10 +310,11 @@ Rules:
   batching, runs inference itself, and performs fan-out.
 - In multi-node topologies, phase docs may describe multiple anti-affined cluster daemon replicas
   and, on `apple-silicon`, one host inference engine per node. The batch and result contract must
-  remain Pulsar-owned so at-most-once topic consumption keeps the fan-in, batching, inference, and
-  fan-out path unambiguous.
+  remain Pulsar-owned so exclusive topic subscriptions, acknowledgements, and negative
+  acknowledgements keep the fan-in, batching, inference, and fan-out ownership path
+  unambiguous.
 - The plan standardizes the NVIDIA-backed Linux substrate as `linux-gpu`. Active phase documents
-  must call out any still-unmigrated `linux-gpu` naming in the current worktree instead of
+  must call out any still-unmigrated `linux-cuda` naming in the current worktree instead of
   pretending the rename is already complete.
 - The staged substrate file beside the active build root is the primary substrate selector.
   Supported runtime, cluster, cache, Kubernetes-wrapper, frontend-contract generation, and

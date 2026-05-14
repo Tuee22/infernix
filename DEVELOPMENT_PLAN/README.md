@@ -90,9 +90,10 @@ fan-out but publish Apple inference batches to a dedicated Pulsar topic; same-bi
 consume that topic and run the Apple-native inference engine. On `linux-cpu` and `linux-gpu`, the
 cluster daemons read from Pulsar, perform fan-in and batching, run inference directly, and perform
 fan-out. In multi-node topologies, the contract allows multiple anti-affined cluster daemons and,
-for Apple, one host inference engine per node; Pulsar at-most-once consumption is the ordering and
-ownership boundary for the fan-in, batching, inference, and fan-out path. The current adapters emit
-deterministic engine-family output from typed durable metadata, while unsupported adapter ids fail
+for Apple, one host inference engine per node; Pulsar-owned topics, exclusive subscriptions, and
+acknowledgement handling are the ordering and ownership boundary for the fan-in, batching,
+inference, and fan-out path. The current adapters emit deterministic engine-family output from
+typed durable metadata, while unsupported adapter ids fail
 fast instead of falling through to a generic success path. The worktree omits the
 direct Harbor, MinIO, and Pulsar tool-route compatibility handlers, requires the real routed
 upstream behavior in integration, persists Linux cluster state

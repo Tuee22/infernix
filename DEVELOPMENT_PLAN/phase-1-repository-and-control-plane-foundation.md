@@ -299,11 +299,11 @@ each workflow topic one canonical home.
   - npm invocation resolution
   - platform command availability checks
   - shared web-dependency readiness used by both CLI and cluster paths
-- later hardening phases may still collapse any remaining helper consumers or literals without
-  changing the Phase-1 ownership boundary
+- later hardening phases collapse helper consumers or literals within the same Phase-1 ownership
+  boundary
 - `documents/reference/cli_surface.md` becomes a short family overview that links to the canonical
   CLI reference instead of repeating it
-- `README.md`, `AGENTS.md`, and `CLAUDE.md` gain governed metadata and canonical-home links back
+- `README.md`, `AGENTS.md`, and `CLAUDE.md` carry governed metadata and canonical-home links back
   into `documents/`, and the automation entry docs stay thin by pointing at one canonical
   assistant-workflow home under `documents/`
 
@@ -312,7 +312,7 @@ each workflow topic one canonical home.
 - `./.build/infernix --help` and the canonical CLI reference enumerate the same supported command families
 - `infernix lint docs` fails if the canonical CLI reference drops a supported registry command line
 - root-doc workflow summaries point readers at canonical `documents/` topics and carry the governed
-  metadata or canonical-home markers needed for later thinning
+  metadata or canonical-home markers for the thin entry-document posture
 
 ### Remaining Work
 
