@@ -19,8 +19,8 @@ false-negative doctrine plus Harbor publication retry closures are present in th
 worktree, and the supported test story is substrate-specific. The Apple routed path validates the
 intended host-native inference doctrine end to end: routed manual inference bridges through Pulsar
 into the host daemon, the browser suite verifies `daemonLocation` and `inferenceDispatchMode`, and
-supported engine runners fail fast on unsupported adapters instead of returning placeholder
-success. The worktree also carries the
+supported engine harnesses use the selected adapter metadata while unsupported adapters fail fast
+instead of returning a generic success payload. The worktree also carries the
 formatter-toolchain closure that is actually implemented today:
 `src/Infernix/Lint/HaskellStyle.hs` drives `ormolu` and `hlint` through the dedicated compatible
 formatter compiler `ghc-9.12.4`, and the Linux substrate image preinstalls that compiler beside
@@ -837,8 +837,9 @@ and E2E ownership in the final `.dhall`-driven terms.
   the correct engine behind the routed demo API
 - test results report the built substrate unambiguously and never imply matrix-wide coverage they
   did not execute
-- supported runtime and validation code carry no simulated cluster, route, transport, or inference
-  fallback behavior on the supported path
+- supported runtime and validation code carry no simulated cluster, route, transport, or generic
+  inference-success fallback behavior on the supported path; inference assertions go through the
+  typed adapter harness selected by the active substrate file
 - supported Linux bootstrap entrypoints restage the active substrate file before lifecycle and
   test commands so lane switches cannot reuse a stale staged payload
 

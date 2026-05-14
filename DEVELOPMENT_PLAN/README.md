@@ -81,10 +81,11 @@ Gateway, and the optional clustered `infernix-demo` surface in Kind while leavin
 `infernix service` host-native; routed manual inference enters the clustered demo surface and
 bridges through Pulsar into the host daemon; `cluster up` no longer deploys `infernix-service`
 on the Apple lane; publication exposes `inferenceDispatchMode: pulsar-bridge-to-host-daemon`;
-and the runtime worker dispatches through explicit supported runners while unsupported adapters
-fail fast instead of returning synthetic success. The worktree omits the direct Harbor, MinIO,
-and Pulsar tool-route compatibility
-handlers, requires the real routed upstream behavior in integration, persists Linux cluster state
+and the runtime worker dispatches through explicit Python or native adapter harnesses. The current
+adapters emit deterministic engine-family output from typed durable metadata, while unsupported
+adapter ids fail fast instead of falling through to a generic success path. The worktree omits the
+direct Harbor, MinIO, and Pulsar tool-route compatibility handlers, requires the real routed
+upstream behavior in integration, persists Linux cluster state
 before later rollout phases, and restages the active Linux substrate payload on each supported
 bootstrap invocation. The formatter-toolchain closure remains in place: the Haskell style bootstrap drives `ormolu` and
 `hlint` through the dedicated compatible formatter compiler `ghc-9.12.4`, while the Linux
@@ -211,8 +212,9 @@ The supported platform now closes around these rules:
 - the routed demo app remains cluster-resident when enabled, but the Apple routed path closes
   around an explicit host-inference bridge rather than cluster-resident Apple service parity
 - supported entrypoints no longer carry the old cross-substrate default matrix, cluster bring-up
-  fallbacks, or direct tool-route compatibility handlers; routed Harbor, MinIO, and Pulsar checks
-  require the real Gateway-backed upstream behavior
+  fallbacks, direct tool-route compatibility handlers, or generic inference-success fallback;
+  routed Harbor, MinIO, and Pulsar checks require the real Gateway-backed upstream behavior, while
+  inference coverage goes through the typed adapter harness selected by the active substrate file
 - integration coverage is driven by the comprehensive model, format, and engine matrix in
   `README.md`: one substrate-aware integration suite reads the active substrate from `.dhall`,
   chooses the corresponding engine binding for each supported row or reference, and runs at least

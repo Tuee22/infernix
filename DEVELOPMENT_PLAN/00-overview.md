@@ -31,7 +31,9 @@ PostgreSQL, Envoy Gateway, and the optional routed demo surface. `cluster up` no
 `infernix-service` on the Apple lane, routed manual inference bridges through Pulsar into the
 host-native daemon, publication exposes `daemonLocation: control-plane-host` plus
 `inferenceDispatchMode: pulsar-bridge-to-host-daemon`, and the runtime worker uses explicit
-supported runners instead of placeholder or fallback execution. The Apple clean-host bootstrap
+Python or native adapter harnesses selected from the staged substrate file. Those adapters
+currently produce deterministic engine-family output from durable metadata rather than claiming
+universal production model-binary execution. The Apple clean-host bootstrap
 hardening is present in code: the stage-0 entrypoint verifies same-process ghcup-managed `ghc`
 and `cabal` resolution before direct `cabal install`, reconciles Homebrew `protoc`, reconciles
 Colima to the supported `8 CPU / 16 GiB` profile before Docker-backed work, and lets Apple
@@ -66,7 +68,7 @@ before the outer bootstrap command returns, and that final post-teardown status 
 | Linux GPU naming | the NVIDIA-backed Linux substrate is standardized as `linux-gpu` | implemented |
 | Serialized substrate naming | the generated substrate file, publication JSON, `cluster status`, and browser contracts still carry the active substrate under `runtimeMode` field names | implemented |
 | Demo UI gating | the staged substrate file can disable the clustered demo surface | implemented; the supported materialization path accepts `--demo-ui false` |
-| Simulation stance | no simulated cluster, route, transport, or inference fallback remains in the supported runtime or validation contract | implemented and validated |
+| Simulation stance | no simulated cluster, route, transport, or generic inference-success fallback remains in the supported runtime or validation contract | implemented and validated; inference execution goes through typed adapter harnesses and unsupported adapters fail fast |
 | Validation scope | integration uses one `.dhall`-driven suite over the README matrix, E2E stays substrate-agnostic at the browser layer, and `test all` validates one built substrate at a time | implemented and validated across the governed Linux and Apple lifecycle reruns |
 
 Monitoring is not a supported first-class surface.
@@ -130,7 +132,7 @@ Monitoring is not a supported first-class surface.
 - `linux-gpu` assumes an amd64 Linux environment paired with a CUDA-capable device, but the outer
   control-plane container itself never requires the NVIDIA runtime
 - supported entrypoints no longer use simulated cluster bring-up, direct tool-route compatibility
-  handlers, or cross-substrate default validation reruns
+  handlers, generic inference-success fallback, or cross-substrate default validation reruns
 - one substrate-aware integration suite traverses the comprehensive model, format, and engine
   matrix in `README.md`, reads the active substrate from `.dhall`, and chooses the corresponding
   engine binding for every supported row or reference
@@ -485,8 +487,8 @@ The plan keeps control-plane execution context separate from substrate.
 - production inference requests arrive by Pulsar topics only
 - production `infernix service` binds no HTTP listener
 - the demo HTTP API is a demo-only surface owned by `infernix-demo`
-- simulated cluster, route, transport, and inference fallback behavior are not part of the
-  supported final contract
+- simulated cluster, route, transport, and generic inference-success fallback behavior are not part
+  of the supported final contract
 
 ### 15. Frontend Language Is PureScript
 

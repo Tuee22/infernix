@@ -315,9 +315,11 @@ Rules:
 - `linux-gpu` closes only when the Kind-backed cluster path exposes NVIDIA container runtime
   support, advertises `nvidia.com/gpu` resources to Kubernetes, and can schedule CUDA workloads on
   that substrate.
-- Later-phase completion claims remove simulated cluster, route, transport, and inference fallback
-  behavior from the supported contract rather than treating simulation as a weaker substitute once
-  real substrate support is claimed.
+- Later-phase completion claims remove simulated cluster, route, transport, and generic
+  inference-success fallback behavior from the supported contract rather than treating simulation
+  as a weaker substitute once real substrate support is claimed. When the current adapter layer
+  uses deterministic harness output rather than invoking a production model binary, the plan names
+  that directly instead of implying broader engine maturity than the code implements.
 
 ### M. Generated Substrate File and ConfigMap Contract
 
@@ -460,9 +462,9 @@ Substrate-specific validation is explicit.
 - The repository does not carry separate per-substrate integration suites. One integration suite
   reads the active substrate from the generated `.dhall`, traverses the README-derived matrix rows,
   and chooses each row's engine binding from that same file.
-- Supported validation removes simulated cluster, route, transport, and inference fallback
-  behavior from the supported execution path. Test results name the single substrate they exercised
-  and do not imply coverage that was not run.
+- Supported validation removes simulated cluster, route, transport, and generic inference-success
+  fallback behavior from the supported execution path. Test results name the single substrate they
+  exercised and do not imply coverage that was not run.
 - when an owning phase calls out real-cluster HA or lifecycle assertions, the supported
   non-Apple-cluster lane also owns those pod-replacement, durability, failover, or rebinding
   checks on the deployed substrate rather than any simulated fallback.

@@ -29,8 +29,9 @@ host-native and the clustered `infernix-demo` path now publishes manual inferenc
 Pulsar, waits for the matching daemon result, localizes large outputs back into the clustered demo
 object store, and persists the localized result for reload. `cluster up` no longer deploys
 `infernix-service` on Apple, while Linux retains clustered daemon workloads. The runtime worker
-dispatches supported Python-native and native adapters through explicit runner branches, and
-unsupported adapters now fail fast with typed errors instead of synthetic success payloads. The
+dispatches supported Python-native and native adapters through explicit harness branches; the
+current adapters emit deterministic engine-family output from durable metadata, and unsupported
+adapter ids fail fast with typed errors instead of returning a generic success payload. The
 staged file, runtime result metadata, publication surface, and browser contracts still expose the
 active substrate through `RuntimeMode` or `runtimeMode` identifiers, while publication also keeps
 the direct Apple service-daemon location distinct from the routed demo API upstream through
@@ -495,8 +496,9 @@ remaining file-absent substrate-selection fallback from the runtime contract.
   deployed substrate images
 - the daemon reads the staged substrate `.dhall` at startup to select the active substrate and
   engine catalog; automatic file-watching or reload is not part of the supported contract
-- the supported steady-state runtime removes simulated cluster, route, transport, and inference
-  fallback code paths from the final contract rather than merely refusing to count them as evidence
+- the supported steady-state runtime removes simulated cluster, route, transport, and generic
+  inference-success fallback code paths from the final contract rather than merely refusing to
+  count them as evidence
 - startup and publication reporting name substrate, daemon placement, and any routed Apple bridge
   mode unambiguously
 
@@ -510,7 +512,7 @@ remaining file-absent substrate-selection fallback from the runtime contract.
 - manual inference through `infernix-demo` and service-loop execution both use the engine binding
   selected in `.dhall` for the active README row
 - runtime validation fails if the service or demo app falls back to simulated route, transport, or
-  substrate behavior or to placeholder engine execution on a supposedly supported final lane
+  substrate behavior or to a generic engine-success path that ignores the selected adapter metadata
 
 ### Remaining Work
 
