@@ -4,6 +4,7 @@ const edgePort = Number(process.env.INFERNIX_EDGE_PORT ?? "9090");
 const edgeHost = process.env.INFERNIX_PLAYWRIGHT_HOST ?? "127.0.0.1";
 const baseUrl = `http://${edgeHost}:${edgePort}`;
 const expectedDaemonLocation = process.env.INFERNIX_EXPECT_DAEMON_LOCATION;
+const expectedInferenceExecutorLocation = process.env.INFERNIX_EXPECT_INFERENCE_EXECUTOR_LOCATION;
 const expectedInferenceDispatchMode = process.env.INFERNIX_EXPECT_INFERENCE_DISPATCH_MODE;
 const expectedApiUpstreamMode = process.env.INFERNIX_EXPECT_API_UPSTREAM_MODE;
 
@@ -33,6 +34,12 @@ test("active mode catalog is fully exercised through the routed HTTP surface", a
   expect(publication.artifactAcquisitionMode).toBe("engine-ready-artifact-manifests");
   if (expectedInferenceDispatchMode) {
     expect(publication.inferenceDispatchMode).toBe(expectedInferenceDispatchMode);
+  }
+  if (expectedDaemonLocation) {
+    expect(publication.daemonLocation).toBe(expectedDaemonLocation);
+  }
+  if (expectedInferenceExecutorLocation) {
+    expect(publication.inferenceExecutorLocation).toBe(expectedInferenceExecutorLocation);
   }
 
   for (const model of models) {

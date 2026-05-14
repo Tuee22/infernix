@@ -16,15 +16,16 @@ lint rules established here.
 
 Phase 0 is closed around the governed `documents/` suite and the canonical root-document posture
 that the repository actually uses today. The governed docs, root docs, and development plan
-describe the same staged-substrate mechanics and the same final Apple product shape. The
-repository and README matrix still point at `apple-silicon` as the Apple-native inference lane,
-and the governed docs match that contract explicitly: Apple host workflows stage
+describe the same staged-substrate mechanics and the Phase 6 Apple split-executor product shape.
+The repository and README matrix still point at `apple-silicon` as the Apple-native
+inference lane, and the plan now records the clarified contract explicitly: Apple host workflows stage
 `./.build/infernix-substrate.dhall` through `./.build/infernix internal materialize-substrate
 apple-silicon`, Linux outer-container workflows stage
 `./.build/outer-container/build/infernix-substrate.dhall` on the host through
 `docker compose run --rm infernix infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>`,
-and the routed Apple path is described consistently as host-native inference plus clustered
-support services and an optional clustered demo surface that bridges into the host daemon.
+and the routed Apple path is now being clarified as clustered service orchestration plus
+host-native inference execution: cluster daemons remain present, and Apple inference batches move
+through Pulsar into same-binary host daemons.
 `infernix lint docs` and `infernix docs check` remain the governed validation entrypoints for
 that closure.
 
@@ -249,13 +250,12 @@ implementation follow-ons claim closure against it.
 
 - the governed docs describe substrates rather than user-selected runtime-mode flags as the final
   supported selection contract
-- Apple operator docs describe the Apple lane as a hybrid topology: host-native control plane,
-  host-native inference daemon, cluster-resident support services, and an optional cluster-resident
-  routed demo surface
+- Apple operator docs distinguish Apple host-native control-plane execution from clustered support
+  services and use the Phase 6 Sprint 6.25 cluster-daemon plus host-inference-executor wording
 - Apple docs distinguish the retired direct host `infernix-demo serve` story from the supported
   Apple host-inference bridge used when the routed demo surface stays in the cluster
 - Apple docs do not describe Kind, Docker, or other containerized Apple workloads as having
-  Metal or unified-memory parity with the host daemon
+  Metal or unified-memory parity with the host inference daemon
 - Linux operator docs describe Compose as the single supported outer-container launcher for both
   `linux-cpu` and `linux-gpu`, with no supported Linux host-native build or CLI flow
 - validation docs describe single-substrate integration and E2E ownership rather than default
@@ -268,7 +268,9 @@ implementation follow-ons claim closure against it.
 - governed docs describe simulation as removed from the supported runtime and validation contract,
   not merely unsupported evidence
 - root guidance names the explicitly materialized substrate `.dhall` as the single source of truth
-  for active substrate, generated catalog, daemon placement, and validation scope
+  for active substrate, generated catalog, daemon behavior, and validation scope; Phase 6 Sprint
+  6.25 extends that rule with explicit daemon role, inference placement, and Pulsar batch-topic
+  wiring
 
 ### Validation
 
@@ -278,7 +280,7 @@ implementation follow-ons claim closure against it.
   generation, first-command auto-generation, file-absent fallback, or runtime-specific in-cluster
   substrate filenames that the code no longer uses
 - `infernix docs check` fails if the governed docs still describe Apple clustered repo workloads
-  as the canonical Apple inference executor or describe the retired direct host
+  as having Apple-native inference parity or describe the retired direct host
   `infernix-demo serve` path as the final routed demo contract
 - `infernix docs check` fails if the governed docs still describe browser-side substrate selection,
   separate per-substrate integration suites, or any simulated fallback as part of the supported

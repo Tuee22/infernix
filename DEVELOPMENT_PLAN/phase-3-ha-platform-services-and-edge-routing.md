@@ -10,9 +10,11 @@
 
 ## Phase Status
 
-Phase 3 is closed around the mandatory HA service set, the shared routed edge, the Haskell-owned
-route registry, and the Apple host-daemon publication contract implemented in this worktree.
-Sprints 3.1–3.9 remain `Done` and there is no additional open Phase 3 backlog.
+Phase 3 is closed around the mandatory HA service set, the shared routed edge, and the
+Haskell-owned route registry implemented in this worktree. Sprints 3.1–3.9 remain `Done` for
+their original scope. The clarified Apple daemon-role model is implemented in Phase 6 Sprint 6.25
+and separates cluster daemon location from host inference executor location in publication
+metadata.
 
 ## HA Reconcile Surface
 
@@ -34,23 +36,23 @@ Sprints 3.1–3.9 remain `Done` and there is no additional open Phase 3 backlog.
   `/minio/console`, `/minio/s3`, `/pulsar/admin`, and `/pulsar/ws` remain the published route
   inventory
 - `/api/publication` and `/api/cache` remain stable routed demo endpoints under the `/api` prefix
-- the final Apple hybrid path keeps the same browser base URL while allowing routed cluster
-  surfaces to bridge into the host-native Apple inference daemon
+- the final Apple split-executor path keeps the same browser base URL while routed cluster
+  surfaces enter the cluster daemon first and Apple inference batches move through Pulsar to the
+  host daemon
 
 ## Current Repo Assessment
 
 The supported cluster path runs the HA platform services and the optional demo HTTP host on the
 Kind substrate. Publication metadata originates from `./.data/runtime/publication.json`, exposes
 the active substrate through current `runtimeMode` fields, derives the route inventory from one
-Haskell-owned registry plus one data-driven HTTPRoute template, and now reports
-`inferenceDispatchMode` beside the direct `infernix service` daemon location and the routed demo
-API upstream. On `apple-silicon`, the routed Apple path keeps the demo surface in-cluster while
-bridging manual inference into the host-native daemon instead of executing that work inside a
-cluster-resident Apple repo workload, and `cluster up` no longer deploys `infernix-service` on
-that lane. Demo-off routing is supported through the explicit substrate-materialization helper with
-`--demo-ui false`. Direct `infernix-demo` execution is limited to the demo-owned HTTP surface when
-used intentionally outside the routed cluster path, so Harbor, MinIO, and Pulsar probes depend on
-the intended HTTPRoute mapping.
+Haskell-owned registry plus one data-driven HTTPRoute template, and reports
+`inferenceDispatchMode` beside the routed demo API upstream. The Apple publication contract
+distinguishes the always-present cluster daemon from the host inference executor: routed manual
+inference enters the clustered daemon path, Apple inference batches move through Pulsar to a
+same-binary host daemon, and Linux substrates keep inference inside the cluster daemon. Demo-off routing is supported through the explicit substrate-materialization helper
+with `--demo-ui false`. Direct `infernix-demo` execution is limited to the demo-owned HTTP surface
+when used intentionally outside the routed cluster path, so Harbor, MinIO, and Pulsar probes depend
+on the intended HTTPRoute mapping.
 
 ## Sprint 3.1: HA MinIO Deployment [Done]
 
@@ -317,7 +319,8 @@ None.
 ### Objective
 
 Keep the routed demo surface cluster-resident while making the Apple host-inference bridge an
-explicit part of the supported Apple contract.
+explicit part of the supported Apple contract. Phase 6 Sprint 6.25 refines this bridge so the
+route enters an always-present cluster daemon before Apple inference batches move to the host.
 
 ### Deliverables
 
@@ -326,11 +329,10 @@ explicit part of the supported Apple contract.
   keeps its clustered HTTP host instead of swinging back to a host-side `infernix-demo serve`
   process
 - on `apple-silicon`, routed manual inference bridges from the clustered `infernix-demo` surface
-  into the host-native `infernix service` daemon instead of remaining inside cluster-resident repo
-  workloads
+  toward host-native inference execution instead of claiming containerized Apple inference parity
 - publication metadata reports the Apple host-inference bridge explicitly and distinguishes it from
-  the Linux cluster-daemon upstream modes
-- route-oriented docs and validation stop accepting cluster-resident Apple service parity as the
+  Linux cluster-local inference modes
+- route-oriented docs and validation stop accepting cluster-resident Apple inference parity as the
   final Apple inference doctrine
 
 ### Validation
@@ -338,9 +340,9 @@ explicit part of the supported Apple contract.
 - `cluster up` deploys the demo app on the cluster for Apple and Linux substrates whenever
   `demo_ui` is enabled
 - routed Apple integration and E2E flows keep one browser base URL while using the Apple
-  host-inference bridge instead of in-cluster Apple service execution
+  host-inference bridge instead of in-cluster Apple inference execution
 - `infernix docs check` and route-oriented validation fail if the docs still describe direct host
-  `infernix-demo serve` or cluster-resident Apple service parity as the final routed Apple
+  `infernix-demo serve` or cluster-resident Apple inference parity as the final routed Apple
   contract
 
 ### Remaining Work

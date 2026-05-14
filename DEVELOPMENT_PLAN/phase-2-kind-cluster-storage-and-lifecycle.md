@@ -45,13 +45,14 @@ windows; staged `infernix-substrate.dhall` writes are atomic so concurrent statu
 observe truncated payloads; and retained-state Apple reruns automatically reinitialize stopped
 Harbor PostgreSQL replicas from the current Patroni leader when timeline drift leaves replicas
 unready after promotion. Phase 6 records the latest clean supported
-`./bootstrap/apple-silicon.sh` lifecycle rerun on May 13, 2026 through `doctor`, `build`, `up`,
-`status`, `test`, and `down`, with `status` reporting in-progress phase data during both `up`
-and `down`; that rerun also confirmed that Apple `build-cluster-images` can stay healthy well
-past thirty minutes before Harbor publication begins, that Harbor image pushes are
-readiness-gated with bounded retries across transient registry resets, that steady-state status
-reports two nodes and sixty-five pods, and that the governed `test` lane may perform multiple
-internal cluster bring-up or teardown cycles before the outer bootstrap command returns.
+`./bootstrap/apple-silicon.sh` lifecycle rerun on May 14, 2026 through `doctor`, `build`, `up`,
+`status`, `test`, `down`, and final `status`; that rerun validated the split daemon topology,
+host-batch Pulsar handoff, repeated retained-state cluster bring-up or teardown cycles inside the
+governed `test` lane, and final post-teardown status returning `clusterPresent: False`,
+`lifecycleStatus: idle`, and `lifecyclePhase: cluster-absent`. The earlier May 13 lifecycle
+investigation remains the proof point that Apple `build-cluster-images` can stay healthy well
+past thirty minutes before Harbor publication begins and that Harbor image pushes are
+readiness-gated with bounded retries across transient registry resets.
 
 ## Sprint 2.1: Kind Bootstrap and StorageClass Reset [Done]
 
@@ -324,7 +325,7 @@ one Compose-driven outer container for both Linux substrates.
 ### Deliverables
 
 - `cluster up` publishes the staged substrate payload into `ConfigMap/infernix-demo-config`
-- Linux cluster-resident consumers mount that ConfigMap at
+- cluster-resident consumers mount that ConfigMap at
   `/opt/build/infernix-substrate.dhall`
 - the outer-container control plane stages the same payload on the host at
   `./.build/outer-container/build/infernix-substrate.dhall` through the host-anchored bind mount
@@ -391,8 +392,9 @@ distinguish real failure from ongoing first-run progress.
 
 - a cold `./bootstrap/apple-silicon.sh up` surfaces the image-build, Harbor-publication, and
   Kind-worker preload phases explicitly while it is still making forward progress
-- the May 13, 2026 supported Apple lifecycle rerun exercises the large Pulsar image publication
-  path through Harbor and completes after the bounded Docker-push retry hardening
+- the May 14, 2026 supported Apple lifecycle rerun exercises the large Pulsar image publication
+  path through Harbor, retained-state replay, split-daemon inference, and final teardown after the
+  bounded Docker-push retry hardening
 - `./bootstrap/apple-silicon.sh down` surfaces the retained-state replay phase before Kind
   deletion when the Apple worker still owns durable cluster data
 - the supported status surface shows the in-progress lifecycle phase instead of only the last

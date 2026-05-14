@@ -4,6 +4,8 @@ module Infernix.Types
   ( ApiUpstream (..),
     CacheManifest (..),
     ClusterState (..),
+    DaemonConfig (..),
+    DaemonRole (..),
     DemoConfig (..),
     EngineBinding (..),
     ErrorResponse (..),
@@ -18,6 +20,7 @@ module Infernix.Types
     RouteInfo (..),
     RuntimeMode (..),
     allRuntimeModes,
+    daemonRoleId,
     parseRuntimeMode,
     runtimeModeId,
   )
@@ -30,7 +33,9 @@ import Data.Aeson
     object,
     withObject,
     withText,
+    (.!=),
     (.:),
+    (.:?),
     (.=),
   )
 import Data.Aeson.Types (Parser)
@@ -69,6 +74,31 @@ instance FromJSON RuntimeMode where
     case parseRuntimeMode rawValue of
       Just runtimeMode -> pure runtimeMode
       Nothing -> fail ("Unsupported runtime mode: " <> Text.unpack rawValue)
+
+data DaemonRole
+  = ClusterDaemon
+  | HostDaemon
+  deriving (Eq, Ord, Read, Show)
+
+daemonRoleId :: DaemonRole -> Text
+daemonRoleId daemonRole = case daemonRole of
+  ClusterDaemon -> "cluster"
+  HostDaemon -> "host"
+
+parseDaemonRole :: Text -> Maybe DaemonRole
+parseDaemonRole rawValue = case Text.toLower rawValue of
+  "cluster" -> Just ClusterDaemon
+  "host" -> Just HostDaemon
+  _ -> Nothing
+
+instance ToJSON DaemonRole where
+  toJSON = String . daemonRoleId
+
+instance FromJSON DaemonRole where
+  parseJSON = withText "DaemonRole" $ \rawValue ->
+    case parseDaemonRole rawValue of
+      Just daemonRole -> pure daemonRole
+      Nothing -> fail ("Unsupported daemon role: " <> Text.unpack rawValue)
 
 data RouteInfo = RouteInfo
   { path :: Text,
@@ -144,12 +174,46 @@ data DemoConfig = DemoConfig
     generatedPath :: FilePath,
     mountedPath :: FilePath,
     demoUiEnabled :: Bool,
+    activeDaemonRole :: DaemonRole,
+    clusterDaemon :: DaemonConfig,
+    hostDaemon :: Maybe DaemonConfig,
     requestTopics :: [Text],
     resultTopic :: Text,
     engines :: [EngineBinding],
     models :: [ModelDescriptor]
   }
   deriving (Eq, Read, Show)
+
+data DaemonConfig = DaemonConfig
+  { daemonConfigRole :: DaemonRole,
+    daemonConfigLocation :: Text,
+    daemonConfigRequestTopics :: [Text],
+    daemonConfigResultTopic :: Text,
+    daemonConfigHostBatchTopic :: Maybe Text,
+    daemonConfigPulsarConnectionMode :: Text
+  }
+  deriving (Eq, Read, Show)
+
+instance ToJSON DaemonConfig where
+  toJSON daemonConfig =
+    object
+      [ "role" .= daemonConfigRole daemonConfig,
+        "location" .= daemonConfigLocation daemonConfig,
+        "request_topics" .= daemonConfigRequestTopics daemonConfig,
+        "result_topic" .= daemonConfigResultTopic daemonConfig,
+        "host_batch_topic" .= daemonConfigHostBatchTopic daemonConfig,
+        "pulsarConnectionMode" .= daemonConfigPulsarConnectionMode daemonConfig
+      ]
+
+instance FromJSON DaemonConfig where
+  parseJSON = withObject "DaemonConfig" $ \value ->
+    DaemonConfig
+      <$> value .: "role"
+      <*> value .: "location"
+      <*> value .: "request_topics"
+      <*> value .: "result_topic"
+      <*> value .:? "host_batch_topic"
+      <*> value .:? "pulsarConnectionMode" .!= "configured-transport"
 
 data EngineBinding = EngineBinding
   { engineBindingName :: Text,
@@ -368,6 +432,9 @@ instance ToJSON DemoConfig where
         "generatedPath" .= generatedPath demoConfig,
         "mountedPath" .= mountedPath demoConfig,
         "demo_ui" .= demoUiEnabled demoConfig,
+        "daemonRole" .= activeDaemonRole demoConfig,
+        "clusterDaemon" .= clusterDaemon demoConfig,
+        "hostDaemon" .= hostDaemon demoConfig,
         "request_topics" .= requestTopics demoConfig,
         "result_topic" .= resultTopic demoConfig,
         "engines" .= engines demoConfig,
@@ -375,18 +442,68 @@ instance ToJSON DemoConfig where
       ]
 
 instance FromJSON DemoConfig where
-  parseJSON = withObject "DemoConfig" $ \value ->
-    DemoConfig
-      <$> value .: "runtimeMode"
-      <*> value .: "edgePort"
+  parseJSON = withObject "DemoConfig" $ \value -> do
+    runtimeModeValue <- value .: "runtimeMode"
+    requestTopicValues <- value .: "request_topics"
+    resultTopicValue <- value .: "result_topic"
+    daemonRoleValue <- value .:? "daemonRole" .!= defaultDaemonRole runtimeModeValue
+    clusterDaemonValue <-
+      value
+        .:? "clusterDaemon"
+        .!= defaultClusterDaemonConfig runtimeModeValue requestTopicValues resultTopicValue
+    hostDaemonValue <-
+      value
+        .:? "hostDaemon"
+        .!= defaultHostDaemonConfig runtimeModeValue resultTopicValue
+    (DemoConfig runtimeModeValue <$> value .: "edgePort")
       <*> value .: "configMapName"
       <*> value .: "generatedPath"
       <*> value .: "mountedPath"
       <*> value .: "demo_ui"
-      <*> value .: "request_topics"
-      <*> value .: "result_topic"
+      <*> pure daemonRoleValue
+      <*> pure clusterDaemonValue
+      <*> pure hostDaemonValue
+      <*> pure requestTopicValues
+      <*> pure resultTopicValue
       <*> value .: "engines"
       <*> value .: "models"
+
+defaultDaemonRole :: RuntimeMode -> DaemonRole
+defaultDaemonRole runtimeMode = case runtimeMode of
+  AppleSilicon -> HostDaemon
+  _ -> ClusterDaemon
+
+defaultClusterDaemonConfig :: RuntimeMode -> [Text] -> Text -> DaemonConfig
+defaultClusterDaemonConfig runtimeMode requestTopicValues resultTopicValue =
+  DaemonConfig
+    { daemonConfigRole = ClusterDaemon,
+      daemonConfigLocation = "cluster-pod",
+      daemonConfigRequestTopics = requestTopicValues,
+      daemonConfigResultTopic = resultTopicValue,
+      daemonConfigHostBatchTopic = defaultHostBatchTopic runtimeMode,
+      daemonConfigPulsarConnectionMode = "configured-transport"
+    }
+
+defaultHostDaemonConfig :: RuntimeMode -> Text -> Maybe DaemonConfig
+defaultHostDaemonConfig runtimeMode resultTopicValue =
+  case runtimeMode of
+    AppleSilicon ->
+      Just
+        DaemonConfig
+          { daemonConfigRole = HostDaemon,
+            daemonConfigLocation = "control-plane-host",
+            daemonConfigRequestTopics = maybe [] pure (defaultHostBatchTopic runtimeMode),
+            daemonConfigResultTopic = resultTopicValue,
+            daemonConfigHostBatchTopic = defaultHostBatchTopic runtimeMode,
+            daemonConfigPulsarConnectionMode = "publication-edge-auto-discovery"
+          }
+    _ -> Nothing
+
+defaultHostBatchTopic :: RuntimeMode -> Maybe Text
+defaultHostBatchTopic runtimeMode =
+  case runtimeMode of
+    AppleSilicon -> Just ("persistent://public/default/inference.batch." <> runtimeModeId runtimeMode <> ".host")
+    _ -> Nothing
 
 formatUtc :: UTCTime -> String
 formatUtc = formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%S%QZ"

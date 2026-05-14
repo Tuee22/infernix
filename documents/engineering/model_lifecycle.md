@@ -23,10 +23,14 @@
   Haskell consumes them through `proto-lens`-generated bindings, and the shared Python adapter
   project consumes them through matching auto-generated Python protobuf modules in
   `tools/generated_proto/`
-- the production daemon (`infernix service`) keeps the topic-shaped request or result contract and
-  uses the Pulsar transport configured for the active substrate; unit-level harnesses can still
-  exercise the repo-local topic spool under `./.data/runtime/pulsar/` when those endpoints are
-  intentionally absent
+- production daemons (`infernix service`) keep the topic-shaped request, host-batch, and result
+  contract and use the Pulsar transport configured for the active substrate; unit-level harnesses
+  can still exercise the repo-local topic spool under `./.data/runtime/pulsar/` when those
+  endpoints are intentionally absent
+- on `apple-silicon`, cluster daemons own inbound request consumption and batch handoff to the
+  configured host topic, while same-binary host daemons execute Apple-native inference and publish
+  the completed result. On Linux substrates, cluster daemons consume, execute, and publish the
+  result directly.
 - engine workers are Haskell processes; for Python-native engines, the worker forks the named
   adapter entrypoint and exchanges typed protobuf worker messages over stdio. The worker passes the
   durable artifact bundle, source manifest, cache manifest, and engine install root into that

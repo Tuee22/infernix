@@ -41,7 +41,6 @@ import Data.Text.IO qualified as TextIO
 import Data.Time (defaultTimeLocale, formatTime, getCurrentTime)
 import Infernix.Config
 import Infernix.DemoConfig (decodeDemoConfigFile)
-import Infernix.Models (expectedDaemonLocationForRuntime)
 import Infernix.Runtime (executeInference)
 import Infernix.Storage (readEdgePortMaybe)
 import Infernix.Types
@@ -129,15 +128,12 @@ instance FromJSON HostDiscoveredPublication where
 runProductionDaemon :: Paths -> RuntimeMode -> IO ()
 runProductionDaemon paths runtimeMode = do
   maybeControlPlaneOverride <- lookupEnv "INFERNIX_CONTROL_PLANE_CONTEXT"
+  maybeDaemonRoleOverride <- lookupEnv "INFERNIX_DAEMON_ROLE"
   maybeDaemonLocationOverride <- lookupEnv "INFERNIX_DAEMON_LOCATION"
   maybeCatalogSourceOverride <- lookupEnv "INFERNIX_CATALOG_SOURCE"
   maybeDemoConfigOverride <- lookupEnv "INFERNIX_DEMO_CONFIG_PATH"
   maybeTransport <- discoverPulsarTransport paths runtimeMode
   let controlPlane = fromMaybe (controlPlaneContext paths) maybeControlPlaneOverride
-      daemonLocation =
-        fromMaybe
-          (Text.unpack (expectedDaemonLocationForRuntime runtimeMode))
-          maybeDaemonLocationOverride
       catalogSource =
         fromMaybe
           ( case maybeDemoConfigOverride of
@@ -148,14 +144,23 @@ runProductionDaemon paths runtimeMode = do
       selectedDemoConfigPath =
         fromMaybe (Infernix.Config.generatedDemoConfigPath paths) maybeDemoConfigOverride
   demoConfig <- decodeDemoConfigFile selectedDemoConfigPath
+  daemonRole <- resolveDaemonRole maybeDaemonRoleOverride demoConfig
+  daemonConfig <- requireDaemonConfig daemonRole demoConfig
+  let daemonLocation =
+        fromMaybe
+          (Text.unpack (daemonConfigLocation daemonConfig))
+          maybeDaemonLocationOverride
   putStrLn ("serviceControlPlaneContext: " <> controlPlane)
+  putStrLn ("serviceDaemonRole: " <> Text.unpack (daemonRoleId daemonRole))
   putStrLn ("serviceDaemonLocation: " <> daemonLocation)
   putStrLn ("serviceCatalogSource: " <> catalogSource)
   putStrLn ("serviceRuntimeMode: " <> Text.unpack (runtimeModeId runtimeMode))
   putStrLn ("serviceDemoConfigPath: " <> selectedDemoConfigPath)
   putStrLn ("serviceMountedDemoConfigPath: " <> watchedDemoConfigPath)
-  putStrLn ("serviceRequestTopics: " <> intercalate "," (map Text.unpack (requestTopics demoConfig)))
-  putStrLn ("serviceResultTopic: " <> Text.unpack (resultTopic demoConfig))
+  putStrLn ("serviceRequestTopics: " <> intercalate "," (map Text.unpack (daemonConfigRequestTopics daemonConfig)))
+  putStrLn ("serviceResultTopic: " <> Text.unpack (daemonConfigResultTopic daemonConfig))
+  forM_ (daemonConfigHostBatchTopic daemonConfig) $ \topicValue ->
+    putStrLn ("serviceHostBatchTopic: " <> Text.unpack topicValue)
   putStrLn ("serviceEngineBindingCount: " <> show (length (engines demoConfig)))
   putStrLn "serviceHttpListener: disabled"
   clearServiceReadinessMarker paths
@@ -165,7 +170,7 @@ runProductionDaemon paths runtimeMode = do
       writeServiceReadinessMarker paths
       putStrLn "serviceSubscriptionMode: filesystem-topic-spool"
       forever $ do
-        forM_ (requestTopics demoConfig) (drainTopic paths runtimeMode (resultTopic demoConfig))
+        forM_ (daemonConfigRequestTopics daemonConfig) (drainTopic paths runtimeMode daemonConfig)
         threadDelay 500000
     Just transport -> do
       ensureSchemaMarkers paths demoConfig
@@ -174,9 +179,42 @@ runProductionDaemon paths runtimeMode = do
       putStrLn "serviceSubscriptionMode: websocket-pulsar"
       putStrLn ("servicePulsarWsBaseUrl: " <> renderPulsarWebSocketBase (pulsarWebSocketBase transport))
       forM_
-        (requestTopics demoConfig)
-        (forkIO . consumeTopicForever transport paths runtimeMode (resultTopic demoConfig))
+        (daemonConfigRequestTopics daemonConfig)
+        (forkIO . consumeTopicForever transport paths runtimeMode daemonConfig)
       forever (threadDelay 60000000)
+
+resolveDaemonRole :: Maybe String -> DemoConfig -> IO DaemonRole
+resolveDaemonRole maybeOverride demoConfig =
+  case trimWhitespace =<< maybeOverride of
+    Nothing -> pure (activeDaemonRole demoConfig)
+    Just rawValue ->
+      case parseDaemonRoleText (Text.pack rawValue) of
+        Just daemonRole -> pure daemonRole
+        Nothing -> ioError (userError ("unsupported INFERNIX_DAEMON_ROLE value: " <> rawValue))
+
+parseDaemonRoleText :: Text.Text -> Maybe DaemonRole
+parseDaemonRoleText rawValue =
+  case Text.toLower rawValue of
+    "cluster" -> Just ClusterDaemon
+    "host" -> Just HostDaemon
+    _ -> Nothing
+
+requireDaemonConfig :: DaemonRole -> DemoConfig -> IO DaemonConfig
+requireDaemonConfig daemonRole demoConfig
+  | daemonConfigRole (clusterDaemon demoConfig) == daemonRole =
+      pure (clusterDaemon demoConfig)
+  | otherwise =
+      case hostDaemon demoConfig of
+        Just daemonConfig
+          | daemonConfigRole daemonConfig == daemonRole ->
+              pure daemonConfig
+        _ ->
+          ioError
+            ( userError
+                ( "generated substrate file does not contain daemon metadata for role "
+                    <> Text.unpack (daemonRoleId daemonRole)
+                )
+            )
 
 publishInferenceRequest :: Paths -> RuntimeMode -> Text.Text -> InferenceRequest -> IO Text.Text
 publishInferenceRequest paths runtimeMode topic requestValue = do
@@ -216,8 +254,32 @@ readPublishedInferenceResultMaybe paths runtimeMode topic requestIdValue = do
     Just transport ->
       readPublishedInferenceResultViaPulsar transport topic requestIdValue
 
-drainTopic :: Paths -> RuntimeMode -> Text.Text -> Text.Text -> IO ()
-drainTopic paths runtimeMode resultTopicValue requestTopicValue = do
+drainTopic :: Paths -> RuntimeMode -> DaemonConfig -> Text.Text -> IO ()
+drainTopic paths runtimeMode daemonConfig requestTopicValue =
+  case daemonConfigHostBatchTopic daemonConfig of
+    Just hostBatchTopicValue
+      | runtimeMode == AppleSilicon && daemonConfigRole daemonConfig == ClusterDaemon ->
+          forwardTopic paths hostBatchTopicValue requestTopicValue
+    _ ->
+      drainInferenceTopic paths runtimeMode (daemonConfigResultTopic daemonConfig) requestTopicValue
+
+forwardTopic :: Paths -> Text.Text -> Text.Text -> IO ()
+forwardTopic paths targetTopicValue sourceTopicValue = do
+  let sourceDirectory = topicDirectoryPath paths sourceTopicValue
+  sourceDirectoryPresent <- doesDirectoryExist sourceDirectory
+  unless sourceDirectoryPresent (createDirectoryIfMissing True sourceDirectory)
+  requestFiles <- sort <$> listDirectory sourceDirectory
+  forM_ (filter (".pb" `endsWith`) requestFiles) $ \requestFile -> do
+    let sourcePath = sourceDirectory </> requestFile
+        targetDirectory = topicDirectoryPath paths targetTopicValue
+        targetPath = targetDirectory </> requestFile
+    encodedRequest <- readFileBytes sourcePath
+    createDirectoryIfMissing True targetDirectory
+    ByteString.writeFile targetPath encodedRequest
+    removeFile sourcePath
+
+drainInferenceTopic :: Paths -> RuntimeMode -> Text.Text -> Text.Text -> IO ()
+drainInferenceTopic paths runtimeMode resultTopicValue requestTopicValue = do
   let requestDirectory = topicDirectoryPath paths requestTopicValue
   requestDirectoryPresent <- doesDirectoryExist requestDirectory
   unless requestDirectoryPresent (createDirectoryIfMissing True requestDirectory)
@@ -238,7 +300,7 @@ drainTopic paths runtimeMode resultTopicValue requestTopicValue = do
 
 ensureSchemaMarkers :: Paths -> DemoConfig -> IO ()
 ensureSchemaMarkers paths demoConfig = do
-  let topics = requestTopics demoConfig <> [resultTopic demoConfig]
+  let topics = schemaTopicsForDemoConfig demoConfig
   forM_ topics writeSchemaMarker
   where
     writeSchemaMarker topicValue = do
@@ -338,9 +400,31 @@ ensureRegisteredSchemas paths transport demoConfig = do
   ensureSchemaMarkers paths demoConfig
   adminBaseUrl <- requirePulsarAdminBaseUrl transport
   manager <- newManager defaultManagerSettings
-  forM_ (requestTopics demoConfig) $ \topicValue ->
+  forM_ (requestLikeSchemaTopics demoConfig) $ \topicValue ->
     ensureRemoteSchema manager adminBaseUrl topicValue "infernix.runtime.InferenceRequest"
   ensureRemoteSchema manager adminBaseUrl (resultTopic demoConfig) "infernix.runtime.InferenceResult"
+
+schemaTopicsForDemoConfig :: DemoConfig -> [Text.Text]
+schemaTopicsForDemoConfig demoConfig =
+  uniqueTexts (requestLikeSchemaTopics demoConfig <> [resultTopic demoConfig])
+
+requestLikeSchemaTopics :: DemoConfig -> [Text.Text]
+requestLikeSchemaTopics demoConfig =
+  uniqueTexts
+    ( requestTopics demoConfig
+        <> daemonConfigRequestTopics (clusterDaemon demoConfig)
+        <> maybe [] daemonConfigRequestTopics (hostDaemon demoConfig)
+        <> maybe [] pure (daemonConfigHostBatchTopic (clusterDaemon demoConfig))
+        <> maybe [] (maybe [] pure . daemonConfigHostBatchTopic) (hostDaemon demoConfig)
+    )
+
+uniqueTexts :: [Text.Text] -> [Text.Text]
+uniqueTexts = go []
+  where
+    go seen [] = reverse seen
+    go seen (value : rest)
+      | value `elem` seen = go seen rest
+      | otherwise = go (value : seen) rest
 
 ensureRegisteredSchemasWithRetry :: Paths -> PulsarTransport -> DemoConfig -> IO ()
 ensureRegisteredSchemasWithRetry paths transport demoConfig =
@@ -426,10 +510,10 @@ ensureRemoteSchema manager adminBaseUrl topicValue messageTypeName = do
               )
           )
 
-consumeTopicForever :: PulsarTransport -> Paths -> RuntimeMode -> Text.Text -> Text.Text -> IO ()
-consumeTopicForever transport paths runtimeMode resultTopicValue requestTopicValue =
+consumeTopicForever :: PulsarTransport -> Paths -> RuntimeMode -> DaemonConfig -> Text.Text -> IO ()
+consumeTopicForever transport paths runtimeMode daemonConfig requestTopicValue =
   forever $ do
-    sessionResult <- try @SomeException (consumeTopicSession transport paths runtimeMode resultTopicValue requestTopicValue)
+    sessionResult <- try @SomeException (consumeTopicSession transport paths runtimeMode daemonConfig requestTopicValue)
     case sessionResult of
       Right _ -> threadDelay 1000000
       Left err -> do
@@ -442,8 +526,8 @@ consumeTopicForever transport paths runtimeMode resultTopicValue requestTopicVal
           )
         threadDelay 1000000
 
-consumeTopicSession :: PulsarTransport -> Paths -> RuntimeMode -> Text.Text -> Text.Text -> IO ()
-consumeTopicSession transport paths runtimeMode resultTopicValue requestTopicValue = do
+consumeTopicSession :: PulsarTransport -> Paths -> RuntimeMode -> DaemonConfig -> Text.Text -> IO ()
+consumeTopicSession transport paths runtimeMode daemonConfig requestTopicValue = do
   topicRef <- requireTopicRef requestTopicValue
   let subscriptionName = "infernix-service-" <> sanitizeTopic requestTopicValue
       consumerName = subscriptionName <> "-consumer"
@@ -472,12 +556,21 @@ consumeTopicSession transport paths runtimeMode resultTopicValue requestTopicVal
   where
     handleConsumerEnvelope connection envelope = do
       decodedRequest <- decodeEnvelopePayload "inference request" envelope
-      publishedResult <- publishedResultFromRequest paths runtimeMode decodedRequest
-      publishTopicPayload
-        transport
-        resultTopicValue
-        (requestId publishedResult)
-        (encodeMessage (domainResultToProto publishedResult))
+      case daemonConfigHostBatchTopic daemonConfig of
+        Just hostBatchTopicValue
+          | runtimeMode == AppleSilicon && daemonConfigRole daemonConfig == ClusterDaemon ->
+              publishTopicPayload
+                transport
+                hostBatchTopicValue
+                (view ProtoInferenceFields.requestId decodedRequest)
+                (encodeMessage decodedRequest)
+        _ -> do
+          publishedResult <- publishedResultFromRequest paths runtimeMode decodedRequest
+          publishTopicPayload
+            transport
+            (daemonConfigResultTopic daemonConfig)
+            (requestId publishedResult)
+            (encodeMessage (domainResultToProto publishedResult))
       sendAck connection (envelopeMessageId envelope)
 
 publishTopicPayload :: PulsarTransport -> Text.Text -> Text.Text -> ByteString.ByteString -> IO ()

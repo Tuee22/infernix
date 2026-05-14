@@ -6,15 +6,16 @@
 > **Purpose**: Define the Haskell service runtime, the shared Python engine-adapter contract, the
 > Pulsar-driven production inference surface, the demo-only HTTP API surface served by
 > `infernix-demo`, the model and artifact contracts, the shared Linux substrate image, the
-> substrate-generated `.dhall` control contract, and the Apple host-native inference bootstrap that
-> together make the runtime model honest and durable.
+> substrate-generated `.dhall` role contract, and the Apple host inference bootstrap that together
+> make the runtime model honest and durable.
 
 ## Phase Status
 
-Phase 4 is closed around the staged-substrate runtime contract, the host-native Apple inference
-lane, the shared Python adapter boundary, the Pulsar-driven request or result contract, and the
-explicit engine-runner dispatch implemented in this worktree. Sprints 4.1–4.12 remain `Done` and
-there is no additional open Phase 4 backlog.
+Phase 4 is closed around the staged-substrate runtime contract, the shared Python adapter
+boundary, the Pulsar-driven request or result contract, and the explicit engine-runner dispatch
+implemented in this worktree. Sprints 4.1–4.12 remain `Done` for their original scope. The later
+clarification that a cluster daemon always exists while Apple inference execution moves to a
+same-binary host daemon is implemented in Phase 6 Sprint 6.25.
 
 ## Current Repo Assessment
 
@@ -22,20 +23,19 @@ The repository has typed request or response shapes, typed runtime result metada
 README-matrix-backed generated catalog, protobuf-backed manifest and result helpers, explicit
 cache status or eviction or rebuild flows, repo-local durable object-store state under
 `./.data/object-store/`, a shared Python adapter project whose setup entrypoints write idempotent
-bootstrap manifests, explicit substrate-materialization helpers, and daemon placement driven by
-the staged substrate file. That file still keeps a legacy `.dhall` name while carrying
-banner-prefixed JSON. On `apple-silicon`, the direct `infernix service` entrypoint remains
-host-native and the clustered `infernix-demo` path now publishes manual inference requests through
-Pulsar, waits for the matching daemon result, localizes large outputs back into the clustered demo
-object store, and persists the localized result for reload. `cluster up` no longer deploys
-`infernix-service` on Apple, while Linux retains clustered daemon workloads. The runtime worker
-dispatches supported Python-native and native adapters through explicit harness branches; the
-current adapters emit deterministic engine-family output from durable metadata, and unsupported
-adapter ids fail fast with typed errors instead of returning a generic success payload. The
-staged file, runtime result metadata, publication surface, and browser contracts still expose the
-active substrate through `RuntimeMode` or `runtimeMode` identifiers, while publication also keeps
-the direct Apple service-daemon location distinct from the routed demo API upstream through
-`inferenceDispatchMode`.
+bootstrap manifests, explicit substrate-materialization helpers, and daemon behavior driven by the
+staged substrate file. That file still keeps a legacy `.dhall` name while carrying banner-prefixed
+JSON. The final runtime contract distinguishes daemon role from inference executor location:
+cluster daemons exist on every substrate and own Pulsar ingress, fan-in, batching coordination,
+and fan-out; Linux cluster daemons run inference directly; Apple cluster daemons publish batches to
+a dedicated Pulsar topic consumed by same-binary host daemons that run Apple-native inference. The
+runtime worker dispatches supported Python-native and native
+adapters through explicit harness branches; the current adapters emit deterministic engine-family
+output from durable metadata, and unsupported adapter ids fail fast with typed errors instead of
+returning a generic success payload. The staged file, runtime result metadata, publication surface,
+and browser contracts still expose the active substrate through `RuntimeMode` or `runtimeMode`
+identifiers, while the final publication contract also distinguishes cluster daemon location from
+host inference executor location.
 
 ## Substrate Config Ownership Contract
 
@@ -126,20 +126,21 @@ None.
 
 ### Objective
 
-Keep one service contract while telling the truth about execution context and placement: Apple
-control-plane commands and Apple inference are host-native, while Linux daemon lanes remain
-cluster-resident.
+Keep one service contract while telling the truth about execution context and inference
+placement: Apple control-plane commands are host-native, Apple cluster daemons own fan-in,
+batching, and batch handoff, Apple inference execution is host-side, and Linux inference execution
+remains cluster-resident.
 
 ### Deliverables
 
-- `infernix service` supports direct host-native Apple execution for the `apple-silicon`
-  substrate when operators invoke it outside the clustered lifecycle
-- on `apple-silicon`, routed cluster surfaces bridge into the host-native `infernix service`
-  daemon instead of treating a cluster-resident `infernix-service` workload as the canonical Apple
-  executor
-- the same executable runs in cluster pods for `linux-cpu` and `linux-gpu`
-- service placement changes only publication context, generated-config source, and optional
-  transport-endpoint wiring, not the request or result or catalog contract
+- `infernix service` supports direct host-side Apple inference execution for the `apple-silicon`
+  substrate when operators invoke it as a host daemon
+- on `apple-silicon`, routed cluster surfaces bridge into host-side inference execution instead of
+  treating a containerized Apple workload as having Metal or unified-memory inference parity
+- the same executable runs in cluster pods for Linux and, under the final Phase 6 contract, for the
+  Apple cluster daemon role as well
+- daemon role changes only publication context, generated-config source, batch-topic wiring, and
+  optional transport-endpoint wiring, not the request or result or catalog contract
 - the current validated durable object-store contract remains repo-local `./.data/object-store/`;
   real Pulsar transport is enabled either by the documented Pulsar endpoint environment variables
   or, on the Apple host-native lane, by discovering the routed Pulsar edge from publication state,
@@ -147,16 +148,16 @@ cluster-resident.
   intentionally present
 - the shared abstraction lives at the control plane, publication, config, Pulsar, protobuf, and
   routed API or UI levels rather than a false claim of identical image layout across all lanes
-- startup reports whether the daemon is running host-side or cluster-side
+- startup reports whether the daemon is running host-side or cluster-side and which role it owns
 - the current generated file, publication surface, and runtime result payloads still serialize the
   active substrate under `runtimeMode` identifiers
 
 ### Validation
 
-- Apple host-native `infernix service` reports host-side daemon metadata and consumes the same
-  generated catalog contract as the Linux cluster-daemon paths
-- routed Apple demo and transport flows reach the host-native daemon through the supported Apple
-  bridge instead of a cluster-resident Apple service workload
+- Apple host-side `infernix service` reports host inference-executor metadata and consumes the same
+  generated catalog contract as the cluster-daemon paths
+- routed Apple demo and transport flows reach the host inference daemon through the supported Apple
+  bridge instead of a cluster-resident Apple inference workload
 - cluster-resident `infernix service` on `linux-cpu` and `linux-gpu` consumes the same generated
   catalog contract and route-or-publication semantics on the cluster path
 - rebuilding for a different substrate changes generated catalog content and engine bindings, not
@@ -314,9 +315,12 @@ non-demo deployment.
 
 ### Deliverables
 
-- the active `.dhall` schema includes `request_topics`, `result_topic`, and engine-binding metadata
+- the active `.dhall` schema includes `request_topics`, `result_topic`, daemon-role metadata, and
+  engine-binding metadata; the final Apple role schema also includes host batch-topic and Pulsar
+  connection details
 - `src/Infernix/Runtime/Pulsar.hs` subscribes to request topics, dispatches work through the
-  worker, and publishes typed protobuf responses to the configured result topic
+  worker or host-batch handoff path, and publishes typed protobuf responses to the configured
+  result topic
 - production `infernix service` binds no HTTP port
 - the production chart deploys `infernix-service` without a Kubernetes HTTP Service and without a
   fake compatibility listener
@@ -404,14 +408,15 @@ None.
 
 ### Objective
 
-On Apple Silicon, keep inference host-native and let the daemon own engine setup without inventing
-fake container parity.
+On Apple Silicon, keep inference execution host-native and let the host daemon own engine setup
+without inventing fake container parity.
 
 ### Deliverables
 
-- `src/Infernix/Engines/AppleSilicon.hs` provides typed engine-setup steps for the host-native lane
-- the daemon currently ensures the shared Poetry project, repo-local engine roots, and per-engine
-  setup entrypoints on Apple Silicon
+- `src/Infernix/Engines/AppleSilicon.hs` provides typed engine-setup steps for the host inference
+  executor lane
+- the host daemon currently ensures the shared Poetry project, repo-local engine roots, and
+  per-engine setup entrypoints on Apple Silicon
 - the operator remains responsible for the host prerequisites documented in governed docs,
   including ghcup and the supported toolchain installs
 - Apple adapter dependencies materialize on demand in `python/.venv/`
@@ -424,9 +429,9 @@ fake container parity.
   succeeds without extra supported wrapper scripts
 - after `./.build/infernix internal materialize-substrate apple-silicon`, the
   `./.build/infernix cluster up` command brings up the cluster and runs the current Apple setup
-  entrypoints before host-side service or inference execution
+  entrypoints before host-side inference execution
 - `infernix test integration` exercises the Apple column of the README matrix against the
-  host-native runtime lane when the active substrate is `apple-silicon`
+  host inference executor lane when the active substrate is `apple-silicon`
 
 ### Remaining Work
 
@@ -467,7 +472,7 @@ generation.
 
 None.
 
-## Sprint 4.12: Substrate-Owned Daemon Placement, Startup Selection, and Fallback Removal [Done]
+## Sprint 4.12: Substrate-Owned Daemon Role, Startup Selection, and Fallback Removal [Done]
 
 **Status**: Done
 **Implementation**: `src/Infernix/Config.hs`, `src/Infernix/DemoConfig.hs`, `src/Infernix/Service.hs`, `src/Infernix/DemoCLI.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Models.hs`, `src/Infernix/Runtime.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Worker.hs`, `docker/linux-substrate.Dockerfile`, `web/test/run_playwright_matrix.mjs`, `test/integration/Spec.hs`, `test/unit/Spec.hs`
@@ -476,12 +481,13 @@ None.
 ### Objective
 
 Make daemon behavior derive entirely from the staged substrate file at startup and remove the
-remaining file-absent substrate-selection fallback from the runtime contract.
+remaining file-absent substrate-selection fallback from the runtime contract. Phase 6 Sprint 6.25
+extends this startup contract with explicit cluster and host daemon roles.
 
 ### Deliverables
 
-- `infernix service` derives its active substrate from the staged substrate file when present and
-  no longer accepts `--runtime-mode` or `INFERNIX_RUNTIME_MODE`
+- `infernix service` derives its active substrate and daemon role from the staged substrate file
+  when present and no longer accepts `--runtime-mode` or `INFERNIX_RUNTIME_MODE`
 - `infernix-demo` and any runtime-owned manual inference entrypoint choose the engine binding for a
   given README row only from the colocated or ConfigMap-backed substrate `.dhall`
 - Apple host workflows stage that substrate file through
@@ -490,26 +496,28 @@ remaining file-absent substrate-selection fallback from the runtime contract.
   `docker compose run --rm infernix infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>`
   onto the host-anchored `./.build/outer-container/build/` bind mount, and supported runtime
   entrypoints fail fast if it is absent
-- the direct `infernix service` entrypoint remains host-side for `apple-silicon`, while the routed
-  clustered demo app reads the same staged `.dhall` and bridges manual inference into that
-  host-native daemon rather than executing Apple inference inside a cluster-resident repo workload
-- cluster-resident Apple workloads, when present, consume the mounted staged substrate file only
-  for catalog or route behavior; they do not stand in for the canonical Apple inference executor
-- Linux `linux-cpu` and `linux-gpu` daemons run only as cluster-resident workloads on their
-  deployed substrate images
-- the daemon reads the staged substrate `.dhall` at startup to select the active substrate and
-  engine catalog; automatic file-watching or reload is not part of the supported contract
+- the direct `infernix service` entrypoint remains host-side for Apple inference execution, while
+  the routed clustered demo app reads the same staged `.dhall` and enters the cluster daemon path
+  before Apple batches move to the host daemon
+- cluster-resident Apple workloads consume the mounted staged substrate file for cluster daemon
+  behavior, catalog behavior, and route behavior; they do not stand in for the canonical Apple
+  inference executor
+- Linux `linux-cpu` and `linux-gpu` daemons run as cluster-resident workloads on their deployed
+  substrate images and perform fan-in, batching, inference, and fan-out there
+- each daemon reads the staged substrate `.dhall` at startup to select the active substrate, daemon
+  role, engine catalog, and any Pulsar topic wiring; automatic file-watching or reload is not part
+  of the supported contract
 - the supported steady-state runtime removes simulated cluster, route, transport, and generic
   inference-success fallback code paths from the final contract rather than merely refusing to
   count them as evidence
-- startup and publication reporting name substrate, daemon placement, and any routed Apple bridge
-  mode unambiguously
+- startup and publication reporting name substrate, daemon role, cluster daemon location, inference
+  executor location, and any routed Apple batch bridge mode unambiguously
 
 ### Validation
 
-- Apple host-native `infernix service` reports `apple-silicon` from the generated substrate file,
-  and routed manual inference continues to succeed through the clustered `infernix-demo` surface
-  by reaching the host-native daemon
+- Apple host-side `infernix service` reports `apple-silicon` from the generated substrate file and
+  the host daemon role, and routed manual inference continues to succeed through the clustered
+  `infernix-demo` surface by entering the cluster daemon path before reaching host inference
 - Linux substrate daemons read the mounted ConfigMap-backed substrate file at
   `/opt/build/infernix-substrate.dhall` and do not rely on runtime-mode flags
 - manual inference through `infernix-demo` and service-loop execution both use the engine binding
@@ -532,7 +540,7 @@ None.
 ## Documentation Requirements
 
 **Engineering docs to create/update:**
-- `documents/architecture/runtime_modes.md` - honest runtime model, host-native Apple control-plane and inference lane, Apple routed bridge behavior, and Linux substrate lanes
+- `documents/architecture/runtime_modes.md` - honest runtime model, host-native Apple control-plane, cluster-daemon role, Apple host inference executor behavior, and Linux substrate lanes
 - `documents/architecture/model_catalog.md` - per-substrate engine binding and generated catalog contract
 - `documents/engineering/docker_policy.md` - shared Linux substrate image doctrine and snapshot launcher expectations
 - `documents/engineering/build_artifacts.md` - build roots, generated proto handling, and image-owned toolchain contract

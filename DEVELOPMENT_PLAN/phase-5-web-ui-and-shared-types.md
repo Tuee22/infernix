@@ -23,8 +23,10 @@ frontend unit suite, `src/Infernix/Web/Contracts.hs` owns the handwritten browse
 `web/dist/app.js`. The generated browser contracts and workbench state still expose the active
 substrate through `runtimeMode` fields. The code can honor `demo_ui = false`, and the supported
 materialization path now emits that shape with `--demo-ui false`. The browser workbench and routed
-Playwright suite now also expose `daemonLocation` and `inferenceDispatchMode`, and the clustered
-demo app closes around host-backed Apple inference rather than in-cluster Apple service parity.
+Playwright suite now also expose `daemonLocation`, `inferenceExecutorLocation`, and
+`inferenceDispatchMode`, and the clustered demo app closes around Apple host inference execution
+without claiming cluster-resident Apple inference parity. Phase 6 Sprint 6.25 distinguishes the
+always-present cluster daemon from the Apple host inference executor.
 
 ## Substrate-Driven Demo Catalog Contract
 
@@ -263,7 +265,9 @@ None.
 ### Objective
 
 Keep the demo app clustered on Apple while making the Apple browser path explicitly host-backed
-for inference and retaining a containerized Linux image as the only supported Playwright executor.
+for inference execution and retaining a containerized Linux image as the only supported Playwright
+executor. Under the final Phase 6 split, the browser enters the cluster daemon path first and only
+the inference batch execution moves to host daemons.
 
 ### Deliverables
 
@@ -282,9 +286,9 @@ for inference and retaining a containerized Linux image as the only supported Pl
 - the Playwright suite and browser helpers do not branch on substrate id or engine family; they
   interact only with the routed demo surface and rely on `infernix-demo` to read `.dhall` and
   dispatch the correct engine or bridge mode
-- README-level substrate instructions cover how to launch the demo app, how the direct Apple
-  `infernix service` lane differs from the clustered demo and E2E path, how the Apple host-backed
-  inference bridge fits into that story, and how E2E execution differs between Apple and Linux
+- README-level substrate instructions cover how to launch the demo app, how the always-present
+  cluster daemon differs from the Apple host inference executor, how the Apple batch bridge fits
+  into that story, and how E2E execution differs between Apple and Linux
 
 ### Validation
 

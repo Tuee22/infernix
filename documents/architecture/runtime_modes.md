@@ -59,14 +59,16 @@ Service placement is a separate concept from runtime mode.
   validation commands run through `./.build/infernix` on the host; it does not mean the supported
   clustered service daemon stays host-resident after reconcile
 - `cluster up` deploys `infernix-demo` whenever `demo_ui` is enabled, deploys
-  `infernix-service` only on `linux-cpu` and `linux-gpu`, and leaves the Apple daemon host-native
+  `infernix-service` on `apple-silicon`, `linux-cpu`, and `linux-gpu`; Apple differs by using the
+  host daemon as the inference executor rather than by omitting the cluster daemon
 - on `apple-silicon`, the clustered `infernix-demo` path still runs from the
   `infernix-linux-cpu:local` image family while reading the staged `apple-silicon` substrate file
-- the direct `infernix service` command remains available as a manual Apple host daemon entrypoint
-  outside the clustered lifecycle and consumes the same generated `request_topics`,
-  `result_topic`, and `engines` fields from the active `.dhall`
+- the direct `infernix service` command remains the Apple host inference executor entrypoint and
+  consumes the generated host daemon metadata, host batch topic, result topic, and engine bindings
+  from the active `.dhall`
 - `/api/publication` keeps `apiUpstream.mode: cluster-demo` for the stable routed browser host,
-  reports `daemonLocation: control-plane-host` on Apple, and distinguishes the daemon lane with
+  reports `daemonLocation: cluster-pod` on every substrate, reports
+  `inferenceExecutorLocation: control-plane-host` on Apple, and distinguishes the daemon lane with
   `inferenceDispatchMode: pulsar-bridge-to-host-daemon` on Apple versus
   `pulsar-bridge-to-cluster-daemon` on Linux
 - when Pulsar endpoint env vars are present, the daemon uses the real Pulsar WebSocket or admin

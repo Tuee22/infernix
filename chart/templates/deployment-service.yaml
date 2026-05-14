@@ -19,6 +19,15 @@ spec:
       nodeSelector:
         infernix.runtime/gpu: "true"
 {{- end }}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: infernix-service
+                topologyKey: kubernetes.io/hostname
       containers:
         - name: infernix-service
           image: "{{ .Values.service.image.repository }}:{{ .Values.service.image.tag }}"
@@ -32,6 +41,8 @@ spec:
               value: {{ .Values.controlPlaneContext | quote }}
             - name: INFERNIX_DAEMON_LOCATION
               value: "cluster-pod"
+            - name: INFERNIX_DAEMON_ROLE
+              value: "cluster"
             - name: INFERNIX_CATALOG_SOURCE
               value: "mounted-configmap"
             - name: INFERNIX_DEMO_CONFIG_PATH

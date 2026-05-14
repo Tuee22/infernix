@@ -35,6 +35,9 @@ between `./.data/kind/apple-silicon/` and the worker instead of being bind-mount
   PostgreSQL, Gateway API routing, and Pulsar-only production inference do not vary by substrate
 - the generated active-mode catalog, publication contract, route inventory, and browser-visible
   base URL stay stable across supported runtime modes
+- every substrate deploys cluster `infernix-service` daemons; Apple differs only by delegating
+  Apple-native inference execution from the cluster daemon to same-binary host daemons through
+  Pulsar host batches
 - Python-native adapters always run through the shared `python/` Poetry project
 - supported validation surfaces remain `infernix lint files`, `infernix lint docs`,
   `infernix lint proto`, `infernix lint chart`, `infernix docs check`, `infernix test lint`,
@@ -52,6 +55,7 @@ between `./.data/kind/apple-silicon/` and the worker instead of being bind-mount
 | Build roots and kubeconfig location | outputs stay repo-local and untracked | `./.build/`, `./.build/infernix.kubeconfig`, and explicit `./.build/infernix internal materialize-substrate apple-silicon` staging | `./.build/outer-container/` on the host through the `./.build:/workspace/.build` bind mount, plus `./.data/runtime/infernix.kubeconfig` for durable outer-container reuse |
 | Python adapter environment | use the shared Poetry project only | `python/.venv/` may materialize on demand after Apple adapter paths reconcile Homebrew `python@3.12` plus a user-local Poetry bootstrap | adapter dependencies are installed in the shared substrate image build |
 | Browser E2E runner | exercise the routed surface for the active generated catalog | the host CLI probes routed readiness on `127.0.0.1:<edge-port>` and then orchestrates `docker compose run --rm playwright` on the private Docker `kind` network against the Kind control-plane DNS using the dedicated `infernix-playwright:local` image | the outer container forwards `docker compose run --rm playwright` through the mounted host docker socket against the same dedicated Playwright image |
+| Inference executor placement | cluster daemons always own request fan-in and result publication semantics | Apple cluster daemons hand batches to host daemons over Pulsar so Apple-native engines can run on the host | Linux cluster daemons perform fan-in, batching, inference, and result publication directly |
 | CUDA path | supported only when the host actually satisfies the NVIDIA contract | not applicable | `linux-gpu` requires the Compose-selected baked image, forwarded Docker socket, GPU visibility, and in-image `nvkind` |
 
 ## Unsupported Shortcuts

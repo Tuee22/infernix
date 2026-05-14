@@ -74,7 +74,7 @@ main =
                 ( Just
                     { runtimeMode: Just runtimeMode
                     , controlPlaneContext: Just "host-native"
-                    , daemonLocation: Just "control-plane-host"
+                    , daemonLocation: Just "cluster-pod"
                     , inferenceDispatchMode: Just "pulsar-bridge-to-host-daemon"
                     , catalogSource: Just "generated-build-root"
                     , edgePort: Just 9090
@@ -90,7 +90,7 @@ main =
                 `shouldEqual`
                   { runtimeMode
                   , controlPlaneContext: "host-native"
-                  , daemonLocation: "control-plane-host"
+                  , daemonLocation: "cluster-pod"
                   , inferenceDispatchMode: "pulsar-bridge-to-host-daemon"
                   , catalogSource: "generated-build-root"
                   , edgePort: "9090"

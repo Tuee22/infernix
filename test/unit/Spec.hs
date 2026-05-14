@@ -52,8 +52,11 @@ main = do
   assert (length (catalogForMode LinuxCpu) == 12) "linux-cpu catalog count matches the matrix"
   assert (length (catalogForMode LinuxGpu) == 16) "linux-gpu catalog count matches the matrix"
   assert
-    (expectedDaemonLocationForRuntime AppleSilicon == "control-plane-host")
-    "apple-silicon publication reports the host-native service daemon location"
+    (expectedDaemonLocationForRuntime AppleSilicon == "cluster-pod")
+    "apple-silicon publication reports the cluster service daemon location"
+  assert
+    (expectedInferenceExecutorLocationForRuntime AppleSilicon == "control-plane-host")
+    "apple-silicon publication reports the host-native inference executor location"
   assert
     (expectedDaemonLocationForRuntime LinuxCpu == "cluster-pod")
     "linux-cpu publication reports the cluster-resident service daemon location"
@@ -70,8 +73,8 @@ main = do
     (expectedInferenceDispatchModeForRuntime LinuxGpu == "pulsar-bridge-to-cluster-daemon")
     "linux-gpu publication reports the cluster-daemon dispatch mode"
   assert
-    (null (platformClaimsForRuntime AppleSilicon))
-    "apple-silicon omits the cluster service PVC claim from the publication seed set"
+    (length (platformClaimsForRuntime AppleSilicon) == 1)
+    "apple-silicon retains the cluster service PVC claim"
   assert
     (length (platformClaimsForRuntime LinuxCpu) == 1 && length (platformClaimsForRuntime LinuxGpu) == 1)
     "linux runtime lanes retain the cluster service PVC claim"
@@ -229,6 +232,17 @@ main = do
                 generatedPath = "./.build/infernix-substrate.dhall",
                 mountedPath = "/opt/build/infernix-substrate.dhall",
                 demoUiEnabled = True,
+                activeDaemonRole = ClusterDaemon,
+                clusterDaemon =
+                  DaemonConfig
+                    { daemonConfigRole = ClusterDaemon,
+                      daemonConfigLocation = "cluster-pod",
+                      daemonConfigRequestTopics = requestTopicsForMode LinuxCpu,
+                      daemonConfigResultTopic = resultTopicForMode LinuxCpu,
+                      daemonConfigHostBatchTopic = Nothing,
+                      daemonConfigPulsarConnectionMode = "configured-transport"
+                    },
+                hostDaemon = Nothing,
                 requestTopics = requestTopicsForMode LinuxCpu,
                 resultTopic = resultTopicForMode LinuxCpu,
                 engines = engineBindingsForMode LinuxCpu,
@@ -240,10 +254,52 @@ main = do
       decodedConfig <- decodeDemoConfigFile demoConfigPath
       assert (configRuntimeMode decodedConfig == LinuxCpu) "demo-config decode preserves runtime mode"
       assert (demoUiEnabled decodedConfig) "demo-config decode preserves the demo UI flag"
+      assert (activeDaemonRole decodedConfig == ClusterDaemon) "demo-config decode preserves the active daemon role"
+      assert (daemonConfigLocation (clusterDaemon decodedConfig) == "cluster-pod") "demo-config decode preserves cluster daemon metadata"
+      assert (isNothing (hostDaemon decodedConfig)) "linux demo-config decode omits host daemon metadata"
       assert (requestTopics decodedConfig == requestTopicsForMode LinuxCpu) "demo-config decode preserves request topics"
       assert (resultTopic decodedConfig == resultTopicForMode LinuxCpu) "demo-config decode preserves the result topic"
       assert (engines decodedConfig == engineBindingsForMode LinuxCpu) "demo-config decode preserves engine bindings"
       assert (length (models decodedConfig) == length (catalogForMode LinuxCpu)) "demo-config decode preserves the model list"
+      let appleHostConfig =
+            DemoConfig
+              { configRuntimeMode = AppleSilicon,
+                configEdgePort = 0,
+                configMapName = "infernix-demo-config",
+                generatedPath = "./.build/infernix-substrate.dhall",
+                mountedPath = "/opt/build/infernix-substrate.dhall",
+                demoUiEnabled = True,
+                activeDaemonRole = HostDaemon,
+                clusterDaemon =
+                  DaemonConfig
+                    { daemonConfigRole = ClusterDaemon,
+                      daemonConfigLocation = "cluster-pod",
+                      daemonConfigRequestTopics = requestTopicsForMode AppleSilicon,
+                      daemonConfigResultTopic = resultTopicForMode AppleSilicon,
+                      daemonConfigHostBatchTopic = hostBatchTopicForMode AppleSilicon,
+                      daemonConfigPulsarConnectionMode = "configured-transport"
+                    },
+                hostDaemon =
+                  Just
+                    DaemonConfig
+                      { daemonConfigRole = HostDaemon,
+                        daemonConfigLocation = "control-plane-host",
+                        daemonConfigRequestTopics = maybe [] pure (hostBatchTopicForMode AppleSilicon),
+                        daemonConfigResultTopic = resultTopicForMode AppleSilicon,
+                        daemonConfigHostBatchTopic = hostBatchTopicForMode AppleSilicon,
+                        daemonConfigPulsarConnectionMode = "publication-edge-auto-discovery"
+                      },
+                requestTopics = requestTopicsForMode AppleSilicon,
+                resultTopic = resultTopicForMode AppleSilicon,
+                engines = engineBindingsForMode AppleSilicon,
+                models = catalogForMode AppleSilicon
+              }
+          appleConfigPath = buildRoot paths </> "apple-host-demo-config-test.dhall"
+      Lazy.writeFile appleConfigPath (encodeDemoConfig appleHostConfig)
+      decodedAppleConfig <- decodeDemoConfigFile appleConfigPath
+      assert (activeDaemonRole decodedAppleConfig == HostDaemon) "apple host demo-config keeps host as the active local daemon role"
+      assert (daemonConfigHostBatchTopic (clusterDaemon decodedAppleConfig) == hostBatchTopicForMode AppleSilicon) "apple cluster daemon metadata publishes the host batch topic"
+      assert (fmap daemonConfigRequestTopics (hostDaemon decodedAppleConfig) == Just (maybe [] pure (hostBatchTopicForMode AppleSilicon))) "apple host daemon metadata consumes the host batch topic"
       let readinessMarkerPath = runtimeRoot paths </> "service" </> "subscription.ready"
       withOptionalEnv "INFERNIX_DEMO_CONFIG_PATH" (Just demoConfigPath) $
         withOptionalEnv "INFERNIX_PULSAR_WS_BASE_URL" (Just "ws://127.0.0.1:65530/ws/v2") $

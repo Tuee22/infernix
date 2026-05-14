@@ -35,7 +35,7 @@ import Infernix.Lint.Chart (runChartLint)
 import Infernix.Lint.Docs (runDocsLint)
 import Infernix.Lint.Files (runFilesLint)
 import Infernix.Lint.Proto (runProtoLint)
-import Infernix.Models (expectedDaemonLocationForRuntime, expectedInferenceDispatchModeForRuntime)
+import Infernix.Models (expectedDaemonLocationForRuntime, expectedInferenceDispatchModeForRuntime, expectedInferenceExecutorLocationForRuntime)
 import Infernix.Python
   ( ensurePoetryExecutable,
     ensurePoetryProjectReady,
@@ -222,6 +222,7 @@ runRuntimeModeE2E paths runtimeMode =
           Just port -> pure port
           Nothing -> ioError (userError "edge port was not published after cluster up")
       let expectedDaemonLocation = Text.unpack (expectedDaemonLocationForRuntime runtimeMode)
+          expectedInferenceExecutorLocation = Text.unpack (expectedInferenceExecutorLocationForRuntime runtimeMode)
       withRuntimeServiceDaemonIfNeeded paths runtimeMode $
         if controlPlaneContext paths == "host-native"
           then
@@ -233,6 +234,7 @@ runRuntimeModeE2E paths runtimeMode =
               (kindControlPlaneNodeName paths runtimeMode)
               30090
               expectedDaemonLocation
+              expectedInferenceExecutorLocation
               expectedInferenceDispatchMode
               "cluster-demo"
           else
@@ -244,6 +246,7 @@ runRuntimeModeE2E paths runtimeMode =
               (kindControlPlaneNodeName paths runtimeMode)
               30090
               expectedDaemonLocation
+              expectedInferenceExecutorLocation
               expectedInferenceDispatchMode
               "cluster-demo"
   )
@@ -301,10 +304,10 @@ printInternalPulsarResult resultValue = do
       putStrLn ("objectRef: " <> Text.unpack objectRefValue)
     _ -> pure ()
 
-runPlaywrightImage :: RuntimeMode -> Maybe String -> String -> Int -> String -> Int -> String -> String -> String -> IO ()
-runPlaywrightImage runtimeMode maybeNetwork readinessHost readinessPort playwrightHost playwrightPort expectedDaemonLocation expectedInferenceDispatchMode expectedApiUpstreamMode = do
+runPlaywrightImage :: RuntimeMode -> Maybe String -> String -> Int -> String -> Int -> String -> String -> String -> String -> IO ()
+runPlaywrightImage runtimeMode maybeNetwork readinessHost readinessPort playwrightHost playwrightPort expectedDaemonLocation expectedInferenceExecutorLocation expectedInferenceDispatchMode expectedApiUpstreamMode = do
   paths <- discoverPaths
-  waitForPlaywrightSurface readinessHost readinessPort expectedDaemonLocation expectedInferenceDispatchMode expectedApiUpstreamMode
+  waitForPlaywrightSurface readinessHost readinessPort expectedDaemonLocation expectedInferenceExecutorLocation expectedInferenceDispatchMode expectedApiUpstreamMode
   let networkValue = fromMaybe "bridge" maybeNetwork
       composeFile = repoRoot paths </> "compose.yaml"
       composeEnv =
@@ -312,6 +315,7 @@ runPlaywrightImage runtimeMode maybeNetwork readinessHost readinessPort playwrig
           ("INFERNIX_EDGE_PORT", show playwrightPort),
           ("INFERNIX_PLAYWRIGHT_HOST", playwrightHost),
           ("INFERNIX_EXPECT_DAEMON_LOCATION", expectedDaemonLocation),
+          ("INFERNIX_EXPECT_INFERENCE_EXECUTOR_LOCATION", expectedInferenceExecutorLocation),
           ("INFERNIX_EXPECT_INFERENCE_DISPATCH_MODE", expectedInferenceDispatchMode),
           ("INFERNIX_EXPECT_API_UPSTREAM_MODE", expectedApiUpstreamMode)
         ]
@@ -323,8 +327,8 @@ runPlaywrightImage runtimeMode maybeNetwork readinessHost readinessPort playwrig
     ["compose", "-f", composeFile, "run", "--rm", "playwright"]
     (repoRoot paths)
 
-waitForPlaywrightSurface :: String -> Int -> String -> String -> String -> IO ()
-waitForPlaywrightSurface host edgePort expectedDaemonLocation expectedInferenceDispatchMode expectedApiUpstreamMode = go (60 :: Int)
+waitForPlaywrightSurface :: String -> Int -> String -> String -> String -> String -> IO ()
+waitForPlaywrightSurface host edgePort expectedDaemonLocation expectedInferenceExecutorLocation expectedInferenceDispatchMode expectedApiUpstreamMode = go (60 :: Int)
   where
     go remainingAttempts
       | remainingAttempts <= 0 =
@@ -360,6 +364,7 @@ waitForPlaywrightSurface host edgePort expectedDaemonLocation expectedInferenceD
               maybeInference <- postJsonUrl (baseUrl <> "/api/inference") payloadBody
               pure
                 ( jsonTextAt ["daemonLocation"] publicationPayload == Just (Text.pack expectedDaemonLocation)
+                    && jsonTextAt ["inferenceExecutorLocation"] publicationPayload == Just (Text.pack expectedInferenceExecutorLocation)
                     && jsonTextAt ["inferenceDispatchMode"] publicationPayload == Just (Text.pack expectedInferenceDispatchMode)
                     && jsonTextAt ["apiUpstream", "mode"] publicationPayload == Just (Text.pack expectedApiUpstreamMode)
                     && "Infernix" `isInfixOf` homeBody

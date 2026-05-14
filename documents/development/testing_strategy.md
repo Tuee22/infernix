@@ -59,12 +59,14 @@ mode-specific coverage, matrix behavior, and operator detail behind those canoni
 
 ## Lifecycle Interpretation
 
-- on May 13, 2026, an Apple lifecycle rerun showed that long waits in `cluster up` and
+- on May 14, 2026, the supported Apple lifecycle reran cleanly through `doctor`, `build`, `up`,
+  `status`, `test`, `down`, and final `status`; the `test all` lane completed split-daemon Apple
+  inference, routed Playwright E2E, repeated retained-state cluster bring-up or teardown cycles,
+  and final cleanup
+- the May 13, 2026 lifecycle rerun remains the proof point that long waits in `cluster up` and
   `cluster down` can still be healthy when the lifecycle is building images, publishing them into
-  Harbor, preloading them onto the Kind worker, or replaying retained state; the monitored Apple
-  `build-cluster-images` phase stayed healthy well past thirty minutes before Harbor publication
-  began, and the large Pulsar image publication path completed with readiness-gated bounded
-  Docker-push retries in place
+  Harbor, preloading them onto the Kind worker, or replaying retained state; the large Pulsar image
+  publication path completed with readiness-gated bounded Docker-push retries in place
 - the supported operator check during those waits is `infernix cluster status`
 - when that status surface reports `lifecycleStatus: in-progress`, use `lifecyclePhase`,
   `lifecycleDetail`, and `lifecycleHeartbeatAt` to distinguish real progress from a stale wait
@@ -112,9 +114,10 @@ mode-specific coverage, matrix behavior, and operator detail behind those canoni
   workbench cannot render publication details, select a model, or submit one of those entries
 - the Apple host-native routed E2E lane also fails if the clustered routed surface cannot keep
   `apiUpstream.mode = cluster-demo`, preserve one browser-visible base URL, match the Apple
-  publication payload `daemonLocation = control-plane-host`, advertise
+  publication payload `daemonLocation = cluster-pod`, advertise
+  `inferenceExecutorLocation = control-plane-host`, advertise
   `inferenceDispatchMode = pulsar-bridge-to-host-daemon`, and still complete routed manual
-  inference through the host daemon
+  inference through the cluster-daemon-to-host-daemon batch path
 - the supported routed E2E path uses the dedicated `infernix-playwright:local` image invoked via
   `docker compose run --rm playwright`; Apple host-native flows run that compose invocation
   directly from the host CLI while Linux flows forward it from the outer container through the

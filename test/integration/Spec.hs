@@ -5,6 +5,8 @@ module Main (main) where
 import Control.Concurrent (threadDelay)
 import Control.Exception (SomeException, displayException, finally, try)
 import Control.Monad (forM_, when)
+import Data.Aeson qualified as Aeson
+import Data.ByteString.Lazy.Char8 qualified as LazyByteStringChar8
 import Data.Char (isAsciiUpper)
 import Data.List (find, isInfixOf, isPrefixOf, isSuffixOf, stripPrefix)
 import Data.Map.Strict qualified as Map
@@ -15,7 +17,10 @@ import Infernix.Config (Paths (..))
 import Infernix.Config qualified as Config
 import Infernix.DemoConfig (decodeDemoConfigFile)
 import Infernix.Models
-  ( requestTopicsForMode,
+  ( expectedDaemonLocationForRuntime,
+    expectedInferenceExecutorLocationForRuntime,
+    hostBatchTopicForMode,
+    requestTopicsForMode,
     resultTopicForMode,
   )
 import Infernix.Runtime.Pulsar
@@ -84,13 +89,17 @@ exerciseRuntimeMode paths runtimeMode = do
           [] -> fail "generated demo config did not publish any models"
       let activeModels = models demoConfig
           activeModelIds = map (Text.unpack . modelId) activeModels
+          expectedDaemonLocation = Text.unpack (expectedDaemonLocationForRuntime runtimeMode)
+          expectedInferenceExecutorLocation = Text.unpack (expectedInferenceExecutorLocationForRuntime runtimeMode)
           expectedDispatchMode = expectedInferenceDispatchMode runtimeMode
       assert (clusterPresent state) ("cluster up records cluster presence for " <> showRuntimeMode runtimeMode)
+      assertClusterServiceDeployment state
       let baseUrl = routeBaseUrl paths state
       reportStep ("route probes: " <> showRuntimeMode runtimeMode)
       homeResponse <- httpGet (baseUrl <> "/")
       publicationResponse <- httpGet (baseUrl <> "/api/publication")
       demoConfigResponse <- httpGet (baseUrl <> "/api/demo-config")
+      routedDemoConfig <- requireJsonDemoConfig demoConfigResponse
       modelsResponse <- httpGet (baseUrl <> "/api/models")
       harborResponse <- httpGet (baseUrl <> "/harbor")
       (harborApiStatus, harborApiResponse) <- httpGetWithStatus (baseUrl <> "/harbor/api/v2.0/projects")
@@ -104,7 +113,21 @@ exerciseRuntimeMode paths runtimeMode = do
       assert
         (("\"inferenceDispatchMode\":\"" <> expectedDispatchMode <> "\"") `isInfixOf` compact publicationResponse)
         "publication reports the runtime-specific inference dispatch mode"
+      assert
+        (("\"daemonLocation\":\"" <> expectedDaemonLocation <> "\"") `isInfixOf` compact publicationResponse)
+        "publication reports the cluster daemon location"
+      assert
+        (("\"inferenceExecutorLocation\":\"" <> expectedInferenceExecutorLocation <> "\"") `isInfixOf` compact publicationResponse)
+        "publication reports the substrate-specific inference executor location"
+      when (runtimeMode == AppleSilicon) $
+        assert
+          (maybe False (\topic -> ("\"hostInferenceBatchTopic\":\"" <> Text.unpack topic <> "\"") `isInfixOf` compact publicationResponse) (hostBatchTopicForMode runtimeMode))
+          "apple publication reports the host inference batch topic"
       assert ("\"demo_ui\":true" `isInfixOf` compact demoConfigResponse) "demo config reports the enabled demo UI flag"
+      assert (activeDaemonRole routedDemoConfig == ClusterDaemon) "cluster-mounted demo config reports the cluster daemon role"
+      assert (daemonConfigRole (clusterDaemon routedDemoConfig) == ClusterDaemon) "demo config reports cluster daemon metadata"
+      when (runtimeMode == AppleSilicon) $
+        assert (fmap daemonConfigRole (hostDaemon routedDemoConfig) == Just HostDaemon) "apple demo config reports host daemon metadata"
       assert
         ( ("\"request_topics\":[\"persistent://public/default/inference.request." <> showRuntimeMode runtimeMode <> "\"]")
             `isInfixOf` compact demoConfigResponse
@@ -194,6 +217,22 @@ validateCatalogModelInference baseUrl modelIdValue = do
   assert
     (("\"requestId\":\"" <> requestIdValue <> "\"") `isInfixOf` compact storedResult)
     ("stored results can be reloaded for " <> modelIdValue)
+
+assertClusterServiceDeployment :: ClusterState -> IO ()
+assertClusterServiceDeployment state = do
+  deploymentName <-
+    trim
+      <$> kubectlOutputForState
+        state
+        [ "-n",
+          "platform",
+          "get",
+          "deployment",
+          "infernix-service",
+          "-o",
+          "jsonpath={.metadata.name}"
+        ]
+  assert (deploymentName == "infernix-service") "cluster deploys infernix-service on every substrate"
 
 validateServiceRuntimeLoop :: Paths -> RuntimeMode -> String -> Bool -> IO ()
 validateServiceRuntimeLoop paths runtimeMode representativeModelId daemonAlreadyRunning = do
@@ -435,6 +474,12 @@ requireJsonStringField fieldName payload =
   case extractJsonStringField fieldName payload of
     Just value -> pure value
     Nothing -> fail ("missing JSON field " <> fieldName <> " in " <> payload)
+
+requireJsonDemoConfig :: String -> IO DemoConfig
+requireJsonDemoConfig payload =
+  case Aeson.decode (LazyByteStringChar8.pack payload) of
+    Just demoConfig -> pure demoConfig
+    Nothing -> fail "unable to decode routed demo config JSON"
 
 extractJsonStringField :: String -> String -> Maybe String
 extractJsonStringField fieldName payload =

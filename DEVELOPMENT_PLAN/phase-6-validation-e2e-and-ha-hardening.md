@@ -12,15 +12,15 @@
 
 ## Phase Status
 
-Phase 6 is closed around the implemented validation and doctrine surface. Sprints 6.1–6.24 are
-now `Done`: the validation entrypoints, routed coverage, governed-root-document metadata closure,
-structured CLI-registry closure, route-hardening cleanup, supported bootstrap lifecycle fixes, and
-false-negative doctrine plus Harbor publication retry closures are present in the current
-worktree, and the supported test story is substrate-specific. The Apple routed path validates the
-intended host-native inference doctrine end to end: routed manual inference bridges through Pulsar
-into the host daemon, the browser suite verifies `daemonLocation` and `inferenceDispatchMode`, and
-supported engine harnesses use the selected adapter metadata while unsupported adapters fail fast
-instead of returning a generic success payload. The worktree also carries the
+Phase 6 is done. Sprints 6.1–6.25 are `Done`: the validation entrypoints, routed coverage,
+governed-root-document metadata closure, structured CLI-registry closure, route-hardening cleanup,
+supported bootstrap lifecycle fixes, false-negative doctrine, Harbor publication retry closure,
+and daemon-role split are present in the current worktree, and the supported test story is
+substrate-specific. Sprint 6.25 closes around the implemented split topology: cluster daemons
+always run, Apple cluster daemons own fan-in, batching coordination, and batch handoff, Apple
+inference batches move through Pulsar to same-binary host daemons, and publication distinguishes
+cluster daemon location from inference executor location.
+The worktree also carries the
 formatter-toolchain closure that is actually implemented today:
 `src/Infernix/Lint/HaskellStyle.hs` drives `ormolu` and `hlint` through the dedicated compatible
 formatter compiler `ghc-9.12.4`, and the Linux substrate image preinstalls that compiler beside
@@ -63,7 +63,17 @@ reinitialization path when timeline drift leaves replicas stopped after promotio
 confirmed that Apple `build-cluster-images` can remain healthy well past thirty minutes before
 Harbor publication begins, that Harbor image pushes are readiness-gated with bounded retries
 across transient registry resets, and that the governed `test` lane may perform multiple internal
-cluster bring-up or teardown cycles before the outer bootstrap command returns.
+cluster bring-up or teardown cycles before the outer bootstrap command returns. The runtime-topology
+implementation now deploys `infernix-service` on Apple and reports `daemonLocation: cluster-pod`,
+`inferenceExecutorLocation: control-plane-host`, and the Apple host batch topic in publication
+metadata. On May 14, 2026, the full governed Apple lifecycle reran cleanly through
+`./bootstrap/apple-silicon.sh doctor`, `build`, `up`, `status`, `test`, `down`, and final
+`status` on the split topology. The `test` lane passed Haskell style, Haskell unit, PureScript
+unit, Haskell integration, routed Playwright, repeated retained-state `cluster down` and
+`cluster up` cycles, Apple host-batch inference for every active generated catalog entry, and
+final retained-state teardown. Final post-teardown status returned `clusterPresent: False`,
+`lifecycleStatus: idle`, `lifecyclePhase: cluster-absent`, `runtimeResultCount: 31`,
+`objectStoreObjectCount: 73`, `modelCacheEntryCount: 30`, and `durableManifestCount: 15`.
 
 ## Validation Surface
 
@@ -689,7 +699,7 @@ model, testing doctrine, and shared workflow-helper contract stop overclaiming c
 ### Deliverables
 
 - the root README uses the same honest runtime-language contract as the governed docs and plan:
-  one host-native Apple inference lane plus two containerized Linux lanes
+  one Apple split-executor lane plus two containerized Linux lanes
 - `documents/engineering/testing.md` remains the sole canonical testing doctrine, and
   `documents/development/testing_strategy.md` is reduced to supporting operator-detail guidance
   instead of a second authoritative canonical validation surface
@@ -825,13 +835,15 @@ and E2E ownership in the final `.dhall`-driven terms.
   one assertion for every such row
 - the repository does not maintain separate integration suites per substrate; substrate choice
   happens only through the generated `.dhall`
-- Apple host-native `test integration` is launched directly from the host CLI and manages the host
-  inference daemon for the duration of the test when that daemon is needed
+- Apple host-native `test integration` is launched directly from the host CLI, validates the
+  cluster daemon, and manages the host inference daemon for the duration of the test when that
+  daemon is needed
 - Apple host-native `test e2e` is launched from the host CLI while the actual Playwright executor
   runs through `docker compose run --rm playwright` against the dedicated `infernix-playwright:local`
   image
 - Linux substrate test commands all run through `docker compose run --rm infernix infernix ...`,
-  and those flows do not manage a host daemon because inference runs from the cluster daemon
+  and those flows do not manage a host daemon because fan-in, batching, inference, and fan-out all
+  run from cluster daemons
 - Playwright remains substrate-agnostic at the browser layer: the browser suite does not branch on
   substrate id or engine family, and it relies on `infernix-demo` to read `.dhall` and dispatch
   the correct engine behind the routed demo API
@@ -845,9 +857,9 @@ and E2E ownership in the final `.dhall`-driven terms.
 
 ### Validation
 
-- Apple host-native `test all` reports `apple-silicon` only, starts the host daemon as needed, and
-  delegates Playwright execution to the compose-driven `playwright` service without changing the
-  reported substrate
+- Apple host-native `test all` reports `apple-silicon` only, validates the cluster daemon, starts
+  the host inference daemon as needed, and delegates Playwright execution to the compose-driven
+  `playwright` service without changing the reported substrate
 - Linux `test all` reports only the built Linux substrate and runs entirely through the outer
   container launcher
 - for any given built substrate, integration validation fails if a README row or reference whose
@@ -1034,8 +1046,9 @@ failure.
   first-run phases that can take minutes without emitting steady log lines
 - CLI reference docs describe the supported status or progress surfaces operators use before
   concluding that a lifecycle action actually failed
-- the plan, runbooks, and testing docs cite the May 13, 2026 Apple lifecycle rerun as the proof
-  point for the supported false-negative doctrine on the current worktree
+- the plan, runbooks, and testing docs cite the May 13, 2026 Apple lifecycle investigation and
+  the May 14, 2026 split-topology rerun as proof points for the supported false-negative doctrine
+  on the current worktree
 
 ### Validation
 
@@ -1092,6 +1105,70 @@ None.
 
 ---
 
+## Sprint 6.25: Cluster-Daemon and Apple Host-Inference Split [Done]
+
+**Status**: Done
+**Implementation**: `src/Infernix/Types.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Service.hs`, `src/Infernix/Models.hs`, `src/Infernix/DemoConfig.hs`, `src/Infernix/Runtime/Pulsar.hs`, `chart/templates/deployment-service.yaml`, `chart/values.yaml`, `infernix.cabal`, `test/unit/Spec.hs`, `test/integration/Spec.hs`, `web/playwright/inference.spec.js`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/00-overview.md`, `DEVELOPMENT_PLAN/system-components.md`, `DEVELOPMENT_PLAN/development_plan_standards.md`, `DEVELOPMENT_PLAN/phase-3-ha-platform-services-and-edge-routing.md`, `DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md`, `DEVELOPMENT_PLAN/phase-5-web-ui-and-shared-types.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
+**Docs to update**: `README.md`, `documents/architecture/runtime_modes.md`, `documents/architecture/web_ui_architecture.md`, `documents/development/testing_strategy.md`, `documents/engineering/model_lifecycle.md`, `documents/engineering/portability.md`, `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/reference/api_surface.md`, `documents/reference/web_portal_surface.md`, `documents/tools/pulsar.md`
+
+### Objective
+
+Clarify and implement the final daemon-role contract: a cluster `infernix service` daemon always
+exists, while the substrate decides whether inference runs in that cluster daemon or in a
+same-binary host daemon fed by Pulsar batches.
+
+### Deliverables
+
+- `cluster up` deploys cluster `infernix service` daemons for `apple-silicon`, `linux-cpu`, and
+  `linux-gpu`
+- cluster daemon replicas can scale across nodes with anti-affinity, and the plan permits multiple
+  cluster daemons in multi-node topologies
+- on `linux-cpu` and `linux-gpu`, cluster daemons read from Pulsar, perform fan-in and batching,
+  execute inference, and publish fan-out results
+- on `apple-silicon`, cluster daemons read from Pulsar, perform fan-in and batching, publish
+  inference batches to a dedicated host-consumed Pulsar topic, and fan out completed results
+- same-binary host daemons on Apple read host-role `.dhall`, connect to Pulsar through the supplied
+  connection details, consume the configured batch topic, execute Apple-native inference, and
+  publish results back through the configured result path
+- in a multi-node Apple topology, each node may run one host inference engine while the cluster
+  daemon set remains responsible for shared fan-in, batching, and fan-out
+- the staged `.dhall` distinguishes substrate, daemon role (`cluster` or `host`), host Pulsar
+  connection details, and host batch topics instead of treating Apple host execution as absence of
+  a cluster daemon
+- publication and browser-visible metadata distinguish cluster daemon location from inference
+  executor location, so `daemonLocation` no longer implies that Apple lacks a cluster daemon
+- Pulsar at-most-once consumption is the ownership boundary for clean fan-in, batching, inference,
+  and fan-out
+- legacy plan language that says Apple `cluster up` does not deploy `infernix-service` is removed
+
+### Validation
+
+- `infernix test unit` proves that `apple-silicon` retains a cluster service claim and renders both
+  cluster-role and host-role daemon metadata
+- `infernix test integration` proves that `apple-silicon` deploys cluster `infernix-service`,
+  starts the host inference daemon when needed, moves batches through the configured Pulsar topic,
+  and completes routed inference through the split executor
+- Linux integration still proves that `linux-cpu` and `linux-gpu` complete fan-in, batching,
+  inference, and fan-out from cluster daemons without managing a host daemon
+- routed E2E verifies that the browser-visible publication payload reports the cluster daemon and
+  Apple host inference executor distinctly
+- docs lint fails if the plan or governed docs describe Apple cluster-daemon absence as the final
+  contract
+- `PATH=/Users/matt/.ghcup/bin:$PATH /Users/matt/.ghcup/bin/cabal test infernix-unit` passes
+- `PATH=/Users/matt/.ghcup/bin:$PATH /Users/matt/.ghcup/bin/cabal test infernix-haskell-style`
+  passes
+- `./bootstrap/apple-silicon.sh doctor`, `build`, `up`, `status`, `test`, `down`, and final
+  `status` pass on May 14, 2026 on the split topology
+- the full `./bootstrap/apple-silicon.sh test` lifecycle exercises the Apple host-batch topic,
+  the host daemon, every active generated catalog entry, routed Playwright, repeated retained-state
+  cluster teardown and bring-up, and final cluster teardown successfully
+
+### Remaining Work
+
+None.
+
+---
+
 ## Remaining Work
 
 None.
@@ -1110,11 +1187,14 @@ None.
 - `documents/engineering/implementation_boundaries.md` - ownership matrix, adapter-local versus shared-contract types, instance placement, and module-boundary rules
 - `documents/engineering/portability.md` - portable invariants versus substrate-specific detail, plus explicit current-status and validation sections where target direction still appears
 - `documents/engineering/storage_and_state.md` - owner or durability table, failure-mode rules, and cleanup contracts
+- `documents/architecture/runtime_modes.md` - daemon-role split, Apple cluster-to-host batch handoff, and host-role `.dhall` fields
+- `documents/engineering/model_lifecycle.md` - batch ownership and fan-in/fan-out runtime contract
 - no `documents/engineering/monitoring.md` exists while monitoring remains unsupported; create it
   only if monitoring becomes a supported first-class surface in a later change
 - `documents/operations/cluster_bootstrap_runbook.md` - test prerequisites and cluster reuse rules
 - `documents/operations/apple_silicon_runbook.md` - Apple matrix expectations and cold-start lifecycle timing doctrine
 - `documents/tools/postgresql.md` - PostgreSQL operator readiness and failover rules
+- `documents/tools/pulsar.md` - request, batch, and result topic ownership for cluster and host daemons
 - `documents/engineering/docker_policy.md` - Colima-only Apple Docker guidance and minimal Linux host prerequisites
 - `documents/development/python_policy.md` - Poetry bootstrap boundary for Apple hosts
 
@@ -1125,6 +1205,7 @@ None.
 - `documents/reference/cli_reference.md` - test command reference
 - `documents/reference/cli_surface.md` - short command-family overview that links to the canonical CLI reference
 - `documents/reference/web_portal_surface.md` - browser coverage expectations and active-substrate catalog behavior
+- `documents/reference/api_surface.md` - publication metadata that distinguishes cluster daemon and inference executor location
 
 **Cross-references to add:**
 - keep [phase-0-documentation-and-governance.md](phase-0-documentation-and-governance.md) aligned
@@ -1139,7 +1220,7 @@ None.
 - keep [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md)
   aligned when lifecycle progress surfaces or long-running convergence doctrine changes
 - keep [system-components.md](system-components.md) aligned when testing-doctrine ownership,
-  shared-helper closure, or the supported monitoring stance changes
+  shared-helper closure, daemon-role topology, or the supported monitoring stance changes
 - keep [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) aligned when any pending
   route-doc, route-lint, assistant-doc, workflow-helper, testing-doc, runtime-language, or
   monitoring-surface or compatibility-shim cleanup item closes

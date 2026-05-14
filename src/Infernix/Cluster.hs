@@ -33,7 +33,7 @@ import Infernix.Cluster.Discover
 import Infernix.Cluster.PublishImages qualified as PublishImages
 import Infernix.Config (Paths (..))
 import Infernix.Config qualified as Config
-import Infernix.DemoConfig (decodeDemoConfigFile)
+import Infernix.DemoConfig (decodeDemoConfigFile, renderGeneratedDemoConfigPayload)
 import Infernix.Engines.AppleSilicon (ensureAppleSiliconRuntimeReady)
 import Infernix.Models
 import Infernix.ProcessMonitor qualified as ProcessMonitor
@@ -63,10 +63,7 @@ seedClaims :: RuntimeMode -> [PersistentClaim]
 seedClaims = platformClaimsForRuntime
 
 clusterServiceEnabled :: RuntimeMode -> Bool
-clusterServiceEnabled runtimeMode =
-  case runtimeMode of
-    AppleSilicon -> False
-    _ -> True
+clusterServiceEnabled _runtimeMode = True
 
 helmRepositories :: [(String, String)]
 helmRepositories =
@@ -339,14 +336,13 @@ clusterUpWithPlatform paths runtimeMode = do
   requestedPort <- chooseEdgePort paths
   generatedConfigPath <- requireGeneratedDemoConfigFile paths runtimeMode
   generatedConfig <- decodeDemoConfigFile generatedConfigPath
-  requestedPayload <- Lazy.readFile generatedConfigPath
   let demoUiEnabledValue = demoUiEnabled generatedConfig
       demoConfigPath = generatedConfigPath
       publishedCatalogPath = Config.publishedConfigMapCatalogPath paths
       configMapManifestPath = Config.publishedConfigMapManifestPath paths
       publicationPath = Config.publicationStatePath paths
       mountedCatalogPath = Config.watchedDemoConfigPath
-      payload = requestedPayload
+      payload = Lazy.fromStrict (renderGeneratedDemoConfigPayload paths runtimeMode demoUiEnabledValue ClusterDaemon)
   createDirectoryIfMissing True (buildRoot paths)
   createDirectoryIfMissing True (takeDirectory publishedCatalogPath)
   createDirectoryIfMissing True (takeDirectory configMapManifestPath)

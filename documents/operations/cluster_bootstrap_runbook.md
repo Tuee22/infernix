@@ -35,11 +35,15 @@
 - on Apple, retained Kind state under `./.data/kind/apple-silicon/` is replayed into and out of
   the worker instead of being bind-mounted, so large retained state can make `cluster up` and
   `cluster down` slower than the Linux lanes even when the supported flow is healthy
-- on May 13, 2026, an Apple investigation confirmed that long waits in retained-state replay,
-  Docker build finalization, Harbor publication, and Kind-worker image preload were healthy
-  convergence rather than hard failure; the monitored Apple `build-cluster-images` phase stayed
-  healthy well past thirty minutes before Harbor publication began, and Harbor Docker pushes used
-  readiness-gated bounded retries across transient registry resets during large-image publication
+- on May 14, 2026, the supported Apple lifecycle reran cleanly through `doctor`, `build`, `up`,
+  `status`, `test`, `down`, and final `status`; that rerun validated the split daemon topology,
+  host-batch Pulsar handoff, routed Playwright E2E, repeated retained-state cluster bring-up or
+  teardown cycles inside `test all`, and final cleanup
+- the May 13, 2026 Apple investigation remains the proof point that long waits in retained-state
+  replay, Docker build finalization, Harbor publication, and Kind-worker image preload are healthy
+  convergence rather than hard failure when the lifecycle status heartbeat continues to refresh;
+  Harbor Docker pushes use readiness-gated bounded retries across transient registry resets during
+  large-image publication
 - for `linux-gpu`, confirm the supported NVIDIA host satisfies the documented `nvidia-smi` and
   `docker run --gpus all` preflight contract before cluster creation
 - for `linux-gpu`, also confirm the host filesystem has substantial free space before `cluster up`
@@ -76,6 +80,9 @@
 - confirm that `infernix kubectl get pods -n platform` shows the Envoy Gateway data plane,
   `infernix-service`, the Harbor application-plane workloads, the MinIO statefulset, the Pulsar
   statefulsets, and the PostgreSQL operator-managed members
+- on `apple-silicon`, confirm `infernix-service` is present in Kind and that
+  `/api/publication` reports `daemonLocation: cluster-pod`,
+  `inferenceExecutorLocation: control-plane-host`, and the Apple host batch topic
 - confirm that `infernix kubectl get gatewayclass infernix-gateway` reports `Accepted=True`,
   `infernix kubectl -n platform get gateway infernix-edge` reports `Accepted=True` and
   `Programmed=True`, and `infernix kubectl -n platform get envoyproxy infernix-edge` is present
@@ -84,7 +91,8 @@
 - confirm that `infernix kubectl get storageclass` shows only `infernix-manual`
 - confirm routes with `infernix cluster status`
 - inspect `./.data/runtime/publication.json` or `GET /api/publication` to confirm the routed
-  publication contract matches `cluster status`
+  publication contract matches `cluster status`, including separate daemon and inference-executor
+  locations on Apple
 - inspect the real ConfigMap with `infernix kubectl get configmap infernix-demo-config -n platform -o yaml`
 
 <!-- infernix:route-registry:cluster-bootstrap:start -->

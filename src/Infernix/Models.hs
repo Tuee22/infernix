@@ -7,8 +7,10 @@ module Infernix.Models
     engineBindingsForMode,
     encodeDemoConfig,
     expectedDaemonLocationForRuntime,
+    expectedInferenceExecutorLocationForRuntime,
     expectedInferenceDispatchModeForRuntime,
     findModel,
+    hostBatchTopicForMode,
     platformClaimsForRuntime,
     requestTopicsForMode,
     renderPublicationState,
@@ -63,6 +65,12 @@ requestTopicsForMode runtimeMode =
 resultTopicForMode :: RuntimeMode -> Text
 resultTopicForMode runtimeMode =
   "persistent://public/default/inference.result." <> runtimeModeId runtimeMode
+
+hostBatchTopicForMode :: RuntimeMode -> Maybe Text
+hostBatchTopicForMode runtimeMode =
+  case runtimeMode of
+    AppleSilicon -> Just ("persistent://public/default/inference.batch." <> runtimeModeId runtimeMode <> ".host")
+    _ -> Nothing
 
 engineBindingForSelectedEngine :: RuntimeMode -> Text -> EngineBinding
 engineBindingForSelectedEngine _runtimeMode selectedEngineValue =
@@ -133,10 +141,8 @@ renderConfigMapManifest payload =
     <> indentBlock 4 (LazyChar8.unpack payload)
 
 platformClaimsForRuntime :: RuntimeMode -> [PersistentClaim]
-platformClaimsForRuntime runtimeMode =
-  case runtimeMode of
-    AppleSilicon -> []
-    _ -> [PersistentClaim "platform" "infernix" "service" 0 "data" "infernix-service-0-data" "5Gi"]
+platformClaimsForRuntime _runtimeMode =
+  [PersistentClaim "platform" "infernix" "service" 0 "data" "infernix-service-0-data" "5Gi"]
 
 routeInventory :: Bool -> [RouteInfo]
 routeInventory = Routes.routeInventory
@@ -168,6 +174,12 @@ renderPublicationStateWithApiUpstream controlPlane state apiUpstream =
     <> ",\n"
     <> "  \"daemonLocation\": "
     <> jsonString (daemonLocationFor state)
+    <> ",\n"
+    <> "  \"inferenceExecutorLocation\": "
+    <> jsonString (expectedInferenceExecutorLocationForRuntime (clusterRuntimeMode state))
+    <> ",\n"
+    <> "  \"hostInferenceBatchTopic\": "
+    <> maybe "null" jsonString (hostBatchTopicForMode (clusterRuntimeMode state))
     <> ",\n"
     <> "  \"catalogSource\": "
     <> jsonString "generated-build-root"
@@ -272,7 +284,11 @@ daemonLocationFor state =
     else "disabled"
 
 expectedDaemonLocationForRuntime :: RuntimeMode -> Text
-expectedDaemonLocationForRuntime runtimeMode =
+expectedDaemonLocationForRuntime _runtimeMode =
+  "cluster-pod"
+
+expectedInferenceExecutorLocationForRuntime :: RuntimeMode -> Text
+expectedInferenceExecutorLocationForRuntime runtimeMode =
   case runtimeMode of
     AppleSilicon -> "control-plane-host"
     _ -> "cluster-pod"
@@ -692,6 +708,15 @@ renderDemoConfig demoConfig =
     <> "  \"demo_ui\": "
     <> jsonBool (demoUiEnabled demoConfig)
     <> ",\n"
+    <> "  \"daemonRole\": "
+    <> jsonString (daemonRoleId (activeDaemonRole demoConfig))
+    <> ",\n"
+    <> "  \"clusterDaemon\": "
+    <> renderDaemonConfig (clusterDaemon demoConfig)
+    <> ",\n"
+    <> "  \"hostDaemon\": "
+    <> maybe "null" renderDaemonConfig (hostDaemon demoConfig)
+    <> ",\n"
     <> "  \"request_topics\": ["
     <> intercalate ", " (map jsonString (requestTopics demoConfig))
     <> "],\n"
@@ -705,6 +730,23 @@ renderDemoConfig demoConfig =
     <> intercalate ",\n" (map renderModelDescriptor (models demoConfig))
     <> "\n  ]\n"
     <> "}\n"
+
+renderDaemonConfig :: DaemonConfig -> String
+renderDaemonConfig daemonConfig =
+  "{"
+    <> "\"role\": "
+    <> jsonString (daemonRoleId (daemonConfigRole daemonConfig))
+    <> ", \"location\": "
+    <> jsonString (daemonConfigLocation daemonConfig)
+    <> ", \"request_topics\": ["
+    <> intercalate ", " (map jsonString (daemonConfigRequestTopics daemonConfig))
+    <> "], \"result_topic\": "
+    <> jsonString (daemonConfigResultTopic daemonConfig)
+    <> ", \"host_batch_topic\": "
+    <> maybe "null" jsonString (daemonConfigHostBatchTopic daemonConfig)
+    <> ", \"pulsarConnectionMode\": "
+    <> jsonString (daemonConfigPulsarConnectionMode daemonConfig)
+    <> "}"
 
 renderEngineBinding :: EngineBinding -> String
 renderEngineBinding engineBinding =

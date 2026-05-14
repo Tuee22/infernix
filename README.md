@@ -135,12 +135,14 @@ The supported local platform is built around:
 
 The optional demo UI runs in the cluster as the `infernix-demo` workload when the active `.dhall`
 `demo_ui` flag is on. On Apple, `./.build/infernix` still builds and drives the control plane
-from the host, `cluster up` keeps Harbor, MinIO, Pulsar, PostgreSQL, Envoy Gateway, and
-`infernix-demo` in Kind, and routed manual inference publishes through Pulsar before the
-host-native `./.build/infernix service` daemon completes the request. On Linux, the same routed
-demo surface bridges through Pulsar into the cluster-resident `infernix-service` workload.
-`/api/publication` now keeps `apiUpstream.mode: cluster-demo` for the stable browser base URL and
-adds `inferenceDispatchMode` so Apple can advertise `pulsar-bridge-to-host-daemon` while Linux
+from the host, `cluster up` keeps Harbor, MinIO, Pulsar, PostgreSQL, Envoy Gateway,
+`infernix-demo`, and cluster `infernix-service` daemons in Kind, and routed manual inference
+enters the cluster daemon before Apple-native batches move through Pulsar to the host-side
+`./.build/infernix service` executor. On Linux, the same routed demo surface bridges through
+Pulsar into the cluster-resident `infernix-service` workload, which also runs inference.
+`/api/publication` now keeps `apiUpstream.mode: cluster-demo` for the stable browser base URL,
+reports `daemonLocation: cluster-pod` for every substrate, adds `inferenceExecutorLocation`, and
+keeps `inferenceDispatchMode` so Apple can advertise `pulsar-bridge-to-host-daemon` while Linux
 advertises `pulsar-bridge-to-cluster-daemon`. Production deployments leave the demo flag off and
 accept inference work via Pulsar subscription only. The local Kind and HA substrate is the
 validation and operator baseline for Apple, CPU, and CUDA runtime targets.
@@ -561,8 +563,9 @@ rebuildable.
 ## Configuration and Runtime Contract
 
 - a `.dhall` configuration defines the runtime contract for supported service flows; the active
-  `.dhall` names `request_topics : List Text`, `result_topic : Text`, `engines : List EngineBinding`,
-  and the optional `demo_ui : Bool` flag that gates the `infernix-demo` workload
+  `.dhall` names `daemonRole`, `clusterDaemon`, optional `hostDaemon`, `request_topics : List Text`,
+  `result_topic : Text`, `engines : List EngineBinding`, and the optional `demo_ui : Bool` flag
+  that gates the `infernix-demo` workload
 - Apple host flows stage that file with
   `./.build/infernix internal materialize-substrate apple-silicon`
 - Linux outer-container flows stage that file on the host with
@@ -575,20 +578,23 @@ rebuildable.
   appear in the demo UI for that mode (when the demo UI is enabled)
 - the set of generated mode-specific demo `.dhall` files must cover every model or workload row in
   the comprehensive model, format, and engine matrix
-- the service contract includes hot-reloadable configuration with safe worker drain, cache
-  eviction, and route or device remapping semantics
-- the production inference surface is Pulsar subscription only: `infernix service` consumes
-  protobuf requests from configured request topics, dispatches them through the Haskell worker, and
-  publishes results to the configured result topic; no HTTP listener is bound
+- each daemon reads the staged substrate file at startup; hot reload, admin HTTP, and route or
+  device remapping are outside the supported service contract
+- the production inference surface is Pulsar subscription only: cluster `infernix service` daemons
+  consume protobuf requests from configured request topics on every substrate; Linux daemons
+  dispatch through the Haskell worker and publish results directly, while Apple cluster daemons
+  forward batches to the configured host batch topic for same-binary host executors; no HTTP
+  listener is bound
 - local cache state is never authoritative; it is reconstructed from durable metadata and durable
   artifacts
 
 ## Messaging and Lane Model
 
-- the supported production topic contract currently centers on the configured request topics and
-  result topic carried in the active `.dhall`; the generated defaults are one
-  `inference.request.<runtime-mode>` topic family and one `inference.result.<runtime-mode>` topic
-  family per active substrate
+- the supported production topic contract centers on the configured request topics, result topic,
+  daemon role metadata, and any Apple host batch topic carried in the active `.dhall`; the
+  generated defaults are one `inference.request.<runtime-mode>` topic family, one
+  `inference.result.<runtime-mode>` topic family, and, on Apple, one
+  `inference.batch.apple-silicon.host` topic
 - request routing is lane-oriented: one engine, one model, one device class or allocation, one
   runtime-owned execution stream
 - engine-specific workers remain responsible for batching and execution internals after Infernix

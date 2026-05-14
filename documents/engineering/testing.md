@@ -34,12 +34,13 @@
 
 ## Lifecycle Failure Classification
 
-- on May 13, 2026, an Apple lifecycle investigation confirmed that long waits in Docker build
-  finalization, Harbor publication, Kind-worker image preload, and retained-state replay were real
-  convergence, not hard product failure; the monitored Apple `build-cluster-images` phase stayed
-  healthy well past thirty minutes before Harbor publication began, Harbor Docker pushes used
-  readiness-gated bounded retries across transient registry resets, and the full `test all` lane
-  still completed lint, unit, integration, and browser coverage
+- on May 14, 2026, the supported Apple lifecycle reran cleanly through `doctor`, `build`, `up`,
+  `status`, `test`, `down`, and final `status`; the full `test all` lane completed lint, unit,
+  integration, split-daemon Apple inference, routed browser coverage, repeated retained-state
+  cluster bring-up or teardown cycles, and final cleanup. The May 13 lifecycle investigation
+  remains the proof point that long waits in Docker build finalization, Harbor publication,
+  Kind-worker image preload, and retained-state replay are real convergence when heartbeat data is
+  moving, not hard product failure.
 - the supported doctrine is inactivity-aware: elapsed wall time alone is not enough to classify
   `cluster up`, `cluster down`, `test integration`, `test e2e`, or `test all` as failed when the
   active path still owns cluster lifecycle
@@ -127,8 +128,8 @@
   `infernix-playwright:local` image; the Linux outer-container path forwards the same compose
   invocation through the mounted host docker socket
 - supported Apple integration and E2E own the host daemon lifecycle when the routed demo surface
-  needs it, so the validation contract proves the routed Apple bridge against the host daemon
-  rather than an in-cluster Apple service pod
+  needs it, so the validation contract proves the cluster daemon plus host inference executor
+  bridge rather than treating an in-cluster pod as the Apple-native inference executor
 - `infernix test e2e` requires Docker on every substrate and has no host-native npm fallback
   path; on Apple host-native flows the supported command reconciles `kind`, `kubectl`, `helm`,
   Node.js, and Poetry on demand after `./.build/infernix` exists, while Linux flows rely on the
