@@ -160,7 +160,9 @@ static quality enforceable through canonical entrypoints.
 - outer-container staged substrate output stays under `./.build/outer-container/` through a
   host-anchored bind mount, while cabal package state and cabal's build directory stay in the
   image overlay
-- `cluster up` stages `infernix-substrate.dhall` under the active build root
+- explicit substrate materialization stages `infernix-substrate.dhall` under the active build
+  root; `cluster up` consumes that staged file, republishes it for cluster consumers, and fails
+  fast if it is absent
 - the supported web build regenerates frontend contracts, runs `spago build`, and emits
   `web/dist/app.js`
 - repo-owned Haskell validation enables strict compiler warnings and treats warnings as errors

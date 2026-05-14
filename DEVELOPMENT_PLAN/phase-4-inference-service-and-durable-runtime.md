@@ -140,8 +140,11 @@ cluster-resident.
 - the same executable runs in cluster pods for `linux-cpu` and `linux-gpu`
 - service placement changes only publication context, generated-config source, and optional
   transport-endpoint wiring, not the request or result or catalog contract
-- the current validated durable object-store contract remains repo-local `./.data/object-store/`,
-  and real Pulsar transport is enabled only when the documented environment variables are set
+- the current validated durable object-store contract remains repo-local `./.data/object-store/`;
+  real Pulsar transport is enabled either by the documented Pulsar endpoint environment variables
+  or, on the Apple host-native lane, by discovering the routed Pulsar edge from publication state,
+  while the filesystem topic spool remains a harness-oriented fallback when no endpoint is
+  intentionally present
 - the shared abstraction lives at the control plane, publication, config, Pulsar, protobuf, and
   routed API or UI levels rather than a false claim of identical image layout across all lanes
 - startup reports whether the daemon is running host-side or cluster-side

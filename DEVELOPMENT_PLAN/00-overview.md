@@ -42,7 +42,7 @@ bootstrap on demand. Routed Apple Playwright readiness probes `127.0.0.1` from t
 the browser container joins the private Docker `kind` network and targets the Kind control-plane
 DNS. The shared cluster lifecycle persists explicit phase, child-operation detail, and heartbeat
 data in `cluster status` during monitored Docker build, Harbor publication, Kind-worker preload,
-and Apple retained-state replay steps; generated substrate-file publication is atomic so
+and Apple retained-state replay steps; explicit substrate-file materialization is atomic so
 concurrent readers do not observe truncated payloads; and retained-state Apple reruns
 automatically reinitialize stopped Harbor PostgreSQL replicas from the current Patroni leader when
 timeline drift leaves replicas unready after promotion. Phase 6 records clean governed bootstrap

@@ -103,7 +103,7 @@ private Docker `kind` network and targets the Kind control-plane DNS, and the de
 Playwright image no longer bakes a conflicting `NO_COLOR` default. The shared cluster lifecycle
 now surfaces explicit in-progress phase, child-operation detail, and heartbeat data through
 `cluster status` during monitored Docker build, Harbor publication, Kind-worker preload, and
-Apple retained-state replay steps; generated substrate publication writes the staged
+Apple retained-state replay steps; explicit substrate materialization writes the staged
 `infernix-substrate.dhall` atomically so concurrent status readers do not observe truncated
 payloads; and retained-state Apple reruns automatically reinitialize stopped Harbor PostgreSQL
 replicas from the current Patroni leader when timeline drift leaves replicas unready after

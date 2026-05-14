@@ -66,9 +66,10 @@
   Kind state is replayed into and out of the worker rather than bind-mounted
 - the shared lifecycle now exposes `lifecycleStatus`, `lifecyclePhase`, `lifecycleDetail`, and
   heartbeat timestamps during monitored Docker build, Harbor publication, Kind-worker preload, and
-  Apple retained-state replay work; staged substrate publication is atomic for concurrent readers;
-  and retained-state Apple reruns automatically reinitialize stopped Harbor PostgreSQL replicas
-  from the current Patroni leader when timeline drift leaves replicas unready after promotion
+  Apple retained-state replay work; staged substrate materialization is atomic for concurrent
+  readers; and retained-state Apple reruns automatically reinitialize stopped Harbor PostgreSQL
+  replicas from the current Patroni leader when timeline drift leaves replicas unready after
+  promotion
 - Phase 6 records clean governed bootstrap reruns for `linux-cpu`, `linux-gpu`, and the
   supported Apple lifecycle, including the latest Apple rerun on May 13, 2026 through `doctor`,
   `build`, `up`, `status`, `test`, and `down`; that rerun also confirmed that Apple

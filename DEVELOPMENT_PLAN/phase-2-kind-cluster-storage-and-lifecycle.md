@@ -419,8 +419,8 @@ status reads remain reliable and retained Harbor PostgreSQL replicas recover wit
 
 ### Deliverables
 
-- generated `infernix-substrate.dhall` writes are atomic, preventing concurrent `cluster status`
-  or publication readers from seeing truncated JSON while lifecycle work is still publishing state
+- generated `infernix-substrate.dhall` staging writes are atomic, preventing concurrent
+  `cluster status` readers from seeing truncated JSON while lifecycle work is in flight
 - retained-state `cluster up` detects a ready Harbor PostgreSQL leader with stopped unready
   replicas and reinitializes those replicas from the leader through Patroni
 - supported Apple reruns no longer require manual Harbor PostgreSQL replica surgery when timeline

@@ -192,9 +192,9 @@ browser surface through the shared edge.
   CLI runs it directly, on Linux substrates the outer container runs it against the host docker
   daemon
 - `INFERNIX_PLAYWRIGHT_NETWORK`, `INFERNIX_EDGE_PORT`, `INFERNIX_PLAYWRIGHT_HOST`,
-  `INFERNIX_EXPECT_DAEMON_LOCATION`, and `INFERNIX_EXPECT_API_UPSTREAM_MODE` flow into the playwright
-  service through compose env so the same spec covers Apple, `linux-cpu`, and `linux-gpu` without
-  branching in browser code
+  `INFERNIX_EXPECT_DAEMON_LOCATION`, `INFERNIX_EXPECT_INFERENCE_DISPATCH_MODE`, and
+  `INFERNIX_EXPECT_API_UPSTREAM_MODE` flow into the playwright service through compose env so the
+  same spec covers Apple, `linux-cpu`, and `linux-gpu` without branching in browser code
 - supported Playwright invocations use `npm --prefix web exec -- playwright ...`
 - E2E covers publication details, model selection, manual inference submission, and result rendering
 
