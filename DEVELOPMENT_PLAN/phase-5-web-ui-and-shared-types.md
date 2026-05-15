@@ -250,7 +250,8 @@ directories mean generated output only.
 
 - `npm --prefix web run build` still regenerates the PureScript contract module successfully
 - Haskell or frontend tests fail if imports or codegen paths still refer to the old handwritten module location
-- `find src/Generated -type f` returns no handwritten source files on the supported path
+- no tracked handwritten Haskell source remains under `src/Generated/`; the current worktree does
+  not need that directory at all
 
 ### Remaining Work
 

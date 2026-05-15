@@ -51,7 +51,8 @@ mode-specific coverage, matrix behavior, and operator detail behind those canoni
 - `infernix test e2e` validates the routed browser surface by comparing `/api/models` to the
   generated demo config and exercising every routed catalog entry through both the HTTP inference
   endpoint and the browser workbench
-- `infernix test all` runs lint, unit, integration, and E2E in sequence for the active substrate
+- `infernix test all` runs lint, unit, integration, and E2E in sequence as the complete supported
+  suite for the active substrate
 - the supported real-cluster `linux-gpu` integration and `test all` lanes also depend on enough
   host disk headroom for Kind image preload, Harbor-backed image publication, and Pulsar
   BookKeeper durability; low disk headroom can block `infernix-service` readiness after cluster
@@ -82,7 +83,7 @@ mode-specific coverage, matrix behavior, and operator detail behind those canoni
 - unit coverage proves generated catalog shape, selected engine metadata, request-shape helpers,
   publication-summary rendering, and object-reference result formatting for the active generated
   contract module
-- `infernix test integration` serializes the active runtime mode into the generated demo config and
+- `infernix test integration` serializes the active staged substrate into the generated demo config and
   publication state, then validates the routed demo API, auxiliary routed prefixes, every
   generated active-mode catalog entry, cache mutation endpoints, and the daemon request or result
   loop for the active substrate
@@ -128,7 +129,7 @@ mode-specific coverage, matrix behavior, and operator detail behind those canoni
 - supported Playwright launchers clear conflicting `NO_COLOR` and `FORCE_COLOR` values from the
   child environment before Playwright starts, and the dedicated Playwright image does not
   reintroduce its own conflicting `NO_COLOR` default
-- changing the active runtime mode changes the generated catalog and therefore the exercised entry
+- changing the active staged substrate changes the generated catalog and therefore the exercised entry
   set automatically
 
 ## Cross-References

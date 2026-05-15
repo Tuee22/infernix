@@ -17,8 +17,8 @@ governed-root-document metadata closure, structured CLI-registry closure, route-
 supported bootstrap lifecycle fixes, false-negative doctrine, Harbor publication retry closure,
 and daemon-role split are present in the current worktree, and the supported test story is
 substrate-specific. Sprint 6.25 closes around the implemented split topology: cluster daemons
-always run, Apple cluster daemons own fan-in, batching coordination, and batch handoff, Apple
-inference batches move through Pulsar to same-binary host daemons, and publication distinguishes
+always run, Apple cluster daemons own request-topic consumption and host-batch handoff, Apple
+inference work moves through Pulsar to same-binary host daemons, and publication distinguishes
 cluster daemon location from inference executor location.
 The worktree also carries the
 formatter-toolchain closure that is actually implemented today:
@@ -103,7 +103,8 @@ commands.
 - `test integration` validates the active substrate's published catalog contract, routed surfaces,
   and routed inference execution for every generated active-substrate catalog entry
 - `test e2e` exercises every demo-visible generated catalog entry for the active substrate
-- `test all` reports only the active built substrate instead of implying cross-substrate coverage
+- `test all` runs every supported validation layer for the active built substrate and reports that
+  substrate instead of implying cross-substrate coverage
 - `test integration`, `test e2e`, and `test all` own cluster lifecycle around each test phase:
   the supported entrypoint runs `cluster down` first, executes the test action, and runs
   `cluster down` again unconditionally afterwards so reruns start from a clean cluster state
@@ -308,7 +309,8 @@ hard-coded lane lists.
   demo config
 - `infernix test e2e` is specified to exercise every demo-visible generated catalog entry through
   the routed browser surface
-- `infernix test all` aggregates lint, unit, integration, and E2E without silently dropping catalog entries
+- `infernix test all` aggregates lint, unit, integration, and E2E as the complete supported suite
+  without silently dropping catalog entries
 - the coverage machinery derives its exercised catalog from the generated substrate file instead of
   hard-coded per-lane model lists
 
@@ -376,8 +378,9 @@ toolchain from package managers instead of depending on a broad preinstalled App
   operator tools needed by the active path, including the Docker CLI, `kind`, `kubectl`, `helm`,
   and Node.js
 - when Apple adapter flows first need Poetry and the `poetry` executable is absent, `infernix`
-  can reconcile Homebrew `python@3.12`, bootstrap Poetry into a user-local environment, and then
-  continue all host-side Python management through the shared Poetry project
+  can reconcile Homebrew `python@3.12` at `/opt/homebrew/opt/python@3.12/bin/python3.12`,
+  bootstrap Poetry into a user-local environment, and then continue all host-side Python
+  management through the shared Poetry project
 - `linux-cpu` host prerequisites stop at Docker Engine plus the Docker Compose plugin
 - `linux-gpu` host prerequisites stop at Docker Engine plus the supported NVIDIA driver and
   container-toolkit setup
@@ -387,7 +390,7 @@ toolchain from package managers instead of depending on a broad preinstalled App
 ### Validation
 
 - validation closes when, on a clean Apple Silicon host with only Homebrew plus ghcup present,
-  `cabal install --installdir=./.build --install-method=copy --overwrite-policy=always exe:infernix exe:infernix-demo`
+  `cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes`
   succeeds, `./.build/infernix internal materialize-substrate apple-silicon` stages the active
   substrate, and `./.build/infernix cluster up` reconciles the remaining supported Apple host
   prerequisites through the supported package-manager path
@@ -818,16 +821,17 @@ None.
 
 ### Objective
 
-Make every supported test command exercise only the built and deployed substrate, remove
-simulation from the supported runtime and validation contract completely, and describe integration
-and E2E ownership in the final `.dhall`-driven terms.
+Make every supported test command run its complete suite against the built and deployed substrate,
+remove simulation from the supported runtime and validation contract completely, and describe
+integration and E2E ownership in the final `.dhall`-driven terms.
 
 ### Deliverables
 
-- `infernix test integration`, `infernix test e2e`, and `infernix test all` exercise only the
-  substrate encoded in the generated `.dhall`
+- `infernix test integration`, `infernix test e2e`, and `infernix test all` run their complete
+  supported suites against the substrate encoded in the generated `.dhall`
 - the supported default test story no longer runs a cross-substrate Apple or CPU or GPU matrix from
-  one invocation
+  one invocation; full substrate closure comes from restaging and rerunning the complete suite for
+  each substrate
 - the comprehensive model, format, and engine matrix in `README.md` is the authoritative
   integration-test coverage ledger
 - one integration suite traverses those README rows or references, reads the active substrate from
@@ -842,8 +846,8 @@ and E2E ownership in the final `.dhall`-driven terms.
   runs through `docker compose run --rm playwright` against the dedicated `infernix-playwright:local`
   image
 - Linux substrate test commands all run through `docker compose run --rm infernix infernix ...`,
-  and those flows do not manage a host daemon because fan-in, batching, inference, and fan-out all
-  run from cluster daemons
+  and those flows do not manage a host daemon because request consumption, inference, and result
+  publication all run from cluster daemons
 - Playwright remains substrate-agnostic at the browser layer: the browser suite does not branch on
   substrate id or engine family, and it relies on `infernix-demo` to read `.dhall` and dispatch
   the correct engine behind the routed demo API
@@ -857,11 +861,11 @@ and E2E ownership in the final `.dhall`-driven terms.
 
 ### Validation
 
-- Apple host-native `test all` reports `apple-silicon` only, validates the cluster daemon, starts
-  the host inference daemon as needed, and delegates Playwright execution to the compose-driven
-  `playwright` service without changing the reported substrate
-- Linux `test all` reports only the built Linux substrate and runs entirely through the outer
-  container launcher
+- Apple host-native `test all` runs the full supported suite for `apple-silicon`, validates the
+  cluster daemon, starts the host inference daemon as needed, and delegates Playwright execution to
+  the compose-driven `playwright` service without changing the reported substrate
+- Linux `test all` runs the full supported suite for the built Linux substrate and runs entirely
+  through the outer container launcher
 - for any given built substrate, integration validation fails if a README row or reference whose
   substrate column names a real engine is not covered by at least one integration assertion using
   the engine selected from `.dhall`
@@ -984,8 +988,9 @@ substrate-mismatched compatibility shims.
 - shared bootstrap helper logic defines the restartable-entrypoint rule explicitly: same-process
   tool installs continue only after the bootstrap verifies command resolution and version, while
   new-shell or reboot requirements stop with a rerun instruction for the same bootstrap command
-- Apple host prerequisite reconciliation can install or verify Homebrew `python@3.12`, a
-  user-local Poetry bootstrap, Node.js, and the supported Colima profile on demand when Apple
+- Apple host prerequisite reconciliation can install or verify Homebrew `python@3.12` at
+  `/opt/homebrew/opt/python@3.12/bin/python3.12`, a user-local Poetry bootstrap, Node.js, and the
+  supported Colima profile on demand when Apple
   lifecycle or adapter-validation paths need them
 - Apple Kind lifecycle code no longer relies on unsupported host bind-mount ownership assumptions,
   no longer preloads unsupported bootstrap images onto Kind nodes on the Apple lane, and keeps the
@@ -1123,22 +1128,23 @@ same-binary host daemon fed by Pulsar batches.
   `linux-gpu`
 - cluster daemon replicas can scale across nodes with anti-affinity, and the plan permits multiple
   cluster daemons in multi-node topologies
-- on `linux-cpu` and `linux-gpu`, cluster daemons read from Pulsar, perform fan-in and batching,
-  execute inference, and publish fan-out results
-- on `apple-silicon`, cluster daemons read from Pulsar, perform fan-in and batching, publish
-  inference batches to a dedicated host-consumed Pulsar topic, and fan out completed results
-- same-binary host daemons on Apple read host-role `.dhall`, connect to Pulsar through the supplied
-  connection details, consume the configured batch topic, execute Apple-native inference, and
-  publish results back through the configured result path
+- on `linux-cpu` and `linux-gpu`, cluster daemons read from Pulsar, execute inference, and publish
+  results
+- on `apple-silicon`, cluster daemons read from Pulsar and publish inference work to a dedicated
+  host-consumed Pulsar topic
+- same-binary host daemons on Apple read host-role `.dhall`, connect to Pulsar through
+  auto-discovered published edge state or explicit endpoint environment variables, consume the
+  configured batch topic, execute Apple-native inference, and publish results back through the
+  configured result path
 - in a multi-node Apple topology, each node may run one host inference engine while the cluster
-  daemon set remains responsible for shared fan-in, batching, and fan-out
+  daemon set remains responsible for shared request-topic consumption and host-batch handoff
 - the staged `.dhall` distinguishes substrate, daemon role (`cluster` or `host`), host Pulsar
-  connection details, and host batch topics instead of treating Apple host execution as absence of
-  a cluster daemon
+  connection mode, result topics, and host batch topics instead of treating Apple host execution
+  as absence of a cluster daemon
 - publication and browser-visible metadata distinguish cluster daemon location from inference
   executor location, so `daemonLocation` no longer implies that Apple lacks a cluster daemon
 - Pulsar-owned topics, exclusive subscriptions, acknowledgements, and negative acknowledgements
-  form the ownership boundary for clean fan-in, batching, inference, and fan-out
+  form the ownership boundary for clean request handoff, inference, and result publication
 - legacy plan language that says Apple `cluster up` does not deploy `infernix-service` is removed
 
 ### Validation
@@ -1148,8 +1154,8 @@ same-binary host daemon fed by Pulsar batches.
 - `infernix test integration` proves that `apple-silicon` deploys cluster `infernix-service`,
   starts the host inference daemon when needed, moves batches through the configured Pulsar topic,
   and completes routed inference through the split executor
-- Linux integration still proves that `linux-cpu` and `linux-gpu` complete fan-in, batching,
-  inference, and fan-out from cluster daemons without managing a host daemon
+- Linux integration still proves that `linux-cpu` and `linux-gpu` complete request consumption,
+  inference, and result publication from cluster daemons without managing a host daemon
 - routed E2E verifies that the browser-visible publication payload reports the cluster daemon and
   Apple host inference executor distinctly
 - docs lint fails if the plan or governed docs describe Apple cluster-daemon absence as the final
@@ -1188,7 +1194,7 @@ None.
 - `documents/engineering/portability.md` - portable invariants versus substrate-specific detail, plus explicit current-status and validation sections where target direction still appears
 - `documents/engineering/storage_and_state.md` - owner or durability table, failure-mode rules, and cleanup contracts
 - `documents/architecture/runtime_modes.md` - daemon-role split, Apple cluster-to-host batch handoff, and host-role `.dhall` fields
-- `documents/engineering/model_lifecycle.md` - batch ownership and fan-in/fan-out runtime contract
+- `documents/engineering/model_lifecycle.md` - batch ownership, request handoff, and result-publication runtime contract
 - no `documents/engineering/monitoring.md` exists while monitoring remains unsupported; create it
   only if monitoring becomes a supported first-class surface in a later change
 - `documents/operations/cluster_bootstrap_runbook.md` - test prerequisites and cluster reuse rules

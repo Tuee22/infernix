@@ -47,7 +47,8 @@ The generated demo catalog is the source of truth for the active runtime mode.
 - `infernix internal materialize-substrate <runtime-mode>` is the supported staging command, and
   `--demo-ui false` emits a demo-off config without hand-editing the file
 - in containerized execution contexts, `ConfigMap/infernix-demo-config` is mounted read-only
-  beside the binary, and the watched file lives at `/opt/build/infernix-substrate.dhall`
+  beside the binary at `/opt/build/infernix-substrate.dhall`; daemons read it at startup rather
+  than watching it for reloads
 - `infernix test integration` and `infernix test e2e` enumerate every generated catalog entry for
   the active runtime mode rather than using a smoke subset
 

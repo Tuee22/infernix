@@ -16,7 +16,8 @@
 - after `./.build/infernix` exists, supported commands reconcile Homebrew-managed Colima, Docker
   CLI, `kind`, `kubectl`, `helm`, and Node.js on demand, reconcile Colima to the supported
   `8 CPU / 16 GiB` profile before Docker-backed work, and let adapter setup or validation paths
-  reconcile Homebrew `python@3.12` plus a user-local Poetry bootstrap when needed
+  reconcile Homebrew `python@3.12` at `/opt/homebrew/opt/python@3.12/bin/python3.12` plus a
+  user-local Poetry bootstrap when needed
 - on May 14, 2026, the supported Apple lifecycle reran cleanly through `doctor`, `build`, `up`,
   `status`, `test`, `down`, and final `status`; that rerun validated the split daemon topology,
   host-batch Pulsar handoff, routed Playwright E2E, repeated retained-state cluster bring-up or
@@ -122,9 +123,10 @@ Direct reference path:
   ensures the shared `python/` project is installed, creates repo-local engine roots under
   `./.data/engines/`, and invokes each `poetry run setup-*` entrypoint for the active mode's
   Python-native engine bindings
-- the Apple bootstrap also reconciles Homebrew `python@3.12` plus a user-local Poetry bootstrap
-  when the `poetry` executable is absent, after which the shared `python/.venv/` still
-  materializes only on demand
+- the Apple bootstrap also reconciles Homebrew `python@3.12` at
+  `/opt/homebrew/opt/python@3.12/bin/python3.12` plus a user-local Poetry bootstrap when the
+  `poetry` executable is absent, after which the shared `python/.venv/` still materializes only on
+  demand
 - the current `setup-*` entrypoints remain idempotent preflight hooks layered on top of that
   prerequisite bootstrap and shared-project install flow
 

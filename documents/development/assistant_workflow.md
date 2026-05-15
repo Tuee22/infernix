@@ -49,7 +49,7 @@ parallel long-form workflow contracts.
   the manual `infernix-manual` storage doctrine
 - keep the three-runtime build direction and the Kind HA testing or demo-ground direction aligned
 - treat the demo UI (served by `infernix-demo`) as a demo surface on that HA substrate while
-  carrying forward the matrix-wide coverage goal; production deployments leave the demo UI off in
+  preserving the README-matrix coverage ledger; production deployments leave the demo UI off in
   the active `.dhall` and accept inference work via Pulsar subscription only
 - routing is owned by Gateway API resources and repo-owned HTTPRoute manifests; the demo cluster is
   local-only and carries no auth filter
@@ -61,7 +61,8 @@ parallel long-form workflow contracts.
   prerequisites are Homebrew plus ghcup, and `infernix` reconciles the remaining Homebrew-managed
   tools plus Poetry bootstrap when adapter flows need them
 - Apple host paths materialize `python/.venv/` only on demand, after `infernix` bootstraps a
-  user-local `poetry` executable after reconciling Homebrew `python@3.12` when necessary
+  user-local `poetry` executable after reconciling Homebrew `python@3.12` at
+  `/opt/homebrew/opt/python@3.12/bin/python3.12` when necessary
 - Linux substrate images install adapter dependencies during image build, and Linux host
   prerequisites stop at Docker plus the NVIDIA host prerequisites for `linux-gpu`
 - the demo UI is PureScript; frontend contracts are emitted into `web/src/Generated/` by

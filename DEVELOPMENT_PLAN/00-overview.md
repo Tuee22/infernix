@@ -22,28 +22,32 @@ docs checks and test commands that validate the active staged substrate before r
 `infernix lint docs` and `infernix docs check` validate documentation without reading the staged
 substrate file, `infernix test unit` validates module behavior after command-level substrate
 context is present, and `infernix test integration`, `infernix test e2e`, and `infernix test all`
-exercise only the currently staged substrate instead of implying a default cross-substrate rerun.
+run the complete relevant suites for the currently staged substrate instead of implying a default
+cross-substrate rerun.
 The worktree omits the direct tool-route compatibility payloads, persists Linux cluster state
 before later rollout phases, and restages the active Linux substrate before each supported
 bootstrap command.
 The final Apple product shape described by this plan is implemented:
 `apple-silicon` keeps Apple-native inference execution host-side for performance while Kind
 continues to host Harbor, MinIO, Pulsar, PostgreSQL, Envoy Gateway, the optional routed demo
-surface, and one or more cluster `infernix service` daemons. The cluster daemons read from Pulsar,
-perform fan-in and batching, and perform fan-out; on Linux substrates they run inference directly,
-while on Apple they publish batches to a dedicated Pulsar topic consumed by same-binary host
-daemons. The staged `.dhall` tells each daemon the substrate, whether it is running in the cluster
-or on the host, and, for host daemons, the Pulsar connection details plus the batch topic to
-consume. Publication now reports the cluster daemon location separately from the Apple
-host inference executor location and batch topic. The runtime worker uses explicit Python or native adapter
+surface, and one or more cluster `infernix service` daemons. On Linux substrates, cluster daemons
+read from Pulsar, run inference directly, and publish results; on Apple, cluster daemons read from
+Pulsar and publish requests to a dedicated host batch topic consumed by same-binary host daemons,
+which execute Apple-native inference and publish the completed result. The staged `.dhall` tells
+each daemon the substrate, whether it is running in the cluster or on the host, and, for host
+daemons, the Pulsar connection mode plus the batch and result topics it uses. Publication now
+reports the cluster daemon location separately from the Apple host inference executor location and
+batch topic. The runtime worker uses explicit Python or native adapter
 harnesses selected from the staged substrate file. Those adapters currently produce deterministic
 engine-family output from durable metadata rather than claiming universal production model-binary
 execution. The Apple clean-host bootstrap
 hardening is present in code: the stage-0 entrypoint verifies same-process ghcup-managed `ghc`
 and `cabal` resolution before direct `cabal install`, reconciles Homebrew `protoc`, reconciles
 Colima to the supported `8 CPU / 16 GiB` profile before Docker-backed work, and lets Apple
-adapter setup or validation paths reconcile Homebrew `python@3.12` plus a user-local Poetry
-bootstrap on demand. Routed Apple Playwright readiness probes `127.0.0.1` from the host while
+adapter setup or validation paths reconcile Homebrew `python@3.12` at
+`/opt/homebrew/opt/python@3.12/bin/python3.12` plus a user-local Poetry bootstrap on demand.
+Routed Apple
+Playwright readiness probes `127.0.0.1` from the host while
 the browser container joins the private Docker `kind` network and targets the Kind control-plane
 DNS. The shared cluster lifecycle persists explicit phase, child-operation detail, and heartbeat
 data in `cluster status` during monitored Docker build, Harbor publication, Kind-worker preload,
@@ -75,7 +79,7 @@ transient registry resets.
 | Serialized substrate naming | the generated substrate file, publication JSON, `cluster status`, and browser contracts still carry the active substrate under `runtimeMode` field names | implemented |
 | Demo UI gating | the staged substrate file can disable the clustered demo surface | implemented; the supported materialization path accepts `--demo-ui false` |
 | Simulation stance | no simulated cluster, route, transport, or generic inference-success fallback remains in the supported runtime or validation contract | implemented and validated; inference execution goes through typed adapter harnesses and unsupported adapters fail fast |
-| Validation scope | integration uses one `.dhall`-driven suite over the README matrix, E2E stays substrate-agnostic at the browser layer, and `test all` validates one built substrate at a time | implemented and validated across the governed Linux and Apple lifecycle reruns |
+| Validation scope | integration uses one `.dhall`-driven suite over the README matrix, E2E stays substrate-agnostic at the browser layer, and `test all` runs every supported validation layer for one built substrate at a time | implemented and validated across the governed Linux and Apple lifecycle reruns |
 
 Monitoring is not a supported first-class surface.
 
@@ -126,11 +130,11 @@ Monitoring is not a supported first-class surface.
 - on Apple Silicon, the host-built binary manages Kind, deploys the mandatory cluster support
   services, cluster `infernix service` daemons, and optional routed demo workload, and still owns
   the host-side same-binary inference daemon lane
-- on Apple Silicon, cluster daemons are canonical for Pulsar ingress, fan-in, batching
-  coordination, and fan-out; host daemons are canonical for Apple-native inference execution and
-  consume a dedicated Pulsar batch topic using connection details from their `.dhall`
-- on Linux substrates, cluster daemons read from Pulsar, perform fan-in and batching, run
-  inference directly, and perform fan-out
+- on Apple Silicon, cluster daemons are canonical for Pulsar ingress and host-batch handoff; host
+  daemons are canonical for Apple-native inference execution and result publication and consume a
+  dedicated Pulsar batch topic using their `.dhall` role metadata plus published edge state
+- on Linux substrates, cluster daemons read from Pulsar, run inference directly, and publish
+  results
 - on Linux substrates, all supported CLI commands run through
   `docker compose run --rm infernix infernix ...`; there is no supported Linux host-native CLI
   story outside the outer container
@@ -155,8 +159,8 @@ Monitoring is not a supported first-class surface.
   operator-managed Patroni PostgreSQL, manual `infernix-manual` storage, Haskell-owned frontend
   contracts, the shared Python adapter project, and untracked generated outputs all remain
   mandatory doctrine
-- supported validation is substrate-specific: integration, E2E, and `test all` exercise only the
-  built and deployed substrate and report that substrate explicitly
+- supported validation is substrate-specific: integration, E2E, and `test all` run the complete
+  supported suites against the built and deployed substrate and report that substrate explicitly
 - the supported control plane keeps one Haskell-owned command registry, imperative cluster or host
   prerequisite orchestration, the current `ormolu` plus `hlint` plus `cabal format` style stack,
   and the existing files or docs or chart or proto validation entrypoints rather than layering on
@@ -387,7 +391,7 @@ The plan keeps control-plane execution context separate from substrate.
 - all default StorageClasses are deleted during bootstrap
 - `infernix-manual` is the only supported persistent StorageClass
 - PVs are created only by `infernix` lifecycle code and map deterministically into `./.data/`
-- hand-authored standalone durable PVC manifests are forbidden
+- hand-authored standalone durable PVC manifests outside Helm or operator ownership are forbidden
 
 ### 5a. Protobuf Manifest and Event Contract
 
@@ -407,12 +411,13 @@ The plan keeps control-plane execution context separate from substrate.
   the supported materialization path can emit that production-off value with `--demo-ui false`
 - when `demo_ui` is true, the demo app is cluster-resident across substrates
 - every substrate deploys cluster `infernix service` daemons
-- on `linux-cpu` and `linux-gpu`, cluster daemons read requests from Pulsar, perform fan-in and
-  batching, execute inference, and fan results out
-- on `apple-silicon`, cluster daemons perform fan-in, batching coordination, and fan-out, then
-  publish inference batches to a dedicated Pulsar topic consumed by same-binary host daemons
+- on `linux-cpu` and `linux-gpu`, cluster daemons read requests from Pulsar, execute inference,
+  and publish results
+- on `apple-silicon`, cluster daemons consume request topics and publish inference work to a
+  dedicated host batch topic consumed by same-binary host daemons, which execute Apple-native
+  inference and publish results
 - the staged `.dhall` tells each daemon its substrate, whether it is a cluster or host daemon, and,
-  for host daemons, the Pulsar connection details and batch topic it consumes
+  for host daemons, the Pulsar connection mode plus the batch and result topics it uses
 - in multi-node topologies, the contract allows multiple anti-affined cluster daemons and one Apple
   host inference engine per node; Pulsar-owned topics, exclusive subscriptions, and
   acknowledgement handling keep batch ownership clear
@@ -450,8 +455,8 @@ The plan keeps control-plane execution context separate from substrate.
   integration assertion for every such row
 - `infernix test e2e` exercises the routed browser surface for that same built substrate without
   branching on substrate or engine in browser code
-- validation reports the single substrate it exercised and does not imply matrix-wide coverage it
-  did not run
+- validation reports the substrate it exercised and does not imply cross-substrate coverage from a
+  single run
 
 ### 9. Haskell Types Own Frontend Contracts
 
@@ -501,10 +506,10 @@ The plan keeps control-plane execution context separate from substrate.
 ### 14. Production Surface Is Pulsar-Only
 
 - production inference requests arrive by Pulsar topics only
-- cluster daemons own the production ingress, fan-in, batching, and fan-out surface on every
-  substrate
-- Linux cluster daemons execute inference directly, while Apple cluster daemons publish batches to
-  a host-inference Pulsar topic consumed by same-binary host daemons
+- cluster daemons own production request-topic consumption on every substrate
+- Linux cluster daemons execute inference and publish results directly, while Apple cluster
+  daemons publish work to a host-inference Pulsar topic consumed by same-binary host daemons that
+  publish the completed results
 - production `infernix service` binds no HTTP listener
 - the demo HTTP API is a demo-only surface owned by `infernix-demo`
 - simulated cluster, route, transport, and generic inference-success fallback behavior are not part

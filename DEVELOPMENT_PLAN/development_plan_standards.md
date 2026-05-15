@@ -241,19 +241,21 @@ Rules:
   containerized Linux workflow inside Colima's amd64 VM and accept that the Apple GPU is out of
   scope for that path.
 - On every substrate, `cluster up` deploys one or more cluster `infernix service` daemons. The
-  substrate decides where inference execution happens, not whether a cluster daemon exists.
-- On `apple-silicon`, the cluster daemon owns cluster-side fan-in, batching coordination, and
-  fan-out, but publishes inference batches to a host-consumed Pulsar topic. A same-binary host
-  daemon consumes that topic and runs the Apple-native inference engine so the Apple lane can use
+  substrate decides where inference execution and result publication happen, not whether a cluster
+  daemon exists.
+- On `apple-silicon`, the cluster daemon owns cluster-side request-topic consumption and
+  host-batch handoff. A same-binary host daemon consumes that host batch topic, runs the
+  Apple-native inference engine, and publishes the completed result so the Apple lane can use
   Metal-capable or unified-memory-aware backends directly.
 - Phase docs must not describe Kind, Docker, or other containerized Apple workloads as equivalent
   Apple GPU execution environments. They may describe cluster-resident Apple daemons only as
-  cluster-side orchestration, batching, or fan-out participants unless the implementation and
+  cluster-side request consumers or host-batch handoff participants unless the implementation and
   validation change together.
 - After the binary exists, the Apple host workflow is allowed to let `infernix` reconcile the
   remaining Homebrew-managed operator tools needed by the active path and bootstrap Poetry through
-  the host's system Python when adapter flows first need it; the repo-local adapter virtual
-  environment still materializes only when an engine-adapter path is exercised explicitly.
+  Homebrew `python@3.12` at `/opt/homebrew/opt/python@3.12/bin/python3.12` when adapter flows first
+  need it; the repo-local adapter virtual environment still materializes only at `python/.venv/`
+  when an engine-adapter path is exercised explicitly.
 - Supported Linux control-plane commands always run through
   `docker compose run --rm infernix infernix ...`; there is no supported Linux host-native
   `infernix` workflow outside the outer container.
@@ -301,17 +303,18 @@ Rules:
 - `apple-silicon` is an explicit split-executor substrate: the control plane remains
   host-native, Kind still hosts Harbor, MinIO, Pulsar, operator-managed PostgreSQL, Envoy Gateway,
   the cluster `infernix service` daemon set, and the optional routed demo app, while Apple-native
-  inference execution runs in same-binary host daemons fed by Pulsar batch topics.
+  inference execution and result publication run in same-binary host daemons fed by Pulsar batch
+  topics.
 - Apple phase docs must not imply that Kind or other containerized Apple workloads have direct
   Metal or unified-memory parity with the host-native Apple daemon. Cluster-resident Apple
-  daemons are canonical for fan-in, batching coordination, and fan-out, but the host daemon is the
-  canonical Apple inference executor.
-- On `linux-cpu` and `linux-gpu`, the cluster daemon reads from Pulsar, performs fan-in and
-  batching, runs inference itself, and performs fan-out.
+  daemons are canonical for request-topic consumption and host-batch handoff, but the host daemon
+  is the canonical Apple inference executor and result publisher.
+- On `linux-cpu` and `linux-gpu`, the cluster daemon reads from Pulsar, runs inference itself, and
+  publishes the result.
 - In multi-node topologies, phase docs may describe multiple anti-affined cluster daemon replicas
-  and, on `apple-silicon`, one host inference engine per node. The batch and result contract must
-  remain Pulsar-owned so exclusive topic subscriptions, acknowledgements, and negative
-  acknowledgements keep the fan-in, batching, inference, and fan-out ownership path
+  and, on `apple-silicon`, one host inference engine per node. The request, batch, and result
+  contract must remain Pulsar-owned so exclusive topic subscriptions, acknowledgements, and
+  negative acknowledgements keep request handoff, inference, and result-publication ownership
   unambiguous.
 - The plan standardizes the NVIDIA-backed Linux substrate as `linux-gpu`. Active phase documents
   must call out any still-unmigrated `linux-cuda` naming in the current worktree instead of
@@ -363,9 +366,9 @@ Rules:
   family, selected engine, request or result contract identifiers, and any substrate-specific
   runtime metadata needed by the service, web UI, or tests.
 - The generated file also records the daemon role for the process that reads it: cluster or host.
-  Host-role Apple daemon configs include the Pulsar connection details and the batch topic the host
-  daemon consumes. Cluster-role configs include the substrate, request and result topics, and, for
-  Apple, the host-inference batch topic used to hand batches to host daemons.
+  Host-role Apple daemon configs include the Pulsar connection mode, result topic, and host batch
+  topic the host daemon consumes. Cluster-role configs include the substrate, request and result
+  topics, and, for Apple, the host-inference batch topic used to hand requests to host daemons.
 - The supported materialization path accepts `--demo-ui true|false`, and phase docs must keep the
   chosen default versus explicit override behavior honest.
 - `cluster up` creates or updates `ConfigMap/infernix-demo-config` from the staged substrate file
@@ -400,7 +403,8 @@ The manual storage model is a hard architectural rule and cannot be weakened in 
   repo-owned Helm release, uses that storage class.
 - PVs are created only by `infernix` lifecycle code, map deterministically into `./.data/`, and
   bind explicitly to their intended claims.
-- Hand-authored standalone PVC manifests for durable workloads are forbidden.
+- Hand-authored standalone PVC manifests for durable workloads are forbidden outside Helm or
+  operator-owned durable workload inputs.
 - Any in-cluster PostgreSQL deployment uses a Patroni cluster managed by the Percona Kubernetes
   operator, even when an upstream chart could self-deploy PostgreSQL.
 - Dedicated PostgreSQL clusters per service are allowed, but direct chart-managed standalone
@@ -494,17 +498,19 @@ Substrate-specific validation is explicit.
 - On Apple Silicon, the supported host CLI owns test orchestration. It proves that the cluster
   daemon is deployed, starts the same-binary host inference daemon when the service-loop checks need
   Apple-native inference, validates the Pulsar batch handoff from cluster daemon to host daemon, and
-  invokes `docker compose run --rm playwright` against the dedicated `infernix-playwright:local`
-  image for the container-owned Playwright executor.
+  verifies that the host daemon publishes the result before invoking `docker compose run --rm
+  playwright` against the dedicated `infernix-playwright:local` image for the container-owned
+  Playwright executor.
 - On Linux substrates, all supported CLI and test commands run through
   `docker compose run --rm infernix infernix ...`, and test flows do not manage a host daemon
-  because fan-in, batching, inference, and fan-out all run from deployed cluster daemons.
+  because request consumption, inference, and result publication all run from deployed cluster
+  daemons.
 - Integration checks use the engine binding encoded in the colocated or ConfigMap-backed substrate
   `.dhall`, which must match the appropriate substrate column from the README matrix. E2E checks
   rely on the demo app to honor that same file rather than selecting engines in browser code.
-- `infernix test all` aggregates lint, unit, integration, and E2E for the built substrate only.
-  Repository closure requires separate substrate-specific reruns instead of one default matrix run
-  that silently covers Apple, CPU, and GPU together.
+- `infernix test all` aggregates lint, unit, integration, and E2E as the full supported suite for
+  the built substrate. Repository closure requires separate substrate-specific reruns instead of
+  one default matrix run that silently covers Apple, CPU, and GPU together.
 
 ### Q. Haskell Quality Gate Contract
 

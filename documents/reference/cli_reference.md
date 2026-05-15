@@ -104,8 +104,8 @@
   while the project build and runtime toolchain stays on `ghc-9.14.1`
 - `infernix test unit` runs the Haskell unit suites and the PureScript frontend unit suites via
   `npm --prefix web run test:unit`
-- `infernix test integration`, `infernix test e2e`, and `infernix test all` exercise only the
-  active substrate encoded in the generated `.dhall`
+- `infernix test integration`, `infernix test e2e`, and `infernix test all` run their complete
+  supported suites against the active substrate encoded in the generated `.dhall`
 - `infernix test e2e` uses the dedicated `infernix-playwright:local` container on every substrate,
   invoked via `docker compose run --rm playwright`; Apple host-native flows run that compose
   invocation directly while Linux flows forward it from the outer container through the mounted

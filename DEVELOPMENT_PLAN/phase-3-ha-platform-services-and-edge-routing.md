@@ -62,16 +62,16 @@ on the intended HTTPRoute mapping.
 
 ### Objective
 
-Provide the HA MinIO deployment and routed object-store surfaces required by Harbor and the future
-real cluster object-store path.
+Provide the HA MinIO deployment and routed object-store surfaces required by Harbor and the
+reserved cluster object-store path.
 
 ### Deliverables
 
 - MinIO always deploys as a four-node distributed cluster with manual PV backing
 - repo-owned values suppress hard pod anti-affinity that would block local Kind scheduling
 - MinIO console and S3 API are both exposed through the shared edge
-- the chart reserves MinIO as the Kind-backed object-store target for Harbor and the future real
-  cluster runtime path, while the current validated runtime keeps durable object-store state under
+- the chart reserves MinIO as the Kind-backed object-store target for Harbor and cluster-routed
+  object-store access, while the current validated runtime keeps durable object-store state under
   `./.data/object-store/`
 
 ### Validation

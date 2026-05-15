@@ -96,8 +96,9 @@ the HA testing and demo ground used to validate and demonstrate them.
 
 On Apple Silicon, the operator workflow has no generic Python prerequisite before the host build.
 When Apple adapter setup or validation paths are exercised, `infernix` reconciles Homebrew
-`python@3.12`, bootstraps a user-local `poetry` executable if needed, and materializes
-`python/.venv/` on demand.
+`python@3.12` at `/opt/homebrew/opt/python@3.12/bin/python3.12`, bootstraps a user-local
+`poetry` executable if needed, and materializes the repo-local `python/.venv/` on demand. The
+supported Apple adapter path does not use `/usr/bin/python3` or an ambient `python` executable.
 
 Infernix uses one operator, artifact, and browser-demo contract across Apple, CPU, and CUDA runtime
 classes.
@@ -193,10 +194,11 @@ Current status:
 
 - after `./.build/infernix` exists on Apple Silicon, supported host-native commands reconcile
   the supported Colima `8 CPU / 16 GiB` profile, Docker CLI, `kind`, `kubectl`, `helm`, Node.js,
-  Homebrew `python@3.12`, and Poetry through the supported package-manager or user-local bootstrap
-  path when the active flow needs them
+  Homebrew `python@3.12` at `/opt/homebrew/opt/python@3.12/bin/python3.12`, and Poetry through the
+  supported package-manager or user-local bootstrap path when the active flow needs them
 - Apple host-native adapter setup and validation paths materialize `python/.venv/` on demand after
-  reconciling Homebrew `python@3.12` and a user-local Poetry bootstrap when needed
+  reconciling Homebrew `python@3.12` at `/opt/homebrew/opt/python@3.12/bin/python3.12` and a
+  user-local Poetry bootstrap when needed
 - Apple routed Playwright validation probes the published edge from the host on `127.0.0.1` but
   runs the dedicated browser container on the private Docker `kind` network against the Kind
   control-plane DNS; because Apple retained Kind state is replayed into and out of the worker
@@ -242,11 +244,13 @@ Notes:
   depends on an explicitly selected GHC and Cabal pair
 - Colima is the only supported Docker environment on Apple Silicon; once `./.build/infernix`
   exists, supported commands install it from Homebrew together with the Docker CLI, `kind`,
-  `kubectl`, `helm`, Node.js, Homebrew `python@3.12`, and any other operator-facing tools needed
-  by the active path; Docker-backed Apple flows reconcile Colima to at least `8 CPU / 16 GiB`
-- Apple adapter setup and validation commands reconcile Homebrew `python@3.12` plus a user-local
-  Poetry bootstrap when `poetry` is absent, after which all host-side Python configuration
-  continues through Poetry
+  `kubectl`, `helm`, Node.js, Homebrew `python@3.12` at
+  `/opt/homebrew/opt/python@3.12/bin/python3.12`, and any other operator-facing tools needed by
+  the active path; Docker-backed Apple flows reconcile Colima to at least `8 CPU / 16 GiB`
+- Apple adapter setup and validation commands reconcile Homebrew `python@3.12` at
+  `/opt/homebrew/opt/python@3.12/bin/python3.12` plus a user-local Poetry bootstrap when `poetry`
+  is absent, after which all host-side Python configuration continues through the repo-local
+  `python/.venv/`
 
 ### Linux CPU host prerequisites
 
@@ -359,7 +363,9 @@ three runtime modes. `cluster up` owns the bring-up path, `cluster status` print
 edge port plus the published route inventory, and the demo UI is available at
 `http://127.0.0.1:<edge-port>/` whenever the active generated `.dhall` enables `demo_ui`.
 
-`infernix test all` is the canonical aggregate suite on every substrate:
+`infernix test all` is the canonical aggregate suite on every substrate. It runs every supported
+validation layer for the currently staged substrate; full repository substrate closure is obtained
+by restaging and rerunning the same complete suite for each supported substrate.
 
 - `infernix test lint`
 - `infernix test unit`

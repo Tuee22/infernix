@@ -137,8 +137,8 @@ container cleanup.
 - `infernix test integration` and `infernix test e2e` exercise the supported outer-container
   launchers, routed surfaces, and image-reuse behavior on the Linux lanes when those lanes are
   selected; routed E2E closes through `docker compose run --rm playwright` on every substrate.
-- `infernix test all` reruns the full supported matrix entrypoints without reintroducing a live
-  repo-mounted or helper-registry-based container workflow.
+- `infernix test all` runs every supported validation layer for the selected Linux substrate
+  without reintroducing a live repo-mounted or helper-registry-based container workflow.
 
 ## Cross-References
 

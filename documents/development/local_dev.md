@@ -17,8 +17,8 @@
   no longer depends on rerunning the same bootstrap command after Cabal is first installed
 - after `./.build/infernix` exists on Apple Silicon, supported host-native commands reconcile
   the supported Colima `8 CPU / 16 GiB` profile, Docker CLI, `kind`, `kubectl`, `helm`, Node.js,
-  Homebrew `python@3.12`, and Poetry through the supported package-manager or user-local bootstrap
-  path when the active flow first needs them
+  Homebrew `python@3.12` at `/opt/homebrew/opt/python@3.12/bin/python3.12`, and Poetry through the
+  supported package-manager or user-local bootstrap path when the active flow first needs them
 - `linux-cpu` and `linux-gpu` expose repo-owned `bootstrap/*.sh` entrypoints that keep host
   prerequisites probe-driven and idempotent; the CPU path stops at Docker Engine plus the Docker
   Compose plugin, and the GPU path adds only the supported NVIDIA driver and container-toolkit
@@ -105,8 +105,9 @@ the shared adapter project:
   operator reruns the same bootstrap command instead of skipping ahead to a later direct command
 - the target Apple host workflow has no generic Python prerequisite; Poetry and a repo-local
   adapter virtual environment materialize only when an engine-adapter test or setup path is
-  exercised, and `infernix` reconciles Homebrew `python@3.12` plus a user-local `poetry`
-  executable when that path first needs it
+  exercised, and `infernix` reconciles Homebrew `python@3.12` at
+  `/opt/homebrew/opt/python@3.12/bin/python3.12` plus a user-local `poetry` executable when that
+  path first needs it
 - Colima is the only supported Docker environment on Apple Silicon
 - supported Apple Docker-backed paths reconcile Colima to at least `8 CPU / 16 GiB` before Kind,
   Harbor, MinIO, Pulsar, or Playwright work begins

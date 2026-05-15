@@ -33,20 +33,22 @@
 - cluster publication mirrors the staged payload locally as `infernix-substrate.dhall`, and the
   rendered chart mounts that same filename inside cluster workloads at
   `/opt/build/infernix-substrate.dhall`
-- the intended Apple product shape is a split-executor lane: `apple-silicon` keeps Apple-native
+- the implemented Apple product shape is a split-executor lane: `apple-silicon` keeps Apple-native
   inference execution host-side for Apple GPU and unified-memory access while Kind continues to host
   Harbor, MinIO, Pulsar, PostgreSQL, Envoy Gateway, the cluster `infernix service` daemons, and the
   optional routed demo surface
 - the final daemon-role contract is implemented: on every substrate cluster daemons own Pulsar
-  ingress, fan-in, batching coordination, and fan-out; on Linux they run inference directly, while
-  on Apple they publish batches to a dedicated Pulsar topic consumed by same-binary host daemons.
+  request-topic consumption; on Linux they run inference and publish results directly, while on
+  Apple they hand work to a dedicated host batch topic consumed by same-binary host daemons, which
+  execute inference and publish results.
   Publication metadata distinguishes `daemonLocation: cluster-pod` from the Apple
   `inferenceExecutorLocation: control-plane-host`. Existing workers use typed Python or native
   adapter harnesses whose current implementations emit deterministic engine-family output from
   durable metadata; unsupported adapter ids fail fast instead of returning a generic success
   payload
-- Linux operator workflows close around Compose-driven outer containers, validation reports only
-  the active built substrate, and the supported materialization path can emit `demo_ui = false`
+- Linux operator workflows close around Compose-driven outer containers, validation reports the
+  active built substrate for the complete selected-substrate suite, and the supported
+  materialization path can emit `demo_ui = false`
 - direct `infernix-demo` execution no longer doubles as a compatibility target for Harbor, MinIO,
   or Pulsar tool-route probes; those checks now require the real Gateway-backed upstream behavior
 - the supported Linux bootstrap entrypoints now restage the active substrate before lifecycle and
@@ -62,8 +64,8 @@
 - the Apple clean-host bootstrap now verifies same-process ghcup-managed `ghc` and `cabal`
   resolution before direct `cabal install`, reconciles Homebrew `protoc`, reconciles Colima to
   the supported `8 CPU / 16 GiB` profile before Docker-backed work, and lets Apple adapter setup
-  or validation paths reconcile Homebrew `python@3.12` plus a user-local Poetry bootstrap on
-  demand
+  or validation paths reconcile Homebrew `python@3.12` at
+  `/opt/homebrew/opt/python@3.12/bin/python3.12` plus a user-local Poetry bootstrap on demand
 - routed Apple Playwright readiness probes `127.0.0.1` from the host while the browser container
   joins the private Docker `kind` network and targets the Kind control-plane DNS, and retained
   Kind state is replayed into and out of the worker rather than bind-mounted
@@ -126,11 +128,11 @@
 | Cluster Gateway resource | `GatewayClass/infernix-gateway` plus `Gateway/infernix-edge` | Kind cluster | single localhost-bound HTTP listener on the chosen edge port | none |
 | HTTPRoute rendering | data-driven `chart/templates/httproutes.yaml` from the Haskell route registry | Kind cluster | publishes the route inventory for demo, Harbor, MinIO, and Pulsar surfaces | none |
 | Substrate-file publication | generated `ConfigMap/infernix-demo-config` plus repo-local mirror | Kind cluster and repo-local state | republishes the cluster-role substrate payload for cluster consumers and local inspection tooling through the shared `infernix-substrate.dhall` filename; Apple host daemons read the host-role payload under `./.build/` | `./.data/runtime/configmaps/infernix-demo-config/` |
-| Service runtime daemons | `infernix service` plus `src/Infernix/Runtime/{Cache,Worker,Pulsar}.hs` | cluster pod on every substrate plus host process for Apple inference execution | cluster daemons read the staged config, consume Pulsar requests, perform fan-in and batching, and publish results. Linux cluster daemons run inference directly; Apple cluster daemons publish inference batches to a dedicated Pulsar topic, while same-binary host daemons read host-role `.dhall`, auto-discover or receive routed Pulsar connection details, consume those batches, run Apple-native inference, and publish results back through Pulsar. Worker execution uses typed Python or native adapter harnesses, with unsupported adapter ids failing fast instead of returning a generic success payload | `./.data/runtime/`, object-store state under `./.data/object-store/` |
+| Service runtime daemons | `infernix service` plus `src/Infernix/Runtime/{Cache,Worker,Pulsar}.hs` | cluster pod on every substrate plus host process for Apple inference execution | cluster daemons read the staged config and consume Pulsar requests. Linux cluster daemons run inference directly and publish results; Apple cluster daemons publish inference work to a dedicated host batch topic, while same-binary host daemons read host-role `.dhall`, auto-discover routed Pulsar endpoint details or receive them through environment variables, consume those batches, run Apple-native inference, and publish results back through Pulsar. Worker execution uses typed Python or native adapter harnesses, with unsupported adapter ids failing fast instead of returning a generic success payload | `./.data/runtime/`, object-store state under `./.data/object-store/` |
 | Demo UI host | `infernix-demo` deployment | cluster pod | serves `/`, `/api`, `/api/publication`, `/api/cache`, and `/objects/` when demo is enabled; on Apple, routed manual inference stays browser-visible through the clustered demo surface and flows through the cluster daemon's batch handoff to host inference daemons; direct `infernix-demo` execution intentionally exposes only the demo-owned HTTP surface outside the intended HTTPRoute mapping | none |
 | Web runtime executor | PureScript bundle baked into the Linux substrate image plus the dedicated `infernix-playwright:local` Playwright image | substrate image runs cluster-resident as the demo app; Playwright image is invoked via `docker compose run --rm playwright`, directly from the host CLI on Apple Silicon and from inside the outer container against the host docker daemon on Linux substrates. On Apple, host-side readiness probes `127.0.0.1:<edge-port>` while the browser container joins the `kind` network and targets the Kind control-plane DNS on port `30090` | serves the browser bundle from the clustered demo app and runs routed E2E coverage from the dedicated Playwright executor | test artifacts under `./.data/` |
 | Engine adapter set | `python/adapters/` invoked via `poetry run` from the Haskell worker | host child process or cluster child process | Python-native engine boundary over typed protobuf-over-stdio | optional Apple venv under `python/.venv/` |
-| Python quality gate | `poetry run check-code` | host or Linux outer-container image | runs mypy strict, black check, and ruff strict against the shared adapter tree | none |
+| Python quality gate | `poetry run check-code` | host or Linux outer-container image | runs `mypy --strict`, `black --check`, and `ruff check` against the shared adapter tree | none |
 
 ## Runtime and Validation Components
 
@@ -171,7 +173,7 @@
 
 | Substrate | Canonical substrate id | Supported contract | Current repo gap |
 |-----------|------------------------|--------------------|------------------|
-| Apple Silicon / Metal | `apple-silicon` | host-native control plane, cluster `infernix service` daemons for fan-in/batching/fan-out, same-binary host inference daemons consuming Apple batch topics, and clustered support services plus optional routed demo workloads sharing the same substrate file and route contracts | none |
+| Apple Silicon / Metal | `apple-silicon` | host-native control plane, cluster `infernix service` daemons for request-topic consumption and host-batch handoff, same-binary host inference daemons consuming Apple batch topics and publishing results, and clustered support services plus optional routed demo workloads sharing the same substrate file and route contracts | none |
 | Linux / CPU | `linux-cpu` | containerized Linux lane built from the shared substrate Dockerfile and driven entirely through Compose | none |
 | Linux / NVIDIA GPU | `linux-gpu` | GPU-enabled Kind lane built from the shared substrate Dockerfile and deployed from the same CUDA-based image used by the outer container | none |
 

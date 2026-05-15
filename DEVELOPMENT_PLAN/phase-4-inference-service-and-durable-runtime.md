@@ -26,9 +26,10 @@ cache status or eviction or rebuild flows, repo-local durable object-store state
 bootstrap manifests, explicit substrate-materialization helpers, and daemon behavior driven by the
 staged substrate file. That file still keeps a legacy `.dhall` name while carrying banner-prefixed
 JSON. The final runtime contract distinguishes daemon role from inference executor location:
-cluster daemons exist on every substrate and own Pulsar ingress, fan-in, batching coordination,
-and fan-out; Linux cluster daemons run inference directly; Apple cluster daemons publish batches to
-a dedicated Pulsar topic consumed by same-binary host daemons that run Apple-native inference. The
+cluster daemons exist on every substrate and own Pulsar request-topic consumption; Linux cluster
+daemons run inference directly and publish results; Apple cluster daemons publish work to a
+dedicated host batch topic consumed by same-binary host daemons that run Apple-native inference
+and publish the completed results. The
 runtime worker dispatches supported Python-native and native
 adapters through explicit harness branches; the current adapters emit deterministic engine-family
 output from durable metadata, and unsupported adapter ids fail fast with typed errors instead of
@@ -127,9 +128,9 @@ None.
 ### Objective
 
 Keep one service contract while telling the truth about execution context and inference
-placement: Apple control-plane commands are host-native, Apple cluster daemons own fan-in,
-batching, and batch handoff, Apple inference execution is host-side, and Linux inference execution
-remains cluster-resident.
+placement: Apple control-plane commands are host-native, Apple cluster daemons own request-topic
+consumption and host-batch handoff, Apple inference execution and result publication are
+host-side, and Linux inference execution and result publication remain cluster-resident.
 
 ### Deliverables
 
@@ -283,8 +284,8 @@ keeping `poetry run` as the only supported execution path.
 - runtime-specific behavior stays inside the shared tree only where engine logic genuinely diverges
 - per-engine setup entrypoints and adapter entrypoints are declared as Poetry console scripts
 - `src/Infernix/Runtime/Worker.hs` forks `poetry run <entrypoint>` rather than raw `python`
-- `poetry run check-code` is the canonical Python quality gate and runs mypy strict, black check,
-  and ruff strict in sequence
+- `poetry run check-code` is the canonical Python quality gate and runs `mypy --strict`,
+  `black --check`, and `ruff check` in sequence
 - the duplicated `python/apple-silicon/`, `python/linux-cpu/`, and `python/linux-gpu/` project
   layout is removed from the supported architecture
 
@@ -317,7 +318,7 @@ non-demo deployment.
 
 - the active `.dhall` schema includes `request_topics`, `result_topic`, daemon-role metadata, and
   engine-binding metadata; the final Apple role schema also includes host batch-topic and Pulsar
-  connection details
+  connection-mode metadata
 - `src/Infernix/Runtime/Pulsar.hs` subscribes to request topics, dispatches work through the
   worker or host-batch handoff path, and publishes typed protobuf responses to the configured
   result topic
@@ -425,7 +426,7 @@ without inventing fake container parity.
 ### Validation
 
 - on a clean Apple Silicon host with ghcup installed,
-  `cabal install --installdir=./.build --install-method=copy --overwrite-policy=always exe:infernix exe:infernix-demo`
+  `cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes`
   succeeds without extra supported wrapper scripts
 - after `./.build/infernix internal materialize-substrate apple-silicon`, the
   `./.build/infernix cluster up` command brings up the cluster and runs the current Apple setup
@@ -503,7 +504,7 @@ extends this startup contract with explicit cluster and host daemon roles.
   behavior, catalog behavior, and route behavior; they do not stand in for the canonical Apple
   inference executor
 - Linux `linux-cpu` and `linux-gpu` daemons run as cluster-resident workloads on their deployed
-  substrate images and perform fan-in, batching, inference, and fan-out there
+  substrate images and perform request consumption, inference, and result publication there
 - each daemon reads the staged substrate `.dhall` at startup to select the active substrate, daemon
   role, engine catalog, and any Pulsar topic wiring; automatic file-watching or reload is not part
   of the supported contract
