@@ -66,7 +66,7 @@ across transient registry resets, and that the governed `test` lane may perform 
 cluster bring-up or teardown cycles before the outer bootstrap command returns. The runtime-topology
 implementation now deploys `infernix-service` on Apple and reports `daemonLocation: cluster-pod`,
 `inferenceExecutorLocation: control-plane-host`, and the Apple host batch topic in publication
-metadata. On May 14, 2026, the full governed Apple lifecycle reran cleanly through
+metadata. On May 15, 2026, the full governed Apple lifecycle reran cleanly through
 `./bootstrap/apple-silicon.sh doctor`, `build`, `up`, `status`, `test`, `down`, and final
 `status` on the split topology. The `test` lane passed Haskell style, Haskell unit, PureScript
 unit, Haskell integration, routed Playwright, repeated retained-state `cluster down` and
@@ -1052,7 +1052,7 @@ failure.
 - CLI reference docs describe the supported status or progress surfaces operators use before
   concluding that a lifecycle action actually failed
 - the plan, runbooks, and testing docs cite the May 13, 2026 Apple lifecycle investigation and
-  the May 14, 2026 split-topology rerun as proof points for the supported false-negative doctrine
+  the May 15, 2026 split-topology rerun as proof points for the supported false-negative doctrine
   on the current worktree
 
 ### Validation
@@ -1164,7 +1164,7 @@ same-binary host daemon fed by Pulsar batches.
 - `PATH=/Users/matt/.ghcup/bin:$PATH /Users/matt/.ghcup/bin/cabal test infernix-haskell-style`
   passes
 - `./bootstrap/apple-silicon.sh doctor`, `build`, `up`, `status`, `test`, `down`, and final
-  `status` pass on May 14, 2026 on the split topology
+  `status` pass on May 15, 2026 on the split topology
 - the full `./bootstrap/apple-silicon.sh test` lifecycle exercises the Apple host-batch topic,
   the host daemon, every active generated catalog entry, routed Playwright, repeated retained-state
   cluster teardown and bring-up, and final cluster teardown successfully

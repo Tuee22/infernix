@@ -35,7 +35,7 @@
 - on Apple, retained Kind state under `./.data/kind/apple-silicon/` is replayed into and out of
   the worker instead of being bind-mounted, so large retained state can make `cluster up` and
   `cluster down` slower than the Linux lanes even when the supported flow is healthy
-- on May 14, 2026, the supported Apple lifecycle reran cleanly through `doctor`, `build`, `up`,
+- on May 15, 2026, the supported Apple lifecycle reran cleanly through `doctor`, `build`, `up`,
   `status`, `test`, `down`, and final `status`; that rerun validated the split daemon topology,
   host-batch Pulsar handoff, routed Playwright E2E, repeated retained-state cluster bring-up or
   teardown cycles inside `test all`, and final cleanup

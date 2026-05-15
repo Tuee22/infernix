@@ -60,7 +60,7 @@ mode-specific coverage, matrix behavior, and operator detail behind those canoni
 
 ## Lifecycle Interpretation
 
-- on May 14, 2026, the supported Apple lifecycle reran cleanly through `doctor`, `build`, `up`,
+- on May 15, 2026, the supported Apple lifecycle reran cleanly through `doctor`, `build`, `up`,
   `status`, `test`, `down`, and final `status`; the `test all` lane completed split-daemon Apple
   inference, routed Playwright E2E, repeated retained-state cluster bring-up or teardown cycles,
   and final cleanup

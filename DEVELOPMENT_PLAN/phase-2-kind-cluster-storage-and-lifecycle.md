@@ -45,7 +45,7 @@ windows; staged `infernix-substrate.dhall` writes are atomic so concurrent statu
 observe truncated payloads; and retained-state Apple reruns automatically reinitialize stopped
 Harbor PostgreSQL replicas from the current Patroni leader when timeline drift leaves replicas
 unready after promotion. Phase 6 records the latest clean supported
-`./bootstrap/apple-silicon.sh` lifecycle rerun on May 14, 2026 through `doctor`, `build`, `up`,
+`./bootstrap/apple-silicon.sh` lifecycle rerun on May 15, 2026 through `doctor`, `build`, `up`,
 `status`, `test`, `down`, and final `status`; that rerun validated the split daemon topology,
 host-batch Pulsar handoff, repeated retained-state cluster bring-up or teardown cycles inside the
 governed `test` lane, and final post-teardown status returning `clusterPresent: False`,
@@ -392,7 +392,7 @@ distinguish real failure from ongoing first-run progress.
 
 - a cold `./bootstrap/apple-silicon.sh up` surfaces the image-build, Harbor-publication, and
   Kind-worker preload phases explicitly while it is still making forward progress
-- the May 14, 2026 supported Apple lifecycle rerun exercises the large Pulsar image publication
+- the May 15, 2026 supported Apple lifecycle rerun exercises the large Pulsar image publication
   path through Harbor, retained-state replay, split-daemon inference, and final teardown after the
   bounded Docker-push retry hardening
 - `./bootstrap/apple-silicon.sh down` surfaces the retained-state replay phase before Kind

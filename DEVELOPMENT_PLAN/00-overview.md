@@ -56,7 +56,7 @@ concurrent readers do not observe truncated payloads; and retained-state Apple r
 automatically reinitialize stopped Harbor PostgreSQL replicas from the current Patroni leader when
 timeline drift leaves replicas unready after promotion. Phase 6 records clean governed bootstrap
 reruns for the supported Linux and Apple lifecycle surfaces, including the latest Apple rerun on
-May 14, 2026 through `doctor`, `build`, `up`, `status`, `test`, `down`, and final `status`; that
+May 15, 2026 through `doctor`, `build`, `up`, `status`, `test`, `down`, and final `status`; that
 rerun validated the split daemon topology, host-batch Pulsar handoff, routed Playwright E2E,
 repeated retained-state cluster bring-up or teardown cycles inside the governed `test` lane, and
 final post-teardown status returning `clusterPresent: False`, `lifecycleStatus: idle`, and

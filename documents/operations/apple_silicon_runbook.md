@@ -18,7 +18,7 @@
   `8 CPU / 16 GiB` profile before Docker-backed work, and let adapter setup or validation paths
   reconcile Homebrew `python@3.12` at `/opt/homebrew/opt/python@3.12/bin/python3.12` plus a
   user-local Poetry bootstrap when needed
-- on May 14, 2026, the supported Apple lifecycle reran cleanly through `doctor`, `build`, `up`,
+- on May 15, 2026, the supported Apple lifecycle reran cleanly through `doctor`, `build`, `up`,
   `status`, `test`, `down`, and final `status`; that rerun validated the split daemon topology,
   host-batch Pulsar handoff, routed Playwright E2E, repeated retained-state cluster bring-up or
   teardown cycles inside `test all`, and final post-teardown status reported

@@ -76,7 +76,7 @@
   replicas from the current Patroni leader when timeline drift leaves replicas unready after
   promotion
 - Phase 6 records clean governed bootstrap reruns for `linux-cpu`, `linux-gpu`, and the
-  supported Apple lifecycle, including the latest Apple rerun on May 14, 2026 through `doctor`,
+  supported Apple lifecycle, including the latest Apple rerun on May 15, 2026 through `doctor`,
   `build`, `up`, `status`, `test`, `down`, and final `status`; that rerun validated the split
   daemon topology, host-batch Pulsar handoff, routed Playwright E2E, repeated retained-state
   cluster bring-up or teardown cycles inside the governed `test` lane, and final post-teardown
