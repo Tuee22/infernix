@@ -60,10 +60,13 @@ May 15, 2026 through `doctor`, `build`, `up`, `status`, `test`, `down`, and fina
 rerun validated the split daemon topology, host-batch Pulsar handoff, routed Playwright E2E,
 repeated retained-state cluster bring-up or teardown cycles inside the governed `test` lane, and
 final post-teardown status returning `clusterPresent: False`, `lifecycleStatus: idle`, and
-`lifecyclePhase: cluster-absent`. The earlier May 13 lifecycle investigation remains the proof
-point that Apple `build-cluster-images` can stay healthy well past thirty minutes before Harbor
-publication begins and that Harbor image pushes are readiness-gated with bounded retries across
-transient registry resets.
+`lifecyclePhase: cluster-absent`. That May 15 rerun also validates the Harbor publication closure
+for repo-owned local images: publication pushes the `infernix-linux-cpu:local` payload before
+third-party chart dependencies and re-tags the source image before each bounded push retry, so
+retry recovery does not depend on a previously retained target tag. The earlier May 13 lifecycle
+investigation remains the proof point that Apple `build-cluster-images` can stay healthy well past
+thirty minutes before Harbor publication begins and that Harbor image pushes are readiness-gated
+with bounded retries across transient registry resets.
 
 | Area | Supported contract | Current repo state |
 |------|--------------------|--------------------|
@@ -222,7 +225,8 @@ same-binary host inference daemons through Pulsar.
 
 The authoritative repository shape closes toward the layout below. Generated-only paths such as
 `web/src/Generated/` and `tools/generated_proto/` materialize on demand and stay untracked even
-though they are part of the supported shape.
+though they are part of the supported shape; a clean checkout may omit `tools/` until Python
+protobuf generation runs.
 
 ```text
 infernix/

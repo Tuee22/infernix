@@ -9,6 +9,7 @@ module Infernix.Cluster.PublishImages
     ensureLocalImageAvailable,
     defaultHarborPublishOptions,
     normalizeRepositoryPath,
+    prioritizePublishableImages,
     publishChartImagesFile,
     writeHarborOverridesFile,
   )
@@ -32,7 +33,7 @@ import Data.Aeson
 import Data.ByteString.Base64 qualified as Base64
 import Data.ByteString.Char8 qualified as ByteString8
 import Data.ByteString.Lazy.Char8 qualified as LazyChar8
-import Data.List (find, intercalate, isSuffixOf, nub)
+import Data.List (find, intercalate, isSuffixOf, nub, partition)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe)
@@ -127,7 +128,7 @@ publishChartImagesFile options commandMonitorFactory renderedChartPath outputPat
   manager <- newManager tlsManagerSettings
   images <- discoverChartImagesFile renderedChartPath
   let chartPublishableImages = filter (not . isHarborImage) images
-      publishableImages = nub (alwaysPublishedImages <> chartPublishableImages)
+      publishableImages = prioritizePublishableImages (nub (alwaysPublishedImages <> chartPublishableImages))
   mapM_ (requireOnePresent chartPublishableImages) requiredRenderedChartImageAlternatives
   loginHarborWithRetries manager options
   publishedImages <- mapM (publishImage manager options commandMonitorFactory) publishableImages
@@ -223,11 +224,11 @@ publishIfNeeded manager options commandMonitorFactory sourceImage clientReposito
   if tagPresent
     then verifyRegistryPull manager options commandMonitorFactory targetRef
     else do
-      pushImageWithRetries manager options commandMonitorFactory targetRef
+      pushImageWithRetries manager options commandMonitorFactory sourceImage targetRef
       verifyRegistryPull manager options commandMonitorFactory targetRef
 
-pushImageWithRetries :: Manager -> HarborPublishOptions -> CommandMonitorFactory -> String -> IO ()
-pushImageWithRetries manager options commandMonitorFactory targetRef = go pushAttempts ""
+pushImageWithRetries :: Manager -> HarborPublishOptions -> CommandMonitorFactory -> String -> String -> IO ()
+pushImageWithRetries manager options commandMonitorFactory sourceImage targetRef = go pushAttempts ""
   where
     (targetRepository, _, targetTag) = breakRepositoryAndTag targetRef
     repositoryPath = normalizeRepositoryPath targetRepository
@@ -235,34 +236,47 @@ pushImageWithRetries manager options commandMonitorFactory targetRef = go pushAt
       | remainingAttempts <= 0 =
           failWith ("docker push failed for " <> targetRef <> "\n" <> lastFailure)
       | otherwise = do
+          let retryOrFail failureMessage = do
+                let attemptsUsed = pushAttempts - remainingAttempts + 1
+                if remainingAttempts > 1
+                  then do
+                    putStrLn
+                      ( "publish-chart-images: retrying docker push for "
+                          <> targetRef
+                          <> " after attempt "
+                          <> show attemptsUsed
+                          <> "/"
+                          <> show pushAttempts
+                          <> " failed"
+                      )
+                    ready <- registryReady manager (harborApiHost options)
+                    unless ready (waitForRegistry manager options)
+                    threadDelay (pushRetryDelayMicros attemptsUsed)
+                    go (remainingAttempts - 1) failureMessage
+                  else go 0 failureMessage
           waitForRegistry manager options
-          monitor <- commandMonitorFactory ("docker push " <> targetRef)
-          result <- tryRunCommandMaybeMonitored "docker" ["push", targetRef] "" monitor
-          case result of
-            Right _ -> pure ()
-            Left failureMessage -> do
-              tagPresent <- harborTagExists manager options repositoryPath targetTag
-              registryPullable <- registryPullSucceeds targetRef
-              if tagPresent || registryPullable
-                then pure ()
-                else do
-                  let attemptsUsed = pushAttempts - remainingAttempts + 1
-                  if remainingAttempts > 1
-                    then do
-                      putStrLn
-                        ( "publish-chart-images: retrying docker push for "
-                            <> targetRef
-                            <> " after attempt "
-                            <> show attemptsUsed
-                            <> "/"
-                            <> show pushAttempts
-                            <> " failed"
-                        )
-                      ready <- registryReady manager (harborApiHost options)
-                      unless ready (waitForRegistry manager options)
-                      threadDelay (pushRetryDelayMicros attemptsUsed)
-                      go (remainingAttempts - 1) failureMessage
-                    else go 0 failureMessage
+          retagResult <- tryRunCommand "docker" ["tag", sourceImage, targetRef] ""
+          case retagResult of
+            Left tagFailure ->
+              retryOrFail ("docker tag failed for " <> sourceImage <> " as " <> targetRef <> "\n" <> tagFailure)
+            Right _ -> do
+              monitor <- commandMonitorFactory ("docker push " <> targetRef)
+              result <- tryRunCommandMaybeMonitored "docker" ["push", targetRef] "" monitor
+              case result of
+                Right _ -> pure ()
+                Left failureMessage -> do
+                  tagPresent <- harborTagExists manager options repositoryPath targetTag
+                  registryPullable <- registryPullSucceeds targetRef
+                  if tagPresent || registryPullable
+                    then pure ()
+                    else retryOrFail failureMessage
+
+prioritizePublishableImages :: [String] -> [String]
+prioritizePublishableImages imageRefs =
+  let repoOwnedImages = concat requiredRenderedChartImageAlternatives
+      isRepoOwned imageRef = imageRef `elem` repoOwnedImages
+      (localImages, otherImages) = partition isRepoOwned imageRefs
+   in localImages <> otherImages
 
 pushRetryDelayMicros :: Int -> Int
 pushRetryDelayMicros attemptsUsed =

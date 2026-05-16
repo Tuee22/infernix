@@ -71,9 +71,13 @@ metadata. On May 15, 2026, the full governed Apple lifecycle reran cleanly throu
 `status` on the split topology. The `test` lane passed Haskell style, Haskell unit, PureScript
 unit, Haskell integration, routed Playwright, repeated retained-state `cluster down` and
 `cluster up` cycles, Apple host-batch inference for every active generated catalog entry, and
-final retained-state teardown. Final post-teardown status returned `clusterPresent: False`,
-`lifecycleStatus: idle`, `lifecyclePhase: cluster-absent`, `runtimeResultCount: 31`,
-`objectStoreObjectCount: 73`, `modelCacheEntryCount: 30`, and `durableManifestCount: 15`.
+final retained-state teardown. That rerun also validates the Harbor publication closure for
+repo-owned local images: publication pushes the `infernix-linux-cpu:local` payload before
+third-party chart dependencies and re-tags the source image before each bounded push retry, so
+retry recovery does not depend on a previously retained target tag. Final post-teardown status
+returned `clusterPresent: False`, `lifecycleStatus: idle`, `lifecyclePhase: cluster-absent`,
+`runtimeResultCount: 31`, `objectStoreObjectCount: 73`, `modelCacheEntryCount: 30`, and
+`durableManifestCount: 15`.
 
 ## Validation Surface
 
@@ -1081,17 +1085,23 @@ None.
 
 ### Objective
 
-Close the transient Harbor Docker-push failure mode exposed by the supported Apple lifecycle when
-large chart images briefly reset the registry connection during publication.
+Close the transient Harbor Docker-push failure modes exposed by the supported Apple lifecycle when
+large chart images briefly reset the registry connection during publication or when a retry would
+otherwise depend on a transient target tag that no longer exists locally.
 
 ### Deliverables
 
 - Docker pushes wait for Harbor registry readiness before every push attempt
 - Harbor image publication now uses eight bounded push attempts with capped retry backoff
+- repo-owned local image references are published before third-party chart dependencies so the
+  locally built substrate payload cannot be displaced by later mirror work before publication
+- each push attempt re-tags the source image to the target Harbor reference before pushing, so a
+  retry can recover even when the prior target tag disappeared locally
 - a failed push still exits successfully when the expected tag is already present or a registry
   pull proves the content became available despite the client-side push failure
 - plan, testing, and runbook docs record the May 13, 2026 Apple lifecycle proof point with the
-  current steady-state pod count and the supported retry interpretation
+  current steady-state pod count and the supported retry interpretation, plus the May 15, 2026
+  repo-owned-image ordering and re-tagging proof point
 
 ### Validation
 
@@ -1101,6 +1111,8 @@ large chart images briefly reset the registry connection during publication.
 - the full `./bootstrap/apple-silicon.sh test` lifecycle exercises the large Pulsar Harbor
   publication path, integration coverage, routed Playwright E2E, retained-state replay, and final
   cluster teardown successfully
+- the May 15, 2026 Apple lifecycle validates that the repo-owned `infernix-linux-cpu:local` image
+  is pushed before third-party images and remains retryable through source re-tagging
 - final `./bootstrap/apple-silicon.sh status` reports `clusterPresent: False`,
   `lifecycleStatus: idle`, and `lifecyclePhase: cluster-absent`
 

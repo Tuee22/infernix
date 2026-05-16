@@ -63,6 +63,9 @@
 - Harbor image publication waits for registry readiness before Docker push attempts and retries
   transient push resets with bounded backoff; treat registry-reset logs during large image pushes
   as recoverable until the command exhausts that retry budget
+- repo-owned local images are published before third-party chart dependencies and re-tagged from
+  their source image before each bounded push retry, so a missing transient target tag is
+  recoverable while the source image remains present
 - on the governed Apple lane, `infernix test all` may trigger multiple internal cluster bring-up
   or teardown cycles before the outer command returns; apply the same heartbeat-driven failure
   classification to those internal rounds

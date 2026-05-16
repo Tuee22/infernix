@@ -128,10 +128,14 @@ supported Apple lifecycle, including the latest Apple rerun on May 15, 2026 thro
 `status`. That Apple rerun validated the split daemon topology, host-batch Pulsar handoff, routed
 Playwright E2E, repeated retained-state cluster bring-up or teardown cycles inside the governed
 `test` lane, and final post-teardown status returning `clusterPresent: False`,
-`lifecycleStatus: idle`, and `lifecyclePhase: cluster-absent`. The earlier May 13 lifecycle
-investigation remains the proof point that `build-cluster-images` can remain healthy well past
-thirty minutes before Harbor publication begins and that Harbor image pushes are readiness-gated
-with bounded retries across transient registry resets.
+`lifecycleStatus: idle`, and `lifecyclePhase: cluster-absent`. That May 15 rerun also validates
+the Harbor publication closure for repo-owned local images: publication pushes the
+`infernix-linux-cpu:local` payload before third-party chart dependencies and re-tags the source
+image before each bounded push retry, so retry recovery does not depend on a previously retained
+target tag. The earlier May 13 lifecycle investigation remains the proof point that
+`build-cluster-images` can remain healthy well past thirty minutes before Harbor publication
+begins and that Harbor image pushes are readiness-gated with bounded retries across transient
+registry resets.
 
 Monitoring is not a supported first-class surface.
 

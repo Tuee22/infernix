@@ -67,7 +67,9 @@ mode-specific coverage, matrix behavior, and operator detail behind those canoni
 - the May 13, 2026 lifecycle rerun remains the proof point that long waits in `cluster up` and
   `cluster down` can still be healthy when the lifecycle is building images, publishing them into
   Harbor, preloading them onto the Kind worker, or replaying retained state; the large Pulsar image
-  publication path completed with readiness-gated bounded Docker-push retries in place
+  publication path completed with readiness-gated bounded Docker-push retries in place, and the
+  May 15, 2026 rerun validates repo-owned local image ordering plus source re-tagging before each
+  bounded push retry
 - the supported operator check during those waits is `infernix cluster status`
 - when that status surface reports `lifecycleStatus: in-progress`, use `lifecyclePhase`,
   `lifecycleDetail`, and `lifecycleHeartbeatAt` to distinguish real progress from a stale wait

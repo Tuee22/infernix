@@ -44,7 +44,8 @@
   cluster bring-up or teardown cycles, and final cleanup. The May 13 lifecycle investigation
   remains the proof point that long waits in Docker build finalization, Harbor publication,
   Kind-worker image preload, and retained-state replay are real convergence when heartbeat data is
-  moving, not hard product failure.
+  moving, not hard product failure. The May 15 lifecycle rerun also validates repo-owned local
+  image publication ordering and source re-tagging before each bounded Harbor push retry.
 - the supported doctrine is inactivity-aware: elapsed wall time alone is not enough to classify
   `cluster up`, `cluster down`, `test integration`, `test e2e`, or `test all` as failed when the
   active path still owns cluster lifecycle

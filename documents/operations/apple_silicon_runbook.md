@@ -62,7 +62,9 @@ Direct reference path:
   twenty minutes before Harbor publication begins
 - `publish-harbor-images` includes readiness-gated bounded retries for Docker push failures, so a
   transient registry reset during large-image publication is not a hard failure unless the retry
-  budget is exhausted and the image is still neither tagged nor pullable
+  budget is exhausted and the image is still neither tagged nor pullable; repo-owned local images
+  are published before third-party chart dependencies and are re-tagged from their source image
+  before each retry so recovery does not depend on a retained target tag
 - `./bootstrap/apple-silicon.sh test` is not a single cluster round-trip: the governed test lane
   may perform multiple internal cluster bring-up or teardown cycles through integration and E2E
   before the outer bootstrap command returns

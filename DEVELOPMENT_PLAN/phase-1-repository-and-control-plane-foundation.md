@@ -229,14 +229,15 @@ Retire custom control-plane Python tooling in favor of Haskell modules under the
 
 - chart discovery, image publication, demo-config loading, docs lint, file lint, proto lint, and
   chart lint are Haskell-owned
-- `tools/` no longer carries repo-owned custom-logic Python on the supported path
+- `tools/` carries no repo-owned custom-logic Python on the supported path; in a clean checkout it
+  may be absent entirely until generated protobuf stubs materialize under `tools/generated_proto/`
 - Python remains only as the engine-adapter boundary governed by later runtime phases
 - repo-owned shell is limited to the supported `bootstrap/*.sh` stage-0 host bootstrap surface
 
 ### Validation
 
-- `find tools -name '*.py' -not -path 'tools/generated_proto/*'` returns no supported
-  control-plane Python
+- `git ls-files tools` reports no tracked Python control-plane helpers outside the generated
+  `tools/generated_proto/` stub location
 - `infernix test lint` runs Haskell-owned repo checks on the supported control-plane path
 
 ### Remaining Work
@@ -257,22 +258,29 @@ Stop tracking generated and disposable artifacts and make the ignore contract en
 
 ### Deliverables
 
-- generated or disposable artifacts are ignored and rejected from the tracked source set:
+- generated or disposable artifacts are ignored by repository policy:
   - `python/poetry.lock`
   - `web/spago.lock`
+  - `web/package-lock.json`
+  - `web/dist/`
+  - `web/output/`
+  - `python/.venv/`
   - everything under `tools/generated_proto/`
+  - `.mypy_cache/` and `.ruff_cache/`
   - all `*.pyc` and `__pycache__/` directories
   - `web/src/Generated/`
 - `.gitignore` and `.dockerignore` mirror the generated-artifact policy
 - `documents/engineering/build_artifacts.md` documents what is source of truth and what is
   regenerated
-- `src/Infernix/Lint/Files.hs` fails when tracked generated artifacts return
+- `src/Infernix/Lint/Files.hs` fails when the implemented tracked generated-source set returns:
+  Python cache files, Poetry or Spago lockfiles, generated protobuf stubs, generated PureScript
+  contracts, and mypy or ruff cache directories
 
 ### Validation
 
-- `git ls-files | grep -E '(poetry\\.lock|generated_proto/|\\.pyc$|__pycache__/|spago\\.lock|web/src/Generated/)'`
+- `git ls-files | grep -E '(poetry\\.lock|generated_proto/|\\.pyc$|__pycache__/|spago\\.lock|web/src/Generated/|\\.mypy_cache/|\\.ruff_cache/|web/package-lock\\.json|web/dist/|web/output/|python/\\.venv/)'`
   returns nothing
-- `infernix test lint` fails when ignored generated paths are re-added to git
+- `infernix test lint` fails when the implemented tracked generated-source set is re-added to git
 
 ### Remaining Work
 

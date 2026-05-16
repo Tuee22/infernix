@@ -17,6 +17,7 @@ import Infernix.Cluster.PublishImages
     contentAddressTagFromInspectPayload,
     dockerHubMirrorRef,
     normalizeRepositoryPath,
+    prioritizePublishableImages,
     writeHarborOverridesFile,
   )
 import Infernix.CommandRegistry
@@ -490,6 +491,18 @@ main = do
     assert
       (isNothing (dockerHubMirrorRef "ghcr.io/example/image:1.0.0"))
       "docker hub fallback ignores non-Docker-Hub registries"
+    assert
+      ( prioritizePublishableImages
+          [ "docker.io/percona/percona-postgresql-operator:2.9.0",
+            "infernix-linux-cpu:local",
+            "docker.io/apachepulsar/pulsar-all:4.0.9"
+          ]
+          == [ "infernix-linux-cpu:local",
+               "docker.io/percona/percona-postgresql-operator:2.9.0",
+               "docker.io/apachepulsar/pulsar-all:4.0.9"
+             ]
+      )
+      "Harbor publication prioritizes repo-owned local images before remote chart dependencies"
     assert
       (contentAddressTagFromInspectPayload sampleDockerImageInspect == Right "sha256-deadbeef")
       "docker inspect parsing prefers repo digests for content-addressed tags"

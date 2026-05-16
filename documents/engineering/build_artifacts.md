@@ -93,8 +93,9 @@ cache-manifest state uses protobuf-backed `*.pb` files instead of legacy text-st
   environment at `python/.venv/`, and Linux substrate image builds run the same shared install
 - the supported web build runs on Node.js 22+ on both the host and Linux substrate-image paths
 - `.gitignore` and `.dockerignore` mirror the generated-artifact ignore set: Poetry lockfiles,
-  generated protobuf stubs, `*.pyc`, `web/spago.lock`, `web/package-lock.json`,
-  `web/src/Generated/`, `web/dist/`, and `python/.venv/` are not tracked
+  generated protobuf stubs, Python bytecode, mypy and ruff caches, `web/spago.lock`,
+  `web/package-lock.json`, `web/src/Generated/`, `web/dist/`, `web/output/`, and
+  `python/.venv/` are not tracked
 
 ## Validation
 
@@ -102,8 +103,11 @@ cache-manifest state uses protobuf-backed `*.pb` files instead of legacy text-st
   metadata contract.
 - `infernix test unit` covers protobuf-backed result reloads, protobuf-backed cache-manifest
   handling, and PureScript contract generation to `web/src/Generated/Contracts.purs`.
-- `infernix lint files` fails if generated outputs that belong under `./.build/`, `./.data/`,
-  `web/src/Generated/`, `web/dist/`, or `tools/generated_proto/` return to tracked source paths.
+- `infernix lint files` fails if the implemented tracked generated-source set returns to tracked
+  paths, including generated protobuf stubs, generated PureScript contracts, Python bytecode,
+  Poetry or Spago lockfiles, and mypy or ruff cache directories.
+- `git ls-files` remains the direct audit surface for ignored derived outputs such as
+  `web/package-lock.json`, `web/dist/`, `web/output/`, and `python/.venv/`.
 
 ## Cross-References
 
