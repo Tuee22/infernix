@@ -199,7 +199,10 @@ Make cluster reconcile, status, and teardown predictable.
 
 - `cluster up` is declarative and idempotent
 - `cluster status` reports cluster existence, chosen edge port, the active substrate through its
-  current `runtimeMode` line, publication details, and storage-health summary without mutation
+  current `runtimeMode` line, publication details, and storage-health summary without mutating
+  Kubernetes resources, publication state, or authoritative repo-local state; the Linux
+  outer-container observer may idempotently attach its fresh launcher container to Docker's
+  private `kind` network
 - `cluster down` tears down Kind while preserving `./.data/`
 - the repo-owned Kind configs pin `kindest/node:v1.34.0`
 

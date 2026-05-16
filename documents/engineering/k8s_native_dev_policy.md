@@ -10,7 +10,9 @@
 - Kind is the supported local cluster substrate
 - `infernix cluster up` is the only supported cluster reconcile entrypoint
 - `infernix cluster down` is the only supported teardown entrypoint
-- `infernix cluster status` is read-only
+- `infernix cluster status` does not mutate Kubernetes resources or repo-local authoritative
+  state; on the Linux outer-container path it may idempotently attach the fresh launcher container
+  to Docker's private `kind` network so it can observe the Kind control plane
 - when Docker, Kind, Helm, or kubectl are unavailable, `cluster up` fails fast instead of
   simulating another substrate
 - repo-owned Kind configs live under `kind/` and define the Apple, CPU, and `linux-gpu` cluster

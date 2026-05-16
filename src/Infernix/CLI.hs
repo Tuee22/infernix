@@ -171,6 +171,7 @@ validateCommandExecutionContext command = do
       case selectedCommand of
         ServiceCommand -> activeRuntimeMode
         ClusterUpCommand -> activeRuntimeMode
+        ClusterDownCommand -> activeRuntimeMode
         ClusterStatusCommand -> activeRuntimeMode
         CacheStatusCommand -> activeRuntimeMode
         CacheEvictCommand _ -> activeRuntimeMode

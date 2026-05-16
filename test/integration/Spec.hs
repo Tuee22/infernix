@@ -26,7 +26,7 @@ import Infernix.Models
 import Infernix.Runtime.Pulsar
   ( publishInferenceRequest,
     readPublishedInferenceResultMaybe,
-    schemaMarkerPath,
+    serviceReadinessMarkerPath,
   )
 import Infernix.Types
 import System.Directory
@@ -174,7 +174,8 @@ exerciseRuntimeMode paths runtimeMode = do
       assert ("\"rebuiltCount\":1" `isInfixOf` compact rebuildResponse) "cache rebuild reports one restored entry"
 
       reportStep ("service runtime loop: " <> showRuntimeMode runtimeMode)
-      validateServiceRuntimeLoop paths runtimeMode representativeModelId (requiresHostServiceHarness paths runtimeMode)
+      withPulsarTransportEnv baseUrl $
+        validateServiceRuntimeLoop paths runtimeMode representativeModelId
 
       when (runtimeMode == LinuxCpu) $ do
         reportStep "harbor recovery"
@@ -234,47 +235,28 @@ assertClusterServiceDeployment state = do
         ]
   assert (deploymentName == "infernix-service") "cluster deploys infernix-service on every substrate"
 
-validateServiceRuntimeLoop :: Paths -> RuntimeMode -> String -> Bool -> IO ()
-validateServiceRuntimeLoop paths runtimeMode representativeModelId daemonAlreadyRunning = do
-  infernixExecutable <- resolveInfernixExecutable
+validateServiceRuntimeLoop :: Paths -> RuntimeMode -> String -> IO ()
+validateServiceRuntimeLoop paths runtimeMode representativeModelId = do
   requestTopic <-
     case requestTopicsForMode runtimeMode of
       topic : _ -> pure topic
       [] -> fail ("no request topics configured for " <> showRuntimeMode runtimeMode)
   let resultTopic = resultTopicForMode runtimeMode
-  let withDaemon
-        | daemonAlreadyRunning = id
-        | otherwise = withSpawnedDaemon infernixExecutable
-  withDaemon $ do
-    waitForFile (schemaMarkerPath paths requestTopic)
-    waitForFile (schemaMarkerPath paths resultTopic)
-    requestIdValue <-
-      publishInferenceRequest
-        paths
-        runtimeMode
-        requestTopic
-        InferenceRequest
-          { requestModelId = Text.pack representativeModelId,
-            inputText = "service daemon request path"
-          }
-    maybeResult <- waitForPublishedResult paths runtimeMode resultTopic requestIdValue
-    case maybeResult of
-      Nothing -> fail ("service daemon did not publish a result for " <> showRuntimeMode runtimeMode)
-      Just resultValue -> do
-        assert (resultModelId resultValue == Text.pack representativeModelId) "service daemon publishes the selected model id"
-        assert (resultRuntimeMode resultValue == runtimeMode) "service daemon preserves the runtime mode in published results"
-  where
-    withSpawnedDaemon infernixExecutable action = do
-      (_, _, _, processHandle) <-
-        createProcess
-          (proc infernixExecutable ["service"])
-            { cwd = Just (repoRoot paths)
-            }
-      action
-        `finally` do
-          terminateProcess processHandle
-          _ <- waitForProcess processHandle
-          pure ()
+  requestIdValue <-
+    publishInferenceRequest
+      paths
+      runtimeMode
+      requestTopic
+      InferenceRequest
+        { requestModelId = Text.pack representativeModelId,
+          inputText = "service daemon request path"
+        }
+  maybeResult <- waitForPublishedResult paths runtimeMode resultTopic requestIdValue
+  case maybeResult of
+    Nothing -> fail ("service daemon did not publish a result for " <> showRuntimeMode runtimeMode)
+    Just resultValue -> do
+      assert (resultModelId resultValue == Text.pack representativeModelId) "service daemon publishes the selected model id"
+      assert (resultRuntimeMode resultValue == runtimeMode) "service daemon preserves the runtime mode in published results"
 
 waitForPublishedResult :: Paths -> RuntimeMode -> Text.Text -> Text.Text -> IO (Maybe InferenceResult)
 waitForPublishedResult paths runtimeMode resultTopic requestIdValue = go (60 :: Int)
@@ -658,8 +640,18 @@ publishAndRequireResult paths runtimeMode modelIdValue inputValue = do
 
 withRuntimeServiceDaemonIfNeeded :: Paths -> RuntimeMode -> IO a -> IO a
 withRuntimeServiceDaemonIfNeeded paths runtimeMode action
-  | requiresHostServiceHarness paths runtimeMode = withRuntimeServiceDaemon paths action
+  | requiresHostServiceHarness paths runtimeMode =
+      let readinessMarker = serviceReadinessMarkerPath paths
+       in do
+            catchIOError (removeFile readinessMarker) ignoreMissing
+            withRuntimeServiceDaemon paths $ do
+              waitForFile readinessMarker
+              action
   | otherwise = action
+  where
+    ignoreMissing err
+      | isDoesNotExistError err = pure ()
+      | otherwise = ioError err
 
 requiresHostServiceHarness :: Paths -> RuntimeMode -> Bool
 requiresHostServiceHarness paths runtimeMode =

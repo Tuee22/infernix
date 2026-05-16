@@ -84,7 +84,10 @@ runs the full supported validation suite for the active built substrate; full re
 closure comes from separate governed reruns for `apple-silicon`, `linux-cpu`, and `linux-gpu`,
 not from one implicit cross-substrate matrix invocation. The generated file, `cluster status`,
 publication JSON, and generated browser contracts still serialize that active substrate under
-`runtimeMode` field names. The Apple split-executor contract
+`runtimeMode` field names. `cluster status` does not mutate Kubernetes resources, publication
+state, or authoritative repo-local state; the accepted Linux outer-container exception is an
+idempotent Docker network membership repair that attaches the fresh launcher container to the
+private `kind` network for observation. The Apple split-executor contract
 is implemented on `apple-silicon`: `cluster up` keeps Harbor, MinIO, Pulsar,
 PostgreSQL, Envoy Gateway, the optional clustered `infernix-demo` surface, and cluster
 `infernix service` daemons in Kind; those cluster daemons own request-topic consumption and

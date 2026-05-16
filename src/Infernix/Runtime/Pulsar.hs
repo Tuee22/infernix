@@ -7,6 +7,7 @@ module Infernix.Runtime.Pulsar
     readPublishedInferenceResultMaybe,
     runProductionDaemon,
     schemaMarkerPath,
+    serviceReadinessMarkerPath,
     topicDirectoryPath,
   )
 where

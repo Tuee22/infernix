@@ -115,9 +115,11 @@ container cleanup.
 - `docker/playwright.Dockerfile` is the dedicated Playwright image definition; it produces
   `infernix-playwright:local` from `mcr.microsoft.com/playwright:v1.57.0-noble` and owns the
   Playwright runtime, browsers, and browser-runtime libs
-- Apple Silicon has no substrate Dockerfile; the host-native workflow builds and runs the
-  `./.build/infernix` and `./.build/infernix-demo` binaries directly, and routed Playwright still
-  comes from the shared `infernix-playwright:local` image through `docker compose run --rm playwright`
+- Apple Silicon has no substrate Dockerfile; the host-native workflow builds the
+  `./.build/infernix` and `./.build/infernix-demo` binaries locally, uses `./.build/infernix` for
+  ordinary operator commands and the host inference daemon, keeps the routed demo workload
+  cluster-resident when `demo_ui` is enabled, and still gets routed Playwright from the shared
+  `infernix-playwright:local` image through `docker compose run --rm playwright`
 
 ## Unsupported Usage
 

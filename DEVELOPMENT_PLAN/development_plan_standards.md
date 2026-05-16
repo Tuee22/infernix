@@ -449,7 +449,10 @@ Rules:
   prints the chosen port to the operator during bring-up.
 - `infernix cluster down` reconciles cluster absence while preserving authoritative repo data under
   `./.data/`.
-- `infernix cluster status` is read-only and never mutates cluster or repo state.
+- `infernix cluster status` does not mutate Kubernetes resources, publication state, or
+  authoritative repo-local state. On Linux outer-container paths it may idempotently attach the
+  fresh launcher container to Docker's private `kind` network so status and wrapper commands can
+  observe the Kind control plane from that container.
 - `infernix cache status`, `infernix cache evict`, and `infernix cache rebuild` operate only on
   manifest-backed derived cache state and do not rewrite the generated catalog or publication
   contract.

@@ -51,8 +51,7 @@ tryCommandMonitored maybeWorkingDirectory envOverrides command args maybeMonitor
       case processResult of
         Left err -> pure (Left (show err))
         Right processHandle -> do
-          waitForMonitoredExit maybeMonitor processHandle
-          exitCode <- waitForProcess processHandle
+          exitCode <- waitForMonitoredExit maybeMonitor processHandle
           hClose stdoutHandle
           hClose stderrHandle
           stdoutOutput <- readFileStrict stdoutPath
@@ -75,22 +74,30 @@ readFileStrict path = do
   _ <- evaluate (length contents)
   pure contents
 
-waitForMonitoredExit :: Maybe CommandMonitor -> ProcessHandle -> IO ()
+waitForMonitoredExit :: Maybe CommandMonitor -> ProcessHandle -> IO ExitCode
 waitForMonitoredExit maybeMonitor processHandle =
   case maybeMonitor of
-    Nothing -> pure ()
-    Just monitor -> go (monitorIntervalMicros monitor `divUp` 1000000)
+    Nothing -> waitForProcess processHandle
+    Just monitor -> go 0 0
       where
         intervalMicros = max 1000000 (monitorIntervalMicros monitor)
-        go elapsedSeconds = do
-          threadDelay intervalMicros
+        pollIntervalMicros = 1000000
+        pollIntervalSeconds = pollIntervalMicros `divUp` 1000000
+        go elapsedMicros elapsedSeconds = do
+          threadDelay pollIntervalMicros
+          let nextElapsedMicros = elapsedMicros + pollIntervalMicros
+              nextElapsedSeconds = elapsedSeconds + pollIntervalSeconds
           maybeExitCode <- getProcessExitCode processHandle
           case maybeExitCode of
-            Just _ -> pure ()
+            Just exitCode -> pure exitCode
             Nothing -> do
-              putStrLn (monitorLabel monitor <> ": still running after " <> show elapsedSeconds <> "s")
-              monitorHeartbeat monitor elapsedSeconds
-              go (elapsedSeconds + (intervalMicros `divUp` 1000000))
+              if nextElapsedMicros >= intervalMicros
+                then do
+                  putStrLn (monitorLabel monitor <> ": still running after " <> show nextElapsedSeconds <> "s")
+                  monitorHeartbeat monitor nextElapsedSeconds
+                  go 0 nextElapsedSeconds
+                else
+                  go nextElapsedMicros nextElapsedSeconds
 
 mergeEnvironment :: [(String, String)] -> [(String, String)] -> [(String, String)]
 mergeEnvironment baseEnv overrides =

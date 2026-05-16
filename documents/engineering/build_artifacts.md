@@ -43,8 +43,10 @@ cache-manifest state uses protobuf-backed `*.pb` files instead of legacy text-st
   so it stays in the image overlay where git-less `infernix lint files` runs can read it
 - `cluster up` writes `./.build/infernix.kubeconfig` on the host path
 - `cluster up` writes `./.data/runtime/infernix.kubeconfig` on the outer-container path
-- the active generated substrate file lives at `./.build/infernix-substrate.dhall` on the host
-  path and `./.build/outer-container/build/infernix-substrate.dhall` in the outer-container image
+- the active generated substrate file lives at `./.build/infernix-substrate.dhall` on the Apple
+  host path and `./.build/outer-container/build/infernix-substrate.dhall` on the host for the
+  Linux outer-container path, where it is visible inside the launcher container as
+  `/workspace/.build/outer-container/build/infernix-substrate.dhall`
 - `cluster up` writes `./.data/runtime/publication.json` as the publication inventory consumed by
   routed status surfaces
 - the web build stages `web/src/Generated/Contracts.purs`, written by

@@ -543,22 +543,20 @@ requireGeneratedDemoConfigFile paths expectedRuntimeMode = do
 
 resolveCommandRuntimeMode :: Paths -> Maybe RuntimeMode -> Maybe ClusterState -> IO RuntimeMode
 resolveCommandRuntimeMode _ (Just runtimeMode) _ = pure runtimeMode
-resolveCommandRuntimeMode paths Nothing maybeState = do
+resolveCommandRuntimeMode paths Nothing _maybeState = do
   let substratePath = Config.generatedDemoConfigPath paths
   substrateExists <- doesFileExist substratePath
   if substrateExists
     then configRuntimeMode <$> decodeDemoConfigFile substratePath
-    else case maybeState of
-      Just state -> pure (clusterRuntimeMode state)
-      Nothing ->
-        ioError
-          ( userError
-              ( unlines
-                  [ "Missing generated substrate file: " <> substratePath,
-                    "Restage it before running cluster operations."
-                  ]
-              )
-          )
+    else
+      ioError
+        ( userError
+            ( unlines
+                [ "Missing generated substrate file: " <> substratePath,
+                  "Restage it before running cluster operations."
+                ]
+            )
+        )
 
 matchingClusterState :: RuntimeMode -> Maybe ClusterState -> Maybe ClusterState
 matchingClusterState runtimeMode maybeState =
@@ -1481,8 +1479,6 @@ buildClusterImages paths state runtimeMode = do
         (dockerBuildArgs imageRef)
 
 preloadBootstrapSupportImagesOnKindNodes :: Paths -> ClusterState -> RuntimeMode -> FilePath -> IO ()
-preloadBootstrapSupportImagesOnKindNodes _paths _state AppleSilicon _renderedChartPath =
-  putStrLn "skipping bootstrap support image preload on apple-silicon; Kind nodes pull supported bootstrap images directly"
 preloadBootstrapSupportImagesOnKindNodes paths state runtimeMode renderedChartPath = do
   discoveredImageRefs <- discoverChartImagesFile renderedChartPath
   preloadImageRefs <-
@@ -1526,7 +1522,55 @@ preloadBootstrapSupportImagesOnKindNodes paths state runtimeMode renderedChartPa
 preloadBootstrapSupportImageOnKindNodes :: Paths -> ClusterState -> RuntimeMode -> String -> IO ()
 preloadBootstrapSupportImageOnKindNodes paths state runtimeMode imageRef = do
   let clusterName = kindClusterName paths runtimeMode
-  runCommandMonitored paths state Nothing [] "kind" ["load", "docker-image", "--name", clusterName, imageRef]
+  kindLoadResult <-
+    try
+      (runCommandMonitored paths state Nothing [] "kind" ["load", "docker-image", "--name", clusterName, imageRef]) ::
+      IO (Either IOException ())
+  case kindLoadResult of
+    Right _ -> pure ()
+    Left err -> do
+      putStrLn
+        ( "kind load failed for bootstrap support image "
+            <> imageRef
+            <> "; falling back to direct worker containerd import: "
+            <> show err
+        )
+      workerContainers <- kindWorkerContainerNames clusterName
+      case workerContainers of
+        [] -> ioError (userError ("no Kind worker containers found for " <> clusterName))
+        _ ->
+          mapM_
+            ( \workerContainer ->
+                runCommandMonitored
+                  paths
+                  state
+                  Nothing
+                  []
+                  "sh"
+                  [ "-c",
+                    "docker save "
+                      <> shellQuote imageRef
+                      <> " | docker exec --privileged -i "
+                      <> shellQuote workerContainer
+                      <> " ctr --namespace=k8s.io images import --snapshotter=overlayfs -"
+                  ]
+            )
+            workerContainers
+
+kindWorkerContainerNames :: String -> IO [String]
+kindWorkerContainerNames clusterName = do
+  output <-
+    captureCommand
+      Nothing
+      []
+      "docker"
+      [ "ps",
+        "--filter",
+        "label=io.x-k8s.kind.cluster=" <> clusterName,
+        "--format",
+        "{{.Names}}"
+      ]
+  pure (filter (not . List.isSuffixOf "-control-plane") (map trim (lines output)))
 
 publishClusterImages :: Paths -> ClusterState -> FilePath -> RuntimeMode -> IO FilePath
 publishClusterImages paths state renderedChartPath runtimeMode = do

@@ -18,6 +18,7 @@ ARG KIND_VERSION=v0.29.0
 ARG KUBECTL_VERSION=v1.34.0
 ARG HELM_VERSION=v3.18.6
 ARG UBUNTU_APT_MIRROR=http://mirrors.edge.kernel.org/ubuntu/
+ARG TARGETARCH
 
 ENV DEBIAN_FRONTEND=noninteractive \
     BOOTSTRAP_HASKELL_NONINTERACTIVE=1 \
@@ -85,16 +86,20 @@ RUN curl https://get-ghcup.haskell.org -sSf | sh \
     && ln -sfn /root/.ghcup/ghc/${FORMATTER_GHC_VERSION} /opt/ghc/${FORMATTER_GHC_VERSION} \
     && ln -sfn /root/.ghcup/ghc/${GHC_VERSION} /opt/ghc/${GHC_VERSION}
 
-RUN curl -fsSL -o /usr/local/bin/kind https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64 \
-    && chmod +x /usr/local/bin/kind
-
-RUN curl -fsSL -o /usr/local/bin/kubectl https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl \
-    && chmod +x /usr/local/bin/kubectl
-
-RUN curl -fsSL -o /tmp/helm.tar.gz https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz \
-    && tar -C /tmp -xzf /tmp/helm.tar.gz \
-    && install /tmp/linux-amd64/helm /usr/local/bin/helm \
-    && rm -rf /tmp/helm.tar.gz /tmp/linux-amd64
+RUN set -eu; \
+    tool_arch="${TARGETARCH:-$(dpkg --print-architecture)}"; \
+    case "${tool_arch}" in \
+      amd64|arm64) ;; \
+      *) echo "unsupported linux substrate tool architecture: ${tool_arch}" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL -o /usr/local/bin/kind "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-${tool_arch}"; \
+    chmod +x /usr/local/bin/kind; \
+    curl -fsSL -o /usr/local/bin/kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${tool_arch}/kubectl"; \
+    chmod +x /usr/local/bin/kubectl; \
+    curl -fsSL -o /tmp/helm.tar.gz "https://get.helm.sh/helm-${HELM_VERSION}-linux-${tool_arch}.tar.gz"; \
+    tar -C /tmp -xzf /tmp/helm.tar.gz; \
+    install "/tmp/linux-${tool_arch}/helm" /usr/local/bin/helm; \
+    rm -rf /tmp/helm.tar.gz "/tmp/linux-${tool_arch}"
 
 COPY --from=nvkind-builder /go/bin/nvkind /usr/local/bin/nvkind
 

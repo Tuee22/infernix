@@ -16,7 +16,7 @@
 
 - `infernix cluster up` - reconciles Kind, Harbor-first bootstrap, the generated substrate file, and routed publication state
 - `infernix cluster down` - tears the cluster down while leaving durable repo-local state under `./.data/` intact
-- `infernix cluster status` - reports cluster presence, lifecycle phase, active substrate, publication state, build paths, and route inventory without mutation
+- `infernix cluster status` - reports cluster presence, lifecycle phase, active substrate, publication state, build paths, and route inventory; on Linux outer-container paths it may attach the launcher to Docker's `kind` network for observation
 
 ### `cache`
 
@@ -71,8 +71,10 @@
 - `cluster up`, `cluster down`, `cluster status`, `cache ...`, `lint ...`, `test ...`,
   `docs check`, and `internal ...` are declarative CLI entrypoints; `infernix service` and
   `infernix-demo serve` are the only long-running daemon entrypoints
-- `cluster status` is read-only and reports publication-state details together with route
-  inventory, state paths, and lifecycle-progress fields
+- `cluster status` does not mutate Kubernetes resources, publication state, or authoritative
+  repo-local state; on the Linux outer-container path it may idempotently run
+  `docker network connect kind <launcher-container>` so the fresh launcher can observe the Kind
+  control plane over Docker's private `kind` network
 - `infernix internal materialize-substrate ...` is the supported way to restage
   `infernix-substrate.dhall`; `cluster up`, `service`, and the validation entrypoints do not
   regenerate it on first command execution
