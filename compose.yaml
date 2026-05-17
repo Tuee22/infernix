@@ -12,6 +12,8 @@ services:
     environment:
       INFERNIX_BUILD_ROOT: /workspace/.build/outer-container/build
       INFERNIX_HOST_REPO_ROOT: "${INFERNIX_HOST_REPO_ROOT:-${PWD}}"
+      INFERNIX_COMPOSE_SUBSTRATE: "${INFERNIX_COMPOSE_SUBSTRATE:-linux-cpu}"
+      INFERNIX_COMPOSE_DEMO_UI: "${INFERNIX_COMPOSE_DEMO_UI:-true}"
     volumes:
       - ./.data:/workspace/.data
       - ./.build:/workspace/.build

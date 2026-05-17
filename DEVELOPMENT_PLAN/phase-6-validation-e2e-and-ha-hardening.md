@@ -41,14 +41,13 @@ recovery or lifecycle checks in code. The staged file, `cluster status`, publica
 generated browser contracts still expose the active substrate through `runtimeMode` fields or
 lines. The worktree omits direct Harbor, MinIO, and Pulsar compatibility handlers from
 `src/Infernix/Demo/Api.hs`, tightens `test/integration/Spec.hs` to require the real routed
-upstream behavior, persists cluster state before later Linux rollout phases, restages the active
-Linux substrate on each supported bootstrap invocation, reuses a persistent Linux chart-archive
-cache, and performs the targeted Pulsar claim-root reset when the known retained ZooKeeper
-epoch-state corruption blocks bootstrap. The current lifecycle still preloads bootstrap support
-images on supported lanes by trying `kind load docker-image` first and falling back to direct
-worker containerd import when Kind's loader fails; Phase 2 Sprint 2.12 tracks the refactor to the
-stricter Harbor-first boundary where only Harbor-required services may pull upstream before
-Harbor is responsive. Recorded validation for this phase covers the governed
+upstream behavior, persists cluster state before later Linux rollout phases, owns active
+substrate preflight in the binary command, reuses a persistent Linux chart-archive cache, and
+performs the targeted Pulsar claim-root reset when the known retained ZooKeeper epoch-state
+corruption blocks bootstrap. The current lifecycle skips broad pre-Harbor support-image preloads
+on supported lanes and follows the stricter Harbor-first boundary where only Harbor-required
+services may pull upstream before Harbor is responsive. Recorded validation for this phase covers
+the governed
 `linux-cpu` and `linux-gpu` bootstrap surfaces. Recorded Apple validation on May 11, 2026 reran
 cleanly through `./bootstrap/apple-silicon.sh doctor`, `build`, `up`, `status`, `test`, and
 `down`. On Apple, routed Playwright no longer times out on `host.docker.internal`: host-side
@@ -400,23 +399,18 @@ toolchain from package managers instead of depending on a broad preinstalled App
 ### Validation
 
 - validation closes when, on a clean Apple Silicon host with only Homebrew plus ghcup present,
-  `cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes`
-  succeeds, `./.build/infernix internal materialize-substrate apple-silicon` stages the active
-  substrate, and `./.build/infernix cluster up` reconciles the remaining supported Apple host
-  prerequisites through the supported package-manager path
+  `./bootstrap/apple-silicon.sh up` builds the host binaries, materializes or verifies the active
+  substrate through the binary, and reconciles the remaining supported Apple host prerequisites
+  through the supported package-manager path
 - validation closes when Apple host validation proves the supported flow can bootstrap Poetry when
   absent and then run the adapter setup path without manual Poetry installation
 - validation closes when, on a clean Linux CPU host with Docker only,
-  `docker compose build infernix`,
-  `docker compose run --rm infernix infernix internal materialize-substrate linux-cpu --demo-ui true`,
-  and `docker compose run --rm infernix infernix test all` pass
+  `./bootstrap/linux-cpu.sh test` enters the Compose-launched `infernix` binary, lets the binary
+  materialize or verify the active substrate, and passes the full supported validation lane
 - validation closes when, on a clean Linux GPU host with Docker plus the supported NVIDIA host
-  prerequisites, exporting `INFERNIX_COMPOSE_IMAGE=infernix-linux-gpu:local`,
-  `INFERNIX_COMPOSE_SUBSTRATE=linux-gpu`, and
-  `INFERNIX_COMPOSE_BASE_IMAGE=nvidia/cuda:13.2.1-cudnn-runtime-ubuntu24.04`, then running
-  `docker compose build infernix`,
-  `docker compose run --rm infernix infernix internal materialize-substrate linux-gpu --demo-ui true`,
-  and `docker compose run --rm infernix infernix test all` pass
+  prerequisites, `./bootstrap/linux-gpu.sh test` enters the Compose-launched `infernix` binary,
+  lets the binary materialize or verify the active substrate, and passes the full supported
+  validation lane
 
 ### Remaining Work
 
@@ -867,9 +861,9 @@ integration and E2E ownership in the final `.dhall`-driven terms.
 - supported runtime and validation code carry no simulated cluster, route, transport, or generic
   inference-success fallback behavior on the supported path; inference assertions go through the
   typed adapter harness selected by the active substrate file
-- current Linux bootstrap entrypoints restage the active substrate file before lifecycle and test
-  commands so lane switches cannot reuse a stale staged payload; Phase 2 Sprint 2.12 moves that
-  preflight into the binary-owned lifecycle and validation commands
+- Linux bootstrap entrypoints delegate lifecycle and test commands to the Compose-launched
+  `infernix` binary, which owns active-substrate preflight so lane switches cannot reuse a stale
+  staged payload
 
 ### Validation
 
@@ -1005,10 +999,9 @@ substrate-mismatched compatibility shims.
   supported Colima profile on demand when Apple
   lifecycle or adapter-validation paths need them
 - Apple Kind lifecycle code no longer relies on unsupported host bind-mount ownership assumptions,
-  currently uses the shared bootstrap support image preload path with the direct worker
-  containerd-import fallback when Kind's loader fails, and keeps the routed demo API aligned with
-  the active staged runtime mode during routed validation; Phase 2 Sprint 2.12 replaces that broad
-  pre-Harbor support-image boundary with stricter Harbor-first publication
+  does not perform broad pre-Harbor support-image preloads, preloads only Harbor-backed final
+  image refs after Harbor publication, and keeps the routed demo API aligned with the active
+  staged runtime mode during routed validation
 - routed Apple Playwright validation probes publication readiness from the host on
   `127.0.0.1:<edge-port>` but runs the browser container on the private Docker `kind` network
   against the Kind control-plane DNS on port `30090`, so the Apple lane no longer depends on
@@ -1058,16 +1051,17 @@ failure.
 ### Deliverables
 
 - the governed testing and runbook docs distinguish hard failure from long-running convergence that
-  is still making progress in Docker, Harbor, Kind-worker preload, or teardown data-sync steps
+  is still making progress in Docker, Harbor, Harbor-backed final-image preload, or teardown
+  data-sync steps
 - the supported validation doctrine uses inactivity-aware language instead of elapsed-wall-time
   language alone when it describes lifecycle failure classification
 - Apple and cluster runbooks describe cold-versus-warm expectations and name the concrete
   first-run phases that can take minutes without emitting steady log lines
 - CLI reference docs describe the supported status or progress surfaces operators use before
   concluding that a lifecycle action actually failed
-- the plan, runbooks, and testing docs cite the May 13, 2026 Apple lifecycle investigation and
-  the May 15, 2026 split-topology rerun as proof points for the supported false-negative doctrine
-  on the current worktree
+- the plan, runbooks, and testing docs cite the May 13, 2026 Apple lifecycle investigation plus
+  the May 15, 2026 and May 17, 2026 split-topology reruns as proof points for the supported
+  false-negative doctrine on the current worktree
 
 ### Validation
 

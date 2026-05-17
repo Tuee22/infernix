@@ -28,12 +28,12 @@ Usage:
 Commands:
   help    Show this help text.
   doctor  Ensure Docker Engine, the Compose plugin, and user access to the Docker socket.
-  build   Ensure host prerequisites and build the \`${COMPOSE_IMAGE}\` launcher image.
-  up      Ensure host prerequisites, build the launcher image, and run \`cluster up\`.
+  build   Ensure host prerequisites and build or enter the \`${COMPOSE_IMAGE}\` launcher image.
+  up      Ensure host prerequisites, enter the launcher image, and run \`cluster up\`.
   status  Show \`cluster status\` through the launcher image.
   test    Run \`infernix test all\` through the launcher image.
   down    Run \`cluster down\` while preserving durable repo-local state under ./.data/.
-  purge   Destructive cleanup: tear down the cluster, remove repo-local state, and remove the local launcher image.
+  purge   Compatibility alias for \`down\`; preserves repo-local state, images, and prerequisites.
 
 This script is safe to re-run. It targets the supported Ubuntu 24.04 CPU path.
 EOF
@@ -52,9 +52,6 @@ Available Linux CPU commands:
   ${SCRIPT_LABEL} purge
 
 Direct reference commands:
-  docker compose build infernix
-  docker compose build playwright
-  docker compose run --rm infernix infernix internal materialize-substrate ${COMPOSE_SUBSTRATE} --demo-ui true
   docker compose run --rm infernix infernix cluster up
   docker compose run --rm infernix infernix cluster status
   docker compose run --rm infernix infernix test all
@@ -153,56 +150,9 @@ ensure_host_prerequisites() {
   ensure_docker_socket_access
 }
 
-image_present() {
-  docker image inspect "${COMPOSE_IMAGE}" >/dev/null 2>&1
-}
-
-playwright_image_present() {
-  docker image inspect infernix-playwright:local >/dev/null 2>&1
-}
-
-ensure_launcher_image() {
-  ensure_host_prerequisites
-  if ! image_present; then
-    bootstrap::run compose_env docker compose build infernix
-  fi
-  if ! playwright_image_present; then
-    bootstrap::run compose_env docker compose build playwright
-  fi
-}
-
-force_launcher_image_build() {
-  ensure_host_prerequisites
-  bootstrap::run compose_env docker compose build infernix
-  bootstrap::run compose_env docker compose build playwright
-}
-
-ensure_substrate_staged() {
-  bootstrap::run compose_env docker compose run --rm infernix \
-    infernix internal materialize-substrate "${COMPOSE_SUBSTRATE}" --demo-ui true
-}
-
 run_infernix() {
-  ensure_launcher_image
-  ensure_substrate_staged
+  ensure_host_prerequisites
   bootstrap::run compose_env docker compose run --rm infernix infernix "$@"
-}
-
-best_effort_compose_down() {
-  if docker_ready && docker_compose_ready; then
-    compose_env docker compose down -v --remove-orphans || true
-    return 0
-  fi
-  bootstrap::warn "Skipping docker compose down because Docker is not currently usable from this shell."
-}
-
-best_effort_remove_image() {
-  if docker_ready; then
-    docker image rm -f "${COMPOSE_IMAGE}" || true
-    docker image rm -f infernix-playwright:local || true
-    return 0
-  fi
-  bootstrap::warn "Skipping Docker image removal because Docker is not currently usable from this shell."
 }
 
 command_doctor() {
@@ -211,7 +161,7 @@ command_doctor() {
 }
 
 command_build() {
-  force_launcher_image_build
+  run_infernix --help
   bootstrap::info "Linux CPU launcher image is ready."
 }
 
@@ -232,11 +182,8 @@ command_down() {
 }
 
 command_purge() {
-  bootstrap::confirm_destructive "Purge Linux CPU launcher state, local image, and repo-local data?"
-  best_effort_compose_down
-  best_effort_remove_image
-  bootstrap::run rm -rf ./.build ./.data
-  bootstrap::info "Removed ./.build, ./.data, ${COMPOSE_IMAGE}, and infernix-playwright:local."
+  command_down
+  bootstrap::info "Preserved ./.build, ./.data, local images, and installed prerequisites."
 }
 
 main() {

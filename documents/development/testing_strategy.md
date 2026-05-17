@@ -60,10 +60,10 @@ mode-specific coverage, matrix behavior, and operator detail behind those canoni
 
 ## Lifecycle Interpretation
 
-- on May 15, 2026, the supported Apple lifecycle reran cleanly through `doctor`, `build`, `up`,
-  `status`, `test`, `down`, and final `status`; the `test all` lane completed split-daemon Apple
-  inference, routed Playwright E2E, repeated retained-state cluster bring-up or teardown cycles,
-  and final cleanup
+- on May 15, 2026, and again on May 17, 2026, the supported Apple lifecycle reran cleanly through
+  `doctor`, `build`, `up`, `status`, `test`, `down`, and final `status`; the `test all` lane
+  completed split-daemon Apple inference, routed Playwright E2E, repeated retained-state cluster
+  bring-up or teardown cycles, and final cleanup
 - the May 13, 2026 lifecycle rerun remains the proof point that long waits in `cluster up` and
   `cluster down` can still be healthy when the lifecycle is building images, publishing them into
   Harbor, preloading them onto the Kind worker, or replaying retained state; the large Pulsar image

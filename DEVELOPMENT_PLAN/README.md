@@ -49,9 +49,8 @@ A phase or sprint can move to `Done` only when all of the following are true:
 
 ## Current Repo Assessment
 
-Phases 0, 1, and 3 through 6 close around the implemented worktree. Phase 2 is reopened for the
-bootstrap responsibility and Harbor-first image-boundary refactor tracked in Sprint 2.12. The
-repository implements the staged-substrate architecture, the baked Linux outer-container launcher,
+Phases 0 through 6 close around the implemented worktree. The repository implements the
+staged-substrate architecture, the baked Linux outer-container launcher,
 the mandatory HA platform services, the Gateway-owned routed edge, the shared Python adapter
 project, the Haskell-owned browser-contract generation path, the substrate-specific validation
 surface, and the final Apple split-executor topology described below. The Apple lane deploys
@@ -59,10 +58,9 @@ cluster `infernix service` daemons for
 request-topic consumption and host-batch handoff while same-binary host daemons consume the
 configured host batch topic, execute Apple-native inference, and publish completed results.
 
-The repository implements the substrate-file doctrine described by this plan, while Sprint 2.12
-tracks the refactor from shell-restaged substrate files to binary-owned lifecycle preflight.
-Supported target flows stage one `infernix-substrate.dhall` beside the active build root through
-the `infernix` command that needs it; the explicit
+The repository implements the substrate-file doctrine described by this plan. Supported flows
+stage one `infernix-substrate.dhall` beside the active build root through the `infernix` command
+that needs it; the explicit
 `infernix internal materialize-substrate ...` helpers remain the direct restaging or inspection
 surface. The Linux substrate Dockerfile also materializes a build-arg-selected substrate file
 inside the image overlay during image build, but supported Compose runs bind-mount the host
@@ -101,9 +99,9 @@ typed durable metadata, while unsupported adapter ids fail
 fast instead of falling through to a generic success path. The worktree omits the
 direct Harbor, MinIO, and Pulsar tool-route compatibility handlers, requires the real routed
 upstream behavior in integration, and persists Linux cluster state before later rollout phases.
-The current implementation still restages the active Linux substrate payload on each supported
-bootstrap invocation; Sprint 2.12 moves that preflight into the binary command. The
-formatter-toolchain closure remains in place: the Haskell style bootstrap drives `ormolu` and
+Bootstrap shells no longer restage the active substrate payload before lifecycle commands; that
+preflight belongs to the binary command that needs the file. The formatter-toolchain closure
+remains in place: the Haskell style bootstrap drives `ormolu` and
 `hlint` through the dedicated compatible formatter compiler `ghc-9.12.4`, while the Linux
 substrate image preinstalls that compiler beside the project `ghc-9.14.1` toolchain. The
 supported Linux outer-container launcher reuses a persistent `chart/charts/` archive cache,
@@ -119,15 +117,15 @@ Playwright readiness probes `127.0.0.1` from the host while the browser containe
 private Docker `kind` network and targets the Kind control-plane DNS, and the dedicated
 Playwright image no longer bakes a conflicting `NO_COLOR` default. The shared cluster lifecycle
 now surfaces explicit in-progress phase, child-operation detail, and heartbeat data through
-`cluster status` during monitored Docker build, Harbor publication, Kind-worker preload, and
-Apple retained-state replay steps; explicit substrate materialization writes the staged
-`infernix-substrate.dhall` atomically so concurrent status readers do not observe truncated
+`cluster status` during monitored Docker build, Harbor publication, Harbor-backed final-image
+preload, and Apple retained-state replay steps; explicit substrate materialization writes the
+staged `infernix-substrate.dhall` atomically so concurrent status readers do not observe truncated
 payloads; and retained-state Apple reruns automatically reinitialize stopped Harbor PostgreSQL
 replicas from the current Patroni leader when timeline drift leaves replicas unready after
-promotion. The current implementation still has a broad bootstrap support-image preload path in
-the shared lifecycle; Sprint 2.12 replaces that with the stricter Harbor-first target where only
-Harbor-required services may pull upstream before Harbor is responsive and every remaining image,
-including the active `infernix` runtime image, is loaded into Harbor before final rollout. Phase 6
+promotion. The shared lifecycle skips broad pre-Harbor support-image preloads and follows the
+stricter Harbor-first target where only Harbor-required services may pull upstream before Harbor
+is responsive and every remaining image, including the active `infernix` runtime image, is loaded
+into Harbor before final rollout. Phase 6
 records clean governed bootstrap reruns for `linux-cpu`,
 `linux-gpu`, and the supported Apple lifecycle, including Apple reruns on
 May 15, 2026 and May 17, 2026 through `./bootstrap/apple-silicon.sh doctor`, `build`, `up`,
@@ -166,7 +164,7 @@ now use that id consistently.
 |-------|------|--------|----------|
 | 0 | Documentation and Governance | Done | [phase-0-documentation-and-governance.md](phase-0-documentation-and-governance.md) |
 | 1 | Repository and Control-Plane Foundation | Done | [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md) |
-| 2 | Kind Cluster Storage and Lifecycle | Active | [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md) |
+| 2 | Kind Cluster Storage and Lifecycle | Done | [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md) |
 | 3 | HA Platform Services and Edge Routing | Done | [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md) |
 | 4 | Inference Service and Durable Runtime | Done | [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) |
 | 5 | Web UI and Shared Types | Done | [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md) |
@@ -174,7 +172,7 @@ now use that id consistently.
 
 ## Canonical Outcome
 
-The target supported platform closes around these rules:
+The supported platform now closes around these rules:
 
 - two repo-owned Haskell executables share the default Cabal library exposed by the `infernix`
   package (declared in `infernix.cabal` without an explicit library name and depended on as
@@ -197,9 +195,9 @@ The target supported platform closes around these rules:
   `docker compose run --rm infernix infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>`
   remains available for direct restaging or inspection
 - the Linux substrate Dockerfile materializes a build-arg-selected copy inside the image overlay,
-  but the supported outer-container command surface bind-mounts the host `./.build/` tree and
-  therefore relies on the explicit host-visible restaging step before lifecycle or aggregate test
-  commands
+  but the supported outer-container command surface bind-mounts the host `./.build/` tree, so
+  lifecycle and aggregate test commands materialize or verify the host-visible substrate file
+  before doing substrate-aware work
 - supported runtime, cluster, cache, Kubernetes-wrapper, frontend-contract generation, and
   aggregate `infernix test ...` entrypoints own substrate-file preflight for their execution
   context and fail with a substrate-specific diagnostic if the file cannot be materialized or
@@ -259,8 +257,8 @@ The target supported platform closes around these rules:
   explicitly instead of implying matrix-wide coverage
 - the supported control plane keeps one Haskell-owned command registry, binary-owned lifecycle and
   validation orchestration, the current `ormolu` plus `hlint` plus `cabal format` style stack, and
-  the existing files or docs or chart or proto validation entrypoints; Sprint 2.12 is the open
-  follow-on for narrowing shell bootstrap responsibility to prerequisite and launcher setup
+  the existing files or docs or chart or proto validation entrypoints; shell bootstrap
+  responsibility is limited to prerequisite and launcher setup
 - every `infernix service` daemon remains startup-configured and Pulsar-driven without a separate
   admin-HTTP, hot-reload, or typed-event-ledger subsystem in the supported contract
 - the test surface remains the current three Cabal stanzas plus the frontend unit suite:

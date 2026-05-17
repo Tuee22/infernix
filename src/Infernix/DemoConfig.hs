@@ -2,6 +2,7 @@
 
 module Infernix.DemoConfig
   ( decodeDemoConfigFile,
+    ensureGeneratedDemoConfigFile,
     materializeGeneratedDemoConfigFile,
     renderGeneratedDemoConfigPayload,
     renderModelListing,
@@ -23,7 +24,7 @@ import Infernix.Config qualified as Config
 import Infernix.Models (catalogForMode, encodeDemoConfig, engineBindingsForMode, hostBatchTopicForMode, requestTopicsForMode, resultTopicForMode)
 import Infernix.Types
 import Infernix.Workflow (demoConfigGeneratedBannerLine)
-import System.Directory (createDirectoryIfMissing, removeFile, renameFile)
+import System.Directory (createDirectoryIfMissing, doesFileExist, removeFile, renameFile)
 import System.FilePath (takeDirectory)
 import System.IO (hClose, openBinaryTempFile)
 
@@ -73,6 +74,18 @@ materializeGeneratedDemoConfigFile paths runtimeMode demoUiEnabledValue = do
         renameFile temporaryPath filePath
     )
   pure filePath
+
+ensureGeneratedDemoConfigFile :: Paths -> RuntimeMode -> Bool -> IO FilePath
+ensureGeneratedDemoConfigFile paths runtimeMode defaultDemoUiEnabled = do
+  let filePath = Config.generatedDemoConfigPath paths
+  fileExists <- doesFileExist filePath
+  if fileExists
+    then do
+      demoConfig <- decodeDemoConfigFile filePath
+      if configRuntimeMode demoConfig == runtimeMode
+        then pure filePath
+        else materializeGeneratedDemoConfigFile paths runtimeMode defaultDemoUiEnabled
+    else materializeGeneratedDemoConfigFile paths runtimeMode defaultDemoUiEnabled
 
 ignoreIo :: IO () -> IO ()
 ignoreIo action = action `catch` ignoreIOException

@@ -37,13 +37,14 @@
 
 ## Lifecycle Failure Classification
 
-- on May 15, 2026, the supported Apple lifecycle reran cleanly through `doctor`, `build`, `up`,
-  `status`, `test`, `down`, and final `status`; the full `test all` lane completed lint, unit,
-  integration, split-daemon Apple inference, routed browser coverage, repeated retained-state
-  cluster bring-up or teardown cycles, and final cleanup. The May 13 lifecycle investigation
+- on May 15, 2026, and again on May 17, 2026, the supported Apple lifecycle reran cleanly through
+  `doctor`, `build`, `up`, `status`, `test`, `down`, and final `status`; the full `test all` lane
+  completed lint, unit, integration, split-daemon Apple inference, routed browser coverage,
+  repeated retained-state cluster bring-up or teardown cycles, and final cleanup. The May 13
+  lifecycle investigation
   remains the proof point that long waits in Docker build finalization, Harbor publication,
   Kind-worker image preload, and retained-state replay are real convergence when heartbeat data is
-  moving, not hard product failure. The May 15 lifecycle rerun also validates repo-owned local
+moving, not hard product failure. The May 15 and May 17 lifecycle reruns also validate repo-owned local
   image publication ordering and source re-tagging before each bounded Harbor push retry.
 - the supported doctrine is inactivity-aware: elapsed wall time alone is not enough to classify
   `cluster up`, `cluster down`, `test integration`, `test e2e`, or `test all` as failed when the

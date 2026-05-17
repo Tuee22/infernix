@@ -14,7 +14,7 @@ where
 
 import Control.Concurrent (threadDelay)
 import Control.Exception (IOException, bracket, try)
-import Control.Monad (filterM, unless, when)
+import Control.Monad (unless, when)
 import Data.Aeson (Value (..), eitherDecode)
 import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KeyMap
@@ -33,7 +33,7 @@ import Infernix.Cluster.Discover
 import Infernix.Cluster.PublishImages qualified as PublishImages
 import Infernix.Config (ControlPlaneContext (..), Paths (..), controlPlaneContextId)
 import Infernix.Config qualified as Config
-import Infernix.DemoConfig (decodeDemoConfigFile, renderGeneratedDemoConfigPayload)
+import Infernix.DemoConfig (decodeDemoConfigFile, ensureGeneratedDemoConfigFile, renderGeneratedDemoConfigPayload)
 import Infernix.Engines.AppleSilicon (ensureAppleSiliconRuntimeReady)
 import Infernix.Models
 import Infernix.ProcessMonitor qualified as ProcessMonitor
@@ -210,6 +210,7 @@ pulsarZookeeperPodNames =
 pulsarBootstrapDirtyLogMarkers :: [String]
 pulsarBootstrapDirtyLogMarkers =
   [ "The current epoch",
+    "Got zxid",
     "older than the last zxid",
     "Unable to load database on disk"
   ]
@@ -323,11 +324,17 @@ clusterUpWithPulsarBootstrapRepair :: Paths -> RuntimeMode -> IO ()
 clusterUpWithPulsarBootstrapRepair paths runtimeMode = go False
   where
     go repairAttempted = do
+      repairAttempted' <-
+        if repairAttempted
+          then pure True
+          else do
+            repaired <- repairInterruptedDirtyPulsarBootstrapState
+            pure (repairAttempted || repaired)
       result <- try (clusterUpWithPlatform paths runtimeMode)
       case result of
         Right _ -> pure ()
         Left err
-          | repairAttempted -> ioError err
+          | repairAttempted' -> ioError err
           | otherwise -> do
               maybeRepairReason <- detectDirtyPulsarBootstrapState paths runtimeMode
               case maybeRepairReason of
@@ -338,6 +345,21 @@ clusterUpWithPulsarBootstrapRepair paths runtimeMode = go False
                   resetPulsarClaimDirectories paths runtimeMode
                   putStrLn "retrying cluster up after resetting retained Pulsar claim roots"
                   go True
+    repairInterruptedDirtyPulsarBootstrapState = do
+      maybeState <- loadClusterState paths
+      case matchingClusterState runtimeMode maybeState >>= lifecycleProgress of
+        Just progress
+          | lifecycleAction progress == "cluster-up" -> do
+              maybeRepairReason <- detectDirtyPulsarBootstrapState paths runtimeMode
+              case maybeRepairReason of
+                Nothing -> pure False
+                Just repairReason -> do
+                  putStrLn ("cluster up detected interrupted inconsistent retained Pulsar state: " <> repairReason)
+                  clusterDown (Just runtimeMode)
+                  resetPulsarClaimDirectories paths runtimeMode
+                  putStrLn "retrying cluster up after resetting retained Pulsar claim roots"
+                  pure True
+        _ -> pure False
 
 clusterUpWithPlatform :: Paths -> RuntimeMode -> IO ()
 clusterUpWithPlatform paths runtimeMode = do
@@ -406,15 +428,7 @@ clusterUpWithPlatform paths runtimeMode = do
   finalValuesPath <- writeHelmValuesFile paths (clusterUpControlPlane inputs) seedState (clusterUpPayload inputs) FinalPhase
   renderedChartPath <- renderHelmChart paths runtimeMode [finalValuesPath]
   when clusterCreated $
-    do
-      bootstrapPreloadState <-
-        startLifecyclePhase
-          paths
-          seedState
-          "cluster-up"
-          "preload-bootstrap-images"
-          "preloading bootstrap support images onto Kind nodes"
-      preloadBootstrapSupportImagesOnKindNodes paths bootstrapPreloadState runtimeMode renderedChartPath
+    putStrLn "cluster-up phase: preload-bootstrap-images - skipped broad pre-Harbor support-image preload; Harbor-first publication owns remaining images"
   applyBootstrapState paths runtimeMode (clusterUpDemoUiEnabled inputs) discoveredClaims
   let initialState = seedState {claims = discoveredClaims}
   initialStateWithDependencies <-
@@ -543,17 +557,7 @@ clusterUpState inputs runtimeMode clusterPresentValue edgePortValue routesValue 
 requireGeneratedDemoConfigFile :: Paths -> RuntimeMode -> IO FilePath
 requireGeneratedDemoConfigFile paths expectedRuntimeMode = do
   let filePath = Config.generatedDemoConfigPath paths
-  filePresent <- doesFileExist filePath
-  unless filePresent $
-    ioError
-      ( userError
-          ( unlines
-              [ "Missing generated substrate file: " <> filePath,
-                "Restage it before running cluster operations.",
-                "Example: infernix internal materialize-substrate " <> Text.unpack (runtimeModeId expectedRuntimeMode)
-              ]
-          )
-      )
+  _ <- ensureGeneratedDemoConfigFile paths expectedRuntimeMode True
   demoConfig <- decodeDemoConfigFile filePath
   unless (configRuntimeMode demoConfig == expectedRuntimeMode) $
     ioError
@@ -1504,100 +1508,6 @@ buildClusterImages paths state runtimeMode = do
         []
         "docker"
         (dockerBuildArgs imageRef)
-
-preloadBootstrapSupportImagesOnKindNodes :: Paths -> ClusterState -> RuntimeMode -> FilePath -> IO ()
-preloadBootstrapSupportImagesOnKindNodes paths state runtimeMode renderedChartPath = do
-  discoveredImageRefs <- discoverChartImagesFile renderedChartPath
-  preloadImageRefs <-
-    mapM
-      resolveBootstrapSupportImageRef
-      ( List.nub
-          (filter shouldPreloadBootstrapImageRef (map trim discoveredImageRefs))
-      )
-  let resolvedImageRefs = List.nub (catMaybes preloadImageRefs)
-  unless (null resolvedImageRefs) $ do
-    putStrLn "preloading bootstrap support images on Kind nodes"
-    mapM_
-      ( \imageRef -> do
-          imageState <-
-            startLifecyclePhase
-              paths
-              state
-              "cluster-up"
-              "preload-bootstrap-images"
-              ("loading bootstrap support image " <> imageRef <> " onto Kind nodes")
-          preloadBootstrapSupportImageOnKindNodes paths imageState runtimeMode imageRef
-      )
-      resolvedImageRefs
-  where
-    shouldPreloadBootstrapImageRef imageRef =
-      not (null imageRef)
-        && imageRef /= clusterWorkloadImageRef runtimeMode
-        && imageRef /= "docker.io/" <> clusterWorkloadImageRef runtimeMode
-        && not ("localhost:30002/" `List.isPrefixOf` imageRef)
-        && not ("localhost:30880/" `List.isPrefixOf` imageRef)
-    resolveBootstrapSupportImageRef imageRef = do
-      let candidateRefs = List.nub (imageRef : maybe [] pure (List.stripPrefix "docker.io/" imageRef))
-      presentCandidates <- filterM (\candidateRef -> maybeCommand ["docker", "image", "inspect", candidateRef]) candidateRefs
-      case presentCandidates of
-        resolvedRef : _ -> pure (Just resolvedRef)
-        [] -> do
-          putStrLn ("pulling bootstrap support image " <> imageRef)
-          PublishImages.ensureLocalImageAvailable (\_ -> pure Nothing) imageRef
-          pure (Just imageRef)
-
-preloadBootstrapSupportImageOnKindNodes :: Paths -> ClusterState -> RuntimeMode -> String -> IO ()
-preloadBootstrapSupportImageOnKindNodes paths state runtimeMode imageRef = do
-  let clusterName = kindClusterName paths runtimeMode
-  kindLoadResult <-
-    try
-      (runCommandMonitored paths state Nothing [] "kind" ["load", "docker-image", "--name", clusterName, imageRef]) ::
-      IO (Either IOException ())
-  case kindLoadResult of
-    Right _ -> pure ()
-    Left err -> do
-      putStrLn
-        ( "kind load failed for bootstrap support image "
-            <> imageRef
-            <> "; falling back to direct worker containerd import: "
-            <> show err
-        )
-      workerContainers <- kindWorkerContainerNames clusterName
-      case workerContainers of
-        [] -> ioError (userError ("no Kind worker containers found for " <> clusterName))
-        _ ->
-          mapM_
-            ( \workerContainer ->
-                runCommandMonitored
-                  paths
-                  state
-                  Nothing
-                  []
-                  "sh"
-                  [ "-c",
-                    "docker save "
-                      <> shellQuote imageRef
-                      <> " | docker exec --privileged -i "
-                      <> shellQuote workerContainer
-                      <> " ctr --namespace=k8s.io images import --snapshotter=overlayfs -"
-                  ]
-            )
-            workerContainers
-
-kindWorkerContainerNames :: String -> IO [String]
-kindWorkerContainerNames clusterName = do
-  output <-
-    captureCommand
-      Nothing
-      []
-      "docker"
-      [ "ps",
-        "--filter",
-        "label=io.x-k8s.kind.cluster=" <> clusterName,
-        "--format",
-        "{{.Names}}"
-      ]
-  pure (filter (not . List.isSuffixOf "-control-plane") (map trim (lines output)))
 
 publishClusterImages :: Paths -> ClusterState -> FilePath -> RuntimeMode -> IO FilePath
 publishClusterImages paths state renderedChartPath runtimeMode = do

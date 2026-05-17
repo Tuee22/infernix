@@ -32,9 +32,9 @@ that closure.
 Phase 0 remains closed because the governance baseline, canonical topic ownership, and docs-lint
 contract are all in place. The governed runbooks, testing docs, CLI references, and plan describe
 the supported first-run convergence windows in `cluster up` and `cluster down`, name the
-long-running Docker build, Harbor publication, Kind-worker preload, and Apple teardown data-sync
-phases explicitly, and use inactivity-aware language instead of treating wall-clock duration alone
-as product failure.
+long-running Docker build, Harbor publication, Harbor-backed final-image preload, and Apple
+teardown data-sync phases explicitly, and use inactivity-aware language instead of treating
+wall-clock duration alone as product failure.
 
 ## Sprint 0.1: `documents/` Suite Scaffold [Done]
 

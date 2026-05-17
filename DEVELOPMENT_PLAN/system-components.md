@@ -21,17 +21,15 @@
   on the Linux outer-container path, which writes
   `./.build/outer-container/build/infernix-substrate.dhall` on the host through the bind-mounted
   build tree
-- Sprint 2.12 tracks the target refactor that makes substrate-file preflight binary-owned for
-  lifecycle and validation commands, leaving `infernix internal materialize-substrate ...` as the
-  direct restaging or inspection helper rather than a shell bootstrap responsibility
-- the current implementation still fails fast when the staged substrate file is absent; Sprint
-  2.12 moves lifecycle and validation preflight to the binary command so it materializes or
-  validates the file before relying on it, while focused `infernix lint ...` and
-  `infernix docs check` remain substrate-file independent
+- substrate-file preflight is binary-owned for lifecycle and validation commands, leaving
+  `infernix internal materialize-substrate ...` as the direct restaging or inspection helper
+  rather than a shell bootstrap responsibility
+- lifecycle and validation preflight materializes or validates the active substrate file before
+  relying on it, while focused `infernix lint ...` and `infernix docs check` remain
+  substrate-file independent
 - the Linux substrate image also materializes a build-arg-selected substrate file inside the image
   overlay during `docker compose build infernix`, but supported Compose runs bind-mount the host
-  `./.build/` tree over that path; Sprint 2.12 makes the host-visible lifecycle preflight
-  binary-owned
+  `./.build/` tree over that path; host-visible lifecycle preflight is binary-owned
 - the staged substrate file, `cluster status`, publication JSON, demo config, and generated
   browser contracts still expose that active substrate through `runtimeMode` field names
 - cluster publication mirrors the staged payload locally as `infernix-substrate.dhall`, and the
@@ -55,10 +53,10 @@
   materialization path can emit `demo_ui = false`
 - direct `infernix-demo` execution no longer doubles as a compatibility target for Harbor, MinIO,
   or Pulsar tool-route probes; those checks now require the real Gateway-backed upstream behavior
-- the current Linux bootstrap entrypoints still restage the active substrate before lifecycle and
-  test commands; Sprint 2.12 moves that responsibility into the binary command. `cluster up`
-  persists repo-local cluster state before later rollout phases so `cluster status` and cleanup
-  can still observe an in-progress Linux reconciliation
+- the Linux bootstrap entrypoints install Docker or CUDA prerequisites and enter
+  `docker compose run --rm infernix infernix <command>`; substrate preflight belongs to the
+  binary command. `cluster up` persists repo-local cluster state before later rollout phases so
+  `cluster status` and cleanup can still observe an in-progress Linux reconciliation
 - the supported `linux-cpu` and `linux-gpu` surfaces use the stricter real-upstream route
   assertions, the restaged Linux substrate flow, and the dedicated `ghc-9.12.4` formatter
   toolchain beside the project `ghc-9.14.1` compiler
@@ -75,16 +73,15 @@
   joins the private Docker `kind` network and targets the Kind control-plane DNS, and retained
   Kind state is replayed into and out of the worker rather than bind-mounted
 - the shared lifecycle now exposes `lifecycleStatus`, `lifecyclePhase`, `lifecycleDetail`, and
-  heartbeat timestamps during monitored Docker build, Harbor publication, Kind-worker preload, and
-  Apple retained-state replay work; staged substrate materialization is atomic for concurrent
-  readers; and retained-state Apple reruns automatically reinitialize stopped Harbor PostgreSQL
+  heartbeat timestamps during monitored Docker build, Harbor publication, Harbor-backed final-image
+  preload, and Apple retained-state replay work; staged substrate materialization is atomic for
+  concurrent readers; and retained-state Apple reruns automatically reinitialize stopped Harbor PostgreSQL
   replicas from the current Patroni leader when timeline drift leaves replicas unready after
   promotion
-- the current shared lifecycle still has a broad bootstrap support-image preload path; Sprint 2.12
-  tracks the stricter Harbor-first image boundary where shell scripts never pull or publish
-  images, only Harbor-required services may pull upstream before Harbor is responsive, and every
-  remaining image, including the active `infernix` runtime image, is loaded into Harbor before
-  final rollout
+- the shared lifecycle skips broad pre-Harbor support-image preloads; shell scripts never pull or
+  publish images, only Harbor-required services may pull upstream before Harbor is responsive, and
+  every remaining image, including the active `infernix` runtime image, is loaded into Harbor
+  before final rollout
 - Phase 6 records clean governed bootstrap reruns for `linux-cpu`, `linux-gpu`, and the
   supported Apple lifecycle, including Apple reruns on May 15, 2026 and May 17, 2026 through
   `doctor`, `build`, `up`, `status`, `test`, `down`, and final `status`; those reruns validated
@@ -207,7 +204,7 @@
 | State class | Authority | Durable home | Notes |
 |-------------|-----------|--------------|-------|
 | Durable PV directories | storage reconciliation in `cluster up` | `./.data/kind/<runtime-mode>/<namespace>/<release>/<workload>/<ordinal>/<claim>` | deterministic host path layout for every PVC-backed workload |
-| Generated Apple substrate file | binary-owned lifecycle or validation preflight, with `./.build/infernix internal materialize-substrate apple-silicon [--demo-ui true|false]` as the explicit helper | `./.build/infernix-substrate.dhall` | Apple host path beside the build root; Sprint 2.12 makes lifecycle staging a binary responsibility rather than a shell bootstrap responsibility |
+| Generated Apple substrate file | binary-owned lifecycle or validation preflight, with `./.build/infernix internal materialize-substrate apple-silicon [--demo-ui true|false]` as the explicit helper | `./.build/infernix-substrate.dhall` | Apple host path beside the build root; lifecycle staging is a binary responsibility rather than a shell bootstrap responsibility |
 | Generated Apple kubeconfig | `cluster up` | `./.build/infernix.kubeconfig` | repo-local kubeconfig used by `infernix kubectl` on Apple |
 | Generated Linux substrate file | binary-owned lifecycle or validation preflight, with `docker compose run --rm infernix infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>` as the explicit helper; the Dockerfile also creates an image-local build-arg-selected copy during image build | `./.build/outer-container/build/infernix-substrate.dhall` on the host through the bind mount (visible inside the outer container as `/workspace/.build/outer-container/build/infernix-substrate.dhall`) | outer-container staging path; supported Compose commands use the host-visible copy because the `./.build/` bind mount hides the image-local copy; the authoritative launcher binary remains `/usr/local/bin/infernix` inside the substrate image |
 | Generated Linux kubeconfig | `cluster up` | `./.data/runtime/infernix.kubeconfig` | durable repo-local kubeconfig reused across fresh outer-container invocations |

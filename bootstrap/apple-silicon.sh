@@ -29,12 +29,12 @@ Usage:
 Commands:
   help    Show this help text.
   doctor  Ensure Homebrew, ghcup, GHC ${APPLE_GHC_VERSION}, Cabal ${APPLE_CABAL_VERSION}, and \`protoc\`.
-  build   Ensure prerequisites, build both binaries, and stage the Apple substrate file.
-  up      Ensure prerequisites, build, stage the substrate file, and run \`cluster up\`.
+  build   Ensure prerequisites and build both host binaries under ./.build/.
+  up      Ensure prerequisites, build the host binary, and run \`cluster up\`.
   status  Show \`cluster status\`.
   test    Run \`./.build/infernix test all\`.
   down    Run \`cluster down\` while preserving durable repo-local state under ./.data/.
-  purge   Destructive cleanup: tear down the cluster and remove ./.build/ and ./.data/.
+  purge   Compatibility alias for \`down\`; preserves build output, data, images, and prerequisites.
 
 This script is safe to re-run. It prefers the supported Apple Silicon path:
 Homebrew + ghcup + direct host-native \`./.build/infernix\`, while reconciling build-time
@@ -56,10 +56,8 @@ Available Apple Silicon commands:
 
 Direct reference commands:
   cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes
-  ./.build/infernix internal materialize-substrate apple-silicon
   ./.build/infernix cluster up
   ./.build/infernix cluster status
-  docker compose build playwright
   ./.build/infernix test all
   ./.build/infernix cluster down
 
@@ -132,12 +130,10 @@ ensure_build_prerequisites() {
 build_launcher() {
   ensure_build_prerequisites
   bootstrap::run "${APPLE_CABAL_BIN}" install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes
-  bootstrap::run ./.build/infernix internal materialize-substrate apple-silicon
 }
 
 ensure_launcher_ready() {
   [[ -x ./.build/infernix ]] || build_launcher
-  bootstrap::run ./.build/infernix internal materialize-substrate apple-silicon
 }
 
 command_doctor() {
@@ -162,7 +158,6 @@ command_status() {
 
 command_test() {
   build_launcher
-  bootstrap::run docker compose build playwright
   bootstrap::run ./.build/infernix test all
 }
 
@@ -172,12 +167,8 @@ command_down() {
 }
 
 command_purge() {
-  bootstrap::confirm_destructive "Purge Apple build output and durable repo-local state?"
-  if [[ -x ./.build/infernix ]]; then
-    ./.build/infernix cluster down || true
-  fi
-  bootstrap::run rm -rf ./.build ./.data
-  bootstrap::info "Removed ./.build and ./.data."
+  command_down
+  bootstrap::info "Preserved ./.build, ./.data, local images, host binaries, and installed prerequisites."
 }
 
 main() {

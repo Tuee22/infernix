@@ -168,7 +168,7 @@ pullImageWithFallback commandMonitorFactory imageRef = do
   initialMonitor <- commandMonitorFactory ("docker pull " <> imageRef)
   pullResult <- tryRunCommandMaybeMonitored "docker" ["pull", imageRef] "" initialMonitor
   case pullResult of
-    Right _ -> pure ()
+    Right _ -> requireLocalImagePresent imageRef ("docker pull completed for " <> imageRef <> ", but the image is still not inspectable locally")
     Left pullFailure ->
       case dockerHubMirrorRef imageRef of
         Nothing ->
@@ -177,7 +177,9 @@ pullImageWithFallback commandMonitorFactory imageRef = do
           mirrorMonitor <- commandMonitorFactory ("docker pull " <> mirrorRef)
           mirrorPullResult <- tryRunCommandMaybeMonitored "docker" ["pull", mirrorRef] "" mirrorMonitor
           case mirrorPullResult of
-            Right _ -> runCommand "docker" ["tag", mirrorRef, imageRef] ""
+            Right _ -> do
+              runCommand "docker" ["tag", mirrorRef, imageRef] ""
+              requireLocalImagePresent imageRef ("mirror pull completed for " <> mirrorRef <> ", but " <> imageRef <> " is still not inspectable locally after tagging")
             Left mirrorFailure ->
               failWith
                 ( "docker pull failed for "
@@ -189,6 +191,13 @@ pullImageWithFallback commandMonitorFactory imageRef = do
                     <> "\n"
                     <> mirrorFailure
                 )
+
+requireLocalImagePresent :: String -> String -> IO ()
+requireLocalImagePresent imageRef message = do
+  imagePresent <- tryRunCommand "docker" ["image", "inspect", imageRef] ""
+  case imagePresent of
+    Right _ -> pure ()
+    Left inspectFailure -> failWith (message <> "\n" <> inspectFailure)
 
 dockerHubMirrorRef :: String -> Maybe String
 dockerHubMirrorRef imageRef =

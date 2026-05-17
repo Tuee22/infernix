@@ -27,6 +27,7 @@ import Infernix.CommandRegistry
 import Infernix.Config
 import Infernix.DemoConfig
   ( decodeDemoConfigFile,
+    ensureGeneratedDemoConfigFile,
     materializeGeneratedDemoConfigFile,
     renderModelListing,
     validateDemoConfigFile,
@@ -56,6 +57,7 @@ import Infernix.Types
     PersistentClaim (..),
     ResultPayload (..),
     RuntimeMode (AppleSilicon),
+    parseRuntimeMode,
     runtimeModeId,
   )
 import Infernix.Web.Contracts qualified as Contracts
@@ -75,7 +77,7 @@ import System.Directory
     removePathForcibly,
     setPermissions,
   )
-import System.Environment (getArgs, getEnvironment, getExecutablePath)
+import System.Environment (getArgs, getEnvironment, getExecutablePath, lookupEnv)
 import System.Exit (ExitCode (ExitSuccess), exitFailure, exitWith)
 import System.FilePath (takeFileName, (</>))
 import System.Process (CreateProcess (cwd, env), createProcess, proc, readProcess, terminateProcess, waitForProcess)
@@ -187,7 +189,44 @@ validateCommandExecutionContext command = do
         InternalMaterializeSubstrateCommand runtimeMode _ -> pure (Just runtimeMode)
         InternalGeneratePursContractsCommand _ -> activeRuntimeMode
         _ -> pure Nothing
-    activeRuntimeMode = Just <$> resolveRuntimeMode Nothing
+    activeRuntimeMode = Just <$> ensureActiveSubstrateFile
+
+ensureActiveSubstrateFile :: IO RuntimeMode
+ensureActiveSubstrateFile = do
+  paths <- discoverPaths
+  ensureRepoLayout paths
+  runtimeMode <- configuredRuntimeMode paths
+  ensureSupportedRuntimeModeForExecutionContext paths runtimeMode
+  demoUiEnabledValue <- defaultDemoUiEnabled
+  _ <- ensureGeneratedDemoConfigFile paths runtimeMode demoUiEnabledValue
+  pure runtimeMode
+
+configuredRuntimeMode :: Paths -> IO RuntimeMode
+configuredRuntimeMode paths = do
+  maybeComposeRuntimeMode <- lookupEnv "INFERNIX_COMPOSE_SUBSTRATE"
+  case maybeComposeRuntimeMode of
+    Just rawRuntimeMode ->
+      case parseRuntimeMode (Text.pack rawRuntimeMode) of
+        Just runtimeMode -> pure runtimeMode
+        Nothing -> ioError (userError ("Unsupported INFERNIX_COMPOSE_SUBSTRATE value: " <> rawRuntimeMode))
+    Nothing ->
+      targetRuntimeModeForExecutionContext paths
+
+defaultDemoUiEnabled :: IO Bool
+defaultDemoUiEnabled = do
+  maybeDemoUi <- lookupEnv "INFERNIX_COMPOSE_DEMO_UI"
+  case Text.toLower . Text.pack <$> maybeDemoUi of
+    Nothing -> pure True
+    Just "true" -> pure True
+    Just "false" -> pure False
+    Just rawValue ->
+      ioError
+        ( userError
+            ( "Unsupported INFERNIX_COMPOSE_DEMO_UI value: "
+                <> Text.unpack rawValue
+                <> ". Expected true or false."
+            )
+        )
 
 runLint :: Maybe RuntimeMode -> IO ()
 runLint maybeRuntimeMode = do
@@ -327,7 +366,7 @@ runPlaywrightImage runtimeMode maybeNetwork readinessHost readinessPort playwrig
     ["FORCE_COLOR", "NO_COLOR"]
     composeEnv
     "docker"
-    ["compose", "-f", composeFile, "run", "--rm", "playwright"]
+    ["compose", "-f", composeFile, "run", "--build", "--rm", "playwright"]
     (repoRoot paths)
 
 waitForPlaywrightSurface :: String -> Int -> String -> String -> String -> String -> IO ()

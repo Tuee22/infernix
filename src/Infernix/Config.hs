@@ -14,6 +14,7 @@ module Infernix.Config
     publishedConfigMapCatalogPath,
     publishedConfigMapManifestPath,
     resolveRuntimeMode,
+    targetRuntimeModeForExecutionContext,
     watchedDemoConfigPath,
   )
 where
@@ -198,6 +199,26 @@ resolveRuntimeMode Nothing = do
   if substrateExists
     then resolveRuntimeModeFromGeneratedFile substratePath
     else ioError (missingGeneratedSubstrateFileError substratePath)
+
+targetRuntimeModeForExecutionContext :: Paths -> IO RuntimeMode
+targetRuntimeModeForExecutionContext paths =
+  case controlPlaneContext paths of
+    HostNative -> pure AppleSilicon
+    OuterContainer -> do
+      maybeRuntimeMode <- lookupEnv "INFERNIX_COMPOSE_SUBSTRATE"
+      case maybeRuntimeMode of
+        Nothing -> pure LinuxCpu
+        Just rawRuntimeMode ->
+          case parseRuntimeMode (Text.pack rawRuntimeMode) of
+            Just runtimeMode -> pure runtimeMode
+            Nothing ->
+              ioError
+                ( userError
+                    ( "Unsupported INFERNIX_COMPOSE_SUBSTRATE value: "
+                        <> rawRuntimeMode
+                        <> ". Expected linux-cpu or linux-gpu."
+                    )
+                )
 
 watchedDemoConfigPath :: FilePath
 watchedDemoConfigPath =
