@@ -13,7 +13,9 @@
   control plane, while Linux uses baked outer-container launchers.
 - Harbor-first bootstrap, manual storage, operator-managed Patroni PostgreSQL, Gateway API
   routing, generated catalog behavior, and Pulsar-only production inference are platform invariants.
-- Tool bootstrap, build-root paths, Docker setup, and CUDA device access are substrate detail.
+- Tool bootstrap, build-root paths, Docker setup, launcher build mechanics, and CUDA device access
+  are substrate detail; Kind, Kubernetes manifests, image preparation, validation, and teardown
+  remain binary-owned.
 
 ## Current Status
 
@@ -52,7 +54,7 @@ between `./.data/kind/apple-silicon/` and the worker instead of being bind-mount
 | Bootstrap activation boundary | stage-0 bootstrap surfaces continue in the current process only after they can verify the executable they need next, and they stop for explicit rerun when a new shell or reboot is required | the bootstrap verifies the selected ghcup-managed `ghc` and `cabal` executables plus Homebrew `protoc` before direct `cabal install`, so the supported clean-host first run does not depend on a second bootstrap invocation | Linux bootstraps stop for Docker group-membership re-entry and NVIDIA-driver reboot, then continue through the same bootstrap surface on rerun |
 | Tool bootstrap after the binary exists | supported commands may reconcile remaining operator tooling | Homebrew-managed Docker CLI, `kind`, `kubectl`, `helm`, Node.js, Homebrew `python@3.12` at `/opt/homebrew/opt/python@3.12/bin/python3.12`, and Poetry bootstrap may be installed on demand | the substrate image already carries the supported toolchain; runtime install is not part of the contract |
 | Apple Docker profile | Docker-backed lifecycle and validation work uses one supported local Docker envelope | Colima is the only supported Apple Docker environment, and Apple lifecycle code reconciles it to at least `8 CPU / 16 GiB` before Kind- or Playwright-backed work proceeds | not applicable |
-| Build roots and kubeconfig location | outputs stay repo-local and untracked | `./.build/`, `./.build/infernix.kubeconfig`, and explicit `./.build/infernix internal materialize-substrate apple-silicon` staging | `./.build/outer-container/` on the host through the `./.build:/workspace/.build` bind mount, plus `./.data/runtime/infernix.kubeconfig` for durable outer-container reuse |
+| Build roots and kubeconfig location | outputs stay repo-local and untracked | `./.build/`, `./.build/infernix.kubeconfig`, and binary-owned substrate-file materialization or validation under the Apple build root | `./.build/outer-container/` on the host through the `./.build:/workspace/.build` bind mount, binary-owned substrate-file materialization or validation there, plus `./.data/runtime/infernix.kubeconfig` for durable outer-container reuse |
 | Python adapter environment | use the shared Poetry project only | `python/.venv/` may materialize on demand after Apple adapter paths reconcile Homebrew `python@3.12` at `/opt/homebrew/opt/python@3.12/bin/python3.12` plus a user-local Poetry bootstrap | adapter dependencies are installed in the shared substrate image build |
 | Browser E2E runner | exercise the routed surface for the active generated catalog | the host CLI probes routed readiness on `127.0.0.1:<edge-port>` and then orchestrates `docker compose run --rm playwright` on the private Docker `kind` network against the Kind control-plane DNS using the dedicated `infernix-playwright:local` image | the outer container forwards `docker compose run --rm playwright` through the mounted host docker socket against the same dedicated Playwright image |
 | Inference executor placement | cluster daemons always own request fan-in and result publication semantics | Apple cluster daemons hand batches to host daemons over Pulsar so Apple-native engines can run on the host | Linux cluster daemons perform fan-in, batching, inference, and result publication directly |
@@ -62,6 +64,8 @@ between `./.data/kind/apple-silicon/` and the worker instead of being bind-mount
 
 - ad hoc repo-owned scripts or wrapper layers beyond the supported `bootstrap/*.sh` stage-0
   entrypoints
+- bootstrap shell code that directly manages Kind clusters, Kubernetes manifests, Helm rollout,
+  container pulls, Harbor publication, validation internals, or destructive artifact cleanup
 - `docker compose up` or `docker compose exec` as operator entrypoints
 - per-substrate Python projects, handwritten source under `Generated/`, or a separate web runtime image
 - pretending Apple host-native inference and Linux outer-container inference are interchangeable

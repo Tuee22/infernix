@@ -19,11 +19,13 @@ Phase 1 backlog.
 
 The repo matches the supported Phase 1 ownership contract: the control plane has a Haskell-owned
 command registry, the governed root docs point at canonical `documents/` topics with explicit
-metadata, the Linux launcher uses a baked image snapshot, and `infernix-substrate.dhall` is
-staged under the build root through explicit helper invocations instead of file-absent fallback
-logic. The Linux substrate Dockerfile also materializes a build-arg-selected copy inside the image
+metadata, and the Linux launcher uses a baked image snapshot. The current implementation stages
+`infernix-substrate.dhall` under the build root through explicit helper invocations instead of
+file-absent fallback logic; Phase 2 Sprint 2.12 tracks the target refactor that moves lifecycle
+and validation substrate-file preflight into the binary command rather than the shell bootstrap.
+The Linux substrate Dockerfile also materializes a build-arg-selected copy inside the image
 overlay during image build, but supported Compose runs bind-mount the host `./.build/` tree over
-that location and restage the host-visible file before lifecycle or aggregate test commands.
+that location.
 
 ## Substrate Foundation
 

@@ -60,11 +60,13 @@ cache-manifest state uses protobuf-backed `*.pb` files instead of legacy text-st
 
 ## Generated Demo Config Publication
 
-- Apple host flows stage `infernix-substrate.dhall` with
-  `./.build/infernix internal materialize-substrate apple-silicon`
-- Linux outer-container flows stage `./.build/outer-container/build/infernix-substrate.dhall` on
-  the host through the bind-mounted build tree with
-  `docker compose run --rm infernix infernix internal materialize-substrate <substrate> --demo-ui <true|false>`
+- Apple host lifecycle and validation flows materialize or verify `infernix-substrate.dhall`
+  under `./.build/`; `./.build/infernix internal materialize-substrate apple-silicon` remains the
+  direct helper for explicit restaging or inspection
+- Linux outer-container lifecycle and validation flows materialize or verify
+  `./.build/outer-container/build/infernix-substrate.dhall` on the host through the bind-mounted
+  build tree; `docker compose run --rm infernix infernix internal materialize-substrate <substrate> --demo-ui <true|false>`
+  remains the direct helper for explicit restaging or inspection
 - the same content is then mirrored under `./.data/runtime/configmaps/infernix-demo-config/` and
   published into `ConfigMap/infernix-demo-config` on the real cluster path
 - in containerized execution contexts, the ConfigMap-backed file is mounted beside the binary
@@ -73,10 +75,14 @@ cache-manifest state uses protobuf-backed `*.pb` files instead of legacy text-st
 ## Rules
 
 - repo-owned shell is limited to the `bootstrap/*.sh` stage-0 host bootstrap entrypoints; build
-  and launcher ownership stays with the direct `cabal`, `docker compose`, and `infernix` surfaces
+  and launcher ownership stays with the direct `cabal`, `docker compose`, and `infernix`
+  surfaces, and shell lifecycle commands preserve `./.build/`, `./.data/`, host-level container
+  builds, Apple host binaries, and installed Docker or CUDA prerequisites
 - generated demo-config files live under the active build root, not tracked source paths
-- `cluster up`, `service`, and the validation entrypoints require the generated substrate file to
-  exist already; they do not regenerate it on first command execution
+- `cluster up`, `service`, and the validation entrypoints own the generated substrate-file
+  preflight for their execution context: they materialize or validate the file under the active
+  build root before relying on it, while the explicit internal materialization helper remains
+  available for direct operator restaging
 - kubeconfig output is repo-local and execution-context-specific: Apple host mode uses
   `./.build/infernix.kubeconfig`, while Linux outer-container mode uses the durable
   `./.data/runtime/infernix.kubeconfig`

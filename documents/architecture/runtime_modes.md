@@ -27,14 +27,13 @@ demo catalog entries, service binding, and validation.
 | Ubuntu 24.04 / CPU | `linux-cpu` | `Best Linux CPU engine` |
 | Ubuntu 24.04 / NVIDIA CUDA Container | `linux-gpu` | `Best Linux CUDA engine` |
 
-The active runtime mode is encoded in `infernix-substrate.dhall` beside the built binary.
-Apple host builds stage that file explicitly with
-`./.build/infernix internal materialize-substrate apple-silicon`, and Linux outer-container
-workflows stage `./.build/outer-container/build/infernix-substrate.dhall` on the host through the
-bind-mounted build tree with
-`docker compose run --rm infernix infernix internal materialize-substrate <substrate> --demo-ui <true|false>`.
-`cluster up` republishes that exact file into the repo-local publication mirror and
-`ConfigMap/infernix-demo-config`.
+The active runtime mode is encoded in `infernix-substrate.dhall` beside the built binary. Apple
+host lifecycle and validation commands materialize or verify that file under `./.build/`, and
+Linux outer-container lifecycle and validation commands materialize or verify
+`./.build/outer-container/build/infernix-substrate.dhall` on the host through the bind-mounted
+build tree. `infernix internal materialize-substrate <substrate> --demo-ui <true|false>` remains
+the direct helper for explicit restaging or inspection. `cluster up` republishes the exact staged
+file into the repo-local publication mirror and `ConfigMap/infernix-demo-config`.
 
 ## Generated Demo Config Contract
 
@@ -44,7 +43,7 @@ The generated demo catalog is the source of truth for the active runtime mode.
   rows whose selected engine is `Not recommended`
 - each generated entry records the selected engine, request shape, runtime lane, and workload
   metadata
-- `infernix internal materialize-substrate <runtime-mode>` is the supported staging command, and
+- `infernix internal materialize-substrate <runtime-mode>` is the explicit staging helper, and
   `--demo-ui false` emits a demo-off config without hand-editing the file
 - in containerized execution contexts, `ConfigMap/infernix-demo-config` is mounted read-only
   beside the binary at `/opt/build/infernix-substrate.dhall`; daemons read it at startup rather

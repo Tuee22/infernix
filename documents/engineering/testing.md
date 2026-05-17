@@ -25,11 +25,10 @@
   `infernix lint proto`, `infernix lint chart`, and `infernix docs check`, are substrate-file
   independent because they validate tracked source, governed docs, schemas, and chart structure
 - substrate-aware entrypoints, including runtime, cluster, cache, Kubernetes-wrapper,
-  frontend-contract generation, and aggregate `infernix test ...` commands, expect the generated
-  substrate file for the selected substrate to exist before their suite starts
+  frontend-contract generation, and aggregate `infernix test ...` commands, own substrate-file
+  preflight for the selected substrate before their suite starts
 - Apple host-native flows expect the built binary plus the minimal Homebrew-plus-ghcup baseline;
-  supported commands may reconcile the remaining host tools on demand, and the staged host config
-  comes from `./.build/infernix internal materialize-substrate apple-silicon`
+  supported commands may reconcile the remaining host tools on demand
 - `linux-cpu` flows expect Docker Engine plus the Docker Compose plugin
 - `linux-gpu` flows expect the `linux-cpu` Docker baseline plus the supported NVIDIA driver and
   container-toolkit setup

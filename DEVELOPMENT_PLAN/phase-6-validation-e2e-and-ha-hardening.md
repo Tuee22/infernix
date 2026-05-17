@@ -44,9 +44,11 @@ lines. The worktree omits direct Harbor, MinIO, and Pulsar compatibility handler
 upstream behavior, persists cluster state before later Linux rollout phases, restages the active
 Linux substrate on each supported bootstrap invocation, reuses a persistent Linux chart-archive
 cache, and performs the targeted Pulsar claim-root reset when the known retained ZooKeeper
-epoch-state corruption blocks bootstrap. The current lifecycle preloads bootstrap support images
-on supported lanes by trying `kind load docker-image` first and falling back to direct worker
-containerd import when Kind's loader fails. Recorded validation for this phase covers the governed
+epoch-state corruption blocks bootstrap. The current lifecycle still preloads bootstrap support
+images on supported lanes by trying `kind load docker-image` first and falling back to direct
+worker containerd import when Kind's loader fails; Phase 2 Sprint 2.12 tracks the refactor to the
+stricter Harbor-first boundary where only Harbor-required services may pull upstream before
+Harbor is responsive. Recorded validation for this phase covers the governed
 `linux-cpu` and `linux-gpu` bootstrap surfaces. Recorded Apple validation on May 11, 2026 reran
 cleanly through `./bootstrap/apple-silicon.sh doctor`, `build`, `up`, `status`, `test`, and
 `down`. On Apple, routed Playwright no longer times out on `host.docker.internal`: host-side
@@ -865,8 +867,9 @@ integration and E2E ownership in the final `.dhall`-driven terms.
 - supported runtime and validation code carry no simulated cluster, route, transport, or generic
   inference-success fallback behavior on the supported path; inference assertions go through the
   typed adapter harness selected by the active substrate file
-- supported Linux bootstrap entrypoints restage the active substrate file before lifecycle and
-  test commands so lane switches cannot reuse a stale staged payload
+- current Linux bootstrap entrypoints restage the active substrate file before lifecycle and test
+  commands so lane switches cannot reuse a stale staged payload; Phase 2 Sprint 2.12 moves that
+  preflight into the binary-owned lifecycle and validation commands
 
 ### Validation
 
@@ -1002,9 +1005,10 @@ substrate-mismatched compatibility shims.
   supported Colima profile on demand when Apple
   lifecycle or adapter-validation paths need them
 - Apple Kind lifecycle code no longer relies on unsupported host bind-mount ownership assumptions,
-  uses the shared bootstrap support image preload path with the direct worker containerd-import
-  fallback when Kind's loader fails, and keeps the routed demo API aligned with the active staged
-  runtime mode during routed validation
+  currently uses the shared bootstrap support image preload path with the direct worker
+  containerd-import fallback when Kind's loader fails, and keeps the routed demo API aligned with
+  the active staged runtime mode during routed validation; Phase 2 Sprint 2.12 replaces that broad
+  pre-Harbor support-image boundary with stricter Harbor-first publication
 - routed Apple Playwright validation probes publication readiness from the host on
   `127.0.0.1:<edge-port>` but runs the browser container on the private Docker `kind` network
   against the Kind control-plane DNS on port `30090`, so the Apple lane no longer depends on

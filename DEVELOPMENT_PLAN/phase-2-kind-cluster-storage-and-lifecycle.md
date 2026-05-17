@@ -1,6 +1,6 @@
 # Phase 2: Kind Cluster Storage and Lifecycle
 
-**Status**: Done
+**Status**: Active
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
 
 > **Purpose**: Define the supported Kind bootstrap path, the manual storage doctrine, the Helm
@@ -10,10 +10,13 @@
 
 ## Phase Status
 
-Phase 2 is closed around the supported shared cluster lifecycle. The Kind bootstrap, manual PV
-doctrine, Harbor-first image flow, shared substrate publication path, Linux outer-container
-launcher contract, lifecycle progress surface, and retained-state repair behavior implemented in
-this worktree are now closed in Sprints 2.1–2.11.
+Phase 2 is reopened for the bootstrap responsibility refactor in Sprint 2.12. The Kind bootstrap,
+manual PV doctrine, Harbor-first image flow, shared substrate publication path, Linux
+outer-container launcher contract, lifecycle progress surface, and retained-state repair behavior
+implemented in this worktree remain closed in Sprints 2.1–2.11. Sprint 2.12 tracks the open code
+work needed to move shell lifecycle responsibility fully behind the `infernix` binary, keep
+pre-Harbor public pulls limited to Harbor-required services, and make bootstrap teardown preserve
+all repo-local build, data, and host prerequisite artifacts.
 
 ## Storage Doctrine
 
@@ -41,12 +44,12 @@ values overlay path, in-image `nvkind` path, and shared substrate-publication fi
 implemented on the supported Kind substrate. `cluster up`, `cluster down`, and `cluster status`
 expose the active lifecycle action, phase, child-operation detail, and heartbeat during the
 monitored Docker build, Harbor publication, Kind-worker preload, and Apple retained-state replay
-windows; bootstrap support image preload now applies through the shared lifecycle on every
-supported lane and falls back from `kind load docker-image` to direct worker containerd import
-when Kind's loader fails; staged `infernix-substrate.dhall` writes are atomic so concurrent
-status readers do not observe truncated payloads; and retained-state Apple reruns automatically
-reinitialize stopped Harbor PostgreSQL replicas from the current Patroni leader when timeline
-drift leaves replicas unready after promotion. Phase 6 records the clean supported
+windows; the current implementation still performs shared bootstrap support-image preloading
+before the new Sprint 2.12 Harbor-first boundary is implemented; staged
+`infernix-substrate.dhall` writes are atomic so concurrent status readers do not observe truncated
+payloads; and retained-state Apple reruns automatically reinitialize stopped Harbor PostgreSQL
+replicas from the current Patroni leader when timeline drift leaves replicas unready after
+promotion. Phase 6 records the clean supported
 `./bootstrap/apple-silicon.sh` lifecycle rerun from May 15, 2026 through `doctor`, `build`, `up`,
 `status`, `test`, `down`, and final `status`; that rerun validated the split daemon topology,
 host-batch Pulsar handoff, repeated retained-state cluster bring-up or teardown cycles inside the
@@ -453,9 +456,68 @@ None.
 
 ---
 
+## Sprint 2.12: Bootstrap Responsibility and Harbor-First Image Boundary Refactor [Active]
+
+**Status**: Active
+**Implementation**: `bootstrap/apple-silicon.sh`, `bootstrap/linux-cpu.sh`, `bootstrap/linux-gpu.sh`, `src/Infernix/Cluster.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Cluster/PublishImages.hs`
+**Docs to update**: `README.md`, `documents/development/local_dev.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/operations/apple_silicon_runbook.md`, `documents/engineering/k8s_native_dev_policy.md`, `documents/engineering/docker_policy.md`, `documents/engineering/build_artifacts.md`, `documents/tools/harbor.md`
+
+### Objective
+
+Make bootstrap scripts narrow stage-0 launchers and move lifecycle responsibility into the
+`infernix` binary on every substrate.
+
+### Deliverables
+
+- `bootstrap/*.sh` scripts install only substrate host prerequisites and build or enter the active
+  `infernix` launcher before delegating to a binary command
+- Apple bootstrap builds `./.build/infernix` and `./.build/infernix-demo`, then invokes
+  `./.build/infernix <command>` for `up`, `status`, `test`, and `down`
+- Linux bootstraps install Docker, plus the supported NVIDIA driver and container toolkit on
+  `linux-gpu`, then invoke `docker compose run --rm infernix infernix <command>` so Compose and
+  the binary own launcher image creation, substrate staging, lifecycle, validation, and teardown
+- shell scripts do not call `kind`, `kubectl`, `helm`, Kubernetes manifest application commands,
+  Docker pulls, image publication, or cluster image preload paths directly
+- `infernix cluster up` keeps the Harbor-first deployment strategy on every substrate: Harbor and
+  only Harbor-required support services may pull upstream before Harbor is responsive, and after
+  Harbor is ready every remaining image, including the active `infernix` runtime image, is loaded
+  into Harbor before final rollout
+- on Apple Silicon, the host-native `infernix` binary builds the cluster-resident runtime image
+  and publishes it into Harbor after Harbor is ready
+- bootstrap `down` commands delegate to `infernix cluster down` and do not delete `./.build/`,
+  `./.data/`, the host-level container build, the Apple host binary, or installed Docker or CUDA
+  prerequisites
+
+### Validation
+
+- `./bootstrap/apple-silicon.sh up`, `status`, `test`, `down`, and final `status` pass while the
+  shell script only builds the host binary and delegates lifecycle commands to `./.build/infernix`
+- `./bootstrap/linux-cpu.sh up`, `status`, `test`, `down`, and final `status` pass while the
+  shell script delegates lifecycle commands through
+  `docker compose run --rm infernix infernix <command>`
+- `./bootstrap/linux-gpu.sh up`, `status`, `test`, `down`, and final `status` pass on a supported
+  NVIDIA host with the same Compose-launched binary boundary
+- a clean bootstrap run does not require any non-Harbor image to be present locally before Harbor
+  becomes responsive, except the bounded Harbor-required support services
+- after bootstrap `down`, `./.build/`, `./.data/`, local substrate images, the Apple host binary,
+  and installed Docker or CUDA prerequisites remain present
+
+### Remaining Work
+
+- refactor `bootstrap/*.sh` so lifecycle subcommands delegate to binary commands after launcher
+  preparation and no longer own substrate staging, Playwright image builds, Kubernetes tooling, or
+  image-preload details
+- refactor `infernix cluster up` so Harbor-first image preparation loads all post-Harbor images
+  into Harbor, including the active runtime image on every substrate, without broad pre-Harbor
+  support-image preloads
+- refactor bootstrap teardown and destructive cleanup surfaces so lifecycle `down` preserves
+  repo-local data, build outputs, host-level images, host binaries, and installed prerequisites
+
+---
+
 ## Remaining Work
 
-None.
+- Sprint 2.12 remains open.
 
 ---
 

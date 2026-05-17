@@ -7,18 +7,17 @@
 
 ## Bring-Up
 
-- confirm the active build root already carries `infernix-substrate.dhall`; on Apple host-native
-  flows stage it with `./.build/infernix internal materialize-substrate apple-silicon`, and the
-  supported Linux outer-container path stages it with
-  `docker compose run --rm infernix infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>`
-  before cluster bring-up
 - treat the supported `bootstrap/*.sh` entrypoints as restartable prerequisite reconcilers: when
   host preparation reports a required new shell or reboot boundary, rerun the same bootstrap
   command from the start after satisfying that boundary instead of continuing from a later direct
   `infernix` command
-- the repo-owned `bootstrap/linux-cpu.sh` and `bootstrap/linux-gpu.sh` entrypoints restage that
-  active Linux substrate file before supported lifecycle and test commands so lane switches do not
-  reuse a stale staged payload
+- after host prerequisites and the substrate-specific launcher are ready, bootstrap scripts invoke
+  the matching `infernix` command; they do not directly create Kind clusters, apply Kubernetes
+  manifests, run `kind`, `kubectl`, or `helm`, pull containers, or publish images
+- on Linux substrates, the supported bootstrap invokes
+  `docker compose run --rm infernix infernix <command>` and relies on that Compose-launched
+  binary path to build or reuse the active launcher image, stage or validate substrate state, and
+  own the requested lifecycle command
 - run `infernix cluster up`
 - if retained Pulsar ZooKeeper state is self-inconsistent, `cluster up` logs a targeted Pulsar
   claim-root reset and retries once; treat that retry as explicit durability repair for the
@@ -58,8 +57,9 @@
 - treat elapsed wall time alone as insufficient evidence of failure; during the monitored
   subprocess phases, a heartbeat that continues to refresh roughly every 30 seconds indicates the
   supported path is still progressing
-- the current monitored long-running subprocess phases are the shared runtime `docker build`,
-  Harbor image publication, Kind-worker Harbor preload, and Apple retained-state replay steps
+- the current monitored long-running subprocess phases are binary-owned lifecycle phases such as
+  the shared runtime `docker build`, Harbor image publication, Kind-worker Harbor preload, and
+  Apple retained-state replay steps
 - Harbor image publication waits for registry readiness before Docker push attempts and retries
   transient push resets with bounded backoff; treat registry-reset logs during large image pushes
   as recoverable until the command exhausts that retry budget
@@ -72,6 +72,9 @@
 - on the real Kind path, confirm that Harbor is the first deployed service on a pristine cluster
   and that only Harbor-required backend services pull from public container repositories before
   Harbor is ready
+- after Harbor is responsive, confirm that every remaining image is mirrored or published into
+  Harbor before its workload rolls out, including the active `infernix` runtime image on every
+  substrate
 - the supported Harbor-first bootstrap path no longer depends on the retired
   `infernix-bootstrap-registry` container or the old `./.build/kind/registry/localhost:30001`
   helper-registry namespace
@@ -113,6 +116,9 @@ execution is not a supported compatibility fallback for the Harbor, MinIO, or Pu
 ## Teardown
 
 - run `infernix cluster down`
+- when using `bootstrap/*.sh down`, expect the shell script to delegate to the binary teardown
+  path only; it deletes the cluster and must preserve `./.build/`, `./.data/`, the host-level
+  container build, the Apple host binary, and installed Docker or CUDA prerequisites
 - on Apple, expect teardown to copy retained Kind claim data back out of the worker before the
   cluster disappears when durable state exists
 - when teardown looks quiet, use `infernix cluster status` to confirm whether the active phase is

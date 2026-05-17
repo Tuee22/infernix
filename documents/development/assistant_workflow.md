@@ -23,8 +23,10 @@ parallel long-form workflow contracts.
 - use `documents/` as the canonical home for architecture, development, engineering, operations,
   and reference guidance
 - update `README.md`, `AGENTS.md`, and `CLAUDE.md` together when root workflow guidance changes
-- keep repo-owned shell limited to the supported `bootstrap/*.sh` stage-0 host bootstrap surface;
-  control-plane behavior and validation remain Haskell- or Compose-owned
+- keep repo-owned shell limited to the supported `bootstrap/*.sh` stage-0 host bootstrap surface:
+  scripts may reconcile prerequisites and build or enter the active launcher, while cluster
+  lifecycle, Kubernetes manifests, image pulls, Harbor publication, validation, and teardown
+  remain `infernix`-owned
 
 ## Supported Build And Operator Workflows
 
@@ -32,9 +34,9 @@ parallel long-form workflow contracts.
   `./bootstrap/apple-silicon.sh`, `./bootstrap/linux-cpu.sh`, and `./bootstrap/linux-gpu.sh`
 - use direct host builds:
   `cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes`
-- on the supported Linux outer-container path, `cluster up` reuses the already-built
-  `infernix-linux-<mode>:local` snapshot instead of rebuilding the identical runtime image inside
-  the launcher
+- on the supported Linux outer-container path, lifecycle commands are invoked as
+  `docker compose run --rm infernix infernix <command>`; the bootstrap does not manage Kind or
+  images directly
 - preserve the distinction between current implementation state and the target platform contract in
   root docs
 

@@ -16,7 +16,8 @@ Apple-native inference execution can be delegated to same-binary host daemons.
 
 ## Current Repo Assessment
 
-The repository implements the substrate-file architecture described in this overview. The
+The repository implements the substrate-file architecture described in this overview, while
+Sprint 2.12 tracks the open bootstrap responsibility and Harbor-first image-boundary refactor. The
 governed validation surface now splits cleanly between focused substrate-file-independent lint or
 docs checks and test commands that validate the active staged substrate before running:
 `infernix lint docs` and `infernix docs check` validate documentation without reading the staged
@@ -24,9 +25,9 @@ substrate file, `infernix test unit` validates module behavior after command-lev
 context is present, and `infernix test integration`, `infernix test e2e`, and `infernix test all`
 run the complete relevant suites for the currently staged substrate instead of implying a default
 cross-substrate rerun.
-The worktree omits the direct tool-route compatibility payloads, persists Linux cluster state
-before later rollout phases, and restages the active Linux substrate before each supported
-bootstrap command.
+The worktree omits the direct tool-route compatibility payloads and persists Linux cluster state
+before later rollout phases. The current implementation still restages the active Linux substrate
+from supported bootstrap commands; Sprint 2.12 moves that preflight into the binary command.
 The final Apple product shape described by this plan is implemented:
 `apple-silicon` keeps Apple-native inference execution host-side for performance while Kind
 continues to host Harbor, MinIO, Pulsar, PostgreSQL, Envoy Gateway, the optional routed demo
@@ -54,9 +55,11 @@ data in `cluster status` during monitored Docker build, Harbor publication, Kind
 and Apple retained-state replay steps; explicit substrate-file materialization is atomic so
 concurrent readers do not observe truncated payloads; and retained-state Apple reruns
 automatically reinitialize stopped Harbor PostgreSQL replicas from the current Patroni leader when
-timeline drift leaves replicas unready after promotion. Bootstrap support image preload now uses
-the shared path on every supported lane, first trying `kind load docker-image` and then falling
-back to direct worker containerd import when Kind's loader fails. Phase 6 records clean governed
+timeline drift leaves replicas unready after promotion. The current shared lifecycle still carries
+a broad bootstrap support-image preload path; Sprint 2.12 replaces that target with binary-owned
+Harbor-first image preparation, where only Harbor-required services may pull upstream before
+Harbor is responsive and every remaining image, including the active `infernix` runtime image, is
+loaded into Harbor before final rollout. Phase 6 records clean governed
 bootstrap reruns for the supported Linux and Apple lifecycle surfaces, including Apple reruns
 on May 15, 2026 and May 17, 2026 through `doctor`, `build`, `up`, `status`, `test`, `down`, and
 final `status`; those reruns validated the split daemon topology, host-batch Pulsar handoff,
@@ -79,6 +82,7 @@ with bounded retries across transient registry resets.
 | Staged substrate-file format | the substrate file and its mirrors use one explicit and consistent file format and filename contract | implemented; the current contract is a shared `infernix-substrate.dhall` filename carrying banner-prefixed JSON on local and cluster-mounted paths |
 | Apple split-executor lane | the host-built binary manages Kind, the cluster always runs `infernix service` daemons, and Apple-native inference batches are delegated to same-binary host daemons through Pulsar | implemented |
 | Apple stage-0 bootstrap determinism | a first-run Apple bootstrap verifies newly installed same-process tool resolution before handing off to direct `cabal` work | implemented and validated through the governed Apple `doctor`, `build`, `up`, `status`, `test`, and `down` lifecycle |
+| Bootstrap responsibility boundary | shell bootstrap builds or enters the active launcher only, then delegates lifecycle, validation, image preparation, and teardown to `infernix`; Harbor-first image loading includes the active runtime image on every substrate after Harbor is responsive | active follow-on in Sprint 2.12 |
 | Lifecycle false-negative protection | supported lifecycle surfaces report long-running build, publication, preload, and teardown phases clearly enough that operators do not mistake progress for failure | implemented and validated; `cluster status` now reports in-progress lifecycle phase, detail, and heartbeat fields during the monitored long-running phases, and the governed docs use the same inactivity-aware interpretation contract |
 | Linux control plane | all supported Linux CLI commands run through `docker compose run --rm infernix infernix ...` | implemented and validated through the supported `linux-cpu` and `linux-gpu` bootstrap lifecycles |
 | Linux GPU naming | the NVIDIA-backed Linux substrate is standardized as `linux-gpu` | implemented |
@@ -107,29 +111,29 @@ Monitoring is not a supported first-class surface.
 - the generated substrate file, routed publication surface, `cluster status` output, and generated
   browser contracts currently serialize that active substrate under `runtimeMode` field names even
   though the supported selection contract is substrate-based
-- the current supported operator staging flow is explicit rather than Cabal-compile-time closure:
-  Apple host-native workflows stage `./.build/infernix-substrate.dhall` with
-  `./.build/infernix internal materialize-substrate apple-silicon [--demo-ui true|false]`, and
-  Linux outer-container workflows stage `./.build/outer-container/build/infernix-substrate.dhall`
-  on the host through the bind-mounted build tree with
-  `docker compose run --rm infernix infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>`
+- the target supported operator staging flow is binary-owned rather than shell-owned:
+  Apple host-native lifecycle and validation commands materialize or verify
+  `./.build/infernix-substrate.dhall`, Linux outer-container lifecycle and validation commands
+  materialize or verify `./.build/outer-container/build/infernix-substrate.dhall` on the host
+  through the bind-mounted build tree, and `infernix internal materialize-substrate ...` remains
+  the explicit restaging or inspection helper
 - the Linux substrate Dockerfile also materializes a build-arg-selected substrate file inside the
   image overlay during image build; supported Compose runs bind-mount the host `./.build/` tree
   over that location, so lifecycle and aggregate test commands rely on the explicit host-visible
   restaging step
 - repo-owned shell is limited to the `bootstrap/*.sh` stage-0 host bootstrap surface, which may
-  reconcile supported host prerequisites, build the active substrate launcher and dedicated
-  `infernix-playwright:local` images, and stage the substrate file under the active build root
-  through `infernix internal materialize-substrate ...` idempotently before handing off to the
-  direct `cabal`, `docker compose`, or `infernix` command surface
+  reconcile supported host prerequisites and build or enter the active substrate launcher before
+  handing off to the direct `infernix` command surface; shell code must not own Kind, Kubernetes
+  manifests, image pulls, Harbor publication, validation internals, or lifecycle teardown beyond
+  invoking the binary command
 - supported stage-0 bootstrap entrypoints are restartable prerequisite reconcilers: they continue
   in the current process only after verifying the required executable they just installed or
   selected, and they stop at explicit new-shell or reboot boundaries so the operator reruns the
   same bootstrap command instead of jumping ahead to a later direct command
 - supported runtime, cluster, cache, Kubernetes-wrapper, frontend-contract generation, and
-  aggregate `infernix test ...` entrypoints fail fast if the staged substrate file is absent
-  instead of regenerating it on first command execution or falling back to env or host detection;
-  focused `infernix lint ...` and `infernix docs check` remain substrate-file independent
+  aggregate `infernix test ...` entrypoints own substrate-file preflight and fail if the file
+  cannot be materialized or validated for the active execution context; focused `infernix lint ...`
+  and `infernix docs check` remain substrate-file independent
 - the staged file retains the legacy `.dhall` filename even though the current payload is
   banner-prefixed JSON produced by Haskell helpers
 - Apple Silicon is the only supported host-native build path outside a container
@@ -375,18 +379,15 @@ The plan keeps control-plane execution context separate from substrate.
 ### 4. Staged Substrate File SSoT
 
 - the repo stages one `infernix-substrate.dhall` file under the active build root
-- the current supported operator implementation materializes that file through an explicit helper
-  command rather than Cabal compile rules alone
-- Apple host-native workflows stage or restage the file with
-  `./.build/infernix internal materialize-substrate apple-silicon [--demo-ui true|false]`
-- Linux outer-container workflows stage or restage the file under `./.build/outer-container/build/`
-  on the host with
-  `docker compose run --rm infernix infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>`
+- the target supported operator implementation materializes or verifies that file through the
+  binary-owned lifecycle or validation command rather than through shell bootstrap
+- `infernix internal materialize-substrate ...` remains the explicit restaging or inspection
+  helper for Apple host-native and Linux outer-container workflows
 - the Linux substrate image also creates a build-arg-selected copy during image build, but the
   supported Compose bind mount hides that image-local copy from host-launched operator commands
 - supported runtime, cluster, cache, Kubernetes-wrapper, frontend-contract generation, and
-  aggregate `infernix test ...` entrypoints fail fast if the staged file is absent; focused
-  `infernix lint ...` and `infernix docs check` do not require it
+  aggregate `infernix test ...` entrypoints own substrate-file preflight; focused `infernix lint ...`
+  and `infernix docs check` do not require it
 - the staged file records the active substrate explicitly
 - the staged file also carries the generated demo catalog for that substrate
 - the current payload is banner-prefixed JSON under a legacy `.dhall` filename

@@ -12,7 +12,9 @@
 - `docker compose run --rm infernix infernix ...` is the supported Linux control-plane launcher
   shape for both `linux-cpu` and `linux-gpu`; `INFERNIX_COMPOSE_IMAGE`,
   `INFERNIX_COMPOSE_SUBSTRATE`, and `INFERNIX_COMPOSE_BASE_IMAGE` select the active built
-  snapshot when the default CPU lane is not in play.
+  snapshot when the default CPU lane is not in play. Bootstrap scripts invoke that same shape and
+  rely on Compose to build a missing launcher image instead of running a separate lifecycle
+  builder path.
 - Routed Playwright execution closes through the dedicated `infernix-playwright:local` image
   invoked via `docker compose run --rm playwright`; the substrate image carries no
   browser-runtime weight.
@@ -21,6 +23,8 @@
   outer-container build root or cabal package cache.
 - The outer-container contract does not include `docker compose up`, `docker compose exec`, or a
   bootstrap helper-registry sidecar.
+- Linux bootstrap scripts install Docker or the CUDA host stack only; they do not call Kind, Helm,
+  Kubernetes manifest tooling, Docker pulls, or image publication directly.
 
 ## Current Status
 
@@ -48,8 +52,13 @@ container cleanup.
 
 ## Supported Usage
 
-- `docker compose build infernix` refreshes the default Linux CPU outer-container image
-- `docker compose build playwright` refreshes the dedicated Playwright image
+- `docker compose build infernix` remains an optional manual refresh for the default Linux CPU
+  outer-container image, but the supported bootstrap lifecycle enters through
+  `docker compose run --rm infernix infernix <command>` and lets Compose build the image when it
+  is absent
+- `docker compose build playwright` remains an optional manual refresh for the dedicated
+  Playwright image; lifecycle and validation ownership still belongs to the `infernix` command
+  that needs routed E2E execution
 - `docker compose run --rm infernix infernix ...` is the supported Linux outer control-plane
   entrypoint for both `linux-cpu` and `linux-gpu`
 - `docker compose run --rm playwright` is the supported routed E2E executor invocation; the same
@@ -83,8 +92,8 @@ container cleanup.
   source snapshot rather than the mutated runtime tree; the manifest sits outside the bind-mounted
   `./.build/` tree so it stays in the image overlay
 - on the supported outer-container path, `cluster up` reuses the already-built
-  `infernix-linux-<mode>:local` snapshot instead of rebuilding the same runtime image again inside
-  the launcher
+  `infernix-linux-<mode>:local` snapshot selected by Compose and publishes that image into Harbor
+  before final rollout instead of asking the shell bootstrap to build or push images directly
 - cluster-backed outer-container commands keep host-published Kind API and routed ports on
   `127.0.0.1`
 - cluster-backed outer-container commands join the private Docker `kind` network and use

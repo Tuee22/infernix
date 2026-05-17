@@ -23,6 +23,9 @@
   prerequisites probe-driven and idempotent; the CPU path stops at Docker Engine plus the Docker
   Compose plugin, and the GPU path adds only the supported NVIDIA driver and container-toolkit
   setup
+- the target bootstrap responsibility boundary keeps shell scripts out of Kind, Kubernetes
+  manifests, and image-pull orchestration: after prerequisites and the substrate-specific launcher
+  are available, lifecycle commands are ordinary `infernix` binary invocations
 
 ## Apple Host-Native Flow
 
@@ -37,7 +40,6 @@ Direct reference path:
 
 ```bash
 cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes
-./.build/infernix internal materialize-substrate apple-silicon
 ./.build/infernix cluster up
 ./.build/infernix cluster status
 ./.build/infernix test all
@@ -59,8 +61,6 @@ Python, or Poetry reconciles those prerequisites automatically.
 Direct reference path:
 
 ```bash
-docker compose build infernix
-docker compose run --rm infernix infernix internal materialize-substrate linux-cpu
 docker compose run --rm infernix infernix cluster up
 docker compose run --rm infernix infernix cluster status
 docker compose run --rm infernix infernix test all
@@ -71,11 +71,9 @@ For `linux-gpu`, use `./bootstrap/linux-gpu.sh ...` as the supported entrypoint.
 reference path exports `INFERNIX_COMPOSE_IMAGE=infernix-linux-gpu:local`,
 `INFERNIX_COMPOSE_SUBSTRATE=linux-gpu`, and
 `INFERNIX_COMPOSE_BASE_IMAGE=nvidia/cuda:13.2.1-cudnn-runtime-ubuntu24.04` before the same
-`docker compose run --rm infernix infernix ...` surface, including
-`docker compose run --rm infernix infernix internal materialize-substrate linux-gpu` before
-cluster lifecycle or validation commands. If the host does not already pass `nvidia-smi -L`, the
-supported bootstrap installs the recommended Ubuntu compute driver, stops, and instructs the
-operator to reboot before rerunning the same command.
+`docker compose run --rm infernix infernix ...` surface. If the host does not already pass
+`nvidia-smi -L`, the supported bootstrap installs the recommended Ubuntu compute driver, stops,
+and instructs the operator to reboot before rerunning the same command.
 
 ## Engine Adapter Testing
 
@@ -89,16 +87,14 @@ the shared adapter project:
 ## Rules
 
 - the active substrate comes from the generated `.dhall` beside the binary rather than a CLI flag
-- supported staging is explicit: Apple host workflows run
-  `./.build/infernix internal materialize-substrate apple-silicon` after `cabal install`, and the
-  Linux outer-container path runs
-  `docker compose run --rm infernix infernix internal materialize-substrate <runtime-mode>` to
-  write `./.build/outer-container/build/infernix-substrate.dhall` on the host through the
-  bind-mounted build tree before supported cluster lifecycle or validation commands start
+- supported staging is binary-owned: the active lifecycle or validation command materializes or
+  verifies the substrate file under the active build root, and
+  `infernix internal materialize-substrate <runtime-mode>` remains the direct repair or inspection
+  helper for operators and tests that need to stage the file explicitly
 - supported repo-owned shell is limited to the `bootstrap/*.sh` stage-0 entrypoints; they prepare
-  the host and then hand off to the direct `cabal`, `docker compose`, or `infernix` command
-  surface; on Linux they also restage the active substrate file idempotently before supported
-  lifecycle and test commands
+  the host, build the Apple host binary or enter the Linux Compose launcher, and then hand off to
+  the direct `infernix` command surface; they do not run `kind`, `kubectl`, `helm`, manifest
+  deployment commands, Docker pulls, or image publication directly
 - supported stage-0 bootstrap entrypoints are restartable host prerequisite reconcilers: they
   continue in the current process only after they can verify a usable executable for any tool they
   just installed or selected, and they stop at explicit new-shell or reboot boundaries so the
@@ -120,6 +116,9 @@ the shared adapter project:
 - the Apple direct reference build calls `cabal` with `--installdir=./.build` and lets cabal use
   its natural `dist-newstyle` builddir at the project root, which materializes
   `./.build/infernix` and `./.build/infernix-demo`
+- bootstrap `down` commands delegate to `infernix cluster down` and preserve `./.build/`,
+  `./.data/`, the Apple host binary, Linux substrate images, and installed Docker or CUDA
+  prerequisites
 - Apple mode uses the repo-local kubeconfig under `./.build/`
 - container mode keeps the staged substrate file under `./.build/outer-container/build/` on the
   host through the `./.build:/workspace/.build` bind mount, while cabal-home and the cabal

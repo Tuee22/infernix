@@ -14,20 +14,24 @@
   `infernix lint files` runs, the route registry, and the snapshot launcher
 - the supported CLI reads the active substrate from `infernix-substrate.dhall` once that file has
   been staged, without a user-facing runtime-mode flag
-- the supported staging path is explicit:
+- the current implemented staging path is explicit:
   `./.build/infernix internal materialize-substrate apple-silicon [--demo-ui true|false]` on
   Apple and
   `docker compose run --rm infernix infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>`
   on the Linux outer-container path, which writes
   `./.build/outer-container/build/infernix-substrate.dhall` on the host through the bind-mounted
   build tree
-- supported runtime, cluster, cache, Kubernetes-wrapper, frontend-contract generation, and
-  aggregate `infernix test ...` entrypoints fail fast if the staged substrate file is absent;
-  focused `infernix lint ...` and `infernix docs check` remain substrate-file independent
+- Sprint 2.12 tracks the target refactor that makes substrate-file preflight binary-owned for
+  lifecycle and validation commands, leaving `infernix internal materialize-substrate ...` as the
+  direct restaging or inspection helper rather than a shell bootstrap responsibility
+- the current implementation still fails fast when the staged substrate file is absent; Sprint
+  2.12 moves lifecycle and validation preflight to the binary command so it materializes or
+  validates the file before relying on it, while focused `infernix lint ...` and
+  `infernix docs check` remain substrate-file independent
 - the Linux substrate image also materializes a build-arg-selected substrate file inside the image
   overlay during `docker compose build infernix`, but supported Compose runs bind-mount the host
-  `./.build/` tree over that path and therefore restage the host-visible file explicitly before
-  lifecycle or aggregate test commands
+  `./.build/` tree over that path; Sprint 2.12 makes the host-visible lifecycle preflight
+  binary-owned
 - the staged substrate file, `cluster status`, publication JSON, demo config, and generated
   browser contracts still expose that active substrate through `runtimeMode` field names
 - cluster publication mirrors the staged payload locally as `infernix-substrate.dhall`, and the
@@ -51,9 +55,10 @@
   materialization path can emit `demo_ui = false`
 - direct `infernix-demo` execution no longer doubles as a compatibility target for Harbor, MinIO,
   or Pulsar tool-route probes; those checks now require the real Gateway-backed upstream behavior
-- the supported Linux bootstrap entrypoints now restage the active substrate before lifecycle and
-  test commands, and `cluster up` persists repo-local cluster state before later rollout phases so
-  `cluster status` and cleanup can still observe an in-progress Linux reconciliation
+- the current Linux bootstrap entrypoints still restage the active substrate before lifecycle and
+  test commands; Sprint 2.12 moves that responsibility into the binary command. `cluster up`
+  persists repo-local cluster state before later rollout phases so `cluster status` and cleanup
+  can still observe an in-progress Linux reconciliation
 - the supported `linux-cpu` and `linux-gpu` surfaces use the stricter real-upstream route
   assertions, the restaged Linux substrate flow, and the dedicated `ghc-9.12.4` formatter
   toolchain beside the project `ghc-9.14.1` compiler
@@ -75,10 +80,11 @@
   readers; and retained-state Apple reruns automatically reinitialize stopped Harbor PostgreSQL
   replicas from the current Patroni leader when timeline drift leaves replicas unready after
   promotion
-- bootstrap support image preload is shared across supported lanes: `cluster up` tries
-  `kind load docker-image` for each local bootstrap support image and falls back to direct worker
-  containerd import through `docker save | docker exec ... ctr --namespace=k8s.io images import`
-  when Kind's loader fails
+- the current shared lifecycle still has a broad bootstrap support-image preload path; Sprint 2.12
+  tracks the stricter Harbor-first image boundary where shell scripts never pull or publish
+  images, only Harbor-required services may pull upstream before Harbor is responsive, and every
+  remaining image, including the active `infernix` runtime image, is loaded into Harbor before
+  final rollout
 - Phase 6 records clean governed bootstrap reruns for `linux-cpu`, `linux-gpu`, and the
   supported Apple lifecycle, including Apple reruns on May 15, 2026 and May 17, 2026 through
   `doctor`, `build`, `up`, `status`, `test`, `down`, and final `status`; those reruns validated
@@ -100,6 +106,7 @@
 |-----------|------------|------------|---------|---------------|
 | Apple host control plane | `./.build/infernix` plus direct `cabal` materialization against operator-installed ghcup | host-native | canonical operator surface on Apple Silicon; host-native cluster lifecycle owner; host-side Apple inference-daemon owner; repo-local kubeconfig owner | `./.build/`, `./.data/` |
 | Linux outer-container control plane | `docker compose run --rm infernix infernix ...` | Linux container | only supported Linux CLI surface for `linux-cpu` and `linux-gpu`; selects the active `infernix-linux-<mode>:local` snapshot through `INFERNIX_COMPOSE_*` launcher variables, forwards the Docker socket, and bind-mounts `./.data/`, `./.build/`, `./chart/charts/`, and the host `compose.yaml` so the staged substrate file under `./.build/outer-container/build/` is visible from the host while reusable Helm chart archives survive fresh launcher containers and cabal package state stays in the image overlay at the toolchain's natural locations | `./.data/`, `./.data/runtime/infernix.kubeconfig`, `./.build/outer-container/build/infernix-substrate.dhall`, `./chart/charts/` |
+| Bootstrap shell entrypoints | `bootstrap/*.sh` | host shell | bounded stage-0 prerequisite and launcher builders; Apple builds the host binary, Linux installs Docker or CUDA prerequisites and enters `docker compose run --rm infernix infernix <command>`; lifecycle, validation, Kind, Kubernetes manifests, image pulls, Harbor publication, and teardown behavior are delegated to `infernix` | preserves `./.build/`, `./.data/`, host-level images, Apple host binaries, and installed prerequisites |
 | Command registry | structured Haskell parser or dispatcher registry | host or outer container | owns the supported command inventory, `--help` output, and the generated CLI-reference sections that docs lint enforces | none |
 | Substrate configuration | staged banner-prefixed JSON payload at the legacy `infernix-substrate.dhall` path | host or outer container | primary source of truth for active substrate, generated catalog content, daemon role, inference placement, Pulsar request/result/batch topics, active engine dispatch, routed Apple bridge behavior, and test scope once the file has been staged; materialization writes the staged file atomically so concurrent readers never observe a partial payload | `./.build/infernix-substrate.dhall` on Apple; `./.build/outer-container/build/infernix-substrate.dhall` on the Linux outer-container path; cluster pods mount the same payload at `/opt/build/infernix-substrate.dhall` |
 | Route registry | Haskell-owned route inventory | host or outer container during render or reconcile | records public prefixes, backend identity, rewrite rules, visibility, and publication metadata | none |
@@ -127,8 +134,8 @@
 
 | Component | Technology | Deployment | Purpose | Durable state |
 |-----------|------------|------------|---------|---------------|
-| Kind and Helm lifecycle | Haskell control-plane orchestration in `cluster up` | host-native Apple CLI or Linux outer container | create or reuse Kind, reset StorageClasses, reconcile PVs, deploy Harbor first, publish the staged substrate payload, preload bootstrap support images through `kind load docker-image` with a direct worker containerd-import fallback when needed, publish images, deploy the final chart including cluster `infernix service` daemon replicas, expose in-progress lifecycle phase, detail, and heartbeat state for status observers, retry once with a targeted Pulsar claim-root reset when retained ZooKeeper state is self-inconsistent, and reinitialize stopped retained Harbor PostgreSQL replicas from the current Patroni leader when timeline drift leaves replicas unready after promotion | `./.data/runtime/cluster-state.state`, `./.data/kind/<runtime-mode>/...` |
-| Harbor image preparation | Harbor plus Haskell image publication flow | Kind cluster plus control plane | bootstrap Harbor, mirror required images, and publish repo-owned local images before third-party chart dependencies and later rollout; Docker pushes wait for registry readiness before each attempt, re-tag the source image before each bounded retry, and use capped backoff so transient Harbor resets or missing transient target tags during large-image publication do not fail the lifecycle prematurely | Harbor state under `./.data/kind/<runtime-mode>/...` |
+| Kind and Helm lifecycle | Haskell control-plane orchestration in `cluster up` | host-native Apple CLI or Linux outer container | create or reuse Kind, reset StorageClasses, reconcile PVs, deploy Harbor first, publish the staged substrate payload, perform Harbor-first image preparation, deploy the final chart including cluster `infernix service` daemon replicas, expose in-progress lifecycle phase, detail, and heartbeat state for status observers, retry once with a targeted Pulsar claim-root reset when retained ZooKeeper state is self-inconsistent, and reinitialize stopped retained Harbor PostgreSQL replicas from the current Patroni leader when timeline drift leaves replicas unready after promotion | `./.data/runtime/cluster-state.state`, `./.data/kind/<runtime-mode>/...` |
+| Harbor image preparation | Harbor plus Haskell image publication flow | Kind cluster plus control plane | bootstrap Harbor, allow only Harbor-required support services to pull upstream before Harbor readiness, then mirror every remaining third-party image and publish the active `infernix` runtime image before final rollout; Docker pushes wait for registry readiness before each attempt, re-tag the source image before each bounded retry, and use capped backoff so transient Harbor resets or missing transient target tags during large-image publication do not fail the lifecycle prematurely | Harbor state under `./.data/kind/<runtime-mode>/...` |
 | PostgreSQL substrate | Percona Kubernetes operator plus Patroni PostgreSQL | Kind cluster | only supported in-cluster PostgreSQL contract for Harbor and later services; retained-state reruns may trigger targeted Patroni replica reinitialization from the current leader when stopped replicas need a fresh base backup after timeline advancement | `./.data/kind/<runtime-mode>/...` |
 | Publication state | repo-local JSON plus routed `/api/publication` surface | repo-local state and demo API | reports control-plane context, cluster daemon location, host inference executor presence when the active substrate is Apple, the routed demo API upstream mode, the active inference dispatch mode, the active substrate through its current `runtimeMode` field, routes, and upstream health metadata | `./.data/runtime/publication.json` |
 | Edge Gateway controller | Helm-installed Envoy Gateway controller | Kind cluster | owns all browser-visible and host-consumed routing | none |
@@ -200,9 +207,9 @@
 | State class | Authority | Durable home | Notes |
 |-------------|-----------|--------------|-------|
 | Durable PV directories | storage reconciliation in `cluster up` | `./.data/kind/<runtime-mode>/<namespace>/<release>/<workload>/<ordinal>/<claim>` | deterministic host path layout for every PVC-backed workload |
-| Generated Apple substrate file | `./.build/infernix internal materialize-substrate apple-silicon [--demo-ui true|false]` | `./.build/infernix-substrate.dhall` | Apple host path beside the build root; the file is staged explicitly rather than by Cabal compile rules alone |
+| Generated Apple substrate file | binary-owned lifecycle or validation preflight, with `./.build/infernix internal materialize-substrate apple-silicon [--demo-ui true|false]` as the explicit helper | `./.build/infernix-substrate.dhall` | Apple host path beside the build root; Sprint 2.12 makes lifecycle staging a binary responsibility rather than a shell bootstrap responsibility |
 | Generated Apple kubeconfig | `cluster up` | `./.build/infernix.kubeconfig` | repo-local kubeconfig used by `infernix kubectl` on Apple |
-| Generated Linux substrate file | explicit helper invocation runs `docker compose run --rm infernix infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>`; the Dockerfile also creates an image-local build-arg-selected copy during image build | `./.build/outer-container/build/infernix-substrate.dhall` on the host through the bind mount (visible inside the outer container as `/workspace/.build/outer-container/build/infernix-substrate.dhall`) | outer-container staging path; supported Compose commands use the host-visible copy because the `./.build/` bind mount hides the image-local copy; the authoritative launcher binary remains `/usr/local/bin/infernix` inside the substrate image |
+| Generated Linux substrate file | binary-owned lifecycle or validation preflight, with `docker compose run --rm infernix infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>` as the explicit helper; the Dockerfile also creates an image-local build-arg-selected copy during image build | `./.build/outer-container/build/infernix-substrate.dhall` on the host through the bind mount (visible inside the outer container as `/workspace/.build/outer-container/build/infernix-substrate.dhall`) | outer-container staging path; supported Compose commands use the host-visible copy because the `./.build/` bind mount hides the image-local copy; the authoritative launcher binary remains `/usr/local/bin/infernix` inside the substrate image |
 | Generated Linux kubeconfig | `cluster up` | `./.data/runtime/infernix.kubeconfig` | durable repo-local kubeconfig reused across fresh outer-container invocations |
 | Helm dependency archive cache | `cluster up`, `test integration`, `test all`, and any supported chart-reconcile path that calls `ensureHelmDependencies` | `./chart/charts/` on the host for the Linux outer-container path; `chart/charts/` in the Apple host worktree | cached top-level Helm dependency archives for Harbor, PostgreSQL, Pulsar, MinIO, and Envoy Gateway so fresh launcher containers reuse the same chart bundle instead of rehydrating every dependency from the network |
 | Cluster-mounted substrate file | Helm deployment plus ConfigMap mount | `/opt/build/infernix-substrate.dhall` | cluster-resident consumers such as `infernix-demo` and all cluster `infernix service` workloads consume the shared staged filename under `/opt/build/`; Apple host daemons read host-role config under `./.build/` |

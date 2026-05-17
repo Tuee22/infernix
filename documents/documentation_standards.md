@@ -121,9 +121,10 @@ Rules:
 - keep one canonical home per topic
 - move implementation status discussion into `DEVELOPMENT_PLAN/`
 - keep examples aligned with the supported `infernix` CLI surface
-- document the supported `bootstrap/*.sh` stage-0 entrypoints together with the direct `cabal`,
-  `docker compose`, and `infernix` commands they drive; do not add extra wrapper layers beyond
-  that bounded bootstrap surface
+- document the supported `bootstrap/*.sh` stage-0 entrypoints as bounded prerequisite and launcher
+  builders: they may install host prerequisites and build or enter the substrate-specific
+  `infernix` launcher, but cluster lifecycle, Kubernetes manifests, image pulls, Harbor
+  publication, validation, and teardown behavior must be described as binary-owned
 
 ## Update Rules
 

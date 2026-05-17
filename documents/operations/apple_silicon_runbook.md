@@ -18,6 +18,9 @@
   `8 CPU / 16 GiB` profile before Docker-backed work, and let adapter setup or validation paths
   reconcile Homebrew `python@3.12` at `/opt/homebrew/opt/python@3.12/bin/python3.12` plus a
   user-local Poetry bootstrap when needed
+- the Apple bootstrap shell owns only host prerequisite reconciliation through the host binary
+  build and then invokes `./.build/infernix <command>`; the host binary owns Colima, Kind,
+  Kubernetes, container builds, Harbor publication, and any image pulls needed after it exists
 - on May 15, 2026, the supported Apple lifecycle reran cleanly through `doctor`, `build`, `up`,
   `status`, `test`, `down`, and final `status`; that rerun validated the split daemon topology,
   host-batch Pulsar handoff, routed Playwright E2E, repeated retained-state cluster bring-up or
@@ -47,8 +50,6 @@ Direct reference path:
 
 - build both Haskell binaries with
   `cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes`
-- stage the active substrate file with
-  `./.build/infernix internal materialize-substrate apple-silicon`
 - run `./.build/infernix cluster up`
 - run `./.build/infernix test all`
 
@@ -88,14 +89,18 @@ Direct reference path:
   command lets cabal use its natural `dist-newstyle` builddir at the project root and only
   overrides `--installdir=./.build` so the materialized `./.build/infernix` and
   `./.build/infernix-demo` binaries land where the supported CLI surface expects them
+- after the host binary exists, the bootstrap shell does not call `kind`, `kubectl`, `helm`, apply
+  manifests, pull images, build the cluster runtime image, or publish to Harbor directly; it calls
+  `./.build/infernix <command>` and lets the binary own those lifecycle responsibilities
 - supported Apple bootstrap commands are restartable stage-0 entrypoints: when host prerequisite
   reconciliation crosses a real new-shell or reboot boundary, rerun the same
   `./bootstrap/apple-silicon.sh <command>` surface rather than jumping straight to a later direct
   command; same-process tool installation continues only after the bootstrap verifies the required
   executable explicitly
-- supported Apple host workflows stage `./.build/infernix-substrate.dhall` explicitly through
-  `./.build/infernix internal materialize-substrate apple-silicon`; add `--demo-ui false` when
-  preparing a demo-off config
+- supported Apple lifecycle and validation commands materialize or verify
+  `./.build/infernix-substrate.dhall` through the binary-owned substrate path;
+  `./.build/infernix internal materialize-substrate apple-silicon` remains the direct helper when
+  an operator intentionally needs to restage or inspect that file
 - `cluster up` writes `./.build/infernix.kubeconfig`
 - supported flows do not mutate `$HOME/.kube/config`
 - the Apple host-native path describes where the Haskell build, control-plane commands, cluster
@@ -103,7 +108,9 @@ Direct reference path:
   `demo_ui` is enabled and always deploys the cluster `infernix-service` daemon set
 - on `apple-silicon`, the clustered demo and cluster service workloads run from the
   `infernix-linux-cpu:local` image family while reading the staged `apple-silicon` substrate file;
-  cluster daemons own request fan-in and batch handoff, not Apple-native inference execution
+  cluster daemons own request fan-in and batch handoff, not Apple-native inference execution, and
+  the host-native `infernix` binary builds and publishes that image family to Harbor after Harbor
+  is responsive
 - `/api/publication` keeps the routed demo API on `apiUpstream.mode: cluster-demo`, reports
   `daemonLocation: cluster-pod`, reports `inferenceExecutorLocation: control-plane-host`, and
   publishes `inferenceDispatchMode: pulsar-bridge-to-host-daemon` so the routed demo surface can
@@ -121,6 +128,9 @@ Direct reference path:
 - retained Apple Kind state under `./.data/kind/apple-silicon/` is replayed into and out of the
   worker instead of being bind-mounted, so large retained state can make `up`, `test`, and
   `down` noticeably slower than Linux
+- `./bootstrap/apple-silicon.sh down` delegates to `./.build/infernix cluster down` and preserves
+  `./.build/`, `./.data/`, the host-built `./.build/infernix` binaries, any host-level runtime
+  container image, Colima, Docker, and Homebrew-managed prerequisites
 - `infernix service` runs `ensureAppleSiliconRuntimeReady` before the daemon loop. That flow
   ensures the shared `python/` project is installed, creates repo-local engine roots under
   `./.data/engines/`, and invokes each `poetry run setup-*` entrypoint for the active mode's

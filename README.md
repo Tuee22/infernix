@@ -59,7 +59,9 @@ This repository serves two aligned purposes:
   3.16.1.0, Python 3 + Poetry, node, the demo UI build toolchain, `nvkind`, and the
   Kind/kubectl/Helm/Docker toolbelt baked in. Apple Silicon has no Dockerfile; the operator
   pre-installs ghcup and the daemon installs engine deps via system `clang` and `brew`
-- repo-owned shell is limited to the `bootstrap/*.sh` stage-0 host bootstrap entrypoints; no
+- repo-owned shell is limited to the `bootstrap/*.sh` stage-0 host bootstrap entrypoints: those
+  scripts build or enter the substrate-specific `infernix` launcher and then hand lifecycle work
+  to the binary instead of managing Kind, Kubernetes manifests, or container pulls directly; no
   committed built artifacts (`poetry.lock`, generated proto, `.mypy_cache`, `.ruff_cache`,
   `*.pyc`, `web/dist/`, `web/spago.lock`, `web/src/Generated/`)
 
@@ -122,9 +124,9 @@ The supported local platform is built around:
   toolchain and the demo UI build toolchain; the chart workload entrypoint selects which exe runs
   (`infernix service` or `infernix-demo serve`). Apple Silicon has no Dockerfile: the daemon
   builds engines on the host via system `clang` and `brew`
-- one Apple host bootstrap entrypoint, `./bootstrap/apple-silicon.sh`, that idempotently
-  reconciles Homebrew plus ghcup before driving the direct host-native Cabal install path and
-  keeping host-native artifacts under `./.build/`
+- substrate bootstrap entrypoints under `bootstrap/` that reconcile only the host prerequisites
+  needed to build or enter the active `infernix` launcher, then invoke the matching binary command
+  for cluster lifecycle, validation, and teardown
 - one repo-local kubeconfig managed under the active build-output location rather than the user's
   global kubeconfig
 
@@ -165,16 +167,18 @@ Use the substrate bootstrap that matches the host you actually want to run:
 
 Each bootstrap entrypoint is designed to be safe to rerun. It probes the current host state,
 installs only the missing supported prerequisites for that substrate, verifies any same-process
-tool it just installed before continuing, builds or reuses the supported launcher path, and then
-runs the requested control-plane command.
+tool it just installed before continuing, builds or enters the supported launcher path, and then
+runs the requested `infernix` command. The shell entrypoints do not directly create Kind
+clusters, deploy Kubernetes manifests, or pull container images; those responsibilities live in
+the Haskell control plane.
 
 After a successful run, each script prints the next commands for that substrate, including:
 
 - `doctor` to re-check prerequisites
 - `status` to print the edge port and route inventory
 - `test` to run `infernix test all`
-- `down` to tear down the cluster while preserving repo-local durable state
-- `purge` to remove repo-local state and local launcher artifacts after confirmation
+- `down` to delete the cluster while preserving repo-local durable state, build artifacts,
+  substrate images, host binaries, and host prerequisites
 
 On `linux-gpu`, if `nvidia-smi` does not already work on the host, the bootstrap installs the
 recommended Ubuntu compute driver, stops, and tells you to reboot and run the same command again.
@@ -388,7 +392,6 @@ Direct reference commands:
 
 ```bash
 cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes
-./.build/infernix internal materialize-substrate apple-silicon
 ./.build/infernix cluster up
 ./.build/infernix cluster status
 ./.build/infernix test all
@@ -419,9 +422,6 @@ Supported bootstrap path:
 Direct reference commands:
 
 ```bash
-docker compose build infernix
-docker compose build playwright
-docker compose run --rm infernix infernix internal materialize-substrate linux-cpu --demo-ui true
 docker compose run --rm infernix infernix cluster up
 docker compose run --rm infernix infernix cluster status
 docker compose run --rm infernix infernix test all
@@ -430,8 +430,10 @@ docker compose run --rm infernix infernix cluster down
 
 The Linux launcher bind-mounts `./.data/`, `./.build/`, the host `compose.yaml`, and the Docker
 socket. The baked image owns the full toolchain, so the supported runtime path does not install
-anything via `apt`, `pip`, or ad hoc host-side `cabal build`, and the bootstrap restages the
-active substrate file before supported lifecycle and test commands.
+anything via `apt`, `pip`, or ad hoc host-side `cabal build`. The Linux bootstrap invokes the
+same `docker compose run --rm infernix infernix <command>` shape that operators use directly,
+letting Compose build the missing launcher image and letting the binary own substrate staging,
+cluster lifecycle, image preparation, and validation.
 
 ### Linux GPU (outer container)
 
@@ -459,9 +461,6 @@ Direct reference commands:
 export INFERNIX_COMPOSE_IMAGE=infernix-linux-gpu:local
 export INFERNIX_COMPOSE_SUBSTRATE=linux-gpu
 export INFERNIX_COMPOSE_BASE_IMAGE=nvidia/cuda:13.2.1-cudnn-runtime-ubuntu24.04
-docker compose build infernix
-docker compose build playwright
-docker compose run --rm infernix infernix internal materialize-substrate linux-gpu --demo-ui true
 docker compose run --rm infernix infernix cluster up
 docker compose run --rm infernix infernix cluster status
 docker compose run --rm infernix infernix kubectl -n platform exec deployment/infernix-service -- nvidia-smi -L
@@ -515,20 +514,23 @@ around upstream `kubectl`, not a parallel lifecycle surface.
 
 - `cluster up` is the supported HA testing and demo-ground bring-up command
 - `cluster up` declaratively reconciles Kind, manual storage, Harbor-backed images, Helm workloads,
-  repo-local kubeconfig, and publication of the already-staged substrate configuration
+  repo-local kubeconfig, and publication of the active substrate configuration
+- `bootstrap/*.sh` commands are launchers for `infernix` commands only after host prerequisites and
+  the substrate-specific binary or container launcher are ready; they do not directly manage Kind,
+  Kubernetes resources, manifests, or image pulls
 - `infernix internal materialize-substrate <runtime-mode> [--demo-ui true|false]` stages the
   active demo `.dhall` file that defines the demo catalog and the engine binding for each
   demo-visible model on that substrate
 - `cluster up` bootstraps Harbor first through Helm and allows Harbor plus only the storage or
   support services Harbor needs during bootstrap, including MinIO and PostgreSQL, to pull from
   public container repositories
-- `cluster up` mirrors required third-party images into Harbor before deploying the remaining
-  non-Harbor workloads
-- `cluster up` publishes the active Linux runtime image to Harbor before the final Helm rollout.
-  On the supported Linux outer-container path it reuses the already-built baked
-  `infernix-linux-<mode>:local` snapshot rather than rebuilding it again inside the launcher. On
-  Apple Silicon the host-native control plane builds and publishes the `infernix-linux-cpu:local`
-  image family used by the cluster-resident demo and service workloads
+- after Harbor is responsive, `cluster up` mirrors every remaining non-Harbor image into Harbor
+  before deploying those workloads, including third-party platform images and the active
+  `infernix` runtime image
+- on Linux substrates the active runtime image is the same Compose-selected
+  `infernix-linux-<mode>:local` image used by the outer control-plane launcher; on Apple Silicon
+  the host-native `infernix` binary builds the cluster-resident runtime image and publishes it to
+  Harbor after Harbor is ready
 - every non-Harbor pod pulls from local Harbor
 - Harbor and only the storage or support services Harbor needs are the allowed direct-upstream
   bootstrap exception before the Harbor-backed pull contract takes over
@@ -539,7 +541,9 @@ around upstream `kubectl`, not a parallel lifecycle surface.
   dedicated operator-managed cluster instead
 - repo-owned Helm values suppress hard pod anti-affinity and equivalent hard scheduling constraints
   as needed for local Kind scheduling
-- `cluster down` removes cluster state without deleting authoritative data under `./.data/`
+- `cluster down` removes cluster state without deleting authoritative data under `./.data/`;
+  bootstrap `down` commands preserve `./.build/`, `./.data/`, the host-level container build,
+  the Apple host binary, and installed Docker or CUDA prerequisites
 - MinIO is the durable source of truth for manifests, durable model artifacts, and large outputs
 - Pulsar is the durable transport for inference requests and result publication
 - artifact flow uses two stages: upstream acquisition into MinIO, then local materialization from
@@ -573,12 +577,13 @@ rebuildable.
   `.dhall` names `daemonRole`, `clusterDaemon`, optional `hostDaemon`, `request_topics : List Text`,
   `result_topic : Text`, `engines : List EngineBinding`, and the optional `demo_ui : Bool` flag
   that gates the `infernix-demo` workload
-- Apple host flows stage that file with
-  `./.build/infernix internal materialize-substrate apple-silicon`
-- Linux outer-container flows stage that file on the host with
-  `docker compose run --rm infernix infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>`,
-  which writes `./.build/outer-container/build/infernix-substrate.dhall` through the
-  bind-mounted build tree
+- Apple host lifecycle and validation commands materialize or verify that file under `./.build/`;
+  `./.build/infernix internal materialize-substrate apple-silicon` remains the direct helper for
+  explicit restaging or inspection
+- Linux outer-container lifecycle and validation commands materialize or verify that file under
+  `./.build/outer-container/build/` on the host through the bind-mounted build tree;
+  `docker compose run --rm infernix infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>`
+  remains the direct helper for explicit restaging or inspection
 - the generated demo `.dhall` file enumerates the demo-visible models and workloads for that mode
   and binds each one to its engine or runtime lane
 - the generated demo `.dhall` file is the exact source of truth for which models and engine bindings

@@ -58,8 +58,9 @@ assets stay under `chart/`, and generated outputs remain untracked.
 - Generated directories such as `web/src/Generated/`, `tools/generated_proto/`, and `web/dist/`
   are rebuild targets, not review surfaces for handwritten logic.
 - Supported repo-owned shell is limited to the `bootstrap/*.sh` stage-0 host bootstrap surface;
-  it may reconcile prerequisites and invoke the supported command surface, but it does not become
-  a second lifecycle or validation implementation.
+  it may reconcile prerequisites, build or enter the supported launcher, and invoke the supported
+  command surface, but it does not become a second lifecycle, Kind, Kubernetes manifest, image
+  publication, validation, or teardown implementation.
 
 ## Validation
 

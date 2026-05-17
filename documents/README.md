@@ -110,6 +110,7 @@
   `README.md`, `AGENTS.md`, and `CLAUDE.md` in the same change.
 - If monitoring ever becomes a supported first-class surface, add the canonical doctrine doc,
   update this index, update the plan, and update docs lint in the same change.
-- Supported workflow docs describe the bounded `bootstrap/*.sh` stage-0 entrypoints and the direct
-  `cabal`, `docker compose`, and `infernix` commands those entrypoints invoke.
+- Supported workflow docs describe the bounded `bootstrap/*.sh` stage-0 entrypoints as host
+  prerequisite and launcher builders, while cluster lifecycle, Kubernetes manifests, image pulls,
+  Harbor publication, validation, and teardown stay owned by the `infernix` binary.
 - Run the docs validator before handing off changes.

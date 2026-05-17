@@ -10,6 +10,10 @@
 - Kind is the supported local cluster substrate
 - `infernix cluster up` is the only supported cluster reconcile entrypoint
 - `infernix cluster down` is the only supported teardown entrypoint
+- `bootstrap/*.sh` entrypoints may prepare host prerequisites and build or enter the active
+  launcher, but they must not directly create Kind clusters, apply Kubernetes manifests, invoke
+  Helm, pull images, or publish images; those responsibilities belong to `infernix cluster up`
+  and `infernix cluster down`
 - `infernix cluster status` does not mutate Kubernetes resources or repo-local authoritative
   state; on the Linux outer-container path it may idempotently attach the fresh launcher container
   to Docker's private `kind` network so it can observe the Kind control plane
@@ -27,7 +31,8 @@
 - `cluster up` bootstraps Harbor first through Helm on a pristine cluster, allowing Harbor and only
   the support services Harbor needs during bootstrap to pull from public container repositories
 - after Harbor is ready, `cluster up` uses Harbor as the image authority for every remaining
-  non-Harbor pod and publishes the active runtime image before the final Helm rollout
+  non-Harbor pod, mirrors third-party images, and publishes the active `infernix` runtime image
+  before the final Helm rollout on every substrate
 - because Pulsar is first enabled in the final Harbor-backed Helm phase, `cluster up` forces the
   upstream Pulsar initialization jobs there before final broker or proxy readiness gates close
 - `cluster up` forwards any `INFERNIX_ENGINE_COMMAND_*` environment variables from the control
