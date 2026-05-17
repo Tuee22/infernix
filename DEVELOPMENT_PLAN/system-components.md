@@ -75,9 +75,13 @@
   readers; and retained-state Apple reruns automatically reinitialize stopped Harbor PostgreSQL
   replicas from the current Patroni leader when timeline drift leaves replicas unready after
   promotion
+- bootstrap support image preload is shared across supported lanes: `cluster up` tries
+  `kind load docker-image` for each local bootstrap support image and falls back to direct worker
+  containerd import through `docker save | docker exec ... ctr --namespace=k8s.io images import`
+  when Kind's loader fails
 - Phase 6 records clean governed bootstrap reruns for `linux-cpu`, `linux-gpu`, and the
-  supported Apple lifecycle, including the latest Apple rerun on May 15, 2026 through `doctor`,
-  `build`, `up`, `status`, `test`, `down`, and final `status`; that rerun validated the split
+  supported Apple lifecycle, including the Apple rerun on May 15, 2026 through `doctor`, `build`,
+  `up`, `status`, `test`, `down`, and final `status`; that rerun validated the split
   daemon topology, host-batch Pulsar handoff, routed Playwright E2E, repeated retained-state
   cluster bring-up or teardown cycles inside the governed `test` lane, and final post-teardown
   status returning `clusterPresent: False`, `lifecycleStatus: idle`, and
@@ -123,7 +127,7 @@
 
 | Component | Technology | Deployment | Purpose | Durable state |
 |-----------|------------|------------|---------|---------------|
-| Kind and Helm lifecycle | Haskell control-plane orchestration in `cluster up` | host-native Apple CLI or Linux outer container | create or reuse Kind, reset StorageClasses, reconcile PVs, deploy Harbor first, publish the staged substrate payload, publish images, deploy the final chart including cluster `infernix service` daemon replicas, expose in-progress lifecycle phase, detail, and heartbeat state for status observers, retry once with a targeted Pulsar claim-root reset when retained ZooKeeper state is self-inconsistent, and reinitialize stopped retained Harbor PostgreSQL replicas from the current Patroni leader when timeline drift leaves replicas unready after promotion | `./.data/runtime/cluster-state.state`, `./.data/kind/<runtime-mode>/...` |
+| Kind and Helm lifecycle | Haskell control-plane orchestration in `cluster up` | host-native Apple CLI or Linux outer container | create or reuse Kind, reset StorageClasses, reconcile PVs, deploy Harbor first, publish the staged substrate payload, preload bootstrap support images through `kind load docker-image` with a direct worker containerd-import fallback when needed, publish images, deploy the final chart including cluster `infernix service` daemon replicas, expose in-progress lifecycle phase, detail, and heartbeat state for status observers, retry once with a targeted Pulsar claim-root reset when retained ZooKeeper state is self-inconsistent, and reinitialize stopped retained Harbor PostgreSQL replicas from the current Patroni leader when timeline drift leaves replicas unready after promotion | `./.data/runtime/cluster-state.state`, `./.data/kind/<runtime-mode>/...` |
 | Harbor image preparation | Harbor plus Haskell image publication flow | Kind cluster plus control plane | bootstrap Harbor, mirror required images, and publish repo-owned local images before third-party chart dependencies and later rollout; Docker pushes wait for registry readiness before each attempt, re-tag the source image before each bounded retry, and use capped backoff so transient Harbor resets or missing transient target tags during large-image publication do not fail the lifecycle prematurely | Harbor state under `./.data/kind/<runtime-mode>/...` |
 | PostgreSQL substrate | Percona Kubernetes operator plus Patroni PostgreSQL | Kind cluster | only supported in-cluster PostgreSQL contract for Harbor and later services; retained-state reruns may trigger targeted Patroni replica reinitialization from the current leader when stopped replicas need a fresh base backup after timeline advancement | `./.data/kind/<runtime-mode>/...` |
 | Publication state | repo-local JSON plus routed `/api/publication` surface | repo-local state and demo API | reports control-plane context, cluster daemon location, host inference executor presence when the active substrate is Apple, the routed demo API upstream mode, the active inference dispatch mode, the active substrate through its current `runtimeMode` field, routes, and upstream health metadata | `./.data/runtime/publication.json` |

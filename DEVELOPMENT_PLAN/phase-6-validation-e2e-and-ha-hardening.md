@@ -44,7 +44,9 @@ lines. The worktree omits direct Harbor, MinIO, and Pulsar compatibility handler
 upstream behavior, persists cluster state before later Linux rollout phases, restages the active
 Linux substrate on each supported bootstrap invocation, reuses a persistent Linux chart-archive
 cache, and performs the targeted Pulsar claim-root reset when the known retained ZooKeeper
-epoch-state corruption blocks bootstrap. Recorded validation for this phase covers the governed
+epoch-state corruption blocks bootstrap. The current lifecycle preloads bootstrap support images
+on supported lanes by trying `kind load docker-image` first and falling back to direct worker
+containerd import when Kind's loader fails. Recorded validation for this phase covers the governed
 `linux-cpu` and `linux-gpu` bootstrap surfaces. Recorded Apple validation on May 11, 2026 reran
 cleanly through `./bootstrap/apple-silicon.sh doctor`, `build`, `up`, `status`, `test`, and
 `down`. On Apple, routed Playwright no longer times out on `host.docker.internal`: host-side
@@ -105,7 +107,9 @@ commands.
   command-level execution-context validation, while their assertions remain static or unit scoped
   and do not claim real-cluster matrix coverage
 - `test integration` validates the active substrate's published catalog contract, routed surfaces,
-  and routed inference execution for every generated active-substrate catalog entry
+  routed inference execution for every generated active-substrate catalog entry, and the
+  service-loop roundtrip through the routed Pulsar transport; on Apple it brackets the
+  same-binary host daemon and waits for the service readiness marker before publishing
 - `test e2e` exercises every demo-visible generated catalog entry for the active substrate
 - `test all` runs every supported validation layer for the active built substrate and reports that
   substrate instead of implying cross-substrate coverage
@@ -672,8 +676,9 @@ Remove the known non-failing warning noise from the supported web-validation pat
 - the PureScript unit suite no longer relies on deprecated `runSpec`
 - the supported Node-based PureScript test runner preserves non-zero exits without relying on the
   deprecated `runSpec` or `runSpecT` entrypoints
-- the Playwright matrix launcher sanitizes its child-process environment so supported runs do not
-  pass both `NO_COLOR` and `FORCE_COLOR`
+- the retained Playwright harness wrapper sanitizes its child-process environment and delegates to
+  `infernix test e2e`, so supported runs do not pass both `NO_COLOR` and `FORCE_COLOR` and the
+  Haskell CLI remains the owner of E2E lifecycle orchestration
 - the Apple host-native containerized Playwright path avoids forwarding conflicting `NO_COLOR` and
   `FORCE_COLOR` values into the executor
 - the governed testing docs describe the supported runner and env-sanitization posture for the web
@@ -997,8 +1002,9 @@ substrate-mismatched compatibility shims.
   supported Colima profile on demand when Apple
   lifecycle or adapter-validation paths need them
 - Apple Kind lifecycle code no longer relies on unsupported host bind-mount ownership assumptions,
-  no longer preloads unsupported bootstrap images onto Kind nodes on the Apple lane, and keeps the
-  routed demo API aligned with the active staged runtime mode during routed validation
+  uses the shared bootstrap support image preload path with the direct worker containerd-import
+  fallback when Kind's loader fails, and keeps the routed demo API aligned with the active staged
+  runtime mode during routed validation
 - routed Apple Playwright validation probes publication readiness from the host on
   `127.0.0.1:<edge-port>` but runs the browser container on the private Docker `kind` network
   against the Kind control-plane DNS on port `30090`, so the Apple lane no longer depends on

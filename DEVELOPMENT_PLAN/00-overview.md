@@ -54,12 +54,15 @@ data in `cluster status` during monitored Docker build, Harbor publication, Kind
 and Apple retained-state replay steps; explicit substrate-file materialization is atomic so
 concurrent readers do not observe truncated payloads; and retained-state Apple reruns
 automatically reinitialize stopped Harbor PostgreSQL replicas from the current Patroni leader when
-timeline drift leaves replicas unready after promotion. Phase 6 records clean governed bootstrap
-reruns for the supported Linux and Apple lifecycle surfaces, including the latest Apple rerun on
-May 15, 2026 through `doctor`, `build`, `up`, `status`, `test`, `down`, and final `status`; that
-rerun validated the split daemon topology, host-batch Pulsar handoff, routed Playwright E2E,
-repeated retained-state cluster bring-up or teardown cycles inside the governed `test` lane, and
-final post-teardown status returning `clusterPresent: False`, `lifecycleStatus: idle`, and
+timeline drift leaves replicas unready after promotion. Bootstrap support image preload now uses
+the shared path on every supported lane, first trying `kind load docker-image` and then falling
+back to direct worker containerd import when Kind's loader fails. Phase 6 records clean governed
+bootstrap reruns for the supported Linux and Apple lifecycle surfaces, including the Apple rerun
+on May 15, 2026 through `doctor`, `build`, `up`, `status`, `test`, `down`, and final
+`status`; that rerun validated the split daemon topology, host-batch Pulsar handoff, routed
+Playwright E2E, repeated retained-state cluster bring-up or teardown cycles inside the governed
+`test` lane, and final post-teardown status returning `clusterPresent: False`,
+`lifecycleStatus: idle`, and
 `lifecyclePhase: cluster-absent`. That May 15 rerun also validates the Harbor publication closure
 for repo-owned local images: publication pushes the `infernix-linux-cpu:local` payload before
 third-party chart dependencies and re-tags the source image before each bounded push retry, so

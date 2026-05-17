@@ -41,11 +41,13 @@ values overlay path, in-image `nvkind` path, and shared substrate-publication fi
 implemented on the supported Kind substrate. `cluster up`, `cluster down`, and `cluster status`
 expose the active lifecycle action, phase, child-operation detail, and heartbeat during the
 monitored Docker build, Harbor publication, Kind-worker preload, and Apple retained-state replay
-windows; staged `infernix-substrate.dhall` writes are atomic so concurrent status readers do not
-observe truncated payloads; and retained-state Apple reruns automatically reinitialize stopped
-Harbor PostgreSQL replicas from the current Patroni leader when timeline drift leaves replicas
-unready after promotion. Phase 6 records the latest clean supported
-`./bootstrap/apple-silicon.sh` lifecycle rerun on May 15, 2026 through `doctor`, `build`, `up`,
+windows; bootstrap support image preload now applies through the shared lifecycle on every
+supported lane and falls back from `kind load docker-image` to direct worker containerd import
+when Kind's loader fails; staged `infernix-substrate.dhall` writes are atomic so concurrent
+status readers do not observe truncated payloads; and retained-state Apple reruns automatically
+reinitialize stopped Harbor PostgreSQL replicas from the current Patroni leader when timeline
+drift leaves replicas unready after promotion. Phase 6 records the clean supported
+`./bootstrap/apple-silicon.sh` lifecycle rerun from May 15, 2026 through `doctor`, `build`, `up`,
 `status`, `test`, `down`, and final `status`; that rerun validated the split daemon topology,
 host-batch Pulsar handoff, repeated retained-state cluster bring-up or teardown cycles inside the
 governed `test` lane, and final post-teardown status returning `clusterPresent: False`,
@@ -380,6 +382,9 @@ distinguish real failure from ongoing first-run progress.
 
 - `cluster up` surfaces explicit lifecycle phase markers for the shared image-build, Harbor
   publication, and Kind-worker preload steps instead of leaving multi-minute silent windows
+- bootstrap support image preload first tries `kind load docker-image` and falls back to direct
+  worker containerd import when Kind's loader fails, so support-image availability does not depend
+  on a single Kind load path
 - Harbor image publication waits for registry readiness before Docker push attempts and retries
   transient push resets with bounded backoff before treating publication as failed
 - `cluster down` surfaces the retained-state replay and Kind-deletion phases explicitly instead of
@@ -395,6 +400,8 @@ distinguish real failure from ongoing first-run progress.
 
 - a cold `./bootstrap/apple-silicon.sh up` surfaces the image-build, Harbor-publication, and
   Kind-worker preload phases explicitly while it is still making forward progress
+- support-image preload succeeds through either the Kind loader or the direct worker
+  containerd-import fallback before Harbor-backed rollout depends on those images
 - the May 15, 2026 supported Apple lifecycle rerun exercises the large Pulsar image publication
   path through Harbor, retained-state replay, split-daemon inference, and final teardown after the
   bounded Docker-push retry hardening
