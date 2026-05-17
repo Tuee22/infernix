@@ -27,7 +27,8 @@ import Generated.Contracts
   , runtimeMode
   )
 import Infernix.Web.Workbench
-  ( Publication
+  ( CompletedRequestSummary
+  , Publication
   , catalogCards
   , describeCompletedRequest
   , publicationSummary
@@ -88,6 +89,10 @@ type Refs =
   , resultOutput :: Element.Element
   , objectLinkContainer :: Element.Element
   }
+
+data InferenceSubmissionResult
+  = InferenceSubmissionFailed String
+  | InferenceSubmissionCompleted CompletedRequestSummary
 
 main :: Effect Unit
 main = do
@@ -238,59 +243,69 @@ submitInference stateRef refs = do
   state <- liftEffect (Ref.read stateRef)
   case state.selectedModelId of
     Nothing ->
-      liftEffect do
-        setStatus refs.requestStatus "status error" "No model selected."
-        setText refs.resultOutput "No result yet."
-        clearChildren refs.objectLinkContainer
+      liftEffect (renderInferenceFailure refs "No model selected.")
     Just selectedModelIdValue -> do
       liftEffect do
         setStatus refs.requestStatus "status muted" "Submitting request…"
         setText refs.objectLinkContainer ""
-      response <-
-        AXWeb.request
-          ( AXWeb.defaultRequest
-              { method = Left POST
-              , url = apiBasePath <> "/inference"
-              , headers = [ RequestHeader.ContentType applicationJSON ]
-              , content =
-                  Just
-                    ( RequestBody.string
-                        ( JSON.writeJSON
-                            { requestModelId: selectedModelIdValue
-                            , inputText: inputValue
-                            }
-                        )
-                    )
-              , responseFormat = ResponseFormat.string
-              }
+      submissionResult <- submitSelectedInference state selectedModelIdValue inputValue
+      liftEffect (renderInferenceSubmission refs submissionResult)
+
+submitSelectedInference :: AppState -> String -> String -> Aff InferenceSubmissionResult
+submitSelectedInference state selectedModelIdValue inputValue = do
+  response <- AXWeb.request (inferenceRequest selectedModelIdValue inputValue)
+  pure $
+    case response of
+      Left requestError ->
+        InferenceSubmissionFailed (AXWeb.printError requestError)
+      Right httpResponse
+        | statusCode httpResponse.status >= 400 ->
+            InferenceSubmissionFailed (decodeErrorMessage httpResponse.body)
+        | otherwise ->
+            decodeInferenceResponse state httpResponse.body
+
+inferenceRequest :: String -> String -> AXWeb.Request String
+inferenceRequest selectedModelIdValue inputValue =
+  AXWeb.defaultRequest
+    { method = Left POST
+    , url = apiBasePath <> "/inference"
+    , headers = [ RequestHeader.ContentType applicationJSON ]
+    , content =
+        Just
+          ( RequestBody.string
+              ( JSON.writeJSON
+                  { requestModelId: selectedModelIdValue
+                  , inputText: inputValue
+                  }
+              )
           )
-      case response of
-        Left requestError ->
-          liftEffect do
-            setStatus refs.requestStatus "status error" (AXWeb.printError requestError)
-            setText refs.resultOutput "No result yet."
-            clearChildren refs.objectLinkContainer
-        Right httpResponse ->
-          if statusCode httpResponse.status >= 400 then
-            liftEffect do
-              let errorMessage = decodeErrorMessage httpResponse.body
-              setStatus refs.requestStatus "status error" errorMessage
-              setText refs.resultOutput "No result yet."
-              clearChildren refs.objectLinkContainer
-          else
-            case JSON.readJSON httpResponse.body of
-              Left decodeError ->
-                liftEffect do
-                  setStatus refs.requestStatus "status error" ("Unable to decode inference result: " <> show decodeError)
-                  setText refs.resultOutput "No result yet."
-                  clearChildren refs.objectLinkContainer
-              Right inferenceResult ->
-                liftEffect do
-                  let summary = describeCompletedRequest inferenceResult (selectedModel state.models state.selectedModelId)
-                  setStatus refs.requestStatus "status success" summary.statusText
-                  setText refs.resultLabel summary.resultLabel
-                  setText refs.resultOutput summary.outputText
-                  renderObjectLink refs summary.objectHref summary.objectLinkLabel
+    , responseFormat = ResponseFormat.string
+    }
+
+decodeInferenceResponse :: AppState -> String -> InferenceSubmissionResult
+decodeInferenceResponse state responseBody =
+  case JSON.readJSON responseBody of
+    Left decodeError ->
+      InferenceSubmissionFailed ("Unable to decode inference result: " <> show decodeError)
+    Right inferenceResult ->
+      InferenceSubmissionCompleted (describeCompletedRequest inferenceResult (selectedModel state.models state.selectedModelId))
+
+renderInferenceSubmission :: Refs -> InferenceSubmissionResult -> Effect Unit
+renderInferenceSubmission refs submissionResult =
+  case submissionResult of
+    InferenceSubmissionFailed message ->
+      renderInferenceFailure refs message
+    InferenceSubmissionCompleted summary -> do
+      setStatus refs.requestStatus "status success" summary.statusText
+      setText refs.resultLabel summary.resultLabel
+      setText refs.resultOutput summary.outputText
+      renderObjectLink refs summary.objectHref summary.objectLinkLabel
+
+renderInferenceFailure :: Refs -> String -> Effect Unit
+renderInferenceFailure refs message = do
+  setStatus refs.requestStatus "status error" message
+  setText refs.resultOutput "No result yet."
+  clearChildren refs.objectLinkContainer
 
 renderAll :: Ref.Ref AppState -> Refs -> Effect Unit
 renderAll stateRef refs = do

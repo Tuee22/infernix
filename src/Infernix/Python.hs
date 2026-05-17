@@ -152,62 +152,74 @@ bootstrapPoetryOnAppleHost :: IO FilePath
 bootstrapPoetryOnAppleHost = do
   candidatePaths <- poetryCandidatePaths
   maybeExisting <- firstExistingPath candidatePaths
-  case maybeExisting of
-    Just executablePath -> do
-      prependDirectoryToPath (directoryOf executablePath)
-      pure executablePath
+  maybe installPoetryOnAppleHost activatePoetryExecutable maybeExisting
+
+installPoetryOnAppleHost :: IO FilePath
+installPoetryOnAppleHost = do
+  pythonExecutable <- requireAppleBootstrapPython
+  poetryHome <- resolvedPoetryHome
+  let poetryVenv = poetryHome </> "venv"
+      poetryExecutable = poetryVenv </> "bin" </> "poetry"
+      poetryPython = poetryVenv </> "bin" </> "python"
+  createDirectoryIfMissing True poetryHome
+  createPoetryBootstrapVenv pythonExecutable poetryVenv
+  installPoetryIntoBootstrapVenv poetryPython
+  resolveInstalledPoetry poetryExecutable
+
+createPoetryBootstrapVenv :: FilePath -> FilePath -> IO ()
+createPoetryBootstrapVenv pythonExecutable poetryVenv = do
+  (exitCode, _, stderrOutput) <-
+    readCreateProcessWithExitCode
+      (proc pythonExecutable ["-m", "venv", "--clear", "--symlinks", poetryVenv])
+      ""
+  case exitCode of
+    ExitSuccess -> pure ()
+    _ ->
+      ioError
+        ( userError
+            ( "failed to create the Apple host Poetry bootstrap venv with "
+                <> pythonExecutable
+                <> "\n"
+                <> stderrOutput
+            )
+        )
+
+installPoetryIntoBootstrapVenv :: FilePath -> IO ()
+installPoetryIntoBootstrapVenv poetryPython = do
+  (exitCode, _, stderrOutput) <-
+    readCreateProcessWithExitCode
+      (proc poetryPython ["-m", "pip", "install", "--upgrade", "pip", "poetry"])
+      ""
+  case exitCode of
+    ExitSuccess -> pure ()
+    _ ->
+      ioError
+        ( userError
+            ( "failed to install Poetry into the Apple host bootstrap venv\n"
+                <> stderrOutput
+            )
+        )
+
+resolveInstalledPoetry :: FilePath -> IO FilePath
+resolveInstalledPoetry poetryExecutable = do
+  refreshedCandidatePaths <- poetryCandidatePaths
+  maybeInstalled <- firstExistingPath refreshedCandidatePaths
+  case maybeInstalled of
+    Just installedExecutable -> activatePoetryExecutable installedExecutable
     Nothing -> do
-      pythonExecutable <- requireAppleBootstrapPython
-      poetryHome <- resolvedPoetryHome
-      let poetryVenv = poetryHome </> "venv"
-          poetryExecutable = poetryVenv </> "bin" </> "poetry"
-          poetryPython = poetryVenv </> "bin" </> "python"
-      createDirectoryIfMissing True poetryHome
-      (venvExitCode, _, venvStderrOutput) <-
-        readCreateProcessWithExitCode
-          (proc pythonExecutable ["-m", "venv", "--clear", "--symlinks", poetryVenv])
-          ""
-      case venvExitCode of
-        ExitSuccess -> do
-          (pipExitCode, _, pipStderrOutput) <-
-            readCreateProcessWithExitCode
-              (proc poetryPython ["-m", "pip", "install", "--upgrade", "pip", "poetry"])
-              ""
-          case pipExitCode of
-            ExitSuccess -> do
-              refreshedCandidatePaths <- poetryCandidatePaths
-              maybeInstalled <- firstExistingPath refreshedCandidatePaths
-              case maybeInstalled of
-                Just installedExecutable -> do
-                  prependDirectoryToPath (directoryOf installedExecutable)
-                  pure installedExecutable
-                Nothing -> do
-                  installed <- doesFileExist poetryExecutable
-                  if installed
-                    then do
-                      prependDirectoryToPath (directoryOf poetryExecutable)
-                      pure poetryExecutable
-                    else
-                      ioError
-                        ( userError
-                            "Poetry bootstrap completed but no poetry executable was found in the expected user-local locations."
-                        )
-            _ ->
-              ioError
-                ( userError
-                    ( "failed to install Poetry into the Apple host bootstrap venv\n"
-                        <> pipStderrOutput
-                    )
-                )
-        _ ->
+      installed <- doesFileExist poetryExecutable
+      if installed
+        then activatePoetryExecutable poetryExecutable
+        else
           ioError
             ( userError
-                ( "failed to create the Apple host Poetry bootstrap venv with "
-                    <> pythonExecutable
-                    <> "\n"
-                    <> venvStderrOutput
-                )
+                "Poetry bootstrap completed but no poetry executable was found in the expected user-local locations."
             )
+
+activatePoetryExecutable :: FilePath -> IO FilePath
+activatePoetryExecutable executablePath = do
+  prependDirectoryToPath (directoryOf executablePath)
+  pure executablePath
 
 requireAppleBootstrapPython :: IO FilePath
 requireAppleBootstrapPython = do

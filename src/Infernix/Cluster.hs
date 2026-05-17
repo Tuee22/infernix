@@ -62,6 +62,18 @@ nodeMountedKindRoot = "/var/infernix-data"
 seedClaims :: RuntimeMode -> [PersistentClaim]
 seedClaims = platformClaimsForRuntime
 
+data ClusterUpInputs = ClusterUpInputs
+  { clusterUpControlPlane :: String,
+    clusterUpRequestedEdgePort :: Int,
+    clusterUpDemoUiEnabled :: Bool,
+    clusterUpDemoConfigPath :: FilePath,
+    clusterUpKubeconfigPath :: FilePath,
+    clusterUpPublishedCatalogPath :: FilePath,
+    clusterUpConfigMapManifestPath :: FilePath,
+    clusterUpMountedCatalogPath :: FilePath,
+    clusterUpPayload :: Lazy.ByteString
+  }
+
 clusterServiceEnabled :: RuntimeMode -> Bool
 clusterServiceEnabled _runtimeMode = True
 
@@ -332,40 +344,17 @@ clusterUpWithPulsarBootstrapRepair paths runtimeMode = go False
 
 clusterUpWithPlatform :: Paths -> RuntimeMode -> IO ()
 clusterUpWithPlatform paths runtimeMode = do
-  let controlPlane = Config.controlPlaneContext paths
-  requestedPort <- chooseEdgePort paths
-  generatedConfigPath <- requireGeneratedDemoConfigFile paths runtimeMode
-  generatedConfig <- decodeDemoConfigFile generatedConfigPath
-  let demoUiEnabledValue = demoUiEnabled generatedConfig
-      demoConfigPath = generatedConfigPath
-      publishedCatalogPath = Config.publishedConfigMapCatalogPath paths
-      configMapManifestPath = Config.publishedConfigMapManifestPath paths
-      publicationPath = Config.publicationStatePath paths
-      mountedCatalogPath = Config.watchedDemoConfigPath
-      payload = Lazy.fromStrict (renderGeneratedDemoConfigPayload paths runtimeMode demoUiEnabledValue ClusterDaemon)
-  createDirectoryIfMissing True (buildRoot paths)
-  createDirectoryIfMissing True (takeDirectory publishedCatalogPath)
-  createDirectoryIfMissing True (takeDirectory configMapManifestPath)
-  createDirectoryIfMissing True (takeDirectory publicationPath)
-  Lazy.writeFile publishedCatalogPath payload
-  writeFile configMapManifestPath (renderConfigMapManifest payload)
+  inputs <- prepareClusterUpInputs paths runtimeMode
   claimDiscoveryTime <- getCurrentTime
   let provisionalState0 =
-        ClusterState
-          { clusterPresent = False,
-            edgePort = requestedPort,
-            routes = routeInventory demoUiEnabledValue,
-            storageClass = "infernix-manual",
-            claims = seedClaims runtimeMode,
-            clusterRuntimeMode = runtimeMode,
-            kubeconfigPath = Config.generatedKubeconfigPath paths,
-            generatedDemoConfigPath = demoConfigPath,
-            publishedDemoConfigPath = publishedCatalogPath,
-            publishedConfigMapManifestPath = configMapManifestPath,
-            mountedDemoConfigPath = mountedCatalogPath,
-            lifecycleProgress = Nothing,
-            updatedAt = claimDiscoveryTime
-          }
+        clusterUpState
+          inputs
+          runtimeMode
+          False
+          (clusterUpRequestedEdgePort inputs)
+          (routeInventory (clusterUpDemoUiEnabled inputs))
+          (seedClaims runtimeMode)
+          claimDiscoveryTime
   provisionalState <-
     startLifecyclePhase
       paths
@@ -373,7 +362,7 @@ clusterUpWithPlatform paths runtimeMode = do
       "cluster-up"
       "discover-persistent-claims"
       "rendering Helm inputs and discovering durable claim roots"
-  claimDiscoveryValuesPath <- writeHelmValuesFile paths controlPlane provisionalState payload FinalPhase
+  claimDiscoveryValuesPath <- writeHelmValuesFile paths (clusterUpControlPlane inputs) provisionalState (clusterUpPayload inputs) FinalPhase
   claimDiscoveryRenderedChartPath <- renderHelmChart paths runtimeMode [claimDiscoveryValuesPath]
   discoveredClaims <- discoverPersistentClaims paths claimDiscoveryRenderedChartPath
   discoveredRoutes <- discoverChartRoutesFile claimDiscoveryRenderedChartPath
@@ -385,7 +374,7 @@ clusterUpWithPlatform paths runtimeMode = do
       "cluster-up"
       "prepare-kind-cluster"
       "creating or reusing the Kind cluster and replaying retained runtime data into nodes"
-  (edgePortValue, kubeconfigContents, clusterCreated) <- ensureKindCluster paths runtimeMode requestedPort
+  (edgePortValue, kubeconfigContents, clusterCreated) <- ensureKindCluster paths runtimeMode (clusterUpRequestedEdgePort inputs)
   when (clusterCreated && not (kindUsesHostBindMounts paths)) $
     prepareKindNodeRuntimePaths paths clusterPrepareState runtimeMode
   unless (kindUsesHostBindMounts paths) $
@@ -394,21 +383,14 @@ clusterUpWithPlatform paths runtimeMode = do
   writeTextFile (Config.generatedKubeconfigPath paths) (Text.pack kubeconfigContents)
   activeStateTime <- getCurrentTime
   let activeState0 =
-        ClusterState
-          { clusterPresent = True,
-            edgePort = edgePortValue,
-            routes = discoveredRoutes,
-            storageClass = "infernix-manual",
-            claims = discoveredClaims,
-            clusterRuntimeMode = runtimeMode,
-            kubeconfigPath = Config.generatedKubeconfigPath paths,
-            generatedDemoConfigPath = demoConfigPath,
-            publishedDemoConfigPath = publishedCatalogPath,
-            publishedConfigMapManifestPath = configMapManifestPath,
-            mountedDemoConfigPath = mountedCatalogPath,
-            lifecycleProgress = Nothing,
-            updatedAt = activeStateTime
-          }
+        clusterUpState
+          inputs
+          runtimeMode
+          True
+          edgePortValue
+          discoveredRoutes
+          discoveredClaims
+          activeStateTime
   activeState <-
     startLifecyclePhase
       paths
@@ -421,10 +403,10 @@ clusterUpWithPlatform paths runtimeMode = do
   configureRuntimeModeCluster paths runtimeMode
   now <- getCurrentTime
   let seedState = activeState {claims = seedClaims runtimeMode, updatedAt = now}
-  warmupValuesPath <- writeHelmValuesFile paths controlPlane seedState payload WarmupPhase
-  bootstrapValuesPath <- writeHelmValuesFile paths controlPlane seedState payload BootstrapPhase
-  harborFinalValuesPath <- writeHelmValuesFile paths controlPlane seedState payload HarborFinalPhase
-  finalValuesPath <- writeHelmValuesFile paths controlPlane seedState payload FinalPhase
+  warmupValuesPath <- writeHelmValuesFile paths (clusterUpControlPlane inputs) seedState (clusterUpPayload inputs) WarmupPhase
+  bootstrapValuesPath <- writeHelmValuesFile paths (clusterUpControlPlane inputs) seedState (clusterUpPayload inputs) BootstrapPhase
+  harborFinalValuesPath <- writeHelmValuesFile paths (clusterUpControlPlane inputs) seedState (clusterUpPayload inputs) HarborFinalPhase
+  finalValuesPath <- writeHelmValuesFile paths (clusterUpControlPlane inputs) seedState (clusterUpPayload inputs) FinalPhase
   renderedChartPath <- renderHelmChart paths runtimeMode [finalValuesPath]
   when clusterCreated $
     do
@@ -436,7 +418,7 @@ clusterUpWithPlatform paths runtimeMode = do
           "preload-bootstrap-images"
           "preloading bootstrap support images onto Kind nodes"
       preloadBootstrapSupportImagesOnKindNodes paths bootstrapPreloadState runtimeMode renderedChartPath
-  applyBootstrapState paths runtimeMode demoUiEnabledValue discoveredClaims
+  applyBootstrapState paths runtimeMode (clusterUpDemoUiEnabled inputs) discoveredClaims
   let initialState = seedState {claims = discoveredClaims}
   initialStateWithDependencies <-
     startLifecyclePhase
@@ -506,12 +488,60 @@ clusterUpWithPlatform paths runtimeMode = do
   waitForRoutedPublicationSurface paths routedPublicationState
   _ <- refreshPersistentClaims routedPublicationState >>= clearLifecycleProgress paths
   putStrLn "cluster up complete"
-  putStrLn ("controlPlaneContext: " <> controlPlane)
+  putStrLn ("controlPlaneContext: " <> clusterUpControlPlane inputs)
   putStrLn ("runtimeMode: " <> Text.unpack (runtimeModeId runtimeMode))
   putStrLn ("edgePort: " <> show edgePortValue)
-  putStrLn ("generatedDemoConfigPath: " <> demoConfigPath)
-  putStrLn ("publishedDemoConfigPath: " <> publishedCatalogPath)
-  putStrLn ("mountedDemoConfigPath: " <> mountedCatalogPath)
+  putStrLn ("generatedDemoConfigPath: " <> clusterUpDemoConfigPath inputs)
+  putStrLn ("publishedDemoConfigPath: " <> clusterUpPublishedCatalogPath inputs)
+  putStrLn ("mountedDemoConfigPath: " <> clusterUpMountedCatalogPath inputs)
+
+prepareClusterUpInputs :: Paths -> RuntimeMode -> IO ClusterUpInputs
+prepareClusterUpInputs paths runtimeMode = do
+  requestedPort <- chooseEdgePort paths
+  generatedConfigPath <- requireGeneratedDemoConfigFile paths runtimeMode
+  generatedConfig <- decodeDemoConfigFile generatedConfigPath
+  let demoUiEnabledValue = demoUiEnabled generatedConfig
+      publishedCatalogPath = Config.publishedConfigMapCatalogPath paths
+      configMapManifestPath = Config.publishedConfigMapManifestPath paths
+      publicationPath = Config.publicationStatePath paths
+      mountedCatalogPath = Config.watchedDemoConfigPath
+      payload = Lazy.fromStrict (renderGeneratedDemoConfigPayload paths runtimeMode demoUiEnabledValue ClusterDaemon)
+  createDirectoryIfMissing True (buildRoot paths)
+  createDirectoryIfMissing True (takeDirectory publishedCatalogPath)
+  createDirectoryIfMissing True (takeDirectory configMapManifestPath)
+  createDirectoryIfMissing True (takeDirectory publicationPath)
+  Lazy.writeFile publishedCatalogPath payload
+  writeFile configMapManifestPath (renderConfigMapManifest payload)
+  pure
+    ClusterUpInputs
+      { clusterUpControlPlane = Config.controlPlaneContext paths,
+        clusterUpRequestedEdgePort = requestedPort,
+        clusterUpDemoUiEnabled = demoUiEnabledValue,
+        clusterUpDemoConfigPath = generatedConfigPath,
+        clusterUpKubeconfigPath = Config.generatedKubeconfigPath paths,
+        clusterUpPublishedCatalogPath = publishedCatalogPath,
+        clusterUpConfigMapManifestPath = configMapManifestPath,
+        clusterUpMountedCatalogPath = mountedCatalogPath,
+        clusterUpPayload = payload
+      }
+
+clusterUpState :: ClusterUpInputs -> RuntimeMode -> Bool -> Int -> [RouteInfo] -> [PersistentClaim] -> UTCTime -> ClusterState
+clusterUpState inputs runtimeMode clusterPresentValue edgePortValue routesValue claimsValue updatedAtValue =
+  ClusterState
+    { clusterPresent = clusterPresentValue,
+      edgePort = edgePortValue,
+      routes = routesValue,
+      storageClass = "infernix-manual",
+      claims = claimsValue,
+      clusterRuntimeMode = runtimeMode,
+      kubeconfigPath = clusterUpKubeconfigPath inputs,
+      generatedDemoConfigPath = clusterUpDemoConfigPath inputs,
+      publishedDemoConfigPath = clusterUpPublishedCatalogPath inputs,
+      publishedConfigMapManifestPath = clusterUpConfigMapManifestPath inputs,
+      mountedDemoConfigPath = clusterUpMountedCatalogPath inputs,
+      lifecycleProgress = Nothing,
+      updatedAt = updatedAtValue
+    }
 
 requireGeneratedDemoConfigFile :: Paths -> RuntimeMode -> IO FilePath
 requireGeneratedDemoConfigFile paths expectedRuntimeMode = do
@@ -1874,42 +1904,51 @@ waitForHarborPostgresPodsReady state = go totalAttempts False False ""
                     | startupPod <- startupPods,
                       not (harborPostgresStartupPodReady startupPod)
                     ]
-      if null currentError
-        then pure ()
-        else
-          if remainingAttempts <= 1
-            then
+      case currentError of
+        "" -> pure ()
+        _
+          | remainingAttempts <= 1 ->
               ioError
                 ( userError
                     ( "Harbor PostgreSQL pods never became ready:\n"
                         <> chooseError currentError lastError
                     )
                 )
-            else do
-              restarted <-
-                if restartIssued
-                  then pure False
-                  else
-                    restartHarborPostgresStartupPodsIfStuck
-                      state
-                      allStartupPodsPresent
-                      attemptsElapsed
-                      startupPods
-              reinitialized <-
-                if reinitIssued || restarted
-                  then pure False
-                  else
-                    reinitializeHarborPostgresReplicasIfStuck
-                      state
-                      attemptsElapsed
-                      (restartIssued || restarted)
-                      startupPods
+          | otherwise -> do
+              (restarted, reinitialized) <-
+                repairHarborPostgresStartup
+                  allStartupPodsPresent
+                  attemptsElapsed
+                  restartIssued
+                  reinitIssued
+                  startupPods
               threadDelay 5000000
               go
                 (remainingAttempts - 1)
                 (restartIssued || restarted)
                 (reinitIssued || reinitialized)
                 (chooseError currentError lastError)
+
+    repairHarborPostgresStartup allStartupPodsPresent attemptsElapsed restartIssued reinitIssued startupPods = do
+      restarted <-
+        if restartIssued
+          then pure False
+          else
+            restartHarborPostgresStartupPodsIfStuck
+              state
+              allStartupPodsPresent
+              attemptsElapsed
+              startupPods
+      reinitialized <-
+        if reinitIssued || restarted
+          then pure False
+          else
+            reinitializeHarborPostgresReplicasIfStuck
+              state
+              attemptsElapsed
+              (restartIssued || restarted)
+              startupPods
+      pure (restarted, reinitialized)
 
     chooseError current previous
       | null current = previous
@@ -2464,11 +2503,11 @@ waitForOperatorManagedPersistentClaims state expectedCount = go (72 :: Int) []
   where
     go remainingAttempts previousClaims = do
       currentClaims <- discoverOperatorManagedPersistentClaims state
-      if length currentClaims >= expectedCount
-        then pure currentClaims
-        else
-          if remainingAttempts <= 1
-            then
+      case () of
+        _
+          | length currentClaims >= expectedCount ->
+              pure currentClaims
+          | remainingAttempts <= 1 ->
               ioError
                 ( userError
                     ( "operator-managed PostgreSQL claims never appeared; expected at least "
@@ -2478,7 +2517,7 @@ waitForOperatorManagedPersistentClaims state expectedCount = go (72 :: Int) []
                         <> " after retries"
                     )
                 )
-            else do
+          | otherwise -> do
               threadDelay 5000000
               go (remainingAttempts - 1) (if null currentClaims then previousClaims else currentClaims)
 
@@ -2575,44 +2614,45 @@ parseOperatorManagedClaimValue itemValue = do
         lookupJsonTextPath ["metadata", "labels", "postgres-operator.crunchydata.com/cluster"] itemValue
   case maybeClusterValue of
     Nothing -> pure Nothing
-    Just clusterValue -> do
-      let repositoryValue =
-            fromMaybe
-              ""
-              (lookupJsonStringPath ["metadata", "labels", "postgres-operator.crunchydata.com/pgbackrest-repo"] itemValue)
-          roleValue =
-            fromMaybe
-              (if null repositoryValue then "" else "pgbackrest")
-              (lookupJsonStringPath ["metadata", "labels", "postgres-operator.crunchydata.com/role"] itemValue)
-          storageClassValue =
-            lookupJsonStringPath ["spec", "storageClassName"] itemValue
-      if roleValue == ""
-        then pure Nothing
-        else
-          if storageClassValue /= Just "infernix-manual"
-            then Left ("operator-managed PostgreSQL PVC uses unsupported storageClassName " <> show storageClassValue)
-            else
-              pure $
-                Just
-                  OperatorManagedClaim
-                    { operatorClaimNamespace =
-                        fromMaybe "default" (lookupJsonStringPath ["metadata", "namespace"] itemValue),
-                      operatorClaimCluster = Text.unpack clusterValue,
-                      operatorClaimInstanceSet =
-                        fromMaybe "" (lookupJsonStringPath ["metadata", "labels", "postgres-operator.crunchydata.com/instance-set"] itemValue),
-                      operatorClaimRole = roleValue,
-                      operatorClaimDataKind =
-                        fromMaybe
-                          (if null repositoryValue then "" else "pgbackrest")
-                          (lookupJsonStringPath ["metadata", "labels", "postgres-operator.crunchydata.com/data"] itemValue),
-                      operatorClaimInstance =
-                        fromMaybe "" (lookupJsonStringPath ["metadata", "labels", "postgres-operator.crunchydata.com/instance"] itemValue),
-                      operatorClaimRepository = repositoryValue,
-                      operatorClaimPvcName =
-                        fromMaybe "" (lookupJsonStringPath ["metadata", "name"] itemValue),
-                      operatorClaimRequestedStorage =
-                        fromMaybe "5Gi" (lookupJsonStringPath ["spec", "resources", "requests", "storage"] itemValue)
-                    }
+    Just clusterValue ->
+      operatorManagedClaimFromValue itemValue clusterValue
+
+operatorManagedClaimFromValue :: Value -> Text.Text -> Either String (Maybe OperatorManagedClaim)
+operatorManagedClaimFromValue itemValue clusterValue
+  | null roleValue =
+      Right Nothing
+  | storageClassValue /= Just "infernix-manual" =
+      Left ("operator-managed PostgreSQL PVC uses unsupported storageClassName " <> show storageClassValue)
+  | otherwise =
+      Right
+        ( Just
+            OperatorManagedClaim
+              { operatorClaimNamespace =
+                  lookupStringOr "default" ["metadata", "namespace"],
+                operatorClaimCluster = Text.unpack clusterValue,
+                operatorClaimInstanceSet =
+                  lookupStringOr "" ["metadata", "labels", "postgres-operator.crunchydata.com/instance-set"],
+                operatorClaimRole = roleValue,
+                operatorClaimDataKind =
+                  lookupStringOr (if null repositoryValue then "" else "pgbackrest") ["metadata", "labels", "postgres-operator.crunchydata.com/data"],
+                operatorClaimInstance =
+                  lookupStringOr "" ["metadata", "labels", "postgres-operator.crunchydata.com/instance"],
+                operatorClaimRepository = repositoryValue,
+                operatorClaimPvcName =
+                  lookupStringOr "" ["metadata", "name"],
+                operatorClaimRequestedStorage =
+                  lookupStringOr "5Gi" ["spec", "resources", "requests", "storage"]
+              }
+        )
+  where
+    repositoryValue =
+      lookupStringOr "" ["metadata", "labels", "postgres-operator.crunchydata.com/pgbackrest-repo"]
+    roleValue =
+      lookupStringOr (if null repositoryValue then "" else "pgbackrest") ["metadata", "labels", "postgres-operator.crunchydata.com/role"]
+    storageClassValue =
+      lookupJsonStringPath ["spec", "storageClassName"] itemValue
+    lookupStringOr defaultValue pathSegments =
+      fromMaybe defaultValue (lookupJsonStringPath pathSegments itemValue)
 
 mergePersistentClaims :: [PersistentClaim] -> [PersistentClaim] -> [PersistentClaim]
 mergePersistentClaims existingClaims newClaims =
@@ -2690,11 +2730,11 @@ waitForPersistentClaimsBound state = mapM_ waitForPersistentClaimBound
                   "-o",
                   "jsonpath={.status.phase}"
                 ]
-          if phaseValue == "Bound"
-            then pure ()
-            else
-              if remainingAttempts <= 1
-                then
+          case () of
+            _
+              | phaseValue == "Bound" ->
+                  pure ()
+              | remainingAttempts <= 1 ->
                   ioError
                     ( userError
                         ( "persistent claim "
@@ -2703,7 +2743,7 @@ waitForPersistentClaimsBound state = mapM_ waitForPersistentClaimBound
                             <> choosePhase phaseValue lastPhase
                         )
                     )
-                else do
+              | otherwise -> do
                   threadDelay 5000000
                   go (remainingAttempts - 1) (choosePhase phaseValue lastPhase)
         choosePhase current previous

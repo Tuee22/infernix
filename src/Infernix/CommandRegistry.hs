@@ -129,144 +129,184 @@ parseCommand args =
 
 commandFamilies :: [CommandFamily]
 commandFamilies =
-  [ CommandFamily
-      { familyTopic = "service",
-        familyOverview = "starts the long-running production daemon that consumes Pulsar work and binds no HTTP port",
-        familyCommands =
-          [ simpleCommand
-              "service"
-              "starts the long-running production daemon; it binds no HTTP port and consumes the active `.dhall` request and result topics"
-              ServiceCommand
-          ]
-      },
-    CommandFamily
-      { familyTopic = "cluster",
-        familyOverview = "reconciles or reports cluster state, lifecycle progress, generated substrate publication, and routed surfaces",
-        familyCommands =
-          [ simpleCommand "cluster up" "reconciles Kind, Harbor-first bootstrap, the generated substrate file, and routed publication state" ClusterUpCommand,
-            simpleCommand "cluster down" "tears the cluster down while leaving durable repo-local state under `./.data/` intact" ClusterDownCommand,
-            simpleCommand "cluster status" "reports cluster presence, lifecycle phase, active substrate, publication state, build paths, and route inventory; on Linux outer-container paths it may attach the launcher to Docker's `kind` network for observation" ClusterStatusCommand
-          ]
-      },
-    CommandFamily
-      { familyTopic = "cache",
-        familyOverview = "inspects or reconciles manifest-backed derived cache state for the active substrate",
-        familyCommands =
-          [ simpleCommand "cache status" "reports the manifest-backed cache inventory for the active substrate" CacheStatusCommand,
-            optionalModelCommand
-              "cache evict [--model MODEL_ID]"
-              "evicts derived cache state for one model or for the whole active substrate"
-              CacheEvictCommand,
-            optionalModelCommand
-              "cache rebuild [--model MODEL_ID]"
-              "rebuilds derived cache state from durable manifests for one model or for the whole active substrate"
-              CacheRebuildCommand
-          ]
-      },
-    CommandFamily
-      { familyTopic = "kubectl",
-        familyOverview = "proxies upstream Kubernetes access through the repo-local kubeconfig",
-        familyCommands =
-          [ CommandSpec
-              { commandUsageSuffix = "kubectl ...",
-                commandDescription = "wraps upstream `kubectl` and injects the repo-local kubeconfig for the active control-plane context",
-                commandParse = \case
-                  "kubectl" : kubectlArgs -> Just (KubectlCommand kubectlArgs)
-                  _ -> Nothing
-              }
-          ]
-      },
-    CommandFamily
-      { familyTopic = "lint",
-        familyOverview = "runs the focused Haskell-owned static checks for files, docs, `.proto`, and chart assets",
-        familyCommands =
-          [ simpleCommand "lint files" "runs the tracked-file and generated-artifact hygiene checks" LintFilesCommand,
-            simpleCommand "lint docs" "runs the governed documentation validator" LintDocsCommand,
-            simpleCommand "lint proto" "runs the protobuf contract validator" LintProtoCommand,
-            simpleCommand "lint chart" "runs the Helm and chart ownership validator" LintChartCommand
-          ]
-      },
-    CommandFamily
-      { familyTopic = "test",
-        familyOverview = "runs the aggregate validation entrypoints for lint, unit, integration, routed E2E, and the full suite",
-        familyCommands =
-          [ simpleCommand "test lint" "runs the focused lint entrypoints together with the strict Haskell style and Python quality gates" TestLintCommand,
-            simpleCommand "test unit" "runs the Haskell unit suites and the PureScript frontend unit suites" TestUnitCommand,
-            simpleCommand "test integration" "runs the cluster-backed integration suite against the active substrate" TestIntegrationCommand,
-            simpleCommand "test e2e" "runs routed Playwright coverage for every demo-visible generated catalog entry" TestE2ECommand,
-            simpleCommand "test all" "runs lint, unit, integration, and routed E2E validation in sequence" TestAllCommand
-          ]
-      },
-    CommandFamily
-      { familyTopic = "docs",
-        familyOverview = "validates the governed documentation suite and the development-plan shape",
-        familyCommands =
-          [ simpleCommand "docs check" "runs the canonical documentation validator" DocsCheckCommand
-          ]
-      },
-    CommandFamily
-      { familyTopic = "internal",
-        familyOverview = "runs build-time helpers for contract generation, chart discovery, substrate materialization, demo-config inspection, and Pulsar round-trip validation",
-        familyCommands =
-          [ singlePathCommand
-              "internal generate-purs-contracts PATH"
-              "emits generated PureScript browser contracts into the requested output directory"
-              InternalGeneratePursContractsCommand
-              ["internal", "generate-purs-contracts"],
-            singlePathCommand
-              "internal discover images RENDERED_CHART"
-              "prints the unique image references discovered in a rendered chart manifest"
-              InternalDiscoverImagesCommand
-              ["internal", "discover", "images"],
-            singlePathCommand
-              "internal discover claims RENDERED_CHART"
-              "prints the persistent-claim inventory discovered in a rendered chart manifest"
-              InternalDiscoverClaimsCommand
-              ["internal", "discover", "claims"],
-            singlePathCommand
-              "internal discover harbor-overlay OVERLAY"
-              "prints the Harbor-backed image references discovered in a rendered override payload"
-              InternalDiscoverHarborOverlayCommand
-              ["internal", "discover", "harbor-overlay"],
-            twoPathCommand
-              "internal publish-chart-images RENDERED_CHART OUTPUT"
-              "publishes the chart image inventory into a Harbor override file"
-              InternalPublishChartImagesCommand
-              ["internal", "publish-chart-images"],
-            CommandSpec
-              { commandUsageSuffix = "internal materialize-substrate RUNTIME_MODE [--demo-ui true|false]",
-                commandDescription = "writes the generated substrate file for one explicit substrate id into the active build root",
-                commandParse = \case
-                  ["internal", "materialize-substrate", rawRuntimeMode] ->
-                    flip InternalMaterializeSubstrateCommand True
-                      <$> parseRuntimeModeArg rawRuntimeMode
-                  ["internal", "materialize-substrate", rawRuntimeMode, "--demo-ui", rawDemoUiEnabled] ->
-                    InternalMaterializeSubstrateCommand
-                      <$> parseRuntimeModeArg rawRuntimeMode
-                      <*> parseDemoUiArg rawDemoUiEnabled
-                  _ -> Nothing
-              },
-            singlePathCommand
-              "internal demo-config load PATH"
-              "loads one generated demo config and prints the rendered model listing"
-              InternalDemoConfigLoadCommand
-              ["internal", "demo-config", "load"],
-            singlePathCommand
-              "internal demo-config validate PATH"
-              "validates one generated demo config file"
-              InternalDemoConfigValidateCommand
-              ["internal", "demo-config", "validate"],
-            CommandSpec
-              { commandUsageSuffix = "internal pulsar-roundtrip DEMO_CONFIG_PATH MODEL_ID INPUT_TEXT",
-                commandDescription = "publishes one inference request through Pulsar and waits for the matching result",
-                commandParse = \case
-                  ["internal", "pulsar-roundtrip", demoConfigPath, modelIdValue, inputTextValue] ->
-                    Just (InternalPulsarRoundTripCommand demoConfigPath modelIdValue inputTextValue)
-                  _ -> Nothing
-              }
-          ]
-      }
+  [ serviceCommandFamily,
+    clusterCommandFamily,
+    cacheCommandFamily,
+    kubectlCommandFamily,
+    lintCommandFamily,
+    testCommandFamily,
+    docsCommandFamily,
+    internalCommandFamily
   ]
+
+serviceCommandFamily :: CommandFamily
+serviceCommandFamily =
+  CommandFamily
+    { familyTopic = "service",
+      familyOverview = "starts the long-running production daemon that consumes Pulsar work and binds no HTTP port",
+      familyCommands =
+        [ simpleCommand
+            "service"
+            "starts the long-running production daemon; it binds no HTTP port and consumes the active `.dhall` request and result topics"
+            ServiceCommand
+        ]
+    }
+
+clusterCommandFamily :: CommandFamily
+clusterCommandFamily =
+  CommandFamily
+    { familyTopic = "cluster",
+      familyOverview = "reconciles or reports cluster state, lifecycle progress, generated substrate publication, and routed surfaces",
+      familyCommands =
+        [ simpleCommand "cluster up" "reconciles Kind, Harbor-first bootstrap, the generated substrate file, and routed publication state" ClusterUpCommand,
+          simpleCommand "cluster down" "tears the cluster down while leaving durable repo-local state under `./.data/` intact" ClusterDownCommand,
+          simpleCommand "cluster status" "reports cluster presence, lifecycle phase, active substrate, publication state, build paths, and route inventory; on Linux outer-container paths it may attach the launcher to Docker's `kind` network for observation" ClusterStatusCommand
+        ]
+    }
+
+cacheCommandFamily :: CommandFamily
+cacheCommandFamily =
+  CommandFamily
+    { familyTopic = "cache",
+      familyOverview = "inspects or reconciles manifest-backed derived cache state for the active substrate",
+      familyCommands =
+        [ simpleCommand "cache status" "reports the manifest-backed cache inventory for the active substrate" CacheStatusCommand,
+          optionalModelCommand
+            "cache evict [--model MODEL_ID]"
+            "evicts derived cache state for one model or for the whole active substrate"
+            CacheEvictCommand,
+          optionalModelCommand
+            "cache rebuild [--model MODEL_ID]"
+            "rebuilds derived cache state from durable manifests for one model or for the whole active substrate"
+            CacheRebuildCommand
+        ]
+    }
+
+kubectlCommandFamily :: CommandFamily
+kubectlCommandFamily =
+  CommandFamily
+    { familyTopic = "kubectl",
+      familyOverview = "proxies upstream Kubernetes access through the repo-local kubeconfig",
+      familyCommands =
+        [ CommandSpec
+            { commandUsageSuffix = "kubectl ...",
+              commandDescription = "wraps upstream `kubectl` and injects the repo-local kubeconfig for the active control-plane context",
+              commandParse = \case
+                "kubectl" : kubectlArgs -> Just (KubectlCommand kubectlArgs)
+                _ -> Nothing
+            }
+        ]
+    }
+
+lintCommandFamily :: CommandFamily
+lintCommandFamily =
+  CommandFamily
+    { familyTopic = "lint",
+      familyOverview = "runs the focused Haskell-owned static checks for files, docs, `.proto`, and chart assets",
+      familyCommands =
+        [ simpleCommand "lint files" "runs the tracked-file and generated-artifact hygiene checks" LintFilesCommand,
+          simpleCommand "lint docs" "runs the governed documentation validator" LintDocsCommand,
+          simpleCommand "lint proto" "runs the protobuf contract validator" LintProtoCommand,
+          simpleCommand "lint chart" "runs the Helm and chart ownership validator" LintChartCommand
+        ]
+    }
+
+testCommandFamily :: CommandFamily
+testCommandFamily =
+  CommandFamily
+    { familyTopic = "test",
+      familyOverview = "runs the aggregate validation entrypoints for lint, unit, integration, routed E2E, and the full suite",
+      familyCommands =
+        [ simpleCommand "test lint" "runs the focused lint entrypoints together with the strict Haskell style and Python quality gates" TestLintCommand,
+          simpleCommand "test unit" "runs the Haskell unit suites and the PureScript frontend unit suites" TestUnitCommand,
+          simpleCommand "test integration" "runs the cluster-backed integration suite against the active substrate" TestIntegrationCommand,
+          simpleCommand "test e2e" "runs routed Playwright coverage for every demo-visible generated catalog entry" TestE2ECommand,
+          simpleCommand "test all" "runs lint, unit, integration, and routed E2E validation in sequence" TestAllCommand
+        ]
+    }
+
+docsCommandFamily :: CommandFamily
+docsCommandFamily =
+  CommandFamily
+    { familyTopic = "docs",
+      familyOverview = "validates the governed documentation suite and the development-plan shape",
+      familyCommands =
+        [ simpleCommand "docs check" "runs the canonical documentation validator" DocsCheckCommand
+        ]
+    }
+
+internalCommandFamily :: CommandFamily
+internalCommandFamily =
+  CommandFamily
+    { familyTopic = "internal",
+      familyOverview = "runs build-time helpers for contract generation, chart discovery, substrate materialization, demo-config inspection, and Pulsar round-trip validation",
+      familyCommands =
+        [ singlePathCommand
+            "internal generate-purs-contracts PATH"
+            "emits generated PureScript browser contracts into the requested output directory"
+            InternalGeneratePursContractsCommand
+            ["internal", "generate-purs-contracts"],
+          singlePathCommand
+            "internal discover images RENDERED_CHART"
+            "prints the unique image references discovered in a rendered chart manifest"
+            InternalDiscoverImagesCommand
+            ["internal", "discover", "images"],
+          singlePathCommand
+            "internal discover claims RENDERED_CHART"
+            "prints the persistent-claim inventory discovered in a rendered chart manifest"
+            InternalDiscoverClaimsCommand
+            ["internal", "discover", "claims"],
+          singlePathCommand
+            "internal discover harbor-overlay OVERLAY"
+            "prints the Harbor-backed image references discovered in a rendered override payload"
+            InternalDiscoverHarborOverlayCommand
+            ["internal", "discover", "harbor-overlay"],
+          twoPathCommand
+            "internal publish-chart-images RENDERED_CHART OUTPUT"
+            "publishes the chart image inventory into a Harbor override file"
+            InternalPublishChartImagesCommand
+            ["internal", "publish-chart-images"],
+          materializeSubstrateCommand,
+          singlePathCommand
+            "internal demo-config load PATH"
+            "loads one generated demo config and prints the rendered model listing"
+            InternalDemoConfigLoadCommand
+            ["internal", "demo-config", "load"],
+          singlePathCommand
+            "internal demo-config validate PATH"
+            "validates one generated demo config file"
+            InternalDemoConfigValidateCommand
+            ["internal", "demo-config", "validate"],
+          pulsarRoundTripCommand
+        ]
+    }
+
+materializeSubstrateCommand :: CommandSpec
+materializeSubstrateCommand =
+  CommandSpec
+    { commandUsageSuffix = "internal materialize-substrate RUNTIME_MODE [--demo-ui true|false]",
+      commandDescription = "writes the generated substrate file for one explicit substrate id into the active build root",
+      commandParse = \case
+        ["internal", "materialize-substrate", rawRuntimeMode] ->
+          flip InternalMaterializeSubstrateCommand True
+            <$> parseRuntimeModeArg rawRuntimeMode
+        ["internal", "materialize-substrate", rawRuntimeMode, "--demo-ui", rawDemoUiEnabled] ->
+          InternalMaterializeSubstrateCommand
+            <$> parseRuntimeModeArg rawRuntimeMode
+            <*> parseDemoUiArg rawDemoUiEnabled
+        _ -> Nothing
+    }
+
+pulsarRoundTripCommand :: CommandSpec
+pulsarRoundTripCommand =
+  CommandSpec
+    { commandUsageSuffix = "internal pulsar-roundtrip DEMO_CONFIG_PATH MODEL_ID INPUT_TEXT",
+      commandDescription = "publishes one inference request through Pulsar and waits for the matching result",
+      commandParse = \case
+        ["internal", "pulsar-roundtrip", demoConfigPath, modelIdValue, inputTextValue] ->
+          Just (InternalPulsarRoundTripCommand demoConfigPath modelIdValue inputTextValue)
+        _ -> Nothing
+    }
 
 allCommandSpecs :: [CommandSpec]
 allCommandSpecs = concatMap familyCommands commandFamilies

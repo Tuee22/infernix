@@ -81,6 +81,8 @@ data DemoBridgeMode
   | PulsarDaemonBridge
   deriving (Eq, Show)
 
+type InferenceResponse = Either (Status, ErrorResponse) InferenceResult
+
 runDemoApiServer :: DemoApiOptions -> IO ()
 runDemoApiServer options = do
   -- Fail fast when the generated catalog is invalid so cluster/test flows surface the error early.
@@ -166,41 +168,63 @@ handleInference options request respond = do
           handleInferenceViaPulsar options activeRuntimeMode inferenceRequest respond
 
 handleInferenceViaPulsar :: DemoApiOptions -> RuntimeMode -> InferenceRequest -> (Response -> IO responseReceived) -> IO responseReceived
-handleInferenceViaPulsar options runtimeMode inferenceRequest respond =
+handleInferenceViaPulsar options runtimeMode inferenceRequest respond = do
+  inferenceResponse <- runPulsarInference options runtimeMode inferenceRequest
+  respond $
+    case inferenceResponse of
+      Left (responseStatus, err) -> jsonResponse responseStatus err
+      Right resultValue -> jsonResponse status200 resultValue
+
+runPulsarInference :: DemoApiOptions -> RuntimeMode -> InferenceRequest -> IO InferenceResponse
+runPulsarInference options runtimeMode inferenceRequest =
   case validateInferenceRequest runtimeMode inferenceRequest of
     Left err ->
-      respond (jsonResponse status400 err)
-    Right model -> do
-      demoConfig <- decodeDemoConfigFile (demoConfigPath options)
-      case requestTopics demoConfig of
-        [] ->
-          respond
-            ( jsonResponse
-                status500
-                (ErrorResponse "missing_request_topic" "The active demo config does not declare any request topics.")
+      pure (Left (status400, err))
+    Right model ->
+      runValidatedPulsarInference options runtimeMode model inferenceRequest
+
+runValidatedPulsarInference :: DemoApiOptions -> RuntimeMode -> ModelDescriptor -> InferenceRequest -> IO InferenceResponse
+runValidatedPulsarInference options runtimeMode model inferenceRequest = do
+  demoConfig <- decodeDemoConfigFile (demoConfigPath options)
+  case firstRequestTopic demoConfig of
+    Left err -> pure (Left err)
+    Right requestTopic -> do
+      materializeCache (demoPaths options) runtimeMode model
+      requestIdValue <- publishInferenceRequest (demoPaths options) runtimeMode requestTopic inferenceRequest
+      maybePublishedResult <- waitForPublishedResult (demoPaths options) runtimeMode (resultTopic demoConfig) requestIdValue
+      resolvePublishedInferenceResult options maybePublishedResult
+
+firstRequestTopic :: DemoConfig -> Either (Status, ErrorResponse) Text.Text
+firstRequestTopic demoConfig =
+  case requestTopics demoConfig of
+    requestTopic : _ -> Right requestTopic
+    [] ->
+      Left
+        ( status500,
+          ErrorResponse "missing_request_topic" "The active demo config does not declare any request topics."
+        )
+
+resolvePublishedInferenceResult :: DemoApiOptions -> Maybe InferenceResult -> IO InferenceResponse
+resolvePublishedInferenceResult options maybePublishedResult =
+  case maybePublishedResult of
+    Nothing ->
+      pure
+        ( Left
+            ( status500,
+              ErrorResponse "daemon_timeout" "The inference daemon did not publish a result in time."
             )
-        requestTopic : _ -> do
-          materializeCache (demoPaths options) runtimeMode model
-          requestIdValue <- publishInferenceRequest (demoPaths options) runtimeMode requestTopic inferenceRequest
-          maybePublishedResult <- waitForPublishedResult (demoPaths options) runtimeMode (resultTopic demoConfig) requestIdValue
-          case maybePublishedResult of
-            Nothing ->
-              respond
-                ( jsonResponse
-                    status500
-                    (ErrorResponse "daemon_timeout" "The inference daemon did not publish a result in time.")
-                )
-            Just publishedResult ->
-              if status publishedResult /= "completed"
-                then respond (jsonResponse status400 (publishedResultError publishedResult))
-                else do
-                  localizedResult <- localizePublishedResult options publishedResult
-                  case localizedResult of
-                    Left err ->
-                      respond (jsonResponse status500 err)
-                    Right resultValue -> do
-                      persistInferenceResult (demoPaths options) resultValue
-                      respond (jsonResponse status200 resultValue)
+        )
+    Just publishedResult
+      | status publishedResult /= "completed" ->
+          pure (Left (status400, publishedResultError publishedResult))
+      | otherwise -> do
+          localizedResult <- localizePublishedResult options publishedResult
+          case localizedResult of
+            Left err ->
+              pure (Left (status500, err))
+            Right resultValue -> do
+              persistInferenceResult (demoPaths options) resultValue
+              pure (Right resultValue)
 
 validateInferenceRequest :: RuntimeMode -> InferenceRequest -> Either ErrorResponse ModelDescriptor
 validateInferenceRequest runtimeMode inferenceRequest =

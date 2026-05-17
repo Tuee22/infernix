@@ -71,6 +71,10 @@ type PublishedImage = (String, String)
 
 type CommandMonitorFactory = String -> IO (Maybe ProcessMonitor.CommandMonitor)
 
+data PushAttemptResult
+  = PushSucceeded
+  | PushFailed String
+
 defaultHarborPublishOptions :: HarborPublishOptions
 defaultHarborPublishOptions =
   HarborPublishOptions
@@ -232,44 +236,56 @@ pushImageWithRetries manager options commandMonitorFactory sourceImage targetRef
   where
     (targetRepository, _, targetTag) = breakRepositoryAndTag targetRef
     repositoryPath = normalizeRepositoryPath targetRepository
+
     go remainingAttempts lastFailure
       | remainingAttempts <= 0 =
           failWith ("docker push failed for " <> targetRef <> "\n" <> lastFailure)
       | otherwise = do
-          let retryOrFail failureMessage = do
-                let attemptsUsed = pushAttempts - remainingAttempts + 1
-                if remainingAttempts > 1
-                  then do
-                    putStrLn
-                      ( "publish-chart-images: retrying docker push for "
-                          <> targetRef
-                          <> " after attempt "
-                          <> show attemptsUsed
-                          <> "/"
-                          <> show pushAttempts
-                          <> " failed"
-                      )
-                    ready <- registryReady manager (harborApiHost options)
-                    unless ready (waitForRegistry manager options)
-                    threadDelay (pushRetryDelayMicros attemptsUsed)
-                    go (remainingAttempts - 1) failureMessage
-                  else go 0 failureMessage
           waitForRegistry manager options
-          retagResult <- tryRunCommand "docker" ["tag", sourceImage, targetRef] ""
-          case retagResult of
-            Left tagFailure ->
-              retryOrFail ("docker tag failed for " <> sourceImage <> " as " <> targetRef <> "\n" <> tagFailure)
-            Right _ -> do
-              monitor <- commandMonitorFactory ("docker push " <> targetRef)
-              result <- tryRunCommandMaybeMonitored "docker" ["push", targetRef] "" monitor
-              case result of
-                Right _ -> pure ()
-                Left failureMessage -> do
-                  tagPresent <- harborTagExists manager options repositoryPath targetTag
-                  registryPullable <- registryPullSucceeds targetRef
-                  if tagPresent || registryPullable
-                    then pure ()
-                    else retryOrFail failureMessage
+          attemptResult <- pushImageOnce
+          case attemptResult of
+            PushSucceeded -> pure ()
+            PushFailed failureMessage ->
+              retryPush remainingAttempts failureMessage
+
+    pushImageOnce = do
+      retagResult <- tryRunCommand "docker" ["tag", sourceImage, targetRef] ""
+      case retagResult of
+        Left tagFailure ->
+          pure (PushFailed ("docker tag failed for " <> sourceImage <> " as " <> targetRef <> "\n" <> tagFailure))
+        Right _ -> do
+          monitor <- commandMonitorFactory ("docker push " <> targetRef)
+          pushResult <- tryRunCommandMaybeMonitored "docker" ["push", targetRef] "" monitor
+          case pushResult of
+            Right _ -> pure PushSucceeded
+            Left failureMessage -> recoverCompletedPush failureMessage
+
+    recoverCompletedPush failureMessage = do
+      tagPresent <- harborTagExists manager options repositoryPath targetTag
+      registryPullable <- registryPullSucceeds targetRef
+      pure $
+        if tagPresent || registryPullable
+          then PushSucceeded
+          else PushFailed failureMessage
+
+    retryPush remainingAttempts failureMessage =
+      if remainingAttempts > 1
+        then do
+          let attemptsUsed = pushAttempts - remainingAttempts + 1
+          putStrLn
+            ( "publish-chart-images: retrying docker push for "
+                <> targetRef
+                <> " after attempt "
+                <> show attemptsUsed
+                <> "/"
+                <> show pushAttempts
+                <> " failed"
+            )
+          ready <- registryReady manager (harborApiHost options)
+          unless ready (waitForRegistry manager options)
+          threadDelay (pushRetryDelayMicros attemptsUsed)
+          go (remainingAttempts - 1) failureMessage
+        else go 0 failureMessage
 
 prioritizePublishableImages :: [String] -> [String]
 prioritizePublishableImages imageRefs =
@@ -468,54 +484,44 @@ buildHarborOverridesValue publishedImages = do
   let minioClientImage = findPublishedImageWithSuffix "/minio-client:2025.7.21-debian-12-r2" publishedImages
       baseOverlay =
         object
-          [ "service"
-              .= object
-                [ "image" .= renderRepoOwnedImage runtimeImage
-                ],
-            "demo"
-              .= object
-                [ "image" .= renderRepoOwnedImage runtimeImage
-                ],
+          [ "service" .= workloadImageOverlay runtimeImage,
+            "demo" .= workloadImageOverlay runtimeImage,
             "minio"
               .= minioObject minioImage minioShellImage minioConsoleImage minioClientImage,
             "pulsar"
-              .= object
-                [ "defaultPulsarImageRepository" .= fst pulsarImage,
-                  "defaultPulsarImageTag" .= snd pulsarImage,
-                  "defaultPullPolicy" .= ("IfNotPresent" :: String)
-                ],
+              .= pulsarImageOverlay pulsarImage,
             "postgresOperator"
-              .= object
-                [ "image" .= renderRepositoryAndTag postgresOperatorPublished,
-                  "imagePullPolicy" .= ("IfNotPresent" :: String)
-                ],
+              .= postgresOperatorOverlay postgresOperatorPublished,
             "harborpg"
-              .= object
-                [ "image" .= renderRepositoryAndTag postgresDatabasePublished,
-                  "imagePullPolicy" .= ("IfNotPresent" :: String),
-                  "backups"
-                    .= object
-                      [ "pgbackrest"
-                          .= object
-                            [ "image" .= renderRepositoryAndTag postgresPgBackRestPublished
-                            ]
-                      ],
-                  "proxy"
-                    .= object
-                      [ "pgBouncer"
-                          .= object
-                            [ "image" .= renderRepositoryAndTag postgresPgBouncerPublished
-                            ]
-                      ]
-                ]
+              .= harborPostgresOverlay postgresDatabasePublished postgresPgBackRestPublished postgresPgBouncerPublished
           ]
   pure baseOverlay
   where
+    workloadImageOverlay imageValue =
+      object ["image" .= renderRepoOwnedImage imageValue]
     renderRepoOwnedImage (repository, tagValue) =
       object
         [ "repository" .= repository,
           "tag" .= tagValue,
           "pullPolicy" .= ("IfNotPresent" :: String)
+        ]
+    pulsarImageOverlay (repository, tagValue) =
+      object
+        [ "defaultPulsarImageRepository" .= repository,
+          "defaultPulsarImageTag" .= tagValue,
+          "defaultPullPolicy" .= ("IfNotPresent" :: String)
+        ]
+    postgresOperatorOverlay published =
+      object
+        [ "image" .= renderRepositoryAndTag published,
+          "imagePullPolicy" .= ("IfNotPresent" :: String)
+        ]
+    harborPostgresOverlay databasePublished pgBackRestPublished pgBouncerPublished =
+      object
+        [ "image" .= renderRepositoryAndTag databasePublished,
+          "imagePullPolicy" .= ("IfNotPresent" :: String),
+          "backups" .= object ["pgbackrest" .= object ["image" .= renderRepositoryAndTag pgBackRestPublished]],
+          "proxy" .= object ["pgBouncer" .= object ["image" .= renderRepositoryAndTag pgBouncerPublished]]
         ]
     minioObject minioPublished minioShellPublished minioConsolePublished maybeMinioClientPublished =
       let baseObject =
