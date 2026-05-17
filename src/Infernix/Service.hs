@@ -53,7 +53,7 @@ resolveServiceDaemonRole maybeDaemonRoleOverride demoConfig =
 ensureServiceRuntimeSupported :: Paths -> RuntimeMode -> DaemonRole -> IO ()
 ensureServiceRuntimeSupported paths runtimeMode daemonRole =
   case (controlPlaneContext paths, runtimeMode, daemonRole) of
-    ("outer-container", AppleSilicon, ClusterDaemon) -> pure ()
+    (OuterContainer, AppleSilicon, ClusterDaemon) -> pure ()
     _ -> ensureSupportedRuntimeModeForExecutionContext paths runtimeMode
 
 whenAppleRuntimeReady :: Paths -> RuntimeMode -> DaemonRole -> IO ()

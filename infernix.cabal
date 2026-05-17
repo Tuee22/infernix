@@ -35,7 +35,9 @@ library
         Infernix.DemoCLI
         Infernix.DemoConfig
         Infernix.Engines.AppleSilicon
+        Infernix.Error
         Infernix.HostPrereqs
+        Infernix.Internal.Util
         Infernix.Lint.Chart
         Infernix.Lint.Docs
         Infernix.Lint.Files

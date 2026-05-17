@@ -8,8 +8,11 @@ module Infernix.Python
   )
 where
 
+import Control.Exception (throwIO)
 import Control.Monad (unless)
-import Infernix.Config (Paths (..), controlPlaneContext)
+import Infernix.Config (ControlPlaneContext (HostNative), Paths (..), controlPlaneContext)
+import Infernix.Error (InfernixError (..))
+import Infernix.Internal.Util (allM, findFirstM, firstJustM)
 import Infernix.Types (RuntimeMode)
 import System.Directory
   ( createDirectoryIfMissing,
@@ -39,27 +42,23 @@ pythonAdaptersPresent projectDirectory = do
 
 ensurePoetryExecutable :: Paths -> IO FilePath
 ensurePoetryExecutable paths = do
-  maybeOverride <- lookupEnv "INFERNIX_POETRY_EXECUTABLE"
-  case maybeOverride of
+  candidate <-
+    firstJustM
+      [ lookupEnv "INFERNIX_POETRY_EXECUTABLE",
+        findExecutable "poetry"
+      ]
+  case candidate of
     Just executablePath -> pure executablePath
-    Nothing -> do
-      maybePathExecutable <- findOnPath "poetry"
-      case maybePathExecutable of
-        Just executablePath -> pure executablePath
-        Nothing ->
-          if os == "darwin" && controlPlaneContext paths == "host-native"
-            then bootstrapPoetryOnAppleHost
-            else
-              ioError
-                ( userError
-                    "poetry is not available on PATH. The supported non-Apple paths provide Poetry inside the shared Linux substrate images."
-                )
+    Nothing
+      | os == "darwin" && controlPlaneContext paths == HostNative ->
+          bootstrapPoetryOnAppleHost
+      | otherwise -> throwIO PoetryUnavailable
 
 ensurePoetryProjectReady :: Paths -> FilePath -> IO ()
 ensurePoetryProjectReady paths projectDirectory = do
   projectPresent <- doesDirectoryExist projectDirectory
   if not projectPresent
-    then ioError (userError ("python substrate project is missing: " <> projectDirectory))
+    then throwIO (PythonProjectMissing projectDirectory)
     else do
       let projectVenv = projectDirectory </> ".venv"
       venvPresent <- doesDirectoryExist projectVenv
@@ -138,20 +137,17 @@ runPoetryCommand paths projectDirectory args failurePrefix = do
   case exitCode of
     ExitSuccess -> pure ()
     _ ->
-      ioError
-        ( userError
-            ( failurePrefix
-                <> "\nproject: "
-                <> projectDirectory
-                <> "\n"
-                <> stderrOutput
-            )
-        )
+      throwIO
+        ProcessFailure
+          { processName = failurePrefix,
+            processStderr = stderrOutput,
+            processCwd = Just projectDirectory
+          }
 
 bootstrapPoetryOnAppleHost :: IO FilePath
 bootstrapPoetryOnAppleHost = do
   candidatePaths <- poetryCandidatePaths
-  maybeExisting <- firstExistingPath candidatePaths
+  maybeExisting <- findFirstM doesFileExist candidatePaths
   maybe installPoetryOnAppleHost activatePoetryExecutable maybeExisting
 
 installPoetryOnAppleHost :: IO FilePath
@@ -175,14 +171,12 @@ createPoetryBootstrapVenv pythonExecutable poetryVenv = do
   case exitCode of
     ExitSuccess -> pure ()
     _ ->
-      ioError
-        ( userError
-            ( "failed to create the Apple host Poetry bootstrap venv with "
-                <> pythonExecutable
-                <> "\n"
-                <> stderrOutput
-            )
-        )
+      throwIO
+        ProcessFailure
+          { processName = "failed to create the Apple host Poetry bootstrap venv with " <> pythonExecutable,
+            processStderr = stderrOutput,
+            processCwd = Nothing
+          }
 
 installPoetryIntoBootstrapVenv :: FilePath -> IO ()
 installPoetryIntoBootstrapVenv poetryPython = do
@@ -193,17 +187,17 @@ installPoetryIntoBootstrapVenv poetryPython = do
   case exitCode of
     ExitSuccess -> pure ()
     _ ->
-      ioError
-        ( userError
-            ( "failed to install Poetry into the Apple host bootstrap venv\n"
-                <> stderrOutput
-            )
-        )
+      throwIO
+        ProcessFailure
+          { processName = "failed to install Poetry into the Apple host bootstrap venv",
+            processStderr = stderrOutput,
+            processCwd = Nothing
+          }
 
 resolveInstalledPoetry :: FilePath -> IO FilePath
 resolveInstalledPoetry poetryExecutable = do
   refreshedCandidatePaths <- poetryCandidatePaths
-  maybeInstalled <- firstExistingPath refreshedCandidatePaths
+  maybeInstalled <- findFirstM doesFileExist refreshedCandidatePaths
   case maybeInstalled of
     Just installedExecutable -> activatePoetryExecutable installedExecutable
     Nothing -> do
@@ -218,7 +212,7 @@ resolveInstalledPoetry poetryExecutable = do
 
 activatePoetryExecutable :: FilePath -> IO FilePath
 activatePoetryExecutable executablePath = do
-  prependDirectoryToPath (directoryOf executablePath)
+  prependDirectoryToPath (takeDirectory executablePath)
   pure executablePath
 
 requireAppleBootstrapPython :: IO FilePath
@@ -271,12 +265,6 @@ prependDirectoryToPath directoryPath = do
             | otherwise -> directoryPath <> ":" <> currentPath
   setEnv "PATH" updatedPath
 
-findOnPath :: FilePath -> IO (Maybe FilePath)
-findOnPath = findExecutable
-
-directoryOf :: FilePath -> FilePath
-directoryOf = takeDirectory
-
 pythonSupportsApplePoetryBootstrap :: FilePath -> IO Bool
 pythonSupportsApplePoetryBootstrap executablePath = do
   (exitCode, _, _) <-
@@ -288,7 +276,7 @@ pythonSupportsApplePoetryBootstrap executablePath = do
 firstCompatibleCommandOnPath :: [FilePath] -> IO (Maybe FilePath)
 firstCompatibleCommandOnPath [] = pure Nothing
 firstCompatibleCommandOnPath (commandName : remainingNames) = do
-  maybeExecutable <- findOnPath commandName
+  maybeExecutable <- findExecutable commandName
   case maybeExecutable of
     Just executablePath -> do
       compatible <- pythonSupportsApplePoetryBootstrap executablePath
@@ -308,24 +296,6 @@ firstCompatiblePath (pathValue : remainingPaths) = do
       if compatible
         then pure (Just pathValue)
         else firstCompatiblePath remainingPaths
-
-firstExistingPath :: [FilePath] -> IO (Maybe FilePath)
-firstExistingPath [] = pure Nothing
-firstExistingPath (pathValue : remainingPaths) = do
-  exists <- doesFileExist pathValue
-  if exists
-    then pure (Just pathValue)
-    else firstExistingPath remainingPaths
-
-allM :: (a -> IO Bool) -> [a] -> IO Bool
-allM predicate = go
-  where
-    go [] = pure True
-    go (value : rest) = do
-      matches <- predicate value
-      if matches
-        then go rest
-        else pure False
 
 listVisibleEntries :: FilePath -> IO [FilePath]
 listVisibleEntries directoryPath = do

@@ -1,6 +1,9 @@
 module Infernix.Config
-  ( Paths (..),
+  ( ControlPlaneContext (..),
+    Paths (..),
     controlPlaneContext,
+    controlPlaneContextId,
+    parseControlPlaneContext,
     discoverPaths,
     ensureSupportedRuntimeModeForExecutionContext,
     ensureRepoLayout,
@@ -107,16 +110,30 @@ ensureRepoLayout paths =
       modelCacheRoot paths
     ]
 
-controlPlaneContext :: Paths -> String
+data ControlPlaneContext
+  = HostNative
+  | OuterContainer
+  deriving (Eq, Ord, Read, Show)
+
+controlPlaneContextId :: ControlPlaneContext -> String
+controlPlaneContextId HostNative = "host-native"
+controlPlaneContextId OuterContainer = "outer-container"
+
+parseControlPlaneContext :: String -> Maybe ControlPlaneContext
+parseControlPlaneContext "host-native" = Just HostNative
+parseControlPlaneContext "outer-container" = Just OuterContainer
+parseControlPlaneContext _ = Nothing
+
+controlPlaneContext :: Paths -> ControlPlaneContext
 controlPlaneContext paths
-  | normalise (buildRoot paths) == normalise (repoRoot paths </> ".build") = "host-native"
-  | otherwise = "outer-container"
+  | normalise (buildRoot paths) == normalise (repoRoot paths </> ".build") = HostNative
+  | otherwise = OuterContainer
 
 ensureSupportedRuntimeModeForExecutionContext :: Paths -> RuntimeMode -> IO ()
 ensureSupportedRuntimeModeForExecutionContext paths runtimeMode =
   case (controlPlaneContext paths, runtimeMode) of
-    ("host-native", AppleSilicon) -> pure ()
-    ("host-native", _) ->
+    (HostNative, AppleSilicon) -> pure ()
+    (HostNative, _) ->
       ioError
         ( userError
             ( unlines
@@ -127,7 +144,7 @@ ensureSupportedRuntimeModeForExecutionContext paths runtimeMode =
                 ]
             )
         )
-    ("outer-container", AppleSilicon) ->
+    (OuterContainer, AppleSilicon) ->
       ioError
         ( userError
             ( unlines
@@ -137,13 +154,12 @@ ensureSupportedRuntimeModeForExecutionContext paths runtimeMode =
                 ]
             )
         )
-    ("outer-container", _) -> pure ()
-    _ -> pure ()
+    (OuterContainer, _) -> pure ()
 
 generatedKubeconfigPath :: Paths -> FilePath
-generatedKubeconfigPath paths
-  | controlPlaneContext paths == "outer-container" = runtimeRoot paths </> "infernix.kubeconfig"
-  | otherwise = buildRoot paths </> "infernix.kubeconfig"
+generatedKubeconfigPath paths = case controlPlaneContext paths of
+  OuterContainer -> runtimeRoot paths </> "infernix.kubeconfig"
+  HostNative -> buildRoot paths </> "infernix.kubeconfig"
 
 generatedDemoConfigPath :: Paths -> FilePath
 generatedDemoConfigPath = generatedSubstratePath

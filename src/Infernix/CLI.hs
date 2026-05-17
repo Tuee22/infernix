@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module Infernix.CLI
   ( main,
@@ -8,7 +9,7 @@ where
 
 import Control.Applicative ((<|>))
 import Control.Concurrent (threadDelay)
-import Control.Exception (IOException, catch, evaluate, finally, try)
+import Control.Exception (IOException, catch, evaluate, finally, throwIO, try)
 import Control.Monad (when)
 import Data.Aeson (Value (..), eitherDecode)
 import Data.Aeson.Key qualified as Key
@@ -30,6 +31,7 @@ import Infernix.DemoConfig
     renderModelListing,
     validateDemoConfigFile,
   )
+import Infernix.Error (InfernixError (EdgePortNotPublished))
 import Infernix.HostPrereqs (ensureAppleHostPrerequisites)
 import Infernix.Lint.Chart (runChartLint)
 import Infernix.Lint.Docs (runDocsLint)
@@ -221,11 +223,11 @@ runRuntimeModeE2E paths runtimeMode =
       edgePort <-
         case maybePort of
           Just port -> pure port
-          Nothing -> ioError (userError "edge port was not published after cluster up")
+          Nothing -> throwIO EdgePortNotPublished
       let expectedDaemonLocation = Text.unpack (expectedDaemonLocationForRuntime runtimeMode)
           expectedInferenceExecutorLocation = Text.unpack (expectedInferenceExecutorLocationForRuntime runtimeMode)
       withRuntimeServiceDaemonIfNeeded paths runtimeMode $
-        if controlPlaneContext paths == "host-native"
+        if controlPlaneContext paths == HostNative
           then
             runPlaywrightImage
               runtimeMode
@@ -421,7 +423,7 @@ printCacheManifest manifest =
 withRuntimeServiceDaemonIfNeeded :: Paths -> RuntimeMode -> IO a -> IO a
 withRuntimeServiceDaemonIfNeeded paths runtimeMode action =
   case (controlPlaneContext paths, runtimeMode) of
-    ("host-native", AppleSilicon) -> withRuntimeServiceDaemon paths action
+    (HostNative, AppleSilicon) -> withRuntimeServiceDaemon paths action
     _ -> action
 
 withRuntimeServiceDaemon :: Paths -> IO a -> IO a
@@ -467,7 +469,7 @@ writeGeneratedPursContracts runtimeMode outputDir = do
       outputFile = generatedDir </> "Contracts.purs"
       bridgeSwitch = noLenses <> noArgonautCodecs
   createDirectoryIfMissing True generatedDir
-  removePathForcibly tempGeneratedRoot `catchAnyIOException` (\_ -> pure ())
+  removePathForcibly tempGeneratedRoot `catch` (\(_ :: IOException) -> pure ())
   createDirectoryIfMissing True tempGeneratedRoot
   writePSTypesWith bridgeSwitch tempGeneratedRoot (buildBridge (contractArrayBridge <|> defaultBridge)) Contracts.contractSumTypes
   normalizeGeneratedPursContracts runtimeMode generatedSourceFile outputFile
@@ -501,9 +503,6 @@ normalizeGeneratedPursContracts runtimeMode sourceFile outputFile = do
             || "import Data.Generic " `isPrefixOf` line
             || "derive instance generic" `isPrefixOf` line
         )
-
-catchAnyIOException :: IO () -> (IOException -> IO ()) -> IO ()
-catchAnyIOException = catch
 
 runCommand :: Maybe RuntimeMode -> FilePath -> [String] -> IO ()
 runCommand maybeRuntimeMode command args = do
@@ -601,7 +600,7 @@ runPythonQualityIfPresent maybeRuntimeMode = do
   let projectDirectory = pythonProjectDirectory paths runtimeMode
   adaptersPresent <- pythonAdaptersPresent projectDirectory
   when adaptersPresent $ do
-    ensurePythonQualityDependencies paths projectDirectory
+    ensurePoetryProjectReady paths projectDirectory
     poetryExecutable <- ensurePoetryExecutable paths
     runCommandWithCwdAndEnv
       maybeRuntimeMode
@@ -617,10 +616,7 @@ ensurePythonAdapterDependencies maybeRuntimeMode = do
   let projectDirectory = pythonProjectDirectory paths runtimeMode
   adaptersPresent <- pythonAdaptersPresent projectDirectory
   when adaptersPresent $ do
-    ensurePythonQualityDependencies paths projectDirectory
-
-ensurePythonQualityDependencies :: Paths -> FilePath -> IO ()
-ensurePythonQualityDependencies = ensurePoetryProjectReady
+    ensurePoetryProjectReady paths projectDirectory
 
 syncBuildRootExecutable :: IO ()
 syncBuildRootExecutable = do

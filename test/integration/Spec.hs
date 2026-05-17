@@ -56,7 +56,7 @@ main = do
       validateDemoUiDisabled paths LinuxCpu
     case runtimeModes of
       runtimeMode : _
-        | Config.controlPlaneContext paths /= "outer-container" ->
+        | Config.controlPlaneContext paths /= Config.OuterContainer ->
             validateEdgePortConflictAndRediscovery paths runtimeMode
       _ -> pure ()
     putStrLn "integration tests passed"
@@ -483,7 +483,7 @@ routeBaseUrl paths state =
 
 routeProbeHostAndPort :: Paths -> ClusterState -> (String, Int)
 routeProbeHostAndPort paths state
-  | Config.controlPlaneContext paths == "outer-container" =
+  | Config.controlPlaneContext paths == Config.OuterContainer =
       (kindControlPlaneNodeName paths (clusterRuntimeMode state), 30090)
   | otherwise = ("127.0.0.1", edgePort state)
 
@@ -655,7 +655,7 @@ withRuntimeServiceDaemonIfNeeded paths runtimeMode action
 
 requiresHostServiceHarness :: Paths -> RuntimeMode -> Bool
 requiresHostServiceHarness paths runtimeMode =
-  Config.controlPlaneContext paths /= "outer-container" && runtimeMode == AppleSilicon
+  Config.controlPlaneContext paths /= Config.OuterContainer && runtimeMode == AppleSilicon
 
 withRuntimeServiceDaemon :: Paths -> IO a -> IO a
 withRuntimeServiceDaemon paths action = do

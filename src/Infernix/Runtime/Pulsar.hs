@@ -42,6 +42,7 @@ import Data.Text.IO qualified as TextIO
 import Data.Time (defaultTimeLocale, formatTime, getCurrentTime)
 import Infernix.Config
 import Infernix.DemoConfig (decodeDemoConfigFile)
+import Infernix.Error (InfernixError (InvalidControlPlaneOverride))
 import Infernix.Runtime (executeInference)
 import Infernix.Storage (readEdgePortMaybe)
 import Infernix.Types
@@ -128,14 +129,18 @@ instance FromJSON HostDiscoveredPublication where
 
 runProductionDaemon :: Paths -> RuntimeMode -> IO ()
 runProductionDaemon paths runtimeMode = do
-  maybeControlPlaneOverride <- lookupEnv "INFERNIX_CONTROL_PLANE_CONTEXT"
+  maybeControlPlaneOverrideRaw <- lookupEnv "INFERNIX_CONTROL_PLANE_CONTEXT"
   maybeDaemonRoleOverride <- lookupEnv "INFERNIX_DAEMON_ROLE"
   maybeDaemonLocationOverride <- lookupEnv "INFERNIX_DAEMON_LOCATION"
   maybeCatalogSourceOverride <- lookupEnv "INFERNIX_CATALOG_SOURCE"
   maybeDemoConfigOverride <- lookupEnv "INFERNIX_DEMO_CONFIG_PATH"
   maybeTransport <- discoverPulsarTransport paths runtimeMode
-  let controlPlane = fromMaybe (controlPlaneContext paths) maybeControlPlaneOverride
-      catalogSource =
+  controlPlane <- case maybeControlPlaneOverrideRaw of
+    Nothing -> pure (controlPlaneContext paths)
+    Just rawOverride -> case parseControlPlaneContext rawOverride of
+      Just parsedOverride -> pure parsedOverride
+      Nothing -> throwIO (InvalidControlPlaneOverride rawOverride)
+  let catalogSource =
         fromMaybe
           ( case maybeDemoConfigOverride of
               Just _ -> "env-config-override"
@@ -151,7 +156,7 @@ runProductionDaemon paths runtimeMode = do
         fromMaybe
           (Text.unpack (daemonConfigLocation daemonConfig))
           maybeDaemonLocationOverride
-  putStrLn ("serviceControlPlaneContext: " <> controlPlane)
+  putStrLn ("serviceControlPlaneContext: " <> controlPlaneContextId controlPlane)
   putStrLn ("serviceDaemonRole: " <> Text.unpack (daemonRoleId daemonRole))
   putStrLn ("serviceDaemonLocation: " <> daemonLocation)
   putStrLn ("serviceCatalogSource: " <> catalogSource)
@@ -342,7 +347,7 @@ discoverPulsarTransport paths runtimeMode = do
   case trimWhitespace =<< maybeWebSocketBase of
     Nothing ->
       case (controlPlaneContext paths, runtimeMode) of
-        ("host-native", AppleSilicon) -> discoverAppleHostPulsarTransport paths
+        (HostNative, AppleSilicon) -> discoverAppleHostPulsarTransport paths
         _ -> pure Nothing
     Just rawWebSocketBase ->
       case parsePulsarWebSocketBase rawWebSocketBase of

@@ -127,7 +127,7 @@ materializeCache paths runtimeMode model = do
                 "  \"artifactType\": " <> jsonString (artifactType model) <> ",",
                 "  \"referenceModel\": " <> jsonString (referenceModel model) <> ",",
                 "  \"selectedEngine\": " <> jsonString (selectedEngine model) <> ",",
-                "  \"runtimeLane\": " <> jsonString (runtimeLane model) <> ",",
+                "  \"runtimeLane\": " <> jsonString (runtimeLaneId (runtimeLane model)) <> ",",
                 "  \"sourceDownloadUrl\": " <> jsonString (downloadUrl model) <> ",",
                 "  \"engineAdapterId\": " <> jsonString (engineBindingAdapterId engineBinding) <> ",",
                 "  \"engineAdapterType\": " <> jsonString (engineBindingAdapterType engineBinding) <> ",",

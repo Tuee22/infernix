@@ -2,6 +2,7 @@
 
 module Infernix.Types
   ( ApiUpstream (..),
+    ApiUpstreamMode (..),
     CacheManifest (..),
     ClusterState (..),
     DaemonConfig (..),
@@ -15,13 +16,24 @@ module Infernix.Types
     ModelDescriptor (..),
     PersistentClaim (..),
     PublicationUpstream (..),
+    PulsarConnectionMode (..),
     RequestField (..),
+    RequestFieldType (..),
     ResultPayload (..),
     RouteInfo (..),
+    RuntimeLane (..),
     RuntimeMode (..),
     allRuntimeModes,
+    apiUpstreamModeId,
     daemonRoleId,
+    parseApiUpstreamMode,
+    parsePulsarConnectionMode,
+    parseRequestFieldType,
+    parseRuntimeLane,
     parseRuntimeMode,
+    pulsarConnectionModeId,
+    requestFieldTypeId,
+    runtimeLaneId,
     runtimeModeId,
   )
 where
@@ -100,6 +112,36 @@ instance FromJSON DaemonRole where
       Just daemonRole -> pure daemonRole
       Nothing -> fail ("Unsupported daemon role: " <> Text.unpack rawValue)
 
+data RuntimeLane
+  = AppleSiliconHost
+  | KindLinuxCpu
+  | KindLinuxGpuGpu
+  | KindLinuxGpuShared
+  deriving (Eq, Ord, Read, Show)
+
+runtimeLaneId :: RuntimeLane -> Text
+runtimeLaneId AppleSiliconHost = "apple-silicon-host"
+runtimeLaneId KindLinuxCpu = "kind-linux-cpu"
+runtimeLaneId KindLinuxGpuGpu = "kind-linux-gpu-gpu"
+runtimeLaneId KindLinuxGpuShared = "kind-linux-gpu-shared"
+
+parseRuntimeLane :: Text -> Maybe RuntimeLane
+parseRuntimeLane rawValue = case Text.toLower rawValue of
+  "apple-silicon-host" -> Just AppleSiliconHost
+  "kind-linux-cpu" -> Just KindLinuxCpu
+  "kind-linux-gpu-gpu" -> Just KindLinuxGpuGpu
+  "kind-linux-gpu-shared" -> Just KindLinuxGpuShared
+  _ -> Nothing
+
+instance ToJSON RuntimeLane where
+  toJSON = String . runtimeLaneId
+
+instance FromJSON RuntimeLane where
+  parseJSON = withText "RuntimeLane" $ \rawValue ->
+    case parseRuntimeLane rawValue of
+      Just runtimeLane -> pure runtimeLane
+      Nothing -> fail ("Unsupported runtime lane: " <> Text.unpack rawValue)
+
 data RouteInfo = RouteInfo
   { path :: Text,
     purpose :: Text
@@ -142,8 +184,32 @@ data ClusterState = ClusterState
   }
   deriving (Eq, Read, Show)
 
+data ApiUpstreamMode
+  = ClusterDemoUpstream
+  | DisabledUpstream
+  deriving (Eq, Ord, Read, Show)
+
+apiUpstreamModeId :: ApiUpstreamMode -> Text
+apiUpstreamModeId ClusterDemoUpstream = "cluster-demo"
+apiUpstreamModeId DisabledUpstream = "disabled"
+
+parseApiUpstreamMode :: Text -> Maybe ApiUpstreamMode
+parseApiUpstreamMode rawValue = case Text.toLower rawValue of
+  "cluster-demo" -> Just ClusterDemoUpstream
+  "disabled" -> Just DisabledUpstream
+  _ -> Nothing
+
+instance ToJSON ApiUpstreamMode where
+  toJSON = String . apiUpstreamModeId
+
+instance FromJSON ApiUpstreamMode where
+  parseJSON = withText "ApiUpstreamMode" $ \rawValue ->
+    case parseApiUpstreamMode rawValue of
+      Just upstreamMode -> pure upstreamMode
+      Nothing -> fail ("Unsupported API upstream mode: " <> Text.unpack rawValue)
+
 data ApiUpstream = ApiUpstream
-  { apiUpstreamMode :: Text,
+  { apiUpstreamMode :: ApiUpstreamMode,
     apiUpstreamHost :: Text,
     apiUpstreamPort :: Int
   }
@@ -184,13 +250,37 @@ data DemoConfig = DemoConfig
   }
   deriving (Eq, Read, Show)
 
+data PulsarConnectionMode
+  = ConfiguredTransport
+  | PublicationEdgeAutoDiscovery
+  deriving (Eq, Ord, Read, Show)
+
+pulsarConnectionModeId :: PulsarConnectionMode -> Text
+pulsarConnectionModeId ConfiguredTransport = "configured-transport"
+pulsarConnectionModeId PublicationEdgeAutoDiscovery = "publication-edge-auto-discovery"
+
+parsePulsarConnectionMode :: Text -> Maybe PulsarConnectionMode
+parsePulsarConnectionMode rawValue = case Text.toLower rawValue of
+  "configured-transport" -> Just ConfiguredTransport
+  "publication-edge-auto-discovery" -> Just PublicationEdgeAutoDiscovery
+  _ -> Nothing
+
+instance ToJSON PulsarConnectionMode where
+  toJSON = String . pulsarConnectionModeId
+
+instance FromJSON PulsarConnectionMode where
+  parseJSON = withText "PulsarConnectionMode" $ \rawValue ->
+    case parsePulsarConnectionMode rawValue of
+      Just connectionMode -> pure connectionMode
+      Nothing -> fail ("Unsupported pulsar connection mode: " <> Text.unpack rawValue)
+
 data DaemonConfig = DaemonConfig
   { daemonConfigRole :: DaemonRole,
     daemonConfigLocation :: Text,
     daemonConfigRequestTopics :: [Text],
     daemonConfigResultTopic :: Text,
     daemonConfigHostBatchTopic :: Maybe Text,
-    daemonConfigPulsarConnectionMode :: Text
+    daemonConfigPulsarConnectionMode :: PulsarConnectionMode
   }
   deriving (Eq, Read, Show)
 
@@ -213,7 +303,7 @@ instance FromJSON DaemonConfig where
       <*> value .: "request_topics"
       <*> value .: "result_topic"
       <*> value .:? "host_batch_topic"
-      <*> value .:? "pulsarConnectionMode" .!= "configured-transport"
+      <*> value .:? "pulsarConnectionMode" .!= ConfiguredTransport
 
 data EngineBinding = EngineBinding
   { engineBindingName :: Text,
@@ -252,10 +342,31 @@ instance FromJSON EngineBinding where
       <*> value .: "projectDirectory"
       <*> value .: "pythonNative"
 
+data RequestFieldType
+  = TextRequestField
+  deriving (Eq, Ord, Read, Show)
+
+requestFieldTypeId :: RequestFieldType -> Text
+requestFieldTypeId TextRequestField = "text"
+
+parseRequestFieldType :: Text -> Maybe RequestFieldType
+parseRequestFieldType rawValue = case Text.toLower rawValue of
+  "text" -> Just TextRequestField
+  _ -> Nothing
+
+instance ToJSON RequestFieldType where
+  toJSON = String . requestFieldTypeId
+
+instance FromJSON RequestFieldType where
+  parseJSON = withText "RequestFieldType" $ \rawValue ->
+    case parseRequestFieldType rawValue of
+      Just fieldType -> pure fieldType
+      Nothing -> fail ("Unsupported request field type: " <> Text.unpack rawValue)
+
 data RequestField = RequestField
   { name :: Text,
     label :: Text,
-    fieldType :: Text
+    fieldType :: RequestFieldType
   }
   deriving (Eq, Read, Show)
 
@@ -286,7 +397,7 @@ data ModelDescriptor = ModelDescriptor
     selectedEngine :: Text,
     requestShape :: [RequestField],
     runtimeMode :: RuntimeMode,
-    runtimeLane :: Text,
+    runtimeLane :: RuntimeLane,
     requiresGpu :: Bool,
     notes :: Text
   }
@@ -481,7 +592,7 @@ defaultClusterDaemonConfig runtimeMode requestTopicValues resultTopicValue =
       daemonConfigRequestTopics = requestTopicValues,
       daemonConfigResultTopic = resultTopicValue,
       daemonConfigHostBatchTopic = defaultHostBatchTopic runtimeMode,
-      daemonConfigPulsarConnectionMode = "configured-transport"
+      daemonConfigPulsarConnectionMode = ConfiguredTransport
     }
 
 defaultHostDaemonConfig :: RuntimeMode -> Text -> Maybe DaemonConfig
@@ -495,7 +606,7 @@ defaultHostDaemonConfig runtimeMode resultTopicValue =
             daemonConfigRequestTopics = maybe [] pure (defaultHostBatchTopic runtimeMode),
             daemonConfigResultTopic = resultTopicValue,
             daemonConfigHostBatchTopic = defaultHostBatchTopic runtimeMode,
-            daemonConfigPulsarConnectionMode = "publication-edge-auto-discovery"
+            daemonConfigPulsarConnectionMode = PublicationEdgeAutoDiscovery
           }
     _ -> Nothing
 

@@ -26,6 +26,7 @@ import Data.List (find, intercalate)
 import Data.Maybe (mapMaybe)
 import Data.Text (Text)
 import Data.Text qualified as Text
+import Infernix.Config (ControlPlaneContext, controlPlaneContextId)
 import Infernix.Routes qualified as Routes
 import Infernix.Types
 import Infernix.Workflow (demoConfigGeneratedBanner)
@@ -150,12 +151,12 @@ routeInventory = Routes.routeInventory
 clusterDemoApiUpstream :: ApiUpstream
 clusterDemoApiUpstream =
   ApiUpstream
-    { apiUpstreamMode = "cluster-demo",
+    { apiUpstreamMode = ClusterDemoUpstream,
       apiUpstreamHost = "infernix-demo.platform.svc.cluster.local",
       apiUpstreamPort = 80
     }
 
-renderPublicationState :: String -> ClusterState -> String
+renderPublicationState :: ControlPlaneContext -> ClusterState -> String
 renderPublicationState controlPlane state =
   renderPublicationStateWithApiUpstream controlPlane state selectedApiUpstream
   where
@@ -163,14 +164,14 @@ renderPublicationState controlPlane state =
       | stateHasDemoUi state = clusterDemoApiUpstream
       | otherwise = disabledApiUpstream
 
-renderPublicationStateWithApiUpstream :: String -> ClusterState -> ApiUpstream -> String
+renderPublicationStateWithApiUpstream :: ControlPlaneContext -> ClusterState -> ApiUpstream -> String
 renderPublicationStateWithApiUpstream controlPlane state apiUpstream =
   "{\n"
     <> "  \"clusterPresent\": "
     <> jsonBool (clusterPresent state)
     <> ",\n"
     <> "  \"controlPlaneContext\": "
-    <> show controlPlane
+    <> show (controlPlaneContextId controlPlane)
     <> ",\n"
     <> "  \"daemonLocation\": "
     <> jsonString (daemonLocationFor state)
@@ -248,7 +249,7 @@ renderApiUpstream :: ApiUpstream -> String
 renderApiUpstream apiUpstream =
   "{"
     <> "\"mode\": "
-    <> jsonString (apiUpstreamMode apiUpstream)
+    <> jsonString (apiUpstreamModeId (apiUpstreamMode apiUpstream))
     <> ", \"host\": "
     <> jsonString (apiUpstreamHost apiUpstream)
     <> ", \"port\": "
@@ -335,7 +336,7 @@ lifecycleProgressJsonFields state =
 disabledApiUpstream :: ApiUpstream
 disabledApiUpstream =
   ApiUpstream
-    { apiUpstreamMode = "disabled",
+    { apiUpstreamMode = DisabledUpstream,
       apiUpstreamHost = "",
       apiUpstreamPort = 0
     }
@@ -362,7 +363,7 @@ descriptorForMode runtimeMode row = do
           [ RequestField
               { name = "inputText",
                 label = rowRequestLabel row,
-                fieldType = "text"
+                fieldType = TextRequestField
               }
           ],
         runtimeMode = runtimeMode,
@@ -377,13 +378,13 @@ bindingForMode runtimeMode row = case runtimeMode of
   LinuxCpu -> linuxCpuBinding row
   LinuxGpu -> linuxGpuBinding row
 
-laneFor :: RuntimeMode -> Bool -> Text
+laneFor :: RuntimeMode -> Bool -> RuntimeLane
 laneFor runtimeMode requiresGpu = case runtimeMode of
-  AppleSilicon -> "apple-silicon-host"
-  LinuxCpu -> "kind-linux-cpu"
+  AppleSilicon -> AppleSiliconHost
+  LinuxCpu -> KindLinuxCpu
   LinuxGpu
-    | requiresGpu -> "kind-linux-gpu-gpu"
-    | otherwise -> "kind-linux-gpu-shared"
+    | requiresGpu -> KindLinuxGpuGpu
+    | otherwise -> KindLinuxGpuShared
 
 matrixRows :: [MatrixRow]
 matrixRows =
@@ -745,7 +746,7 @@ renderDaemonConfig daemonConfig =
     <> ", \"host_batch_topic\": "
     <> maybe "null" jsonString (daemonConfigHostBatchTopic daemonConfig)
     <> ", \"pulsarConnectionMode\": "
-    <> jsonString (daemonConfigPulsarConnectionMode daemonConfig)
+    <> jsonString (pulsarConnectionModeId (daemonConfigPulsarConnectionMode daemonConfig))
     <> "}"
 
 renderEngineBinding :: EngineBinding -> String
@@ -778,7 +779,7 @@ renderModelDescriptor model =
       "      \"selectedEngine\": " <> jsonString (selectedEngine model) <> ",",
       "      \"requestShape\": [" <> intercalate ", " (map renderRequestField (requestShape model)) <> "],",
       "      \"runtimeMode\": " <> jsonString (runtimeModeId (runtimeMode model)) <> ",",
-      "      \"runtimeLane\": " <> jsonString (runtimeLane model) <> ",",
+      "      \"runtimeLane\": " <> jsonString (runtimeLaneId (runtimeLane model)) <> ",",
       "      \"requiresGpu\": " <> jsonBool (requiresGpu model) <> ",",
       "      \"notes\": " <> jsonString (notes model),
       "    }"
@@ -792,7 +793,7 @@ renderRequestField requestField =
     <> ", \"label\": "
     <> jsonString (label requestField)
     <> ", \"fieldType\": "
-    <> jsonString (fieldType requestField)
+    <> jsonString (requestFieldTypeId (fieldType requestField))
     <> "}"
 
 jsonBool :: Bool -> String

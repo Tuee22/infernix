@@ -137,7 +137,7 @@ main = do
       paths <- discoverPaths
       ensureRepoLayout paths
       assert
-        (controlPlaneContext paths == "host-native")
+        (controlPlaneContext paths == HostNative)
         "an unset build-root override keeps unit tests on the host-native control-plane context"
       assert
         (generatedKubeconfigPath paths == buildRoot paths </> "infernix.kubeconfig")
@@ -150,7 +150,7 @@ main = do
       withOptionalEnv "INFERNIX_BUILD_ROOT" (Just "/opt/build/infernix") $ do
         outerPaths <- discoverPaths
         assert
-          (controlPlaneContext outerPaths == "outer-container")
+          (controlPlaneContext outerPaths == OuterContainer)
           "setting a non-host build root selects the outer-container control-plane context"
         assert
           (generatedKubeconfigPath outerPaths == runtimeRoot outerPaths </> "infernix.kubeconfig")
@@ -241,7 +241,7 @@ main = do
                       daemonConfigRequestTopics = requestTopicsForMode LinuxCpu,
                       daemonConfigResultTopic = resultTopicForMode LinuxCpu,
                       daemonConfigHostBatchTopic = Nothing,
-                      daemonConfigPulsarConnectionMode = "configured-transport"
+                      daemonConfigPulsarConnectionMode = ConfiguredTransport
                     },
                 hostDaemon = Nothing,
                 requestTopics = requestTopicsForMode LinuxCpu,
@@ -278,7 +278,7 @@ main = do
                       daemonConfigRequestTopics = requestTopicsForMode AppleSilicon,
                       daemonConfigResultTopic = resultTopicForMode AppleSilicon,
                       daemonConfigHostBatchTopic = hostBatchTopicForMode AppleSilicon,
-                      daemonConfigPulsarConnectionMode = "configured-transport"
+                      daemonConfigPulsarConnectionMode = ConfiguredTransport
                     },
                 hostDaemon =
                   Just
@@ -288,7 +288,7 @@ main = do
                         daemonConfigRequestTopics = maybe [] pure (hostBatchTopicForMode AppleSilicon),
                         daemonConfigResultTopic = resultTopicForMode AppleSilicon,
                         daemonConfigHostBatchTopic = hostBatchTopicForMode AppleSilicon,
-                        daemonConfigPulsarConnectionMode = "publication-edge-auto-discovery"
+                        daemonConfigPulsarConnectionMode = PublicationEdgeAutoDiscovery
                       },
                 requestTopics = requestTopicsForMode AppleSilicon,
                 resultTopic = resultTopicForMode AppleSilicon,

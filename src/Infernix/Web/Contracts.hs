@@ -282,7 +282,7 @@ modelDescriptorFromInternal internalModel =
       downloadUrl = Types.downloadUrl internalModel,
       selectedEngine = Types.selectedEngine internalModel,
       runtimeMode = Types.runtimeModeId (Types.runtimeMode internalModel),
-      runtimeLane = Types.runtimeLane internalModel,
+      runtimeLane = Types.runtimeLaneId (Types.runtimeLane internalModel),
       requiresGpu = Types.requiresGpu internalModel,
       notes = Types.notes internalModel,
       requestShape = map requestFieldFromInternal (Types.requestShape internalModel)
@@ -293,7 +293,7 @@ requestFieldFromInternal internalField =
   RequestField
     { name = Types.name internalField,
       label = Types.label internalField,
-      fieldType = Types.fieldType internalField
+      fieldType = Types.requestFieldTypeId (Types.fieldType internalField)
     }
 
 renderPursStringArray :: [String] -> String

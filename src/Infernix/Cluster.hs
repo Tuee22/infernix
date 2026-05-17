@@ -31,7 +31,7 @@ import Data.Time (UTCTime, diffUTCTime, getCurrentTime)
 import Data.Vector qualified as Vector
 import Infernix.Cluster.Discover
 import Infernix.Cluster.PublishImages qualified as PublishImages
-import Infernix.Config (Paths (..))
+import Infernix.Config (ControlPlaneContext (..), Paths (..), controlPlaneContextId)
 import Infernix.Config qualified as Config
 import Infernix.DemoConfig (decodeDemoConfigFile, renderGeneratedDemoConfigPayload)
 import Infernix.Engines.AppleSilicon (ensureAppleSiliconRuntimeReady)
@@ -59,11 +59,8 @@ clusterStatePath paths = runtimeRoot paths </> "cluster-state.state"
 nodeMountedKindRoot :: FilePath
 nodeMountedKindRoot = "/var/infernix-data"
 
-seedClaims :: RuntimeMode -> [PersistentClaim]
-seedClaims = platformClaimsForRuntime
-
 data ClusterUpInputs = ClusterUpInputs
-  { clusterUpControlPlane :: String,
+  { clusterUpControlPlane :: ControlPlaneContext,
     clusterUpRequestedEdgePort :: Int,
     clusterUpDemoUiEnabled :: Bool,
     clusterUpDemoConfigPath :: FilePath,
@@ -353,7 +350,7 @@ clusterUpWithPlatform paths runtimeMode = do
           False
           (clusterUpRequestedEdgePort inputs)
           (routeInventory (clusterUpDemoUiEnabled inputs))
-          (seedClaims runtimeMode)
+          (platformClaimsForRuntime runtimeMode)
           claimDiscoveryTime
   provisionalState <-
     startLifecyclePhase
@@ -402,7 +399,7 @@ clusterUpWithPlatform paths runtimeMode = do
   waitForKubernetesApi paths runtimeMode
   configureRuntimeModeCluster paths runtimeMode
   now <- getCurrentTime
-  let seedState = activeState {claims = seedClaims runtimeMode, updatedAt = now}
+  let seedState = activeState {claims = platformClaimsForRuntime runtimeMode, updatedAt = now}
   warmupValuesPath <- writeHelmValuesFile paths (clusterUpControlPlane inputs) seedState (clusterUpPayload inputs) WarmupPhase
   bootstrapValuesPath <- writeHelmValuesFile paths (clusterUpControlPlane inputs) seedState (clusterUpPayload inputs) BootstrapPhase
   harborFinalValuesPath <- writeHelmValuesFile paths (clusterUpControlPlane inputs) seedState (clusterUpPayload inputs) HarborFinalPhase
@@ -488,7 +485,7 @@ clusterUpWithPlatform paths runtimeMode = do
   waitForRoutedPublicationSurface paths routedPublicationState
   _ <- refreshPersistentClaims routedPublicationState >>= clearLifecycleProgress paths
   putStrLn "cluster up complete"
-  putStrLn ("controlPlaneContext: " <> clusterUpControlPlane inputs)
+  putStrLn ("controlPlaneContext: " <> controlPlaneContextId (clusterUpControlPlane inputs))
   putStrLn ("runtimeMode: " <> Text.unpack (runtimeModeId runtimeMode))
   putStrLn ("edgePort: " <> show edgePortValue)
   putStrLn ("generatedDemoConfigPath: " <> clusterUpDemoConfigPath inputs)
@@ -670,7 +667,7 @@ clusterStatus maybeRuntimeMode = do
       nodeCount <- kubectlLineCountIfReachable state ["get", "nodes", "--no-headers"]
       podCount <- kubectlLineCountIfReachable state ["get", "pods", "-A", "--no-headers"]
       putStrLn ("clusterPresent: " <> show actualPresent)
-      putStrLn ("controlPlaneContext: " <> Config.controlPlaneContext paths)
+      putStrLn ("controlPlaneContext: " <> controlPlaneContextId (Config.controlPlaneContext paths))
       putStrLn ("runtimeMode: " <> Text.unpack (runtimeModeId (clusterRuntimeMode state)))
       putStrLn ("edgePort: " <> show (edgePort state))
       putStrLn ("storageClass: " <> Text.unpack (storageClass state))
@@ -907,7 +904,7 @@ ensureClaimDirectoryReady paths runtimeMode persistentClaim = do
 
 hostClaimOwnershipAlignmentSupported :: Paths -> Bool
 hostClaimOwnershipAlignmentSupported paths =
-  Config.controlPlaneContext paths == "outer-container"
+  Config.controlPlaneContext paths == OuterContainer
 
 claimOwner :: PersistentClaim -> Maybe String
 claimOwner claimSpec
@@ -1082,11 +1079,11 @@ linuxGpuProbeResults = do
         dockerVolumeMountResult = dockerVolumeMountResult
       }
 
-linuxGpuPreflightSatisfied :: String -> LinuxGpuProbeResults -> Bool
+linuxGpuPreflightSatisfied :: ControlPlaneContext -> LinuxGpuProbeResults -> Bool
 linuxGpuPreflightSatisfied controlPlane probeResults =
   commandSucceeded (dockerRuntimeResult probeResults)
     && commandSucceeded (dockerVolumeMountResult probeResults)
-    && (controlPlane == "outer-container" || commandSucceeded (hostGpuResult probeResults))
+    && (controlPlane == OuterContainer || commandSucceeded (hostGpuResult probeResults))
 
 commandSucceeded :: Either String String -> Bool
 commandSucceeded result = case result of
@@ -1112,12 +1109,12 @@ firstSuccessfulCommand firstResult secondResult =
                 ]
             )
 
-linuxGpuHostFailureReport :: String -> LinuxGpuProbeResults -> String
+linuxGpuHostFailureReport :: ControlPlaneContext -> LinuxGpuProbeResults -> String
 linuxGpuHostFailureReport controlPlane probeResults =
   unlines
     ( [ "linux-gpu requires a real NVIDIA host plus a Docker engine configured for GPU and the NVIDIA volume-mount worker-device contract that nvkind uses for Kind workers.",
         "",
-        "Active control-plane context: " <> controlPlane
+        "Active control-plane context: " <> controlPlaneContextId controlPlane
       ]
         <> requiredPreflightLines
         <> [ "",
@@ -1137,7 +1134,7 @@ linuxGpuHostFailureReport controlPlane probeResults =
     )
   where
     requiredPreflightLines
-      | controlPlane == "outer-container" =
+      | controlPlane == OuterContainer =
           [ "",
             "Required preflight commands for the outer-container launcher:",
             "  docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi -L",
@@ -1207,7 +1204,7 @@ ensureNvkindBinary _paths = do
 waitForKindKubeconfig :: Paths -> RuntimeMode -> IO (Either String String)
 waitForKindKubeconfig paths runtimeMode = do
   let internalFlag
-        | Config.controlPlaneContext paths == "outer-container" = ["--internal"]
+        | Config.controlPlaneContext paths == OuterContainer = ["--internal"]
         | otherwise = []
       commandArgs = ["get", "kubeconfig", "--name", kindClusterName paths runtimeMode] <> internalFlag
   retryCommandOutput
@@ -1496,7 +1493,7 @@ buildClusterImages paths state runtimeMode = do
           "."
         ]
   imagePresent <- maybeCommand ["docker", "image", "inspect", imageRef]
-  if Config.controlPlaneContext paths == "outer-container" && imagePresent
+  if Config.controlPlaneContext paths == OuterContainer && imagePresent
     then putStrLn ("reusing baked cluster image for " <> runtimeModeName <> ": " <> imageRef)
     else do
       putStrLn ("building cluster images for " <> runtimeModeName)
@@ -3165,7 +3162,7 @@ currentKindEdgePort paths runtimeMode = do
             portText -> readMaybe portText
         [] -> Nothing
 
-writeHelmValuesFile :: Paths -> String -> ClusterState -> Lazy.ByteString -> HelmDeployPhase -> IO FilePath
+writeHelmValuesFile :: Paths -> ControlPlaneContext -> ClusterState -> Lazy.ByteString -> HelmDeployPhase -> IO FilePath
 writeHelmValuesFile paths controlPlane state demoConfigPayload deployPhase = do
   engineCommandOverrides <- engineCommandOverridesFromEnvironment
   let outputPath =
@@ -3212,11 +3209,11 @@ discoverPersistentClaims :: Paths -> FilePath -> IO [PersistentClaim]
 discoverPersistentClaims _paths =
   discoverChartClaimsFile
 
-renderHelmValues :: String -> ClusterState -> Lazy.ByteString -> HelmDeployPhase -> [(String, String)] -> String
+renderHelmValues :: ControlPlaneContext -> ClusterState -> Lazy.ByteString -> HelmDeployPhase -> [(String, String)] -> String
 renderHelmValues controlPlane state demoConfigPayload deployPhase engineCommandOverrides =
   unlines
     ( [ "runtimeMode: " <> Text.unpack (runtimeModeId (clusterRuntimeMode state)),
-        "controlPlaneContext: " <> show controlPlane,
+        "controlPlaneContext: " <> show (controlPlaneContextId controlPlane),
         "gateway:",
         "  publishedPort: " <> show (edgePort state),
         "  publishedNodePort: 30090",
@@ -3341,7 +3338,7 @@ renderHelmValues controlPlane state demoConfigPayload deployPhase engineCommandO
 
 harborApiHost :: Paths -> RuntimeMode -> String
 harborApiHost paths runtimeMode
-  | Config.controlPlaneContext paths == "outer-container" = kindControlPlaneNodeName paths runtimeMode <> ":30002"
+  | Config.controlPlaneContext paths == OuterContainer = kindControlPlaneNodeName paths runtimeMode <> ":30002"
   | otherwise = "127.0.0.1:30002"
 
 harborAdminUser :: String
@@ -3389,12 +3386,12 @@ clusterEdgeBaseUrl paths state =
 
 clusterEdgeHost :: Paths -> ClusterState -> String
 clusterEdgeHost paths state
-  | Config.controlPlaneContext paths == "outer-container" = kindControlPlaneNodeName paths (clusterRuntimeMode state)
+  | Config.controlPlaneContext paths == OuterContainer = kindControlPlaneNodeName paths (clusterRuntimeMode state)
   | otherwise = "127.0.0.1"
 
 clusterEdgePort :: Paths -> ClusterState -> Int
 clusterEdgePort paths state
-  | Config.controlPlaneContext paths == "outer-container" = 30090
+  | Config.controlPlaneContext paths == OuterContainer = 30090
   | otherwise = edgePort state
 
 kubectlOutput :: ClusterState -> [String] -> IO String
@@ -3528,12 +3525,12 @@ mergeEnvironment :: [(String, String)] -> [(String, String)] -> [(String, String
 mergeEnvironment baseEnv overrides =
   overrides <> filter (\(key, _) -> key `notElem` map fst overrides) baseEnv
 
-normalizeKubeconfigServer :: String -> String -> String
+normalizeKubeconfigServer :: ControlPlaneContext -> String -> String
 normalizeKubeconfigServer _controlPlane kubeconfigContents = kubeconfigContents
 
 ensureOuterContainerKindNetworkAccess :: Paths -> RuntimeMode -> IO ()
 ensureOuterContainerKindNetworkAccess paths _runtimeMode
-  | Config.controlPlaneContext paths /= "outer-container" = pure ()
+  | Config.controlPlaneContext paths /= OuterContainer = pure ()
   | otherwise = do
       launcherContainer <- currentLauncherContainerName
       connectResult <- tryCommand Nothing [] "docker" ["network", "connect", "kind", launcherContainer]

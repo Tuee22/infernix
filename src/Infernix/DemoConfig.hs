@@ -108,7 +108,7 @@ renderGeneratedDemoConfigPayload paths runtimeMode demoUiEnabledValue daemonRole
 defaultDaemonRoleForMaterializedFile :: Paths -> RuntimeMode -> DaemonRole
 defaultDaemonRoleForMaterializedFile paths runtimeMode =
   case (Config.controlPlaneContext paths, runtimeMode) of
-    ("host-native", AppleSilicon) -> HostDaemon
+    (Config.HostNative, AppleSilicon) -> HostDaemon
     _ -> ClusterDaemon
 
 clusterDaemonConfig :: RuntimeMode -> DaemonConfig
@@ -119,7 +119,7 @@ clusterDaemonConfig runtimeMode =
       daemonConfigRequestTopics = requestTopicsForMode runtimeMode,
       daemonConfigResultTopic = resultTopicForMode runtimeMode,
       daemonConfigHostBatchTopic = hostBatchTopicForMode runtimeMode,
-      daemonConfigPulsarConnectionMode = "configured-transport"
+      daemonConfigPulsarConnectionMode = ConfiguredTransport
     }
 
 hostDaemonConfig :: RuntimeMode -> Maybe DaemonConfig
@@ -133,7 +133,7 @@ hostDaemonConfig runtimeMode =
             daemonConfigRequestTopics = maybe [] pure (hostBatchTopicForMode runtimeMode),
             daemonConfigResultTopic = resultTopicForMode runtimeMode,
             daemonConfigHostBatchTopic = hostBatchTopicForMode runtimeMode,
-            daemonConfigPulsarConnectionMode = "publication-edge-auto-discovery"
+            daemonConfigPulsarConnectionMode = PublicationEdgeAutoDiscovery
           }
     _ -> Nothing
 
@@ -214,7 +214,7 @@ validateDemoConfig demoConfig
       null (requestShape model)
         || any invalidField (requestShape model)
     invalidField requestField =
-      any (Text.null . Text.strip) [name requestField, label requestField, fieldType requestField]
+      any (Text.null . Text.strip) [name requestField, label requestField]
     invalidActiveDaemonRole =
       activeDaemonRole demoConfig
         /= daemonConfigRole (clusterDaemon demoConfig)
@@ -224,7 +224,6 @@ validateDemoConfig demoConfig
         || null (daemonConfigRequestTopics daemonConfig)
         || any (Text.null . Text.strip) (daemonConfigRequestTopics daemonConfig)
         || Text.null (Text.strip (daemonConfigResultTopic daemonConfig))
-        || Text.null (Text.strip (daemonConfigPulsarConnectionMode daemonConfig))
     runtimeMismatch model = runtimeMode model /= configRuntimeMode demoConfig
     missingEngineBindings =
       [ Text.unpack engineName

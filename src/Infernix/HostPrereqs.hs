@@ -12,7 +12,8 @@ import Data.Aeson (FromJSON (parseJSON), eitherDecode, withObject, (.:))
 import Data.ByteString.Lazy.Char8 qualified as LazyChar8
 import Data.List (isInfixOf, nub)
 import Infernix.CommandRegistry (Command (..))
-import Infernix.Config (controlPlaneContext, discoverPaths, resolveRuntimeMode)
+import Infernix.Config (ControlPlaneContext (HostNative), controlPlaneContext, discoverPaths, resolveRuntimeMode)
+import Infernix.Internal.Util (findFirstM)
 import Infernix.Python (ensurePoetryExecutable)
 import Infernix.Types (RuntimeMode (AppleSilicon))
 import System.Directory (doesFileExist, findExecutable)
@@ -63,7 +64,7 @@ supportedColimaMemoryBytes =
 ensureAppleHostPrerequisites :: Maybe RuntimeMode -> Command -> IO ()
 ensureAppleHostPrerequisites maybeRuntimeMode command = do
   paths <- discoverPaths
-  when (os == "darwin" && controlPlaneContext paths == "host-native") $ do
+  when (os == "darwin" && controlPlaneContext paths == HostNative) $ do
     resolvedRuntimeMode <- runtimeModeForApplePrereqs maybeRuntimeMode command
     let requirements = appleHostRequirements resolvedRuntimeMode command
     unless (null requirements) $ do
@@ -162,7 +163,7 @@ requireBrewExecutable = do
             [ "/opt/homebrew/bin/brew",
               "/usr/local/bin/brew"
             ]
-      maybeFallback <- firstExistingPath fallbackPaths
+      maybeFallback <- findFirstM doesFileExist fallbackPaths
       case maybeFallback of
         Just executablePath -> pure executablePath
         Nothing ->
@@ -387,14 +388,6 @@ requirementId = \case
   AppleNode -> "node"
   ApplePython -> "python"
   ApplePoetry -> "poetry"
-
-firstExistingPath :: [FilePath] -> IO (Maybe FilePath)
-firstExistingPath [] = pure Nothing
-firstExistingPath (pathValue : remainingPaths) = do
-  exists <- doesFileExist pathValue
-  if exists
-    then pure (Just pathValue)
-    else firstExistingPath remainingPaths
 
 trimWhitespace :: String -> String
 trimWhitespace =

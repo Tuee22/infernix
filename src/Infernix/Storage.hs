@@ -16,6 +16,7 @@ module Infernix.Storage
 where
 
 import Control.Applicative ((<|>))
+import Control.Exception (throwIO)
 import Data.ByteString qualified as ByteString
 import Data.Maybe (fromMaybe)
 import Data.ProtoLens (Message, decodeMessage, defMessage, encodeMessage)
@@ -26,6 +27,7 @@ import Data.Text.IO qualified as Text
 import Data.Time (UTCTime)
 import Data.Time.Format (defaultTimeLocale, formatTime, parseTimeM)
 import Infernix.Config (Paths (..))
+import Infernix.Error (InfernixError (ProtobufDecodeFailure))
 import Infernix.Types
 import Lens.Family2 (set, view)
 import Proto.Infernix.Manifest.RuntimeManifest qualified as ProtoManifest
@@ -95,7 +97,7 @@ readProtoFileMaybe filePath = do
       encoded <- ByteString.readFile filePath
       case decodeMessage encoded of
         Left err ->
-          ioError (userError ("failed to decode protobuf file " <> filePath <> ": " <> err))
+          throwIO (ProtobufDecodeFailure filePath err)
         Right value -> pure (Just value)
 
 inferenceResultToProto :: InferenceResult -> ProtoInference.InferenceResult
@@ -103,7 +105,7 @@ inferenceResultToProto resultValue =
   set (field @"requestId") (requestId resultValue) $
     set (field @"resultModelId") (resultModelId resultValue) $
       set (field @"matrixRowId") (resultMatrixRowId resultValue) $
-        set (field @"runtimeMode") (runtimeModeToText (resultRuntimeMode resultValue)) $
+        set (field @"runtimeMode") (runtimeModeId (resultRuntimeMode resultValue)) $
           set (field @"selectedEngine") (resultSelectedEngine resultValue) $
             set (field @"status") (status resultValue) $
               set (field @"payload") (resultPayloadToProto (payload resultValue)) $
@@ -111,7 +113,7 @@ inferenceResultToProto resultValue =
 
 inferenceResultFromProto :: ProtoInference.InferenceResult -> Maybe InferenceResult
 inferenceResultFromProto protoValue = do
-  runtimeMode <- textToRuntimeMode (view ProtoInferenceFields.runtimeMode protoValue)
+  runtimeMode <- parseRuntimeMode (view ProtoInferenceFields.runtimeMode protoValue)
   createdAtValue <- parseTimestamp (view ProtoInferenceFields.createdAt protoValue)
   payloadValue <- resultPayloadFromProto (view ProtoInferenceFields.payload protoValue)
   pure
@@ -162,7 +164,7 @@ cacheManifestToProto materializedCachePath manifest =
         set (field @"cacheEntries") [cacheEntry] $
           set (field @"durableResultsPrefix") durableResultsPrefix defMessage
   where
-    runtimeModeText = runtimeModeToText (cacheRuntimeMode manifest)
+    runtimeModeText = runtimeModeId (cacheRuntimeMode manifest)
     manifestIdentifier = runtimeModeText <> ":" <> cacheModelId manifest <> ":" <> cacheCacheKey manifest
     durableResultsPrefix = "object-store/results/" <> runtimeModeText
     materialization =
@@ -181,7 +183,7 @@ cacheManifestToProto materializedCachePath manifest =
 cacheManifestFromProto :: ProtoManifest.RuntimeManifest -> Maybe CacheManifest
 cacheManifestFromProto protoValue = do
   runtimeMode <-
-    textToRuntimeMode
+    parseRuntimeMode
       (view ProtoManifestFields.runtimeMode protoValue)
   modelIdValue <- firstPresent modelIdFromMaterialization modelIdFromCacheEntry
   selectedEngineValue <- firstPresent selectedEngineFromMaterialization (Just "")
@@ -220,12 +222,6 @@ cacheManifestFromProto protoValue = do
         [] -> Nothing
     firstPresent firstChoice secondChoice =
       firstChoice <|> secondChoice
-
-runtimeModeToText :: RuntimeMode -> Text
-runtimeModeToText = runtimeModeId
-
-textToRuntimeMode :: Text -> Maybe RuntimeMode
-textToRuntimeMode = parseRuntimeMode
 
 formatTimestamp :: UTCTime -> Text
 formatTimestamp = Text.pack . formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%S%QZ"
