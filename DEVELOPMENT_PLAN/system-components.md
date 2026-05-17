@@ -80,12 +80,12 @@
   containerd import through `docker save | docker exec ... ctr --namespace=k8s.io images import`
   when Kind's loader fails
 - Phase 6 records clean governed bootstrap reruns for `linux-cpu`, `linux-gpu`, and the
-  supported Apple lifecycle, including the Apple rerun on May 15, 2026 through `doctor`, `build`,
-  `up`, `status`, `test`, `down`, and final `status`; that rerun validated the split
-  daemon topology, host-batch Pulsar handoff, routed Playwright E2E, repeated retained-state
-  cluster bring-up or teardown cycles inside the governed `test` lane, and final post-teardown
-  status returning `clusterPresent: False`, `lifecycleStatus: idle`, and
-  `lifecyclePhase: cluster-absent`; it also validates that Harbor publication pushes repo-owned
+  supported Apple lifecycle, including Apple reruns on May 15, 2026 and May 17, 2026 through
+  `doctor`, `build`, `up`, `status`, `test`, `down`, and final `status`; those reruns validated
+  the split daemon topology, host-batch Pulsar handoff, routed Playwright E2E, repeated
+  retained-state cluster bring-up or teardown cycles inside the governed `test` lane, and final
+  post-teardown status returning `clusterPresent: False`, `lifecycleStatus: idle`, and
+  `lifecyclePhase: cluster-absent`; they also validate that Harbor publication pushes repo-owned
   local images before third-party chart dependencies and re-tags the source image before each
   bounded push retry, so retry recovery does not depend on a previously retained target tag; the
   earlier May 13 lifecycle investigation remains the proof
@@ -120,7 +120,7 @@
 | Testing doctrine docs | `documents/engineering/testing.md` and `documents/development/testing_strategy.md` | keep one canonical testing doctrine together with one operator-facing detail layer | none |
 | Browser-contract source | `src/Infernix/Web/Contracts.hs`, `web/package.json` | keeps handwritten Haskell contract source out of `Generated/` while preserving generated PureScript output there | none |
 | Helm deployment assets | `chart/Chart.yaml`, `chart/values.yaml`, `chart/templates/` | hold repo-owned workloads, ConfigMaps, Gateway resources, and third-party chart dependencies | none |
-| Kind topology assets | `kind/cluster-apple-silicon.yaml`, `kind/cluster-linux-cpu.yaml`, `kind/cluster-linux-gpu.yaml` | substrate-specific Kind shapes, including the GPU-enabled `linux-gpu` lane | none |
+| Kind topology reference assets | `kind/cluster-apple-silicon.yaml`, `kind/cluster-linux-cpu.yaml`, `kind/cluster-linux-gpu.yaml` | tracked topology references and chart-lint inputs for the substrate-specific Kind shapes; the supported lifecycle renders the active runtime config from Haskell into `./.build/kind/cluster-<runtime-mode>.generated.yaml` before invoking Kind or nvkind | none |
 | Protobuf contract assets | `proto/infernix/...` plus on-demand generated `tools/generated_proto/` stubs under a `tools/` directory that may be absent in a clean checkout | define canonical runtime, manifest, and event schema boundaries | generated stubs must stay untracked |
 
 ## Cluster and Publication Components

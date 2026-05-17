@@ -68,12 +68,12 @@ across transient registry resets, and that the governed `test` lane may perform 
 cluster bring-up or teardown cycles before the outer bootstrap command returns. The runtime-topology
 implementation now deploys `infernix-service` on Apple and reports `daemonLocation: cluster-pod`,
 `inferenceExecutorLocation: control-plane-host`, and the Apple host batch topic in publication
-metadata. On May 15, 2026, the full governed Apple lifecycle reran cleanly through
+metadata. On May 15, 2026, and again on May 17, 2026, the full governed Apple lifecycle reran cleanly through
 `./bootstrap/apple-silicon.sh doctor`, `build`, `up`, `status`, `test`, `down`, and final
 `status` on the split topology. The `test` lane passed Haskell style, Haskell unit, PureScript
 unit, Haskell integration, routed Playwright, repeated retained-state `cluster down` and
 `cluster up` cycles, Apple host-batch inference for every active generated catalog entry, and
-final retained-state teardown. That rerun also validates the Harbor publication closure for
+final retained-state teardown. Those reruns also validate the Harbor publication closure for
 repo-owned local images: publication pushes the `infernix-linux-cpu:local` payload before
 third-party chart dependencies and re-tags the source image before each bounded push retry, so
 retry recovery does not depend on a previously retained target tag. Final post-teardown status
@@ -1174,15 +1174,16 @@ same-binary host daemon fed by Pulsar batches.
   and completes routed inference through the split executor
 - Linux integration still proves that `linux-cpu` and `linux-gpu` complete request consumption,
   inference, and result publication from cluster daemons without managing a host daemon
-- routed E2E verifies that the browser-visible publication payload reports the cluster daemon and
-  Apple host inference executor distinctly
+- routed E2E readiness verifies that the browser-visible publication payload reports the cluster
+  daemon and Apple host inference executor distinctly before the Playwright container exercises the
+  browser surface
 - docs lint fails if the plan or governed docs describe Apple cluster-daemon absence as the final
   contract
 - `PATH=/Users/matt/.ghcup/bin:$PATH /Users/matt/.ghcup/bin/cabal test infernix-unit` passes
 - `PATH=/Users/matt/.ghcup/bin:$PATH /Users/matt/.ghcup/bin/cabal test infernix-haskell-style`
   passes
 - `./bootstrap/apple-silicon.sh doctor`, `build`, `up`, `status`, `test`, `down`, and final
-  `status` pass on May 15, 2026 on the split topology
+  `status` pass on May 15, 2026 and May 17, 2026 on the split topology
 - the full `./bootstrap/apple-silicon.sh test` lifecycle exercises the Apple host-batch topic,
   the host daemon, every active generated catalog entry, routed Playwright, repeated retained-state
   cluster teardown and bring-up, and final cluster teardown successfully

@@ -129,13 +129,13 @@ promotion. Bootstrap support image preload now runs through the shared lifecycle
 supported lane: it tries `kind load docker-image` first and falls back to a direct worker
 containerd import through `docker save | docker exec ... ctr --namespace=k8s.io images import`
 when Kind's loader fails. Phase 6 records clean governed bootstrap reruns for `linux-cpu`,
-`linux-gpu`, and the supported Apple lifecycle, including the Apple rerun on
-May 15, 2026 through `./bootstrap/apple-silicon.sh doctor`, `build`, `up`, `status`, `test`,
-`down`, and final `status`. That Apple rerun validated the split daemon topology, host-batch
-Pulsar handoff, routed Playwright E2E, repeated retained-state cluster bring-up or teardown
-cycles inside the governed `test` lane, and final post-teardown status returning
-`clusterPresent: False`,
-`lifecycleStatus: idle`, and `lifecyclePhase: cluster-absent`. That May 15 rerun also validates
+`linux-gpu`, and the supported Apple lifecycle, including Apple reruns on
+May 15, 2026 and May 17, 2026 through `./bootstrap/apple-silicon.sh doctor`, `build`, `up`,
+`status`, `test`, `down`, and final `status`. Those Apple reruns validated the split daemon
+topology, host-batch Pulsar handoff, routed Playwright E2E, repeated retained-state cluster
+bring-up or teardown cycles inside the governed `test` lane, and final post-teardown status
+returning `clusterPresent: False`,
+`lifecycleStatus: idle`, and `lifecyclePhase: cluster-absent`. Those reruns also validate
 the Harbor publication closure for repo-owned local images: publication pushes the
 `infernix-linux-cpu:local` payload before third-party chart dependencies and re-tags the source
 image before each bounded push retry, so retry recovery does not depend on a previously retained
