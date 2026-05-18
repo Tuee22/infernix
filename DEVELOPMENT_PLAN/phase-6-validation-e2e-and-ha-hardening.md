@@ -80,7 +80,10 @@ third-party chart dependencies and re-tags the source image before each bounded 
 retry recovery does not depend on a previously retained target tag. Final post-teardown status
 returned `clusterPresent: False`, `lifecycleStatus: idle`, `lifecyclePhase: cluster-absent`,
 `runtimeResultCount: 31`, `objectStoreObjectCount: 73`, `modelCacheEntryCount: 30`, and
-`durableManifestCount: 15`.
+`durableManifestCount: 15`. The supported routed and cluster validation path uses real Pulsar
+transport; the repo-local topic spool under `./.data/runtime/pulsar/` remains only for
+unit-level or intentionally endpoint-absent harness checks and is not accepted as routed Pulsar
+evidence.
 
 ## Validation Surface
 
@@ -858,9 +861,11 @@ integration and E2E ownership in the final `.dhall`-driven terms.
   the correct engine behind the routed demo API
 - test results report the built substrate unambiguously and never imply matrix-wide coverage they
   did not execute
-- supported runtime and validation code carry no simulated cluster, route, transport, or generic
-  inference-success fallback behavior on the supported path; inference assertions go through the
-  typed adapter harness selected by the active substrate file
+- supported runtime and validation code carry no simulated cluster, route, or generic
+  inference-success fallback behavior on the supported path, and routed Pulsar checks require the
+  real Gateway-backed upstream; inference assertions go through the typed adapter harness selected
+  by the active substrate file. The repo-local topic spool remains a harness-only transport for
+  endpoint-absent unit or isolated daemon checks
 - Linux bootstrap entrypoints delegate lifecycle and test commands to the Compose-launched
   `infernix` binary, which owns active-substrate preflight so lane switches cannot reuse a stale
   staged payload

@@ -90,7 +90,7 @@ with bounded retries across transient registry resets.
 | Linux GPU naming | the NVIDIA-backed Linux substrate is standardized as `linux-gpu` | implemented |
 | Serialized substrate naming | the generated substrate file, publication JSON, `cluster status`, and browser contracts still carry the active substrate under `runtimeMode` field names | implemented |
 | Demo UI gating | the staged substrate file can disable the clustered demo surface | implemented; the supported materialization path accepts `--demo-ui false` |
-| Simulation stance | no simulated cluster, route, transport, or generic inference-success fallback remains in the supported runtime or validation contract | implemented and validated; inference execution goes through typed adapter harnesses and unsupported adapters fail fast |
+| Simulation stance | no simulated cluster, route, or generic inference-success fallback remains in the supported runtime or validation contract, and routed Pulsar checks require the real Gateway-backed upstream | implemented and validated; inference execution goes through typed adapter harnesses, unsupported adapters fail fast, and the remaining repo-local topic spool under `./.data/runtime/pulsar/` is a harness-only path for unit-level or intentionally endpoint-absent daemon checks |
 | Validation scope | integration uses one `.dhall`-driven suite over the README matrix, E2E stays substrate-agnostic at the browser layer, and `test all` runs every supported validation layer for one built substrate at a time | implemented and validated across the governed Linux and Apple lifecycle reruns |
 
 Monitoring is not a supported first-class surface.
@@ -156,7 +156,9 @@ Monitoring is not a supported first-class surface.
 - `linux-gpu` assumes an amd64 Linux environment paired with a CUDA-capable device, but the outer
   control-plane container itself never requires the NVIDIA runtime
 - supported entrypoints no longer use simulated cluster bring-up, direct tool-route compatibility
-  handlers, generic inference-success fallback, or cross-substrate default validation reruns
+  handlers, generic inference-success fallback, or cross-substrate default validation reruns; the
+  remaining repo-local topic spool is a harness-only path and does not replace real Pulsar
+  transport on the routed cluster validation path
 - one substrate-aware integration suite traverses the comprehensive model, format, and engine
   matrix in `README.md`, reads the active substrate from `.dhall`, and chooses the corresponding
   engine binding for every supported row or reference
@@ -522,8 +524,9 @@ The plan keeps control-plane execution context separate from substrate.
   publish the completed results
 - production `infernix service` binds no HTTP listener
 - the demo HTTP API is a demo-only surface owned by `infernix-demo`
-- simulated cluster, route, transport, and generic inference-success fallback behavior are not part
-  of the supported final contract
+- simulated cluster, route, and generic inference-success fallback behavior are not part of the
+  supported final contract; real cluster paths use Pulsar transport, while the repo-local topic
+  spool is retained only for unit-level or intentionally endpoint-absent harness flows
 
 ### 15. Frontend Language Is PureScript
 

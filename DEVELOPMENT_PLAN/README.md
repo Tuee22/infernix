@@ -142,6 +142,12 @@ target tag. The earlier May 13 lifecycle investigation remains the proof point t
 begins and that Harbor image pushes are readiness-gated with bounded retries across transient
 registry resets.
 
+The production and routed validation path uses real Pulsar transport. The repository still keeps
+the repo-local topic spool under `./.data/runtime/pulsar/` as a deliberate harness surface when
+unit-level checks or manually isolated daemon runs intentionally omit Pulsar endpoint
+configuration; that harness does not count as routed cluster evidence and does not replace the
+Gateway-backed Pulsar assertions in integration or E2E validation.
+
 Monitoring is not a supported first-class surface.
 
 ## Execution Contexts and Substrates
@@ -242,7 +248,9 @@ The supported platform now closes around these rules:
 - supported entrypoints no longer carry the old cross-substrate default matrix, cluster bring-up
   fallbacks, direct tool-route compatibility handlers, or generic inference-success fallback;
   routed Harbor, MinIO, and Pulsar checks require the real Gateway-backed upstream behavior, while
-  inference coverage goes through the typed adapter harness selected by the active substrate file
+  inference coverage goes through the typed adapter harness selected by the active substrate file.
+  The repo-local Pulsar topic spool remains only a harness-oriented path for endpoint-absent unit
+  or isolated daemon checks, not a substitute for routed cluster validation
 - integration coverage is driven by the comprehensive model, format, and engine matrix in
   `README.md`: one substrate-aware integration suite reads the active substrate from `.dhall`,
   chooses the corresponding engine binding for each supported row or reference, and runs at least
