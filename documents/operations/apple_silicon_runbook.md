@@ -15,17 +15,20 @@
 - Colima is the only supported Docker environment on Apple Silicon
 - after `./.build/infernix` exists, supported commands reconcile Homebrew-managed Colima, Docker
   CLI, `kind`, `kubectl`, `helm`, and Node.js on demand, reconcile Colima to the supported
-  `8 CPU / 16 GiB` profile before Docker-backed work, and let adapter setup or validation paths
+  `8 CPU / 16 GiB` profile before Docker-backed work, select the supported `default` profile even
+  when `colima list --json` reports multiple profiles, and let adapter setup or validation paths
   reconcile Homebrew `python@3.12` at `/opt/homebrew/opt/python@3.12/bin/python3.12` plus a
   user-local Poetry bootstrap when needed
 - the Apple bootstrap shell owns only host prerequisite reconciliation through the host binary
   build and then invokes `./.build/infernix <command>`; the host binary owns Colima, Kind,
   Kubernetes, container builds, Harbor publication, and any image pulls needed after it exists
 - on May 15, 2026, and again on May 17, 2026, the supported Apple lifecycle reran cleanly through
-  `doctor`, `build`, `up`, `status`, `test`, `down`, and final `status`; those reruns validated
-  the split daemon topology, host-batch Pulsar handoff, routed Playwright E2E, repeated
-  retained-state cluster bring-up or teardown cycles inside `test all`, and final post-teardown
-  status reported `clusterPresent: False`
+  `doctor`, `build`, `up`, `status`, `test`, `down`, and final `status`; the May 17, 2026 rerun
+  also validated the current Colima 0.10.1 multi-profile `colima list --json` output shape.
+  Those reruns validated the split daemon topology, host-batch Pulsar handoff, routed Playwright
+  E2E, repeated retained-state cluster bring-up or teardown cycles inside `test all`, and final
+  post-teardown status reported `clusterPresent: False`, `lifecycleStatus: idle`, and
+  `lifecyclePhase: cluster-absent`
 - the May 13, 2026 Apple lifecycle investigation remains the proof point that long waits can still
   be healthy while the supported path is replaying retained Kind data, building the shared runtime
   image, publishing it through Harbor, or preloading Harbor-backed images onto the Kind worker;

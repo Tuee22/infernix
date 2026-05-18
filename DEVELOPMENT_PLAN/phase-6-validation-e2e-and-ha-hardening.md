@@ -1003,6 +1003,9 @@ substrate-mismatched compatibility shims.
   `/opt/homebrew/opt/python@3.12/bin/python3.12`, a user-local Poetry bootstrap, Node.js, and the
   supported Colima profile on demand when Apple
   lifecycle or adapter-validation paths need them
+- Apple host prerequisite reconciliation selects the supported `default` Colima profile even when
+  newer `colima list --json` output reports one JSON object per profile, so multi-profile Apple
+  hosts do not fail before Docker-backed work starts
 - Apple Kind lifecycle code no longer relies on unsupported host bind-mount ownership assumptions,
   does not perform broad pre-Harbor support-image preloads, preloads only Harbor-backed final
   image refs after Harbor publication, and keeps the routed demo API aligned with the active
@@ -1025,9 +1028,15 @@ substrate-mismatched compatibility shims.
   `./bootstrap/apple-silicon.sh build` reaches direct Cabal handoff on the first invocation after
   it installs or selects `cabal 3.16.1.0`
 - the supported Apple lifecycle rerun closes through
-  `./bootstrap/apple-silicon.sh doctor`, `build`, `up`, `status`, `test`, and `down`
+  `./bootstrap/apple-silicon.sh doctor`, `build`, `up`, `status`, `test`, `down`, and final
+  `status`
 - on May 11, 2026, the supported Apple lifecycle reran cleanly through
   `./bootstrap/apple-silicon.sh doctor`, `build`, `up`, `status`, `test`, and `down`
+- on May 17, 2026, with Colima 0.10.1 reporting multiple profiles from
+  `colima list --json`, the supported Apple lifecycle reran cleanly through
+  `./bootstrap/apple-silicon.sh doctor`, `build`, `up`, `status`, `test`, `down`, and final
+  `status`, and the post-teardown `status` surface reported `clusterPresent: False`,
+  `lifecycleStatus: idle`, and `lifecyclePhase: cluster-absent`
 - the Apple bootstrap fails fast with actionable messages if the resolved ghcup-managed toolchain,
   Homebrew `protoc`, or supported Colima profile still cannot be used in the current process
 - the supported Apple routed Playwright lane passes without timing out on

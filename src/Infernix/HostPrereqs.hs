@@ -3,14 +3,16 @@
 
 module Infernix.HostPrereqs
   ( appleHostRequirementIds,
+    colimaProfileSummary,
+    decodeDefaultColimaProfileOutput,
     ensureAppleHostPrerequisites,
   )
 where
 
 import Control.Monad (unless, void, when)
-import Data.Aeson (FromJSON (parseJSON), eitherDecode, withObject, (.:))
+import Data.Aeson (FromJSON (parseJSON), eitherDecode, withObject, (.!=), (.:), (.:?))
 import Data.ByteString.Lazy.Char8 qualified as LazyChar8
-import Data.List (isInfixOf, nub)
+import Data.List (find, intercalate, isInfixOf, nub)
 import Infernix.CommandRegistry (Command (..))
 import Infernix.Config (ControlPlaneContext (HostNative), controlPlaneContext, discoverPaths, resolveRuntimeMode)
 import Infernix.Internal.Util (findFirstM)
@@ -35,7 +37,8 @@ data AppleHostRequirement
   deriving (Eq, Show)
 
 data ColimaProfile = ColimaProfile
-  { colimaStatus :: String,
+  { colimaName :: String,
+    colimaStatus :: String,
     colimaCpus :: Int,
     colimaMemoryBytes :: Integer
   }
@@ -44,7 +47,8 @@ instance FromJSON ColimaProfile where
   parseJSON =
     withObject "ColimaProfile" $ \objectValue ->
       ColimaProfile
-        <$> objectValue .: "status"
+        <$> objectValue .:? "name" .!= "default"
+        <*> objectValue .: "status"
         <*> objectValue .: "cpus"
         <*> objectValue .: "memory"
 
@@ -282,7 +286,7 @@ readColimaProfile = do
     readCreateProcessWithExitCode (proc "colima" ["list", "--json"]) ""
   case exitCode of
     ExitSuccess ->
-      case eitherDecode (LazyChar8.pack stdoutOutput) of
+      case decodeDefaultColimaProfileOutput stdoutOutput of
         Right profile -> pure profile
         Left decodeError ->
           ioError
@@ -297,6 +301,50 @@ readColimaProfile = do
             ( "failed to inspect the Colima profile for the Apple host-native Docker environment\n"
                 <> stderrOutput
             )
+        )
+
+decodeDefaultColimaProfileOutput :: String -> Either String ColimaProfile
+decodeDefaultColimaProfileOutput stdoutOutput =
+  case decodeSingleProfile of
+    Right profile -> Right profile
+    Left singleProfileError ->
+      case decodeProfileArray of
+        Right profiles -> selectDefaultColimaProfile profiles
+        Left profileArrayError ->
+          case decodeProfileLines of
+            Right profiles -> selectDefaultColimaProfile profiles
+            Left profileLinesError ->
+              Left
+                ( "single-profile decode failed: "
+                    <> singleProfileError
+                    <> "\narray decode failed: "
+                    <> profileArrayError
+                    <> "\nnewline-delimited decode failed: "
+                    <> profileLinesError
+                )
+  where
+    outputBytes = LazyChar8.pack stdoutOutput
+    decodeSingleProfile :: Either String ColimaProfile
+    decodeSingleProfile = eitherDecode outputBytes
+    decodeProfileArray :: Either String [ColimaProfile]
+    decodeProfileArray = eitherDecode outputBytes
+    decodeProfileLines =
+      case filter (not . null) (map trimWhitespace (lines stdoutOutput)) of
+        [] -> Left "command returned no JSON output"
+        profileLines -> traverse decodeProfileLine profileLines
+    decodeProfileLine line =
+      case eitherDecode (LazyChar8.pack line) of
+        Right profile -> Right profile
+        Left decodeError -> Left ("line `" <> line <> "` failed to decode: " <> decodeError)
+
+selectDefaultColimaProfile :: [ColimaProfile] -> Either String ColimaProfile
+selectDefaultColimaProfile profiles =
+  case find ((== "default") . colimaName) profiles of
+    Just profile -> Right profile
+    Nothing ->
+      Left
+        ( "Colima did not report the supported `default` profile. Reported profiles: "
+            <> intercalate ", " (map colimaName profiles)
         )
 
 colimaProfileRunning :: ColimaProfile -> Bool

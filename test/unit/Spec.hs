@@ -29,7 +29,7 @@ import Infernix.CommandRegistry
 import Infernix.Config
 import Infernix.DemoConfig (decodeDemoConfigFile)
 import Infernix.Engines.AppleSilicon (ensureAppleSiliconRuntimeReady)
-import Infernix.HostPrereqs (appleHostRequirementIds)
+import Infernix.HostPrereqs (appleHostRequirementIds, colimaProfileSummary, decodeDefaultColimaProfileOutput)
 import Infernix.Models
 import Infernix.Routes
   ( renderChartRouteRegistryCommentSection,
@@ -129,6 +129,28 @@ main = do
   assert
     (null (appleHostRequirementIds AppleSilicon DocsCheckCommand))
     "apple host prerequisite planning does not install unrelated tools for docs-only commands"
+  defaultColimaProfile <-
+    expectRight
+      "default Colima profile decode succeeds for newline-delimited multi-profile output"
+      ( decodeDefaultColimaProfileOutput
+          ( unlines
+              [ "{\"name\":\"default\",\"status\":\"Running\",\"arch\":\"aarch64\",\"cpus\":8,\"memory\":25769803776,\"disk\":274877906944,\"runtime\":\"docker\"}",
+                "{\"name\":\"bby-amd64\",\"status\":\"Stopped\",\"arch\":\"aarch64\",\"cpus\":4,\"memory\":17179869184,\"disk\":274877906944}"
+              ]
+          )
+      )
+  assert
+    (colimaProfileSummary defaultColimaProfile == "8 CPU / 24 GiB memory")
+    "newline-delimited Colima profile decode keeps the supported default profile details"
+  legacyColimaProfile <-
+    expectRight
+      "legacy single-profile Colima JSON decode remains supported"
+      ( decodeDefaultColimaProfileOutput
+          "{\"status\":\"Running\",\"cpus\":8,\"memory\":17179869184}"
+      )
+  assert
+    (colimaProfileSummary legacyColimaProfile == "8 CPU / 16 GiB memory")
+    "single-profile Colima decode remains compatible with the older payload shape"
   assertUniqueModelIds AppleSilicon
   assertUniqueModelIds LinuxCpu
   assertUniqueModelIds LinuxGpu
@@ -542,6 +564,10 @@ testRootPath suiteName = do
 assert :: Bool -> String -> IO ()
 assert True _ = pure ()
 assert False message = fail message
+
+expectRight :: String -> Either String a -> IO a
+expectRight _ (Right value) = pure value
+expectRight context (Left err) = fail (context <> ": " <> err)
 
 assertUniqueModelIds :: RuntimeMode -> IO ()
 assertUniqueModelIds mode = do
