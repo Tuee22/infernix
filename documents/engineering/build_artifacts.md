@@ -23,6 +23,9 @@ The current worktree follows the supported artifact layout directly: the host pa
 `./.build/outer-container/` on the host through the `./.build:/workspace/.build` bind mount,
 generated frontend contracts stay under `web/src/Generated/`, and runtime result or
 cache-manifest state uses protobuf-backed `*.pb` files instead of legacy text-state fallbacks.
+Kind and `nvkind` cluster create or delete uses transient scratch kubeconfig state under the
+execution context's temp directory, and only the published repo-local kubeconfig paths are part
+of the supported artifact contract.
 
 ## Build Roots
 
@@ -41,8 +44,11 @@ cache-manifest state uses protobuf-backed `*.pb` files instead of legacy text-st
 - the substrate image captures the sorted source snapshot at
   `/opt/infernix/source-snapshot-files.txt`, which sits outside the bind-mounted `./.build/` tree
   so it stays in the image overlay where git-less `infernix lint files` runs can read it
-- `cluster up` writes `./.build/infernix.kubeconfig` on the host path
-- `cluster up` writes `./.data/runtime/infernix.kubeconfig` on the outer-container path
+- `cluster up` publishes `./.build/infernix.kubeconfig` on the host path after Kind create or
+  delete uses a transient host-local scratch kubeconfig
+- `cluster up` publishes `./.data/runtime/infernix.kubeconfig` on the outer-container path after
+  Kind or `nvkind` create or delete uses a transient launcher-local scratch kubeconfig under the
+  container temp directory
 - the active generated substrate file lives at `./.build/infernix-substrate.dhall` on the Apple
   host path and `./.build/outer-container/build/infernix-substrate.dhall` on the host for the
   Linux outer-container path, where it is visible inside the launcher container as
@@ -83,9 +89,11 @@ cache-manifest state uses protobuf-backed `*.pb` files instead of legacy text-st
   preflight for their execution context: they materialize or validate the file under the active
   build root before relying on it, while the explicit internal materialization helper remains
   available for direct operator restaging
-- kubeconfig output is repo-local and execution-context-specific: Apple host mode uses
-  `./.build/infernix.kubeconfig`, while Linux outer-container mode uses the durable
-  `./.data/runtime/infernix.kubeconfig`
+- kubeconfig output is repo-local and execution-context-specific: Apple host mode publishes
+  `./.build/infernix.kubeconfig`, while Linux outer-container mode publishes the durable
+  `./.data/runtime/infernix.kubeconfig`; Kind and `nvkind` cluster create or delete uses a
+  transient scratch kubeconfig outside the repo tree and may clean stale repo-local `*.lock`
+  artifacts automatically
 - `infernix lint files` uses tracked files from `.git` when VCS metadata is present and otherwise
   uses `/opt/infernix/source-snapshot-files.txt` baked into the substrate image on git-less Linux
   image runs

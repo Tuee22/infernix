@@ -26,6 +26,9 @@
 - the target bootstrap responsibility boundary keeps shell scripts out of Kind, Kubernetes
   manifests, and image-pull orchestration: after prerequisites and the substrate-specific launcher
   are available, lifecycle commands are ordinary `infernix` binary invocations
+- the lifecycle keeps Kind and `nvkind` lock-taking off repo-visible paths by using a transient
+  scratch kubeconfig under the execution context's system temp directory during cluster create or
+  delete, then publishing the durable repo-local kubeconfig afterward
 
 ## Apple Host-Native Flow
 
@@ -119,7 +122,10 @@ the shared adapter project:
 - bootstrap `down` commands delegate to `infernix cluster down` and preserve `./.build/`,
   `./.data/`, the Apple host binary, Linux substrate images, and installed Docker or CUDA
   prerequisites
-- Apple mode uses the repo-local kubeconfig under `./.build/`
+- Kind or `nvkind` create or delete uses a transient scratch kubeconfig under the execution
+  context's system temp directory, then publishes the supported repo-local kubeconfig at
+  `./.build/infernix.kubeconfig` on Apple or `./.data/runtime/infernix.kubeconfig` on Linux;
+  stale repo-local `*.lock` files are disposable lifecycle byproducts
 - container mode keeps the staged substrate file under `./.build/outer-container/build/` on the
   host through the `./.build:/workspace/.build` bind mount, while cabal-home and the cabal
   builddir live at the toolchain's natural in-image locations rather than on any bind-mounted

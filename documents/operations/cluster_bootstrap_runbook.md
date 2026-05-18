@@ -18,6 +18,11 @@
   `docker compose run --rm infernix infernix <command>` and relies on that Compose-launched
   binary path to build or reuse the active launcher image, stage or validate substrate state, and
   own the requested lifecycle command
+- on every supported substrate, Kind or `nvkind` create or delete uses a transient
+  execution-local scratch kubeconfig under the system temp directory; after cluster creation the
+  lifecycle publishes the supported repo-local kubeconfig (`./.build/infernix.kubeconfig` on
+  Apple, `./.data/runtime/infernix.kubeconfig` on Linux) and cleans stale repo-local lock
+  artifacts automatically
 - run `infernix cluster up`
 - if retained Pulsar ZooKeeper state is self-inconsistent, `cluster up` logs a targeted Pulsar
   claim-root reset and retries once; treat that retry as explicit durability repair for the
@@ -119,6 +124,8 @@ execution is not a supported compatibility fallback for the Harbor, MinIO, or Pu
 - when using `bootstrap/*.sh down`, expect the shell script to delegate to the binary teardown
   path only; it deletes the cluster and must preserve `./.build/`, `./.data/`, the host-level
   container build, the Apple host binary, and installed Docker or CUDA prerequisites
+- the same scratch-kubeconfig policy applies during teardown: Kind delete does not depend on the
+  durable repo-local kubeconfig path or its transient lock artifacts
 - on Apple, expect teardown to copy retained Kind claim data back out of the worker before the
   cluster disappears when durable state exists
 - when teardown looks quiet, use `infernix cluster status` to confirm whether the active phase is

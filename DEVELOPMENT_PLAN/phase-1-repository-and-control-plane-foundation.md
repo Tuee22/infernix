@@ -108,7 +108,7 @@ None.
 ## Sprint 1.3: Dual Operator Execution Contexts [Done]
 
 **Status**: Done
-**Implementation**: `compose.yaml`, `src/Infernix/CLI.hs`, `src/Infernix/Config.hs`, `src/Infernix/Service.hs`
+**Implementation**: `compose.yaml`, `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Config.hs`, `src/Infernix/Service.hs`
 **Docs to update**: `README.md`, `documents/development/local_dev.md`, `documents/engineering/docker_policy.md`
 
 ### Objective
@@ -120,10 +120,13 @@ different products.
 
 - Apple Silicon runs `./.build/infernix` directly on the host and shells out to host-installed
   `kind`, `kubectl`, `helm`, and Docker
-- `cluster up` writes `./.build/infernix.kubeconfig` on Apple and does not mutate
-  `$HOME/.kube/config`
-- `cluster up` writes `./.data/runtime/infernix.kubeconfig` on the Linux outer-container path so
-  fresh launcher containers reuse the same durable cluster handle
+- `cluster up` publishes `./.build/infernix.kubeconfig` on Apple without mutating
+  `$HOME/.kube/config`, while Kind create or delete uses a transient host-local scratch
+  kubeconfig first
+- `cluster up` publishes `./.data/runtime/infernix.kubeconfig` on the Linux outer-container path
+  so fresh launcher containers reuse the same durable cluster handle, while Kind or `nvkind`
+  create or delete uses a transient execution-local scratch kubeconfig off repo-visible bind
+  mounts
 - `infernix kubectl ...` automatically targets the repo-local kubeconfig on supported paths
 - Linux uses Compose only as a one-command launcher:
   `docker compose run --rm infernix infernix <subcommand>`
@@ -137,6 +140,9 @@ different products.
   manually setting `KUBECONFIG`
 - after `docker compose run --rm infernix infernix internal materialize-substrate linux-cpu --demo-ui true`,
   `docker compose run --rm infernix infernix cluster status` executes on the Linux outer path
+- repeated supported cluster create or delete reruns do not depend on preserving repo-local
+  `infernix.kubeconfig.lock` artifacts because Kind or `nvkind` operates on a scratch kubeconfig
+  and the lifecycle republishes the durable repo-local kubeconfig afterward
 
 ### Remaining Work
 

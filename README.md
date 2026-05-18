@@ -127,8 +127,9 @@ The supported local platform is built around:
 - substrate bootstrap entrypoints under `bootstrap/` that reconcile only the host prerequisites
   needed to build or enter the active `infernix` launcher, then invoke the matching binary command
   for cluster lifecycle, validation, and teardown
-- one repo-local kubeconfig managed under the active build-output location rather than the user's
-  global kubeconfig
+- one repo-local kubeconfig published under the active build-output location rather than the
+  user's global kubeconfig; Kind and `nvkind` use a transient scratch kubeconfig during cluster
+  create or delete so lifecycle-owned lock files never become part of the supported repo contract
 
 <!-- infernix:route-registry:readme:start -->
 - always-published routed prefixes: `/harbor/api`, `/harbor`, `/minio/console`, `/minio/s3`, `/pulsar/admin`, `/pulsar/ws`
@@ -398,10 +399,12 @@ cabal install --installdir=./.build --install-method=copy --overwrite-policy=alw
 ./.build/infernix cluster down
 ```
 
-`cluster up` writes `./.build/infernix.kubeconfig` and never touches `$HOME/.kube/config`. On the
-supported minimal-prerequisites path, the bootstrap and then the binary reconcile Homebrew-managed
-operator tools and Poetry bootstrap before an adapter setup or validation path first needs the
-shared `python/.venv/`.
+`cluster up` publishes `./.build/infernix.kubeconfig` and never touches `$HOME/.kube/config`.
+Kind create or delete uses a transient host-local scratch kubeconfig first, so the supported
+repo-local kubeconfig remains the only operator-facing file under `./.build/`. On the supported
+minimal-prerequisites path, the bootstrap and then the binary reconcile Homebrew-managed operator
+tools and Poetry bootstrap before an adapter setup or validation path first needs the shared
+`python/.venv/`.
 
 ### Linux CPU (outer container)
 
@@ -433,7 +436,10 @@ socket. The baked image owns the full toolchain, so the supported runtime path d
 anything via `apt`, `pip`, or ad hoc host-side `cabal build`. The Linux bootstrap invokes the
 same `docker compose run --rm infernix infernix <command>` shape that operators use directly,
 letting Compose build the missing launcher image and letting the binary own substrate staging,
-cluster lifecycle, image preparation, and validation.
+cluster lifecycle, image preparation, and validation. On both Linux substrates, Kind or `nvkind`
+create or delete uses a launcher-local scratch kubeconfig under the container temp directory and
+the lifecycle publishes the durable operator-facing kubeconfig afterward to
+`./.data/runtime/infernix.kubeconfig`.
 
 ### Linux GPU (outer container)
 
@@ -514,7 +520,9 @@ around upstream `kubectl`, not a parallel lifecycle surface.
 
 - `cluster up` is the supported HA testing and demo-ground bring-up command
 - `cluster up` declaratively reconciles Kind, manual storage, Harbor-backed images, Helm workloads,
-  repo-local kubeconfig, and publication of the active substrate configuration
+  repo-local kubeconfig publication, and publication of the active substrate configuration; Kind
+  or `nvkind` create or delete uses a transient scratch kubeconfig while the published repo-local
+  kubeconfig remains the supported operator surface
 - `bootstrap/*.sh` commands are launchers for `infernix` commands only after host prerequisites and
   the substrate-specific binary or container launcher are ready; they do not directly manage Kind,
   Kubernetes resources, manifests, or image pulls

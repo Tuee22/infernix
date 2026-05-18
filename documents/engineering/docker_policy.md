@@ -36,7 +36,9 @@ routed E2E execution for every substrate. `compose.yaml` defines an `infernix` s
 control plane and a `playwright` service for routed E2E, and bind-mounts `./.data/`, `./.build/`,
 `./chart/charts/`, and the host `compose.yaml` into the `infernix` service together with the
 Docker socket. The Harbor-first bootstrap path no longer depends on any retired helper-registry
-container cleanup.
+container cleanup. Kind and `nvkind` cluster create or delete uses launcher-local scratch
+kubeconfig state under the container temp directory, and the durable operator-facing kubeconfig is
+published afterward to `./.data/runtime/infernix.kubeconfig`.
 
 ## Host Prerequisite Boundary
 
@@ -99,6 +101,10 @@ container cleanup.
 - cluster-backed outer-container commands join the private Docker `kind` network and use
   `kind get kubeconfig --internal` plus control-plane container DNS for Kubernetes access instead
   of `host.docker.internal`
+- on the supported outer-container path, Kind and `nvkind` create or delete the cluster against a
+  launcher-local scratch kubeconfig under the container temp directory; the lifecycle publishes
+  the durable operator-facing kubeconfig afterward to `./.data/runtime/infernix.kubeconfig`,
+  keeping transient lock files off the bind-mounted repo tree
 - on the host-native Apple lane, the dedicated Playwright container also joins the private Docker
   `kind` network and targets the Kind control-plane DNS instead of `host.docker.internal`; only
   the host-side routed-surface readiness probe uses the published edge on `127.0.0.1`

@@ -13,7 +13,7 @@ module Infernix.Cluster
 where
 
 import Control.Concurrent (threadDelay)
-import Control.Exception (IOException, bracket, try)
+import Control.Exception (IOException, bracket, finally, try)
 import Control.Monad (unless, when)
 import Data.Aeson (Value (..), eitherDecode)
 import Data.Aeson.Key qualified as Key
@@ -42,7 +42,7 @@ import Infernix.Storage
 import Infernix.Types
 import Infernix.Workflow (platformCommandsAvailable)
 import Network.Socket qualified as Socket
-import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, findExecutable, listDirectory, removePathForcibly, renameFile)
+import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, findExecutable, getTemporaryDirectory, listDirectory, removeFile, removePathForcibly, renameFile)
 import System.Environment (getEnvironment, lookupEnv)
 import System.Exit (ExitCode (..))
 import System.FilePath (takeDirectory, takeFileName, (</>))
@@ -399,7 +399,7 @@ clusterUpWithPlatform paths runtimeMode = do
   unless (kindUsesHostBindMounts paths) $
     prepareKindNodeClaimDirectories paths clusterPrepareState runtimeMode discoveredClaims
   writeFile (edgePortPath paths) (show edgePortValue)
-  writeTextFile (Config.generatedKubeconfigPath paths) (Text.pack kubeconfigContents)
+  publishGeneratedKubeconfig paths (Text.pack kubeconfigContents)
   activeStateTime <- getCurrentTime
   let activeState0 =
         clusterUpState
@@ -762,7 +762,7 @@ ensureClusterKubeconfigPresent paths state = do
   let kubeconfigFile = kubeconfigPath state
   kubeconfigExists <- doesFileExist kubeconfigFile
   unless kubeconfigExists $
-    writeTextFile kubeconfigFile . Text.pack =<< waitForKindKubeconfigOrFail paths (clusterRuntimeMode state)
+    publishGeneratedKubeconfig paths . Text.pack =<< waitForKindKubeconfigOrFail paths (clusterRuntimeMode state)
 
 publicationStateSummaryLines :: FilePath -> IO [String]
 publicationStateSummaryLines publicationPath = do
@@ -933,7 +933,7 @@ ensureKindCluster paths runtimeMode requestedPort = do
       pure (selectedPort, normalizeKubeconfigServer (Config.controlPlaneContext paths) kubeconfigContents, clusterCreated)
     Left err
       | clusterExists -> do
-          runCommand Nothing [] "kind" ["delete", "cluster", "--name", kindClusterName paths runtimeMode]
+          deleteKindCluster paths runtimeMode
           recreatedPort <- createKindCluster paths runtimeMode requestedPort
           recreatedKubeconfig <- waitForKindKubeconfigOrFail paths runtimeMode
           pure (recreatedPort, normalizeKubeconfigServer (Config.controlPlaneContext paths) recreatedKubeconfig, True)
@@ -954,10 +954,10 @@ createKindCluster paths runtimeMode = case runtimeMode of
   where
     go candidatePort = do
       configPath <- writeGeneratedKindConfig paths runtimeMode candidatePort
-      result <-
+      result <- withKindScratchKubeconfig paths runtimeMode $ \scratchKubeconfig ->
         tryCommand
           Nothing
-          [("KUBECONFIG", Config.generatedKubeconfigPath paths)]
+          [("KUBECONFIG", scratchKubeconfig)]
           "kind"
           ["create", "cluster", "--name", kindClusterName paths runtimeMode, "--config", configPath]
       case result of
@@ -976,10 +976,10 @@ createLinuxGpuCluster paths = go
       ensureLinuxGpuHostPrerequisites paths
       nvkindBinary <- ensureNvkindBinary paths
       configPath <- writeGeneratedKindConfig paths LinuxGpu candidatePort
-      result <-
+      result <- withKindScratchKubeconfig paths LinuxGpu $ \scratchKubeconfig ->
         tryCommand
           Nothing
-          [("KUBECONFIG", Config.generatedKubeconfigPath paths)]
+          [("KUBECONFIG", scratchKubeconfig)]
           nvkindBinary
           [ "cluster",
             "create",
@@ -988,7 +988,7 @@ createLinuxGpuCluster paths = go
             "--config-template",
             configPath,
             "--kubeconfig",
-            Config.generatedKubeconfigPath paths,
+            scratchKubeconfig,
             "--wait",
             "5m"
           ]
@@ -1231,6 +1231,38 @@ waitForKindKubeconfigOrFail paths runtimeMode = do
                 <> err
             )
         )
+
+publishGeneratedKubeconfig :: Paths -> Text.Text -> IO ()
+publishGeneratedKubeconfig paths kubeconfigContents = do
+  removeGeneratedKubeconfigLockFile paths
+  writeTextFile (Config.generatedKubeconfigPath paths) kubeconfigContents
+  removeGeneratedKubeconfigLockFile paths
+
+generatedKubeconfigLockPath :: Paths -> FilePath
+generatedKubeconfigLockPath paths = Config.generatedKubeconfigPath paths <> ".lock"
+
+removeGeneratedKubeconfigLockFile :: Paths -> IO ()
+removeGeneratedKubeconfigLockFile = removeFileIfExists . generatedKubeconfigLockPath
+
+removeKubeconfigArtifacts :: FilePath -> IO ()
+removeKubeconfigArtifacts kubeconfigFile = do
+  removeFileIfExists kubeconfigFile
+  removeFileIfExists (kubeconfigFile <> ".lock")
+
+removeFileIfExists :: FilePath -> IO ()
+removeFileIfExists filePath = do
+  fileExists <- doesFileExist filePath
+  when fileExists (removeFile filePath)
+
+withKindScratchKubeconfig :: Paths -> RuntimeMode -> (FilePath -> IO a) -> IO a
+withKindScratchKubeconfig paths runtimeMode action = do
+  scratchRoot <- getTemporaryDirectory
+  let scratchKubeconfig = scratchRoot </> ("infernix-kind-" <> kindClusterName paths runtimeMode <> ".kubeconfig")
+  -- Kind and nvkind take file locks while creating or deleting clusters. Keep those transient
+  -- locks off repo-visible bind mounts, then publish the durable repo-local kubeconfig ourselves.
+  removeGeneratedKubeconfigLockFile paths
+  removeKubeconfigArtifacts scratchKubeconfig
+  finally (action scratchKubeconfig) (removeKubeconfigArtifacts scratchKubeconfig)
 
 waitForKubernetesApi :: Paths -> RuntimeMode -> IO ()
 waitForKubernetesApi paths runtimeMode = do
@@ -3341,10 +3373,10 @@ deleteKindCluster paths runtimeMode = go (3 :: Int) ""
     commandLabel = "kind " <> unwords commandArgs
 
     go remainingAttempts lastError = do
-      result <-
+      result <- withKindScratchKubeconfig paths runtimeMode $ \scratchKubeconfig ->
         tryCommand
           Nothing
-          [("KUBECONFIG", Config.generatedKubeconfigPath paths)]
+          [("KUBECONFIG", scratchKubeconfig)]
           "kind"
           commandArgs
       case result of

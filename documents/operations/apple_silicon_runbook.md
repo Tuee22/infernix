@@ -22,6 +22,9 @@
 - the Apple bootstrap shell owns only host prerequisite reconciliation through the host binary
   build and then invokes `./.build/infernix <command>`; the host binary owns Colima, Kind,
   Kubernetes, container builds, Harbor publication, and any image pulls needed after it exists
+- the Apple lifecycle now keeps Kind lock-taking off repo-visible paths by using a host-local
+  scratch kubeconfig under the system temp directory during cluster create or delete and then
+  publishing the durable repo-local kubeconfig under `./.build/`
 - on May 15, 2026, and again on May 17, 2026, the supported Apple lifecycle reran cleanly through
   `doctor`, `build`, `up`, `status`, `test`, `down`, and final `status`; the May 17, 2026 rerun
   also validated the current Colima 0.10.1 multi-profile `colima list --json` output shape.
@@ -104,7 +107,8 @@ Direct reference path:
   `./.build/infernix-substrate.dhall` through the binary-owned substrate path;
   `./.build/infernix internal materialize-substrate apple-silicon` remains the direct helper when
   an operator intentionally needs to restage or inspect that file
-- `cluster up` writes `./.build/infernix.kubeconfig`
+- Kind create or delete uses a host-local scratch kubeconfig under the system temp directory, and
+  `cluster up` publishes `./.build/infernix.kubeconfig` afterward
 - supported flows do not mutate `$HOME/.kube/config`
 - the Apple host-native path describes where the Haskell build, control-plane commands, cluster
   daemon orchestration, and host inference executor run; `cluster up` adds `infernix-demo` when

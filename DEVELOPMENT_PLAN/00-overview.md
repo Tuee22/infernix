@@ -506,6 +506,9 @@ The plan keeps control-plane execution context separate from substrate.
 - host-native compiled artifacts stay under `./.build/`
 - the Apple substrate `.dhall` sits beside `./.build/infernix`
 - `cluster up` writes the repo-local kubeconfig to `./.build/infernix.kubeconfig`
+- on every supported substrate, Kind or `nvkind` create or delete uses a transient
+  execution-local scratch kubeconfig under the system temp directory, and the lifecycle publishes
+  the durable repo-local kubeconfig afterward
 
 ### 13. Python Restriction
 

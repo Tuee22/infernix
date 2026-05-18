@@ -18,8 +18,9 @@
 
 The current repository already follows this split: Kind PV data, object-store metadata, MinIO
 objects, Pulsar ledgers, protobuf-backed inference-result files, and Patroni-backed PostgreSQL
-state are durable, while `./.build/`, `/opt/build/`, generated publication mirrors, caches, and
-Playwright output are derived.
+state are durable, while `./.build/`, `/opt/build/`, generated publication mirrors, caches,
+Playwright output, transient Kind or `nvkind` scratch kubeconfig files, and stale repo-local
+kubeconfig lock files are derived.
 
 ## Owner And Durability Table
 
@@ -34,7 +35,7 @@ Playwright output are derived.
 | Runtime artifact bundles | Haskell service runtime | `./.data/object-store/artifacts/` | durable | bundles are durable worker inputs and are not rebuilt from cache directories alone |
 | Cache manifests used to rebuild model caches | Haskell service runtime | `./.data/object-store/manifests/<runtime-mode>/<model-id>/default.pb` | durable | rebuild the derived cache from these protobuf-backed manifests rather than inventing alternate cache metadata |
 | Publication state and generated ConfigMap mirrors | cluster lifecycle and demo activation | `./.data/runtime/publication.json`, `./.data/runtime/configmaps/infernix-demo-config/` | derived but user-visible | regenerate from `cluster up`, `cluster down`, or the active generated demo config |
-| Repo-local kubeconfig and chosen edge-port record | cluster lifecycle | `./.build/infernix.kubeconfig`, `./.data/runtime/infernix.kubeconfig`, `./.data/runtime/edge-port.json` | derived | recreate from the supported control-plane lifecycle |
+| Repo-local kubeconfig and chosen edge-port record | cluster lifecycle | `./.build/infernix.kubeconfig`, `./.data/runtime/infernix.kubeconfig`, `./.data/runtime/edge-port.json` | derived | recreate from the supported control-plane lifecycle; Kind and `nvkind` create or delete use transient scratch kubeconfig state under system temp and may remove stale repo-local `*.lock` artifacts automatically |
 | Build roots and staged generated demo config | build or cluster lifecycle | `./.build/`, `/opt/build/` | derived | rebuild from source and the active runtime mode |
 | Runtime model cache | Haskell service runtime | `./.data/runtime/model-cache/...` | derived | rebuild from durable manifests and artifacts |
 | Apple adapter virtualenv and Playwright artifacts | Poetry or validation tooling | `python/.venv/`, `./.data/test-artifacts/playwright/` | derived | recreate from the shared Python project or rerun the validation lane |
@@ -51,8 +52,9 @@ Playwright output are derived.
   in that lane
 - Supported inference-result reloads depend on protobuf-backed `*.pb` records only; legacy
   `*.state` compatibility files are not part of the rebuild or reload contract.
-- Publication mirrors, repo-local kubeconfig files, edge-port records, and generated demo-config
-  staging are disposable because the supported lifecycle commands recreate them.
+- Publication mirrors, repo-local kubeconfig files, edge-port records, generated demo-config
+  staging, transient Kind or `nvkind` scratch kubeconfig files, and repo-local kubeconfig lock
+  artifacts are disposable because the supported lifecycle commands recreate or clean them.
 - Model-cache directories are disposable because the durable manifests and artifact bundles under
   `./.data/object-store/` are the rebuild inputs.
 - Build roots and frontend bundles are disposable because the supported build and web workflows
@@ -66,6 +68,8 @@ Playwright output are derived.
   operator-visible data loss for the affected runtime lane rather than as implicit cache cleanup.
 - Do not hand-edit derived publication mirrors, generated demo-config files, or frontend generated
   outputs; regenerate them from the owning command instead.
+- Do not preserve repo-local kubeconfig lock files as authoritative state; supported lifecycle
+  commands may delete and recreate them while publishing the durable repo-local kubeconfig.
 - Keep generated build output, generated contracts, generated protobuf bindings, and test artifacts
   out of tracked source even when they are present locally.
 - Do not preserve or recreate retired `*.state` compatibility files for runtime results or cache
