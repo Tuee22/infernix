@@ -361,6 +361,30 @@ Notes:
 - everything beyond Docker plus the NVIDIA host prerequisites happens inside the shared Linux
   substrate image build or runtime path
 
+### Warning guidance
+
+The supported lifecycle treats warnings as either actionable cleanup or explicitly documented
+upstream or packaging constraints. Operators should use
+[the cluster bootstrap runbook](documents/operations/cluster_bootstrap_runbook.md) for the canonical
+warning classification. In short:
+
+- long image publication, final-image preload, retained-state replay, and early Kubernetes
+  readiness warnings can be healthy convergence while lifecycle heartbeat fields continue to update
+- host resource warnings such as `SystemOOM` are environment contention and should be addressed
+  before rerunning heavy lifecycle work
+- buildx, npm update notices, npm deprecation warnings, Python root-pip warnings, and GHCup
+  shell-profile warnings are eliminated on the current supported image and web toolchain; if they
+  return, treat them as regressions unless the canonical policy doc names a new upstream constraint
+- Playwright image build failures for a missing `web/scripts/install-purescript.mjs` are image
+  contract regressions; the dedicated Playwright image must copy `web/scripts/` before npm
+  `postinstall`
+- the remaining GHCup no-update message and generic PATH advice come from the upstream `get-ghcup`
+  installer; accept them only when the Dockerfile-owned `PATH` works, the pinned toolchain installs,
+  and the image build exits zero
+- current PureScript and Spago toolchain ownership is tracked in
+  [the PureScript policy](documents/development/purescript_policy.md), and Python packaging warning
+  ownership is tracked in [the Python policy](documents/development/python_policy.md)
+
 ## Demo and Validation Quick Start
 
 The local HA Kind cluster is the supported demo ground and full-suite validation ground for all

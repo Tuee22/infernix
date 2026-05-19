@@ -18,6 +18,9 @@
 - Routed Playwright execution closes through the dedicated `infernix-playwright:local` image
   invoked via `docker compose run --rm playwright`; the substrate image carries no
   browser-runtime weight.
+- Buildx support is part of the supported Docker toolchain. Host bootstraps install the Docker
+  buildx plugin, and the Linux substrate image installs `docker-buildx` for nested Compose builds
+  that happen during routed E2E.
 - Outer-container build state lives under `./.build/outer-container/` on the host through a
   single `./.build:/workspace/.build` bind mount; no docker-managed named volumes back the
   outer-container build root or cabal package cache.
@@ -38,7 +41,10 @@ control plane and a `playwright` service for routed E2E, and bind-mounts `./.dat
 Docker socket. The Harbor-first bootstrap path no longer depends on any retired helper-registry
 container cleanup. Kind and `nvkind` cluster create or delete uses launcher-local scratch
 kubeconfig state under the container temp directory, and the durable operator-facing kubeconfig is
-published afterward to `./.data/runtime/infernix.kubeconfig`.
+published afterward to `./.data/runtime/infernix.kubeconfig`. The host Linux bootstrap installs
+`docker-buildx-plugin`, and the Linux substrate image installs Ubuntu's `docker-buildx` package so
+nested Playwright image builds have a buildx-capable Docker CLI when Compose selects Bake-backed
+build behavior.
 
 ## Host Prerequisite Boundary
 
@@ -48,6 +54,8 @@ published afterward to `./.data/runtime/infernix.kubeconfig`.
 - on `linux-cpu`, host prerequisites stop at Docker Engine plus the Docker Compose plugin
 - on `linux-gpu`, host prerequisites stop at the `linux-cpu` Docker baseline plus the supported
   NVIDIA driver and container-toolkit setup
+- the supported Linux host Docker baseline includes the Docker buildx plugin because Compose may
+  select Bake-backed build behavior on current Docker installations
 - every remaining control-plane, web, Poetry, and Kubernetes toolchain dependency for Linux lives
   inside the shared substrate image; the Playwright runtime and browsers live inside the dedicated
   `infernix-playwright:local` image instead of the substrate image
@@ -114,6 +122,11 @@ published afterward to `./.data/runtime/infernix.kubeconfig`.
 - the Linux substrate images preinstall the project `ghc-9.14.1` toolchain together with the
   dedicated formatter-toolchain compiler `ghc-9.12.4` that the Haskell style gate uses through
   `ghcup run`
+- the Linux substrate image leaves GHCup shell-profile adjustment disabled and owns the toolchain
+  `PATH` through Docker `ENV`; `Couldn't figure out login shell!` is therefore a regression if it
+  appears in a freshly built image
+- the Linux substrate image disables npm's update notifier; npm version changes must come through
+  explicit image toolchain updates rather than lifecycle log notices
 
 ## Image Set
 
@@ -124,12 +137,14 @@ published afterward to `./.data/runtime/infernix.kubeconfig`.
 - `RUNTIME_MODE=linux-gpu` with
   `BASE_IMAGE=nvidia/cuda:13.2.1-cudnn-runtime-ubuntu24.04` produces
   `infernix-linux-gpu:local`
-- the substrate image installs Node.js 22+, the shared Poetry project, generated protobuf stubs,
+- the substrate image installs Node.js 22.5+, the shared Poetry project, generated protobuf stubs,
   the built `web/dist/` bundle, and the `nvkind` binary during image build, and regenerates
   `web/package-lock.json` through `npm install` rather than tracking it under version control
 - `docker/playwright.Dockerfile` is the dedicated Playwright image definition; it produces
   `infernix-playwright:local` from `mcr.microsoft.com/playwright:v1.57.0-noble` and owns the
-  Playwright runtime, browsers, and browser-runtime libs
+  Playwright runtime, browsers, and browser-runtime libs. It copies `web/scripts/` before running
+  `npm install` so the PureScript `postinstall` compiler acquisition script is present in the
+  image build.
 - Apple Silicon has no substrate Dockerfile; the host-native workflow builds the
   `./.build/infernix` and `./.build/infernix-demo` binaries locally, uses `./.build/infernix` for
   ordinary operator commands and the host inference daemon, keeps the routed demo workload
@@ -156,6 +171,11 @@ published afterward to `./.data/runtime/infernix.kubeconfig`.
   selected; routed E2E closes through `docker compose run --rm playwright` on every substrate.
 - `infernix test all` runs every supported validation layer for the selected Linux substrate
   without reintroducing a live repo-mounted or helper-registry-based container workflow.
+- routed E2E should not emit a Docker Compose Bake/buildx warning; if the warning returns after a
+  substrate image rebuild, treat it as a tooling regression rather than nonfatal background noise.
+- routed E2E should not fail the Playwright image build with a missing
+  `web/scripts/install-purescript.mjs`; if that error returns, the Playwright Dockerfile has drifted
+  from the web toolchain contract and must copy the web scripts before npm `postinstall`.
 
 ## Cross-References
 

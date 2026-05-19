@@ -11,7 +11,8 @@
 The demo UI is the only browser-facing surface in this repository. It is implemented in
 PureScript. JavaScript exists as compiled output under `web/dist/`; source-level `.js` or `.mjs`
 files are not part of the supported browser application. The remaining `.js` or `.mjs` files under
-`web/playwright/` and `web/test/run_playwright_matrix.mjs` are test-harness assets.
+`web/playwright/`, `web/test/run_playwright_matrix.mjs`, and
+`web/scripts/install-purescript.mjs` are test or toolchain assets.
 
 The demo UI is served by the `infernix-demo` Haskell binary and gated by the active `.dhall`
 `demo_ui` flag. Production deployments leave the flag off and the cluster has no demo UI workload.
@@ -19,28 +20,56 @@ The demo UI is served by the `infernix-demo` Haskell binary and gated by the act
 ## Toolchain
 
 - `web/package.json` owns the npm-distributed toolchain and scripts
-- Node.js 22 or newer is required for the supported PureScript or Playwright toolchain
+- Node.js 22.5 or newer is required for the supported PureScript or Playwright toolchain
 - `web/spago.yaml` declares the PureScript package set and dependencies
-- `purs` is the PureScript compiler
+- `purs` is the PureScript compiler; it is installed from the official PureScript release archive by
+  `web/scripts/install-purescript.mjs` during `npm install`
 - `spago build` compiles the source tree under `web/src/*.purs`
 - `spago bundle --module Main --outfile dist/app.js --platform browser --bundle-type app` produces
   the static demo bundle in `web/dist/`
 - `spago test` runs the `purescript-spec` suites under `web/test/*.purs`
 - `web/test/Main.purs` uses the non-deprecated `purescript-spec` runner APIs and preserves
   non-zero exits explicitly instead of relying on deprecated `runSpec` entrypoints
-- the npm-managed PureScript toolchain is installed either in `web/node_modules/` on the host
-  path or in the active Linux substrate image build, both on Node.js 22+
+- the npm-managed web toolchain is installed either in `web/node_modules/` on the host path or in the
+  active Linux substrate image build, both on Node.js 22.5+
 - supported routed Playwright E2E stays container-owned through the dedicated
   `infernix-playwright:local` image; on Apple Silicon the host CLI invokes
   `docker compose run --rm playwright` directly, and on Linux the outer container forwards the
   same compose invocation through the mounted host docker socket; supported Playwright launchers
   sanitize conflicting `NO_COLOR` and `FORCE_COLOR` values before spawning the child process
+- the dedicated Playwright image copies `web/scripts/` before npm `postinstall`, so the same
+  official PureScript compiler acquisition path is available in both web install contexts
+
+## Dependency Warning Policy
+
+Warnings from the npm toolchain are not accepted as permanent background noise. When the repository
+owns the dependency edge, the supported fix is to migrate to a maintained tool release and validate
+the PureScript unit suite plus routed Playwright coverage.
+
+Current status:
+
+- the deprecated `purescript` npm installer package is not used; `web/scripts/install-purescript.mjs`
+  installs the official `purs` binary into `web/node_modules/.bin/`
+- Spago is pinned to the maintained 1.x line, and `web/package.json` overrides Spago's transitive
+  `glob` dependency to `glob@13.0.6` so the deprecated `glob@11` warning is not part of the current
+  install
+- direct-tool warnings from packages the repository pins directly, such as Playwright, Spago,
+  `esbuild`, or future npm-distributed tooling, are ordinary maintenance work and should be
+  resolved by upgrading to maintained releases when validation remains green
+- supported image builds disable npm's update notifier; npm itself should be updated through the
+  supported Node/npm toolchain policy rather than through lifecycle-log prompts
+
+An npm deprecation warning is therefore tolerated only when it is tied to a newly documented
+upstream acquisition constraint and the install, build, unit, integration, and E2E gates exit
+successfully.
 
 ## Source Layout
 
 ```text
 web/
 ├── package.json
+├── scripts/
+│   └── install-purescript.mjs
 ├── spago.yaml
 ├── src/
 │   ├── Main.purs

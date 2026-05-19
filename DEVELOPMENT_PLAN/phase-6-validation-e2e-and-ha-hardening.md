@@ -12,14 +12,24 @@
 
 ## Phase Status
 
-Phase 6 is done. Sprints 6.1–6.25 are `Done`: the validation entrypoints, routed coverage,
+Phase 6 is done. Sprints 6.1–6.26 are `Done`: the validation entrypoints, routed coverage,
 governed-root-document metadata closure, structured CLI-registry closure, route-hardening cleanup,
 supported bootstrap lifecycle fixes, false-negative doctrine, Harbor publication retry closure,
 and daemon-role split are present in the current worktree, and the supported test story is
 substrate-specific. Sprint 6.25 closes around the implemented split topology: cluster daemons
 always run, Apple cluster daemons own request-topic consumption and host-batch handoff, Apple
 inference work moves through Pulsar to same-binary host daemons, and publication distinguishes
-cluster daemon location from inference executor location.
+cluster daemon location from inference executor location. Sprint 6.26 closes the lifecycle-warning
+cleanup: warning classification is documented, buildx support inside the Linux substrate image is
+implemented, the PureScript compiler now bypasses the deprecated npm installer, Spago's deprecated
+`glob@11` transitive dependency is overridden to `glob@13`, and Poetry installs through an
+image-local virtual environment. The Linux substrate also suppresses npm update notices and leaves
+GHCup shell-profile adjustment disabled; the remaining upstream GHCup no-update message is
+documented as an idempotent installer no-op, and the upstream PATH advice is accepted only because
+the Dockerfile owns `PATH` and the pinned toolchain succeeds. The May 19, 2026 governed
+`linux-gpu` lifecycle rerun passed after the cleanup, including the dedicated Playwright image
+build that copies `web/scripts/` before running npm `postinstall`.
+
 The worktree also carries the
 formatter-toolchain closure that is actually implemented today:
 `src/Infernix/Lint/HaskellStyle.hs` drives `ormolu` and `hlint` through the dedicated compatible
@@ -83,7 +93,10 @@ returned `clusterPresent: False`, `lifecycleStatus: idle`, `lifecyclePhase: clus
 `durableManifestCount: 15`. The supported routed and cluster validation path uses real Pulsar
 transport; the repo-local topic spool under `./.data/runtime/pulsar/` remains only for
 unit-level or intentionally endpoint-absent harness checks and is not accepted as routed Pulsar
-evidence.
+evidence. The May 19, 2026 `linux-gpu` lifecycle rerun completed successfully through `doctor`,
+image refresh, `build`, `up`, `status`, `test`, `down`, `purge`, and final `status`; it verified
+the warning-classification and toolchain-noise closure work, including routed Playwright E2E from
+the dedicated `infernix-playwright:local` image.
 
 ## Validation Surface
 
@@ -1206,6 +1219,64 @@ None.
 
 ---
 
+## Sprint 6.26: Lifecycle Warning Classification and Toolchain Noise Closure [Done]
+
+**Status**: Done
+**Implementation**: `docker/linux-substrate.Dockerfile`, `docker/playwright.Dockerfile`, `web/package.json`, `web/scripts/install-purescript.mjs`, `src/Infernix/Workflow.hs`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/engineering/docker_policy.md`, `documents/development/purescript_policy.md`, `documents/development/python_policy.md`, `documents/engineering/build_artifacts.md`, `README.md`, `DEVELOPMENT_PLAN/README.md`
+**Docs to update**: `README.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/engineering/docker_policy.md`, `documents/development/purescript_policy.md`, `documents/development/python_policy.md`, `documents/engineering/build_artifacts.md`, `DEVELOPMENT_PLAN/README.md`
+
+### Objective
+
+Classify every warning observed in the supported `linux-gpu` lifecycle, eliminate warnings that the
+repository owns, and document only those warning classes that currently come from upstream tools,
+container-build packaging behavior, or normal Kubernetes convergence.
+
+### Deliverables
+
+- the cluster bootstrap runbook owns a warning-classification table that names recoverable
+  lifecycle convergence, host environment failures, and toolchain warnings
+- operator docs distinguish normal Harbor, MinIO, PostgreSQL, Pulsar, image-publication, preload,
+  and retained-state convergence from command failure using lifecycle heartbeat and exit status
+- `SystemOOM` is documented as host resource contention rather than an accepted lifecycle warning
+- Docker policy records buildx as part of the supported Docker toolchain, and the substrate image
+  installs `docker-buildx` for nested Compose builds
+- PureScript policy records that direct npm deprecation warnings should be eliminated by migrating
+  to maintained tool releases; the current implementation removes the deprecated `purescript` npm
+  installer path and validates Spago 1.x with a `glob@13` override
+- Python policy records that Poetry is installed into `/opt/poetry` so the substrate image no longer
+  uses system pip as root
+- Docker policy and the runbook record that npm update notices and GHCup shell-profile adjustment
+  messages are not expected from current image builds
+- the runbook explicitly documents GHCup's upstream no-update warning as accepted only when the
+  pinned toolchain installs and the image build exits zero
+- the runbook explicitly documents GHCup's upstream PATH advice as accepted only when the
+  Dockerfile-owned `PATH` is effective in the same image build
+
+### Validation
+
+- `infernix docs check` passes with the warning-classification docs and plan status aligned
+- a Linux substrate image refresh removes the nested Compose Bake/buildx warning
+- web install/build/unit validation remains free of npm deprecation warnings after the PureScript
+  compiler acquisition change and Spago `glob@13` override
+- Linux substrate image build output remains free of Python root-pip warnings after the Poetry
+  virtual-environment layout change
+- Linux substrate image build output remains free of npm update notices and GHCup shell-profile
+  adjustment messages
+- supported lifecycle reruns still pass after warning cleanup and do not reclassify command failures
+  as acceptable warning noise
+- on May 19, 2026, the supported `linux-gpu` lifecycle passed through
+  `./bootstrap/linux-gpu.sh doctor`, forced `docker compose build infernix` image refresh,
+  `./bootstrap/linux-gpu.sh build`, `up`, `status`, `test`, `down`, `purge`, and final `status`
+- the final `./bootstrap/linux-gpu.sh test` rerun passed Haskell style, Python checks, Haskell
+  unit, PureScript unit, Haskell integration, routed Playwright E2E, retained-state replay, and
+  final teardown after the Playwright image copied `web/scripts/` before npm `postinstall`
+
+### Remaining Work
+
+None.
+
+---
+
 ## Remaining Work
 
 None.
@@ -1228,12 +1299,17 @@ None.
 - `documents/engineering/model_lifecycle.md` - batch ownership, request handoff, and result-publication runtime contract
 - no `documents/engineering/monitoring.md` exists while monitoring remains unsupported; create it
   only if monitoring becomes a supported first-class surface in a later change
-- `documents/operations/cluster_bootstrap_runbook.md` - test prerequisites and cluster reuse rules
+- `documents/operations/cluster_bootstrap_runbook.md` - lifecycle warning classification, test
+  prerequisites, and cluster reuse rules
 - `documents/operations/apple_silicon_runbook.md` - Apple matrix expectations and cold-start lifecycle timing doctrine
 - `documents/tools/postgresql.md` - PostgreSQL operator readiness and failover rules
 - `documents/tools/pulsar.md` - request, batch, and result topic ownership for cluster and host daemons
-- `documents/engineering/docker_policy.md` - Colima-only Apple Docker guidance and minimal Linux host prerequisites
-- `documents/development/python_policy.md` - Poetry bootstrap boundary for Apple hosts
+- `documents/engineering/docker_policy.md` - Colima-only Apple Docker guidance, minimal Linux host
+  prerequisites, and buildx expectations for nested Compose builds
+- `documents/development/purescript_policy.md` - PureScript npm deprecation-warning ownership,
+  compiler acquisition constraints, and Spago transitive-dependency constraints
+- `documents/development/python_policy.md` - Poetry bootstrap boundary for Apple hosts and the
+  Linux substrate image-local Poetry virtual-environment layout
 
 **Product or reference docs to create/update:**
 - `README.md` - orientation layer with governed root-document metadata and canonical-home links

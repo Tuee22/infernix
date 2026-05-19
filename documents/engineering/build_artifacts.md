@@ -107,7 +107,7 @@ of the supported artifact contract.
 - engine-adapter Python builds use Poetry against the shared `python/` project; outside the
   cluster, `poetry install --directory python` materializes a repo-local adapter virtual
   environment at `python/.venv/`, and Linux substrate image builds run the same shared install
-- the supported web build runs on Node.js 22+ on both the host and Linux substrate-image paths
+- the supported web build runs on Node.js 22.5+ on both the host and Linux substrate-image paths
 - `.gitignore` and `.dockerignore` mirror the generated-artifact ignore set: Poetry lockfiles,
   generated protobuf stubs, Python bytecode, mypy and ruff caches, `web/spago.lock`,
   `web/package-lock.json`, `web/src/Generated/`, `web/dist/`, `web/output/`, and

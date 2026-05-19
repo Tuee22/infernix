@@ -46,7 +46,7 @@ webToolchainPresent webRoot =
     <$> mapM
       doesFileExist
       [ webRoot </> "node_modules" </> "playwright" </> "package.json",
-        webRoot </> "node_modules" </> "purescript" </> "package.json",
+        webRoot </> "node_modules" </> ".bin" </> "purs",
         webRoot </> "node_modules" </> "spago" </> "package.json",
         webRoot </> "node_modules" </> "esbuild" </> "package.json"
       ]
@@ -79,18 +79,23 @@ hostNodeSupportsWebToolchain = do
       pure $
         case exitCode of
           ExitSuccess ->
-            case parseNodeMajorVersion stdoutOutput of
-              Just majorVersion -> majorVersion >= 22
+            case parseNodeVersion stdoutOutput of
+              Just (majorVersion, minorVersion) ->
+                majorVersion > 22 || (majorVersion == 22 && minorVersion >= 5)
               Nothing -> False
           _ -> False
     _ -> pure False
 
-parseNodeMajorVersion :: String -> Maybe Int
-parseNodeMajorVersion rawVersion =
+parseNodeVersion :: String -> Maybe (Int, Int)
+parseNodeVersion rawVersion =
   case dropWhile (not . isDigit) rawVersion of
     [] -> Nothing
     digits -> case span isDigit digits of
-      (majorDigits, _) | not (null majorDigits) -> Just (read majorDigits)
+      (majorDigits, '.' : minorAndRest) | not (null majorDigits) ->
+        case span isDigit minorAndRest of
+          (minorDigits, _) | not (null minorDigits) -> Just (read majorDigits, read minorDigits)
+          _ -> Nothing
+      (majorDigits, _) | not (null majorDigits) -> Just (read majorDigits, 0)
       _ -> Nothing
 
 shellQuote :: String -> String

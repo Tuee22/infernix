@@ -129,7 +129,9 @@ into Harbor before final rollout. Phase 6
 records clean governed bootstrap reruns for `linux-cpu`,
 `linux-gpu`, and the supported Apple lifecycle, including Apple reruns on
 May 15, 2026 and May 17, 2026 through `./bootstrap/apple-silicon.sh doctor`, `build`, `up`,
-`status`, `test`, `down`, and final `status`. Those Apple reruns validated the split daemon
+`status`, `test`, `down`, and final `status`, plus the May 19, 2026 post-warning-cleanup
+`linux-gpu` rerun through `./bootstrap/linux-gpu.sh doctor`, forced image refresh, `build`, `up`,
+`status`, `test`, `down`, `purge`, and final `status`. Those reruns validated the split daemon
 topology, host-batch Pulsar handoff, routed Playwright E2E, repeated retained-state cluster
 bring-up or teardown cycles inside the governed `test` lane, and final post-teardown status
 returning `clusterPresent: False`,
@@ -140,7 +142,8 @@ image before each bounded push retry, so retry recovery does not depend on a pre
 target tag. The earlier May 13 lifecycle investigation remains the proof point that
 `build-cluster-images` can remain healthy well past thirty minutes before Harbor publication
 begins and that Harbor image pushes are readiness-gated with bounded retries across transient
-registry resets.
+registry resets. Sprint 6.26 closes the buildx, npm, GHCup shell-profile, Python packaging, and
+Playwright image-script warning cleanup with the governed `linux-gpu` lifecycle rerun complete.
 
 The production and routed validation path uses real Pulsar transport. The repository still keeps
 the repo-local topic spool under `./.data/runtime/pulsar/` as a deliberate harness surface when

@@ -64,10 +64,11 @@ image, including the active `infernix` runtime image, is loaded into Harbor befo
 Phase 6 records clean governed
 bootstrap reruns for the supported Linux and Apple lifecycle surfaces, including Apple reruns
 on May 15, 2026 and May 17, 2026 through `doctor`, `build`, `up`, `status`, `test`, `down`, and
-final `status`; those reruns validated the split daemon topology, host-batch Pulsar handoff,
-routed Playwright E2E, repeated retained-state cluster bring-up or teardown cycles inside the
-governed `test` lane, and final post-teardown status returning `clusterPresent: False`,
-`lifecycleStatus: idle`, and
+final `status`, plus the May 19, 2026 post-warning-cleanup `linux-gpu` rerun through `doctor`,
+forced image refresh, `build`, `up`, `status`, `test`, `down`, `purge`, and final `status`; those
+reruns validated the split daemon topology, host-batch Pulsar handoff, routed Playwright E2E,
+repeated retained-state cluster bring-up or teardown cycles inside the governed `test` lane, and
+final post-teardown status returning `clusterPresent: False`, `lifecycleStatus: idle`, and
 `lifecyclePhase: cluster-absent`. Those reruns also validate the Harbor publication closure
 for repo-owned local images: publication pushes the `infernix-linux-cpu:local` payload before
 third-party chart dependencies and re-tags the source image before each bounded push retry, so

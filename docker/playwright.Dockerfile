@@ -13,6 +13,7 @@ RUN apt-get update \
 WORKDIR /workspace
 
 COPY web/package.json /workspace/web/
+COPY web/scripts /workspace/web/scripts
 RUN npm --prefix /workspace/web install --no-audit --no-fund
 
 COPY web/playwright /workspace/web/playwright

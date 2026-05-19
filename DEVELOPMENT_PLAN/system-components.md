@@ -92,10 +92,12 @@
   the split daemon topology, host-batch Pulsar handoff, routed Playwright E2E, repeated
   retained-state cluster bring-up or teardown cycles inside the governed `test` lane, and final
   post-teardown status returning `clusterPresent: False`, `lifecycleStatus: idle`, and
-  `lifecyclePhase: cluster-absent`; they also validate that Harbor publication pushes repo-owned
-  local images before third-party chart dependencies and re-tags the source image before each
-  bounded push retry, so retry recovery does not depend on a previously retained target tag; the
-  earlier May 13 lifecycle investigation remains the proof
+  `lifecyclePhase: cluster-absent`; the May 19, 2026 `linux-gpu` post-warning-cleanup rerun
+  passed through `doctor`, forced image refresh, `build`, `up`, `status`, `test`, `down`, `purge`,
+  and final `status`; those reruns also validate that Harbor publication pushes repo-owned local
+  images before third-party chart dependencies and re-tags the source image before each bounded
+  push retry, so retry recovery does not depend on a previously retained target tag; the earlier
+  May 13 lifecycle investigation remains the proof
   point that Apple `build-cluster-images` can stay healthy well past thirty minutes before Harbor
   publication begins and that Harbor image pushes are readiness-gated with bounded retries across
   transient registry resets
@@ -120,7 +122,7 @@
 
 | Component | Current content | Purpose | Gap |
 |-----------|-----------------|---------|-----|
-| Linux substrate image definition | `docker/linux-substrate.Dockerfile` | one shared build definition produces the Linux control-plane image and the Linux daemon image family while owning ghcup, Poetry, Node.js 22+ for the demo bundle, and the Kind toolbelt; materializes a build-arg-selected substrate file inside the image overlay before web build and Python quality checks; carries no browser-runtime weight; cabal-home and the cabal builddir live at the toolchain's natural in-image locations rather than under any bind-mounted host path; the image uses `tini` as its `ENTRYPOINT` for clean signal handling and zombie reaping | none |
+| Linux substrate image definition | `docker/linux-substrate.Dockerfile` | one shared build definition produces the Linux control-plane image and the Linux daemon image family while owning ghcup, Poetry, Node.js 22.5+ for the demo bundle, Docker buildx for nested Compose builds, npm update-notifier suppression, and the Kind toolbelt; materializes a build-arg-selected substrate file inside the image overlay before web build and Python quality checks; carries no browser-runtime weight; cabal-home and the cabal builddir live at the toolchain's natural in-image locations rather than under any bind-mounted host path; the image uses `tini` as its `ENTRYPOINT` for clean signal handling and zombie reaping | none |
 | Playwright image definition | `docker/playwright.Dockerfile` | dedicated single-purpose image (`infernix-playwright:local`) that owns Node, the Playwright runtime, and the three browsers, used by every substrate for routed E2E through `docker compose run --rm playwright` | none |
 | Compose launcher | `compose.yaml` | env-configurable outer-container launcher for supported Linux workflows; defines the `infernix` service for the control plane and the `playwright` service for routed Playwright execution | none |
 | Shared Python adapter project | `python/pyproject.toml`, `python/adapters/` | single dependency boundary and adapter tree for Python-native engines | none in the supported operator contract |

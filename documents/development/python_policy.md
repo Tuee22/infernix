@@ -63,6 +63,21 @@ Rules:
 - adapter modules carry inline type annotations on every function and class; `# type: ignore`
   pragmas require an explanatory comment
 
+## Packaging Warnings
+
+Python packaging warnings are handled by execution context:
+
+- on the Apple host-native path, adapter setup uses a repo-local `python/.venv/` and must not run
+  host package installation as root
+- inside Linux substrate Docker image builds, Poetry is installed into `/opt/poetry`, a dedicated
+  virtual environment owned by the image layer, and the project dependencies still install into the
+  repo-local `python/.venv/`
+- a pip warning about running as root is not expected on the supported image-build path
+
+The repository should eliminate Python packaging warnings that come from maintained tool upgrades.
+If a root-pip warning returns, treat it as a substrate image-layout regression rather than as an
+accepted warning.
+
 ## Adapter Contract
 
 Each engine-specific adapter module under `python/adapters/` honors a small process contract:

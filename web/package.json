@@ -3,10 +3,11 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.5"
   },
   "scripts": {
     "generate:contracts": "cabal run exe:infernix -- internal generate-purs-contracts ./src",
+    "postinstall": "node scripts/install-purescript.mjs",
     "build:purs": "sh -c 'set -eu; rm -rf dist; mkdir -p dist; cp src/index.html dist/index.html; npm exec -- spago build; npm exec -- spago bundle --module Main --outfile dist/app.js --platform browser --bundle-type app --force'",
     "build": "npm run generate:contracts && npm run build:purs",
     "test:unit": "npm run build && npm exec -- spago test"
@@ -14,7 +15,9 @@
   "devDependencies": {
     "esbuild": "0.28.0",
     "playwright": "1.57.0",
-    "purescript": "0.15.16",
-    "spago": "0.93.44"
+    "spago": "1.0.4"
+  },
+  "overrides": {
+    "glob": "13.0.6"
   }
 }

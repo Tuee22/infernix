@@ -22,17 +22,20 @@ ARG TARGETARCH
 
 ENV DEBIAN_FRONTEND=noninteractive \
     BOOTSTRAP_HASKELL_NONINTERACTIVE=1 \
-    BOOTSTRAP_HASKELL_ADJUST_BASHRC=0 \
     BOOTSTRAP_HASKELL_INSTALL_NO_STACK=1 \
+    BOOTSTRAP_HASKELL_GHC_VERSION=${GHC_VERSION} \
+    BOOTSTRAP_HASKELL_CABAL_VERSION=${CABAL_VERSION} \
     POETRY_VIRTUALENVS_IN_PROJECT=true \
+    POETRY_HOME=/opt/poetry \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    NPM_CONFIG_UPDATE_NOTIFIER=false \
     LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
     GHC_VERSION=${GHC_VERSION} \
     FORMATTER_GHC_VERSION=${FORMATTER_GHC_VERSION} \
     CABAL_VERSION=${CABAL_VERSION} \
     INFERNIX_BUILD_ROOT=/workspace/.build/outer-container/build \
-    PATH=/root/.local/bin:/root/.ghcup/bin:/root/.cabal/bin:${PATH}
+    PATH=/opt/poetry/bin:/root/.local/bin:/root/.ghcup/bin:/root/.cabal/bin:${PATH}
 
 RUN sed -i \
       -e "s#http://archive.ubuntu.com/ubuntu/#${UBUNTU_APT_MIRROR}#g" \
@@ -45,6 +48,7 @@ RUN apt-get update \
         build-essential \
         ca-certificates \
         curl \
+        docker-buildx \
         docker.io \
         docker-compose-v2 \
         git \
@@ -74,13 +78,14 @@ RUN apt-get update \
     && ln -sf /usr/bin/python3 /usr/local/bin/python \
     && rm -rf /var/lib/apt/lists/*
 
-RUN python3 -m pip install --break-system-packages poetry
+RUN python3 -m venv ${POETRY_HOME} \
+    && ${POETRY_HOME}/bin/python -m pip install --upgrade pip \
+    && ${POETRY_HOME}/bin/pip install poetry \
+    && ln -sfn ${POETRY_HOME}/bin/poetry /usr/local/bin/poetry
 
 RUN curl https://get-ghcup.haskell.org -sSf | sh \
     && ghcup install ghc ${FORMATTER_GHC_VERSION} \
-    && ghcup install ghc ${GHC_VERSION} \
     && ghcup set ghc ${GHC_VERSION} \
-    && ghcup install cabal ${CABAL_VERSION} \
     && ghcup set cabal ${CABAL_VERSION} \
     && mkdir -p /opt/ghc \
     && ln -sfn /root/.ghcup/ghc/${FORMATTER_GHC_VERSION} /opt/ghc/${FORMATTER_GHC_VERSION} \
