@@ -354,8 +354,10 @@ Rules:
 ### M. Generated Substrate File and ConfigMap Contract
 
 The supported build or explicit restaging flow stages one substrate file under the active build
-root, and cluster deployment republishes that payload through a ConfigMap for cluster-resident
-consumers.
+root, and cluster deployment republishes a cluster-role payload through a ConfigMap for
+cluster-resident consumers. Linux outer-container staging already uses the cluster role; Apple
+host-native staging uses the host role and `cluster up` renders the matching cluster-role payload
+for Kind consumers.
 
 Rules:
 
@@ -387,10 +389,12 @@ Rules:
   topics, and, for Apple, the host-inference batch topic used to hand requests to host daemons.
 - The supported materialization path accepts `--demo-ui true|false`, and phase docs must keep the
   chosen default versus explicit override behavior honest.
-- `cluster up` creates or updates `ConfigMap/infernix-demo-config` from the staged substrate file
-  or its exact payload whenever the active deployment path includes cluster-resident consumers of
-  the generated catalog, including Linux daemon workloads, Apple cluster daemons, and any Apple
-  cluster-resident demo or support workload.
+- `cluster up` creates or updates `ConfigMap/infernix-demo-config` from a cluster-role payload
+  rendered from the active staged substrate metadata whenever the active deployment path includes
+  cluster-resident consumers of the generated catalog, including Linux daemon workloads, Apple
+  cluster daemons, and any Apple cluster-resident demo or support workload. On Linux this is the
+  same role as the staged outer-container payload; on Apple it intentionally differs from the
+  host-role payload under `./.build/`.
 - Cluster-resident consumers mount that ConfigMap read-only beside the relevant runtime entrypoint
   at `/opt/build/infernix-substrate.dhall`.
 - Apple host daemon consumers read host-role config from `./.build/`, even when the Apple topology

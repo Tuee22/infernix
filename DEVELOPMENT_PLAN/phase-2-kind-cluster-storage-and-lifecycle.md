@@ -30,8 +30,9 @@ These rules close in this phase and remain mandatory afterward:
 ## Current Generated Demo-Config Baseline
 
 - cluster-side reconciliation reads the active substrate from the generated file beside the binary
-- `cluster up` republishes that exact `infernix-substrate.dhall` payload into
-  `ConfigMap/infernix-demo-config`
+- `cluster up` republishes a cluster-role `infernix-substrate.dhall` payload into
+  `ConfigMap/infernix-demo-config`; on Apple this is rendered from the active staged substrate
+  metadata and `demo_ui` setting rather than copying the host-role file verbatim
 - generated deployment inputs are not committed as static blobs in `chart/values.yaml`
 
 ## Current Repo Assessment
@@ -235,12 +236,14 @@ None.
 
 ### Objective
 
-Make `cluster up` the canonical point where the explicitly staged substrate file is republished
-into the cluster and mirrored for local inspection.
+Make `cluster up` the canonical point where the active substrate metadata is republished as a
+cluster-role substrate file into the cluster and mirrored for local inspection.
 
 ### Deliverables
 
-- `cluster up` republishes the exact staged `infernix-substrate.dhall` for the active substrate
+- `cluster up` republishes a cluster-role `infernix-substrate.dhall` payload for the active
+  substrate, preserving catalog content and `demo_ui` from the staged file while using cluster
+  daemon metadata for cluster consumers
 - the generated file contains every README-matrix row supported by that substrate and no
   unsupported rows
 - `cluster up` creates or updates `ConfigMap/infernix-demo-config` from that generated content
@@ -328,15 +331,15 @@ None.
 
 ### Objective
 
-Publish the staged substrate payload into the cluster and close the Linux launcher contract around
-one Compose-driven outer container for both Linux substrates.
+Publish the cluster-role substrate payload into the cluster and close the Linux launcher contract
+around one Compose-driven outer container for both Linux substrates.
 
 ### Deliverables
 
-- `cluster up` publishes the staged substrate payload into `ConfigMap/infernix-demo-config`
+- `cluster up` publishes the cluster-role substrate payload into `ConfigMap/infernix-demo-config`
 - cluster-resident consumers mount that ConfigMap at
   `/opt/build/infernix-substrate.dhall`
-- the outer-container control plane stages the same payload on the host at
+- the outer-container control plane stages the Linux cluster-role payload on the host at
   `./.build/outer-container/build/infernix-substrate.dhall` through the host-anchored bind mount
   when it needs to know its own substrate
 - the cluster publication contract uses the same stable `infernix-substrate.dhall` filename in the
@@ -353,9 +356,9 @@ one Compose-driven outer container for both Linux substrates.
 ### Validation
 
 - `docker compose run --rm infernix infernix cluster up` materializes or verifies the Linux CPU
-  staged substrate payload and publishes it into the ConfigMap without any runtime-mode flag
+  cluster-role substrate payload and publishes it into the ConfigMap without any runtime-mode flag
 - `infernix kubectl get configmap infernix-demo-config -n platform -o yaml` shows the current
-  `infernix-substrate.dhall` key and the staged payload
+  `infernix-substrate.dhall` key and the cluster-role payload
 - with `INFERNIX_COMPOSE_IMAGE=infernix-linux-gpu:local`,
   `INFERNIX_COMPOSE_SUBSTRATE=linux-gpu`, and
   `INFERNIX_COMPOSE_BASE_IMAGE=nvidia/cuda:13.2.1-cudnn-runtime-ubuntu24.04`,

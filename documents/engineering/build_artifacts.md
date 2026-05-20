@@ -73,9 +73,12 @@ of the supported artifact contract.
   `./.build/outer-container/build/infernix-substrate.dhall` on the host through the bind-mounted
   build tree; `docker compose run --rm infernix infernix internal materialize-substrate <substrate> --demo-ui <true|false>`
   remains the direct helper for explicit restaging or inspection
-- the same content is then mirrored under `./.data/runtime/configmaps/infernix-demo-config/` and
-  published into `ConfigMap/infernix-demo-config` on the real cluster path
-- in containerized execution contexts, the ConfigMap-backed file is mounted beside the binary
+- `cluster up` mirrors the cluster-role substrate payload under
+  `./.data/runtime/configmaps/infernix-demo-config/` and publishes it into
+  `ConfigMap/infernix-demo-config` on the real cluster path; on Apple this cluster-role payload is
+  rendered from the active staged substrate metadata and `demo_ui` setting rather than copied
+  verbatim from the host-role file under `./.build/`
+- in cluster-resident execution contexts, the ConfigMap-backed file is mounted beside the binary
 - the cluster pod's ConfigMap-backed mount path is `/opt/build/infernix-substrate.dhall`
 
 ## Rules

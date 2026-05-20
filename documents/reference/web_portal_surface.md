@@ -50,9 +50,11 @@ On the real Kind path those routes are published by `Gateway/infernix-edge`,
   `infernix internal generate-purs-contracts`
 - the visible catalog comes from the generated demo catalog for the active runtime mode
 - the generated catalog is staged under the active build root as `infernix-substrate.dhall`;
-  `cluster up` publishes that payload through `ConfigMap/infernix-demo-config`, mounts it into
-  the `infernix-demo` workload, and mirrors the publication under
-  `./.data/runtime/configmaps/infernix-demo-config/` for inspection
+  `cluster up` publishes a cluster-role payload through `ConfigMap/infernix-demo-config`, mounts
+  it into the `infernix-demo` workload, and mirrors the publication under
+  `./.data/runtime/configmaps/infernix-demo-config/` for inspection; on Apple that cluster-role
+  payload is rendered from the active staged substrate metadata and `demo_ui` setting while the
+  host daemon keeps reading its host-role file under `./.build/`
 - the browser workbench renders the generated catalog exactly rather than maintaining a separate
   browser-only subset
 - the routed Playwright contract cross-checks `/api/models` against the serialized generated demo
