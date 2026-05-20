@@ -90,10 +90,11 @@ PostgreSQL, Envoy Gateway, the optional clustered `infernix-demo` surface, and c
 host-batch handoff but do not execute Apple-native inference or publish the completed result;
 same-binary host daemons consume the host batch topic, run the Apple-native inference engine, and
 publish the result. On `linux-cpu` and `linux-gpu`, the cluster daemons read from Pulsar, run
-inference directly, and publish results. In multi-node topologies, the contract allows multiple
-anti-affined cluster daemons and, for Apple, one host inference engine per node; Pulsar-owned
-topics, exclusive subscriptions, and acknowledgement handling are the ordering and ownership
-boundary for request handoff, inference, and result publication. The current adapters emit
+inference directly, and publish results. The generated final-phase Helm values currently run one
+cluster `infernix service` replica; the chart template exposes `service.replicaCount` and preferred
+anti-affinity for explicit multi-replica values. Pulsar-owned topics, exclusive subscriptions, and
+acknowledgement handling are the ordering and ownership boundary for request handoff, inference,
+and result publication if operators deliberately scale that surface. The current adapters emit
 deterministic engine-family output from
 typed durable metadata, while unsupported adapter ids fail
 fast instead of falling through to a generic success path. The worktree omits the
@@ -111,8 +112,9 @@ resetting only the retained Pulsar claim roots and retrying `cluster up` once. T
 clean-host bootstrap verifies the selected ghcup-managed `ghc` and `cabal` executables before
 direct `cabal install`, reconciles Homebrew `protoc`, reconciles Colima to the supported
 `8 CPU / 16 GiB` profile before Docker-backed work, and lets Apple adapter setup or validation
-paths reconcile Homebrew `python@3.12` at `/opt/homebrew/opt/python@3.12/bin/python3.12` plus a
-user-local Poetry bootstrap on demand. Routed Apple
+paths reconcile the Homebrew-managed `python@3.12` formula and `python3.12` command plus a
+user-local Poetry bootstrap on demand. The Poetry bootstrap may reuse an already available
+compatible Python 3.12+ executable when one passes the implemented version check. Routed Apple
 Playwright readiness probes `127.0.0.1` from the host while the browser container joins the
 private Docker `kind` network and targets the Kind control-plane DNS, and the dedicated
 Playwright image no longer bakes a conflicting `NO_COLOR` default. The shared cluster lifecycle
@@ -215,7 +217,7 @@ The supported platform now closes around these rules:
   banner-prefixed JSON produced by Haskell runtime helpers
 - Apple host-native operation is the only supported host build path outside a container
 - on Apple Silicon, the host-built `./.build/infernix` binary manages Kind, deploys the mandatory
-  cluster support services, cluster `infernix service` daemon set, and optional routed demo
+  cluster support services, the cluster `infernix service` Deployment, and optional routed demo
   workload, and owns the host-side same-binary inference daemon lane
 - on Apple Silicon, the cluster daemon is canonical for Pulsar ingress and host-batch handoff,
   while the host daemon is canonical for Apple-native inference execution and result publication;

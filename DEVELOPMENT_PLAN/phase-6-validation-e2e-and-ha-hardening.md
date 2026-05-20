@@ -98,6 +98,12 @@ image refresh, `build`, `up`, `status`, `test`, `down`, `purge`, and final `stat
 the warning-classification and toolchain-noise closure work, including routed Playwright E2E from
 the dedicated `infernix-playwright:local` image.
 
+On May 20, 2026, a repo-local static and unit audit reran `infernix lint files`,
+`infernix lint docs`, `infernix lint proto`, `infernix lint chart`, `infernix docs check`,
+`infernix test lint`, and `infernix test unit` successfully after the plan-truth cleanup. That
+pass observed `cluster status` in `lifecyclePhase: not-yet-reconciled`, so it does not add new
+routed integration or E2E lifecycle evidence beyond the governed cluster reruns recorded above.
+
 ## Validation Surface
 
 The supported validation entrypoints are:
@@ -403,7 +409,8 @@ toolchain from package managers instead of depending on a broad preinstalled App
   operator tools needed by the active path, including the Docker CLI, `kind`, `kubectl`, `helm`,
   and Node.js
 - when Apple adapter flows first need Poetry and the `poetry` executable is absent, `infernix`
-  can reconcile Homebrew `python@3.12` at `/opt/homebrew/opt/python@3.12/bin/python3.12`,
+  can reconcile the Homebrew-managed `python@3.12` formula and `python3.12` command, or reuse an
+  already available compatible Python 3.12+ executable that passes the implemented version check,
   bootstrap Poetry into a user-local environment, and then continue all host-side Python
   management through the shared Poetry project
 - `linux-cpu` host prerequisites stop at Docker Engine plus the Docker Compose plugin
@@ -1012,9 +1019,9 @@ substrate-mismatched compatibility shims.
 - shared bootstrap helper logic defines the restartable-entrypoint rule explicitly: same-process
   tool installs continue only after the bootstrap verifies command resolution and version, while
   new-shell or reboot requirements stop with a rerun instruction for the same bootstrap command
-- Apple host prerequisite reconciliation can install or verify Homebrew `python@3.12` at
-  `/opt/homebrew/opt/python@3.12/bin/python3.12`, a user-local Poetry bootstrap, Node.js, and the
-  supported Colima profile on demand when Apple
+- Apple host prerequisite reconciliation can install or verify the Homebrew-managed `python@3.12`
+  formula and `python3.12` command, a user-local Poetry bootstrap, Node.js, and the supported
+  Colima profile on demand when Apple
   lifecycle or adapter-validation paths need them
 - Apple host prerequisite reconciliation selects the supported `default` Colima profile even when
   newer `colima list --json` output reports one JSON object per profile, so multi-profile Apple
@@ -1169,8 +1176,8 @@ same-binary host daemon fed by Pulsar batches.
 
 - `cluster up` deploys cluster `infernix service` daemons for `apple-silicon`, `linux-cpu`, and
   `linux-gpu`
-- cluster daemon replicas can scale across nodes with anti-affinity, and the plan permits multiple
-  cluster daemons in multi-node topologies
+- the cluster service chart template exposes `service.replicaCount` and preferred anti-affinity,
+  while the generated supported final values currently run one cluster `infernix-service` replica
 - on `linux-cpu` and `linux-gpu`, cluster daemons read from Pulsar, execute inference, and publish
   results
 - on `apple-silicon`, cluster daemons read from Pulsar and publish inference work to a dedicated
@@ -1179,8 +1186,9 @@ same-binary host daemon fed by Pulsar batches.
   auto-discovered published edge state or explicit endpoint environment variables, consume the
   configured batch topic, execute Apple-native inference, and publish results back through the
   configured result path
-- in a multi-node Apple topology, each node may run one host inference engine while the cluster
-  daemon set remains responsible for shared request-topic consumption and host-batch handoff
+- if operators explicitly scale the cluster daemon deployment or run multiple Apple host
+  executors, Pulsar subscriptions remain the ownership boundary for shared request-topic
+  consumption and host-batch handoff
 - the staged `.dhall` distinguishes substrate, daemon role (`cluster` or `host`), host Pulsar
   connection mode, result topics, and host batch topics instead of treating Apple host execution
   as absence of a cluster daemon

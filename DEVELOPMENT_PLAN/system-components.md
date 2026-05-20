@@ -71,8 +71,10 @@
   resolution before direct `cabal install`, selects the supported `default` profile even when
   `colima list --json` returns multiple newline-delimited profile objects, reconciles Homebrew
   `protoc`, reconciles Colima to the supported `8 CPU / 16 GiB` profile before Docker-backed
-  work, and lets Apple adapter setup or validation paths reconcile Homebrew `python@3.12` at
-  `/opt/homebrew/opt/python@3.12/bin/python3.12` plus a user-local Poetry bootstrap on demand
+  work, and lets Apple adapter setup or validation paths reconcile the Homebrew-managed
+  `python@3.12` formula and `python3.12` command plus a user-local Poetry bootstrap on demand;
+  the Poetry bootstrap may reuse an already available compatible Python 3.12+ executable when one
+  passes the implemented version check
 - routed Apple Playwright readiness probes `127.0.0.1` from the host while the browser container
   joins the private Docker `kind` network and targets the Kind control-plane DNS, and retained
   Kind state is replayed into and out of the worker rather than bind-mounted

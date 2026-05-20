@@ -24,9 +24,10 @@ non-Python binding.
 ## Toolchain
 
 - the shared Poetry project lives at `python/pyproject.toml`
-- on the intended Apple clean-host path, `infernix` may reconcile Homebrew `python@3.12` at
-  `/opt/homebrew/opt/python@3.12/bin/python3.12` and then bootstrap the `poetry` executable when
-  adapter setup or validation first needs it
+- on the intended Apple clean-host path, `infernix` may reconcile the Homebrew-managed
+  `python@3.12` formula and `python3.12` command and then bootstrap the `poetry` executable when
+  adapter setup or validation first needs it; the Poetry bootstrap may reuse an already available
+  compatible Python 3.12+ executable when one passes the implemented version check
 - outside the cluster, `poetry install --directory python` materializes the repo-local
   `python/.venv/` environment for adapter validation on the Apple host path
 - Linux substrate image builds run `poetry install --directory python` during the image build and
@@ -36,9 +37,10 @@ non-Python binding.
 
 Current status:
 
-- on the Apple host-native path, `infernix` reconciles Homebrew `python@3.12` at
-  `/opt/homebrew/opt/python@3.12/bin/python3.12` and bootstraps a user-local `poetry` executable
-  when adapter setup or validation first needs it
+- on the Apple host-native path, `infernix` reconciles the Homebrew-managed `python@3.12` formula
+  and `python3.12` command and bootstraps a user-local `poetry` executable when adapter setup or
+  validation first needs it; the Poetry bootstrap may reuse an already available compatible
+  Python 3.12+ executable when one passes the implemented version check
 - once `poetry` exists, the shared project still materializes `python/.venv/` only on demand
 
 ## Quality Gate

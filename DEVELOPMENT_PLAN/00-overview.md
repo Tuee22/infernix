@@ -32,10 +32,12 @@ validation commands rely on it. The final Apple product shape described by this 
 implemented:
 `apple-silicon` keeps Apple-native inference execution host-side for performance while Kind
 continues to host Harbor, MinIO, Pulsar, PostgreSQL, Envoy Gateway, the optional routed demo
-surface, and one or more cluster `infernix service` daemons. On Linux substrates, cluster daemons
-read from Pulsar, run inference directly, and publish results; on Apple, cluster daemons read from
-Pulsar and publish requests to a dedicated host batch topic consumed by same-binary host daemons,
-which execute Apple-native inference and publish the completed result. The staged `.dhall` tells
+surface, and the cluster `infernix service` Deployment. The generated final-phase Helm values run
+one cluster service replica by default; explicit chart values can scale that Deployment through
+`service.replicaCount`. On Linux substrates, cluster daemons read from Pulsar, run inference
+directly, and publish results; on Apple, cluster daemons read from Pulsar and publish requests to a
+dedicated host batch topic consumed by same-binary host daemons, which execute Apple-native
+inference and publish the completed result. The staged `.dhall` tells
 each daemon the substrate, whether it is running in the cluster or on the host, and, for host
 daemons, the Pulsar connection mode plus the batch and result topics it uses. Publication now
 reports the cluster daemon location separately from the Apple host inference executor location and
@@ -46,9 +48,10 @@ execution. The Apple clean-host bootstrap
 hardening is present in code: the stage-0 entrypoint verifies same-process ghcup-managed `ghc`
 and `cabal` resolution before direct `cabal install`, reconciles Homebrew `protoc`, reconciles
 Colima to the supported `8 CPU / 16 GiB` profile before Docker-backed work, and lets Apple
-adapter setup or validation paths reconcile Homebrew `python@3.12` at
-`/opt/homebrew/opt/python@3.12/bin/python3.12` plus a user-local Poetry bootstrap on demand.
-Routed Apple
+adapter setup or validation paths reconcile the Homebrew-managed `python@3.12` formula and
+`python3.12` command plus a user-local Poetry bootstrap on demand. The Poetry bootstrap may reuse
+an already available compatible Python 3.12+ executable when one passes the implemented version
+check. Routed Apple
 Playwright readiness probes `127.0.0.1` from the host while
 the browser container joins the private Docker `kind` network and targets the Kind control-plane
 DNS. The shared cluster lifecycle persists explicit phase, child-operation detail, and heartbeat
@@ -431,9 +434,10 @@ The plan keeps control-plane execution context separate from substrate.
   inference and publish results
 - the staged `.dhall` tells each daemon its substrate, whether it is a cluster or host daemon, and,
   for host daemons, the Pulsar connection mode plus the batch and result topics it uses
-- in multi-node topologies, the contract allows multiple anti-affined cluster daemons and one Apple
-  host inference engine per node; Pulsar-owned topics, exclusive subscriptions, and
-  acknowledgement handling keep batch ownership clear
+- the current generated Helm values run one cluster `infernix service` replica, while the
+  Deployment template exposes `service.replicaCount` and preferred anti-affinity for explicit
+  multi-replica chart values; Pulsar-owned topics, exclusive subscriptions, and acknowledgement
+  handling keep batch ownership clear if operators scale that surface deliberately
 
 ### 7. Local Harbor Is The Cluster Image Source
 

@@ -22,5 +22,5 @@ Runtime contract:
   `infernix-demo` workload on `.Values.demo.enabled`, driven from the active `.dhall` `demo_ui`
   flag
 - routing is owned by `GatewayClass/infernix-gateway`, `Gateway/infernix-edge`, and the
-  `chart/templates/httproutes/` inventory
+  data-driven `chart/templates/httproutes.yaml` template
 - non-Harbor workloads pull Harbor-published runtime-image references selected through chart values

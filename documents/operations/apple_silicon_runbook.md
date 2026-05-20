@@ -17,8 +17,9 @@
   CLI, `kind`, `kubectl`, `helm`, and Node.js on demand, reconcile Colima to the supported
   `8 CPU / 16 GiB` profile before Docker-backed work, select the supported `default` profile even
   when `colima list --json` reports multiple profiles, and let adapter setup or validation paths
-  reconcile Homebrew `python@3.12` at `/opt/homebrew/opt/python@3.12/bin/python3.12` plus a
-  user-local Poetry bootstrap when needed
+  reconcile the Homebrew-managed `python@3.12` formula and `python3.12` command plus a user-local
+  Poetry bootstrap when needed; the Poetry bootstrap may reuse an already available compatible
+  Python 3.12+ executable when one passes the implemented version check
 - the Apple bootstrap shell owns only host prerequisite reconciliation through the host binary
   build and then invokes `./.build/infernix <command>`; the host binary owns Colima, Kind,
   Kubernetes, container builds, Harbor publication, and any image pulls needed after it exists
@@ -112,7 +113,7 @@ Direct reference path:
 - supported flows do not mutate `$HOME/.kube/config`
 - the Apple host-native path describes where the Haskell build, control-plane commands, cluster
   daemon orchestration, and host inference executor run; `cluster up` adds `infernix-demo` when
-  `demo_ui` is enabled and always deploys the cluster `infernix-service` daemon set
+  `demo_ui` is enabled and always deploys the cluster `infernix-service` Deployment
 - on `apple-silicon`, the clustered demo and cluster service workloads run from the
   `infernix-linux-cpu:local` image family while reading the staged `apple-silicon` substrate file;
   cluster daemons own request fan-in and batch handoff, not Apple-native inference execution, and
@@ -142,10 +143,10 @@ Direct reference path:
   ensures the shared `python/` project is installed, creates repo-local engine roots under
   `./.data/engines/`, and invokes each `poetry run setup-*` entrypoint for the active mode's
   Python-native engine bindings
-- the Apple bootstrap also reconciles Homebrew `python@3.12` at
-  `/opt/homebrew/opt/python@3.12/bin/python3.12` plus a user-local Poetry bootstrap when the
-  `poetry` executable is absent, after which the shared `python/.venv/` still materializes only on
-  demand
+- the Apple bootstrap also reconciles the Homebrew-managed `python@3.12` formula and `python3.12`
+  command plus a user-local Poetry bootstrap when the `poetry` executable is absent; the Poetry
+  bootstrap may reuse an already available compatible Python 3.12+ executable, after which the
+  shared `python/.venv/` still materializes only on demand
 - the current `setup-*` entrypoints remain idempotent preflight hooks layered on top of that
   prerequisite bootstrap and shared-project install flow
 

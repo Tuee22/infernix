@@ -58,7 +58,7 @@ This repository serves two aligned purposes:
   `infernix-linux-cpu` and `infernix-linux-gpu`, each with ghcup-pinned GHC 9.14.1 + Cabal
   3.16.1.0, Python 3 + Poetry, node, the demo UI build toolchain, `nvkind`, and the
   Kind/kubectl/Helm/Docker toolbelt baked in. Apple Silicon has no Dockerfile; the operator
-  pre-installs ghcup and the daemon installs engine deps via system `clang` and `brew`
+  pre-installs ghcup and the host binary reconciles adapter setup through the shared Poetry project
 - repo-owned shell is limited to the `bootstrap/*.sh` stage-0 host bootstrap entrypoints: those
   scripts build or enter the substrate-specific `infernix` launcher and then hand lifecycle work
   to the binary instead of managing Kind, Kubernetes manifests, or container pulls directly; no
@@ -97,10 +97,12 @@ the HA testing and demo ground used to validate and demonstrate them.
 | Ubuntu 24.04 / NVIDIA CUDA Container | pinned CUDA container lane with NVIDIA runtime | high-throughput GPU execution under the same manifests, messaging, and runtime contract | `vLLM`, `PyTorch` CUDA, `Diffusers` or `ComfyUI`, `CTranslate2`, `TensorFlow` CUDA, `JAX/XLA`, `llama.cpp` when GGUF is the right artifact |
 
 On Apple Silicon, the operator workflow has no generic Python prerequisite before the host build.
-When Apple adapter setup or validation paths are exercised, `infernix` reconciles Homebrew
-`python@3.12` at `/opt/homebrew/opt/python@3.12/bin/python3.12`, bootstraps a user-local
-`poetry` executable if needed, and materializes the repo-local `python/.venv/` on demand. The
-supported Apple adapter path does not use `/usr/bin/python3` or an ambient `python` executable.
+When Apple adapter setup or validation paths are exercised, `infernix` reconciles the
+Homebrew-managed `python@3.12` formula and `python3.12` command when needed, bootstraps a
+user-local `poetry` executable if needed, and materializes the repo-local `python/.venv/` on
+demand. The Poetry bootstrap may reuse an already available compatible Python 3.12+ executable
+when one passes the implemented version check; the supported path does not depend on an
+unversioned `python` executable.
 
 Infernix uses one operator, artifact, and browser-demo contract across Apple, CPU, and CUDA runtime
 classes.
@@ -122,8 +124,8 @@ The supported local platform is built around:
 - one local Harbor registry used by every non-Harbor cluster pod after Harbor bootstrap completes
 - one OCI image per Linux substrate carrying both `infernix` and `infernix-demo` plus the engine
   toolchain and the demo UI build toolchain; the chart workload entrypoint selects which exe runs
-  (`infernix service` or `infernix-demo serve`). Apple Silicon has no Dockerfile: the daemon
-  builds engines on the host via system `clang` and `brew`
+  (`infernix service` or `infernix-demo serve`). Apple Silicon has no Dockerfile: the host daemon
+  uses the same Haskell worker and shared Poetry adapter setup path as the rest of the runtime
 - substrate bootstrap entrypoints under `bootstrap/` that reconcile only the host prerequisites
   needed to build or enter the active `infernix` launcher, then invoke the matching binary command
   for cluster lifecycle, validation, and teardown
@@ -199,11 +201,12 @@ Current status:
 
 - after `./.build/infernix` exists on Apple Silicon, supported host-native commands reconcile
   the supported Colima `8 CPU / 16 GiB` profile, Docker CLI, `kind`, `kubectl`, `helm`, Node.js,
-  Homebrew `python@3.12` at `/opt/homebrew/opt/python@3.12/bin/python3.12`, and Poetry through the
+  the Homebrew-managed `python@3.12` formula and `python3.12` command, and Poetry through the
   supported package-manager or user-local bootstrap path when the active flow needs them
 - Apple host-native adapter setup and validation paths materialize `python/.venv/` on demand after
-  reconciling Homebrew `python@3.12` at `/opt/homebrew/opt/python@3.12/bin/python3.12` and a
-  user-local Poetry bootstrap when needed
+  reconciling the Homebrew-managed `python@3.12` formula and `python3.12` command, or reusing a
+  compatible Python 3.12+ executable that is already available, plus a user-local Poetry bootstrap
+  when needed
 - Apple routed Playwright validation probes the published edge from the host on `127.0.0.1` but
   runs the dedicated browser container on the private Docker `kind` network against the Kind
   control-plane DNS; because Apple retained Kind state is replayed into and out of the worker
@@ -249,13 +252,13 @@ Notes:
   depends on an explicitly selected GHC and Cabal pair
 - Colima is the only supported Docker environment on Apple Silicon; once `./.build/infernix`
   exists, supported commands install it from Homebrew together with the Docker CLI, `kind`,
-  `kubectl`, `helm`, Node.js, Homebrew `python@3.12` at
-  `/opt/homebrew/opt/python@3.12/bin/python3.12`, and any other operator-facing tools needed by
-  the active path; Docker-backed Apple flows reconcile Colima to at least `8 CPU / 16 GiB`
-- Apple adapter setup and validation commands reconcile Homebrew `python@3.12` at
-  `/opt/homebrew/opt/python@3.12/bin/python3.12` plus a user-local Poetry bootstrap when `poetry`
-  is absent, after which all host-side Python configuration continues through the repo-local
-  `python/.venv/`
+  `kubectl`, `helm`, Node.js, the Homebrew-managed `python@3.12` formula and `python3.12`
+  command, and any other operator-facing tools needed by the active path; Docker-backed Apple
+  flows reconcile Colima to at least `8 CPU / 16 GiB`
+- Apple adapter setup and validation commands reconcile the Homebrew-managed `python@3.12` formula
+  and `python3.12` command plus a user-local Poetry bootstrap when `poetry` is absent; the Poetry
+  bootstrap may reuse an already available compatible Python 3.12+ executable, after which all
+  host-side Python configuration continues through the repo-local `python/.venv/`
 
 ### Linux CPU host prerequisites
 

@@ -247,9 +247,10 @@ Rules:
 - When Apple operators intentionally exercise the `linux-cpu` substrate, they do so through the
   containerized Linux workflow inside Colima's amd64 VM and accept that the Apple GPU is out of
   scope for that path.
-- On every substrate, `cluster up` deploys one or more cluster `infernix service` daemons. The
-  substrate decides where inference execution and result publication happen, not whether a cluster
-  daemon exists.
+- On every substrate, `cluster up` deploys the cluster `infernix service` Deployment. The
+  generated supported values currently run one replica by default, while explicit chart values can
+  scale it through `service.replicaCount`. The substrate decides where inference execution and
+  result publication happen, not whether a cluster daemon exists.
 - On `apple-silicon`, the cluster daemon owns cluster-side request-topic consumption and
   host-batch handoff. A same-binary host daemon consumes that host batch topic, runs the
   Apple-native inference engine, and publishes the completed result so the Apple lane can use
@@ -260,9 +261,10 @@ Rules:
   validation change together.
 - After the binary exists, the Apple host workflow is allowed to let `infernix` reconcile the
   remaining Homebrew-managed operator tools needed by the active path and bootstrap Poetry through
-  Homebrew `python@3.12` at `/opt/homebrew/opt/python@3.12/bin/python3.12` when adapter flows first
-  need it; the repo-local adapter virtual environment still materializes only at `python/.venv/`
-  when an engine-adapter path is exercised explicitly.
+  the Homebrew-managed `python@3.12` formula and `python3.12` command when adapter flows first
+  need it. The Poetry bootstrap may reuse an already available compatible Python 3.12+ executable
+  when one passes the implemented version check; the repo-local adapter virtual environment still
+  materializes only at `python/.venv/` when an engine-adapter path is exercised explicitly.
 - Supported Linux control-plane commands always run through
   `docker compose run --rm infernix infernix ...`; there is no supported Linux host-native
   `infernix` workflow outside the outer container.
@@ -316,7 +318,7 @@ Rules:
   engine rather than `Not recommended` or an empty cell.
 - `apple-silicon` is an explicit split-executor substrate: the control plane remains
   host-native, Kind still hosts Harbor, MinIO, Pulsar, operator-managed PostgreSQL, Envoy Gateway,
-  the cluster `infernix service` daemon set, and the optional routed demo app, while Apple-native
+  the cluster `infernix service` Deployment, and the optional routed demo app, while Apple-native
   inference execution and result publication run in same-binary host daemons fed by Pulsar batch
   topics.
 - Apple phase docs must not imply that Kind or other containerized Apple workloads have direct
@@ -325,8 +327,9 @@ Rules:
   is the canonical Apple inference executor and result publisher.
 - On `linux-cpu` and `linux-gpu`, the cluster daemon reads from Pulsar, runs inference itself, and
   publishes the result.
-- In multi-node topologies, phase docs may describe multiple anti-affined cluster daemon replicas
-  and, on `apple-silicon`, one host inference engine per node. The request, batch, and result
+- When phase docs describe multi-node or multi-replica topologies, they must distinguish the
+  currently generated one-replica `infernix-service` values from the chart template's explicit
+  `service.replicaCount` and preferred anti-affinity knobs. The request, batch, and result
   contract must remain Pulsar-owned so exclusive topic subscriptions, acknowledgements, and
   negative acknowledgements keep request handoff, inference, and result-publication ownership
   unambiguous.
