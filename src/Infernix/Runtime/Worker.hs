@@ -43,25 +43,28 @@ data WorkerInvocation
 
 runInferenceWorker :: Paths -> RuntimeMode -> ModelDescriptor -> InferenceRequest -> IO (Either ErrorResponse Text)
 runInferenceWorker paths runtimeMode model request =
-  let engineBinding = engineBindingForSelectedEngine runtimeMode (selectedEngine model)
-   in case engineBindingAdapterType engineBinding of
-        "python-stdio" ->
-          ensurePythonEngineSetupReady paths runtimeMode engineBinding
-            >> runPythonWorker paths runtimeMode model engineBinding request
-        "native-process-runner" ->
-          runNativeWorker runtimeMode model engineBinding request
-        adapterType ->
-          pure
-            ( Left
-                ErrorResponse
-                  { errorCode = "unsupported_engine_runner",
-                    message =
-                      "Unsupported engine adapter type for "
-                        <> engineBindingAdapterId engineBinding
-                        <> ": "
-                        <> adapterType
-                  }
-            )
+  case engineBindingAdapterType engineBinding of
+    "python-stdio" ->
+      ensurePythonEngineSetupReady paths runtimeMode engineBinding
+        >> runPythonWorker paths runtimeMode model engineBinding request
+    "native-process-runner" ->
+      runNativeWorker runtimeMode model engineBinding request
+    adapterType ->
+      pure (unsupportedEngineRunner engineBinding adapterType)
+  where
+    engineBinding = engineBindingForSelectedEngine runtimeMode (selectedEngine model)
+
+unsupportedEngineRunner :: EngineBinding -> Text -> Either ErrorResponse Text
+unsupportedEngineRunner engineBinding adapterType =
+  Left
+    ErrorResponse
+      { errorCode = "unsupported_engine_runner",
+        message =
+          "Unsupported engine adapter type for "
+            <> engineBindingAdapterId engineBinding
+            <> ": "
+            <> adapterType
+      }
 
 engineCommandOverrideEnvironmentName :: EngineBinding -> String
 engineCommandOverrideEnvironmentName engineBinding =
@@ -77,25 +80,31 @@ runPythonWorker paths runtimeMode model engineBinding request = do
   invocation <- resolvePythonInvocation paths engineBinding maybeOverride
   let workerRequest = encodeMessage (buildWorkerRequest paths runtimeMode model engineBinding request)
   workerResult <- runWorkerInvocation paths invocation workerRequest
-  pure
-    ( case workerResult of
-        Right encodedResponse ->
-          case decodeMessage encodedResponse of
-            Left decodeError ->
-              Left
-                ErrorResponse
-                  { errorCode = "worker_decode_failed",
-                    message = Text.pack ("Unable to decode worker response: " <> decodeError)
-                  }
-            Right workerResponse ->
-              workerOutputFromResponse workerResponse
-        Left message ->
-          Left
-            ErrorResponse
-              { errorCode = "worker_failed",
-                message = Text.pack message
-              }
-    )
+  pure (workerResultToOutput workerResult)
+
+workerResultToOutput :: Either String ByteString8.ByteString -> Either ErrorResponse Text
+workerResultToOutput workerResult =
+  case workerResult of
+    Right encodedResponse ->
+      decodedWorkerOutput encodedResponse
+    Left message ->
+      Left
+        ErrorResponse
+          { errorCode = "worker_failed",
+            message = Text.pack message
+          }
+
+decodedWorkerOutput :: ByteString8.ByteString -> Either ErrorResponse Text
+decodedWorkerOutput encodedResponse =
+  case decodeMessage encodedResponse of
+    Left decodeError ->
+      Left
+        ErrorResponse
+          { errorCode = "worker_decode_failed",
+            message = Text.pack ("Unable to decode worker response: " <> decodeError)
+          }
+    Right workerResponse ->
+      workerOutputFromResponse workerResponse
 
 ensurePythonEngineSetupReady :: Paths -> RuntimeMode -> EngineBinding -> IO ()
 ensurePythonEngineSetupReady paths runtimeMode engineBinding = do

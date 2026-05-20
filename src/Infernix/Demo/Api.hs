@@ -92,6 +92,7 @@ runDemoApiServer options = do
           setPort (demoPort options) defaultSettings
   runSettings settings (application options)
 
+-- type Application = Request -> (Response -> IO ResponseReceived) -> IO ResponseReceived
 application :: DemoApiOptions -> Application
 application options request respond = do
   demoEnabled <- demoUiEnabled <$> decodeDemoConfigFile (demoConfigPath options)
@@ -154,28 +155,47 @@ handleInference options request respond = do
   case decodeStrict' (LazyByteString.toStrict body) of
     Nothing ->
       respond (jsonResponse status400 (ErrorResponse "invalid_request" "Unable to decode JSON request body."))
-    Just inferenceRequest -> do
-      activeRuntimeMode <- currentDemoRuntimeMode options
-      case demoBridgeMode options of
-        DirectDemoInference -> do
-          result <- executeInference (demoPaths options) activeRuntimeMode inferenceRequest
-          case result of
-            Left err ->
-              respond (jsonResponse status400 err)
-            Right inferenceResult ->
-              respond (jsonResponse status200 inferenceResult)
-        PulsarDaemonBridge ->
-          handleInferenceViaPulsar options activeRuntimeMode inferenceRequest respond
+    Just inferenceRequest ->
+      handleDecodedInference options inferenceRequest respond
+
+handleDecodedInference :: DemoApiOptions -> InferenceRequest -> (Response -> IO responseReceived) -> IO responseReceived
+handleDecodedInference options inferenceRequest respond = do
+  activeRuntimeMode <- currentDemoRuntimeMode options
+  case demoBridgeMode options of
+    DirectDemoInference ->
+      handleDirectInference options activeRuntimeMode inferenceRequest respond
+    PulsarDaemonBridge ->
+      handleInferenceViaPulsar options activeRuntimeMode inferenceRequest respond
+
+handleDirectInference :: DemoApiOptions -> RuntimeMode -> InferenceRequest -> (Response -> IO responseReceived) -> IO responseReceived
+handleDirectInference options runtimeMode inferenceRequest respond = do
+  result <- executeInference (demoPaths options) runtimeMode inferenceRequest
+  respond (directInferenceResponse result)
+
+directInferenceResponse :: Either ErrorResponse InferenceResult -> Response
+directInferenceResponse result =
+  case result of
+    Left err -> jsonResponse status400 err
+    Right inferenceResult -> jsonResponse status200 inferenceResult
 
 handleInferenceViaPulsar :: DemoApiOptions -> RuntimeMode -> InferenceRequest -> (Response -> IO responseReceived) -> IO responseReceived
 handleInferenceViaPulsar options runtimeMode inferenceRequest respond = do
   inferenceResponse <- runPulsarInference options runtimeMode inferenceRequest
-  respond $
-    case inferenceResponse of
-      Left (responseStatus, err) -> jsonResponse responseStatus err
-      Right resultValue -> jsonResponse status200 resultValue
+  respond (inferenceResponseToHttpResponse inferenceResponse)
 
-runPulsarInference :: DemoApiOptions -> RuntimeMode -> InferenceRequest -> IO InferenceResponse
+-- type InferenceResponse = Either (Status, ErrorResponse) InferenceResult
+inferenceResponseToHttpResponse :: InferenceResponse -> Response
+inferenceResponseToHttpResponse inferenceResponse =
+  case inferenceResponse of
+    Left (responseStatus, err) -> jsonResponse responseStatus err
+    Right resultValue -> jsonResponse status200 resultValue
+
+-- type InferenceResponse = Either (Status, ErrorResponse) InferenceResult
+runPulsarInference ::
+  DemoApiOptions ->
+  RuntimeMode ->
+  InferenceRequest ->
+  IO InferenceResponse
 runPulsarInference options runtimeMode inferenceRequest =
   case validateInferenceRequest runtimeMode inferenceRequest of
     Left err ->
@@ -183,7 +203,13 @@ runPulsarInference options runtimeMode inferenceRequest =
     Right model ->
       runValidatedPulsarInference options runtimeMode model inferenceRequest
 
-runValidatedPulsarInference :: DemoApiOptions -> RuntimeMode -> ModelDescriptor -> InferenceRequest -> IO InferenceResponse
+-- type InferenceResponse = Either (Status, ErrorResponse) InferenceResult
+runValidatedPulsarInference ::
+  DemoApiOptions ->
+  RuntimeMode ->
+  ModelDescriptor ->
+  InferenceRequest ->
+  IO InferenceResponse
 runValidatedPulsarInference options runtimeMode model inferenceRequest = do
   demoConfig <- decodeDemoConfigFile (demoConfigPath options)
   case firstRequestTopic demoConfig of
@@ -204,7 +230,11 @@ firstRequestTopic demoConfig =
           ErrorResponse "missing_request_topic" "The active demo config does not declare any request topics."
         )
 
-resolvePublishedInferenceResult :: DemoApiOptions -> Maybe InferenceResult -> IO InferenceResponse
+-- type InferenceResponse = Either (Status, ErrorResponse) InferenceResult
+resolvePublishedInferenceResult ::
+  DemoApiOptions ->
+  Maybe InferenceResult ->
+  IO InferenceResponse
 resolvePublishedInferenceResult options maybePublishedResult =
   case maybePublishedResult of
     Nothing ->
@@ -214,17 +244,26 @@ resolvePublishedInferenceResult options maybePublishedResult =
               ErrorResponse "daemon_timeout" "The inference daemon did not publish a result in time."
             )
         )
-    Just publishedResult
-      | status publishedResult /= "completed" ->
-          pure (Left (status400, publishedResultError publishedResult))
-      | otherwise -> do
-          localizedResult <- localizePublishedResult options publishedResult
-          case localizedResult of
-            Left err ->
-              pure (Left (status500, err))
-            Right resultValue -> do
-              persistInferenceResult (demoPaths options) resultValue
-              pure (Right resultValue)
+    Just publishedResult ->
+      resolveCompletedPublishedResult options publishedResult
+
+-- type InferenceResponse = Either (Status, ErrorResponse) InferenceResult
+resolveCompletedPublishedResult :: DemoApiOptions -> InferenceResult -> IO InferenceResponse
+resolveCompletedPublishedResult options publishedResult
+  | status publishedResult /= "completed" =
+      pure (Left (status400, publishedResultError publishedResult))
+  | otherwise =
+      persistLocalizedResult options =<< localizePublishedResult options publishedResult
+
+-- type InferenceResponse = Either (Status, ErrorResponse) InferenceResult
+persistLocalizedResult :: DemoApiOptions -> Either ErrorResponse InferenceResult -> IO InferenceResponse
+persistLocalizedResult options localizedResult =
+  case localizedResult of
+    Left err ->
+      pure (Left (status500, err))
+    Right resultValue -> do
+      persistInferenceResult (demoPaths options) resultValue
+      pure (Right resultValue)
 
 validateInferenceRequest :: RuntimeMode -> InferenceRequest -> Either ErrorResponse ModelDescriptor
 validateInferenceRequest runtimeMode inferenceRequest =
@@ -440,5 +479,6 @@ textResponse :: Status -> String -> Response
 textResponse responseStatus body =
   responseLBS responseStatus [(hContentType, "text/plain; charset=utf-8")] (LazyByteString.fromStrict (ByteStringChar8.pack body))
 
+-- type HostPreference = String
 fromStringHost :: String -> HostPreference
 fromStringHost = fromString

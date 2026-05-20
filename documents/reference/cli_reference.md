@@ -66,9 +66,9 @@
 
 ## Rules
 
-- the `infernix` command inventory above is rendered from the `optparse-applicative` parser tree
-  exposed by the Haskell command registry in `src/Infernix/CommandRegistry.hs`; `infernix docs check`
-  fails if this generated section drifts
+- the `infernix` command inventory above is rendered from the command metadata exposed by the
+  Haskell command registry in `src/Infernix/CommandRegistry.hs`; `infernix docs check` fails if this
+  generated section drifts
 - `cluster up`, `cluster down`, `cluster status`, `cache ...`, `lint ...`, `test ...`,
   `docs check`, and `internal ...` are declarative CLI entrypoints; `infernix service` and
   `infernix-demo serve` are the only long-running daemon entrypoints

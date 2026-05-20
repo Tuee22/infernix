@@ -1636,11 +1636,7 @@ maybeCommand (command : arguments) =
 maybeRun :: String -> [String] -> IO Bool
 maybeRun command arguments = do
   result <- tryCommand Nothing [] command arguments
-  pure
-    ( case result of
-        Right _ -> True
-        Left _ -> False
-    )
+  pure (either (const False) (const True) result)
 
 waitForHarborRegistry :: Paths -> RuntimeMode -> IO ()
 waitForHarborRegistry paths runtimeMode = do
@@ -2042,11 +2038,13 @@ harborPostgresPrimaryPodNameMaybe state = do
           "-o",
           "custom-columns=:metadata.name"
         ]
-  pure
-    ( case podNames of
-        podName : _ -> podName
-        [] -> ""
-    )
+  pure (firstOrEmpty podNames)
+
+firstOrEmpty :: [String] -> String
+firstOrEmpty values =
+  case values of
+    firstValue : _ -> firstValue
+    [] -> ""
 
 runHarborDatabaseCommand :: ClusterState -> String -> IO (Either String String)
 runHarborDatabaseCommand state commandText = do
@@ -2223,11 +2221,7 @@ podLogsContainDirtyMarker state podName usePreviousLogs = do
              ]
           <> previousArgs
       )
-  pure
-    ( case result of
-        Right output -> pulsarBootstrapLogIndicatesDirtyState output
-        Left _ -> False
-    )
+  pure (either (const False) pulsarBootstrapLogIndicatesDirtyState result)
   where
     previousArgs
       | usePreviousLogs = ["--previous"]
@@ -2778,10 +2772,13 @@ resolveHostRepoPath paths containerPath = do
   let normalizedRepoRoot = normalise (repoRoot paths)
       normalizedContainerPath = normalise containerPath
       repoRootPrefix = addTrailingPathSeparator normalizedRepoRoot
-  pure $
-    if normalizedContainerPath == normalizedRepoRoot
-      then hostRepoRoot
-      else case List.stripPrefix repoRootPrefix normalizedContainerPath of
+  pure (resolveHostRepoPathFromNormalized hostRepoRoot normalizedRepoRoot repoRootPrefix normalizedContainerPath)
+
+resolveHostRepoPathFromNormalized :: FilePath -> FilePath -> FilePath -> FilePath -> FilePath
+resolveHostRepoPathFromNormalized hostRepoRoot normalizedRepoRoot repoRootPrefix normalizedContainerPath
+  | normalizedContainerPath == normalizedRepoRoot = hostRepoRoot
+  | otherwise =
+      case List.stripPrefix repoRootPrefix normalizedContainerPath of
         Just relativePath -> hostRepoRoot </> relativePath
         Nothing -> normalizedContainerPath
 
@@ -2926,9 +2923,7 @@ syncKindNodeRuntimePathsToHost :: Paths -> RuntimeMode -> Maybe ClusterState -> 
 syncKindNodeRuntimePathsToHost paths runtimeMode maybeState = do
   let localKindRoot = kindRuntimeRoot paths runtimeMode
   createDirectoryIfMissing True localKindRoot
-  syncedClaims <- case maybeState of
-    Just state | not (null (claims state)) -> syncClaimDirectoriesFromOwningNodes paths state
-    _ -> pure False
+  syncedClaims <- syncClaimDirectoriesWhenAvailable paths maybeState
   unless syncedClaims $ do
     nodeNames <- kindNodeNames paths runtimeMode
     mapM_
@@ -2947,6 +2942,12 @@ syncKindNodeRuntimePathsToHost paths runtimeMode maybeState = do
           copyDirectoryContentsFromContainer paths maybeCopyState nodeName nodeMountedKindRoot localKindRoot
       )
       nodeNames
+
+syncClaimDirectoriesWhenAvailable :: Paths -> Maybe ClusterState -> IO Bool
+syncClaimDirectoriesWhenAvailable paths maybeState =
+  case maybeState of
+    Just state | not (null (claims state)) -> syncClaimDirectoriesFromOwningNodes paths state
+    _ -> pure False
 
 syncClaimDirectoriesFromOwningNodes :: Paths -> ClusterState -> IO Bool
 syncClaimDirectoriesFromOwningNodes paths state = do
@@ -2972,14 +2973,14 @@ discoverClaimNodeBindings state = do
                claimNodeBindingsTemplate
              ]
       )
-  pure
-    ( case result of
-        Left _ -> Map.empty
-        Right output -> Map.fromList (mapMaybe parseClaimNodeBindingLine (lines output))
-    )
+  pure (either (const Map.empty) parseClaimNodeBindings result)
   where
     claimNodeBindingsTemplate =
       "go-template={{range .items}}{{ $node := .spec.nodeName }}{{range .spec.volumes}}{{if .persistentVolumeClaim}}{{printf \"%s\\t%s\\n\" .persistentVolumeClaim.claimName $node}}{{end}}{{end}}{{end}}"
+
+parseClaimNodeBindings :: String -> Map.Map String String
+parseClaimNodeBindings output =
+  Map.fromList (mapMaybe parseClaimNodeBindingLine (lines output))
 
 syncClaimDirectoryFromOwningNode :: Paths -> ClusterState -> PersistentClaim -> Map.Map String String -> IO Bool
 syncClaimDirectoryFromOwningNode paths state persistentClaim claimNodeBindings =
@@ -3068,20 +3069,16 @@ directoryHasEntries directory = do
 containerDirectoryHasEntries :: String -> FilePath -> IO Bool
 containerDirectoryHasEntries nodeName directory = do
   result <- tryCommand Nothing [] "docker" ["exec", nodeName, "sh", "-lc", "ls -A " <> directory]
-  pure
-    ( case result of
-        Left _ -> False
-        Right output -> not (all (all isSpace) (lines output))
-    )
+  pure (either (const False) directoryListingHasEntries result)
+
+directoryListingHasEntries :: String -> Bool
+directoryListingHasEntries output =
+  not (all (all isSpace) (lines output))
 
 containerDirectoryExists :: String -> FilePath -> IO Bool
 containerDirectoryExists nodeName directory = do
   result <- tryCommand Nothing [] "docker" ["exec", nodeName, "sh", "-lc", "test -d " <> directory]
-  pure
-    ( case result of
-        Left _ -> False
-        Right _ -> True
-    )
+  pure (either (const False) (const True) result)
 
 runtimeModeLabels :: RuntimeMode -> String
 runtimeModeLabels runtimeMode = case runtimeMode of
@@ -3553,10 +3550,11 @@ trim = reverse . dropWhile isSpace . reverse . dropWhile isSpace
 splitTabs :: String -> [String]
 splitTabs [] = [""]
 splitTabs value =
-  let (prefix, suffix) = break (== '\t') value
-   in case suffix of
-        [] -> [prefix]
-        _ : rest -> prefix : splitTabs rest
+  case suffix of
+    [] -> [prefix]
+    _ : rest -> prefix : splitTabs rest
+  where
+    (prefix, suffix) = break (== '\t') value
 
 retryCommandOutput :: Int -> Int -> String -> IO (Either String String) -> IO (Either String String)
 retryCommandOutput attempts delayMicros commandLabel action = go attempts ""

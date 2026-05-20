@@ -5,7 +5,8 @@ where
 
 import Control.Exception (IOException, try)
 import Control.Monad (when)
-import Data.List (sort)
+import Data.Char (isAlphaNum)
+import Data.List (intercalate, isInfixOf, sort)
 import Data.Maybe (fromMaybe)
 import Infernix.Config (Paths (..), discoverPaths)
 import System.Directory
@@ -38,6 +39,7 @@ runHaskellStyleLint = do
   sources <- haskellSources (repoRoot paths)
   runCommand (repoRoot paths) ormoluPath (["--mode", "check"] <> sources)
   runCommand (repoRoot paths) hlintPath ["Setup.hs", "app", "src", "test"]
+  checkReadabilityRules (repoRoot paths) sources
   checkCabalManifest paths
   putStrLn "haskell-style-check: ok"
 
@@ -155,6 +157,132 @@ collectHsFiles directoryPath = do
 hasHsExtension :: FilePath -> Bool
 hasHsExtension pathValue =
   reverse (take 3 (reverse pathValue)) == ".hs"
+
+checkReadabilityRules :: FilePath -> [FilePath] -> IO ()
+checkReadabilityRules repoRoot sourceFiles = do
+  violations <- concat <$> mapM (checkSourceReadability repoRoot) sourceFiles
+  case violations of
+    [] -> pure ()
+    _ ->
+      ioError
+        ( userError
+            ( "haskell-style-check: readability rules failed\n"
+                <> intercalate "\n" violations
+            )
+        )
+
+checkSourceReadability :: FilePath -> FilePath -> IO [String]
+checkSourceReadability repoRoot sourceFile = do
+  contents <- readFile (repoRoot </> sourceFile)
+  let numberedLines = zip [1 :: Int ..] (lines contents)
+  pure
+    ( hangingCaseViolations sourceFile numberedLines
+        <> aliasCommentViolations sourceFile numberedLines
+    )
+
+hangingCaseViolations :: FilePath -> [(Int, String)] -> [String]
+hangingCaseViolations sourceFile numberedLines =
+  [ sourceFile <> ":" <> show lineNumber <> ": avoid hanging `case`; move it into a named helper or make it the outer expression"
+  | (lineNumber, lineValue) <- numberedLines,
+    not (isCommentLine lineValue),
+    lineHasHangingCase lineValue
+  ]
+
+lineHasHangingCase :: String -> Bool
+lineHasHangingCase lineValue =
+  any
+    (`isInfixOf` paddedLine)
+    hangingCaseNeedles
+  where
+    paddedLine = " " <> lineValue <> " "
+
+hangingCaseNeedles :: [String]
+hangingCaseNeedles =
+  [ "(" <> " case",
+    "->" <> " case",
+    "then" <> " case",
+    "else" <> " case",
+    "<-" <> " case",
+    " in" <> " case "
+  ]
+
+aliasCommentViolations :: FilePath -> [(Int, String)] -> [String]
+aliasCommentViolations sourceFile numberedLines =
+  concatMap signatureViolations (signatureBlocks numberedLines)
+  where
+    signatureViolations (lineNumber, signatureLines) =
+      [ sourceFile <> ":" <> show lineNumber <> ": aliased type `" <> aliasName <> "` needs comment `" <> requiredComment <> "`"
+      | (aliasName, requiredComment) <- aliasedTypeComments,
+        containsToken aliasName (unlines signatureLines),
+        not (hasRequiredAliasComment requiredComment lineNumber numberedLines)
+      ]
+
+aliasedTypeComments :: [(String, String)]
+aliasedTypeComments =
+  [ ("Application", "-- type Application = Request -> (Response -> IO ResponseReceived) -> IO ResponseReceived"),
+    ("HostPreference", "-- type HostPreference = String"),
+    ("InferenceResponse", "-- type InferenceResponse = Either (Status, ErrorResponse) InferenceResult"),
+    ("PublishedImage", "-- type PublishedImage = (String, String)"),
+    ("CommandMonitorFactory", "-- type CommandMonitorFactory = String -> IO (Maybe ProcessMonitor.CommandMonitor)")
+  ]
+
+signatureBlocks :: [(Int, String)] -> [(Int, [String])]
+signatureBlocks [] = []
+signatureBlocks ((lineNumber, lineValue) : remainingLines)
+  | isSignatureStart lineValue =
+      let (continuation, rest) = span isSignatureContinuation remainingLines
+       in (lineNumber, lineValue : map snd continuation) : signatureBlocks rest
+  | otherwise = signatureBlocks remainingLines
+
+isSignatureStart :: String -> Bool
+isSignatureStart lineValue =
+  not (startsWithSpace lineValue)
+    && not (isCommentLine lineValue)
+    && "::" `isInfixOf` lineValue
+
+isSignatureContinuation :: (Int, String) -> Bool
+isSignatureContinuation (_, lineValue) =
+  null (trimWhitespace lineValue) || startsWithSpace lineValue || isCommentLine lineValue
+
+startsWithSpace :: String -> Bool
+startsWithSpace (' ' : _) = True
+startsWithSpace ('\t' : _) = True
+startsWithSpace _ = False
+
+hasRequiredAliasComment :: String -> Int -> [(Int, String)] -> Bool
+hasRequiredAliasComment requiredComment lineNumber numberedLines =
+  requiredComment `elem` precedingNonBlankLines
+  where
+    precedingNonBlankLines =
+      take
+        6
+        [ trimWhitespace candidateLine
+        | (candidateLineNumber, candidateLine) <- reverse numberedLines,
+          candidateLineNumber < lineNumber,
+          not (null (trimWhitespace candidateLine))
+        ]
+
+containsToken :: String -> String -> Bool
+containsToken token value =
+  token `elem` tokenize value
+
+tokenize :: String -> [String]
+tokenize =
+  words . map tokenCharacter
+  where
+    tokenCharacter character
+      | isAlphaNum character || character == '_' || character == '\'' = character
+      | otherwise = ' '
+
+isCommentLine :: String -> Bool
+isCommentLine lineValue =
+  case trimWhitespace lineValue of
+    '-' : '-' : _ -> True
+    _ -> False
+
+trimWhitespace :: String -> String
+trimWhitespace =
+  reverse . dropWhile (`elem` [' ', '\t']) . reverse . dropWhile (`elem` [' ', '\t'])
 
 makeRelative :: FilePath -> FilePath -> FilePath
 makeRelative root fullPath =

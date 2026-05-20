@@ -575,12 +575,14 @@ extractMarkdownLinkTargets = go
       case break (== ']') rest of
         (_, []) -> go rest
         (_label, ']' : '(' : afterOpen) ->
-          let (target, remainder) = break (== ')') afterOpen
-           in case remainder of
-                ')' : remaining -> target : go remaining
-                _ -> go afterOpen
+          extractLinkTarget afterOpen
         (_label, _ : remaining) -> go remaining
     go (_ : remaining) = go remaining
+
+    extractLinkTarget afterOpen =
+      case break (== ')') afterOpen of
+        (target, ')' : remaining) -> target : go remaining
+        _ -> go afterOpen
 
 stripFencedCodeBlocks :: String -> String
 stripFencedCodeBlocks contents =

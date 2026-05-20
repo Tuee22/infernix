@@ -46,11 +46,16 @@
   near the edge so the inner domain logic stays testable and easy to reason about.
 - `Typed control flow:` prefer ADTs, records, and pattern matching over stringly mode switches,
   sentinel values, or silently ignored cases.
+- `Case shape:` avoid hanging `case` expressions such as `foo <- case ...`, `bar -> case ...`, or
+  `pure (case ...)`; make the `case` the outer expression or move the branch logic into a named
+  helper.
+- `Type aliases:` when a function signature uses a `type` synonym, put a comment immediately above
+  it showing the full expanded type.
 - `Repository discipline:` treat unsupported convenience fallbacks as design debt rather than
   widening the supported contract silently, and preserve the generated-artifact hygiene rules.
-- `CLI parsing:` CLI entry points use `optparse-applicative` through the command-registry layer in
-  `src/Infernix/CommandRegistry.hs`; the registry's metadata layer owns the generated CLI-reference
-  output, and per-flag parsers stay declarative rather than hand-rolling argument-list recursion.
+- `CLI parsing:` CLI entry points flow through the command-registry layer in
+  `src/Infernix/CommandRegistry.hs`; the registry's metadata layer owns parsing, help text, and the
+  generated CLI-reference output from the same command inventory.
 
 ## Enforcement Model
 

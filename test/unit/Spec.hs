@@ -714,6 +714,7 @@ sampleHarborOverlay =
       "  defaultPulsarImageTag: sha256-pulsar"
     ]
 
+-- type PublishedImage = (String, String)
 samplePublishedImages :: Map.Map String PublishedImage
 samplePublishedImages =
   Map.fromList

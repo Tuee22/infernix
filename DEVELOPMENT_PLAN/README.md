@@ -147,6 +147,9 @@ target tag. The earlier May 13 lifecycle investigation remains the proof point t
 begins and that Harbor image pushes are readiness-gated with bounded retries across transient
 registry resets. Sprint 6.26 closes the buildx, npm, GHCup shell-profile, Python packaging, and
 Playwright image-script warning cleanup with the governed `linux-gpu` lifecycle rerun complete.
+Sprint 6.27 closes the staged-substrate format cleanup: `infernix-substrate.dhall` is now a real
+typed Dhall record decoded in-process by the `dhall` Haskell library, with the schema documented at
+`dhall/InfernixSubstrate.dhall`.
 
 The production and routed validation path uses real Pulsar transport. The repository still keeps
 the repo-local topic spool under `./.data/runtime/pulsar/` as a deliberate harness surface when
@@ -190,7 +193,7 @@ The supported platform now closes around these rules:
   package (declared in `infernix.cabal` without an explicit library name and depended on as
   `infernix`): `infernix` for the production daemon, cluster lifecycle, validation, and internal
   helpers; `infernix-demo` for the routed demo HTTP host
-- one `optparse-applicative`-backed Haskell command registry owns parsing, help text, and the
+- one Haskell command registry owns parsing, help text, and the
   canonical CLI reference, but it no longer exposes `--runtime-mode` or any equivalent substrate
   override
 - the product contract standardizes three substrates:
@@ -271,7 +274,7 @@ The supported platform now closes around these rules:
 - supported validation is substrate-specific: integration, E2E, and `test all` run their complete
   supported suites against the built and deployed substrate, and test reports name that substrate
   explicitly instead of implying matrix-wide coverage
-- the supported control plane keeps one `optparse-applicative`-backed Haskell command registry,
+- the supported control plane keeps one Haskell command registry,
   binary-owned lifecycle and validation orchestration, the current `ormolu` plus `hlint` plus
   `cabal format` style stack, and the existing files or docs or chart or proto validation
   entrypoints; shell bootstrap responsibility is limited to prerequisite and launcher setup

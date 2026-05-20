@@ -127,7 +127,13 @@ pushRetryBaseDelayMicros = 5000000
 pushRetryMaxDelayMicros :: Int
 pushRetryMaxDelayMicros = 30000000
 
-publishChartImagesFile :: HarborPublishOptions -> CommandMonitorFactory -> FilePath -> FilePath -> IO ()
+-- type CommandMonitorFactory = String -> IO (Maybe ProcessMonitor.CommandMonitor)
+publishChartImagesFile ::
+  HarborPublishOptions ->
+  CommandMonitorFactory ->
+  FilePath ->
+  FilePath ->
+  IO ()
 publishChartImagesFile options commandMonitorFactory renderedChartPath outputPath = do
   manager <- newManager tlsManagerSettings
   images <- discoverChartImagesFile renderedChartPath
@@ -146,7 +152,14 @@ publishChartImagesFile options commandMonitorFactory renderedChartPath outputPat
                 <> show imageRefs
             )
 
-publishImage :: Manager -> HarborPublishOptions -> CommandMonitorFactory -> String -> IO (String, PublishedImage)
+-- type CommandMonitorFactory = String -> IO (Maybe ProcessMonitor.CommandMonitor)
+-- type PublishedImage = (String, String)
+publishImage ::
+  Manager ->
+  HarborPublishOptions ->
+  CommandMonitorFactory ->
+  String ->
+  IO (String, PublishedImage)
 publishImage manager options commandMonitorFactory sourceImage = do
   ensureLocalImageAvailable commandMonitorFactory sourceImage
   targetTag <- contentAddressTag sourceImage
@@ -156,6 +169,7 @@ publishImage manager options commandMonitorFactory sourceImage = do
   publishIfNeeded manager options commandMonitorFactory sourceImage clientRepository repositoryPath targetTag
   pure (sourceImage, (publishedRepository, targetTag))
 
+-- type CommandMonitorFactory = String -> IO (Maybe ProcessMonitor.CommandMonitor)
 ensureLocalImageAvailable :: CommandMonitorFactory -> String -> IO ()
 ensureLocalImageAvailable commandMonitorFactory imageRef = do
   maybePresent <- tryRunCommand "docker" ["image", "inspect", imageRef] ""
@@ -163,6 +177,7 @@ ensureLocalImageAvailable commandMonitorFactory imageRef = do
     Right _ -> pure ()
     Left _ -> pullImageWithFallback commandMonitorFactory imageRef
 
+-- type CommandMonitorFactory = String -> IO (Maybe ProcessMonitor.CommandMonitor)
 pullImageWithFallback :: CommandMonitorFactory -> String -> IO ()
 pullImageWithFallback commandMonitorFactory imageRef = do
   initialMonitor <- commandMonitorFactory ("docker pull " <> imageRef)
@@ -229,7 +244,16 @@ dockerHubMirrorRef imageRef =
         (_, []) -> "library/" <> pathValue
         _ -> pathValue
 
-publishIfNeeded :: Manager -> HarborPublishOptions -> CommandMonitorFactory -> String -> String -> String -> String -> IO ()
+-- type CommandMonitorFactory = String -> IO (Maybe ProcessMonitor.CommandMonitor)
+publishIfNeeded ::
+  Manager ->
+  HarborPublishOptions ->
+  CommandMonitorFactory ->
+  String ->
+  String ->
+  String ->
+  String ->
+  IO ()
 publishIfNeeded manager options commandMonitorFactory sourceImage clientRepository repositoryPath targetTag = do
   let targetRef = clientRepository <> ":" <> targetTag
   runCommand "docker" ["tag", sourceImage, targetRef] ""
@@ -240,7 +264,14 @@ publishIfNeeded manager options commandMonitorFactory sourceImage clientReposito
       pushImageWithRetries manager options commandMonitorFactory sourceImage targetRef
       verifyRegistryPull manager options commandMonitorFactory targetRef
 
-pushImageWithRetries :: Manager -> HarborPublishOptions -> CommandMonitorFactory -> String -> String -> IO ()
+-- type CommandMonitorFactory = String -> IO (Maybe ProcessMonitor.CommandMonitor)
+pushImageWithRetries ::
+  Manager ->
+  HarborPublishOptions ->
+  CommandMonitorFactory ->
+  String ->
+  String ->
+  IO ()
 pushImageWithRetries manager options commandMonitorFactory sourceImage targetRef = go pushAttempts ""
   where
     (targetRepository, _, targetTag) = breakRepositoryAndTag targetRef
@@ -311,7 +342,13 @@ registryPullSucceeds :: String -> IO Bool
 registryPullSucceeds imageRef =
   either (const False) (const True) <$> tryRunCommand "docker" ["pull", imageRef] ""
 
-verifyRegistryPull :: Manager -> HarborPublishOptions -> CommandMonitorFactory -> String -> IO ()
+-- type CommandMonitorFactory = String -> IO (Maybe ProcessMonitor.CommandMonitor)
+verifyRegistryPull ::
+  Manager ->
+  HarborPublishOptions ->
+  CommandMonitorFactory ->
+  String ->
+  IO ()
 verifyRegistryPull manager options commandMonitorFactory targetRef = do
   waitForRegistry manager options
   go pullVerifyAttempts ""
@@ -462,23 +499,25 @@ repoDigestTag inspection =
 
 normalizeRepositoryPath :: String -> String
 normalizeRepositoryPath rawImage =
-  let withoutDigest = takeBefore '@' rawImage
-      withoutTag = fromMaybe withoutDigest (breakTagSuffix withoutDigest)
-      pathSegments = splitOn '/' withoutTag
-   in case pathSegments of
-        firstSegment : remainingSegments
-          | isExplicitRegistry firstSegment -> joinWith "/" remainingSegments
-        _ -> withoutTag
+  case splitOn '/' withoutTag of
+    firstSegment : remainingSegments
+      | isExplicitRegistry firstSegment -> joinWith "/" remainingSegments
+    _ -> withoutTag
+  where
+    withoutDigest = takeBefore '@' rawImage
+    withoutTag = fromMaybe withoutDigest (breakTagSuffix withoutDigest)
 
 isHarborImage :: String -> Bool
 isHarborImage imageRef = any (`isPrefixOfString` imageRef) harborPrefixes
 
+-- type PublishedImage = (String, String)
 writeHarborOverridesFile :: Map String PublishedImage -> FilePath -> IO ()
 writeHarborOverridesFile publishedImages outputPath =
   case buildHarborOverridesValue publishedImages of
     Right overlayValue -> Yaml.encodeFile outputPath overlayValue
     Left err -> failWith err
 
+-- type PublishedImage = (String, String)
 buildHarborOverridesValue :: Map String PublishedImage -> Either String Value
 buildHarborOverridesValue publishedImages = do
   runtimeImage <- requiredRuntimeImage publishedImages
@@ -555,6 +594,7 @@ buildHarborOverridesValue publishedImages = do
                   maybeMinioClientPublished
             )
 
+-- type PublishedImage = (String, String)
 requiredRuntimeImage :: Map String PublishedImage -> Either String PublishedImage
 requiredRuntimeImage publishedImages =
   maybe
@@ -566,6 +606,7 @@ orElse :: Maybe a -> Maybe a -> Maybe a
 orElse maybeLeft maybeRight =
   maybeLeft <|> maybeRight
 
+-- type PublishedImage = (String, String)
 findPublishedImageWithSuffix :: String -> Map String PublishedImage -> Maybe PublishedImage
 findPublishedImageWithSuffix suffix =
   fmap snd . find (isSuffixOf suffix . fst) . Map.toList
@@ -576,6 +617,7 @@ requireDiscoveredImage =
     (Left "did not discover every non-Harbor third-party image required for the final Harbor-backed rollout")
     Right
 
+-- type PublishedImage = (String, String)
 splitRegistryRepository :: PublishedImage -> Value
 splitRegistryRepository (repository, tagValue) =
   let (registryValue, repositoryRemainder) = breakOnFirst '/' repository
@@ -585,6 +627,7 @@ splitRegistryRepository (repository, tagValue) =
           "tag" .= tagValue
         ]
 
+-- type PublishedImage = (String, String)
 renderRepositoryAndTag :: PublishedImage -> String
 renderRepositoryAndTag (repository, tagValue) = repository <> ":" <> tagValue
 
@@ -652,11 +695,12 @@ joinWith = intercalate
 
 breakRepositoryAndTag :: String -> (String, String, String)
 breakRepositoryAndTag value =
-  let reversed = reverse value
-      (reversedTag, remainder) = break (== ':') reversed
-   in case remainder of
-        ':' : reversedRepository -> (reverse reversedRepository, ":", reverse reversedTag)
-        _ -> (value, "", "")
+  case remainder of
+    ':' : reversedRepository -> (reverse reversedRepository, ":", reverse reversedTag)
+    _ -> (value, "", "")
+  where
+    reversed = reverse value
+    (reversedTag, remainder) = break (== ':') reversed
 
 breakOn :: Char -> String -> Maybe (String, String)
 breakOn delimiter value =

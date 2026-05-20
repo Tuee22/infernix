@@ -73,25 +73,37 @@ hostNodeSupportsWebToolchain = do
       (exitCode, stdoutOutput, _) <- readCreateProcessWithExitCode (proc "node" ["--version"]) ""
       pure $
         case exitCode of
-          ExitSuccess ->
-            case parseNodeVersion stdoutOutput of
-              Just (majorVersion, minorVersion) ->
-                majorVersion > 22 || (majorVersion == 22 && minorVersion >= 5)
-              Nothing -> False
+          ExitSuccess -> nodeVersionSatisfiesMinimum stdoutOutput
           _ -> False
     _ -> pure False
+
+nodeVersionSatisfiesMinimum :: String -> Bool
+nodeVersionSatisfiesMinimum stdoutOutput =
+  case parseNodeVersion stdoutOutput of
+    Just (majorVersion, minorVersion) ->
+      majorVersion > 22 || (majorVersion == 22 && minorVersion >= 5)
+    Nothing -> False
 
 parseNodeVersion :: String -> Maybe (Int, Int)
 parseNodeVersion rawVersion =
   case dropWhile (not . isDigit) rawVersion of
     [] -> Nothing
-    digits -> case span isDigit digits of
-      (majorDigits, '.' : minorAndRest) | not (null majorDigits) ->
-        case span isDigit minorAndRest of
-          (minorDigits, _) | not (null minorDigits) -> Just (read majorDigits, read minorDigits)
-          _ -> Nothing
-      (majorDigits, _) | not (null majorDigits) -> Just (read majorDigits, 0)
-      _ -> Nothing
+    digits -> parseVersionDigits digits
+
+parseVersionDigits :: String -> Maybe (Int, Int)
+parseVersionDigits digits =
+  case span isDigit digits of
+    (majorDigits, '.' : minorAndRest)
+      | not (null majorDigits) ->
+          parseMinorVersion majorDigits minorAndRest
+    (majorDigits, _) | not (null majorDigits) -> Just (read majorDigits, 0)
+    _ -> Nothing
+
+parseMinorVersion :: String -> String -> Maybe (Int, Int)
+parseMinorVersion majorDigits minorAndRest =
+  case span isDigit minorAndRest of
+    (minorDigits, _) | not (null minorDigits) -> Just (read majorDigits, read minorDigits)
+    _ -> Nothing
 
 shellQuote :: String -> String
 shellQuote rawValue =

@@ -465,10 +465,11 @@ requireJsonDemoConfig payload =
 
 extractJsonStringField :: String -> String -> Maybe String
 extractJsonStringField fieldName payload =
-  let needle = "\"" <> fieldName <> "\":\""
-   in case breakOn needle (compact payload) of
-        Just suffix -> Just (takeWhile (/= '"') suffix)
-        Nothing -> Nothing
+  case breakOn needle (compact payload) of
+    Just suffix -> Just (takeWhile (/= '"') suffix)
+    Nothing -> Nothing
+  where
+    needle = "\"" <> fieldName <> "\":\""
 
 compact :: String -> String
 compact = filter (`notElem` [' ', '\n', '\r', '\t'])

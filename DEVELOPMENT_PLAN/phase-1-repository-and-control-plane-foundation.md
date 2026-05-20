@@ -17,8 +17,8 @@ Phase 1 backlog.
 
 ## Current Repo Assessment
 
-The repo matches the supported Phase 1 ownership contract: the control plane has an
-`optparse-applicative`-backed Haskell command registry, the governed root docs point at canonical
+The repo matches the supported Phase 1 ownership contract: the control plane has a
+Haskell command registry, the governed root docs point at canonical
 `documents/` topics with explicit metadata, and the Linux launcher uses a baked image snapshot. Lifecycle and validation commands
 stage or verify `infernix-substrate.dhall` under the active build root through binary-owned
 preflight, while explicit helper invocations remain available for direct inspection or restaging.
@@ -308,7 +308,7 @@ each workflow topic one canonical home.
 
 ### Deliverables
 
-- one Haskell command-registry foundation, implemented with `optparse-applicative`, owns the
+- one Haskell command-registry foundation owns the
   supported command inventory, parser entrypoint, `--help` output, and CLI-reference lint coverage
 - a shared Haskell workflow-helper foundation exists for:
   - npm invocation resolution

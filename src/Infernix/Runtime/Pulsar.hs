@@ -135,17 +135,10 @@ runProductionDaemon paths runtimeMode = do
   maybeCatalogSourceOverride <- lookupEnv "INFERNIX_CATALOG_SOURCE"
   maybeDemoConfigOverride <- lookupEnv "INFERNIX_DEMO_CONFIG_PATH"
   maybeTransport <- discoverPulsarTransport paths runtimeMode
-  controlPlane <- case maybeControlPlaneOverrideRaw of
-    Nothing -> pure (controlPlaneContext paths)
-    Just rawOverride -> case parseControlPlaneContext rawOverride of
-      Just parsedOverride -> pure parsedOverride
-      Nothing -> throwIO (InvalidControlPlaneOverride rawOverride)
+  controlPlane <- resolveControlPlaneOverride paths maybeControlPlaneOverrideRaw
   let catalogSource =
         fromMaybe
-          ( case maybeDemoConfigOverride of
-              Just _ -> "env-config-override"
-              Nothing -> "generated-build-root"
-          )
+          (demoConfigCatalogSource maybeDemoConfigOverride)
           maybeCatalogSourceOverride
       selectedDemoConfigPath =
         fromMaybe (Infernix.Config.generatedDemoConfigPath paths) maybeDemoConfigOverride
@@ -188,6 +181,24 @@ runProductionDaemon paths runtimeMode = do
         (daemonConfigRequestTopics daemonConfig)
         (forkIO . consumeTopicForever transport paths runtimeMode daemonConfig)
       forever (threadDelay 60000000)
+
+resolveControlPlaneOverride :: Paths -> Maybe String -> IO ControlPlaneContext
+resolveControlPlaneOverride paths maybeControlPlaneOverrideRaw =
+  case maybeControlPlaneOverrideRaw of
+    Nothing -> pure (controlPlaneContext paths)
+    Just rawOverride -> parseControlPlaneOverride rawOverride
+
+parseControlPlaneOverride :: String -> IO ControlPlaneContext
+parseControlPlaneOverride rawOverride =
+  case parseControlPlaneContext rawOverride of
+    Just parsedOverride -> pure parsedOverride
+    Nothing -> throwIO (InvalidControlPlaneOverride rawOverride)
+
+demoConfigCatalogSource :: Maybe FilePath -> String
+demoConfigCatalogSource maybeDemoConfigOverride =
+  case maybeDemoConfigOverride of
+    Just _ -> "env-config-override"
+    Nothing -> "generated-build-root"
 
 resolveDaemonRole :: Maybe String -> DemoConfig -> IO DaemonRole
 resolveDaemonRole maybeOverride demoConfig =
@@ -811,31 +822,29 @@ parsePulsarWebSocketBase :: String -> Either String PulsarWebSocketBase
 parsePulsarWebSocketBase rawValue =
   case trimWhitespace rawValue of
     Nothing -> Left "the value is blank"
-    Just trimmedValue ->
-      case stripPrefix "ws://" trimmedValue of
-        Just valueWithoutScheme -> parseAuthorityAndPath valueWithoutScheme
-        Nothing ->
-          case stripPrefix "wss://" trimmedValue of
-            Just _ ->
-              Left "wss:// URLs are not supported by the current runtime; use the ws:// Pulsar proxy endpoint"
-            Nothing ->
-              Left "expected a ws:// URL"
+    Just trimmedValue -> parseTrimmedPulsarWebSocketBase trimmedValue
   where
+    parseTrimmedPulsarWebSocketBase trimmedValue
+      | Just valueWithoutScheme <- stripPrefix "ws://" trimmedValue =
+          parseAuthorityAndPath valueWithoutScheme
+      | Just _ <- stripPrefix "wss://" trimmedValue =
+          Left "wss:// URLs are not supported by the current runtime; use the ws:// Pulsar proxy endpoint"
+      | otherwise =
+          Left "expected a ws:// URL"
+
     parseAuthorityAndPath valueWithoutScheme =
-      let (authorityValue, rawPathPrefix) = break (== '/') valueWithoutScheme
-          pathPrefixValue = trimTrailingSlash rawPathPrefix
-       in case authorityAndPort authorityValue of
-            Left err -> Left err
-            Right (hostValue, portValue) ->
-              Right
-                PulsarWebSocketBase
-                  { pulsarWsHost = hostValue,
-                    pulsarWsPort = portValue,
-                    pulsarWsPathPrefix =
-                      if null pathPrefixValue
-                        then ""
-                        else pathPrefixValue
-                  }
+      case authorityAndPort authorityValue of
+        Left err -> Left err
+        Right (hostValue, portValue) ->
+          Right
+            PulsarWebSocketBase
+              { pulsarWsHost = hostValue,
+                pulsarWsPort = portValue,
+                pulsarWsPathPrefix = pathPrefixValue
+              }
+      where
+        (authorityValue, rawPathPrefix) = break (== '/') valueWithoutScheme
+        pathPrefixValue = trimTrailingSlash rawPathPrefix
 
 authorityAndPort :: String -> Either String (String, Int)
 authorityAndPort rawAuthority =
@@ -862,17 +871,23 @@ renderPulsarWebSocketBase websocketBase =
 
 joinSocketPath :: String -> String -> String
 joinSocketPath basePath relativePath =
-  let normalizedBase =
-        case trimTrailingSlash basePath of
-          "" -> ""
-          value ->
-            case value of
-              '/' : _ -> value
-              _ -> '/' : value
-      normalizedRelative = dropWhile (== '/') relativePath
-   in case normalizedBase of
-        "" -> '/' : normalizedRelative
-        _ -> normalizedBase <> "/" <> normalizedRelative
+  case normalizedBasePath basePath of
+    "" -> '/' : normalizedRelative
+    normalizedBase -> normalizedBase <> "/" <> normalizedRelative
+  where
+    normalizedRelative = dropWhile (== '/') relativePath
+
+normalizedBasePath :: String -> String
+normalizedBasePath basePath =
+  case trimTrailingSlash basePath of
+    "" -> ""
+    value -> ensureLeadingSlash value
+
+ensureLeadingSlash :: String -> String
+ensureLeadingSlash value =
+  case value of
+    '/' : _ -> value
+    _ -> '/' : value
 
 appendQueryParameters :: String -> [(String, String)] -> String
 appendQueryParameters basePath [] = basePath

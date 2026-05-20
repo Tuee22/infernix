@@ -83,7 +83,7 @@ with bounded retries across transient registry resets.
 | Area | Supported contract | Current repo state |
 |------|--------------------|--------------------|
 | Root-document governance | the governed docs, root docs, and plan describe the same staged-substrate doctrine and Apple daemon-role topology | implemented and validated |
-| CLI ownership | one `optparse-applicative`-backed Haskell command registry owns the supported command surface without any `--runtime-mode` override | implemented |
+| CLI ownership | one Haskell command registry owns the supported command surface without any `--runtime-mode` override | implemented |
 | Substrate selection | one staged substrate file beside the active build root is the primary source of truth for substrate identity and generated catalog selection | implemented |
 | Staged substrate-file format | the substrate file and its mirrors use one explicit and consistent file format and filename contract | implemented; the current contract is a shared `infernix-substrate.dhall` filename carrying a typed Dhall record on local and cluster-mounted paths, decoded in-process by the `dhall` Haskell library |
 | Apple split-executor lane | the host-built binary manages Kind, the cluster always runs `infernix service` daemons, and Apple-native inference batches are delegated to same-binary host daemons through Pulsar | implemented |
@@ -107,7 +107,7 @@ Monitoring is not a supported first-class surface.
   package (declared in `infernix.cabal` without an explicit library name and depended on as
   `infernix`): `infernix` for the production daemon, cluster lifecycle, validation, and internal
   helpers; `infernix-demo` for the routed demo HTTP host
-- one `optparse-applicative`-backed Haskell command registry owns parsing, help text, and the
+- one Haskell command registry owns parsing, help text, and the
   canonical CLI reference, and the final command surface carries no `--runtime-mode` override
 - the product standardizes three substrates:
   `apple-silicon`, `linux-cpu`, and `linux-gpu`
@@ -180,7 +180,7 @@ Monitoring is not a supported first-class surface.
   mandatory doctrine
 - supported validation is substrate-specific: integration, E2E, and `test all` run the complete
   supported suites against the built and deployed substrate and report that substrate explicitly
-- the supported control plane keeps one `optparse-applicative`-backed Haskell command registry,
+- the supported control plane keeps one Haskell command registry,
   imperative cluster or host prerequisite orchestration, the current `ormolu` plus `hlint` plus
   `cabal format` style stack,
   and the existing files or docs or chart or proto validation entrypoints rather than layering on

@@ -319,19 +319,9 @@ parseExplicitClaim metadata releaseValue =
         Text.unpack claimValue
       )
     _ ->
-      let nameValue = requireTextValue "name" (lookupTextFromObject "name" metadata)
-          parts = splitDash nameValue
-       in case reverse parts of
-            claimValue : ordinalValue : rest
-              | not (null claimValue),
-                not (null rest),
-                Just parsedOrdinal <- readMaybe ordinalValue,
-                takeWhile (/= '-') nameValue == releaseValue ->
-                  ( intercalateDash (reverse rest),
-                    parsedOrdinal,
-                    claimValue
-                  )
-            _ -> (normalizeWorkloadName nameValue releaseValue, 0, "data")
+      parseClaimFromName
+        (requireTextValue "name" (lookupTextFromObject "name" metadata))
+        releaseValue
   where
     lookupLabel labelName =
       lookupObjectFromObject "labels" metadata >>= lookupTextFromObject labelName
@@ -341,13 +331,28 @@ parseExplicitClaim metadata releaseValue =
         Nothing ->
           error ("discover-chart-claims: invalid ordinal label " <> rawOrdinal)
 
+parseClaimFromName :: String -> String -> (String, Int, String)
+parseClaimFromName nameValue releaseValue =
+  case reverse (splitDash nameValue) of
+    claimValue : ordinalValue : rest
+      | not (null claimValue),
+        not (null rest),
+        Just parsedOrdinal <- readMaybe ordinalValue,
+        takeWhile (/= '-') nameValue == releaseValue ->
+          ( intercalateDash (reverse rest),
+            parsedOrdinal,
+            claimValue
+          )
+    _ -> (normalizeWorkloadName nameValue releaseValue, 0, "data")
+
 normalizeWorkloadName :: String -> String -> String
 normalizeWorkloadName nameValue releaseValue =
-  let withoutRelease = stripPrefixOrSelf (releaseValue <> "-") nameValue
-      doublePrefix = releaseValue <> "-pulsar-"
-   in case stripPrefixMaybe doublePrefix withoutRelease of
-        Just pulsarWorkload -> "pulsar-" <> pulsarWorkload
-        Nothing -> withoutRelease
+  case stripPrefixMaybe doublePrefix withoutRelease of
+    Just pulsarWorkload -> "pulsar-" <> pulsarWorkload
+    Nothing -> withoutRelease
+  where
+    withoutRelease = stripPrefixOrSelf (releaseValue <> "-") nameValue
+    doublePrefix = releaseValue <> "-pulsar-"
 
 normalizeClaimName :: String -> String -> String
 normalizeClaimName templateName workloadValue =

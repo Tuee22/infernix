@@ -490,12 +490,12 @@ None.
 
 ### Objective
 
-Collapse the supported CLI surface into one `optparse-applicative`-backed Haskell registry so
+Collapse the supported CLI surface into one Haskell registry so
 parsing, help text, and the canonical CLI reference stop drifting independently.
 
 ### Deliverables
 
-- one `optparse-applicative`-backed Haskell registry owns supported command parsing, help text, and
+- one Haskell registry owns supported command parsing, help text, and
   command-family metadata
 - the canonical CLI reference derives from that same registry or from a mechanically equivalent
   generated artifact rather than a separate handwritten command inventory
@@ -507,7 +507,7 @@ parsing, help text, and the canonical CLI reference stop drifting independently.
 ### Validation
 
 - `./.build/infernix --help` and the canonical CLI reference enumerate the same supported command
-  families from the same `optparse-applicative`-backed registry source
+  families from the same Haskell registry source
 - changing a supported command in the registry changes parsing, help output, and CLI reference
   material through one implementation path
 - `infernix docs check` fails when the CLI reference drifts from the command registry
