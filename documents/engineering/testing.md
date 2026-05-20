@@ -29,7 +29,7 @@
   preflight for the selected substrate before their suite starts
 - Apple host-native flows expect the built binary plus the minimal Homebrew-plus-ghcup baseline;
   supported commands may reconcile the remaining host tools on demand
-- `linux-cpu` flows expect Docker Engine plus the Docker Compose plugin
+- `linux-cpu` flows expect Docker Engine plus the Docker buildx and Compose plugins
 - `linux-gpu` flows expect the `linux-cpu` Docker baseline plus the supported NVIDIA driver and
   container-toolkit setup
 - real-cluster `linux-gpu` validation also expects enough disk headroom for Kind image preload,

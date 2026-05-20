@@ -53,7 +53,7 @@ operator-facing kubeconfig remains repo-local in the active execution context.
 | Topic | Portable contract | Apple host-native detail | Linux outer-container detail |
 |-------|-------------------|--------------------------|------------------------------|
 | Control-plane launcher | `infernix` owns lifecycle and validation behavior | use `./bootstrap/apple-silicon.sh <command>` as the supported stage-0 entrypoint; the direct reference surface remains `./.build/infernix ...` after host build into `./.build/` | use `./bootstrap/linux-cpu.sh <command>` or `./bootstrap/linux-gpu.sh <command>` as the supported stage-0 entrypoint; the direct reference surface remains `docker compose run --rm infernix infernix ...`, with `INFERNIX_COMPOSE_*` selecting `linux-gpu` |
-| Host prerequisites | keep prerequisites minimal and explicit | Homebrew plus ghcup before build; Colima is the only supported Apple Docker environment | Docker Engine plus Compose plugin for `linux-cpu`; NVIDIA driver plus container toolkit in addition for `linux-gpu` |
+| Host prerequisites | keep prerequisites minimal and explicit | Homebrew plus ghcup before build; Colima is the only supported Apple Docker environment | Docker Engine plus Docker buildx and Compose plugins for `linux-cpu`; NVIDIA driver plus container toolkit in addition for `linux-gpu` |
 | Bootstrap activation boundary | stage-0 bootstrap surfaces continue in the current process only after they can verify the executable they need next, and they stop for explicit rerun when a new shell or reboot is required | the bootstrap verifies the selected ghcup-managed `ghc` and `cabal` executables plus Homebrew `protoc` before direct `cabal install`, so the supported clean-host first run does not depend on a second bootstrap invocation | Linux bootstraps stop for Docker group-membership re-entry and NVIDIA-driver reboot, then continue through the same bootstrap surface on rerun |
 | Tool bootstrap after the binary exists | supported commands may reconcile remaining operator tooling | Homebrew-managed Docker CLI, `kind`, `kubectl`, `helm`, Node.js, the Homebrew-managed `python@3.12` formula and `python3.12` command, and Poetry bootstrap may be installed on demand; Poetry may reuse an already available compatible Python 3.12+ executable | the substrate image already carries the supported toolchain; runtime install is not part of the contract |
 | Apple Docker profile | Docker-backed lifecycle and validation work uses one supported local Docker envelope | Colima is the only supported Apple Docker environment, and Apple lifecycle code reconciles it to at least `8 CPU / 16 GiB` before Kind- or Playwright-backed work proceeds | not applicable |
@@ -68,7 +68,8 @@ operator-facing kubeconfig remains repo-local in the active execution context.
 - ad hoc repo-owned scripts or wrapper layers beyond the supported `bootstrap/*.sh` stage-0
   entrypoints
 - bootstrap shell code that directly manages Kind clusters, Kubernetes manifests, Helm rollout,
-  container pulls, Harbor publication, validation internals, or destructive artifact cleanup
+  cluster workload image pulls, Harbor publication, validation internals, or destructive artifact
+  cleanup
 - `docker compose up` or `docker compose exec` as operator entrypoints
 - per-substrate Python projects, handwritten source under `Generated/`, or a separate web runtime image
 - pretending Apple host-native inference and Linux outer-container inference are interchangeable

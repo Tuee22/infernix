@@ -130,8 +130,8 @@ Monitoring is not a supported first-class surface.
 - repo-owned shell is limited to the `bootstrap/*.sh` stage-0 host bootstrap surface, which may
   reconcile supported host prerequisites and build or enter the active substrate launcher before
   handing off to the direct `infernix` command surface; shell code must not own Kind, Kubernetes
-  manifests, image pulls, Harbor publication, validation internals, or lifecycle teardown beyond
-  invoking the binary command
+  manifests, cluster workload image pulls, Harbor publication, validation internals, or lifecycle
+  teardown beyond invoking the binary command
 - supported stage-0 bootstrap entrypoints are restartable prerequisite reconcilers: they continue
   in the current process only after verifying the required executable they just installed or
   selected, and they stop at explicit new-shell or reboot boundaries so the operator reruns the

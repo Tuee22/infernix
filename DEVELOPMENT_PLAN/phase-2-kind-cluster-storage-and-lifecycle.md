@@ -475,11 +475,12 @@ Make bootstrap scripts narrow stage-0 launchers and move lifecycle responsibilit
   `infernix` launcher before delegating to a binary command
 - Apple bootstrap builds `./.build/infernix` and `./.build/infernix-demo`, then invokes
   `./.build/infernix <command>` for `up`, `status`, `test`, and `down`
-- Linux bootstraps install Docker, plus the supported NVIDIA driver and container toolkit on
-  `linux-gpu`, then invoke `docker compose run --rm infernix infernix <command>` so Compose and
-  the binary own launcher image creation, substrate staging, lifecycle, validation, and teardown
+- Linux bootstraps install the Docker baseline, plus the supported NVIDIA driver and container
+  toolkit on `linux-gpu`, then invoke `docker compose run --rm infernix infernix <command>` so
+  Compose and the binary own launcher image creation, substrate staging, lifecycle, validation, and
+  teardown
 - shell scripts do not call `kind`, `kubectl`, `helm`, Kubernetes manifest application commands,
-  Docker pulls, image publication, or cluster image preload paths directly
+  cluster workload image pulls, image publication, or cluster image preload paths directly
 - `infernix cluster up` keeps the Harbor-first deployment strategy on every substrate: Harbor and
   only Harbor-required support services may pull upstream before Harbor is responsive, and after
   Harbor is ready every remaining image, including the active `infernix` runtime image, is loaded

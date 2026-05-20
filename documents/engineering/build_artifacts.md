@@ -106,7 +106,10 @@ of the supported artifact contract.
   output lives in `web/dist/`
 - runtime result and cache-manifest reload paths are protobuf-backed `*.pb` files only; supported
   flows do not read legacy `*.state` compatibility files
-- generated web build output and Playwright artifacts live under `web/dist/` and `./.data/`
+- generated web build output lives under `web/dist/`; Playwright validation artifacts use
+  Playwright default output directories such as `test-results/` and `playwright-report/` under the
+  active runner working tree when emitted, and compose-run artifacts are container-local unless
+  explicitly bind-mounted
 - engine-adapter Python builds use Poetry against the shared `python/` project; outside the
   cluster, `poetry install --directory python` materializes a repo-local adapter virtual
   environment at `python/.venv/`, and Linux substrate image builds run the same shared install

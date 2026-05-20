@@ -27,7 +27,8 @@
 - The outer-container contract does not include `docker compose up`, `docker compose exec`, or a
   bootstrap helper-registry sidecar.
 - Linux bootstrap scripts install Docker or the CUDA host stack only; they do not call Kind, Helm,
-  Kubernetes manifest tooling, Docker pulls, or image publication directly.
+  Kubernetes manifest tooling, cluster workload image-pull orchestration, or image publication
+  directly.
 
 ## Current Status
 
@@ -51,7 +52,8 @@ build behavior.
 - on Apple Silicon, Colima is the only supported Docker environment
 - on the Apple host-native control-plane path, `./.build/infernix` reconciles Homebrew-managed
   Colima and the Docker CLI before it attempts real cluster work
-- on `linux-cpu`, host prerequisites stop at Docker Engine plus the Docker Compose plugin
+- on `linux-cpu`, host prerequisites stop at Docker Engine plus the Docker buildx and Compose
+  plugins
 - on `linux-gpu`, host prerequisites stop at the `linux-cpu` Docker baseline plus the supported
   NVIDIA driver and container-toolkit setup
 - the supported Linux host Docker baseline includes the Docker buildx plugin because Compose may

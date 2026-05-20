@@ -75,9 +75,12 @@
   repo-local state; on the Linux outer-container path it may idempotently run
   `docker network connect kind <launcher-container>` so the fresh launcher can observe the Kind
   control plane over Docker's private `kind` network
-- `infernix internal materialize-substrate ...` is the supported way to restage
-  `infernix-substrate.dhall`; `cluster up`, `service`, and the validation entrypoints do not
-  regenerate it on first command execution
+- `infernix internal materialize-substrate ...` remains the explicit restaging and inspection
+  helper for `infernix-substrate.dhall`; substrate-aware entrypoints such as `cluster up`,
+  `service`, `cache ...`, `kubectl ...`, frontend-contract generation, and aggregate
+  `infernix test ...` commands own substrate-file preflight for their execution context, materialize
+  or validate the file before relying on it, and fail with a substrate-specific diagnostic if that
+  preflight cannot complete
 - `infernix service` is the production daemon. It binds no HTTP port, consumes the active
   `.dhall` `request_topics`, `result_topic`, and `engines` fields and uses the Pulsar transport
   configured for the active substrate

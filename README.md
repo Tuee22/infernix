@@ -61,9 +61,9 @@ This repository serves two aligned purposes:
   pre-installs ghcup and the host binary reconciles adapter setup through the shared Poetry project
 - repo-owned shell is limited to the `bootstrap/*.sh` stage-0 host bootstrap entrypoints: those
   scripts build or enter the substrate-specific `infernix` launcher and then hand lifecycle work
-  to the binary instead of managing Kind, Kubernetes manifests, or container pulls directly; no
-  committed built artifacts (`poetry.lock`, generated proto, `.mypy_cache`, `.ruff_cache`,
-  `*.pyc`, `web/dist/`, `web/spago.lock`, `web/src/Generated/`)
+  to the binary instead of managing Kind, Kubernetes manifests, or cluster workload image pulls
+  directly; no committed built artifacts (`poetry.lock`, generated proto, `.mypy_cache`,
+  `.ruff_cache`, `*.pyc`, `web/dist/`, `web/spago.lock`, `web/src/Generated/`)
 
 ## What Infernix Does
 
@@ -212,8 +212,9 @@ Current status:
   control-plane DNS; because Apple retained Kind state is replayed into and out of the worker
   rather than bind-mounted, large `./.data/kind/apple-silicon/` trees can make `up`, `test`, and
   `down` slower than Linux
-- `linux-cpu` keeps its host prerequisites at Docker Engine plus the Docker Compose plugin, and
-  `linux-gpu` adds the documented NVIDIA driver and container-toolkit requirements on top of that
+- `linux-cpu` keeps its host prerequisites at Docker Engine plus the Docker buildx and Compose
+  plugins, and `linux-gpu` adds the documented NVIDIA driver and container-toolkit requirements on
+  top of that
 
 The Linux install examples below assume an Ubuntu 24.04 host.
 
@@ -271,6 +272,7 @@ Preferred path:
 Required on the host:
 
 - Docker Engine
+- Docker buildx plugin
 - Docker Compose plugin
 - permission to access `/var/run/docker.sock`
 
@@ -552,7 +554,7 @@ around upstream `kubectl`, not a parallel lifecycle surface.
   kubeconfig remains the supported operator surface
 - `bootstrap/*.sh` commands are launchers for `infernix` commands only after host prerequisites and
   the substrate-specific binary or container launcher are ready; they do not directly manage Kind,
-  Kubernetes resources, manifests, or image pulls
+  Kubernetes resources, manifests, or cluster workload image pulls
 - `infernix internal materialize-substrate <runtime-mode> [--demo-ui true|false]` stages the
   active demo `.dhall` file that defines the demo catalog and the engine binding for each
   demo-visible model on that substrate

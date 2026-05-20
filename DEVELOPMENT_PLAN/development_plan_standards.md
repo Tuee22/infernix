@@ -268,10 +268,10 @@ Rules:
 - Supported Linux control-plane commands always run through
   `docker compose run --rm infernix infernix ...`; there is no supported Linux host-native
   `infernix` workflow outside the outer container.
-- On Linux substrates, the stage-0 shell may install Docker Engine and the Compose plugin, and on
-  `linux-gpu` may also install the supported NVIDIA driver and container toolkit. The shell relies
-  on `docker compose run --rm infernix infernix <command>` to build or reuse the active
-  `infernix-linux-<mode>:local` launcher image and then run the binary command.
+- On Linux substrates, the stage-0 shell may install Docker Engine plus the Docker buildx and
+  Compose plugins, and on `linux-gpu` may also install the supported NVIDIA driver and container
+  toolkit. The shell relies on `docker compose run --rm infernix infernix <command>` to build or
+  reuse the active `infernix-linux-<mode>:local` launcher image and then run the binary command.
 - When the active Linux snapshot differs from the default `linux-cpu` image, phase docs call out
   the `INFERNIX_COMPOSE_*` launcher variables that select the built image and Dockerfile build
   arguments while keeping that same supported Compose command surface unchanged.
@@ -279,9 +279,10 @@ Rules:
   The Apple host CLI invokes `docker compose run --rm playwright` against the dedicated
   `infernix-playwright:local` image when it needs the container-owned Playwright executor during
   routed E2E validation.
-- On Linux CPU, host prerequisites stop at Docker Engine plus the Docker Compose plugin.
-- On Linux GPU, host prerequisites stop at Docker Engine plus the supported NVIDIA driver and
-  container-toolkit setup.
+- On Linux CPU, host prerequisites stop at Docker Engine plus the Docker buildx and Compose
+  plugins.
+- On Linux GPU, host prerequisites stop at the Linux CPU Docker baseline plus the supported NVIDIA
+  driver and container-toolkit setup.
 - Bootstrap `down` commands delegate to `infernix cluster down` and preserve `./.build/`,
   `./.data/`, the host-level container build, the Apple host binary, and installed Docker or CUDA
   prerequisites. Removing those artifacts is outside lifecycle teardown.

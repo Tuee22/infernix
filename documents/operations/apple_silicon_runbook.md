@@ -22,7 +22,8 @@
   Python 3.12+ executable when one passes the implemented version check
 - the Apple bootstrap shell owns only host prerequisite reconciliation through the host binary
   build and then invokes `./.build/infernix <command>`; the host binary owns Colima, Kind,
-  Kubernetes, container builds, Harbor publication, and any image pulls needed after it exists
+  Kubernetes, container builds, Harbor publication, and any cluster workload image pulls needed
+  after it exists
 - the Apple lifecycle now keeps Kind lock-taking off repo-visible paths by using a host-local
   scratch kubeconfig under the system temp directory during cluster create or delete and then
   publishing the durable repo-local kubeconfig under `./.build/`

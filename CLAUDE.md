@@ -34,5 +34,5 @@ root file is only the entry point. Supported stage-0 host bootstrap entrypoints 
 [documents/development/local_dev.md](documents/development/local_dev.md). Those bootstrap
 entrypoints are restartable prerequisite reconcilers: they verify same-process tool activation
 before continuing, stop at explicit rerun boundaries when a new shell or reboot is required, and
-delegate cluster lifecycle, Kubernetes manifests, image pulls, Harbor publication, validation, and
-teardown behavior to the `infernix` binary.
+delegate cluster lifecycle, Kubernetes manifests, cluster workload image pulls, Harbor
+publication, validation, and teardown behavior to the `infernix` binary.

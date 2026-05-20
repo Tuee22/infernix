@@ -99,6 +99,9 @@ Rules:
 
 - `DEVELOPMENT_PLAN/` owns phase order, current implementation status, and closure criteria.
 - `documents/` owns architecture and operator guidance once the relevant document exists.
+- When current-state or closure claims in `documents/` conflict with `DEVELOPMENT_PLAN/`, reconcile
+  the governed docs to `DEVELOPMENT_PLAN/`; do not use `documents/` as a parallel implementation
+  status authority.
 - `README.md` is a governed orientation layer and points to canonical documents instead of
   duplicating them.
 - `AGENTS.md` and `CLAUDE.md` are governed entry documents and must stay aligned with workflow
@@ -123,8 +126,8 @@ Rules:
 - keep examples aligned with the supported `infernix` CLI surface
 - document the supported `bootstrap/*.sh` stage-0 entrypoints as bounded prerequisite and launcher
   builders: they may install host prerequisites and build or enter the substrate-specific
-  `infernix` launcher, but cluster lifecycle, Kubernetes manifests, image pulls, Harbor
-  publication, validation, and teardown behavior must be described as binary-owned
+  `infernix` launcher, but cluster lifecycle, Kubernetes manifests, cluster workload image pulls,
+  Harbor publication, validation, and teardown behavior must be described as binary-owned
 
 ## Update Rules
 

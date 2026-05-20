@@ -16,11 +16,11 @@
 
 ## Current Status
 
-The current repository already follows this split: Kind PV data, object-store metadata, MinIO
-objects, Pulsar ledgers, protobuf-backed inference-result files, and Patroni-backed PostgreSQL
-state are durable, while `./.build/`, `/opt/build/`, generated publication mirrors, caches,
-Playwright output, transient Kind or `nvkind` scratch kubeconfig files, and stale repo-local
-kubeconfig lock files are derived.
+The current repository already follows this split: Kind PV data, repo-local object-store metadata
+and payloads, reserved MinIO cluster objects, Pulsar ledgers, protobuf-backed inference-result
+files, and Patroni-backed PostgreSQL state are durable, while `./.build/`, `/opt/build/`,
+generated publication mirrors, caches, Playwright output, transient Kind or `nvkind` scratch
+kubeconfig files, and stale repo-local kubeconfig lock files are derived.
 
 ## Owner And Durability Table
 
@@ -28,17 +28,19 @@ kubeconfig lock files are derived.
 |-------------|-------|--------------------|------------|--------------|
 | PVC-backed cluster data for Harbor, MinIO, Pulsar, and PostgreSQL | `infernix cluster up` storage reconciliation plus the workload itself | `./.data/kind/<runtime-mode>/<namespace>/<release>/<workload>/<ordinal>/<claim>` | durable | do not delete implicitly; supported lifecycle reruns rebind the same deterministic host paths within the active runtime lane |
 | Harbor registry content and Harbor metadata | Harbor plus operator-managed PostgreSQL | Harbor PVCs under `./.data/kind/<runtime-mode>/...` | durable | loss is a platform failure, not a cache miss |
-| MinIO objects | MinIO plus the service runtime | MinIO PVCs under `./.data/kind/<runtime-mode>/...` | durable | objects may be republished deliberately, but they are not treated as disposable cache |
+| Reserved MinIO cluster objects | MinIO | MinIO PVCs under `./.data/kind/<runtime-mode>/...` | durable | objects may be republished deliberately, but they are not treated as disposable cache; the current validated runtime object store remains repo-local under `./.data/object-store/` |
 | Pulsar ledgers and BookKeeper journals | Pulsar | Pulsar PVCs under `./.data/kind/<runtime-mode>/...` | durable | deletion resets message durability and is therefore explicit operator intent |
 | Inference-result records | Haskell service runtime plus routed reload handlers | `./.data/runtime/results/*.pb` | durable and user-visible | reload only from protobuf-backed result files; retired `*.state` files are not part of the supported contract |
 | Source-artifact manifests | Haskell service runtime | `./.data/object-store/source-artifacts/` | durable | these manifests are authoritative artifact-selection inputs |
 | Runtime artifact bundles | Haskell service runtime | `./.data/object-store/artifacts/` | durable | bundles are durable worker inputs and are not rebuilt from cache directories alone |
+| Runtime large-output objects | Haskell service runtime | `./.data/object-store/results/` | durable and user-visible | preserve unless the operator deliberately accepts losing large inference outputs |
 | Cache manifests used to rebuild model caches | Haskell service runtime | `./.data/object-store/manifests/<runtime-mode>/<model-id>/default.pb` | durable | rebuild the derived cache from these protobuf-backed manifests rather than inventing alternate cache metadata |
 | Publication state and generated ConfigMap mirrors | cluster lifecycle and demo activation | `./.data/runtime/publication.json`, `./.data/runtime/configmaps/infernix-demo-config/` | derived but user-visible | regenerate from `cluster up`, `cluster down`, or the active generated demo config |
 | Repo-local kubeconfig and chosen edge-port record | cluster lifecycle | `./.build/infernix.kubeconfig`, `./.data/runtime/infernix.kubeconfig`, `./.data/runtime/edge-port.json` | derived | recreate from the supported control-plane lifecycle; Kind and `nvkind` create or delete use transient scratch kubeconfig state under system temp and may remove stale repo-local `*.lock` artifacts automatically |
 | Build roots and staged generated demo config | build or cluster lifecycle | `./.build/`, `/opt/build/` | derived | rebuild from source and the active runtime mode |
 | Runtime model cache | Haskell service runtime | `./.data/runtime/model-cache/...` | derived | rebuild from durable manifests and artifacts |
-| Apple adapter virtualenv and Playwright artifacts | Poetry or validation tooling | `python/.venv/`, `./.data/test-artifacts/playwright/` | derived | recreate from the shared Python project or rerun the validation lane |
+| Apple adapter virtualenv | Poetry | `python/.venv/` | derived | recreate from the shared Python project |
+| Playwright validation artifacts | Playwright validation tooling | Playwright default output directories such as `test-results/` and `playwright-report/` under the active runner working tree when emitted; compose-run artifacts are container-local unless explicitly bind-mounted | derived | recreate by rerunning the routed E2E validation lane |
 
 ## Failure And Rebuild Rules
 

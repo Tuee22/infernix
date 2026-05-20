@@ -21,11 +21,12 @@
   supported package-manager or user-local bootstrap path when the active flow first needs them
 - `linux-cpu` and `linux-gpu` expose repo-owned `bootstrap/*.sh` entrypoints that keep host
   prerequisites probe-driven and idempotent; the CPU path stops at Docker Engine plus the Docker
-  Compose plugin, and the GPU path adds only the supported NVIDIA driver and container-toolkit
-  setup
+  buildx and Compose plugins, and the GPU path adds only the supported NVIDIA driver and
+  container-toolkit setup
 - the target bootstrap responsibility boundary keeps shell scripts out of Kind, Kubernetes
-  manifests, and image-pull orchestration: after prerequisites and the substrate-specific launcher
-  are available, lifecycle commands are ordinary `infernix` binary invocations
+  manifests, and cluster workload image-pull orchestration: after prerequisites and the
+  substrate-specific launcher are available, lifecycle commands are ordinary `infernix` binary
+  invocations
 - the lifecycle keeps Kind and `nvkind` lock-taking off repo-visible paths by using a transient
   scratch kubeconfig under the execution context's system temp directory during cluster create or
   delete, then publishing the durable repo-local kubeconfig afterward
@@ -97,7 +98,7 @@ the shared adapter project:
 - supported repo-owned shell is limited to the `bootstrap/*.sh` stage-0 entrypoints; they prepare
   the host, build the Apple host binary or enter the Linux Compose launcher, and then hand off to
   the direct `infernix` command surface; they do not run `kind`, `kubectl`, `helm`, manifest
-  deployment commands, Docker pulls, or image publication directly
+  deployment commands, cluster workload image pulls, or image publication directly
 - supported stage-0 bootstrap entrypoints are restartable host prerequisite reconcilers: they
   continue in the current process only after they can verify a usable executable for any tool they
   just installed or selected, and they stop at explicit new-shell or reboot boundaries so the

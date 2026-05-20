@@ -413,9 +413,9 @@ toolchain from package managers instead of depending on a broad preinstalled App
   already available compatible Python 3.12+ executable that passes the implemented version check,
   bootstrap Poetry into a user-local environment, and then continue all host-side Python
   management through the shared Poetry project
-- `linux-cpu` host prerequisites stop at Docker Engine plus the Docker Compose plugin
-- `linux-gpu` host prerequisites stop at Docker Engine plus the supported NVIDIA driver and
-  container-toolkit setup
+- `linux-cpu` host prerequisites stop at Docker Engine plus the Docker buildx and Compose plugins
+- `linux-gpu` host prerequisites stop at the `linux-cpu` Docker baseline plus the supported
+  NVIDIA driver and container-toolkit setup
 - clean-host validation proves the supported commands reconcile prerequisites rather than relying on
   undocumented manual setup beyond those minimal host baselines
 

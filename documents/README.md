@@ -49,8 +49,8 @@
   operator-managed claim ownership
 - [engineering/model_lifecycle.md](engineering/model_lifecycle.md) records the generated catalog,
   durable artifact, and runtime-cache lifecycle contract
-- [engineering/object_storage.md](engineering/object_storage.md) defines how MinIO-backed objects
-  surface through the demo API
+- [engineering/object_storage.md](engineering/object_storage.md) defines the current repo-local
+  object-store contract and the reserved MinIO-backed cluster path
 - [engineering/portability.md](engineering/portability.md) defines the portable contract versus
   Apple- or Linux-specific execution details
 - [engineering/storage_and_state.md](engineering/storage_and_state.md) records the authoritative
@@ -93,6 +93,8 @@
 
 - `DEVELOPMENT_PLAN/` owns implementation status, phase order, and closure criteria.
 - `documents/` owns architecture guidance, operator workflow guidance, and reference material.
+- When current-state or closure wording in `documents/` diverges from `DEVELOPMENT_PLAN/`, update
+  `documents/` to match the plan rather than treating the governed docs as the status authority.
 - `documents/development/assistant_workflow.md` owns the canonical assistant-facing repository
   workflow rules.
 - Monitoring is not a supported first-class surface. The governed docs suite intentionally has no
@@ -111,6 +113,10 @@
 - If monitoring ever becomes a supported first-class surface, add the canonical doctrine doc,
   update this index, update the plan, and update docs lint in the same change.
 - Supported workflow docs describe the bounded `bootstrap/*.sh` stage-0 entrypoints as host
-  prerequisite and launcher builders, while cluster lifecycle, Kubernetes manifests, image pulls,
-  Harbor publication, validation, and teardown stay owned by the `infernix` binary.
+  prerequisite and launcher builders, while cluster lifecycle, Kubernetes manifests, cluster
+  workload image pulls, Harbor publication, validation, and teardown stay owned by the `infernix`
+  binary.
+- When a bootstrap entrypoint uses Docker to probe host prerequisites, such as the `linux-gpu`
+  CUDA runtime probe, that does not move Harbor image publication, cluster workload image pulls, or
+  lifecycle ownership out of the `infernix` binary.
 - Run the docs validator before handing off changes.

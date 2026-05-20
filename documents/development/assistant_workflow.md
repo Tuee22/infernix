@@ -25,8 +25,8 @@ parallel long-form workflow contracts.
 - update `README.md`, `AGENTS.md`, and `CLAUDE.md` together when root workflow guidance changes
 - keep repo-owned shell limited to the supported `bootstrap/*.sh` stage-0 host bootstrap surface:
   scripts may reconcile prerequisites and build or enter the active launcher, while cluster
-  lifecycle, Kubernetes manifests, image pulls, Harbor publication, validation, and teardown
-  remain `infernix`-owned
+  lifecycle, Kubernetes manifests, cluster workload image pulls, Harbor publication, validation,
+  and teardown remain `infernix`-owned
 
 ## Supported Build And Operator Workflows
 

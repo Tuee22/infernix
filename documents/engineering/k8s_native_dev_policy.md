@@ -12,8 +12,8 @@
 - `infernix cluster down` is the only supported teardown entrypoint
 - `bootstrap/*.sh` entrypoints may prepare host prerequisites and build or enter the active
   launcher, but they must not directly create Kind clusters, apply Kubernetes manifests, invoke
-  Helm, pull images, or publish images; those responsibilities belong to `infernix cluster up`
-  and `infernix cluster down`
+  Helm, pull cluster workload images, or publish images; those responsibilities belong to
+  `infernix cluster up` and `infernix cluster down`
 - `infernix cluster status` does not mutate Kubernetes resources or repo-local authoritative
   state; on the Linux outer-container path it may idempotently attach the fresh launcher container
   to Docker's private `kind` network so it can observe the Kind control plane

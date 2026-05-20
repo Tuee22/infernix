@@ -28,7 +28,7 @@ PureScript demo UI, and one governed documentation suite.
   real Kind path; supported workflows fail fast when the required platform commands are unavailable
 - `bootstrap/*.sh` entrypoints are substrate launchers only: they reconcile host prerequisites and
   build or enter the active `infernix` launcher, while the binary owns Kind, Kubernetes, manifest
-  deployment, image pulls, Harbor publication, and lifecycle status
+  deployment, cluster workload image pulls, Harbor publication, and lifecycle status
 - Harbor is always the first deployed service on a pristine cluster, and only Harbor plus
   Harbor-required backend services such as MinIO and PostgreSQL may pull from public container
   repositories before Harbor is ready
