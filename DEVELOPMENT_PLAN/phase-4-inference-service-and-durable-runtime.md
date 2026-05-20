@@ -24,8 +24,9 @@ README-matrix-backed generated catalog, protobuf-backed manifest and result help
 cache status or eviction or rebuild flows, repo-local durable object-store state under
 `./.data/object-store/`, a shared Python adapter project whose setup entrypoints write idempotent
 bootstrap manifests, explicit substrate-materialization helpers, and daemon behavior driven by the
-staged substrate file. That file still keeps a legacy `.dhall` name while carrying banner-prefixed
-JSON. The final runtime contract distinguishes daemon role from inference executor location:
+staged substrate file. That file is a typed Dhall record at `infernix-substrate.dhall`, decoded
+in-process by the `dhall` Haskell library. The final runtime contract distinguishes daemon role
+from inference executor location:
 cluster daemons exist on every substrate and own Pulsar request-topic consumption; Linux cluster
 daemons run inference directly and publish results; Apple cluster daemons publish work to a
 dedicated host batch topic consumed by same-binary host daemons that run Apple-native inference

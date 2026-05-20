@@ -27,6 +27,7 @@ module Infernix.Types
     apiUpstreamModeId,
     daemonRoleId,
     parseApiUpstreamMode,
+    parseDaemonRole,
     parsePulsarConnectionMode,
     parseRequestFieldType,
     parseRuntimeLane,

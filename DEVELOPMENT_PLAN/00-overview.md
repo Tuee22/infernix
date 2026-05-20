@@ -83,9 +83,9 @@ with bounded retries across transient registry resets.
 | Area | Supported contract | Current repo state |
 |------|--------------------|--------------------|
 | Root-document governance | the governed docs, root docs, and plan describe the same staged-substrate doctrine and Apple daemon-role topology | implemented and validated |
-| CLI ownership | one structured Haskell command registry owns the supported command surface without any `--runtime-mode` override | implemented |
+| CLI ownership | one `optparse-applicative`-backed Haskell command registry owns the supported command surface without any `--runtime-mode` override | implemented |
 | Substrate selection | one staged substrate file beside the active build root is the primary source of truth for substrate identity and generated catalog selection | implemented |
-| Staged substrate-file format | the substrate file and its mirrors use one explicit and consistent file format and filename contract | implemented; the current contract is a shared `infernix-substrate.dhall` filename carrying banner-prefixed JSON on local and cluster-mounted paths |
+| Staged substrate-file format | the substrate file and its mirrors use one explicit and consistent file format and filename contract | implemented; the current contract is a shared `infernix-substrate.dhall` filename carrying a typed Dhall record on local and cluster-mounted paths, decoded in-process by the `dhall` Haskell library |
 | Apple split-executor lane | the host-built binary manages Kind, the cluster always runs `infernix service` daemons, and Apple-native inference batches are delegated to same-binary host daemons through Pulsar | implemented |
 | Apple stage-0 bootstrap determinism | a first-run Apple bootstrap verifies newly installed same-process tool resolution before handing off to direct `cabal` work | implemented and validated through the governed Apple `doctor`, `build`, `up`, `status`, `test`, and `down` lifecycle |
 | Bootstrap responsibility boundary | shell bootstrap builds or enters the active launcher only, then delegates lifecycle, validation, image preparation, and teardown to `infernix`; Harbor-first image loading includes the active runtime image on every substrate after Harbor is responsive | implemented and validated |
@@ -107,8 +107,8 @@ Monitoring is not a supported first-class surface.
   package (declared in `infernix.cabal` without an explicit library name and depended on as
   `infernix`): `infernix` for the production daemon, cluster lifecycle, validation, and internal
   helpers; `infernix-demo` for the routed demo HTTP host
-- one structured Haskell command registry owns parsing, help text, and the canonical CLI
-  reference, and the final command surface carries no `--runtime-mode` override
+- one `optparse-applicative`-backed Haskell command registry owns parsing, help text, and the
+  canonical CLI reference, and the final command surface carries no `--runtime-mode` override
 - the product standardizes three substrates:
   `apple-silicon`, `linux-cpu`, and `linux-gpu`
 - the staged `infernix-substrate.dhall` file beside the active build root is the primary source of
@@ -140,8 +140,9 @@ Monitoring is not a supported first-class surface.
   aggregate `infernix test ...` entrypoints own substrate-file preflight and fail if the file
   cannot be materialized or validated for the active execution context; focused `infernix lint ...`
   and `infernix docs check` remain substrate-file independent
-- the staged file retains the legacy `.dhall` filename even though the current payload is
-  banner-prefixed JSON produced by Haskell helpers
+- the staged file is a typed Dhall record named `infernix-substrate.dhall`, materialized by
+  Haskell helpers and decoded in-process by the `dhall` library; the schema lives at
+  `dhall/InfernixSubstrate.dhall`
 - Apple Silicon is the only supported host-native build path outside a container
 - on Apple Silicon, the host-built binary manages Kind, deploys the mandatory cluster support
   services, cluster `infernix service` daemons, and optional routed demo workload, and still owns
@@ -179,8 +180,9 @@ Monitoring is not a supported first-class surface.
   mandatory doctrine
 - supported validation is substrate-specific: integration, E2E, and `test all` run the complete
   supported suites against the built and deployed substrate and report that substrate explicitly
-- the supported control plane keeps one Haskell-owned command registry, imperative cluster or host
-  prerequisite orchestration, the current `ormolu` plus `hlint` plus `cabal format` style stack,
+- the supported control plane keeps one `optparse-applicative`-backed Haskell command registry,
+  imperative cluster or host prerequisite orchestration, the current `ormolu` plus `hlint` plus
+  `cabal format` style stack,
   and the existing files or docs or chart or proto validation entrypoints rather than layering on
   an additional architecture-doctrine backlog
 - every `infernix service` daemon remains startup-configured and Pulsar-driven without a separate
@@ -398,7 +400,8 @@ The plan keeps control-plane execution context separate from substrate.
   and `infernix docs check` do not require it
 - the staged file records the active substrate explicitly
 - the staged file also carries the generated demo catalog for that substrate
-- the current payload is banner-prefixed JSON under a legacy `.dhall` filename
+- the staged file is a typed Dhall record at `infernix-substrate.dhall`, decoded in-process by the
+  `dhall` Haskell library; the schema lives at `dhall/InfernixSubstrate.dhall`
 - the current daemon reads that file at startup; automatic file-watching or reload is not part of
   the supported contract
 

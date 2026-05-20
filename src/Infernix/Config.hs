@@ -19,12 +19,8 @@ module Infernix.Config
   )
 where
 
-import Data.Aeson (Value (Object, String), eitherDecodeStrict')
-import Data.Aeson.Key qualified as Key
-import Data.Aeson.KeyMap qualified as KeyMap
-import Data.ByteString qualified as ByteString
-import Data.ByteString.Char8 qualified as ByteStringChar8
 import Data.Text qualified as Text
+import Infernix.Substrate (resolveRuntimeModeFromSubstrateFile)
 import Infernix.Types (RuntimeMode (..), parseRuntimeMode, runtimeModeId)
 import System.Directory (createDirectoryIfMissing, doesFileExist, doesPathExist, getCurrentDirectory)
 import System.Environment (lookupEnv)
@@ -225,36 +221,7 @@ watchedDemoConfigPath =
   "/opt/build/infernix-substrate.dhall"
 
 resolveRuntimeModeFromGeneratedFile :: FilePath -> IO RuntimeMode
-resolveRuntimeModeFromGeneratedFile substratePath = do
-  rawValue <- ByteString.readFile substratePath
-  case eitherDecodeStrict' (stripGeneratedBanner rawValue) of
-    Right (Object objectValue) ->
-      case KeyMap.lookup (Key.fromString "runtimeMode") objectValue of
-        Just (String rawRuntimeMode) ->
-          case parseRuntimeMode rawRuntimeMode of
-            Just runtimeMode -> pure runtimeMode
-            Nothing ->
-              ioError
-                (userError ("Unsupported runtime mode in " <> substratePath <> ": " <> Text.unpack rawRuntimeMode))
-        _ ->
-          ioError
-            (userError ("Generated substrate file is missing runtimeMode: " <> substratePath))
-    Left message ->
-      ioError
-        (userError ("Invalid generated substrate file " <> substratePath <> ": " <> message))
-    Right _ ->
-      ioError
-        (userError ("Generated substrate file is not a JSON object: " <> substratePath))
-
-stripGeneratedBanner :: ByteString.ByteString -> ByteString.ByteString
-stripGeneratedBanner rawValue =
-  case dropBlankPrefix (ByteStringChar8.lines rawValue) of
-    firstLine : remainingLines
-      | ByteStringChar8.isPrefixOf (ByteStringChar8.pack "{-") (ByteStringChar8.strip firstLine) ->
-          ByteStringChar8.unlines remainingLines
-    trimmedLines -> ByteStringChar8.unlines trimmedLines
-  where
-    dropBlankPrefix = dropWhile (ByteString.null . ByteStringChar8.strip)
+resolveRuntimeModeFromGeneratedFile = resolveRuntimeModeFromSubstrateFile
 
 missingGeneratedSubstrateFileError :: FilePath -> IOError
 missingGeneratedSubstrateFileError substratePath =

@@ -391,8 +391,8 @@ distinguish real failure from ongoing first-run progress.
   phase, while final image availability is owned by Harbor-backed publication and preload
 - Harbor image publication waits for registry readiness before Docker push attempts and retries
   transient push resets with bounded backoff before treating publication as failed
-- `cluster down` surfaces the retained-state replay and Kind-deletion phases explicitly instead of
-  presenting teardown as one opaque wait
+- `cluster down` surfaces retained-state replay when the active substrate needs it and surfaces
+  Kind deletion explicitly instead of presenting teardown as one opaque wait
 - the cluster lifecycle records enough active-phase detail that `cluster status` can report the
   current reconcile or teardown stage while work is still in progress
 - lifecycle failure handling uses inactivity-aware doctrine for long-running phases rather than
@@ -437,7 +437,7 @@ status reads remain reliable and retained Harbor PostgreSQL replicas recover wit
 ### Deliverables
 
 - generated `infernix-substrate.dhall` staging writes are atomic, preventing concurrent
-  `cluster status` readers from seeing truncated JSON while lifecycle work is in flight
+  `cluster status` readers from seeing truncated Dhall while lifecycle work is in flight
 - retained-state `cluster up` detects a ready Harbor PostgreSQL leader with stopped unready
   replicas and reinitializes those replicas from the leader through Patroni
 - supported Apple reruns no longer require manual Harbor PostgreSQL replica surgery when timeline

@@ -136,6 +136,9 @@ the shared adapter project:
   `./chart/charts/`, and the host `compose.yaml` (read-only) together with the Docker socket; no
   docker-managed named volumes back the outer-container build root, and the substrate image uses
   `tini` as its entrypoint for clean signal handling
+- container mode forwards the host repo root into the launcher so generated Linux Kind or `nvkind`
+  configs mount host-resolved `./.data/kind/<runtime-mode>/` and `./.build/kind/registry/`
+  directories directly into node containers instead of replaying retained state with `docker cp`
 - on the Linux outer-container path, `./chart/charts/` is the supported host-persisted cache for
   the top-level Harbor, PostgreSQL, Pulsar, MinIO, and Envoy Gateway chart archives so fresh
   `docker compose run --rm infernix ...` invocations can reuse the same dependency bundle instead

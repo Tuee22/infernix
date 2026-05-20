@@ -12,7 +12,6 @@ module Infernix.DemoConfig
 where
 
 import Control.Exception (IOException, bracketOnError, catch)
-import Data.Aeson (eitherDecodeStrict')
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Char8 qualified as ByteStringChar8
 import Data.ByteString.Lazy qualified as LazyByteString
@@ -22,8 +21,8 @@ import Data.Text qualified as Text
 import Infernix.Config (Paths)
 import Infernix.Config qualified as Config
 import Infernix.Models (catalogForMode, encodeDemoConfig, engineBindingsForMode, hostBatchTopicForMode, requestTopicsForMode, resultTopicForMode)
+import Infernix.Substrate (decodeSubstrateConfigFile, demoConfigGeneratedBannerLine)
 import Infernix.Types
-import Infernix.Workflow (demoConfigGeneratedBannerLine)
 import System.Directory (createDirectoryIfMissing, doesFileExist, removeFile, renameFile)
 import System.FilePath (takeDirectory)
 import System.IO (hClose, openBinaryTempFile)
@@ -43,13 +42,10 @@ stripDemoConfigBanner rawValue =
 
 decodeDemoConfigFile :: FilePath -> IO DemoConfig
 decodeDemoConfigFile filePath = do
-  rawValue <- ByteString.readFile filePath
-  case eitherDecodeStrict' (stripDemoConfigBanner rawValue) of
+  demoConfig <- decodeSubstrateConfigFile filePath
+  case validateDemoConfig demoConfig of
     Left message -> ioError (userError ("invalid demo config: " <> message))
-    Right demoConfig ->
-      case validateDemoConfig demoConfig of
-        Left message -> ioError (userError ("invalid demo config: " <> message))
-        Right validDemoConfig -> pure validDemoConfig
+    Right validDemoConfig -> pure validDemoConfig
 
 validateDemoConfigFile :: FilePath -> IO ()
 validateDemoConfigFile filePath = do

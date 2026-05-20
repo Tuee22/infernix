@@ -3,7 +3,9 @@ write-ghc-environment-files: never
 with-compiler: ghc-9.14.1
 
 allow-newer:
-    binary:containers
+    *:base
+  , *:template-haskell
+  , binary:containers
   , lens-family:base
   , lens-family:containers
   , lens-family:lens-family-core

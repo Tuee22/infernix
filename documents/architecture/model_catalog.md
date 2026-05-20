@@ -11,7 +11,8 @@ The model catalog is Haskell-owned typed configuration derived from the README m
 
 - the service registry owns one entry for every README matrix row
 - the active generated substrate file selects the engine for each supported row and carries the
-  resulting catalog as `infernix-substrate.dhall`
+  resulting catalog as `infernix-substrate.dhall`, a typed Dhall record whose schema lives at
+  `dhall/InfernixSubstrate.dhall` and is decoded in-process by the `dhall` Haskell library
 - `cluster up` publishes a cluster-role `infernix-substrate.dhall` payload into
   `ConfigMap/infernix-demo-config` for cluster-resident consumers; on Apple this preserves the
   active generated catalog and `demo_ui` setting while using cluster daemon metadata rather than

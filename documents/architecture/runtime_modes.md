@@ -27,8 +27,10 @@ demo catalog entries, service binding, and validation.
 | Ubuntu 24.04 / CPU | `linux-cpu` | `Best Linux CPU engine` |
 | Ubuntu 24.04 / NVIDIA CUDA Container | `linux-gpu` | `Best Linux CUDA engine` |
 
-The active runtime mode is encoded in `infernix-substrate.dhall` beside the built binary. Apple
-host lifecycle and validation commands materialize or verify that file under `./.build/`, and
+The active runtime mode is encoded in `infernix-substrate.dhall` beside the built binary. The file
+is a typed Dhall record; the schema is defined at `dhall/InfernixSubstrate.dhall` and decoded
+in-process by the `dhall` Haskell library. Apple host lifecycle and validation commands
+materialize or verify that file under `./.build/`, and
 Linux outer-container lifecycle and validation commands materialize or verify
 `./.build/outer-container/build/infernix-substrate.dhall` on the host through the bind-mounted
 build tree. `infernix internal materialize-substrate <substrate> --demo-ui <true|false>` remains

@@ -37,6 +37,8 @@
 - [development/chaos_testing.md](development/chaos_testing.md) records the current HA-failure
   validation status and the Phase 6 ownership for that coverage
 - [engineering/build_artifacts.md](engineering/build_artifacts.md) defines build-output isolation
+- [engineering/dependency_management.md](engineering/dependency_management.md) defines the
+  supported Cabal dependency posture for the pinned Haskell toolchain
 - [engineering/docker_policy.md](engineering/docker_policy.md) defines the supported
   outer-container control-plane workflow
 - [engineering/edge_routing.md](engineering/edge_routing.md) defines the registry-owned public

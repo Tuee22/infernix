@@ -25,7 +25,7 @@ import Data.ByteString.Lazy.Char8 qualified as LazyChar8
 import Data.Char (isSpace, toLower)
 import Data.List qualified as List
 import Data.Map.Strict qualified as Map
-import Data.Maybe (catMaybes, fromMaybe, mapMaybe)
+import Data.Maybe (catMaybes, fromMaybe, isJust, mapMaybe)
 import Data.Text qualified as Text
 import Data.Time (UTCTime, diffUTCTime, getCurrentTime)
 import Data.Vector qualified as Vector
@@ -45,7 +45,7 @@ import Network.Socket qualified as Socket
 import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, findExecutable, getTemporaryDirectory, listDirectory, removeFile, removePathForcibly, renameFile)
 import System.Environment (getEnvironment, lookupEnv)
 import System.Exit (ExitCode (..))
-import System.FilePath (takeDirectory, takeFileName, (</>))
+import System.FilePath (addTrailingPathSeparator, normalise, takeDirectory, takeFileName, (</>))
 import System.Process
   ( CreateProcess (cwd, env),
     proc,
@@ -392,11 +392,12 @@ clusterUpWithPlatform paths runtimeMode = do
       provisionalState
       "cluster-up"
       "prepare-kind-cluster"
-      "creating or reusing the Kind cluster and replaying retained runtime data into nodes"
+      "creating or reusing the Kind cluster and preparing retained runtime data"
   (edgePortValue, kubeconfigContents, clusterCreated) <- ensureKindCluster paths runtimeMode (clusterUpRequestedEdgePort inputs)
-  when (clusterCreated && not (kindUsesHostBindMounts paths)) $
+  usesHostBindMounts <- kindUsesHostBindMounts paths runtimeMode
+  when (clusterCreated && not usesHostBindMounts) $
     prepareKindNodeRuntimePaths paths clusterPrepareState runtimeMode
-  unless (kindUsesHostBindMounts paths) $
+  unless usesHostBindMounts $
     prepareKindNodeClaimDirectories paths clusterPrepareState runtimeMode discoveredClaims
   writeFile (edgePortPath paths) (show edgePortValue)
   publishGeneratedKubeconfig paths (Text.pack kubeconfigContents)
@@ -604,9 +605,10 @@ clusterDown maybeRuntimeMode = do
   let maybeState = matchingClusterState runtimeMode recordedState
   clusterExists <- kindClusterExists paths runtimeMode
   when clusterExists $ do
+    usesHostBindMounts <- kindUsesHostBindMounts paths runtimeMode
     case maybeState of
       Just state
-        | not (kindUsesHostBindMounts paths) -> do
+        | not usesHostBindMounts -> do
             replayState <-
               startLifecyclePhase
                 paths
@@ -616,7 +618,7 @@ clusterDown maybeRuntimeMode = do
                 "replaying retained Kind runtime data back into the repo-local data root"
             syncKindNodeRuntimePathsToHost paths runtimeMode (Just replayState)
       _ ->
-        unless (kindUsesHostBindMounts paths) $
+        unless usesHostBindMounts $
           syncKindNodeRuntimePathsToHost paths runtimeMode maybeState
     case maybeState of
       Just state -> do
@@ -626,7 +628,7 @@ clusterDown maybeRuntimeMode = do
             state
             "cluster-down"
             "delete-kind-cluster"
-            "deleting the Kind cluster after retained-state replay is complete"
+            "deleting the Kind cluster after retained runtime data handling is complete"
         deleteKindCluster paths (clusterRuntimeMode deleteState)
       Nothing -> deleteKindCluster paths runtimeMode
   case maybeState of
@@ -2424,7 +2426,8 @@ reconcileOperatorManagedPersistentVolumes paths state = do
   waitForWorkloadRollout state 900 postgresOperatorDeployment
   operatorClaims <- waitForOperatorManagedPersistentClaims state harborPostgresExpectedOperatorClaims
   mapM_ (ensureClaimDirectoryReady paths (clusterRuntimeMode state)) operatorClaims
-  unless (kindUsesHostBindMounts paths) $
+  usesHostBindMounts <- kindUsesHostBindMounts paths (clusterRuntimeMode state)
+  unless usesHostBindMounts $
     prepareKindNodeClaimDirectories paths state (clusterRuntimeMode state) operatorClaims
   let updatedState = state {claims = mergePersistentClaims (claims state) operatorClaims}
   reconcilePersistentVolumes updatedState
@@ -2728,9 +2731,10 @@ writeGeneratedKindConfig paths runtimeMode edgePortValue = do
           </> "kind"
           </> ("cluster-" <> Text.unpack (runtimeModeId runtimeMode) <> ".generated.yaml")
   hostKindRoot <- resolveHostKindRoot paths runtimeMode
+  usesHostBindMounts <- kindUsesHostBindMounts paths runtimeMode
   writeRegistryHostsConfig paths runtimeMode
   hostRegistryHostsDirectory <- resolveHostRegistryHostsRoot paths
-  writeTextFile outputPath (Text.pack (renderKindConfig paths runtimeMode edgePortValue hostKindRoot hostRegistryHostsDirectory))
+  writeTextFile outputPath (Text.pack (renderKindConfig paths runtimeMode edgePortValue hostKindRoot hostRegistryHostsDirectory usesHostBindMounts))
   pure outputPath
 
 writeRegistryHostsConfig :: Paths -> RuntimeMode -> IO ()
@@ -2755,23 +2759,34 @@ writeRegistryHostsConfig paths runtimeMode = do
 resolveHostKindRoot :: Paths -> RuntimeMode -> IO FilePath
 resolveHostKindRoot paths runtimeMode = do
   maybeOverride <- lookupEnv "INFERNIX_HOST_KIND_ROOT"
-  pure (fromMaybe (kindRuntimeRoot paths runtimeMode) maybeOverride)
+  case maybeOverride of
+    Just override -> pure override
+    Nothing -> resolveHostRepoPath paths (kindRuntimeRoot paths runtimeMode)
 
 resolveHostRegistryHostsRoot :: Paths -> IO FilePath
 resolveHostRegistryHostsRoot paths = do
-  maybeHostKindRoot <- lookupEnv "INFERNIX_HOST_KIND_ROOT"
-  pure
-    ( case maybeHostKindRoot of
-        Just hostKindRoot ->
-          takeDirectory (takeDirectory hostKindRoot)
-            </> ".build"
-            </> "kind"
-            </> "registry"
-        Nothing -> repoRoot paths </> ".build" </> "kind" </> "registry"
-    )
+  resolveHostRepoPath paths (repoRoot paths </> ".build" </> "kind" </> "registry")
 
-renderKindConfig :: Paths -> RuntimeMode -> Int -> FilePath -> FilePath -> String
-renderKindConfig paths runtimeMode edgePortValue hostKindRoot registryHostsDirectory =
+resolveHostRepoRoot :: Paths -> IO FilePath
+resolveHostRepoRoot paths = do
+  maybeHostRepoRoot <- lookupEnv "INFERNIX_HOST_REPO_ROOT"
+  pure (fromMaybe (repoRoot paths) maybeHostRepoRoot)
+
+resolveHostRepoPath :: Paths -> FilePath -> IO FilePath
+resolveHostRepoPath paths containerPath = do
+  hostRepoRoot <- resolveHostRepoRoot paths
+  let normalizedRepoRoot = normalise (repoRoot paths)
+      normalizedContainerPath = normalise containerPath
+      repoRootPrefix = addTrailingPathSeparator normalizedRepoRoot
+  pure $
+    if normalizedContainerPath == normalizedRepoRoot
+      then hostRepoRoot
+      else case List.stripPrefix repoRootPrefix normalizedContainerPath of
+        Just relativePath -> hostRepoRoot </> relativePath
+        Nothing -> normalizedContainerPath
+
+renderKindConfig :: Paths -> RuntimeMode -> Int -> FilePath -> FilePath -> Bool -> String
+renderKindConfig paths runtimeMode edgePortValue hostKindRoot registryHostsDirectory usesHostBindMounts =
   unlines (preamble <> ["nodes:"] <> nodeBlock "control-plane" initLabels edgePortLines <> nodeBlock "worker" workerLabels [])
   where
     preamble =
@@ -2825,7 +2840,7 @@ renderKindConfig paths runtimeMode edgePortValue hostKindRoot registryHostsDirec
       where
         nodeExtraMounts = linuxGpuMounts role <> hostBindMounts
     hostBindMounts
-      | kindUsesHostBindMounts paths =
+      | usesHostBindMounts =
           [ "      - hostPath: " <> hostKindRoot,
             "        containerPath: " <> nodeMountedKindRoot,
             "      - hostPath: " <> registryHostsDirectory,
@@ -2842,10 +2857,15 @@ renderKindConfig paths runtimeMode edgePortValue hostKindRoot registryHostsDirec
       | role == "control-plane" = "InitConfiguration"
       | otherwise = "JoinConfiguration"
 
-kindUsesHostBindMounts :: Paths -> Bool
--- The supported control planes now sync runtime state into Kind nodes explicitly rather than
--- relying on host bind mounts, which avoids macOS uid/gid incompatibilities on Apple.
-kindUsesHostBindMounts _paths = False
+kindUsesHostBindMounts :: Paths -> RuntimeMode -> IO Bool
+-- Linux outer-container runs can hand the host Docker daemon host-resolved paths, so Kind nodes
+-- can mount retained state directly. Apple keeps explicit sync to avoid macOS uid/gid issues.
+kindUsesHostBindMounts paths runtimeMode =
+  case runtimeMode of
+    AppleSilicon -> pure False
+    _ -> do
+      maybeHostRepoRoot <- lookupEnv "INFERNIX_HOST_REPO_ROOT"
+      pure (Config.controlPlaneContext paths == OuterContainer || isJust maybeHostRepoRoot)
 
 prepareKindNodeRuntimePaths :: Paths -> ClusterState -> RuntimeMode -> IO ()
 prepareKindNodeRuntimePaths paths state runtimeMode = do

@@ -69,6 +69,9 @@ This repository serves two aligned purposes:
 
 Infernix does not reimplement model kernels. It coordinates them.
 
+The active substrate configuration lives in `infernix-substrate.dhall`, a typed Dhall record decoded
+in-process by the `dhall` Haskell library; the schema is defined at `dhall/InfernixSubstrate.dhall`.
+
 - consumes inference requests from Pulsar request topics named in the active `.dhall` and publishes
   results to the configured result topics; this is the production inference surface
 - optionally exposes a manual browser submission surface via the `infernix-demo` binary, gated by
@@ -212,6 +215,9 @@ Current status:
   control-plane DNS; because Apple retained Kind state is replayed into and out of the worker
   rather than bind-mounted, large `./.data/kind/apple-silicon/` trees can make `up`, `test`, and
   `down` slower than Linux
+- Linux outer-container lifecycle runs pass host-resolved `./.data/kind/<runtime-mode>/` and
+  `./.build/kind/registry/` paths into the generated Kind or `nvkind` node config so node-local
+  PVs and registry host config are preserved by direct Docker bind mounts instead of replay copies
 - `linux-cpu` keeps its host prerequisites at Docker Engine plus the Docker buildx and Compose
   plugins, and `linux-gpu` adds the documented NVIDIA driver and container-toolkit requirements on
   top of that
@@ -373,7 +379,7 @@ upstream or packaging constraints. Operators should use
 [the cluster bootstrap runbook](documents/operations/cluster_bootstrap_runbook.md) for the canonical
 warning classification. In short:
 
-- long image publication, final-image preload, retained-state replay, and early Kubernetes
+- long image publication, final-image preload, Apple retained-state replay, and early Kubernetes
   readiness warnings can be healthy convergence while lifecycle heartbeat fields continue to update
 - host resource warnings such as `SystemOOM` are environment contention and should be addressed
   before rerunning heavy lifecycle work
@@ -461,9 +467,11 @@ docker compose run --rm infernix infernix cluster down
 ```
 
 The Linux launcher bind-mounts `./.data/`, `./.build/`, the host `compose.yaml`, and the Docker
-socket. The baked image owns the full toolchain, so the supported runtime path does not install
-anything via `apt`, `pip`, or ad hoc host-side `cabal build`. The Linux bootstrap invokes the
-same `docker compose run --rm infernix infernix <command>` shape that operators use directly,
+socket. It also forwards the host repo root so the generated Kind or `nvkind` config can mount
+the host's `./.data/kind/<runtime-mode>/` and `./.build/kind/registry/` directories directly into
+node containers. The baked image owns the full toolchain, so the supported runtime path does not
+install anything via `apt`, `pip`, or ad hoc host-side `cabal build`. The Linux bootstrap invokes
+the same `docker compose run --rm infernix infernix <command>` shape that operators use directly,
 letting Compose build the missing launcher image and letting the binary own substrate staging,
 cluster lifecycle, image preparation, and validation. On both Linux substrates, Kind or `nvkind`
 create or delete uses a launcher-local scratch kubeconfig under the container temp directory and

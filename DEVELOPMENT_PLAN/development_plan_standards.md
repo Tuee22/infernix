@@ -577,8 +577,14 @@ The standards govern current repository truth, not imported doctrine. When the p
 plane architecture patterns, they must match the implementation that actually exists in the
 worktree and the governed docs that describe it.
 
-- One Haskell-owned command registry remains the supported source of truth for parsing, help text,
-  generated CLI-reference sections, and the operator command families documented in the plan.
+- One Haskell-owned command registry, implemented with `optparse-applicative`, remains the supported
+  source of truth for parsing, help text, generated CLI-reference sections, and the operator
+  command families documented in the plan.
+- The substrate file `infernix-substrate.dhall` is real Dhall, decoded in-process by the `dhall`
+  Haskell library. The repo's `cabal.project` carries `allow-newer: *:base, *:template-haskell` so
+  Dhall's transitive CBOR dependencies resolve against the project's GHC; that posture is part of
+  the supported contract and is documented in
+  [documents/engineering/dependency_management.md](../documents/engineering/dependency_management.md).
 - State-changing lifecycle and runtime flows are described in terms of the implemented imperative
   reconcile or bootstrap paths. The plan must not claim generic `Plan` / `Apply`, mandatory
   `--dry-run`, `--plan-file`, or similar doctrine-only surfaces until those surfaces exist.

@@ -12,10 +12,10 @@
 
 ## Phase Status
 
-Phase 6 is done. Sprints 6.1–6.26 are `Done`: the validation entrypoints, routed coverage,
+Phase 6 is done. Sprints 6.1–6.27 are `Done`: the validation entrypoints, routed coverage,
 governed-root-document metadata closure, structured CLI-registry closure, route-hardening cleanup,
 supported bootstrap lifecycle fixes, false-negative doctrine, Harbor publication retry closure,
-and daemon-role split are present in the current worktree, and the supported test story is
+daemon-role split, and real Dhall substrate codec are present in the current worktree, and the supported test story is
 substrate-specific. Sprint 6.25 closes around the implemented split topology: cluster daemons
 always run, Apple cluster daemons own request-topic consumption and host-batch handoff, Apple
 inference work moves through Pulsar to same-binary host daemons, and publication distinguishes
@@ -29,6 +29,11 @@ documented as an idempotent installer no-op, and the upstream PATH advice is acc
 the Dockerfile owns `PATH` and the pinned toolchain succeeds. The May 19, 2026 governed
 `linux-gpu` lifecycle rerun passed after the cleanup, including the dedicated Playwright image
 build that copies `web/scripts/` before running npm `postinstall`.
+Sprint 6.27 closes the staged-substrate format cleanup: `infernix-substrate.dhall` is a typed
+Dhall record decoded in-process by the `dhall` Haskell library, the schema lives at
+`dhall/InfernixSubstrate.dhall`, generated files no longer carry banner-prefixed JSON, and
+`cabal.project` records the supported wildcard `allow-newer` posture required by the pinned
+GHC 9.14.1 dependency plan.
 
 The worktree also carries the
 formatter-toolchain closure that is actually implemented today:
@@ -485,15 +490,15 @@ None.
 
 ### Objective
 
-Collapse the supported CLI surface into one structured Haskell definition so parsing, help text,
-and the canonical CLI reference stop drifting independently.
+Collapse the supported CLI surface into one `optparse-applicative`-backed Haskell registry so
+parsing, help text, and the canonical CLI reference stop drifting independently.
 
 ### Deliverables
 
-- one structured Haskell registry owns supported command parsing, help text, and command-family
-  metadata
-- the canonical CLI reference derives from that same structured registry or from a mechanically
-  equivalent generated artifact rather than a separate handwritten command inventory
+- one `optparse-applicative`-backed Haskell registry owns supported command parsing, help text, and
+  command-family metadata
+- the canonical CLI reference derives from that same registry or from a mechanically equivalent
+  generated artifact rather than a separate handwritten command inventory
 - `documents/reference/cli_surface.md` remains a short family overview that summarizes and links to
   the canonical CLI reference
 - docs lint validates the stronger CLI-registry contract instead of only checking that registry
@@ -502,10 +507,10 @@ and the canonical CLI reference stop drifting independently.
 ### Validation
 
 - `./.build/infernix --help` and the canonical CLI reference enumerate the same supported command
-  families from the same structured registry source
-- changing a supported command in the structured registry changes parsing, help output, and CLI
-  reference material through one implementation path
-- `infernix docs check` fails when the CLI reference drifts from the structured command registry
+  families from the same `optparse-applicative`-backed registry source
+- changing a supported command in the registry changes parsing, help output, and CLI reference
+  material through one implementation path
+- `infernix docs check` fails when the CLI reference drifts from the command registry
 
 ### Remaining Work
 
@@ -1285,6 +1290,41 @@ None.
 
 ---
 
+## Sprint 6.27: Real Dhall Substrate Codec Closure [Done]
+
+**Status**: Done
+**Implementation**: `src/Infernix/Substrate.hs`, `src/Infernix/DemoConfig.hs`, `src/Infernix/Config.hs`, `src/Infernix/Models.hs`, `src/Infernix/Workflow.hs`, `src/Infernix/Types.hs`, `dhall/InfernixSubstrate.dhall`, `cabal.project`, `infernix.cabal`, `test/unit/Spec.hs`
+**Docs to update**: `README.md`, `documents/README.md`, `documents/architecture/runtime_modes.md`, `documents/architecture/model_catalog.md`, `documents/engineering/build_artifacts.md`, `documents/engineering/dependency_management.md`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/00-overview.md`, `DEVELOPMENT_PLAN/system-components.md`, `DEVELOPMENT_PLAN/development_plan_standards.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
+
+### Objective
+
+Replace the legacy banner-prefixed JSON payload at `infernix-substrate.dhall` with a real Dhall
+record while preserving the existing staged filename, generated catalog contents, daemon-role
+metadata, and browser/API JSON surfaces derived from the decoded Haskell ADTs.
+
+### Deliverables
+
+- generated substrate materialization writes a syntactically valid Dhall record instead of JSON
+- substrate readers decode through the `dhall` Haskell library and then validate the existing
+  `DemoConfig` domain invariants
+- `dhall/InfernixSubstrate.dhall` records the schema for the generated substrate payload
+- `cabal.project` carries the documented wildcard `allow-newer: *:base, *:template-haskell`
+  dependency posture needed for the pinned GHC 9.14.1 toolchain and Dhall's transitive closure
+- unit coverage proves the generated payload has Dhall record syntax and still round-trips through
+  the runtime decoder
+
+### Validation
+
+- `cabal build all:exes`
+- `cabal test infernix-unit`
+- `infernix lint docs`
+
+### Remaining Work
+
+None.
+
+---
+
 ## Remaining Work
 
 None.
@@ -1294,6 +1334,8 @@ None.
 **Engineering docs to create/update:**
 - `documents/documentation_standards.md` - root-document metadata contract and canonical-home markers
 - `documents/engineering/build_artifacts.md` - generated-artifact locations, build-root rules, and derived-output validation expectations
+- `documents/engineering/dependency_management.md` - Cabal dependency posture for the pinned
+  Haskell toolchain and the Dhall dependency closure
 - `documents/engineering/edge_routing.md` - route-registry ownership, generated route summaries, and route-aware validation expectations
 - `documents/engineering/testing.md` - canonical testing doctrine, core principles, preflight expectations, unsupported paths, and per-layer validation obligations
 - `documents/development/testing_strategy.md` - operator workflow, matrix selection, and test-entrypoint details

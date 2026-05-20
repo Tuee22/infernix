@@ -28,8 +28,8 @@ import Data.Text (Text)
 import Data.Text qualified as Text
 import Infernix.Config (ControlPlaneContext, controlPlaneContextId)
 import Infernix.Routes qualified as Routes
+import Infernix.Substrate (encodeSubstrateConfig)
 import Infernix.Types
-import Infernix.Workflow (demoConfigGeneratedBanner)
 
 data ModeBinding = ModeBinding
   { bindingEngine :: Text,
@@ -125,8 +125,7 @@ findModel runtimeMode wantedModelId =
   find ((== wantedModelId) . modelId) (catalogForMode runtimeMode)
 
 encodeDemoConfig :: DemoConfig -> LazyChar8.ByteString
-encodeDemoConfig demoConfig =
-  LazyChar8.pack (demoConfigGeneratedBanner <> renderDemoConfig demoConfig)
+encodeDemoConfig = encodeSubstrateConfig
 
 renderConfigMapManifest :: LazyChar8.ByteString -> String
 renderConfigMapManifest payload =
@@ -687,114 +686,6 @@ mkRow rowIdValue modelIdValue displayNameValue familyValue descriptionValue arti
       linuxCpuBinding = linuxCpuValue,
       linuxGpuBinding = linuxGpuValue
     }
-
-renderDemoConfig :: DemoConfig -> String
-renderDemoConfig demoConfig =
-  "{\n"
-    <> "  \"runtimeMode\": "
-    <> jsonString (runtimeModeId (configRuntimeMode demoConfig))
-    <> ",\n"
-    <> "  \"edgePort\": "
-    <> show (configEdgePort demoConfig)
-    <> ",\n"
-    <> "  \"configMapName\": "
-    <> jsonString (configMapName demoConfig)
-    <> ",\n"
-    <> "  \"generatedPath\": "
-    <> jsonFilePath (generatedPath demoConfig)
-    <> ",\n"
-    <> "  \"mountedPath\": "
-    <> jsonFilePath (mountedPath demoConfig)
-    <> ",\n"
-    <> "  \"demo_ui\": "
-    <> jsonBool (demoUiEnabled demoConfig)
-    <> ",\n"
-    <> "  \"daemonRole\": "
-    <> jsonString (daemonRoleId (activeDaemonRole demoConfig))
-    <> ",\n"
-    <> "  \"clusterDaemon\": "
-    <> renderDaemonConfig (clusterDaemon demoConfig)
-    <> ",\n"
-    <> "  \"hostDaemon\": "
-    <> maybe "null" renderDaemonConfig (hostDaemon demoConfig)
-    <> ",\n"
-    <> "  \"request_topics\": ["
-    <> intercalate ", " (map jsonString (requestTopics demoConfig))
-    <> "],\n"
-    <> "  \"result_topic\": "
-    <> jsonString (resultTopic demoConfig)
-    <> ",\n"
-    <> "  \"engines\": [\n"
-    <> intercalate ",\n" (map renderEngineBinding (engines demoConfig))
-    <> "\n  ],\n"
-    <> "  \"models\": [\n"
-    <> intercalate ",\n" (map renderModelDescriptor (models demoConfig))
-    <> "\n  ]\n"
-    <> "}\n"
-
-renderDaemonConfig :: DaemonConfig -> String
-renderDaemonConfig daemonConfig =
-  "{"
-    <> "\"role\": "
-    <> jsonString (daemonRoleId (daemonConfigRole daemonConfig))
-    <> ", \"location\": "
-    <> jsonString (daemonConfigLocation daemonConfig)
-    <> ", \"request_topics\": ["
-    <> intercalate ", " (map jsonString (daemonConfigRequestTopics daemonConfig))
-    <> "], \"result_topic\": "
-    <> jsonString (daemonConfigResultTopic daemonConfig)
-    <> ", \"host_batch_topic\": "
-    <> maybe "null" jsonString (daemonConfigHostBatchTopic daemonConfig)
-    <> ", \"pulsarConnectionMode\": "
-    <> jsonString (pulsarConnectionModeId (daemonConfigPulsarConnectionMode daemonConfig))
-    <> "}"
-
-renderEngineBinding :: EngineBinding -> String
-renderEngineBinding engineBinding =
-  unlines
-    [ "    {",
-      "      \"engine\": " <> jsonString (engineBindingName engineBinding) <> ",",
-      "      \"adapterId\": " <> jsonString (engineBindingAdapterId engineBinding) <> ",",
-      "      \"adapterType\": " <> jsonString (engineBindingAdapterType engineBinding) <> ",",
-      "      \"adapterLocator\": " <> jsonString (engineBindingAdapterLocator engineBinding) <> ",",
-      "      \"adapterEntrypoint\": " <> jsonString (engineBindingAdapterEntrypoint engineBinding) <> ",",
-      "      \"setupEntrypoint\": " <> jsonString (engineBindingSetupEntrypoint engineBinding) <> ",",
-      "      \"projectDirectory\": " <> jsonFilePath (engineBindingProjectDirectory engineBinding) <> ",",
-      "      \"pythonNative\": " <> jsonBool (engineBindingPythonNative engineBinding),
-      "    }"
-    ]
-
-renderModelDescriptor :: ModelDescriptor -> String
-renderModelDescriptor model =
-  unlines
-    [ "    {",
-      "      \"matrixRowId\": " <> jsonString (matrixRowId model) <> ",",
-      "      \"modelId\": " <> jsonString (modelId model) <> ",",
-      "      \"displayName\": " <> jsonString (displayName model) <> ",",
-      "      \"family\": " <> jsonString (family model) <> ",",
-      "      \"description\": " <> jsonString (description model) <> ",",
-      "      \"artifactType\": " <> jsonString (artifactType model) <> ",",
-      "      \"referenceModel\": " <> jsonString (referenceModel model) <> ",",
-      "      \"downloadUrl\": " <> jsonString (downloadUrl model) <> ",",
-      "      \"selectedEngine\": " <> jsonString (selectedEngine model) <> ",",
-      "      \"requestShape\": [" <> intercalate ", " (map renderRequestField (requestShape model)) <> "],",
-      "      \"runtimeMode\": " <> jsonString (runtimeModeId (runtimeMode model)) <> ",",
-      "      \"runtimeLane\": " <> jsonString (runtimeLaneId (runtimeLane model)) <> ",",
-      "      \"requiresGpu\": " <> jsonBool (requiresGpu model) <> ",",
-      "      \"notes\": " <> jsonString (notes model),
-      "    }"
-    ]
-
-renderRequestField :: RequestField -> String
-renderRequestField requestField =
-  "{"
-    <> "\"name\": "
-    <> jsonString (name requestField)
-    <> ", \"label\": "
-    <> jsonString (label requestField)
-    <> ", \"fieldType\": "
-    <> jsonString (requestFieldTypeId (fieldType requestField))
-    <> "}"
 
 jsonBool :: Bool -> String
 jsonBool value

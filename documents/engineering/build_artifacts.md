@@ -66,6 +66,10 @@ of the supported artifact contract.
 
 ## Generated Demo Config Publication
 
+The substrate file is a typed Dhall record at `infernix-substrate.dhall`; the schema is defined at
+`dhall/InfernixSubstrate.dhall` and decoded in-process by the `dhall` Haskell library. Cluster pods
+that consume the file link the same library through the in-cluster `infernix` binary.
+
 - Apple host lifecycle and validation flows materialize or verify `infernix-substrate.dhall`
   under `./.build/`; `./.build/infernix internal materialize-substrate apple-silicon` remains the
   direct helper for explicit restaging or inspection

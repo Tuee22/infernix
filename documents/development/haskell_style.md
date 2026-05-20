@@ -48,6 +48,9 @@
   sentinel values, or silently ignored cases.
 - `Repository discipline:` treat unsupported convenience fallbacks as design debt rather than
   widening the supported contract silently, and preserve the generated-artifact hygiene rules.
+- `CLI parsing:` CLI entry points use `optparse-applicative` through the command-registry layer in
+  `src/Infernix/CommandRegistry.hs`; the registry's metadata layer owns the generated CLI-reference
+  output, and per-flag parsers stay declarative rather than hand-rolling argument-list recursion.
 
 ## Enforcement Model
 

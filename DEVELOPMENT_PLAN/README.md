@@ -74,8 +74,9 @@ details and the batch topic consumed by the host daemon. Cluster publication mir
 cluster-role payload locally under
 `./.data/runtime/configmaps/infernix-demo-config/infernix-substrate.dhall` and mounts the same
 filename inside cluster workloads at `/opt/build/infernix-substrate.dhall`, while the Apple host
-file under `./.build/` remains host-role metadata for the same substrate. The file keeps the
-legacy `.dhall` filename even though the payload is banner-prefixed JSON. `infernix test all`
+file under `./.build/` remains host-role metadata for the same substrate. The file is a typed
+Dhall record at `infernix-substrate.dhall`, decoded in-process by the `dhall` Haskell library.
+`infernix test all`
 runs the full supported validation suite for the active built substrate; full repository substrate
 closure comes from separate governed reruns for `apple-silicon`, `linux-cpu`, and `linux-gpu`,
 not from one implicit cross-substrate matrix invocation. The generated file, `cluster status`,
@@ -189,8 +190,9 @@ The supported platform now closes around these rules:
   package (declared in `infernix.cabal` without an explicit library name and depended on as
   `infernix`): `infernix` for the production daemon, cluster lifecycle, validation, and internal
   helpers; `infernix-demo` for the routed demo HTTP host
-- one structured Haskell command registry owns parsing, help text, and the canonical CLI
-  reference, but it no longer exposes `--runtime-mode` or any equivalent substrate override
+- one `optparse-applicative`-backed Haskell command registry owns parsing, help text, and the
+  canonical CLI reference, but it no longer exposes `--runtime-mode` or any equivalent substrate
+  override
 - the product contract standardizes three substrates:
   `apple-silicon`, `linux-cpu`, and `linux-gpu`
 - the active substrate is read from the staged `infernix-substrate.dhall` file beside the active
@@ -213,8 +215,9 @@ The supported platform now closes around these rules:
   aggregate `infernix test ...` entrypoints own substrate-file preflight for their execution
   context and fail with a substrate-specific diagnostic if the file cannot be materialized or
   validated; focused `infernix lint ...` and `infernix docs check` remain substrate-file independent
-- the staged substrate file retains the legacy `.dhall` filename even though the current payload is
-  banner-prefixed JSON produced by Haskell runtime helpers
+- the staged substrate file is a typed Dhall record at `infernix-substrate.dhall`, materialized by
+  Haskell runtime helpers and decoded in-process by the `dhall` Haskell library; the schema lives
+  at `dhall/InfernixSubstrate.dhall`
 - Apple host-native operation is the only supported host build path outside a container
 - on Apple Silicon, the host-built `./.build/infernix` binary manages Kind, deploys the mandatory
   cluster support services, the cluster `infernix service` Deployment, and optional routed demo
@@ -268,10 +271,10 @@ The supported platform now closes around these rules:
 - supported validation is substrate-specific: integration, E2E, and `test all` run their complete
   supported suites against the built and deployed substrate, and test reports name that substrate
   explicitly instead of implying matrix-wide coverage
-- the supported control plane keeps one Haskell-owned command registry, binary-owned lifecycle and
-  validation orchestration, the current `ormolu` plus `hlint` plus `cabal format` style stack, and
-  the existing files or docs or chart or proto validation entrypoints; shell bootstrap
-  responsibility is limited to prerequisite and launcher setup
+- the supported control plane keeps one `optparse-applicative`-backed Haskell command registry,
+  binary-owned lifecycle and validation orchestration, the current `ormolu` plus `hlint` plus
+  `cabal format` style stack, and the existing files or docs or chart or proto validation
+  entrypoints; shell bootstrap responsibility is limited to prerequisite and launcher setup
 - every `infernix service` daemon remains startup-configured and Pulsar-driven without a separate
   admin-HTTP, hot-reload, or typed-event-ledger subsystem in the supported contract
 - the test surface remains the current three Cabal stanzas plus the frontend unit suite:

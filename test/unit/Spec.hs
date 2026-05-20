@@ -247,6 +247,25 @@ main = do
       assert
         (legacyRegistryHostsContents == "legacy helper registry\n")
         "kind registry-host generation does not rewrite the retired helper-registry namespace"
+      withOptionalEnv "INFERNIX_BUILD_ROOT" (Just (unitTestRoot </> "outer-container" </> "build")) $
+        withOptionalEnv "INFERNIX_HOST_REPO_ROOT" (Just "/host/infernix") $
+          withOptionalEnv "INFERNIX_HOST_KIND_ROOT" Nothing $ do
+            outerPaths <- discoverPaths
+            ensureRepoLayout outerPaths
+            generatedLinuxGpuKindConfigPath <- writeGeneratedKindConfig outerPaths LinuxGpu 30090
+            generatedLinuxGpuKindConfig <- readFile generatedLinuxGpuKindConfigPath
+            assert
+              ("hostPath: /host/infernix/.build/test-unit/.data/kind/linux-gpu" `isInfixOf` generatedLinuxGpuKindConfig)
+              "linux-gpu outer-container Kind config mounts host-resolved retained cluster data"
+            assert
+              ("containerPath: /var/infernix-data" `isInfixOf` generatedLinuxGpuKindConfig)
+              "linux-gpu outer-container Kind config exposes retained data at the node PV root"
+            assert
+              ("hostPath: /host/infernix/.build/kind/registry" `isInfixOf` generatedLinuxGpuKindConfig)
+              "linux-gpu outer-container Kind config mounts host-resolved registry hosts"
+            assert
+              ("containerPath: /var/run/nvidia-container-devices/all" `isInfixOf` generatedLinuxGpuKindConfig)
+              "linux-gpu outer-container Kind config keeps the NVIDIA worker device mount"
       let demoConfig =
             DemoConfig
               { configRuntimeMode = LinuxCpu,
@@ -274,6 +293,13 @@ main = do
           demoConfigPath = buildRoot paths </> "demo-config-test.dhall"
       createDirectoryIfMissing True (buildRoot paths)
       Lazy.writeFile demoConfigPath (encodeDemoConfig demoConfig)
+      demoConfigContents <- readFile demoConfigPath
+      assert
+        ("runtimeMode = \"linux-cpu\"" `isInfixOf` demoConfigContents)
+        "generated substrate materialization writes Dhall record fields"
+      assert
+        (not ("\"runtimeMode\":" `isInfixOf` demoConfigContents))
+        "generated substrate materialization no longer writes banner-prefixed JSON"
       decodedConfig <- decodeDemoConfigFile demoConfigPath
       assert (configRuntimeMode decodedConfig == LinuxCpu) "demo-config decode preserves runtime mode"
       assert (demoUiEnabled decodedConfig) "demo-config decode preserves the demo UI flag"
