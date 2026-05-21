@@ -162,7 +162,8 @@ exerciseRuntimeMode paths runtimeMode = do
         (pulsarHttpStatus == 405)
         "pulsar HTTP routes preserve the websocket context root and reach the real servlet on the cluster path"
       reportStep ("per-model inference: " <> showRuntimeMode runtimeMode)
-      forM_ activeModelIds (validateCatalogModelInference baseUrl)
+      withPulsarTransportEnv baseUrl $
+        forM_ activeModelIds (validateCatalogModelInference paths runtimeMode)
       reportStep ("cache lifecycle: " <> showRuntimeMode runtimeMode)
       cacheResponse <- httpGet (baseUrl <> "/api/cache")
       assert
@@ -204,20 +205,32 @@ exerciseRuntimeMode paths runtimeMode = do
   assert ("clusterPresent: False" `isInfixOf` downStatusOutput) "cluster status reports cluster absence after down"
   assert ("lifecyclePhase: cluster-absent" `isInfixOf` downStatusOutput) "cluster status reports the idle absent lifecycle phase after down"
 
-validateCatalogModelInference :: String -> String -> IO ()
-validateCatalogModelInference baseUrl modelIdValue = do
-  inferenceResponse <-
-    httpPostJson
-      (baseUrl <> "/api/inference")
-      ("{\"requestModelId\":\"" <> modelIdValue <> "\",\"inputText\":\"integration coverage for " <> modelIdValue <> "\"}")
-  assert
-    (("\"resultModelId\":\"" <> modelIdValue <> "\"") `isInfixOf` compact inferenceResponse)
-    ("inference returns the selected model id for " <> modelIdValue)
-  requestIdValue <- requireJsonStringField "requestId" inferenceResponse
-  storedResult <- httpGet (baseUrl <> "/api/inference/" <> requestIdValue)
-  assert
-    (("\"requestId\":\"" <> requestIdValue <> "\"") `isInfixOf` compact storedResult)
-    ("stored results can be reloaded for " <> modelIdValue)
+validateCatalogModelInference :: Paths -> RuntimeMode -> String -> IO ()
+validateCatalogModelInference paths runtimeMode modelIdValue = do
+  requestTopic <-
+    case requestTopicsForMode runtimeMode of
+      topic : _ -> pure topic
+      [] -> fail ("no request topics configured for " <> showRuntimeMode runtimeMode)
+  let resultTopic = resultTopicForMode runtimeMode
+  requestIdValue <-
+    publishInferenceRequest
+      paths
+      runtimeMode
+      requestTopic
+      InferenceRequest
+        { requestModelId = Text.pack modelIdValue,
+          inputText = Text.pack ("integration coverage for " <> modelIdValue)
+        }
+  maybeResult <- waitForPublishedResult paths runtimeMode resultTopic requestIdValue
+  case maybeResult of
+    Nothing -> fail ("service daemon did not publish a result for " <> modelIdValue)
+    Just resultValue -> do
+      assert
+        (resultModelId resultValue == Text.pack modelIdValue)
+        ("inference returns the selected model id for " <> modelIdValue)
+      assert
+        (resultRuntimeMode resultValue == runtimeMode)
+        ("service daemon preserves the runtime mode in published results for " <> modelIdValue)
 
 assertClusterServiceDeployment :: ClusterState -> IO ()
 assertClusterServiceDeployment state = do
@@ -451,25 +464,11 @@ parseCurlBodyAndStatus payload =
         _ -> Nothing
     [] -> Nothing
 
-requireJsonStringField :: String -> String -> IO String
-requireJsonStringField fieldName payload =
-  case extractJsonStringField fieldName payload of
-    Just value -> pure value
-    Nothing -> fail ("missing JSON field " <> fieldName <> " in " <> payload)
-
 requireJsonDemoConfig :: String -> IO DemoConfig
 requireJsonDemoConfig payload =
   case Aeson.decode (LazyByteStringChar8.pack payload) of
     Just demoConfig -> pure demoConfig
     Nothing -> fail "unable to decode routed demo config JSON"
-
-extractJsonStringField :: String -> String -> Maybe String
-extractJsonStringField fieldName payload =
-  case breakOn needle (compact payload) of
-    Just suffix -> Just (takeWhile (/= '"') suffix)
-    Nothing -> Nothing
-  where
-    needle = "\"" <> fieldName <> "\":\""
 
 compact :: String -> String
 compact = filter (`notElem` [' ', '\n', '\r', '\t'])

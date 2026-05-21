@@ -32,7 +32,7 @@ compatibility payload.
 <!-- infernix:route-registry:edge-routing:start -->
 | Public prefix | Visibility | Purpose | Backend | Rewrite |
 |---------------|------------|---------|---------|---------|
-| `/` | demo-only | Demo workbench | `infernix-demo:80` | no rewrite |
+| `/` | demo-only | Demo SPA | `infernix-demo:80` | no rewrite |
 | `/api` | demo-only | Demo API | `infernix-demo:80` | no rewrite |
 | `/objects` | demo-only | Demo object store | `infernix-demo:80` | no rewrite |
 | `/harbor/api` | always published | Harbor API | `infernix-harbor-core:80` | `/harbor/api` -> `/api` |

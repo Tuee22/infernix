@@ -22,6 +22,35 @@
 - the generated module also appends the active runtime constants, catalog constants, helper
   record-unwrapping functions, and explicit `Simple.JSON` instances consumed by the frontend
 
+## Haskell-First Logic Discipline (Planned, Phase 7)
+
+When the durable-context demo lands, the contract-generation pipeline carries every new ADT
+the demo introduces, and the discipline that PureScript is a thin renderer becomes a
+governed contract:
+
+- the reducer, idempotency dedup, `prefixHash` chain, dispatcher rule, event construction, and
+  all projection logic live only in Haskell, in the shared `infernix` library
+- the browser receives typed `ConversationState` snapshots and `ConversationStatePatch` deltas
+  over the WS and applies patches via trivial mechanical helpers; PureScript code never folds
+  raw events
+- the reducer is not codegen'd; the browser does not import it
+- new browser-contract ADTs added in
+  [../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md](../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md)
+  Sprint 7.2 flow through the same `purescript-bridge` pipeline as today's contracts:
+  - `ConversationEvent` (server-side log entries; emitted to the browser only on opaque
+    diagnostic paths, not on the standard render path)
+  - `ContextMetadataEvent`, `DraftEvent`
+  - `ConversationState`, `ConversationStatePatch`
+  - `ContextListState`, `ContextListPatch`
+  - `DraftMapState`, `DraftMapPatch`
+  - `WsClientMessage`, `WsServerMessage` (server messages carry snapshots and patches, not raw
+    events)
+  - `ArtifactUploadRequest`, `ArtifactUploadGrant`, `ArtifactDownloadGrant`
+  - `ObjectRef`, `ArtifactKind`, `ArtifactMimeType`, `ArtifactRenderDisposition`
+  - newtypes for `UserId`, `ContextId`, `MessageId`, `ClientIdempotencyKey`
+- generated `Simple.JSON` instances stay in lockstep with Haskell `ToJSON`/`FromJSON` instances
+  so both sides agree on wire format mechanically
+
 ## Validation
 
 - `infernix test unit` runs `spago test` (`purescript-spec`) for the generated-contract,
@@ -45,3 +74,4 @@
 - [local_dev.md](local_dev.md)
 - [testing_strategy.md](testing_strategy.md)
 - [../reference/api_surface.md](../reference/api_surface.md)
+- [../architecture/demo_app_design.md](../architecture/demo_app_design.md)

@@ -191,7 +191,7 @@ demo-only HTTP surface, and generated-catalog architecture baseline.
 
 - the docs suite describes `infernix` and `infernix-demo` as the supported binary topology
 - production inference is documented as Pulsar-only
-- demo HTTP, browser workbench, and generated frontend contracts are documented as demo-only surfaces
+- demo HTTP, browser SPA, and generated frontend contracts are documented as demo-only surfaces
 - later implementation phases inherit a coherent docs baseline instead of mixed legacy language
 
 ### Validation

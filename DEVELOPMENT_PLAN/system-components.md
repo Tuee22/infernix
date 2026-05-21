@@ -152,10 +152,15 @@
 | HTTPRoute rendering | data-driven `chart/templates/httproutes.yaml` from the Haskell route registry | Kind cluster | publishes the route inventory for demo, Harbor, MinIO, and Pulsar surfaces | none |
 | Substrate-file publication | generated `ConfigMap/infernix-demo-config` plus repo-local mirror | Kind cluster and repo-local state | republishes the cluster-role substrate payload for cluster consumers and local inspection tooling through the shared `infernix-substrate.dhall` filename; Apple host daemons read the host-role payload under `./.build/` | `./.data/runtime/configmaps/infernix-demo-config/` |
 | Service runtime daemons | `infernix service` plus `src/Infernix/Runtime/{Cache,Worker,Pulsar}.hs` | cluster pod on every substrate plus host process for Apple inference execution | cluster daemons read the staged config and consume Pulsar requests. Linux cluster daemons run inference directly and publish results; Apple cluster daemons publish inference work to a dedicated host batch topic, while same-binary host daemons read host-role `.dhall`, auto-discover routed Pulsar endpoint details or receive them through environment variables, consume those batches, run Apple-native inference, and publish results back through Pulsar. Worker execution uses typed Python or native adapter harnesses, with unsupported adapter ids failing fast instead of returning a generic success payload. When Pulsar endpoints are intentionally absent in unit-level harnesses, the same daemon code can use the repo-local topic spool under `./.data/runtime/pulsar/`; that harness path is not routed cluster evidence. | `./.data/runtime/`, object-store state under `./.data/object-store/` |
-| Demo UI host | `infernix-demo` deployment | cluster pod | serves `/`, `/api`, `/api/publication`, `/api/cache`, and `/objects/` when demo is enabled; on Apple, routed manual inference stays browser-visible through the clustered demo surface and flows through the cluster daemon's batch handoff to host inference daemons; direct `infernix-demo` execution intentionally exposes only the demo-owned HTTP surface outside the intended HTTPRoute mapping | none |
+| Demo UI host | `infernix-demo` deployment | cluster pod | serves `/`, `/api`, `/api/publication`, `/api/demo-config`, `/api/models`, `/api/cache`, and `/objects/` when demo is enabled; routed manual inference closes through the Phase 7 durable-context Chat surface, where the `infernix-demo` Pulsar-fronted dispatcher publishes inference work and (on Apple) hands batches off to host inference daemons; direct `infernix-demo` execution intentionally exposes only the demo-owned HTTP surface outside the intended HTTPRoute mapping | none |
 | Web runtime executor | PureScript bundle baked into the Linux substrate image plus the dedicated `infernix-playwright:local` Playwright image | substrate image runs cluster-resident as the demo app; Playwright image is invoked via `docker compose run --rm playwright`, directly from the host CLI on Apple Silicon and from inside the outer container against the host docker daemon on Linux substrates. On Apple, host-side readiness probes `127.0.0.1:<edge-port>` while the browser container joins the `kind` network and targets the Kind control-plane DNS on port `30090` | serves the browser bundle from the clustered demo app and runs routed E2E coverage from the dedicated Playwright executor | test artifacts under `./.data/` |
 | Engine adapter set | `python/adapters/` invoked via `poetry run` from the Haskell worker | host child process or cluster child process | Python-native engine boundary over typed protobuf-over-stdio | optional Apple venv under `python/.venv/` |
 | Python quality gate | `poetry run check-code` | host or Linux outer-container image | runs `mypy --strict`, `black --check`, and `ruff check` against the shared adapter tree | none |
+| Keycloak identity (Planned) | Keycloak Helm release | Kind cluster, demo-gated | OIDC identity provider for the durable-context demo: self-signup on, email verification off, public SPA client; absent when `demo_ui = false`; see [../documents/tools/keycloak.md](../documents/tools/keycloak.md) | Keycloak Patroni Postgres state under `./.data/kind/<runtime-mode>/...` |
+| Keycloak Patroni Postgres (Planned) | Percona PostgreSQL operator | Kind cluster, demo-gated | dedicated Patroni cluster backing Keycloak per the per-service rule in [../documents/tools/postgresql.md](../documents/tools/postgresql.md); absent when `demo_ui = false` | `./.data/kind/<runtime-mode>/...` |
+| Demo artifact bucket (Planned) | MinIO bucket `infernix-demo-objects` | Kind cluster, demo-gated | single shared bucket holding per-user prefix trees `users/<userId>/contexts/<contextId>/{uploads,generated}/`; presigned PUT/GET URLs minted by `/api/objects` with per-user scope; absent when `demo_ui = false`; see [../documents/tools/minio.md](../documents/tools/minio.md) | MinIO durable state under `./.data/kind/<runtime-mode>/...` |
+| Demo conversation Pulsar topics (Planned) | Pulsar topic family `persistent://infernix/demo/demo.conversation.<userId>.<contextId>` | Pulsar broker, demo-gated | per-context append-only conversation log; single-partition, broker-assigned `MessageId` is the canonical sequence; producer-side dedup enabled; absent when `demo_ui = false` | Pulsar BookKeeper state plus tiered storage offload to MinIO |
+| Demo per-user metadata topics (Planned) | Pulsar topic families `demo.user.<userId>.contexts` and `demo.user.<userId>.drafts` | Pulsar broker, demo-gated | compacted per-user metadata for the left-rail context list and drafts; keyed by `contextId`; absent when `demo_ui = false` | Pulsar BookKeeper state |
 
 ## Runtime and Validation Components
 
@@ -181,10 +186,13 @@
 | Route | Upstream | Purpose | Notes |
 |-------|----------|---------|-------|
 | `/` | HTTPRoute -> `infernix-demo` Service | demo browser UI | absent when `demo_ui` is false |
-| `/api` | HTTPRoute -> `infernix-demo` Service | demo API prefix for models, publication, cache, and manual inference | absent when `demo_ui` is false |
+| `/api` | HTTPRoute -> `infernix-demo` Service | demo API prefix for models, publication, demo-config, and cache discovery | absent when `demo_ui` is false |
 | `/api/publication` | `GET` endpoint on the `/api` route -> `infernix-demo` Service | routed publication metadata | absent when `demo_ui` is false |
 | `/api/cache` | `GET` and `POST` endpoints on the `/api` route -> `infernix-demo` Service | demo cache lifecycle API | absent when `demo_ui` is false |
 | `/objects/<objectRef>` | HTTPRoute -> `infernix-demo` Service | demo object-store fixture access | absent when `demo_ui` is false |
+| `/auth` (Planned) | HTTPRoute -> Keycloak Service | Keycloak login pages and OIDC endpoints for the durable-context demo | absent when `demo_ui` is false |
+| `/ws` (Planned) | HTTPRoute -> `infernix-demo` Service | WebSocket endpoint for authenticated durable-context sessions; carries chat, drafts, context list, progress, and artifact-ready notifications | absent when `demo_ui` is false |
+| `/api/objects` (Planned) | HTTPRoute -> `infernix-demo` Service | HTTP endpoint that mints presigned MinIO PUT/GET URLs scoped per user; artifact bytes never traverse the demo backend | absent when `demo_ui` is false |
 | `/harbor/api` | HTTPRoute -> Harbor core Service | Harbor API surface | always published |
 | `/harbor` | HTTPRoute -> Harbor portal Service | Harbor browser portal | always published |
 | `/minio/console` | HTTPRoute -> MinIO console Service | MinIO console | always published |
@@ -210,6 +218,7 @@
 | Inference requester <-> Pulsar | external | protobuf over Pulsar topics | repo-owned `.proto` schemas with Haskell and Python generated bindings | production inference surface |
 | Apple cluster daemon -> Apple host daemon | internal production path | protobuf batches over a dedicated Pulsar topic | `src/Infernix/Runtime/Pulsar.hs` plus host-role `.dhall` config | Apple cluster daemons hand batched inference work to host daemons; Pulsar-owned topics, exclusive subscriptions, and acknowledgement handling keep batch ownership unambiguous |
 | Haskell worker <-> Python adapter | internal child-process boundary | protobuf over stdio | `src/Infernix/Runtime/Worker.hs` plus `python/adapters/` | invoked only through `poetry run` |
+| Browser <-> demo WebSocket (Planned) | external (demo only) | typed framed envelopes (JSON via `Simple.JSON`) carrying server-sent `ConversationState`/`*Patch` snapshots/deltas and client-sent typed actions | handwritten Haskell browser-contract ADTs in `src/Infernix/Web/Contracts.hs` plus generated PureScript bindings via purescript-bridge | absent when `demo_ui = false`; business logic stays Haskell-only |
 
 ## State and Artifact Locations
 
@@ -236,6 +245,9 @@
 | Generated frontend dist | `npm --prefix web run build` | `web/dist/` | ignored static output served by `infernix-demo` |
 | Apple adapter venv | Poetry on demand | `python/.venv/` | Apple-only materialized virtualenv for shared adapter project |
 | Playwright and test artifacts | validation flows | `./.data/` | repo-local test output location |
+| Demo artifact bucket prefixes (Planned) | demo backend + presigned URL clients | MinIO bucket `infernix-demo-objects` (`users/<userId>/contexts/<contextId>/{uploads,generated}/`) | per-user prefix layout; absent when `demo_ui = false` |
+| Demo conversation Pulsar topics (Planned) | demo backend | Pulsar BookKeeper plus tiered MinIO offload | append-only per-context conversation logs; SSoT for sequencing and text; absent when `demo_ui = false` |
+| Demo metadata Pulsar topics (Planned) | demo backend | Pulsar BookKeeper | compacted per-user contexts and drafts topics; SSoT for the left-rail list and unsubmitted drafts; absent when `demo_ui = false` |
 
 ## Cross-References
 

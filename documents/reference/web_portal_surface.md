@@ -3,7 +3,7 @@
 **Status**: Authoritative source
 **Referenced by**: [api_surface.md](api_surface.md), [../../DEVELOPMENT_PLAN/phase-3-ha-platform-services-and-edge-routing.md](../../DEVELOPMENT_PLAN/phase-3-ha-platform-services-and-edge-routing.md)
 
-> **Purpose**: Describe the browser-visible routes and PureScript demo workbench behavior exposed
+> **Purpose**: Describe the browser-visible routes and PureScript demo SPA behavior exposed
 > through the published routed surface.
 
 ## Scope
@@ -23,8 +23,8 @@ Demo-only prefixes:
 
 | Routed prefix | Purpose | Notes |
 |---------------|---------|-------|
-| `/` | Demo workbench | PureScript manual inference workbench served by `infernix-demo`. |
-| `/api` | Demo API | Covers `/api/publication`, `/api/cache`, `/api/models`, `/api/demo-config`, and `/api/inference`. |
+| `/` | Demo SPA | PureScript demo SPA served by `infernix-demo`. |
+| `/api` | Demo API | Covers `/api/publication`, `/api/cache`, `/api/models`, and `/api/demo-config`. |
 | `/objects` | Demo object store | Serves `GET /objects/:objectRef` for large outputs. |
 
 Always-published operator prefixes:
@@ -42,9 +42,33 @@ Always-published operator prefixes:
 On the real Kind path those routes are published by `Gateway/infernix-edge`,
 `EnvoyProxy/infernix-edge`, and the repo-owned HTTPRoute set.
 
-## Workbench Behavior
+## Durable Context Surface (Planned)
 
-- the workbench is implemented in PureScript, built into `web/dist/` by
+When the durable-context demo lands (Phase 7), three additional routed prefixes appear in the
+registry output above. They are demo-gated and absent when the active substrate's generated
+`.dhall` carries `demo_ui = false`:
+
+- `/auth` — Keycloak login pages and OIDC endpoints. Backs the SPA's signup, login, and JWT
+  issuance flow. See [../tools/keycloak.md](../tools/keycloak.md).
+- `/ws` — authenticated WebSocket endpoint for the durable-context session. Carries chat
+  send/receive, context list/create/delete, draft sync, inference progress, and artifact-ready
+  notifications. JWT is presented on the WS handshake; envelope wire format is
+  `purescript-bridge`-generated typed sums (`WsClientMessage` / `WsServerMessage`).
+- `/api/objects` — HTTP endpoint that mints presigned MinIO PUT/GET URLs scoped to the
+  authenticated user. Artifact bytes are uploaded and downloaded directly to and from MinIO;
+  they never traverse the demo backend. See [api_surface.md](api_surface.md) and
+  [../tools/minio.md](../tools/minio.md).
+
+The demo `Service` sets `sessionAffinity: None` and the HTTPRoute does not enable client-IP or
+cookie affinity. WS pods use Pulsar `Reader` subscriptions for per-WS fan-out, so any replica
+can host any session.
+
+See [../architecture/demo_app_design.md](../architecture/demo_app_design.md) for the full
+contract.
+
+## SPA Behavior
+
+- the SPA is implemented in PureScript, built into `web/dist/` by
   `npm --prefix web run build`, and served by the `infernix-demo` Haskell binary
 - frontend contract modules are emitted into `web/src/Generated/` by
   `infernix internal generate-purs-contracts`
@@ -55,7 +79,7 @@ On the real Kind path those routes are published by `Gateway/infernix-edge`,
   `./.data/runtime/configmaps/infernix-demo-config/` for inspection; on Apple that cluster-role
   payload is rendered from the active staged substrate metadata and `demo_ui` setting while the
   host daemon keeps reading its host-role file under `./.build/`
-- the browser workbench renders the generated catalog exactly rather than maintaining a separate
+- the browser SPA renders the generated catalog exactly rather than maintaining a separate
   browser-only subset
 - the routed Playwright contract cross-checks `/api/models` against the serialized generated demo
   config returned by `GET /api/demo-config` and separately validates publication details from
@@ -64,16 +88,17 @@ On the real Kind path those routes are published by `Gateway/infernix-edge`,
   `docker compose run --rm playwright`; Apple host-native flows run that compose invocation
   directly while Linux flows forward it from the outer container through the mounted host docker
   socket
-- the workbench surfaces the active runtime mode, control-plane context, daemon location, inference
+- the SPA surfaces the active runtime mode, control-plane context, daemon location, inference
   executor location in the publication payload, catalog source, chosen edge port, inference
   dispatch mode, demo-config path, and routed publication inventory through
   `/api/publication`
-- the user can browse any generated model entry, inspect its selected engine and request shape,
-  and submit a manual inference request through the demo `/api`
-- manual inference requests always enter through the clustered `infernix-demo` workload, but the
-  routed deployment bridges them through Pulsar into the active daemon lane: Apple enters the
-  cluster daemon first and then hands host batches to the host-native daemon, while Linux uses the
-  cluster-resident daemon for both orchestration and inference execution
+- the user can browse any generated model entry and inspect its selected engine and request shape
+- supported manual-inference dispatch closes through the durable-context Chat surface introduced
+  by Phase 7: the browser opens a WebSocket against `/ws`, sends typed
+  `WsClientMessage` actions, and receives `ConversationState` snapshots plus
+  `ConversationStatePatch` deltas. On Apple the cluster `infernix-demo` dispatcher publishes
+  Pulsar batches that host-native daemons consume; on Linux the cluster daemon owns request
+  consumption, inference, and result publication directly.
 - manual inference requests execute through the same Haskell worker dispatch used by the
   production daemon, including shared Python adapters under `python/adapters/` when the bound
   engine is Python-native
@@ -87,3 +112,6 @@ On the real Kind path those routes are published by `Gateway/infernix-edge`,
 - [api_surface.md](api_surface.md)
 - [../engineering/edge_routing.md](../engineering/edge_routing.md)
 - [../architecture/web_ui_architecture.md](../architecture/web_ui_architecture.md)
+- [../architecture/demo_app_design.md](../architecture/demo_app_design.md)
+- [../tools/keycloak.md](../tools/keycloak.md)
+- [../tools/minio.md](../tools/minio.md)

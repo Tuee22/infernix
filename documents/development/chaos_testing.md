@@ -27,6 +27,31 @@
 - route, publication, cache, and service-loop coverage that does not require pod-failure injection
   remains owned by the ordinary unit, integration, and routed E2E entrypoints
 
+## Durable-Context Demo Chaos Cases (Planned, Phase 7)
+
+When the durable-context demo lands, the supported integration suite gains three additional
+chaos cases that exercise the failure semantics described in
+[../architecture/demo_app_design.md](../architecture/demo_app_design.md). Each case asserts
+exactly-once outcome and full state preservation through Pulsar Failover redelivery, Pulsar
+producer-side deduplication, and projection-layer idempotency:
+
+- **WS-hosting demo pod kill mid-session.** Open a WS, exchange a few messages, kill the pod
+  holding the WS, assert the client transparently reconnects to a surviving replica and
+  resumes state from Pulsar with no losses.
+- **Dispatcher pod kill mid-prompt.** Submit a prompt, kill the active dispatcher pod between
+  the `UserPrompt` publish and the inference-request publish, assert Pulsar Failover promotes
+  a surviving pod, the new dispatcher reaches the same decision via the pure-fold rule, and
+  Pulsar producer dedup on `inference.request.<mode>` (keyed by `userPromptMessageId`)
+  prevents a duplicate dispatch.
+- **Cluster daemon kill mid-inference.** Submit a prompt, kill the cluster daemon pod
+  mid-inference, assert Pulsar redelivers the unacked inference request to a surviving pod,
+  that engine rebuilds the KV cache from the conversation log via the shared reducer + hash
+  modules, and Pulsar producer dedup on `inference.result.<mode>` (keyed by
+  `userPromptMessageId`) prevents a duplicate result.
+
+These cases land in Sprint 7.13 alongside the existing Harbor / MinIO / Patroni / Pulsar HA
+coverage. See [demo_app_test_plan.md](demo_app_test_plan.md) for the full validation contract.
+
 ## Cross-References
 
 - [testing_strategy.md](testing_strategy.md)
@@ -34,3 +59,5 @@
 - [../tools/minio.md](../tools/minio.md)
 - [../tools/postgresql.md](../tools/postgresql.md)
 - [../tools/pulsar.md](../tools/pulsar.md)
+- [demo_app_test_plan.md](demo_app_test_plan.md)
+- [../architecture/demo_app_design.md](../architecture/demo_app_design.md)

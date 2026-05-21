@@ -228,7 +228,7 @@ one stable clustered browser entrypoint across substrates.
 
 ### Validation
 
-- the routed demo workbench loads from `infernix-demo` when `demo_ui` is on
+- the routed demo SPA loads from `infernix-demo` when `demo_ui` is on
 - keeping the Apple host-native control plane does not change the browser base URL
 - when `demo_ui` is off, the cluster has no demo routes
 
@@ -255,7 +255,7 @@ entrypoint.
 - `cluster status` reports the active substrate through its current `runtimeMode` line together
   with publication details and edge routes
 - the supported reconcile path writes `./.data/runtime/publication.json`
-- `/api/publication` exposes the routed publication details consumed by the browser workbench
+- `/api/publication` exposes the routed publication details consumed by the browser SPA
 - the publication contract preserves the same browser entrypoint used by the cluster-resident path
 
 ### Validation

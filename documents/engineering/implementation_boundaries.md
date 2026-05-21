@@ -62,6 +62,42 @@ assets stay under `chart/`, and generated outputs remain untracked.
   command surface, but it does not become a second lifecycle, Kind, Kubernetes manifest, image
   publication, validation, or teardown implementation.
 
+## Application Library Boundary (Planned, Phase 7)
+
+When the durable-context demo application lands, the new modules split into three groups so
+the durable-context primitives become reusable by any future SPA-like application built on the
+inference platform.
+
+- **Shared library (product-agnostic).** Concept-named modules under the `Infernix.` namespace,
+  parameterized in topic namespace, bucket name, and JWT issuer/audience. Free of HTTP/WS
+  specifics and SPA assumptions:
+  - `Infernix.Conversation.{Event,Reducer,Idempotency,Hash,Topic}`
+  - `Infernix.Topic.{Metadata,Drafts}`
+  - `Infernix.Dispatch.SingleFlight`
+  - `Infernix.Objects.{Layout,Presigned}`
+  - `Infernix.Auth.Jwt`
+- **Demo binary (product-specific glue).** Modules under `Infernix.Demo.*` carry the
+  Keycloak-realm-specific JWT wiring, the WS upgrade, the HTTP route handlers, the WS envelope
+  tagged-sum wire schema, and first-run bootstrap. May import any shared module.
+- **Cluster daemon (engine path).** Modules under `Infernix.Runtime.*` import
+  `Infernix.Conversation.Reducer` and `Infernix.Conversation.Hash` for engine-side KV-cache
+  consistency only. They must not import `Infernix.Demo.*`, `Infernix.Objects.Presigned`,
+  `Infernix.Auth.Jwt`, or any WebSocket module.
+
+The dependency arrows are strict: shared library has no upward dependencies; demo binary and
+cluster daemon both depend on shared library; demo binary and cluster daemon never depend on
+each other.
+
+Adding a second similar app (e.g., a hypothetical `infernix-notebook`) follows the same
+pattern: a new `Infernix.<AppName>.*` namespace reuses every shared module verbatim and the
+new app writes only its renderer plus the WS envelope variants it needs. The reusable surface
+area is roughly 80% of the new code by line count.
+
+See [../architecture/durable_context_design.md](../architecture/durable_context_design.md)
+for the product-agnostic design that motivates this split, and
+[../architecture/demo_app_design.md](../architecture/demo_app_design.md) for the concrete
+demo binding.
+
 ## Validation
 
 - `infernix docs check` fails if this governed boundary document loses its required structure or
@@ -76,3 +112,5 @@ assets stay under `chart/`, and generated outputs remain untracked.
 - [portability.md](portability.md)
 - [../development/frontend_contracts.md](../development/frontend_contracts.md)
 - [../development/python_policy.md](../development/python_policy.md)
+- [../architecture/durable_context_design.md](../architecture/durable_context_design.md)
+- [../architecture/demo_app_design.md](../architecture/demo_app_design.md)

@@ -89,6 +89,12 @@ Rules:
 - handwritten PureScript modules under `web/src/*.purs` import generated modules from
   `web/src/Generated/` for shared types; they do not declare their own request or response types
 - `web/test/*.purs` modules use `purescript-spec` and run via `spago test`
+- when the durable-context demo lands (Phase 7), additional handwritten view modules under
+  `web/src/Infernix/Web/` (`Chat.purs`, `Artifacts.purs`, `Auth.purs`, `WebSocket.purs`,
+  `Router.purs`) follow the same import-from-`Generated/` rule and the same `purescript-spec`
+  test framework. They are renderers plus input handlers and apply server-sent state patches
+  via trivial mechanical helpers; they do not reimplement business rules. See
+  [frontend_contracts.md](frontend_contracts.md) for the Haskell-first logic discipline.
 
 ## Contract Derivation
 
@@ -110,7 +116,7 @@ Frontend types are generated from Haskell-owned DTO and catalog records.
 - contract suites assert that generated PureScript modules expose the active runtime constants and
   generated catalog expected by the routed demo surface
 - contract suites also prove that the bridge-generated `newtype` surface stays aligned with the
-  handwritten workbench helpers that unwrap record views
+  handwritten SPA helpers that unwrap record views
 - view-level suites assert catalog order, selection, publication summary rendering, and result
   rendering behavior
 - the Node-based unit-test path stays on non-deprecated runner entrypoints and fails explicitly

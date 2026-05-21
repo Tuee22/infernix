@@ -8,6 +8,10 @@
 
 ## Rules
 
+- the supported default Pulsar tenant/namespace is `infernix/demo`; every supported demo and
+  production topic name uses the `persistent://infernix/demo/...` prefix unless an explicit
+  staged `.dhall` value overrides it, and `cluster up` reconciles that tenant and namespace
+  before topics are produced or subscribed
 - Pulsar is the durable event-transport shape for the production inference surface: the active
   `.dhall` names the daemon role, request topics, result topic, and any Apple host batch topic
   that the production daemons own, and `infernix service` keeps those daemons on a no-HTTP surface
@@ -65,8 +69,50 @@ publish directly to `result_topic`. On `apple-silicon`, cluster daemons consume 
 and publish batches to `hostDaemon.request_topics`; same-binary host daemons consume that batch
 topic, execute Apple-native inference, and publish completed results to `result_topic`.
 
+## Demo Conversation and Metadata Topics (Planned)
+
+When the durable-context demo lands (Phase 7), the demo backend uses three additional Pulsar
+topic families. They are demo-gated and absent when `demo_ui = false`.
+
+| Topic family | Pattern | Partition | Retention | Compaction |
+|---|---|---|---|---|
+| Per-context conversation log | `persistent://infernix/demo/demo.conversation.<userId>.<contextId>` | 1 | full retention with tiered storage offload to MinIO | off |
+| Per-user context metadata | `persistent://infernix/demo/demo.user.<userId>.contexts` | 1 | full | on (key: `contextId`) |
+| Per-user drafts | `persistent://infernix/demo/demo.user.<userId>.drafts` | 1 | full | on (key: `contextId`) |
+
+Rules:
+
+- the conversation log topic is append-only and append-by-broker-order — single-partition gives
+  total order over messages from any number of producers; the broker-assigned `MessageId` is
+  the canonical sequence identifier
+- typed event variants on the conversation log are `UserPrompt`, `UserUpload`, `UserCancel`,
+  and `InferenceResult`; schemas are registered via the Pulsar admin API at `infernix-demo`
+  startup
+- Pulsar producer-side deduplication (`enableProducerDeduplication = true`) is enabled on
+  conversation, `inference.request.<mode>`, and `inference.result.<mode>` topics; named
+  producers carry dedup sequence IDs derived from upstream `MessageId`s or
+  `ClientIdempotencyKey`s so retry paths are idempotent at the broker level
+- the compacted metadata topics are read by the demo backend with the compacted-reader API to
+  drive the SPA's left-rail context list and draft restore; namespace-level compaction policy
+  is reconciled on `cluster up`
+- the demo backend's per-WS Pulsar **Reader** subscriptions on conversation and metadata
+  topics give pod-failover-safe fan-out without sticky sessions; the per-context inference
+  dispatcher uses a named **Failover** subscription so exactly one pod is the active dispatcher
+  per context at a time
+- conversation topics opt into Pulsar's tiered storage so cold ledgers offload to MinIO; hot
+  read paths stay broker-resident
+- inference dispatch reuses the existing shared `inference.request.<mode>` and
+  `inference.result.<mode>` topics described above; the demo envelope carries
+  `(userId, contextId, causalRef, conversationLogOffset, prefixHash)` so engines can verify
+  KV-cache consistency against the Pulsar SSoT
+
+See [../architecture/demo_app_design.md](../architecture/demo_app_design.md) for the full
+event model, reducer, dispatcher rule, and failure semantics.
+
 ## Cross-References
 
 - [minio.md](minio.md)
+- [keycloak.md](keycloak.md)
 - [../engineering/edge_routing.md](../engineering/edge_routing.md)
 - [../engineering/storage_and_state.md](../engineering/storage_and_state.md)
+- [../architecture/demo_app_design.md](../architecture/demo_app_design.md)

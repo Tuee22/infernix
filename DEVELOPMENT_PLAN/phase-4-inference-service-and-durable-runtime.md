@@ -53,7 +53,7 @@ This phase owns the conversion from the README-scale matrix to runtime-consumabl
 ## Sprint 4.1: Typed Configuration, Model Catalog, and Runtime Contracts [Done]
 
 **Status**: Done
-**Implementation**: `src/Infernix/Types.hs`, `src/Infernix/Models.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Storage.hs`, `proto/infernix/api/inference_service.proto`, `proto/infernix/manifest/runtime_manifest.proto`, `proto/infernix/runtime/inference.proto`, `test/unit/Spec.hs`
+**Implementation**: `src/Infernix/Types.hs`, `src/Infernix/Models.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Storage.hs`, `proto/infernix/manifest/runtime_manifest.proto`, `proto/infernix/runtime/inference.proto`, `test/unit/Spec.hs`
 **Docs to update**: `documents/architecture/runtime_modes.md`, `documents/architecture/model_catalog.md`
 
 ### Objective
@@ -171,7 +171,7 @@ None.
 
 ---
 
-## Sprint 4.4: Demo Inference API Surface [Done]
+## Sprint 4.4: Demo Catalog and Cache HTTP API Surface [Done]
 
 **Status**: Done
 **Implementation**: `infernix.cabal`, `app/Demo.hs`, `src/Infernix/DemoCLI.hs`, `src/Infernix/Demo/Api.hs`, `src/Infernix/Service.hs`, `src/Infernix/Models.hs`, `chart/templates/deployment-demo.yaml`, `chart/templates/service-demo.yaml`, `test/integration/Spec.hs`, `web/playwright/inference.spec.js`
@@ -179,22 +179,26 @@ None.
 
 ### Objective
 
-Expose a stable demo HTTP API surface for listing models and submitting manual inference requests
-from the browser while keeping production inference Pulsar-only.
+Expose the stable demo HTTP API surface that the browser consumes for catalog, publication, and
+cache discovery, while keeping production inference Pulsar-only. Routed manual inference
+dispatch closes through the durable-context surface introduced by Phase 7 rather than a direct
+HTTP request/poll cycle owned by this sprint.
 
 ### Deliverables
 
-- typed handlers for listing models, inspecting model request shape, submitting inference, and
-  retrieving results, all exposed by `infernix-demo`
+- typed handlers for listing models, inspecting model request shape, reporting publication
+  metadata, and observing or mutating derived cache state, all exposed by `infernix-demo`
 - request validation uses the same Haskell-owned model metadata used by the production path
-- the manual inference path can target any model present in the generated catalog
 - the demo surface dispatches into the same Haskell runtime contract that production
-  `infernix service` uses
+  `infernix service` uses for any auxiliary discovery surfaces
+- the demo HTTP surface does not carry a direct manual-inference handler in the supported final
+  contract; Phase 7 owns the durable-context Chat surface that replaces it
 
 ### Validation
 
-- `infernix test e2e` proves routed model listing and manual inference submission through `/api`
-- direct API calls return typed model metadata and stored results
+- `infernix test e2e` proves routed model listing, publication discovery, and cache lifecycle
+  through `/api`
+- direct API calls return typed model metadata, publication metadata, and cache state
 - invalid requests fail with typed user-facing errors
 
 ### Remaining Work

@@ -7,7 +7,6 @@ module Infernix.Demo.Api
   )
 where
 
-import Control.Concurrent (threadDelay)
 import Data.Aeson
   ( FromJSON (parseJSON),
     ToJSON,
@@ -22,25 +21,17 @@ import Data.Aeson
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Char8 qualified as ByteStringChar8
 import Data.ByteString.Lazy qualified as LazyByteString
-import Data.Char (isSpace)
-import Data.Maybe (fromMaybe)
 import Data.String (fromString)
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
 import Infernix.Config (Paths (..))
 import Infernix.DemoConfig (decodeDemoConfigFile)
-import Infernix.Models (engineBindingForSelectedEngine, findModel)
+import Infernix.Models (engineBindingForSelectedEngine)
 import Infernix.Runtime
-  ( buildPayload,
-    evictCache,
-    executeInference,
+  ( evictCache,
     listCacheManifests,
-    loadInferenceResult,
-    persistInferenceResult,
     rebuildCache,
   )
-import Infernix.Runtime.Cache (materializeCache)
-import Infernix.Runtime.Pulsar (publishInferenceRequest, readPublishedInferenceResultMaybe)
 import Infernix.Types
 import Network.HTTP.Types
   ( Status,
@@ -48,7 +39,6 @@ import Network.HTTP.Types
     methodGet,
     methodPost,
     status200,
-    status400,
     status404,
     status500,
   )
@@ -80,8 +70,6 @@ data DemoBridgeMode
   = DirectDemoInference
   | PulsarDaemonBridge
   deriving (Eq, Show)
-
-type InferenceResponse = Either (Status, ErrorResponse) InferenceResult
 
 runDemoApiServer :: DemoApiOptions -> IO ()
 runDemoApiServer options = do
@@ -115,12 +103,6 @@ application options request respond = do
     ["api", "models", modelIdValue]
       | requestMethod request == methodGet && demoEnabled ->
           serveModel options modelIdValue respond
-    ["api", "inference", requestIdValue]
-      | requestMethod request == methodGet && demoEnabled ->
-          serveInferenceResult options requestIdValue respond
-    ["api", "inference"]
-      | requestMethod request == methodPost && demoEnabled ->
-          handleInference options request respond
     ["api", "cache"]
       | requestMethod request == methodGet && demoEnabled ->
           serveCacheStatus options respond
@@ -148,175 +130,6 @@ newtype CacheMutationRequest = CacheMutationRequest
 instance FromJSON CacheMutationRequest where
   parseJSON = withObject "CacheMutationRequest" $ \value ->
     CacheMutationRequest <$> value .:? "modelId"
-
-handleInference :: DemoApiOptions -> Request -> (Response -> IO responseReceived) -> IO responseReceived
-handleInference options request respond = do
-  body <- strictRequestBody request
-  case decodeStrict' (LazyByteString.toStrict body) of
-    Nothing ->
-      respond (jsonResponse status400 (ErrorResponse "invalid_request" "Unable to decode JSON request body."))
-    Just inferenceRequest ->
-      handleDecodedInference options inferenceRequest respond
-
-handleDecodedInference :: DemoApiOptions -> InferenceRequest -> (Response -> IO responseReceived) -> IO responseReceived
-handleDecodedInference options inferenceRequest respond = do
-  activeRuntimeMode <- currentDemoRuntimeMode options
-  case demoBridgeMode options of
-    DirectDemoInference ->
-      handleDirectInference options activeRuntimeMode inferenceRequest respond
-    PulsarDaemonBridge ->
-      handleInferenceViaPulsar options activeRuntimeMode inferenceRequest respond
-
-handleDirectInference :: DemoApiOptions -> RuntimeMode -> InferenceRequest -> (Response -> IO responseReceived) -> IO responseReceived
-handleDirectInference options runtimeMode inferenceRequest respond = do
-  result <- executeInference (demoPaths options) runtimeMode inferenceRequest
-  respond (directInferenceResponse result)
-
-directInferenceResponse :: Either ErrorResponse InferenceResult -> Response
-directInferenceResponse result =
-  case result of
-    Left err -> jsonResponse status400 err
-    Right inferenceResult -> jsonResponse status200 inferenceResult
-
-handleInferenceViaPulsar :: DemoApiOptions -> RuntimeMode -> InferenceRequest -> (Response -> IO responseReceived) -> IO responseReceived
-handleInferenceViaPulsar options runtimeMode inferenceRequest respond = do
-  inferenceResponse <- runPulsarInference options runtimeMode inferenceRequest
-  respond (inferenceResponseToHttpResponse inferenceResponse)
-
--- type InferenceResponse = Either (Status, ErrorResponse) InferenceResult
-inferenceResponseToHttpResponse :: InferenceResponse -> Response
-inferenceResponseToHttpResponse inferenceResponse =
-  case inferenceResponse of
-    Left (responseStatus, err) -> jsonResponse responseStatus err
-    Right resultValue -> jsonResponse status200 resultValue
-
--- type InferenceResponse = Either (Status, ErrorResponse) InferenceResult
-runPulsarInference ::
-  DemoApiOptions ->
-  RuntimeMode ->
-  InferenceRequest ->
-  IO InferenceResponse
-runPulsarInference options runtimeMode inferenceRequest =
-  case validateInferenceRequest runtimeMode inferenceRequest of
-    Left err ->
-      pure (Left (status400, err))
-    Right model ->
-      runValidatedPulsarInference options runtimeMode model inferenceRequest
-
--- type InferenceResponse = Either (Status, ErrorResponse) InferenceResult
-runValidatedPulsarInference ::
-  DemoApiOptions ->
-  RuntimeMode ->
-  ModelDescriptor ->
-  InferenceRequest ->
-  IO InferenceResponse
-runValidatedPulsarInference options runtimeMode model inferenceRequest = do
-  demoConfig <- decodeDemoConfigFile (demoConfigPath options)
-  case firstRequestTopic demoConfig of
-    Left err -> pure (Left err)
-    Right requestTopic -> do
-      materializeCache (demoPaths options) runtimeMode model
-      requestIdValue <- publishInferenceRequest (demoPaths options) runtimeMode requestTopic inferenceRequest
-      maybePublishedResult <- waitForPublishedResult (demoPaths options) runtimeMode (resultTopic demoConfig) requestIdValue
-      resolvePublishedInferenceResult options maybePublishedResult
-
-firstRequestTopic :: DemoConfig -> Either (Status, ErrorResponse) Text.Text
-firstRequestTopic demoConfig =
-  case requestTopics demoConfig of
-    requestTopic : _ -> Right requestTopic
-    [] ->
-      Left
-        ( status500,
-          ErrorResponse "missing_request_topic" "The active demo config does not declare any request topics."
-        )
-
--- type InferenceResponse = Either (Status, ErrorResponse) InferenceResult
-resolvePublishedInferenceResult ::
-  DemoApiOptions ->
-  Maybe InferenceResult ->
-  IO InferenceResponse
-resolvePublishedInferenceResult options maybePublishedResult =
-  case maybePublishedResult of
-    Nothing ->
-      pure
-        ( Left
-            ( status500,
-              ErrorResponse "daemon_timeout" "The inference daemon did not publish a result in time."
-            )
-        )
-    Just publishedResult ->
-      resolveCompletedPublishedResult options publishedResult
-
--- type InferenceResponse = Either (Status, ErrorResponse) InferenceResult
-resolveCompletedPublishedResult :: DemoApiOptions -> InferenceResult -> IO InferenceResponse
-resolveCompletedPublishedResult options publishedResult
-  | status publishedResult /= "completed" =
-      pure (Left (status400, publishedResultError publishedResult))
-  | otherwise =
-      persistLocalizedResult options =<< localizePublishedResult options publishedResult
-
--- type InferenceResponse = Either (Status, ErrorResponse) InferenceResult
-persistLocalizedResult :: DemoApiOptions -> Either ErrorResponse InferenceResult -> IO InferenceResponse
-persistLocalizedResult options localizedResult =
-  case localizedResult of
-    Left err ->
-      pure (Left (status500, err))
-    Right resultValue -> do
-      persistInferenceResult (demoPaths options) resultValue
-      pure (Right resultValue)
-
-validateInferenceRequest :: RuntimeMode -> InferenceRequest -> Either ErrorResponse ModelDescriptor
-validateInferenceRequest runtimeMode inferenceRequest =
-  case findModel runtimeMode (requestModelId inferenceRequest) of
-    Nothing ->
-      Left (ErrorResponse "unknown_model" "The requested model is not registered.")
-    Just model
-      | Text.all isSpace (inputText inferenceRequest) ->
-          Left (ErrorResponse "invalid_request" "The request input must not be blank.")
-      | otherwise ->
-          Right model
-
-waitForPublishedResult :: Paths -> RuntimeMode -> Text.Text -> Text.Text -> IO (Maybe InferenceResult)
-waitForPublishedResult paths runtimeMode topic requestIdValue = go (120 :: Int)
-  where
-    go remainingAttempts
-      | remainingAttempts <= 0 = pure Nothing
-      | otherwise = do
-          maybeResult <- readPublishedInferenceResultMaybe paths runtimeMode topic requestIdValue
-          case maybeResult of
-            Just resultValue -> pure (Just resultValue)
-            Nothing -> do
-              threadDelay 250000
-              go (remainingAttempts - 1)
-
-localizePublishedResult :: DemoApiOptions -> InferenceResult -> IO (Either ErrorResponse InferenceResult)
-localizePublishedResult options publishedResult =
-  case objectRef (payload publishedResult) of
-    Just _ ->
-      pure
-        ( Left
-            ( ErrorResponse
-                "unsupported_result_payload"
-                "The daemon returned an external object reference that the clustered demo surface cannot serve."
-            )
-        )
-    Nothing -> do
-      localizedPayload <-
-        buildPayload
-          (demoPaths options)
-          (requestId publishedResult)
-          (fromMaybe "" (inlineOutput (payload publishedResult)))
-      pure (Right publishedResult {payload = localizedPayload})
-
-publishedResultError :: InferenceResult -> ErrorResponse
-publishedResultError resultValue =
-  ErrorResponse
-    { errorCode = "worker_failed",
-      message =
-        fromMaybe
-          "The inference daemon reported a failure."
-          (inlineOutput (payload resultValue))
-    }
 
 handleCacheMutation :: DemoApiOptions -> Request -> CacheMutation -> (Response -> IO responseReceived) -> IO responseReceived
 handleCacheMutation options request mutation respond = do
@@ -371,13 +184,6 @@ serveModel options requestedModelId respond = do
   case filter ((== requestedModelId) . modelId) (models demoConfig) of
     modelDescriptor : _ -> respond (jsonResponse status200 modelDescriptor)
     [] -> respond (jsonResponse status404 (ErrorResponse "unknown_model" "The requested model is not registered."))
-
-serveInferenceResult :: DemoApiOptions -> Text.Text -> (Response -> IO responseReceived) -> IO responseReceived
-serveInferenceResult options requestIdValue respond = do
-  maybeResult <- loadInferenceResult (demoPaths options) requestIdValue
-  case maybeResult of
-    Just inferenceResult -> respond (jsonResponse status200 inferenceResult)
-    Nothing -> respond (jsonResponse status404 (ErrorResponse "unknown_request" "The requested result was not found."))
 
 serveCacheStatus :: DemoApiOptions -> (Response -> IO responseReceived) -> IO responseReceived
 serveCacheStatus options respond = do

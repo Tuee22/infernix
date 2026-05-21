@@ -90,7 +90,7 @@ moving, not hard product failure. The May 15 and May 17 lifecycle reruns also va
   `purescript-spec` entrypoints.
 - `infernix test integration` proves the active staged substrate's generated catalog, routed surfaces,
   publication state, cache contract, and the real cluster's HA or lifecycle assertions.
-- `infernix test e2e` proves that the browser workbench can exercise every demo-visible generated
+- `infernix test e2e` proves that the demo SPA can exercise every demo-visible generated
   catalog entry through the shared routed surface, with supported Playwright launchers sanitizing
   conflicting `NO_COLOR` and `FORCE_COLOR` pairs before the child process starts.
 - `infernix test all` proves that the repository passes the supported aggregate validation flow for

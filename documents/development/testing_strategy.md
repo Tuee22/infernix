@@ -39,8 +39,8 @@ mode-specific coverage, matrix behavior, and operator detail behind those canoni
 - `infernix test unit` validates generated catalog counts and selection rules, demo-config encode
   or decode behavior, cache lifecycle, the
   protobuf-over-stdio Python worker path and adapter-command overrides, chart image or claim
-  discovery, Harbor overlay emission, and the current PureScript generated-contract or workbench
-  behavior via `spago test` driven by the non-deprecated runner in `web/test/Main.purs`
+  discovery, Harbor overlay emission, and the current PureScript generated-contract and SPA
+  view-model behavior via `spago test` driven by the non-deprecated runner in `web/test/Main.purs`
 - `infernix test integration` validates cluster lifecycle for the active generated substrate,
   generated demo-config publication, routed demo or tool surfaces, routed inference plus cache
   endpoints, service-path request or result publication through the active topic contract,
@@ -49,8 +49,7 @@ mode-specific coverage, matrix behavior, and operator detail behind those canoni
   `infernix internal materialize-substrate linux-cpu --demo-ui false`, and edge-port rediscovery
   on the host-native `apple-silicon` lane
 - `infernix test e2e` validates the routed browser surface by comparing `/api/models` to the
-  generated demo config and exercising every routed catalog entry through both the HTTP inference
-  endpoint and the browser workbench
+  generated demo config and exercising every routed catalog entry through the demo SPA
 - `infernix test all` runs lint, unit, integration, and E2E in sequence as the complete supported
   suite for the active substrate
 - the supported real-cluster `linux-gpu` integration and `test all` lanes also depend on enough
@@ -113,8 +112,8 @@ mode-specific coverage, matrix behavior, and operator detail behind those canoni
   inventory plus host-path mapping across `cluster down` plus `cluster up`
 - `infernix test e2e` exercises every generated catalog entry exposed through the routed surface
   for the active substrate, compares `/api/models` against the serialized generated demo
-  config, validates routed publication details from `/api/publication`, and fails if the browser
-  workbench cannot render publication details, select a model, or submit one of those entries
+  config, validates routed publication details from `/api/publication`, and fails if the demo
+  SPA cannot render publication details, select a model, or submit one of those entries
 - the Apple host-native routed E2E lane also fails if the clustered routed surface cannot keep
   `apiUpstream.mode = cluster-demo`, preserve one browser-visible base URL, match the Apple
   publication payload `daemonLocation = cluster-pod`, advertise
@@ -134,6 +133,35 @@ mode-specific coverage, matrix behavior, and operator detail behind those canoni
 - changing the active staged substrate changes the generated catalog and therefore the exercised entry
   set automatically
 
+## Durable-Context Demo Validation (Planned, Phase 7)
+
+The multi-user durable-context demo introduces a substantial expansion of the validation
+surface, split across three sprints. The authoritative test contract lives at
+[demo_app_test_plan.md](demo_app_test_plan.md); this section names the layers and their
+relationship to the existing entrypoints.
+
+- **Unit layer** (Sprint 7.12, `infernix test unit`) — reducer property tests, idempotency
+  dedup, `prefixHash` chain, dispatcher pure-fold rule, JWT validation edge cases, presigned
+  URL minting, compacted topic projection, WS envelope codec, plus PureScript view-model tests
+  scoped to patch application and rendering only. Reducer logic is exercised in Haskell, not
+  in PureScript.
+- **Integration layer** (Sprint 7.13, `infernix test integration`) — real Pulsar / MinIO /
+  Keycloak round-trips, producer-dedup verification across simulated dispatcher restart,
+  Pulsar Failover handoff, cross-user presigned URL negative, chaos tests (WS pod kill,
+  dispatcher kill, cluster daemon mid-inference kill), and the **multi-user throughput /
+  fan-in batching / fan-out** test (N users × K contexts × P prompts on one model) asserting
+  per-context ordering, no duplicates or losses, cross-context independence, batching gain,
+  bounded p95 latency, and dedup correctness.
+- **E2E layer** (Sprint 7.14, `infernix test e2e`) — Playwright flows for auth, context,
+  conversation (including two-in-a-row and cancel), drafts, artifact upload/download plus
+  render, preview, document handling, or download-only behavior per supported artifact class,
+  generated-artifact lifecycle, multi-tab convergence, client reconstitution
+  via Browser Context storage-clear, pod-failover-from-browser, plus the **per-model smoke
+  matrix** driven by the active substrate's generated `.dhall` catalog (every non-`Not
+  recommended` row gets one passing flow). The Playwright suite source is identical across
+  `apple-silicon`, `linux-cpu`, and `linux-gpu`; substrate selection lives only in the
+  generated `.dhall`.
+
 ## Cross-References
 
 - [frontend_contracts.md](frontend_contracts.md)
@@ -145,3 +173,6 @@ mode-specific coverage, matrix behavior, and operator detail behind those canoni
 - [../engineering/portability.md](../engineering/portability.md)
 - [../tools/postgresql.md](../tools/postgresql.md)
 - [../reference/cli_surface.md](../reference/cli_surface.md)
+- [demo_app_test_plan.md](demo_app_test_plan.md)
+- [chaos_testing.md](chaos_testing.md)
+- [../architecture/demo_app_design.md](../architecture/demo_app_design.md)

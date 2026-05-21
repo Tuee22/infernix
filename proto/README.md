@@ -7,7 +7,6 @@ Current schema inventory:
 
 - `infernix/runtime/inference.proto` - generated catalog, inference request, result, and error payloads
 - `infernix/manifest/runtime_manifest.proto` - durable manifest and cache-materialization metadata
-- `infernix/api/inference_service.proto` - service RPC boundary mapped onto the manual inference API
 
 Runtime contract:
 

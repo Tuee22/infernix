@@ -112,7 +112,7 @@
 - `curl http://127.0.0.1:<port>/minio/console/browser` checks the `/minio/console -> /` rewrite into the MinIO console service.
 - `curl http://127.0.0.1:<port>/minio/s3/models/demo.bin` checks the `/minio/s3 -> /` rewrite into the MinIO S3 service.
 - `curl http://127.0.0.1:<port>/pulsar/admin/admin/v2/clusters` checks the `/pulsar/admin -> /` rewrite into Pulsar's `/admin/v2` surface.
-- `curl http://127.0.0.1:<port>/pulsar/ws/v2/producer/public/default/demo` checks the `/pulsar/ws -> /ws` rewrite and returns `405 Method Not Allowed` on the real cluster path.
+- `curl http://127.0.0.1:<port>/pulsar/ws/v2/producer/infernix/demo/demo` checks the `/pulsar/ws -> /ws` rewrite and returns `405 Method Not Allowed` on the real cluster path.
 <!-- infernix:route-registry:cluster-bootstrap:end -->
 
 Those probes validate the real Gateway-backed upstream responses only; direct `infernix-demo`
@@ -154,9 +154,36 @@ constraints, or normal Kubernetes convergence.
   still `replay-retained-state` or has advanced to `delete-kind-cluster`
 - expect durable state under `./.data/` to remain intact
 
+## Durable-Context Demo Bring-Up (Planned, Phase 7)
+
+When the active substrate's generated `.dhall` carries `demo_ui = true`, `cluster up` performs
+the following additional reconciliation steps:
+
+- deploys a Keycloak Helm release together with its dedicated Patroni Postgres cluster managed
+  by the Percona operator; expects Harbor to be responsive first, then the Keycloak Patroni
+  cluster to report ready, then Keycloak itself
+- idempotently imports the demo realm with self-signup on and email verification off; reruns
+  verify the realm matches without rewriting it
+- creates the `infernix-demo-objects` MinIO bucket idempotently
+- reconciles namespace-level Pulsar compaction policy for the `demo.user.*` topic namespaces
+- registers schemas for `ConversationEvent`, `ContextMetadataEvent`, `DraftEvent`, and the
+  inference request and result envelopes via the Pulsar admin API
+- enables Pulsar producer-side deduplication on conversation, inference-request, and
+  inference-result topics
+
+Warning classification stays consistent with the rest of this runbook: slow Keycloak realm
+import or initial Patroni replica bootstrap is healthy convergence as long as the lifecycle
+heartbeat continues to update. When `demo_ui = false`, none of the above steps run and the
+Keycloak release, demo MinIO bucket, and demo Pulsar namespaces are absent from the cluster.
+
+See [../architecture/demo_app_design.md](../architecture/demo_app_design.md) and
+[../tools/keycloak.md](../tools/keycloak.md) for the full contract.
+
 ## Cross-References
 
 - [../engineering/k8s_native_dev_policy.md](../engineering/k8s_native_dev_policy.md)
 - [../engineering/k8s_storage.md](../engineering/k8s_storage.md)
 - [../tools/postgresql.md](../tools/postgresql.md)
 - [../reference/cli_surface.md](../reference/cli_surface.md)
+- [../tools/keycloak.md](../tools/keycloak.md)
+- [../architecture/demo_app_design.md](../architecture/demo_app_design.md)

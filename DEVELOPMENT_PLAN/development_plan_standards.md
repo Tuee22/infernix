@@ -86,6 +86,7 @@ DEVELOPMENT_PLAN/
 ├── phase-4-inference-service-and-durable-runtime.md
 ├── phase-5-web-ui-and-shared-types.md
 ├── phase-6-validation-e2e-and-ha-hardening.md
+├── phase-7-demo-app-durable-context.md
 └── legacy-tracking-for-deletion.md
 ```
 

@@ -99,6 +99,21 @@ with bounded retries across transient registry resets.
 
 Monitoring is not a supported first-class surface.
 
+Phase 7 (`Planned`) adds the multi-user durable-context demo application on top of this
+validated platform. The full design lives at
+[../documents/architecture/demo_app_design.md](../documents/architecture/demo_app_design.md);
+the execution-ordered build out lives at
+[phase-7-demo-app-durable-context.md](phase-7-demo-app-durable-context.md). Phase 7 introduces
+a Keycloak release with its own Patroni Postgres, a per-context Pulsar conversation log topic
+family, compacted per-user metadata and drafts topics, a shared MinIO bucket with per-user
+prefixes, and stateless WebSocket coordination via Pulsar `Reader` subscriptions. The
+durable-context surface, including Keycloak, the WS endpoint, the `/auth` and `/api/objects`
+routes, and the demo MinIO bucket, is gated by the same `demo_ui` flag that gates the rest
+of the `infernix-demo` browser surface. Phase 7 supersedes the previous single-form manual
+inference path: routed manual inference closes through the durable-context Chat surface and
+WebSocket-delivered `ConversationStatePatch` deltas rather than a direct HTTP request/poll
+cycle. Production deployments leave `demo_ui = false` and the Phase 7 surface is absent.
+
 ## Supported Outcome
 
 `infernix` targets these rules:
@@ -190,6 +205,15 @@ Monitoring is not a supported first-class surface.
 - the test surface remains the current three Cabal stanzas plus the frontend unit suite:
   `infernix-unit`, `infernix-integration`, and `infernix-haskell-style`, exercised through the
   supported `infernix test lint|unit|integration|e2e|all` command surface
+- when `demo_ui = true`, Phase 7 adds a multi-user durable-context surface served by the
+  existing `infernix-demo` workload: Keycloak self-signup, WebSocket post-login transport,
+  per-context Pulsar conversation log topics, compacted per-user metadata and drafts topics,
+  a shared MinIO `infernix-demo-objects` bucket with per-user prefixes, and `/auth` and
+  `/api/objects` routes registered through the Haskell route registry source; business
+  logic — reducer, idempotency dedup, `prefixHash` chain, dispatcher rule, event
+  construction — lives only in the shared `infernix` library and surfaces to the SPA via
+  `purescript-bridge`, with the browser receiving typed state snapshots and patches rather
+  than raw events
 
 ## Topology Baseline
 

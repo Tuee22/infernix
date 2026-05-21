@@ -64,7 +64,7 @@ the outer container forwards the same compose invocation through the mounted hos
 
 ## Testing
 
-- `purescript-spec` suites cover the generated contract module shape plus the workbench view-model
+- `purescript-spec` suites cover the generated contract module shape plus the SPA view-model
   logic for selection, catalog parity, publication summary rendering, family-aware request
   guidance, and result-state rendering
 - E2E coverage exhaustively hits every generated catalog entry through the routed surface and
@@ -76,9 +76,36 @@ the outer container forwards the same compose invocation through the mounted hos
   it directly while the Linux outer-container path forwards the call through the mounted host
   docker socket
 
+## Durable Context Surface
+
+When the durable-context demo lands (Phase 7), the same `infernix-demo` workload also serves
+the multi-user durable-context application. The product-agnostic primitives this binding is
+built on live at [durable_context_design.md](durable_context_design.md); the demo's concrete
+bindings live at [demo_app_design.md](demo_app_design.md). Topology delta:
+
+- new authenticated WebSocket endpoint at `/ws` carries chat, drafts, context list/create/delete,
+  progress, and artifact-ready notifications; demo-gated
+- Keycloak provides identity at `/auth`; demo-gated; see [../tools/keycloak.md](../tools/keycloak.md)
+- HTTP endpoint `/api/objects` mints presigned MinIO PUT/GET URLs for artifact upload and
+  download; bytes never traverse the demo backend; demo-gated
+- the demo `Service` sets `sessionAffinity: None` so any replica can host any WS connection;
+  WS pods use Pulsar `Reader` subscriptions for per-WS fan-out and named `Failover`
+  subscriptions for the per-context inference dispatcher
+- new handwritten PureScript modules under `web/src/Infernix/Web/`: `Chat.purs`,
+  `Artifacts.purs`, `Auth.purs`, `WebSocket.purs`, `Router.purs`; all consume generated
+  contracts from `web/src/Generated/` and apply server-sent state patches mechanically without
+  reimplementing business rules
+- the supported manual-inference dispatch closes through the durable-context Chat surface and
+  WebSocket transport; the previous direct `POST /api/inference` request/poll surface is
+  retired from the supported contract per
+  [../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md](../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md)
+
 ## Cross-References
 
 - [runtime_modes.md](runtime_modes.md)
+- [durable_context_design.md](durable_context_design.md)
+- [demo_app_design.md](demo_app_design.md)
+- [../tools/keycloak.md](../tools/keycloak.md)
 - [../development/frontend_contracts.md](../development/frontend_contracts.md)
 - [../development/purescript_policy.md](../development/purescript_policy.md)
 - [../reference/web_portal_surface.md](../reference/web_portal_surface.md)

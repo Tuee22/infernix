@@ -74,8 +74,7 @@ ensureGeneratedPythonProto :: Paths -> FilePath -> IO ()
 ensureGeneratedPythonProto paths projectDirectory = do
   let outputRoot = repoRoot paths </> "tools" </> "generated_proto"
       generatedFiles =
-        [ outputRoot </> "infernix" </> "api" </> "inference_service_pb2.py",
-          outputRoot </> "infernix" </> "manifest" </> "runtime_manifest_pb2.py",
+        [ outputRoot </> "infernix" </> "manifest" </> "runtime_manifest_pb2.py",
           outputRoot </> "infernix" </> "runtime" </> "inference_pb2.py"
         ]
   allPresent <- allM doesFileExist generatedFiles
@@ -97,8 +96,7 @@ ensureGeneratedPythonProto paths projectDirectory = do
         ]
           <> map
             (\relativePath -> repoRoot paths </> "proto" </> relativePath)
-            [ "infernix/api/inference_service.proto",
-              "infernix/manifest/runtime_manifest.proto",
+            [ "infernix/manifest/runtime_manifest.proto",
               "infernix/runtime/inference.proto"
             ]
       )
@@ -107,7 +105,6 @@ ensureGeneratedPythonProto paths projectDirectory = do
       ensureNamespaceInit
       [ outputRoot,
         outputRoot </> "infernix",
-        outputRoot </> "infernix" </> "api",
         outputRoot </> "infernix" </> "manifest",
         outputRoot </> "infernix" </> "runtime"
       ]

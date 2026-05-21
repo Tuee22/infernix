@@ -113,7 +113,7 @@ renderClusterBootstrapRouteChecksSection =
       "- `curl http://127.0.0.1:<port>/minio/console/browser` checks the `/minio/console -> /` rewrite into the MinIO console service.",
       "- `curl http://127.0.0.1:<port>/minio/s3/models/demo.bin` checks the `/minio/s3 -> /` rewrite into the MinIO S3 service.",
       "- `curl http://127.0.0.1:<port>/pulsar/admin/admin/v2/clusters` checks the `/pulsar/admin -> /` rewrite into Pulsar's `/admin/v2` surface.",
-      "- `curl http://127.0.0.1:<port>/pulsar/ws/v2/producer/public/default/demo` checks the `/pulsar/ws -> /ws` rewrite and returns `405 Method Not Allowed` on the real cluster path."
+      "- `curl http://127.0.0.1:<port>/pulsar/ws/v2/producer/infernix/demo/demo` checks the `/pulsar/ws -> /ws` rewrite and returns `405 Method Not Allowed` on the real cluster path."
     ]
 
 renderChartRouteRegistryCommentSection :: String
@@ -159,7 +159,7 @@ routeSpecs =
   [ RouteSpec
       "infernix-demo-root"
       "/"
-      "Demo workbench"
+      "Demo SPA"
       "infernix-demo"
       80
       Nothing
@@ -359,8 +359,8 @@ rewriteSentence routeSpec =
 webPortalNotes :: RouteSpec -> String
 webPortalNotes routeSpec =
   case routePathPrefix routeSpec of
-    "/" -> "PureScript manual inference workbench served by `infernix-demo`."
-    "/api" -> "Covers `/api/publication`, `/api/cache`, `/api/models`, `/api/demo-config`, and `/api/inference`."
+    "/" -> "PureScript demo SPA served by `infernix-demo`."
+    "/api" -> "Covers `/api/publication`, `/api/cache`, `/api/models`, and `/api/demo-config`."
     "/objects" -> "Serves `GET /objects/:objectRef` for large outputs."
     "/harbor/api" -> "Rewrites to upstream `/api` before forwarding to `infernix-harbor-core:80`."
     "/harbor" -> "Rewrites to upstream `/` before forwarding to `infernix-harbor-portal:80`."

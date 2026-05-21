@@ -13,7 +13,6 @@ extra-source-files:
     dhall/InfernixSubstrate.dhall
     proto/infernix/runtime/inference.proto
     proto/infernix/manifest/runtime_manifest.proto
-    proto/infernix/api/inference_service.proto
 
 custom-setup
     setup-depends:
@@ -61,16 +60,12 @@ library
     hs-source-dirs:   src
     other-modules:
         Infernix.ProcessMonitor
-        Proto.Infernix.Api.InferenceService
-        Proto.Infernix.Api.InferenceService_Fields
         Proto.Infernix.Manifest.RuntimeManifest
         Proto.Infernix.Manifest.RuntimeManifest_Fields
         Proto.Infernix.Runtime.Inference
         Proto.Infernix.Runtime.Inference_Fields
 
     autogen-modules:
-        Proto.Infernix.Api.InferenceService
-        Proto.Infernix.Api.InferenceService_Fields
         Proto.Infernix.Manifest.RuntimeManifest
         Proto.Infernix.Manifest.RuntimeManifest_Fields
         Proto.Infernix.Runtime.Inference

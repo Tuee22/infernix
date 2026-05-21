@@ -18,6 +18,15 @@
   contract derived from the README matrix
 - [architecture/web_ui_architecture.md](architecture/web_ui_architecture.md) describes the
   PureScript demo UI topology and the two-binary cluster image layout
+- [architecture/durable_context_design.md](architecture/durable_context_design.md) defines the
+  product-agnostic durable-context primitives — event-sourced state, deterministic reducer
+  plus prefix-hash chain, single-flight dispatcher, compacted metadata projections, presigned
+  object storage, JWKS-backed JWT, and stateless WebSocket coordination — reusable across
+  future SPA-style apps built on the inference platform
+- [architecture/demo_app_design.md](architecture/demo_app_design.md) defines the demo-specific
+  bindings on top of `durable_context_design.md`: Keycloak as the IdP, the concrete
+  `infernix/demo` topic namespace and `infernix-demo-objects` bucket, the `/auth` / `/ws` /
+  `/api/objects` routes, the SPA view contract, and the `demo_ui` gating
 - [development/local_dev.md](development/local_dev.md) describes the supported local workflows
 - [development/assistant_workflow.md](development/assistant_workflow.md) defines the canonical
   repository-level workflow rules for automated agents and LLM coding assistants
@@ -36,6 +45,9 @@
   doctrine
 - [development/chaos_testing.md](development/chaos_testing.md) records the current HA-failure
   validation status and the Phase 6 ownership for that coverage
+- [development/demo_app_test_plan.md](development/demo_app_test_plan.md) defines the unit,
+  integration, and E2E validation surface for the multi-user durable-context demo, including the
+  per-model smoke matrix and the multi-user throughput / fan-in batching / fan-out test
 - [engineering/build_artifacts.md](engineering/build_artifacts.md) defines build-output isolation
 - [engineering/dependency_management.md](engineering/dependency_management.md) defines the
   supported Cabal dependency posture for the pinned Haskell toolchain
@@ -69,6 +81,9 @@
   family overview
 - [tools/postgresql.md](tools/postgresql.md) records the supported operator-managed PostgreSQL
   contract
+- [tools/keycloak.md](tools/keycloak.md) records the supported Keycloak deployment, realm
+  pre-seed contract, JWT validation surface, and demo-gated lifecycle for the durable-context
+  demo
 - [tools/pulsar.md](tools/pulsar.md) records the production inference subscription and dispatch
   contract (`request_topics`, `result_topic`, `engines` in the active `.dhall`) together with the
   repo-local topic-spool harness used by unit-level validation

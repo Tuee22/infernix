@@ -18,7 +18,6 @@ import Data.ByteString.Lazy.Char8 qualified as LazyChar8
 import Data.List (intercalate, isInfixOf, isPrefixOf)
 import Data.Maybe (fromMaybe)
 import Data.Text qualified as Text
-import Data.Vector qualified as Vector
 import GHC.IO.Encoding (setLocaleEncoding, utf8)
 import Infernix.Cluster
 import Infernix.Cluster.Discover
@@ -380,7 +379,7 @@ waitForPlaywrightSurface host edgePort expectedDaemonLocation expectedInferenceE
                     <> host
                     <> ":"
                     <> show edgePort
-                    <> " to serve publication, demo-config, and inference traffic"
+                    <> " to serve publication and demo-config traffic"
                 )
             )
       | otherwise = do
@@ -396,28 +395,15 @@ waitForPlaywrightSurface host edgePort expectedDaemonLocation expectedInferenceE
       maybeDemoConfig <- loadJsonUrl (baseUrl <> "/api/demo-config")
       maybeHome <- loadTextUrl (baseUrl <> "/")
       case (maybePublication, maybeDemoConfig, maybeHome) of
-        (Just publicationPayload, Just demoConfigPayload, Just homeBody) ->
-          case firstModelId demoConfigPayload of
-            Just firstModel -> do
-              let payloadBody =
-                    "{\"requestModelId\":"
-                      <> show (Text.unpack firstModel)
-                      <> ",\"inputText\":\"playwright readiness probe\"}"
-              maybeInference <- postJsonUrl (baseUrl <> "/api/inference") payloadBody
-              pure
-                ( jsonTextAt ["daemonLocation"] publicationPayload == Just (Text.pack expectedDaemonLocation)
-                    && jsonTextAt ["inferenceExecutorLocation"] publicationPayload == Just (Text.pack expectedInferenceExecutorLocation)
-                    && jsonTextAt ["inferenceDispatchMode"] publicationPayload == Just (Text.pack expectedInferenceDispatchMode)
-                    && jsonTextAt ["apiUpstream", "mode"] publicationPayload == Just (Text.pack expectedApiUpstreamMode)
-                    && "Infernix" `isInfixOf` homeBody
-                    && maybe False (\inferencePayload -> jsonTextAt ["resultModelId"] inferencePayload == Just firstModel) maybeInference
-                )
-            Nothing -> pure False
+        (Just publicationPayload, Just _demoConfigPayload, Just homeBody) ->
+          pure
+            ( jsonTextAt ["daemonLocation"] publicationPayload == Just (Text.pack expectedDaemonLocation)
+                && jsonTextAt ["inferenceExecutorLocation"] publicationPayload == Just (Text.pack expectedInferenceExecutorLocation)
+                && jsonTextAt ["inferenceDispatchMode"] publicationPayload == Just (Text.pack expectedInferenceDispatchMode)
+                && jsonTextAt ["apiUpstream", "mode"] publicationPayload == Just (Text.pack expectedApiUpstreamMode)
+                && "Infernix" `isInfixOf` homeBody
+            )
         _ -> pure False
-    firstModelId demoConfigPayload =
-      case jsonArrayAt ["models"] demoConfigPayload of
-        Just (Object firstModel : _) -> KeyMap.lookup (Key.fromText "modelId") firstModel >>= valueText
-        _ -> Nothing
 
 runCacheStatus :: Maybe RuntimeMode -> IO ()
 runCacheStatus maybeRuntimeMode = do
@@ -599,34 +585,11 @@ loadTextUrl url = do
     Left _ -> pure Nothing
     Right payload -> pure (Just payload)
 
-postJsonUrl :: String -> String -> IO (Maybe Value)
-postJsonUrl url body = do
-  response <-
-    try
-      ( readProcess
-          "curl"
-          ["-fsS", "-X", "POST", "-H", "Content-Type: application/json", "-d", body, url]
-          ""
-      ) ::
-      IO (Either IOException String)
-  case response of
-    Left _ -> pure Nothing
-    Right payload ->
-      case eitherDecode (LazyChar8.pack payload) of
-        Left _ -> pure Nothing
-        Right decodedValue -> pure (Just decodedValue)
-
 jsonTextAt :: [Text.Text] -> Value -> Maybe Text.Text
 jsonTextAt [] value = valueText value
 jsonTextAt (segment : remainingSegments) (Object objectValue) =
   KeyMap.lookup (Key.fromText segment) objectValue >>= jsonTextAt remainingSegments
 jsonTextAt _ _ = Nothing
-
-jsonArrayAt :: [Text.Text] -> Value -> Maybe [Value]
-jsonArrayAt [] (Array values) = Just (Vector.toList values)
-jsonArrayAt (segment : remainingSegments) (Object objectValue) =
-  KeyMap.lookup (Key.fromText segment) objectValue >>= jsonArrayAt remainingSegments
-jsonArrayAt _ _ = Nothing
 
 valueText :: Value -> Maybe Text.Text
 valueText (String textValue) = Just textValue

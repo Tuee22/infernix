@@ -30,16 +30,6 @@ requiredProtoFiles =
         "message RuntimeCacheEntry",
         "message RuntimeManifest"
       ]
-    ),
-    ( "proto/infernix/api/inference_service.proto",
-      "package infernix.api;",
-      [ "message ListCatalogRequest",
-        "message ListCatalogResponse",
-        "message GetModelRequest",
-        "message SubmitInferenceRequest",
-        "message GetInferenceResultRequest",
-        "service InferenceService"
-      ]
     )
   ]
 

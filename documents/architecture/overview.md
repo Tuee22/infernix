@@ -19,6 +19,14 @@ PureScript demo UI, and one governed documentation suite.
   `demo_ui` flag is off
 - when the demo UI is enabled, the browser entrypoint is the shared routed surface on one
   localhost port and the demo UI is served by `infernix-demo`
+- the reusable durable-context primitives that shape the demo UI and any future SPA-style app
+  on the platform — event-sourced state, deterministic reducer, single-flight dispatcher,
+  prefix-hash chain, presigned object storage, JWKS-backed JWT, and stateless WebSocket
+  coordination — are defined in [durable_context_design.md](durable_context_design.md). The
+  demo's concrete bindings (Keycloak as the IdP, `infernix/demo` topic namespace,
+  `infernix-demo-objects` bucket, `/auth` / `/ws` / `/api/objects` routes, SPA views) are
+  defined in [demo_app_design.md](demo_app_design.md). Both are built out through
+  [../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md](../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md)
 - Python is restricted to the shared adapter project under `python/`; the canonical quality gate
   is `poetry run check-code`, and all custom platform logic is Haskell
 - the demo UI is PureScript built with `spago`, tested with `purescript-spec`, with generated
@@ -57,5 +65,7 @@ major roots:
 
 - [runtime_modes.md](runtime_modes.md)
 - [web_ui_architecture.md](web_ui_architecture.md)
+- [durable_context_design.md](durable_context_design.md)
+- [demo_app_design.md](demo_app_design.md)
 - [../engineering/storage_and_state.md](../engineering/storage_and_state.md)
 - [../tools/postgresql.md](../tools/postgresql.md)

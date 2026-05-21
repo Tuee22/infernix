@@ -4,25 +4,28 @@
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
 
 > **Purpose**: Define the PureScript demo UI built with spago, the Haskell-owned frontend contract
-> generator, the `purescript-spec` test framework, the browser workbench, and the generated-path
-> cleanup that reserves `Generated/` directories for real generated outputs only.
+> generator, the `purescript-spec` test framework, the cluster-resident browser SPA, and the
+> generated-path cleanup that reserves `Generated/` directories for real generated outputs only.
 
 ## Phase Status
 
 Phase 5 is closed around the PureScript demo UI, the Haskell-owned browser-contract source, the
 generated contract path under `web/src/Generated/`, the clustered demo hosting rule, and the
 container-owned routed Playwright executor implemented in this worktree. Sprints 5.1–5.8 remain
-`Done` and there is no additional open Phase 5 backlog.
+`Done` and there is no additional open Phase 5 backlog. Phase 7 extends the PureScript demo
+surface with the durable-context Chat, Artifacts, and Model Picker views; the supported
+manual-inference path moves from a direct HTTP request/poll cycle to WebSocket-delivered
+`ConversationStatePatch` deltas owned by Phase 7.
 
 ## Current Repo Assessment
 
-The repository ships the supported PureScript demo path: `web/src/Main.purs` and
-`web/src/Infernix/Web/Workbench.purs` own the browser workbench, `web/test/Main.purs` owns the
-frontend unit suite, `src/Infernix/Web/Contracts.hs` owns the handwritten browser contract, and
-`npm --prefix web run build` regenerates generated contracts and bundles the app into
-`web/dist/app.js`. The generated browser contracts and workbench state still expose the active
+The repository ships the supported PureScript demo path: `web/src/Main.purs` and the handwritten
+PureScript modules under `web/src/Infernix/Web/` own the browser SPA, `web/test/Main.purs` owns
+the frontend unit suite, `src/Infernix/Web/Contracts.hs` owns the handwritten browser contract,
+and `npm --prefix web run build` regenerates generated contracts and bundles the app into
+`web/dist/app.js`. The generated browser contracts and SPA state still expose the active
 substrate through `runtimeMode` fields. The code can honor `demo_ui = false`, and the supported
-materialization path now emits that shape with `--demo-ui false`. The browser workbench and routed
+materialization path now emits that shape with `--demo-ui false`. The browser SPA and routed
 Playwright suite now also expose `daemonLocation`, `inferenceExecutorLocation`, and
 `inferenceDispatchMode`, and the clustered demo app closes around Apple host inference execution
 without claiming cluster-resident Apple inference parity. Phase 6 Sprint 6.25 distinguishes the
@@ -32,11 +35,11 @@ always-present cluster daemon from the Apple host inference executor.
 
 - the demo UI catalog comes only from the active substrate's generated demo catalog
 - the UI does not maintain a hidden hard-coded allowlist
-- the browser workbench exposes every model or workload entry present in the generated file
+- the browser SPA exposes every model or workload entry present in the generated file
 - substrate changes alter catalog content without changing route structure
 - the generated browser contracts and routed publication payloads currently serialize the active
   substrate under `runtimeMode` field names
-- the browser workbench and Playwright harness do not choose engines or branch on substrate ids;
+- the browser SPA and Playwright harness do not choose engines or branch on substrate ids;
   `infernix-demo` reads the active `.dhall` and owns substrate-appropriate dispatch
 
 ## Sprint 5.1: Demo Web Application Host (PureScript) [Done]
@@ -60,7 +63,7 @@ clustered routed surface on every supported substrate.
 
 ### Validation
 
-- the browser workbench loads through the routed surface and consumes the active generated catalog
+- the browser SPA loads through the routed surface and consumes the active generated catalog
 - `cluster up` deploys `infernix-demo` through Helm when `demo_ui` is on
 - when the supported materialization path stages a file with `--demo-ui false`, `/` is absent from
   the route inventory
@@ -109,7 +112,7 @@ None.
 
 ### Objective
 
-Use repo-owned frontend tests to verify the browser workbench stays aligned with the Haskell-owned
+Use repo-owned frontend tests to verify the browser SPA stays aligned with the Haskell-owned
 contract and behaves predictably.
 
 ### Deliverables
@@ -131,28 +134,32 @@ None.
 
 ---
 
-## Sprint 5.4: Manual Inference Workbench in PureScript For Any Registered Model [Done]
+## Sprint 5.4: Manual Inference SPA For Any Registered Model [Done]
 
 **Status**: Done
-**Implementation**: `web/src/Main.purs`, `web/src/Infernix/Web/Workbench.purs`, `web/src/index.html`, `web/playwright/inference.spec.js`
+**Implementation**: `web/src/Main.purs`, `web/src/Infernix/Web/`, `web/src/index.html`, `web/playwright/inference.spec.js`
 **Docs to update**: `documents/reference/web_portal_surface.md`, `documents/architecture/web_ui_architecture.md`
 
 ### Objective
 
-Deliver the browser workbench for manual inference against any model in the generated catalog.
+Deliver the browser SPA for manual inference against any model in the generated catalog. Phase
+7 evolves this surface into the durable-context Chat surface; the supported manual-inference
+path closes through that Phase 7 contract, not a direct HTTP request/poll cycle.
 
 ### Deliverables
 
 - model catalog browser with search or filter support
 - per-model request form derived from the model's declared request contract
-- submission, progress, and result views for manual inference
+- submission, progress, and result views for manual inference, surfaced as a server-driven
+  view model rather than as a parallel HTTP polling client
 - links to large object-store-backed outputs when the service returns references rather than inline payloads
 
 ### Validation
 
-- the UI can search, select a catalog entry, and submit a request through `/api`
-- routed Playwright coverage proves the workbench can render object-reference result links
-- every registered model remains manually callable through the same `/api` surface
+- the UI can search, select a catalog entry, and submit a request through the supported demo
+  surface
+- routed Playwright coverage proves the SPA can render object-reference result links
+- every registered model remains reachable through the supported demo surface
 
 ### Remaining Work
 
@@ -198,15 +205,15 @@ None.
 
 ---
 
-## Sprint 5.6: Substrate-Driven Demo Catalog and Workbench Parity in PureScript [Done]
+## Sprint 5.6: Substrate-Driven Demo Catalog and SPA Parity in PureScript [Done]
 
 **Status**: Done
-**Implementation**: `web/src/Main.purs`, `web/src/Infernix/Web/Workbench.purs`, `web/playwright/inference.spec.js`, `web/test/Main.purs`
+**Implementation**: `web/src/Main.purs`, `web/src/Infernix/Web/`, `web/playwright/inference.spec.js`, `web/test/Main.purs`
 **Docs to update**: `documents/architecture/web_ui_architecture.md`, `documents/reference/web_portal_surface.md`, `documents/development/testing_strategy.md`
 
 ### Objective
 
-Make the browser workbench a faithful reflection of the generated catalog for the active built
+Make the browser SPA a faithful reflection of the generated catalog for the active built
 substrate.
 
 ### Deliverables
@@ -327,7 +334,7 @@ None.
 - `documents/engineering/implementation_boundaries.md` - browser-contract ownership and generated-output boundaries
 
 **Product or reference docs to create/update:**
-- `documents/reference/web_portal_surface.md` - manual inference workbench behavior, route inventory, and active-substrate catalog rules
+- `documents/reference/web_portal_surface.md` - manual inference SPA behavior, route inventory, and active-substrate catalog rules
 
 **Cross-references to add:**
 - keep [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md)

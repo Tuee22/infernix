@@ -23,8 +23,10 @@ This repository serves two aligned purposes:
 - provide consistent binary or container build outputs for three supported runtime modes: Apple
   Silicon or Metal, Ubuntu 24.04 CPU, and Ubuntu 24.04 NVIDIA CUDA containers
 - provide a local Kind cluster, running the mandatory HA service topology, as the testing and demo
-  ground for the control plane; the demo UI (served by the `infernix-demo` binary) is a demo
-  surface on that substrate, gated by the active `.dhall` config
+  ground for the control plane, including Harbor, MinIO, Pulsar, Prometheus, Grafana, and
+  per-service Patroni PostgreSQL clusters where durable PostgreSQL state is required; the demo UI
+  (served by the `infernix-demo` binary) is a demo surface on that substrate, gated by the active
+  `.dhall` config
 
 ## Highlights
 
@@ -40,14 +42,18 @@ This repository serves two aligned purposes:
   adapter tree under `python/adapters/`; the canonical quality entrypoint is
   `poetry run check-code`, which runs mypy strict, black check, and ruff strict in sequence
 - one Kind and Helm workflow for the HA testing and demo ground
-- one mandatory local HA topology: Harbor, MinIO, Pulsar, and operator-managed PostgreSQL on Kind
+- one mandatory local HA topology: Harbor, MinIO, Pulsar, Prometheus, Grafana, and per-service
+  operator-managed PostgreSQL on Kind
+- one Prometheus metrics plane that every other platform, control-plane, and inference service
+  syncs with, plus one Grafana visualization surface that can use its own PostgreSQL backend under
+  the same PostgreSQL rules
 - one local Harbor registry as the image source for every non-Harbor pod
 - one manual persistent-storage doctrine rooted at `./.data/`
 - one PureScript demo UI built with spago, tested with `purescript-spec`, with frontend contracts
   emitted by `infernix internal generate-purs-contracts` through `purescript-bridge` from
   dedicated Haskell browser-contract ADTs plus active-mode catalog metadata
-- one browser-based manual inference demo workbench for any registered model, served by
-  `infernix-demo`
+- one browser-based PureScript demo SPA covering manual inference for any registered model,
+  served by `infernix-demo`
 - three runtime targets: Apple Silicon or Metal, Ubuntu 24.04 CPU, and Ubuntu 24.04 NVIDIA CUDA
   containers
 - one validation surface spanning repo-owned Haskell `ormolu`/`cabal format`/`hlint`,
@@ -115,15 +121,20 @@ classes.
 The supported local platform is built around:
 
 - one Kind cluster used as the HA testing and demo ground for Harbor, MinIO, Pulsar, the Envoy
-  Gateway controller, operator-managed PostgreSQL, the production `infernix-service` workload,
-  and the optional `infernix-demo` workload
+  Gateway controller, Prometheus, Grafana, per-service operator-managed PostgreSQL clusters, the
+  production `infernix-service` workload, and the optional `infernix-demo` workload
 - one Envoy-Gateway-API-owned localhost listener (`Gateway/infernix-edge`, port chosen by
   `cluster up` starting at `9090`) backed by the repo-owned `EnvoyProxy/infernix-edge` service
   shape; the route inventory stays registry-driven, the demo routes are absent when the demo
   surface is disabled, and the demo cluster runs locally without auth filters
 - one manual storage class backed by repo-owned PVs under `./.data/`
-- one Patroni PostgreSQL model managed by the Percona Kubernetes operator for every in-cluster
-  PostgreSQL dependency
+- each service that requires durable PostgreSQL storage deploys its own Patroni PostgreSQL cluster
+  managed by the Percona Kubernetes operator; chart-embedded PostgreSQL paths stay disabled
+- one first-class Prometheus deployment receives metrics from the other platform, control-plane,
+  and inference services, and one first-class Grafana deployment reads from Prometheus for
+  dashboards and operational visibility
+- Grafana may use its own durable PostgreSQL backend, but that backend follows the same
+  per-service Patroni and Percona-operator rules as every other PostgreSQL dependency
 - one local Harbor registry used by every non-Harbor cluster pod after Harbor bootstrap completes
 - one OCI image per Linux substrate carrying both `infernix` and `infernix-demo` plus the engine
   toolchain and the demo UI build toolchain; the chart workload entrypoint selects which exe runs
@@ -581,7 +592,11 @@ around upstream `kubectl`, not a parallel lifecycle surface.
   bootstrap exception before the Harbor-backed pull contract takes over
 - `cluster up` always deploys the mandatory local HA topology: 3x Harbor application-plane services
   where the selected chart supports them, 4x MinIO, 3x Pulsar HA surfaces where the selected
-  chart supports them, and operator-managed Patroni PostgreSQL for every in-cluster PostgreSQL need
+  chart supports them, Prometheus, Grafana, and a dedicated operator-managed Patroni PostgreSQL
+  cluster for each service that requires durable PostgreSQL storage
+- every other platform, control-plane, and inference service with metrics syncs with Prometheus;
+  Grafana reads from Prometheus and may use its own dedicated PostgreSQL backend under the same
+  Patroni and Percona-operator rules
 - services that can self-deploy PostgreSQL still disable that embedded database path and target a
   dedicated operator-managed cluster instead
 - repo-owned Helm values suppress hard pod anti-affinity and equivalent hard scheduling constraints
@@ -611,7 +626,8 @@ Local durability is explicit.
 - PVs bind deterministically into `./.data/kind/<runtime-mode>/<namespace>/<release>/<workload>/<ordinal>/<claim>`
 - explicit PV-to-PVC binding guarantees clean `cluster down` and `cluster up` rebinding behavior
 - storage reconciliation is part of `cluster up`; there is no separate storage reconcile command
-- every in-cluster PostgreSQL deployment uses a Patroni cluster managed by the Percona Kubernetes operator
+- each service that requires durable PostgreSQL storage deploys its own Patroni cluster managed by
+  the Percona Kubernetes operator
 
 MinIO is authoritative for durable artifacts and large outputs. Local cache state is derived and
 rebuildable.
@@ -693,6 +709,20 @@ contracts.
 - the demo UI, demo API surface, generated PureScript contracts, and validation suites must expand
   until every supported model, format, and engine combination has a browser-visible and testable
   path under the demo surface
+- when the demo UI is enabled, the supported product shape is a multi-user durable-context chat
+  application: Keycloak self-signup (no email verification), WebSocket post-login transport,
+  per-context durable conversation history backed by Pulsar conversation topics, MinIO-backed
+  artifact upload/download via presigned URLs, and a dedicated artifacts view that renders
+  image, playable audio, and video artifacts inline, previews bounded text/JSON, uses
+  browser-native PDF handling, and treats MIDI, MusicXML/MXL notation, unknown, and generic
+  binary artifacts as download-only by default; backend pods are stateless and the browser
+  holds no durable state, so signing in on any device fully reconstitutes the user's
+  contexts, drafts, transcripts, and artifacts; business logic — reducer, dispatcher, prefix-
+  hash, idempotency — lives only in Haskell and surfaces to the SPA as typed snapshots and
+  patches via `purescript-bridge`. The canonical design lives in
+  [documents/architecture/demo_app_design.md](documents/architecture/demo_app_design.md) and
+  the execution-ordered build out lives in
+  [DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md](DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md)
 
 ## Comprehensive Model / Format / Engine Matrix
 
@@ -729,9 +759,9 @@ ground and demo webapp provide the shared operator and demo substrate for this m
   be represented by an explicit model or workload entry
 - the model catalog, manifests, and runtime registration surface must grow until every matrix row is
   representable by a registered model and a typed request contract
-- the manual inference workbench must present a usable browser path for every supported matrix row,
-  including request forms, progress states, result rendering, and object-reference handling where
-  needed
+- the demo SPA must present a usable browser path for manual inference against every supported
+  matrix row, including request forms, progress states, result rendering, and object-reference
+  handling where needed
 - the validation surface must cover every supported matrix row through the appropriate mix of unit,
   integration, and Playwright or browser-driven checks
 - Apple, CPU, and CUDA runtime lanes must be validated as first-class targets rather than narrowing

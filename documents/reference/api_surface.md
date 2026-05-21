@@ -23,25 +23,25 @@ surface is the `.dhall` topic contract described in [../tools/pulsar.md](../tool
 - `GET /api/models/:modelId` returns model metadata, selected engine, and request-shape
   information
 - `GET /api/demo-config` returns the serialized generated demo config for the active runtime mode
-- `POST /api/inference` submits a manual inference request
-- `GET /api/inference/:requestId` returns the latest result, including the active runtime mode and
-  selected engine
 - `GET /objects/:objectRef` returns the stored large-output payload referenced by an inference
   result
 - `GET /api/cache` returns manifest-backed cache status for the active runtime mode
 - `POST /api/cache/evict` removes derived cache directories while retaining the durable manifest
 - `POST /api/cache/rebuild` rebuilds derived cache directories from the durable manifest set
+- `POST /api/objects` (Planned, Phase 7) mints a presigned MinIO URL for the authenticated user
+  and the requested context. Request body carries the operation (`Upload` or `Download`), the
+  target `contextId`, and the artifact metadata (kind, MIME/content type, display name, byte
+  count for uploads). Response carries the presigned URL plus the canonical MinIO object key and
+  render disposition (`inline-media`, `text-preview`, `browser-document`, or `download-only`).
+  URLs are scoped to the user's prefix; cross-user URL requests are rejected. Demo-gated and
+  absent when `demo_ui = false`. See [../tools/minio.md](../tools/minio.md) and
+  [../architecture/demo_app_design.md](../architecture/demo_app_design.md).
 
 ## Rules
 
 - the demo API surface is implemented in Haskell as `src/Infernix/Demo/Api.hs` and exposed by the
   `infernix-demo` binary; production `infernix service` does not bind any HTTP port and never
   serves these endpoints
-- `POST /api/inference` always terminates at `infernix-demo`, but the clustered demo deployment
-  can switch to `INFERNIX_DEMO_BRIDGE_MODE=pulsar-daemon`: that mode materializes the local cache
-  mirror, publishes the request through Pulsar, waits for the matching result, rewrites large
-  outputs into the demo pod's own object store, and persists the localized result for
-  `GET /api/inference/:requestId`
 - request validation uses Haskell-owned model metadata; the same Haskell typed runtime contract is
   shared with the non-HTTP production daemon
 - invalid requests return typed user-facing errors
@@ -64,6 +64,11 @@ surface is the `.dhall` topic contract described in [../tools/pulsar.md](../tool
   is always cluster-resident
 - the demo API surface is stable even when switching runtime modes because only the generated
   catalog content changes
+- the supported manual-inference path closes through the durable-context Chat surface introduced
+  by Phase 7: the browser opens a WebSocket against `/ws` (see
+  [web_portal_surface.md](web_portal_surface.md)) and receives typed `ConversationState`
+  snapshots plus `ConversationStatePatch` deltas, and artifact transfer uses presigned MinIO
+  URLs minted by `POST /api/objects`
 
 ## Cross-References
 
