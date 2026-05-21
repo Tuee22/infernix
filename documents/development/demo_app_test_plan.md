@@ -1,7 +1,7 @@
 # Demo App Test Plan
 
 **Status**: Authoritative source
-**Referenced by**: [testing_strategy.md](testing_strategy.md), [chaos_testing.md](chaos_testing.md), [../architecture/demo_app_design.md](../architecture/demo_app_design.md), [../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md](../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md)
+**Referenced by**: [testing_strategy.md](testing_strategy.md), [chaos_testing.md](chaos_testing.md), [../architecture/demo_app_design.md](../architecture/demo_app_design.md), [../architecture/daemon_topology.md](../architecture/daemon_topology.md), [../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md](../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md)
 
 > **Purpose**: Define the unit, integration, and end-to-end validation surface for the
 > multi-user durable-context demo application, including the per-model smoke matrix and the
@@ -199,5 +199,7 @@ code.
 - [testing_strategy.md](testing_strategy.md)
 - [chaos_testing.md](chaos_testing.md)
 - [../architecture/demo_app_design.md](../architecture/demo_app_design.md)
+- [../architecture/durable_context_design.md](../architecture/durable_context_design.md)
+- [../architecture/daemon_topology.md](../architecture/daemon_topology.md)
 - [../engineering/testing.md](../engineering/testing.md)
 - [../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md](../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md)

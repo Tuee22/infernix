@@ -1,7 +1,7 @@
 # Pulsar
 
 **Status**: Authoritative source
-**Referenced by**: [../engineering/edge_routing.md](../engineering/edge_routing.md), [../../DEVELOPMENT_PLAN/phase-3-ha-platform-services-and-edge-routing.md](../../DEVELOPMENT_PLAN/phase-3-ha-platform-services-and-edge-routing.md)
+**Referenced by**: [../engineering/edge_routing.md](../engineering/edge_routing.md), [../architecture/daemon_topology.md](../architecture/daemon_topology.md), [../../DEVELOPMENT_PLAN/phase-3-ha-platform-services-and-edge-routing.md](../../DEVELOPMENT_PLAN/phase-3-ha-platform-services-and-edge-routing.md)
 
 > **Purpose**: Record the supported production topic contract and the current daemon
 > implementation.
@@ -64,10 +64,21 @@ The active `.dhall` config carries the production inference fields consumed by `
 - the optional `demo_ui : Bool` flag toggles the `infernix-demo` workload (production deployments
   leave it off)
 
-On `linux-cpu` and `linux-gpu`, cluster daemons consume `request_topics`, execute inference, and
-publish directly to `result_topic`. On `apple-silicon`, cluster daemons consume `request_topics`
-and publish batches to `hostDaemon.request_topics`; same-binary host daemons consume that batch
-topic, execute Apple-native inference, and publish completed results to `result_topic`.
+The three-role daemon model in
+[../architecture/daemon_topology.md](../architecture/daemon_topology.md) maps to Pulsar
+subscriptions as follows. The coordinator role (`infernix-coordinator` Deployment on every
+substrate; today's in-cluster Apple daemon plays this role) consumes `request_topics`, applies
+the dispatch and batching rules, and publishes to `inference.batch.<mode>` (a separate topic
+family that exists on every substrate). The engine role (`infernix-engine` Deployment on Linux;
+on-host daemon on Apple) consumes `inference.batch.<mode>`, executes the engine adapter, and
+publishes results to `result_topic`. The coordinator then writes the result back to the
+originating per-context conversation topic via the result-bridge.
+
+Today's repo ships a single fused `infernix-service` Deployment on Linux that performs both
+the coordinator's and the engine's duties in one process; Sprint 7.7 of Phase 7 splits that
+pod into role-specific Deployments and adds the `inference.batch.<mode>` topic family for
+Linux. Apple silicon already runs the supported two-process shape and is being renamed
+consistently in Sprint 7.7.
 
 ## Demo Conversation and Metadata Topics (Planned)
 
@@ -89,16 +100,45 @@ Rules:
   and `InferenceResult`; schemas are registered via the Pulsar admin API at `infernix-demo`
   startup
 - Pulsar producer-side deduplication (`enableProducerDeduplication = true`) is enabled on
-  conversation, `inference.request.<mode>`, and `inference.result.<mode>` topics; named
-  producers carry dedup sequence IDs derived from upstream `MessageId`s or
-  `ClientIdempotencyKey`s so retry paths are idempotent at the broker level
+  conversation, `inference.request.<mode>`, `inference.batch.<mode>`, and
+  `inference.result.<mode>` topics; named producers carry dedup sequence IDs derived from
+  upstream `MessageId`s, `batchId`s, or `ClientIdempotencyKey`s so retry paths are idempotent
+  at the broker level
 - the compacted metadata topics are read by the demo backend with the compacted-reader API to
   drive the SPA's left-rail context list and draft restore; namespace-level compaction policy
   is reconciled on `cluster up`
-- the demo backend's per-WS Pulsar **Reader** subscriptions on conversation and metadata
+- the frontend pod's per-WS Pulsar **Reader** subscriptions on conversation and metadata
   topics give pod-failover-safe fan-out without sticky sessions; the per-context inference
-  dispatcher uses a named **Failover** subscription so exactly one pod is the active dispatcher
-  per context at a time
+  dispatcher in the coordinator pod uses a named **Failover** subscription so exactly one
+  coordinator replica is the active dispatcher per context at a time; the result-bridge in
+  the coordinator pod uses a named **Failover** subscription on `inference.result.<mode>`
+  with the same semantics
+
+## Model-Bootstrap Topic (Planned, Phase 7 Sprint 7.7)
+
+Phase 7 Sprint 7.7 introduces a third Failover subscription type in the coordinator pod for
+lazy model-weight population to MinIO with exactly-once semantics:
+
+| Topic | Pattern | Purpose |
+|---|---|---|
+| Model bootstrap request | `persistent://infernix/system/model.bootstrap.request` | Engine pods publish a request keyed by `modelId` when a model is not yet present in `infernix-models`. Producer dedup on `modelId` collapses concurrent retries. |
+| Model bootstrap ready | `persistent://infernix/system/model.bootstrap.ready.<modelId>` | Coordinator's bootstrap worker publishes a ready event after `infernix-models/<modelId>/.ready` has been written. Engine pods that published a request subscribe with bounded timeout. |
+
+Rules:
+
+- the `infernix/system` namespace is **always-on** (not demo-gated) — model weights are a
+  platform-level concern, present even in production where `demo_ui = false`
+- the coordinator's bootstrap subscription is a Pulsar named **Failover** subscription —
+  exactly one coordinator replica processes a given `modelId` at a time; on crash, Pulsar
+  promotes a surviving replica and redelivers the unacked request
+- the coordinator is the only daemon role with outbound-internet egress; the request
+  carries no upstream URL itself — the worker reads the URL from the active substrate's
+  staged `.dhall` catalog, keyed by `modelId`
+- the `infernix-models/<modelId>/.ready` sentinel object in MinIO is written **last** so the
+  upload is atomically visible; engines observe `.ready` and only then load weights
+- failure mode: if the worker dies mid-upload, the surviving replica re-checks MinIO; if
+  the `.ready` sentinel is already present (idempotent guard), the worker simply publishes
+  the ready event; otherwise the download restarts from scratch
 - conversation topics opt into Pulsar's tiered storage so cold ledgers offload to MinIO; hot
   read paths stay broker-resident
 - inference dispatch reuses the existing shared `inference.request.<mode>` and
@@ -116,3 +156,5 @@ event model, reducer, dispatcher rule, and failure semantics.
 - [../engineering/edge_routing.md](../engineering/edge_routing.md)
 - [../engineering/storage_and_state.md](../engineering/storage_and_state.md)
 - [../architecture/demo_app_design.md](../architecture/demo_app_design.md)
+- [../architecture/durable_context_design.md](../architecture/durable_context_design.md)
+- [../architecture/daemon_topology.md](../architecture/daemon_topology.md)

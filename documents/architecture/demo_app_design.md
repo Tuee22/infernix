@@ -1,7 +1,7 @@
 # Demo App Design
 
 **Status**: Authoritative source
-**Referenced by**: [durable_context_design.md](durable_context_design.md), [overview.md](overview.md), [web_ui_architecture.md](web_ui_architecture.md), [../reference/web_portal_surface.md](../reference/web_portal_surface.md), [../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md](../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md)
+**Referenced by**: [durable_context_design.md](durable_context_design.md), [overview.md](overview.md), [web_ui_architecture.md](web_ui_architecture.md), [daemon_topology.md](daemon_topology.md), [../reference/web_portal_surface.md](../reference/web_portal_surface.md), [../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md](../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md)
 
 > **Purpose**: Define the demo-specific bindings for the `infernix-demo`
 > workload — Keycloak as the IdP, the concrete Pulsar namespace and MinIO
@@ -95,6 +95,26 @@ The demo Service has `sessionAffinity: None`. WS pods use Pulsar
 `Reader` subscriptions per the primitives doc; the per-context
 dispatcher uses a Pulsar named `Failover` subscription per conversation
 topic.
+
+### Pod Layout
+
+The demo binds the three-role daemon model in
+[daemon_topology.md](daemon_topology.md) as follows:
+
+- **Frontend.** The `infernix-demo` Deployment owns WS upgrade, JWT
+  validation, route handlers for `/auth`, `/ws`, and `/api/objects`,
+  and SPA asset serving. Stateless, replicas ≥ 2 by default.
+- **Coordinator.** The `infernix-coordinator` Deployment runs the
+  single-flight dispatcher and the result-bridge on the demo's
+  conversation and result topics. Stateless, replicas ≥ 2 by default;
+  Pulsar `Failover` provides leader election.
+- **Engine.** The `infernix-engine` Deployment (Linux) or the
+  existing on-host daemon (Apple) runs the inference engine. Strict
+  one-per-node policy on every substrate.
+
+The demo binary owns only the frontend role; the coordinator and
+engine pods are platform infrastructure shared with any other
+durable-context application.
 
 ## Demo Pulsar and MinIO Bindings
 
@@ -234,6 +254,7 @@ the surface is split across three sprints:
 ## Cross-References
 
 - [durable_context_design.md](durable_context_design.md) — product-agnostic primitives (authoritative for the reusable shape)
+- [daemon_topology.md](daemon_topology.md) — three-role daemon model and per-substrate placement
 - [overview.md](overview.md) — platform topology
 - [web_ui_architecture.md](web_ui_architecture.md) — PureScript demo UI topology and image layout
 - [../tools/keycloak.md](../tools/keycloak.md) — Keycloak deployment and realm contract

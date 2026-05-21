@@ -1,7 +1,7 @@
 # Portability
 
 **Status**: Authoritative source
-**Referenced by**: [../development/local_dev.md](../development/local_dev.md), [../../DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md](../../DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md)
+**Referenced by**: [../development/local_dev.md](../development/local_dev.md), [../architecture/daemon_topology.md](../architecture/daemon_topology.md), [../../DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md](../../DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md)
 
 > **Purpose**: Separate the portable platform contract from substrate-specific execution detail.
 
@@ -60,7 +60,7 @@ operator-facing kubeconfig remains repo-local in the active execution context.
 | Build roots and kubeconfig location | outputs stay repo-local and untracked, while Kind or `nvkind` create or delete uses transient execution-local scratch kubeconfig outside repo mounts | `./.build/`, published `./.build/infernix.kubeconfig`, and binary-owned substrate-file materialization or validation under the Apple build root | `./.build/outer-container/` on the host through the `./.build:/workspace/.build` bind mount, binary-owned substrate-file materialization or validation there, plus published `./.data/runtime/infernix.kubeconfig` for durable outer-container reuse |
 | Python adapter environment | use the shared Poetry project only | `python/.venv/` may materialize on demand after Apple adapter paths reconcile the Homebrew-managed `python@3.12` formula and `python3.12` command plus a user-local Poetry bootstrap, or reuse an already available compatible Python 3.12+ executable for that bootstrap | adapter dependencies are installed in the shared substrate image build |
 | Browser E2E runner | exercise the routed surface for the active generated catalog | the host CLI probes routed readiness on `127.0.0.1:<edge-port>` and then orchestrates `docker compose run --rm playwright` on the private Docker `kind` network against the Kind control-plane DNS using the dedicated `infernix-playwright:local` image | the outer container forwards `docker compose run --rm playwright` through the mounted host docker socket against the same dedicated Playwright image |
-| Inference executor placement | cluster daemons always own request fan-in and result publication semantics | Apple cluster daemons hand batches to host daemons over Pulsar so Apple-native engines can run on the host | Linux cluster daemons perform fan-in, batching, inference, and result publication directly |
+| Inference executor placement | the supported three-role daemon model splits Pulsar coordination (`infernix-coordinator`) from engine execution (`infernix-engine`); coordinator daemons own request fan-in, batching, result publication, and the lazy model-weight bootstrap workflow; engine daemons own adapter execution and the node's in-memory KV cache under a strict one-per-node policy uniform across substrates. No daemon has a PVC; engine pods use ephemeral `emptyDir` for the model-weight cache only. See [../architecture/daemon_topology.md](../architecture/daemon_topology.md) and [object_storage.md](object_storage.md). | the cluster-side `infernix-coordinator` Deployment runs the coordinator role and hands batches to the on-host engine daemon over Pulsar; the host daemon enforces one-per-node via `flock(2)` on `engine.lock`, pulls weights from MinIO `infernix-models`, runs Apple-native engines, and publishes results | the cluster-side `infernix-coordinator` Deployment runs the coordinator role, and a separate cluster-side `infernix-engine` Deployment runs the engine role with required one-per-node anti-affinity; on `linux-gpu` the engine pod claims all local NVIDIA devices; both pods are PVC-free |
 | CUDA path | supported only when the host actually satisfies the NVIDIA contract | not applicable | `linux-gpu` requires the Compose-selected baked image, forwarded Docker socket, GPU visibility, and in-image `nvkind` |
 
 ## Unsupported Shortcuts
@@ -80,6 +80,7 @@ operator-facing kubeconfig remains repo-local in the active execution context.
 - [docker_policy.md](docker_policy.md)
 - [implementation_boundaries.md](implementation_boundaries.md)
 - [../architecture/runtime_modes.md](../architecture/runtime_modes.md)
+- [../architecture/daemon_topology.md](../architecture/daemon_topology.md)
 - [../operations/apple_silicon_runbook.md](../operations/apple_silicon_runbook.md)
 
 ## Validation

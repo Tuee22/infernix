@@ -99,12 +99,16 @@ bindings live at [demo_app_design.md](demo_app_design.md). Topology delta:
   WebSocket transport; the previous direct `POST /api/inference` request/poll surface is
   retired from the supported contract per
   [../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md](../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md)
+- the routed browser surface terminates at the frontend pod (`infernix-demo`); the coordinator
+  and engine pods are not directly addressable from the browser. The supported per-pod
+  placement is codified in [daemon_topology.md](daemon_topology.md)
 
 ## Cross-References
 
 - [runtime_modes.md](runtime_modes.md)
 - [durable_context_design.md](durable_context_design.md)
 - [demo_app_design.md](demo_app_design.md)
+- [daemon_topology.md](daemon_topology.md)
 - [../tools/keycloak.md](../tools/keycloak.md)
 - [../development/frontend_contracts.md](../development/frontend_contracts.md)
 - [../development/purescript_policy.md](../development/purescript_policy.md)

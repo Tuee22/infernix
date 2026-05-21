@@ -100,19 +100,27 @@ with bounded retries across transient registry resets.
 Monitoring is not a supported first-class surface.
 
 Phase 7 (`Planned`) adds the multi-user durable-context demo application on top of this
-validated platform. The full design lives at
+validated platform. The product-agnostic primitives live at
+[../documents/architecture/durable_context_design.md](../documents/architecture/durable_context_design.md);
+the demo's concrete bindings live at
 [../documents/architecture/demo_app_design.md](../documents/architecture/demo_app_design.md);
+the supported three-role daemon model (stateless frontend, stateless coordinator, one-per-node
+stateful engine) lives at
+[../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md);
 the execution-ordered build out lives at
 [phase-7-demo-app-durable-context.md](phase-7-demo-app-durable-context.md). Phase 7 introduces
 a Keycloak release with its own Patroni Postgres, a per-context Pulsar conversation log topic
 family, compacted per-user metadata and drafts topics, a shared MinIO bucket with per-user
-prefixes, and stateless WebSocket coordination via Pulsar `Reader` subscriptions. The
+prefixes, stateless WebSocket coordination via Pulsar `Reader` subscriptions, and a chart
+refactor that replaces the fused `infernix-service` Deployment with role-specific
+`infernix-coordinator` and `infernix-engine` Deployments under HA defaults. The
 durable-context surface, including Keycloak, the WS endpoint, the `/auth` and `/api/objects`
 routes, and the demo MinIO bucket, is gated by the same `demo_ui` flag that gates the rest
 of the `infernix-demo` browser surface. Phase 7 supersedes the previous single-form manual
 inference path: routed manual inference closes through the durable-context Chat surface and
 WebSocket-delivered `ConversationStatePatch` deltas rather than a direct HTTP request/poll
-cycle. Production deployments leave `demo_ui = false` and the Phase 7 surface is absent.
+cycle. Production deployments leave `demo_ui = false`, the Phase 7 surface is absent, and
+the only daemon Deployment present is `infernix-engine`.
 
 ## Supported Outcome
 

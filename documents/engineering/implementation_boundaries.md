@@ -79,14 +79,39 @@ inference platform.
 - **Demo binary (product-specific glue).** Modules under `Infernix.Demo.*` carry the
   Keycloak-realm-specific JWT wiring, the WS upgrade, the HTTP route handlers, the WS envelope
   tagged-sum wire schema, and first-run bootstrap. May import any shared module.
-- **Cluster daemon (engine path).** Modules under `Infernix.Runtime.*` import
-  `Infernix.Conversation.Reducer` and `Infernix.Conversation.Hash` for engine-side KV-cache
-  consistency only. They must not import `Infernix.Demo.*`, `Infernix.Objects.Presigned`,
-  `Infernix.Auth.Jwt`, or any WebSocket module.
+- **Coordinator daemon (stateless Pulsar coordination).** The
+  `infernix-coordinator` Deployment loads the shared library minus the
+  engine-specific paths. It runs `Infernix.Dispatch.SingleFlight` (the
+  single-flight dispatcher), `Infernix.Bridge.Result` (the
+  result-bridge), `Infernix.Bootstrap.Models` (the lazy model-weight
+  bootstrap worker for `infernix-models`), and the optional batcher.
+  It must not import `Infernix.Demo.*` (or any other
+  `<appNamespace>.*`), `Infernix.Objects.Presigned`,
+  `Infernix.Auth.Jwt`, any WebSocket module, or `Infernix.Runtime.*`.
+  The coordinator has no PVC — Pulsar subscription cursors are
+  broker-side durable. It is the only daemon role with
+  outbound-internet egress (used solely for upstream model downloads
+  in the bootstrap workflow).
+- **Engine daemon (stateful adapter execution, one per node).** The
+  `infernix-engine` Deployment on Linux substrates, and the on-host
+  daemon on Apple silicon, load `Infernix.Conversation.Reducer` and
+  `Infernix.Conversation.Hash` for engine-side KV-cache consistency
+  plus `Infernix.Runtime.*` for adapter management. They must not
+  import `Infernix.Demo.*` (or any other `<appNamespace>.*`),
+  `Infernix.Objects.Presigned`, `Infernix.Auth.Jwt`,
+  `Infernix.Dispatch.SingleFlight`, `Infernix.Bridge.Result`,
+  `Infernix.Bootstrap.Models`, or any WebSocket module. The engine
+  has no PVC; its only on-disk state is an ephemeral `emptyDir`
+  model-weight cache populated lazily from the `infernix-models`
+  MinIO bucket through the shared adapter helper
+  `python/adapters/common/model_cache.py`.
 
-The dependency arrows are strict: shared library has no upward dependencies; demo binary and
-cluster daemon both depend on shared library; demo binary and cluster daemon never depend on
-each other.
+The dependency arrows are strict: shared library has no upward
+dependencies; the demo binary, the coordinator daemon, and the engine
+daemon all depend on shared library; none of the three daemons depend
+on each other. Per-pod placement, replica policy, and the
+one-per-node engine rule are documented in
+[../architecture/daemon_topology.md](../architecture/daemon_topology.md).
 
 Adding a second similar app (e.g., a hypothetical `infernix-notebook`) follows the same
 pattern: a new `Infernix.<AppName>.*` namespace reuses every shared module verbatim and the
@@ -114,3 +139,4 @@ demo binding.
 - [../development/python_policy.md](../development/python_policy.md)
 - [../architecture/durable_context_design.md](../architecture/durable_context_design.md)
 - [../architecture/demo_app_design.md](../architecture/demo_app_design.md)
+- [../architecture/daemon_topology.md](../architecture/daemon_topology.md)

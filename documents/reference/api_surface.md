@@ -23,8 +23,6 @@ surface is the `.dhall` topic contract described in [../tools/pulsar.md](../tool
 - `GET /api/models/:modelId` returns model metadata, selected engine, and request-shape
   information
 - `GET /api/demo-config` returns the serialized generated demo config for the active runtime mode
-- `GET /objects/:objectRef` returns the stored large-output payload referenced by an inference
-  result
 - `GET /api/cache` returns manifest-backed cache status for the active runtime mode
 - `POST /api/cache/evict` removes derived cache directories while retaining the durable manifest
 - `POST /api/cache/rebuild` rebuilds derived cache directories from the durable manifest set
@@ -45,8 +43,12 @@ surface is the `.dhall` topic contract described in [../tools/pulsar.md](../tool
 - request validation uses Haskell-owned model metadata; the same Haskell typed runtime contract is
   shared with the non-HTTP production daemon
 - invalid requests return typed user-facing errors
-- large outputs are returned as typed object references and remain retrievable through
-  `GET /objects/:objectRef`
+- large outputs from generative engines (image, audio, video, large structured-text) are
+  PUT by the engine adapter directly to the `infernix-demo-objects` MinIO bucket at the
+  appropriate per-user prefix; the inference result message carries an `ObjectRef`, and the
+  browser fetches the bytes via presigned GET URLs minted at `/api/objects`. Text outputs
+  ride inline in the result message. The legacy `GET /objects/:objectRef` route is retired
+  in Phase 7 Sprint 7.7 (see [../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md](../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md))
 - cache-eviction and cache-rebuild flows only affect derived cache state; they do not rewrite the
   generated catalog or publication contract
 - cache status exposes durable runtime-artifact bundle URIs, engine-runner metadata including

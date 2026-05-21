@@ -1,7 +1,7 @@
 # Apple Silicon Runbook
 
 **Status**: Authoritative source
-**Referenced by**: [../development/local_dev.md](../development/local_dev.md), [../../DEVELOPMENT_PLAN/phase-3-ha-platform-services-and-edge-routing.md](../../DEVELOPMENT_PLAN/phase-3-ha-platform-services-and-edge-routing.md)
+**Referenced by**: [../development/local_dev.md](../development/local_dev.md), [../architecture/daemon_topology.md](../architecture/daemon_topology.md), [../../DEVELOPMENT_PLAN/phase-3-ha-platform-services-and-edge-routing.md](../../DEVELOPMENT_PLAN/phase-3-ha-platform-services-and-edge-routing.md)
 
 > **Purpose**: Describe the supported Apple host-native operator workflow.
 
@@ -112,21 +112,35 @@ Direct reference path:
 - Kind create or delete uses a host-local scratch kubeconfig under the system temp directory, and
   `cluster up` publishes `./.build/infernix.kubeconfig` afterward
 - supported flows do not mutate `$HOME/.kube/config`
-- the Apple host-native path describes where the Haskell build, control-plane commands, cluster
-  daemon orchestration, and host inference executor run; `cluster up` adds `infernix-demo` when
-  `demo_ui` is enabled and always deploys the cluster `infernix-service` Deployment
-- on `apple-silicon`, the clustered demo and cluster service workloads run from the
+- the Apple host-native path describes where the Haskell build, control-plane commands,
+  cluster-side coordinator orchestration, and on-host engine executor run. The three-role
+  daemon model in [../architecture/daemon_topology.md](../architecture/daemon_topology.md) maps
+  to Apple as: cluster-side `infernix-coordinator` Deployment (the supported name for the
+  in-cluster daemon, replacing today's `infernix-service` after Sprint 7.7); on-host engine
+  daemon (today's `HostDaemon` role). `cluster up` adds `infernix-demo` when `demo_ui` is
+  enabled and always deploys the cluster `infernix-coordinator` Deployment
+- on `apple-silicon`, the clustered demo and coordinator workloads run from the
   `infernix-linux-cpu:local` image family while reading the staged `apple-silicon` substrate file;
-  cluster daemons own request fan-in and batch handoff, not Apple-native inference execution, and
-  the host-native `infernix` binary builds and publishes that image family to Harbor after Harbor
-  is responsive
+  the coordinator role owns request fan-in and batch handoff, not Apple-native inference
+  execution, and the host-native `infernix` binary builds and publishes that image family to
+  Harbor after Harbor is responsive
 - `/api/publication` keeps the routed demo API on `apiUpstream.mode: cluster-demo`, reports
   `daemonLocation: cluster-pod`, reports `inferenceExecutorLocation: control-plane-host`, and
   publishes `inferenceDispatchMode: pulsar-bridge-to-host-daemon` so the routed demo surface can
-  advertise the cluster-daemon plus host-executor split explicitly
-- the direct `infernix service` host run consumes the generated host daemon metadata and host batch
-  topic, auto-discovers the routed Pulsar edge from published cluster state when needed, and forks
-  Python adapters from `python/adapters/` only when the bound engine is Python-native
+  advertise the coordinator-plus-host-engine split explicitly
+- the direct `infernix service` host run carries the engine daemon role: it consumes the
+  generated engine-role metadata and batch topic, auto-discovers the routed Pulsar edge from
+  published cluster state when needed, and forks Python adapters from `python/adapters/` only
+  when the bound engine is Python-native. The engine role enforces the supported uniform
+  one-per-node policy via an exclusive `flock(2)` on `./.data/runtime/engine.lock`; a second
+  `infernix service` invocation on the same host exits non-zero with a diagnostic naming the
+  PID currently holding the lock
+- model weights for the host engine come from the `infernix-models` MinIO bucket via the
+  same lazy bootstrap workflow the in-cluster Linux engine pods use. The host daemon caches
+  weights under `./.data/runtime/model-cache/<modelId>/`; this cache is host-local ephemeral
+  state on the operator's machine (not a Kubernetes PVC, not durable cluster state) and is
+  purgeable. First-use of a model triggers the cluster-side coordinator's bootstrap
+  subscription; subsequent uses are local-cache hits
 - the Apple host bootstrap uses Homebrew-managed Colima, Docker CLI, `kind`, `kubectl`, `helm`,
   Node.js, and related operator tools rather than a broader manual prerequisite list
 - the Apple host bootstrap reconciles Colima to at least `8 CPU / 16 GiB` before Docker-backed
@@ -155,4 +169,5 @@ Direct reference path:
 
 - [cluster_bootstrap_runbook.md](cluster_bootstrap_runbook.md)
 - [../architecture/runtime_modes.md](../architecture/runtime_modes.md)
+- [../architecture/daemon_topology.md](../architecture/daemon_topology.md)
 - [../reference/cli_reference.md](../reference/cli_reference.md)

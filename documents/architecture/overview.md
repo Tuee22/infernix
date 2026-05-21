@@ -25,7 +25,9 @@ PureScript demo UI, and one governed documentation suite.
   coordination — are defined in [durable_context_design.md](durable_context_design.md). The
   demo's concrete bindings (Keycloak as the IdP, `infernix/demo` topic namespace,
   `infernix-demo-objects` bucket, `/auth` / `/ws` / `/api/objects` routes, SPA views) are
-  defined in [demo_app_design.md](demo_app_design.md). Both are built out through
+  defined in [demo_app_design.md](demo_app_design.md). The supported per-pod placement —
+  stateless frontend and coordinator Deployments plus a one-per-node engine Deployment — is
+  codified in [daemon_topology.md](daemon_topology.md). All three are built out through
   [../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md](../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md)
 - Python is restricted to the shared adapter project under `python/`; the canonical quality gate
   is `poetry run check-code`, and all custom platform logic is Haskell
@@ -67,5 +69,6 @@ major roots:
 - [web_ui_architecture.md](web_ui_architecture.md)
 - [durable_context_design.md](durable_context_design.md)
 - [demo_app_design.md](demo_app_design.md)
+- [daemon_topology.md](daemon_topology.md)
 - [../engineering/storage_and_state.md](../engineering/storage_and_state.md)
 - [../tools/postgresql.md](../tools/postgresql.md)

@@ -176,3 +176,5 @@ relationship to the existing entrypoints.
 - [demo_app_test_plan.md](demo_app_test_plan.md)
 - [chaos_testing.md](chaos_testing.md)
 - [../architecture/demo_app_design.md](../architecture/demo_app_design.md)
+- [../architecture/durable_context_design.md](../architecture/durable_context_design.md)
+- [../architecture/daemon_topology.md](../architecture/daemon_topology.md)

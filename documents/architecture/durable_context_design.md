@@ -1,7 +1,7 @@
 # Durable Context Design
 
 **Status**: Authoritative source
-**Referenced by**: [demo_app_design.md](demo_app_design.md), [overview.md](overview.md), [web_ui_architecture.md](web_ui_architecture.md), [../engineering/implementation_boundaries.md](../engineering/implementation_boundaries.md), [../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md](../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md)
+**Referenced by**: [demo_app_design.md](demo_app_design.md), [overview.md](overview.md), [web_ui_architecture.md](web_ui_architecture.md), [daemon_topology.md](daemon_topology.md), [../engineering/implementation_boundaries.md](../engineering/implementation_boundaries.md), [../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md](../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md)
 
 > **Purpose**: Define the product-agnostic durable-context primitives —
 > event-sourced state, deterministic reducer plus prefix-hash chain,
@@ -104,6 +104,22 @@ Adding a second similar app follows the same pattern: a new
 `Infernix.<AppName>.*` namespace reuses every shared module verbatim and
 the new app writes only its renderer plus the WS envelope variants it
 needs. The reusable surface is roughly 80% of the new code by line count.
+
+### Daemon Layout
+
+The three module groups above map onto three daemon roles at deploy
+time: the frontend loads in the per-app pod (`<appWorkload>`); the
+shared library minus engine-specific paths loads in the stateless
+**coordinator** Deployment (which additionally runs the model-bootstrap
+worker that lazily populates the `infernix-models` MinIO bucket from
+upstream); the engine-side surface plus `Infernix.Runtime.*` loads in
+the **engine** Deployment, which is constrained to one pod per node
+on every substrate. **No daemon has a PVC** — the only durable state
+is in MinIO (binary blobs) and Pulsar (event streams). The engine
+pod uses an ephemeral `emptyDir` mount with hard `sizeLimit` for
+model-weight staging only. The supported per-pod placement, replica
+policy, one-per-node engine rule, and no-PVC posture are codified in
+[daemon_topology.md](daemon_topology.md).
 
 ## Stateless Transport Coordination
 
@@ -311,6 +327,10 @@ mode.
 
 ## Failure Semantics
 
+Per-role failure modes (frontend, coordinator, engine) are documented
+in [daemon_topology.md § Failure Semantics per Role](daemon_topology.md#failure-semantics-per-role).
+This section names the platform-level recovery primitives.
+
 No application pod holds authoritative state. Recovery relies on three
 primitives:
 
@@ -381,6 +401,7 @@ resolution.
 
 - [demo_app_design.md](demo_app_design.md) — first concrete binding (the
   `infernix-demo` workload)
+- [daemon_topology.md](daemon_topology.md) — three-role daemon model and per-substrate placement
 - [overview.md](overview.md) — platform topology
 - [web_ui_architecture.md](web_ui_architecture.md) — PureScript topology
   for SPA-style bindings

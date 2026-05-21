@@ -122,7 +122,10 @@ The supported local platform is built around:
 
 - one Kind cluster used as the HA testing and demo ground for Harbor, MinIO, Pulsar, the Envoy
   Gateway controller, Prometheus, Grafana, per-service operator-managed PostgreSQL clusters, the
-  production `infernix-service` workload, and the optional `infernix-demo` workload
+  production `infernix-engine` workload (stateful, one-per-node), and (when the demo UI is
+  enabled) the stateless `infernix-coordinator` Deployment plus the optional `infernix-demo`
+  workload per the supported three-role daemon model in
+  [documents/architecture/daemon_topology.md](documents/architecture/daemon_topology.md)
 - one Envoy-Gateway-API-owned localhost listener (`Gateway/infernix-edge`, port chosen by
   `cluster up` starting at `9090`) backed by the repo-owned `EnvoyProxy/infernix-edge` service
   shape; the route inventory stays registry-driven, the demo routes are absent when the demo
@@ -154,18 +157,37 @@ The supported local platform is built around:
 <!-- infernix:route-registry:readme:end -->
 
 The optional demo UI runs in the cluster as the `infernix-demo` workload when the active `.dhall`
-`demo_ui` flag is on. On Apple, `./.build/infernix` still builds and drives the control plane
-from the host, `cluster up` keeps Harbor, MinIO, Pulsar, PostgreSQL, Envoy Gateway,
-`infernix-demo`, and cluster `infernix-service` daemons in Kind, and routed manual inference
-enters the cluster daemon before Apple-native batches move through Pulsar to the host-side
-`./.build/infernix service` executor. On Linux, the same routed demo surface bridges through
-Pulsar into the cluster-resident `infernix-service` workload, which also runs inference.
-`/api/publication` now keeps `apiUpstream.mode: cluster-demo` for the stable browser base URL,
-reports `daemonLocation: cluster-pod` for every substrate, adds `inferenceExecutorLocation`, and
-keeps `inferenceDispatchMode` so Apple can advertise `pulsar-bridge-to-host-daemon` while Linux
-advertises `pulsar-bridge-to-cluster-daemon`. Production deployments leave the demo flag off and
-accept inference work via Pulsar subscription only. The local Kind and HA substrate is the
-validation and operator baseline for Apple, CPU, and CUDA runtime targets.
+`demo_ui` flag is on. The supported deployment shape splits inference work across three daemon
+roles (see [documents/architecture/daemon_topology.md](documents/architecture/daemon_topology.md)):
+the stateless frontend Deployment (`infernix-demo`), the stateless coordinator Deployment
+(`infernix-coordinator`, owning Pulsar dispatch, batching, result writeback, and the lazy
+model-weight bootstrap workflow), and the stateful engine role (`infernix-engine` Deployment on
+Linux substrates with strict one-per-node anti-affinity; the on-host `./.build/infernix service`
+daemon on Apple silicon, with the same one-per-node rule enforced via an exclusive `flock(2)`).
+The frontend and coordinator Deployments scale horizontally with replicas ≥ 2 under HA defaults;
+the engine role runs at most one pod per node because multiple engines per node would duplicate
+KV cache and model-weight memory with no performance gain. On a Linux node with multiple NVIDIA
+devices, the single engine pod owns all local devices and the active `.dhall` decides per-device
+model assignment. **No daemon has a PVC** — durable state lives only in MinIO and Pulsar. Model
+weights are pulled from the `infernix-models` MinIO bucket on first use (lazy bootstrap via a
+Pulsar Failover subscription owned by the coordinator with exactly-once semantics) and staged
+into the engine pod's ephemeral `emptyDir` model cache with a hard `sizeLimit`; pod restart
+wipes the cache and the next request repopulates from MinIO. User uploads and engine-generated
+artifacts (images, audio, video) live in the demo-gated `infernix-demo-objects` bucket; the
+browser reads and writes them through presigned URLs minted at `/api/objects`. On Apple, `./.build/infernix` still builds and drives the control plane from the
+host, `cluster up` keeps Harbor, MinIO, Pulsar, PostgreSQL, Envoy Gateway, `infernix-demo`, and
+`infernix-coordinator` (today's in-cluster Apple `infernix-service` daemon, renamed under
+Phase 7 Sprint 7.7) in Kind, and routed manual inference enters the coordinator before
+Apple-native batches move through Pulsar to the host-side `./.build/infernix service` engine
+executor. On Linux, the same routed demo surface bridges through Pulsar into the coordinator
+Deployment, which hands batches off to the engine Deployment. `/api/publication` now keeps
+`apiUpstream.mode: cluster-demo` for the stable browser base URL, reports
+`daemonLocation: cluster-pod` for every substrate, adds `inferenceExecutorLocation`, and keeps
+`inferenceDispatchMode` so Apple can advertise `pulsar-bridge-to-host-daemon` while Linux
+advertises `pulsar-bridge-to-cluster-daemon`. Production deployments leave the demo flag off,
+accept inference work via Pulsar subscription only, and run only the engine Deployment. The
+local Kind and HA substrate is the validation and operator baseline for Apple, CPU, and CUDA
+runtime targets.
 
 ## Getting Started
 
@@ -517,7 +539,7 @@ export INFERNIX_COMPOSE_SUBSTRATE=linux-gpu
 export INFERNIX_COMPOSE_BASE_IMAGE=nvidia/cuda:13.2.1-cudnn-runtime-ubuntu24.04
 docker compose run --rm infernix infernix cluster up
 docker compose run --rm infernix infernix cluster status
-docker compose run --rm infernix infernix kubectl -n platform exec deployment/infernix-service -- nvidia-smi -L
+docker compose run --rm infernix infernix kubectl -n platform exec deployment/infernix-engine -- nvidia-smi -L
 docker compose run --rm infernix infernix test all
 docker compose run --rm infernix infernix cluster down
 ```
@@ -653,11 +675,14 @@ rebuildable.
   the comprehensive model, format, and engine matrix
 - each daemon reads the staged substrate file at startup; hot reload, admin HTTP, and route or
   device remapping are outside the supported service contract
-- the production inference surface is Pulsar subscription only: cluster `infernix service` daemons
-  consume protobuf requests from configured request topics on every substrate; Linux daemons
-  dispatch through the Haskell worker and publish results directly, while Apple cluster daemons
-  forward batches to the configured host batch topic for same-binary host executors; no HTTP
-  listener is bound
+- the production inference surface is Pulsar subscription only and runs only the engine role
+  (`infernix-engine` Deployment on Linux substrates; on-host `infernix service` daemon on Apple
+  silicon); when the demo UI is enabled, the stateless coordinator role
+  (`infernix-coordinator` Deployment) joins the cluster to own per-context dispatch, batching,
+  and result writeback. On every substrate the coordinator consumes protobuf requests from the
+  configured request topics and forwards batches to `inference.batch.<mode>`; the engine role
+  consumes those batches, executes inference, and publishes results to
+  `inference.result.<mode>`; no HTTP listener is bound on either role
 - local cache state is never authoritative; it is reconstructed from durable metadata and durable
   artifacts
 
@@ -719,9 +744,14 @@ contracts.
   holds no durable state, so signing in on any device fully reconstitutes the user's
   contexts, drafts, transcripts, and artifacts; business logic — reducer, dispatcher, prefix-
   hash, idempotency — lives only in Haskell and surfaces to the SPA as typed snapshots and
-  patches via `purescript-bridge`. The canonical design lives in
-  [documents/architecture/demo_app_design.md](documents/architecture/demo_app_design.md) and
-  the execution-ordered build out lives in
+  patches via `purescript-bridge`. The product-agnostic primitives live in
+  [documents/architecture/durable_context_design.md](documents/architecture/durable_context_design.md);
+  the demo-specific bindings live in
+  [documents/architecture/demo_app_design.md](documents/architecture/demo_app_design.md);
+  the supported three-role daemon model (stateless frontend, stateless coordinator,
+  one-per-node stateful engine) lives in
+  [documents/architecture/daemon_topology.md](documents/architecture/daemon_topology.md);
+  and the execution-ordered build out lives in
   [DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md](DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md)
 
 ## Comprehensive Model / Format / Engine Matrix

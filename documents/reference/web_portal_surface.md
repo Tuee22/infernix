@@ -1,7 +1,7 @@
 # Web Portal Surface
 
 **Status**: Authoritative source
-**Referenced by**: [api_surface.md](api_surface.md), [../../DEVELOPMENT_PLAN/phase-3-ha-platform-services-and-edge-routing.md](../../DEVELOPMENT_PLAN/phase-3-ha-platform-services-and-edge-routing.md)
+**Referenced by**: [api_surface.md](api_surface.md), [../architecture/daemon_topology.md](../architecture/daemon_topology.md), [../../DEVELOPMENT_PLAN/phase-3-ha-platform-services-and-edge-routing.md](../../DEVELOPMENT_PLAN/phase-3-ha-platform-services-and-edge-routing.md)
 
 > **Purpose**: Describe the browser-visible routes and PureScript demo SPA behavior exposed
 > through the published routed surface.
@@ -61,7 +61,10 @@ registry output above. They are demo-gated and absent when the active substrate'
 
 The demo `Service` sets `sessionAffinity: None` and the HTTPRoute does not enable client-IP or
 cookie affinity. WS pods use Pulsar `Reader` subscriptions for per-WS fan-out, so any replica
-can host any session.
+can host any session. The routed browser surface terminates at the frontend pod
+(`infernix-demo`); the coordinator and engine pods named in
+[../architecture/daemon_topology.md](../architecture/daemon_topology.md) are not directly
+addressable from the browser.
 
 See [../architecture/demo_app_design.md](../architecture/demo_app_design.md) for the full
 contract.
@@ -96,14 +99,16 @@ contract.
 - supported manual-inference dispatch closes through the durable-context Chat surface introduced
   by Phase 7: the browser opens a WebSocket against `/ws`, sends typed
   `WsClientMessage` actions, and receives `ConversationState` snapshots plus
-  `ConversationStatePatch` deltas. On Apple the cluster `infernix-demo` dispatcher publishes
-  Pulsar batches that host-native daemons consume; on Linux the cluster daemon owns request
-  consumption, inference, and result publication directly.
+  `ConversationStatePatch` deltas. The coordinator daemon
+  (`infernix-coordinator`) publishes Pulsar batches; the engine role (`infernix-engine` on
+  Linux, on-host daemon on Apple) executes inference and publishes results, which the
+  coordinator then writes back to the originating conversation topic.
 - manual inference requests execute through the same Haskell worker dispatch used by the
   production daemon, including shared Python adapters under `python/adapters/` when the bound
   engine is Python-native
-- large outputs surface as object-reference results with browser-visible links that resolve
-  through `GET /objects/:objectRef`
+- large outputs surface as typed `ObjectRef` results that point into the `infernix-demo-objects`
+  MinIO bucket; the browser fetches them via presigned GET URLs minted at `/api/objects`
+  (the legacy `GET /objects/:objectRef` route is retired in Phase 7 Sprint 7.7)
 - switching runtime modes changes the generated catalog and selected engine bindings without
   changing the browser route structure
 
@@ -113,5 +118,6 @@ contract.
 - [../engineering/edge_routing.md](../engineering/edge_routing.md)
 - [../architecture/web_ui_architecture.md](../architecture/web_ui_architecture.md)
 - [../architecture/demo_app_design.md](../architecture/demo_app_design.md)
+- [../architecture/daemon_topology.md](../architecture/daemon_topology.md)
 - [../tools/keycloak.md](../tools/keycloak.md)
 - [../tools/minio.md](../tools/minio.md)

@@ -1,7 +1,7 @@
 # Runtime Modes
 
 **Status**: Authoritative source
-**Referenced by**: [overview.md](overview.md), [../../DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md](../../DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md)
+**Referenced by**: [overview.md](overview.md), [daemon_topology.md](daemon_topology.md), [../../DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md](../../DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md)
 
 > **Purpose**: Describe the supported control-plane execution contexts, service placement options,
 > and the three product runtime modes.
@@ -58,24 +58,33 @@ The generated demo catalog is the source of truth for the active runtime mode.
 
 ## Service Placement
 
-Service placement is a separate concept from runtime mode.
+Service placement is a separate concept from runtime mode. The supported
+target shape is the three-role daemon model codified in
+[daemon_topology.md](daemon_topology.md):
 
 - Apple host-native execution context means the supported `cluster up`, `cluster status`, and
   validation commands run through `./.build/infernix` on the host; it does not mean the supported
-  clustered service daemon stays host-resident after reconcile
-- `cluster up` deploys `infernix-demo` whenever `demo_ui` is enabled, deploys
-  `infernix-service` on `apple-silicon`, `linux-cpu`, and `linux-gpu`; Apple differs by using the
-  host daemon as the inference executor rather than by omitting the cluster daemon
+  clustered service daemons stay host-resident after reconcile
+- `cluster up` deploys the **frontend** Deployment (`infernix-demo`)
+  and the **coordinator** Deployment (`infernix-coordinator`) whenever
+  `demo_ui` is enabled, on every supported substrate. The **engine**
+  role runs as an in-cluster `infernix-engine` Deployment on Linux
+  substrates with a strict one-per-node anti-affinity rule, and as
+  the existing on-host daemon on Apple silicon. Today's repo ships a
+  single fused `infernix-service` Deployment on Linux substrates;
+  Sprint 7.7 of Phase 7 splits that pod into the two role-specific
+  Deployments without changing the Apple lane's behavior.
 - on `apple-silicon`, the clustered `infernix-demo` path still runs from the
   `infernix-linux-cpu:local` image family while reading the staged `apple-silicon` substrate file
-- the direct `infernix service` command remains the Apple host inference executor entrypoint and
-  consumes the generated host daemon metadata, host batch topic, result topic, and engine bindings
+- the direct `infernix service` command remains the Apple host engine-role entrypoint and
+  consumes the generated engine-role metadata, batch topic, result topic, and engine bindings
   from the active `.dhall`
 - `/api/publication` keeps `apiUpstream.mode: cluster-demo` for the stable routed browser host,
-  reports `daemonLocation: cluster-pod` on every substrate, reports
-  `inferenceExecutorLocation: control-plane-host` on Apple, and distinguishes the daemon lane with
-  `inferenceDispatchMode: pulsar-bridge-to-host-daemon` on Apple versus
-  `pulsar-bridge-to-cluster-daemon` on Linux
+  reports `daemonLocation: cluster-pod` for the in-cluster coordinator daemon on every substrate,
+  reports `inferenceExecutorLocation: control-plane-host` on Apple, and distinguishes the
+  inference lane with `inferenceDispatchMode: pulsar-bridge-to-host-daemon` on Apple versus
+  `pulsar-bridge-to-cluster-daemon` on Linux (the latter terminates at the in-cluster engine
+  Deployment after the Sprint 7.7 split)
 - when Pulsar endpoint env vars are present, the daemon uses the real Pulsar WebSocket or admin
   transport for those topic fields; on Apple host-native runs, the daemon also auto-discovers the
   routed Pulsar edge from the published cluster state when the env vars are absent and the cluster
@@ -90,5 +99,6 @@ Service placement is a separate concept from runtime mode.
 
 - [overview.md](overview.md)
 - [web_ui_architecture.md](web_ui_architecture.md)
+- [daemon_topology.md](daemon_topology.md)
 - [model_catalog.md](model_catalog.md)
 - [../operations/apple_silicon_runbook.md](../operations/apple_silicon_runbook.md)

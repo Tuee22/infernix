@@ -1,7 +1,7 @@
 # Cluster Bootstrap Runbook
 
 **Status**: Authoritative source
-**Referenced by**: [apple_silicon_runbook.md](apple_silicon_runbook.md), [../../DEVELOPMENT_PLAN/phase-2-kind-cluster-storage-and-lifecycle.md](../../DEVELOPMENT_PLAN/phase-2-kind-cluster-storage-and-lifecycle.md)
+**Referenced by**: [apple_silicon_runbook.md](apple_silicon_runbook.md), [../architecture/daemon_topology.md](../architecture/daemon_topology.md), [../../DEVELOPMENT_PLAN/phase-2-kind-cluster-storage-and-lifecycle.md](../../DEVELOPMENT_PLAN/phase-2-kind-cluster-storage-and-lifecycle.md)
 
 > **Purpose**: Describe the supported cluster lifecycle and durable-state expectations.
 
@@ -52,7 +52,8 @@
   `docker run --gpus all` preflight contract before cluster creation
 - for `linux-gpu`, also confirm the host filesystem has substantial free space before `cluster up`
   or `test all`; low disk headroom can make Kind-hosted BookKeeper ledger directories
-  non-writable during the Harbor-backed rollout and prevent `infernix-service` readiness
+  non-writable during the Harbor-backed rollout and prevent `infernix-coordinator` and
+  `infernix-engine` readiness
 - confirm that the chosen edge port, active runtime mode, generated demo-config paths, and
   build-root publication details are printed
 - when `cluster up` appears quiet, run `infernix cluster status` before abandoning it
@@ -88,12 +89,27 @@
   launcher
 - confirm that `cluster up` preloads Harbor-backed final image refs onto the Kind worker before the
   remaining non-Harbor workloads begin their final rollout
-- confirm that `infernix kubectl get pods -n platform` shows the Envoy Gateway data plane,
-  `infernix-service`, the Harbor application-plane workloads, the MinIO statefulset, the Pulsar
-  statefulsets, and the PostgreSQL operator-managed members
-- on `apple-silicon`, confirm `infernix-service` is present in Kind and that
-  `/api/publication` reports `daemonLocation: cluster-pod`,
-  `inferenceExecutorLocation: control-plane-host`, and the Apple host batch topic
+- confirm that `infernix kubectl get pods -n platform` shows the Envoy Gateway data plane, the
+  `infernix-coordinator` and `infernix-engine` Deployments (per the three-role daemon model in
+  [../architecture/daemon_topology.md](../architecture/daemon_topology.md)), the Harbor
+  application-plane workloads, the MinIO statefulset, the Pulsar statefulsets, and the
+  PostgreSQL operator-managed members
+- confirm `infernix kubectl get deployments -n platform` returns `infernix-coordinator` and
+  `infernix-engine` (and `infernix-demo` when `demo_ui = true`); under `demo_ui = false` only
+  `infernix-engine` is present
+- confirm `infernix kubectl get pvc -A` returns no daemon PVCs — the `infernix-coordinator`,
+  `infernix-engine`, and `infernix-demo` Deployments are PVC-free in the supported target
+  shape (Sprint 7.7 onward). PVCs are still present for Harbor, MinIO, Pulsar, and the
+  operator-managed PostgreSQL clusters
+- confirm `infernix kubectl get buckets` (or equivalent MinIO admin check) shows
+  `infernix-models` always-on; when `demo_ui = true`, also shows `infernix-demo-objects`.
+  Lazy first-use bootstrap means `infernix-models` may be empty immediately after `cluster
+  up`; the first inference request for a given model triggers the coordinator's bootstrap
+  workflow and the model's files plus `.ready` sentinel appear under `infernix-models/<modelId>/`
+  shortly afterward (latency bounded by upstream download speed)
+- on `apple-silicon`, confirm `infernix-coordinator` is present in Kind, the on-host engine
+  daemon is running, and `/api/publication` reports `daemonLocation: cluster-pod`,
+  `inferenceExecutorLocation: control-plane-host`, and the Apple batch topic
 - confirm that `infernix kubectl get gatewayclass infernix-gateway` reports `Accepted=True`,
   `infernix kubectl -n platform get gateway infernix-edge` reports `Accepted=True` and
   `Programmed=True`, and `infernix kubectl -n platform get envoyproxy infernix-edge` is present
@@ -187,3 +203,4 @@ See [../architecture/demo_app_design.md](../architecture/demo_app_design.md) and
 - [../reference/cli_surface.md](../reference/cli_surface.md)
 - [../tools/keycloak.md](../tools/keycloak.md)
 - [../architecture/demo_app_design.md](../architecture/demo_app_design.md)
+- [../architecture/daemon_topology.md](../architecture/daemon_topology.md)

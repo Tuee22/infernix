@@ -27,6 +27,10 @@
   bindings on top of `durable_context_design.md`: Keycloak as the IdP, the concrete
   `infernix/demo` topic namespace and `infernix-demo-objects` bucket, the `/auth` / `/ws` /
   `/api/objects` routes, the SPA view contract, and the `demo_ui` gating
+- [architecture/daemon_topology.md](architecture/daemon_topology.md) defines the supported
+  three-role daemon model — stateless frontend, stateless coordinator, one-per-node stateful
+  engine — including HA replica policy, per-substrate placement, library footprint per role,
+  and failure semantics
 - [development/local_dev.md](development/local_dev.md) describes the supported local workflows
 - [development/assistant_workflow.md](development/assistant_workflow.md) defines the canonical
   repository-level workflow rules for automated agents and LLM coding assistants

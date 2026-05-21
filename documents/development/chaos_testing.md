@@ -1,7 +1,7 @@
 # Chaos Testing
 
 **Status**: Authoritative source
-**Referenced by**: [testing_strategy.md](testing_strategy.md), [../../DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md](../../DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md)
+**Referenced by**: [testing_strategy.md](testing_strategy.md), [../architecture/daemon_topology.md](../architecture/daemon_topology.md), [../../DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md](../../DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md)
 
 > **Purpose**: Record the supported HA-failure coverage for Harbor, MinIO, operator-managed
 > PostgreSQL, and Pulsar.
@@ -29,28 +29,54 @@
 
 ## Durable-Context Demo Chaos Cases (Planned, Phase 7)
 
-When the durable-context demo lands, the supported integration suite gains three additional
-chaos cases that exercise the failure semantics described in
-[../architecture/demo_app_design.md](../architecture/demo_app_design.md). Each case asserts
-exactly-once outcome and full state preservation through Pulsar Failover redelivery, Pulsar
-producer-side deduplication, and projection-layer idempotency:
+When the durable-context demo lands, the supported integration suite gains chaos cases that
+exercise the failure semantics described in
+[../architecture/daemon_topology.md § Failure Semantics per Role](../architecture/daemon_topology.md#failure-semantics-per-role)
+and [../architecture/durable_context_design.md](../architecture/durable_context_design.md).
+Each case asserts exactly-once outcome and full state preservation through Pulsar Failover
+redelivery, Pulsar producer-side deduplication, and projection-layer idempotency:
 
-- **WS-hosting demo pod kill mid-session.** Open a WS, exchange a few messages, kill the pod
-  holding the WS, assert the client transparently reconnects to a surviving replica and
-  resumes state from Pulsar with no losses.
-- **Dispatcher pod kill mid-prompt.** Submit a prompt, kill the active dispatcher pod between
-  the `UserPrompt` publish and the inference-request publish, assert Pulsar Failover promotes
-  a surviving pod, the new dispatcher reaches the same decision via the pure-fold rule, and
-  Pulsar producer dedup on `inference.request.<mode>` (keyed by `userPromptMessageId`)
-  prevents a duplicate dispatch.
-- **Cluster daemon kill mid-inference.** Submit a prompt, kill the cluster daemon pod
-  mid-inference, assert Pulsar redelivers the unacked inference request to a surviving pod,
-  that engine rebuilds the KV cache from the conversation log via the shared reducer + hash
-  modules, and Pulsar producer dedup on `inference.result.<mode>` (keyed by
+- **Frontend (WS-hosting) pod kill mid-session.** Open a WS, exchange a few messages, kill the
+  `infernix-demo` pod holding the WS, assert the client transparently reconnects to a surviving
+  replica and resumes state from Pulsar with no losses.
+- **Coordinator pod kill mid-dispatch.** Submit a prompt, kill the active
+  `infernix-coordinator` replica between the `UserPrompt` publish and the inference-request
+  publish, assert Pulsar Failover promotes a surviving replica, the new dispatcher reaches
+  the same decision via the pure-fold rule, and Pulsar producer dedup on
+  `inference.request.<mode>` (keyed by `userPromptMessageId`) prevents a duplicate dispatch.
+- **Coordinator pod kill mid-result-bridge.** Submit a prompt that returns a result, kill the
+  active `infernix-coordinator` replica between the inference-result arrival and the conversation
+  topic writeback, assert Pulsar Failover promotes a surviving replica that writes the result
+  exactly once via producer dedup on the conversation topic (keyed by
+  `(userPromptMessageId, kind = InferenceResult)`).
+- **Engine pod kill mid-inference.** Submit a prompt, kill the active `infernix-engine` pod
+  mid-inference, assert Pulsar redelivers the unacked batch message to a surviving engine pod
+  on another node, that engine rebuilds the KV cache from the conversation log via the shared
+  reducer + hash modules, and Pulsar producer dedup on `inference.result.<mode>` (keyed by
   `userPromptMessageId`) prevents a duplicate result.
+- **Engine node drain.** Drain a node hosting an engine pod, assert the engine PDB blocks the
+  drain until at least one other engine pod is available cluster-wide, and the cluster keeps
+  serving inference throughout.
+- **Coordinator pod kill mid-bootstrap upload.** Submit an inference request for a model
+  that is not yet present in `infernix-models`, kill the active `infernix-coordinator`
+  replica after some weight files have PUT to `infernix-models/<modelId>/` but before the
+  `.ready` sentinel; assert a surviving coordinator replica resumes (producer dedup on
+  `infernix/system/model.bootstrap.request` prevents a duplicate upstream download), the
+  `.ready` sentinel appears exactly once, and waiting engine pods observe the ready event
+  and proceed.
+- **Concurrent model-bootstrap requests.** N engine pods request the same uncached model
+  simultaneously; assert producer dedup + Pulsar Failover guarantees exactly one upstream
+  download, the `.ready` sentinel appears exactly once, and all N engine pods observe it
+  and proceed.
+- **One-engine-per-node enforcement.** On Linux,
+  `kubectl scale deployment/infernix-engine --replicas=N+1` (where N = engine-capable nodes)
+  leaves one replica `Pending` with the anti-affinity rejection message; on Apple,
+  launching a second `infernix service` on the same host while one is already running exits
+  non-zero with the `engine.lock held by PID …` diagnostic.
 
-These cases land in Sprint 7.13 alongside the existing Harbor / MinIO / Patroni / Pulsar HA
-coverage. See [demo_app_test_plan.md](demo_app_test_plan.md) for the full validation contract.
+These cases land in Sprint 7.14 (post-renumber) alongside the existing Harbor / MinIO /
+Patroni / Pulsar HA coverage. See [demo_app_test_plan.md](demo_app_test_plan.md) for the
+full validation contract.
 
 ## Cross-References
 
@@ -61,3 +87,5 @@ coverage. See [demo_app_test_plan.md](demo_app_test_plan.md) for the full valida
 - [../tools/pulsar.md](../tools/pulsar.md)
 - [demo_app_test_plan.md](demo_app_test_plan.md)
 - [../architecture/demo_app_design.md](../architecture/demo_app_design.md)
+- [../architecture/durable_context_design.md](../architecture/durable_context_design.md)
+- [../architecture/daemon_topology.md](../architecture/daemon_topology.md)
