@@ -9,6 +9,9 @@
 # - `/minio/s3` -> `infernix-minio:9000` (always published; `/minio/s3` -> `/`)
 # - `/pulsar/admin` -> `infernix-infernix-pulsar-proxy:80` (always published; `/pulsar/admin` -> `/`)
 # - `/pulsar/ws` -> `infernix-infernix-pulsar-proxy:80` (always published; `/pulsar/ws` -> `/ws`)
+# - `/auth` -> `infernix-keycloak:8080` (demo-only; no rewrite)
+# - `/ws` -> `infernix-demo:80` (demo-only; no rewrite)
+# - `/api/objects` -> `infernix-demo:80` (demo-only; no rewrite)
 {{/* infernix:route-registry:end */}}
 {{- if .Values.repoGateway.enabled }}
 {{- range $route := .Values.routes }}

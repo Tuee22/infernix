@@ -123,7 +123,6 @@ RUN mkdir -p /workspace/tools/generated_proto \
     && poetry --directory python run python -m grpc_tools.protoc \
          -I /workspace/proto \
          --python_out /workspace/tools/generated_proto \
-         /workspace/proto/infernix/api/inference_service.proto \
          /workspace/proto/infernix/manifest/runtime_manifest.proto \
          /workspace/proto/infernix/runtime/inference.proto \
     && cabal build all \

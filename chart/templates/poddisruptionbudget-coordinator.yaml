@@ -1,0 +1,12 @@
+{{- if and .Values.daemonSplit.enabled .Values.coordinator.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: infernix-coordinator
+  namespace: platform
+spec:
+  maxUnavailable: {{ .Values.coordinator.podDisruptionBudget.maxUnavailable }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: infernix-coordinator
+{{- end }}

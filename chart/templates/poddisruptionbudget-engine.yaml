@@ -1,0 +1,12 @@
+{{- if and .Values.daemonSplit.enabled .Values.engine.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: infernix-engine
+  namespace: platform
+spec:
+  maxUnavailable: {{ .Values.engine.podDisruptionBudget.maxUnavailable }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: infernix-engine
+{{- end }}

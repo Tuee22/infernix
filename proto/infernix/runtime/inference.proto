@@ -51,6 +51,20 @@ message InferenceRequest {
   string request_model_id = 2;
   string input_text = 3;
   string runtime_mode = 4;
+  // Phase 7 Sprint 7.8: typed envelope fields for the durable-context
+  // dispatcher. user_id + context_id address the engine's result writeback
+  // and per-user MinIO scoping. user_prompt_message_id is the conversation-
+  // log MessageId that both producer-side dedup (on inference.request.<mode>)
+  // and causal reference (carried through on inference.result.<mode>) use.
+  // conversation_log_offset + prefix_hash let the engine verify KV cache
+  // consistency before reuse; on hash mismatch it rebuilds from the log.
+  string user_id = 5;
+  string context_id = 6;
+  string user_prompt_message_id = 7;
+  string client_idempotency_key = 8;
+  int64 conversation_log_offset = 9;
+  string prefix_hash = 10;
+  string causal_ref = 11;
 }
 
 message WorkerRequest {
@@ -84,9 +98,19 @@ message InferenceResult {
   string matrix_row_id = 3;
   string runtime_mode = 4;
   string selected_engine = 5;
+  // Supported status values: "Completed", "Failed", "Cancelled" (Phase 7
+  // Sprint 7.8 adds Cancelled). Engine emits Cancelled when the bridge
+  // observes a ConversationCancelEvent in the conversation log before the
+  // inference completes.
   string status = 6;
   ResultPayload payload = 7;
   string created_at = 8;
+  // Phase 7 Sprint 7.8: causal reference back to the user prompt message id
+  // that this result resolves. Used by the result-bridge to write a
+  // ConversationInferenceResultEvent back to the per-context conversation
+  // topic; producer-side dedup on the inference.result.<mode> topic is keyed
+  // by this value.
+  string causal_ref = 9;
 }
 
 message ErrorResponse {

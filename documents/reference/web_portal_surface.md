@@ -26,6 +26,9 @@ Demo-only prefixes:
 | `/` | Demo SPA | PureScript demo SPA served by `infernix-demo`. |
 | `/api` | Demo API | Covers `/api/publication`, `/api/cache`, `/api/models`, and `/api/demo-config`. |
 | `/objects` | Demo object store | Serves `GET /objects/:objectRef` for large outputs. |
+| `/auth` | Keycloak SSO | Registry-defined route. |
+| `/ws` | Demo durable-context WebSocket | Registry-defined route. |
+| `/api/objects` | Demo MinIO presigned URL minting | Registry-defined route. |
 
 Always-published operator prefixes:
 

@@ -1,6 +1,8 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module Infernix.Web.Contracts
   ( EngineBinding (..),
@@ -10,11 +12,50 @@ module Infernix.Web.Contracts
     ModelDescriptor (..),
     RequestField (..),
     ResultPayload (..),
+    -- Phase 7 newtypes
+    UserId (..),
+    ContextId (..),
+    MessageId (..),
+    ClientIdempotencyKey (..),
+    -- Phase 7 object references
+    ObjectRef (..),
+    ArtifactKind (..),
+    ArtifactMimeType (..),
+    ArtifactRenderDisposition (..),
+    -- Phase 7 event payloads
+    UserPromptPayload (..),
+    ConversationInferenceResultPayload (..),
+    ConversationCancelPayload (..),
+    ConversationUserUploadPayload (..),
+    -- Phase 7 conversation/state/patch types
+    ConversationEvent (..),
+    ContextMetadataEvent (..),
+    DraftEvent (..),
+    ConversationMessage (..),
+    ConversationState (..),
+    ConversationStatePatch (..),
+    ContextSummary (..),
+    ContextListState (..),
+    ContextListPatch (..),
+    DraftEntry (..),
+    DraftMapState (..),
+    DraftMapPatch (..),
+    -- Phase 7 WebSocket envelopes
+    WsClientMessage (..),
+    WsServerMessage (..),
+    -- Phase 7 artifact grants
+    ArtifactUploadRequest (..),
+    ArtifactUploadGrant (..),
+    ArtifactDownloadGrant (..),
+    -- helpers
     contractSumTypes,
     renderPursContractFooter,
+    taggedSumOptions,
   )
 where
 
+import Data.Aeson (FromJSON, ToJSON, defaultOptions)
+import Data.Aeson qualified as Aeson
 import Data.List (intercalate)
 import Data.Proxy (Proxy (Proxy))
 import Data.Text qualified as Text
@@ -91,6 +132,390 @@ data EngineBinding = EngineBinding
   }
   deriving (Eq, Generic, Show)
 
+-- ----------------------------------------------------------------------------
+-- Phase 7: durable-context demo contracts
+-- ----------------------------------------------------------------------------
+
+-- | Tagged-sum encoding used by every Phase 7 sum type so the wire format
+-- matches PureScript Simple.JSON's tagged-sum-rep convention exactly:
+-- @{ "tag": "ConstructorName", "contents": ... }@.
+taggedSumOptions :: Aeson.Options
+taggedSumOptions =
+  defaultOptions {Aeson.sumEncoding = Aeson.TaggedObject "tag" "contents"}
+
+newtype UserId = UserId {unUserId :: Text.Text}
+  deriving stock (Generic, Show)
+  deriving newtype (Eq, Ord, ToJSON, FromJSON)
+
+newtype ContextId = ContextId {unContextId :: Text.Text}
+  deriving stock (Generic, Show)
+  deriving newtype (Eq, Ord, ToJSON, FromJSON)
+
+newtype MessageId = MessageId {unMessageId :: Text.Text}
+  deriving stock (Generic, Show)
+  deriving newtype (Eq, Ord, ToJSON, FromJSON)
+
+newtype ClientIdempotencyKey = ClientIdempotencyKey {unClientIdempotencyKey :: Text.Text}
+  deriving stock (Generic, Show)
+  deriving newtype (Eq, Ord, ToJSON, FromJSON)
+
+data ObjectRef = ObjectRef
+  { objectBucket :: Text.Text,
+    objectKey :: Text.Text
+  }
+  deriving (Eq, Generic, Show)
+
+instance ToJSON ObjectRef
+
+instance FromJSON ObjectRef
+
+data ArtifactKind
+  = ArtifactKindUpload
+  | ArtifactKindGenerated
+  deriving (Eq, Generic, Show)
+
+instance ToJSON ArtifactKind where
+  toJSON = Aeson.genericToJSON taggedSumOptions
+
+instance FromJSON ArtifactKind where
+  parseJSON = Aeson.genericParseJSON taggedSumOptions
+
+newtype ArtifactMimeType = ArtifactMimeType {unArtifactMimeType :: Text.Text}
+  deriving stock (Generic, Show)
+  deriving newtype (Eq, Ord, ToJSON, FromJSON)
+
+data ArtifactRenderDisposition
+  = RenderInline
+  | DownloadOnly
+  | BoundedTextPreview
+  | BrowserNativePdf
+  deriving (Eq, Generic, Show)
+
+instance ToJSON ArtifactRenderDisposition where
+  toJSON = Aeson.genericToJSON taggedSumOptions
+
+instance FromJSON ArtifactRenderDisposition where
+  parseJSON = Aeson.genericParseJSON taggedSumOptions
+
+data UserPromptPayload = UserPromptPayload
+  { promptText :: Text.Text,
+    promptClientIdempotencyKey :: ClientIdempotencyKey,
+    promptUserUploads :: [ObjectRef]
+  }
+  deriving (Eq, Generic, Show)
+
+instance ToJSON UserPromptPayload
+
+instance FromJSON UserPromptPayload
+
+data ConversationInferenceResultPayload = ConversationInferenceResultPayload
+  { inferenceResultUserPromptMessageId :: MessageId,
+    inferenceResultStatus :: Text.Text,
+    inferenceResultInlineOutput :: Maybe Text.Text,
+    inferenceResultArtifacts :: [ObjectRef]
+  }
+  deriving (Eq, Generic, Show)
+
+instance ToJSON ConversationInferenceResultPayload
+
+instance FromJSON ConversationInferenceResultPayload
+
+newtype ConversationCancelPayload = ConversationCancelPayload
+  { cancelUserPromptMessageId :: MessageId
+  }
+  deriving (Eq, Generic, Show)
+
+instance ToJSON ConversationCancelPayload
+
+instance FromJSON ConversationCancelPayload
+
+data ConversationUserUploadPayload = ConversationUserUploadPayload
+  { uploadObjectRef :: ObjectRef,
+    uploadMimeType :: ArtifactMimeType,
+    uploadDisplayName :: Text.Text
+  }
+  deriving (Eq, Generic, Show)
+
+instance ToJSON ConversationUserUploadPayload
+
+instance FromJSON ConversationUserUploadPayload
+
+data ConversationEvent
+  = ConversationUserPromptEvent UserPromptPayload
+  | ConversationInferenceResultEvent ConversationInferenceResultPayload
+  | ConversationCancelEvent ConversationCancelPayload
+  | ConversationUserUploadEvent ConversationUserUploadPayload
+  deriving (Eq, Generic, Show)
+
+instance ToJSON ConversationEvent where
+  toJSON = Aeson.genericToJSON taggedSumOptions
+
+instance FromJSON ConversationEvent where
+  parseJSON = Aeson.genericParseJSON taggedSumOptions
+
+data ContextMetadataEvent
+  = ContextCreated
+      { contextCreatedContextId :: ContextId,
+        contextCreatedModelId :: Text.Text,
+        contextCreatedTitle :: Text.Text
+      }
+  | ContextRenamed
+      { contextRenamedContextId :: ContextId,
+        contextRenamedTitle :: Text.Text
+      }
+  | ContextSoftDeleted
+      { contextSoftDeletedContextId :: ContextId
+      }
+  deriving (Eq, Generic, Show)
+
+instance ToJSON ContextMetadataEvent where
+  toJSON = Aeson.genericToJSON taggedSumOptions
+
+instance FromJSON ContextMetadataEvent where
+  parseJSON = Aeson.genericParseJSON taggedSumOptions
+
+data DraftEvent
+  = DraftUpdated
+      { draftUpdatedContextId :: ContextId,
+        draftUpdatedText :: Text.Text
+      }
+  | DraftCleared
+      { draftClearedContextId :: ContextId
+      }
+  deriving (Eq, Generic, Show)
+
+instance ToJSON DraftEvent where
+  toJSON = Aeson.genericToJSON taggedSumOptions
+
+instance FromJSON DraftEvent where
+  parseJSON = Aeson.genericParseJSON taggedSumOptions
+
+data ConversationMessage = ConversationMessage
+  { conversationMessageId :: MessageId,
+    conversationMessageEvent :: ConversationEvent
+  }
+  deriving (Eq, Generic, Show)
+
+instance ToJSON ConversationMessage
+
+instance FromJSON ConversationMessage
+
+data ConversationState = ConversationState
+  { conversationStateContextId :: ContextId,
+    conversationStateMessages :: [ConversationMessage],
+    conversationStatePrefixHash :: Text.Text
+  }
+  deriving (Eq, Generic, Show)
+
+instance ToJSON ConversationState
+
+instance FromJSON ConversationState
+
+data ConversationStatePatch
+  = ConversationStateAppendMessage
+      { appendMessage :: ConversationMessage,
+        appendNewPrefixHash :: Text.Text
+      }
+  | ConversationStateReplaceSnapshot
+      { replaceSnapshot :: ConversationState
+      }
+  deriving (Eq, Generic, Show)
+
+instance ToJSON ConversationStatePatch where
+  toJSON = Aeson.genericToJSON taggedSumOptions
+
+instance FromJSON ConversationStatePatch where
+  parseJSON = Aeson.genericParseJSON taggedSumOptions
+
+data ContextSummary = ContextSummary
+  { contextSummaryId :: ContextId,
+    contextSummaryModelId :: Text.Text,
+    contextSummaryTitle :: Text.Text,
+    contextSummarySoftDeleted :: Bool
+  }
+  deriving (Eq, Generic, Show)
+
+instance ToJSON ContextSummary
+
+instance FromJSON ContextSummary
+
+newtype ContextListState = ContextListState
+  { contextListStateContexts :: [ContextSummary]
+  }
+  deriving (Eq, Generic, Show)
+
+instance ToJSON ContextListState
+
+instance FromJSON ContextListState
+
+data ContextListPatch
+  = ContextListUpsert
+      { contextListUpsertSummary :: ContextSummary
+      }
+  | ContextListReplaceSnapshot
+      { contextListReplaceSnapshot :: ContextListState
+      }
+  deriving (Eq, Generic, Show)
+
+instance ToJSON ContextListPatch where
+  toJSON = Aeson.genericToJSON taggedSumOptions
+
+instance FromJSON ContextListPatch where
+  parseJSON = Aeson.genericParseJSON taggedSumOptions
+
+data DraftEntry = DraftEntry
+  { draftEntryContextId :: ContextId,
+    draftEntryText :: Text.Text
+  }
+  deriving (Eq, Generic, Show)
+
+instance ToJSON DraftEntry
+
+instance FromJSON DraftEntry
+
+newtype DraftMapState = DraftMapState
+  { draftMapStateDrafts :: [DraftEntry]
+  }
+  deriving (Eq, Generic, Show)
+
+instance ToJSON DraftMapState
+
+instance FromJSON DraftMapState
+
+data DraftMapPatch
+  = DraftMapUpsert
+      { draftMapUpsertEntry :: DraftEntry
+      }
+  | DraftMapRemove
+      { draftMapRemoveContextId :: ContextId
+      }
+  | DraftMapReplaceSnapshot
+      { draftMapReplaceSnapshot :: DraftMapState
+      }
+  deriving (Eq, Generic, Show)
+
+instance ToJSON DraftMapPatch where
+  toJSON = Aeson.genericToJSON taggedSumOptions
+
+instance FromJSON DraftMapPatch where
+  parseJSON = Aeson.genericParseJSON taggedSumOptions
+
+data WsClientMessage
+  = ClientHello
+      { clientHelloUserId :: UserId
+      }
+  | ClientSubscribeContext
+      { clientSubscribeContextId :: ContextId
+      }
+  | ClientSubmitPrompt
+      { clientSubmitPromptContextId :: ContextId,
+        clientSubmitPromptPayload :: UserPromptPayload
+      }
+  | ClientCancelPrompt
+      { clientCancelPromptContextId :: ContextId,
+        clientCancelPromptUserPromptMessageId :: MessageId
+      }
+  | ClientUpdateDraft
+      { clientUpdateDraftContextId :: ContextId,
+        clientUpdateDraftText :: Text.Text
+      }
+  | ClientCreateContext
+      { clientCreateContextId :: ContextId,
+        clientCreateContextModelId :: Text.Text,
+        clientCreateContextTitle :: Text.Text
+      }
+  | ClientRenameContext
+      { clientRenameContextId :: ContextId,
+        clientRenameContextTitle :: Text.Text
+      }
+  | ClientSoftDeleteContext
+      { clientSoftDeleteContextId :: ContextId
+      }
+  deriving (Eq, Generic, Show)
+
+instance ToJSON WsClientMessage where
+  toJSON = Aeson.genericToJSON taggedSumOptions
+
+instance FromJSON WsClientMessage where
+  parseJSON = Aeson.genericParseJSON taggedSumOptions
+
+data WsServerMessage
+  = ServerConversationSnapshot
+      { serverConversationSnapshot :: ConversationState
+      }
+  | ServerConversationPatch
+      { serverConversationPatchContextId :: ContextId,
+        serverConversationPatch :: ConversationStatePatch
+      }
+  | ServerContextListSnapshot
+      { serverContextListSnapshot :: ContextListState
+      }
+  | ServerContextListPatch
+      { serverContextListPatch :: ContextListPatch
+      }
+  | ServerDraftMapSnapshot
+      { serverDraftMapSnapshot :: DraftMapState
+      }
+  | ServerDraftMapPatch
+      { serverDraftMapPatch :: DraftMapPatch
+      }
+  | ServerArtifactReady
+      { serverArtifactReadyContextId :: ContextId,
+        serverArtifactReadyObjectRef :: ObjectRef,
+        serverArtifactReadyKind :: ArtifactKind
+      }
+  | ServerInferenceProgress
+      { serverInferenceProgressContextId :: ContextId,
+        serverInferenceProgressUserPromptMessageId :: MessageId,
+        serverInferenceProgressFractionDone :: Double
+      }
+  | ServerError
+      { serverErrorErrorCode :: Text.Text,
+        serverErrorMessage :: Text.Text
+      }
+  deriving (Eq, Generic, Show)
+
+instance ToJSON WsServerMessage where
+  toJSON = Aeson.genericToJSON taggedSumOptions
+
+instance FromJSON WsServerMessage where
+  parseJSON = Aeson.genericParseJSON taggedSumOptions
+
+data ArtifactUploadRequest = ArtifactUploadRequest
+  { artifactUploadRequestContextId :: ContextId,
+    artifactUploadRequestMimeType :: ArtifactMimeType,
+    artifactUploadRequestDisplayName :: Text.Text
+  }
+  deriving (Eq, Generic, Show)
+
+instance ToJSON ArtifactUploadRequest
+
+instance FromJSON ArtifactUploadRequest
+
+data ArtifactUploadGrant = ArtifactUploadGrant
+  { artifactUploadGrantObjectRef :: ObjectRef,
+    artifactUploadGrantPresignedUrl :: Text.Text,
+    artifactUploadGrantExpiresAtIso8601 :: Text.Text
+  }
+  deriving (Eq, Generic, Show)
+
+instance ToJSON ArtifactUploadGrant
+
+instance FromJSON ArtifactUploadGrant
+
+data ArtifactDownloadGrant = ArtifactDownloadGrant
+  { artifactDownloadGrantObjectRef :: ObjectRef,
+    artifactDownloadGrantPresignedUrl :: Text.Text,
+    artifactDownloadGrantMimeType :: ArtifactMimeType,
+    artifactDownloadGrantRenderDisposition :: ArtifactRenderDisposition,
+    artifactDownloadGrantExpiresAtIso8601 :: Text.Text
+  }
+  deriving (Eq, Generic, Show)
+
+instance ToJSON ArtifactDownloadGrant
+
+instance FromJSON ArtifactDownloadGrant
+
 contractSumTypes :: [SumType 'Haskell]
 contractSumTypes =
   [ let proxy = Proxy :: Proxy RequestField in equal proxy (mkSumType proxy),
@@ -99,7 +524,42 @@ contractSumTypes =
     let proxy = Proxy :: Proxy ResultPayload in equal proxy (mkSumType proxy),
     let proxy = Proxy :: Proxy InferenceResult in equal proxy (mkSumType proxy),
     let proxy = Proxy :: Proxy ErrorResponse in equal proxy (mkSumType proxy),
-    let proxy = Proxy :: Proxy EngineBinding in equal proxy (mkSumType proxy)
+    let proxy = Proxy :: Proxy EngineBinding in equal proxy (mkSumType proxy),
+    -- Phase 7 newtypes
+    let proxy = Proxy :: Proxy UserId in equal proxy (mkSumType proxy),
+    let proxy = Proxy :: Proxy ContextId in equal proxy (mkSumType proxy),
+    let proxy = Proxy :: Proxy MessageId in equal proxy (mkSumType proxy),
+    let proxy = Proxy :: Proxy ClientIdempotencyKey in equal proxy (mkSumType proxy),
+    let proxy = Proxy :: Proxy ArtifactMimeType in equal proxy (mkSumType proxy),
+    -- Phase 7 object references and artifact descriptors
+    let proxy = Proxy :: Proxy ObjectRef in equal proxy (mkSumType proxy),
+    let proxy = Proxy :: Proxy ArtifactKind in equal proxy (mkSumType proxy),
+    let proxy = Proxy :: Proxy ArtifactRenderDisposition in equal proxy (mkSumType proxy),
+    -- Phase 7 event payload records
+    let proxy = Proxy :: Proxy UserPromptPayload in equal proxy (mkSumType proxy),
+    let proxy = Proxy :: Proxy ConversationInferenceResultPayload in equal proxy (mkSumType proxy),
+    let proxy = Proxy :: Proxy ConversationCancelPayload in equal proxy (mkSumType proxy),
+    let proxy = Proxy :: Proxy ConversationUserUploadPayload in equal proxy (mkSumType proxy),
+    -- Phase 7 conversation / state / patch types
+    let proxy = Proxy :: Proxy ConversationEvent in equal proxy (mkSumType proxy),
+    let proxy = Proxy :: Proxy ContextMetadataEvent in equal proxy (mkSumType proxy),
+    let proxy = Proxy :: Proxy DraftEvent in equal proxy (mkSumType proxy),
+    let proxy = Proxy :: Proxy ConversationMessage in equal proxy (mkSumType proxy),
+    let proxy = Proxy :: Proxy ConversationState in equal proxy (mkSumType proxy),
+    let proxy = Proxy :: Proxy ConversationStatePatch in equal proxy (mkSumType proxy),
+    let proxy = Proxy :: Proxy ContextSummary in equal proxy (mkSumType proxy),
+    let proxy = Proxy :: Proxy ContextListState in equal proxy (mkSumType proxy),
+    let proxy = Proxy :: Proxy ContextListPatch in equal proxy (mkSumType proxy),
+    let proxy = Proxy :: Proxy DraftEntry in equal proxy (mkSumType proxy),
+    let proxy = Proxy :: Proxy DraftMapState in equal proxy (mkSumType proxy),
+    let proxy = Proxy :: Proxy DraftMapPatch in equal proxy (mkSumType proxy),
+    -- Phase 7 WebSocket envelopes
+    let proxy = Proxy :: Proxy WsClientMessage in equal proxy (mkSumType proxy),
+    let proxy = Proxy :: Proxy WsServerMessage in equal proxy (mkSumType proxy),
+    -- Phase 7 artifact grants
+    let proxy = Proxy :: Proxy ArtifactUploadRequest in equal proxy (mkSumType proxy),
+    let proxy = Proxy :: Proxy ArtifactUploadGrant in equal proxy (mkSumType proxy),
+    let proxy = Proxy :: Proxy ArtifactDownloadGrant in equal proxy (mkSumType proxy)
   ]
 
 renderPursContractFooter :: Types.RuntimeMode -> String

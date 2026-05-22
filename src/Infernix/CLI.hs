@@ -515,6 +515,7 @@ normalizeGeneratedPursContracts runtimeMode sourceFile outputFile = do
       | line == "module Infernix.Web.Contracts where" = "module Generated.Contracts where"
       | line == "import Data.Maybe (Maybe, Maybe(..))" = "import Data.Maybe (Maybe)"
       | line == "import Prim (Array, Boolean, String)" = "import Prim (Array, Boolean, Int, String)"
+      | line == "import Prim (Array, Boolean, Number, String)" = "import Prim (Array, Boolean, Int, Number, String)"
       | line == "import Data.Newtype (class Newtype)" =
           unlines
             [ "import Data.Newtype (class Newtype)",

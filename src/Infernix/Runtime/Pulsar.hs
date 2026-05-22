@@ -573,15 +573,20 @@ consumeTopicSession transport paths runtimeMode daemonConfig requestTopicValue =
   where
     handleConsumerEnvelope connection envelope = do
       decodedRequest <- decodeEnvelopePayload "inference request" envelope
+      -- Forward to the host-batch topic whenever the active daemon config
+      -- names one. Sprint 7.7 generalises this from an AppleSilicon-only
+      -- conditional to "every substrate honors the configured handoff
+      -- topic" so the cluster coordinator can hand off to a per-substrate
+      -- engine pool uniformly. When no host-batch topic is configured the
+      -- daemon executes inference inline and publishes the result itself.
       case daemonConfigHostBatchTopic daemonConfig of
-        Just hostBatchTopicValue
-          | runtimeMode == AppleSilicon && daemonConfigRole daemonConfig == ClusterDaemon ->
-              publishTopicPayload
-                transport
-                hostBatchTopicValue
-                (view ProtoInferenceFields.requestId decodedRequest)
-                (encodeMessage decodedRequest)
-        _ -> do
+        Just hostBatchTopicValue ->
+          publishTopicPayload
+            transport
+            hostBatchTopicValue
+            (view ProtoInferenceFields.requestId decodedRequest)
+            (encodeMessage decodedRequest)
+        Nothing -> do
           publishedResult <- publishedResultFromRequest paths runtimeMode decodedRequest
           publishTopicPayload
             transport

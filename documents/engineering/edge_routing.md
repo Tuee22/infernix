@@ -41,6 +41,9 @@ compatibility payload.
 | `/minio/s3` | always published | MinIO S3 API | `infernix-minio:9000` | `/minio/s3` -> `/` |
 | `/pulsar/admin` | always published | Pulsar admin surface | `infernix-infernix-pulsar-proxy:80` | `/pulsar/admin` -> `/` |
 | `/pulsar/ws` | always published | Pulsar websocket surface | `infernix-infernix-pulsar-proxy:80` | `/pulsar/ws` -> `/ws` |
+| `/auth` | demo-only | Keycloak SSO | `infernix-keycloak:8080` | no rewrite |
+| `/ws` | demo-only | Demo durable-context WebSocket | `infernix-demo:80` | no rewrite |
+| `/api/objects` | demo-only | Demo MinIO presigned URL minting | `infernix-demo:80` | no rewrite |
 <!-- infernix:route-registry:edge-routing:end -->
 
 - when the demo surface is enabled, `/` and the demo `/api*` and `/objects/` routes target the

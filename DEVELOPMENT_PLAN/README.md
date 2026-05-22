@@ -185,7 +185,7 @@ now use that id consistently.
 | 4 | Inference Service and Durable Runtime | Done | [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) |
 | 5 | Web UI and Shared Types | Done | [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md) |
 | 6 | Validation, E2E, and HA Hardening | Done | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) |
-| 7 | Demo App Multi-User Durable Context | Planned | [phase-7-demo-app-durable-context.md](phase-7-demo-app-durable-context.md) |
+| 7 | Demo App Multi-User Durable Context | Active | [phase-7-demo-app-durable-context.md](phase-7-demo-app-durable-context.md) |
 
 ## Canonical Outcome
 

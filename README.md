@@ -152,7 +152,7 @@ The supported local platform is built around:
 
 <!-- infernix:route-registry:readme:start -->
 - always-published routed prefixes: `/harbor/api`, `/harbor`, `/minio/console`, `/minio/s3`, `/pulsar/admin`, `/pulsar/ws`
-- demo-only routed prefixes (present when `.dhall` `demo_ui = True`): `/`, `/api`, `/objects`
+- demo-only routed prefixes (present when `.dhall` `demo_ui = True`): `/`, `/api`, `/objects`, `/auth`, `/ws`, `/api/objects`
 - registry-owned rewrites: `/harbor/api` -> `/api`; `/harbor` -> `/`; `/minio/console` -> `/`; `/minio/s3` -> `/`; `/pulsar/admin` -> `/`; `/pulsar/ws` -> `/ws`
 <!-- infernix:route-registry:readme:end -->
 

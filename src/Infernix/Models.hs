@@ -1,7 +1,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module Infernix.Models
-  ( catalogForMode,
+  ( canonicalBatchTopicForMode,
+    catalogForMode,
     clusterDemoApiUpstream,
     engineBindingForSelectedEngine,
     engineBindingsForMode,
@@ -72,6 +73,16 @@ hostBatchTopicForMode runtimeMode =
   case runtimeMode of
     AppleSilicon -> Just ("persistent://public/default/inference.batch." <> runtimeModeId runtimeMode <> ".host")
     _ -> Nothing
+
+-- | Canonical @inference.batch.<mode>@ topic name for any substrate. The
+-- auto-generated dhall file does not enable handoff on Linux substrates by
+-- default ('hostBatchTopicForMode' returns 'Nothing' for those), but operators
+-- can wire this topic name into a custom staged @.dhall@ once the supported
+-- coordinator + engine daemon split lands. Used by chart helpers and by the
+-- supported Sprint 7.7 daemon-split rollout.
+canonicalBatchTopicForMode :: RuntimeMode -> Text
+canonicalBatchTopicForMode runtimeMode =
+  "persistent://public/default/inference.batch." <> runtimeModeId runtimeMode
 
 engineBindingForSelectedEngine :: RuntimeMode -> Text -> EngineBinding
 engineBindingForSelectedEngine _runtimeMode selectedEngineValue =

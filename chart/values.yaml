@@ -82,6 +82,59 @@ service:
   engineAdapters:
     commandEnv: {}
 
+# Phase 7 Sprint 7.7: the supported three-role daemon split.
+# These stanzas are inert until `daemonSplit.enabled` is true; the fused
+# `service` Deployment above remains the active topology for now and is
+# retired together with the cluster validation that proves the split path.
+daemonSplit:
+  enabled: false
+
+coordinator:
+  enabled: false
+  replicaCount: 2
+  image:
+    repository: infernix-linux-cpu
+    tag: local
+    pullPolicy: IfNotPresent
+  command:
+    - infernix
+  args:
+    - service
+    - --role=coordinator
+  podDisruptionBudget:
+    maxUnavailable: 1
+
+engine:
+  enabled: false
+  # Operator-set up to the number of engine-capable nodes. Default 1 keeps
+  # the chart shape sensible on single-node Kind clusters; the supported
+  # production target raises this to match available GPU capacity on
+  # `linux-gpu`.
+  replicaCount: 1
+  image:
+    repository: infernix-linux-cpu
+    tag: local
+    pullPolicy: IfNotPresent
+  command:
+    - infernix
+  args:
+    - service
+    - --role=engine
+  modelCache:
+    # `emptyDir` sizeLimit on the engine pod's `/model-cache` volume. The
+    # adapter-side LRU eviction keeps the actual on-disk size under this
+    # ceiling so kubelet never restarts the pod for ephemeral-storage
+    # exhaustion.
+    sizeLimit: 32Gi
+  podDisruptionBudget:
+    maxUnavailable: 1
+
+demoSplit:
+  enabled: false
+  replicaCount: 2
+  podDisruptionBudget:
+    maxUnavailable: 1
+
 minio:
   mode: distributed
   fullnameOverride: infernix-minio
@@ -128,6 +181,18 @@ minio:
       - name: infernix-runtime
         versioning: Unchanged
       - name: infernix-results
+        versioning: Unchanged
+      # Phase 7 Sprint 7.7: always-on platform model-weights bucket. The
+      # coordinator role's bootstrap subscription PUTs `<modelId>/<filename>`
+      # entries here on first use of a model and writes the `.ready` sentinel
+      # last; engines read from this bucket via the per-adapter model cache.
+      - name: infernix-models
+        versioning: Unchanged
+      # Phase 7 Sprint 7.7: demo-gated user-artifact bucket. Hosts per-user
+      # prefixes `users/<userId>/contexts/<contextId>/{uploads,generated}/`
+      # for the durable-context surface; presigned PUT/GET URLs minted at
+      # `/api/objects` are scoped per user.
+      - name: infernix-demo-objects
         versioning: Unchanged
 
 harbor:

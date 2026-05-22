@@ -254,7 +254,40 @@ routeSpecs =
       False
       (Just "pulsar")
       (Just "HTTPRoute -> Pulsar Service")
-      (Just "envoy-gateway-routed pulsar deployment")
+      (Just "envoy-gateway-routed pulsar deployment"),
+    RouteSpec
+      "infernix-keycloak-auth"
+      "/auth"
+      "Keycloak SSO"
+      "infernix-keycloak"
+      8080
+      Nothing
+      True
+      (Just "keycloak")
+      (Just "HTTPRoute -> Keycloak Service")
+      (Just "envoy-gateway-routed keycloak deployment"),
+    RouteSpec
+      "infernix-demo-ws"
+      "/ws"
+      "Demo durable-context WebSocket"
+      "infernix-demo"
+      80
+      Nothing
+      True
+      Nothing
+      Nothing
+      Nothing,
+    RouteSpec
+      "infernix-demo-objects-api"
+      "/api/objects"
+      "Demo MinIO presigned URL minting"
+      "infernix-demo"
+      80
+      Nothing
+      True
+      Nothing
+      Nothing
+      Nothing
   ]
 
 yamlBool :: Bool -> String

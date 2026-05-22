@@ -1,0 +1,12 @@
+{{- if and .Values.daemonSplit.enabled .Values.demoSplit.enabled .Values.demo.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: infernix-demo
+  namespace: platform
+spec:
+  maxUnavailable: {{ .Values.demoSplit.podDisruptionBudget.maxUnavailable }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: infernix-demo
+{{- end }}
