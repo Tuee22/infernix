@@ -1,0 +1,46 @@
+{{- if and .Values.demo.enabled .Values.keycloak.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: infernix-keycloak-realm
+  namespace: platform
+data:
+  infernix-realm.json: |
+    {
+      "realm": "{{ .Values.keycloak.realm.name }}",
+      "displayName": "{{ .Values.keycloak.realm.displayName }}",
+      "enabled": true,
+      "registrationAllowed": true,
+      "registrationEmailAsUsername": false,
+      "rememberMe": true,
+      "verifyEmail": false,
+      "loginWithEmailAllowed": false,
+      "duplicateEmailsAllowed": true,
+      "resetPasswordAllowed": false,
+      "editUsernameAllowed": false,
+      "bruteForceProtected": true,
+      "sslRequired": "external",
+      "accessTokenLifespan": 900,
+      "ssoSessionIdleTimeout": 3600,
+      "ssoSessionMaxLifespan": 36000,
+      "passwordPolicy": "length(8)",
+      "clients": [
+        {
+          "clientId": "{{ .Values.keycloak.realm.clientId }}",
+          "name": "Infernix SPA",
+          "publicClient": true,
+          "standardFlowEnabled": true,
+          "directAccessGrantsEnabled": false,
+          "serviceAccountsEnabled": false,
+          "implicitFlowEnabled": false,
+          "redirectUris": ["/*"],
+          "webOrigins": ["+"],
+          "protocol": "openid-connect",
+          "attributes": {
+            "pkce.code.challenge.method": "S256",
+            "post.logout.redirect.uris": "+"
+          }
+        }
+      ]
+    }
+{{- end }}

@@ -100,11 +100,13 @@ main = do
     (expectedInferenceDispatchModeForRuntime LinuxGpu == "pulsar-bridge-to-cluster-daemon")
     "linux-gpu publication reports the cluster-daemon dispatch mode"
   assert
-    (length (platformClaimsForRuntime AppleSilicon) == 1)
-    "apple-silicon retains the cluster service PVC claim"
+    -- Phase 7 Sprint 7.7: the supported split topology has no daemon
+    -- PVCs (coordinator + engine + demo all run PVC-free).
+    (null (platformClaimsForRuntime AppleSilicon))
+    "apple-silicon split topology has no daemon PVCs"
   assert
-    (length (platformClaimsForRuntime LinuxCpu) == 1 && length (platformClaimsForRuntime LinuxGpu) == 1)
-    "linux runtime lanes retain the cluster service PVC claim"
+    (null (platformClaimsForRuntime LinuxCpu) && null (platformClaimsForRuntime LinuxGpu))
+    "linux split topologies have no daemon PVCs"
   assert (isJust (findModel LinuxGpu "llm-qwen25-awq")) "linux-gpu includes the AWQ row"
   assert (isNothing (findModel AppleSilicon "llm-qwen25-awq")) "apple-silicon omits unsupported AWQ rows"
   assert
@@ -331,19 +333,21 @@ main = do
                 generatedPath = "./.build/infernix-substrate.dhall",
                 mountedPath = "/opt/build/infernix-substrate.dhall",
                 demoUiEnabled = True,
-                activeDaemonRole = ClusterDaemon,
-                clusterDaemon =
+                activeDaemonRole = Coordinator,
+                coordinatorDaemon =
                   DaemonConfig
-                    { daemonConfigRole = ClusterDaemon,
+                    { daemonConfigRole = Coordinator,
                       daemonConfigLocation = "cluster-pod",
                       daemonConfigRequestTopics = requestTopicsForMode LinuxCpu,
                       daemonConfigResultTopic = resultTopicForMode LinuxCpu,
                       daemonConfigHostBatchTopic = Nothing,
                       daemonConfigPulsarConnectionMode = ConfiguredTransport
                     },
-                hostDaemon = Nothing,
+                engineDaemon = Nothing,
                 requestTopics = requestTopicsForMode LinuxCpu,
                 resultTopic = resultTopicForMode LinuxCpu,
+                modelsBucket = defaultModelsBucket,
+                modelBootstrapTopic = defaultModelBootstrapTopic,
                 engines = engineBindingsForMode LinuxCpu,
                 models = catalogForMode LinuxCpu
               }
@@ -360,9 +364,9 @@ main = do
       decodedConfig <- decodeDemoConfigFile demoConfigPath
       assert (configRuntimeMode decodedConfig == LinuxCpu) "demo-config decode preserves runtime mode"
       assert (demoUiEnabled decodedConfig) "demo-config decode preserves the demo UI flag"
-      assert (activeDaemonRole decodedConfig == ClusterDaemon) "demo-config decode preserves the active daemon role"
-      assert (daemonConfigLocation (clusterDaemon decodedConfig) == "cluster-pod") "demo-config decode preserves cluster daemon metadata"
-      assert (isNothing (hostDaemon decodedConfig)) "linux demo-config decode omits host daemon metadata"
+      assert (activeDaemonRole decodedConfig == Coordinator) "demo-config decode preserves the active daemon role"
+      assert (daemonConfigLocation (coordinatorDaemon decodedConfig) == "cluster-pod") "demo-config decode preserves cluster daemon metadata"
+      assert (isNothing (engineDaemon decodedConfig)) "linux demo-config decode omits host daemon metadata"
       assert (requestTopics decodedConfig == requestTopicsForMode LinuxCpu) "demo-config decode preserves request topics"
       assert (resultTopic decodedConfig == resultTopicForMode LinuxCpu) "demo-config decode preserves the result topic"
       assert (engines decodedConfig == engineBindingsForMode LinuxCpu) "demo-config decode preserves engine bindings"
@@ -375,20 +379,20 @@ main = do
                 generatedPath = "./.build/infernix-substrate.dhall",
                 mountedPath = "/opt/build/infernix-substrate.dhall",
                 demoUiEnabled = True,
-                activeDaemonRole = HostDaemon,
-                clusterDaemon =
+                activeDaemonRole = Engine,
+                coordinatorDaemon =
                   DaemonConfig
-                    { daemonConfigRole = ClusterDaemon,
+                    { daemonConfigRole = Coordinator,
                       daemonConfigLocation = "cluster-pod",
                       daemonConfigRequestTopics = requestTopicsForMode AppleSilicon,
                       daemonConfigResultTopic = resultTopicForMode AppleSilicon,
                       daemonConfigHostBatchTopic = hostBatchTopicForMode AppleSilicon,
                       daemonConfigPulsarConnectionMode = ConfiguredTransport
                     },
-                hostDaemon =
+                engineDaemon =
                   Just
                     DaemonConfig
-                      { daemonConfigRole = HostDaemon,
+                      { daemonConfigRole = Engine,
                         daemonConfigLocation = "control-plane-host",
                         daemonConfigRequestTopics = maybe [] pure (hostBatchTopicForMode AppleSilicon),
                         daemonConfigResultTopic = resultTopicForMode AppleSilicon,
@@ -397,15 +401,17 @@ main = do
                       },
                 requestTopics = requestTopicsForMode AppleSilicon,
                 resultTopic = resultTopicForMode AppleSilicon,
+                modelsBucket = defaultModelsBucket,
+                modelBootstrapTopic = defaultModelBootstrapTopic,
                 engines = engineBindingsForMode AppleSilicon,
                 models = catalogForMode AppleSilicon
               }
           appleConfigPath = buildRoot paths </> "apple-host-demo-config-test.dhall"
       Lazy.writeFile appleConfigPath (encodeDemoConfig appleHostConfig)
       decodedAppleConfig <- decodeDemoConfigFile appleConfigPath
-      assert (activeDaemonRole decodedAppleConfig == HostDaemon) "apple host demo-config keeps host as the active local daemon role"
-      assert (daemonConfigHostBatchTopic (clusterDaemon decodedAppleConfig) == hostBatchTopicForMode AppleSilicon) "apple cluster daemon metadata publishes the host batch topic"
-      assert (fmap daemonConfigRequestTopics (hostDaemon decodedAppleConfig) == Just (maybe [] pure (hostBatchTopicForMode AppleSilicon))) "apple host daemon metadata consumes the host batch topic"
+      assert (activeDaemonRole decodedAppleConfig == Engine) "apple host demo-config keeps host as the active local daemon role"
+      assert (daemonConfigHostBatchTopic (coordinatorDaemon decodedAppleConfig) == hostBatchTopicForMode AppleSilicon) "apple cluster daemon metadata publishes the host batch topic"
+      assert (fmap daemonConfigRequestTopics (engineDaemon decodedAppleConfig) == Just (maybe [] pure (hostBatchTopicForMode AppleSilicon))) "apple host daemon metadata consumes the host batch topic"
       let readinessMarkerPath = runtimeRoot paths </> "service" </> "subscription.ready"
       withOptionalEnv "INFERNIX_DEMO_CONFIG_PATH" (Just demoConfigPath) $
         withOptionalEnv "INFERNIX_PULSAR_WS_BASE_URL" (Just "ws://127.0.0.1:65530/ws/v2") $
@@ -429,7 +435,11 @@ main = do
         Right result -> do
           assert (resultModelId result == "llm-qwen25-safetensors") "inference result records the selected model id"
           assert (resultRuntimeMode result == AppleSilicon) "inference result records the runtime mode"
-          assert (isJust (objectRef (payload result))) "long outputs are stored in the object store"
+          -- Phase 7 Sprint 7.7: text outputs always ride inline in the result
+          -- envelope; the legacy 80-char threshold and object-store overflow
+          -- path are retired.
+          assert (isJust (inlineOutput (payload result))) "text outputs are carried inline in the result payload"
+          assert (isNothing (objectRef (payload result))) "text outputs do not reference an object-store entry"
           let resultPath = resultsRoot paths </> Text.unpack (requestId result) <> ".pb"
           resultExists <- doesFileExist resultPath
           assert resultExists "inference execution writes a protobuf result file"
@@ -437,16 +447,16 @@ main = do
           assert
             (fmap requestId reloadedResult == Just (requestId result))
             "inference result reload reads the protobuf-backed result file"
-          case objectRef (payload result) of
-            Just objectRefValue -> do
-              durableOutput <- readFile (objectStoreRoot paths </> Text.unpack objectRefValue)
+          case inlineOutput (payload result) of
+            Just inlineOutputText -> do
+              let durableOutput = Text.unpack inlineOutputText
               assert
                 ("transformers-python|ready|llm-qwen25-safetensors|tok=1|" `isInfixOf` durableOutput)
                 "python-native worker execution loads adapter bootstrap state and model metadata"
               assert
                 (Text.unpack (inputText request) `isInfixOf` durableOutput)
                 "python-native worker execution preserves the submitted prompt payload"
-            Nothing -> fail "expected an object-store-backed output for the long inference result"
+            Nothing -> fail "expected an inline output for the inference result"
           let bootstrapManifestPath = dataRoot paths </> "engines" </> "transformers-python" </> "bootstrap.json"
           bootstrapExists <- doesFileExist bootstrapManifestPath
           assert bootstrapExists "apple-silicon setup creates per-adapter bootstrap manifests"
@@ -543,12 +553,15 @@ main = do
       )
       "rendered chart image discovery returns sorted unique image refs"
     discoveredClaims <- discoverChartClaimsFile renderedChartPath
-    assert (length discoveredClaims == 3) "rendered chart claim discovery finds explicit and StatefulSet claims"
+    -- Phase 7 Sprint 7.7: the supported split topology has no daemon
+    -- PVCs (coordinator + engine + demo all run PVC-free), so the
+    -- sample chart now exercises only the MinIO StatefulSet
+    -- volumeClaimTemplates path.
+    assert (length discoveredClaims == 2) "rendered chart claim discovery finds StatefulSet claims"
     assert
       ( map pvcName discoveredClaims
           == [ "data-infernix-minio-0",
-               "data-infernix-minio-1",
-               "infernix-service-0-data"
+               "data-infernix-minio-1"
              ]
       )
       "rendered chart claim discovery preserves normalized PVC names"
@@ -1538,13 +1551,15 @@ assertUniqueModelIds mode = do
   assert (length matrixRows == length (nub matrixRows)) ("catalog matrix rows are unique for " <> show mode)
 
 renderPayloadText :: Paths -> ResultPayload -> IO String
-renderPayloadText paths payloadValue =
+renderPayloadText _paths payloadValue =
+  -- Phase 7 Sprint 7.7: text outputs always ride inline. Binary outputs flow
+  -- through an MinIO `ObjectRef` rather than a host filesystem fallback, so
+  -- the helper no longer needs the @Paths@ argument; the parameter is kept
+  -- for call-site stability while the integration suite still threads it
+  -- through.
   case inlineOutput payloadValue of
     Just outputText -> pure (Text.unpack outputText)
-    Nothing ->
-      case objectRef payloadValue of
-        Just objectRefValue -> readFile (objectStoreRoot paths </> Text.unpack objectRefValue)
-        Nothing -> pure ""
+    Nothing -> pure ""
 
 sampleRenderedChart :: String
 sampleRenderedChart =
@@ -1581,22 +1596,6 @@ sampleRenderedChart =
       "        resources:",
       "          requests:",
       "            storage: 7Gi",
-      "---",
-      "apiVersion: v1",
-      "kind: PersistentVolumeClaim",
-      "metadata:",
-      "  name: infernix-service-0-data",
-      "  namespace: platform",
-      "  labels:",
-      "    infernix.io/release: infernix",
-      "    infernix.io/workload: service",
-      "    infernix.io/ordinal: \"0\"",
-      "    infernix.io/claim: data",
-      "spec:",
-      "  storageClassName: infernix-manual",
-      "  resources:",
-      "    requests:",
-      "      storage: 5Gi",
       "---",
       "apiVersion: pgv2.percona.com/v2",
       "kind: PerconaPGCluster",

@@ -71,8 +71,15 @@ data ClusterUpInputs = ClusterUpInputs
     clusterUpPayload :: Lazy.ByteString
   }
 
+-- | Phase 7 Sprint 7.7: the supported three-role daemon split retired
+-- the fused @infernix-service@ Deployment. The supported finalisation
+-- waits on the new @infernix-coordinator@ + @infernix-engine@ rollouts
+-- (see 'finalPhaseDeployments'), so this gate is now @False@ across
+-- every substrate. Kept as a one-shot constant so a future re-introduction
+-- of a single-role fused deployment can flip it back without rewriting
+-- every reference.
 clusterServiceEnabled :: RuntimeMode -> Bool
-clusterServiceEnabled _runtimeMode = True
+clusterServiceEnabled _runtimeMode = False
 
 helmRepositories :: [(String, String)]
 helmRepositories =
@@ -99,13 +106,21 @@ envoyGatewayDependencyArchive = "chart/charts/gateway-helm-v1.7.2.tgz"
 helmDependencyArchivesDirectory :: Paths -> FilePath
 helmDependencyArchivesDirectory paths = repoRoot paths </> "chart/charts"
 
+-- | Phase 7 Sprint 7.7: the supported three-role daemon split wait
+-- list. Always include the coordinator + engine Deployments (they run
+-- on every substrate that brings up Pulsar). The demo Deployment is
+-- demo-gated. The retired @infernix-service@ Deployment is no longer
+-- part of the chart.
 finalPhaseDeployments :: ClusterState -> [String]
 finalPhaseDeployments state =
   baseDeployments
     <> [deployment | clusterStateHasDemoUi state, deployment <- ["deployment/infernix-demo"]]
   where
     baseDeployments =
-      ["deployment/infernix-minio-console"]
+      [ "deployment/infernix-minio-console",
+        "deployment/infernix-coordinator",
+        "deployment/infernix-engine"
+      ]
         <> [deployment | clusterServiceEnabled (clusterRuntimeMode state), deployment <- ["deployment/infernix-service"]]
 
 finalPhaseStatefulSets :: [String]
@@ -217,7 +232,7 @@ pulsarBootstrapDirtyLogMarkers =
 
 clusterStateHasDemoUi :: ClusterState -> Bool
 clusterStateHasDemoUi state =
-  any ((`elem` ["/", "/api", "/objects"]) . path) (routes state)
+  any ((`elem` ["/", "/api"]) . path) (routes state)
 
 persistClusterState :: Paths -> ClusterState -> IO ()
 persistClusterState paths state = do
@@ -517,7 +532,7 @@ prepareClusterUpInputs paths runtimeMode = do
       configMapManifestPath = Config.publishedConfigMapManifestPath paths
       publicationPath = Config.publicationStatePath paths
       mountedCatalogPath = Config.watchedDemoConfigPath
-      payload = Lazy.fromStrict (renderGeneratedDemoConfigPayload paths runtimeMode demoUiEnabledValue ClusterDaemon)
+      payload = Lazy.fromStrict (renderGeneratedDemoConfigPayload paths runtimeMode demoUiEnabledValue Coordinator)
   createDirectoryIfMissing True (buildRoot paths)
   createDirectoryIfMissing True (takeDirectory publishedCatalogPath)
   createDirectoryIfMissing True (takeDirectory configMapManifestPath)
@@ -3192,9 +3207,21 @@ renderHelmValues controlPlane state demoConfigPayload deployPhase engineCommandO
         "publication:",
         "  payloadJson: |",
         indentBlock 4 (renderPublicationState controlPlane state),
-        "service:",
-        "  enabled: " <> yamlBool (clusterServiceEnabled (clusterRuntimeMode state)),
-        "  replicaCount: " <> show (repoWorkloadReplicaCount deployPhase),
+        -- Phase 7 Sprint 7.7: the supported three-role daemon split
+        -- replaces the legacy `service.*` Deployment. The split workloads
+        -- depend on Pulsar (`coordinator` consumes inference-request
+        -- topics, runs the bootstrap subscription, and registers schemas)
+        -- so we hold their replica counts at zero until `FinalPhase`
+        -- brings the upstream Pulsar chart up. `demo.replicaCount` was
+        -- already phase-gated for the same reason.
+        "coordinator:",
+        "  replicaCount: " <> show (repoCoordinatorReplicaCount deployPhase),
+        "  image:",
+        "    repository: " <> clusterWorkloadImageRepository (clusterRuntimeMode state),
+        "    tag: local",
+        "    pullPolicy: IfNotPresent",
+        "engine:",
+        "  replicaCount: " <> show (repoEngineReplicaCount deployPhase),
         "  image:",
         "    repository: " <> clusterWorkloadImageRepository (clusterRuntimeMode state),
         "    tag: local",
@@ -3209,6 +3236,23 @@ renderHelmValues controlPlane state demoConfigPayload deployPhase engineCommandO
   where
     repoWorkloadReplicaCount :: HelmDeployPhase -> Int
     repoWorkloadReplicaCount phaseValue = case phaseValue of
+      WarmupPhase -> 0
+      BootstrapPhase -> 0
+      HarborFinalPhase -> 0
+      FinalPhase -> 1
+    -- Phase 7 Sprint 7.7: zero out the coordinator + engine roles in
+    -- every pre-Pulsar phase, then come up with the supported supported
+    -- HA replicaCount (coordinator >= 2 for stateless coordination;
+    -- engine 1 by default on single-node Kind clusters, raised by
+    -- operators on multi-engine-node deployments).
+    repoCoordinatorReplicaCount :: HelmDeployPhase -> Int
+    repoCoordinatorReplicaCount phaseValue = case phaseValue of
+      WarmupPhase -> 0
+      BootstrapPhase -> 0
+      HarborFinalPhase -> 0
+      FinalPhase -> 2
+    repoEngineReplicaCount :: HelmDeployPhase -> Int
+    repoEngineReplicaCount phaseValue = case phaseValue of
       WarmupPhase -> 0
       BootstrapPhase -> 0
       HarborFinalPhase -> 0

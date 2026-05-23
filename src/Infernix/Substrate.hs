@@ -56,10 +56,19 @@ data DhallDemoConfig = DhallDemoConfig
     dhallMountedPath :: Text,
     dhallDemoUi :: Bool,
     dhallDaemonRole :: Text,
-    dhallClusterDaemon :: DhallDaemonConfig,
-    dhallHostDaemon :: Maybe DhallDaemonConfig,
+    -- Phase 7 Sprint 7.7 renamed Dhall fields:
+    -- @clusterDaemon@ -> @coordinator@ and @hostDaemon@ -> @engine@.
+    -- The Haskell record selector for the engine role daemon uses the
+    -- @EngineDaemon@ suffix to avoid colliding with
+    -- 'DhallEngineBinding.dhallEngine' (the engine-name string in the
+    -- engine binding record); 'dhallFieldName' maps it to the @engine@
+    -- key on the dhall wire side.
+    dhallCoordinator :: DhallDaemonConfig,
+    dhallEngineDaemon :: Maybe DhallDaemonConfig,
     dhallConfigRequestTopics :: [Text],
     dhallConfigResultTopic :: Text,
+    dhallModelsBucket :: Text,
+    dhallModelBootstrapTopic :: Text,
     dhallEngines :: [DhallEngineBinding],
     dhallModels :: [DhallModelDescriptor]
   }
@@ -145,6 +154,9 @@ dhallFieldName rawFieldName =
     Just "RequestTopics" -> "request_topics"
     Just "ResultTopic" -> "result_topic"
     Just "HostBatchTopic" -> "host_batch_topic"
+    Just "ModelsBucket" -> "models_bucket"
+    Just "ModelBootstrapTopic" -> "model_bootstrap_topic"
+    Just "EngineDaemon" -> "engine"
     Just suffix -> lowerInitial suffix
 
 lowerInitial :: Text -> Text
@@ -157,8 +169,8 @@ demoConfigFromDhall :: DhallDemoConfig -> Either String DemoConfig
 demoConfigFromDhall rawConfig = do
   runtimeModeValue <- parseEnum "runtimeMode" parseRuntimeMode (dhallConfigRuntimeMode rawConfig)
   activeDaemonRoleValue <- parseEnum "daemonRole" parseDaemonRole (dhallDaemonRole rawConfig)
-  clusterDaemonValue <- daemonConfigFromDhall (dhallClusterDaemon rawConfig)
-  hostDaemonValue <- traverse daemonConfigFromDhall (dhallHostDaemon rawConfig)
+  coordinatorDaemonValue <- daemonConfigFromDhall (dhallCoordinator rawConfig)
+  engineDaemonValue <- traverse daemonConfigFromDhall (dhallEngineDaemon rawConfig)
   engineValues <- traverse engineBindingFromDhall (dhallEngines rawConfig)
   modelValues <- traverse modelDescriptorFromDhall (dhallModels rawConfig)
   pure
@@ -170,10 +182,12 @@ demoConfigFromDhall rawConfig = do
         mountedPath = Text.unpack (dhallMountedPath rawConfig),
         demoUiEnabled = dhallDemoUi rawConfig,
         activeDaemonRole = activeDaemonRoleValue,
-        clusterDaemon = clusterDaemonValue,
-        hostDaemon = hostDaemonValue,
+        coordinatorDaemon = coordinatorDaemonValue,
+        engineDaemon = engineDaemonValue,
         requestTopics = dhallConfigRequestTopics rawConfig,
         resultTopic = dhallConfigResultTopic rawConfig,
+        modelsBucket = dhallModelsBucket rawConfig,
+        modelBootstrapTopic = dhallModelBootstrapTopic rawConfig,
         engines = engineValues,
         models = modelValues
       }
@@ -255,10 +269,12 @@ renderSubstrateConfig demoConfig =
       ", mountedPath = " <> dhallFilePath (mountedPath demoConfig),
       ", demo_ui = " <> dhallBool (demoUiEnabled demoConfig),
       ", daemonRole = " <> dhallText (daemonRoleId (activeDaemonRole demoConfig)),
-      ", clusterDaemon = " <> renderDaemonConfig (clusterDaemon demoConfig),
-      ", hostDaemon = " <> dhallOptional daemonConfigType renderDaemonConfig (hostDaemon demoConfig),
+      ", coordinator = " <> renderDaemonConfig (coordinatorDaemon demoConfig),
+      ", engine = " <> dhallOptional daemonConfigType renderDaemonConfig (engineDaemon demoConfig),
       ", request_topics = " <> dhallList "Text" dhallText (requestTopics demoConfig),
       ", result_topic = " <> dhallText (resultTopic demoConfig),
+      ", models_bucket = " <> dhallText (modelsBucket demoConfig),
+      ", model_bootstrap_topic = " <> dhallText (modelBootstrapTopic demoConfig),
       ", engines = " <> dhallList engineBindingType renderEngineBinding (engines demoConfig),
       ", models = " <> dhallList modelDescriptorType renderModelDescriptor (models demoConfig),
       "}"

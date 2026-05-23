@@ -124,10 +124,10 @@ exerciseRuntimeMode paths runtimeMode = do
           (maybe False (\topic -> ("\"hostInferenceBatchTopic\":\"" <> Text.unpack topic <> "\"") `isInfixOf` compact publicationResponse) (hostBatchTopicForMode runtimeMode))
           "apple publication reports the host inference batch topic"
       assert ("\"demo_ui\":true" `isInfixOf` compact demoConfigResponse) "demo config reports the enabled demo UI flag"
-      assert (activeDaemonRole routedDemoConfig == ClusterDaemon) "cluster-mounted demo config reports the cluster daemon role"
-      assert (daemonConfigRole (clusterDaemon routedDemoConfig) == ClusterDaemon) "demo config reports cluster daemon metadata"
+      assert (activeDaemonRole routedDemoConfig == Coordinator) "cluster-mounted demo config reports the coordinator role"
+      assert (daemonConfigRole (coordinatorDaemon routedDemoConfig) == Coordinator) "demo config reports coordinator metadata"
       when (runtimeMode == AppleSilicon) $
-        assert (fmap daemonConfigRole (hostDaemon routedDemoConfig) == Just HostDaemon) "apple demo config reports host daemon metadata"
+        assert (fmap daemonConfigRole (engineDaemon routedDemoConfig) == Just Engine) "apple demo config reports engine metadata"
       assert
         ( ("\"request_topics\":[\"persistent://public/default/inference.request." <> showRuntimeMode runtimeMode <> "\"]")
             `isInfixOf` compact demoConfigResponse

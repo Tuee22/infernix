@@ -26,6 +26,8 @@ module Infernix.Types
     allRuntimeModes,
     apiUpstreamModeId,
     daemonRoleId,
+    defaultModelBootstrapTopic,
+    defaultModelsBucket,
     parseApiUpstreamMode,
     parseDaemonRole,
     parsePulsarConnectionMode,
@@ -88,20 +90,37 @@ instance FromJSON RuntimeMode where
       Just runtimeMode -> pure runtimeMode
       Nothing -> fail ("Unsupported runtime mode: " <> Text.unpack rawValue)
 
+-- | Daemon role identity. Phase 7 Sprint 7.7 renames the legacy
+-- @cluster@ / @host@ vocabulary to the supported @coordinator@ /
+-- @engine@ pair from the three-role daemon-topology contract:
+--
+--  * 'Coordinator' = stateless Pulsar coordination role. On Linux
+--    substrates it runs as the in-cluster @infernix-coordinator@
+--    Deployment; on Apple silicon it runs in-cluster too.
+--  * 'Engine' = stateful inference role. On Linux it runs as the
+--    in-cluster @infernix-engine@ Deployment under required pod
+--    anti-affinity; on Apple silicon it runs as the on-host
+--    @infernix service@ daemon under exclusive @engine.lock@.
 data DaemonRole
-  = ClusterDaemon
-  | HostDaemon
+  = Coordinator
+  | Engine
   deriving (Eq, Ord, Read, Show)
 
 daemonRoleId :: DaemonRole -> Text
 daemonRoleId daemonRole = case daemonRole of
-  ClusterDaemon -> "cluster"
-  HostDaemon -> "host"
+  Coordinator -> "coordinator"
+  Engine -> "engine"
 
+-- | Parse the supported daemon-role identifier. Accepts the new
+-- @coordinator@ / @engine@ ids plus the legacy @cluster@ / @host@
+-- aliases so a stale staged @.dhall@ from a pre-Sprint-7.7 build still
+-- decodes; the renderer always emits the new vocabulary.
 parseDaemonRole :: Text -> Maybe DaemonRole
 parseDaemonRole rawValue = case Text.toLower rawValue of
-  "cluster" -> Just ClusterDaemon
-  "host" -> Just HostDaemon
+  "coordinator" -> Just Coordinator
+  "engine" -> Just Engine
+  "cluster" -> Just Coordinator
+  "host" -> Just Engine
   _ -> Nothing
 
 instance ToJSON DaemonRole where
@@ -242,10 +261,30 @@ data DemoConfig = DemoConfig
     mountedPath :: FilePath,
     demoUiEnabled :: Bool,
     activeDaemonRole :: DaemonRole,
-    clusterDaemon :: DaemonConfig,
-    hostDaemon :: Maybe DaemonConfig,
+    -- | Coordinator role metadata. On Linux substrates this drives the
+    -- in-cluster @infernix-coordinator@ Deployment; on Apple silicon
+    -- it drives the in-cluster Pulsar coordination role too.
+    -- Sprint 7.7 renamed this field from @clusterDaemon@ to track the
+    -- new daemon-role vocabulary.
+    coordinatorDaemon :: DaemonConfig,
+    -- | Engine role metadata. On Apple silicon this is present and
+    -- describes the on-host engine daemon; on Linux substrates the
+    -- engine role is bound to the in-cluster @infernix-engine@
+    -- Deployment and this field stays 'Nothing'. Sprint 7.7 renamed
+    -- this from @hostDaemon@.
+    engineDaemon :: Maybe DaemonConfig,
     requestTopics :: [Text],
     resultTopic :: Text,
+    -- | Always-on MinIO bucket the coordinator's bootstrap subscription
+    -- populates with platform model weights, keyed by @<modelId>/<filename>@
+    -- with a @.ready@ sentinel written last (Phase 7 Sprint 7.7).
+    modelsBucket :: Text,
+    -- | Pulsar topic the engine publishes onto when it sees an uncached
+    -- model; the coordinator's bootstrap subscription consumes it,
+    -- downloads weights from the model's upstream URL, uploads them to
+    -- 'modelsBucket', and acknowledges with @model.bootstrap.ready.<modelId>@
+    -- (Phase 7 Sprint 7.7).
+    modelBootstrapTopic :: Text,
     engines :: [EngineBinding],
     models :: [ModelDescriptor]
   }
@@ -545,10 +584,12 @@ instance ToJSON DemoConfig where
         "mountedPath" .= mountedPath demoConfig,
         "demo_ui" .= demoUiEnabled demoConfig,
         "daemonRole" .= activeDaemonRole demoConfig,
-        "clusterDaemon" .= clusterDaemon demoConfig,
-        "hostDaemon" .= hostDaemon demoConfig,
+        "coordinator" .= coordinatorDaemon demoConfig,
+        "engine" .= engineDaemon demoConfig,
         "request_topics" .= requestTopics demoConfig,
         "result_topic" .= resultTopic demoConfig,
+        "models_bucket" .= modelsBucket demoConfig,
+        "model_bootstrap_topic" .= modelBootstrapTopic demoConfig,
         "engines" .= engines demoConfig,
         "models" .= models demoConfig
       ]
@@ -559,36 +600,77 @@ instance FromJSON DemoConfig where
     requestTopicValues <- value .: "request_topics"
     resultTopicValue <- value .: "result_topic"
     daemonRoleValue <- value .:? "daemonRole" .!= defaultDaemonRole runtimeModeValue
-    clusterDaemonValue <-
-      value
-        .:? "clusterDaemon"
-        .!= defaultClusterDaemonConfig runtimeModeValue requestTopicValues resultTopicValue
-    hostDaemonValue <-
-      value
-        .:? "hostDaemon"
-        .!= defaultHostDaemonConfig runtimeModeValue resultTopicValue
+    -- Phase 7 Sprint 7.7 renamed the JSON keys from
+    -- @clusterDaemon@ / @hostDaemon@ to @coordinator@ / @engine@.
+    -- Both names parse during the transition window.
+    coordinatorDaemonValue <-
+      do
+        coordinatorMaybe <- value .:? "coordinator"
+        case coordinatorMaybe of
+          Just coordinator -> pure coordinator
+          Nothing -> do
+            clusterMaybe <- value .:? "clusterDaemon"
+            case clusterMaybe of
+              Just legacyCluster -> pure legacyCluster
+              Nothing ->
+                pure
+                  ( defaultCoordinatorDaemonConfig
+                      runtimeModeValue
+                      requestTopicValues
+                      resultTopicValue
+                  )
+    engineDaemonValue <-
+      do
+        engineMaybe <- value .:? "engine"
+        case engineMaybe of
+          Just engine -> pure engine
+          Nothing -> do
+            hostMaybe <- value .:? "hostDaemon"
+            case hostMaybe of
+              Just legacyHost -> pure legacyHost
+              Nothing -> pure (defaultEngineDaemonConfig runtimeModeValue resultTopicValue)
+    modelsBucketValue <- value .:? "models_bucket" .!= defaultModelsBucket
+    modelBootstrapTopicValue <-
+      value .:? "model_bootstrap_topic" .!= defaultModelBootstrapTopic
     (DemoConfig runtimeModeValue <$> value .: "edgePort")
       <*> value .: "configMapName"
       <*> value .: "generatedPath"
       <*> value .: "mountedPath"
       <*> value .: "demo_ui"
       <*> pure daemonRoleValue
-      <*> pure clusterDaemonValue
-      <*> pure hostDaemonValue
+      <*> pure coordinatorDaemonValue
+      <*> pure engineDaemonValue
       <*> pure requestTopicValues
       <*> pure resultTopicValue
+      <*> pure modelsBucketValue
+      <*> pure modelBootstrapTopicValue
       <*> value .: "engines"
       <*> value .: "models"
 
+-- | Supported always-on MinIO bucket name holding platform model weights.
+-- The coordinator's bootstrap Failover subscription is the only writer; engines
+-- and host daemons read from it through the per-adapter @get_model_path@ helper.
+defaultModelsBucket :: Text
+defaultModelsBucket = "infernix-models"
+
+-- | Pulsar topic family the engine publishes onto when it sees an uncached
+-- model, in the supported @infernix/system@ namespace. The coordinator's
+-- bootstrap subscription consumes it with producer-side deduplication keyed
+-- by @modelId@ so concurrent first-touch requests trigger exactly one upstream
+-- download.
+defaultModelBootstrapTopic :: Text
+defaultModelBootstrapTopic =
+  "persistent://infernix/system/model.bootstrap.request"
+
 defaultDaemonRole :: RuntimeMode -> DaemonRole
 defaultDaemonRole runtimeMode = case runtimeMode of
-  AppleSilicon -> HostDaemon
-  _ -> ClusterDaemon
+  AppleSilicon -> Engine
+  _ -> Coordinator
 
-defaultClusterDaemonConfig :: RuntimeMode -> [Text] -> Text -> DaemonConfig
-defaultClusterDaemonConfig runtimeMode requestTopicValues resultTopicValue =
+defaultCoordinatorDaemonConfig :: RuntimeMode -> [Text] -> Text -> DaemonConfig
+defaultCoordinatorDaemonConfig runtimeMode requestTopicValues resultTopicValue =
   DaemonConfig
-    { daemonConfigRole = ClusterDaemon,
+    { daemonConfigRole = Coordinator,
       daemonConfigLocation = "cluster-pod",
       daemonConfigRequestTopics = requestTopicValues,
       daemonConfigResultTopic = resultTopicValue,
@@ -596,13 +678,13 @@ defaultClusterDaemonConfig runtimeMode requestTopicValues resultTopicValue =
       daemonConfigPulsarConnectionMode = ConfiguredTransport
     }
 
-defaultHostDaemonConfig :: RuntimeMode -> Text -> Maybe DaemonConfig
-defaultHostDaemonConfig runtimeMode resultTopicValue =
+defaultEngineDaemonConfig :: RuntimeMode -> Text -> Maybe DaemonConfig
+defaultEngineDaemonConfig runtimeMode resultTopicValue =
   case runtimeMode of
     AppleSilicon ->
       Just
         DaemonConfig
-          { daemonConfigRole = HostDaemon,
+          { daemonConfigRole = Engine,
             daemonConfigLocation = "control-plane-host",
             daemonConfigRequestTopics = maybe [] pure (defaultHostBatchTopic runtimeMode),
             daemonConfigResultTopic = resultTopicValue,

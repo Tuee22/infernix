@@ -67,6 +67,8 @@ spec:
               value: "{{ .Values.demoConfig.mountPath }}/{{ .Values.demoConfig.fileName }}"
             - name: INFERNIX_PUBLICATION_STATE_PATH
               value: "{{ .Values.demoConfig.mountPath }}/{{ .Values.publication.fileName }}"
+            - name: INFERNIX_DATA_ROOT
+              value: "/srv/infernix/.data"
             - name: INFERNIX_MODEL_CACHE_ROOT
               value: /model-cache
             - name: INFERNIX_MINIO_ENDPOINT
@@ -107,6 +109,8 @@ spec:
               mountPath: "{{ .Values.demoConfig.mountPath }}/{{ .Values.publication.fileName }}"
               subPath: {{ .Values.publication.fileName }}
               readOnly: true
+            - name: engine-data
+              mountPath: /srv/infernix/.data
             - name: model-cache
               mountPath: /model-cache
           readinessProbe:
@@ -114,7 +118,7 @@ spec:
               command:
                 - /bin/sh
                 - -lc
-                - test -f /tmp/engine/startup.ready
+                - test -f /srv/infernix/.data/runtime/service/subscription.ready
             periodSeconds: 5
             timeoutSeconds: 3
             failureThreshold: 120
@@ -125,6 +129,8 @@ spec:
         - name: publication-state
           configMap:
             name: {{ .Values.publication.name }}
+        - name: engine-data
+          emptyDir: {}
         - name: model-cache
           emptyDir:
             sizeLimit: {{ .Values.engine.modelCache.sizeLimit }}

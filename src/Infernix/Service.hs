@@ -1,15 +1,34 @@
+{-# LANGUAGE ScopedTypeVariables #-}
+
 module Infernix.Service
   ( runService,
   )
 where
 
+import Control.Exception (IOException, bracketOnError, catch)
 import Data.Maybe (fromMaybe)
 import Infernix.Config
 import Infernix.DemoConfig (decodeDemoConfigFile)
 import Infernix.Engines.AppleSilicon (ensureAppleSiliconRuntimeReady)
 import Infernix.Runtime.Pulsar (runProductionDaemon)
-import Infernix.Types (DaemonRole (ClusterDaemon, HostDaemon), DemoConfig (..), RuntimeMode (AppleSilicon), runtimeModeId)
+import Infernix.Types (DaemonRole (Coordinator, Engine), DemoConfig (..), RuntimeMode (AppleSilicon), runtimeModeId)
+import System.Directory (createDirectoryIfMissing)
 import System.Environment (lookupEnv)
+import System.FilePath (takeDirectory, (</>))
+import System.IO (SeekMode (AbsoluteSeek), hPutStrLn, stderr)
+import System.Posix.Files (touchFile)
+import System.Posix.IO
+  ( LockRequest (WriteLock),
+    OpenFileFlags (creat),
+    OpenMode (ReadWrite),
+    closeFd,
+    defaultFileFlags,
+    fdWrite,
+    getLock,
+    openFd,
+    setLock,
+  )
+import System.Posix.Process (getProcessID)
 
 runService :: Maybe RuntimeMode -> IO ()
 runService maybeRuntimeMode = do
@@ -23,6 +42,14 @@ runService maybeRuntimeMode = do
   daemonRole <- resolveServiceDaemonRole maybeDaemonRoleOverride demoConfig
   ensureServiceRuntimeSupported paths runtimeMode daemonRole
   whenAppleRuntimeReady paths runtimeMode daemonRole
+  -- Phase 7 Sprint 7.7: engine-role startup acquires an exclusive lock on
+  -- @engine.lock@ to enforce one-per-node. On Apple silicon, the on-host
+  -- engine daemon is the engine role today; on Linux substrates the same
+  -- guarantee is provided by required pod anti-affinity on the engine
+  -- Deployment (a Linux engine-role process inside that pod also acquires
+  -- this lock as a no-op uniformity guarantee once the daemon-role rename
+  -- lands and the engine role is wired into the chart split).
+  acquireEngineLockIfEngineRole paths daemonRole
   runProductionDaemon paths runtimeMode
 
 resolveServiceRuntimeMode :: Maybe RuntimeMode -> DemoConfig -> IO RuntimeMode
@@ -45,19 +72,78 @@ resolveServiceDaemonRole :: Maybe String -> DemoConfig -> IO DaemonRole
 resolveServiceDaemonRole maybeDaemonRoleOverride demoConfig =
   case maybeDaemonRoleOverride of
     Nothing -> pure (activeDaemonRole demoConfig)
-    Just "cluster" -> pure ClusterDaemon
-    Just "host" -> pure HostDaemon
+    Just "coordinator" -> pure Coordinator
+    Just "engine" -> pure Engine
+    Just "cluster" -> pure Coordinator
+    Just "host" -> pure Engine
     Just rawValue ->
       ioError (userError ("Unsupported daemon role override for service: " <> rawValue))
 
 ensureServiceRuntimeSupported :: Paths -> RuntimeMode -> DaemonRole -> IO ()
 ensureServiceRuntimeSupported paths runtimeMode daemonRole =
   case (controlPlaneContext paths, runtimeMode, daemonRole) of
-    (OuterContainer, AppleSilicon, ClusterDaemon) -> pure ()
+    (OuterContainer, AppleSilicon, Coordinator) -> pure ()
     _ -> ensureSupportedRuntimeModeForExecutionContext paths runtimeMode
 
 whenAppleRuntimeReady :: Paths -> RuntimeMode -> DaemonRole -> IO ()
 whenAppleRuntimeReady paths runtimeMode daemonRole =
   case (runtimeMode, daemonRole) of
-    (AppleSilicon, HostDaemon) -> ensureAppleSiliconRuntimeReady paths
+    (AppleSilicon, Engine) -> ensureAppleSiliconRuntimeReady paths
     _ -> pure ()
+
+-- | Path of the engine-role exclusive lock under the durable runtime root.
+-- Each engine-role 'infernix service' process holds this lock for its
+-- lifetime so a second engine cannot start on the same host while the
+-- first is alive. Linux substrates additionally rely on Kubernetes
+-- required pod anti-affinity at the chart layer; the lock keeps the
+-- supported contract uniform across substrates.
+engineLockPath :: Paths -> FilePath
+engineLockPath paths = runtimeRoot paths </> "engine.lock"
+
+acquireEngineLockIfEngineRole :: Paths -> DaemonRole -> IO ()
+acquireEngineLockIfEngineRole paths daemonRole =
+  case daemonRole of
+    -- Phase 7 Sprint 7.7: the engine role now uniformly gates the lock
+    -- acquisition; Apple silicon's on-host daemon and the Linux in-cluster
+    -- @infernix-engine@ pod both pass through this branch. The coordinator
+    -- role never holds the engine lock.
+    Engine -> acquireEngineLock (engineLockPath paths)
+    Coordinator -> pure ()
+
+-- | Acquire an exclusive write lock on the supplied lock-file path. On
+-- contention the helper reads the existing holder's PID (written into the
+-- lock file at acquisition time below) and surfaces it through a fail-fast
+-- diagnostic. The lock is released only when the file descriptor closes,
+-- which happens automatically when the engine process exits — there is no
+-- explicit @releaseEngineLock@ in the supported contract.
+acquireEngineLock :: FilePath -> IO ()
+acquireEngineLock lockPath = do
+  createDirectoryIfMissing True (takeDirectory lockPath)
+  -- Ensure the lock file exists so 'openFd' below succeeds with @creat = Nothing@-style
+  -- semantics on subsequent runs. 'touchFile' is a no-op when the file already exists.
+  touchFile lockPath `catch` (\(_ :: IOException) -> pure ())
+  fd <-
+    bracketOnError
+      (openFd lockPath ReadWrite (defaultFileFlags {creat = Just 0o644}))
+      closeFd
+      pure
+  maybeHolder <- getLock fd (WriteLock, AbsoluteSeek, 0, 0)
+  case maybeHolder of
+    Just (holderPid, _) -> do
+      closeFd fd
+      hPutStrLn stderr ("engine.lock held by PID " <> show holderPid)
+      ioError
+        ( userError
+            ( "engine.lock at "
+                <> lockPath
+                <> " is held by PID "
+                <> show holderPid
+                <> "; refusing to start a second engine on this host"
+            )
+        )
+    Nothing -> do
+      setLock fd (WriteLock, AbsoluteSeek, 0, 0)
+      -- Persist our own PID for the next contender's diagnostic.
+      pid <- getProcessID
+      _ <- fdWrite fd (show pid <> "\n")
+      pure ()

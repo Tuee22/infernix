@@ -8,7 +8,7 @@
 
 ## Scope
 
-The `/` and demo-related routes (`/`, `/api*`, `/objects/<key>`) are demo-only and absent from
+The `/` and demo-related routes (`/`, `/api*`, `/auth`, `/ws`, `/api/objects`) are demo-only and absent from
 production deployments. Production deployments leave the active `.dhall` `demo_ui` flag off, the
 cluster has no `infernix-demo` workload, and the demo routes are not bound. The Harbor, MinIO,
 and Pulsar portal routes remain unconditional in every supported deployment.
@@ -25,7 +25,6 @@ Demo-only prefixes:
 |---------------|---------|-------|
 | `/` | Demo SPA | PureScript demo SPA served by `infernix-demo`. |
 | `/api` | Demo API | Covers `/api/publication`, `/api/cache`, `/api/models`, and `/api/demo-config`. |
-| `/objects` | Demo object store | Serves `GET /objects/:objectRef` for large outputs. |
 | `/auth` | Keycloak SSO | Registry-defined route. |
 | `/ws` | Demo durable-context WebSocket | Registry-defined route. |
 | `/api/objects` | Demo MinIO presigned URL minting | Registry-defined route. |

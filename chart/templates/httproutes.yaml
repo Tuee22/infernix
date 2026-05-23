@@ -2,7 +2,6 @@
 # Route registry summary generated from `src/Infernix/Routes.hs`.
 # - `/` -> `infernix-demo:80` (demo-only; no rewrite)
 # - `/api` -> `infernix-demo:80` (demo-only; no rewrite)
-# - `/objects` -> `infernix-demo:80` (demo-only; no rewrite)
 # - `/harbor/api` -> `infernix-harbor-core:80` (always published; `/harbor/api` -> `/api`)
 # - `/harbor` -> `infernix-harbor-portal:80` (always published; `/harbor` -> `/`)
 # - `/minio/console` -> `infernix-minio-console:9090` (always published; `/minio/console` -> `/`)

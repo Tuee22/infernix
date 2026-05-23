@@ -15,13 +15,13 @@ requiredFiles =
     "chart/values.yaml",
     "chart/templates/configmap-demo-catalog.yaml",
     "chart/templates/configmap-publication-state.yaml",
+    "chart/templates/deployment-coordinator.yaml",
     "chart/templates/deployment-demo.yaml",
-    "chart/templates/deployment-service.yaml",
+    "chart/templates/deployment-engine.yaml",
     "chart/templates/envoyproxy.yaml",
     "chart/templates/gateway.yaml",
     "chart/templates/gatewayclass.yaml",
     "chart/templates/httproutes.yaml",
-    "chart/templates/persistentvolumeclaim-service-data.yaml",
     "chart/templates/runtimeclass-nvidia.yaml",
     "chart/templates/service-demo.yaml",
     "kind/cluster-apple-silicon.yaml",
@@ -97,8 +97,13 @@ requiredPhrases =
         "from: Same"
       ]
     ),
-    ( "chart/templates/deployment-service.yaml",
-      [ ".Values.service.enabled",
+    -- Phase 7 Sprint 7.7: the supported split topology routes engine
+    -- runtime-class + GPU resource shape through
+    -- `chart/templates/deployment-engine.yaml`. The legacy
+    -- `chart/templates/deployment-service.yaml` is retired together
+    -- with the fused `service.*` Deployment.
+    ( "chart/templates/deployment-engine.yaml",
+      [ ".Values.engine.enabled",
         "demoConfig.mountPath",
         "INFERNIX_DEMO_CONFIG_PATH",
         "INFERNIX_PUBLICATION_STATE_PATH",
@@ -111,6 +116,16 @@ requiredPhrases =
         "nvidia.com/gpu"
       ]
     ),
+    ( "chart/templates/deployment-coordinator.yaml",
+      [ ".Values.coordinator.enabled",
+        "demoConfig.mountPath",
+        "INFERNIX_DEMO_CONFIG_PATH",
+        "INFERNIX_PUBLICATION_STATE_PATH",
+        "INFERNIX_MINIO_ENDPOINT",
+        "INFERNIX_PULSAR_ADMIN_URL",
+        "INFERNIX_PULSAR_WS_BASE_URL"
+      ]
+    ),
     ( "chart/templates/httproutes.yaml",
       [ ".Values.repoGateway.enabled",
         ".Values.routes",
@@ -120,13 +135,6 @@ requiredPhrases =
         "value: {{ $route.pathPrefix }}",
         "name: {{ $route.serviceName }}",
         "replacePrefixMatch: {{ $route.rewritePrefix }}"
-      ]
-    ),
-    ( "chart/templates/persistentvolumeclaim-service-data.yaml",
-      [ ".Values.service.enabled",
-        "storageClassName:",
-        "infernix.io/workload: service",
-        ".Values.service.dataPvc.name"
       ]
     ),
     ( "chart/templates/runtimeclass-nvidia.yaml",

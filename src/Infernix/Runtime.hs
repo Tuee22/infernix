@@ -22,7 +22,6 @@ import Infernix.Runtime.Worker (runInferenceWorker)
 import Infernix.Storage
   ( readInferenceResultProtoMaybe,
     writeInferenceResultProto,
-    writeTextFile,
   )
 import Infernix.Types
 import System.FilePath ((</>))
@@ -53,7 +52,6 @@ executeInference paths runtimeMode request = case findModel runtimeMode (request
           Left workerError ->
             pure (Left workerError)
           Right outputText -> do
-            payload <- buildPayload paths requestIdValue outputText
             let result =
                   InferenceResult
                     { requestId = requestIdValue,
@@ -62,7 +60,7 @@ executeInference paths runtimeMode request = case findModel runtimeMode (request
                       resultRuntimeMode = runtimeMode,
                       resultSelectedEngine = selectedEngine model,
                       status = "completed",
-                      payload = payload,
+                      payload = buildPayload outputText,
                       createdAt = now
                     }
             persistInferenceResult paths result
@@ -72,23 +70,18 @@ loadInferenceResult :: Paths -> Text -> IO (Maybe InferenceResult)
 loadInferenceResult paths requestIdValue =
   readInferenceResultProtoMaybe (inferenceResultPath paths requestIdValue)
 
-buildPayload :: Paths -> Text -> Text -> IO ResultPayload
-buildPayload paths requestIdValue outputText
-  | Text.length outputText > 80 = do
-      let relativePath = "results/" <> requestIdValue <> ".txt"
-          fullPath = objectStoreRoot paths </> Text.unpack relativePath
-      writeTextFile fullPath outputText
-      pure
-        ResultPayload
-          { inlineOutput = Nothing,
-            objectRef = Just relativePath
-          }
-  | otherwise =
-      pure
-        ResultPayload
-          { inlineOutput = Just outputText,
-            objectRef = Nothing
-          }
+-- | Build a result payload. Text outputs always ride inline in the Pulsar
+-- result message; binary outputs are written directly to the demo MinIO
+-- bucket by the engine adapter and carry an 'objectRef' (bucket + key) in
+-- the result envelope. Phase 7 Sprint 7.7 retired the 80-character inline
+-- threshold and the @./.data/object-store/results/@ overflow path that
+-- preceded this contract.
+buildPayload :: Text -> ResultPayload
+buildPayload outputText =
+  ResultPayload
+    { inlineOutput = Just outputText,
+      objectRef = Nothing
+    }
 
 persistInferenceResult :: Paths -> InferenceResult -> IO ()
 persistInferenceResult paths resultValue =

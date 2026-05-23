@@ -39,6 +39,27 @@ spec:
               value: {{ .Values.service.pulsar.adminUrl | quote }}
             - name: INFERNIX_PULSAR_WS_BASE_URL
               value: {{ .Values.service.pulsar.webSocketBaseUrl | quote }}
+            # Phase 7 Sprint 7.9: MinIO endpoint + credentials for the
+            # `/api/objects/{upload,download}` presigned URL minter. The
+            # demo binary derives the SigV4 signing material from these
+            # env vars; per-user bucket scope is enforced inside the
+            # handler.
+            - name: INFERNIX_MINIO_ENDPOINT
+              value: {{ .Values.service.minio.endpoint | quote }}
+            - name: INFERNIX_MINIO_ACCESS_KEY
+              value: {{ .Values.service.minio.accessKey | quote }}
+            - name: INFERNIX_MINIO_SECRET_KEY
+              value: {{ .Values.service.minio.secretKey | quote }}
+            - name: INFERNIX_MINIO_REGION
+              value: "us-east-1"
+            - name: INFERNIX_MINIO_PRESIGN_EXPIRY_SECONDS
+              value: "900"
+            # Phase 7 Sprint 7.1: Keycloak JWKS endpoint inside the
+            # cluster, used by the WebSocket handshake and the
+            # `/api/objects` handler to verify bearer JWTs without
+            # round-tripping through the routed `/auth` edge.
+            - name: INFERNIX_KEYCLOAK_JWKS_URL
+              value: "http://infernix-keycloak.platform.svc.cluster.local:{{ .Values.keycloak.service.port }}/realms/{{ .Values.keycloak.realm.name }}/protocol/openid-connect/certs"
           ports:
             - containerPort: {{ .Values.demo.port }}
           volumeMounts:

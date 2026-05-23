@@ -179,17 +179,6 @@ routeSpecs =
       Nothing
       Nothing,
     RouteSpec
-      "infernix-demo-objects"
-      "/objects"
-      "Demo object store"
-      "infernix-demo"
-      80
-      Nothing
-      True
-      Nothing
-      Nothing
-      Nothing,
-    RouteSpec
       "infernix-harbor-api"
       "/harbor/api"
       "Harbor API"
@@ -394,7 +383,6 @@ webPortalNotes routeSpec =
   case routePathPrefix routeSpec of
     "/" -> "PureScript demo SPA served by `infernix-demo`."
     "/api" -> "Covers `/api/publication`, `/api/cache`, `/api/models`, and `/api/demo-config`."
-    "/objects" -> "Serves `GET /objects/:objectRef` for large outputs."
     "/harbor/api" -> "Rewrites to upstream `/api` before forwarding to `infernix-harbor-core:80`."
     "/harbor" -> "Rewrites to upstream `/` before forwarding to `infernix-harbor-portal:80`."
     "/minio/console" -> "Rewrites to upstream `/` before forwarding to `infernix-minio-console:9090`."

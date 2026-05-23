@@ -68,11 +68,19 @@ resultTopicForMode :: RuntimeMode -> Text
 resultTopicForMode runtimeMode =
   "persistent://public/default/inference.result." <> runtimeModeId runtimeMode
 
+-- | Phase 7 Sprint 7.7: the coordinator-to-engine handoff topic on
+-- every substrate. The supported three-role daemon split publishes
+-- pre-batched inference work to @persistent://public/default/inference.batch.<mode>@;
+-- the engine role consumes from it and publishes the result back to
+-- @inference.result.<mode>@. On Apple silicon, the engine is on-host
+-- and the topic name is suffixed with @.host@ for backward
+-- compatibility with the pre-split lane.
 hostBatchTopicForMode :: RuntimeMode -> Maybe Text
 hostBatchTopicForMode runtimeMode =
   case runtimeMode of
     AppleSilicon -> Just ("persistent://public/default/inference.batch." <> runtimeModeId runtimeMode <> ".host")
-    _ -> Nothing
+    LinuxCpu -> Just (canonicalBatchTopicForMode runtimeMode)
+    LinuxGpu -> Just (canonicalBatchTopicForMode runtimeMode)
 
 -- | Canonical @inference.batch.<mode>@ topic name for any substrate. The
 -- auto-generated dhall file does not enable handoff on Linux substrates by
@@ -151,9 +159,14 @@ renderConfigMapManifest payload =
     ]
     <> indentBlock 4 (LazyChar8.unpack payload)
 
+-- | Phase 7 Sprint 7.7: the supported three-role daemon split has no
+-- daemon PVCs. The coordinator role keeps its subscription cursors on
+-- the Pulsar broker side; the engine role uses an `emptyDir` model
+-- cache under `engine.modelCache.sizeLimit`. The legacy
+-- `infernix-service-0-data` claim is retired with the fused
+-- `infernix-service` Deployment.
 platformClaimsForRuntime :: RuntimeMode -> [PersistentClaim]
-platformClaimsForRuntime _runtimeMode =
-  [PersistentClaim "platform" "infernix" "service" 0 "data" "infernix-service-0-data" "5Gi"]
+platformClaimsForRuntime _runtimeMode = []
 
 routeInventory :: Bool -> [RouteInfo]
 routeInventory = Routes.routeInventory
@@ -312,7 +325,7 @@ expectedInferenceDispatchModeForRuntime runtimeMode =
 
 stateHasDemoUi :: ClusterState -> Bool
 stateHasDemoUi state =
-  any ((`elem` ["/", "/api", "/objects"]) . path) (routes state)
+  any ((`elem` ["/", "/api"]) . path) (routes state)
 
 inferenceDispatchModeFor :: ClusterState -> Text
 inferenceDispatchModeFor state

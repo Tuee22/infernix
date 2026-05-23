@@ -1,0 +1,117 @@
+{{- if and .Values.demo.enabled .Values.keycloak.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: infernix-keycloak
+  namespace: platform
+spec:
+  replicas: {{ .Values.keycloak.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: infernix-keycloak
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: infernix-keycloak
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app.kubernetes.io/name
+                      operator: In
+                      values:
+                        - infernix-keycloak
+                topologyKey: kubernetes.io/hostname
+      containers:
+        - name: keycloak
+          image: "{{ .Values.keycloak.image.repository }}:{{ .Values.keycloak.image.tag }}"
+          imagePullPolicy: {{ .Values.keycloak.image.pullPolicy }}
+          args:
+            - start
+            - --import-realm
+            - --http-enabled=true
+            - --hostname-strict=false
+            - --proxy-headers=xforwarded
+            - --http-relative-path=/auth
+          env:
+            - name: KC_DB
+              value: postgres
+            - name: KC_DB_URL
+              value: "jdbc:postgresql://{{ .Values.keycloak.database.host }}:{{ .Values.keycloak.database.port }}/{{ .Values.keycloak.database.dbName }}"
+            - name: KC_DB_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.keycloak.database.secretName }}
+                  key: user
+            - name: KC_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.keycloak.database.secretName }}
+                  key: password
+            - name: KC_HOSTNAME_STRICT_HTTPS
+              value: "false"
+            - name: KC_HTTP_ENABLED
+              value: "true"
+            - name: KC_HEALTH_ENABLED
+              value: "true"
+            - name: KC_METRICS_ENABLED
+              value: "false"
+            - name: KC_BOOTSTRAP_ADMIN_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.keycloak.admin.secretName }}
+                  key: username
+            - name: KC_BOOTSTRAP_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.keycloak.admin.secretName }}
+                  key: password
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            # Keycloak 26 exposes /health/ready and /health/live on a
+            # separate management port (default 9000); the supported
+            # probes use that port to avoid the user-facing
+            # `--http-relative-path=/auth` rewrite.
+            - name: management
+              containerPort: 9000
+              protocol: TCP
+          # Phase 7 Sprint 7.1: TCP socket probes against the user-facing
+          # HTTP listener. Keycloak 26's HTTP management endpoint paths
+          # vary by Quarkus version, so the supported probes assert that
+          # the listener accepts connections rather than coupling to a
+          # specific HTTP path. The richer
+          # `/health/{live,ready,started}` HTTPGet probes can replace
+          # these once Sprint 7.14 validates the realm-import endpoint
+          # path against a live cluster.
+          readinessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 6
+          volumeMounts:
+            - name: realm-import
+              mountPath: /opt/keycloak/data/import
+              readOnly: true
+      volumes:
+        - name: realm-import
+          configMap:
+            name: infernix-keycloak-realm
+            items:
+              - key: infernix-realm.json
+                path: infernix-realm.json
+{{- end }}

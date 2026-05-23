@@ -18,7 +18,7 @@ where
 import Control.Applicative ((<|>))
 import Control.Concurrent (threadDelay)
 import Control.Exception (SomeException, try)
-import Control.Monad (unless)
+import Control.Monad (unless, when)
 import Data.Aeson
   ( FromJSON (parseJSON),
     Value,
@@ -37,6 +37,7 @@ import Data.List (find, intercalate, isSuffixOf, nub, partition)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe)
+import Data.Text qualified as Text
 import Data.Yaml qualified as Yaml
 import Infernix.Cluster.Discover (discoverChartImagesFile)
 import Infernix.ProcessMonitor qualified as ProcessMonitor
@@ -176,6 +177,19 @@ ensureLocalImageAvailable commandMonitorFactory imageRef = do
   case maybePresent of
     Right _ -> pure ()
     Left _ -> pullImageWithFallback commandMonitorFactory imageRef
+  -- Phase 7 Sprint 7.7 follow-on: with Docker 29.x + the containerd
+  -- snapshotter image store, @docker push@ of a multi-arch upstream
+  -- image fails with "image with reference X was found but does not
+  -- provide any platform" because the local tag points at the
+  -- manifest list, not the platform-specific sub-image. Even
+  -- @--platform linux/amd64@ on push reports "does not provide the
+  -- specified platform" because the local list-entry isn't a
+  -- standalone image tag. The supported workaround is to extract the
+  -- linux/amd64 digest from the upstream manifest list, pull that
+  -- specific digest, and re-tag it under the original tag name so the
+  -- subsequent @docker push@ sees a single-platform local image.
+  when (isUpstreamMultiArchImage imageRef) $
+    pinLocalImageToAmd64 commandMonitorFactory imageRef
 
 -- type CommandMonitorFactory = String -> IO (Maybe ProcessMonitor.CommandMonitor)
 pullImageWithFallback :: CommandMonitorFactory -> String -> IO ()
@@ -294,6 +308,11 @@ pushImageWithRetries manager options commandMonitorFactory sourceImage targetRef
         Left tagFailure ->
           pure (PushFailed ("docker tag failed for " <> sourceImage <> " as " <> targetRef <> "\n" <> tagFailure))
         Right _ -> do
+          -- Phase 7 Sprint 7.7 follow-on: 'ensureLocalImageAvailable'
+          -- already pins multi-arch upstream images to their
+          -- linux/amd64 digest before the retag below, so the local
+          -- tag references a single-platform image and plain
+          -- @docker push@ succeeds.
           monitor <- commandMonitorFactory ("docker push " <> targetRef)
           pushResult <- tryRunCommandMaybeMonitored "docker" ["push", targetRef] "" monitor
           case pushResult of
@@ -497,6 +516,97 @@ repoDigestTag inspection =
       Just (_, digestValue) <- [breakOn '@' repoDigestValue]
     ]
 
+-- | Pull the linux/amd64 sub-image from a multi-arch upstream and
+-- re-tag it under the original tag name so subsequent @docker push@
+-- works against a single-platform local image. See
+-- 'ensureLocalImageAvailable' for the supported context.
+-- type CommandMonitorFactory = String -> IO (Maybe ProcessMonitor.CommandMonitor)
+pinLocalImageToAmd64 :: CommandMonitorFactory -> String -> IO ()
+pinLocalImageToAmd64 commandMonitorFactory imageRef = do
+  inspectResult <- tryRunCommand "docker" ["manifest", "inspect", imageRef] ""
+  case inspectResult of
+    Left _ -> pure ()
+    Right manifestJson ->
+      case extractAmd64Digest manifestJson of
+        Nothing -> pure ()
+        Just amd64Digest -> do
+          let imageWithoutTag = takeBefore ':' imageRef
+              imageByDigest = imageWithoutTag <> "@" <> amd64Digest
+          digestMonitor <- commandMonitorFactory ("docker pull --platform linux/amd64 " <> imageByDigest)
+          digestPullResult <-
+            tryRunCommandMaybeMonitored
+              "docker"
+              ["pull", "--platform", "linux/amd64", imageByDigest]
+              ""
+              digestMonitor
+          case digestPullResult of
+            Left _ -> pure ()
+            Right _ -> do
+              _ <- tryRunCommand "docker" ["tag", imageByDigest, imageRef] ""
+              pure ()
+
+-- | Parse the JSON output of @docker manifest inspect@ and return the
+-- digest of the @linux/amd64@ entry, if any. Uses the Aeson FromJSON
+-- machinery to decode just the shape we need without enumerating the
+-- full manifest-list schema.
+extractAmd64Digest :: String -> Maybe String
+extractAmd64Digest manifestJson =
+  case eitherDecode (LazyChar8.pack manifestJson) :: Either String ManifestList of
+    Left _ -> Nothing
+    Right ml -> Text.unpack <$> findAmd64Digest (manifestListEntries ml)
+  where
+    findAmd64Digest [] = Nothing
+    findAmd64Digest (entry : rest)
+      | manifestEntryArchitecture entry == "amd64"
+          && manifestEntryOs entry == "linux" =
+          Just (manifestEntryDigest entry)
+      | otherwise = findAmd64Digest rest
+
+newtype ManifestList = ManifestList
+  { manifestListEntries :: [ManifestEntry]
+  }
+  deriving (Eq, Show)
+
+instance FromJSON ManifestList where
+  parseJSON = withObject "ManifestList" $ \value ->
+    ManifestList <$> value .: "manifests"
+
+data ManifestEntry = ManifestEntry
+  { manifestEntryDigest :: Text.Text,
+    manifestEntryArchitecture :: Text.Text,
+    manifestEntryOs :: Text.Text
+  }
+  deriving (Eq, Show)
+
+instance FromJSON ManifestEntry where
+  parseJSON = withObject "ManifestEntry" $ \value -> do
+    digestField <- value .: "digest"
+    platformField <- value .: "platform"
+    architectureField <- platformField .: "architecture"
+    osField <- platformField .: "os"
+    pure
+      ManifestEntry
+        { manifestEntryDigest = digestField,
+          manifestEntryArchitecture = architectureField,
+          manifestEntryOs = osField
+        }
+
+-- | Heuristic: an image is considered upstream-multi-arch (and routed
+-- through @docker buildx imagetools create@ instead of plain
+-- @docker push@) when its reference does NOT start with the supported
+-- locally-built prefix. Sprint 7.7's follow-on Docker-29 + containerd
+-- snapshotter issue rejects pushes of multi-arch manifest lists, so
+-- the supported workaround is to use the registry V2 API path
+-- imagetools talks to. Locally-built repo images stay on the fast
+-- legacy @docker push@ path because they are single-platform by
+-- construction.
+isUpstreamMultiArchImage :: String -> Bool
+isUpstreamMultiArchImage imageRef =
+  not (any (`hasPrefix` imageRef) localImagePrefixes)
+  where
+    localImagePrefixes = ["infernix-linux-cpu:", "infernix-linux-gpu:"]
+    hasPrefix prefixValue value = take (length prefixValue) value == prefixValue
+
 normalizeRepositoryPath :: String -> String
 normalizeRepositoryPath rawImage =
   case splitOn '/' withoutTag of
@@ -534,6 +644,13 @@ buildHarborOverridesValue publishedImages = do
         object
           [ "service" .= workloadImageOverlay runtimeImage,
             "demo" .= workloadImageOverlay runtimeImage,
+            -- Phase 7 Sprint 7.7: the supported three-role split routes
+            -- coordinator + engine images through the same Harbor-mirrored
+            -- runtime image. Without these overlays the new pods pull
+            -- the bare `infernix-linux-{cpu,gpu}:local` ref which is not
+            -- present on Kind worker nodes.
+            "coordinator" .= workloadImageOverlay runtimeImage,
+            "engine" .= workloadImageOverlay runtimeImage,
             "minio"
               .= minioObject minioImage minioShellImage minioConsoleImage minioClientImage,
             "pulsar"

@@ -19,6 +19,11 @@ dependencies:
     version: 2.9.0
     repository: https://percona.github.io/percona-helm-charts
     condition: upstreamCharts.harborpg.enabled
+  - name: pg-db
+    alias: keycloakpg
+    version: 2.9.0
+    repository: https://percona.github.io/percona-helm-charts
+    condition: upstreamCharts.keycloakpg.enabled
   - name: pulsar
     version: 4.5.0
     repository: https://pulsar.apache.org/charts

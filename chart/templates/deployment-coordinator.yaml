@@ -60,6 +60,13 @@ spec:
               value: "{{ .Values.demoConfig.mountPath }}/{{ .Values.demoConfig.fileName }}"
             - name: INFERNIX_PUBLICATION_STATE_PATH
               value: "{{ .Values.demoConfig.mountPath }}/{{ .Values.publication.fileName }}"
+            # Phase 7 Sprint 7.7: writable durable-state root the daemon
+            # uses for the subscription-ready marker and any future
+            # broker-cursor metadata. An emptyDir volume is sufficient
+            # because Pulsar subscription cursors live broker-side; the
+            # coordinator role has no persistent local state.
+            - name: INFERNIX_DATA_ROOT
+              value: "/srv/infernix/.data"
             - name: INFERNIX_MINIO_ENDPOINT
               value: {{ .Values.service.minio.endpoint | quote }}
             - name: INFERNIX_MINIO_ACCESS_KEY
@@ -87,12 +94,14 @@ spec:
               mountPath: "{{ .Values.demoConfig.mountPath }}/{{ .Values.publication.fileName }}"
               subPath: {{ .Values.publication.fileName }}
               readOnly: true
+            - name: coordinator-data
+              mountPath: /srv/infernix/.data
           readinessProbe:
             exec:
               command:
                 - /bin/sh
                 - -lc
-                - test -f /tmp/coordinator/subscription.ready
+                - test -f /srv/infernix/.data/runtime/service/subscription.ready
             periodSeconds: 5
             timeoutSeconds: 3
             failureThreshold: 120
@@ -103,4 +112,6 @@ spec:
         - name: publication-state
           configMap:
             name: {{ .Values.publication.name }}
+        - name: coordinator-data
+          emptyDir: {}
 {{- end }}

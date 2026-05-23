@@ -34,7 +34,6 @@ compatibility payload.
 |---------------|------------|---------|---------|---------|
 | `/` | demo-only | Demo SPA | `infernix-demo:80` | no rewrite |
 | `/api` | demo-only | Demo API | `infernix-demo:80` | no rewrite |
-| `/objects` | demo-only | Demo object store | `infernix-demo:80` | no rewrite |
 | `/harbor/api` | always published | Harbor API | `infernix-harbor-core:80` | `/harbor/api` -> `/api` |
 | `/harbor` | always published | Harbor portal | `infernix-harbor-portal:80` | `/harbor` -> `/` |
 | `/minio/console` | always published | MinIO console | `infernix-minio-console:9090` | `/minio/console` -> `/` |
@@ -46,8 +45,9 @@ compatibility payload.
 | `/api/objects` | demo-only | Demo MinIO presigned URL minting | `infernix-demo:80` | no rewrite |
 <!-- infernix:route-registry:edge-routing:end -->
 
-- when the demo surface is enabled, `/` and the demo `/api*` and `/objects/` routes target the
-  `infernix-demo` workload; direct `infernix-demo serve [--dhall PATH] [--port PORT]` still
+- when the demo surface is enabled, `/`, the demo `/api*` routes, `/auth`, `/ws`, and
+  `/api/objects` target the `infernix-demo` workload (or the routed Keycloak release in the
+  `/auth` case); direct `infernix-demo serve [--dhall PATH] [--port PORT]` still
   exposes the same Haskell demo API surface outside the routed cluster path when used
   intentionally, but the supported routed Apple story keeps that HTTP host cluster-resident and
   bridges manual inference through Pulsar into the host daemon instead of treating direct `serve`

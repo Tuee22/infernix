@@ -48,10 +48,12 @@ in  { runtimeMode : Text
     , mountedPath : Text
     , demo_ui : Bool
     , daemonRole : Text
-    , clusterDaemon : DaemonConfig
-    , hostDaemon : Optional DaemonConfig
+    , coordinator : DaemonConfig
+    , engine : Optional DaemonConfig
     , request_topics : List Text
     , result_topic : Text
+    , models_bucket : Text
+    , model_bootstrap_topic : Text
     , engines : List EngineBinding
     , models : List ModelDescriptor
     }

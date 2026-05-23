@@ -1,0 +1,16 @@
+{{- if and .Values.demo.enabled .Values.keycloak.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: infernix-keycloak
+  namespace: platform
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: infernix-keycloak
+  ports:
+    - name: http
+      port: {{ .Values.keycloak.service.port }}
+      targetPort: 8080
+      protocol: TCP
+{{- end }}

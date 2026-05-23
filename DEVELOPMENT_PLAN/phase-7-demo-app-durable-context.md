@@ -36,6 +36,163 @@ The legacy direct manual-inference HTTP handlers, the matching CLI helper, the
 inference surface are tracked for explicit removal in
 [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) under this phase.
 
+Phase 7 Sprint 7.7 landed a focused legacy-cleanup pass on May 22, 2026: the staged
+`infernix-substrate.dhall` schema now carries `models_bucket` and `model_bootstrap_topic`
+fields (defaults `infernix-models` and `persistent://infernix/system/model.bootstrap.request`);
+the legacy `/objects/:objectRef` HTTP route and `serveObject` handler are removed across
+`src/Infernix/Routes.hs`, `src/Infernix/Demo/Api.hs`, the route-validation lists in
+`src/Infernix/Models.hs` and `src/Infernix/Cluster.hs`, the generated route-registry
+comment in `chart/templates/httproutes.yaml`, and the route inventory rows in `README.md`,
+`documents/engineering/edge_routing.md`, and `documents/reference/web_portal_surface.md`;
+the 80-character inline-payload threshold in `src/Infernix/Runtime.hs` is replaced with
+unconditional inline payloads; `src/Infernix/Service.hs` acquires an exclusive
+`flock(2)`-style lock on `./.data/runtime/engine.lock` at engine-role startup
+(canonical `HostDaemon` role today; the Linux engine pod uniformly acquires the same
+lock once the daemon-role rename lands); `src/Infernix/Runtime/Pulsar.hs` reconciles the
+supported `infernix` tenant plus `infernix/system` and `infernix/demo` namespaces, sets a
+compaction threshold on the demo namespace, and creates the
+`persistent://infernix/system/model.bootstrap.request` topic before schema registration;
+`python/adapters/model_cache.py` adds the uniform `get_model_path(model_id)` contract
+with a clear `ModelCacheNotPopulated` fail-fast surface awaiting the Sprint 7.14
+real-cluster MinIO client and LRU eviction loop. `infernix lint files`, `infernix lint
+chart`, `infernix lint docs`, `infernix lint proto`, `infernix test lint`, and
+`infernix test unit` all exit zero against the post-cleanup state.
+
+The Sprint 7.7 surface that still depends on a real-cluster validation pass or on the
+broader daemon-role rename is enumerated explicitly in the sprint's `Remaining Work`
+section below: the daemon-role vocabulary cutover from `cluster`/`host` strings to
+`coordinator`/`engine`, the `./.data/object-store/` tree and `objectStoreRoot` plumbing
+removal (which touches the worker proto envelope and every adapter), the
+`s3://infernix-runtime/` URI scheme and `localPathFromUri` mapping, the
+`infernix-runtime` / `infernix-results` placeholder bucket removal from
+`chart/values.yaml` (paired with the `chart/templates/deployment-service.yaml` and
+`persistentvolumeclaim-service-data.yaml` deletions and the `daemonSplit.enabled`
+flip), and the Pulsar WebSocket producer-side deduplication wiring on the conversation,
+inference-request, inference-result, and `model.bootstrap.request` topics.
+
+The May 22, 2026 `linux-cpu` validation pass surfaced and fixed three Sprint 7.7 / 7.1
+follow-on bugs in three iterative cluster-up cycles, then closed the supported
+`./bootstrap/linux-cpu.sh build` + `cluster up` + `cluster down` lifecycle clean:
+
+1. **Sprint 7.7 Pulsar tenant `allowedClusters` empty list.** The initial
+   `reconcileSupportedNamespaces` call sent the Pulsar admin tenant body with
+   `allowedClusters: []`, which the broker rejected with `412 Precondition Failed:
+   Clusters cannot be empty or blank`. The daemon retried 250+ times, blocking the
+   `infernix-service` rollout. Fix: the reconcile now queries `GET /admin/v2/clusters`
+   and passes the discovered cluster list (the bundled chart's single cluster is
+   `infernix-infernix-pulsar`) as the tenant body's `allowedClusters`.
+2. **Sprint 7.1 `pulsar:` top-level key dropped from `chart/values.yaml`.** The
+   Keycloak stanza insertion accidentally removed the `pulsar:` top-level key so the
+   pulsar dep rendered with default values (`infernix-pulsar-` single prefix, default
+   10 GiB journal volumes without `infernix-manual` storage class), which the
+   discover-chart-claims phase rejected. Fix: restored the `pulsar:` top-level key so
+   the dep stanza routes through Helm's alias resolution again.
+3. **Sprint 7.1 Keycloak HTTPGet health probes.** Keycloak 26 returned 404 on the
+   `/health/{live,ready}` paths at port 8080 and the path on the separate 9000
+   management port varies by Quarkus version. Fix: the supported probes are TCP
+   socket probes against port 8080 so the contract is decoupled from path drift.
+
+After the third rebuild, `./bootstrap/linux-cpu.sh build` plus
+`docker compose run --rm infernix infernix cluster up` reached
+`lifecyclePhase: steady-state` with `cluster status` reporting all eleven supported
+HTTPRoutes (`/`, `/api`, `/api/objects`, `/auth`, `/ws`, the operator route family)
+and zero references to the retired `/objects` route. `infernix-keycloak 2/2`,
+`keycloak-postgresql-pgbouncer 3/3`, `infernix-demo 1/1`, `infernix-service 1/1`.
+`sessionAffinity: None` confirmed on the demo Service. The Pulsar admin reconcile
+created the `infernix` tenant plus `infernix/demo` and `infernix/system` namespaces
+and set the 100 MiB compaction threshold on `infernix/demo`. `cluster down` then
+reconciled cluster absence cleanly: `clusterPresent: False`, `lifecycleStatus: idle`,
+`lifecyclePhase: cluster-absent`.
+
+One small follow-on remains under Sprint 7.7 cluster validation: the explicit
+`persistent://infernix/system/model.bootstrap.request` topic creation via the admin
+PUT returned 2xx in the daemon log but the topic does not appear in
+`pulsar-admin topics list infernix/system`. Pulsar's auto-topic-creation on first
+publish will materialise the topic when the coordinator bootstrap subscription comes
+online; the explicit creation contract closes when Sprint 7.14 chaos validation
+verifies the topic exists before the first publish.
+
+The May 22, 2026 `linux-gpu` rerun then re-validated the same Sprint 7.1 + 7.3 + 7.7
++ 7.9 changes against the GPU substrate. `./bootstrap/linux-gpu.sh doctor`, `build`,
+`up`, `status`, and `down` all exit zero on the first attempt:
+`lifecyclePhase: steady-state` on the running cluster with `runtimeMode: linux-gpu`,
+two Kubernetes nodes (`infernix-linux-gpu-control-plane` + `infernix-linux-gpu-worker`),
+the `nvidia` RuntimeClass present, the worker node advertising
+`nvidia.com/gpu: 1` (RTX 5090), `infernix-keycloak 2/2`, both Patroni clusters
+running, the Pulsar admin reconcile creating the `infernix` tenant + `infernix/demo`
++ `infernix/system` namespaces, and the same 11-route registry as the `linux-cpu`
+lane (with `/objects` correctly absent). `cluster down` returned the lifecycle to
+`clusterPresent: False`, `lifecycleStatus: idle`, `lifecyclePhase: cluster-absent`.
+The Sprint 7.1 + 7.3 + 7.7 + 7.9 code changes are now real-cluster validated on
+both supported `linux-*` substrates.
+
+The May 23, 2026 follow-on pass closed the remaining Sprint 7.7 architectural
+items — the daemon-role rename and the chart cutover from fused to split
+topology — and validated them end-to-end on `linux-cpu`. The closure surfaces:
+
+- `Types.hs.DaemonRole` constructors renamed to `Coordinator` / `Engine`;
+  `DemoConfig` record fields renamed to `coordinatorDaemon` /
+  `engineDaemon`; `parseDaemonRole` accepts legacy `cluster` / `host`
+  strings during transition. Dhall schema field names and the JSON wire
+  keys flipped to the new vocabulary. `infernix service` reports
+  `serviceDaemonRole: coordinator` in steady state.
+- `chart/templates/deployment-service.yaml` plus
+  `chart/templates/persistentvolumeclaim-service-data.yaml` deleted;
+  the legacy `service.{enabled,image,replicaCount,command,args,dataPvc}`
+  keys plus `infernix-runtime` / `infernix-results` MinIO bucket entries
+  removed from `chart/values.yaml`. `daemonSplit.enabled = true` plus
+  per-role `enabled: true` defaults are now the chart shape. The
+  `service:` stanza is reduced to shared backend wiring
+  (`service.minio.*`, `service.pulsar.*`, `service.engineAdapters.commandEnv`)
+  the new Deployment templates consume.
+- `chart/templates/deployment-{coordinator,engine}.yaml` mount the
+  substrate ConfigMap + an `INFERNIX_DATA_ROOT=/srv/infernix/.data`
+  `emptyDir` for the supported `subscription.ready` marker; the
+  coordinator template additionally injects `INFERNIX_MINIO_*` and the
+  Keycloak JWKS URL so the `/api/objects` and `/ws` handlers can mint
+  presigned URLs and validate JWTs at startup.
+- `src/Infernix/Models.hs.hostBatchTopicForMode` now returns the
+  canonical `inference.batch.<mode>` topic on every substrate (not just
+  Apple), and `Infernix.DemoConfig.engineDaemonConfig` returns `Just`
+  on every substrate so the in-cluster `infernix-engine` Deployment has
+  daemon metadata to start with.
+- `src/Infernix/Cluster.hs.finalPhaseDeployments` waits on
+  `deployment/infernix-{coordinator,engine,demo}` (no longer on the
+  retired `deployment/infernix-service`); `clusterServiceEnabled`
+  returns `False` across every substrate. `renderHelmValues` zeros out
+  the coordinator + engine replica counts in every pre-Pulsar phase and
+  raises them to the supported HA values (coordinator ≥ 2, engine 1) in
+  `FinalPhase`.
+- `src/Infernix/Cluster/PublishImages.hs.buildHarborOverridesValue`
+  rewrites `coordinator.image` + `engine.image` alongside `service.image`
+  and `demo.image`, so the new pods pull from the Harbor mirror instead
+  of the bare `:local` tag (which is not present on Kind worker nodes).
+- `src/Infernix/Runtime/Pulsar.hs.buildConsumerSocketPath` now requests
+  `subscriptionType=Shared` so two coordinator replicas can split the
+  inference-request topic without 409 Conflict. Per-context exclusive
+  ownership lives on the per-conversation Failover subscriptions the
+  dispatcher creates (Sprint 7.6).
+- `src/Infernix/DemoConfig.hs.ensureGeneratedDemoConfigFile` catches
+  decode failures and re-materialises, so a stale staged `.dhall` from
+  a pre-rename build doesn't strand `cluster up` on the new schema.
+
+`./bootstrap/linux-cpu.sh up` reached `lifecyclePhase: steady-state` with
+`infernix-coordinator 2/2`, `infernix-engine 1/1`, `infernix-demo 1/1`,
+`infernix-keycloak 2/2`, the Pulsar admin reconcile creating
+`infernix/demo` + `infernix/system` namespaces, no `infernix-service`
+PVC, all eleven supported HTTPRoutes registered (with `/objects`
+correctly absent). `cluster down` returned the lifecycle to
+`clusterPresent: False`, `lifecycleStatus: idle`,
+`lifecyclePhase: cluster-absent`.
+
+The remaining Sprint 7.7 follow-ons are still pending and are listed in
+the sprint's `Remaining Work` section below: `objectStoreRoot` plumbing
+removal (touches the worker proto envelope + every Python adapter), the
+`s3://infernix-runtime/` URI scheme retirement, and the Pulsar
+producer-side deduplication wiring on the conversation /
+inference-request / inference-result / `model.bootstrap.request` topic
+families. They land together with Sprint 7.14's chaos validation cycle.
+
 Phase 7 closes the durable-context contract on top of that foundation. It does not modify
 production inference dispatch; the new conversation, metadata, and drafts topics live in
 demo-gated namespaces, the new Keycloak release, demo MinIO bucket, WebSocket endpoint, and
@@ -214,27 +371,52 @@ that allows self-signup with username/password and skips email verification.
 
 ### Remaining Work
 
-The `/auth` route is landed in the Haskell route registry source
-(`src/Infernix/Routes.hs`), and the generated route sections in `README.md`,
-`chart/templates/httproutes.yaml`, `documents/engineering/edge_routing.md`, and
-`documents/reference/web_portal_surface.md` all carry the new demo-only entry pointing at
-`infernix-keycloak:8080`. `infernix lint chart` and `infernix lint docs` pass.
+The May 22, 2026 Sprint 7.1 pass landed the chart-side scaffolding and supporting Patroni
+dependency:
+
+- `chart/Chart.yaml` declares a second `pg-db` dependency aliased to `keycloakpg`, gated
+  on `upstreamCharts.keycloakpg.enabled` (default `true` when the demo surface is on).
+- `chart/values.yaml` adds:
+  - the `keycloakpg:` stanza mirroring `harborpg:` — Patroni cluster managed by the Percona
+    operator, `keycloak` user + `keycloak` database, 3-instance HA, `infernix-manual`
+    storage class, `infernix-keycloak-db-user` secret, pgbackrest backups.
+  - the `keycloak:` stanza — `quay.io/keycloak/keycloak:26.0.7` image, replica count 2,
+    realm + client identifiers, admin + database secret names, port 8080.
+- `chart/templates/keycloak/` adds five templates, all gated on
+  `.Values.demo.enabled && .Values.keycloak.enabled`:
+  - `deployment.yaml` — Keycloak Deployment with preferred anti-affinity, JDBC env wired
+    to the Patroni `pgbouncer` Service, realm import via `--import-realm` from the
+    mounted ConfigMap, readiness + liveness probes on `/auth/health/{ready,live}`, and
+    bootstrap admin credentials sourced from the `infernix-keycloak-admin` secret.
+  - `service.yaml` — ClusterIP Service exposing the Keycloak HTTP listener at port 8080
+    so the routed `/auth` HTTPRoute (already registered in `Infernix.Routes`) reaches it
+    without a NodePort.
+  - `configmap-realm-import.yaml` — realm definition with `registrationAllowed: true`,
+    `verifyEmail: false`, an `infernix-spa` public OIDC client with PKCS code-challenge,
+    and a length-only password policy.
+  - `secret-admin.yaml` — bootstrap admin credentials. Operators rotate this through the
+    Keycloak admin UI after first login.
+  - `poddisruptionbudget.yaml` — `maxUnavailable: 1` matching the supported HA shape.
+
+`infernix lint chart`, `infernix lint files`, `infernix lint docs`, `infernix lint proto`,
+`infernix test unit`, and `infernix test lint` all exit zero with the new chart assets in
+place.
 
 Pending closure:
 
-- `chart/templates/keycloak/` Helm templates for the Keycloak Deployment, Service, and
-  realm-import ConfigMap (image pinned to the Harbor-hosted Keycloak release).
-- Patroni PostgreSQL cluster manifest for Keycloak's backend store, managed by the existing
-  Percona operator.
-- `chart/values.yaml` Keycloak stanza with `demo.enabled`-gated installation and the
-  per-realm settings the importer needs.
-- `src/Infernix/Cluster/Keycloak.hs` (or equivalent extension to
-  `src/Infernix/Cluster.hs`) that reconciles the realm import after Harbor is ready and
-  before the demo workload starts.
-- Real-cluster validation: `cluster up` with `demo_ui = true` deploys Keycloak, the
-  browser reaches `/auth`, self-signup succeeds without an email-verification step, the
-  Patroni cluster is visible to `infernix kubectl get postgrescluster`, and with
-  `demo_ui = false` neither Keycloak nor its Patroni cluster are present.
+- A dedicated `src/Infernix/Cluster/Keycloak.hs` reconcile module is not required —
+  Keycloak's native `--import-realm` flag consumes the mounted realm ConfigMap at
+  startup, and the Patroni cluster's user + database creation is owned by the Percona
+  operator. `cluster up` already waits for the final Helm rollout, which includes the
+  Keycloak Deployment + Service + ConfigMap + admin Secret + Patroni cluster as
+  Helm-managed resources.
+- Real-cluster validation: `./bootstrap/linux-cpu.sh up` with the new chart, then
+  `infernix kubectl -n platform get postgrescluster` shows `keycloak-postgresql`,
+  `infernix kubectl -n platform get deployments/infernix-keycloak` is `Available`, a
+  browser at `/auth` reaches the Keycloak login page, self-signup succeeds without an
+  email-verification step, and `cluster up` with `demo_ui = false` shows neither the
+  Keycloak Deployment, Service, ConfigMap, Secret, nor the `keycloak-postgresql`
+  Patroni cluster.
 
 ---
 
@@ -323,24 +505,49 @@ session.
 
 ### Remaining Work
 
-The `/ws` route is landed in the Haskell route registry source (`src/Infernix/Routes.hs`),
-and the generated route sections across the supported documentation surface reflect the new
-demo-only WebSocket entry pointing at `infernix-demo:80`.
+The May 22, 2026 Sprint 7.3 pass landed the WebSocket handshake plus framed-envelope
+dispatch:
+
+- `src/Infernix/Auth/Jwt.hs` (landed earlier in Sprint 7.3) — JWKS-backed validation
+  parameterised in issuer and audience.
+- `src/Infernix/Demo/Auth.hs` (landed earlier in Sprint 7.3) — Keycloak realm wiring
+  into the shared `Auth.Jwt` validator.
+- `src/Infernix/Demo/WebSocket.hs` — new. `wsApplication` mounts on the @/ws@ route,
+  upgrades WAI requests via `Network.Wai.Handler.WebSockets.websocketsOr`, and validates
+  the bearer JWT carried in either the `Authorization` header or the `?token=` query
+  parameter (the SPA-friendly fallback because browsers cannot set headers on
+  `WebSocket(...)` connects). The handshake calls
+  `Infernix.Auth.Jwt.verifyAndParseJwt`, captures `UserId` from the `sub` claim, and
+  hands off to a per-connection receive loop that decodes the framed envelopes from
+  Sprint 7.2 (`WsClientMessage` / `WsServerMessage`). Each decoded `ClientMessage`
+  family is classified through the pure `classifyClientMessage` helper, which today
+  returns `AcknowledgePending` for every variant — the supported handshake + decode +
+  routing shape is in place; the Pulsar Reader / Failover subscription wiring lands
+  together with the Sprint 7.14 real-cluster validation. Per-WS state is limited to the
+  WS handle plus the authenticated `UserId`.
+- `chart/templates/service-demo.yaml` now sets `sessionAffinity: None` so any frontend
+  replica can host any session and the pod-kill-survives-reconnect contract from
+  Sprint 7.14 has the substrate it needs.
+- `src/Infernix/Demo/Api.hs` mounts the WebSocket handler at `/ws`, using the same
+  Keycloak JWKS loader the `/api/objects` handler uses (with the
+  `INFERNIX_KEYCLOAK_JWKS_URL` override).
+- `infernix.cabal` exposes the new module and pulls in `wai-websockets 3.0`.
+
+`infernix lint chart`, `infernix lint files`, `infernix lint docs`, `infernix lint proto`,
+`infernix test lint`, and `infernix test unit` all exit zero with the new WebSocket
+module in place.
 
 Pending closure:
 
-- `src/Infernix/Auth/Jwt.hs` — JWKS-backed validation parameterised in issuer and audience.
-  Unit-testable as pure Haskell with a static JWKS fixture, no live Keycloak required for
-  the unit gate.
-- `src/Infernix/Demo/Auth.hs` — wiring of the Keycloak realm settings into `Auth.Jwt`.
-- `src/Infernix/Demo/WebSocket.hs` — WAI-level WS upgrade, framed-envelope routing for the
-  `WsClientMessage` / `WsServerMessage` sums landed in Sprint 7.2, and per-WS state limited
-  to the WS handle plus Pulsar Reader cursors.
-- Chart Service for `infernix-demo` setting `sessionAffinity: None` and the matching
-  HTTPRoute carrying no client-IP or cookie affinity.
-- Real-cluster validation: WS connection with a valid JWT succeeds, invalid/expired JWT
-  closes the WS with a typed error, `sessionAffinity: None` is reported, and the
-  pod-kill-survives-reconnect chaos case from Sprint 7.14.
+- Pulsar Reader cursors per-context: the `runSession` loop today acknowledges client
+  messages but does not yet bind them to per-context Pulsar Reader subscriptions on
+  the conversation log topic. Lands together with Sprint 7.14.
+- Real-cluster validation: WS connection with a valid Keycloak-issued JWT succeeds,
+  invalid/expired JWT closes the WS with the typed 401/503 reject, `sessionAffinity:
+  None` is reported by `infernix kubectl -n platform get service/infernix-demo -o
+  yaml`, and the pod-kill-survives-reconnect chaos case from Sprint 7.14 passes.
+- PureScript-side `web/src/Infernix/Web/WebSocket.purs` client that talks to this
+  endpoint (Sprint 7.10).
 
 ---
 
@@ -437,11 +644,15 @@ the `DraftEvent` fold that respects `DraftUpdated`/`DraftCleared` semantics and 
 @N events with M distinct keys -> M latest values@ invariant in-memory and confirms the draft
 cleared semantics.
 
-Pending closure: the broker-side namespace compaction policy. `cluster up` must call the
-Pulsar admin API to enable compaction on the `infernix/demo` namespace for the `demo.user.*`
-topic prefixes (the compaction policy is currently inherited from broker defaults). The
-broker-side assertion lives in Sprint 7.14's integration suite — it is the supported
-real-cluster validation gate for this sprint.
+Pending closure: real-cluster validation of the broker-side namespace compaction policy.
+The May 22, 2026 Sprint 7.7 cleanup pass landed the admin-API reconcile path in
+`src/Infernix/Runtime/Pulsar.hs` (`reconcileSupportedNamespaces`): the daemon startup now
+creates the supported `infernix` tenant, the `infernix/demo` and `infernix/system`
+namespaces, and a 100 MiB compaction threshold on `infernix/demo` via the Pulsar admin
+REST API before schema registration, with 409 Conflict treated as success. The
+broker-side assertion that the threshold actually applies to `demo.user.*` topics is
+still owned by Sprint 7.14's integration suite — it is the supported real-cluster
+validation gate for this sprint.
 
 ---
 
@@ -670,28 +881,76 @@ The pure-Haskell coordination layer plus the additive chart-side scaffolding are
 - `infernix lint chart`, `infernix lint files`, `infernix lint docs`,
   `infernix lint proto` exit zero with the new chart templates in place.
 
+The May 22, 2026 cleanup pass additionally landed the following sub-items, all
+validated through `infernix lint *` plus `infernix test unit`:
+
+- `dhall/InfernixSubstrate.dhall` carries the new `models_bucket : Text` and
+  `model_bootstrap_topic : Text` top-level fields. `src/Infernix/Types.hs` exposes
+  the matching `modelsBucket` / `modelBootstrapTopic` `DemoConfig` record fields and
+  the `defaultModelsBucket = "infernix-models"` + `defaultModelBootstrapTopic =
+  "persistent://infernix/system/model.bootstrap.request"` constants.
+  `src/Infernix/Substrate.hs` (Dhall decoder/renderer) and `src/Infernix/DemoConfig.hs`
+  (materialization path) thread both fields through end to end.
+- 80-character inline-payload threshold removed from `src/Infernix/Runtime.hs`:
+  `buildPayload` is now a pure helper that always returns an inline `ResultPayload`,
+  the legacy `./.data/object-store/results/<requestId>.txt` overflow path is retired,
+  and the unit tests at `test/unit/Spec.hs` were updated to assert inline-output
+  behaviour. Listed as **Completed** in `legacy-tracking-for-deletion.md`.
+- `/objects/:objectRef` HTTP route fully retired: the `serveObject` handler is gone
+  from `src/Infernix/Demo/Api.hs`, the matching `RouteSpec` plus the route table
+  notes are gone from `src/Infernix/Routes.hs`, the demo-detection lists in
+  `src/Infernix/Models.hs` and `src/Infernix/Cluster.hs` no longer reference
+  `/objects`, the generated route-registry comment is gone from
+  `chart/templates/httproutes.yaml`, and the route inventory rows are gone from
+  `README.md`, `documents/reference/web_portal_surface.md`, and
+  `documents/engineering/edge_routing.md`. Listed as **Completed** in
+  `legacy-tracking-for-deletion.md`.
+- `src/Infernix/Service.hs` engine-role startup acquires an exclusive write lock on
+  `./.data/runtime/engine.lock` via `fcntl(2)`-style `setLock` (BSD-equivalent
+  semantics) before `runProductionDaemon`. On contention the helper reads the
+  existing holder's PID and surfaces a fail-fast diagnostic. Gated on `HostDaemon`
+  today; the Linux engine pod will gate uniformly on `engine` once the daemon-role
+  rename lands.
+- `src/Infernix/Runtime/Pulsar.hs` reconciles the supported `infernix` tenant plus
+  `infernix/system` and `infernix/demo` namespaces via the Pulsar admin REST API,
+  sets the compaction threshold on `infernix/demo`, and creates the
+  `persistent://infernix/system/model.bootstrap.request` topic. The reconcile is
+  idempotent (409 Conflict is treated as success) and runs once per daemon startup
+  with bounded retry, before schema registration.
+- `python/adapters/model_cache.py` exposes the supported `get_model_path(model_id)
+  -> Path` contract with `ModelCacheNotPopulated` as the fail-fast surface. The
+  helper currently honours `INFERNIX_MODEL_CACHE_ROOT` and reads from
+  `/model-cache/<modelId>/` with a `.ready` sentinel; the MinIO download client and
+  LRU eviction loop land together with Sprint 7.14's real-cluster validation.
+
 Pending closure:
 
-- `src/Infernix/Bootstrap/Models.hs` — the coordinator's Failover bootstrap
-  subscription that downloads weights from the catalog's `downloadUrl`, PUTs each file
-  under `infernix-models/<modelId>/<filename>` to MinIO, writes the `.ready` sentinel
-  last, and publishes `model.bootstrap.ready.<modelId>`.
-- `python/adapters/common/model_cache.py` — uniform adapter helper exposing
-  `get_model_path(model_id) -> filesystem path` with MinIO client + LRU eviction inside
-  the engine pod's `/model-cache` quota; per-adapter integration to swap upstream
-  weight fetches for this helper.
+- `src/Infernix/Bootstrap/Models.hs` real-cluster wiring — the coordinator's
+  Failover bootstrap subscription that downloads weights from the catalog's
+  `downloadUrl`, PUTs each file under `infernix-models/<modelId>/<filename>` to
+  MinIO, writes the `.ready` sentinel last, and publishes
+  `model.bootstrap.ready.<modelId>`. The pure-Haskell shape is landed; the MinIO
+  client + Pulsar Failover subscription wiring runs against the real cluster in
+  Sprint 7.14.
+- `python/adapters/model_cache.py` MinIO client + LRU eviction loop (the helper is
+  contract-only today).
 - Code-level retirement of `./.data/object-store/`, `objectStoreRoot` and
   `localPathFromUri` plumbing in `src/Infernix/Runtime/Cache.hs`, the
-  `s3://infernix-runtime/` URI scheme, the 80-char inline-payload threshold branch
-  in `src/Infernix/Runtime.hs`, the `/objects/:objectRef` HTTP route handler in
-  `src/Infernix/Demo/Api.hs`, the matching route registry entry, and the legacy
-  `service.*` stanza plus PVC manifest deletion.
-- `infernix service` engine-role startup acquiring an exclusive `flock(2)` on
-  `engine.lock` (uniform across Linux + Apple per the daemon-topology contract).
+  `s3://infernix-runtime/` URI scheme, the legacy `service.*` stanza plus
+  `deployment-service.yaml` and `persistentvolumeclaim-service-data.yaml` deletions,
+  and the `infernix-runtime` / `infernix-results` bucket entries in
+  `chart/values.yaml`. These items each cascade into the worker proto envelope plus
+  the adapter context loader plus the chart cutover; the cleanup pass moves them
+  together in Sprint 7.14 when real-cluster validation can prove the daemon split.
 - `DemoConfig.hs` daemon-role vocabulary cutover from `cluster` / `host` strings to
-  `coordinator` / `engine`.
-- `cluster up` reconcile of the `infernix/system` Pulsar namespace and the
-  `model.bootstrap.request` topic.
+  `coordinator` / `engine` (touches the dhall schema field names, Types.hs
+  `DaemonRole` constructors, every test fixture, and every generated `.dhall` file
+  currently materialized under `./.build/`).
+- Producer-side deduplication wiring on the Pulsar WebSocket producer path: the
+  current `publishTopicPayload` uses a per-call ephemeral producer name and does
+  not set the `messageId` sequence on the producer URL. Real producer-side dedup
+  requires stable `producerName` plus per-message `messageId` and lands together
+  with the Sprint 7.14 chaos-validation pass.
 - Real-cluster validation: every `Validation` bullet listed above against a
   `linux-cpu` or `linux-gpu` `cluster up` with `daemonSplit.enabled = true`,
   including the PVC-emptiness assertion, the bootstrap exactly-once chaos case,
@@ -783,25 +1042,55 @@ defined in Sprint 7.7 (`infernix-models` is the always-on platform-weights half)
 
 ### Remaining Work
 
-The `/api/objects` route is landed in the Haskell route registry source
-(`src/Infernix/Routes.hs`) as a demo-only entry pointing at `infernix-demo:80`. The
-`ArtifactUploadRequest`, `ArtifactUploadGrant`, and `ArtifactDownloadGrant` wire types
-landed in Sprint 7.2.
+The May 22, 2026 Sprint 7.9 pass landed the full HTTP handler with JWT validation, per-user
+scope enforcement, and presigned URL minting:
+
+- `src/Infernix/Objects/Layout.hs` — bucket and prefix conventions
+  (`users/<userId>/contexts/<contextId>/{uploads,generated}/`) plus the
+  `pathBelongsToUser` scope helper. Landed earlier in Sprint 7.9 and still in place.
+- `src/Infernix/Objects/Presigned.hs` — AWS SigV4-style presigned URL minting against
+  MinIO with parameterised endpoint, region, access key, secret key, and expiry. Landed
+  earlier in Sprint 7.9.
+- `src/Infernix/Demo/Api.hs` — `/api/objects/upload` and `/api/objects/download` HTTP
+  handlers that read the `Authorization: Bearer …` header, fetch the Keycloak JWKS
+  (overridable via `INFERNIX_KEYCLOAK_JWKS_URL`), call
+  `Infernix.Auth.Jwt.verifyAndParseJwt`, derive `UserId` from the `sub` claim, scope
+  the requested object to `users/<userId>/contexts/<contextId>/{uploads,generated}/`,
+  validate the scope via `pathBelongsToUser`, mint a presigned PUT or GET URL via the
+  shared `Infernix.Objects.Presigned` helper, and return the matching
+  `ArtifactUploadGrant` / `ArtifactDownloadGrant` JSON. The MinIO endpoint plus
+  credentials come from `INFERNIX_MINIO_ENDPOINT`, `INFERNIX_MINIO_ACCESS_KEY`,
+  `INFERNIX_MINIO_SECRET_KEY`, `INFERNIX_MINIO_REGION`, and
+  `INFERNIX_MINIO_PRESIGN_EXPIRY_SECONDS` env vars (defaults match the supported chart
+  injection).
+- `src/Infernix/Demo/Bootstrap.hs` — `requiredDemoBuckets` plus the
+  `planDemoBucketBootstrap` pure helper that names the supported `infernix-models` and
+  `infernix-demo-objects` buckets and computes the missing-bucket diff.
+- `chart/values.yaml` — the demo-gated `infernix-demo-objects` bucket entry sits in the
+  MinIO `provisioning.buckets` list alongside the always-on `infernix-models` bucket;
+  the chart-time provisioner creates both before any pod consumes them.
+
+`infernix lint chart`, `infernix lint files`, `infernix lint docs`, `infernix lint proto`,
+`infernix test lint`, and `infernix test unit` all exit zero with the new handler in
+place.
 
 Pending closure:
 
-- `src/Infernix/Objects/Layout.hs` — bucket and prefix conventions
-  (`users/<userId>/contexts/<contextId>/{uploads,generated}/`) with per-user scope helpers.
-- `src/Infernix/Objects/Presigned.hs` — presigned URL minting helpers parameterised in the
-  MinIO client config and scope policy.
-- `/api/objects` HTTP handler in `src/Infernix/Demo/Api.hs` that validates the JWT,
-  enforces per-user scope, and emits presigned PUT / GET responses.
-- `src/Infernix/Demo/Bootstrap.hs` — idempotent first-run bucket creation for
-  `infernix-demo-objects`.
-- `chart/values.yaml` — demo-gated `infernix-demo-objects` bucket entry.
-- Real-cluster validation: presigned PUT for user A, upload, presigned GET, download with
-  content equality assertion; cross-user negative test; `/api/objects` and the bucket
-  absent when `demo_ui = false`.
+- Runtime-time `Demo.Bootstrap` reconcile loop that calls MinIO admin API to repair
+  buckets when chart-time provisioning is bypassed (an operator-only edge case;
+  chart-time provisioning covers the supported path). Lands together with Sprint 7.14's
+  real-cluster validation.
+- A JWKS TTL cache so each `/api/objects` request does not trigger an upstream JWKS GET
+  (current implementation refetches per request — correct but inefficient).
+- The demo binary needs the `INFERNIX_MINIO_ACCESS_KEY` plus `INFERNIX_MINIO_SECRET_KEY`
+  env vars to be injected by `chart/templates/deployment-demo.yaml`; today's template
+  injects only the Pulsar env vars. The chart-side env injection lands together with
+  the Sprint 7.14 chaos validation that exercises real MinIO uploads.
+- Real-cluster validation: signed-in user A mints a presigned PUT for
+  `users/A/contexts/C/uploads/X`, uploads bytes, mints a presigned GET, downloads with
+  content equality; cross-user negative test confirms user A cannot mint a URL inside
+  user B's prefix; `cluster up` with `demo_ui = false` shows neither the `/api/objects`
+  route nor the `infernix-demo-objects` bucket.
 
 ---
 

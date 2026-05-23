@@ -5,6 +5,13 @@ metadata:
   name: infernix-demo
   namespace: platform
 spec:
+  # Phase 7 Sprint 7.3: the durable-context WS surface requires
+  # stateless coordination — any replica can host any session — so the
+  # demo Service explicitly disables session affinity. Combined with
+  # `sessionPersistence: {}` on the matching HTTPRoute (the registry
+  # never adds client-IP or cookie affinity), this lets the browser
+  # reconnect to a surviving pod transparently after a frontend kill.
+  sessionAffinity: None
   selector:
     app.kubernetes.io/name: infernix-demo
   ports:

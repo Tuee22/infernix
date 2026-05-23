@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module Infernix.DemoConfig
   ( decodeDemoConfigFile,
@@ -11,7 +12,7 @@ module Infernix.DemoConfig
   )
 where
 
-import Control.Exception (IOException, bracketOnError, catch)
+import Control.Exception (IOException, SomeException, bracketOnError, catch, try)
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Char8 qualified as ByteStringChar8
 import Data.ByteString.Lazy qualified as LazyByteString
@@ -77,10 +78,21 @@ ensureGeneratedDemoConfigFile paths runtimeMode defaultDemoUiEnabled = do
   fileExists <- doesFileExist filePath
   if fileExists
     then do
-      demoConfig <- decodeDemoConfigFile filePath
-      if configRuntimeMode demoConfig == runtimeMode
-        then pure filePath
-        else materializeGeneratedDemoConfigFile paths runtimeMode defaultDemoUiEnabled
+      -- Phase 7 Sprint 7.7: re-materialise if the staged file fails to
+      -- decode under the current schema. The supported flow
+      -- materialises this file as part of cluster up; a stale
+      -- pre-rename file (with @clusterDaemon@ / @hostDaemon@ keys)
+      -- can't satisfy the renamed @coordinator@ / @engine@ schema, so
+      -- the decoder rejects it and we regenerate from
+      -- @renderGeneratedDemoConfigPayload@.
+      decodeResult <- try (decodeDemoConfigFile filePath)
+      case decodeResult of
+        Left (_ :: SomeException) ->
+          materializeGeneratedDemoConfigFile paths runtimeMode defaultDemoUiEnabled
+        Right demoConfig ->
+          if configRuntimeMode demoConfig == runtimeMode
+            then pure filePath
+            else materializeGeneratedDemoConfigFile paths runtimeMode defaultDemoUiEnabled
     else materializeGeneratedDemoConfigFile paths runtimeMode defaultDemoUiEnabled
 
 ignoreIo :: IO () -> IO ()
@@ -105,10 +117,12 @@ renderGeneratedDemoConfigPayload paths runtimeMode demoUiEnabledValue daemonRole
             mountedPath = Config.watchedDemoConfigPath,
             demoUiEnabled = demoUiEnabledValue,
             activeDaemonRole = daemonRole,
-            clusterDaemon = clusterDaemonConfig runtimeMode,
-            hostDaemon = hostDaemonConfig runtimeMode,
+            coordinatorDaemon = coordinatorDaemonConfig runtimeMode,
+            engineDaemon = engineDaemonConfig runtimeMode,
             requestTopics = requestTopicsForMode runtimeMode,
             resultTopic = resultTopicForMode runtimeMode,
+            modelsBucket = defaultModelsBucket,
+            modelBootstrapTopic = defaultModelBootstrapTopic,
             engines = engineBindingsForMode runtimeMode,
             models = catalogForMode runtimeMode
           }
@@ -117,13 +131,13 @@ renderGeneratedDemoConfigPayload paths runtimeMode demoUiEnabledValue daemonRole
 defaultDaemonRoleForMaterializedFile :: Paths -> RuntimeMode -> DaemonRole
 defaultDaemonRoleForMaterializedFile paths runtimeMode =
   case (Config.controlPlaneContext paths, runtimeMode) of
-    (Config.HostNative, AppleSilicon) -> HostDaemon
-    _ -> ClusterDaemon
+    (Config.HostNative, AppleSilicon) -> Engine
+    _ -> Coordinator
 
-clusterDaemonConfig :: RuntimeMode -> DaemonConfig
-clusterDaemonConfig runtimeMode =
+coordinatorDaemonConfig :: RuntimeMode -> DaemonConfig
+coordinatorDaemonConfig runtimeMode =
   DaemonConfig
-    { daemonConfigRole = ClusterDaemon,
+    { daemonConfigRole = Coordinator,
       daemonConfigLocation = "cluster-pod",
       daemonConfigRequestTopics = requestTopicsForMode runtimeMode,
       daemonConfigResultTopic = resultTopicForMode runtimeMode,
@@ -131,20 +145,36 @@ clusterDaemonConfig runtimeMode =
       daemonConfigPulsarConnectionMode = ConfiguredTransport
     }
 
-hostDaemonConfig :: RuntimeMode -> Maybe DaemonConfig
-hostDaemonConfig runtimeMode =
+-- | Phase 7 Sprint 7.7: the engine role is deployed on every supported
+-- substrate. On Apple silicon it runs as the on-host daemon (location
+-- @control-plane-host@, Pulsar transport discovered through the
+-- publication edge). On Linux substrates it runs as the in-cluster
+-- @infernix-engine@ Deployment (location @cluster-pod@, Pulsar transport
+-- configured directly via env vars). In every case the engine consumes
+-- the inference-batch topic the coordinator hands off to.
+engineDaemonConfig :: RuntimeMode -> Maybe DaemonConfig
+engineDaemonConfig runtimeMode =
   case runtimeMode of
     AppleSilicon ->
       Just
         DaemonConfig
-          { daemonConfigRole = HostDaemon,
+          { daemonConfigRole = Engine,
             daemonConfigLocation = "control-plane-host",
             daemonConfigRequestTopics = maybe [] pure (hostBatchTopicForMode runtimeMode),
             daemonConfigResultTopic = resultTopicForMode runtimeMode,
             daemonConfigHostBatchTopic = hostBatchTopicForMode runtimeMode,
             daemonConfigPulsarConnectionMode = PublicationEdgeAutoDiscovery
           }
-    _ -> Nothing
+    _ ->
+      Just
+        DaemonConfig
+          { daemonConfigRole = Engine,
+            daemonConfigLocation = "cluster-pod",
+            daemonConfigRequestTopics = maybe [] pure (hostBatchTopicForMode runtimeMode),
+            daemonConfigResultTopic = resultTopicForMode runtimeMode,
+            daemonConfigHostBatchTopic = hostBatchTopicForMode runtimeMode,
+            daemonConfigPulsarConnectionMode = ConfiguredTransport
+          }
 
 renderModelListing :: DemoConfig -> String
 renderModelListing demoConfig =
@@ -185,17 +215,17 @@ validateDemoConfig demoConfig
   | any invalidRequestShape (models demoConfig) =
       Left "every model must declare at least one request field"
   | invalidActiveDaemonRole =
-      Left "active daemon role must match either the cluster daemon or host daemon metadata"
-  | invalidDaemonConfig (clusterDaemon demoConfig) =
-      Left "cluster daemon metadata must declare role, location, request topics, and result topic"
-  | maybe False invalidDaemonConfig (hostDaemon demoConfig) =
-      Left "host daemon metadata must declare role, location, request topics, and result topic"
-  | configRuntimeMode demoConfig == AppleSilicon && isNothing (hostDaemon demoConfig) =
-      Left "apple-silicon configs must include host daemon metadata"
-  | configRuntimeMode demoConfig == AppleSilicon && isNothing (daemonConfigHostBatchTopic (clusterDaemon demoConfig)) =
-      Left "apple-silicon cluster daemon metadata must declare a host batch topic"
-  | configRuntimeMode demoConfig == AppleSilicon && maybe True (null . daemonConfigRequestTopics) (hostDaemon demoConfig) =
-      Left "apple-silicon host daemon metadata must consume the host batch topic"
+      Left "active daemon role must match either the coordinator or engine metadata"
+  | invalidDaemonConfig (coordinatorDaemon demoConfig) =
+      Left "coordinator metadata must declare role, location, request topics, and result topic"
+  | maybe False invalidDaemonConfig (engineDaemon demoConfig) =
+      Left "engine metadata must declare role, location, request topics, and result topic"
+  | configRuntimeMode demoConfig == AppleSilicon && isNothing (engineDaemon demoConfig) =
+      Left "apple-silicon configs must include engine metadata"
+  | configRuntimeMode demoConfig == AppleSilicon && isNothing (daemonConfigHostBatchTopic (coordinatorDaemon demoConfig)) =
+      Left "apple-silicon coordinator metadata must declare a host batch topic"
+  | configRuntimeMode demoConfig == AppleSilicon && maybe True (null . daemonConfigRequestTopics) (engineDaemon demoConfig) =
+      Left "apple-silicon engine metadata must consume the host batch topic"
   | any runtimeMismatch (models demoConfig) =
       Left "every model runtimeMode must match the demo config runtimeMode"
   | missingEngineBindings /= [] =
@@ -226,8 +256,8 @@ validateDemoConfig demoConfig
       any (Text.null . Text.strip) [name requestField, label requestField]
     invalidActiveDaemonRole =
       activeDaemonRole demoConfig
-        /= daemonConfigRole (clusterDaemon demoConfig)
-        && maybe True ((/= activeDaemonRole demoConfig) . daemonConfigRole) (hostDaemon demoConfig)
+        /= daemonConfigRole (coordinatorDaemon demoConfig)
+        && maybe True ((/= activeDaemonRole demoConfig) . daemonConfigRole) (engineDaemon demoConfig)
     invalidDaemonConfig daemonConfig =
       Text.null (Text.strip (daemonConfigLocation daemonConfig))
         || null (daemonConfigRequestTopics daemonConfig)

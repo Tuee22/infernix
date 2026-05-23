@@ -12,6 +12,11 @@ upstreamCharts:
     enabled: true
   harborpg:
     enabled: true
+  # Phase 7 Sprint 7.1: Patroni Postgres backing Keycloak. Gated on the
+  # demo surface — production deploys (`demo_ui = false`) skip Keycloak
+  # plus its database entirely.
+  keycloakpg:
+    enabled: true
   minio:
     enabled: true
   pulsar:
@@ -51,27 +56,18 @@ publication:
 
 routes: []
 
+# Phase 7 Sprint 7.7: shared backend wiring consumed by the supported
+# three-role daemon split (coordinator + engine + demo). The legacy
+# `service.{enabled,image,replicaCount,command,args,dataPvc}` keys are
+# retired together with `chart/templates/deployment-service.yaml` and
+# `chart/templates/persistentvolumeclaim-service-data.yaml`; what
+# remains is the shared MinIO + Pulsar + engine-adapter env config the
+# Deployment templates read.
 service:
-  enabled: true
-  image:
-    repository: infernix-linux-cpu
-    tag: local
-    pullPolicy: IfNotPresent
-  replicaCount: 1
-  command:
-    - infernix
-  args:
-    - service
-  dataPvc:
-    name: infernix-service-0-data
-    size: 5Gi
-    storageClassName: infernix-manual
   minio:
     endpoint: http://infernix-minio.platform.svc.cluster.local:9000
     accessKey: minioadmin
     secretKey: minioadmin123
-    runtimeBucket: infernix-runtime
-    resultsBucket: infernix-results
   pulsar:
     adminUrl: http://infernix-infernix-pulsar-proxy.platform.svc.cluster.local/admin/v2
     httpBaseUrl: http://infernix-infernix-pulsar-proxy.platform.svc.cluster.local
@@ -82,15 +78,17 @@ service:
   engineAdapters:
     commandEnv: {}
 
-# Phase 7 Sprint 7.7: the supported three-role daemon split.
-# These stanzas are inert until `daemonSplit.enabled` is true; the fused
-# `service` Deployment above remains the active topology for now and is
-# retired together with the cluster validation that proves the split path.
+# Phase 7 Sprint 7.7: the supported three-role daemon split is now the
+# default cluster topology. `daemonSplit.enabled = true` activates the
+# coordinator + engine + demo Deployments below; the per-role `enabled`
+# flags stay so operators can disable individual roles for production
+# (where only the engine role runs in the supported `demo_ui = false`
+# shape).
 daemonSplit:
-  enabled: false
+  enabled: true
 
 coordinator:
-  enabled: false
+  enabled: true
   replicaCount: 2
   image:
     repository: infernix-linux-cpu
@@ -98,14 +96,17 @@ coordinator:
     pullPolicy: IfNotPresent
   command:
     - infernix
+  # The supported `infernix service` entrypoint reads its role from the
+  # `INFERNIX_DAEMON_ROLE` env var injected by the Deployment template.
+  # Passing a `--role=coordinator` CLI flag would print help and exit
+  # since the binary's command surface does not register that flag.
   args:
     - service
-    - --role=coordinator
   podDisruptionBudget:
     maxUnavailable: 1
 
 engine:
-  enabled: false
+  enabled: true
   # Operator-set up to the number of engine-capable nodes. Default 1 keeps
   # the chart shape sensible on single-node Kind clusters; the supported
   # production target raises this to match available GPU capacity on
@@ -119,7 +120,6 @@ engine:
     - infernix
   args:
     - service
-    - --role=engine
   modelCache:
     # `emptyDir` sizeLimit on the engine pod's `/model-cache` volume. The
     # adapter-side LRU eviction keeps the actual on-disk size under this
@@ -130,7 +130,7 @@ engine:
     maxUnavailable: 1
 
 demoSplit:
-  enabled: false
+  enabled: true
   replicaCount: 2
   podDisruptionBudget:
     maxUnavailable: 1
@@ -178,14 +178,12 @@ minio:
     buckets:
       - name: harbor-registry
         versioning: Unchanged
-      - name: infernix-runtime
-        versioning: Unchanged
-      - name: infernix-results
-        versioning: Unchanged
       # Phase 7 Sprint 7.7: always-on platform model-weights bucket. The
       # coordinator role's bootstrap subscription PUTs `<modelId>/<filename>`
       # entries here on first use of a model and writes the `.ready` sentinel
       # last; engines read from this bucket via the per-adapter model cache.
+      # The retired `infernix-runtime` + `infernix-results` placeholder
+      # buckets are removed together with the legacy `service.*` stanza.
       - name: infernix-models
         versioning: Unchanged
       # Phase 7 Sprint 7.7: demo-gated user-artifact bucket. Hosts per-user
@@ -364,6 +362,80 @@ harborpg:
               resources:
                 requests:
                   storage: 5Gi
+
+# Phase 7 Sprint 7.1: Patroni Postgres backing Keycloak. Mirrors the Harbor
+# pattern: dedicated Patroni cluster managed by the same Percona operator,
+# with the `keycloak` role + database created by the operator and the
+# generated credentials exposed via `infernix-keycloak-db-user` for the
+# Keycloak Deployment to consume.
+keycloakpg:
+  fullnameOverride: keycloak-postgresql
+  image: docker.io/percona/percona-distribution-postgresql:18.3-1
+  imagePullPolicy: IfNotPresent
+  postgresVersion: 18
+  users:
+    - name: keycloak
+      databases:
+        - keycloak
+      password:
+        type: ASCII
+      secretName: infernix-keycloak-db-user
+  instances:
+    - name: instance1
+      replicas: 3
+      dataVolumeClaimSpec:
+        storageClassName: infernix-manual
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 2Gi
+  proxy:
+    pgBouncer:
+      replicas: 3
+      image: docker.io/percona/percona-pgbouncer:1.25.1-1
+  backups:
+    enabled: true
+    pgbackrest:
+      image: docker.io/percona/percona-pgbackrest:2.58.0-1
+      repos:
+        - name: repo1
+          volume:
+            volumeClaimSpec:
+              storageClassName: infernix-manual
+              accessModes:
+                - ReadWriteOnce
+              resources:
+                requests:
+                  storage: 2Gi
+
+# Phase 7 Sprint 7.1: Keycloak release. Self-signup on, email
+# verification off; the realm definition lives in
+# `chart/templates/keycloak/configmap-realm-import.yaml` and is mounted
+# read-only at `/opt/keycloak/data/import/`. Demo-gated; absent when
+# `demo.enabled = false`.
+keycloak:
+  enabled: true
+  image:
+    repository: quay.io/keycloak/keycloak
+    tag: "26.0.7"
+    pullPolicy: IfNotPresent
+  replicaCount: 2
+  realm:
+    name: infernix
+    displayName: Infernix Demo
+    clientId: infernix-spa
+    issuerUrl: /auth/realms/infernix
+  admin:
+    user: admin
+    secretName: infernix-keycloak-admin
+  database:
+    secretName: infernix-keycloak-db-user
+    host: keycloak-postgresql-pgbouncer.platform.svc.cluster.local
+    port: 5432
+    dbName: keycloak
+  service:
+    port: 8080
 
 pulsar:
   # Pulsar is only enabled in the final Helm phase, so force the upstream init jobs to run there.

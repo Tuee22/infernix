@@ -173,6 +173,7 @@ runProductionDaemon paths runtimeMode = do
         threadDelay 500000
     Just transport -> do
       ensureSchemaMarkers paths demoConfig
+      reconcileSupportedNamespacesWithRetry transport demoConfig
       ensureRegisteredSchemasWithRetry paths transport demoConfig
       writeServiceReadinessMarker paths
       putStrLn "serviceSubscriptionMode: websocket-pulsar"
@@ -212,16 +213,18 @@ resolveDaemonRole maybeOverride demoConfig =
 parseDaemonRoleText :: Text.Text -> Maybe DaemonRole
 parseDaemonRoleText rawValue =
   case Text.toLower rawValue of
-    "cluster" -> Just ClusterDaemon
-    "host" -> Just HostDaemon
+    "coordinator" -> Just Coordinator
+    "engine" -> Just Engine
+    "cluster" -> Just Coordinator
+    "host" -> Just Engine
     _ -> Nothing
 
 requireDaemonConfig :: DaemonRole -> DemoConfig -> IO DaemonConfig
 requireDaemonConfig daemonRole demoConfig
-  | daemonConfigRole (clusterDaemon demoConfig) == daemonRole =
-      pure (clusterDaemon demoConfig)
+  | daemonConfigRole (coordinatorDaemon demoConfig) == daemonRole =
+      pure (coordinatorDaemon demoConfig)
   | otherwise =
-      case hostDaemon demoConfig of
+      case engineDaemon demoConfig of
         Just daemonConfig
           | daemonConfigRole daemonConfig == daemonRole ->
               pure daemonConfig
@@ -275,7 +278,7 @@ drainTopic :: Paths -> RuntimeMode -> DaemonConfig -> Text.Text -> IO ()
 drainTopic paths runtimeMode daemonConfig requestTopicValue =
   case daemonConfigHostBatchTopic daemonConfig of
     Just hostBatchTopicValue
-      | runtimeMode == AppleSilicon && daemonConfigRole daemonConfig == ClusterDaemon ->
+      | runtimeMode == AppleSilicon && daemonConfigRole daemonConfig == Coordinator ->
           forwardTopic paths hostBatchTopicValue requestTopicValue
     _ ->
       drainInferenceTopic paths runtimeMode (daemonConfigResultTopic daemonConfig) requestTopicValue
@@ -429,10 +432,10 @@ requestLikeSchemaTopics :: DemoConfig -> [Text.Text]
 requestLikeSchemaTopics demoConfig =
   uniqueTexts
     ( requestTopics demoConfig
-        <> daemonConfigRequestTopics (clusterDaemon demoConfig)
-        <> maybe [] daemonConfigRequestTopics (hostDaemon demoConfig)
-        <> maybe [] pure (daemonConfigHostBatchTopic (clusterDaemon demoConfig))
-        <> maybe [] (maybe [] pure . daemonConfigHostBatchTopic) (hostDaemon demoConfig)
+        <> daemonConfigRequestTopics (coordinatorDaemon demoConfig)
+        <> maybe [] daemonConfigRequestTopics (engineDaemon demoConfig)
+        <> maybe [] pure (daemonConfigHostBatchTopic (coordinatorDaemon demoConfig))
+        <> maybe [] (maybe [] pure . daemonConfigHostBatchTopic) (engineDaemon demoConfig)
     )
 
 uniqueTexts :: [Text.Text] -> [Text.Text]
@@ -464,6 +467,265 @@ ensureRegisteredSchemasWithRetry paths transport demoConfig =
                 )
               threadDelay 1000000
               retry (attempt + 1)
+
+-- | Phase 7 Sprint 7.7 + 7.5: reconcile the supported Pulsar tenants,
+-- namespaces, and the @model.bootstrap.request@ topic on every daemon
+-- startup. Idempotent — re-running against an already-reconciled broker
+-- is cheap because each call either returns @409 Conflict@ (already
+-- exists) or @204 No Content@ (policy already set).
+--
+-- The supported topology adds two namespaces:
+--
+--  * @infernix/system@ — carries the @model.bootstrap.request@ and
+--    @model.bootstrap.ready.<modelId>@ topic family the coordinator's
+--    Failover bootstrap subscription consumes.
+--  * @infernix/demo@ — carries the per-context conversation log topics
+--    and the compacted @demo.user.<userId>.contexts@ /
+--    @demo.user.<userId>.drafts@ metadata topics. A namespace-level
+--    compaction threshold ensures the compacted topics reach the
+--    @compacted@ state without operator intervention.
+--
+-- The current default Pulsar tenant / namespace for production topics
+-- remains @public/default@; the @infernix@ tenant is created here so the
+-- supported demo and system namespaces can live in a dedicated tenant
+-- without competing with stock-Pulsar defaults.
+reconcileSupportedNamespaces :: PulsarTransport -> DemoConfig -> IO ()
+reconcileSupportedNamespaces transport _demoConfig = do
+  adminBaseUrl <- requirePulsarAdminBaseUrl transport
+  manager <- newManager defaultManagerSettings
+  -- Tenant + namespaces. Pulsar's tenant-create endpoint requires a
+  -- non-empty 'allowedClusters' list pointing at real clusters (a
+  -- @412 Precondition Failed@ comes back when we pass an empty array).
+  -- Query @/admin/v2/clusters@ once and reuse the result for the
+  -- tenant body so the supported reconcile works on any Pulsar
+  -- release name.
+  knownClusters <- listClusters manager adminBaseUrl
+  ensureTenant manager adminBaseUrl "infernix" knownClusters
+  ensureNamespace manager adminBaseUrl "infernix/system"
+  ensureNamespace manager adminBaseUrl "infernix/demo"
+  -- Compaction threshold on the demo namespace so the compacted contexts
+  -- and drafts topics reach the supported steady state. 100 MiB (in
+  -- bytes) matches Pulsar's documented small-namespace default.
+  ensureNamespaceCompactionThreshold manager adminBaseUrl "infernix/demo" (100 * 1024 * 1024)
+  -- Phase 7 Sprint 7.7: enable broker-side message deduplication on
+  -- both supported namespaces. The full exactly-once contract also
+  -- requires the producer to send a stable @producerName@ plus a
+  -- monotonically increasing @sequenceId@ per message; today's
+  -- WebSocket-based @publishTopicPayload@ uses an ephemeral producer
+  -- name, so the broker policy is the supported namespace-level gate
+  -- and the per-message producer wiring lands together with Sprint
+  -- 7.14's chaos validation pass.
+  ensureNamespaceDeduplicationEnabled manager adminBaseUrl "infernix/demo"
+  ensureNamespaceDeduplicationEnabled manager adminBaseUrl "infernix/system"
+  -- The bootstrap request topic itself. Pulsar auto-creates topics on
+  -- first produce when @allowAutoTopicCreation = true@; doing the
+  -- create-here belt-and-braces means daemon startup logs a clear error
+  -- if broker policy disables auto-creation.
+  ensureNonPartitionedTopic
+    manager
+    adminBaseUrl
+    "persistent://infernix/system/model.bootstrap.request"
+
+reconcileSupportedNamespacesWithRetry :: PulsarTransport -> DemoConfig -> IO ()
+reconcileSupportedNamespacesWithRetry transport demoConfig =
+  retry (1 :: Int)
+  where
+    retry attempt = do
+      reconcileResult <- try @SomeException (reconcileSupportedNamespaces transport demoConfig)
+      case reconcileResult of
+        Right _ -> pure ()
+        Left err ->
+          case fromException err :: Maybe SomeAsyncException of
+            Just asyncErr -> throwIO asyncErr
+            Nothing -> do
+              hPutStrLn
+                stderr
+                ( "pulsar namespace reconcile attempt "
+                    <> show attempt
+                    <> " failed:\n"
+                    <> displayException err
+                )
+              threadDelay 1000000
+              retry (attempt + 1)
+
+-- | Query @GET /admin/v2/clusters@ for the list of cluster names this
+-- broker manages, used as the @allowedClusters@ value when reconciling
+-- the supported tenant. The supported deployment is a single local
+-- Pulsar cluster but its name is release-dependent
+-- (`infernix-infernix-pulsar` for the bundled chart values), so the
+-- daemon discovers it at startup rather than hardcoding.
+listClusters :: Manager -> String -> IO [Text.Text]
+listClusters manager adminBaseUrl = do
+  requestValue <- parseRequest (adminBaseUrl <> "/clusters")
+  response <- httpLbs requestValue manager
+  case statusCode (responseStatus response) of
+    200 ->
+      case eitherDecode (responseBody response) of
+        Right clusters -> pure clusters
+        Left decodeError ->
+          ioError
+            ( userError
+                ( "failed to parse Pulsar clusters list:\n"
+                    <> decodeError
+                )
+            )
+    code ->
+      ioError
+        ( userError
+            ( "failed to list Pulsar clusters (status "
+                <> show code
+                <> "):\n"
+                <> lazyBodyToString (responseBody response)
+            )
+        )
+
+ensureTenant :: Manager -> String -> Text.Text -> [Text.Text] -> IO ()
+ensureTenant manager adminBaseUrl tenantValue allowedClusters = do
+  -- Pulsar admin v2 tenant create: PUT @/admin/v2/tenants/<tenant>@.
+  -- The body declares allowed clusters and admin roles. Pulsar
+  -- requires at least one real cluster name in 'allowedClusters' (a
+  -- @412 Precondition Failed@ comes back when the list is empty), so
+  -- the caller supplies the cluster list discovered via 'listClusters'.
+  let url = adminBaseUrl <> "/tenants/" <> Text.unpack tenantValue
+  putRequest <- parseRequest url
+  let createRequest =
+        putRequest
+          { method = "PUT",
+            requestHeaders = [("Content-Type", "application/json")],
+            requestBody =
+              RequestBodyLBS
+                ( encode
+                    ( object
+                        [ "adminRoles" .= ([] :: [String]),
+                          "allowedClusters" .= allowedClusters
+                        ]
+                    )
+                )
+          }
+  response <- httpLbs createRequest manager
+  let code = statusCode (responseStatus response)
+  -- 204 = created/updated; 409 = already exists (treated as success).
+  unless (code `elem` [200, 204, 409]) $
+    ioError
+      ( userError
+          ( "failed to reconcile Pulsar tenant "
+              <> Text.unpack tenantValue
+              <> " (status "
+              <> show code
+              <> "):\n"
+              <> lazyBodyToString (responseBody response)
+          )
+      )
+
+ensureNamespace :: Manager -> String -> Text.Text -> IO ()
+ensureNamespace manager adminBaseUrl namespaceValue = do
+  let url = adminBaseUrl <> "/namespaces/" <> Text.unpack namespaceValue
+  putRequest <- parseRequest url
+  let createRequest =
+        putRequest
+          { method = "PUT",
+            requestHeaders = [("Content-Type", "application/json")]
+          }
+  response <- httpLbs createRequest manager
+  let code = statusCode (responseStatus response)
+  unless (code `elem` [200, 204, 409]) $
+    ioError
+      ( userError
+          ( "failed to reconcile Pulsar namespace "
+              <> Text.unpack namespaceValue
+              <> " (status "
+              <> show code
+              <> "):\n"
+              <> lazyBodyToString (responseBody response)
+          )
+      )
+
+ensureNamespaceCompactionThreshold :: Manager -> String -> Text.Text -> Int -> IO ()
+ensureNamespaceCompactionThreshold manager adminBaseUrl namespaceValue thresholdBytes = do
+  let url = adminBaseUrl <> "/namespaces/" <> Text.unpack namespaceValue <> "/compactionThreshold"
+  putRequest <- parseRequest url
+  let createRequest =
+        putRequest
+          { method = "PUT",
+            requestHeaders = [("Content-Type", "application/json")],
+            requestBody = RequestBodyLBS (encode thresholdBytes)
+          }
+  response <- httpLbs createRequest manager
+  let code = statusCode (responseStatus response)
+  unless (code `elem` [200, 204]) $
+    ioError
+      ( userError
+          ( "failed to set Pulsar namespace compaction threshold for "
+              <> Text.unpack namespaceValue
+              <> " (status "
+              <> show code
+              <> "):\n"
+              <> lazyBodyToString (responseBody response)
+          )
+      )
+
+-- | Enable broker-side message deduplication on a namespace via the
+-- admin API. With this policy on, the broker tracks
+-- @(producerName, sequenceId)@ pairs and rejects duplicates. The
+-- producer-side wiring (stable @producerName@ + monotonic
+-- @sequenceId@) lands together with Sprint 7.14's chaos validation;
+-- the broker policy is the supported namespace-level gate.
+ensureNamespaceDeduplicationEnabled :: Manager -> String -> Text.Text -> IO ()
+ensureNamespaceDeduplicationEnabled manager adminBaseUrl namespaceValue = do
+  let url = adminBaseUrl <> "/namespaces/" <> Text.unpack namespaceValue <> "/deduplication"
+  putRequest <- parseRequest url
+  let createRequest =
+        putRequest
+          { method = "POST",
+            requestHeaders = [("Content-Type", "application/json")],
+            requestBody = RequestBodyLBS (encode True)
+          }
+  response <- httpLbs createRequest manager
+  let code = statusCode (responseStatus response)
+  unless (code `elem` [200, 204]) $
+    ioError
+      ( userError
+          ( "failed to enable Pulsar namespace deduplication for "
+              <> Text.unpack namespaceValue
+              <> " (status "
+              <> show code
+              <> "):\n"
+              <> lazyBodyToString (responseBody response)
+          )
+      )
+
+ensureNonPartitionedTopic :: Manager -> String -> Text.Text -> IO ()
+ensureNonPartitionedTopic manager adminBaseUrl topicValue = do
+  topicRef <- requireTopicRef topicValue
+  -- PUT @/admin/v2/persistent/<tenant>/<namespace>/<topic>@ creates a
+  -- non-partitioned persistent topic; 409 is the already-exists case.
+  let url =
+        adminBaseUrl
+          <> "/persistent/"
+          <> Text.unpack (topicTenant topicRef)
+          <> "/"
+          <> Text.unpack (topicNamespace topicRef)
+          <> "/"
+          <> Text.unpack (topicName topicRef)
+  putRequest <- parseRequest url
+  let createRequest =
+        putRequest
+          { method = "PUT",
+            requestHeaders = [("Content-Type", "application/json")]
+          }
+  response <- httpLbs createRequest manager
+  let code = statusCode (responseStatus response)
+  unless (code `elem` [200, 204, 409]) $
+    ioError
+      ( userError
+          ( "failed to reconcile Pulsar topic "
+              <> Text.unpack topicValue
+              <> " (status "
+              <> show code
+              <> "):\n"
+              <> lazyBodyToString (responseBody response)
+          )
+      )
 
 requirePulsarAdminBaseUrl :: PulsarTransport -> IO String
 requirePulsarAdminBaseUrl transport =
@@ -749,7 +1011,13 @@ buildConsumerSocketPath websocketBase topicRef subscriptionName consumerName =
   buildSocketPath
     websocketBase
     ("consumer/" <> renderTopicPath topicRef <> "/" <> subscriptionName)
-    [ ("subscriptionType", "Exclusive"),
+    -- Phase 7 Sprint 7.7: @Shared@ subscription so the supported
+    -- multi-replica coordinator + engine daemons can split the
+    -- request and batch topics without contending on an exclusive
+    -- subscription. Per-context exclusive ownership lives on the
+    -- per-conversation Failover subscriptions the dispatcher creates
+    -- (Sprint 7.6), not on the global request/batch topics.
+    [ ("subscriptionType", "Shared"),
       ("subscriptionInitialPosition", "Earliest"),
       ("receiverQueueSize", "1"),
       ("consumerName", consumerName)

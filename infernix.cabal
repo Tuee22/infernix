@@ -45,6 +45,7 @@ library
         Infernix.Demo.Api
         Infernix.Demo.Auth
         Infernix.Demo.Bootstrap
+        Infernix.Demo.WebSocket
         Infernix.DemoCLI
         Infernix.DemoConfig
         Infernix.Engines.AppleSilicon
@@ -115,7 +116,9 @@ library
         text >=2.0 && <2.2,
         time >=1.12 && <1.16,
         vector >=0.13 && <0.14,
+        unix >=2.8 && <2.9,
         wai >=3.2 && <3.3,
+        wai-websockets >=3.0 && <3.1,
         websockets >=0.13 && <0.14,
         warp >=3.3 && <3.5,
         yaml >=0.11 && <0.12
