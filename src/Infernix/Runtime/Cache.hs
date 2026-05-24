@@ -8,12 +8,10 @@ module Infernix.Runtime.Cache
   )
 where
 
-import Control.Monad (when)
 import Data.Maybe (catMaybes)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Infernix.Config (Paths (..))
-import Infernix.Models (engineBindingForSelectedEngine)
 import Infernix.Storage
   ( readCacheManifestProtoMaybe,
     writeCacheManifestProto,
@@ -21,8 +19,7 @@ import Infernix.Storage
   )
 import Infernix.Types
 import System.Directory
-  ( copyFile,
-    createDirectoryIfMissing,
+  ( createDirectoryIfMissing,
     doesDirectoryExist,
     doesFileExist,
     listDirectory,
@@ -31,18 +28,32 @@ import System.Directory
 import System.FilePath ((</>))
 import System.IO.Error (catchIOError, isDoesNotExistError)
 
+-- Phase 7 Sprint 7.7: the cache CLI commands operate on the local
+-- model-cache root only. Manifests sit beside the cached model files at
+-- @modelCacheRoot/<runtimeMode>/<modelId>/manifest.pb@; the @./.data/object-store/@
+-- tree, the @s3://infernix-runtime/@ URI scheme, and the synthetic
+-- artifact-bundle / source-manifest JSON files are retired.
+--
+-- In the supported target topology, model weights live in MinIO
+-- @infernix-models@; engine pods pull on demand into the @/model-cache@
+-- @emptyDir@ mount, and @adapters/model_cache.get_model_path@ owns the
+-- lazy population + LRU eviction loop. The local cache CLI commands
+-- remain useful as a diagnostic surface for the host-engine daemon on
+-- Apple silicon (where the model-cache lives under
+-- @./.data/runtime/model-cache/@) and for unit-test fixtures.
+
 listCacheManifests :: Paths -> RuntimeMode -> IO [CacheManifest]
 listCacheManifests paths runtimeMode = do
-  let manifestRoot = cacheManifestRoot paths runtimeMode
-  rootExists <- doesDirectoryExist manifestRoot
+  let runtimeRootDir = modelCacheRoot paths </> Text.unpack (runtimeModeId runtimeMode)
+  rootExists <- doesDirectoryExist runtimeRootDir
   if not rootExists
     then pure []
     else do
-      modelDirectories <- listDirectory manifestRoot
-      catMaybes <$> mapM (readManifestIfPresent . (manifestRoot </>)) modelDirectories
+      modelDirectories <- listDirectory runtimeRootDir
+      catMaybes <$> mapM (readManifestIfPresent . (runtimeRootDir </>)) modelDirectories
   where
     readManifestIfPresent modelDirectory = do
-      let manifestPath = modelDirectory </> "default.pb"
+      let manifestPath = manifestProtoPathForModelDirectory modelDirectory
       manifestExists <- doesFileExist manifestPath
       if manifestExists
         then readCacheManifestProtoMaybe manifestPath
@@ -79,66 +90,20 @@ rebuildCache paths runtimeMode maybeModelId = do
               <> " via "
               <> cacheSelectedEngine manifest
       createDirectoryIfMissing True cacheRoot
-      copyDurableArtifactToCache paths cacheRoot (cacheDurableSourceUri manifest)
       writeTextFile (cacheRoot </> "materialized.txt") markerContents
 
 materializeCache :: Paths -> RuntimeMode -> ModelDescriptor -> IO ()
 materializeCache paths runtimeMode model = do
-  let runtimeModeName = Text.unpack (runtimeModeId runtimeMode)
-      modelName = Text.unpack (modelId model)
-      cacheRoot = cacheRootFor paths runtimeMode (modelId model)
-      sourceManifestPath = sourceManifestPathFor paths runtimeMode (modelId model)
-      durableArtifactPath = durableArtifactPathFor paths runtimeMode (modelId model)
-      durableArtifactUri = "s3://infernix-runtime/artifacts/" <> Text.pack runtimeModeName <> "/" <> modelId model <> "/bundle.json"
+  let cacheRoot = cacheRootFor paths runtimeMode (modelId model)
+      modelDirectory = modelDirectoryFor paths runtimeMode (modelId model)
+      manifestPath = manifestProtoPathForModelDirectory modelDirectory
+      durableArtifactUri =
+        "minio://infernix-models/" <> modelId model <> "/"
       markerContents =
         "materialized from "
           <> durableArtifactUri
           <> " via "
           <> selectedEngine model
-      sourceManifestContents =
-        Text.pack . unlines $
-          [ "{",
-            "  \"runtimeMode\": " <> jsonString (runtimeModeId runtimeMode) <> ",",
-            "  \"modelId\": " <> jsonString (modelId model) <> ",",
-            "  \"selectionMode\": \"engine-specific-direct-artifact\",",
-            "  \"fetchStatus\": \"materialized\",",
-            "  \"acquisitionMode\": \"local-file-copy\",",
-            "  \"selectedArtifacts\": [",
-            "    {",
-            "      \"artifactId\": " <> jsonString (modelId model) <> ",",
-            "      \"artifactKind\": \"bundle\",",
-            "      \"uri\": " <> jsonString durableArtifactUri <> ",",
-            "      \"required\": true",
-            "    }",
-            "  ]",
-            "}"
-          ]
-      durableArtifactContents =
-        let engineBinding = engineBindingForSelectedEngine runtimeMode (selectedEngine model)
-         in Text.pack . unlines $
-              [ "{",
-                "  \"artifactKind\": \"infernix-runtime-bundle\",",
-                "  \"schemaVersion\": 1,",
-                "  \"runtimeMode\": " <> jsonString (runtimeModeId runtimeMode) <> ",",
-                "  \"matrixRowId\": " <> jsonString (matrixRowId model) <> ",",
-                "  \"modelId\": " <> jsonString (modelId model) <> ",",
-                "  \"displayName\": " <> jsonString (displayName model) <> ",",
-                "  \"family\": " <> jsonString (family model) <> ",",
-                "  \"artifactType\": " <> jsonString (artifactType model) <> ",",
-                "  \"referenceModel\": " <> jsonString (referenceModel model) <> ",",
-                "  \"selectedEngine\": " <> jsonString (selectedEngine model) <> ",",
-                "  \"runtimeLane\": " <> jsonString (runtimeLaneId (runtimeLane model)) <> ",",
-                "  \"sourceDownloadUrl\": " <> jsonString (downloadUrl model) <> ",",
-                "  \"engineAdapterId\": " <> jsonString (engineBindingAdapterId engineBinding) <> ",",
-                "  \"engineAdapterType\": " <> jsonString (engineBindingAdapterType engineBinding) <> ",",
-                "  \"engineAdapterLocator\": " <> jsonString (engineBindingAdapterLocator engineBinding) <> ",",
-                "  \"artifactAcquisitionMode\": \"engine-ready-artifact-manifests\",",
-                "  \"sourceArtifactManifestPath\": " <> jsonString (Text.pack ("source-artifacts/" <> runtimeModeName <> "/" <> modelName <> "/source.json")) <> ",",
-                "  \"sourceArtifactSelectionMode\": \"engine-specific-direct-artifact\",",
-                "  \"sourceArtifactAuthoritativeUri\": " <> jsonString durableArtifactUri <> ",",
-                "  \"sourceArtifactAuthoritativeKind\": \"bundle\"",
-                "}"
-              ]
       manifest =
         CacheManifest
           { cacheRuntimeMode = runtimeMode,
@@ -148,64 +113,22 @@ materializeCache paths runtimeMode model = do
             cacheCacheKey = "default"
           }
   createDirectoryIfMissing True cacheRoot
-  writeTextFile sourceManifestPath sourceManifestContents
-  writeTextFile durableArtifactPath durableArtifactContents
   writeTextFile (cacheRoot </> "materialized.txt") markerContents
-  copyFile durableArtifactPath (cacheRoot </> "artifact-bundle.json")
-  writeCacheManifestProto (cacheManifestProtoPath paths runtimeMode (modelId model)) cacheRoot manifest
+  writeCacheManifestProto manifestPath cacheRoot manifest
 
-copyDurableArtifactToCache :: Paths -> FilePath -> Text -> IO ()
-copyDurableArtifactToCache paths cacheRoot durableSourceUriValue = do
-  let durableArtifactPath = localPathFromUri paths durableSourceUriValue
-      cacheBundleFilePath = cacheRoot </> "artifact-bundle.json"
-  artifactExists <- doesFileExist durableArtifactPath
-  when artifactExists (copyFile durableArtifactPath cacheBundleFilePath)
-
+-- The cache root @<modelCacheRoot>/<runtimeMode>/<modelId>/default/@ holds
+-- the actual cached weight files an engine adapter loads; the parent
+-- @<modelCacheRoot>/<runtimeMode>/<modelId>/manifest.pb@ records the
+-- bookkeeping the @infernix cache@ commands surface.
 cacheRootFor :: Paths -> RuntimeMode -> Text -> FilePath
 cacheRootFor paths runtimeMode modelName =
+  modelDirectoryFor paths runtimeMode modelName </> "default"
+
+modelDirectoryFor :: Paths -> RuntimeMode -> Text -> FilePath
+modelDirectoryFor paths runtimeMode modelName =
   modelCacheRoot paths
     </> Text.unpack (runtimeModeId runtimeMode)
     </> Text.unpack modelName
-    </> "default"
 
-cacheManifestRoot :: Paths -> RuntimeMode -> FilePath
-cacheManifestRoot paths runtimeMode =
-  objectStoreRoot paths
-    </> "manifests"
-    </> Text.unpack (runtimeModeId runtimeMode)
-
-localPathFromUri :: Paths -> Text -> FilePath
-localPathFromUri paths rawUri =
-  case Text.stripPrefix "file://" rawUri of
-    Just localPath -> Text.unpack localPath
-    Nothing ->
-      case Text.stripPrefix "s3://infernix-runtime/" rawUri of
-        Just objectPath -> objectStoreRoot paths </> Text.unpack objectPath
-        Nothing -> Text.unpack rawUri
-
-cacheManifestProtoPath :: Paths -> RuntimeMode -> Text -> FilePath
-cacheManifestProtoPath paths runtimeMode modelName =
-  objectStoreRoot paths
-    </> "manifests"
-    </> Text.unpack (runtimeModeId runtimeMode)
-    </> Text.unpack modelName
-    </> "default.pb"
-
-sourceManifestPathFor :: Paths -> RuntimeMode -> Text -> FilePath
-sourceManifestPathFor paths runtimeMode modelName =
-  objectStoreRoot paths
-    </> "source-artifacts"
-    </> Text.unpack (runtimeModeId runtimeMode)
-    </> Text.unpack modelName
-    </> "source.json"
-
-durableArtifactPathFor :: Paths -> RuntimeMode -> Text -> FilePath
-durableArtifactPathFor paths runtimeMode modelName =
-  objectStoreRoot paths
-    </> "artifacts"
-    </> Text.unpack (runtimeModeId runtimeMode)
-    </> Text.unpack modelName
-    </> "bundle.json"
-
-jsonString :: Text -> String
-jsonString = show . Text.unpack
+manifestProtoPathForModelDirectory :: FilePath -> FilePath
+manifestProtoPathForModelDirectory modelDirectory = modelDirectory </> "manifest.pb"

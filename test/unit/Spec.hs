@@ -71,6 +71,18 @@ import System.FilePath ((</>))
 import System.IO qualified
 import System.IO.Error (catchIOError, isDoesNotExistError)
 import System.Timeout (timeout)
+import Test.QuickCheck
+  ( Args (..),
+    Gen,
+    Result (..),
+    Testable,
+    choose,
+    elements,
+    forAll,
+    listOf,
+    quickCheckWithResult,
+    stdArgs,
+  )
 
 main :: IO ()
 main = do
@@ -224,7 +236,10 @@ main = do
                     { inlineOutput = Just "legacy output",
                       objectRef = Nothing
                     },
-                createdAt = now
+                createdAt = now,
+                resultUserId = "",
+                resultContextId = "",
+                resultCausalRef = ""
               }
           legacyResultPath = resultsRoot paths </> "legacy-only-request.state"
       createDirectoryIfMissing True (resultsRoot paths)
@@ -234,21 +249,19 @@ main = do
         (isNothing legacyOnlyReload)
         "inference result loading ignores retired .state-only files"
 
-      let legacyManifestDirectory = objectStoreRoot paths </> "manifests" </> "linux-cpu" </> "legacy-model"
-          legacyCacheManifest =
-            CacheManifest
-              { cacheRuntimeMode = LinuxCpu,
-                cacheModelId = "legacy-model",
-                cacheSelectedEngine = "llama-cpp",
-                cacheDurableSourceUri = "s3://infernix-runtime/artifacts/linux-cpu/legacy-model/bundle.json",
-                cacheCacheKey = "default"
-              }
-      createDirectoryIfMissing True legacyManifestDirectory
-      writeFile (legacyManifestDirectory </> "default.state") (show legacyCacheManifest)
+      -- Phase 7 Sprint 7.7 retires @./.data/object-store/@ so the cache
+      -- manifest reader now ignores any stale @.state@ or @default.pb@
+      -- payload at the legacy location and only loads manifests written
+      -- into @modelCacheRoot/<runtimeMode>/<modelId>/manifest.pb@.
+      let staleLegacyManifestDirectory =
+            dataRoot paths </> "object-store" </> "manifests" </> "linux-cpu" </> "legacy-model"
+      createDirectoryIfMissing True staleLegacyManifestDirectory
+      writeFile (staleLegacyManifestDirectory </> "default.state") "legacy state file"
+      writeFile (staleLegacyManifestDirectory </> "default.pb") "legacy proto file"
       legacyCacheManifests <- listCacheManifests paths LinuxCpu
       assert
         (null legacyCacheManifests)
-        "cache manifest loading ignores retired default.state files"
+        "cache manifest reader ignores retired ./.data/object-store/ payloads"
 
       let contractsOutputRoot = buildRoot paths </> "contracts-output"
           legacyContractsPath = contractsOutputRoot </> "Infernix" </> "Web" </> "Contracts.purs"
@@ -293,6 +306,7 @@ main = do
       assertDemoAuthRealm
       assertBootstrapModels
       assertDemoBucketBootstrap
+      assertConversationPropertyTests
 
       let legacyRegistryNamespace = repoRoot paths </> ".build" </> "kind" </> "registry" </> "localhost:30001"
       createDirectoryIfMissing True legacyRegistryNamespace
@@ -1333,7 +1347,8 @@ assertObjectsLayoutAndPresigning = do
   -- Presigned URL minting determinism
   let cfg =
         ObjPresigned.PresignedUrlConfig
-          { ObjPresigned.presignedEndpoint = "infernix-minio:9000",
+          { ObjPresigned.presignedScheme = "http",
+            ObjPresigned.presignedEndpoint = "infernix-minio:9000",
             ObjPresigned.presignedRegion = "us-east-1",
             ObjPresigned.presignedAccessKeyId = "AKIAIOSFODNN7EXAMPLE",
             ObjPresigned.presignedSecretAccessKey = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
@@ -1684,3 +1699,131 @@ sampleDockerImageInspectWithoutRepoDigest =
       "  }",
       "]"
     ]
+
+-- | Phase 7 Sprint 7.13 QuickCheck-style property generators for
+-- arbitrary 'Contracts.ConversationEvent' sequences. The Reducer's
+-- invariants must hold regardless of event ordering, idempotency key
+-- collisions, or causal-ref shape; the generators below exercise the
+-- shapes that matter end-to-end (prompt / cancel / inference-result /
+-- user-upload) and the properties assert behaviour on every shrink.
+assertConversationPropertyTests :: IO ()
+assertConversationPropertyTests = do
+  let ctx = Contracts.ContextId "ctx-property"
+      seed =
+        Contracts.ConversationState
+          { Contracts.conversationStateContextId = ctx,
+            Contracts.conversationStateMessages = [],
+            Contracts.conversationStatePrefixHash =
+              ConversationHash.unPrefixHash ConversationHash.emptyPrefixHash
+          }
+  runProperty
+    "patch stream replay converges to snapshot reducer projection on every generated log"
+    ( forAll
+        genConversationLog
+        ( \events ->
+            let (_, patches) = ConversationReducer.foldEventsKeepingPatches ctx events
+                snapshot = ConversationReducer.snapshotReducer ctx events
+                replayed = foldl ConversationReducer.applyPatchToState seed patches
+             in replayed == snapshot
+        )
+    )
+  runProperty
+    "prefixHash chain is monotonic in length and deterministic"
+    ( forAll
+        genConversationLog
+        ( \events ->
+            let chain = ConversationHash.prefixHashChainOver events
+                chain2 = ConversationHash.prefixHashChainOver events
+             in length chain == length events + 1 && chain == chain2
+        )
+    )
+  runProperty
+    "idempotency dedup drops every repeated (contextId, key) inside the same log"
+    ( forAll
+        genConversationLog
+        ( \events ->
+            let (_, patches) = ConversationReducer.foldEventsKeepingPatches ctx events
+                snapshot = ConversationReducer.snapshotReducer ctx events
+                stateMessageCount =
+                  length
+                    ( foldr
+                        (:)
+                        []
+                        (Contracts.conversationStateMessages snapshot)
+                    )
+             in length patches == stateMessageCount
+        )
+    )
+
+runProperty :: (Testable prop) => String -> prop -> IO ()
+runProperty label property = do
+  result <- quickCheckWithResult stdArgs {maxSize = 16, maxSuccess = 50} property
+  case result of
+    Success {} -> putStrLn ("property ok: " <> label)
+    _ -> ioError (userError ("property failed: " <> label))
+
+-- | Generate a conversation log of bounded length. Each message gets a
+-- fresh monotonic-shaped MessageId so the reducer sees an ordering
+-- consistent with a real Pulsar topic; cancel and inference-result
+-- variants reference an earlier prompt's MessageId so the causal-ref
+-- shape exercises the same dispatcher rule the production code path
+-- runs.
+genConversationLog :: Gen [Contracts.ConversationMessage]
+genConversationLog = do
+  count <- choose (0, 8)
+  -- Each prompt is keyed by index so duplicates collide deterministically.
+  let buildPrompt idx =
+        Contracts.ConversationMessage
+          { Contracts.conversationMessageId =
+              Contracts.MessageId (Text.pack ("m-" ++ show idx)),
+            Contracts.conversationMessageEvent =
+              Contracts.ConversationUserPromptEvent
+                Contracts.UserPromptPayload
+                  { Contracts.promptText = Text.pack ("prompt-" ++ show idx),
+                    Contracts.promptClientIdempotencyKey =
+                      Contracts.ClientIdempotencyKey
+                        (Text.pack ("idem-" ++ show idx)),
+                    Contracts.promptUserUploads = []
+                  }
+          }
+  let prompts = map buildPrompt ([1 .. count] :: [Int])
+  -- Optionally interleave cancels / results / duplicates by appending
+  -- causal-ref events keyed by prior prompts.
+  extras <-
+    if null prompts
+      then pure []
+      else listOf (genCausalEvent prompts)
+  pure (prompts ++ extras)
+
+genCausalEvent :: [Contracts.ConversationMessage] -> Gen Contracts.ConversationMessage
+genCausalEvent prompts = do
+  parent <- elements prompts
+  let parentId = Contracts.conversationMessageId parent
+  shape <- elements (["cancel", "result", "duplicate"] :: [String])
+  case shape of
+    "cancel" -> do
+      tag <- choose (1, 1000 :: Int)
+      pure
+        Contracts.ConversationMessage
+          { Contracts.conversationMessageId =
+              Contracts.MessageId (Text.pack ("c-" ++ show tag)),
+            Contracts.conversationMessageEvent =
+              Contracts.ConversationCancelEvent
+                (Contracts.ConversationCancelPayload parentId)
+          }
+    "result" -> do
+      tag <- choose (1, 1000 :: Int)
+      pure
+        Contracts.ConversationMessage
+          { Contracts.conversationMessageId =
+              Contracts.MessageId (Text.pack ("r-" ++ show tag)),
+            Contracts.conversationMessageEvent =
+              Contracts.ConversationInferenceResultEvent
+                Contracts.ConversationInferenceResultPayload
+                  { Contracts.inferenceResultUserPromptMessageId = parentId,
+                    Contracts.inferenceResultStatus = "Completed",
+                    Contracts.inferenceResultInlineOutput = Just "ok",
+                    Contracts.inferenceResultArtifacts = []
+                  }
+          }
+    _ -> pure parent

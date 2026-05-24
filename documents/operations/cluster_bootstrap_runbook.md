@@ -170,22 +170,28 @@ constraints, or normal Kubernetes convergence.
   still `replay-retained-state` or has advanced to `delete-kind-cluster`
 - expect durable state under `./.data/` to remain intact
 
-## Durable-Context Demo Bring-Up (Planned, Phase 7)
+## Durable-Context Demo Bring-Up (Phase 7)
 
-When the active substrate's generated `.dhall` carries `demo_ui = true`, `cluster up` performs
-the following additional reconciliation steps:
+When the active substrate's generated `.dhall` carries `demo_ui = true`, `cluster up`
+performs the following additional reconciliation steps (validated end-to-end on `linux-cpu`
+on May 22, 2026 and on `linux-gpu` on May 22, 2026):
 
 - deploys a Keycloak Helm release together with its dedicated Patroni Postgres cluster managed
   by the Percona operator; expects Harbor to be responsive first, then the Keycloak Patroni
   cluster to report ready, then Keycloak itself
-- idempotently imports the demo realm with self-signup on and email verification off; reruns
-  verify the realm matches without rewriting it
-- creates the `infernix-demo-objects` MinIO bucket idempotently
-- reconciles namespace-level Pulsar compaction policy for the `demo.user.*` topic namespaces
+- idempotently imports the demo realm with self-signup on and email verification off via
+  Keycloak's native `--import-realm` flag against the mounted ConfigMap; reruns are no-ops
+  because Keycloak skips re-importing an existing realm
+- creates the always-on `infernix-models` MinIO bucket plus the demo-gated
+  `infernix-demo-objects` MinIO bucket through the chart-time MinIO provisioner
+- reconciles the supported `infernix` Pulsar tenant plus the `infernix/system` and
+  `infernix/demo` namespaces, sets the 100 MiB compaction threshold on `infernix/demo`,
+  enables broker-side deduplication on both namespaces, and creates the
+  `persistent://infernix/system/model.bootstrap.request` topic via the Pulsar admin REST
+  API before schema registration; see `reconcileSupportedNamespaces` in
+  `src/Infernix/Runtime/Pulsar.hs`
 - registers schemas for `ConversationEvent`, `ContextMetadataEvent`, `DraftEvent`, and the
   inference request and result envelopes via the Pulsar admin API
-- enables Pulsar producer-side deduplication on conversation, inference-request, and
-  inference-result topics
 
 Warning classification stays consistent with the rest of this runbook: slow Keycloak realm
 import or initial Patroni replica bootstrap is healthy convergence as long as the lifecycle

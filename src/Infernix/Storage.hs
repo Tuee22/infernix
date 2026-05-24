@@ -109,7 +109,10 @@ inferenceResultToProto resultValue =
           set (field @"selectedEngine") (resultSelectedEngine resultValue) $
             set (field @"status") (status resultValue) $
               set (field @"payload") (resultPayloadToProto (payload resultValue)) $
-                set (field @"createdAt") (formatTimestamp (createdAt resultValue)) defMessage
+                set (field @"createdAt") (formatTimestamp (createdAt resultValue)) $
+                  set (field @"userId") (resultUserId resultValue) $
+                    set (field @"contextId") (resultContextId resultValue) $
+                      set (field @"causalRef") (resultCausalRef resultValue) defMessage
 
 inferenceResultFromProto :: ProtoInference.InferenceResult -> Maybe InferenceResult
 inferenceResultFromProto protoValue = do
@@ -125,7 +128,10 @@ inferenceResultFromProto protoValue = do
         resultSelectedEngine = view ProtoInferenceFields.selectedEngine protoValue,
         status = view ProtoInferenceFields.status protoValue,
         payload = payloadValue,
-        createdAt = createdAtValue
+        createdAt = createdAtValue,
+        resultUserId = view ProtoInferenceFields.userId protoValue,
+        resultContextId = view ProtoInferenceFields.contextId protoValue,
+        resultCausalRef = view ProtoInferenceFields.causalRef protoValue
       }
 
 resultPayloadToProto :: ResultPayload -> ProtoInference.ResultPayload
@@ -166,7 +172,10 @@ cacheManifestToProto materializedCachePath manifest =
   where
     runtimeModeText = runtimeModeId (cacheRuntimeMode manifest)
     manifestIdentifier = runtimeModeText <> ":" <> cacheModelId manifest <> ":" <> cacheCacheKey manifest
-    durableResultsPrefix = "object-store/results/" <> runtimeModeText
+    -- Phase 7 Sprint 7.7 retires the on-disk object-store tree; durable
+    -- results land in MinIO @infernix-demo-objects@ under the per-user
+    -- prefix @users/<userId>/contexts/<contextId>/generated/@.
+    durableResultsPrefix = "minio://infernix-demo-objects/users/"
     materialization =
       set (field @"runtimeMode") runtimeModeText $
         set (field @"modelId") (cacheModelId manifest) $

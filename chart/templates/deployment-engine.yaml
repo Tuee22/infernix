@@ -77,6 +77,11 @@ spec:
               value: {{ .Values.service.minio.accessKey | quote }}
             - name: INFERNIX_MINIO_SECRET_KEY
               value: {{ .Values.service.minio.secretKey | quote }}
+            # Phase 7 Sprint 7.7: model_cache.py uses boto3 SigV4 to GET
+            # weights from infernix-models on first use; explicit region
+            # avoids drift across substrates.
+            - name: INFERNIX_MINIO_REGION
+              value: "us-east-1"
             - name: INFERNIX_PULSAR_ADMIN_URL
               value: {{ .Values.service.pulsar.adminUrl | quote }}
             - name: INFERNIX_PULSAR_HTTP_BASE_URL

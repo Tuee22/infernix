@@ -21,10 +21,11 @@ same-binary host daemon is implemented in Phase 6 Sprint 6.25.
 
 The repository has typed request or response shapes, typed runtime result metadata, a
 README-matrix-backed generated catalog, protobuf-backed manifest and result helpers, explicit
-cache status or eviction or rebuild flows, repo-local durable object-store state under
-`./.data/object-store/`, a shared Python adapter project whose setup entrypoints write idempotent
-bootstrap manifests, explicit substrate-materialization helpers, and daemon behavior driven by the
-staged substrate file. That file is a typed Dhall record at `infernix-substrate.dhall`, decoded
+cache status or eviction or rebuild flows, a shared Python adapter project whose setup entrypoints
+write idempotent bootstrap manifests, explicit substrate-materialization helpers, and daemon
+behavior driven by the staged substrate file. Durable model artifact storage moved to the
+`infernix-models` MinIO bucket under Phase 7 Sprint 7.7; the legacy `./.data/object-store/` tree
+is retired and tracked in [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md). That file is a typed Dhall record at `infernix-substrate.dhall`, decoded
 in-process by the `dhall` Haskell library. The final runtime contract distinguishes daemon role
 from inference executor location:
 cluster daemons exist on every substrate and own Pulsar request-topic consumption; Linux cluster
@@ -96,7 +97,8 @@ derived local cache state become authoritative.
 ### Deliverables
 
 - the service runtime stores durable manifests, artifacts, and large outputs under the repo-local
-  object-store root `./.data/object-store/`
+  object-store root `./.data/object-store/` (retired by Phase 7 Sprint 7.7; durable model artifacts
+  now live in the `infernix-models` MinIO bucket and the per-pod `emptyDir` model cache)
 - the service runtime consumes inference requests and publishes results through the topic-shaped
   Pulsar contract, using the configured transport on supported cluster paths and the repo-local
   topic spool only in harness-oriented flows that intentionally omit those endpoints
@@ -143,7 +145,8 @@ host-side, and Linux inference execution and result publication remain cluster-r
   Apple cluster daemon role as well
 - daemon role changes only publication context, generated-config source, batch-topic wiring, and
   optional transport-endpoint wiring, not the request or result or catalog contract
-- the current validated durable object-store contract remains repo-local `./.data/object-store/`;
+- the durable object-store contract closed at Sprint 4.3 around repo-local `./.data/object-store/`
+  and was retired by Phase 7 Sprint 7.7 in favor of the `infernix-models` MinIO bucket;
   real Pulsar transport is enabled either by the documented Pulsar endpoint environment variables
   or, on the Apple host-native lane, by discovering the routed Pulsar edge from publication state,
   while the filesystem topic spool remains a harness-oriented fallback when no endpoint is
@@ -222,14 +225,17 @@ Make derived runtime state reproducible from durable sources and keep lifecycle 
 - local service cache roots live under `./.data/runtime/`
 - cache directories are keyed by model identity and substrate identifier, with current durable
   payloads still serializing that identifier as `runtimeMode`
-- durable cache manifests under `./.data/object-store/manifests/` act as rebuild sources
+- durable cache manifests under `./.data/object-store/manifests/` acted as rebuild sources at
+  Sprint 4.5 closure; retired by Phase 7 Sprint 7.7 in favor of MinIO-backed weights with cache
+  rebuildability from the Pulsar conversation log via `prefixHash`
 - `cache status`, `cache evict`, and `cache rebuild` are explicit operator flows
 
 ### Validation
 
 - `infernix test unit` proves cache materialization, eviction, and rebuild behavior
 - `infernix test integration` proves the routed cache API can materialize and rebuild cache entries
-- `cluster status` distinguishes cache, object-store, and manifest counts
+- `cluster status` distinguishes cache, object-store, and manifest counts (object-store and
+  on-disk manifest tracking retired by Phase 7 Sprint 7.7)
 
 ### Remaining Work
 

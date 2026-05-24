@@ -231,7 +231,7 @@ None.
 ## Sprint 2.6: Explicit Substrate File Staging and ConfigMap Publication [Done]
 
 **Status**: Done
-**Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Config.hs`, `src/Infernix/Models.hs`, `chart/templates/configmap-demo-catalog.yaml`, `chart/templates/deployment-service.yaml`, `chart/templates/deployment-demo.yaml`, `test/integration/Spec.hs`
+**Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Config.hs`, `src/Infernix/Models.hs`, `chart/templates/configmap-demo-catalog.yaml`, `chart/templates/deployment-coordinator.yaml`, `chart/templates/deployment-engine.yaml`, `chart/templates/deployment-demo.yaml`, `test/integration/Spec.hs`
 **Docs to update**: `documents/engineering/build_artifacts.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/development/testing_strategy.md`
 
 ### Objective
@@ -265,7 +265,7 @@ None.
 ## Sprint 2.7: GPU-Enabled Kind Runtime For `linux-gpu` [Done]
 
 **Status**: Done
-**Implementation**: `kind/cluster-linux-gpu.yaml`, `src/Infernix/Cluster.hs`, `src/Infernix/Lint/Chart.hs`, `chart/templates/deployment-service.yaml`, `chart/templates/runtimeclass-nvidia.yaml`, `test/integration/Spec.hs`
+**Implementation**: `kind/cluster-linux-gpu.yaml`, `src/Infernix/Cluster.hs`, `src/Infernix/Lint/Chart.hs`, `chart/templates/deployment-engine.yaml`, `chart/templates/runtimeclass-nvidia.yaml`, `test/integration/Spec.hs`
 **Docs to update**: `documents/engineering/k8s_native_dev_policy.md`, `documents/architecture/runtime_modes.md`, `documents/development/testing_strategy.md`
 
 ### Objective
@@ -283,7 +283,7 @@ Make `linux-gpu` a real GPU-backed cluster mode rather than a nominal matrix col
 
 - `infernix kubectl get nodes -l infernix.runtime/gpu=true` shows allocatable `nvidia.com/gpu`
 - the NVIDIA device plugin rollout is ready on GPU-capable nodes
-- `infernix kubectl -n platform exec deployment/infernix-service -- nvidia-smi -L` reports a visible GPU on supported hosts
+- `infernix kubectl -n platform exec deployment/infernix-engine -- nvidia-smi -L` reports a visible GPU on supported hosts
 
 ### Remaining Work
 
@@ -326,7 +326,7 @@ None.
 ## Sprint 2.9: Staged Substrate File Publication and Linux Launcher Closure [Done]
 
 **Status**: Done
-**Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Models.hs`, `chart/templates/configmap-demo-catalog.yaml`, `chart/templates/deployment-service.yaml`, `chart/templates/deployment-demo.yaml`, `compose.yaml`, `docker/linux-substrate.Dockerfile`
+**Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Models.hs`, `chart/templates/configmap-demo-catalog.yaml`, `chart/templates/deployment-coordinator.yaml`, `chart/templates/deployment-engine.yaml`, `chart/templates/deployment-demo.yaml`, `compose.yaml`, `docker/linux-substrate.Dockerfile`
 **Docs to update**: `README.md`, `documents/development/local_dev.md`, `documents/engineering/build_artifacts.md`, `documents/engineering/docker_policy.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/development/testing_strategy.md`
 
 ### Objective

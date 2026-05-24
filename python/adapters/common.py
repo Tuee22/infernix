@@ -6,7 +6,7 @@ import json
 import os
 import subprocess
 import sys
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -50,8 +50,6 @@ class AdapterContext:
     selected_engine: str
     artifact_type: str
     runtime_lane: str
-    selection_mode: str
-    acquisition_mode: str
     input_text: str
     bootstrap_ready: bool
     bootstrap_manifest_path: str
@@ -125,22 +123,23 @@ def run_check_code() -> int:
 
 
 def load_adapter_context(request: inference_pb2.WorkerRequest) -> AdapterContext:
-    artifact_bundle = _read_json_object(cast(str, request.artifact_bundle_path))
-    source_manifest = _read_json_object(cast(str, request.source_manifest_path))
+    # Phase 7 Sprint 7.7 retires the ./.data/object-store/ tree, so the
+    # daemon ships model metadata straight on the WorkerRequest envelope
+    # instead of staging synthetic artifact-bundle / source-manifest JSON
+    # files. The MinIO infernix-models bucket is now the only durable
+    # source of weight artifacts, fetched lazily by
+    # adapters.model_cache.get_model_path.
     bootstrap_path = Path(cast(str, request.engine_install_root)) / "bootstrap.json"
     bootstrap_ready = bootstrap_path.exists()
-    model_id = _required_str(artifact_bundle, "modelId")
     return AdapterContext(
         adapter_id=cast(str, request.adapter_id),
         runtime_mode=cast(str, request.runtime_mode),
-        model_id=model_id,
-        display_name=_required_str(artifact_bundle, "displayName"),
-        family=_required_str(artifact_bundle, "family"),
-        selected_engine=_required_str(artifact_bundle, "selectedEngine"),
-        artifact_type=_required_str(artifact_bundle, "artifactType"),
-        runtime_lane=_required_str(artifact_bundle, "runtimeLane"),
-        selection_mode=_required_str(source_manifest, "selectionMode"),
-        acquisition_mode=_required_str(source_manifest, "acquisitionMode"),
+        model_id=cast(str, request.request_model_id),
+        display_name=cast(str, request.display_name),
+        family=cast(str, request.family),
+        selected_engine=cast(str, request.selected_engine),
+        artifact_type=cast(str, request.artifact_type),
+        runtime_lane=cast(str, request.runtime_lane),
         input_text=normalized_input_text(cast(str, request.input_text)),
         bootstrap_ready=bootstrap_ready,
         bootstrap_manifest_path=str(bootstrap_path),
@@ -176,20 +175,6 @@ def _engine_install_root(adapter_id: str) -> Path:
     if configured:
         return Path(configured)
     return _repo_root() / ".data" / "engines" / adapter_id
-
-
-def _read_json_object(path: str) -> dict[str, Any]:
-    payload = json.loads(Path(path).read_text(encoding="utf-8"))
-    if not isinstance(payload, dict):
-        raise ValueError(f"expected a JSON object at {path}")
-    return cast(dict[str, Any], payload)
-
-
-def _required_str(mapping: Mapping[str, Any], key: str) -> str:
-    value = mapping.get(key)
-    if not isinstance(value, str) or not value:
-        raise ValueError(f"missing string field {key}")
-    return value
 
 
 def _require_inference_pb2() -> Any:

@@ -14,8 +14,44 @@ module Infernix.Bootstrap.Models
   )
 where
 
+import Data.Aeson
+  ( FromJSON (parseJSON),
+    ToJSON (toJSON),
+    object,
+    withObject,
+    (.:),
+    (.=),
+  )
 import Data.Text (Text)
 import Data.Text qualified as Text
+
+instance ToJSON ModelBootstrapRequest where
+  toJSON request =
+    object
+      [ "modelId" .= bootstrapRequestModelId request,
+        "downloadUrl" .= bootstrapRequestDownloadUrl request,
+        "requestedAt" .= bootstrapRequestRequestedAtIso8601 request
+      ]
+
+instance FromJSON ModelBootstrapRequest where
+  parseJSON = withObject "ModelBootstrapRequest" $ \value ->
+    ModelBootstrapRequest
+      <$> value .: "modelId"
+      <*> value .: "downloadUrl"
+      <*> value .: "requestedAt"
+
+instance ToJSON ModelBootstrapReadyEvent where
+  toJSON event =
+    object
+      [ "modelId" .= readyEventModelId event,
+        "readyAt" .= readyEventReadyAtIso8601 event
+      ]
+
+instance FromJSON ModelBootstrapReadyEvent where
+  parseJSON = withObject "ModelBootstrapReadyEvent" $ \value ->
+    ModelBootstrapReadyEvent
+      <$> value .: "modelId"
+      <*> value .: "readyAt"
 
 -- | A request the engine pod publishes when its adapter sees an uncached
 -- model. The supported topic is @infernix/system/model.bootstrap.request@;

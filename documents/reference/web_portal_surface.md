@@ -44,11 +44,10 @@ Always-published operator prefixes:
 On the real Kind path those routes are published by `Gateway/infernix-edge`,
 `EnvoyProxy/infernix-edge`, and the repo-owned HTTPRoute set.
 
-## Durable Context Surface (Planned)
+## Durable Context Surface
 
-When the durable-context demo lands (Phase 7), three additional routed prefixes appear in the
-registry output above. They are demo-gated and absent when the active substrate's generated
-`.dhall` carries `demo_ui = false`:
+Phase 7 added three routed prefixes to the registry above. They are demo-gated and absent
+when the active substrate's generated `.dhall` carries `demo_ui = false`:
 
 - `/auth` — Keycloak login pages and OIDC endpoints. Backs the SPA's signup, login, and JWT
   issuance flow. See [../tools/keycloak.md](../tools/keycloak.md).

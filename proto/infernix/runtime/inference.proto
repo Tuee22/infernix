@@ -73,10 +73,16 @@ message WorkerRequest {
   string runtime_mode = 3;
   string selected_engine = 4;
   string adapter_id = 5;
-  string artifact_bundle_path = 6;
-  string source_manifest_path = 7;
-  string cache_manifest_path = 8;
-  string engine_install_root = 9;
+  string engine_install_root = 6;
+  // Phase 7 Sprint 7.7: model metadata used to be loaded by adapters
+  // from synthetic JSON files staged under ./.data/object-store/; the
+  // supported target reads it straight off the wire from the daemon's
+  // already-loaded substrate .dhall catalog and pulls actual weights
+  // from MinIO infernix-models via adapters/model_cache.get_model_path.
+  string display_name = 7;
+  string family = 8;
+  string artifact_type = 9;
+  string runtime_lane = 10;
 }
 
 message WorkerResponse {
@@ -111,6 +117,14 @@ message InferenceResult {
   // topic; producer-side dedup on the inference.result.<mode> topic is keyed
   // by this value.
   string causal_ref = 9;
+  // Phase 7 Sprint 7.8: per-context routing for the result-bridge. The
+  // bridge consumes inference.result.<mode> with a Failover subscription
+  // and writes a ConversationInferenceResultEvent to the per-context
+  // conversation topic; user_id + context_id are the fields the bridge
+  // uses to compute the destination topic name without consulting a
+  // separate request-id cache.
+  string user_id = 10;
+  string context_id = 11;
 }
 
 message ErrorResponse {

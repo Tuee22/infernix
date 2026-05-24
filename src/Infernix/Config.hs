@@ -36,7 +36,6 @@ data Paths = Paths
     helmConfigRoot :: FilePath,
     helmCacheRoot :: FilePath,
     helmDataRoot :: FilePath,
-    objectStoreRoot :: FilePath,
     resultsRoot :: FilePath,
     modelCacheRoot :: FilePath
   }
@@ -55,7 +54,6 @@ discoverPaths = do
       helmConfigRootPath = dataRootPath </> "helm" </> "config"
       helmCacheRootPath = dataRootPath </> "helm" </> "cache"
       helmDataRootPath = dataRootPath </> "helm" </> "data"
-      objectStoreRootPath = dataRootPath </> "object-store"
       resultsRootPath = runtimeRootPath </> "results"
       modelCacheRootPath = runtimeRootPath </> "model-cache"
   pure
@@ -68,7 +66,6 @@ discoverPaths = do
         helmConfigRoot = helmConfigRootPath,
         helmCacheRoot = helmCacheRootPath,
         helmDataRoot = helmDataRootPath,
-        objectStoreRoot = objectStoreRootPath,
         resultsRoot = resultsRootPath,
         modelCacheRoot = modelCacheRootPath
       }
@@ -102,7 +99,6 @@ ensureRepoLayout paths =
       helmConfigRoot paths,
       helmCacheRoot paths,
       helmDataRoot paths,
-      objectStoreRoot paths,
       resultsRoot paths,
       modelCacheRoot paths
     ]

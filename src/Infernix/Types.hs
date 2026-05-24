@@ -54,6 +54,7 @@ import Data.Aeson
     (.=),
   )
 import Data.Aeson.Types (Parser)
+import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Time (UTCTime)
@@ -526,7 +527,14 @@ data InferenceResult = InferenceResult
     resultSelectedEngine :: Text,
     status :: Text,
     payload :: ResultPayload,
-    createdAt :: UTCTime
+    createdAt :: UTCTime,
+    -- Phase 7 Sprint 7.8: per-context routing fields the result-bridge
+    -- uses to compute the destination conversation topic. Empty strings
+    -- indicate a non-durable-context request that should bypass the
+    -- bridge (legacy / Phase 4 manual-inference fallback).
+    resultUserId :: Text,
+    resultContextId :: Text,
+    resultCausalRef :: Text
   }
   deriving (Eq, Read, Show)
 
@@ -540,7 +548,10 @@ instance ToJSON InferenceResult where
         "selectedEngine" .= resultSelectedEngine resultValue,
         "status" .= status resultValue,
         "payload" .= payload resultValue,
-        "createdAt" .= formatUtc (createdAt resultValue)
+        "createdAt" .= formatUtc (createdAt resultValue),
+        "userId" .= resultUserId resultValue,
+        "contextId" .= resultContextId resultValue,
+        "causalRef" .= resultCausalRef resultValue
       ]
 
 instance FromJSON InferenceResult where
@@ -554,6 +565,9 @@ instance FromJSON InferenceResult where
       <*> value .: "status"
       <*> value .: "payload"
       <*> (parseUtc =<< value .: "createdAt")
+      <*> (fromMaybe "" <$> value .:? "userId")
+      <*> (fromMaybe "" <$> value .:? "contextId")
+      <*> (fromMaybe "" <$> value .:? "causalRef")
 
 data ErrorResponse = ErrorResponse
   { errorCode :: Text,

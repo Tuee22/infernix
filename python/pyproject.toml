@@ -9,6 +9,11 @@ packages = [{ include = "adapters" }]
 python = "^3.12"
 protobuf = "^6.31.1"
 grpcio-tools = "^1.73.0"
+# Phase 7 Sprint 7.7: model_cache.py uses boto3 against MinIO's S3
+# protocol surface to pull weight files lazily on first use. boto3
+# ships SigV4 signing, retries, and streaming GET out of the box; the
+# engine pod's INFERNIX_MINIO_* env vars feed the client config.
+boto3 = "^1.35.0"
 
 [tool.poetry.group.dev.dependencies]
 black = "^24.10.0"

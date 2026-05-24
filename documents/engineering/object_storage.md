@@ -10,16 +10,20 @@
 
 ## Current Status
 
-Today's repo still implements the legacy `./.data/object-store/`
-filesystem-backed object store plus the `s3://infernix-runtime/...`
-URI scheme in `src/Infernix/Runtime/Cache.hs`. The chart reserves
-`infernix-runtime` and `infernix-results` MinIO bucket names that
-have never been wired to real MinIO. Phase 7 Sprint 7.7 retires all
-three surfaces (the local object-store tree, the fake-S3 scheme, and
-the placeholder buckets) and replaces them with the two-bucket model
-documented below. Until that sprint lands,
-[../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md](../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md)
-carries the pending-removal entries.
+Phase 7 Sprint 7.7 (May 23, 2026) retired the legacy
+`./.data/object-store/` filesystem-backed object store, the
+`s3://infernix-runtime/...` URI scheme in `src/Infernix/Runtime/Cache.hs`,
+and the chart-reserved `infernix-runtime` / `infernix-results`
+placeholder bucket entries. `Infernix.Config.Paths` no longer carries
+the `objectStoreRoot` field. `src/Infernix/Runtime/Cache.hs` is
+rewritten around `modelCacheRoot/<runtimeMode>/<modelId>/manifest.pb`
+so manifests sit beside the cached weights instead of in a parallel
+durable-state tree, and the durable-source URI shape used by the
+cache-status payload and the `RuntimeManifest` proto is
+`minio://infernix-models/<modelId>/` (engines pull from MinIO; nothing
+on host disk pretends to be S3). The two-bucket target model
+documented below — `infernix-models` always-on, `infernix-demo-objects`
+demo-gated — is the only supported shape today.
 
 ## Bucket Inventory
 
@@ -134,10 +138,11 @@ operator's machine, not durable cluster state.
 
 The previous `./.data/object-store/` filesystem tree, `objectStoreRoot`
 plumbing, `localPathFromUri`, and the `s3://infernix-runtime/...` URI
-scheme are deleted by Sprint 7.7. The `/objects/:objectRef` HTTP
-route in `Demo/Api.hs` is also retired; browsers fetch generated
-artifacts exclusively through `/api/objects`-minted presigned URLs
-against the `infernix-demo-objects` MinIO bucket.
+scheme were deleted by Sprint 7.7 (May 23, 2026). The
+`/objects/:objectRef` HTTP route in `Demo/Api.hs` is also retired;
+browsers fetch generated artifacts exclusively through `/api/objects`-
+minted presigned URLs against the `infernix-demo-objects` MinIO
+bucket.
 
 ## Routed Surface
 

@@ -70,10 +70,14 @@ target shape is the three-role daemon model codified in
   `demo_ui` is enabled, on every supported substrate. The **engine**
   role runs as an in-cluster `infernix-engine` Deployment on Linux
   substrates with a strict one-per-node anti-affinity rule, and as
-  the existing on-host daemon on Apple silicon. Today's repo ships a
-  single fused `infernix-service` Deployment on Linux substrates;
-  Sprint 7.7 of Phase 7 splits that pod into the two role-specific
-  Deployments without changing the Apple lane's behavior.
+  the existing on-host daemon on Apple silicon. The Sprint 7.7
+  daemon split is landed: the chart no longer ships
+  `chart/templates/deployment-service.yaml`, `clusterServiceEnabled`
+  returns `False` on every substrate, and `finalPhaseDeployments`
+  waits on `deployment/infernix-{coordinator,engine}` instead of
+  the retired `deployment/infernix-service`. The Apple lane's
+  cluster-daemon-to-host-daemon batch bridge is unchanged by the
+  split.
 - on `apple-silicon`, the clustered `infernix-demo` path still runs from the
   `infernix-linux-cpu:local` image family while reading the staged `apple-silicon` substrate file
 - the direct `infernix service` command remains the Apple host engine-role entrypoint and

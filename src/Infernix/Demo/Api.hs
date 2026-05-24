@@ -24,12 +24,13 @@ import Data.Aeson
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Char8 qualified as ByteStringChar8
 import Data.ByteString.Lazy qualified as LazyByteString
+import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import Data.Maybe (fromMaybe)
 import Data.String (fromString)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
-import Data.Time.Clock (UTCTime, getCurrentTime)
+import Data.Time.Clock (NominalDiffTime, UTCTime, diffUTCTime, getCurrentTime)
 import Infernix.Auth.Jwt
   ( Jwks,
     JwtError,
@@ -128,18 +129,52 @@ data DemoBridgeMode
   | PulsarDaemonBridge
   deriving (Eq, Show)
 
+-- | Phase 7 Sprint 7.9: the demo API process holds one JWKS cache for
+-- the lifetime of the process. Build it once in 'runDemoApiServer' so
+-- the per-request handlers and the WebSocket handshake share the same
+-- TTL-cached fetch path instead of each request triggering an upstream
+-- JWKS round-trip.
+newtype JwksCache = JwksCache (IORef (Maybe (UTCTime, Jwks)))
+
+newJwksCache :: IO JwksCache
+newJwksCache = JwksCache <$> newIORef Nothing
+
+-- | Keycloak realms typically rotate keys on the order of hours. A
+-- 5-minute TTL keeps the demo backend snappy while still surfacing a
+-- newly rotated kid quickly enough that the legitimate user-facing
+-- error window stays under one TTL cycle.
+jwksCacheTtl :: NominalDiffTime
+jwksCacheTtl = 300
+
+loadJwksCached :: JwksCache -> KeycloakRealmConfig -> IO (Either String Jwks)
+loadJwksCached (JwksCache cacheRef) realmConfig = do
+  cached <- readIORef cacheRef
+  now <- getCurrentTime
+  case cached of
+    Just (lastFetched, jwks)
+      | diffUTCTime now lastFetched < jwksCacheTtl ->
+          pure (Right jwks)
+    _ -> do
+      result <- loadJwksFromKeycloak realmConfig
+      case result of
+        Right jwks -> do
+          writeIORef cacheRef (Just (now, jwks))
+          pure (Right jwks)
+        Left err -> pure (Left err)
+
 runDemoApiServer :: DemoApiOptions -> IO ()
 runDemoApiServer options = do
   -- Fail fast when the generated catalog is invalid so cluster/test flows surface the error early.
   _ <- decodeDemoConfigFile (demoConfigPath options)
+  jwksCache <- newJwksCache
   let settings =
         setHost (fromStringHost (demoBindHost options)) $
           setPort (demoPort options) defaultSettings
-  runSettings settings (application options)
+  runSettings settings (application options jwksCache)
 
 -- type Application = Request -> (Response -> IO ResponseReceived) -> IO ResponseReceived
-application :: DemoApiOptions -> Application
-application options request respond = do
+application :: DemoApiOptions -> JwksCache -> Application
+application options jwksCache request respond = do
   demoEnabled <- demoUiEnabled <$> decodeDemoConfigFile (demoConfigPath options)
   case pathInfo request of
     ["healthz"]
@@ -171,14 +206,14 @@ application options request respond = do
           handleCacheMutation options request RebuildCache respond
     ["api", "objects", "upload"]
       | requestMethod request == methodPost && demoEnabled ->
-          handleObjectsGrant request ObjectsUpload respond
+          handleObjectsGrant jwksCache request ObjectsUpload respond
     ["api", "objects", "download"]
       | requestMethod request == methodPost && demoEnabled ->
-          handleObjectsGrant request ObjectsDownload respond
+          handleObjectsGrant jwksCache request ObjectsDownload respond
     ["ws"]
       | demoEnabled ->
           DemoWebSocket.wsApplication
-            (DemoWebSocket.defaultWebSocketOptions (loadJwksFromKeycloak defaultInfernixRealmConfig))
+            (DemoWebSocket.defaultWebSocketOptions (loadJwksCached jwksCache defaultInfernixRealmConfig))
             request
             respond
     staticSegments
@@ -197,16 +232,17 @@ application options request respond = do
 data ObjectsAction = ObjectsUpload | ObjectsDownload
 
 handleObjectsGrant ::
+  JwksCache ->
   Request ->
   ObjectsAction ->
   (Response -> IO responseReceived) ->
   IO responseReceived
-handleObjectsGrant request action respond = do
+handleObjectsGrant jwksCache request action respond = do
   let realmConfig = defaultInfernixRealmConfig
   case extractBearerToken request of
     Nothing -> respond (textResponse status401 "missing bearer token")
     Just token -> do
-      jwksResult <- loadJwksFromKeycloak realmConfig
+      jwksResult <- loadJwksCached jwksCache realmConfig
       case jwksResult of
         Left jwksError ->
           respond (textResponse status503 ("JWKS fetch failed: " <> jwksError))
@@ -348,17 +384,34 @@ loadPresignedConfig = do
   maybeExpiry <- lookupEnv "INFERNIX_MINIO_PRESIGN_EXPIRY_SECONDS"
   case (maybeEndpoint, maybeAccessKey, maybeSecretKey) of
     (Just endpointValue, Just accessKeyValue, Just secretKeyValue) ->
-      pure $
-        Right
-          PresignedUrlConfig
-            { presignedEndpoint = Text.pack endpointValue,
-              presignedRegion = Text.pack (fromMaybe "us-east-1" maybeRegion),
-              presignedAccessKeyId = Text.pack accessKeyValue,
-              presignedSecretAccessKey = Text.pack secretKeyValue,
-              presignedExpirySeconds = maybe 900 read maybeExpiry
-            }
+      let (scheme, hostPort) = splitMinioEndpoint (Text.pack endpointValue)
+       in pure $
+            Right
+              PresignedUrlConfig
+                { presignedScheme = scheme,
+                  presignedEndpoint = hostPort,
+                  presignedRegion = Text.pack (fromMaybe "us-east-1" maybeRegion),
+                  presignedAccessKeyId = Text.pack accessKeyValue,
+                  presignedSecretAccessKey = Text.pack secretKeyValue,
+                  presignedExpirySeconds = maybe 900 read maybeExpiry
+                }
     _ ->
       pure (Left "INFERNIX_MINIO_ENDPOINT / ACCESS_KEY / SECRET_KEY must be set")
+
+-- | Phase 7 Sprint 7.7 follow-on: the @INFERNIX_MINIO_ENDPOINT@ env var
+-- the chart injects carries a full @http://host:port@ URL, but the SigV4
+-- canonical request signs only the @host:port@ as the @host@ header.
+-- Strip any scheme prefix and record it separately so the minted URL
+-- points at the correct transport (plain HTTP for in-cluster MinIO,
+-- HTTPS for TLS-fronted MinIO).
+splitMinioEndpoint :: Text -> (Text, Text)
+splitMinioEndpoint raw =
+  case Text.stripPrefix "https://" raw of
+    Just hostPort -> ("https", hostPort)
+    Nothing ->
+      case Text.stripPrefix "http://" raw of
+        Just hostPort -> ("http", hostPort)
+        Nothing -> ("http", raw)
 
 renderJwtError :: JwtError -> String
 renderJwtError = show
@@ -471,13 +524,14 @@ cacheEntryValue options manifest = do
         ]
     )
 
+-- Phase 7 Sprint 7.7 retires the @./.data/object-store/@ tree, so the
+-- cache-status payload no longer points at a synthetic local
+-- source-artifact manifest. The active substrate's MinIO
+-- @infernix-models@ bucket is the only durable source of truth; the URI
+-- below names that bucket prefix instead.
 sourceArtifactManifestUri :: CacheManifest -> Text.Text
 sourceArtifactManifestUri manifest =
-  "s3://infernix-runtime/source-artifacts/"
-    <> runtimeModeId (cacheRuntimeMode manifest)
-    <> "/"
-    <> cacheModelId manifest
-    <> "/source.json"
+  "minio://infernix-models/" <> cacheModelId manifest <> "/"
 
 serveStaticSegments :: DemoApiOptions -> [Text.Text] -> (Response -> IO responseReceived) -> IO responseReceived
 serveStaticSegments options staticSegments respond = do

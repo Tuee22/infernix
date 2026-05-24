@@ -115,10 +115,11 @@ Direct reference path:
 - the Apple host-native path describes where the Haskell build, control-plane commands,
   cluster-side coordinator orchestration, and on-host engine executor run. The three-role
   daemon model in [../architecture/daemon_topology.md](../architecture/daemon_topology.md) maps
-  to Apple as: cluster-side `infernix-coordinator` Deployment (the supported name for the
-  in-cluster daemon, replacing today's `infernix-service` after Sprint 7.7); on-host engine
-  daemon (today's `HostDaemon` role). `cluster up` adds `infernix-demo` when `demo_ui` is
-  enabled and always deploys the cluster `infernix-coordinator` Deployment
+  to Apple as: cluster-side `infernix-coordinator` Deployment (landed in Phase 7 Sprint 7.7,
+  replacing the retired `infernix-service` Deployment); on-host `Engine`-role daemon (the
+  on-host `infernix service` process, renamed from `HostDaemon` in Sprint 7.7's vocabulary
+  cutover). `cluster up` adds `infernix-demo` when `demo_ui` is enabled and always deploys
+  the cluster `infernix-coordinator` Deployment
 - on `apple-silicon`, the clustered demo and coordinator workloads run from the
   `infernix-linux-cpu:local` image family while reading the staged `apple-silicon` substrate file;
   the coordinator role owns request fan-in and batch handoff, not Apple-native inference

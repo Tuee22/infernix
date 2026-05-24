@@ -683,8 +683,6 @@ clusterStatus maybeRuntimeMode = do
       now <- getCurrentTime
       cacheEntries <- countLeafEntries (modelCacheRoot paths)
       resultCount <- countLeafEntries (resultsRoot paths)
-      objectCount <- countLeafEntries (objectStoreRoot paths)
-      durableManifestCount <- countLeafEntries (objectStoreRoot paths </> "manifests")
       nodeCount <- kubectlLineCountIfReachable state ["get", "nodes", "--no-headers"]
       podCount <- kubectlLineCountIfReachable state ["get", "pods", "-A", "--no-headers"]
       putStrLn ("clusterPresent: " <> show actualPresent)
@@ -701,16 +699,13 @@ clusterStatus maybeRuntimeMode = do
       putStrLn ("mountedDemoConfigPath: " <> mountedDemoConfigPath state)
       putStrLn ("publicationStatePath: " <> Config.publicationStatePath paths)
       putStrLn ("modelCacheRoot: " <> modelCacheRoot paths)
-      putStrLn ("durableManifestRoot: " <> objectStoreRoot paths </> "manifests")
       putStrLn ("storageHealth: " <> show (length (claims state)) <> " chart-owned claim roots prepared")
       mapM_ putStrLn (lifecycleStatusLines now actualPresent state)
       publicationSummaryLines <- publicationStateSummaryLines (Config.publicationStatePath paths)
       putStrLn ("kubernetesNodeCount: " <> show nodeCount)
       putStrLn ("kubernetesPodCount: " <> show podCount)
       putStrLn ("runtimeResultCount: " <> show resultCount)
-      putStrLn ("objectStoreObjectCount: " <> show objectCount)
       putStrLn ("modelCacheEntryCount: " <> show cacheEntries)
-      putStrLn ("durableManifestCount: " <> show durableManifestCount)
       mapM_ putStrLn publicationSummaryLines
       mapM_
         (\route -> putStrLn ("route: " <> Text.unpack (path route) <> " -> " <> Text.unpack (purpose route)))
@@ -3287,6 +3282,15 @@ renderHelmValues controlPlane state demoConfigPayload deployPhase engineCommandO
         "    enabled: true",
         "  harborpg:",
         "    enabled: true",
+        -- Phase 7 Sprint 7.1: gate the Keycloak Patroni cluster the
+        -- same way Pulsar is gated. Pre-final phases bring up Harbor +
+        -- its Patroni backend; the demo-only Keycloak + its Patroni
+        -- backend only roll out in FinalPhase. Otherwise the warmup
+        -- helm-install can hang for 30m on the Keycloak Deployment
+        -- post-install readiness probe while waiting for its Patroni
+        -- replicas to come up alongside Harbor's.
+        "  keycloakpg:",
+        "    enabled: false",
         "  minio:",
         "    enabled: true",
         "  pulsar:",
@@ -3294,6 +3298,8 @@ renderHelmValues controlPlane state demoConfigPayload deployPhase engineCommandO
         "  envoyGateway:",
         "    enabled: " <> yamlBool envoyGatewayEnabled,
         "repoGateway:",
+        "  enabled: false",
+        "keycloak:",
         "  enabled: false",
         "minio:",
         "  console:",

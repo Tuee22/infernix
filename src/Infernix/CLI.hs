@@ -412,8 +412,7 @@ runCacheStatus maybeRuntimeMode = do
   manifests <- listCacheManifests paths runtimeMode
   putStrLn ("runtimeMode: " <> Text.unpack (runtimeModeId runtimeMode))
   putStrLn ("cacheRoot: " <> modelCacheRoot paths </> Text.unpack (runtimeModeId runtimeMode))
-  putStrLn ("durableManifestRoot: " <> objectStoreRoot paths </> "manifests" </> Text.unpack (runtimeModeId runtimeMode))
-  putStrLn ("durableManifestCount: " <> show (length manifests))
+  putStrLn ("cacheManifestCount: " <> show (length manifests))
   mapM_ printCacheManifest manifests
 
 runCacheEvict :: Maybe RuntimeMode -> Maybe Text.Text -> IO ()

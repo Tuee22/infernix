@@ -8,17 +8,22 @@
 
 ## Rules
 
-- the current validated runtime persists durable artifacts, protobuf runtime manifests, and large
-  outputs under the repo-local object-store root `./.data/object-store/`, while protobuf-backed
-  runtime-result records live under `./.data/runtime/results/*.pb`
-- the Haskell worker layer (`src/Infernix/Runtime/{Pulsar,Worker,Cache}.hs`) stores engine-specific
-  runtime artifact bundles under `artifacts/<runtime-mode>/<model-id>/bundle.json` and durable
-  source-artifact manifests under `source-artifacts/<runtime-mode>/<model-id>/source.json`
-- those durable bundles also record engine-adapter id, type, locator, and availability together
-  with the authoritative source-artifact URI or kind selected for the current worker path
-- the current validated runtime records source-selection metadata in
-  `source-artifacts/<runtime-mode>/<model-id>/source.json`; it does not publish a separate
-  `payload.bin` compatibility file on the supported path
+- the supported runtime persists model weights in MinIO `infernix-models`
+  (always-on, populated lazily by the coordinator's bootstrap Failover
+  subscription on first use) and user-visible artifacts in MinIO
+  `infernix-demo-objects` (demo-gated). Protobuf-backed runtime-result
+  records live under `./.data/runtime/results/*.pb`; the previous local
+  object-store tree under `./.data/object-store/` is retired (see
+  [object_storage.md](object_storage.md))
+- the Haskell worker layer (`src/Infernix/Runtime/{Pulsar,Worker,Cache}.hs`)
+  stores cache manifests beside the cached weights at
+  `./.data/runtime/model-cache/<runtime-mode>/<model-id>/manifest.pb`;
+  durable artifact bundles, source-artifact manifest JSON files, and
+  the `s3://infernix-runtime/...` URI scheme were retired in Phase 7
+  Sprint 7.7
+- the durable source URI recorded on cache manifests is now
+  `minio://infernix-models/<modelId>/` rather than a synthetic local
+  filesystem path
 - repo-owned `.proto` schemas define the contract for durable manifests and topic payloads;
   Haskell consumes them through `proto-lens`-generated bindings, and the shared Python adapter
   project consumes them through matching auto-generated Python protobuf modules in
@@ -32,20 +37,24 @@
   the completed result. On Linux substrates, cluster daemons consume, execute, and publish the
   result directly.
 - engine workers are Haskell processes; for Python-native engines, the worker forks the named
-  adapter entrypoint and exchanges typed protobuf worker messages over stdio. The worker passes the
-  durable artifact bundle, source manifest, cache manifest, and engine install root into that
-  adapter boundary so the shared Python modules can derive engine-family-specific behavior from
-  authoritative runtime metadata
+  adapter entrypoint and exchanges typed protobuf worker messages over stdio. The worker passes
+  the model metadata (`display_name`, `family`, `artifact_type`,
+  `runtime_lane`, `selected_engine`, `adapter_id`, `engine_install_root`) directly on the
+  `WorkerRequest` envelope; the adapter calls
+  `python/adapters/model_cache.get_model_path(model_id)` to obtain the on-disk path to the
+  weights pulled lazily from MinIO `infernix-models`. The retired `artifact_bundle_path`,
+  `source_manifest_path`, and `cache_manifest_path` envelope fields are gone.
 - per-adapter bootstrap state lives under `./.data/engines/<adapter-id>/bootstrap.json`; the
   Apple host path and the cluster or worker path both treat that bootstrap manifest as the
   idempotent setup-ready marker
 - derived cache state is keyed by runtime mode and model identity and is always rebuildable
-- the demo `/api/cache` surface operates on the manifest-backed durable contract exposed by the
-  Haskell worker, including engine-runner metadata and selected-artifact inventory derived from the
-  durable bundle
-- the service returns typed object references when outputs exceed inline limits, and the clustered
-  demo bridge localizes those large outputs back into its own object-store root before persisting
-  the browser-visible result record
+- the demo `/api/cache` surface operates on the manifest-backed contract exposed by the Haskell
+  worker; the manifest reads the supported `minio://infernix-models/<modelId>/` durable source
+  URI and the engine-runner metadata derived from the staged substrate `.dhall`
+- engine adapters write binary outputs directly into MinIO
+  `infernix-demo-objects` at the per-user prefix and the result message carries an
+  `ObjectRef` (bucket + key); text outputs always ride inline in the protobuf result message
+  (the retired 80-character threshold + local object-store overflow path is gone)
 
 ## Cross-References
 

@@ -29,8 +29,17 @@ import Infernix.Web.Contracts (ObjectRef (..))
 
 -- | Endpoint + credentials needed to mint a presigned URL against MinIO.
 -- The endpoint hostname doubles as the SigV4 @host@ header.
+--
+-- @presignedEndpoint@ is @host:port@ (no scheme), e.g.
+-- @infernix-minio.platform.svc.cluster.local:9000@. @presignedScheme@ is
+-- @http@ for the supported in-cluster MinIO deployment (the chart does
+-- not provision TLS for the MinIO service) and @https@ for TLS-fronted
+-- MinIO. Operators feed either through @INFERNIX_MINIO_ENDPOINT@; the
+-- loader strips any @http://@ or @https://@ prefix and records the
+-- scheme separately so the minted URL points at the right transport.
 data PresignedUrlConfig = PresignedUrlConfig
-  { presignedEndpoint :: Text,
+  { presignedScheme :: Text,
+    presignedEndpoint :: Text,
     presignedRegion :: Text,
     presignedAccessKeyId :: Text,
     presignedSecretAccessKey :: Text,
@@ -115,7 +124,8 @@ presignedUrlForRequest config request =
       signingKey = deriveSigningKey secretAccessKey dateStamp region service
       signature = hmacHex signingKey (TextEncoding.encodeUtf8 stringToSign)
       finalQuery = canonicalQuery <> "&X-Amz-Signature=" <> signature
-   in PresignedUrl ("https://" <> host <> canonicalPath <> "?" <> finalQuery)
+      scheme = presignedScheme config
+   in PresignedUrl (scheme <> "://" <> host <> canonicalPath <> "?" <> finalQuery)
 
 presignedPutUrl :: PresignedUrlConfig -> UTCTime -> ObjectRef -> PresignedUrl
 presignedPutUrl config now object =

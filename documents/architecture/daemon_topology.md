@@ -39,18 +39,21 @@
 
 ## Current Status
 
-The three-role contract is the supported target shape for Phase 7. As
-of today the Linux substrates ship a single fused `infernix-service`
-Deployment that performs both the coordinator's Pulsar duties and the
-engine's adapter execution in one process; Sprint 7.7 of Phase 7
-([../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md](../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md))
-splits that pod into `infernix-coordinator` and `infernix-engine`.
-Apple silicon already runs the two roles as the in-cluster
-`ClusterDaemon` and the on-host `HostDaemon` and renames cleanly in
-Sprint 7.7 with no behavior change. This doc describes the supported
-target shape that the suite is being aligned to; cross-references
-elsewhere in the governed docs name what is current versus target
-where it matters.
+The three-role contract is the supported shape for Phase 7. Sprint 7.7
+landed the Linux daemon split: `chart/templates/deployment-service.yaml`
+is gone, `clusterServiceEnabled` returns `False` on every substrate,
+and `finalPhaseDeployments` waits on
+`deployment/infernix-{coordinator,engine,demo}` instead of the retired
+`deployment/infernix-service`. Apple silicon runs the two roles as the
+in-cluster `Coordinator` and the on-host `Engine` (renamed from
+`ClusterDaemon` / `HostDaemon` in the Sprint 7.7 vocabulary cutover);
+the cluster-daemon-to-host-daemon batch bridge is unchanged. The
+coordinator's runtime Pulsar wiring (per-context dispatcher Failover
+subscription, result-bridge Failover subscription, model-bootstrap
+Failover subscription against `infernix-models`) lands its real
+broker-side wiring together with Sprint 7.14's chaos validation
+cycle. The pure-Haskell shared-library shape that hosts those
+subscriptions is in place today.
 
 ## Roles and Responsibilities
 

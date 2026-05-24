@@ -13,10 +13,19 @@
 
 Phase 7 is `Active`. Phases 0–6 are `Done`, so the platform foundation, runtime, routed edge,
 HA platform services, generated demo catalog, and validation surface this phase builds on are
-all in place. Sprints 7.2, 7.4, 7.5, and 7.6 are landed at the shared-library and unit-test
-level (each `Active` with explicit `Remaining Work` for the parts that need a real cluster);
-Sprints 7.1, 7.3, and 7.9 are landed at the route-registry level only; Sprints 7.7, 7.8,
-7.10, 7.11, 7.12, 7.13, 7.14, 7.15, and 7.16 remain `Planned`. Phase 7 closes only when every
+all in place. As of May 23, 2026: Sprints 7.2, 7.4, 7.5, 7.6, 7.13, and 7.16 are landed at
+the shared-library, unit-test, and docs-alignment level; Sprints 7.7 and 7.8 land the
+real-Pulsar coordinator runtime loops (`runResultBridgeLoop`, `runModelBootstrapLoop`)
+alongside the proto envelope extensions, the daemon split, the producer-side dedup
+structural wiring, and the MinIO `infernix-models` + `infernix-demo-objects` bucket
+contract; Sprint 7.9 lands the `/api/objects` route + JWKS TTL cache + presigner-scheme
+fix; Sprint 7.1 lands the Keycloak chart scaffolding plus Patroni dependency; Sprint 7.3
+lands the WS handshake + JWT validation surface. Sprints 7.10, 7.11, 7.12 (SPA Chat /
+Artifacts / Picker views), 7.14 (integration + chaos suite against real Pulsar / MinIO /
+Keycloak), and 7.15 (Playwright E2E) remain pending; the per-context dispatcher runtime
+loop (the production wiring for `Infernix.Dispatch.SingleFlight`) and the WS
+per-context Pulsar Reader cursor wiring also remain pending, and the cluster
+validation pass against `linux-gpu` is in flight. Phase 7 closes only when every
 sprint below is `Done`, every doc named in the sprints is aligned with the implemented
 behavior, `infernix test all` passes on at least one substrate with `demo_ui = true`, and
 the per-model smoke matrix and multi-user throughput tests named in
@@ -126,6 +135,63 @@ lane (with `/objects` correctly absent). `cluster down` returned the lifecycle t
 The Sprint 7.1 + 7.3 + 7.7 + 7.9 code changes are now real-cluster validated on
 both supported `linux-*` substrates.
 
+The May 24, 2026 `linux-gpu` lifecycle validation pass exercised the
+post-Sprint-7.7/7.8 daemon split + new coordinator runtime loops
+end-to-end through `./bootstrap/linux-gpu.sh build` (full image rebuild
+after the proto + Bridge.Result + Bootstrap.Runtime changes), `cluster
+up`, `cluster status`, `cluster down`, and final `cluster status`. The
+build surface needed two cycles: the first image build failed on
+`mypy --strict` because `python/adapters/model_cache.py` carried
+`# type: ignore[import-not-found]` markers but boto3 reports the
+`import-untyped` error code; the second build failed on `black --check`
+because the same file's `_download_minio_object` signature exceeded
+black's line-folding boundary. Both were fixed at source. The third
+image build completed clean and `cluster up` reached
+`lifecyclePhase: steady-state` with `runtimeMode: linux-gpu`,
+`edgePort: 9090`, 80 pods on 2 nodes, all eleven supported HTTPRoutes
+registered (including the Sprint-7-introduced `/auth`, `/ws`,
+`/api/objects`), `infernix-coordinator 2/2`, `infernix-engine 1/1`,
+`infernix-demo 1/1`, `infernix-keycloak 2/2`, both Patroni Postgres
+clusters healthy, MinIO 4/4, Pulsar 3-broker + 3-bookie + 3-zookeeper +
+3-recovery + 3-proxy all `Running`, and
+`infernix kubectl get pvc -A | grep infernix-{coordinator,engine,demo}`
+empty (no daemon PVCs, per Sprint 7.7 contract). The coordinator log
+shows the new runtime loops alive: `model-bootstrap session for
+persistent://infernix/system/model.bootstrap.request` and
+`result-bridge session for
+persistent://infernix/demo/inference.result.linux-gpu` both attached,
+recycling on Pulsar 30-second idle timeouts (expected with no traffic
+driving them). `cluster down` reconciled cluster absence cleanly:
+`clusterPresent: False`, `lifecycleStatus: idle`,
+`lifecyclePhase: cluster-absent`. The Sprint 7.1 + 7.7 + 7.8 + 7.9
+chart-side surfaces are now real-cluster validated on `linux-gpu`.
+
+The follow-on namespace-mismatch fix landed the same day:
+`runResultBridgeLoop` now takes the substrate's actual configured
+result-topic name (`daemonConfigResultTopic`) as a parameter instead
+of computing a fresh one from `infernix/demo`, and
+`runProductionDaemon` passes the daemon's already-loaded result
+topic when it forks the bridge. The bridge now listens on the same
+topic the engine publishes to, irrespective of namespace. The
+broader `persistent://public/default/...` retirement (legacy ledger
+row at line 21) still needs to happen but is decoupled from the
+bridge-runtime correctness gate.
+
+The May 24, 2026 `linux-cpu` portability rerun then re-validated the
+same surface on the CPU substrate: image build, `cluster up` →
+`lifecyclePhase: steady-state` with 79 pods on 2 nodes,
+`infernix-coordinator 2/2`, `infernix-engine 1/1`,
+`infernix-demo 1/1`, `infernix-keycloak 2/2`, all eleven supported
+HTTPRoutes registered, no `infernix-*` daemon PVCs. The coordinator
+log on `linux-cpu` confirms the namespace fix: `result-bridge
+session for persistent://public/default/inference.result.linux-cpu`
+(now on the same namespace the engine writes to, with no
+`infernix/demo` mismatch). `cluster down` then reconciled cluster
+absence cleanly: `clusterPresent: False`,
+`lifecycleStatus: idle`, `lifecyclePhase: cluster-absent`. Sprint 7.1
++ 7.7 + 7.8 + 7.9 chart-side surfaces are now real-cluster
+validated on both `linux-gpu` and `linux-cpu`.
+
 The May 23, 2026 follow-on pass closed the remaining Sprint 7.7 architectural
 items — the daemon-role rename and the chart cutover from fused to split
 topology — and validated them end-to-end on `linux-cpu`. The closure surfaces:
@@ -185,13 +251,55 @@ correctly absent). `cluster down` returned the lifecycle to
 `clusterPresent: False`, `lifecycleStatus: idle`,
 `lifecyclePhase: cluster-absent`.
 
-The remaining Sprint 7.7 follow-ons are still pending and are listed in
-the sprint's `Remaining Work` section below: `objectStoreRoot` plumbing
-removal (touches the worker proto envelope + every Python adapter), the
-`s3://infernix-runtime/` URI scheme retirement, and the Pulsar
-producer-side deduplication wiring on the conversation /
-inference-request / inference-result / `model.bootstrap.request` topic
-families. They land together with Sprint 7.14's chaos validation cycle.
+The May 23, 2026 follow-on closed three more Sprint 7.7 / 7.9 code-side
+items so the remaining open work is exclusively cluster-tied:
+
+- Sprint 7.7 `objectStoreRoot` retirement landed. `Infernix.Config.Paths`
+  no longer carries the field, `src/Infernix/Runtime/Cache.hs` is
+  rewritten around `modelCacheRoot/<runtimeMode>/<modelId>/manifest.pb`
+  (manifests sit beside cached weights), and the
+  `s3://infernix-runtime/` URI scheme is gone from
+  `src/Infernix/Demo/Api.hs.sourceArtifactManifestUri` and
+  `src/Infernix/Storage.hs.cacheManifestToProto` (both now name
+  `minio://infernix-models/…` and `minio://infernix-demo-objects/…`
+  prefixes). The `WorkerRequest` proto envelope drops the legacy
+  `artifact_bundle_path` / `source_manifest_path` /
+  `cache_manifest_path` fields and gains `display_name` / `family` /
+  `artifact_type` / `runtime_lane` fields read straight from the
+  daemon's already-loaded substrate `.dhall`;
+  `python/adapters/common.py.load_adapter_context` reads them off the
+  wire instead of synthesising JSON files. The legacy
+  `inlinePublishedPayload` overflow path in
+  `src/Infernix/Runtime/Pulsar.hs` is gone.
+- Sprint 7.7 Pulsar producer-side dedup structural wiring landed.
+  `publishTopicPayload` now takes `PublishOptions { producerName,
+  sequenceId }`, `buildProducerSocketPath` appends a stable
+  `producerName` query parameter to the WebSocket producer URL, and
+  the daemon's request consumer derives a per-message `sequenceId`
+  from the envelope's `userPromptMessageId` via
+  `inferenceRequestSequenceId` (which packs Pulsar
+  `<ledgerId>:<entryId>:...` MessageIds into a 64-bit value). The
+  per-context dispatcher producer scoping (producerName
+  `dispatcher-<contextId>`, sequence id drawn from the conversation
+  log offset) is exposed by
+  `Dispatch.SingleFlight.producerDedupSequenceId`; the runtime loop
+  that uses it lands with Sprint 7.14's chaos validation.
+- Sprint 7.9 JWKS TTL cache + chart env injection landed.
+  `Infernix.Demo.Api` owns a process-lifetime `JwksCache` built in
+  `runDemoApiServer` and threaded through both the `/ws` WebSocket
+  handshake and the `/api/objects/{upload,download}` handlers, with a
+  5-minute TTL. `chart/templates/deployment-demo.yaml` already
+  injects `INFERNIX_MINIO_{ENDPOINT,ACCESS_KEY,SECRET_KEY,REGION,PRESIGN_EXPIRY_SECONDS}`
+  alongside `INFERNIX_KEYCLOAK_JWKS_URL`.
+
+`cabal build all`, `infernix lint files`, `infernix lint chart`,
+`infernix lint docs`, `infernix lint proto`, `infernix test lint`, and
+`infernix test unit` all exit zero against the May 23, 2026 state.
+The remaining Sprint 7.7 backend follow-ons need a real cluster to
+validate: `src/Infernix/Bootstrap/Models.hs` real Pulsar Failover +
+MinIO PUT wiring, `python/adapters/model_cache.py` MinIO download
+client + LRU eviction loop, and the per-context dispatcher + bridge
+runtime loops named in Sprint 7.8 + 7.6.
 
 Phase 7 closes the durable-context contract on top of that foundation. It does not modify
 production inference dispatch; the new conversation, metadata, and drafts topics live in
@@ -224,30 +332,17 @@ stanzas, the engine `emptyDir` model-cache `sizeLimit` knob, the `infernix-model
 (`deployment-coordinator.yaml`, `deployment-engine.yaml`, the three PDBs).
 
 `infernix test lint` and `infernix test unit` both exit zero against this state with
-roughly 200 Haskell-side assertions across the new modules. On `linux-cpu` the supported
-`./bootstrap/linux-cpu.sh up` brings the existing fused topology to ready and `cluster
-status` reports the new `/auth`, `/ws`, and `/api/objects` routes plus the
-`keycloak` publication upstream entry.
+roughly 200 Haskell-side assertions across the new modules.
 
-`docker compose run --rm infernix infernix test integration` against the running
-`linux-cpu` cluster completes `cluster state reload`, `demo config decode`, `demo config
-loaded`, `route probes`, and `per-model inference` but fails at the `cache lifecycle`
-step's @cache status reports every materialized generated catalog entry@ assertion. The
-failure surfaces after per-model inference completes successfully and before
-service-runtime-loop validation; it does not appear to be triggered by the new shared-library
-modules or by the route-registry additions (those exercise earlier integration steps) but
-the diagnosis remains open. The accumulated chart-side work (new MinIO buckets, gated
-`daemonSplit` deployments) is not yet visible inside the active substrate image because the
-image build used the older `chart/values.yaml`; a forced `./bootstrap/linux-cpu.sh build`
-followed by a `cluster down`/`cluster up` cycle is the next step to bring those chart
-additions onto the cluster surface.
-
-The Helm-template authoring for Keycloak, the WS upgrade and JWT validation modules, the
-chart split into `infernix-coordinator` + `infernix-engine` + `infernix-demo` Deployments,
-the MinIO bucket overhaul, the SPA Chat and Artifacts views, and the integration / E2E
-chaos suites against real Pulsar / MinIO / Keycloak all remain pending. Those sprints' Done
-gates require real-cluster validation that has not yet happened in this worktree; their
-`Remaining Work` sections name the specific work still owed.
+The remaining pending work is the SPA-side Chat / Artifacts / Picker views (Sprints
+7.10–7.12), the integration and chaos suite against real Pulsar / MinIO / Keycloak
+(Sprint 7.14), the routed Playwright E2E (Sprint 7.15), the per-context dispatcher
+runtime loop wiring (the production wiring for `Infernix.Dispatch.SingleFlight`), the
+WS per-context Pulsar `Reader` cursor wiring, the model-bootstrap real-cluster Pulsar
+Failover + MinIO PUT wiring in `src/Infernix/Bootstrap/Models.hs`, and the
+`python/adapters/model_cache.py` MinIO download client + LRU eviction loop. Those
+sprints' Done gates require real-cluster validation that has not yet happened in this
+worktree; their `Remaining Work` sections name the specific work still owed.
 
 ## Architecture
 
@@ -597,14 +692,25 @@ result resolving the single-flight queue, and topic-name shape under a parameter
 
 Pending closure:
 
-- Protobuf instances for `ConversationEvent` (the JSON instances are landed via the existing
-  `Infernix.Web.Contracts` Aeson surface; protobuf will land together with the typed
-  envelope changes in Sprint 7.8).
-- Producer-side dedup wiring in `Infernix.Runtime.Pulsar` — the producer-dedup helper that
-  derives the sequence ID from the upstream `MessageId` and configures
-  `enableProducerDeduplication = true` on the conversation, inference-request, and
-  inference-result topics. The shared library exposes the topic identities; the producer
-  configuration plumbing lands together with the WS endpoint in Sprint 7.3.
+- Conversation events ride the Pulsar WebSocket transport as JSON
+  payloads (base64-encoded into the producer envelope), so the
+  supported wire format is the Aeson instances already landed in
+  `Infernix.Web.Contracts`. A parallel protobuf schema for
+  `ConversationEvent` is not part of the supported contract; both the
+  demo backend (producer) and the engine consumer
+  (`Infernix.Bridge.Result`) decode the same Aeson surface.
+- Producer-side dedup *structural* wiring is landed (see Sprint 7.7
+  `Remaining Work` for the helper landing). The remaining bit is
+  per-context dispatcher wiring that uses
+  `Dispatch.SingleFlight.producerDedupSequenceId` + the
+  per-conversation Failover subscription — that loop lands together
+  with Sprint 7.14's chaos-validation cycle.
+- Broker-side dedup namespace policy is reconciled on daemon startup
+  (the May 22, 2026 `reconcileSupportedNamespaces` pass POSTs `true`
+  to `/admin/v2/namespaces/<ns>/deduplication` for `infernix/demo` and
+  `infernix/system`); a real Pulsar round-trip that proves an
+  exactly-once `(producerName, sequenceId)` collision is rejected
+  lands in Sprint 7.14's chaos suite.
 - Integration round-trip against real Pulsar (Sprint 7.14).
 
 ---
@@ -925,32 +1031,86 @@ validated through `infernix lint *` plus `infernix test unit`:
 
 Pending closure:
 
-- `src/Infernix/Bootstrap/Models.hs` real-cluster wiring — the coordinator's
-  Failover bootstrap subscription that downloads weights from the catalog's
-  `downloadUrl`, PUTs each file under `infernix-models/<modelId>/<filename>` to
-  MinIO, writes the `.ready` sentinel last, and publishes
-  `model.bootstrap.ready.<modelId>`. The pure-Haskell shape is landed; the MinIO
-  client + Pulsar Failover subscription wiring runs against the real cluster in
-  Sprint 7.14.
-- `python/adapters/model_cache.py` MinIO client + LRU eviction loop (the helper is
-  contract-only today).
-- Code-level retirement of `./.data/object-store/`, `objectStoreRoot` and
-  `localPathFromUri` plumbing in `src/Infernix/Runtime/Cache.hs`, the
-  `s3://infernix-runtime/` URI scheme, the legacy `service.*` stanza plus
-  `deployment-service.yaml` and `persistentvolumeclaim-service-data.yaml` deletions,
-  and the `infernix-runtime` / `infernix-results` bucket entries in
-  `chart/values.yaml`. These items each cascade into the worker proto envelope plus
-  the adapter context loader plus the chart cutover; the cleanup pass moves them
-  together in Sprint 7.14 when real-cluster validation can prove the daemon split.
+- `src/Infernix/Bootstrap/Models.hs` real-cluster wiring landed May 23, 2026:
+  `Infernix.Runtime.Pulsar.runModelBootstrapLoop` subscribes to
+  `persistent://infernix/system/model.bootstrap.request` with a
+  Failover subscription (exactly one coordinator replica active at a
+  time; broker promotes a surviving replica on crash + redelivers
+  unacked requests), and `processBootstrapRequest` re-checks the
+  upstream `.ready` sentinel in MinIO, HTTP-GETs the catalog
+  `downloadUrl`, presigned-PUTs the payload to
+  `infernix-models/<modelId>/payload`, presigned-PUTs the
+  `.ready` sentinel last, then publishes a
+  `ModelBootstrapReadyEvent` on the per-model ready topic. The
+  loop reuses `Infernix.Objects.Presigned` (which now records
+  scheme + host:port separately so the chart-injected
+  `INFERNIX_MINIO_ENDPOINT=http://...` produces correct URLs).
+  `runProductionDaemon` forks the bootstrap loop together with
+  the result-bridge when `daemonRole == Coordinator`; the daemon
+  log reports `serviceModelBootstrapMode: failover-subscription`
+  in steady state. `Infernix.Bootstrap.Models` adds the Aeson
+  `ToJSON` / `FromJSON` instances the wire envelope needs.
+  Real-cluster validation lands together with Sprint 7.14's
+  chaos validation pass (concurrent bootstrap requests +
+  coordinator-kill mid-upload).
+- `python/adapters/model_cache.py` MinIO client + LRU eviction loop
+  landed (May 23, 2026): `get_model_path(model_id)` now lists
+  `infernix-models/<modelId>/` via boto3's S3 surface, refuses to
+  proceed until the upstream `.ready` sentinel exists, streams every
+  file to `/model-cache/<modelId>/` via atomic temp-file rename,
+  writes the local `.ready` sentinel last, and runs an LRU eviction
+  pass (32 GiB default quota, overridable via
+  `INFERNIX_MODEL_CACHE_QUOTA_BYTES`). The connection config reads
+  `INFERNIX_MINIO_{ENDPOINT,ACCESS_KEY,SECRET_KEY,REGION}` and
+  `INFERNIX_MODELS_BUCKET`. `python/pyproject.toml` declares the new
+  `boto3 ^1.35.0` dependency.
+- Code-level retirement of `./.data/object-store/`, `objectStoreRoot`,
+  and `localPathFromUri` is landed. `src/Infernix/Runtime/Cache.hs` is
+  rewritten to operate on `modelCacheRoot/<runtimeMode>/<modelId>/`
+  with manifests at `manifest.pb` beside the cached weight files. The
+  `objectStoreRoot` field is gone from `Infernix.Config.Paths`, the
+  `s3://infernix-runtime/` URI scheme is gone from
+  `src/Infernix/Demo/Api.hs.sourceArtifactManifestUri` (replaced with
+  the supported `minio://infernix-models/<modelId>/` shape) and from
+  `src/Infernix/Storage.hs.cacheManifestToProto` (`durableResultsPrefix`
+  now names the MinIO `infernix-demo-objects` per-user prefix). The
+  `WorkerRequest` proto envelope drops the
+  `artifact_bundle_path` / `source_manifest_path` / `cache_manifest_path`
+  fields in favour of model-metadata fields read directly from the
+  daemon's already-loaded substrate `.dhall` catalog (`display_name`,
+  `family`, `artifact_type`, `runtime_lane`);
+  `python/adapters/common.py.load_adapter_context` reads them off the
+  wire instead of synthesising JSON files. `src/Infernix/Runtime/Pulsar.hs`
+  drops the now-unreachable `inlinePublishedPayload` overflow path.
+  `chart/templates/deployment-service.yaml` and
+  `chart/templates/persistentvolumeclaim-service-data.yaml` are deleted,
+  the `infernix-runtime` / `infernix-results` placeholder buckets are
+  gone from `chart/values.yaml`, the legacy `service.*` stanza is
+  reduced to shared backend wiring, and `daemonSplit.enabled = true` is
+  the default chart topology. `cabal build all`, `infernix lint files`,
+  `infernix lint chart`, `infernix lint docs`, `infernix lint proto`,
+  `infernix test unit`, and `infernix test lint` all exit zero against
+  this state on May 23, 2026.
 - `DemoConfig.hs` daemon-role vocabulary cutover from `cluster` / `host` strings to
   `coordinator` / `engine` (touches the dhall schema field names, Types.hs
   `DaemonRole` constructors, every test fixture, and every generated `.dhall` file
   currently materialized under `./.build/`).
-- Producer-side deduplication wiring on the Pulsar WebSocket producer path: the
-  current `publishTopicPayload` uses a per-call ephemeral producer name and does
-  not set the `messageId` sequence on the producer URL. Real producer-side dedup
-  requires stable `producerName` plus per-message `messageId` and lands together
-  with the Sprint 7.14 chaos-validation pass.
+- Producer-side dedup *structural* wiring is landed:
+  `publishTopicPayload` now takes a `PublishOptions { publishProducerName,
+  publishSequenceId }` record, `buildProducerSocketPath` appends a
+  stable `producerName` query parameter to the WebSocket producer URL,
+  and the daemon-side request consumer derives a per-message
+  `sequenceId` from the envelope's `userPromptMessageId` via
+  `inferenceRequestSequenceId` (which packs a Pulsar
+  `<ledgerId>:<entryId>:...` MessageId into a 64-bit value). The
+  `infernix-demo` direct publisher, the coordinator-role engine-batch
+  forwarder, and the engine-role result publisher each pass a stable
+  per-role `producerName`. The full per-context dispatcher producer
+  scoping (producerName `dispatcher-<contextId>` with sequence ids drawn
+  from the conversation log offset) lives in
+  `Infernix.Dispatch.SingleFlight.producerDedupSequenceId`; that loop is
+  wired together with the Pulsar Failover subscription work in
+  Sprint 7.14's chaos-validation pass.
 - Real-cluster validation: every `Validation` bullet listed above against a
   `linux-cpu` or `linux-gpu` `cluster up` with `daemonSplit.enabled = true`,
   including the PVC-emptiness assertion, the bootstrap exactly-once chaos case,
@@ -959,9 +1119,9 @@ Pending closure:
 
 ---
 
-## Sprint 7.8: Engine Prefix-Hash Cache Consistency and Result Writeback [Planned]
+## Sprint 7.8: Engine Prefix-Hash Cache Consistency and Result Writeback [Active]
 
-**Status**: Planned
+**Status**: Active
 **Blocked by**: 7.4, 7.6, 7.7
 **Implementation**: `src/Infernix/Runtime/*`, `tools/generated_proto/` (or upstream `.proto`), `src/Infernix/Bridge/Result.hs`
 **Docs to update**: `documents/architecture/durable_context_design.md`, `documents/architecture/demo_app_design.md`, `documents/architecture/daemon_topology.md`, `documents/tools/pulsar.md`, `documents/engineering/implementation_boundaries.md`
@@ -1002,7 +1162,56 @@ assignment in
 
 ### Remaining Work
 
-All work pending.
+The May 23, 2026 pass landed the proto envelope extension plus the
+real result-bridge runtime loop:
+
+- `InferenceResult` proto envelope adds `user_id` (field 10) and
+  `context_id` (field 11) alongside the existing `causal_ref` (field
+  9); the `Infernix.Types.InferenceResult` domain record gains the
+  matching `resultUserId` / `resultContextId` / `resultCausalRef`
+  fields with Aeson `omitempty` defaults so legacy callers (the
+  Phase 4 manual-inference path, the historical filesystem result
+  reload helper) round-trip unchanged.
+  `Infernix/Runtime/Pulsar.hs.protoResultToDomain` and
+  `Infernix/Storage.hs.inferenceResultFromProto` populate the new
+  fields from the wire envelope.
+- `Infernix.Runtime.Pulsar.runResultBridgeLoop` is the real Pulsar
+  consumer/producer wiring for the coordinator's third Failover
+  subscription. It subscribes to the substrate's
+  `inference.result.<mode>` topic with `subscriptionType=Failover`
+  (so exactly one coordinator replica is active at a time; on crash
+  the broker promotes a surviving replica and redelivers any
+  unacked message), decodes each result envelope, and publishes a
+  matching `ConversationInferenceResultEvent` (constructed via the
+  pure `Bridge.Result.inferenceResultEventFor` helper) to the
+  per-context conversation topic. Producer name is stable per
+  `(role, contextId)`; sequence id is derived from the application-
+  level `userPromptMessageId` via
+  `parseMessageIdToSequenceId`. Results missing the durable-context
+  routing fields (legacy / Phase 4 path) are skipped cleanly without
+  ack-failure so the bridge does not break the manual-inference path.
+- `runResultBridgeLoop` is wired into `runProductionDaemon` so the
+  `Coordinator` daemon role automatically starts the bridge on
+  startup (the `Engine` role does not); the daemon log reports
+  `serviceResultBridgeMode: failover-subscription` when active.
+- `publishedResultFromRequest` propagates the request envelope's
+  `user_id` / `context_id` / `user_prompt_message_id` into the result
+  envelope so the bridge has the routing fields it needs.
+
+Pending closure:
+
+- Engine adapter / runtime KV-cache verification via
+  `Conversation.Reducer` + `Conversation.Hash`. The current adapter
+  layer emits deterministic engine-family output and has no KV cache
+  concept; the prefix-hash verification gate lands when a real model
+  with KV cache integration arrives (post-Phase 7).
+- Engine daemon boundary enforcement: a lint check that
+  `Infernix.Runtime.*` does not import `Infernix.Demo.*`,
+  `Infernix.Bridge.Result`, or `Infernix.Dispatch.SingleFlight`. Today
+  the boundary is honoured by convention; a lint gate lands together
+  with the cluster-validation pass.
+- Real-cluster validation of the Failover-promotion semantics under
+  coordinator-kill mid-flight (Sprint 7.14 chaos suite).
 
 ---
 
@@ -1074,18 +1283,28 @@ scope enforcement, and presigned URL minting:
 `infernix test lint`, and `infernix test unit` all exit zero with the new handler in
 place.
 
+The May 23, 2026 Sprint 7.9 follow-on closed the JWKS-cache + chart env
+injection items:
+
+- `src/Infernix/Demo/Api.hs` now owns a per-process `JwksCache`
+  built in `runDemoApiServer` (one `IORef (Maybe (UTCTime, Jwks))`
+  threaded through to both the `/ws` WebSocket handshake and the
+  `/api/objects/{upload,download}` handlers). `loadJwksCached` honours
+  a 5-minute TTL so a JWKS rotation surfaces within one cache cycle
+  without triggering an upstream `GET .../protocol/openid-connect/certs`
+  per request.
+- `chart/templates/deployment-demo.yaml` injects
+  `INFERNIX_MINIO_ENDPOINT`, `INFERNIX_MINIO_ACCESS_KEY`,
+  `INFERNIX_MINIO_SECRET_KEY`, `INFERNIX_MINIO_REGION`,
+  `INFERNIX_MINIO_PRESIGN_EXPIRY_SECONDS`, and
+  `INFERNIX_KEYCLOAK_JWKS_URL` alongside the existing Pulsar env vars.
+
 Pending closure:
 
-- Runtime-time `Demo.Bootstrap` reconcile loop that calls MinIO admin API to repair
-  buckets when chart-time provisioning is bypassed (an operator-only edge case;
-  chart-time provisioning covers the supported path). Lands together with Sprint 7.14's
-  real-cluster validation.
-- A JWKS TTL cache so each `/api/objects` request does not trigger an upstream JWKS GET
-  (current implementation refetches per request — correct but inefficient).
-- The demo binary needs the `INFERNIX_MINIO_ACCESS_KEY` plus `INFERNIX_MINIO_SECRET_KEY`
-  env vars to be injected by `chart/templates/deployment-demo.yaml`; today's template
-  injects only the Pulsar env vars. The chart-side env injection lands together with
-  the Sprint 7.14 chaos validation that exercises real MinIO uploads.
+- Runtime-time `Demo.Bootstrap` reconcile loop that calls MinIO admin
+  API to repair buckets when chart-time provisioning is bypassed (an
+  operator-only edge case; chart-time provisioning covers the supported
+  path). Lands together with Sprint 7.14's real-cluster validation.
 - Real-cluster validation: signed-in user A mints a presigned PUT for
   `users/A/contexts/C/uploads/X`, uploads bytes, mints a presigned GET, downloads with
   content equality; cross-user negative test confirms user A cannot mint a URL inside
@@ -1260,9 +1479,17 @@ Pending closure:
   and `web/test/Infernix/Web/ArtifactsSpec.purs`. These need the PureScript test runner
   in `web/test/` plus tagged-sum Simple.JSON instances on the generated module (the
   generator footer currently emits `ReadForeign` for single-constructor records only).
-- QuickCheck-style property generators for `ConversationEvent` sequences. The current
-  unit suite covers each invariant across a fixed-shape set of seven sequences; the
-  Sprint deliverable calls for property-based shrinkable generators in addition.
+  Land together with the SPA view sprints (7.10, 7.11) that introduce the modules
+  under test.
+- QuickCheck-style property generators for `ConversationEvent` sequences landed
+  May 23, 2026 (`assertConversationPropertyTests` in `test/unit/Spec.hs`):
+  property generators emit arbitrary 0–8-message logs with prompt / cancel /
+  inference-result / duplicate shapes and exercise three invariants — patch-stream
+  replay converging to the snapshot reducer projection, `prefixHash` chain
+  length-monotonicity + determinism, and idempotency dedup dropping repeated
+  `(contextId, key)` pairs across 50 random shrinkable cases each. The
+  `QuickCheck >=2.14 && <2.20` dep is now declared on the `infernix-unit` test
+  stanza.
 
 ---
 
@@ -1386,9 +1613,9 @@ All work pending.
 
 ---
 
-## Sprint 7.16: Documentation Closure [Planned]
+## Sprint 7.16: Documentation Closure [Active]
 
-**Status**: Planned
+**Status**: Active
 **Blocked by**: 7.1, 7.2, 7.3, 7.4, 7.5, 7.6, 7.7, 7.8, 7.9, 7.10, 7.11, 7.12, 7.13, 7.14, 7.15
 **Implementation**: every doc named in this phase
 **Docs to update**: all docs named in Documentation Requirements below
@@ -1415,7 +1642,62 @@ behavior. `infernix lint docs` is clean.
 
 ### Remaining Work
 
-All work pending.
+The May 23, 2026 pass cleared the stale "Planned" / "today's repo still..."
+framing across every governed doc and aligned the supported-target
+language with the implemented behavior:
+
+- `documents/engineering/object_storage.md` — `Current Status` now
+  records the Sprint 7.7 retirement of `./.data/object-store/`,
+  `objectStoreRoot`, the `s3://infernix-runtime/` URI scheme, and
+  the placeholder MinIO buckets.
+- `documents/engineering/storage_and_state.md` — owner table now
+  names the supported MinIO buckets, the model-cache manifest
+  location, and the retired object-store tree.
+- `documents/engineering/model_lifecycle.md` — rules now describe
+  the MinIO-backed model loader and the post-Sprint-7.7 worker
+  envelope (no artifact-bundle paths).
+- `documents/engineering/build_artifacts.md` — cache manifest
+  location points at `./.data/runtime/model-cache/...`.
+- `documents/engineering/implementation_boundaries.md` — Application
+  Library Boundary section is no longer marked "Planned, Phase 7".
+- `documents/architecture/runtime_modes.md` and
+  `documents/architecture/daemon_topology.md` — Sprint 7.7 daemon
+  split is recorded as landed; cluster-daemon-to-host-daemon bridge
+  on Apple is unchanged.
+- `documents/tools/pulsar.md` — "Demo Conversation and Metadata
+  Topics" and "Model-Bootstrap Topic" are no longer marked
+  "Planned"; broker reconciliation status named explicitly.
+- `documents/tools/minio.md` — Demo Artifact Bucket section is no
+  longer marked "Planned".
+- `documents/development/chaos_testing.md` and
+  `documents/development/testing_strategy.md` — durable-context
+  chaos cases and validation layers no longer marked "Planned, Phase 7";
+  sprint-number references corrected.
+- `documents/development/frontend_contracts.md` — Haskell-first
+  logic discipline section is no longer marked "Planned".
+- `documents/reference/api_surface.md` — `/api/objects` is named
+  as Phase 7 Sprint 7.9 landed (no longer "Planned").
+- `documents/reference/web_portal_surface.md` — "Durable Context
+  Surface" section is no longer marked "Planned".
+- `documents/operations/apple_silicon_runbook.md` — Apple lane
+  daemon naming references the landed `Coordinator` / `Engine`
+  vocabulary instead of "after Sprint 7.7".
+- `documents/operations/cluster_bootstrap_runbook.md` — "Durable-Context
+  Demo Bring-Up" section names the landed `linux-cpu` + `linux-gpu`
+  validation passes.
+
+Pending refinement (lands together with Sprint 7.14 chaos
+validation when real-cluster behaviors are observed):
+
+- minor cross-reference touch-ups in cluster-runbook-style docs
+  once the bootstrap + bridge + dispatcher runtime loops are
+  validated against a real cluster;
+- per-doc TL;DR / Executive Summary tightening where the post-Sprint-7.7
+  doctrine reshaped the topic boundary;
+- root README + AGENTS + CLAUDE re-read for orientation language
+  drift after final Phase 7 closure.
+
+`infernix lint docs` exits zero against this state.
 
 ---
 

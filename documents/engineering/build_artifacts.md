@@ -60,7 +60,9 @@ of the supported artifact contract.
 - `spago bundle --module Main --outfile dist/app.js --platform browser --bundle-type app`
   produces the static demo bundle in `web/dist/`
 - inference-result reloads use `./.data/runtime/results/*.pb`
-- cache durability manifests use `./.data/object-store/manifests/<runtime-mode>/<model-id>/default.pb`
+- cache manifests sit beside the cached weights at
+  `./.data/runtime/model-cache/<runtime-mode>/<model-id>/manifest.pb`
+  (Phase 7 Sprint 7.7 retired the `./.data/object-store/` tree)
 - `ensurePoetryProjectReady` regenerates Python protobuf stubs under `tools/generated_proto/` when
   they are missing
 

@@ -305,10 +305,11 @@ buildWorkerRequest paths runtimeMode model engineBinding request =
       set (field @"runtimeMode") (runtimeModeId runtimeMode) $
         set (field @"selectedEngine") (selectedEngine model) $
           set (field @"adapterId") (engineBindingAdapterId engineBinding) $
-            set (field @"artifactBundlePath") (Text.pack (artifactBundlePathFor paths runtimeMode model)) $
-              set (field @"sourceManifestPath") (Text.pack (sourceManifestPathFor paths runtimeMode model)) $
-                set (field @"cacheManifestPath") (Text.pack (cacheManifestPathFor paths runtimeMode model)) $
-                  set (field @"engineInstallRoot") (Text.pack (engineInstallRootPath paths engineBinding)) defMessage
+            set (field @"displayName") (displayName model) $
+              set (field @"family") (family model) $
+                set (field @"artifactType") (artifactType model) $
+                  set (field @"runtimeLane") (runtimeLaneId (runtimeLane model)) $
+                    set (field @"engineInstallRoot") (Text.pack (engineInstallRootPath paths engineBinding)) defMessage
 
 workerOutputFromResponse :: ProtoInference.WorkerResponse -> Either ErrorResponse Text
 workerOutputFromResponse workerResponse =
@@ -359,30 +360,6 @@ trimWhitespace :: String -> Maybe String
 trimWhitespace rawValue =
   let trimmed = dropWhileEnd (`elem` [' ', '\n', '\r', '\t']) (dropWhile (`elem` [' ', '\n', '\r', '\t']) rawValue)
    in if null trimmed then Nothing else Just trimmed
-
-artifactBundlePathFor :: Paths -> RuntimeMode -> ModelDescriptor -> FilePath
-artifactBundlePathFor paths runtimeMode model =
-  objectStoreRoot paths
-    </> "artifacts"
-    </> Text.unpack (runtimeModeId runtimeMode)
-    </> Text.unpack (modelId model)
-    </> "bundle.json"
-
-sourceManifestPathFor :: Paths -> RuntimeMode -> ModelDescriptor -> FilePath
-sourceManifestPathFor paths runtimeMode model =
-  objectStoreRoot paths
-    </> "source-artifacts"
-    </> Text.unpack (runtimeModeId runtimeMode)
-    </> Text.unpack (modelId model)
-    </> "source.json"
-
-cacheManifestPathFor :: Paths -> RuntimeMode -> ModelDescriptor -> FilePath
-cacheManifestPathFor paths runtimeMode model =
-  objectStoreRoot paths
-    </> "manifests"
-    </> Text.unpack (runtimeModeId runtimeMode)
-    </> Text.unpack (modelId model)
-    </> "default.pb"
 
 engineInstallRootPath :: Paths -> EngineBinding -> FilePath
 engineInstallRootPath paths engineBinding =

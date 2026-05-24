@@ -133,26 +133,28 @@ mode-specific coverage, matrix behavior, and operator detail behind those canoni
 - changing the active staged substrate changes the generated catalog and therefore the exercised entry
   set automatically
 
-## Durable-Context Demo Validation (Planned, Phase 7)
+## Durable-Context Demo Validation (Phase 7)
 
-The multi-user durable-context demo introduces a substantial expansion of the validation
-surface, split across three sprints. The authoritative test contract lives at
+The multi-user durable-context demo expands the validation surface across three sprints.
+The authoritative test contract lives at
 [demo_app_test_plan.md](demo_app_test_plan.md); this section names the layers and their
 relationship to the existing entrypoints.
 
-- **Unit layer** (Sprint 7.12, `infernix test unit`) — reducer property tests, idempotency
+- **Unit layer** (Sprint 7.13, `infernix test unit`) — reducer property tests, idempotency
   dedup, `prefixHash` chain, dispatcher pure-fold rule, JWT validation edge cases, presigned
   URL minting, compacted topic projection, WS envelope codec, plus PureScript view-model tests
   scoped to patch application and rendering only. Reducer logic is exercised in Haskell, not
-  in PureScript.
-- **Integration layer** (Sprint 7.13, `infernix test integration`) — real Pulsar / MinIO /
+  in PureScript. The Haskell-side unit gate is landed; PureScript view-model tests follow the
+  SPA view sprints.
+- **Integration layer** (Sprint 7.14, `infernix test integration`) — real Pulsar / MinIO /
   Keycloak round-trips, producer-dedup verification across simulated dispatcher restart,
   Pulsar Failover handoff, cross-user presigned URL negative, chaos tests (WS pod kill,
-  dispatcher kill, cluster daemon mid-inference kill), and the **multi-user throughput /
-  fan-in batching / fan-out** test (N users × K contexts × P prompts on one model) asserting
-  per-context ordering, no duplicates or losses, cross-context independence, batching gain,
-  bounded p95 latency, and dedup correctness.
-- **E2E layer** (Sprint 7.14, `infernix test e2e`) — Playwright flows for auth, context,
+  dispatcher kill, engine pod kill mid-inference, coordinator kill mid-bootstrap upload,
+  concurrent model-bootstrap requests, one-engine-per-node enforcement), and the
+  **multi-user throughput / fan-in batching / fan-out** test (N users × K contexts × P
+  prompts on one model) asserting per-context ordering, no duplicates or losses,
+  cross-context independence, batching gain, bounded p95 latency, and dedup correctness.
+- **E2E layer** (Sprint 7.15, `infernix test e2e`) — Playwright flows for auth, context,
   conversation (including two-in-a-row and cancel), drafts, artifact upload/download plus
   render, preview, document handling, or download-only behavior per supported artifact class,
   generated-artifact lifecycle, multi-tab convergence, client reconstitution

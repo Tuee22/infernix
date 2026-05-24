@@ -180,6 +180,7 @@ test-suite infernix-unit
         process >=1.6 && <1.7,
         proto-lens >=0.7 && <0.8,
         proto-lens-runtime >=0.7 && <0.8,
+        QuickCheck >=2.14 && <2.20,
         text >=2.0 && <2.2,
         time >=1.12 && <1.16,
         infernix

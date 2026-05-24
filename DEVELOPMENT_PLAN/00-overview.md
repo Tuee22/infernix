@@ -99,7 +99,7 @@ with bounded retries across transient registry resets.
 
 Monitoring is not a supported first-class surface.
 
-Phase 7 (`Planned`) adds the multi-user durable-context demo application on top of this
+Phase 7 (`Active`) adds the multi-user durable-context demo application on top of this
 validated platform. The product-agnostic primitives live at
 [../documents/architecture/durable_context_design.md](../documents/architecture/durable_context_design.md);
 the demo's concrete bindings live at
@@ -333,13 +333,17 @@ infernix/
 │   └── templates/
 │       ├── configmap-demo-catalog.yaml
 │       ├── configmap-publication-state.yaml
+│       ├── deployment-coordinator.yaml
 │       ├── deployment-demo.yaml
-│       ├── deployment-service.yaml
+│       ├── deployment-engine.yaml
 │       ├── envoyproxy.yaml
 │       ├── gatewayclass.yaml
 │       ├── gateway.yaml
 │       ├── httproutes.yaml
-│       ├── persistentvolumeclaim-service-data.yaml
+│       ├── keycloak/
+│       ├── poddisruptionbudget-coordinator.yaml
+│       ├── poddisruptionbudget-demo.yaml
+│       ├── poddisruptionbudget-engine.yaml
 │       ├── runtimeclass-nvidia.yaml
 │       └── service-demo.yaml
 ├── kind/

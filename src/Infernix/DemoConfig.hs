@@ -154,6 +154,14 @@ coordinatorDaemonConfig runtimeMode =
 -- the inference-batch topic the coordinator hands off to.
 engineDaemonConfig :: RuntimeMode -> Maybe DaemonConfig
 engineDaemonConfig runtimeMode =
+  -- Phase 7 Sprint 7.7: the engine consumes its substrate's
+  -- @inference.batch.<mode>@ topic, executes the worker, and publishes
+  -- the result to @inference.result.<mode>@. The host_batch_topic
+  -- field stays @Nothing@ for the engine role so the consumer loop
+  -- falls into the "execute inline" branch; setting it to the same
+  -- topic the engine consumes from would create an infinite
+  -- forward loop in @handleConsumerEnvelope@. The coordinator role
+  -- is the only daemon that forwards from request -> batch.
   case runtimeMode of
     AppleSilicon ->
       Just
@@ -162,7 +170,7 @@ engineDaemonConfig runtimeMode =
             daemonConfigLocation = "control-plane-host",
             daemonConfigRequestTopics = maybe [] pure (hostBatchTopicForMode runtimeMode),
             daemonConfigResultTopic = resultTopicForMode runtimeMode,
-            daemonConfigHostBatchTopic = hostBatchTopicForMode runtimeMode,
+            daemonConfigHostBatchTopic = Nothing,
             daemonConfigPulsarConnectionMode = PublicationEdgeAutoDiscovery
           }
     _ ->
@@ -172,7 +180,7 @@ engineDaemonConfig runtimeMode =
             daemonConfigLocation = "cluster-pod",
             daemonConfigRequestTopics = maybe [] pure (hostBatchTopicForMode runtimeMode),
             daemonConfigResultTopic = resultTopicForMode runtimeMode,
-            daemonConfigHostBatchTopic = hostBatchTopicForMode runtimeMode,
+            daemonConfigHostBatchTopic = Nothing,
             daemonConfigPulsarConnectionMode = ConfiguredTransport
           }
 

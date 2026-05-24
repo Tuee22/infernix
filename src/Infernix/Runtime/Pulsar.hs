@@ -5,7 +5,9 @@
 module Infernix.Runtime.Pulsar
   ( publishInferenceRequest,
     readPublishedInferenceResultMaybe,
+    runModelBootstrapLoop,
     runProductionDaemon,
+    runResultBridgeLoop,
     schemaMarkerPath,
     serviceReadinessMarkerPath,
     topicDirectoryPath,
@@ -38,14 +40,18 @@ import Data.ProtoLens (Message, decodeMessage, defMessage, encodeMessage)
 import Data.ProtoLens.Field (field)
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
-import Data.Text.IO qualified as TextIO
-import Data.Time (defaultTimeLocale, formatTime, getCurrentTime)
+import Data.Time (UTCTime, defaultTimeLocale, formatTime, getCurrentTime)
+import Infernix.Bootstrap.Models qualified as BootstrapModels
+import Infernix.Bridge.Result qualified as ResultBridge
 import Infernix.Config
+import Infernix.Conversation.Topic qualified as ConversationTopic
 import Infernix.DemoConfig (decodeDemoConfigFile)
 import Infernix.Error (InfernixError (InvalidControlPlaneOverride))
+import Infernix.Objects.Presigned qualified as Presigned
 import Infernix.Runtime (executeInference)
 import Infernix.Storage (readEdgePortMaybe)
 import Infernix.Types
+import Infernix.Web.Contracts qualified as Contracts
 import Lens.Family2 (set, view)
 import Network.HTTP.Client
   ( Manager,
@@ -181,6 +187,31 @@ runProductionDaemon paths runtimeMode = do
       forM_
         (daemonConfigRequestTopics daemonConfig)
         (forkIO . consumeTopicForever transport paths runtimeMode daemonConfig)
+      -- Phase 7 Sprint 7.8: when running as Coordinator, also start the
+      -- result-bridge Failover subscription. The bridge consumes
+      -- @inference.result.<mode>@ and writes the matching
+      -- @ConversationInferenceResultEvent@ back to the per-context
+      -- conversation topic. The Engine role does not start this loop;
+      -- it produces results to @inference.result.<mode>@ and the
+      -- bridge owns the writeback.
+      when (daemonRole == Coordinator) $ do
+        putStrLn "serviceResultBridgeMode: failover-subscription"
+        _ <-
+          forkIO
+            ( runResultBridgeLoop
+                transport
+                runtimeMode
+                (daemonConfigResultTopic daemonConfig)
+                ConversationTopic.defaultDemoTopicNamespace
+            )
+        putStrLn "serviceModelBootstrapMode: failover-subscription"
+        _ <-
+          forkIO
+            ( runModelBootstrapLoop
+                transport
+                ConversationTopic.systemTopicNamespace
+            )
+        pure ()
       forever (threadDelay 60000000)
 
 resolveControlPlaneOverride :: Paths -> Maybe String -> IO ControlPlaneContext
@@ -252,7 +283,20 @@ publishInferenceRequest paths runtimeMode topic requestValue = do
       writeInferenceRequestFile outputPath protoPayload
       pure requestIdValue
     Just transport -> do
-      publishTopicPayload transport topic requestIdValue (encodeMessage protoPayload)
+      -- Phase 7 Sprint 7.7: stable producer name per
+      -- @inference.request.<mode>@ topic so the broker dedup gate can
+      -- track @(producerName, sequenceId)@ tuples across coordinator
+      -- replicas. Application-level dedup key derivation lives in
+      -- @Infernix.Dispatch.SingleFlight.producerDedupSequenceId@; the
+      -- direct @infernix-demo@ producer path leaves @sequenceId@
+      -- unset so retries from this code path do not collide with the
+      -- coordinator's typed envelope.
+      let options =
+            defaultPublishOptions
+              ( "infernix-demo-publisher-"
+                  <> runtimeModeId runtimeMode
+              )
+      publishTopicPayload transport topic options requestIdValue (encodeMessage protoPayload)
       pure requestIdValue
 
 readPublishedInferenceResultMaybe :: Paths -> RuntimeMode -> Text.Text -> Text.Text -> IO (Maybe InferenceResult)
@@ -842,30 +886,109 @@ consumeTopicSession transport paths runtimeMode daemonConfig requestTopicValue =
       -- engine pool uniformly. When no host-batch topic is configured the
       -- daemon executes inference inline and publishes the result itself.
       case daemonConfigHostBatchTopic daemonConfig of
-        Just hostBatchTopicValue ->
+        Just hostBatchTopicValue -> do
+          -- Coordinator-role hand-off to the engine-batch topic. The
+          -- producer name is stable per coordinator role so the broker
+          -- dedups concurrent coordinator replicas. Sequence-id
+          -- derivation from the application-level
+          -- @userPromptMessageId@ key lives in
+          -- @Infernix.Dispatch.SingleFlight.producerDedupSequenceId@;
+          -- the broker-side dedup gate ('reconcileSupportedNamespaces')
+          -- accepts the resulting tuple. Phase 7 Sprint 7.14 wires the
+          -- typed envelope read here.
+          let batchOptions =
+                (defaultPublishOptions ("infernix-coordinator-batch-" <> runtimeModeId runtimeMode))
+                  { publishSequenceId = inferenceRequestSequenceId decodedRequest
+                  }
           publishTopicPayload
             transport
             hostBatchTopicValue
+            batchOptions
             (view ProtoInferenceFields.requestId decodedRequest)
             (encodeMessage decodedRequest)
         Nothing -> do
           publishedResult <- publishedResultFromRequest paths runtimeMode decodedRequest
+          let resultOptions =
+                (defaultPublishOptions ("infernix-engine-result-" <> runtimeModeId runtimeMode))
+                  { publishSequenceId = inferenceRequestSequenceId decodedRequest
+                  }
           publishTopicPayload
             transport
             (daemonConfigResultTopic daemonConfig)
+            resultOptions
             (requestId publishedResult)
             (encodeMessage (domainResultToProto publishedResult))
       sendAck connection (envelopeMessageId envelope)
 
-publishTopicPayload :: PulsarTransport -> Text.Text -> Text.Text -> ByteString.ByteString -> IO ()
-publishTopicPayload transport topicValue contextValue payload = do
+-- | Phase 7 Sprint 7.7 producer-side dedup wiring. Each publish carries
+-- a stable @producerName@ in the URL query plus a per-message
+-- @sequenceId@ in the JSON payload; the broker-side dedup gate
+-- reconciled by 'reconcileSupportedNamespaces' rejects duplicate
+-- @(producerName, sequenceId)@ tuples. When the application has a
+-- monotonic dedup key (e.g. the conversation-log offset of the user
+-- prompt event), callers pass it via 'publishSequenceId' so application
+-- retries are observably idempotent end-to-end. When no application
+-- key is available, callers leave 'publishSequenceId' as 'Nothing' and
+-- the broker assigns the sequence; dedup degenerates to "no broker
+-- side dedup, only producer-name stability for observability".
+data PublishOptions = PublishOptions
+  { publishProducerName :: Text.Text,
+    publishSequenceId :: Maybe Integer
+  }
+
+defaultPublishOptions :: Text.Text -> PublishOptions
+defaultPublishOptions producerName =
+  PublishOptions
+    { publishProducerName = producerName,
+      publishSequenceId = Nothing
+    }
+
+-- | Derive a per-message Pulsar dedup @sequenceId@ from an envelope's
+-- @userPromptMessageId@. Pulsar MessageIds serialize as
+-- @<ledgerId>:<entryId>:<partition>:<batchIdx>@; we pack ledger and
+-- entry into a 64-bit value because both are monotonic per
+-- topic-partition. The supported per-context dispatcher in
+-- 'Infernix.Dispatch.SingleFlight' uses one producer per context, so
+-- the resulting sequence is monotonic within a producer scope. If the
+-- envelope's @userPromptMessageId@ is empty or unparseable (legacy
+-- inference-request envelopes that predate Sprint 7.8), the helper
+-- returns 'Nothing' and the broker assigns the sequence so dedup
+-- degenerates to producer-name stability without breaking the publish.
+inferenceRequestSequenceId :: ProtoInference.InferenceRequest -> Maybe Integer
+inferenceRequestSequenceId request =
+  parseMessageIdToSequenceId (view ProtoInferenceFields.userPromptMessageId request)
+
+parseMessageIdToSequenceId :: Text.Text -> Maybe Integer
+parseMessageIdToSequenceId raw =
+  case Text.splitOn ":" raw of
+    (ledgerText : entryText : _) -> do
+      ledger <- parseInteger ledgerText
+      entry <- parseInteger entryText
+      pure (ledger * (2 ^ (32 :: Int)) + entry)
+    _ -> Nothing
+  where
+    parseInteger value =
+      case reads (Text.unpack value) :: [(Integer, String)] of
+        [(parsed, "")] -> Just parsed
+        _ -> Nothing
+
+publishTopicPayload :: PulsarTransport -> Text.Text -> PublishOptions -> Text.Text -> ByteString.ByteString -> IO ()
+publishTopicPayload transport topicValue options contextValue payload = do
   topicRef <- requireTopicRef topicValue
-  let producerPath = buildProducerSocketPath (pulsarWebSocketBase transport) topicRef
-      producerPayload =
-        object
-          [ "payload" .= TextEncoding.decodeUtf8 (Base64.encode payload),
-            "context" .= contextValue
-          ]
+  let producerPath =
+        buildProducerSocketPath
+          (pulsarWebSocketBase transport)
+          topicRef
+          (publishProducerName options)
+      baseFields =
+        [ "payload" .= TextEncoding.decodeUtf8 (Base64.encode payload),
+          "context" .= contextValue
+        ]
+      payloadFields =
+        case publishSequenceId options of
+          Just seqId -> ("sequenceId" .= seqId) : baseFields
+          Nothing -> baseFields
+      producerPayload = object payloadFields
   runPulsarWebSocketClient (pulsarWebSocketBase transport) producerPath $ \connection -> do
     sendJsonFrame connection producerPayload
     rawResponse <- receiveJsonFrame "Pulsar producer response" connection
@@ -879,6 +1002,442 @@ publishTopicPayload transport topicValue contextValue payload = do
                 <> Text.unpack (fromMaybe "unknown producer error" (producerErrorMessage producerResponse))
             )
         )
+
+-- | Phase 7 Sprint 7.8 result-bridge runtime loop. The coordinator
+-- subscribes to the substrate's @inference.result.<mode>@ topic with a
+-- Failover subscription (so exactly one coordinator replica is active
+-- at a time; on crash the broker promotes a surviving replica and
+-- redelivers any unacked message), decodes each result envelope,
+-- derives the matching 'ConversationInferenceResultEvent', and
+-- publishes it to the originating per-context conversation topic with
+-- producer-side dedup keyed by @userPromptMessageId@. The substrate's
+-- conversation topic family lives under
+-- 'Infernix.Conversation.Topic.TopicNamespace' (default
+-- @infernix/demo@); the bridge expects the upstream engine to have
+-- populated 'resultUserId' / 'resultContextId' / 'resultCausalRef' on
+-- the wire (these are the Sprint 7.8 envelope additions). Results
+-- missing those fields belong to the legacy / Phase 4 manual-inference
+-- path and are skipped without an ack-failure so they re-deliver
+-- harmlessly on the next subscription session.
+runResultBridgeLoop ::
+  PulsarTransport ->
+  RuntimeMode ->
+  Text.Text ->
+  ConversationTopic.TopicNamespace ->
+  IO ()
+runResultBridgeLoop transport runtimeMode resultTopic topicNamespace = do
+  topicRef <- requireTopicRef resultTopic
+  let runtimeModeText = runtimeModeId runtimeMode
+      subscriptionName = "result-bridge-" <> runtimeModeText
+      consumerName = subscriptionName <> "-consumer"
+      consumerPath =
+        buildFailoverConsumerSocketPath
+          (pulsarWebSocketBase transport)
+          topicRef
+          (Text.unpack subscriptionName)
+          (Text.unpack consumerName)
+  forever $ do
+    sessionResult <-
+      try @SomeException
+        ( runPulsarWebSocketClient (pulsarWebSocketBase transport) consumerPath $ \connection ->
+            forever (handleResultBridgeMessage transport runtimeMode topicNamespace connection)
+        )
+    case sessionResult of
+      Right _ -> threadDelay 1_000_000
+      Left err -> do
+        hPutStrLn
+          stderr
+          ( "result-bridge session for "
+              <> Text.unpack resultTopic
+              <> " failed:\n"
+              <> displayException err
+          )
+        threadDelay 1_000_000
+
+handleResultBridgeMessage ::
+  PulsarTransport ->
+  RuntimeMode ->
+  ConversationTopic.TopicNamespace ->
+  WebSockets.Connection ->
+  IO ()
+handleResultBridgeMessage transport _runtimeMode topicNamespace connection = do
+  rawEnvelope <- receiveJsonFrame "Pulsar result-bridge message" connection
+  envelope <- decodeJsonText "Pulsar result-bridge message" rawEnvelope
+  handled <-
+    try @SomeException
+      ( do
+          protoResult <- decodeEnvelopePayload "inference result" envelope
+          case protoResultToDomain protoResult of
+            Nothing ->
+              hPutStrLn
+                stderr
+                ( "result-bridge skipping undecodable inference result "
+                    <> Text.unpack (envelopeMessageId envelope)
+                )
+            Just resultValue
+              | Text.null (resultUserId resultValue)
+                  || Text.null (resultContextId resultValue)
+                  || Text.null (resultCausalRef resultValue) ->
+                  -- Legacy / Phase 4 result without durable-context
+                  -- routing fields. Skip silently so the legacy
+                  -- manual-inference path is not broken by the bridge.
+                  pure ()
+              | otherwise -> bridgeResultToConversation transport topicNamespace resultValue
+      )
+  case handled of
+    Right _ -> sendAck connection (envelopeMessageId envelope)
+    Left err -> do
+      sendNegativeAck connection (envelopeMessageId envelope)
+      hPutStrLn
+        stderr
+        ( "result-bridge message handling failed:\n"
+            <> displayException err
+        )
+
+-- | Publish a @ConversationInferenceResultEvent@ on the per-context
+-- conversation topic for the given result. The producer name is
+-- stable per @(role, contextId)@ so the broker dedup gate collapses
+-- replays from a restarted bridge replica; the sequence id is derived
+-- from the application-level @userPromptMessageId@ dedup key.
+bridgeResultToConversation ::
+  PulsarTransport ->
+  ConversationTopic.TopicNamespace ->
+  InferenceResult ->
+  IO ()
+bridgeResultToConversation transport topicNamespace resultValue = do
+  let userIdText = resultUserId resultValue
+      contextIdText = resultContextId resultValue
+      causalRef = resultCausalRef resultValue
+      conversationTopic =
+        ConversationTopic.conversationTopicName
+          topicNamespace
+          (Contracts.UserId userIdText)
+          (Contracts.ContextId contextIdText)
+      inlineOutputValue = case payload resultValue of
+        ResultPayload {inlineOutput = Just text} -> Just text
+        _ -> Nothing
+      objectRefValue = case payload resultValue of
+        ResultPayload {objectRef = Just rawKey} ->
+          -- The result envelope's @ObjectRef@ field stores a single
+          -- string ("bucket/key" or just a key); the conversation
+          -- event surface carries the structured ObjectRef the
+          -- browser uses to mint presigned URLs. Default to the demo
+          -- bucket when only a key is supplied.
+          [ Contracts.ObjectRef
+              { Contracts.objectBucket = "infernix-demo-objects",
+                Contracts.objectKey = rawKey
+              }
+          ]
+        _ -> []
+      conversationEvent =
+        ResultBridge.inferenceResultEventFor
+          (Contracts.MessageId causalRef)
+          (status resultValue)
+          inlineOutputValue
+          objectRefValue
+      options =
+        (defaultPublishOptions ("infernix-result-bridge-" <> contextIdText))
+          { publishSequenceId = parseMessageIdToSequenceId causalRef
+          }
+  publishTopicPayload
+    transport
+    conversationTopic
+    options
+    causalRef
+    (Lazy.toStrict (encode conversationEvent))
+
+-- | Phase 7 Sprint 7.7 / 7.14 model-bootstrap runtime loop. The
+-- coordinator subscribes to @infernix/system/model.bootstrap.request@
+-- with a Failover subscription (exactly one coordinator replica is
+-- active at a time; on crash the broker promotes a surviving replica
+-- and redelivers any unacked request). For each request:
+--
+-- 1. Re-check the upstream @.ready@ sentinel object in MinIO so
+--    duplicate work after Failover handoff is a no-op (the helper
+--    'sentinelExistsInMinio' returns @True@ when the object is
+--    already present; we skip straight to publishing the ready event).
+-- 2. HTTP @GET@ the upstream @downloadUrl@ carried on the request
+--    envelope (this is the only point in the supported daemon
+--    topology that reaches the public internet).
+-- 3. @PUT@ the downloaded bytes to MinIO under
+--    @infernix-models/<modelId>/payload@ via a presigned PUT URL
+--    minted with the chart-injected @INFERNIX_MINIO_*@ credentials.
+-- 4. @PUT@ the @.ready@ sentinel last so partial uploads are not
+--    visible to engines (the engine helper waits on this sentinel).
+-- 5. Publish a 'ModelBootstrapReadyEvent' on the matching ready topic
+--    and ack the original request.
+--
+-- Producer-side dedup on the request topic (keyed by @modelId@) and
+-- the named Failover subscription together give exactly-once
+-- semantics for the upstream download under concurrent retries.
+runModelBootstrapLoop ::
+  PulsarTransport ->
+  ConversationTopic.TopicNamespace ->
+  IO ()
+runModelBootstrapLoop transport systemNamespace = do
+  let requestTopic =
+        ConversationTopic.modelBootstrapRequestTopicName systemNamespace
+  topicRef <- requireTopicRef requestTopic
+  let consumerName = Text.unpack BootstrapModels.bootstrapSubscriptionName <> "-consumer"
+      consumerPath =
+        buildFailoverConsumerSocketPath
+          (pulsarWebSocketBase transport)
+          topicRef
+          (Text.unpack BootstrapModels.bootstrapSubscriptionName)
+          consumerName
+  forever $ do
+    sessionResult <-
+      try @SomeException
+        ( runPulsarWebSocketClient (pulsarWebSocketBase transport) consumerPath $ \connection ->
+            forever (handleBootstrapMessage transport systemNamespace connection)
+        )
+    case sessionResult of
+      Right _ -> threadDelay 1_000_000
+      Left err -> do
+        hPutStrLn
+          stderr
+          ( "model-bootstrap session for "
+              <> Text.unpack requestTopic
+              <> " failed:\n"
+              <> displayException err
+          )
+        threadDelay 1_000_000
+
+handleBootstrapMessage ::
+  PulsarTransport ->
+  ConversationTopic.TopicNamespace ->
+  WebSockets.Connection ->
+  IO ()
+handleBootstrapMessage transport systemNamespace connection = do
+  rawEnvelope <- receiveJsonFrame "Pulsar bootstrap message" connection
+  envelope <- decodeJsonText "Pulsar bootstrap message" rawEnvelope
+  handled <-
+    try @SomeException
+      ( do
+          payloadBytes <- bootstrapPayloadBytes envelope
+          case eitherDecodeStrict' payloadBytes of
+            Left err ->
+              hPutStrLn
+                stderr
+                ( "model-bootstrap skipping undecodable request "
+                    <> Text.unpack (envelopeMessageId envelope)
+                    <> ": "
+                    <> err
+                )
+            Right request -> processBootstrapRequest transport systemNamespace request
+      )
+  case handled of
+    Right _ -> sendAck connection (envelopeMessageId envelope)
+    Left err -> do
+      sendNegativeAck connection (envelopeMessageId envelope)
+      hPutStrLn
+        stderr
+        ( "model-bootstrap message handling failed:\n"
+            <> displayException err
+        )
+
+bootstrapPayloadBytes :: PulsarEnvelope -> IO ByteString.ByteString
+bootstrapPayloadBytes envelope =
+  case Base64.decode (TextEncoding.encodeUtf8 (envelopePayload envelope)) of
+    Right raw -> pure raw
+    Left err ->
+      ioError
+        ( userError
+            ( "failed to decode base64 model-bootstrap payload for message "
+                <> Text.unpack (envelopeMessageId envelope)
+                <> ":\n"
+                <> err
+            )
+        )
+
+processBootstrapRequest ::
+  PulsarTransport ->
+  ConversationTopic.TopicNamespace ->
+  BootstrapModels.ModelBootstrapRequest ->
+  IO ()
+processBootstrapRequest transport systemNamespace request = do
+  presignedConfigResult <- loadBootstrapPresignedConfig
+  case presignedConfigResult of
+    Left configError ->
+      hPutStrLn
+        stderr
+        ( "model-bootstrap unable to load MinIO credentials: "
+            <> configError
+        )
+    Right presigned -> do
+      let modelId = BootstrapModels.bootstrapRequestModelId request
+          payloadObject =
+            Contracts.ObjectRef
+              { Contracts.objectBucket = "infernix-models",
+                Contracts.objectKey = modelId <> "/payload"
+              }
+          sentinelObject =
+            Contracts.ObjectRef
+              { Contracts.objectBucket = "infernix-models",
+                Contracts.objectKey =
+                  modelId <> "/" <> BootstrapModels.readySentinelFilename
+              }
+      manager <- newManager defaultManagerSettings
+      now <- getCurrentTime
+      sentinelPresent <- minioObjectExists presigned manager sentinelObject
+      if sentinelPresent
+        then publishBootstrapReadyEvent transport systemNamespace request
+        else do
+          downloadedBytes <-
+            downloadUpstreamModel manager (BootstrapModels.bootstrapRequestDownloadUrl request)
+          putMinioObject presigned manager now payloadObject downloadedBytes
+          putMinioObject presigned manager now sentinelObject "ready\n"
+          publishBootstrapReadyEvent transport systemNamespace request
+
+publishBootstrapReadyEvent ::
+  PulsarTransport ->
+  ConversationTopic.TopicNamespace ->
+  BootstrapModels.ModelBootstrapRequest ->
+  IO ()
+publishBootstrapReadyEvent transport systemNamespace request = do
+  now <- getCurrentTime
+  let modelId = BootstrapModels.bootstrapRequestModelId request
+      readyTopic = BootstrapModels.bootstrapReadyTopicFor (qualifiedReadyTopicPrefix systemNamespace) modelId
+      event =
+        BootstrapModels.ModelBootstrapReadyEvent
+          { BootstrapModels.readyEventModelId = modelId,
+            BootstrapModels.readyEventReadyAtIso8601 =
+              Text.pack (formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%SZ" now)
+          }
+      options =
+        defaultPublishOptions ("infernix-model-bootstrap-" <> modelId)
+  publishTopicPayload
+    transport
+    readyTopic
+    options
+    modelId
+    (Lazy.toStrict (encode event))
+
+qualifiedReadyTopicPrefix :: ConversationTopic.TopicNamespace -> Text.Text
+qualifiedReadyTopicPrefix ns =
+  Text.concat
+    [ "persistent://",
+      ConversationTopic.topicNamespaceTenant ns,
+      "/",
+      ConversationTopic.topicNamespaceName ns
+    ]
+
+downloadUpstreamModel :: Manager -> Text.Text -> IO ByteString.ByteString
+downloadUpstreamModel manager urlText = do
+  request <- parseRequest (Text.unpack urlText)
+  response <- httpLbs request manager
+  let code = statusCode (responseStatus response)
+  unless (code == 200) $
+    ioError
+      ( userError
+          ( "upstream model download "
+              <> Text.unpack urlText
+              <> " returned HTTP "
+              <> show code
+          )
+      )
+  pure (Lazy.toStrict (responseBody response))
+
+minioObjectExists ::
+  Presigned.PresignedUrlConfig ->
+  Manager ->
+  Contracts.ObjectRef ->
+  IO Bool
+minioObjectExists presigned manager objectRef = do
+  now <- getCurrentTime
+  let signedUrl =
+        Presigned.unPresignedUrl
+          (Presigned.presignedGetUrl presigned now objectRef)
+  request <- parseRequest (Text.unpack signedUrl)
+  let headRequest = request {method = "HEAD"}
+  response <- httpLbs headRequest manager
+  pure (statusCode (responseStatus response) == 200)
+
+putMinioObject ::
+  Presigned.PresignedUrlConfig ->
+  Manager ->
+  UTCTime ->
+  Contracts.ObjectRef ->
+  ByteString.ByteString ->
+  IO ()
+putMinioObject presigned manager now objectRef payload = do
+  let signedUrl =
+        Presigned.unPresignedUrl
+          (Presigned.presignedPutUrl presigned now objectRef)
+  request <- parseRequest (Text.unpack signedUrl)
+  let putRequest =
+        request
+          { method = "PUT",
+            requestBody = RequestBodyLBS (Lazy.fromStrict payload)
+          }
+  response <- httpLbs putRequest manager
+  let code = statusCode (responseStatus response)
+  unless (code `elem` [200, 204]) $
+    ioError
+      ( userError
+          ( "MinIO PUT for "
+              <> Text.unpack (Contracts.objectBucket objectRef)
+              <> "/"
+              <> Text.unpack (Contracts.objectKey objectRef)
+              <> " returned HTTP "
+              <> show code
+          )
+      )
+
+loadBootstrapPresignedConfig :: IO (Either String Presigned.PresignedUrlConfig)
+loadBootstrapPresignedConfig = do
+  maybeEndpoint <- lookupEnv "INFERNIX_MINIO_ENDPOINT"
+  maybeAccessKey <- lookupEnv "INFERNIX_MINIO_ACCESS_KEY"
+  maybeSecretKey <- lookupEnv "INFERNIX_MINIO_SECRET_KEY"
+  maybeRegion <- lookupEnv "INFERNIX_MINIO_REGION"
+  case (maybeEndpoint, maybeAccessKey, maybeSecretKey) of
+    (Just endpointValue, Just accessKeyValue, Just secretKeyValue) ->
+      let (scheme, hostPort) = splitMinioEndpoint (Text.pack endpointValue)
+       in pure $
+            Right
+              Presigned.PresignedUrlConfig
+                { Presigned.presignedScheme = scheme,
+                  Presigned.presignedEndpoint = hostPort,
+                  Presigned.presignedRegion = Text.pack (fromMaybe "us-east-1" maybeRegion),
+                  Presigned.presignedAccessKeyId = Text.pack accessKeyValue,
+                  Presigned.presignedSecretAccessKey = Text.pack secretKeyValue,
+                  Presigned.presignedExpirySeconds = 900
+                }
+    _ ->
+      pure
+        ( Left
+            "INFERNIX_MINIO_ENDPOINT / ACCESS_KEY / SECRET_KEY must be set on the coordinator"
+        )
+
+splitMinioEndpoint :: Text.Text -> (Text.Text, Text.Text)
+splitMinioEndpoint raw =
+  case Text.stripPrefix "https://" raw of
+    Just hostPort -> ("https", hostPort)
+    Nothing ->
+      case Text.stripPrefix "http://" raw of
+        Just hostPort -> ("http", hostPort)
+        Nothing -> ("http", raw)
+
+-- | Build a Pulsar WebSocket consumer URL with a @Failover@
+-- subscription. Differs from 'buildConsumerSocketPath' which uses
+-- @Shared@; Failover is the right semantic for the result-bridge so
+-- exactly one coordinator replica processes a given message at a
+-- time.
+buildFailoverConsumerSocketPath ::
+  PulsarWebSocketBase ->
+  TopicRef ->
+  String ->
+  String ->
+  String
+buildFailoverConsumerSocketPath websocketBase topicRef subscriptionName consumerName =
+  buildSocketPath
+    websocketBase
+    ("consumer/" <> renderTopicPath topicRef <> "/" <> subscriptionName)
+    [ ("subscriptionType", "Failover"),
+      ("subscriptionInitialPosition", "Earliest"),
+      ("receiverQueueSize", "1"),
+      ("consumerName", consumerName)
+    ]
 
 readPublishedInferenceResultViaPulsar :: PulsarTransport -> Text.Text -> Text.Text -> IO (Maybe InferenceResult)
 readPublishedInferenceResultViaPulsar transport topicValue wantedRequestId = do
@@ -907,13 +1466,21 @@ publishedResultFromRequest :: Paths -> RuntimeMode -> ProtoInference.InferenceRe
 publishedResultFromRequest paths runtimeMode protoRequest = do
   domainResult <- executeInference paths runtimeMode (protoRequestToDomain protoRequest)
   now <- getCurrentTime
+  let envelopeUserId = view ProtoInferenceFields.userId protoRequest
+      envelopeContextId = view ProtoInferenceFields.contextId protoRequest
+      envelopeCausalRef = view ProtoInferenceFields.userPromptMessageId protoRequest
   case domainResult of
-    Right resultValue -> do
-      inlinedPayload <- inlinePublishedPayload paths (payload resultValue)
+    Right resultValue ->
       pure
         resultValue
           { requestId = view ProtoInferenceFields.requestId protoRequest,
-            payload = inlinedPayload
+            -- Phase 7 Sprint 7.8: forward the durable-context routing
+            -- fields from the request envelope into the result so the
+            -- coordinator's result-bridge can compute the destination
+            -- conversation topic without consulting a separate cache.
+            resultUserId = envelopeUserId,
+            resultContextId = envelopeContextId,
+            resultCausalRef = envelopeCausalRef
           }
     Left errorValue ->
       pure
@@ -925,16 +1492,11 @@ publishedResultFromRequest paths runtimeMode protoRequest = do
             resultSelectedEngine = "",
             status = "failed",
             payload = ResultPayload {inlineOutput = Just (message errorValue), objectRef = Nothing},
-            createdAt = now
+            createdAt = now,
+            resultUserId = envelopeUserId,
+            resultContextId = envelopeContextId,
+            resultCausalRef = envelopeCausalRef
           }
-
-inlinePublishedPayload :: Paths -> ResultPayload -> IO ResultPayload
-inlinePublishedPayload paths payloadValue =
-  case objectRef payloadValue of
-    Just objectRefValue -> do
-      objectContents <- TextIO.readFile (objectStoreRoot paths </> Text.unpack objectRefValue)
-      pure ResultPayload {inlineOutput = Just objectContents, objectRef = Nothing}
-    Nothing -> pure payloadValue
 
 decodeEnvelopePayload :: (Message a) => String -> PulsarEnvelope -> IO a
 decodeEnvelopePayload payloadLabel envelope = do
@@ -999,12 +1561,15 @@ runPulsarWebSocketClient :: PulsarWebSocketBase -> String -> (WebSockets.Connect
 runPulsarWebSocketClient websocketBase =
   WebSockets.runClient (pulsarWsHost websocketBase) (pulsarWsPort websocketBase)
 
-buildProducerSocketPath :: PulsarWebSocketBase -> TopicRef -> String
-buildProducerSocketPath websocketBase topicRef =
+-- | Build the Pulsar WebSocket producer URL with a stable
+-- @producerName@ query parameter so the broker-side dedup gate can
+-- track @(producerName, sequenceId)@ tuples.
+buildProducerSocketPath :: PulsarWebSocketBase -> TopicRef -> Text.Text -> String
+buildProducerSocketPath websocketBase topicRef producerName =
   buildSocketPath
     websocketBase
     ("producer/" <> renderTopicPath topicRef)
-    []
+    [("producerName", Text.unpack producerName)]
 
 buildConsumerSocketPath :: PulsarWebSocketBase -> TopicRef -> String -> String -> String
 buildConsumerSocketPath websocketBase topicRef subscriptionName consumerName =
@@ -1192,7 +1757,10 @@ domainResultToProto resultValue =
           set (field @"selectedEngine") (resultSelectedEngine resultValue) $
             set (field @"status") (status resultValue) $
               set (field @"payload") (resultPayloadToProto (payload resultValue)) $
-                set (field @"createdAt") (Text.pack (show (createdAt resultValue))) defMessage
+                set (field @"createdAt") (Text.pack (show (createdAt resultValue))) $
+                  set (field @"userId") (resultUserId resultValue) $
+                    set (field @"contextId") (resultContextId resultValue) $
+                      set (field @"causalRef") (resultCausalRef resultValue) defMessage
 
 protoResultToDomain :: ProtoInference.InferenceResult -> Maybe InferenceResult
 protoResultToDomain protoResult = do
@@ -1207,7 +1775,10 @@ protoResultToDomain protoResult = do
         resultSelectedEngine = view ProtoInferenceFields.selectedEngine protoResult,
         status = view ProtoInferenceFields.status protoResult,
         payload = parsedPayload,
-        createdAt = read (Text.unpack (view ProtoInferenceFields.createdAt protoResult))
+        createdAt = read (Text.unpack (view ProtoInferenceFields.createdAt protoResult)),
+        resultUserId = view ProtoInferenceFields.userId protoResult,
+        resultContextId = view ProtoInferenceFields.contextId protoResult,
+        resultCausalRef = view ProtoInferenceFields.causalRef protoResult
       }
 
 resultPayloadToProto :: ResultPayload -> ProtoInference.ResultPayload

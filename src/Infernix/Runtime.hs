@@ -61,7 +61,15 @@ executeInference paths runtimeMode request = case findModel runtimeMode (request
                       resultSelectedEngine = selectedEngine model,
                       status = "completed",
                       payload = buildPayload outputText,
-                      createdAt = now
+                      createdAt = now,
+                      -- Legacy / Phase 4 manual-inference path: no durable
+                      -- context routing, so the bridge fields stay empty.
+                      -- Phase 7 Sprint 7.8 fills these in when the engine
+                      -- receives the request via the durable-context
+                      -- dispatcher.
+                      resultUserId = "",
+                      resultContextId = "",
+                      resultCausalRef = ""
                     }
             persistInferenceResult paths result
             pure (Right result)

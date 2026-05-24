@@ -27,10 +27,10 @@
 - route, publication, cache, and service-loop coverage that does not require pod-failure injection
   remains owned by the ordinary unit, integration, and routed E2E entrypoints
 
-## Durable-Context Demo Chaos Cases (Planned, Phase 7)
+## Durable-Context Demo Chaos Cases
 
-When the durable-context demo lands, the supported integration suite gains chaos cases that
-exercise the failure semantics described in
+Phase 7 Sprint 7.14 owns the integration chaos suite for the durable-context demo. The
+cases below exercise the failure semantics described in
 [../architecture/daemon_topology.md § Failure Semantics per Role](../architecture/daemon_topology.md#failure-semantics-per-role)
 and [../architecture/durable_context_design.md](../architecture/durable_context_design.md).
 Each case asserts exactly-once outcome and full state preservation through Pulsar Failover

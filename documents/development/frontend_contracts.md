@@ -22,11 +22,12 @@
 - the generated module also appends the active runtime constants, catalog constants, helper
   record-unwrapping functions, and explicit `Simple.JSON` instances consumed by the frontend
 
-## Haskell-First Logic Discipline (Planned, Phase 7)
+## Haskell-First Logic Discipline (Phase 7)
 
-When the durable-context demo lands, the contract-generation pipeline carries every new ADT
-the demo introduces, and the discipline that PureScript is a thin renderer becomes a
-governed contract:
+The durable-context demo's contract-generation pipeline carries every new ADT the demo
+introduces (the Sprint 7.2 type set is landed in `src/Infernix/Web/Contracts.hs` and emitted
+through `infernix internal generate-purs-contracts`), and the discipline that PureScript is
+a thin renderer is a governed contract:
 
 - the reducer, idempotency dedup, `prefixHash` chain, dispatcher rule, event construction, and
   all projection logic live only in Haskell, in the shared `infernix` library

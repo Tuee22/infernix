@@ -42,10 +42,10 @@
 - the supported Gateway contract targets the live MinIO console and S3 surfaces, and integration
   requires those real upstream responses on the shared edge
 
-## Demo Artifact Bucket (Planned)
+## Demo Artifact Bucket
 
-When the durable-context demo lands (Phase 7), one additional bucket is reserved for the demo
-application. It is demo-gated and absent when `demo_ui = false`.
+Phase 7 Sprint 7.7 landed the `infernix-demo-objects` bucket alongside the always-on
+`infernix-models` bucket. The demo bucket is demo-gated and absent when `demo_ui = false`.
 
 - bucket name: `infernix-demo-objects`
 - per-user prefix layout inside the bucket:

@@ -73,6 +73,12 @@ spec:
               value: {{ .Values.service.minio.accessKey | quote }}
             - name: INFERNIX_MINIO_SECRET_KEY
               value: {{ .Values.service.minio.secretKey | quote }}
+            # Phase 7 Sprint 7.7: coordinator's bootstrap subscription
+            # mints presigned PUT URLs against MinIO via SigV4, which
+            # requires the region. Defaults to us-east-1 (which is what
+            # the chart-time MinIO provisioner uses) when unset.
+            - name: INFERNIX_MINIO_REGION
+              value: "us-east-1"
             - name: INFERNIX_PULSAR_ADMIN_URL
               value: {{ .Values.service.pulsar.adminUrl | quote }}
             - name: INFERNIX_PULSAR_HTTP_BASE_URL

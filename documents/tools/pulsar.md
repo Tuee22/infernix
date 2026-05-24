@@ -74,16 +74,18 @@ on-host daemon on Apple) consumes `inference.batch.<mode>`, executes the engine 
 publishes results to `result_topic`. The coordinator then writes the result back to the
 originating per-context conversation topic via the result-bridge.
 
-Today's repo ships a single fused `infernix-service` Deployment on Linux that performs both
-the coordinator's and the engine's duties in one process; Sprint 7.7 of Phase 7 splits that
-pod into role-specific Deployments and adds the `inference.batch.<mode>` topic family for
-Linux. Apple silicon already runs the supported two-process shape and is being renamed
-consistently in Sprint 7.7.
+The Sprint 7.7 daemon split is landed:
+`chart/templates/deployment-service.yaml` is gone, the chart ships
+`deployment-{coordinator,engine}.yaml` instead, and the
+`inference.batch.<mode>` topic family is now defined on every substrate
+(see `src/Infernix/Models.hs.canonicalBatchTopicForMode`). Apple silicon
+already ran the supported two-process shape and was renamed cleanly
+under Sprint 7.7's `Coordinator` / `Engine` vocabulary.
 
-## Demo Conversation and Metadata Topics (Planned)
+## Demo Conversation and Metadata Topics
 
-When the durable-context demo lands (Phase 7), the demo backend uses three additional Pulsar
-topic families. They are demo-gated and absent when `demo_ui = false`.
+Phase 7's durable-context demo uses three additional Pulsar topic families. They are
+demo-gated and absent when `demo_ui = false`.
 
 | Topic family | Pattern | Partition | Retention | Compaction |
 |---|---|---|---|---|
@@ -114,10 +116,16 @@ Rules:
   the coordinator pod uses a named **Failover** subscription on `inference.result.<mode>`
   with the same semantics
 
-## Model-Bootstrap Topic (Planned, Phase 7 Sprint 7.7)
+## Model-Bootstrap Topic
 
-Phase 7 Sprint 7.7 introduces a third Failover subscription type in the coordinator pod for
-lazy model-weight population to MinIO with exactly-once semantics:
+Phase 7 Sprint 7.7 added a third Failover subscription type in the coordinator pod for
+lazy model-weight population to MinIO with exactly-once semantics. The supported
+`infernix` tenant plus the `infernix/system` and `infernix/demo` namespaces (with
+deduplication enabled) are reconciled on daemon startup by
+`reconcileSupportedNamespaces` (`src/Infernix/Runtime/Pulsar.hs`); the
+`persistent://infernix/system/model.bootstrap.request` topic is created during the same
+reconcile pass. The coordinator's bootstrap consumer + downloader + MinIO uploader
+runtime loop lands together with Sprint 7.14's chaos validation:
 
 | Topic | Pattern | Purpose |
 |---|---|---|

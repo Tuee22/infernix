@@ -26,13 +26,17 @@ surface is the `.dhall` topic contract described in [../tools/pulsar.md](../tool
 - `GET /api/cache` returns manifest-backed cache status for the active runtime mode
 - `POST /api/cache/evict` removes derived cache directories while retaining the durable manifest
 - `POST /api/cache/rebuild` rebuilds derived cache directories from the durable manifest set
-- `POST /api/objects` (Planned, Phase 7) mints a presigned MinIO URL for the authenticated user
-  and the requested context. Request body carries the operation (`Upload` or `Download`), the
-  target `contextId`, and the artifact metadata (kind, MIME/content type, display name, byte
-  count for uploads). Response carries the presigned URL plus the canonical MinIO object key and
-  render disposition (`inline-media`, `text-preview`, `browser-document`, or `download-only`).
-  URLs are scoped to the user's prefix; cross-user URL requests are rejected. Demo-gated and
-  absent when `demo_ui = false`. See [../tools/minio.md](../tools/minio.md) and
+- `POST /api/objects/upload` and `POST /api/objects/download` (Phase 7 Sprint 7.9) mint a
+  presigned MinIO URL for the authenticated user and the requested context. The bearer JWT
+  is verified against the cached Keycloak JWKS, `userId` is derived from the `sub` claim,
+  the request body names the target `contextId` plus artifact metadata (kind,
+  MIME/content type, display name, byte count for uploads), the requested object key is
+  scoped against `users/<userId>/contexts/<contextId>/{uploads,generated}/`, and the
+  response carries the presigned URL plus the canonical MinIO object reference and a
+  render disposition (`inline-media`, `text-preview`, `browser-document`, or
+  `download-only`). Cross-user URL requests are rejected at the route layer; the
+  per-user MinIO scope policy is the second line of defence. Demo-gated and absent
+  when `demo_ui = false`. See [../tools/minio.md](../tools/minio.md) and
   [../architecture/demo_app_design.md](../architecture/demo_app_design.md).
 
 ## Rules
@@ -51,10 +55,12 @@ surface is the `.dhall` topic contract described in [../tools/pulsar.md](../tool
   in Phase 7 Sprint 7.7 (see [../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md](../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md))
 - cache-eviction and cache-rebuild flows only affect derived cache state; they do not rewrite the
   generated catalog or publication contract
-- cache status exposes durable runtime-artifact bundle URIs, engine-runner metadata including
-  engine-adapter availability, durable source-artifact manifest URIs, authoritative
-  source-artifact URI or kind metadata, and selected-artifact inventory while keeping derived cache
-  directories rebuildable
+- cache status exposes the supported `minio://infernix-models/<modelId>/` durable
+  source URIs, engine-runner metadata including engine-adapter availability, and selected
+  engine-binding details derived from the staged substrate `.dhall`. Cache manifests sit
+  beside the cached weights at
+  `./.data/runtime/model-cache/<runtime-mode>/<model-id>/manifest.pb` and are rebuildable
+  via `infernix cache rebuild`
 - publication details stay mode-stable and source from the repo-local publication-state file
 - on Apple, the supported clustered lifecycle publishes `daemonLocation: cluster-pod`,
   `inferenceExecutorLocation: control-plane-host`, `hostInferenceBatchTopic`, and
