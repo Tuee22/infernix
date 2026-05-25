@@ -98,7 +98,7 @@ dispatch command =
   case command of
     ShowRootHelp -> putStrLn helpText
     ShowTopicHelp topic -> putStrLn (topicHelpText topic)
-    ServiceCommand -> runService Nothing
+    ServiceCommand maybeRole -> runService Nothing maybeRole
     ClusterUpCommand -> clusterUp Nothing
     ClusterDownCommand -> clusterDown Nothing
     ClusterStatusCommand -> clusterStatus Nothing
@@ -172,7 +172,7 @@ validateCommandExecutionContext command = do
   where
     runtimeModeForCommand selectedCommand =
       case selectedCommand of
-        ServiceCommand -> activeRuntimeMode
+        ServiceCommand _ -> activeRuntimeMode
         ClusterUpCommand -> activeRuntimeMode
         ClusterDownCommand -> activeRuntimeMode
         ClusterStatusCommand -> activeRuntimeMode

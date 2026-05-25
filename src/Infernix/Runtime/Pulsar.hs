@@ -48,6 +48,15 @@ import Data.Text.Encoding qualified as TextEncoding
 import Data.Time (UTCTime, defaultTimeLocale, formatTime, getCurrentTime, parseTimeM)
 import Infernix.Bootstrap.Models qualified as BootstrapModels
 import Infernix.Bridge.Result qualified as ResultBridge
+import Infernix.ClusterConfig
+  ( ClusterConfig (..),
+    CoordinatorWiring (..),
+    DemoBackendWiring (..),
+    EngineCommandOverride (..),
+    EngineWiring (..),
+    PulsarWiring (..),
+  )
+import Infernix.ClusterConfig qualified as Cluster
 import Infernix.Config
 import Infernix.Conversation.Reducer
   ( ReducerState,
@@ -60,9 +69,10 @@ import Infernix.DemoConfig (decodeDemoConfigFile)
 import Infernix.Dispatch.ContextModelMap (ContextModelMap)
 import Infernix.Dispatch.ContextModelMap qualified as ContextModelMap
 import Infernix.Dispatch.SingleFlight qualified as Dispatch
-import Infernix.Error (InfernixError (InvalidControlPlaneOverride))
 import Infernix.Objects.Presigned qualified as Presigned
 import Infernix.Runtime (executeInference)
+import Infernix.Runtime.Worker (EngineCommandOverrideMap)
+import Infernix.SecretsConfig qualified as Secrets
 import Infernix.Storage (readEdgePortMaybe)
 import Infernix.Types
 import Infernix.Web.Contracts qualified as Contracts
@@ -91,7 +101,6 @@ import System.Directory
     listDirectory,
     removeFile,
   )
-import System.Environment (lookupEnv)
 import System.FilePath (takeDirectory, (<.>), (</>))
 import System.IO (hPutStrLn, stderr)
 import System.Timeout (timeout)
@@ -147,28 +156,48 @@ instance FromJSON HostDiscoveredPublication where
       <$> value .: "clusterPresent"
       <*> value .:? "edgePort"
 
-runProductionDaemon :: Paths -> RuntimeMode -> IO ()
-runProductionDaemon paths runtimeMode = do
-  maybeControlPlaneOverrideRaw <- lookupEnv "INFERNIX_CONTROL_PLANE_CONTEXT"
-  maybeDaemonRoleOverride <- lookupEnv "INFERNIX_DAEMON_ROLE"
-  maybeDaemonLocationOverride <- lookupEnv "INFERNIX_DAEMON_LOCATION"
-  maybeCatalogSourceOverride <- lookupEnv "INFERNIX_CATALOG_SOURCE"
-  maybeDemoConfigOverride <- lookupEnv "INFERNIX_DEMO_CONFIG_PATH"
-  maybeTransport <- discoverPulsarTransport paths runtimeMode
-  controlPlane <- resolveControlPlaneOverride paths maybeControlPlaneOverrideRaw
-  let catalogSource =
-        fromMaybe
-          (demoConfigCatalogSource maybeDemoConfigOverride)
-          maybeCatalogSourceOverride
-      selectedDemoConfigPath =
-        fromMaybe (Infernix.Config.generatedDemoConfigPath paths) maybeDemoConfigOverride
+-- | Phase 4 Sprint 4.13: env-var override family retired. Wiring
+-- values previously read from @INFERNIX_CONTROL_PLANE_CONTEXT@,
+-- @INFERNIX_DAEMON_ROLE@, @INFERNIX_DAEMON_LOCATION@,
+-- @INFERNIX_CATALOG_SOURCE@, @INFERNIX_DEMO_CONFIG_PATH@ now flow
+-- through typed arguments: the 'ClusterConfig' (optional, mounted by
+-- the chart into cluster pods at @/opt/infernix/cluster.dhall@)
+-- supplies cluster-wiring overrides; the 'DaemonRole' supplied by the
+-- caller (typically 'Infernix.Service.runService' after parsing the
+-- @--role coordinator|engine@ CLI flag) replaces the role env var;
+-- everything else falls back to the substrate dhall + 'Paths'
+-- defaults.
+runProductionDaemon :: Paths -> RuntimeMode -> Maybe ClusterConfig -> DaemonRole -> IO ()
+runProductionDaemon paths runtimeMode maybeClusterConfig daemonRole = do
+  maybeTransport <- discoverPulsarTransport paths runtimeMode maybeClusterConfig
+  let controlPlane = case maybeClusterConfig of
+        Just clusterConfig -> resolveClusterControlPlaneContext clusterConfig (controlPlaneContext paths)
+        Nothing -> controlPlaneContext paths
+      catalogSource = case maybeClusterConfig of
+        Just clusterConfig -> Text.unpack (coordinatorCatalogSource (clusterCoordinator clusterConfig))
+        Nothing -> demoConfigCatalogSource
+      selectedDemoConfigPath = case maybeClusterConfig of
+        Just clusterConfig ->
+          let demoPath = Text.unpack (demoConfigFilePath (clusterDemoBackend clusterConfig))
+           in if null demoPath then Infernix.Config.generatedDemoConfigPath paths else demoPath
+        Nothing -> Infernix.Config.generatedDemoConfigPath paths
+      -- Phase 4 Sprint 4.13: engine-command overrides are read once from
+      -- the mounted cluster manifest's @engine.commandOverrides@ field
+      -- and threaded through to the worker. Empty list when no manifest
+      -- is mounted (Apple host daemon, unit tests).
+      engineOverrides = case maybeClusterConfig of
+        Just clusterConfig ->
+          map
+            (\override -> (engineOverrideKey override, engineOverrideValue override))
+            (engineCommandOverrides (clusterEngine clusterConfig))
+        Nothing -> []
   demoConfig <- decodeDemoConfigFile selectedDemoConfigPath
-  daemonRole <- resolveDaemonRole maybeDaemonRoleOverride demoConfig
   daemonConfig <- requireDaemonConfig daemonRole demoConfig
-  let daemonLocation =
-        fromMaybe
-          (Text.unpack (daemonConfigLocation daemonConfig))
-          maybeDaemonLocationOverride
+  let daemonLocation = case maybeClusterConfig of
+        Just clusterConfig ->
+          let mounted = Text.unpack (coordinatorDaemonLocation (clusterCoordinator clusterConfig))
+           in if null mounted then Text.unpack (daemonConfigLocation daemonConfig) else mounted
+        Nothing -> Text.unpack (daemonConfigLocation daemonConfig)
   putStrLn ("serviceControlPlaneContext: " <> controlPlaneContextId controlPlane)
   putStrLn ("serviceDaemonRole: " <> Text.unpack (daemonRoleId daemonRole))
   putStrLn ("serviceDaemonLocation: " <> daemonLocation)
@@ -189,7 +218,7 @@ runProductionDaemon paths runtimeMode = do
       writeServiceReadinessMarker paths
       putStrLn "serviceSubscriptionMode: filesystem-topic-spool"
       forever $ do
-        forM_ (daemonConfigRequestTopics daemonConfig) (drainTopic paths runtimeMode daemonConfig)
+        forM_ (daemonConfigRequestTopics daemonConfig) (drainTopic paths runtimeMode engineOverrides daemonConfig)
         threadDelay 500000
     Just transport -> do
       ensureSchemaMarkers paths demoConfig
@@ -200,7 +229,7 @@ runProductionDaemon paths runtimeMode = do
       putStrLn ("servicePulsarWsBaseUrl: " <> renderPulsarWebSocketBase (pulsarWebSocketBase transport))
       forM_
         (daemonConfigRequestTopics daemonConfig)
-        (forkIO . consumeTopicForever transport paths runtimeMode daemonConfig)
+        (forkIO . consumeTopicForever transport paths runtimeMode engineOverrides daemonConfig)
       -- Phase 7 Sprint 7.8: when running as Coordinator, also start the
       -- result-bridge Failover subscription. The bridge consumes
       -- @inference.result.<mode>@ and writes the matching
@@ -251,41 +280,22 @@ runProductionDaemon paths runtimeMode = do
     firstOrEmpty [] = ""
     firstOrEmpty (topic : _) = topic
 
-resolveControlPlaneOverride :: Paths -> Maybe String -> IO ControlPlaneContext
-resolveControlPlaneOverride paths maybeControlPlaneOverrideRaw =
-  case maybeControlPlaneOverrideRaw of
-    Nothing -> pure (controlPlaneContext paths)
-    Just rawOverride -> parseControlPlaneOverride rawOverride
+-- | Phase 4 Sprint 4.13: resolve the control-plane context from a
+-- mounted cluster manifest when available, falling back to the
+-- 'Paths'-derived value (the supported host-native default).
+resolveClusterControlPlaneContext :: ClusterConfig -> ControlPlaneContext -> ControlPlaneContext
+resolveClusterControlPlaneContext clusterConfig fallback =
+  let mounted = Text.unpack (coordinatorControlPlaneContext (clusterCoordinator clusterConfig))
+   in fromMaybe fallback (parseControlPlaneContext mounted)
 
-parseControlPlaneOverride :: String -> IO ControlPlaneContext
-parseControlPlaneOverride rawOverride =
-  case parseControlPlaneContext rawOverride of
-    Just parsedOverride -> pure parsedOverride
-    Nothing -> throwIO (InvalidControlPlaneOverride rawOverride)
-
-demoConfigCatalogSource :: Maybe FilePath -> String
-demoConfigCatalogSource maybeDemoConfigOverride =
-  case maybeDemoConfigOverride of
-    Just _ -> "env-config-override"
-    Nothing -> "generated-build-root"
-
-resolveDaemonRole :: Maybe String -> DemoConfig -> IO DaemonRole
-resolveDaemonRole maybeOverride demoConfig =
-  case trimWhitespace =<< maybeOverride of
-    Nothing -> pure (activeDaemonRole demoConfig)
-    Just rawValue ->
-      case parseDaemonRoleText (Text.pack rawValue) of
-        Just daemonRole -> pure daemonRole
-        Nothing -> ioError (userError ("unsupported INFERNIX_DAEMON_ROLE value: " <> rawValue))
-
-parseDaemonRoleText :: Text.Text -> Maybe DaemonRole
-parseDaemonRoleText rawValue =
-  case Text.toLower rawValue of
-    "coordinator" -> Just Coordinator
-    "engine" -> Just Engine
-    "cluster" -> Just Coordinator
-    "host" -> Just Engine
-    _ -> Nothing
+-- | Phase 4 Sprint 4.13: the previous helper accepted a
+-- @Maybe FilePath@ encoding the now-retired @INFERNIX_DEMO_CONFIG_PATH@
+-- env override. The supported flow now always falls through to the
+-- staged substrate dhall, so the source identifier is constant. The
+-- 'ClusterConfig.coordinator.catalogSource' field provides the
+-- in-cluster override.
+demoConfigCatalogSource :: String
+demoConfigCatalogSource = "generated-build-root"
 
 requireDaemonConfig :: DaemonRole -> DemoConfig -> IO DaemonConfig
 requireDaemonConfig daemonRole demoConfig
@@ -306,7 +316,11 @@ requireDaemonConfig daemonRole demoConfig
 
 publishInferenceRequest :: Paths -> RuntimeMode -> Text.Text -> InferenceRequest -> IO Text.Text
 publishInferenceRequest paths runtimeMode topic requestValue = do
-  maybeTransport <- discoverPulsarTransport paths runtimeMode
+  -- Phase 4 Sprint 4.13: this is the host-side @internal
+  -- pulsar-roundtrip@ entrypoint; it never runs in a cluster pod, so
+  -- 'discoverPulsarTransport' is invoked with no 'ClusterConfig' and
+  -- falls through to the Apple-host publication-state discovery.
+  maybeTransport <- discoverPulsarTransport paths runtimeMode Nothing
   requestIdValue <- generatePublishedRequestId
   let protoPayload =
         set (field @"requestId") requestIdValue $
@@ -338,7 +352,8 @@ publishInferenceRequest paths runtimeMode topic requestValue = do
 
 readPublishedInferenceResultMaybe :: Paths -> RuntimeMode -> Text.Text -> Text.Text -> IO (Maybe InferenceResult)
 readPublishedInferenceResultMaybe paths runtimeMode topic requestIdValue = do
-  maybeTransport <- discoverPulsarTransport paths runtimeMode
+  -- Phase 4 Sprint 4.13: see note on 'publishInferenceRequest' above.
+  maybeTransport <- discoverPulsarTransport paths runtimeMode Nothing
   case maybeTransport of
     Nothing -> do
       let outputPath = topicDirectoryPath paths topic </> Text.unpack requestIdValue <.> "pb"
@@ -355,14 +370,14 @@ readPublishedInferenceResultMaybe paths runtimeMode topic requestIdValue = do
     Just transport ->
       readPublishedInferenceResultViaPulsar transport topic requestIdValue
 
-drainTopic :: Paths -> RuntimeMode -> DaemonConfig -> Text.Text -> IO ()
-drainTopic paths runtimeMode daemonConfig requestTopicValue =
+drainTopic :: Paths -> RuntimeMode -> EngineCommandOverrideMap -> DaemonConfig -> Text.Text -> IO ()
+drainTopic paths runtimeMode overrides daemonConfig requestTopicValue =
   case daemonConfigHostBatchTopic daemonConfig of
     Just hostBatchTopicValue
       | runtimeMode == AppleSilicon && daemonConfigRole daemonConfig == Coordinator ->
           forwardTopic paths hostBatchTopicValue requestTopicValue
     _ ->
-      drainInferenceTopic paths runtimeMode (daemonConfigResultTopic daemonConfig) requestTopicValue
+      drainInferenceTopic paths runtimeMode overrides (daemonConfigResultTopic daemonConfig) requestTopicValue
 
 forwardTopic :: Paths -> Text.Text -> Text.Text -> IO ()
 forwardTopic paths targetTopicValue sourceTopicValue = do
@@ -379,8 +394,8 @@ forwardTopic paths targetTopicValue sourceTopicValue = do
     ByteString.writeFile targetPath encodedRequest
     removeFile sourcePath
 
-drainInferenceTopic :: Paths -> RuntimeMode -> Text.Text -> Text.Text -> IO ()
-drainInferenceTopic paths runtimeMode resultTopicValue requestTopicValue = do
+drainInferenceTopic :: Paths -> RuntimeMode -> EngineCommandOverrideMap -> Text.Text -> Text.Text -> IO ()
+drainInferenceTopic paths runtimeMode overrides resultTopicValue requestTopicValue = do
   let requestDirectory = topicDirectoryPath paths requestTopicValue
   requestDirectoryPresent <- doesDirectoryExist requestDirectory
   unless requestDirectoryPresent (createDirectoryIfMissing True requestDirectory)
@@ -392,7 +407,7 @@ drainInferenceTopic paths runtimeMode resultTopicValue requestTopicValue = do
       Left err ->
         ioError (userError ("failed to decode inference request from " <> requestPath <> ": " <> err))
       Right protoRequest -> do
-        publishedResult <- publishedResultFromRequest paths runtimeMode protoRequest
+        publishedResult <- publishedResultFromRequest paths runtimeMode overrides protoRequest
         createDirectoryIfMissing True (topicDirectoryPath paths resultTopicValue)
         writeInferenceResultFile
           (topicDirectoryPath paths resultTopicValue </> Text.unpack (requestId publishedResult) <.> "pb")
@@ -435,27 +450,45 @@ topicDirectoryPath :: Paths -> Text.Text -> FilePath
 topicDirectoryPath paths topicValue =
   runtimeRoot paths </> "pulsar" </> "topics" </> sanitizeTopic topicValue
 
-discoverPulsarTransport :: Paths -> RuntimeMode -> IO (Maybe PulsarTransport)
-discoverPulsarTransport paths runtimeMode = do
-  maybeWebSocketBase <- lookupEnv "INFERNIX_PULSAR_WS_BASE_URL"
-  maybeAdminBase <- lookupEnv "INFERNIX_PULSAR_ADMIN_URL"
-  case trimWhitespace =<< maybeWebSocketBase of
-    Nothing ->
-      case (controlPlaneContext paths, runtimeMode) of
-        (HostNative, AppleSilicon) -> discoverAppleHostPulsarTransport paths
-        _ -> pure Nothing
-    Just rawWebSocketBase ->
-      case parsePulsarWebSocketBase rawWebSocketBase of
-        Left err ->
-          ioError (userError ("invalid INFERNIX_PULSAR_WS_BASE_URL: " <> err))
-        Right parsedWebSocketBase ->
-          pure
-            ( Just
-                PulsarTransport
-                  { pulsarAdminBaseUrl = trimWhitespace =<< maybeAdminBase,
-                    pulsarWebSocketBase = parsedWebSocketBase
-                  }
-            )
+-- | Phase 4 Sprint 4.13: @INFERNIX_PULSAR_WS_BASE_URL@ and
+-- @INFERNIX_PULSAR_ADMIN_URL@ env reads retired. Cluster-resident
+-- pods now provide both endpoints through the mounted
+-- 'ClusterConfig'; host-native flows fall back to the existing
+-- Apple publication-state discovery path.
+discoverPulsarTransport :: Paths -> RuntimeMode -> Maybe ClusterConfig -> IO (Maybe PulsarTransport)
+discoverPulsarTransport paths runtimeMode maybeClusterConfig =
+  case maybeClusterConfig of
+    Just clusterConfig -> discoverPulsarTransportFromCluster clusterConfig fallback
+    Nothing -> fallback
+  where
+    fallback = case (controlPlaneContext paths, runtimeMode) of
+      (HostNative, AppleSilicon) -> discoverAppleHostPulsarTransport paths
+      _ -> pure Nothing
+
+discoverPulsarTransportFromCluster ::
+  ClusterConfig ->
+  IO (Maybe PulsarTransport) ->
+  IO (Maybe PulsarTransport)
+discoverPulsarTransportFromCluster clusterConfig fallback =
+  let rawWebSocketBase = Text.unpack (pulsarWsBaseUrl (clusterPulsar clusterConfig))
+      adminBase = Text.unpack (pulsarAdminUrl (clusterPulsar clusterConfig))
+   in if null rawWebSocketBase
+        then fallback
+        else parseClusterPulsarTransport adminBase rawWebSocketBase
+
+parseClusterPulsarTransport :: String -> String -> IO (Maybe PulsarTransport)
+parseClusterPulsarTransport adminBase rawWebSocketBase =
+  case parsePulsarWebSocketBase rawWebSocketBase of
+    Left err ->
+      ioError (userError ("invalid pulsar.wsBaseUrl in cluster manifest: " <> err))
+    Right parsedWebSocketBase ->
+      pure
+        ( Just
+            PulsarTransport
+              { pulsarAdminBaseUrl = if null adminBase then Nothing else Just adminBase,
+                pulsarWebSocketBase = parsedWebSocketBase
+              }
+        )
 
 discoverAppleHostPulsarTransport :: Paths -> IO (Maybe PulsarTransport)
 discoverAppleHostPulsarTransport paths = do
@@ -816,7 +849,7 @@ requirePulsarAdminBaseUrl transport =
     Nothing ->
       ioError
         ( userError
-            "INFERNIX_PULSAR_ADMIN_URL must be set whenever INFERNIX_PULSAR_WS_BASE_URL enables the real Pulsar transport."
+            "Pulsar admin URL must be configured (ClusterConfig.pulsar.adminUrl) whenever the real Pulsar transport is enabled."
         )
 
 ensureRemoteSchema :: Manager -> String -> Text.Text -> String -> IO ()
@@ -871,10 +904,17 @@ ensureRemoteSchema manager adminBaseUrl topicValue messageTypeName = do
               )
           )
 
-consumeTopicForever :: PulsarTransport -> Paths -> RuntimeMode -> DaemonConfig -> Text.Text -> IO ()
-consumeTopicForever transport paths runtimeMode daemonConfig requestTopicValue =
+consumeTopicForever ::
+  PulsarTransport ->
+  Paths ->
+  RuntimeMode ->
+  EngineCommandOverrideMap ->
+  DaemonConfig ->
+  Text.Text ->
+  IO ()
+consumeTopicForever transport paths runtimeMode overrides daemonConfig requestTopicValue =
   forever $ do
-    sessionResult <- try @SomeException (consumeTopicSession transport paths runtimeMode daemonConfig requestTopicValue)
+    sessionResult <- try @SomeException (consumeTopicSession transport paths runtimeMode overrides daemonConfig requestTopicValue)
     case sessionResult of
       Right _ -> threadDelay 1000000
       Left err -> do
@@ -887,8 +927,15 @@ consumeTopicForever transport paths runtimeMode daemonConfig requestTopicValue =
           )
         threadDelay 1000000
 
-consumeTopicSession :: PulsarTransport -> Paths -> RuntimeMode -> DaemonConfig -> Text.Text -> IO ()
-consumeTopicSession transport paths runtimeMode daemonConfig requestTopicValue = do
+consumeTopicSession ::
+  PulsarTransport ->
+  Paths ->
+  RuntimeMode ->
+  EngineCommandOverrideMap ->
+  DaemonConfig ->
+  Text.Text ->
+  IO ()
+consumeTopicSession transport paths runtimeMode overrides daemonConfig requestTopicValue = do
   topicRef <- requireTopicRef requestTopicValue
   let subscriptionName = "infernix-service-" <> sanitizeTopic requestTopicValue
       consumerName = subscriptionName <> "-consumer"
@@ -949,7 +996,7 @@ consumeTopicSession transport paths runtimeMode daemonConfig requestTopicValue =
           publishedResult <-
             if Text.null modelIdValue
               then pure (emptyModelIdRejectionResult runtimeMode decodedRequest)
-              else publishedResultFromRequest paths runtimeMode decodedRequest
+              else publishedResultFromRequest paths runtimeMode overrides decodedRequest
           let resultOptions =
                 (defaultPublishOptions ("infernix-engine-result-" <> runtimeModeId runtimeMode))
                   { publishSequenceId = inferenceRequestSequenceId decodedRequest
@@ -1899,29 +1946,42 @@ putMinioObject presigned manager now objectRef payload = do
           )
       )
 
+-- | Phase 7 Sprint 7.17: @INFERNIX_MINIO_*@ env reads retired. The
+-- supported flow reads non-credential wiring (endpoint, region,
+-- presign-expiry) from the mounted 'ClusterConfig' and credentials
+-- (access key, secret key) from the file path declared by the mounted
+-- 'SecretsConfig.minio.credentialsPath'.
 loadBootstrapPresignedConfig :: IO (Either String Presigned.PresignedUrlConfig)
 loadBootstrapPresignedConfig = do
-  maybeEndpoint <- lookupEnv "INFERNIX_MINIO_ENDPOINT"
-  maybeAccessKey <- lookupEnv "INFERNIX_MINIO_ACCESS_KEY"
-  maybeSecretKey <- lookupEnv "INFERNIX_MINIO_SECRET_KEY"
-  maybeRegion <- lookupEnv "INFERNIX_MINIO_REGION"
-  case (maybeEndpoint, maybeAccessKey, maybeSecretKey) of
-    (Just endpointValue, Just accessKeyValue, Just secretKeyValue) ->
-      let (scheme, hostPort) = splitMinioEndpoint (Text.pack endpointValue)
-       in pure $
-            Right
-              Presigned.PresignedUrlConfig
-                { Presigned.presignedScheme = scheme,
-                  Presigned.presignedEndpoint = hostPort,
-                  Presigned.presignedRegion = Text.pack (fromMaybe "us-east-1" maybeRegion),
-                  Presigned.presignedAccessKeyId = Text.pack accessKeyValue,
-                  Presigned.presignedSecretAccessKey = Text.pack secretKeyValue,
-                  Presigned.presignedExpirySeconds = 900
-                }
-    _ ->
+  clusterExists <- doesFileExist Cluster.defaultClusterConfigMountPath
+  secretsExists <- doesFileExist Secrets.defaultClusterSecretsMountPath
+  if not (clusterExists && secretsExists)
+    then
       pure
         ( Left
-            "INFERNIX_MINIO_ENDPOINT / ACCESS_KEY / SECRET_KEY must be set on the coordinator"
+            ( "model-bootstrap requires the cluster ConfigMap at "
+                <> Cluster.defaultClusterConfigMountPath
+                <> " and the secrets Secret at "
+                <> Secrets.defaultClusterSecretsMountPath
+                <> "; the coordinator pod is the supported caller for this code path"
+            )
+        )
+    else do
+      clusterConfig <- Cluster.decodeClusterConfigFile Cluster.defaultClusterConfigMountPath
+      secretsConfig <- Secrets.decodeSecretsConfigFile Secrets.defaultClusterSecretsMountPath
+      minioCreds <- Secrets.readMinioCredentials (Secrets.secretsMinio secretsConfig)
+      let minio = Cluster.clusterMinio clusterConfig
+          (scheme, hostPort) = splitMinioEndpoint (Cluster.minioEndpoint minio)
+      pure
+        ( Right
+            Presigned.PresignedUrlConfig
+              { Presigned.presignedScheme = scheme,
+                Presigned.presignedEndpoint = hostPort,
+                Presigned.presignedRegion = Cluster.minioRegion minio,
+                Presigned.presignedAccessKeyId = Secrets.minioAccessKey minioCreds,
+                Presigned.presignedSecretAccessKey = Secrets.minioSecretKey minioCreds,
+                Presigned.presignedExpirySeconds = fromIntegral (Cluster.minioPresignExpirySeconds minio)
+              }
         )
 
 splitMinioEndpoint :: Text.Text -> (Text.Text, Text.Text)
@@ -2022,9 +2082,14 @@ emptyModelIdRejectionTimestamp =
     Just timestamp -> timestamp
     Nothing -> error "internal: failed to parse fixed epoch timestamp"
 
-publishedResultFromRequest :: Paths -> RuntimeMode -> ProtoInference.InferenceRequest -> IO InferenceResult
-publishedResultFromRequest paths runtimeMode protoRequest = do
-  domainResult <- executeInference paths runtimeMode (protoRequestToDomain protoRequest)
+publishedResultFromRequest ::
+  Paths ->
+  RuntimeMode ->
+  EngineCommandOverrideMap ->
+  ProtoInference.InferenceRequest ->
+  IO InferenceResult
+publishedResultFromRequest paths runtimeMode overrides protoRequest = do
+  domainResult <- executeInference paths runtimeMode overrides (protoRequestToDomain protoRequest)
   now <- getCurrentTime
   let envelopeUserId = view ProtoInferenceFields.userId protoRequest
       envelopeContextId = view ProtoInferenceFields.contextId protoRequest

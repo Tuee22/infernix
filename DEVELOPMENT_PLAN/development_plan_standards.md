@@ -308,9 +308,12 @@ Rules:
   the `INFERNIX_COMPOSE_*` launcher variables that select the built image and Dockerfile build
   arguments while keeping that same supported Compose command surface unchanged.
 - On Apple Silicon, operators do not use Compose as a user-facing launcher for ordinary CLI work.
-  The Apple host CLI invokes `docker compose run --rm playwright` against the dedicated
-  `infernix-playwright:local` image when it needs the container-owned Playwright executor during
-  routed E2E validation.
+  The Apple host-native routed-E2E refactor (host-side `npm exec` Playwright fed by the same typed
+  fixture) is deferred together with the Apple bootstrap stage-zero refactor; the current Apple
+  branch in `runRuntimeModeE2E` surfaces an explicit deferral diagnostic. Phase 3 Sprint 3.10
+  (May 24, 2026) retired the previous dedicated `infernix-playwright:local` image and the
+  `docker compose run --rm playwright` invocation; Linux substrates now run Playwright in-container
+  inside the substrate image via `npm --prefix web exec -- playwright test ...`.
 - On Linux CPU, host prerequisites stop at Docker Engine plus the Docker buildx and Compose
   plugins.
 - On Linux GPU, host prerequisites stop at the Linux CPU Docker baseline plus the supported NVIDIA
@@ -567,9 +570,9 @@ Substrate-specific validation is explicit.
 - On Apple Silicon, the supported host CLI owns test orchestration. It proves that the cluster
   daemon is deployed, starts the same-binary host inference daemon when the service-loop checks need
   Apple-native inference, validates the Pulsar batch handoff from cluster daemon to host daemon, and
-  verifies that the host daemon publishes the result before invoking `docker compose run --rm
-  playwright` against the dedicated `infernix-playwright:local` image for the container-owned
-  Playwright executor.
+  verifies that the host daemon publishes the result; the host-native routed-E2E executor refactor
+  (host-side `npm exec` Playwright fed by the same typed fixture) is deferred and the current Apple
+  branch in `runRuntimeModeE2E` surfaces an explicit deferral diagnostic until that work lands.
 - On Linux substrates, all supported CLI and test commands run through
   `docker compose run --rm infernix infernix ...`, and test flows do not manage a host daemon
   because request consumption, inference, and result publication all run from deployed cluster

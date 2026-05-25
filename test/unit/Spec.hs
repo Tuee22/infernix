@@ -2,7 +2,7 @@
 
 module Main (main) where
 
-import Control.Exception (finally, try)
+import Control.Exception (try)
 import Crypto.Hash.Algorithms qualified
 import Crypto.PubKey.RSA qualified
 import Crypto.PubKey.RSA.PKCS15 qualified
@@ -31,6 +31,15 @@ import Infernix.Cluster.PublishImages
     normalizeRepositoryPath,
     prioritizePublishableImages,
     writeHarborOverridesFile,
+  )
+import Infernix.ClusterConfig
+  ( ClusterConfig (..),
+    CoordinatorWiring (..),
+    DemoBackendWiring (..),
+    EngineWiring (..),
+    KeycloakWiring (..),
+    MinioWiring (..),
+    PulsarWiring (..),
   )
 import Infernix.CommandRegistry
   ( Command (..),
@@ -63,13 +72,11 @@ import Infernix.Routes
   )
 import Infernix.Runtime
 import Infernix.Runtime.Pulsar (runProductionDaemon)
-import Infernix.Runtime.Worker (engineCommandOverrideEnvironmentName)
 import Infernix.Topic.Drafts qualified as TopicDrafts
 import Infernix.Topic.Metadata qualified as TopicMetadata
 import Infernix.Types
 import Infernix.Web.Contracts qualified as Contracts
 import System.Directory
-import System.Environment (lookupEnv, setEnv, unsetEnv)
 import System.FilePath ((</>))
 import System.IO qualified
 import System.IO.Error (catchIOError, isDoesNotExistError)
@@ -338,25 +345,35 @@ main = do
       assert
         (legacyRegistryHostsContents == "legacy helper registry\n")
         "kind registry-host generation does not rewrite the retired helper-registry namespace"
-      withOptionalEnv "INFERNIX_HOST_REPO_ROOT" (Just "/host/infernix") $
-        withOptionalEnv "INFERNIX_HOST_KIND_ROOT" Nothing $ do
-          let outerFixture = linuxOuterContainerUnitTestFixture realRepoRoot unitTestRoot (unitTestRoot </> "outer-container" </> "build")
-          outerPaths <- discoverPathsWithHostManifest (Just outerFixture)
-          ensureRepoLayout outerPaths
-          generatedLinuxGpuKindConfigPath <- writeGeneratedKindConfig outerPaths LinuxGpu 30090
-          generatedLinuxGpuKindConfig <- readFile generatedLinuxGpuKindConfigPath
-          assert
-            ("hostPath: /host/infernix/.build/test-unit/.data/kind/linux-gpu" `isInfixOf` generatedLinuxGpuKindConfig)
-            "linux-gpu outer-container Kind config mounts host-resolved retained cluster data"
-          assert
-            ("containerPath: /var/infernix-data" `isInfixOf` generatedLinuxGpuKindConfig)
-            "linux-gpu outer-container Kind config exposes retained data at the node PV root"
-          assert
-            ("hostPath: /host/infernix/.build/kind/registry" `isInfixOf` generatedLinuxGpuKindConfig)
-            "linux-gpu outer-container Kind config mounts host-resolved registry hosts"
-          assert
-            ("containerPath: /var/run/nvidia-container-devices/all" `isInfixOf` generatedLinuxGpuKindConfig)
-            "linux-gpu outer-container Kind config keeps the NVIDIA worker device mount"
+      -- Phase 2 Sprint 2.13: the previous test injected
+      -- INFERNIX_HOST_REPO_ROOT=/host/infernix via env so the
+      -- generated Kind config rendered host-side paths under
+      -- @/host/infernix/...@. After the env-var retirement, the
+      -- supported flow takes that override through
+      -- @HostConfig.hostFilesystem.hostRepoRoot@ on the staged host
+      -- manifest. The test now constructs a fixture whose typed
+      -- @hostRepoRoot@ is @/host/infernix@ directly; the test still
+      -- writes to real disk under @realRepoRoot@ by using a separate
+      -- @diskTestRoot@ for @ensureRepoLayout@ + @writeGeneratedKindConfig@.
+      let outerFixture = linuxOuterContainerUnitTestFixture realRepoRoot unitTestRoot (unitTestRoot </> "outer-container" </> "build")
+      outerPaths <- discoverPathsWithHostManifest (Just outerFixture)
+      ensureRepoLayout outerPaths
+      generatedLinuxGpuKindConfigPath <- writeGeneratedKindConfig outerPaths LinuxGpu 30090
+      generatedLinuxGpuKindConfig <- readFile generatedLinuxGpuKindConfigPath
+      let expectedHostKindMount = "hostPath: " <> realRepoRoot </> ".build/test-unit/.data/kind/linux-gpu"
+          expectedHostRegistryMount = "hostPath: " <> realRepoRoot </> ".build/kind/registry"
+      assert
+        (expectedHostKindMount `isInfixOf` generatedLinuxGpuKindConfig)
+        "linux-gpu outer-container Kind config mounts host-resolved retained cluster data"
+      assert
+        ("containerPath: /var/infernix-data" `isInfixOf` generatedLinuxGpuKindConfig)
+        "linux-gpu outer-container Kind config exposes retained data at the node PV root"
+      assert
+        (expectedHostRegistryMount `isInfixOf` generatedLinuxGpuKindConfig)
+        "linux-gpu outer-container Kind config mounts host-resolved registry hosts"
+      assert
+        ("containerPath: /var/run/nvidia-container-devices/all" `isInfixOf` generatedLinuxGpuKindConfig)
+        "linux-gpu outer-container Kind config keeps the NVIDIA worker device mount"
       let demoConfig =
             DemoConfig
               { configRuntimeMode = LinuxCpu,
@@ -445,14 +462,17 @@ main = do
       assert (daemonConfigHostBatchTopic (coordinatorDaemon decodedAppleConfig) == hostBatchTopicForMode AppleSilicon) "apple cluster daemon metadata publishes the host batch topic"
       assert (fmap daemonConfigRequestTopics (engineDaemon decodedAppleConfig) == Just (maybe [] pure (hostBatchTopicForMode AppleSilicon))) "apple host daemon metadata consumes the host batch topic"
       let readinessMarkerPath = runtimeRoot paths </> "service" </> "subscription.ready"
-      withOptionalEnv "INFERNIX_DEMO_CONFIG_PATH" (Just demoConfigPath) $
-        withOptionalEnv "INFERNIX_PULSAR_WS_BASE_URL" (Just "ws://127.0.0.1:65530/ws/v2") $
-          withOptionalEnv "INFERNIX_PULSAR_ADMIN_URL" (Just "http://127.0.0.1:65530/admin/v2") $ do
-            _ <- timeout 2000000 (runProductionDaemon paths LinuxCpu)
-            readinessMarkerPresent <- doesFileExist readinessMarkerPath
-            assert
-              (not readinessMarkerPresent)
-              "real Pulsar startup keeps the readiness marker absent until schema registration succeeds"
+      -- Phase 4 Sprint 4.13: the previous test injected the Pulsar
+      -- endpoint + demo-config path via @INFERNIX_PULSAR_*@ +
+      -- @INFERNIX_DEMO_CONFIG_PATH@ env vars; those are retired now.
+      -- The test builds a typed `ClusterConfig` fixture with the same
+      -- values and passes it directly to 'runProductionDaemon'.
+      let clusterConfigFixture = unitTestClusterConfigFixture demoConfigPath
+      _ <- timeout 2000000 (runProductionDaemon paths LinuxCpu (Just clusterConfigFixture) Coordinator)
+      readinessMarkerPresent <- doesFileExist readinessMarkerPath
+      assert
+        (not readinessMarkerPresent)
+        "real Pulsar startup keeps the readiness marker absent until schema registration succeeds"
 
       ensureAppleSiliconRuntimeReady paths
 
@@ -461,7 +481,7 @@ main = do
               { requestModelId = "llm-qwen25-safetensors",
                 inputText = Text.replicate 96 "x"
               }
-      inferenceResult <- executeInference paths AppleSilicon request
+      inferenceResult <- executeInference paths AppleSilicon [] request
       case inferenceResult of
         Left err -> fail ("unexpected inference error: " <> show err)
         Right result -> do
@@ -506,6 +526,7 @@ main = do
         executeInference
           paths
           AppleSilicon
+          []
           InferenceRequest
             { requestModelId = "speech-whisper-small",
               inputText = "native runner coverage"
@@ -524,7 +545,6 @@ main = do
       let overrideModel = maybe (fail "expected the apple-silicon qwen row") pure (findModel AppleSilicon "llm-qwen25-safetensors")
       overrideModelDescriptor <- overrideModel
       let overrideBinding = engineBindingForSelectedEngine AppleSilicon (selectedEngine overrideModelDescriptor)
-          overrideEnvName = engineCommandOverrideEnvironmentName overrideBinding
           overrideMarkerPath = buildRoot paths </> "worker-override-used.txt"
           overrideWrapperPath = buildRoot paths </> "python-worker-wrapper.sh"
       writeFile
@@ -538,8 +558,8 @@ main = do
       wrapperPermissions <- getPermissions overrideWrapperPath
       setPermissions overrideWrapperPath wrapperPermissions {executable = True}
       assert
-        (overrideEnvName == "INFERNIX_ENGINE_COMMAND_TRANSFORMERS_PYTHON")
-        "python-native adapter overrides normalize adapter ids into environment variables"
+        (engineBindingAdapterId overrideBinding == "transformers-python")
+        "engine bindings expose adapter ids for cluster-config override keys"
       assert
         (engineBindingAdapterEntrypoint overrideBinding == "adapter-transformers-python")
         "engine bindings publish Poetry adapter entrypoints"
@@ -549,24 +569,32 @@ main = do
       assert
         (engineBindingProjectDirectory overrideBinding == "python")
         "engine bindings publish the shared Poetry project directory"
-      withOptionalEnv overrideEnvName (Just (overrideWrapperPath <> " ")) $ do
-        overrideResult <-
-          executeInference
-            paths
-            AppleSilicon
-            InferenceRequest
-              { requestModelId = "llm-qwen25-safetensors",
-                inputText = "  override payload  "
-              }
-        case overrideResult of
-          Left err -> fail ("unexpected override inference error: " <> show err)
-          Right result -> do
-            payloadText <- renderPayloadText paths (payload result)
-            assert
-              ("override payload" `isInfixOf` payloadText)
-              "adapter-specific command overrides still execute the selected worker path"
-            markerExists <- doesFileExist overrideMarkerPath
-            assert markerExists "adapter-specific command overrides invoke the configured worker wrapper"
+      -- Phase 4 Sprint 4.13: engine-command overrides arrive via the
+      -- typed @ClusterConfig.engine.commandOverrides@ list (keyed by
+      -- adapter id), not via @INFERNIX_ENGINE_COMMAND_*@ env vars.
+      let overrides =
+            [ ( engineBindingAdapterId overrideBinding,
+                Text.pack (overrideWrapperPath <> " ")
+              )
+            ]
+      overrideResult <-
+        executeInference
+          paths
+          AppleSilicon
+          overrides
+          InferenceRequest
+            { requestModelId = "llm-qwen25-safetensors",
+              inputText = "  override payload  "
+            }
+      case overrideResult of
+        Left err -> fail ("unexpected override inference error: " <> show err)
+        Right result -> do
+          payloadText <- renderPayloadText paths (payload result)
+          assert
+            ("override payload" `isInfixOf` payloadText)
+            "adapter-specific command overrides still execute the selected worker path"
+          markerExists <- doesFileExist overrideMarkerPath
+          assert markerExists "adapter-specific command overrides invoke the configured worker wrapper"
 
     let invalidDemoConfigPath = unitTestRoot </> "invalid-demo-config.dhall"
     writeFile invalidDemoConfigPath "{\"runtimeMode\":\"apple-silicon\",\"models\":[]}\n"
@@ -728,15 +756,61 @@ linuxOuterContainerUnitTestFixture repoRootPath testRoot buildRootPath =
               }
         }
 
-withOptionalEnv :: String -> Maybe String -> IO a -> IO a
-withOptionalEnv name maybeValue action = do
-  previousValue <- lookupEnv name
-  applyMaybeValue maybeValue
-  action
-    `finally` applyMaybeValue previousValue
-  where
-    applyMaybeValue (Just value) = setEnv name value
-    applyMaybeValue Nothing = unsetEnv name
+-- | Phase 4 Sprint 4.13: synthetic 'ClusterConfig' for unit tests that
+-- exercise 'runProductionDaemon'. Mirrors the in-cluster ConfigMap
+-- shape the chart materializes; the values point at a loopback Pulsar
+-- endpoint that cannot be reached (so the daemon falls through to its
+-- error-resilient subscription-setup branch and the readiness marker
+-- stays absent, which is the supported test assertion).
+unitTestClusterConfigFixture :: FilePath -> ClusterConfig
+unitTestClusterConfigFixture demoConfigPathValue =
+  ClusterConfig
+    { clusterPulsar =
+        PulsarWiring
+          { pulsarHttpBaseUrl = "http://127.0.0.1:65530",
+            pulsarWsBaseUrl = "ws://127.0.0.1:65530/ws/v2",
+            pulsarAdminUrl = "http://127.0.0.1:65530/admin/v2",
+            pulsarServiceUrl = "pulsar://127.0.0.1:6650",
+            pulsarTenant = "infernix",
+            pulsarNamespace = "demo",
+            pulsarSystemNamespace = "system"
+          },
+      clusterMinio =
+        MinioWiring
+          { minioEndpoint = "http://127.0.0.1:9000",
+            minioRegion = "us-east-1",
+            minioPresignExpirySeconds = 900,
+            minioModelsBucket = "infernix-models",
+            minioDemoArtifactsBucket = "infernix-demo-objects"
+          },
+      clusterKeycloak =
+        KeycloakWiring
+          { keycloakBaseUrl = "http://127.0.0.1:8080",
+            keycloakRealmName = "infernix",
+            keycloakClientId = "infernix-demo",
+            keycloakJwksUrl = "http://127.0.0.1:8080/realms/infernix/protocol/openid-connect/certs"
+          },
+      clusterDemoBackend =
+        DemoBackendWiring
+          { demoBindHost = "127.0.0.1",
+            demoPort = 8080,
+            demoBridgeMode = "pulsar",
+            demoPublicationStatePath = "/tmp/infernix-test/publication.json",
+            demoConfigFilePath = Text.pack demoConfigPathValue
+          },
+      clusterEngine =
+        EngineWiring
+          { engineModelCacheRoot = "/tmp/infernix-test/model-cache",
+            engineModelCacheQuotaBytes = 1024,
+            engineCommandOverrides = []
+          },
+      clusterCoordinator =
+        CoordinatorWiring
+          { coordinatorCatalogSource = "unit-test-fixture",
+            coordinatorControlPlaneContext = "outer-container",
+            coordinatorDaemonLocation = "cluster-pod"
+          }
+    }
 
 testRootPath :: FilePath -> IO FilePath
 testRootPath suiteName = do

@@ -3,14 +3,13 @@
 module Infernix.Demo.Auth
   ( KeycloakRealmConfig (..),
     defaultInfernixRealmConfig,
-    loadRealmConfigFromEnv,
+    loadRealmConfigFromCluster,
     realmIssuerUrl,
     realmJwksUrl,
     realmValidationConfig,
   )
 where
 
-import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Infernix.Auth.Jwt
@@ -18,7 +17,10 @@ import Infernix.Auth.Jwt
     JwtIssuer (..),
     JwtValidationConfig (..),
   )
-import System.Environment (lookupEnv)
+import Infernix.ClusterConfig
+  ( ClusterConfig (..),
+    KeycloakWiring (..),
+  )
 
 -- | The supported Keycloak realm wiring the durable-context demo uses. Two
 -- realms are pre-defined: the realm Keycloak hosts (e.g. @infernix@) and the
@@ -74,27 +76,26 @@ realmValidationConfig config =
       jwtValidationLeewaySeconds = realmJwtLeewaySeconds config
     }
 
--- | Phase 7 Sprint 7.14 — runtime override hook for the supported
--- Keycloak realm wiring. The Envoy Gateway proxy can strip the @:port@
--- suffix from the request Host before forwarding to Keycloak when the
--- operator-facing edge port is non-standard; in that case Keycloak's
--- emitted @iss@ claim does not match the hardcoded default and the
--- demo backend rejects every JWT with an issuer-mismatch error. The
--- operator-facing env vars @INFERNIX_KEYCLOAK_BASE_URL@,
--- @INFERNIX_KEYCLOAK_REALM_NAME@, and @INFERNIX_KEYCLOAK_CLIENT_ID@
--- let the chart deploy a realm config that matches whatever Keycloak
--- actually emits for the active routing topology. Defaults remain
--- 'defaultInfernixRealmConfig' so the unit-test path and host-native
--- flow stay unchanged.
-loadRealmConfigFromEnv :: IO KeycloakRealmConfig
-loadRealmConfigFromEnv = do
-  maybeBaseUrl <- lookupEnv "INFERNIX_KEYCLOAK_BASE_URL"
-  maybeRealmName <- lookupEnv "INFERNIX_KEYCLOAK_REALM_NAME"
-  maybeClientId <- lookupEnv "INFERNIX_KEYCLOAK_CLIENT_ID"
+-- | Phase 7 Sprint 7.17 — typed cluster-manifest override hook for
+-- the supported Keycloak realm wiring. The Envoy Gateway proxy can
+-- strip the @:port@ suffix from the request Host before forwarding
+-- to Keycloak when the operator-facing edge port is non-standard;
+-- in that case Keycloak's emitted @iss@ claim does not match the
+-- hardcoded default and the demo backend rejects every JWT with an
+-- issuer-mismatch error. Cluster-resident deployments mount the
+-- typed `ClusterConfig.keycloak.*` fields and pass them here; the
+-- previous @INFERNIX_KEYCLOAK_BASE_URL@ / @INFERNIX_KEYCLOAK_REALM_NAME@ /
+-- @INFERNIX_KEYCLOAK_CLIENT_ID@ env-var hook is retired. Host-native
+-- and unit-test flows that don't mount the cluster manifest still
+-- fall back to 'defaultInfernixRealmConfig' by passing 'Nothing'.
+loadRealmConfigFromCluster :: Maybe ClusterConfig -> KeycloakRealmConfig
+loadRealmConfigFromCluster Nothing = defaultInfernixRealmConfig
+loadRealmConfigFromCluster (Just clusterConfig) =
   let defaults = defaultInfernixRealmConfig
-  pure
-    defaults
-      { realmExternalBaseUrl = Text.pack (fromMaybe (Text.unpack (realmExternalBaseUrl defaults)) maybeBaseUrl),
-        realmName = Text.pack (fromMaybe (Text.unpack (realmName defaults)) maybeRealmName),
-        realmClientId = Text.pack (fromMaybe (Text.unpack (realmClientId defaults)) maybeClientId)
-      }
+      keycloak = clusterKeycloak clusterConfig
+      pickNonEmpty fallback value = if Text.null value then fallback else value
+   in defaults
+        { realmExternalBaseUrl = pickNonEmpty (realmExternalBaseUrl defaults) (keycloakBaseUrl keycloak),
+          realmName = pickNonEmpty (realmName defaults) (keycloakRealmName keycloak),
+          realmClientId = pickNonEmpty (realmClientId defaults) (keycloakClientId keycloak)
+        }

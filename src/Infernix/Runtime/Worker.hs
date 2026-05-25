@@ -3,15 +3,15 @@
 {-# LANGUAGE TypeApplications #-}
 
 module Infernix.Runtime.Worker
-  ( engineCommandOverrideEnvironmentName,
+  ( EngineCommandOverrideMap,
+    lookupEngineCommandOverride,
     runInferenceWorker,
   )
 where
 
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Char8 qualified as ByteString8
-import Data.Char (isAlphaNum, toUpper)
-import Data.List (dropWhileEnd)
+import Data.List (dropWhileEnd, find)
 import Data.ProtoLens (decodeMessage, defMessage, encodeMessage)
 import Data.ProtoLens.Field (field)
 import Data.Text (Text)
@@ -24,7 +24,6 @@ import Lens.Family2 (set, view)
 import Proto.Infernix.Runtime.Inference qualified as ProtoInference
 import Proto.Infernix.Runtime.Inference_Fields qualified as ProtoInferenceFields
 import System.Directory (doesFileExist)
-import System.Environment (lookupEnv)
 import System.Exit (ExitCode (ExitSuccess))
 import System.FilePath ((</>))
 import System.IO (hClose)
@@ -37,16 +36,36 @@ import System.Process
     waitForProcess,
   )
 
+-- | Phase 4 Sprint 4.13 — engine-command override lookup keyed by the
+-- engine binding's adapter id. The supported source is the
+-- @ClusterConfig.engine.commandOverrides@ Dhall map (rendered into
+-- @ConfigMap/infernix-cluster-config@). Empty list = no overrides; the
+-- worker uses the default Poetry-run invocation.
+type EngineCommandOverrideMap = [(Text, Text)]
+
+-- | Look up an override entry by the engine binding's adapter id.
+lookupEngineCommandOverride :: EngineCommandOverrideMap -> EngineBinding -> Maybe String
+lookupEngineCommandOverride overrides engineBinding =
+  fmap
+    (Text.unpack . snd)
+    (find (\(adapterIdKey, _) -> adapterIdKey == engineBindingAdapterId engineBinding) overrides)
+
 data WorkerInvocation
   = DirectWorkerInvocation FilePath FilePath [String]
   | ShellWorkerInvocation FilePath String
 
-runInferenceWorker :: Paths -> RuntimeMode -> ModelDescriptor -> InferenceRequest -> IO (Either ErrorResponse Text)
-runInferenceWorker paths runtimeMode model request =
+runInferenceWorker ::
+  Paths ->
+  RuntimeMode ->
+  EngineCommandOverrideMap ->
+  ModelDescriptor ->
+  InferenceRequest ->
+  IO (Either ErrorResponse Text)
+runInferenceWorker paths runtimeMode overrides model request =
   case engineBindingAdapterType engineBinding of
     "python-stdio" ->
       ensurePythonEngineSetupReady paths runtimeMode engineBinding
-        >> runPythonWorker paths runtimeMode model engineBinding request
+        >> runPythonWorker paths runtimeMode overrides model engineBinding request
     "native-process-runner" ->
       runNativeWorker runtimeMode model engineBinding request
     adapterType ->
@@ -66,17 +85,16 @@ unsupportedEngineRunner engineBinding adapterType =
             <> adapterType
       }
 
-engineCommandOverrideEnvironmentName :: EngineBinding -> String
-engineCommandOverrideEnvironmentName engineBinding =
-  "INFERNIX_ENGINE_COMMAND_" <> map normalize (Text.unpack (engineBindingAdapterId engineBinding))
-  where
-    normalize character
-      | isAlphaNum character = toUpper character
-      | otherwise = '_'
-
-runPythonWorker :: Paths -> RuntimeMode -> ModelDescriptor -> EngineBinding -> InferenceRequest -> IO (Either ErrorResponse Text)
-runPythonWorker paths runtimeMode model engineBinding request = do
-  maybeOverride <- lookupEnv (engineCommandOverrideEnvironmentName engineBinding)
+runPythonWorker ::
+  Paths ->
+  RuntimeMode ->
+  EngineCommandOverrideMap ->
+  ModelDescriptor ->
+  EngineBinding ->
+  InferenceRequest ->
+  IO (Either ErrorResponse Text)
+runPythonWorker paths runtimeMode overrides model engineBinding request = do
+  let maybeOverride = lookupEngineCommandOverride overrides engineBinding
   invocation <- resolvePythonInvocation paths engineBinding maybeOverride
   let workerRequest = encodeMessage (buildWorkerRequest paths runtimeMode model engineBinding request)
   workerResult <- runWorkerInvocation paths invocation workerRequest

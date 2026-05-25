@@ -302,18 +302,44 @@ infernix/
 │   └── Demo.hs
 ├── src/
 │   └── Infernix/
+│       ├── Auth/
+│       ├── Bootstrap/
+│       ├── Bridge/
 │       ├── CLI.hs
-│       ├── CommandRegistry.hs
-│       ├── Routes.hs
-│       ├── Web/
-│       │   └── Contracts.hs
 │       ├── Cluster/
+│       ├── Cluster.hs
+│       ├── CommandRegistry.hs
+│       ├── Config.hs
+│       ├── Conversation/
 │       ├── Demo/
+│       ├── DemoCLI.hs
+│       ├── DemoConfig.hs
+│       ├── Dispatch/
+│       ├── Engines/
+│       ├── Error.hs
+│       ├── HostConfig.hs
+│       ├── HostPrereqs.hs
+│       ├── HostTools.hs
+│       ├── Internal/
 │       ├── Lint/
+│       ├── Models.hs
+│       ├── Objects/
+│       ├── ProcessMonitor.hs
+│       ├── Python.hs
+│       ├── Routes.hs
 │       ├── Runtime/
+│       ├── Runtime.hs
 │       ├── Service.hs
 │       ├── Storage.hs
-│       └── Types.hs
+│       ├── Substrate.hs
+│       ├── Topic/
+│       ├── Types.hs
+│       ├── Web/
+│       │   └── Contracts.hs
+│       └── Workflow.hs
+├── dhall/
+│   ├── InfernixHost.dhall
+│   └── InfernixSubstrate.dhall
 ├── proto/
 │   └── infernix/
 ├── python/
@@ -321,10 +347,12 @@ infernix/
 │   └── adapters/
 ├── web/
 │   ├── spago.yaml
+│   ├── package.json
 │   ├── src/
 │   │   ├── *.purs
 │   │   └── Generated/
 │   ├── test/
+│   ├── scripts/
 │   └── playwright/
 ├── chart/
 │   ├── Chart.yaml
@@ -352,8 +380,7 @@ infernix/
 │   ├── cluster-linux-cpu.yaml
 │   └── cluster-linux-gpu.yaml
 ├── docker/
-│   ├── linux-substrate.Dockerfile
-│   └── playwright.Dockerfile
+│   └── linux-substrate.Dockerfile
 ├── tools/
 │   └── generated_proto/
 ├── test/
@@ -390,7 +417,10 @@ The plan keeps control-plane execution context separate from substrate.
 
 ### 0. Documentation-First Construction Rule
 
-- Phase 0 remains the closed documentation and governance baseline for later doctrine resets.
+- Sprints 0.1–0.8 are the closed documentation and governance baseline. Sprint 0.9
+  (Configuration Doctrine) is `Active`: the doctrine and per-phase retirement-sprint ledger are
+  declared, but the seven later retirement sprints (1.11, 2.13, 3.10, 4.13, 5.9, 6.28, 7.17) are
+  still open or blocked.
 - New documentation gaps land as explicit follow-on work in later phases.
 - `README.md` stays an orientation layer.
 - governed root docs carry explicit status, supersession, and canonical-home markers when they
@@ -410,8 +440,9 @@ The plan keeps control-plane execution context separate from substrate.
 
 - Apple host-native control plane is the canonical operator surface on Apple Silicon
 - Linux outer-container control plane is the only supported Linux CLI surface
-- Apple operators do not use Compose as a user-facing launcher for ordinary CLI work, but the
-  Apple host CLI invokes `docker compose run --rm playwright` for routed E2E
+- Apple operators do not use Compose as a user-facing launcher for ordinary CLI work; the
+  routed Apple-host E2E surface is deferred (see Hard Constraint 10) until the host-native
+  `npm exec` Playwright refactor lands
 - Linux host-native `infernix` execution outside a container is not a supported operator workflow
 
 ### 3. Three Supported Substrates
@@ -465,18 +496,27 @@ The plan keeps control-plane execution context separate from substrate.
 - when `demo_ui` is false in the active staged file, no demo UI or demo API route is published;
   the supported materialization path can emit that production-off value with `--demo-ui false`
 - when `demo_ui` is true, the demo app is cluster-resident across substrates
-- every substrate deploys cluster `infernix service` daemons
-- on `linux-cpu` and `linux-gpu`, cluster daemons read requests from Pulsar, execute inference,
-  and publish results
-- on `apple-silicon`, cluster daemons consume request topics and publish inference work to a
-  dedicated host batch topic consumed by same-binary host daemons, which execute Apple-native
-  inference and publish results
-- the staged `.dhall` tells each daemon its substrate, whether it is a cluster or host daemon, and,
-  for host daemons, the Pulsar connection mode plus the batch and result topics it uses
-- the current generated Helm values run one cluster `infernix service` replica, while the
-  Deployment template exposes `service.replicaCount` and preferred anti-affinity for explicit
-  multi-replica chart values; Pulsar-owned topics, exclusive subscriptions, and acknowledgement
-  handling keep batch ownership clear if operators scale that surface deliberately
+- every substrate deploys cluster `infernix` daemon Deployments under the supported three-role
+  split landed by Phase 7 Sprint 7.7: `infernix-coordinator` (stateless, Pulsar coordination +
+  dispatcher + result-bridge + model bootstrap) and `infernix-engine` (stateful adapter execution
+  on Linux substrates, on-host `flock(2)`-singleton daemon on Apple Silicon). The legacy fused
+  `chart/templates/deployment-service.yaml` was retired together with the `service.*` chart-values
+  block on May 23, 2026
+- on `linux-cpu` and `linux-gpu`, the coordinator consumes request topics and publishes
+  `inference.batch.<mode>`; the engine consumes the batch topic, executes inference, and publishes
+  results
+- on `apple-silicon`, the coordinator role consumes request topics and publishes inference work to
+  `inference.batch.apple-silicon`; the same-binary on-host engine daemon consumes that batch topic,
+  executes Apple-native inference, and publishes results
+- the staged `.dhall` tells each daemon its substrate, whether its `daemonRole` is `Coordinator` or
+  `Engine`, and, for the Apple host engine, the Pulsar connection mode plus the batch and result
+  topics it uses
+- the supported HA defaults: coordinator `replicaCount >= 2` with soft anti-affinity, engine
+  required pod anti-affinity keyed on its own label with `topologyKey: kubernetes.io/hostname` so
+  two engine pods cannot share a node; per-role `coordinator.replicaCount` and
+  `engine.replicaCount` knobs in `chart/values.yaml`. Pulsar-owned topics, `Shared` subscriptions
+  on the request and batch topics, and per-context `Failover` subscriptions on the result topic
+  keep request handoff, inference, and result-publication ownership unambiguous
 
 ### 7. Local Harbor Is The Cluster Image Source
 
@@ -520,14 +560,17 @@ The plan keeps control-plane execution context separate from substrate.
 - generated PureScript contract output lives in `web/src/Generated/`
 - no handwritten duplicate DTO layer exists on the frontend
 
-### 10. Playwright Runs From The Dedicated Playwright Image
+### 10. Playwright Runs From Inside The Linux Substrate Image
 
-- routed Playwright execution runs from the dedicated `infernix-playwright:local` image built by
-  `docker/playwright.Dockerfile` on every substrate
-- on Apple Silicon, the host CLI invokes `docker compose run --rm playwright` directly against the
-  host docker daemon
-- on Linux substrates, the outer container invokes the same `docker compose run --rm playwright`
-  through the mounted host docker socket
+- Phase 3 Sprint 3.10 (landed May 24, 2026) retired the dedicated `infernix-playwright:local`
+  image and `docker/playwright.Dockerfile`; the Playwright system packages and the three browsers
+  are now baked into `docker/linux-substrate.Dockerfile`
+- on Linux substrates, routed Playwright execution runs in-container via
+  `npm --prefix web exec -- playwright test ...` against the routed cluster on Docker's private
+  `kind` network
+- on Apple Silicon, the host-native E2E refactor (host-side `npm exec` Playwright fed by the same
+  typed fixture) is deferred; the current Apple branch in `runRuntimeModeE2E` surfaces an explicit
+  deferral diagnostic so the Linux closure stays honest about the gap
 - browser and Playwright code do not branch on substrate id or engine family; `infernix-demo`
   reads the active `.dhall` and owns substrate-appropriate engine dispatch
 - supported workflows use `npm --prefix web exec -- playwright ...`; `npx` is not part of the

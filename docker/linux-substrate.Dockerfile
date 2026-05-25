@@ -116,9 +116,72 @@ WORKDIR /workspace
 
 COPY . /workspace
 
-RUN mkdir -p /workspace/.build /opt/infernix \
+RUN mkdir -p /workspace/.build /opt/infernix /opt/infernix/dhall \
     && cd /workspace \
     && find . -type f | sed 's#^\\./##' | LC_ALL=C sort > /opt/infernix/source-snapshot-files.txt
+
+# Phase 1 Sprint 1.11 — bake the supported Linux outer-container host
+# manifest into the image at the canonical mount path. The Haskell
+# binary's `discoverPaths` reads this file via `tryLoadHostManifest`
+# at startup so it can resolve `buildRoot = /workspace/.build/outer-container/build`
+# (the supported outer-container path) instead of falling back to
+# `/workspace/.build` (the host-native fallback default that
+# mis-classifies the container as `HostNative`). Operators override
+# per-host by editing this file before the binary needs it.
+RUN printf '%s\n' \
+    '{ hostExecutionContext = < AppleHostNative | LinuxOuterContainer >.LinuxOuterContainer' \
+    ', toolPaths =' \
+    '    { docker = "/usr/bin/docker"' \
+    '    , kubectl = "/usr/local/bin/kubectl"' \
+    '    , helm = "/usr/local/bin/helm"' \
+    '    , kind = "/usr/local/bin/kind"' \
+    '    , cabal = "/usr/local/bin/cabal"' \
+    '    , ghc = "/usr/local/bin/ghc"' \
+    '    , ghcup = ""' \
+    '    , ormolu = "/workspace/.build/haskell-style-tools/bin/ormolu"' \
+    '    , hlint = "/workspace/.build/haskell-style-tools/bin/hlint"' \
+    '    , npm = "/usr/local/bin/npm"' \
+    '    , node = "/usr/local/bin/node"' \
+    '    , python3 = "/usr/bin/python3"' \
+    '    , poetry = "/opt/poetry/bin/poetry"' \
+    '    , protoc = "/usr/bin/protoc"' \
+    '    , git = "/usr/bin/git"' \
+    '    , tar = "/usr/bin/tar"' \
+    '    , curl = "/usr/bin/curl"' \
+    '    , aptGet = "/usr/bin/apt-get"' \
+    '    , brew = ""' \
+    '    , colima = ""' \
+    '    , sudo = "/usr/bin/sudo"' \
+    '    , systemctl = "/usr/bin/systemctl"' \
+    '    , mkdir = "/usr/bin/mkdir"' \
+    '    , chmod = "/usr/bin/chmod"' \
+    '    , ln = "/usr/bin/ln"' \
+    '    , install = "/usr/bin/install"' \
+    '    , id = "/usr/bin/id"' \
+    '    , getent = "/usr/bin/getent"' \
+    '    , cut = "/usr/bin/cut"' \
+    '    , dirname = "/usr/bin/dirname"' \
+    '    , bash = "/usr/bin/bash"' \
+    '    , crictl = "/usr/local/bin/crictl"' \
+    '    , chown = "/usr/bin/chown"' \
+    '    , nvidiaSmi = "/usr/bin/nvidia-smi"' \
+    '    , nvkind = "/usr/local/bin/nvkind"' \
+    '    , hostname = "/usr/bin/hostname"' \
+    '    }' \
+    ', filesystem =' \
+    '    { repoRoot = "/workspace"' \
+    '    , buildRoot = "/workspace/.build/outer-container/build"' \
+    '    , dataRoot = "/workspace/.data"' \
+    '    , runtimeRoot = "/workspace/.data/runtime"' \
+    '    , kubeconfigPath = "/workspace/.data/runtime/infernix.kubeconfig"' \
+    '    , secretsRoot = "/workspace/.data/runtime/secrets"' \
+    '    , homeDirectory = "/root"' \
+    '    , kindRoot = "/workspace/.data/runtime/kind"' \
+    '    }' \
+    ', playwrightHost = "127.0.0.1"' \
+    ', controlPlaneContext = "outer-container"' \
+    '}' \
+    > /opt/infernix/dhall/InfernixHost.dhall
 
 RUN mkdir -p /workspace/tools/generated_proto \
     && cabal update \

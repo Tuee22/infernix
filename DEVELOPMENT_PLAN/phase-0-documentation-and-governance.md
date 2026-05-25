@@ -301,9 +301,11 @@ None.
 ### Objective
 
 Declare the no-env-var, absolute-path, three-Dhall-file configuration doctrine as the supported
-contract, and enumerate the per-phase retirement work (Sprints 1.11, 2.10, 3.10, 4.13, 5.9, 6.28,
+contract, and enumerate the per-phase retirement work (Sprints 1.11, 2.13, 3.10, 4.13, 5.9, 6.28,
 7.17) that operationalizes it. Phase 0 owns the doctrine; the matching code changes land in the
-later-phase retirement sprints.
+later-phase retirement sprints. The three configuration Dhall files (`InfernixHost.dhall`,
+`InfernixCluster.dhall`, `InfernixSecrets.dhall`) are distinct from the pre-existing
+`dhall/InfernixSubstrate.dhall` substrate schema landed in Phase 6 Sprint 6.27.
 
 ### Deliverables
 
@@ -339,11 +341,11 @@ later-phase retirement sprints.
 - `infernix lint files` and the existing repo-wide checks remain clean (this sprint is purely
   declarative — no code changes).
 - The seven Pending Removal rows in `legacy-tracking-for-deletion.md` each name a specific later
-  sprint as the owning sprint (1.11, 2.10, 3.10, 4.13, 5.9, 6.28, 7.17).
+  sprint as the owning sprint (1.11, 2.13, 3.10, 4.13, 5.9, 6.28, 7.17).
 
 ### Remaining Work
 
-Sprint 0.9 closes when the seven retirement sprints (1.11, 2.10, 3.10, 4.13, 5.9, 6.28, 7.17)
+Sprint 0.9 closes when the seven retirement sprints (1.11, 2.13, 3.10, 4.13, 5.9, 6.28, 7.17)
 land. Until then Sprint 0.9 stays Active and Phase 0 stays Active because the doctrine it
 declares is not yet enforced by code or chart shape; the lint gates land in Phase 6 Sprint 6.28
 and become the durable enforcement mechanism at that point.

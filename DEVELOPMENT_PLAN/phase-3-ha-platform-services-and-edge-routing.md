@@ -1,6 +1,6 @@
 # Phase 3: HA Platform Services and Edge Routing
 
-**Status**: Active (Sprint 3.10 in flight; Sprints 3.1–3.9 Done)
+**Status**: Active (Sprint 3.10 substantively landed May 24, 2026 with two deferred items; Sprints 3.1–3.9 Done)
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Define the mandatory local HA Harbor, MinIO, operator-managed PostgreSQL, and

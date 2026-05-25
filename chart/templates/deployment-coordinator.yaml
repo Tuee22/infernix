@@ -45,53 +45,39 @@ spec:
           imagePullPolicy: {{ .Values.coordinator.image.pullPolicy }}
           command:
 {{ toYaml .Values.coordinator.command | nindent 12 }}
+          # Phase 4 Sprint 4.13: daemon role is now a typed CLI arg
+          # (`--role coordinator`) instead of an `INFERNIX_DAEMON_ROLE`
+          # env var. The full `INFERNIX_PULSAR_*` env family is retired;
+          # the daemon decodes those values from the mounted
+          # `infernix-cluster-config` ConfigMap below at startup.
+          # `INFERNIX_DATA_ROOT` stays as an env var for now (Phase 1
+          # Sprint 1.11 deferred its retirement to the demo-deployment
+          # rewiring that happens in Phase 7 Sprint 7.17).
           args:
-{{ toYaml .Values.coordinator.args | nindent 12 }}
+            - service
+            - --role
+            - coordinator
+          # Phase 7 Sprint 7.17: `INFERNIX_MINIO_ACCESS_KEY` /
+          # `INFERNIX_MINIO_SECRET_KEY` env entries retire. The
+          # supported flow mounts `Secret/infernix-cluster-secrets`
+          # at `/etc/infernix/secrets/`; the daemon decodes
+          # `InfernixSecrets.dhall` to find the credential file paths
+          # and reads JSON-encoded credentials from those files. The
+          # remaining `INFERNIX_DATA_ROOT` env entry is the supported
+          # writable durable-state root for the subscription-ready
+          # marker; an emptyDir volume backs it because Pulsar
+          # subscription cursors live broker-side.
           env:
-            - name: INFERNIX_CONTROL_PLANE_CONTEXT
-              value: {{ .Values.controlPlaneContext | quote }}
-            - name: INFERNIX_DAEMON_LOCATION
-              value: "cluster-pod"
-            - name: INFERNIX_DAEMON_ROLE
-              value: "coordinator"
-            - name: INFERNIX_CATALOG_SOURCE
-              value: "mounted-configmap"
-            - name: INFERNIX_DEMO_CONFIG_PATH
-              value: "{{ .Values.demoConfig.mountPath }}/{{ .Values.demoConfig.fileName }}"
-            - name: INFERNIX_PUBLICATION_STATE_PATH
-              value: "{{ .Values.demoConfig.mountPath }}/{{ .Values.publication.fileName }}"
-            # Phase 7 Sprint 7.7: writable durable-state root the daemon
-            # uses for the subscription-ready marker and any future
-            # broker-cursor metadata. An emptyDir volume is sufficient
-            # because Pulsar subscription cursors live broker-side; the
-            # coordinator role has no persistent local state.
             - name: INFERNIX_DATA_ROOT
               value: "/srv/infernix/.data"
-            - name: INFERNIX_MINIO_ENDPOINT
-              value: {{ .Values.service.minio.endpoint | quote }}
-            - name: INFERNIX_MINIO_ACCESS_KEY
-              value: {{ .Values.service.minio.accessKey | quote }}
-            - name: INFERNIX_MINIO_SECRET_KEY
-              value: {{ .Values.service.minio.secretKey | quote }}
-            # Phase 7 Sprint 7.7: coordinator's bootstrap subscription
-            # mints presigned PUT URLs against MinIO via SigV4, which
-            # requires the region. Defaults to us-east-1 (which is what
-            # the chart-time MinIO provisioner uses) when unset.
-            - name: INFERNIX_MINIO_REGION
-              value: "us-east-1"
-            - name: INFERNIX_PULSAR_ADMIN_URL
-              value: {{ .Values.service.pulsar.adminUrl | quote }}
-            - name: INFERNIX_PULSAR_HTTP_BASE_URL
-              value: {{ .Values.service.pulsar.httpBaseUrl | quote }}
-            - name: INFERNIX_PULSAR_WS_BASE_URL
-              value: {{ .Values.service.pulsar.webSocketBaseUrl | quote }}
-            - name: INFERNIX_PULSAR_SERVICE_URL
-              value: {{ .Values.service.pulsar.serviceUrl | quote }}
-            - name: INFERNIX_PULSAR_TENANT
-              value: {{ .Values.service.pulsar.tenant | quote }}
-            - name: INFERNIX_PULSAR_NAMESPACE
-              value: {{ .Values.service.pulsar.namespace | quote }}
           volumeMounts:
+            - name: cluster-config
+              mountPath: /opt/infernix/cluster.dhall
+              subPath: cluster.dhall
+              readOnly: true
+            - name: cluster-secrets
+              mountPath: /etc/infernix/secrets
+              readOnly: true
             - name: demo-config
               mountPath: "{{ .Values.demoConfig.mountPath }}/{{ .Values.demoConfig.fileName }}"
               subPath: {{ .Values.demoConfig.fileName }}
@@ -118,6 +104,12 @@ spec:
         - name: publication-state
           configMap:
             name: {{ .Values.publication.name }}
+        - name: cluster-config
+          configMap:
+            name: {{ .Values.clusterConfig.name }}
+        - name: cluster-secrets
+          secret:
+            secretName: infernix-cluster-secrets
         - name: coordinator-data
           emptyDir: {}
 {{- end }}

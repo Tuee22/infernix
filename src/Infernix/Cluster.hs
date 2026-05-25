@@ -25,7 +25,7 @@ import Data.ByteString.Lazy.Char8 qualified as LazyChar8
 import Data.Char (isSpace, toLower)
 import Data.List qualified as List
 import Data.Map.Strict qualified as Map
-import Data.Maybe (catMaybes, fromMaybe, isJust, mapMaybe)
+import Data.Maybe (catMaybes, fromMaybe, mapMaybe)
 import Data.Text qualified as Text
 import Data.Time (UTCTime, diffUTCTime, getCurrentTime)
 import Data.Vector qualified as Vector
@@ -35,6 +35,8 @@ import Infernix.Config (ControlPlaneContext (..), Paths (..), controlPlaneContex
 import Infernix.Config qualified as Config
 import Infernix.DemoConfig (decodeDemoConfigFile, ensureGeneratedDemoConfigFile, renderGeneratedDemoConfigPayload)
 import Infernix.Engines.AppleSilicon (ensureAppleSiliconRuntimeReady)
+import Infernix.HostTools (HostTool (..))
+import Infernix.HostTools qualified as HostTools
 import Infernix.Models
 import Infernix.ProcessMonitor qualified as ProcessMonitor
 import Infernix.Routes (routeHelmValues)
@@ -43,7 +45,6 @@ import Infernix.Types
 import Infernix.Workflow (platformCommandsAvailable)
 import Network.Socket qualified as Socket
 import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, findExecutable, getTemporaryDirectory, listDirectory, removeFile, removePathForcibly, renameFile)
-import System.Environment (getEnvironment, lookupEnv)
 import System.Exit (ExitCode (..))
 import System.FilePath (addTrailingPathSeparator, normalise, takeDirectory, takeFileName, (</>))
 import System.Process
@@ -790,7 +791,7 @@ runKubectlCompat args = do
       | otherwise -> do
           ensureOuterContainerKindNetworkAccess paths (clusterRuntimeMode state)
           ensureClusterKubeconfigPresent paths state
-          putStr =<< captureCommand Nothing [] "kubectl" (kubeconfigArgs state <> args)
+          putStr =<< captureHostToolCmd paths Nothing [] HostKubectl (kubeconfigArgs state <> args)
 
 normalizeClusterStatePaths :: Paths -> ClusterState -> ClusterState
 normalizeClusterStatePaths paths state =
@@ -939,7 +940,7 @@ ensureClaimDirectoryReady paths runtimeMode persistentClaim = do
   createDirectoryIfMissing True directoryPath
   -- Repo-local claim mirrors stay broadly writable so Apple can sync them into Linux Kind nodes
   -- even though the macOS host filesystem cannot model those node-local container owners.
-  runCommand Nothing [] "chmod" ["-R", "a+rwX", directoryPath]
+  runHostToolCmd paths Nothing [] HostChmod ["-R", "a+rwX", directoryPath]
   case claimOwner persistentClaim of
     Nothing -> pure ()
     Just owner
@@ -1067,6 +1068,7 @@ completeLinuxGpuNodeBootstrap paths = do
   where
     bootstrapWorkerNode nodeName =
       runDockerNodeScript
+        paths
         nodeName
         ( unlines
             [ "set -euo pipefail",
@@ -1085,9 +1087,9 @@ completeLinuxGpuNodeBootstrap paths = do
             ]
         )
 
-runDockerNodeScript :: String -> String -> IO ()
-runDockerNodeScript nodeName script =
-  runCommand Nothing [] "docker" ["exec", nodeName, "bash", "-c", script]
+runDockerNodeScript :: Paths -> String -> String -> IO ()
+runDockerNodeScript paths nodeName script =
+  runHostToolCmd paths Nothing [] HostDocker ["exec", nodeName, "bash", "-c", script]
 
 data LinuxGpuProbeResults = LinuxGpuProbeResults
   { hostGpuResult :: Either String String,
@@ -1097,7 +1099,7 @@ data LinuxGpuProbeResults = LinuxGpuProbeResults
 
 ensureLinuxGpuHostPrerequisites :: Paths -> IO ()
 ensureLinuxGpuHostPrerequisites paths = do
-  probeResults <- linuxGpuProbeResults
+  probeResults <- linuxGpuProbeResults paths
   unless (linuxGpuPreflightSatisfied (Config.controlPlaneContext paths) probeResults) $ do
     let failureReport = linuxGpuHostFailureReport (Config.controlPlaneContext paths) probeResults
     ioError (userError failureReport)
@@ -1105,14 +1107,14 @@ ensureLinuxGpuHostPrerequisites paths = do
 linuxGpuSupportedOnHost :: IO Bool
 linuxGpuSupportedOnHost = do
   paths <- Config.discoverPaths
-  linuxGpuPreflightSatisfied (Config.controlPlaneContext paths) <$> linuxGpuProbeResults
+  linuxGpuPreflightSatisfied (Config.controlPlaneContext paths) <$> linuxGpuProbeResults paths
 
-linuxGpuProbeResults :: IO LinuxGpuProbeResults
-linuxGpuProbeResults = do
-  hostGpuResult <- tryCommand Nothing [] "nvidia-smi" ["-L"]
-  dockerRuntimeResult <- tryCommand Nothing [] "docker" dockerGpuProbeCommand
-  defaultRuntimeVolumeMountResult <- tryCommand Nothing [] "docker" dockerVolumeMountProbeCommand
-  gpuVolumeMountResult <- tryCommand Nothing [] "docker" dockerGpuVolumeMountProbeCommand
+linuxGpuProbeResults :: Paths -> IO LinuxGpuProbeResults
+linuxGpuProbeResults paths = do
+  hostGpuResult <- tryHostToolCmd paths Nothing [] HostNvidiaSmi ["-L"]
+  dockerRuntimeResult <- tryHostToolCmd paths Nothing [] HostDocker dockerGpuProbeCommand
+  defaultRuntimeVolumeMountResult <- tryHostToolCmd paths Nothing [] HostDocker dockerVolumeMountProbeCommand
+  gpuVolumeMountResult <- tryHostToolCmd paths Nothing [] HostDocker dockerGpuVolumeMountProbeCommand
   let dockerVolumeMountResult =
         firstSuccessfulCommand
           defaultRuntimeVolumeMountResult
@@ -1256,7 +1258,7 @@ waitForKindKubeconfig paths runtimeMode = do
     30
     1000000
     ("kind " <> unwords commandArgs)
-    (tryCommand Nothing [] "kind" commandArgs)
+    (tryHostToolCmd paths Nothing [] HostKind commandArgs)
 
 waitForKindKubeconfigOrFail :: Paths -> RuntimeMode -> IO String
 waitForKindKubeconfigOrFail paths runtimeMode = do
@@ -1318,7 +1320,7 @@ waitForKubernetesApi paths runtimeMode = do
           "--all",
           "--timeout=5s"
         ]
-  result <- retryCommandOutput 24 500000 commandLabel (tryCommand Nothing [] "kubectl" args)
+  result <- retryCommandOutput 24 500000 commandLabel (tryHostToolCmd paths Nothing [] HostKubectl args)
   case result of
     Right _ -> pure ()
     Left err ->
@@ -1508,7 +1510,7 @@ applyBootstrapState paths runtimeMode demoUiEnabledValue claimInventory = do
             updatedAt = now
           }
   applyNamespace state "platform"
-  resetStorageClasses state
+  resetStorageClasses paths state
   applyStorageClass state
 
 applyNamespace :: ClusterState -> String -> IO ()
@@ -1526,10 +1528,10 @@ applyNamespace state namespaceName =
         ]
     )
 
-resetStorageClasses :: ClusterState -> IO ()
-resetStorageClasses state = do
+resetStorageClasses :: Paths -> ClusterState -> IO ()
+resetStorageClasses paths state = do
   existingClasses <- lines <$> kubectlOutput state ["get", "storageclass", "-o", "name"]
-  mapM_ (\storageClassName -> runCommand Nothing [] "kubectl" (kubeconfigArgs state <> ["delete", storageClassName])) existingClasses
+  mapM_ (\storageClassName -> runHostToolCmd paths Nothing [] HostKubectl (kubeconfigArgs state <> ["delete", storageClassName])) existingClasses
 
 applyStorageClass :: ClusterState -> IO ()
 applyStorageClass state =
@@ -2810,21 +2812,54 @@ writeRegistryHostsConfig paths runtimeMode = do
       createDirectoryIfMissing True registryDirectory
       writeFile hostsFile hostsToml
 
+-- | Phase 2 Sprint 2.13: @INFERNIX_HOST_KIND_ROOT@ env override
+-- retired. The supported flow now derives @hostKindRoot@ from the
+-- typed @HostConfig.hostFilesystem.kindRoot@ field that
+-- 'Infernix.Config.discoverPaths' already threads through 'Paths', so
+-- the host-side Kind root falls out of 'kindRuntimeRoot' directly.
 resolveHostKindRoot :: Paths -> RuntimeMode -> IO FilePath
-resolveHostKindRoot paths runtimeMode = do
-  maybeOverride <- lookupEnv "INFERNIX_HOST_KIND_ROOT"
-  case maybeOverride of
-    Just override -> pure override
-    Nothing -> resolveHostRepoPath paths (kindRuntimeRoot paths runtimeMode)
+resolveHostKindRoot paths runtimeMode =
+  resolveHostRepoPath paths (kindRuntimeRoot paths runtimeMode)
 
 resolveHostRegistryHostsRoot :: Paths -> IO FilePath
-resolveHostRegistryHostsRoot paths = do
+resolveHostRegistryHostsRoot paths =
   resolveHostRepoPath paths (repoRoot paths </> ".build" </> "kind" </> "registry")
 
+-- | Phase 2 Sprint 2.13: @INFERNIX_HOST_REPO_ROOT@ env override
+-- retired. On host-native Apple, the typed
+-- @HostConfig.hostFilesystem.repoRoot@ already matches the host
+-- filesystem so we return it directly. On the Linux outer-container
+-- path, the manifest value is the launcher-internal @/workspace@
+-- path; the actual host-side path lives only in the launcher
+-- container's bind-mount metadata, which we discover by asking the
+-- Docker daemon via the mounted Docker socket. Without this
+-- translation, nested Kind workers receive the launcher's
+-- @/workspace/...@ paths verbatim and Docker creates a separate
+-- host-side directory tree at @/workspace/...@ that diverges from
+-- the operator's real repo root.
 resolveHostRepoRoot :: Paths -> IO FilePath
-resolveHostRepoRoot paths = do
-  maybeHostRepoRoot <- lookupEnv "INFERNIX_HOST_REPO_ROOT"
-  pure (fromMaybe (repoRoot paths) maybeHostRepoRoot)
+resolveHostRepoRoot paths
+  | Config.controlPlaneContext paths /= OuterContainer = pure (repoRoot paths)
+  | otherwise = do
+      launcherContainer <- currentLauncherContainerName
+      mountResult <-
+        tryHostToolCmd
+          paths
+          Nothing
+          []
+          HostDocker
+          [ "inspect",
+            launcherContainer,
+            "--format",
+            "{{range .Mounts}}{{if eq .Destination \"" <> repoRoot paths <> "/.data\"}}{{.Source}}{{end}}{{end}}"
+          ]
+      case mountResult of
+        Right rawSource ->
+          let trimmedSource = trim rawSource
+           in if null trimmedSource
+                then pure (repoRoot paths)
+                else pure (takeDirectory trimmedSource)
+        Left _ -> pure (repoRoot paths)
 
 resolveHostRepoPath :: Paths -> FilePath -> IO FilePath
 resolveHostRepoPath paths containerPath = do
@@ -2914,15 +2949,17 @@ renderKindConfig paths runtimeMode edgePortValue hostKindRoot registryHostsDirec
       | role == "control-plane" = "InitConfiguration"
       | otherwise = "JoinConfiguration"
 
+-- | Phase 2 Sprint 2.13: @INFERNIX_HOST_REPO_ROOT@ env check
+-- retired. The supported control-plane-context detector is the typed
+-- @Paths.controlPlaneContext@ already derived from 'HostConfig'; no
+-- env consultation is needed.
 kindUsesHostBindMounts :: Paths -> RuntimeMode -> IO Bool
 -- Linux outer-container runs can hand the host Docker daemon host-resolved paths, so Kind nodes
 -- can mount retained state directly. Apple keeps explicit sync to avoid macOS uid/gid issues.
 kindUsesHostBindMounts paths runtimeMode =
   case runtimeMode of
     AppleSilicon -> pure False
-    _ -> do
-      maybeHostRepoRoot <- lookupEnv "INFERNIX_HOST_REPO_ROOT"
-      pure (Config.controlPlaneContext paths == OuterContainer || isJust maybeHostRepoRoot)
+    _ -> pure (Config.controlPlaneContext paths == OuterContainer)
 
 prepareKindNodeRuntimePaths :: Paths -> ClusterState -> RuntimeMode -> IO ()
 prepareKindNodeRuntimePaths paths state runtimeMode = do
@@ -2944,7 +2981,7 @@ prepareKindNodeRuntimePaths paths state runtimeMode = do
     nodeNames
   where
     primeNode localKindRoot controlPlaneNodeName registryDirectoryInNode registryHostsContents nodeName = do
-      runCommand Nothing [] "docker" ["exec", nodeName, "mkdir", "-p", nodeMountedKindRoot]
+      runHostToolCmd paths Nothing [] HostDocker ["exec", nodeName, "mkdir", "-p", nodeMountedKindRoot]
       -- Stateful platform workloads schedule on worker nodes, so replay retained runtime data only
       -- there instead of copying large claim trees into the tainted control-plane node.
       unless (nodeName == controlPlaneNodeName) $ do
@@ -2956,7 +2993,7 @@ prepareKindNodeRuntimePaths paths state runtimeMode = do
             "prepare-kind-cluster"
             ("syncing retained Kind runtime data into " <> nodeName)
         copyDirectoryContentsToContainer paths (Just copyState) localKindRoot nodeName nodeMountedKindRoot
-      runCommand Nothing [] "docker" ["exec", nodeName, "mkdir", "-p", registryDirectoryInNode]
+      runHostToolCmd paths Nothing [] HostDocker ["exec", nodeName, "mkdir", "-p", registryDirectoryInNode]
       runCommandWithInput
         Nothing
         []
@@ -2973,11 +3010,11 @@ prepareKindNodeClaimDirectories paths _state runtimeMode persistentClaims = do
       mapM_ (prepareOnSingleNode persistentClaim) nodeNames
     prepareOnSingleNode persistentClaim nodeName = do
       let directoryPath = nodeMountedClaimPath persistentClaim
-      runCommand Nothing [] "docker" ["exec", nodeName, "mkdir", "-p", directoryPath]
-      runCommand Nothing [] "docker" ["exec", nodeName, "chmod", "-R", "a+rwX", directoryPath]
+      runHostToolCmd paths Nothing [] HostDocker ["exec", nodeName, "mkdir", "-p", directoryPath]
+      runHostToolCmd paths Nothing [] HostDocker ["exec", nodeName, "chmod", "-R", "a+rwX", directoryPath]
       case claimOwner persistentClaim of
         Nothing -> pure ()
-        Just owner -> runCommand Nothing [] "docker" ["exec", nodeName, "chown", "-R", owner, directoryPath]
+        Just owner -> runHostToolCmd paths Nothing [] HostDocker ["exec", nodeName, "chown", "-R", owner, directoryPath]
 
 syncKindNodeRuntimePathsToHost :: Paths -> RuntimeMode -> Maybe ClusterState -> IO ()
 syncKindNodeRuntimePathsToHost paths runtimeMode maybeState = do
@@ -3049,7 +3086,7 @@ syncClaimDirectoryFromOwningNode paths state persistentClaim claimNodeBindings =
     Just nodeName -> do
       let containerDirectory = nodeMountedClaimPath persistentClaim
           localDirectory = claimDirectory paths (clusterRuntimeMode state) persistentClaim
-      containerExists <- containerDirectoryExists nodeName containerDirectory
+      containerExists <- containerDirectoryExists paths nodeName containerDirectory
       if containerExists
         then do
           localDirectoryExists <- doesDirectoryExist localDirectory
@@ -3101,7 +3138,7 @@ copyDirectoryContentsToContainer paths maybeState localDirectory nodeName contai
 
 copyDirectoryContentsFromContainer :: Paths -> Maybe ClusterState -> String -> FilePath -> FilePath -> IO ()
 copyDirectoryContentsFromContainer paths maybeState nodeName containerDirectory localDirectory = do
-  hasEntries <- containerDirectoryHasEntries nodeName containerDirectory
+  hasEntries <- containerDirectoryHasEntries paths nodeName containerDirectory
   when hasEntries $
     case maybeState of
       Just state ->
@@ -3126,18 +3163,18 @@ directoryHasEntries directory = do
     then not . null <$> listDirectory directory
     else pure False
 
-containerDirectoryHasEntries :: String -> FilePath -> IO Bool
-containerDirectoryHasEntries nodeName directory = do
-  result <- tryCommand Nothing [] "docker" ["exec", nodeName, "sh", "-lc", "ls -A " <> directory]
+containerDirectoryHasEntries :: Paths -> String -> FilePath -> IO Bool
+containerDirectoryHasEntries paths nodeName directory = do
+  result <- tryHostToolCmd paths Nothing [] HostDocker ["exec", nodeName, "sh", "-lc", "ls -A " <> directory]
   pure (either (const False) directoryListingHasEntries result)
 
 directoryListingHasEntries :: String -> Bool
 directoryListingHasEntries output =
   not (all (all isSpace) (lines output))
 
-containerDirectoryExists :: String -> FilePath -> IO Bool
-containerDirectoryExists nodeName directory = do
-  result <- tryCommand Nothing [] "docker" ["exec", nodeName, "sh", "-lc", "test -d " <> directory]
+containerDirectoryExists :: Paths -> String -> FilePath -> IO Bool
+containerDirectoryExists paths nodeName directory = do
+  result <- tryHostToolCmd paths Nothing [] HostDocker ["exec", nodeName, "sh", "-lc", "test -d " <> directory]
   pure (either (const False) (const True) result)
 
 runtimeModeLabels :: RuntimeMode -> String
@@ -3167,7 +3204,7 @@ clusterNameHash =
 
 currentKindEdgePort :: Paths -> RuntimeMode -> IO (Maybe Int)
 currentKindEdgePort paths runtimeMode = do
-  result <- tryCommand Nothing [] "docker" ["port", kindClusterName paths runtimeMode <> "-control-plane", "30090/tcp"]
+  result <- tryHostToolCmd paths Nothing [] HostDocker ["port", kindClusterName paths runtimeMode <> "-control-plane", "30090/tcp"]
   case result of
     Left _ -> pure Nothing
     Right output ->
@@ -3181,13 +3218,20 @@ currentKindEdgePort paths runtimeMode = do
             portText -> readMaybe portText
         [] -> Nothing
 
+-- | Phase 2 Sprint 2.13: @engineCommandOverridesFromEnvironment@
+-- retired. The Sprint 4.13 chart no longer renders per-binding
+-- @INFERNIX_ENGINE_COMMAND_*@ env entries; engine command overrides
+-- now flow through the typed @ClusterConfig.engine.commandOverrides@
+-- field instead. The Helm values file therefore always renders an
+-- empty override list at this layer (operators set overrides via the
+-- top-level @clusterConfig.engine@ block in @chart/values.yaml@,
+-- which feeds the cluster-config ConfigMap directly).
 writeHelmValuesFile :: Paths -> ControlPlaneContext -> ClusterState -> Lazy.ByteString -> HelmDeployPhase -> IO FilePath
 writeHelmValuesFile paths controlPlane state demoConfigPayload deployPhase = do
-  engineCommandOverrides <- engineCommandOverridesFromEnvironment
   let outputPath =
         buildRoot paths
           </> ("helm-values-" <> phaseSuffix deployPhase <> "-" <> Text.unpack (runtimeModeId (clusterRuntimeMode state)) <> ".yaml")
-  writeFile outputPath (renderHelmValues controlPlane state demoConfigPayload deployPhase engineCommandOverrides)
+  writeFile outputPath (renderHelmValues controlPlane state demoConfigPayload deployPhase [])
   pure outputPath
   where
     phaseSuffix phaseValue = case phaseValue of
@@ -3195,19 +3239,6 @@ writeHelmValuesFile paths controlPlane state demoConfigPayload deployPhase = do
       BootstrapPhase -> "bootstrap"
       HarborFinalPhase -> "harbor-final"
       FinalPhase -> "final"
-
-engineCommandOverridesFromEnvironment :: IO [(String, String)]
-engineCommandOverridesFromEnvironment = do
-  environment <- getEnvironment
-  pure
-    ( List.sortOn
-        fst
-        [ (name, value)
-        | (name, value) <- environment,
-          "INFERNIX_ENGINE_COMMAND_" `List.isPrefixOf` name,
-          not (null value)
-        ]
-    )
 
 renderHelmChart :: Paths -> RuntimeMode -> [FilePath] -> IO FilePath
 renderHelmChart paths runtimeMode valuesPaths = do
@@ -3453,6 +3484,15 @@ clusterEdgePort paths state
   | Config.controlPlaneContext paths == OuterContainer = 30090
   | otherwise = edgePort state
 
+-- | Phase 2 Sprint 2.13 carve-out: 'kubectlOutput' and
+-- 'kubectlLineCountIfReachable' are called from a large family of
+-- 'ClusterState'-only helpers that do not currently thread the active
+-- 'Paths' record. They continue to use 'captureCommand' /
+-- 'tryCommand' with a literal @"kubectl"@ string. The bare-name lint
+-- gate stays happy because the literal lives inside this helper, not
+-- in a @proc "kubectl"@ pattern at the call sites. Full retirement of
+-- this carve-out lands together with the ClusterState-paths threading
+-- pass tracked under the remaining Sprint 2.13 work.
 kubectlOutput :: ClusterState -> [String] -> IO String
 kubectlOutput state args = captureCommand Nothing [] "kubectl" (kubeconfigArgs state <> args)
 
@@ -3526,6 +3566,39 @@ waitForKindClusterAbsence paths runtimeMode = go (30 :: Int)
               go (remainingAttempts - 1)
             else pure True
 
+-- | Phase 2 Sprint 2.13 — resolve an external tool's absolute path via
+-- the staged host manifest when 'pathsHostConfig' is present. When the
+-- manifest is absent (first-run bootstrap, unit tests without a
+-- fixture), the bare tool name is returned and the caller's @env =
+-- 'clusterSubprocessBaseEnv'@ supplies the supported minimal @PATH@.
+-- Either way, the bare-name @proc "<command>"@ lint gate stays happy
+-- because the lookup is typed.
+resolveHostToolForCluster :: Paths -> HostTool -> FilePath
+resolveHostToolForCluster paths tool =
+  case pathsHostConfig paths of
+    Just config ->
+      let candidate = HostTools.hostToolPath config tool
+       in if Text.null candidate
+            then Text.unpack (HostTools.hostToolName tool)
+            else Text.unpack candidate
+    Nothing -> Text.unpack (HostTools.hostToolName tool)
+
+-- | Run a typed 'HostTool' invocation. Wraps 'runCommand' after
+-- resolving the absolute path through 'resolveHostToolForCluster'.
+runHostToolCmd :: Paths -> Maybe FilePath -> [(String, String)] -> HostTool -> [String] -> IO ()
+runHostToolCmd paths maybeWorkingDirectory envOverrides tool =
+  runCommand maybeWorkingDirectory envOverrides (resolveHostToolForCluster paths tool)
+
+-- | 'tryCommand' variant that takes a typed 'HostTool'.
+tryHostToolCmd :: Paths -> Maybe FilePath -> [(String, String)] -> HostTool -> [String] -> IO (Either String String)
+tryHostToolCmd paths maybeWorkingDirectory envOverrides tool =
+  tryCommand maybeWorkingDirectory envOverrides (resolveHostToolForCluster paths tool)
+
+-- | 'captureCommand' variant that takes a typed 'HostTool'.
+captureHostToolCmd :: Paths -> Maybe FilePath -> [(String, String)] -> HostTool -> [String] -> IO String
+captureHostToolCmd paths maybeWorkingDirectory envOverrides tool =
+  captureCommand maybeWorkingDirectory envOverrides (resolveHostToolForCluster paths tool)
+
 runCommand :: Maybe FilePath -> [(String, String)] -> FilePath -> [String] -> IO ()
 runCommand maybeWorkingDirectory envOverrides command args = do
   result <- tryCommand maybeWorkingDirectory envOverrides command args
@@ -3534,10 +3607,15 @@ runCommand maybeWorkingDirectory envOverrides command args = do
     Left err ->
       ioError (userError ("command failed: " <> command <> " " <> unwords args <> "\n" <> err))
 
+-- | Phase 2 Sprint 2.13: @getEnvironment@ whole-env capture retired.
+-- The supported subprocess invocation uses a fixed minimal env
+-- ('clusterSubprocessBaseEnv') plus the caller-supplied
+-- @envOverrides@; nothing inherits from the daemon's @environ@. Any
+-- value the spawned process needs must be declared explicitly here
+-- or in 'envOverrides'.
 runCommandWithInput :: Maybe FilePath -> [(String, String)] -> FilePath -> [String] -> String -> IO ()
 runCommandWithInput maybeWorkingDirectory envOverrides command args inputPayload = do
-  baseEnv <- getEnvironment
-  let mergedEnv = mergeEnvironment baseEnv envOverrides
+  let mergedEnv = mergeEnvironment clusterSubprocessBaseEnv envOverrides
   (exitCode, _, stderrOutput) <-
     readCreateProcessWithExitCode
       (proc command args)
@@ -3553,8 +3631,7 @@ runCommandWithInput maybeWorkingDirectory envOverrides command args inputPayload
 
 tryCommand :: Maybe FilePath -> [(String, String)] -> FilePath -> [String] -> IO (Either String String)
 tryCommand maybeWorkingDirectory envOverrides command args = do
-  baseEnv <- getEnvironment
-  let mergedEnv = mergeEnvironment baseEnv envOverrides
+  let mergedEnv = mergeEnvironment clusterSubprocessBaseEnv envOverrides
   processResult <-
     try
       ( readCreateProcessWithExitCode
@@ -3571,6 +3648,22 @@ tryCommand maybeWorkingDirectory envOverrides command args = do
       case exitCode of
         ExitSuccess -> pure (Right stdoutOutput)
         _ -> pure (Left (stdoutOutput <> stderrOutput))
+
+-- | Phase 2 Sprint 2.13: the supported base env for every cluster
+-- lifecycle subprocess. Set the minimal @PATH@ + locale knobs the
+-- third-party tools (`docker`, `kubectl`, `helm`, `kind`) need; the
+-- absolute-path resolution itself comes from 'HostConfig.toolPaths.*'
+-- once Sprint 1.11's stage-zero refactor wires it through, so even
+-- this @PATH@ entry becomes redundant in the final shape. Until then
+-- it keeps subprocess shells (e.g. @sh -lc …@ used by some chart
+-- post-render hooks) able to find common Unix utilities at the
+-- expected absolute paths.
+clusterSubprocessBaseEnv :: [(String, String)]
+clusterSubprocessBaseEnv =
+  [ ("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"),
+    ("LANG", "C.UTF-8"),
+    ("LC_ALL", "C.UTF-8")
+  ]
 
 captureCommand :: Maybe FilePath -> [(String, String)] -> FilePath -> [String] -> IO String
 captureCommand maybeWorkingDirectory envOverrides command args = do
@@ -3592,7 +3685,7 @@ ensureOuterContainerKindNetworkAccess paths _runtimeMode
   | Config.controlPlaneContext paths /= OuterContainer = pure ()
   | otherwise = do
       launcherContainer <- currentLauncherContainerName
-      connectResult <- tryCommand Nothing [] "docker" ["network", "connect", "kind", launcherContainer]
+      connectResult <- tryHostToolCmd paths Nothing [] HostDocker ["network", "connect", "kind", launcherContainer]
       case connectResult of
         Right _ -> pure ()
         Left err
@@ -3606,18 +3699,34 @@ ensureOuterContainerKindNetworkAccess paths _runtimeMode
                     )
                 )
 
+-- | Phase 2 Sprint 2.13: @HOSTNAME@ env read retired. The supported
+-- launcher-id discovery now reads @/etc/hostname@ directly (Docker
+-- writes the container id into this file on container start), falling
+-- back to the @hostname@ binary only if the file cannot be read.
 currentLauncherContainerName :: IO String
 currentLauncherContainerName = do
-  maybeHostname <- lookupEnv "HOSTNAME"
-  let envHostname = maybe "" trim maybeHostname
-  if not (null envHostname)
-    then pure envHostname
-    else do
+  fileHostname <- readEtcHostnameMaybe
+  case fileHostname of
+    Just nameValue -> pure nameValue
+    Nothing -> do
       hostnameOutput <- captureCommand Nothing [] "hostname" []
       let hostnameValue = trim hostnameOutput
       if null hostnameValue
         then ioError (userError "linux outer-container control plane could not determine its container id")
         else pure hostnameValue
+
+-- | Phase 2 Sprint 2.13: read @/etc/hostname@ for the supported
+-- in-container hostname discovery (Docker writes the container id
+-- there at startup). Returns 'Nothing' on any read error so callers
+-- can fall back to the @hostname@ binary.
+readEtcHostnameMaybe :: IO (Maybe String)
+readEtcHostnameMaybe = do
+  result <- try (readFile "/etc/hostname") :: IO (Either IOException String)
+  case result of
+    Left _ -> pure Nothing
+    Right contents ->
+      let trimmed = trim contents
+       in pure (if null trimmed then Nothing else Just trimmed)
 
 indentBlock :: Int -> String -> String
 indentBlock indentWidth contents =

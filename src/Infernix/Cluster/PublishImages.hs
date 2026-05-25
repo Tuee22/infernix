@@ -34,6 +34,7 @@ import Data.ByteString.Base64 qualified as Base64
 import Data.ByteString.Char8 qualified as ByteString8
 import Data.ByteString.Lazy.Char8 qualified as LazyChar8
 import Data.List (find, intercalate, isSuffixOf, nub, partition)
+import Data.List qualified as List
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe)
@@ -605,9 +606,25 @@ pinLocalImageToAmd64 commandMonitorFactory imageRef = do
               -- Best-effort untag so 'docker tag' writes a fresh
               -- single-platform reference rather than overlaying the
               -- multi-arch manifest list still attached to the tag.
+              -- The @rm@ may fail benignly (the tag wasn't present).
               _ <- tryRunCommand "docker" ["image", "rm", "--no-prune", imageRef] ""
-              _ <- tryRunCommand "docker" ["tag", imageByDigest, imageRef] ""
-              pure ()
+              -- @docker tag <image>\@<digest> <image>:<tag>@ fails
+              -- under the Docker 29.x containerd snapshotter
+              -- because the digest reference is not directly
+              -- tag-able even after @docker pull@ succeeds. The
+              -- supported workaround is to look up the image ID via
+              -- @docker inspect <image>\@<digest> --format '{{.Id}}'@
+              -- (which DOES work after the digest pull) and tag the
+              -- resolved ID under the original ref.
+              idResult <- tryRunCommand "docker" ["inspect", imageByDigest, "--format", "{{.Id}}"] ""
+              case idResult of
+                Right rawId -> do
+                  let imageId = trimNewlines rawId
+                  tagResult <- tryRunCommand "docker" ["tag", imageId, imageRef] ""
+                  case tagResult of
+                    Right _ -> pure ()
+                    Left _ -> recoverOriginalTag commandMonitorFactory imageRef
+                Left _ -> recoverOriginalTag commandMonitorFactory imageRef
 
 -- | Parse the JSON output of @docker manifest inspect@ and return the
 -- digest of the @linux/amd64@ entry, if any. Uses the Aeson FromJSON
@@ -682,17 +699,31 @@ pushUpstreamMultiArchViaImagetools commandMonitorFactory sourceImage targetRef =
         Just amd64Digest -> do
           let sourceRepository = takeBefore ':' sourceImage
               sourceByDigest = sourceRepository <> "@" <> amd64Digest
+              -- @docker buildx imagetools create@ resolves the
+              -- target registry via the host's glibc resolver, which
+              -- prefers IPv6 (@[::1]@) for @localhost@. Harbor's
+              -- NodePort 30002 is bound to @127.0.0.1@ only (Kind's
+              -- @extraPortMappings@ emit IPv4 listeners), so the
+              -- IPv6 dial path fails with @connection refused@
+              -- before glibc falls through to IPv4. Substituting
+              -- @localhost@ with @127.0.0.1@ in the buildx target
+              -- ref forces the IPv4 path. Regular @docker push@
+              -- already works against the same NodePort because the
+              -- launcher's @docker push@ runs through the local
+              -- daemon, which inherits the launcher's @kind@
+              -- network attachment + IPv4 routing.
+              imagetoolsTargetRef = substituteLocalhostWithLoopbackV4 targetRef
           imagetoolsMonitor <-
             commandMonitorFactory
               ( "docker buildx imagetools create --tag "
-                  <> targetRef
+                  <> imagetoolsTargetRef
                   <> " "
                   <> sourceByDigest
               )
           imagetoolsResult <-
             tryRunCommandMaybeMonitored
               "docker"
-              ["buildx", "imagetools", "create", "--tag", targetRef, sourceByDigest]
+              ["buildx", "imagetools", "create", "--tag", imagetoolsTargetRef, sourceByDigest]
               ""
               imagetoolsMonitor
           case imagetoolsResult of
@@ -905,6 +936,49 @@ failWith message = ioError (userError ("publish-chart-images: " <> message))
 
 takeBefore :: Char -> String -> String
 takeBefore delimiter = takeWhile (/= delimiter)
+
+-- | Phase 7 Sprint 7.14 follow-on (May 25, 2026): rewrite a
+-- @localhost@-prefixed image reference to use @127.0.0.1@ so the
+-- buildx imagetools fallback dials Harbor's IPv4-only NodePort
+-- listener instead of the unbound IPv6 loopback. Returns the input
+-- unchanged when the prefix doesn't match (e.g. operator-overridden
+-- @harbor.local@ targets).
+substituteLocalhostWithLoopbackV4 :: String -> String
+substituteLocalhostWithLoopbackV4 imageRef =
+  case List.stripPrefix "localhost:" imageRef of
+    Just remainder -> "127.0.0.1:" <> remainder
+    Nothing -> imageRef
+
+-- | Phase 7 Sprint 7.14 follow-on (May 25, 2026): trim trailing
+-- newlines + whitespace from @docker inspect --format@ output. Docker
+-- emits the captured field followed by a single newline; the tag
+-- callers want the bare value.
+trimNewlines :: String -> String
+trimNewlines = reverse . dropWhile isTrailingWhitespace . reverse
+
+isTrailingWhitespace :: Char -> Bool
+isTrailingWhitespace character = character `elem` trailingWhitespaceCharacters
+
+trailingWhitespaceCharacters :: String
+trailingWhitespaceCharacters = " \n\r\t"
+
+-- | Phase 7 Sprint 7.14 follow-on (May 25, 2026): recovery path used
+-- when the digest-pinned image cannot be tagged under the original
+-- ref. Re-pulls the original tag (which puts the multi-arch manifest
+-- list back) so the downstream @pushUpstreamMultiArchViaImagetools@
+-- fallback can do the work. Failure here is silent because the
+-- caller already failed to pin and is doing best-effort recovery.
+-- type CommandMonitorFactory = String -> IO (Maybe ProcessMonitor.CommandMonitor)
+recoverOriginalTag :: CommandMonitorFactory -> String -> IO ()
+recoverOriginalTag commandMonitorFactory imageRef = do
+  recoverMonitor <- commandMonitorFactory ("docker pull --platform linux/amd64 " <> imageRef)
+  _ <-
+    tryRunCommandMaybeMonitored
+      "docker"
+      ["pull", "--platform", "linux/amd64", imageRef]
+      ""
+      recoverMonitor
+  pure ()
 
 breakTagSuffix :: String -> Maybe String
 breakTagSuffix value =

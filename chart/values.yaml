@@ -87,6 +87,44 @@ service:
 daemonSplit:
   enabled: true
 
+# Phase 4 Sprint 4.13: typed cluster-wiring values rendered into
+# `ConfigMap/infernix-cluster-config` and consumed by every cluster-
+# resident `infernix` daemon at startup. Mirrors the
+# `dhall/InfernixCluster.dhall` schema; see
+# `documents/engineering/cluster_config_manifest.md` for the full
+# per-field origin mapping.
+#
+# Credentials are NOT here. They live in `Secret/infernix-cluster-secrets`
+# (Phase 7 Sprint 7.17 materializes that companion template).
+clusterConfig:
+  name: infernix-cluster-config
+  mountPath: /opt/infernix/cluster.dhall
+  pulsar:
+    systemNamespace: system
+  minio:
+    region: us-east-1
+    presignExpirySeconds: 900
+    modelsBucket: infernix-models
+    demoArtifactsBucket: infernix-demo-objects
+  keycloak:
+    baseUrl: http://infernix-keycloak.platform.svc.cluster.local
+    realmName: infernix
+    clientId: infernix-demo
+    jwksUrl: http://infernix-keycloak.platform.svc.cluster.local/realms/infernix/protocol/openid-connect/certs
+  demoBackend:
+    bindHost: 0.0.0.0
+    port: 8080
+    bridgeMode: pulsar
+  engine:
+    modelCacheRoot: /model-cache
+    # Sized to match the engine deployment's `modelCache.sizeLimit`
+    # (32 GiB) so the adapter-side LRU eviction stays under kubelet's
+    # ephemeral-storage threshold.
+    modelCacheQuotaBytes: 34359738368
+  coordinator:
+    catalogSource: mounted-configmap
+    daemonLocation: cluster-pod
+
 coordinator:
   enabled: true
   replicaCount: 2

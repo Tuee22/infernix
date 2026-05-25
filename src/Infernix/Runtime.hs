@@ -18,7 +18,7 @@ import Data.Time (defaultTimeLocale, formatTime, getCurrentTime)
 import Infernix.Config (Paths (..))
 import Infernix.Models (findModel)
 import Infernix.Runtime.Cache (evictCache, listCacheManifests, materializeCache, rebuildCache)
-import Infernix.Runtime.Worker (runInferenceWorker)
+import Infernix.Runtime.Worker (EngineCommandOverrideMap, runInferenceWorker)
 import Infernix.Storage
   ( readInferenceResultProtoMaybe,
     writeInferenceResultProto,
@@ -26,8 +26,8 @@ import Infernix.Storage
 import Infernix.Types
 import System.FilePath ((</>))
 
-executeInference :: Paths -> RuntimeMode -> InferenceRequest -> IO (Either ErrorResponse InferenceResult)
-executeInference paths runtimeMode request = case findModel runtimeMode (requestModelId request) of
+executeInference :: Paths -> RuntimeMode -> EngineCommandOverrideMap -> InferenceRequest -> IO (Either ErrorResponse InferenceResult)
+executeInference paths runtimeMode overrides request = case findModel runtimeMode (requestModelId request) of
   Nothing ->
     pure $
       Left $
@@ -47,7 +47,7 @@ executeInference paths runtimeMode request = case findModel runtimeMode (request
         now <- getCurrentTime
         let requestIdValue = Text.pack (formatTime defaultTimeLocale "req-%Y%m%d%H%M%S%q" now)
         materializeCache paths runtimeMode model
-        workerResult <- runInferenceWorker paths runtimeMode model request
+        workerResult <- runInferenceWorker paths runtimeMode overrides model request
         case workerResult of
           Left workerError ->
             pure (Left workerError)

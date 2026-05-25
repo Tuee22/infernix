@@ -615,7 +615,7 @@ honest):
   forbidden-env grep gate, but they still use `command -v` to resolve
   `docker`, `sudo`, `apt-get`, etc. The full stage-zero refactor
   (Section T of the development-plan standards) lands together with
-  Sprint 2.10's `proc "<bare-name>"` retirement, since the two changes
+  Sprint 2.13's `proc "<bare-name>"` retirement, since the two changes
   share the same `HostConfig.toolPaths.*` absolute-path table.
 - **Apple bootstrap script (`bootstrap/apple-silicon.sh`).** Deferred
   to the Apple-host validation pass per the active-substrate priority.
@@ -626,14 +626,39 @@ honest):
   step already bakes the chart-deps archives into the image at
   `/workspace/chart/charts/`, so the supported lifecycle works after
   the compose.yaml shrink. The `/opt/infernix/` relocation is an
-  organizational nicety that lands together with the Linux launcher
-  image's in-image host-manifest baking at
-  `/opt/infernix/dhall/InfernixHost.dhall`.
+  organizational nicety.
+- **In-image host-manifest baking at
+  `/opt/infernix/dhall/InfernixHost.dhall` — landed May 25, 2026.**
+  `docker/linux-substrate.Dockerfile` now writes the supported Linux
+  outer-container `HostConfig` Dhall manifest to that path before the
+  `infernix internal materialize-substrate` invocation. The manifest
+  declares `controlPlaneContext = outer-container`, the absolute path
+  table for every external tool, and the supported filesystem
+  conventions (`buildRoot = /workspace/.build/outer-container/build`,
+  `kindRoot = /workspace/.data/runtime/kind`, etc). Without this,
+  the binary's `discoverPaths` `tryLoadHostManifest` walk falls
+  through to the convention default `buildRoot = repoRoot/.build`,
+  the `controlPlaneContext` path-heuristic mis-classifies the
+  container as `HostNative`, and the `linux-gpu`
+  materialize-substrate step is rejected by
+  `ensureSupportedRuntimeModeForExecutionContext`. The fix replaces
+  the previously-retired `ENV INFERNIX_BUILD_ROOT=...` directive
+  with the typed Dhall manifest the doctrine actually demands.
+- **`src/Infernix/DemoCLI.hs` env-var retirement.** Sprint 1.11 named
+  `DemoCLI.hs` in its in-scope list at "Every Haskell external-command
+  invocation in this phase's scope", and the grep gate
+  `grep -rn 'lookupEnv\|getEnv' src/Infernix/{Config,CLI,DemoCLI}.hs`
+  is part of the sprint's validation. `DemoCLI.hs` still calls
+  `lookupEnv "INFERNIX_BIND_HOST"`, `lookupEnv "INFERNIX_DEMO_BRIDGE_MODE"`,
+  and `lookupEnv "INFERNIX_PUBLICATION_STATE_PATH"`. Those reads are
+  retired together with the rest of the demo-backend `ClusterConfig`
+  threading in Phase 5 Sprint 5.9 because the replacement values
+  (`ClusterConfig.demoBackend.*`) are introduced by Phase 4 Sprint 4.13
+  rather than Phase 1.
 - **Sprint 3.10's compose.yaml `playwright` service removal + the
-  `docker/playwright.Dockerfile` deletion** are tracked in the Sprint
-  3.10 section of `phase-3-ha-platform-services-and-edge-routing.md`;
-  the compose.yaml shrink here intentionally keeps the playwright
-  block intact until 3.10's `runEndToEnd` refactor lands.
+  `docker/playwright.Dockerfile` deletion** are now landed — the Sprint
+  3.10 closure (May 24, 2026) removed both. This row stays here for
+  ledger traceability of the temporary in-Sprint-1.11 carve-out.
 
 ---
 

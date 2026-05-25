@@ -10,7 +10,7 @@
 
 ### `service`
 
-- `infernix service` - starts the long-running production daemon; it binds no HTTP port and consumes the active `.dhall` request and result topics
+- `infernix service [--role coordinator|engine]` - starts the long-running production daemon; it binds no HTTP port and consumes the active `.dhall` request and result topics. The optional `--role` arg overrides the substrate dhall's `daemonRole` field for split coordinator/engine Deployments.
 
 ### `cluster`
 

@@ -26,55 +26,26 @@ spec:
             - "{{ .Values.demoConfig.mountPath }}/{{ .Values.demoConfig.fileName }}"
             - --port
             - {{ .Values.demo.port | quote }}
+          # Phase 7 Sprint 7.17: `INFERNIX_MINIO_ACCESS_KEY` /
+          # `INFERNIX_MINIO_SECRET_KEY` env entries retire. The
+          # supported flow mounts `Secret/infernix-cluster-secrets`
+          # at `/etc/infernix/secrets/` (see coordinator template
+          # note). `INFERNIX_DATA_ROOT` is the writable durable-state
+          # root for any subscription-ready marker the demo daemon
+          # writes locally.
           env:
-            - name: INFERNIX_BIND_HOST
-              value: "0.0.0.0"
-            - name: INFERNIX_DEMO_BRIDGE_MODE
-              value: "pulsar-daemon"
-            - name: INFERNIX_PUBLICATION_STATE_PATH
-              value: "{{ .Values.demoConfig.mountPath }}/{{ .Values.publication.fileName }}"
             - name: INFERNIX_DATA_ROOT
               value: "/srv/infernix/.data"
-            - name: INFERNIX_PULSAR_ADMIN_URL
-              value: {{ .Values.service.pulsar.adminUrl | quote }}
-            - name: INFERNIX_PULSAR_WS_BASE_URL
-              value: {{ .Values.service.pulsar.webSocketBaseUrl | quote }}
-            # Phase 7 Sprint 7.9: MinIO endpoint + credentials for the
-            # `/api/objects/{upload,download}` presigned URL minter. The
-            # demo binary derives the SigV4 signing material from these
-            # env vars; per-user bucket scope is enforced inside the
-            # handler.
-            - name: INFERNIX_MINIO_ENDPOINT
-              value: {{ .Values.service.minio.endpoint | quote }}
-            - name: INFERNIX_MINIO_ACCESS_KEY
-              value: {{ .Values.service.minio.accessKey | quote }}
-            - name: INFERNIX_MINIO_SECRET_KEY
-              value: {{ .Values.service.minio.secretKey | quote }}
-            - name: INFERNIX_MINIO_REGION
-              value: "us-east-1"
-            - name: INFERNIX_MINIO_PRESIGN_EXPIRY_SECONDS
-              value: "900"
-            # Phase 7 Sprint 7.1: Keycloak JWKS endpoint inside the
-            # cluster, used by the WebSocket handshake and the
-            # `/api/objects` handler to verify bearer JWTs without
-            # round-tripping through the routed `/auth` edge.
-            - name: INFERNIX_KEYCLOAK_JWKS_URL
-              value: "http://infernix-keycloak.platform.svc.cluster.local:{{ .Values.keycloak.service.port }}/auth/realms/{{ .Values.keycloak.realm.name }}/protocol/openid-connect/certs"
-            # Phase 7 Sprint 7.14: Envoy Gateway strips the @:port@
-            # suffix from the X-Forwarded-Host header when proxying to
-            # Keycloak, so Keycloak's emitted @iss@ claim omits the
-            # operator-facing edge port. The supported workaround is to
-            # configure the demo backend's expected issuer to match
-            # whatever Keycloak actually emits for the routing topology.
-            - name: INFERNIX_KEYCLOAK_BASE_URL
-              value: "{{ .Values.keycloak.externalBaseUrl }}"
-            - name: INFERNIX_KEYCLOAK_REALM_NAME
-              value: "{{ .Values.keycloak.realm.name }}"
-            - name: INFERNIX_KEYCLOAK_CLIENT_ID
-              value: "{{ .Values.keycloak.realm.spaClientId }}"
           ports:
             - containerPort: {{ .Values.demo.port }}
           volumeMounts:
+            - name: cluster-config
+              mountPath: /opt/infernix/cluster.dhall
+              subPath: cluster.dhall
+              readOnly: true
+            - name: cluster-secrets
+              mountPath: /etc/infernix/secrets
+              readOnly: true
             - name: demo-config
               mountPath: "{{ .Values.demoConfig.mountPath }}/{{ .Values.demoConfig.fileName }}"
               subPath: {{ .Values.demoConfig.fileName }}
@@ -86,6 +57,12 @@ spec:
             - name: demo-data
               mountPath: /srv/infernix/.data
       volumes:
+        - name: cluster-config
+          configMap:
+            name: {{ .Values.clusterConfig.name }}
+        - name: cluster-secrets
+          secret:
+            secretName: infernix-cluster-secrets
         - name: demo-config
           configMap:
             name: {{ .Values.demoConfig.name }}

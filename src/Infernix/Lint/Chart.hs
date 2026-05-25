@@ -57,16 +57,23 @@ requiredPhrases =
         "storageClassName: infernix-manual"
       ]
     ),
+    -- Phase 7 Sprint 7.17: the demo Deployment's `INFERNIX_MINIO_ACCESS_KEY`
+    -- / `INFERNIX_MINIO_SECRET_KEY` entries retire together with the
+    -- `cluster-secrets` Secret mount at `/etc/infernix/secrets/`.
+    -- Only the non-credential `INFERNIX_DATA_ROOT` writable-state path
+    -- remains in the `env:` block.
     ( "chart/templates/deployment-demo.yaml",
       [ ".Values.demo.enabled",
         "name: infernix-demo",
         "- infernix-demo",
         "--dhall",
-        "INFERNIX_DEMO_BRIDGE_MODE",
-        "INFERNIX_PUBLICATION_STATE_PATH",
+        ".Values.clusterConfig.name",
+        "name: cluster-config",
+        "mountPath: /opt/infernix/cluster.dhall",
+        "name: cluster-secrets",
+        "mountPath: /etc/infernix/secrets",
+        "secretName: infernix-cluster-secrets",
         "INFERNIX_DATA_ROOT",
-        "INFERNIX_PULSAR_ADMIN_URL",
-        "INFERNIX_PULSAR_WS_BASE_URL",
         "emptyDir: {}"
       ]
     ),
@@ -102,15 +109,23 @@ requiredPhrases =
     -- `chart/templates/deployment-engine.yaml`. The legacy
     -- `chart/templates/deployment-service.yaml` is retired together
     -- with the fused `service.*` Deployment.
+    --
+    -- Phase 4 Sprint 4.13: `INFERNIX_PULSAR_*` + `INFERNIX_DAEMON_*`
+    -- env families retired; the daemon now reads them from
+    -- `cluster.dhall` mounted from `ConfigMap/{{ .Values.clusterConfig.name }}`
+    -- and `--role coordinator|engine` is the typed CLI arg that
+    -- replaces `INFERNIX_DAEMON_ROLE`.
     ( "chart/templates/deployment-engine.yaml",
       [ ".Values.engine.enabled",
         "demoConfig.mountPath",
-        "INFERNIX_DEMO_CONFIG_PATH",
-        "INFERNIX_PUBLICATION_STATE_PATH",
-        "INFERNIX_MINIO_ENDPOINT",
-        "INFERNIX_PULSAR_ADMIN_URL",
-        "INFERNIX_PULSAR_WS_BASE_URL",
-        ".Values.service.engineAdapters.commandEnv",
+        ".Values.clusterConfig.name",
+        "name: cluster-config",
+        "mountPath: /opt/infernix/cluster.dhall",
+        "name: cluster-secrets",
+        "mountPath: /etc/infernix/secrets",
+        "secretName: infernix-cluster-secrets",
+        "- --role",
+        "- engine",
         "runtimeClassName: nvidia",
         "infernix.runtime/gpu",
         "nvidia.com/gpu"
@@ -118,12 +133,35 @@ requiredPhrases =
     ),
     ( "chart/templates/deployment-coordinator.yaml",
       [ ".Values.coordinator.enabled",
-        "demoConfig.mountPath",
-        "INFERNIX_DEMO_CONFIG_PATH",
-        "INFERNIX_PUBLICATION_STATE_PATH",
-        "INFERNIX_MINIO_ENDPOINT",
-        "INFERNIX_PULSAR_ADMIN_URL",
-        "INFERNIX_PULSAR_WS_BASE_URL"
+        ".Values.clusterConfig.name",
+        "name: cluster-config",
+        "mountPath: /opt/infernix/cluster.dhall",
+        "name: cluster-secrets",
+        "mountPath: /etc/infernix/secrets",
+        "secretName: infernix-cluster-secrets",
+        "- --role",
+        "- coordinator"
+      ]
+    ),
+    ( "chart/templates/secret-cluster-secrets.yaml",
+      [ "kind: Secret",
+        "name: infernix-cluster-secrets",
+        "InfernixSecrets.dhall:",
+        "minio.json:",
+        "keycloak-admin.json:",
+        "keycloak-db.json:",
+        "{ \"accessKey\":"
+      ]
+    ),
+    ( "chart/templates/configmap-cluster-config.yaml",
+      [ ".Values.clusterConfig.name",
+        "cluster.dhall:",
+        "{ pulsar =",
+        ", minio =",
+        ", keycloak =",
+        ", demoBackend =",
+        ", engine =",
+        ", coordinator ="
       ]
     ),
     ( "chart/templates/httproutes.yaml",

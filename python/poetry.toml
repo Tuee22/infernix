@@ -1,0 +1,6 @@
+# Phase 7 Sprint 7.17: replaces the `POETRY_VIRTUALENVS_IN_PROJECT=true`
+# env-var convention with a typed Poetry config file. Operators
+# editing this file get the same effect as setting the env var, but
+# the value lives in the repo and is consumed without env inheritance.
+[virtualenvs]
+in-project = true

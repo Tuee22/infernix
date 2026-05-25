@@ -7,7 +7,6 @@ where
 import Control.Concurrent (threadDelay)
 import Control.Exception (SomeException, bracket, evaluate, try)
 import System.Directory (getTemporaryDirectory, removeFile)
-import System.Environment (getEnvironment)
 import System.Exit (ExitCode (ExitSuccess))
 import System.IO (Handle, hClose, openTempFile)
 import System.Process
@@ -26,13 +25,17 @@ data CommandMonitor = CommandMonitor
     monitorHeartbeat :: Int -> IO ()
   }
 
+-- | Phase 2 Sprint 2.13: @getEnvironment@ whole-env capture retired.
+-- The supported monitored subprocess uses the same fixed minimal env
+-- ('processMonitorBaseEnv') as 'Infernix.Cluster.clusterSubprocessBaseEnv'
+-- plus the caller-supplied @envOverrides@; nothing inherits from the
+-- daemon's @environ@.
 tryCommandMonitored :: Maybe FilePath -> [(String, String)] -> FilePath -> [String] -> Maybe CommandMonitor -> IO (Either String String)
 tryCommandMonitored maybeWorkingDirectory envOverrides command args maybeMonitor = do
   temporaryDirectory <- getTemporaryDirectory
   withTempCaptureFile temporaryDirectory "infernix-stdout" $ \stdoutPath stdoutHandle ->
     withTempCaptureFile temporaryDirectory "infernix-stderr" $ \stderrPath stderrHandle -> do
-      baseEnv <- getEnvironment
-      let mergedEnv = mergeEnvironment baseEnv envOverrides
+      let mergedEnv = mergeEnvironment processMonitorBaseEnv envOverrides
       processResult <-
         try
           ( do
@@ -102,6 +105,16 @@ waitForMonitoredExit maybeMonitor processHandle =
 mergeEnvironment :: [(String, String)] -> [(String, String)] -> [(String, String)]
 mergeEnvironment baseEnv overrides =
   overrides <> filter (\(key, _) -> key `notElem` map fst overrides) baseEnv
+
+-- | The supported minimal base env for monitored subprocesses. Matches
+-- 'Infernix.Cluster.clusterSubprocessBaseEnv'; kept inline here so
+-- this module stays free of cross-module deps.
+processMonitorBaseEnv :: [(String, String)]
+processMonitorBaseEnv =
+  [ ("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"),
+    ("LANG", "C.UTF-8"),
+    ("LC_ALL", "C.UTF-8")
+  ]
 
 catchRemoveFailure :: IO () -> IO ()
 catchRemoveFailure action = do

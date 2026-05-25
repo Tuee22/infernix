@@ -12,7 +12,13 @@ import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-const version = process.env.PURESCRIPT_VERSION || "0.15.16";
+// Phase 5 Sprint 5.9: `PURESCRIPT_VERSION` env override retired. The
+// supported version is hardcoded here per the no-env-var doctrine
+// (see `documents/development/no_env_vars.md`). Operators bump the
+// PureScript compiler by editing this file directly; the
+// `verifySha256` step below ensures the matching artifact metadata is
+// updated together.
+const version = "0.15.16";
 
 const artifacts = {
   "linux:x64": {

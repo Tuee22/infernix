@@ -25,7 +25,6 @@ import Data.ByteString qualified as ByteString
 import Data.ByteString.Char8 qualified as ByteStringChar8
 import Data.ByteString.Lazy qualified as LazyByteString
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
-import Data.Maybe (fromMaybe)
 import Data.String (fromString)
 import Data.Text (Text)
 import Data.Text qualified as Text
@@ -38,10 +37,11 @@ import Infernix.Auth.Jwt
     verifyAndParseJwt,
   )
 import Infernix.Auth.Jwt qualified as Jwt
+import Infernix.ClusterConfig qualified as ClusterConfig
 import Infernix.Config (Paths (..))
 import Infernix.Demo.Auth
   ( KeycloakRealmConfig (..),
-    loadRealmConfigFromEnv,
+    loadRealmConfigFromCluster,
     realmJwksUrl,
     realmValidationConfig,
   )
@@ -65,6 +65,7 @@ import Infernix.Runtime
     listCacheManifests,
     rebuildCache,
   )
+import Infernix.SecretsConfig qualified as SecretsConfig
 import Infernix.Types
 import Infernix.Web.Contracts
   ( ArtifactDownloadGrant (..),
@@ -111,7 +112,6 @@ import Network.Wai
   )
 import Network.Wai.Handler.Warp (HostPreference, defaultSettings, runSettings, setHost, setPort)
 import System.Directory (doesDirectoryExist, doesFileExist)
-import System.Environment (lookupEnv)
 import System.FilePath (takeExtension, (</>))
 
 data DemoApiOptions = DemoApiOptions
@@ -167,11 +167,28 @@ runDemoApiServer options = do
   -- Fail fast when the generated catalog is invalid so cluster/test flows surface the error early.
   _ <- decodeDemoConfigFile (demoConfigPath options)
   jwksCache <- newJwksCache
-  realmConfig <- loadRealmConfigFromEnv
-  let settings =
+  -- Phase 7 Sprint 7.17: realm wiring now comes from the typed
+  -- @ClusterConfig.keycloak.*@ fields when the chart ConfigMap is
+  -- mounted; host-native + unit-test flows that don't mount the
+  -- manifest fall back to 'defaultInfernixRealmConfig'.
+  maybeClusterConfig <- tryLoadClusterConfig
+  let realmConfig = loadRealmConfigFromCluster maybeClusterConfig
+      settings =
         setHost (fromStringHost (demoBindHost options)) $
           setPort (demoPort options) defaultSettings
   runSettings settings (application options jwksCache realmConfig)
+
+-- | Phase 7 Sprint 7.17: best-effort load of the cluster manifest
+-- mounted by the chart at the supported path. The demo daemon pod
+-- has this ConfigMap-mounted; host-native and unit-test flows do
+-- not, so absence is silently tolerated.
+tryLoadClusterConfig :: IO (Maybe ClusterConfig.ClusterConfig)
+tryLoadClusterConfig = do
+  let path = ClusterConfig.defaultClusterConfigMountPath
+  exists <- doesFileExist path
+  if exists
+    then Just <$> ClusterConfig.decodeClusterConfigFile path
+    else pure Nothing
 
 -- type Application = Request -> (Response -> IO ResponseReceived) -> IO ResponseReceived
 application :: DemoApiOptions -> JwksCache -> KeycloakRealmConfig -> Application
@@ -336,28 +353,19 @@ bearerToken headerValue =
     Just token | not (Text.null token) -> Just token
     _ -> Nothing
 
--- | Fetch the Keycloak realm JWKS over plain HTTP from the cluster
--- service. The current implementation has no cache; each /api/objects
--- request triggers one upstream JWKS GET. Sprint 7.14 lands a TTL cache
--- with Pulsar admin-driven invalidation when the realm rotates.
+-- | Phase 7 Sprint 7.17: fetch the Keycloak realm JWKS via the
+-- typed `ClusterConfig.keycloak.jwksUrl` field when the cluster
+-- manifest is mounted; fall back to the realm-config-derived URL
+-- (host-native + unit-test flows). The retired
+-- @INFERNIX_KEYCLOAK_JWKS_URL@ env override is gone.
 loadJwksFromKeycloak :: KeycloakRealmConfig -> IO (Either String Jwks)
 loadJwksFromKeycloak realmConfig = do
-  -- The supported cluster path resolves JWKS through the Keycloak
-  -- Service rather than the routed @/auth@ edge so the demo backend
-  -- never has to round-trip through Envoy Gateway for token
-  -- verification. Operators can override with @INFERNIX_KEYCLOAK_JWKS_URL@
-  -- on isolated daemon runs.
-  override <- lookupEnv "INFERNIX_KEYCLOAK_JWKS_URL"
-  let jwksUrl = case override of
-        Just rawUrl -> Text.pack rawUrl
-        Nothing ->
-          Text.concat
-            [ "http://infernix-keycloak.platform.svc.cluster.local:8080",
-              "/realms/",
-              realmName realmConfig,
-              "/protocol/openid-connect/certs"
-            ]
-      _ = realmJwksUrl realmConfig
+  maybeClusterConfig <- tryLoadClusterConfig
+  let jwksUrl = case maybeClusterConfig of
+        Just clusterConfig ->
+          let configured = ClusterConfig.keycloakJwksUrl (ClusterConfig.clusterKeycloak clusterConfig)
+           in if Text.null configured then realmJwksUrl realmConfig else configured
+        Nothing -> realmJwksUrl realmConfig
   manager <- newManager defaultManagerSettings
   fetchAttempt <- try @SomeException $ do
     requestValue <- parseRequest (Text.unpack jwksUrl)
@@ -372,32 +380,45 @@ loadJwksFromKeycloak realmConfig = do
       | otherwise ->
           pure (Left ("JWKS endpoint returned HTTP " <> show (statusCode (responseStatus response))))
 
--- | Pull MinIO endpoint + credentials + region from the demo binary's
--- environment. The chart injects these as @INFERNIX_MINIO_ENDPOINT@,
--- @INFERNIX_MINIO_ACCESS_KEY@, @INFERNIX_MINIO_SECRET_KEY@, and
--- @INFERNIX_MINIO_REGION@ via the demo Deployment env block.
+-- | Phase 7 Sprint 7.17: pull MinIO endpoint / region / presign
+-- expiry from the mounted `ClusterConfig.minio.*` fields and
+-- credentials from the file path declared by the mounted
+-- `SecretsConfig.minio.credentialsPath`. The retired `INFERNIX_MINIO_*`
+-- env reads are gone; cluster-resident deployments mount both
+-- ConfigMaps + Secret at the supported paths, and the function
+-- surfaces a typed diagnostic when either is absent.
 loadPresignedConfig :: IO (Either String PresignedUrlConfig)
 loadPresignedConfig = do
-  maybeEndpoint <- lookupEnv "INFERNIX_MINIO_ENDPOINT"
-  maybeAccessKey <- lookupEnv "INFERNIX_MINIO_ACCESS_KEY"
-  maybeSecretKey <- lookupEnv "INFERNIX_MINIO_SECRET_KEY"
-  maybeRegion <- lookupEnv "INFERNIX_MINIO_REGION"
-  maybeExpiry <- lookupEnv "INFERNIX_MINIO_PRESIGN_EXPIRY_SECONDS"
-  case (maybeEndpoint, maybeAccessKey, maybeSecretKey) of
-    (Just endpointValue, Just accessKeyValue, Just secretKeyValue) ->
-      let (scheme, hostPort) = splitMinioEndpoint (Text.pack endpointValue)
-       in pure $
-            Right
-              PresignedUrlConfig
-                { presignedScheme = scheme,
-                  presignedEndpoint = hostPort,
-                  presignedRegion = Text.pack (fromMaybe "us-east-1" maybeRegion),
-                  presignedAccessKeyId = Text.pack accessKeyValue,
-                  presignedSecretAccessKey = Text.pack secretKeyValue,
-                  presignedExpirySeconds = maybe 900 read maybeExpiry
-                }
-    _ ->
-      pure (Left "INFERNIX_MINIO_ENDPOINT / ACCESS_KEY / SECRET_KEY must be set")
+  clusterExists <- doesFileExist ClusterConfig.defaultClusterConfigMountPath
+  secretsExists <- doesFileExist SecretsConfig.defaultClusterSecretsMountPath
+  if not (clusterExists && secretsExists)
+    then
+      pure
+        ( Left
+            ( "demo backend requires the cluster ConfigMap at "
+                <> ClusterConfig.defaultClusterConfigMountPath
+                <> " and the secrets Secret at "
+                <> SecretsConfig.defaultClusterSecretsMountPath
+                <> "; the demo Deployment mounts both via the supported chart templates"
+            )
+        )
+    else do
+      clusterConfig <- ClusterConfig.decodeClusterConfigFile ClusterConfig.defaultClusterConfigMountPath
+      secretsConfig <- SecretsConfig.decodeSecretsConfigFile SecretsConfig.defaultClusterSecretsMountPath
+      minioCreds <- SecretsConfig.readMinioCredentials (SecretsConfig.secretsMinio secretsConfig)
+      let minio = ClusterConfig.clusterMinio clusterConfig
+          (scheme, hostPort) = splitMinioEndpoint (ClusterConfig.minioEndpoint minio)
+      pure
+        ( Right
+            PresignedUrlConfig
+              { presignedScheme = scheme,
+                presignedEndpoint = hostPort,
+                presignedRegion = ClusterConfig.minioRegion minio,
+                presignedAccessKeyId = SecretsConfig.minioAccessKey minioCreds,
+                presignedSecretAccessKey = SecretsConfig.minioSecretKey minioCreds,
+                presignedExpirySeconds = fromIntegral (ClusterConfig.minioPresignExpirySeconds minio)
+              }
+        )
 
 -- | Phase 7 Sprint 7.7 follow-on: the @INFERNIX_MINIO_ENDPOINT@ env var
 -- the chart injects carries a full @http://host:port@ URL, but the SigV4

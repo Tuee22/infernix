@@ -6,14 +6,17 @@ module Infernix.Service
 where
 
 import Control.Exception (IOException, bracketOnError, catch)
-import Data.Maybe (fromMaybe)
+import Infernix.ClusterConfig
+  ( ClusterConfig,
+    decodeClusterConfigFile,
+    defaultClusterConfigMountPath,
+  )
 import Infernix.Config
 import Infernix.DemoConfig (decodeDemoConfigFile)
 import Infernix.Engines.AppleSilicon (ensureAppleSiliconRuntimeReady)
 import Infernix.Runtime.Pulsar (runProductionDaemon)
 import Infernix.Types (DaemonRole (Coordinator, Engine), DemoConfig (..), RuntimeMode (AppleSilicon), runtimeModeId)
-import System.Directory (createDirectoryIfMissing)
-import System.Environment (lookupEnv)
+import System.Directory (createDirectoryIfMissing, doesFileExist)
 import System.FilePath (takeDirectory, (</>))
 import System.IO (SeekMode (AbsoluteSeek), hPutStrLn, stderr)
 import System.Posix.Files (touchFile)
@@ -30,16 +33,21 @@ import System.Posix.IO
   )
 import System.Posix.Process (getProcessID)
 
-runService :: Maybe RuntimeMode -> IO ()
-runService maybeRuntimeMode = do
+-- | Phase 4 Sprint 4.13: the supported daemon entrypoint. Both args
+-- are now typed: 'maybeRuntimeMode' is the legacy host-side override
+-- (unchanged), 'maybeDaemonRole' replaces the retired
+-- @INFERNIX_DAEMON_ROLE@ env var. The chart-driven coordinator and
+-- engine Deployments pass @--role coordinator@ and @--role engine@
+-- through @args@; host-native flows omit the flag and fall back to
+-- the active substrate dhall's @daemonRole@ field.
+runService :: Maybe RuntimeMode -> Maybe DaemonRole -> IO ()
+runService maybeRuntimeMode maybeDaemonRole = do
   paths <- discoverPaths
   ensureRepoLayout paths
-  maybeDemoConfigOverride <- lookupEnv "INFERNIX_DEMO_CONFIG_PATH"
-  maybeDaemonRoleOverride <- lookupEnv "INFERNIX_DAEMON_ROLE"
-  let selectedDemoConfigPath = fromMaybe (generatedDemoConfigPath paths) maybeDemoConfigOverride
-  demoConfig <- decodeDemoConfigFile selectedDemoConfigPath
+  maybeClusterConfig <- tryLoadClusterConfig
+  demoConfig <- decodeDemoConfigFile (generatedDemoConfigPath paths)
   runtimeMode <- resolveServiceRuntimeMode maybeRuntimeMode demoConfig
-  daemonRole <- resolveServiceDaemonRole maybeDaemonRoleOverride demoConfig
+  let daemonRole = resolveServiceDaemonRole maybeDaemonRole demoConfig
   ensureServiceRuntimeSupported paths runtimeMode daemonRole
   whenAppleRuntimeReady paths runtimeMode daemonRole
   -- Phase 7 Sprint 7.7: engine-role startup acquires an exclusive lock on
@@ -47,10 +55,22 @@ runService maybeRuntimeMode = do
   -- engine daemon is the engine role today; on Linux substrates the same
   -- guarantee is provided by required pod anti-affinity on the engine
   -- Deployment (a Linux engine-role process inside that pod also acquires
-  -- this lock as a no-op uniformity guarantee once the daemon-role rename
-  -- lands and the engine role is wired into the chart split).
+  -- this lock as a no-op uniformity guarantee).
   acquireEngineLockIfEngineRole paths daemonRole
-  runProductionDaemon paths runtimeMode
+  runProductionDaemon paths runtimeMode maybeClusterConfig daemonRole
+
+-- | Phase 4 Sprint 4.13: best-effort load of the cluster manifest
+-- mounted at the supported path. Cluster-resident pods have this
+-- ConfigMap-mounted; host-native and unit-test paths do not, so the
+-- absence is silently tolerated and downstream consumers fall back to
+-- the substrate dhall + 'Paths' defaults.
+tryLoadClusterConfig :: IO (Maybe ClusterConfig)
+tryLoadClusterConfig = do
+  let path = defaultClusterConfigMountPath
+  exists <- doesFileExist path
+  if exists
+    then Just <$> decodeClusterConfigFile path
+    else pure Nothing
 
 resolveServiceRuntimeMode :: Maybe RuntimeMode -> DemoConfig -> IO RuntimeMode
 resolveServiceRuntimeMode maybeRuntimeMode demoConfig =
@@ -68,16 +88,16 @@ resolveServiceRuntimeMode maybeRuntimeMode demoConfig =
             )
     Nothing -> pure (configRuntimeMode demoConfig)
 
-resolveServiceDaemonRole :: Maybe String -> DemoConfig -> IO DaemonRole
+-- | Phase 4 Sprint 4.13: typed CLI override replaces the previous
+-- @lookupEnv "INFERNIX_DAEMON_ROLE"@ + 'String' parsing path. The
+-- parser is now in 'Infernix.CommandRegistry'; this function just
+-- threads the parsed value, falling back to the substrate dhall's
+-- 'activeDaemonRole' when no override is supplied.
+resolveServiceDaemonRole :: Maybe DaemonRole -> DemoConfig -> DaemonRole
 resolveServiceDaemonRole maybeDaemonRoleOverride demoConfig =
   case maybeDaemonRoleOverride of
-    Nothing -> pure (activeDaemonRole demoConfig)
-    Just "coordinator" -> pure Coordinator
-    Just "engine" -> pure Engine
-    Just "cluster" -> pure Coordinator
-    Just "host" -> pure Engine
-    Just rawValue ->
-      ioError (userError ("Unsupported daemon role override for service: " <> rawValue))
+    Nothing -> activeDaemonRole demoConfig
+    Just daemonRole -> daemonRole
 
 ensureServiceRuntimeSupported :: Paths -> RuntimeMode -> DaemonRole -> IO ()
 ensureServiceRuntimeSupported paths runtimeMode daemonRole =

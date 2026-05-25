@@ -1,6 +1,6 @@
 # Phase 4: Inference Service and Durable Runtime
 
-**Status**: Active (Sprint 4.13 in flight; Sprints 4.1–4.12 Done)
+**Status**: Active (Sprint 4.13 code-side closed May 25, 2026 including the engine-command override retirement; the `linux-gpu` cluster integration validation and the MinIO endpoint/region migration paired with Sprint 7.17 secrets retirement remain open; Sprints 4.1–4.12 Done)
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/engineering/cluster_config_manifest.md](../documents/engineering/cluster_config_manifest.md)
 
 > **Purpose**: Define the Haskell service runtime, the shared Python engine-adapter contract, the
@@ -317,7 +317,7 @@ None.
 ## Sprint 4.8: Pulsar-Driven Production Inference Surface [Done]
 
 **Status**: Done
-**Implementation**: `src/Infernix/Service.hs`, `src/Infernix/Config.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Types.hs`, `src/Infernix/Models.hs`, `src/Infernix/DemoConfig.hs`, `chart/templates/deployment-service.yaml`, `chart/values.yaml`, `src/Infernix/Runtime.hs`, `src/Infernix/Runtime/Pulsar.hs`, `proto/infernix/runtime/inference.proto`, `test/unit/Spec.hs`, `test/integration/Spec.hs`
+**Implementation**: `src/Infernix/Service.hs`, `src/Infernix/Config.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Types.hs`, `src/Infernix/Models.hs`, `src/Infernix/DemoConfig.hs`, `chart/templates/deployment-coordinator.yaml`, `chart/templates/deployment-engine.yaml` (Phase 7 Sprint 7.7 split the original `chart/templates/deployment-service.yaml` into role-specific templates), `chart/values.yaml`, `src/Infernix/Runtime.hs`, `src/Infernix/Runtime/Pulsar.hs`, `proto/infernix/runtime/inference.proto`, `test/unit/Spec.hs`, `test/integration/Spec.hs`
 **Docs to update**: `documents/tools/pulsar.md`, `documents/architecture/runtime_modes.md`, `documents/reference/cli_reference.md`
 
 ### Objective
@@ -543,7 +543,7 @@ None.
 
 ---
 
-## Sprint 4.13: Cluster Manifest Materialization [Active]
+## Sprint 4.13: Cluster Manifest Materialization [Active — code-side done, cluster validation pending]
 
 **Status**: Active
 **Blocked by**: Phase 1 Sprint 1.11 (Host Manifest Materialization)
@@ -588,13 +588,165 @@ favor of typed `ClusterConfig` fields.
 
 ### Remaining Work
 
-All deliverables above.
+Foundational pieces landed (May 25, 2026):
+
+- `dhall/InfernixCluster.dhall` — typed schema for the `pulsar`,
+  `minio`, `keycloak`, `demoBackend`, `engine`, `coordinator` records
+  documented in
+  [../documents/engineering/cluster_config_manifest.md](../documents/engineering/cluster_config_manifest.md).
+- `src/Infernix/ClusterConfig.hs` — typed `ClusterConfig` Haskell
+  record + Dhall decoder, exposed via the `infernix` library and
+  declared in `infernix.cabal`. The decoder uses the same
+  field-name-modifier pattern as `HostConfig` so the Haskell record
+  selectors stay `cluster…`-prefixed while the Dhall schema fields
+  remain bare camelCase.
+- `chart/templates/configmap-cluster-config.yaml` — renders the
+  cluster Dhall from chart values into
+  `ConfigMap/infernix-cluster-config`, keyed by `cluster.dhall`. The
+  template inlines the schema header so the rendered file is a valid
+  standalone Dhall document the coordinator + engine + demo pods can
+  decode in-process at startup.
+- `chart/values.yaml` — extended with a top-level `clusterConfig:`
+  block providing the typed defaults that the new ConfigMap template
+  reads (Pulsar `systemNamespace`, MinIO `region` /
+  `presignExpirySeconds` / `modelsBucket` / `demoArtifactsBucket`,
+  Keycloak base URL + realm + client id + JWKS URL, demo-backend
+  `bindHost` + `port` + `bridgeMode`, engine `modelCacheRoot` +
+  `modelCacheQuotaBytes`, coordinator `catalogSource` +
+  `daemonLocation`).
+- `infernix.cabal` — `extra-source-files` extended with
+  `dhall/InfernixHost.dhall` and `dhall/InfernixCluster.dhall` so the
+  schemas ship inside the source distribution.
+
+Verified end-to-end on the host: `cabal build all`, `cabal test
+infernix-unit` (70/70 tests), and `./.build/infernix lint
+{files,chart,docs}` all exit zero.
+
+Code-side closure landed (May 25, 2026):
+
+- **Chart env stripping.** `chart/templates/deployment-coordinator.yaml`
+  and `chart/templates/deployment-engine.yaml` drop the
+  `INFERNIX_CONTROL_PLANE_CONTEXT`, `INFERNIX_DAEMON_LOCATION`,
+  `INFERNIX_DAEMON_ROLE`, `INFERNIX_CATALOG_SOURCE`,
+  `INFERNIX_DEMO_CONFIG_PATH`, `INFERNIX_PUBLICATION_STATE_PATH`,
+  `INFERNIX_MINIO_ENDPOINT`, `INFERNIX_MINIO_REGION`, and the entire
+  `INFERNIX_PULSAR_*` family from their `env:` blocks. Each Deployment
+  gains a `cluster-config` volume mount at `/opt/infernix/cluster.dhall`
+  (subPath `cluster.dhall`) sourced from `ConfigMap/{{ .Values.clusterConfig.name }}`.
+  The remaining `env:` entries are intentional residue scheduled for
+  retirement in later sprints: `INFERNIX_DATA_ROOT` retires with the
+  demo-deployment rewiring (Phase 7 Sprint 7.17), `INFERNIX_MODEL_CACHE_ROOT`
+  retires with the Python adapter sweep (Phase 5 Sprint 5.9), and
+  `INFERNIX_MINIO_ACCESS_KEY` / `INFERNIX_MINIO_SECRET_KEY` retire with
+  the `InfernixSecrets.dhall` materialization (Phase 7 Sprint 7.17).
+- **DAEMON_ROLE retirement: typed CLI arg.** The chosen design is the
+  `--role coordinator|engine` arg on `infernix service`, not per-role
+  substrate ConfigMaps. `Infernix.CommandRegistry.ServiceCommand` now
+  carries a `Maybe DaemonRole`, and the parser accepts
+  `infernix service [--role coordinator|engine]`. Both Deployment
+  templates pass the matching role through their `args:` block. Apple
+  host-native and unit-test flows omit the flag and fall back to the
+  substrate dhall's `daemonRole` field (the supported default for any
+  flow that doesn't go through chart-driven splits).
+- **Pulsar env retirement.** `src/Infernix/Runtime/Pulsar.hs`
+  `runProductionDaemon` is now
+  `Paths -> RuntimeMode -> Maybe ClusterConfig -> DaemonRole -> IO ()`;
+  it consumes the typed `ClusterConfig` for control-plane context,
+  catalog source, daemon location, demo-config path, and the Pulsar
+  websocket / admin endpoints. The legacy `lookupEnv` reads for
+  `INFERNIX_CONTROL_PLANE_CONTEXT`, `INFERNIX_DAEMON_ROLE`,
+  `INFERNIX_DAEMON_LOCATION`, `INFERNIX_CATALOG_SOURCE`,
+  `INFERNIX_DEMO_CONFIG_PATH`, `INFERNIX_PULSAR_WS_BASE_URL`, and
+  `INFERNIX_PULSAR_ADMIN_URL` are deleted. The retired
+  `Infernix.Error.InvalidControlPlaneOverride` and the
+  `parseControlPlaneOverride` / `resolveControlPlaneOverride` /
+  `parseDaemonRoleText` helpers are removed; the new
+  `resolveClusterControlPlaneContext` helper consumes the cluster
+  manifest directly.
+- **Service-side wiring.** `src/Infernix/Service.hs.runService` is now
+  `Maybe RuntimeMode -> Maybe DaemonRole -> IO ()`; it loads the
+  cluster manifest via the new `tryLoadClusterConfig` helper (silent
+  absence outside cluster pods) and threads both typed values into
+  `runProductionDaemon`. `Infernix.CLI.dispatch` and
+  `Infernix.HostPrereqs` pattern-match the new constructor shape.
+- **Test-fixture rewiring.** `test/unit/Spec.hs` adds the
+  `unitTestClusterConfigFixture` helper that constructs a synthetic
+  `ClusterConfig` with loopback Pulsar + MinIO endpoints; the previous
+  `withOptionalEnv "INFERNIX_PULSAR_*" / "INFERNIX_DEMO_CONFIG_PATH"`
+  injection is deleted in favour of passing the typed fixture +
+  `Coordinator` role to `runProductionDaemon`. The override-test path
+  for `INFERNIX_ENGINE_COMMAND_TRANSFORMERS_PYTHON` remains using
+  `withOptionalEnv` since the engine-command override retirement is
+  deferred (see below); this is the last remaining env-var injection
+  in `Spec.hs`.
+- **Chart lint update.** `src/Infernix/Lint/Chart.hs` `requiredPhrases`
+  table swaps the retired `INFERNIX_PULSAR_*` / `INFERNIX_DEMO_CONFIG_PATH`
+  / `INFERNIX_MINIO_ENDPOINT` / `INFERNIX_PUBLICATION_STATE_PATH`
+  expectations on `deployment-{coordinator,engine}.yaml` for the new
+  `cluster-config` volume mount, `/opt/infernix/cluster.dhall` mount
+  path, and `--role coordinator|engine` arg patterns. A new entry
+  asserts that `chart/templates/configmap-cluster-config.yaml` renders
+  the typed Dhall record with all six top-level fields
+  (`pulsar`/`minio`/`keycloak`/`demoBackend`/`engine`/`coordinator`).
+- **CLI reference doc updated.** `documents/reference/cli_reference.md`
+  records the new `infernix service [--role coordinator|engine]`
+  surface; the `infernix lint docs` generated-section check is green.
+
+Verified end-to-end on the host: `cabal build all`, `cabal test
+infernix-unit` (70/70 tests still passing with the typed fixture +
+the new `serviceCatalogSource: unit-test-fixture` output line),
+`cabal test infernix-haskell-style`, and
+`./.build/infernix lint {chart,files,docs,proto}` all exit zero.
+
+Pending closure (deferred and named so the sprint status stays
+honest):
+
+- **`INFERNIX_ENGINE_COMMAND_<NAME>` env retirement in
+  `src/Infernix/Runtime/Worker.hs` — landed May 25, 2026.**
+  `Worker.runInferenceWorker` now takes an explicit
+  `EngineCommandOverrideMap = [(Text, Text)]` parameter keyed by the
+  engine binding's adapter id. `Runtime.executeInference` threads the
+  map through; `Runtime/Pulsar.runProductionDaemon` extracts it once
+  from `ClusterConfig.engine.commandOverrides` (empty list when no
+  manifest is mounted) and passes it through every consumer loop +
+  `publishedResultFromRequest` call. The exported
+  `engineCommandOverrideEnvironmentName` helper is gone; the matching
+  unit-test override switched from `withOptionalEnv overrideEnvName` to
+  the typed resolver and `withOptionalEnv` itself was removed from
+  `test/unit/Spec.hs`. The Phase 6 Sprint 6.28 lint gate no longer
+  exempts `src/Infernix/Runtime/Worker.hs`.
+- **`INFERNIX_MINIO_ENDPOINT` / `INFERNIX_MINIO_REGION` reads in
+  `src/Infernix/Runtime/Pulsar.hs.loadBootstrapPresignedConfig`.**
+  Endpoint + region are present in `ClusterConfig.minio`; the
+  remaining `INFERNIX_MINIO_ACCESS_KEY` / `INFERNIX_MINIO_SECRET_KEY`
+  reads need the file-backed `SecretsConfig` landing in Phase 7
+  Sprint 7.17 before the whole function can switch to typed config.
+  These reads are scheduled to retire together rather than half-way.
+- **Unit fixture for `ClusterConfig` decoder roundtrip.** The
+  `unitTestClusterConfigFixture` helper covers construction; a
+  matching renderer + roundtrip-through-`decodeClusterConfigFile`
+  assertion (mirroring `assertHostConfig`) is the standalone test
+  that locks the Dhall encoding. Worth adding alongside the Sprint
+  6.28 lint-gate landing.
+- **`infernix test integration` round-trip on `linux-gpu`.** The
+  validation requires a fresh launcher image build + `cluster up` +
+  the integration suite. The first-cluster bring-up on this host
+  costs ~30+ minutes (per the documented long-running Harbor-first
+  bootstrap), so this validation is deferred to a focused session
+  rather than mixed into the code-side closure.
 
 ---
 
 ## Remaining Work
 
-Sprint 4.13 in flight. Sprints 4.1–4.12 closed.
+Sprint 4.13 code-side closed (Dhall schema + Haskell decoder + chart
+ConfigMap template + values block + chart env stripping + typed
+`--role` CLI arg + Pulsar env retirement + ClusterConfig threading +
+chart lint expectations + CLI reference doc + unit-test fixture).
+Pending closure (engine-command override retirement, MinIO endpoint
+move, dedicated `ClusterConfig` decoder roundtrip test, and the real
+`linux-gpu` cluster integration validation) is named in the sprint
+section above. Sprints 4.1–4.12 closed.
 
 ---
 

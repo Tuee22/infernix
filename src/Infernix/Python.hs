@@ -10,8 +10,10 @@ where
 
 import Control.Exception (throwIO)
 import Control.Monad (unless)
+import Data.Text qualified as Text
 import Infernix.Config (ControlPlaneContext (HostNative), Paths (..), controlPlaneContext)
 import Infernix.Error (InfernixError (..))
+import Infernix.HostConfig qualified as HostConfig
 import Infernix.Internal.Util (allM, findFirstM, firstJustM)
 import Infernix.Types (RuntimeMode)
 import System.Directory
@@ -22,11 +24,11 @@ import System.Directory
     getHomeDirectory,
     listDirectory,
   )
-import System.Environment (getEnvironment, lookupEnv, setEnv)
+import System.Environment (lookupEnv, setEnv)
 import System.Exit (ExitCode (ExitSuccess))
 import System.FilePath (takeDirectory, (</>))
 import System.Info (os)
-import System.Process (CreateProcess (cwd, env), proc, readCreateProcessWithExitCode)
+import System.Process (CreateProcess (cwd), proc, readCreateProcessWithExitCode)
 
 pythonProjectDirectory :: Paths -> RuntimeMode -> FilePath
 pythonProjectDirectory paths _runtimeMode =
@@ -40,11 +42,26 @@ pythonAdaptersPresent projectDirectory = do
     then pure False
     else not . null <$> listVisibleEntries adaptersRoot
 
+-- | Phase 7 Sprint 7.17 — @INFERNIX_POETRY_EXECUTABLE@ env override
+-- retired. The supported Poetry path comes from
+-- @HostConfig.toolPaths.poetry@ (mounted via the host manifest at
+-- @./.build/infernix-host.dhall@ on Apple and
+-- @/opt/infernix/dhall/InfernixHost.dhall@ in the Linux launcher
+-- image). When the manifest is absent (first-run bootstrap, pre-binary
+-- adapter setup), the helper falls back to a @\$PATH@ lookup so the
+-- one-time bootstrap can install Poetry on Apple. After the binary
+-- materializes the manifest, supported flows use the typed path
+-- exclusively.
 ensurePoetryExecutable :: Paths -> IO FilePath
 ensurePoetryExecutable paths = do
+  let manifestPoetry = case pathsHostConfig paths of
+        Just hostConfig ->
+          let configured = HostConfig.hostPoetry (HostConfig.hostToolPaths hostConfig)
+           in if Text.null configured then Nothing else Just (Text.unpack configured)
+        Nothing -> Nothing
   candidate <-
     firstJustM
-      [ lookupEnv "INFERNIX_POETRY_EXECUTABLE",
+      [ maybe (pure Nothing) onlyIfExists manifestPoetry,
         findExecutable "poetry"
       ]
   case candidate of
@@ -115,21 +132,16 @@ ensureNamespaceInit directoryPath = do
   initPresent <- doesFileExist initPath
   unless initPresent (writeFile initPath "")
 
+-- | Phase 7 Sprint 7.17: @POETRY_VIRTUALENVS_IN_PROJECT@ env-set
+-- retired. The new typed source is @python/poetry.toml@'s
+-- @[virtualenvs] in-project = true@ entry; Poetry picks it up
+-- automatically when invoked from the project directory.
 runPoetryCommand :: Paths -> FilePath -> [String] -> String -> IO ()
 runPoetryCommand paths projectDirectory args failurePrefix = do
   poetryExecutable <- ensurePoetryExecutable paths
-  baseEnvironment <- getEnvironment
   (exitCode, _, stderrOutput) <-
     readCreateProcessWithExitCode
-      ( (proc poetryExecutable args)
-          { cwd = Just projectDirectory,
-            env =
-              Just
-                ( ("POETRY_VIRTUALENVS_IN_PROJECT", "true")
-                    : filter ((/= "POETRY_VIRTUALENVS_IN_PROJECT") . fst) baseEnvironment
-                )
-          }
-      )
+      ((proc poetryExecutable args) {cwd = Just projectDirectory})
       ""
   case exitCode of
     ExitSuccess -> pure ()
@@ -298,3 +310,13 @@ listVisibleEntries :: FilePath -> IO [FilePath]
 listVisibleEntries directoryPath = do
   entries <- listDirectory directoryPath
   pure [entry | entry <- entries, entry /= "." && entry /= ".."]
+
+-- | Returns @Just path@ when the file at @path@ exists; otherwise
+-- @Nothing@. Used to gracefully ignore stale or default-fixture tool
+-- paths declared in the host manifest when they do not exist on the
+-- current operator's host (e.g. unit-test fixtures that synthesize a
+-- HostConfig with the Apple homedir default).
+onlyIfExists :: FilePath -> IO (Maybe FilePath)
+onlyIfExists candidate = do
+  present <- doesFileExist candidate
+  pure (if present then Just candidate else Nothing)

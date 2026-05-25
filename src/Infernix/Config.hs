@@ -41,7 +41,15 @@ data Paths = Paths
     helmCacheRoot :: FilePath,
     helmDataRoot :: FilePath,
     resultsRoot :: FilePath,
-    modelCacheRoot :: FilePath
+    modelCacheRoot :: FilePath,
+    -- | Phase 2 Sprint 2.13: the staged host manifest, when present.
+    -- Cluster lifecycle helpers route their external invocations
+    -- through this so absolute tool paths come from
+    -- @HostConfig.toolPaths.*@ instead of @\$PATH@. 'Nothing' means
+    -- the manifest is absent (first-run bootstrap, unit tests
+    -- without an explicit fixture) and the callers fall back to the
+    -- bare-name tool resolution they used before this field landed.
+    pathsHostConfig :: Maybe HostConfig.HostConfig
   }
   deriving (Eq, Show)
 
@@ -113,7 +121,8 @@ pathsFromRepoRoot fallbackRepoRoot maybeHostConfig =
           helmCacheRoot = helmCacheRootPath,
           helmDataRoot = helmDataRootPath,
           resultsRoot = resultsRootPath,
-          modelCacheRoot = modelCacheRootPath
+          modelCacheRoot = modelCacheRootPath,
+          pathsHostConfig = maybeHostConfig
         }
 
 resolveAgainst :: FilePath -> FilePath -> FilePath

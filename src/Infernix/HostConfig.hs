@@ -76,7 +76,11 @@ data HostToolPaths = HostToolPaths
     hostCut :: Text,
     hostDirname :: Text,
     hostBash :: Text,
-    hostCrictl :: Text
+    hostCrictl :: Text,
+    hostChown :: Text,
+    hostNvidiaSmi :: Text,
+    hostNvkind :: Text,
+    hostHostname :: Text
   }
   deriving (Eq, Show, Generic)
 
@@ -130,6 +134,7 @@ hostFieldName rawFieldName =
     Just "PlaywrightHost" -> "playwrightHost"
     Just "ControlPlaneContext" -> "controlPlaneContext"
     Just "AptGet" -> "aptGet"
+    Just "NvidiaSmi" -> "nvidiaSmi"
     Just suffix -> lowerInitial suffix
 
 lowerInitial :: Text -> Text
@@ -210,6 +215,10 @@ renderHostConfig hostConfig =
             <> renderText "dirname" hostDirname
             <> renderText "bash" hostBash
             <> renderText "crictl" hostCrictl
+            <> renderText "chown" hostChown
+            <> renderText "nvidiaSmi" hostNvidiaSmi
+            <> renderText "nvkind" hostNvkind
+            <> renderText "hostname" hostHostname
             <> "  }",
           ", filesystem =",
           renderHeadText "repoRoot" hostRepoRoot
@@ -267,7 +276,11 @@ defaultLinuxOuterContainerHostConfig homeDir =
             hostCut = "/usr/bin/cut",
             hostDirname = "/usr/bin/dirname",
             hostBash = "/usr/bin/bash",
-            hostCrictl = "/usr/local/bin/crictl"
+            hostCrictl = "/usr/local/bin/crictl",
+            hostChown = "/usr/bin/chown",
+            hostNvidiaSmi = "/usr/bin/nvidia-smi",
+            hostNvkind = "",
+            hostHostname = "/usr/bin/hostname"
           },
       hostFilesystem =
         HostFilesystem
@@ -325,7 +338,11 @@ defaultAppleHostNativeHostConfig repoRoot homeDir =
             hostCut = "/usr/bin/cut",
             hostDirname = "/usr/bin/dirname",
             hostBash = "/bin/bash",
-            hostCrictl = ""
+            hostCrictl = "",
+            hostChown = "/usr/sbin/chown",
+            hostNvidiaSmi = "",
+            hostNvkind = "",
+            hostHostname = "/bin/hostname"
           },
       hostFilesystem =
         HostFilesystem

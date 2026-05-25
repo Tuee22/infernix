@@ -178,7 +178,143 @@ checkSourceReadability repoRoot sourceFile = do
   pure
     ( hangingCaseViolations sourceFile numberedLines
         <> aliasCommentViolations sourceFile numberedLines
+        <> envFunctionViolations sourceFile numberedLines
+        <> bareNameProcViolations sourceFile numberedLines
     )
+
+-- | Phase 6 Sprint 6.28 (initial landing — May 25, 2026): reject new
+-- occurrences of @lookupEnv@ / @getEnv@ / @getEnvironment@ /
+-- @setEnv@ / @unsetEnv@ outside the explicit exemption list. The
+-- exemption list names the modules whose env retirements are
+-- deferred to specific later sprints (Phase 7 Sprint 7.17 for the
+-- credential-bearing reads, the Apple validation pass for the
+-- Apple-only code paths). As those sprints close, their rows leave
+-- this list and the gate tightens automatically.
+envFunctionViolations :: FilePath -> [(Int, String)] -> [String]
+envFunctionViolations sourceFile numberedLines
+  | sourceFile `elem` envFunctionExemptedFiles = []
+  | otherwise =
+      [ sourceFile <> ":" <> show lineNumber <> ": forbidden env-IO call `" <> needle <> "`; route through HostConfig or a typed Dhall manifest"
+      | (lineNumber, lineValue) <- numberedLines,
+        not (isCommentLine lineValue),
+        needle <- forbiddenEnvFunctions,
+        containsToken needle lineValue
+      ]
+
+forbiddenEnvFunctions :: [String]
+forbiddenEnvFunctions =
+  [ "lookupEnv",
+    "getEnv",
+    "getEnvironment",
+    "setEnv",
+    "unsetEnv"
+  ]
+
+envFunctionExemptedFiles :: [FilePath]
+envFunctionExemptedFiles =
+  [ -- The build setup is genuinely outside the runtime-config
+    -- substrate and runs before the binary exists.
+    "Setup.hs",
+    -- This lint module defines the forbidden tokens as string
+    -- literals; it must exempt itself or the check trips on its own
+    -- token list.
+    "src/Infernix/Lint/HaskellStyle.hs",
+    -- Phase 2 Sprint 2.13 retired the @getEnvironment@ captures in
+    -- `Cluster.hs` + `ProcessMonitor.hs`; the matching cleanup of
+    -- @Infernix.CLI.runCommandWithCwdAndEnvRemoving@'s remaining
+    -- @getEnvironment@ + the supported execution-context helpers is
+    -- the same workstream and lands together with the
+    -- `Cluster.hs`-side @proc@ retirement.
+    "src/Infernix/CLI.hs",
+    -- Phase 7 Sprint 7.17 retires the Poetry env reads + the
+    -- @POETRY_VIRTUALENVS_IN_PROJECT@ PATH munging once
+    -- `poetry.toml` ships at the project root.
+    "src/Infernix/Python.hs",
+    -- Apple validation pass: the Apple host workflow's
+    -- @getEnvironment@ + PATH munging is intentionally deferred
+    -- until the user finalizes the Apple lane.
+    "src/Infernix/Engines/AppleSilicon.hs",
+    "src/Infernix/HostPrereqs.hs",
+    -- Phase 5 Sprint 5.9 pending Python adapter rewire keeps
+    -- @Workflow.hs@'s legacy Python-adapter ready-check together
+    -- with the @proc "node"@ web-build invocation; both close
+    -- together in the focused Python-adapter session.
+    "src/Infernix/Workflow.hs",
+    -- The test harness intentionally injects env vars to exercise
+    -- legacy fallback paths; the test-suite retirement is its own
+    -- Sprint 6.28 work item tracked separately.
+    "test/unit/Spec.hs",
+    "test/integration/Spec.hs"
+  ]
+
+-- | Phase 6 Sprint 6.28 (initial landing — May 25, 2026): reject
+-- bare-name @proc "<command>"@ invocations whose name matches a
+-- known external tool. The supported flow routes every invocation
+-- through `Infernix.HostTools.runHostTool` so the absolute path
+-- comes from the typed `HostConfig.toolPaths.*` record.
+bareNameProcViolations :: FilePath -> [(Int, String)] -> [String]
+bareNameProcViolations sourceFile numberedLines
+  | sourceFile `elem` bareNameProcExemptedFiles = []
+  | otherwise =
+      [ sourceFile <> ":" <> show lineNumber <> ": forbidden bare-name `proc " <> show toolName <> "`; route through HostTools.runHostTool"
+      | (lineNumber, lineValue) <- numberedLines,
+        not (isCommentLine lineValue),
+        toolName <- forbiddenBareProcCommands,
+        let needle = "proc \"" <> toolName <> "\"",
+        needle `isInfixOf` lineValue
+      ]
+
+forbiddenBareProcCommands :: [String]
+forbiddenBareProcCommands =
+  [ "docker",
+    "kubectl",
+    "helm",
+    "kind",
+    "cabal",
+    "ghc",
+    "ghcup",
+    "ormolu",
+    "hlint",
+    "npm",
+    "node",
+    "python3",
+    "poetry",
+    "protoc",
+    "git",
+    "tar",
+    "curl",
+    "apt-get",
+    "brew",
+    "colima",
+    "sudo",
+    "systemctl"
+  ]
+
+bareNameProcExemptedFiles :: [FilePath]
+bareNameProcExemptedFiles =
+  [ -- This lint module lists forbidden tokens as literals; exempt it.
+    "src/Infernix/Lint/HaskellStyle.hs",
+    -- Phase 2 Sprint 2.13: the cluster family's external invocations
+    -- now route the literal @\"docker\"@/@\"kubectl\"@/@\"kind\"@/
+    -- @\"helm\"@ tool names through a typed 'HostTool' wrapper layer
+    -- before reaching 'System.Process.proc'. The bare-name @proc
+    -- "<lit>"@ pattern this gate looks for is therefore absent from
+    -- these modules. 'Infernix.Lint.Files.runFilesLint' still uses
+    -- @proc "git" ["ls-files"]@ to enumerate the tracked file set
+    -- (genuine bootstrap-time call before HostConfig is available).
+    "src/Infernix/Lint/Files.hs",
+    -- Apple validation pass.
+    "src/Infernix/HostPrereqs.hs",
+    -- See note above in @envFunctionExemptedFiles@.
+    "src/Infernix/Workflow.hs",
+    "src/Infernix/Python.hs",
+    "src/Infernix/CLI.hs",
+    -- Integration test scaffolding uses `proc "python3"` to invoke
+    -- a fixture script. The supported retirement here passes
+    -- through `HostTools` once the integration suite picks up
+    -- typed-fixture threading.
+    "test/integration/Spec.hs"
+  ]
 
 hangingCaseViolations :: FilePath -> [(Int, String)] -> [String]
 hangingCaseViolations sourceFile numberedLines =

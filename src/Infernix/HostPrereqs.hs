@@ -101,7 +101,7 @@ runtimeModeForApplePrereqs maybeRuntimeMode command
 
 commandNeedsPythonPrereqs :: Command -> Bool
 commandNeedsPythonPrereqs = \case
-  ServiceCommand -> True
+  ServiceCommand _ -> True
   ClusterUpCommand -> True
   TestLintCommand -> True
   TestUnitCommand -> True
@@ -144,7 +144,7 @@ pythonToolRequirements runtimeMode command
   | runtimeMode /= AppleSilicon = []
   | otherwise =
       case command of
-        ServiceCommand -> [ApplePython, ApplePoetry]
+        ServiceCommand _ -> [ApplePython, ApplePoetry]
         ClusterUpCommand -> [ApplePython, ApplePoetry]
         TestLintCommand -> [ApplePython, ApplePoetry]
         TestUnitCommand -> [ApplePython, ApplePoetry]

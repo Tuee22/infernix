@@ -11,6 +11,9 @@ build-type:         Custom
 extra-source-files:
     README.md
     dhall/InfernixSubstrate.dhall
+    dhall/InfernixHost.dhall
+    dhall/InfernixCluster.dhall
+    dhall/InfernixSecrets.dhall
     proto/infernix/runtime/inference.proto
     proto/infernix/manifest/runtime_manifest.proto
 
@@ -28,6 +31,8 @@ library
         Infernix.CLI
         Infernix.CommandRegistry
         Infernix.Cluster
+        Infernix.ClusterConfig
+        Infernix.SecretsConfig
         Infernix.Auth.Jwt
         Infernix.Bootstrap.Models
         Infernix.Bridge.Result

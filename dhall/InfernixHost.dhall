@@ -50,6 +50,10 @@ let ToolPaths =
       , dirname : Text
       , bash : Text
       , crictl : Text
+      , chown : Text
+      , nvidiaSmi : Text
+      , nvkind : Text
+      , hostname : Text
       }
 
 let FilesystemConventions =

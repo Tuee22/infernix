@@ -15,12 +15,12 @@ import Data.Char (toLower)
 import Data.List (find)
 import Data.Maybe (mapMaybe)
 import Data.Text qualified as Text
-import Infernix.Types (RuntimeMode, parseRuntimeMode)
+import Infernix.Types (DaemonRole, RuntimeMode, parseDaemonRole, parseRuntimeMode)
 
 data Command
   = ShowRootHelp
   | ShowTopicHelp String
-  | ServiceCommand
+  | ServiceCommand (Maybe DaemonRole)
   | ClusterUpCommand
   | ClusterDownCommand
   | ClusterStatusCommand
@@ -145,11 +145,27 @@ serviceCommandFamily =
     { familyTopic = "service",
       familyOverview = "starts the long-running production daemon that consumes Pulsar work and binds no HTTP port",
       familyCommands =
-        [ simpleCommand
-            "service"
-            "starts the long-running production daemon; it binds no HTTP port and consumes the active `.dhall` request and result topics"
-            ServiceCommand
+        [ serviceCommandSpec
         ]
+    }
+
+-- | `infernix service [--role coordinator|engine]`. The optional
+-- `--role` arg replaces the retired `INFERNIX_DAEMON_ROLE` env var
+-- (Phase 4 Sprint 4.13): coordinator + engine pods each pass the
+-- matching role via chart-supplied `args`, while host-native flows
+-- omit the flag and fall back to the active substrate dhall's
+-- `daemonRole` field.
+serviceCommandSpec :: CommandSpec
+serviceCommandSpec =
+  CommandSpec
+    { commandUsageSuffix = "service [--role coordinator|engine]",
+      commandDescription =
+        "starts the long-running production daemon; it binds no HTTP port and consumes the active `.dhall` request and result topics. The optional `--role` arg overrides the substrate dhall's `daemonRole` field for split coordinator/engine Deployments.",
+      commandParse = \case
+        ["service"] -> Just (ServiceCommand Nothing)
+        ["service", "--role", rawRole] ->
+          ServiceCommand . Just <$> parseDaemonRole (Text.pack rawRole)
+        _ -> Nothing
     }
 
 clusterCommandFamily :: CommandFamily

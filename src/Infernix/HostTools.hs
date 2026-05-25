@@ -74,6 +74,10 @@ data HostTool
   | HostDirname
   | HostBash
   | HostCrictl
+  | HostChown
+  | HostNvidiaSmi
+  | HostNvkind
+  | HostHostname
   deriving (Eq, Show)
 
 -- | The supported short name for a tool, used in lint messages and
@@ -113,6 +117,10 @@ hostToolName tool = case tool of
   HostDirname -> "dirname"
   HostBash -> "bash"
   HostCrictl -> "crictl"
+  HostChown -> "chown"
+  HostNvidiaSmi -> "nvidia-smi"
+  HostNvkind -> "nvkind"
+  HostHostname -> "hostname"
 
 -- | Look up the absolute path for a tool. An empty path means the
 -- active execution context does not provide the tool (e.g. @apt-get@
@@ -155,6 +163,10 @@ pickToolPath tool paths = case tool of
   HostDirname -> hostDirname paths
   HostBash -> hostBash paths
   HostCrictl -> hostCrictl paths
+  HostChown -> hostChown paths
+  HostNvidiaSmi -> hostNvidiaSmi paths
+  HostNvkind -> hostNvkind paths
+  HostHostname -> hostHostname paths
 
 -- | Build a 'CreateProcess' for a tool invocation. The returned value
 -- can be customized further by callers that need stdin/stdout/stderr

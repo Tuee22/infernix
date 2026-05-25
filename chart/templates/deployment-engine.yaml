@@ -52,52 +52,36 @@ spec:
           imagePullPolicy: {{ .Values.engine.image.pullPolicy }}
           command:
 {{ toYaml .Values.engine.command | nindent 12 }}
+          # Phase 4 Sprint 4.13: daemon role is now a typed CLI arg
+          # (`--role engine`) instead of an `INFERNIX_DAEMON_ROLE` env
+          # var. The full `INFERNIX_PULSAR_*` env family is retired;
+          # the daemon decodes those values from the mounted
+          # `infernix-cluster-config` ConfigMap at startup. The retained
+          # `INFERNIX_MODEL_CACHE_ROOT` + `INFERNIX_DATA_ROOT` env vars
+          # are scheduled to retire together with the Python adapter
+          # env-var sweep in Phase 5 Sprint 5.9 (model-cache root) and
+          # Phase 7 Sprint 7.17 (demo deployment).
+          # `INFERNIX_ENGINE_COMMAND_*` overrides have moved to the
+          # `engine.commandOverrides` field on the cluster manifest;
+          # the chart no longer materializes per-binding env entries.
           args:
-{{ toYaml .Values.engine.args | nindent 12 }}
+            - service
+            - --role
+            - engine
+          # Phase 7 Sprint 7.17: `INFERNIX_MINIO_ACCESS_KEY` /
+          # `INFERNIX_MINIO_SECRET_KEY` env entries retire (see
+          # coordinator template note). `INFERNIX_DATA_ROOT` +
+          # `INFERNIX_MODEL_CACHE_ROOT` are the two remaining residual
+          # entries; both are pure path declarations the engine binary
+          # consumes for in-pod local state — both can move to a typed
+          # arg or to a `ClusterConfig.engine.*` field in a focused
+          # follow-up, but neither is sensitive material so the
+          # closure here matches the "no credential env" rule.
           env:
-            - name: INFERNIX_CONTROL_PLANE_CONTEXT
-              value: {{ .Values.controlPlaneContext | quote }}
-            - name: INFERNIX_DAEMON_LOCATION
-              value: "cluster-pod"
-            - name: INFERNIX_DAEMON_ROLE
-              value: "engine"
-            - name: INFERNIX_CATALOG_SOURCE
-              value: "mounted-configmap"
-            - name: INFERNIX_DEMO_CONFIG_PATH
-              value: "{{ .Values.demoConfig.mountPath }}/{{ .Values.demoConfig.fileName }}"
-            - name: INFERNIX_PUBLICATION_STATE_PATH
-              value: "{{ .Values.demoConfig.mountPath }}/{{ .Values.publication.fileName }}"
             - name: INFERNIX_DATA_ROOT
               value: "/srv/infernix/.data"
             - name: INFERNIX_MODEL_CACHE_ROOT
               value: /model-cache
-            - name: INFERNIX_MINIO_ENDPOINT
-              value: {{ .Values.service.minio.endpoint | quote }}
-            - name: INFERNIX_MINIO_ACCESS_KEY
-              value: {{ .Values.service.minio.accessKey | quote }}
-            - name: INFERNIX_MINIO_SECRET_KEY
-              value: {{ .Values.service.minio.secretKey | quote }}
-            # Phase 7 Sprint 7.7: model_cache.py uses boto3 SigV4 to GET
-            # weights from infernix-models on first use; explicit region
-            # avoids drift across substrates.
-            - name: INFERNIX_MINIO_REGION
-              value: "us-east-1"
-            - name: INFERNIX_PULSAR_ADMIN_URL
-              value: {{ .Values.service.pulsar.adminUrl | quote }}
-            - name: INFERNIX_PULSAR_HTTP_BASE_URL
-              value: {{ .Values.service.pulsar.httpBaseUrl | quote }}
-            - name: INFERNIX_PULSAR_WS_BASE_URL
-              value: {{ .Values.service.pulsar.webSocketBaseUrl | quote }}
-            - name: INFERNIX_PULSAR_SERVICE_URL
-              value: {{ .Values.service.pulsar.serviceUrl | quote }}
-            - name: INFERNIX_PULSAR_TENANT
-              value: {{ .Values.service.pulsar.tenant | quote }}
-            - name: INFERNIX_PULSAR_NAMESPACE
-              value: {{ .Values.service.pulsar.namespace | quote }}
-{{- range $name, $value := .Values.service.engineAdapters.commandEnv }}
-            - name: {{ $name }}
-              value: {{ $value | quote }}
-{{- end }}
 {{- if eq .Values.runtimeMode "linux-gpu" }}
           resources:
             limits:
@@ -106,6 +90,13 @@ spec:
               nvidia.com/gpu: "1"
 {{- end }}
           volumeMounts:
+            - name: cluster-config
+              mountPath: /opt/infernix/cluster.dhall
+              subPath: cluster.dhall
+              readOnly: true
+            - name: cluster-secrets
+              mountPath: /etc/infernix/secrets
+              readOnly: true
             - name: demo-config
               mountPath: "{{ .Values.demoConfig.mountPath }}/{{ .Values.demoConfig.fileName }}"
               subPath: {{ .Values.demoConfig.fileName }}
@@ -128,6 +119,12 @@ spec:
             timeoutSeconds: 3
             failureThreshold: 120
       volumes:
+        - name: cluster-config
+          configMap:
+            name: {{ .Values.clusterConfig.name }}
+        - name: cluster-secrets
+          secret:
+            secretName: infernix-cluster-secrets
         - name: demo-config
           configMap:
             name: {{ .Values.demoConfig.name }}

@@ -1,6 +1,6 @@
 # Phase 2: Kind Cluster Storage and Lifecycle
 
-**Status**: Active (Sprint 2.10 in flight; Sprints 2.1–2.9 Done)
+**Status**: Active (Sprint 2.13 env-side + partial bare-name proc retirement landed May 25, 2026; the ClusterState-paths threading pass for the deeper Cluster.hs helpers + Apple `Engines/AppleSilicon.hs` + `./bootstrap/linux-gpu.sh up` under-`env -i` validation remain open; Sprints 2.1–2.12 Done)
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Define the supported Kind bootstrap path, the manual storage doctrine, the Helm
@@ -10,10 +10,17 @@
 
 ## Phase Status
 
-Phase 2 is closed. The Kind bootstrap, manual PV doctrine, Harbor-first image flow, shared
-substrate publication path, Linux outer-container launcher contract, lifecycle progress surface,
-retained-state repair behavior, narrowed bootstrap responsibility boundary, and teardown
-preservation contract are implemented in this worktree.
+Sprints 2.1–2.12 are closed. The Kind bootstrap, manual PV doctrine, Harbor-first image flow,
+shared substrate publication path, Linux outer-container launcher contract, lifecycle progress
+surface, retained-state repair behavior, narrowed bootstrap responsibility boundary, and teardown
+preservation contract are implemented in this worktree. Sprint 2.13 (Cluster Lifecycle
+Host-Manifest Retirement) is `Active`: the cluster lifecycle code in `src/Infernix/Cluster.hs`,
+`src/Infernix/Cluster/PublishImages.hs`, `src/Infernix/Cluster/Discover.hs`,
+`src/Infernix/ProcessMonitor.hs`, and `src/Infernix/Engines/AppleSilicon.hs` still reads
+`INFERNIX_HOST_KIND_ROOT`, `INFERNIX_HOST_REPO_ROOT`, and `HOSTNAME` via `lookupEnv`, still calls
+`getEnvironment` to inherit the parent process env, and still invokes `proc "docker"`,
+`proc "kubectl"`, `proc "helm"`, and `proc "kind"` with PATH-resolved bare names; Sprint 2.13
+retires all of these onto the `HostConfig` record materialized in Phase 1 Sprint 1.11.
 
 ## Storage Doctrine
 
@@ -516,7 +523,7 @@ None.
 
 ---
 
-## Sprint 2.10: Cluster Lifecycle Host-Manifest Retirement [Active]
+## Sprint 2.13: Cluster Lifecycle Host-Manifest Retirement [Active — env-side done, bare-name proc retirement + cluster validation pending]
 
 **Status**: Active
 **Blocked by**: Phase 1 Sprint 1.11 (Host Manifest Materialization)
@@ -552,13 +559,113 @@ materialized in Phase 1 Sprint 1.11.
 
 ### Remaining Work
 
-All deliverables above.
+Env-side retirement landed (May 25, 2026):
+
+- **`INFERNIX_HOST_KIND_ROOT` retired in `src/Infernix/Cluster.hs.resolveHostKindRoot`.**
+  The supported `Paths.kindRoot` field is already derived from
+  `HostConfig.hostFilesystem.hostKindRoot` in
+  `Infernix.Config.discoverPaths`, so `resolveHostKindRoot` now flows
+  through `resolveHostRepoPath paths (kindRuntimeRoot paths runtimeMode)`
+  without consulting `lookupEnv`.
+- **`INFERNIX_HOST_REPO_ROOT` retired in `Cluster.hs.resolveHostRepoRoot`
+  and `kindUsesHostBindMounts`.** Both now read
+  `HostConfig.hostFilesystem.hostRepoRoot` indirectly via
+  `Paths.repoRoot` and the typed `Config.controlPlaneContext paths`
+  check; the env-var consultation is deleted.
+- **`HOSTNAME` env retired in `Cluster.hs.currentLauncherContainerName`.**
+  The supported in-container hostname discovery now reads
+  `/etc/hostname` directly (Docker writes the container id there at
+  startup); the `hostname` binary stays as the fallback path. New
+  helper `readEtcHostnameMaybe` provides the typed file-backed
+  alternative.
+- **`getEnvironment` whole-env captures retired in
+  `Cluster.hs.runCommandWithInput`, `Cluster.hs.tryCommand`, and
+  `ProcessMonitor.hs.tryCommandMonitored`.** Each now uses a fixed
+  minimal `[(String, String)]` base env (`clusterSubprocessBaseEnv`
+  in `Cluster.hs`, `processMonitorBaseEnv` in `ProcessMonitor.hs`)
+  with the same `PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`
+  + `LANG=C.UTF-8` + `LC_ALL=C.UTF-8` shape; nothing inherits from
+  the daemon's `environ`.
+- **`engineCommandOverridesFromEnvironment` retired.** The Sprint 4.13
+  chart no longer renders per-binding `INFERNIX_ENGINE_COMMAND_*` env
+  entries, so `Cluster.hs.writeHelmValuesFile` passes an empty
+  override list to `renderHelmValues`. Engine command overrides now
+  flow through `clusterConfig.engine.commandOverrides` in
+  `chart/values.yaml` directly.
+- **Imports cleaned up.** `src/Infernix/Cluster.hs` no longer imports
+  from `System.Environment`; `src/Infernix/ProcessMonitor.hs` no
+  longer imports `getEnvironment`. The `Data.Maybe (isJust)` import
+  is removed.
+- **Unit-test fixture rewiring.** `test/unit/Spec.hs` Kind-config
+  rendering assertion previously injected
+  `INFERNIX_HOST_REPO_ROOT=/host/infernix` via `withOptionalEnv` and
+  asserted host paths under `/host/infernix/...`. The supported
+  override path now flows through the
+  `linuxOuterContainerUnitTestFixture` `HostConfig.hostRepoRoot`
+  field directly; the assertion compares against the typed fixture's
+  `realRepoRoot` instead.
+
+Verified end-to-end on the host: `cabal build all`, `cabal test
+infernix-unit` (70/70 tests), `cabal test infernix-haskell-style`,
+and `./.build/infernix lint {chart,files,docs,proto}` all exit zero.
+The Phase 2 forbidden-env grep gate
+(`grep -rEn 'lookupEnv|getEnv |getEnvironment|setEnv|unsetEnv' src/Infernix/Cluster.hs src/Infernix/ProcessMonitor.hs`)
+returns only documented-retirement comment references — no live
+reads remain.
+
+Pending closure (deferred and named so the sprint status stays
+honest):
+
+- **Bare-name `proc "<command>"` retirement across `Cluster.hs`,
+  `Cluster/PublishImages.hs`, `Cluster/Discover.hs` — partially
+  landed May 25, 2026.** `Infernix.Config.Paths` now carries
+  `pathsHostConfig :: Maybe HostConfig`; the host manifest decoded
+  during `discoverPaths` flows into every helper that already has
+  `Paths` in scope. `Cluster.hs` ships four new HostTool-routed
+  wrapper helpers — `runHostToolCmd`, `tryHostToolCmd`,
+  `captureHostToolCmd`, plus `resolveHostToolForCluster` for path
+  resolution — that look up absolute paths from
+  `HostConfig.toolPaths.*` and fall through to the bare tool name
+  when the manifest is absent (first-run bootstrap, unit tests
+  without an explicit fixture). The HostTool enum + Dhall schema +
+  Linux/Apple defaults now include `chown`, `nvidiaSmi`, `nvkind`,
+  and `hostname` in addition to the original 31 tools. ~30 of
+  `Cluster.hs`'s `runCommand Nothing [] "docker"` / `tryCommand
+  Nothing [] "kubectl"` / `captureCommand Nothing [] "kubectl"` /
+  `tryCommand Nothing [] "nvidia-smi"` callsites that had `paths`
+  in scope now route through the typed `HostTool` enum. The
+  remaining ~60 sites live in helpers that take `ClusterState`
+  rather than `Paths`. Two paths to close out the rest:
+  (a) add `Paths` to `ClusterState` (touches `Types.hs`, mass
+      signature change downstream), or
+  (b) thread `Paths` alongside `ClusterState` through every
+      helper individually (~20 functions).
+  The `bareNameProcViolations` lint gate no longer exempts
+  `Cluster.hs`, `Cluster/PublishImages.hs`, or `Cluster/Discover.hs`
+  because their current helper layer keeps the literal tool-name
+  string inside `kubectlOutput` / `kubectlLineCountIfReachable` /
+  `tryRunCommand` / `runCommand` — the lint pattern `proc "<bare>"`
+  no longer fires from any cluster-family module after the partial
+  refactor.
+- **`Engines/AppleSilicon.hs` `getEnvironment` capture.** Apple-only
+  code path; retirement deferred per the user's "stay on Linux with
+  CUDA" instruction.
+- **`./bootstrap/linux-gpu.sh up` under `env -i` validation.** The
+  named integration test (`reaches lifecyclePhase: steady-state under
+  env -i /usr/bin/bash`) requires a fresh launcher image build +
+  cluster bring-up (~30+ min wall-clock per the documented
+  Harbor-first phase timings). Deferred to a focused validation
+  session.
 
 ---
 
 ## Remaining Work
 
-Sprint 2.10 in flight. Sprints 2.1–2.9 closed.
+Sprint 2.13 env-side closed (5 env reads retired in `Cluster.hs`, 1
+`getEnvironment` retired in `ProcessMonitor.hs`, `engineCommandOverridesFromEnvironment`
+deleted, supporting unit-test fixture rewired, all lints + tests
+green). Bare-name `proc` retirement and the env-clean cluster
+validation remain pending. Sprints 2.1–2.12 closed.
 
 ---
 
