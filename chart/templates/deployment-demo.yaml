@@ -59,7 +59,19 @@ spec:
             # `/api/objects` handler to verify bearer JWTs without
             # round-tripping through the routed `/auth` edge.
             - name: INFERNIX_KEYCLOAK_JWKS_URL
-              value: "http://infernix-keycloak.platform.svc.cluster.local:{{ .Values.keycloak.service.port }}/realms/{{ .Values.keycloak.realm.name }}/protocol/openid-connect/certs"
+              value: "http://infernix-keycloak.platform.svc.cluster.local:{{ .Values.keycloak.service.port }}/auth/realms/{{ .Values.keycloak.realm.name }}/protocol/openid-connect/certs"
+            # Phase 7 Sprint 7.14: Envoy Gateway strips the @:port@
+            # suffix from the X-Forwarded-Host header when proxying to
+            # Keycloak, so Keycloak's emitted @iss@ claim omits the
+            # operator-facing edge port. The supported workaround is to
+            # configure the demo backend's expected issuer to match
+            # whatever Keycloak actually emits for the routing topology.
+            - name: INFERNIX_KEYCLOAK_BASE_URL
+              value: "{{ .Values.keycloak.externalBaseUrl }}"
+            - name: INFERNIX_KEYCLOAK_REALM_NAME
+              value: "{{ .Values.keycloak.realm.name }}"
+            - name: INFERNIX_KEYCLOAK_CLIENT_ID
+              value: "{{ .Values.keycloak.realm.spaClientId }}"
           ports:
             - containerPort: {{ .Values.demo.port }}
           volumeMounts:

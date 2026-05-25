@@ -1,3 +1,5 @@
+{-# LANGUAGE ScopedTypeVariables #-}
+
 module Infernix.Config
   ( ControlPlaneContext (..),
     Paths (..),
@@ -5,6 +7,7 @@ module Infernix.Config
     controlPlaneContextId,
     parseControlPlaneContext,
     discoverPaths,
+    discoverPathsWithHostManifest,
     ensureSupportedRuntimeModeForExecutionContext,
     ensureRepoLayout,
     generatedDemoConfigPath,
@@ -19,11 +22,12 @@ module Infernix.Config
   )
 where
 
+import Control.Exception (SomeException, try)
 import Data.Text qualified as Text
+import Infernix.HostConfig qualified as HostConfig
 import Infernix.Substrate (resolveRuntimeModeFromSubstrateFile)
-import Infernix.Types (RuntimeMode (..), parseRuntimeMode, runtimeModeId)
+import Infernix.Types (RuntimeMode (..), runtimeModeId)
 import System.Directory (createDirectoryIfMissing, doesFileExist, doesPathExist, getCurrentDirectory)
-import System.Environment (lookupEnv)
 import System.FilePath (isAbsolute, normalise, takeDirectory, (</>))
 import System.IO.Error (mkIOError, userErrorType)
 
@@ -41,38 +45,106 @@ data Paths = Paths
   }
   deriving (Eq, Show)
 
+-- | Phase 1 Sprint 1.11 — discover the active 'Paths' by combining the
+-- repo-root walk with any staged host manifest. When the manifest is
+-- present (post-bootstrap), its @filesystem@ record overrides the
+-- convention defaults so operators can edit the typed Dhall record
+-- instead of setting @INFERNIX_BUILD_ROOT@ / @INFERNIX_DATA_ROOT@ env
+-- vars. When the manifest is absent (first-run bootstrap, before the
+-- binary has materialized it), the convention defaults still apply so
+-- the binary remains workable enough to materialize the manifest from
+-- itself.
 discoverPaths :: IO Paths
 discoverPaths = do
   cwd <- getCurrentDirectory
   repoRootPath <- findRepoRoot cwd
-  buildRootEnv <- lookupEnv "INFERNIX_BUILD_ROOT"
-  dataRootEnv <- lookupEnv "INFERNIX_DATA_ROOT"
-  let buildRootPath = maybe (repoRootPath </> ".build") (makeRooted repoRootPath) buildRootEnv
-      dataRootPath = maybe (repoRootPath </> ".data") (makeRooted repoRootPath) dataRootEnv
-      runtimeRootPath = dataRootPath </> "runtime"
-      kindRootPath = dataRootPath </> "kind"
+  maybeHostConfig <- tryLoadHostManifest repoRootPath
+  pure (pathsFromRepoRoot repoRootPath maybeHostConfig)
+
+-- | Variant exposed for callers that want explicit control over which
+-- host manifest is consulted (e.g. test fixtures that supply a typed
+-- record directly rather than reading from disk).
+discoverPathsWithHostManifest :: Maybe HostConfig.HostConfig -> IO Paths
+discoverPathsWithHostManifest maybeHostConfig = do
+  cwd <- getCurrentDirectory
+  repoRootPath <- findRepoRoot cwd
+  pure (pathsFromRepoRoot repoRootPath maybeHostConfig)
+
+pathsFromRepoRoot :: FilePath -> Maybe HostConfig.HostConfig -> Paths
+pathsFromRepoRoot fallbackRepoRoot maybeHostConfig =
+  let manifestFs = HostConfig.hostFilesystem <$> maybeHostConfig
+      repoRootPath =
+        maybe
+          fallbackRepoRoot
+          (resolveAgainst fallbackRepoRoot . Text.unpack . HostConfig.hostRepoRoot)
+          manifestFs
+      buildRootPath =
+        maybe
+          (repoRootPath </> ".build")
+          (resolveAgainst repoRootPath . Text.unpack . HostConfig.hostBuildRoot)
+          manifestFs
+      dataRootPath =
+        maybe
+          (repoRootPath </> ".data")
+          (resolveAgainst repoRootPath . Text.unpack . HostConfig.hostDataRoot)
+          manifestFs
+      runtimeRootPath =
+        maybe
+          (dataRootPath </> "runtime")
+          (resolveAgainst repoRootPath . Text.unpack . HostConfig.hostRuntimeRoot)
+          manifestFs
+      kindRootPath =
+        maybe
+          (dataRootPath </> "kind")
+          (resolveAgainst repoRootPath . Text.unpack . HostConfig.hostKindRoot)
+          manifestFs
       helmConfigRootPath = dataRootPath </> "helm" </> "config"
       helmCacheRootPath = dataRootPath </> "helm" </> "cache"
       helmDataRootPath = dataRootPath </> "helm" </> "data"
       resultsRootPath = runtimeRootPath </> "results"
       modelCacheRootPath = runtimeRootPath </> "model-cache"
-  pure
-    Paths
-      { repoRoot = repoRootPath,
-        buildRoot = buildRootPath,
-        dataRoot = dataRootPath,
-        runtimeRoot = runtimeRootPath,
-        kindRoot = kindRootPath,
-        helmConfigRoot = helmConfigRootPath,
-        helmCacheRoot = helmCacheRootPath,
-        helmDataRoot = helmDataRootPath,
-        resultsRoot = resultsRootPath,
-        modelCacheRoot = modelCacheRootPath
-      }
+   in Paths
+        { repoRoot = repoRootPath,
+          buildRoot = buildRootPath,
+          dataRoot = dataRootPath,
+          runtimeRoot = runtimeRootPath,
+          kindRoot = kindRootPath,
+          helmConfigRoot = helmConfigRootPath,
+          helmCacheRoot = helmCacheRootPath,
+          helmDataRoot = helmDataRootPath,
+          resultsRoot = resultsRootPath,
+          modelCacheRoot = modelCacheRootPath
+        }
+
+resolveAgainst :: FilePath -> FilePath -> FilePath
+resolveAgainst anchor candidate
+  | isAbsolute candidate = candidate
+  | otherwise = anchor </> candidate
+
+-- | Try the supported staging locations for the host manifest in
+-- preference order: Apple host-native build root, Linux outer-container
+-- bind-mount build root (legacy compose layout retained until Sprint
+-- 1.11's compose shrink lands), and the Linux launcher image's baked
+-- default. Returns @Nothing@ if no candidate decodes; the caller falls
+-- back to convention defaults so first-run bootstrap remains workable.
+tryLoadHostManifest :: FilePath -> IO (Maybe HostConfig.HostConfig)
+tryLoadHostManifest repoRootPath = loop candidatePaths
   where
-    makeRooted cwd value
-      | isAbsolute value = value
-      | otherwise = cwd </> value
+    candidatePaths =
+      [ repoRootPath </> ".build" </> "infernix-host.dhall",
+        repoRootPath </> ".build" </> "outer-container" </> "build" </> "infernix-host.dhall",
+        "/opt/infernix/dhall/InfernixHost.dhall"
+      ]
+    loop [] = pure Nothing
+    loop (candidate : rest) = do
+      exists <- doesFileExist candidate
+      if exists
+        then do
+          decoded <- try (HostConfig.decodeHostConfigFile candidate) :: IO (Either SomeException HostConfig.HostConfig)
+          case decoded of
+            Right value -> pure (Just value)
+            Left _ -> loop rest
+        else loop rest
 
 findRepoRoot :: FilePath -> IO FilePath
 findRepoRoot start = go start
@@ -192,25 +264,31 @@ resolveRuntimeMode Nothing = do
     then resolveRuntimeModeFromGeneratedFile substratePath
     else ioError (missingGeneratedSubstrateFileError substratePath)
 
+-- | Phase 1 Sprint 1.11 — return the substrate the current launcher
+-- targets without consulting any environment variable. The supported
+-- contract is:
+--
+-- * Host-native (Apple) → 'AppleSilicon'. Apple lifecycle commands
+--   materialize @./.build/infernix-substrate.dhall@ from the bootstrap
+--   script before reaching this code path, so callers that need the
+--   substrate identity for subsequent work read the staged file
+--   directly via 'resolveRuntimeMode'.
+-- * Outer-container (Linux) → read the substrate from the staged
+--   @infernix-substrate.dhall@ baked into the launcher image (the image
+--   build runs @infernix internal materialize-substrate@ as part of the
+--   Dockerfile). When the file is absent (first-run bootstrap before
+--   the binary has staged anything), the caller surfaces a typed
+--   diagnostic.
 targetRuntimeModeForExecutionContext :: Paths -> IO RuntimeMode
 targetRuntimeModeForExecutionContext paths =
   case controlPlaneContext paths of
     HostNative -> pure AppleSilicon
     OuterContainer -> do
-      maybeRuntimeMode <- lookupEnv "INFERNIX_COMPOSE_SUBSTRATE"
-      case maybeRuntimeMode of
-        Nothing -> pure LinuxCpu
-        Just rawRuntimeMode ->
-          case parseRuntimeMode (Text.pack rawRuntimeMode) of
-            Just runtimeMode -> pure runtimeMode
-            Nothing ->
-              ioError
-                ( userError
-                    ( "Unsupported INFERNIX_COMPOSE_SUBSTRATE value: "
-                        <> rawRuntimeMode
-                        <> ". Expected linux-cpu or linux-gpu."
-                    )
-                )
+      let substratePath = generatedDemoConfigPath paths
+      substrateExists <- doesFileExist substratePath
+      if substrateExists
+        then resolveRuntimeModeFromGeneratedFile substratePath
+        else ioError (missingGeneratedSubstrateFileError substratePath)
 
 watchedDemoConfigPath :: FilePath
 watchedDemoConfigPath =

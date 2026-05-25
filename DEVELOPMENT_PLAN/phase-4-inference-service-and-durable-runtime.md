@@ -1,7 +1,7 @@
 # Phase 4: Inference Service and Durable Runtime
 
-**Status**: Done
-**Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
+**Status**: Active (Sprint 4.13 in flight; Sprints 4.1–4.12 Done)
+**Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/engineering/cluster_config_manifest.md](../documents/engineering/cluster_config_manifest.md)
 
 > **Purpose**: Define the Haskell service runtime, the shared Python engine-adapter contract, the
 > Pulsar-driven production inference surface, the demo-only HTTP API surface served by
@@ -543,9 +543,58 @@ None.
 
 ---
 
+## Sprint 4.13: Cluster Manifest Materialization [Active]
+
+**Status**: Active
+**Blocked by**: Phase 1 Sprint 1.11 (Host Manifest Materialization)
+**Implementation**: `dhall/InfernixCluster.dhall` (new), `src/Infernix/ClusterConfig.hs` (new), `src/Infernix/Service.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Worker.hs`, `chart/templates/deployment-coordinator.yaml`, `chart/templates/deployment-engine.yaml`, `chart/templates/configmap-cluster-config.yaml` (new)
+**Docs to update**: `documents/engineering/cluster_config_manifest.md`, `documents/tools/pulsar.md`, `documents/architecture/daemon_topology.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
+
+### Objective
+
+Materialize the `InfernixCluster.dhall` typed cluster-wiring record + matching Haskell decoder.
+Delete every `env:` block from `chart/templates/deployment-{coordinator,engine}.yaml`; the pods
+mount the cluster `ConfigMap` at `/opt/infernix/cluster.dhall` and the Haskell daemon decodes it
+at startup. Retire every Pulsar / catalog / daemon-location / engine-command env-var fallback in
+favor of typed `ClusterConfig` fields.
+
+### Deliverables
+
+- `dhall/InfernixCluster.dhall` schema with the `PulsarConfig`, `MinioConfig` (non-credential
+  fields), `DemoBackendConfig`, `EngineConfig`, `CoordinatorConfig` records named in
+  `documents/engineering/cluster_config_manifest.md`.
+- `ClusterConfig` typed record + decoder; threaded through every coordinator + engine entry
+  point.
+- `INFERNIX_DEMO_CONFIG_PATH`, `INFERNIX_DAEMON_ROLE`, `INFERNIX_DAEMON_LOCATION`,
+  `INFERNIX_CATALOG_SOURCE`, `INFERNIX_CONTROL_PLANE_CONTEXT`, `INFERNIX_PULSAR_*`
+  (admin/ws/http/service/tenant/namespace), `INFERNIX_ENGINE_COMMAND_<NAME>` env reads deleted
+  from `src/Infernix/Service.hs`, `src/Infernix/Runtime/Pulsar.hs`,
+  `src/Infernix/Runtime/Worker.hs`.
+- `chart/templates/deployment-coordinator.yaml` and
+  `chart/templates/deployment-engine.yaml` lose every `env:` entry except any third-party
+  upstream exception explicitly enumerated; they gain `cluster-config` volume mount at
+  `/opt/infernix/cluster.dhall`.
+- `chart/templates/configmap-cluster-config.yaml` renders the staged cluster Dhall into a
+  ConfigMap.
+
+### Validation
+
+- `cabal build all` clean, `infernix test lint` clean, `infernix test unit` clean.
+- `grep -rn '^\s*-\s*name:\s*INFERNIX_' chart/templates/deployment-{coordinator,engine}.yaml`
+  returns zero matches.
+- `infernix test integration` on `linux-gpu` round-trips through coordinator + engine pods that
+  read from the mounted Dhall ConfigMap (proven by removing the corresponding `env:` entries
+  before the test runs).
+
+### Remaining Work
+
+All deliverables above.
+
+---
+
 ## Remaining Work
 
-None.
+Sprint 4.13 in flight. Sprints 4.1–4.12 closed.
 
 ---
 

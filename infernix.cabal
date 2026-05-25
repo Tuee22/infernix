@@ -39,6 +39,7 @@ library
         Infernix.Conversation.Idempotency
         Infernix.Conversation.Reducer
         Infernix.Conversation.Topic
+        Infernix.Dispatch.ContextModelMap
         Infernix.Dispatch.SingleFlight
         Infernix.Topic.Drafts
         Infernix.Topic.Metadata
@@ -50,7 +51,9 @@ library
         Infernix.DemoConfig
         Infernix.Engines.AppleSilicon
         Infernix.Error
+        Infernix.HostConfig
         Infernix.HostPrereqs
+        Infernix.HostTools
         Infernix.Internal.Util
         Infernix.Lint.Chart
         Infernix.Lint.Docs

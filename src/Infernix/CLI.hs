@@ -11,12 +11,11 @@ import Control.Applicative ((<|>))
 import Control.Concurrent (threadDelay)
 import Control.Exception (IOException, catch, evaluate, finally, throwIO, try)
 import Control.Monad (when)
-import Data.Aeson (Value (..), eitherDecode)
+import Data.Aeson (Value (..), eitherDecode, encode, object, (.=))
 import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.ByteString.Lazy.Char8 qualified as LazyChar8
 import Data.List (intercalate, isInfixOf, isPrefixOf)
-import Data.Maybe (fromMaybe)
 import Data.Text qualified as Text
 import GHC.IO.Encoding (setLocaleEncoding, utf8)
 import Infernix.Cluster
@@ -26,8 +25,8 @@ import Infernix.CommandRegistry
 import Infernix.Config
 import Infernix.DemoConfig
   ( decodeDemoConfigFile,
-    ensureGeneratedDemoConfigFile,
     materializeGeneratedDemoConfigFile,
+    materializeHostManifestFile,
     renderModelListing,
     validateDemoConfigFile,
   )
@@ -56,7 +55,6 @@ import Infernix.Types
     PersistentClaim (..),
     ResultPayload (..),
     RuntimeMode (AppleSilicon),
-    parseRuntimeMode,
     runtimeModeId,
   )
 import Infernix.Web.Contracts qualified as Contracts
@@ -76,7 +74,7 @@ import System.Directory
     removePathForcibly,
     setPermissions,
   )
-import System.Environment (getArgs, getEnvironment, getExecutablePath, lookupEnv)
+import System.Environment (getArgs, getEnvironment, getExecutablePath)
 import System.Exit (ExitCode (ExitSuccess), exitFailure, exitWith)
 import System.FilePath (takeFileName, (</>))
 import System.Process (CreateProcess (cwd, env), createProcess, proc, readProcess, terminateProcess, waitForProcess)
@@ -143,9 +141,11 @@ dispatch command =
       paths <- discoverPaths
       ensureRepoLayout paths
       materializedPath <- materializeGeneratedDemoConfigFile paths runtimeMode demoUiEnabledValue
+      hostManifestPath <- materializeHostManifestFile paths
       putStrLn ("runtimeMode: " <> Text.unpack (runtimeModeId runtimeMode))
       putStrLn ("demoUiEnabled: " <> show demoUiEnabledValue)
       putStrLn ("generatedDemoConfigPath: " <> materializedPath)
+      putStrLn ("hostManifestPath: " <> hostManifestPath)
     InternalDemoConfigLoadCommand demoConfigPath -> do
       demoConfig <- decodeDemoConfigFile demoConfigPath
       putStr (renderModelListing demoConfig)
@@ -190,42 +190,28 @@ validateCommandExecutionContext command = do
         _ -> pure Nothing
     activeRuntimeMode = Just <$> ensureActiveSubstrateFile
 
+-- | Phase 1 Sprint 1.11 — discover the active substrate by reading the
+-- staged @infernix-substrate.dhall@ file under the launcher build root.
+-- The supported contract has no env-var fallback: on the Linux outer-
+-- container path the launcher image bakes the substrate file at image
+-- build time (the Dockerfile invokes @infernix internal
+-- materialize-substrate@ with an explicit substrate argument); on Apple
+-- host-native the bootstrap script does the same against
+-- @./.build/@. Both cases mean the file is present before any lifecycle
+-- or validation command reaches this code path. When it is absent
+-- (operator skipped bootstrap, schema drift, etc.), 'configuredRuntimeMode'
+-- surfaces a typed diagnostic that names the supported materialization
+-- helpers.
 ensureActiveSubstrateFile :: IO RuntimeMode
 ensureActiveSubstrateFile = do
   paths <- discoverPaths
   ensureRepoLayout paths
   runtimeMode <- configuredRuntimeMode paths
   ensureSupportedRuntimeModeForExecutionContext paths runtimeMode
-  demoUiEnabledValue <- defaultDemoUiEnabled
-  _ <- ensureGeneratedDemoConfigFile paths runtimeMode demoUiEnabledValue
   pure runtimeMode
 
 configuredRuntimeMode :: Paths -> IO RuntimeMode
-configuredRuntimeMode paths = do
-  maybeComposeRuntimeMode <- lookupEnv "INFERNIX_COMPOSE_SUBSTRATE"
-  case maybeComposeRuntimeMode of
-    Just rawRuntimeMode ->
-      case parseRuntimeMode (Text.pack rawRuntimeMode) of
-        Just runtimeMode -> pure runtimeMode
-        Nothing -> ioError (userError ("Unsupported INFERNIX_COMPOSE_SUBSTRATE value: " <> rawRuntimeMode))
-    Nothing ->
-      targetRuntimeModeForExecutionContext paths
-
-defaultDemoUiEnabled :: IO Bool
-defaultDemoUiEnabled = do
-  maybeDemoUi <- lookupEnv "INFERNIX_COMPOSE_DEMO_UI"
-  case Text.toLower . Text.pack <$> maybeDemoUi of
-    Nothing -> pure True
-    Just "true" -> pure True
-    Just "false" -> pure False
-    Just rawValue ->
-      ioError
-        ( userError
-            ( "Unsupported INFERNIX_COMPOSE_DEMO_UI value: "
-                <> Text.unpack rawValue
-                <> ". Expected true or false."
-            )
-        )
+configuredRuntimeMode = targetRuntimeModeForExecutionContext
 
 runLint :: Maybe RuntimeMode -> IO ()
 runLint maybeRuntimeMode = do
@@ -258,32 +244,36 @@ runRuntimeModeE2E paths runtimeMode =
       clusterUp (Just runtimeMode)
       let expectedInferenceDispatchMode = Text.unpack (expectedInferenceDispatchModeForRuntime runtimeMode)
       maybePort <- readEdgePortMaybe paths
-      edgePort <-
+      _edgePort <-
         case maybePort of
           Just port -> pure port
           Nothing -> throwIO EdgePortNotPublished
       let expectedDaemonLocation = Text.unpack (expectedDaemonLocationForRuntime runtimeMode)
           expectedInferenceExecutorLocation = Text.unpack (expectedInferenceExecutorLocationForRuntime runtimeMode)
       withRuntimeServiceDaemonIfNeeded paths runtimeMode $
-        if controlPlaneContext paths == HostNative
-          then
-            runPlaywrightImage
+        case controlPlaneContext paths of
+          HostNative ->
+            -- Phase 3 Sprint 3.10 — Apple host-native E2E is deferred
+            -- to the Apple validation pass. The retired
+            -- @infernix-playwright:local@ container is no longer part
+            -- of the supported launcher set, and the supported Apple
+            -- replacement (host-native @npm exec@ Playwright fed by
+            -- the same typed fixture) lands together with the Apple
+            -- bootstrap refactor.
+            ioError
+              ( userError
+                  ( unlines
+                      [ "Apple host-native `infernix test e2e` is deferred (Phase 3 Sprint 3.10 follow-on).",
+                        "The retired infernix-playwright:local container has been removed; the supported",
+                        "Apple replacement (host-native `npm exec` Playwright fed by the typed fixture)",
+                        "lands together with the Apple bootstrap refactor."
+                      ]
+                  )
+              )
+          OuterContainer ->
+            runInContainerPlaywright
+              paths
               runtimeMode
-              (Just "kind")
-              "127.0.0.1"
-              edgePort
-              (kindControlPlaneNodeName paths runtimeMode)
-              30090
-              expectedDaemonLocation
-              expectedInferenceExecutorLocation
-              expectedInferenceDispatchMode
-              "cluster-demo"
-          else
-            runPlaywrightImage
-              runtimeMode
-              (Just "kind")
-              (kindControlPlaneNodeName paths runtimeMode)
-              30090
               (kindControlPlaneNodeName paths runtimeMode)
               30090
               expectedDaemonLocation
@@ -345,28 +335,41 @@ printInternalPulsarResult resultValue = do
       putStrLn ("objectRef: " <> Text.unpack objectRefValue)
     _ -> pure ()
 
-runPlaywrightImage :: RuntimeMode -> Maybe String -> String -> Int -> String -> Int -> String -> String -> String -> String -> IO ()
-runPlaywrightImage runtimeMode maybeNetwork readinessHost readinessPort playwrightHost playwrightPort expectedDaemonLocation expectedInferenceExecutorLocation expectedInferenceDispatchMode expectedApiUpstreamMode = do
-  paths <- discoverPaths
-  waitForPlaywrightSurface readinessHost readinessPort expectedDaemonLocation expectedInferenceExecutorLocation expectedInferenceDispatchMode expectedApiUpstreamMode
-  let networkValue = fromMaybe "bridge" maybeNetwork
-      composeFile = repoRoot paths </> "compose.yaml"
-      composeEnv =
-        [ ("INFERNIX_PLAYWRIGHT_NETWORK", networkValue),
-          ("INFERNIX_EDGE_PORT", show playwrightPort),
-          ("INFERNIX_PLAYWRIGHT_HOST", playwrightHost),
-          ("INFERNIX_EXPECT_DAEMON_LOCATION", expectedDaemonLocation),
-          ("INFERNIX_EXPECT_INFERENCE_EXECUTOR_LOCATION", expectedInferenceExecutorLocation),
-          ("INFERNIX_EXPECT_INFERENCE_DISPATCH_MODE", expectedInferenceDispatchMode),
-          ("INFERNIX_EXPECT_API_UPSTREAM_MODE", expectedApiUpstreamMode)
-        ]
-  runCommandWithCwdAndEnvRemoving
-    (Just runtimeMode)
-    ["FORCE_COLOR", "NO_COLOR"]
-    composeEnv
-    "docker"
-    ["compose", "-f", composeFile, "run", "--build", "--rm", "playwright"]
-    (repoRoot paths)
+-- | Phase 3 Sprint 3.10 — invoke Playwright inside the launcher
+-- container (already attached to Docker's private @kind@ network and
+-- carrying the Playwright system packages + browser binaries baked in
+-- by @docker/linux-substrate.Dockerfile@). Writes a typed JSON fixture
+-- at @<runtimeRoot>/playwright-fixture.json@ that
+-- @web/playwright.config.js@ reads to populate Playwright's @use:@
+-- block, replacing the retired @INFERNIX_EDGE_PORT@ /
+-- @INFERNIX_PLAYWRIGHT_*@ / @INFERNIX_EXPECT_*@ env-var family.
+runInContainerPlaywright ::
+  Paths ->
+  RuntimeMode ->
+  String ->
+  Int ->
+  String ->
+  String ->
+  String ->
+  String ->
+  IO ()
+runInContainerPlaywright paths runtimeMode playwrightHost playwrightPort expectedDaemonLocation expectedInferenceExecutorLocation expectedInferenceDispatchMode expectedApiUpstreamMode = do
+  waitForPlaywrightSurface playwrightHost playwrightPort expectedDaemonLocation expectedInferenceExecutorLocation expectedInferenceDispatchMode expectedApiUpstreamMode
+  let fixturePath = runtimeRoot paths </> "playwright-fixture.json"
+      fixturePayload =
+        encode
+          ( object
+              [ Key.fromText "host" .= playwrightHost,
+                Key.fromText "edgePort" .= playwrightPort,
+                Key.fromText "expectedDaemonLocation" .= expectedDaemonLocation,
+                Key.fromText "expectedInferenceExecutorLocation" .= expectedInferenceExecutorLocation,
+                Key.fromText "expectedInferenceDispatchMode" .= expectedInferenceDispatchMode,
+                Key.fromText "expectedApiUpstreamMode" .= expectedApiUpstreamMode
+              ]
+          )
+  createDirectoryIfMissing True (runtimeRoot paths)
+  LazyChar8.writeFile fixturePath fixturePayload
+  runWebNpmCommand (Just runtimeMode) ["--prefix", "web", "exec", "--", "playwright", "test", "playwright/inference.spec.js"]
 
 waitForPlaywrightSurface :: String -> Int -> String -> String -> String -> String -> IO ()
 waitForPlaywrightSurface host edgePort expectedDaemonLocation expectedInferenceExecutorLocation expectedInferenceDispatchMode expectedApiUpstreamMode = go (60 :: Int)
@@ -518,6 +521,7 @@ normalizeGeneratedPursContracts runtimeMode sourceFile outputFile = do
       | line == "import Data.Newtype (class Newtype)" =
           unlines
             [ "import Data.Newtype (class Newtype)",
+              "import Foreign (ForeignError(..), fail) as Foreign",
               "import Simple.JSON as JSON"
             ]
       | otherwise = line

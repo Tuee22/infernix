@@ -1,7 +1,7 @@
 # Phase 0: Documentation and Governance
 
-**Status**: Done
-**Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
+**Status**: Active (Sprint 0.9 in flight; Sprints 0.1–0.8 Done)
+**Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Establish the governed `documents/` suite, the standards that keep the plan and
 > docs aligned, and the documentation-first baseline that all later implementation phases depend on.
@@ -292,9 +292,67 @@ None.
 
 ---
 
+## Sprint 0.9: Configuration Doctrine [Active]
+
+**Status**: Active
+**Implementation**: `DEVELOPMENT_PLAN/development_plan_standards.md` (Sections T+U), `documents/architecture/configuration_doctrine.md` (new), `documents/engineering/host_tools_manifest.md` (new), `documents/engineering/cluster_config_manifest.md` (new), `documents/development/no_env_vars.md` (new), `documents/documentation_standards.md`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`, `README.md`, `AGENTS.md`, `CLAUDE.md`
+**Docs to update**: every doc named above
+
+### Objective
+
+Declare the no-env-var, absolute-path, three-Dhall-file configuration doctrine as the supported
+contract, and enumerate the per-phase retirement work (Sprints 1.11, 2.10, 3.10, 4.13, 5.9, 6.28,
+7.17) that operationalizes it. Phase 0 owns the doctrine; the matching code changes land in the
+later-phase retirement sprints.
+
+### Deliverables
+
+- `DEVELOPMENT_PLAN/development_plan_standards.md` gains Sections T (No Environment Variables, No
+  PATH) and U (Host Tools Manifest). Both name the three Dhall files (`InfernixHost`,
+  `InfernixCluster`, `InfernixSecrets`), the secret-file convention, the bootstrap stage-zero
+  discovery convention (`BASH_SOURCE`, `/etc/passwd`, hardcoded pre-binary paths), and the
+  third-party-upstream exception list (Keycloak `KC_DB_*`).
+- `documents/architecture/configuration_doctrine.md` is the canonical home declaring the doctrine.
+- `documents/engineering/host_tools_manifest.md` defines the `InfernixHost.dhall` schema and the
+  per-tool absolute-path table.
+- `documents/engineering/cluster_config_manifest.md` defines the `InfernixCluster.dhall` schema
+  and the ConfigMap+Secret mount contract.
+- `documents/development/no_env_vars.md` defines the developer-facing rules (no `lookupEnv`,
+  no `proc "<bare-name>"`, no `process.env`, no `os.environ`, no `env:` blocks in
+  infernix-owned chart templates).
+- `documents/documentation_standards.md` adds a content rule rejecting `$INFERNIX_*` / `$PATH`
+  mentions in governed docs outside the legacy-tracking ledger and the documented Keycloak
+  third-party exception.
+- `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md` gains seven Pending Removal rows, one per
+  per-phase retirement sprint, naming the specific env vars / PATH-resolved commands /
+  chart-template `env:` blocks each retires.
+- `DEVELOPMENT_PLAN/README.md` Phase Overview table reflects all phases as Active with the named
+  retirement sprint as the open work.
+- `README.md`, `AGENTS.md`, `CLAUDE.md` link to
+  `documents/architecture/configuration_doctrine.md` and
+  `documents/development/no_env_vars.md` as canonical homes; the no-env-var + absolute-path
+  rules are surfaced in the assistant non-negotiable rules section.
+
+### Validation
+
+- `infernix lint docs` exits zero against the new + updated docs.
+- `infernix lint files` and the existing repo-wide checks remain clean (this sprint is purely
+  declarative — no code changes).
+- The seven Pending Removal rows in `legacy-tracking-for-deletion.md` each name a specific later
+  sprint as the owning sprint (1.11, 2.10, 3.10, 4.13, 5.9, 6.28, 7.17).
+
+### Remaining Work
+
+Sprint 0.9 closes when the seven retirement sprints (1.11, 2.10, 3.10, 4.13, 5.9, 6.28, 7.17)
+land. Until then Sprint 0.9 stays Active and Phase 0 stays Active because the doctrine it
+declares is not yet enforced by code or chart shape; the lint gates land in Phase 6 Sprint 6.28
+and become the durable enforcement mechanism at that point.
+
+---
+
 ## Remaining Work
 
-None.
+Sprint 0.9 in flight. Sprints 0.1–0.8 closed.
 
 ## Documentation Requirements
 

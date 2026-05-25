@@ -1,7 +1,7 @@
 # Phase 3: HA Platform Services and Edge Routing
 
-**Status**: Done
-**Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
+**Status**: Active (Sprint 3.10 in flight; Sprints 3.1–3.9 Done)
+**Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Define the mandatory local HA Harbor, MinIO, operator-managed PostgreSQL, and
 > Pulsar deployments; the Envoy Gateway installation that owns all browser-visible routing on one
@@ -351,9 +351,125 @@ None.
 
 ---
 
+## Sprint 3.10: Playwright Container Retirement and Edge Manifest Retirement [Active]
+
+**Status**: Active
+**Blocked by**: Phase 1 Sprint 1.11 (Host Manifest Materialization)
+**Implementation**: `docker/playwright.Dockerfile` (deleted), `docker/linux-substrate.Dockerfile` (gains Playwright runtime), `compose.yaml` (drop `playwright` service), `src/Infernix/CLI.hs` (runEndToEnd refactor), `web/playwright/inference.spec.js`, `web/playwright.config.js` (new fixture-driven config)
+**Docs to update**: `documents/engineering/host_tools_manifest.md`, `documents/development/testing_strategy.md`, `documents/development/demo_app_test_plan.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
+
+### Objective
+
+Eliminate the dedicated `infernix-playwright:local` image and the separate `playwright` compose
+service. Playwright runtime (Chromium/Firefox/WebKit dependencies, fonts, gstreamer plugins, xvfb)
+moves into `docker/linux-substrate.Dockerfile`. `infernix test e2e` invokes Playwright via the
+in-container `npm exec --prefix web -- playwright test …` against the routed cluster on Docker's
+private `kind` network. Retire `INFERNIX_EDGE_PORT`, `INFERNIX_PLAYWRIGHT_HOST`,
+`INFERNIX_PLAYWRIGHT_NETWORK`, and the `INFERNIX_EXPECT_*` family in favor of substrate `.dhall`
+fields plus a Dhall-driven Playwright fixture file. Apple host-native E2E is unaffected.
+
+### Deliverables
+
+- `docker/playwright.Dockerfile` deleted.
+- `compose.yaml` `playwright` service block deleted; only the `infernix` service remains.
+- `docker/linux-substrate.Dockerfile` gains the Playwright system packages and runs
+  `npm exec --prefix web -- playwright install --with-deps chromium firefox webkit` at image
+  build time.
+- `src/Infernix/CLI.hs` `runEndToEnd` invokes `runHostTool hostConfig HostNpm
+  ["exec", "--prefix", "web", "--", "playwright", "test", "playwright/inference.spec.js"]`
+  inside the launcher container. The browser connects to `http://127.0.0.1:9090`.
+- `INFERNIX_EDGE_PORT`, `INFERNIX_PLAYWRIGHT_HOST`, `INFERNIX_PLAYWRIGHT_NETWORK`,
+  `INFERNIX_EXPECT_DAEMON_LOCATION`, `INFERNIX_EXPECT_INFERENCE_DISPATCH_MODE`,
+  `INFERNIX_EXPECT_API_UPSTREAM_MODE`, `INFERNIX_EXPECT_INFERENCE_EXECUTOR_LOCATION` all
+  deleted from `compose.yaml`, `src/Infernix/CLI.hs`, and `web/playwright/inference.spec.js`.
+- `web/playwright.config.js` reads `/workspace/.data/runtime/playwright-fixture.json`
+  (Dhall-decoded by the Haskell test driver at test start) and exposes the expectations via
+  Playwright's `use:` block; the spec reads `test.info().project.use.*`.
+- legacy-tracking row 3.10 moves from Pending Removal to Completed.
+
+### Validation
+
+- `cabal build all` clean, `infernix test lint` clean.
+- `docker images` shows no `infernix-playwright:local` image after a fresh
+  `./bootstrap/linux-gpu.sh build`.
+- `infernix test e2e` on `linux-gpu` succeeds end-to-end via the in-container Playwright path.
+
+### Remaining Work
+
+Landed May 24, 2026:
+
+- `docker/playwright.Dockerfile` deleted.
+- `compose.yaml` `playwright` service block deleted; the file now
+  declares only the `infernix` service with its two supported bind
+  mounts.
+- `docker/linux-substrate.Dockerfile` gains a dedicated `RUN` step that
+  invokes
+  `apt-get update && npm --prefix web exec -- playwright install --with-deps chromium firefox webkit && rm -rf /var/lib/apt/lists/*`
+  so the launcher image carries Chromium / Firefox / WebKit plus their
+  system dependencies.
+- `src/Infernix/CLI.hs.runRuntimeModeE2E` routes the outer-container
+  path through the new `runInContainerPlaywright` helper that writes a
+  typed JSON fixture (`<runtimeRoot>/playwright-fixture.json`) and
+  then runs `npm --prefix web exec -- playwright test playwright/inference.spec.js`
+  inside the launcher container. The retired
+  `runPlaywrightImage`/`docker compose run --rm playwright` path is
+  gone. The Apple host-native branch surfaces a typed deferral
+  diagnostic — host-native E2E lands together with the Apple bootstrap
+  refactor.
+- `web/playwright.config.js` (new) reads
+  `/workspace/.data/runtime/playwright-fixture.json` and exposes the
+  expected daemon location / executor location / dispatch mode /
+  upstream mode through Playwright's `use:` block under the
+  `infernix-e2e` project.
+- `web/playwright/inference.spec.js` rewritten: the per-test handler
+  pulls `testInfo.project.use.infernixFixture` instead of reading any
+  `process.env.INFERNIX_*` field.
+- The seven retired env vars
+  (`INFERNIX_EDGE_PORT`, `INFERNIX_PLAYWRIGHT_HOST`,
+  `INFERNIX_PLAYWRIGHT_NETWORK`,
+  `INFERNIX_EXPECT_DAEMON_LOCATION`,
+  `INFERNIX_EXPECT_INFERENCE_EXECUTOR_LOCATION`,
+  `INFERNIX_EXPECT_INFERENCE_DISPATCH_MODE`,
+  `INFERNIX_EXPECT_API_UPSTREAM_MODE`) are gone from `src/`,
+  `compose.yaml`, `docker/`, and `web/playwright/`; only retirement
+  doc-comments remain.
+
+Verified end-to-end on the host: `cabal build all` clean,
+`cabal test infernix-unit` and `cabal test infernix-haskell-style`
+pass, `infernix lint {files,chart,docs,proto}` exit zero. The
+Sprint 3.10 grep gate
+(`grep -rEn 'INFERNIX_EDGE_PORT|INFERNIX_PLAYWRIGHT_*|INFERNIX_EXPECT_*' src/ compose.yaml docker/ web/`)
+returns only the two retirement doc comments
+(`src/Infernix/CLI.hs:344`, `web/playwright.config.js:4`).
+
+Pending closure (deferred to a follow-on turn):
+
+- A real `linux-gpu` cluster bring-up + `infernix test e2e` rerun on
+  the freshly rebuilt launcher image. The image rebuild adds the
+  Playwright system packages and browsers, so the rerun is the durable
+  proof that the in-container Playwright path replaces the retired
+  `infernix-playwright:local` lane. Tracked under the user's
+  validation-checkpoint preference.
+- Apple host-native E2E refactor. The current Apple branch in
+  `runRuntimeModeE2E` surfaces an explicit deferral diagnostic so the
+  Linux closure is honest about the gap. The Apple replacement (a
+  host-side `npm exec` Playwright invocation fed by the same typed
+  fixture) lands together with the deferred `bootstrap/apple-silicon.sh`
+  stage-zero refactor.
+- `documents/engineering/host_tools_manifest.md` and
+  `documents/development/testing_strategy.md` reference touch-ups for
+  the new fixture-driven path. The shape is consistent with the
+  existing docs (the doc-update list in this sprint's header already
+  names the targets); the per-doc reword lands in a Sprint 7.16
+  documentation-closure pass.
+
+---
+
 ## Remaining Work
 
-None.
+Sprint 3.10 substantively landed (May 24, 2026). The two deferred
+items above (linux-gpu rerun + Apple e2e refactor) close the residual
+gap. Sprints 3.1–3.9 closed.
 
 ---
 

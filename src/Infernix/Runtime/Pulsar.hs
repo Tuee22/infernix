@@ -5,6 +5,7 @@
 module Infernix.Runtime.Pulsar
   ( publishInferenceRequest,
     readPublishedInferenceResultMaybe,
+    runDispatcherLoop,
     runModelBootstrapLoop,
     runProductionDaemon,
     runResultBridgeLoop,
@@ -16,8 +17,9 @@ where
 
 import Control.Applicative ((<|>))
 import Control.Concurrent (forkIO, threadDelay)
+import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar)
 import Control.Exception (SomeAsyncException, SomeException, displayException, fromException, throwIO, try)
-import Control.Monad (forM_, forever, unless, when)
+import Control.Monad (forM_, forever, unless, void, when)
 import Data.Aeson
   ( FromJSON (parseJSON),
     Value,
@@ -34,18 +36,30 @@ import Data.ByteString qualified as ByteString
 import Data.ByteString.Base64 qualified as Base64
 import Data.ByteString.Char8 qualified as ByteString8
 import Data.ByteString.Lazy qualified as Lazy
+import Data.IORef (IORef, atomicModifyIORef', newIORef)
 import Data.List (intercalate, sort)
 import Data.Maybe (fromMaybe)
 import Data.ProtoLens (Message, decodeMessage, defMessage, encodeMessage)
 import Data.ProtoLens.Field (field)
+import Data.Set (Set)
+import Data.Set qualified as Set
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
-import Data.Time (UTCTime, defaultTimeLocale, formatTime, getCurrentTime)
+import Data.Time (UTCTime, defaultTimeLocale, formatTime, getCurrentTime, parseTimeM)
 import Infernix.Bootstrap.Models qualified as BootstrapModels
 import Infernix.Bridge.Result qualified as ResultBridge
 import Infernix.Config
+import Infernix.Conversation.Reducer
+  ( ReducerState,
+    StepOutcome (StepAdvanced, StepDropped),
+    initialReducerState,
+    stepReducer,
+  )
 import Infernix.Conversation.Topic qualified as ConversationTopic
 import Infernix.DemoConfig (decodeDemoConfigFile)
+import Infernix.Dispatch.ContextModelMap (ContextModelMap)
+import Infernix.Dispatch.ContextModelMap qualified as ContextModelMap
+import Infernix.Dispatch.SingleFlight qualified as Dispatch
 import Infernix.Error (InfernixError (InvalidControlPlaneOverride))
 import Infernix.Objects.Presigned qualified as Presigned
 import Infernix.Runtime (executeInference)
@@ -211,8 +225,31 @@ runProductionDaemon paths runtimeMode = do
                 transport
                 ConversationTopic.systemTopicNamespace
             )
+        -- Phase 7 Sprint 7.6: per-context single-flight dispatcher loop.
+        -- Polls @infernix/demo@ for @demo.conversation.<userId>.<contextId>@
+        -- topics, spawns a per-context worker keyed by 'ContextId' that
+        -- subscribes Failover (name @dispatcher-<contextId>@), folds events
+        -- through 'Infernix.Conversation.Reducer', and publishes
+        -- 'Infernix.Dispatch.SingleFlight.InferenceRequestEnvelope' to the
+        -- substrate's request topic with stable producer name and
+        -- 'producerDedupSequenceId'. Engine role does not start this loop.
+        putStrLn "serviceDispatcherMode: per-context-failover"
+        contextModelMap <- ContextModelMap.newContextModelMap
+        _ <-
+          forkIO
+            ( runDispatcherLoop
+                transport
+                runtimeMode
+                (firstOrEmpty (daemonConfigRequestTopics daemonConfig))
+                ConversationTopic.defaultDemoTopicNamespace
+                contextModelMap
+            )
         pure ()
       forever (threadDelay 60000000)
+  where
+    firstOrEmpty :: [Text.Text] -> Text.Text
+    firstOrEmpty [] = ""
+    firstOrEmpty (topic : _) = topic
 
 resolveControlPlaneOverride :: Paths -> Maybe String -> IO ControlPlaneContext
 resolveControlPlaneOverride paths maybeControlPlaneOverrideRaw =
@@ -529,10 +566,11 @@ ensureRegisteredSchemasWithRetry paths transport demoConfig =
 --    compaction threshold ensures the compacted topics reach the
 --    @compacted@ state without operator intervention.
 --
--- The current default Pulsar tenant / namespace for production topics
--- remains @public/default@; the @infernix@ tenant is created here so the
--- supported demo and system namespaces can live in a dedicated tenant
--- without competing with stock-Pulsar defaults.
+-- The supported default Pulsar tenant / namespace for production
+-- topics is @infernix/demo@ (Phase 7 Sprint 7.7, legacy row 21). The
+-- @infernix@ tenant is created here so the supported demo and system
+-- namespaces live in a dedicated tenant rather than the stock-Pulsar
+-- @public/default@ defaults.
 reconcileSupportedNamespaces :: PulsarTransport -> DemoConfig -> IO ()
 reconcileSupportedNamespaces transport _demoConfig = do
   adminBaseUrl <- requirePulsarAdminBaseUrl transport
@@ -907,7 +945,11 @@ consumeTopicSession transport paths runtimeMode daemonConfig requestTopicValue =
             (view ProtoInferenceFields.requestId decodedRequest)
             (encodeMessage decodedRequest)
         Nothing -> do
-          publishedResult <- publishedResultFromRequest paths runtimeMode decodedRequest
+          let modelIdValue = view ProtoInferenceFields.requestModelId decodedRequest
+          publishedResult <-
+            if Text.null modelIdValue
+              then pure (emptyModelIdRejectionResult runtimeMode decodedRequest)
+              else publishedResultFromRequest paths runtimeMode decodedRequest
           let resultOptions =
                 (defaultPublishOptions ("infernix-engine-result-" <> runtimeModeId runtimeMode))
                   { publishSequenceId = inferenceRequestSequenceId decodedRequest
@@ -1145,6 +1187,479 @@ bridgeResultToConversation transport topicNamespace resultValue = do
     options
     causalRef
     (Lazy.toStrict (encode conversationEvent))
+
+-- | Phase 7 Sprint 7.6 per-context single-flight dispatcher loop. The
+-- coordinator polls the supported demo namespace for
+-- @demo.conversation.<userId>.<contextId>@ topics every
+-- 'dispatcherTopicPollSeconds' seconds and forks one per-context worker
+-- per topic. Each worker subscribes Failover with subscription name
+-- @dispatcher-<contextId>@ (so exactly one coordinator replica is
+-- active for a given context at a time), folds conversation events
+-- through 'Infernix.Conversation.Reducer.stepReducer', and publishes
+-- 'Infernix.Dispatch.SingleFlight.InferenceRequestEnvelope' as an
+-- 'InferenceRequest' proto on the substrate's request topic. The
+-- producer name is stable per context (@dispatcher-<contextId>@) and
+-- the sequence id is derived from the prompt's
+-- @userPromptMessageId@ so 'reconcileSupportedNamespaces' broker
+-- dedup collapses retries from a crashed-and-recovered dispatcher
+-- without a duplicate inference dispatch.
+--
+-- The dispatcher does not own model-id resolution: the published
+-- proto carries the dispatcher envelope (causal_ref, prefix_hash,
+-- conversation_log_offset, user_id, context_id) plus an empty
+-- @request_model_id@ until the SPA-side @CreateContext@ surface
+-- (Sprint 7.10 + 7.12) writes per-context model metadata to
+-- @demo.user.<userId>.contexts@. Until that lookup is wired in,
+-- the dispatcher publishes envelopes that the engine will reject;
+-- the integration loop in Sprint 7.14 covers the end-to-end gate.
+dispatcherTopicPollSeconds :: Int
+dispatcherTopicPollSeconds = 30
+
+runDispatcherLoop ::
+  PulsarTransport ->
+  RuntimeMode ->
+  Text.Text ->
+  ConversationTopic.TopicNamespace ->
+  ContextModelMap ->
+  IO ()
+runDispatcherLoop transport runtimeMode requestTopic topicNamespace contextModelMap
+  | Text.null requestTopic = do
+      hPutStrLn
+        stderr
+        "dispatcher loop disabled: daemon config has no inference request topic"
+      forever (threadDelay 60_000_000)
+  | otherwise = do
+      managedContexts <- newMVar Set.empty
+      managedUsers <- newMVar Set.empty
+      manager <- newManager defaultManagerSettings
+      forever $ do
+        outcome <-
+          try @SomeException
+            ( discoverAndStartDispatchers
+                transport
+                runtimeMode
+                requestTopic
+                topicNamespace
+                manager
+                managedContexts
+                managedUsers
+                contextModelMap
+            )
+        case outcome of
+          Right _ -> pure ()
+          Left err ->
+            hPutStrLn
+              stderr
+              ( "dispatcher topic discovery failed:\n"
+                  <> displayException err
+              )
+        threadDelay (dispatcherTopicPollSeconds * 1_000_000)
+
+discoverAndStartDispatchers ::
+  PulsarTransport ->
+  RuntimeMode ->
+  Text.Text ->
+  ConversationTopic.TopicNamespace ->
+  Manager ->
+  MVar (Set Text.Text) ->
+  MVar (Set Text.Text) ->
+  ContextModelMap ->
+  IO ()
+discoverAndStartDispatchers transport runtimeMode requestTopic topicNamespace manager managedContexts managedUsers contextModelMap = do
+  adminBaseUrl <- requirePulsarAdminBaseUrl transport
+  topics <- listNamespaceTopics manager adminBaseUrl topicNamespace
+  forM_ topics $ \topicUrl -> do
+    case parseConversationTopicUrl topicNamespace topicUrl of
+      Just (userIdValue, contextIdValue) -> do
+        startDispatcherWorkerIfNeeded
+          transport
+          runtimeMode
+          requestTopic
+          topicUrl
+          userIdValue
+          contextIdValue
+          managedContexts
+          contextModelMap
+        startContextsMetadataWorkerIfNeeded
+          transport
+          topicNamespace
+          userIdValue
+          managedUsers
+          contextModelMap
+      Nothing -> pure ()
+
+-- | List all non-partitioned topics in the supported demo namespace.
+-- Pulsar admin v2 returns the topic URLs as
+-- @persistent://<tenant>/<namespace>/<topic>@.
+listNamespaceTopics ::
+  Manager ->
+  String ->
+  ConversationTopic.TopicNamespace ->
+  IO [Text.Text]
+listNamespaceTopics manager adminBaseUrl ns = do
+  let url =
+        adminBaseUrl
+          <> "/persistent/"
+          <> Text.unpack (ConversationTopic.topicNamespaceTenant ns)
+          <> "/"
+          <> Text.unpack (ConversationTopic.topicNamespaceName ns)
+  requestValue <- parseRequest url
+  response <- httpLbs requestValue manager
+  case statusCode (responseStatus response) of
+    200 ->
+      case eitherDecode (responseBody response) of
+        Right topics -> pure topics
+        Left decodeError ->
+          ioError
+            ( userError
+                ( "failed to parse Pulsar namespace topic list for "
+                    <> Text.unpack (ConversationTopic.topicNamespaceTenant ns)
+                    <> "/"
+                    <> Text.unpack (ConversationTopic.topicNamespaceName ns)
+                    <> ":\n"
+                    <> decodeError
+                )
+            )
+    -- 404 means the namespace has no topics yet; treat as empty list so the
+    -- dispatcher loop polls cleanly until the first conversation is created.
+    404 -> pure []
+    code ->
+      ioError
+        ( userError
+            ( "failed to list Pulsar namespace topics (status "
+                <> show code
+                <> "):\n"
+                <> lazyBodyToString (responseBody response)
+            )
+        )
+
+-- | Extract @(UserId, ContextId)@ from a topic URL when the topic name
+-- matches the supported @demo.conversation.<userId>.<contextId>@ shape.
+-- Returns 'Nothing' for any other topic in the namespace.
+parseConversationTopicUrl ::
+  ConversationTopic.TopicNamespace ->
+  Text.Text ->
+  Maybe (Contracts.UserId, Contracts.ContextId)
+parseConversationTopicUrl ns topicUrl = do
+  let prefix =
+        Text.concat
+          [ "persistent://",
+            ConversationTopic.topicNamespaceTenant ns,
+            "/",
+            ConversationTopic.topicNamespaceName ns,
+            "/demo.conversation."
+          ]
+  remainder <- Text.stripPrefix prefix topicUrl
+  case Text.splitOn "." remainder of
+    [userIdValue, contextIdValue]
+      | not (Text.null userIdValue) && not (Text.null contextIdValue) ->
+          Just (Contracts.UserId userIdValue, Contracts.ContextId contextIdValue)
+    _ -> Nothing
+
+startDispatcherWorkerIfNeeded ::
+  PulsarTransport ->
+  RuntimeMode ->
+  Text.Text ->
+  Text.Text ->
+  Contracts.UserId ->
+  Contracts.ContextId ->
+  MVar (Set Text.Text) ->
+  ContextModelMap ->
+  IO ()
+startDispatcherWorkerIfNeeded transport runtimeMode requestTopic conversationTopic userIdValue contextIdValue managedContexts contextModelMap = do
+  let Contracts.ContextId contextIdText = contextIdValue
+  modifyMVar_ managedContexts $ \alreadyStarted ->
+    if Set.member contextIdText alreadyStarted
+      then pure alreadyStarted
+      else do
+        void
+          ( forkIO
+              ( runDispatcherForContext
+                  transport
+                  runtimeMode
+                  requestTopic
+                  conversationTopic
+                  userIdValue
+                  contextIdValue
+                  contextModelMap
+              )
+          )
+        pure (Set.insert contextIdText alreadyStarted)
+
+-- | Spawn a per-user worker that consumes the supported compacted
+-- @demo.user.<userId>.contexts@ topic and writes @(contextId, modelId)@
+-- pairs into the shared 'ContextModelMap'. Idempotent across discovery
+-- cycles via 'managedUsers'.
+startContextsMetadataWorkerIfNeeded ::
+  PulsarTransport ->
+  ConversationTopic.TopicNamespace ->
+  Contracts.UserId ->
+  MVar (Set Text.Text) ->
+  ContextModelMap ->
+  IO ()
+startContextsMetadataWorkerIfNeeded transport topicNamespace userIdValue managedUsers contextModelMap = do
+  let Contracts.UserId userIdText = userIdValue
+  modifyMVar_ managedUsers $ \alreadyStarted ->
+    if Set.member userIdText alreadyStarted
+      then pure alreadyStarted
+      else do
+        void
+          ( forkIO
+              ( runContextsMetadataConsumer
+                  transport
+                  topicNamespace
+                  userIdValue
+                  contextModelMap
+              )
+          )
+        pure (Set.insert userIdText alreadyStarted)
+
+-- | The per-user compacted-topic consumer. Subscribes Exclusive (the
+-- contexts topic is per-user so no Failover or Shared semantics are
+-- needed), reads from the earliest broker offset so the compacted view
+-- is replayed on cold coordinator startup, decodes each frame as a
+-- 'Contracts.ContextMetadataEvent', and updates the shared map via
+-- 'ContextModelMap.recordContextMetadataEvent'. Frames the SPA has not
+-- written yet simply don't surface here; the supported flow surfaces a
+-- typed engine error result when 'lookupModelId' returns 'Nothing' at
+-- dispatch time.
+runContextsMetadataConsumer ::
+  PulsarTransport ->
+  ConversationTopic.TopicNamespace ->
+  Contracts.UserId ->
+  ContextModelMap ->
+  IO ()
+runContextsMetadataConsumer transport topicNamespace userIdValue contextModelMap = do
+  let topicUrl = ConversationTopic.contextsMetadataTopicName topicNamespace userIdValue
+      Contracts.UserId userIdText = userIdValue
+      subscriptionName = "infernix-coordinator-context-model-map-" <> userIdText
+      consumerName = subscriptionName <> "-consumer"
+  topicRef <- requireTopicRef topicUrl
+  let consumerPath =
+        buildFailoverConsumerSocketPath
+          (pulsarWebSocketBase transport)
+          topicRef
+          (Text.unpack subscriptionName)
+          (Text.unpack consumerName)
+  forever $ do
+    sessionResult <-
+      try @SomeException
+        ( runPulsarWebSocketClient (pulsarWebSocketBase transport) consumerPath $ \connection ->
+            forever (handleContextsMetadataMessage contextModelMap connection)
+        )
+    case sessionResult of
+      Right _ -> threadDelay 1_000_000
+      Left err -> do
+        hPutStrLn
+          stderr
+          ( "contexts metadata session for "
+              <> Text.unpack topicUrl
+              <> " failed:\n"
+              <> displayException err
+          )
+        threadDelay 1_000_000
+
+handleContextsMetadataMessage ::
+  ContextModelMap ->
+  WebSockets.Connection ->
+  IO ()
+handleContextsMetadataMessage contextModelMap connection = do
+  rawEnvelope <- receiveJsonFrame "contexts metadata message" connection
+  envelope <- decodeJsonText "contexts metadata message" rawEnvelope
+  handled <-
+    try @SomeException
+      ( do
+          payloadBytes <- conversationPayloadBytes envelope
+          case eitherDecode (Lazy.fromStrict payloadBytes) of
+            Left decodeError ->
+              hPutStrLn
+                stderr
+                ( "contexts metadata skipping undecodable event "
+                    <> Text.unpack (envelopeMessageId envelope)
+                    <> ": "
+                    <> decodeError
+                )
+            Right event ->
+              ContextModelMap.recordContextMetadataEvent contextModelMap event
+      )
+  case handled of
+    Right _ -> sendAck connection (envelopeMessageId envelope)
+    Left err -> do
+      sendNegativeAck connection (envelopeMessageId envelope)
+      hPutStrLn
+        stderr
+        ( "contexts metadata message handling failed:\n"
+            <> displayException err
+        )
+
+-- | The per-context dispatcher worker. Maintains 'ReducerState' across
+-- subscription sessions; on Failover handoff the surviving replica
+-- replays from the broker's earliest position and folds back up to
+-- the cursor. Producer-side dedup catches any duplicate dispatch from
+-- the recovered replica.
+runDispatcherForContext ::
+  PulsarTransport ->
+  RuntimeMode ->
+  Text.Text ->
+  Text.Text ->
+  Contracts.UserId ->
+  Contracts.ContextId ->
+  ContextModelMap ->
+  IO ()
+runDispatcherForContext transport runtimeMode requestTopic conversationTopic userIdValue contextIdValue contextModelMap = do
+  reducerStateRef <- newIORef (initialReducerState contextIdValue)
+  let subscriptionName = Dispatch.dispatcherSubscriptionName contextIdValue
+      consumerName = subscriptionName <> "-consumer"
+  topicRef <- requireTopicRef conversationTopic
+  let consumerPath =
+        buildFailoverConsumerSocketPath
+          (pulsarWebSocketBase transport)
+          topicRef
+          (Text.unpack subscriptionName)
+          (Text.unpack consumerName)
+  forever $ do
+    sessionResult <-
+      try @SomeException
+        ( runPulsarWebSocketClient (pulsarWebSocketBase transport) consumerPath $ \connection ->
+            forever
+              ( handleDispatcherMessage
+                  transport
+                  runtimeMode
+                  requestTopic
+                  userIdValue
+                  contextIdValue
+                  reducerStateRef
+                  contextModelMap
+                  connection
+              )
+        )
+    case sessionResult of
+      Right _ -> threadDelay 1_000_000
+      Left err -> do
+        hPutStrLn
+          stderr
+          ( "dispatcher session for "
+              <> Text.unpack conversationTopic
+              <> " failed:\n"
+              <> displayException err
+          )
+        threadDelay 1_000_000
+
+handleDispatcherMessage ::
+  PulsarTransport ->
+  RuntimeMode ->
+  Text.Text ->
+  Contracts.UserId ->
+  Contracts.ContextId ->
+  IORef ReducerState ->
+  ContextModelMap ->
+  WebSockets.Connection ->
+  IO ()
+handleDispatcherMessage transport runtimeMode requestTopic userIdValue contextIdValue reducerStateRef contextModelMap connection = do
+  rawEnvelope <- receiveJsonFrame "Pulsar dispatcher message" connection
+  envelope <- decodeJsonText "Pulsar dispatcher message" rawEnvelope
+  handled <-
+    try @SomeException
+      ( do
+          eventBytes <- conversationPayloadBytes envelope
+          case eitherDecode (Lazy.fromStrict eventBytes) of
+            Left decodeError ->
+              hPutStrLn
+                stderr
+                ( "dispatcher skipping undecodable conversation event "
+                    <> Text.unpack (envelopeMessageId envelope)
+                    <> ": "
+                    <> decodeError
+                )
+            Right conversationEvent -> do
+              let messageId = Contracts.MessageId (envelopeMessageId envelope)
+                  conversationMessage =
+                    Contracts.ConversationMessage messageId conversationEvent
+              decision <- atomicModifyIORef' reducerStateRef $ \state ->
+                case stepReducer state conversationMessage of
+                  StepAdvanced advancedState _ ->
+                    (advancedState, Dispatch.buildDispatchDecision userIdValue advancedState)
+                  StepDropped unchanged ->
+                    (unchanged, Dispatch.DispatchNoOp)
+              case decision of
+                Dispatch.DispatchNoOp -> pure ()
+                Dispatch.DispatchPrompt inferenceEnvelope -> do
+                  maybeModelId <- ContextModelMap.lookupModelId contextModelMap contextIdValue
+                  publishDispatchedInferenceRequest
+                    transport
+                    runtimeMode
+                    requestTopic
+                    (fromMaybe Text.empty maybeModelId)
+                    inferenceEnvelope
+      )
+  case handled of
+    Right _ -> sendAck connection (envelopeMessageId envelope)
+    Left err -> do
+      sendNegativeAck connection (envelopeMessageId envelope)
+      hPutStrLn
+        stderr
+        ( "dispatcher message handling failed:\n"
+            <> displayException err
+        )
+
+conversationPayloadBytes :: PulsarEnvelope -> IO ByteString.ByteString
+conversationPayloadBytes envelope =
+  case Base64.decode (TextEncoding.encodeUtf8 (envelopePayload envelope)) of
+    Right raw -> pure raw
+    Left err ->
+      ioError
+        ( userError
+            ( "failed to decode base64 conversation event payload for message "
+                <> Text.unpack (envelopeMessageId envelope)
+                <> ":\n"
+                <> err
+            )
+        )
+
+-- | Publish a dispatcher-built envelope to the substrate's inference
+-- request topic. Producer name is stable per @ContextId@ so the broker
+-- dedup gate sees a single producer scope per per-context queue;
+-- sequence id is derived from the dispatcher envelope's
+-- @userPromptMessageId@ so a recovered replica that re-dispatches
+-- collides with the original publish.
+publishDispatchedInferenceRequest ::
+  PulsarTransport ->
+  RuntimeMode ->
+  Text.Text ->
+  Text.Text ->
+  Dispatch.InferenceRequestEnvelope ->
+  IO ()
+publishDispatchedInferenceRequest transport runtimeMode requestTopic resolvedModelId env = do
+  let Contracts.ContextId contextIdText = Dispatch.inferenceContextId env
+      Contracts.UserId userIdText = Dispatch.inferenceUserId env
+      Contracts.MessageId promptMessageIdText = Dispatch.inferenceUserPromptMessageId env
+      Contracts.ClientIdempotencyKey idempotencyKey = Dispatch.inferenceClientIdempotencyKey env
+      protoPayload :: ProtoInference.InferenceRequest
+      protoPayload =
+        set (field @"requestId") promptMessageIdText
+          . set (field @"requestModelId") resolvedModelId
+          . set (field @"inputText") (Dispatch.inferencePromptText env)
+          . set (field @"runtimeMode") (runtimeModeId runtimeMode)
+          . set (field @"userId") userIdText
+          . set (field @"contextId") contextIdText
+          . set (field @"userPromptMessageId") promptMessageIdText
+          . set (field @"clientIdempotencyKey") idempotencyKey
+          . set
+            (field @"conversationLogOffset")
+            (fromIntegral (Dispatch.inferenceConversationLogOffset env))
+          . set (field @"prefixHash") (Dispatch.inferencePrefixHash env)
+          . set (field @"causalRef") (Dispatch.inferenceCausalRef env)
+          $ defMessage
+      options =
+        (defaultPublishOptions ("dispatcher-" <> contextIdText))
+          { publishSequenceId = parseMessageIdToSequenceId promptMessageIdText
+          }
+  publishTopicPayload
+    transport
+    requestTopic
+    options
+    promptMessageIdText
+    (encodeMessage protoPayload)
 
 -- | Phase 7 Sprint 7.7 / 7.14 model-bootstrap runtime loop. The
 -- coordinator subscribes to @infernix/system/model.bootstrap.request@
@@ -1461,6 +1976,51 @@ readPublishedInferenceResultViaPulsar transport topicValue wantedRequestId = do
                   pure (Just resultValue)
             _ ->
               readMatchingResult connection
+
+-- | Phase 7 Sprint 7.12 — engine-side rejection when the dispatcher
+-- could not resolve the per-context model id (the @ContextCreated@
+-- event has not been observed yet, or the SPA flow that pins model id
+-- is not wired). The engine produces a typed failed result instead of
+-- silently dispatching to a generic engine path. The result-bridge
+-- writes this back to the conversation log so the SPA renders the
+-- typed error in the Chat surface.
+emptyModelIdRejectionResult ::
+  RuntimeMode ->
+  ProtoInference.InferenceRequest ->
+  InferenceResult
+emptyModelIdRejectionResult runtimeMode protoRequest =
+  let envelopeUserId = view ProtoInferenceFields.userId protoRequest
+      envelopeContextId = view ProtoInferenceFields.contextId protoRequest
+      envelopeCausalRef = view ProtoInferenceFields.userPromptMessageId protoRequest
+   in InferenceResult
+        { requestId = view ProtoInferenceFields.requestId protoRequest,
+          resultModelId = "",
+          resultMatrixRowId = "",
+          resultRuntimeMode = runtimeMode,
+          resultSelectedEngine = "",
+          status = "failed",
+          payload =
+            ResultPayload
+              { inlineOutput =
+                  Just
+                    "request rejected: model id was not resolved for this context (the SPA's ContextCreated event has not been observed yet, or the coordinator's contexts-metadata consumer has not caught up)",
+                objectRef = Nothing
+              },
+          createdAt = emptyModelIdRejectionTimestamp,
+          resultUserId = envelopeUserId,
+          resultContextId = envelopeContextId,
+          resultCausalRef = envelopeCausalRef
+        }
+
+-- | The empty-model-id rejection path returns a deterministic
+-- timestamp so the rejection result is byte-identical across duplicate
+-- redeliveries. Pulsar producer dedup on the result topic collapses
+-- those duplicates.
+emptyModelIdRejectionTimestamp :: UTCTime
+emptyModelIdRejectionTimestamp =
+  case parseTimeM True defaultTimeLocale "%Y-%m-%dT%H:%M:%SZ" "1970-01-01T00:00:00Z" of
+    Just timestamp -> timestamp
+    Nothing -> error "internal: failed to parse fixed epoch timestamp"
 
 publishedResultFromRequest :: Paths -> RuntimeMode -> ProtoInference.InferenceRequest -> IO InferenceResult
 publishedResultFromRequest paths runtimeMode protoRequest = do

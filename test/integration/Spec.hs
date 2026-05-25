@@ -129,12 +129,12 @@ exerciseRuntimeMode paths runtimeMode = do
       when (runtimeMode == AppleSilicon) $
         assert (fmap daemonConfigRole (engineDaemon routedDemoConfig) == Just Engine) "apple demo config reports engine metadata"
       assert
-        ( ("\"request_topics\":[\"persistent://public/default/inference.request." <> showRuntimeMode runtimeMode <> "\"]")
+        ( ("\"request_topics\":[\"persistent://infernix/demo/inference.request." <> showRuntimeMode runtimeMode <> "\"]")
             `isInfixOf` compact demoConfigResponse
         )
         "demo config reports the active request topic"
       assert
-        ( ("\"result_topic\":\"persistent://public/default/inference.result." <> showRuntimeMode runtimeMode <> "\"")
+        ( ("\"result_topic\":\"persistent://infernix/demo/inference.result." <> showRuntimeMode runtimeMode <> "\"")
             `isInfixOf` compact demoConfigResponse
         )
         "demo config reports the active result topic"

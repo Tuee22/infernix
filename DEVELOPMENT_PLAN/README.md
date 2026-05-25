@@ -178,14 +178,20 @@ now use that id consistently.
 
 | Phase | Name | Status | Document |
 |-------|------|--------|----------|
-| 0 | Documentation and Governance | Done | [phase-0-documentation-and-governance.md](phase-0-documentation-and-governance.md) |
-| 1 | Repository and Control-Plane Foundation | Done | [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md) |
-| 2 | Kind Cluster Storage and Lifecycle | Done | [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md) |
-| 3 | HA Platform Services and Edge Routing | Done | [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md) |
-| 4 | Inference Service and Durable Runtime | Done | [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) |
-| 5 | Web UI and Shared Types | Done | [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md) |
-| 6 | Validation, E2E, and HA Hardening | Done | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) |
-| 7 | Demo App Multi-User Durable Context | Active | [phase-7-demo-app-durable-context.md](phase-7-demo-app-durable-context.md) |
+| 0 | Documentation and Governance | Active (Sprint 0.9: Configuration Doctrine) | [phase-0-documentation-and-governance.md](phase-0-documentation-and-governance.md) |
+| 1 | Repository and Control-Plane Foundation | Active (Sprint 1.11: Host Manifest Materialization) | [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md) |
+| 2 | Kind Cluster Storage and Lifecycle | Active (Sprint 2.10: Cluster Lifecycle Host-Manifest Retirement) | [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md) |
+| 3 | HA Platform Services and Edge Routing | Active (Sprint 3.10: Playwright Container Retirement + Edge Manifest) | [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md) |
+| 4 | Inference Service and Durable Runtime | Active (Sprint 4.13: Cluster Manifest Materialization) | [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) |
+| 5 | Web UI and Shared Types | Active (Sprint 5.9: Web and Python Manifest Retirement) | [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md) |
+| 6 | Validation, E2E, and HA Hardening | Active (Sprint 6.28: Test Fixture and Lint Gate Retirement) | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) |
+| 7 | Demo App Multi-User Durable Context | Active (Sprint 7.17: Secrets-via-Files and Demo-Surface Retirement, plus Sprints 7.10–7.15) | [phase-7-demo-app-durable-context.md](phase-7-demo-app-durable-context.md) |
+
+> **Note**: All phases are `Active` as of the Phase 0 Sprint 0.9 configuration-doctrine landing.
+> Each phase 1-7 gained a retirement sprint that eliminates the env-var fallbacks and
+> PATH-resolved external commands the phase originally introduced. See
+> [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
+> for the doctrine, and the per-phase sprint sections for the specific retirement scope.
 
 ## Canonical Outcome
 

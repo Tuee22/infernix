@@ -51,6 +51,15 @@ a thin renderer is a governed contract:
   - newtypes for `UserId`, `ContextId`, `MessageId`, `ClientIdempotencyKey`
 - generated `Simple.JSON` instances stay in lockstep with Haskell `ToJSON`/`FromJSON` instances
   so both sides agree on wire format mechanically
+- the May 24, 2026 generator pass extended this lockstep to every Phase 7 sum and newtype:
+  string-wrapped newtypes (`UserId`, `ContextId`, `MessageId`, `ClientIdempotencyKey`,
+  `ArtifactMimeType`) encode as bare strings on the wire, matching the Haskell side's
+  `deriving newtype (ToJSON)`; record-wrapped newtypes unwrap to their inner record;
+  nullary sums emit `{"tag": "ConstructorName"}`; positional sums emit
+  `{"tag": "...", "contents": ...}`; record-syntax sums spread their constructor's fields
+  beside the `tag` key (matching Aeson's `TaggedObject "tag" "contents"` behavior). The
+  PureScript roundtrip suite at `web/test/Infernix/Web/ContractsSpec.purs` covers 43 cases
+  across every Phase 7 type to keep the lockstep mechanically enforced.
 
 ## Validation
 

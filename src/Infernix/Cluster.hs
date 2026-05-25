@@ -114,7 +114,7 @@ helmDependencyArchivesDirectory paths = repoRoot paths </> "chart/charts"
 finalPhaseDeployments :: ClusterState -> [String]
 finalPhaseDeployments state =
   baseDeployments
-    <> [deployment | clusterStateHasDemoUi state, deployment <- ["deployment/infernix-demo"]]
+    <> [deployment | clusterStateHasDemoUi state, deployment <- ["deployment/infernix-demo", "deployment/infernix-keycloak"]]
   where
     baseDeployments =
       [ "deployment/infernix-minio-console",
@@ -202,6 +202,18 @@ harborPostgresReplicaReinitGraceAttempts = harborPostgresStartupRepairGraceAttem
 
 harborPostgresExpectedOperatorClaims :: Int
 harborPostgresExpectedOperatorClaims = 4
+
+-- | Phase 7 Sprint 7.1: keycloak-postgresql is a second Patroni Postgres
+-- cluster (operator-managed) that lands in FinalPhase, after Harbor.
+-- It contributes 4 operator-managed PVCs (3 data + 1 pgbackrest repo),
+-- so the FinalPhase reconcile waits for the combined Harbor + Keycloak
+-- total before declaring the PV side ready.
+keycloakPostgresExpectedOperatorClaims :: Int
+keycloakPostgresExpectedOperatorClaims = 4
+
+finalPhaseExpectedOperatorClaims :: Int
+finalPhaseExpectedOperatorClaims =
+  harborPostgresExpectedOperatorClaims + keycloakPostgresExpectedOperatorClaims
 
 harborPostgresPrimarySelector :: String
 harborPostgresPrimarySelector =
@@ -503,8 +515,25 @@ clusterUpWithPlatform paths runtimeMode = do
       "cluster-up"
       "deploy-final-phase"
       "deploying the final chart and waiting for routed workloads to become ready"
-  deployChart paths finalDeployState [finalValuesPath, imageOverridesPath] True
-  waitForFinalPhaseRollouts finalDeployState
+  -- Phase 7 Sprint 7.1: the FinalPhase chart deploy applies (among others)
+  -- the @keycloak-postgresql@ PerconaPGCluster CR; the Percona operator
+  -- then creates 4 PVCs (3 data + 1 pgbackrest repo) on the supported
+  -- @infernix-manual@ storage class, which has no provisioner.
+  -- 'reconcileFinalPhaseOperatorManagedPersistentVolumes' below creates
+  -- matching PVs and waits for them to bind so Keycloak's Deployment
+  -- is not blocked behind a Pending database. The helm install
+  -- intentionally runs WITHOUT @--wait@ here — helm's @--wait@ blocks
+  -- on every Deployment becoming Ready, and Keycloak's TCP probe
+  -- never succeeds while its postgres backend is unbound, which
+  -- would deadlock the whole flow (helm hangs on Keycloak → PV
+  -- reconcile never runs → PVCs never bind → Keycloak never starts).
+  -- The explicit 'waitForFinalPhaseRollouts' below is the supported
+  -- wait, and it runs after the PV reconcile so it observes a healthy
+  -- Keycloak.
+  deployChart paths finalDeployState [finalValuesPath, imageOverridesPath] False
+  finalDeployStateWithKeycloakPg <-
+    reconcileFinalPhaseOperatorManagedPersistentVolumes paths finalDeployState
+  waitForFinalPhaseRollouts finalDeployStateWithKeycloakPg
   routedPublicationState <-
     startLifecyclePhase
       paths
@@ -2437,6 +2466,27 @@ reconcileOperatorManagedPersistentVolumes paths state = do
   reconcilePersistentVolumes updatedState
   waitForPersistentClaimsBound updatedState operatorClaims
   waitForHarborDatabaseReadyWithRepair updatedState
+  pure updatedState
+
+-- | Phase 7 Sprint 7.1: second pass over operator-managed PVCs after the
+-- FinalPhase chart deploy applies the @keycloak-postgresql@ PerconaPGCluster
+-- CR. The Percona operator creates 4 additional PVCs (3 data + 1
+-- pgbackrest repo) on the supported @infernix-manual@ storage class; we
+-- create the matching PVs and wait for them to bind so the Keycloak
+-- Deployment is not blocked behind a Pending database. Unlike the warmup
+-- reconcile, this pass skips Harbor's database-ready repair because that
+-- already ran during the earlier 'reconcileOperatorManagedPersistentVolumes'
+-- call.
+reconcileFinalPhaseOperatorManagedPersistentVolumes :: Paths -> ClusterState -> IO ClusterState
+reconcileFinalPhaseOperatorManagedPersistentVolumes paths state = do
+  operatorClaims <- waitForOperatorManagedPersistentClaims state finalPhaseExpectedOperatorClaims
+  mapM_ (ensureClaimDirectoryReady paths (clusterRuntimeMode state)) operatorClaims
+  usesHostBindMounts <- kindUsesHostBindMounts paths (clusterRuntimeMode state)
+  unless usesHostBindMounts $
+    prepareKindNodeClaimDirectories paths state (clusterRuntimeMode state) operatorClaims
+  let updatedState = state {claims = mergePersistentClaims (claims state) operatorClaims}
+  reconcilePersistentVolumes updatedState
+  waitForPersistentClaimsBound updatedState operatorClaims
   pure updatedState
 
 refreshPersistentClaims :: ClusterState -> IO ClusterState

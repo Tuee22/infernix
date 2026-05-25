@@ -1,7 +1,7 @@
 # Phase 5: Web UI and Shared Types
 
-**Status**: Done
-**Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
+**Status**: Active (Sprint 5.9 in flight; Sprints 5.1–5.8 Done)
+**Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Define the PureScript demo UI built with spago, the Haskell-owned frontend contract
 > generator, the `purescript-spec` test framework, the cluster-resident browser SPA, and the
@@ -318,9 +318,53 @@ None.
 
 ---
 
+## Sprint 5.9: Web and Python Manifest Retirement [Active]
+
+**Status**: Active
+**Blocked by**: Phase 1 Sprint 1.11 (Host Manifest Materialization), Phase 4 Sprint 4.13 (Cluster Manifest Materialization)
+**Implementation**: `src/Infernix/DemoCLI.hs`, `python/adapters/common.py`, `python/adapters/model_cache.py`, every engine adapter under `python/adapters/*.py`, `web/scripts/install-purescript.mjs`, `web/test/run_playwright_matrix.mjs`
+**Docs to update**: `documents/development/no_env_vars.md`, `documents/development/frontend_contracts.md`, `documents/development/testing_strategy.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
+
+### Objective
+
+Retire env-var consumption in the demo backend CLI, the Python adapter layer, and the web/Node
+scripts. Replace `INFERNIX_BIND_HOST`, `INFERNIX_DEMO_BRIDGE_MODE`,
+`INFERNIX_PUBLICATION_STATE_PATH` with `ClusterConfig.demoBackend.*` fields. Replace every
+`os.environ` read in Python adapters with a typed JSON config blob passed on stdin by the
+Haskell daemon. Hardcode `PURESCRIPT_VERSION` in `install-purescript.mjs`. Resolve
+`INFERNIX_PLAYWRIGHT_INFERNIX` via the `HostConfig` absolute path.
+
+### Deliverables
+
+- `src/Infernix/DemoCLI.hs` reads `bindHost`, `bridgeMode`, `publicationStatePath` from
+  `ClusterConfig.demoBackend.*`; the `lookupEnv` calls are deleted.
+- Haskell daemon's invocation of `python/adapters/*` switches to `runHostTool hostConfig
+  HostPoetry [..., "--", "python", "adapters/...", "--config-stdin"]` and writes the typed JSON
+  config to the adapter's stdin.
+- `python/adapters/common.py` and `python/adapters/model_cache.py` parse `json.load(sys.stdin)` at
+  startup; every `os.environ` read is deleted.
+- `web/scripts/install-purescript.mjs` hardcodes the PureScript version; `PURESCRIPT_VERSION` env
+  read deleted. Operators bump by editing the script.
+- `web/test/run_playwright_matrix.mjs` reads the infernix binary path from the Dhall-decoded
+  playwright fixture (introduced in Sprint 3.10); `INFERNIX_PLAYWRIGHT_INFERNIX` and
+  `INFERNIX_BUILD_ROOT` reads deleted.
+
+### Validation
+
+- `grep -rn 'os.environ' python/` returns zero matches.
+- `grep -rn 'process\.env' web/scripts/ web/test/ web/playwright/` returns zero matches.
+- `infernix test integration` on `linux-gpu` round-trips through the demo + adapter path
+  successfully.
+
+### Remaining Work
+
+All deliverables above.
+
+---
+
 ## Remaining Work
 
-None.
+Sprint 5.9 in flight. Sprints 5.1–5.8 closed.
 
 ---
 

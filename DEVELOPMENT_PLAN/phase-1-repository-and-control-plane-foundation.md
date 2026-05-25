@@ -1,7 +1,7 @@
 # Phase 1: Repository and Control-Plane Foundation
 
-**Status**: Done
-**Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
+**Status**: Active (Sprint 1.11 in flight; Sprints 1.1–1.10 Done)
+**Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/engineering/host_tools_manifest.md](../documents/engineering/host_tools_manifest.md)
 
 > **Purpose**: Establish the canonical repository scaffold, the two-binary topology
 > (`infernix` plus `infernix-demo` sharing the default Cabal library exposed by the `infernix`
@@ -10,10 +10,17 @@
 
 ## Phase Status
 
-Phase 1 is closed around the current repository scaffold, the two-binary topology, the staged
-substrate-file contract, the baked Linux launcher image, and the governed root-document posture
-implemented in this worktree. Sprints 1.1–1.10 remain `Done` and there is no additional open
-Phase 1 backlog.
+Phase 1 closed Sprints 1.1–1.10 around the current repository scaffold, the two-binary topology,
+the staged substrate-file contract, the baked Linux launcher image, and the governed
+root-document posture implemented in this worktree. Phase 1 is now Active again because Phase 0
+Sprint 0.9 declared the no-env-var + absolute-path doctrine and Phase 1 owns the host-manifest
+materialization that closes that doctrine for the host tool-path surface. Sprint 1.11 retires
+`INFERNIX_BUILD_ROOT`, `INFERNIX_DATA_ROOT`, the `INFERNIX_COMPOSE_SUBSTRATE` /
+`INFERNIX_COMPOSE_DEMO_UI` runtime fallbacks, `INFERNIX_BOOTSTRAP_YES`, the
+`bootstrap::prepend_path` helper, and the host-side `.build` / `chart/charts` bind mounts. It
+introduces `dhall/InfernixHost.dhall` + the matching `HostConfig` Haskell record and refactors
+every bootstrap script to the `PATH=/usr/bin:/bin` + `BASH_SOURCE` + `/etc/passwd` + hardcoded
+absolute-path discovery convention.
 
 ## Current Repo Assessment
 
@@ -432,9 +439,209 @@ None.
 
 ---
 
+## Sprint 1.11: Host Manifest Materialization [Active]
+
+**Status**: Active
+**Blocked by**: Phase 0 Sprint 0.9 (Configuration Doctrine declaration)
+**Implementation**: `dhall/InfernixHost.dhall` (new), `src/Infernix/Substrate.hs` (extended), `src/Infernix/HostConfig.hs` (new), `src/Infernix/HostTools.hs` (new helper module), `src/Infernix/CLI.hs`, `src/Infernix/Config.hs`, `src/Infernix/DemoCLI.hs`, every `bootstrap/*.sh`, `compose.yaml`, `docker/linux-substrate.Dockerfile`
+**Docs to update**: `documents/architecture/configuration_doctrine.md`, `documents/engineering/host_tools_manifest.md`, `documents/development/local_dev.md`, `documents/engineering/portability.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
+
+### Objective
+
+Materialize the `InfernixHost.dhall` typed config record for every supported execution context
+(Apple host-native, Linux launcher container) and refactor every host-tool invocation and every
+filesystem-convention lookup to read from `HostConfig` instead of consuming env vars or relying on
+PATH. Refactor the bootstrap shell scripts to the supported stage-zero convention
+(`PATH=/usr/bin:/bin` reset, `BASH_SOURCE`/`getent passwd` discovery, hardcoded absolute paths for
+the small set of pre-binary commands, delegation to the launcher binary for everything else). Move
+the build-artefact tree (`./.build/outer-container/build/`) and the Helm dependency archive cache
+(`./chart/charts/`) inside the launcher image so the Linux container's host-bind-mount surface
+shrinks to `./.data` plus the Docker socket only.
+
+### Deliverables
+
+- `dhall/InfernixHost.dhall` schema with the `ToolPaths`, `FilesystemConventions`, and
+  `HostExecutionContext` records named in `documents/engineering/host_tools_manifest.md`.
+- `HostConfig` typed Haskell record in `src/Infernix/HostConfig.hs`, decoded via the `dhall`
+  library at every entry point (`runProductionDaemon`, `clusterUp`, `runDemoApiServer`, every
+  `infernix <command>`).
+- `runHostTool :: HostConfig -> HostTool -> [String] -> IO a` helper module
+  `src/Infernix/HostTools.hs`. Every Haskell external-command invocation in this phase's scope
+  (`src/Infernix/Config.hs`, `src/Infernix/CLI.hs`, `src/Infernix/DemoCLI.hs`) routes through
+  this helper.
+- Materialization helper extended in `src/Infernix/CLI.hs` so `infernix internal materialize-substrate`
+  also writes `./.build/infernix-host.dhall` (Apple) or `/opt/infernix/dhall/InfernixHost.dhall`
+  (Linux launcher).
+- Bootstrap scripts (`bootstrap/common.sh`, `bootstrap/linux-cpu.sh`,
+  `bootstrap/linux-gpu.sh`, `bootstrap/apple-silicon.sh`) refactored to the stage-zero convention:
+  first line `PATH=/usr/bin:/bin`, repo root from `BASH_SOURCE`, home dir from `/etc/passwd`, every
+  pre-binary command by absolute-path constant, post-binary delegation to `./.build/infernix`
+  (Apple) or `/usr/bin/docker compose run --rm infernix infernix` (Linux).
+- `INFERNIX_BOOTSTRAP_YES` env var replaced by `--yes` CLI flag on each bootstrap script.
+- `compose.yaml` shrinks to one `infernix` service with two bind mounts (`./.data` and the
+  Docker socket). The `INFERNIX_BUILD_ROOT` and `INFERNIX_HOST_REPO_ROOT` `environment:` entries
+  are removed. The `./.build` and `./chart/charts` bind mounts are removed.
+- `docker/linux-substrate.Dockerfile` bakes the Helm dependency archive cache into the image at
+  `/opt/infernix/chart/charts/` (replacing the previous bind-mount surface). The `ENV
+  INFERNIX_BUILD_ROOT=…` directive is removed; the binary discovers its build root via
+  `getExecutablePath`.
+- Test fixtures in `test/unit/Spec.hs` and `test/integration/Spec.hs` stop calling `setEnv
+  "INFERNIX_BUILD_ROOT"` and `setEnv "INFERNIX_DATA_ROOT"`; they pass a typed `HostConfig`
+  override instead.
+
+### Validation
+
+- `cabal build all` clean, `infernix test lint` clean, `infernix test unit` clean.
+- `grep -rn 'lookupEnv\|getEnv' src/Infernix/{Config,CLI,DemoCLI}.hs` returns zero matches.
+- `grep -rn 'INFERNIX_BUILD_ROOT\|INFERNIX_DATA_ROOT\|INFERNIX_COMPOSE_SUBSTRATE\|INFERNIX_COMPOSE_DEMO_UI\|INFERNIX_BOOTSTRAP_YES' src/ bootstrap/ compose.yaml docker/` returns zero matches.
+- `./bootstrap/linux-cpu.sh doctor` runs cleanly under `env -i /usr/bin/bash` (empty starting env).
+- `./bootstrap/linux-gpu.sh build` produces an image whose `docker run --rm infernix-linux-gpu:local
+  /usr/bin/ls /opt/infernix/chart/charts` lists the expected Helm chart archives (no bind mount
+  needed).
+- `docker inspect <launcher-container> --format '{{json .Mounts}}'` shows exactly two mounts:
+  `./.data` and `/var/run/docker.sock`.
+
+### Remaining Work
+
+Foundational pieces landed:
+
+- `dhall/InfernixHost.dhall` schema with the typed `ToolPaths`,
+  `FilesystemConventions`, and `HostExecutionContext` records.
+- `src/Infernix/HostConfig.hs` — typed `HostConfig` Haskell record,
+  Dhall decoder, renderer, and supported defaults for both Apple
+  host-native and Linux outer-container execution contexts.
+- `src/Infernix/HostTools.hs` — closed `HostTool` enumeration plus the
+  `hostToolPath`, `runHostTool`, `runHostToolWithCwd`, `readHostTool`,
+  `readHostToolWithExitCode`, and `hostToolProcess` helpers that the
+  later sprints will use to route every external invocation through
+  `HostConfig` instead of bare-name `proc` calls.
+- `src/Infernix/DemoConfig.hs.materializeHostManifestFile` writes the
+  manifest beside the substrate file on `infernix internal
+  materialize-substrate`; the CLI also prints `hostManifestPath`.
+- `test/unit/Spec.hs.assertHostConfig` covers decoder roundtrip +
+  tool-path lookup + the absent-tool empty-path convention.
+
+Verified end-to-end on the host: `infernix internal materialize-substrate
+apple-silicon` writes `./.build/infernix-host.dhall` with the Apple
+defaults. `infernix test lint`, `infernix test unit` (70/70 tests),
+`infernix lint files|chart|docs|proto` all exit zero.
+
+Haskell-side env-var retirement landed (May 24, 2026):
+
+- `src/Infernix/Config.hs` `discoverPaths` now consumes an optional
+  `HostConfig` (loaded via the new `tryLoadHostManifest` candidate-list
+  walk: `<repo>/.build/infernix-host.dhall`, the Linux outer-container
+  bind-mount location, and `/opt/infernix/dhall/InfernixHost.dhall`).
+  Convention defaults still apply when the manifest is absent so
+  first-run bootstrap remains workable. `INFERNIX_BUILD_ROOT` and
+  `INFERNIX_DATA_ROOT` env reads removed.
+- `src/Infernix/Config.hs.targetRuntimeModeForExecutionContext`
+  no longer reads `INFERNIX_COMPOSE_SUBSTRATE`. The outer-container
+  branch decodes the active substrate from the staged
+  `infernix-substrate.dhall` file (the Dockerfile bakes that file at
+  image build time) or fails with the supported `missingGeneratedSubstrateFileError`
+  diagnostic.
+- `src/Infernix/CLI.hs.configuredRuntimeMode` collapses to a direct
+  call into `targetRuntimeModeForExecutionContext`; the duplicate
+  `INFERNIX_COMPOSE_SUBSTRATE` read and the `INFERNIX_COMPOSE_DEMO_UI`
+  read in `defaultDemoUiEnabled` are deleted. The supported flow
+  exposes the demo-UI selector via the
+  `infernix internal materialize-substrate --demo-ui true|false`
+  flag, not an env override.
+- `src/Infernix/CLI.hs.ensureActiveSubstrateFile` no longer
+  auto-materializes the substrate file on first run; it reads the
+  staged file and surfaces a typed diagnostic when absent. The
+  Dockerfile's `infernix internal materialize-substrate` build step
+  and the Apple bootstrap script keep the file present on the
+  supported paths.
+- `src/Infernix/Config.discoverPathsWithHostManifest` exposes
+  fixture-driven discovery for tests (Sprint 6.28 will codify the
+  lint gate that forbids any new `setEnv`/`unsetEnv` regressions).
+- `test/unit/Spec.hs` replaces the `withOptionalEnv "INFERNIX_BUILD_ROOT"`
+  and `withTestRoot` `setEnv "INFERNIX_DATA_ROOT"` patterns with two
+  typed `HostConfig` fixtures (`hostNativeUnitTestFixture`,
+  `linuxOuterContainerUnitTestFixture`) that route every test-time
+  `Paths` value through `discoverPathsWithHostManifest`.
+
+Infra-side cleanup landed (May 24, 2026):
+
+- `compose.yaml` shrunk: the `infernix` service drops the previous
+  `build:` block, the `environment:` block (the four forbidden
+  `INFERNIX_BUILD_ROOT` / `INFERNIX_COMPOSE_SUBSTRATE` / `INFERNIX_COMPOSE_DEMO_UI`
+  references plus the `INFERNIX_HOST_REPO_ROOT` runtime echo), and the
+  `./.build` / `./chart/charts` / `./compose.yaml` bind mounts. The
+  service now references the launcher image by name only and bind-mounts
+  exactly `./.data:/workspace/.data` and `/var/run/docker.sock`. The
+  `playwright` sidecar service stays in compose.yaml for now; Sprint 3.10
+  deletes it together with `docker/playwright.Dockerfile` and the
+  matching `runEndToEnd` refactor.
+- `docker/linux-substrate.Dockerfile`: removed the
+  `ENV INFERNIX_BUILD_ROOT=/workspace/.build/outer-container/build`
+  directive. The supported in-image build root is now the convention
+  default `/workspace/.build`, discovered by `discoverPaths` via the
+  cwd-walk plus the optional host-manifest lookup. The `mkdir -p`
+  before the materialize-substrate step targets `/workspace/.build`
+  directly.
+- `bootstrap/common.sh`: replaced `INFERNIX_BOOTSTRAP_YES` env
+  consumption with a typed `BOOTSTRAP_ASSUME_YES` script-local flag,
+  set via the new `bootstrap::parse_yes_flag` helper that pops a
+  leading `--yes` from each entrypoint's argv.
+- `bootstrap/linux-cpu.sh`, `bootstrap/linux-gpu.sh`:
+  `compose_env` no longer passes `INFERNIX_COMPOSE_SUBSTRATE` or
+  `INFERNIX_COMPOSE_BASE_IMAGE`; the substrate is fed exclusively via
+  the new `build_launcher_image` helper that invokes
+  `docker build --build-arg RUNTIME_MODE=…` directly (compose.yaml has
+  no `build.args:` block per the standards). `command_build` calls
+  `build_launcher_image` before the smoke-test `infernix --help`.
+  Both scripts parse `--yes` as the first argument.
+
+Verified end-to-end on the host: `cabal build all`, `cabal test
+infernix-unit`, `cabal test infernix-haskell-style`, and
+`cabal run infernix -- lint {files,chart,docs,proto}` all exit zero.
+The Sprint 1.11 forbidden-env grep gate
+(`grep -rEn 'INFERNIX_BUILD_ROOT|INFERNIX_DATA_ROOT|INFERNIX_COMPOSE_SUBSTRATE|INFERNIX_COMPOSE_DEMO_UI|INFERNIX_BOOTSTRAP_YES' src/ bootstrap/ compose.yaml docker/`)
+returns only the documented-retirement comment references plus one
+chart-lint expectation entry in `src/Infernix/Lint/Chart.hs:67` that
+asserts `chart/templates/deployment-demo.yaml` still carries the
+`INFERNIX_DATA_ROOT` env var (the chart still does — Sprint 5.9 +
+Sprint 7.17 retire it together with the demo deployment's env block
+and the Python adapter's `os.environ` reads).
+
+Pending closure (deferred to later turns, named so closure status stays
+honest):
+
+- **Stage-zero `PATH=/usr/bin:/bin` + absolute-path constants in
+  bootstrap scripts.** The current scripts already pass the
+  forbidden-env grep gate, but they still use `command -v` to resolve
+  `docker`, `sudo`, `apt-get`, etc. The full stage-zero refactor
+  (Section T of the development-plan standards) lands together with
+  Sprint 2.10's `proc "<bare-name>"` retirement, since the two changes
+  share the same `HostConfig.toolPaths.*` absolute-path table.
+- **Apple bootstrap script (`bootstrap/apple-silicon.sh`).** Deferred
+  to the Apple-host validation pass per the active-substrate priority.
+  The shared `bootstrap/common.sh` `--yes` flag wiring already covers
+  the Apple lane when it lands.
+- **Move `chart/charts/` cache into the launcher image at
+  `/opt/infernix/chart/charts/`.** The current `COPY . /workspace`
+  step already bakes the chart-deps archives into the image at
+  `/workspace/chart/charts/`, so the supported lifecycle works after
+  the compose.yaml shrink. The `/opt/infernix/` relocation is an
+  organizational nicety that lands together with the Linux launcher
+  image's in-image host-manifest baking at
+  `/opt/infernix/dhall/InfernixHost.dhall`.
+- **Sprint 3.10's compose.yaml `playwright` service removal + the
+  `docker/playwright.Dockerfile` deletion** are tracked in the Sprint
+  3.10 section of `phase-3-ha-platform-services-and-edge-routing.md`;
+  the compose.yaml shrink here intentionally keeps the playwright
+  block intact until 3.10's `runEndToEnd` refactor lands.
+
+---
+
 ## Remaining Work
 
-None.
+Sprint 1.11 partially landed (foundational schema + decoder + helper +
+materializer + unit tests). Pending closure named in the sprint
+section above. Sprints 1.1–1.10 closed.
 
 ## Documentation Requirements
 

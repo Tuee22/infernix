@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Phase 1 Sprint 1.11 — destructive-confirmation gate is set explicitly
+# from the bootstrap entrypoint's CLI parsing (typically the @--yes@
+# flag), not by consulting @INFERNIX_BOOTSTRAP_YES@ in the operator's
+# inherited environment. See @bootstrap::confirm_destructive@ below.
 BOOTSTRAP_SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 BOOTSTRAP_REPO_ROOT="$(cd -- "${BOOTSTRAP_SCRIPT_DIR}/.." && pwd)"
 BOOTSTRAP_PENDING_EXIT_CODE=20
+BOOTSTRAP_ASSUME_YES=0
 
 bootstrap::repo_root() {
   printf '%s\n' "${BOOTSTRAP_REPO_ROOT}"
@@ -126,11 +131,11 @@ bootstrap::require_command_version() {
 
 bootstrap::confirm_destructive() {
   local prompt="$1"
-  if [[ "${INFERNIX_BOOTSTRAP_YES:-0}" == "1" ]]; then
+  if [[ "${BOOTSTRAP_ASSUME_YES}" -eq 1 ]]; then
     return 0
   fi
   if [[ ! -t 0 ]]; then
-    bootstrap::die "Destructive cleanup requires confirmation. Re-run with INFERNIX_BOOTSTRAP_YES=1."
+    bootstrap::die "Destructive cleanup requires confirmation. Re-run with --yes."
   fi
   printf '%s [y/N] ' "${prompt}"
   read -r reply
@@ -138,4 +143,15 @@ bootstrap::confirm_destructive() {
     y | Y | yes | YES) return 0 ;;
     *) bootstrap::die "Cancelled." ;;
   esac
+}
+
+# Phase 1 Sprint 1.11 — pop a leading @--yes@ from a script's argv and
+# flip the destructive-confirmation gate. Bootstrap entrypoints call
+# this once during argv parsing.
+bootstrap::parse_yes_flag() {
+  if [[ "${1:-}" == "--yes" ]]; then
+    BOOTSTRAP_ASSUME_YES=1
+    return 1
+  fi
+  return 0
 }

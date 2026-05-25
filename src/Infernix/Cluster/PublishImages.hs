@@ -176,7 +176,25 @@ ensureLocalImageAvailable commandMonitorFactory imageRef = do
   maybePresent <- tryRunCommand "docker" ["image", "inspect", imageRef] ""
   case maybePresent of
     Right _ -> pure ()
-    Left _ -> pullImageWithFallback commandMonitorFactory imageRef
+    Left _ ->
+      -- Phase 7 Sprint 7.7 follow-on (May 24, 2026 afternoon): on
+      -- Docker 29.x + the containerd snapshotter image store,
+      -- @docker pull <multi-arch-tag>@ reports success but the
+      -- post-pull @docker image inspect@ still fails because the
+      -- snapshotter stores the manifest list rather than a
+      -- single-platform image. The supported flow for multi-arch
+      -- upstream images is to skip the post-pull inspect gate (the
+      -- pull itself succeeded; the inspect-failure surface is the
+      -- supported signal to switch to the digest-pinned path) and
+      -- jump straight to the @pinLocalImageToAmd64@ helper, which
+      -- runs @docker manifest inspect@ + @docker pull <image>\@<amd64-digest>@
+      -- + @docker tag@ so the subsequent @docker push@ sees a
+      -- single-platform local image. For non-multi-arch images we
+      -- keep the strict requireLocalImagePresent gate because their
+      -- pull-then-inspect cycle is the supported readiness signal.
+      if isUpstreamMultiArchImage imageRef
+        then pullUpstreamMultiArchImage commandMonitorFactory imageRef
+        else pullImageWithFallback commandMonitorFactory imageRef
   -- Phase 7 Sprint 7.7 follow-on: with Docker 29.x + the containerd
   -- snapshotter image store, @docker push@ of a multi-arch upstream
   -- image fails with "image with reference X was found but does not
@@ -190,6 +208,21 @@ ensureLocalImageAvailable commandMonitorFactory imageRef = do
   -- subsequent @docker push@ sees a single-platform local image.
   when (isUpstreamMultiArchImage imageRef) $
     pinLocalImageToAmd64 commandMonitorFactory imageRef
+
+-- | Pull a multi-arch upstream image without requiring the post-pull
+-- inspect to succeed. The supported invariant is that @docker pull@
+-- itself returns success; downstream code ('pinLocalImageToAmd64' +
+-- 'pushUpstreamMultiArchViaImagetools') handles the
+-- containerd-snapshotter-specific inspectability gap.
+-- type CommandMonitorFactory = String -> IO (Maybe ProcessMonitor.CommandMonitor)
+pullUpstreamMultiArchImage :: CommandMonitorFactory -> String -> IO ()
+pullUpstreamMultiArchImage commandMonitorFactory imageRef = do
+  pullMonitor <- commandMonitorFactory ("docker pull " <> imageRef)
+  pullResult <- tryRunCommandMaybeMonitored "docker" ["pull", imageRef] "" pullMonitor
+  case pullResult of
+    Right _ -> pure ()
+    Left pullFailure ->
+      failWith ("docker pull failed for " <> imageRef <> "\n" <> pullFailure)
 
 -- type CommandMonitorFactory = String -> IO (Maybe ProcessMonitor.CommandMonitor)
 pullImageWithFallback :: CommandMonitorFactory -> String -> IO ()
@@ -308,16 +341,34 @@ pushImageWithRetries manager options commandMonitorFactory sourceImage targetRef
         Left tagFailure ->
           pure (PushFailed ("docker tag failed for " <> sourceImage <> " as " <> targetRef <> "\n" <> tagFailure))
         Right _ -> do
-          -- Phase 7 Sprint 7.7 follow-on: 'ensureLocalImageAvailable'
-          -- already pins multi-arch upstream images to their
-          -- linux/amd64 digest before the retag below, so the local
-          -- tag references a single-platform image and plain
-          -- @docker push@ succeeds.
+          -- Phase 7 Sprint 7.7 follow-on (May 24, 2026): on Docker
+          -- 29.x + containerd snapshotter, @docker push@ of a tag
+          -- derived from an upstream multi-arch image (e.g.
+          -- @envoyproxy/gateway:v1.7.2@) re-emits the manifest list
+          -- even after a digest pin to @linux/amd64@. Harbor then
+          -- rejects the push with @NotFound: content digest …: not
+          -- found@ because the other platform manifests are not in
+          -- the local store. The supported fallback is to copy the
+          -- amd64 digest straight from the upstream registry into
+          -- Harbor via @docker buildx imagetools create@, which
+          -- bypasses the local docker store entirely and operates
+          -- on the registry API. See
+          -- 'pushUpstreamMultiArchViaImagetools' for the helper.
           monitor <- commandMonitorFactory ("docker push " <> targetRef)
           pushResult <- tryRunCommandMaybeMonitored "docker" ["push", targetRef] "" monitor
           case pushResult of
             Right _ -> pure PushSucceeded
-            Left failureMessage -> recoverCompletedPush failureMessage
+            Left failureMessage
+              | isUpstreamMultiArchImage sourceImage -> do
+                  imagetoolsResult <-
+                    pushUpstreamMultiArchViaImagetools
+                      commandMonitorFactory
+                      sourceImage
+                      targetRef
+                  case imagetoolsResult of
+                    Right _ -> pure PushSucceeded
+                    Left imagetoolsFailure -> recoverCompletedPush (failureMessage <> "\nfallback imagetools failed:\n" <> imagetoolsFailure)
+              | otherwise -> recoverCompletedPush failureMessage
 
     recoverCompletedPush failureMessage = do
       tagPresent <- harborTagExists manager options repositoryPath targetTag
@@ -520,6 +571,15 @@ repoDigestTag inspection =
 -- re-tag it under the original tag name so subsequent @docker push@
 -- works against a single-platform local image. See
 -- 'ensureLocalImageAvailable' for the supported context.
+--
+-- Phase 7 Sprint 7.7 follow-on (May 24, 2026): on Docker 29.x + the
+-- containerd snapshotter, the @docker tag <digest> <tag>@ step alone
+-- is not sufficient because the named tag can still resolve to the
+-- previously-pulled multi-arch manifest list under the same tag. The
+-- supported workaround removes the local tag with @docker image rm@
+-- before the pin so the subsequent @docker tag@ writes a fresh,
+-- single-platform reference. The @rm@ is best-effort: an unknown-tag
+-- failure is benign (the tag wasn't present yet).
 -- type CommandMonitorFactory = String -> IO (Maybe ProcessMonitor.CommandMonitor)
 pinLocalImageToAmd64 :: CommandMonitorFactory -> String -> IO ()
 pinLocalImageToAmd64 commandMonitorFactory imageRef = do
@@ -542,6 +602,10 @@ pinLocalImageToAmd64 commandMonitorFactory imageRef = do
           case digestPullResult of
             Left _ -> pure ()
             Right _ -> do
+              -- Best-effort untag so 'docker tag' writes a fresh
+              -- single-platform reference rather than overlaying the
+              -- multi-arch manifest list still attached to the tag.
+              _ <- tryRunCommand "docker" ["image", "rm", "--no-prune", imageRef] ""
               _ <- tryRunCommand "docker" ["tag", imageByDigest, imageRef] ""
               pure ()
 
@@ -590,6 +654,60 @@ instance FromJSON ManifestEntry where
           manifestEntryArchitecture = architectureField,
           manifestEntryOs = osField
         }
+
+-- | Push the @linux/amd64@ manifest of an upstream multi-arch image
+-- straight into Harbor via @docker buildx imagetools create@. The
+-- imagetools path operates on the registry API and accepts a
+-- digest-pinned source, so the Docker 29.x + containerd snapshotter
+-- pitfalls that block @docker push@ for multi-arch tags do not apply.
+-- The helper extracts the @linux/amd64@ digest from the upstream
+-- manifest list, then runs
+-- @docker buildx imagetools create --tag DEST SRC\@DIGEST@.
+-- Returns 'Left' with the captured stderr on any step that fails.
+-- type CommandMonitorFactory = String -> IO (Maybe ProcessMonitor.CommandMonitor)
+pushUpstreamMultiArchViaImagetools ::
+  CommandMonitorFactory ->
+  String ->
+  String ->
+  IO (Either String ())
+pushUpstreamMultiArchViaImagetools commandMonitorFactory sourceImage targetRef = do
+  manifestResult <- tryRunCommand "docker" ["manifest", "inspect", sourceImage] ""
+  case manifestResult of
+    Left manifestFailure ->
+      pure (Left ("docker manifest inspect failed for " <> sourceImage <> "\n" <> manifestFailure))
+    Right manifestJson ->
+      case extractAmd64Digest manifestJson of
+        Nothing ->
+          pure (Left ("no linux/amd64 entry in upstream manifest for " <> sourceImage))
+        Just amd64Digest -> do
+          let sourceRepository = takeBefore ':' sourceImage
+              sourceByDigest = sourceRepository <> "@" <> amd64Digest
+          imagetoolsMonitor <-
+            commandMonitorFactory
+              ( "docker buildx imagetools create --tag "
+                  <> targetRef
+                  <> " "
+                  <> sourceByDigest
+              )
+          imagetoolsResult <-
+            tryRunCommandMaybeMonitored
+              "docker"
+              ["buildx", "imagetools", "create", "--tag", targetRef, sourceByDigest]
+              ""
+              imagetoolsMonitor
+          case imagetoolsResult of
+            Right _ -> pure (Right ())
+            Left imagetoolsFailure ->
+              pure
+                ( Left
+                    ( "docker buildx imagetools create failed for "
+                        <> sourceByDigest
+                        <> " -> "
+                        <> targetRef
+                        <> "\n"
+                        <> imagetoolsFailure
+                    )
+                )
 
 -- | Heuristic: an image is considered upstream-multi-arch (and routed
 -- through @docker buildx imagetools create@ instead of plain

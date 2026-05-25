@@ -13,6 +13,8 @@ Read first:
 
 - [documents/development/assistant_workflow.md](documents/development/assistant_workflow.md)
 - [documents/development/local_dev.md](documents/development/local_dev.md)
+- [documents/architecture/configuration_doctrine.md](documents/architecture/configuration_doctrine.md)
+- [documents/development/no_env_vars.md](documents/development/no_env_vars.md)
 - [DEVELOPMENT_PLAN/README.md](DEVELOPMENT_PLAN/README.md)
 
 ## Non-Negotiable Rules
@@ -24,6 +26,11 @@ Read first:
 - update `README.md`, `AGENTS.md`, and `CLAUDE.md` together when root workflow guidance or the
   supported bootstrap entrypoints change
 - run `infernix lint docs` before closing documentation changes
+- no Haskell `lookupEnv` / `getEnv` / `setEnv` calls in new code; no `proc "<bare-name>"`
+  external invocations; no `env:` blocks in infernix-owned chart templates; no `process.env` or
+  `os.environ` reads in web / Python code. The supported configuration substrate is the typed
+  `.dhall` files documented in [documents/architecture/configuration_doctrine.md](documents/architecture/configuration_doctrine.md);
+  the lint enforcement (Phase 6 Sprint 6.28) rejects violations
 
 ## Scope
 

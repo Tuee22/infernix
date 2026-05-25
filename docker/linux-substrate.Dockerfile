@@ -20,6 +20,11 @@ ARG HELM_VERSION=v3.18.6
 ARG UBUNTU_APT_MIRROR=http://mirrors.edge.kernel.org/ubuntu/
 ARG TARGETARCH
 
+# Phase 1 Sprint 1.11 — INFERNIX_BUILD_ROOT removed. The Haskell binary
+# discovers its build root through 'discoverPaths' (cwd-walk + optional
+# host-manifest lookup) instead of consuming a process-inherited env
+# var. The supported in-image build root is the convention default
+# @/workspace/.build@.
 ENV DEBIAN_FRONTEND=noninteractive \
     BOOTSTRAP_HASKELL_NONINTERACTIVE=1 \
     BOOTSTRAP_HASKELL_INSTALL_NO_STACK=1 \
@@ -34,7 +39,6 @@ ENV DEBIAN_FRONTEND=noninteractive \
     GHC_VERSION=${GHC_VERSION} \
     FORMATTER_GHC_VERSION=${FORMATTER_GHC_VERSION} \
     CABAL_VERSION=${CABAL_VERSION} \
-    INFERNIX_BUILD_ROOT=/workspace/.build/outer-container/build \
     PATH=/opt/poetry/bin:/root/.local/bin:/root/.ghcup/bin:/root/.cabal/bin:${PATH}
 
 RUN sed -i \
@@ -112,7 +116,7 @@ WORKDIR /workspace
 
 COPY . /workspace
 
-RUN mkdir -p ${INFERNIX_BUILD_ROOT} /opt/infernix \
+RUN mkdir -p /workspace/.build /opt/infernix \
     && cd /workspace \
     && find . -type f | sed 's#^\\./##' | LC_ALL=C sort > /opt/infernix/source-snapshot-files.txt
 
@@ -135,6 +139,16 @@ RUN mkdir -p /workspace/tools/generated_proto \
     && infernix internal materialize-substrate ${RUNTIME_MODE} --demo-ui ${DEMO_UI} \
     && npm --prefix web run build \
     && poetry --directory python run check-code
+
+# Phase 3 Sprint 3.10 — Playwright system dependencies + browser
+# install live in the launcher image. The previous dedicated
+# @infernix-playwright:local@ container is retired; @infernix test e2e@
+# now invokes @npm --prefix web exec -- playwright test ...@ inside
+# this launcher container, on the same private Docker @kind@ network as
+# the running cluster.
+RUN apt-get update \
+    && npm --prefix web exec -- playwright install --with-deps chromium firefox webkit \
+    && rm -rf /var/lib/apt/lists/*
 
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["infernix", "--help"]

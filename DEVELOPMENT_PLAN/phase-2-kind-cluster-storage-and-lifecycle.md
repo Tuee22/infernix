@@ -1,7 +1,7 @@
 # Phase 2: Kind Cluster Storage and Lifecycle
 
-**Status**: Done
-**Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
+**Status**: Active (Sprint 2.10 in flight; Sprints 2.1–2.9 Done)
+**Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Define the supported Kind bootstrap path, the manual storage doctrine, the Helm
 > deployment model, the Harbor bootstrap and Harbor-backed image flow embedded in `cluster up`,
@@ -516,9 +516,49 @@ None.
 
 ---
 
+## Sprint 2.10: Cluster Lifecycle Host-Manifest Retirement [Active]
+
+**Status**: Active
+**Blocked by**: Phase 1 Sprint 1.11 (Host Manifest Materialization)
+**Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Cluster/PublishImages.hs`, `src/Infernix/Cluster/Discover.hs`, `src/Infernix/ProcessMonitor.hs`, `src/Infernix/Engines/AppleSilicon.hs`, `compose.yaml`
+**Docs to update**: `documents/engineering/host_tools_manifest.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/operations/apple_silicon_runbook.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
+
+### Objective
+
+Retire the env-var fallbacks and PATH-resolved external-command invocations that the cluster
+lifecycle code accumulated. Every `docker`, `kubectl`, `helm`, `kind` invocation in
+`src/Infernix/Cluster.hs` and friends reads its absolute path from the `HostConfig` record
+materialized in Phase 1 Sprint 1.11.
+
+### Deliverables
+
+- `INFERNIX_HOST_KIND_ROOT`, `INFERNIX_HOST_REPO_ROOT`, and `HOSTNAME` env reads in
+  `src/Infernix/Cluster.hs` are replaced by `HostConfig.kindRoot`, `HostConfig.repoRoot`, and a
+  direct `/etc/hostname` file read via `Data.ByteString.readFile`.
+- Every `getEnvironment` whole-env capture in `src/Infernix/Cluster.hs`,
+  `src/Infernix/ProcessMonitor.hs`, `src/Infernix/Engines/AppleSilicon.hs` is replaced with a
+  fixed `[(String, String)]` list derived from `HostConfig`.
+- Every `proc "<bare-name>"` invocation in `src/Infernix/Cluster.hs`,
+  `src/Infernix/Cluster/PublishImages.hs`, `src/Infernix/Cluster/Discover.hs` becomes
+  `runHostTool hostConfig <HostTool> args` reading the absolute path from
+  `HostConfig.toolPaths.*`.
+
+### Validation
+
+- `cabal build all` clean, `infernix test lint` clean.
+- `grep -rEn '\bproc "(docker|kubectl|helm|kind)"' src/Infernix/Cluster.hs src/Infernix/Cluster/` returns zero matches.
+- `./bootstrap/linux-gpu.sh up` reaches `lifecyclePhase: steady-state` under `env -i /usr/bin/bash`
+  (empty starting env).
+
+### Remaining Work
+
+All deliverables above.
+
+---
+
 ## Remaining Work
 
-None.
+Sprint 2.10 in flight. Sprints 2.1–2.9 closed.
 
 ---
 

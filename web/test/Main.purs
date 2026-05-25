@@ -23,6 +23,9 @@ import Generated.Contracts
   , resultTopic
   , runtimeMode
   )
+import Infernix.Web.ArtifactsSpec as ArtifactsSpec
+import Infernix.Web.ChatSpec as ChatSpec
+import Infernix.Web.ContractsSpec as ContractsSpec
 import Infernix.Web.Workbench
   ( catalogCards
   , describeCompletedRequest
@@ -50,8 +53,8 @@ main =
         it "publish the active runtime constants" do
           apiBasePath `shouldEqual` "/api"
           maxInlineOutputLength `shouldEqual` 80
-          requestTopics `shouldEqual` [ "persistent://public/default/inference.request." <> runtimeMode ]
-          resultTopic `shouldEqual` ("persistent://public/default/inference.result." <> runtimeMode)
+          requestTopics `shouldEqual` [ "persistent://infernix/demo/inference.request." <> runtimeMode ]
+          resultTopic `shouldEqual` ("persistent://infernix/demo/inference.result." <> runtimeMode)
           length engines `shouldEqual` expectedEngineCount runtimeMode
           length models `shouldEqual` expectedModelCount runtimeMode
           any hasEngineMetadata engines `shouldEqual` true
@@ -130,6 +133,10 @@ main =
               completedRequest.resultLabel `shouldEqual` (selectionSummary (Just firstModel)).resultLabel
               completedRequest.outputText `shouldEqual` "Stored object reference: results/req-1.txt"
               completedRequest.objectHref `shouldEqual` Just "/objects/results/req-1.txt"
+
+      ContractsSpec.spec
+      ChatSpec.spec
+      ArtifactsSpec.spec
 
     unless (successful results) do
       throwError (error "PureScript unit tests failed")

@@ -5,6 +5,7 @@ module Infernix.DemoConfig
   ( decodeDemoConfigFile,
     ensureGeneratedDemoConfigFile,
     materializeGeneratedDemoConfigFile,
+    materializeHostManifestFile,
     renderGeneratedDemoConfigPayload,
     renderModelListing,
     stripDemoConfigBanner,
@@ -21,11 +22,12 @@ import Data.Maybe (isNothing)
 import Data.Text qualified as Text
 import Infernix.Config (Paths)
 import Infernix.Config qualified as Config
+import Infernix.HostConfig qualified as HostConfig
 import Infernix.Models (catalogForMode, encodeDemoConfig, engineBindingsForMode, hostBatchTopicForMode, requestTopicsForMode, resultTopicForMode)
 import Infernix.Substrate (decodeSubstrateConfigFile, demoConfigGeneratedBannerLine)
 import Infernix.Types
 import System.Directory (createDirectoryIfMissing, doesFileExist, removeFile, renameFile)
-import System.FilePath (takeDirectory)
+import System.FilePath (takeDirectory, (</>))
 import System.IO (hClose, openBinaryTempFile)
 
 demoConfigBannerBytes :: ByteString.ByteString
@@ -71,6 +73,46 @@ materializeGeneratedDemoConfigFile paths runtimeMode demoUiEnabledValue = do
         renameFile temporaryPath filePath
     )
   pure filePath
+
+-- | Phase 1 Sprint 1.11 — materialize the host manifest beside the
+-- substrate file. The supported defaults come from
+-- 'HostConfig.defaultAppleHostNativeHostConfig' (Apple) and
+-- 'HostConfig.defaultLinuxOuterContainerHostConfig' (Linux launcher)
+-- per the active execution context. Operators override individual
+-- fields by hand-editing the materialized file; subsequent
+-- @infernix internal materialize-substrate@ runs do not overwrite the
+-- operator edits because we only materialize when the file is absent
+-- (the @ensureGeneratedDemoConfigFile@ idempotency model is mirrored
+-- here for the host manifest).
+materializeHostManifestFile :: Paths -> IO FilePath
+materializeHostManifestFile paths = do
+  let buildRootPath = Config.buildRoot paths
+      filePath = buildRootPath </> "infernix-host.dhall"
+  createDirectoryIfMissing True buildRootPath
+  alreadyMaterialized <- doesFileExist filePath
+  if alreadyMaterialized
+    then pure filePath
+    else do
+      let hostConfig = case Config.controlPlaneContext paths of
+            Config.OuterContainer ->
+              HostConfig.defaultLinuxOuterContainerHostConfig (Text.pack "/root")
+            _ ->
+              HostConfig.defaultAppleHostNativeHostConfig
+                (Text.pack (Config.repoRoot paths))
+                (Text.pack "")
+          payload = ByteStringChar8.pack (HostConfig.renderHostConfig hostConfig)
+      bracketOnError
+        (openBinaryTempFile buildRootPath "infernix-host.dhall.tmp")
+        ( \(temporaryPath, handle) -> do
+            ignoreIo (hClose handle)
+            ignoreIo (removeFile temporaryPath)
+        )
+        ( \(temporaryPath, handle) -> do
+            ByteString.hPut handle payload
+            hClose handle
+            renameFile temporaryPath filePath
+        )
+      pure filePath
 
 ensureGeneratedDemoConfigFile :: Paths -> RuntimeMode -> Bool -> IO FilePath
 ensureGeneratedDemoConfigFile paths runtimeMode defaultDemoUiEnabled = do

@@ -47,9 +47,12 @@ import Infernix.Conversation.Topic qualified as ConversationTopic
 import Infernix.Demo.Auth qualified as DemoAuth
 import Infernix.Demo.Bootstrap qualified as DemoBootstrap
 import Infernix.DemoConfig (decodeDemoConfigFile)
+import Infernix.Dispatch.ContextModelMap qualified as ContextModelMap
 import Infernix.Dispatch.SingleFlight qualified as Dispatch
 import Infernix.Engines.AppleSilicon (ensureAppleSiliconRuntimeReady)
+import Infernix.HostConfig qualified as HostConfig
 import Infernix.HostPrereqs (appleHostRequirementIds, colimaProfileSummary, decodeDefaultColimaProfileOutput)
+import Infernix.HostTools qualified as HostTools
 import Infernix.Models
 import Infernix.Objects.Layout qualified as ObjLayout
 import Infernix.Objects.Presigned qualified as ObjPresigned
@@ -150,16 +153,26 @@ main = do
   assert
     ("`/minio/s3` -> `infernix-minio:9000`" `isInfixOf` renderChartRouteRegistryCommentSection)
     "the chart route summary includes the MinIO S3 backend from the route registry"
+  -- Phase 1 Sprint 1.11 — compose.yaml shrunk to the supported shape:
+  -- one infernix service that picks its image via @INFERNIX_COMPOSE_IMAGE@
+  -- only. The previous @${INFERNIX_COMPOSE_SUBSTRATE:-linux-cpu}@ and
+  -- @${INFERNIX_COMPOSE_BASE_IMAGE:-ubuntu:24.04}@ assertions are
+  -- retired together with the build.args: block (forbidden by the
+  -- configuration-doctrine standards); the bootstrap scripts now feed
+  -- substrate and base image as @docker build --build-arg@ values.
   composeLauncherContents <- readFile "compose.yaml"
   assert
     ("${INFERNIX_COMPOSE_IMAGE:-infernix-linux-cpu:local}" `isInfixOf` composeLauncherContents)
     "compose defaults to the linux-cpu launcher image while allowing image selection"
   assert
-    ("${INFERNIX_COMPOSE_SUBSTRATE:-linux-cpu}" `isInfixOf` composeLauncherContents)
-    "compose build defaults to the linux-cpu substrate while allowing linux-gpu selection"
+    (not ("INFERNIX_COMPOSE_SUBSTRATE" `isInfixOf` composeLauncherContents))
+    "Sprint 1.11: compose.yaml no longer references INFERNIX_COMPOSE_SUBSTRATE"
   assert
-    ("${INFERNIX_COMPOSE_BASE_IMAGE:-ubuntu:24.04}" `isInfixOf` composeLauncherContents)
-    "compose build keeps the default CPU base image while allowing the linux-gpu CUDA base image"
+    (not ("INFERNIX_BUILD_ROOT" `isInfixOf` composeLauncherContents))
+    "Sprint 1.11: compose.yaml no longer references INFERNIX_BUILD_ROOT"
+  assert
+    (not ("INFERNIX_COMPOSE_DEMO_UI" `isInfixOf` composeLauncherContents))
+    "Sprint 1.11: compose.yaml no longer references INFERNIX_COMPOSE_DEMO_UI"
   assert
     (appleHostRequirementIds AppleSilicon ClusterUpCommand == ["docker", "colima", "kind", "kubectl", "helm", "node", "python", "poetry"])
     "apple host prerequisite planning includes the full cluster and adapter toolchain for apple-silicon cluster up"
@@ -194,13 +207,15 @@ main = do
   assertUniqueModelIds AppleSilicon
   assertUniqueModelIds LinuxCpu
   assertUniqueModelIds LinuxGpu
+  realRepoRoot <- repoRoot <$> discoverPaths
   withTestRoot unitTestRoot $ do
-    withOptionalEnv "INFERNIX_BUILD_ROOT" Nothing $ do
-      paths <- discoverPaths
+    let hostNativeFixture = hostNativeUnitTestFixture realRepoRoot unitTestRoot
+    do
+      paths <- discoverPathsWithHostManifest (Just hostNativeFixture)
       ensureRepoLayout paths
       assert
         (controlPlaneContext paths == HostNative)
-        "an unset build-root override keeps unit tests on the host-native control-plane context"
+        "the host-native HostConfig fixture keeps unit tests on the host-native control-plane context"
       assert
         (generatedKubeconfigPath paths == buildRoot paths </> "infernix.kubeconfig")
         "host-native kubeconfig stays under the build root"
@@ -209,11 +224,12 @@ main = do
       assert
         (either (isInfixOf "Unsupported host-native runtime mode: linux-cpu" . show) (const False) hostNativeLinuxCpuResult)
         "host-native execution rejects the linux-cpu substrate"
-      withOptionalEnv "INFERNIX_BUILD_ROOT" (Just "/opt/build/infernix") $ do
-        outerPaths <- discoverPaths
+      do
+        let outerFixture = linuxOuterContainerUnitTestFixture realRepoRoot unitTestRoot "/opt/build/infernix"
+        outerPaths <- discoverPathsWithHostManifest (Just outerFixture)
         assert
           (controlPlaneContext outerPaths == OuterContainer)
-          "setting a non-host build root selects the outer-container control-plane context"
+          "an outer-container HostConfig fixture selects the outer-container control-plane context"
         assert
           (generatedKubeconfigPath outerPaths == runtimeRoot outerPaths </> "infernix.kubeconfig")
           "outer-container kubeconfig persists under the durable runtime root"
@@ -307,6 +323,8 @@ main = do
       assertBootstrapModels
       assertDemoBucketBootstrap
       assertConversationPropertyTests
+      assertContextModelMap
+      assertHostConfig unitTestRoot
 
       let legacyRegistryNamespace = repoRoot paths </> ".build" </> "kind" </> "registry" </> "localhost:30001"
       createDirectoryIfMissing True legacyRegistryNamespace
@@ -320,25 +338,25 @@ main = do
       assert
         (legacyRegistryHostsContents == "legacy helper registry\n")
         "kind registry-host generation does not rewrite the retired helper-registry namespace"
-      withOptionalEnv "INFERNIX_BUILD_ROOT" (Just (unitTestRoot </> "outer-container" </> "build")) $
-        withOptionalEnv "INFERNIX_HOST_REPO_ROOT" (Just "/host/infernix") $
-          withOptionalEnv "INFERNIX_HOST_KIND_ROOT" Nothing $ do
-            outerPaths <- discoverPaths
-            ensureRepoLayout outerPaths
-            generatedLinuxGpuKindConfigPath <- writeGeneratedKindConfig outerPaths LinuxGpu 30090
-            generatedLinuxGpuKindConfig <- readFile generatedLinuxGpuKindConfigPath
-            assert
-              ("hostPath: /host/infernix/.build/test-unit/.data/kind/linux-gpu" `isInfixOf` generatedLinuxGpuKindConfig)
-              "linux-gpu outer-container Kind config mounts host-resolved retained cluster data"
-            assert
-              ("containerPath: /var/infernix-data" `isInfixOf` generatedLinuxGpuKindConfig)
-              "linux-gpu outer-container Kind config exposes retained data at the node PV root"
-            assert
-              ("hostPath: /host/infernix/.build/kind/registry" `isInfixOf` generatedLinuxGpuKindConfig)
-              "linux-gpu outer-container Kind config mounts host-resolved registry hosts"
-            assert
-              ("containerPath: /var/run/nvidia-container-devices/all" `isInfixOf` generatedLinuxGpuKindConfig)
-              "linux-gpu outer-container Kind config keeps the NVIDIA worker device mount"
+      withOptionalEnv "INFERNIX_HOST_REPO_ROOT" (Just "/host/infernix") $
+        withOptionalEnv "INFERNIX_HOST_KIND_ROOT" Nothing $ do
+          let outerFixture = linuxOuterContainerUnitTestFixture realRepoRoot unitTestRoot (unitTestRoot </> "outer-container" </> "build")
+          outerPaths <- discoverPathsWithHostManifest (Just outerFixture)
+          ensureRepoLayout outerPaths
+          generatedLinuxGpuKindConfigPath <- writeGeneratedKindConfig outerPaths LinuxGpu 30090
+          generatedLinuxGpuKindConfig <- readFile generatedLinuxGpuKindConfigPath
+          assert
+            ("hostPath: /host/infernix/.build/test-unit/.data/kind/linux-gpu" `isInfixOf` generatedLinuxGpuKindConfig)
+            "linux-gpu outer-container Kind config mounts host-resolved retained cluster data"
+          assert
+            ("containerPath: /var/infernix-data" `isInfixOf` generatedLinuxGpuKindConfig)
+            "linux-gpu outer-container Kind config exposes retained data at the node PV root"
+          assert
+            ("hostPath: /host/infernix/.build/kind/registry" `isInfixOf` generatedLinuxGpuKindConfig)
+            "linux-gpu outer-container Kind config mounts host-resolved registry hosts"
+          assert
+            ("containerPath: /var/run/nvidia-container-devices/all" `isInfixOf` generatedLinuxGpuKindConfig)
+            "linux-gpu outer-container Kind config keeps the NVIDIA worker device mount"
       let demoConfig =
             DemoConfig
               { configRuntimeMode = LinuxCpu,
@@ -643,18 +661,72 @@ main = do
       "docker inspect parsing falls back to the image id when no repo digest is present"
   putStrLn "unit tests passed"
 
+-- | Phase 1 Sprint 1.11 — set up a unit-test sandbox at @root@. The
+-- supported pattern is: tests inside @withTestRoot@ obtain 'Paths' via
+-- 'discoverPathsWithHostManifest' with an explicit typed fixture
+-- ('hostNativeUnitTestFixture' or 'linuxOuterContainerUnitTestFixture')
+-- so the operator's @INFERNIX_*@ env vars and the host-staged
+-- @./.build/infernix-host.dhall@ are bypassed.
 withTestRoot :: FilePath -> IO a -> IO a
 withTestRoot root action = do
   catchIOError (removePathForcibly root) ignoreMissing
   createDirectoryIfMissing True root
-  previousDataRoot <- lookupEnv "INFERNIX_DATA_ROOT"
-  setEnv "INFERNIX_DATA_ROOT" (root </> ".data")
   withCurrentDirectory root action
-    `finally` maybe (unsetEnv "INFERNIX_DATA_ROOT") (setEnv "INFERNIX_DATA_ROOT") previousDataRoot
   where
     ignoreMissing err
       | isDoesNotExistError err = pure ()
       | otherwise = ioError err
+
+-- | Phase 1 Sprint 1.11 — host-native HostConfig fixture. The first
+-- argument is the operator's real repo root (so source-tree paths like
+-- @repoRoot \</\> "python"@ still resolve to the real @python\/@
+-- directory). The second is the unit-test sandbox root, used to
+-- redirect every data / runtime / kind / cache path away from the
+-- operator's real @./.data/@ tree. The build root deliberately matches
+-- @realRepoRoot \</\> ".build"@ so 'controlPlaneContext' returns
+-- 'HostNative'.
+hostNativeUnitTestFixture :: FilePath -> FilePath -> HostConfig.HostConfig
+hostNativeUnitTestFixture repoRootPath testRoot =
+  let base = HostConfig.defaultAppleHostNativeHostConfig (Text.pack repoRootPath) (Text.pack "/tmp")
+   in base
+        { HostConfig.hostFilesystem =
+            (HostConfig.hostFilesystem base)
+              { HostConfig.hostRepoRoot = Text.pack repoRootPath,
+                HostConfig.hostBuildRoot = Text.pack (repoRootPath </> ".build"),
+                HostConfig.hostDataRoot = Text.pack (testRoot </> ".data"),
+                HostConfig.hostRuntimeRoot = Text.pack (testRoot </> ".data" </> "runtime"),
+                HostConfig.hostKindRoot = Text.pack (testRoot </> ".data" </> "kind"),
+                HostConfig.hostKubeconfigPath = Text.pack (repoRootPath </> ".build" </> "infernix.kubeconfig"),
+                HostConfig.hostSecretsRoot = Text.pack (testRoot </> ".data" </> "runtime" </> "secrets"),
+                HostConfig.hostHomeDirectory = Text.pack "/tmp"
+              }
+        }
+
+-- | Phase 1 Sprint 1.11 — outer-container HostConfig fixture for tests
+-- that exercise the Linux launcher path. The first argument is the
+-- repo root the fixture should report (use the operator's real repo
+-- root when @resolveHostRepoPath@-style prefix substitution must keep
+-- the @.build/test-unit/@ middle segment intact; use the test root
+-- otherwise). The second argument is the test sandbox root used to
+-- isolate data / runtime / kind paths. The third argument is the
+-- absolute build root that drives the 'OuterContainer' branch of
+-- 'controlPlaneContext'.
+linuxOuterContainerUnitTestFixture :: FilePath -> FilePath -> FilePath -> HostConfig.HostConfig
+linuxOuterContainerUnitTestFixture repoRootPath testRoot buildRootPath =
+  let base = HostConfig.defaultLinuxOuterContainerHostConfig (Text.pack "/root")
+   in base
+        { HostConfig.hostFilesystem =
+            (HostConfig.hostFilesystem base)
+              { HostConfig.hostRepoRoot = Text.pack repoRootPath,
+                HostConfig.hostBuildRoot = Text.pack buildRootPath,
+                HostConfig.hostDataRoot = Text.pack (testRoot </> ".data"),
+                HostConfig.hostRuntimeRoot = Text.pack (testRoot </> ".data" </> "runtime"),
+                HostConfig.hostKindRoot = Text.pack (testRoot </> ".data" </> "kind"),
+                HostConfig.hostKubeconfigPath = Text.pack (testRoot </> ".data" </> "runtime" </> "infernix.kubeconfig"),
+                HostConfig.hostSecretsRoot = Text.pack (testRoot </> ".data" </> "runtime" </> "secrets"),
+                HostConfig.hostHomeDirectory = Text.pack "/tmp"
+              }
+        }
 
 withOptionalEnv :: String -> Maybe String -> IO a -> IO a
 withOptionalEnv name maybeValue action = do
@@ -1459,27 +1531,27 @@ assertDemoAuthRealm = do
     (Jwt.unJwtIssuer (Jwt.jwtValidationIssuer validation) == DemoAuth.realmIssuerUrl cfg)
     "JwtValidationConfig issuer matches the realm issuer URL"
   assert
-    (Jwt.unJwtAudience (Jwt.jwtValidationAudience validation) == "infernix-demo")
+    (Jwt.unJwtAudience (Jwt.jwtValidationAudience validation) == "infernix-spa")
     "JwtValidationConfig audience matches the realm client id"
 
 assertResultBridgeAndBatchTopics :: IO ()
 assertResultBridgeAndBatchTopics = do
   -- canonicalBatchTopicForMode now defined for every substrate
   assert
-    (canonicalBatchTopicForMode AppleSilicon == "persistent://public/default/inference.batch.apple-silicon")
+    (canonicalBatchTopicForMode AppleSilicon == "persistent://infernix/demo/inference.batch.apple-silicon")
     "canonicalBatchTopicForMode emits the supported topic name for apple-silicon"
   assert
-    (canonicalBatchTopicForMode LinuxCpu == "persistent://public/default/inference.batch.linux-cpu")
+    (canonicalBatchTopicForMode LinuxCpu == "persistent://infernix/demo/inference.batch.linux-cpu")
     "canonicalBatchTopicForMode emits the supported topic name for linux-cpu"
   assert
-    (canonicalBatchTopicForMode LinuxGpu == "persistent://public/default/inference.batch.linux-gpu")
+    (canonicalBatchTopicForMode LinuxGpu == "persistent://infernix/demo/inference.batch.linux-gpu")
     "canonicalBatchTopicForMode emits the supported topic name for linux-gpu"
 
   -- Result-bridge subscription naming
   let bridgeConfig =
         ResultBridge.ResultBridgeConfig
           { ResultBridge.resultBridgeSubstrate = "linux-cpu",
-            ResultBridge.resultBridgeResultTopic = "persistent://public/default/inference.result.linux-cpu",
+            ResultBridge.resultBridgeResultTopic = "persistent://infernix/demo/inference.result.linux-cpu",
             ResultBridge.resultBridgeConversationTopicNamespace = "infernix/demo"
           }
   assert
@@ -1827,3 +1899,104 @@ genCausalEvent prompts = do
                   }
           }
     _ -> pure parent
+
+-- Phase 7 Sprint 7.12 — ContextId → modelId map invariants.
+assertContextModelMap :: IO ()
+assertContextModelMap = do
+  contextModelMap <- ContextModelMap.newContextModelMap
+  initialSize <- ContextModelMap.contextModelMapSize contextModelMap
+  assert
+    (initialSize == 0)
+    "ContextModelMap starts empty"
+  let contextA = Contracts.ContextId "c-a"
+      contextB = Contracts.ContextId "c-b"
+
+  ContextModelMap.recordContextModel contextModelMap contextA "llm-qwen25-safetensors"
+  ContextModelMap.recordContextModel contextModelMap contextB "image-sdxl-turbo"
+  afterDirectInsertSize <- ContextModelMap.contextModelMapSize contextModelMap
+  assert
+    (afterDirectInsertSize == 2)
+    "ContextModelMap records direct (contextId, modelId) inserts"
+
+  resolvedA <- ContextModelMap.lookupModelId contextModelMap contextA
+  resolvedB <- ContextModelMap.lookupModelId contextModelMap contextB
+  resolvedMissing <- ContextModelMap.lookupModelId contextModelMap (Contracts.ContextId "c-missing")
+  assert
+    (resolvedA == Just "llm-qwen25-safetensors")
+    "ContextModelMap returns the model id for a known context"
+  assert
+    (resolvedB == Just "image-sdxl-turbo")
+    "ContextModelMap returns the model id for the second known context"
+  assert
+    (isNothing resolvedMissing)
+    "ContextModelMap returns Nothing for an unknown context"
+
+  -- ContextCreated event populates the map; ContextRenamed and
+  -- ContextSoftDeleted are no-ops for the (contextId, modelId)
+  -- binding.
+  let createdEvent =
+        Contracts.ContextCreated
+          { Contracts.contextCreatedContextId = Contracts.ContextId "c-c",
+            Contracts.contextCreatedModelId = "llm-tinyllama-gguf",
+            Contracts.contextCreatedTitle = "Tiny Chat"
+          }
+      renamedEvent =
+        Contracts.ContextRenamed
+          { Contracts.contextRenamedContextId = Contracts.ContextId "c-c",
+            Contracts.contextRenamedTitle = "Renamed Tiny Chat"
+          }
+      softDeletedEvent =
+        Contracts.ContextSoftDeleted
+          { Contracts.contextSoftDeletedContextId = Contracts.ContextId "c-c"
+          }
+  ContextModelMap.recordContextMetadataEvent contextModelMap createdEvent
+  resolvedAfterCreate <- ContextModelMap.lookupModelId contextModelMap (Contracts.ContextId "c-c")
+  assert
+    (resolvedAfterCreate == Just "llm-tinyllama-gguf")
+    "ContextCreated event populates ContextModelMap"
+
+  ContextModelMap.recordContextMetadataEvent contextModelMap renamedEvent
+  resolvedAfterRename <- ContextModelMap.lookupModelId contextModelMap (Contracts.ContextId "c-c")
+  assert
+    (resolvedAfterRename == Just "llm-tinyllama-gguf")
+    "ContextRenamed event does not alter the (contextId, modelId) binding"
+
+  ContextModelMap.recordContextMetadataEvent contextModelMap softDeletedEvent
+  resolvedAfterSoftDelete <- ContextModelMap.lookupModelId contextModelMap (Contracts.ContextId "c-c")
+  assert
+    (resolvedAfterSoftDelete == Just "llm-tinyllama-gguf")
+    "ContextSoftDeleted event does not alter the (contextId, modelId) binding"
+
+-- Phase 1 Sprint 1.11 — HostConfig roundtrip + HostTools resolution.
+assertHostConfig :: FilePath -> IO ()
+assertHostConfig testRoot = do
+  let appleConfig = HostConfig.defaultAppleHostNativeHostConfig "/Users/operator/infernix" "/Users/operator"
+      linuxConfig = HostConfig.defaultLinuxOuterContainerHostConfig "/root"
+  assert
+    (HostConfig.hostExecutionContext appleConfig == HostConfig.AppleHostNative)
+    "default Apple host config reports the Apple host-native execution context"
+  assert
+    (HostConfig.hostExecutionContext linuxConfig == HostConfig.LinuxOuterContainer)
+    "default Linux host config reports the Linux outer-container execution context"
+  assert
+    (HostTools.hostToolPath linuxConfig HostTools.HostDocker == "/usr/bin/docker")
+    "HostTools resolves docker by absolute path on Linux"
+  assert
+    (Text.unpack (HostTools.hostToolPath appleConfig HostTools.HostBrew) == "/opt/homebrew/bin/brew")
+    "HostTools resolves brew by Homebrew absolute path on Apple"
+  assert
+    (HostTools.hostToolPath appleConfig HostTools.HostAptGet == "")
+    "HostTools returns empty path for tools unavailable in the active context"
+  assert
+    (HostTools.hostToolName HostTools.HostKubectl == "kubectl")
+    "HostTools reports the supported short name for each tool"
+  -- Round-trip through the renderer + decoder so the materialization
+  -- path stays mechanically self-consistent.
+  let hostManifestRoot = testRoot </> "host-manifest"
+      hostManifestPath = hostManifestRoot </> "infernix-host.dhall"
+  createDirectoryIfMissing True hostManifestRoot
+  writeFile hostManifestPath (HostConfig.renderHostConfig linuxConfig)
+  decoded <- HostConfig.decodeHostConfigFile hostManifestPath
+  assert
+    (decoded == linuxConfig)
+    "HostConfig round-trip through renderHostConfig + decodeHostConfigFile preserves every field"

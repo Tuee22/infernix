@@ -63,13 +63,30 @@ Teardown and cleanup:
 EOF
 }
 
+# Phase 1 Sprint 1.11 — compose.yaml has no build: block, no
+# environment: block, and no substrate-selection env var. The script
+# sets exactly @INFERNIX_COMPOSE_IMAGE@ (compose's image-name selector)
+# and @INFERNIX_HOST_REPO_ROOT@ (Sprint 2.10 territory, still consumed
+# by @Cluster.hs@ for host-side kind config path resolution).
 compose_env() {
   COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT}" \
     INFERNIX_COMPOSE_IMAGE="${COMPOSE_IMAGE}" \
-    INFERNIX_COMPOSE_SUBSTRATE="${COMPOSE_SUBSTRATE}" \
-    INFERNIX_COMPOSE_BASE_IMAGE="${COMPOSE_BASE_IMAGE}" \
     INFERNIX_HOST_REPO_ROOT="${BOOTSTRAP_REPO_ROOT}" \
     "$@"
+}
+
+# Phase 1 Sprint 1.11 — explicit @docker build@ replaces the previous
+# compose.yaml @build: args:@ block (forbidden by the
+# configuration-doctrine standards). Build args feed the Dockerfile;
+# the resulting image is referenced from compose.yaml by name only.
+build_launcher_image() {
+  bootstrap::run docker build \
+    --file docker/linux-substrate.Dockerfile \
+    --tag "${COMPOSE_IMAGE}" \
+    --build-arg "RUNTIME_MODE=${COMPOSE_SUBSTRATE}" \
+    --build-arg "BASE_IMAGE=${COMPOSE_BASE_IMAGE}" \
+    --build-arg "DEMO_UI=true" \
+    .
 }
 
 docker_ready() {
@@ -161,6 +178,8 @@ command_doctor() {
 }
 
 command_build() {
+  ensure_host_prerequisites
+  build_launcher_image
   run_infernix --help
   bootstrap::info "Linux CPU launcher image is ready."
 }
@@ -187,6 +206,11 @@ command_purge() {
 }
 
 main() {
+  # Phase 1 Sprint 1.11 — @--yes@ replaces the @INFERNIX_BOOTSTRAP_YES@
+  # env-var sense for destructive-confirmation gates.
+  if ! bootstrap::parse_yes_flag "${1:-}"; then
+    shift
+  fi
   local command="${1:-help}"
   bootstrap::cd_repo_root
   case "${command}" in

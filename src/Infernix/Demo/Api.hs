@@ -41,7 +41,7 @@ import Infernix.Auth.Jwt qualified as Jwt
 import Infernix.Config (Paths (..))
 import Infernix.Demo.Auth
   ( KeycloakRealmConfig (..),
-    defaultInfernixRealmConfig,
+    loadRealmConfigFromEnv,
     realmJwksUrl,
     realmValidationConfig,
   )
@@ -167,14 +167,15 @@ runDemoApiServer options = do
   -- Fail fast when the generated catalog is invalid so cluster/test flows surface the error early.
   _ <- decodeDemoConfigFile (demoConfigPath options)
   jwksCache <- newJwksCache
+  realmConfig <- loadRealmConfigFromEnv
   let settings =
         setHost (fromStringHost (demoBindHost options)) $
           setPort (demoPort options) defaultSettings
-  runSettings settings (application options jwksCache)
+  runSettings settings (application options jwksCache realmConfig)
 
 -- type Application = Request -> (Response -> IO ResponseReceived) -> IO ResponseReceived
-application :: DemoApiOptions -> JwksCache -> Application
-application options jwksCache request respond = do
+application :: DemoApiOptions -> JwksCache -> KeycloakRealmConfig -> Application
+application options jwksCache realmConfig request respond = do
   demoEnabled <- demoUiEnabled <$> decodeDemoConfigFile (demoConfigPath options)
   case pathInfo request of
     ["healthz"]
@@ -206,14 +207,14 @@ application options jwksCache request respond = do
           handleCacheMutation options request RebuildCache respond
     ["api", "objects", "upload"]
       | requestMethod request == methodPost && demoEnabled ->
-          handleObjectsGrant jwksCache request ObjectsUpload respond
+          handleObjectsGrant jwksCache realmConfig request ObjectsUpload respond
     ["api", "objects", "download"]
       | requestMethod request == methodPost && demoEnabled ->
-          handleObjectsGrant jwksCache request ObjectsDownload respond
+          handleObjectsGrant jwksCache realmConfig request ObjectsDownload respond
     ["ws"]
       | demoEnabled ->
           DemoWebSocket.wsApplication
-            (DemoWebSocket.defaultWebSocketOptions (loadJwksCached jwksCache defaultInfernixRealmConfig))
+            (DemoWebSocket.defaultWebSocketOptions (loadJwksCached jwksCache realmConfig))
             request
             respond
     staticSegments
@@ -233,12 +234,12 @@ data ObjectsAction = ObjectsUpload | ObjectsDownload
 
 handleObjectsGrant ::
   JwksCache ->
+  KeycloakRealmConfig ->
   Request ->
   ObjectsAction ->
   (Response -> IO responseReceived) ->
   IO responseReceived
-handleObjectsGrant jwksCache request action respond = do
-  let realmConfig = defaultInfernixRealmConfig
+handleObjectsGrant jwksCache realmConfig request action respond = do
   case extractBearerToken request of
     Nothing -> respond (textResponse status401 "missing bearer token")
     Just token -> do

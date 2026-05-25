@@ -226,14 +226,14 @@ The demo binding's validation surface lives at
 [../development/demo_app_test_plan.md](../development/demo_app_test_plan.md);
 the surface is split across three sprints:
 
-- **Sprint 7.12 (Unit)** — Haskell unit and property tests for the
+- **Sprint 7.13 (Unit)** — Haskell unit and property tests for the
   shared primitives (covered in
   [durable_context_design.md § Validation](durable_context_design.md#validation));
   PureScript `purescript-spec` view-model tests scoped to patch
   application and rendering for the demo's three SPA views; WS envelope
   codec roundtrip across the demo's `WsClientMessage` and
   `WsServerMessage` variants.
-- **Sprint 7.13 (Integration)** — real Pulsar / MinIO / Keycloak
+- **Sprint 7.14 (Integration)** — real Pulsar / MinIO / Keycloak
   round-trips against the demo bindings; producer-dedup verification
   across simulated dispatcher restart; Failover handoff; cross-user
   presigned URL negative; chaos tests; multi-user throughput / fan-in
@@ -241,7 +241,7 @@ the surface is split across three sprints:
   model) asserting per-context ordering, no duplicates or losses,
   cross-context independence, batching gain, bounded p95 latency, dedup
   correctness.
-- **Sprint 7.14 (E2E)** — Playwright flows for auth, context,
+- **Sprint 7.15 (E2E)** — Playwright flows for auth, context,
   conversation (including two-in-a-row and cancel), draft, artifact
   upload/download/render per MIME family, generated-artifact lifecycle,
   multi-tab convergence, client reconstitution via Browser Context

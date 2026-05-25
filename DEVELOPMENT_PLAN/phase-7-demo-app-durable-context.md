@@ -1,7 +1,7 @@
 # Phase 7: Demo App Multi-User Durable Context
 
-**Status**: Active
-**Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/durable_context_design.md](../documents/architecture/durable_context_design.md), [../documents/architecture/demo_app_design.md](../documents/architecture/demo_app_design.md), [../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md)
+**Status**: Active (Sprints 7.10–7.15 plus Sprint 7.17 in flight)
+**Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/durable_context_design.md](../documents/architecture/durable_context_design.md), [../documents/architecture/demo_app_design.md](../documents/architecture/demo_app_design.md), [../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Define the multi-user, durable-context shape of the `infernix-demo` workload —
 > Keycloak self-signup, WebSocket post-login transport, Pulsar-backed per-context conversation
@@ -13,22 +13,27 @@
 
 Phase 7 is `Active`. Phases 0–6 are `Done`, so the platform foundation, runtime, routed edge,
 HA platform services, generated demo catalog, and validation surface this phase builds on are
-all in place. As of May 23, 2026: Sprints 7.2, 7.4, 7.5, 7.6, 7.13, and 7.16 are landed at
+all in place. As of May 24, 2026 (afternoon pass): Sprint 7.2 is `Done` (PureScript-side
+tagged-sum encoders + roundtrip suite); Sprints 7.4, 7.5, 7.6, 7.13, and 7.16 are landed at
 the shared-library, unit-test, and docs-alignment level; Sprints 7.7 and 7.8 land the
-real-Pulsar coordinator runtime loops (`runResultBridgeLoop`, `runModelBootstrapLoop`)
-alongside the proto envelope extensions, the daemon split, the producer-side dedup
-structural wiring, and the MinIO `infernix-models` + `infernix-demo-objects` bucket
-contract; Sprint 7.9 lands the `/api/objects` route + JWKS TTL cache + presigner-scheme
-fix; Sprint 7.1 lands the Keycloak chart scaffolding plus Patroni dependency; Sprint 7.3
-lands the WS handshake + JWT validation surface. Sprints 7.10, 7.11, 7.12 (SPA Chat /
-Artifacts / Picker views), 7.14 (integration + chaos suite against real Pulsar / MinIO /
-Keycloak), and 7.15 (Playwright E2E) remain pending; the per-context dispatcher runtime
-loop (the production wiring for `Infernix.Dispatch.SingleFlight`) and the WS
-per-context Pulsar Reader cursor wiring also remain pending, and the cluster
-validation pass against `linux-gpu` is in flight. Phase 7 closes only when every
-sprint below is `Done`, every doc named in the sprints is aligned with the implemented
-behavior, `infernix test all` passes on at least one substrate with `demo_ui = true`, and
-the per-model smoke matrix and multi-user throughput tests named in
+real-Pulsar coordinator runtime loops (`runResultBridgeLoop`, `runModelBootstrapLoop`,
+`runDispatcherLoop`) alongside the proto envelope extensions, the daemon split, the
+producer-side dedup structural wiring, and the MinIO `infernix-models` +
+`infernix-demo-objects` bucket contract; Sprint 7.9 lands the `/api/objects` route +
+JWKS TTL cache + presigner-scheme fix; Sprint 7.1 lands the Keycloak chart scaffolding
+plus Patroni dependency; Sprint 7.3 lands the WS handshake + JWT validation surface.
+Sprints 7.10 (SPA Chat patch helpers + real WebSocket client transport), 7.11
+(Artifacts view helpers + typed upload request builder + WS `ServerArtifactReady`
+dispatch), and 7.12 (`ContextModelMap` backend + coordinator-side contexts-metadata
+consumer + engine-side empty-model-id rejection) land their backend / pure-helper /
+unit-test halves but defer DOM-renderer + Pulsar publisher wiring to Sprint 7.15
+real-cluster validation. Sprints 7.14 (integration + chaos suite against real
+Pulsar / MinIO / Keycloak) and 7.15 (Playwright E2E) remain pending and gate the full
+SPA shell mount + Workbench retirement + per-user model-picker → ContextCreated →
+ContextModelMap round-trip end-to-end. Phase 7 closes only when every sprint below is
+`Done`, every doc named in the sprints is aligned with the implemented behavior,
+`infernix test all` passes on at least one substrate with `demo_ui = true`, and the
+per-model smoke matrix and multi-user throughput tests named in
 [../documents/development/demo_app_test_plan.md](../documents/development/demo_app_test_plan.md)
 are green.
 
@@ -344,6 +349,53 @@ Failover + MinIO PUT wiring in `src/Infernix/Bootstrap/Models.hs`, and the
 sprints' Done gates require real-cluster validation that has not yet happened in this
 worktree; their `Remaining Work` sections name the specific work still owed.
 
+The May 24, 2026 afternoon pass landed five focused increments on top of the May 23
++ morning May 24 work above:
+
+1. **Sprint 7.2 closure (`Done`).** The generator footer in
+   `src/Infernix/Web/Contracts.hs` (new helpers `renderPhase7PursInstances`,
+   `renderPursRecordKind`, `renderPursSum`, `renderShowInstanceIfAllNullary`) emits
+   hand-rolled Simple.JSON `WriteForeign` / `ReadForeign` instances for every Phase 7
+   ADT plus `Show` instances for every nullary sum; the import-normalization in
+   `src/Infernix/CLI.hs` adds `Foreign (ForeignError(..), fail) as Foreign` to the
+   generated module. The PS roundtrip suite at
+   `web/test/Infernix/Web/ContractsSpec.purs` covers 43 cases (string newtypes,
+   record newtypes, nullary sums, positional sums, record-syntax sums, WebSocket
+   envelopes).
+2. **Sprint 7.10 partial.** `web/spago.yaml` adds the `web-socket` package;
+   `web/src/Infernix/Web/WebSocket.purs` implements the real `connect` / `sendClientMessage`
+   / `connectionStatus` / `close` against the `Web.Socket.WebSocket` browser binding
+   with a tiny `WebSocket.js` FFI for raw payload coercion; `web/src/Infernix/Web/Chat.purs`
+   exposes `applyConversationStatePatch`, `applyContextListPatch`, `applyDraftMapPatch`,
+   `handleServerMessage`, and `pendingPromptCount`. The DOM-level renderer +
+   `Main.purs` / `index.html` shell-mount + Workbench retirement remain Sprint 7.15-tied.
+3. **Sprint 7.11 partial.** `web/src/Infernix/Web/Artifacts.purs` exposes the typed
+   `ArtifactsViewState`, `artifactEntryFromReady`, `recordArtifactReady`,
+   `handleArtifactsServerMessage`, `artifactsForContext`, and `buildUploadRequest`
+   helpers; the MIME-to-disposition classifier handles images / audio / video / PDF /
+   text / JSON / MIDI / MusicXML / unknown. The DOM renderer + Aff-based HTTP
+   multipart upload helper remain Sprint 7.15-tied.
+4. **Sprint 7.12 backend half.** A new `src/Infernix/Dispatch/ContextModelMap.hs`
+   module exposes the typed `ContextModelMap` (`IORef (Map Text Text)` keyed on
+   `ContextId`) plus `newContextModelMap`, `lookupModelId`, `recordContextModel`, and
+   `recordContextMetadataEvent`. `src/Infernix/Runtime/Pulsar.hs.runContextsMetadataConsumer`
+   is the per-user worker the coordinator dispatcher loop spawns when it observes a
+   new userId; it subscribes Failover to the per-user contexts metadata topic and
+   updates the shared map. `publishDispatchedInferenceRequest` now accepts a resolved
+   `modelId :: Text` and populates the proto `request_model_id` field with it;
+   `handleConsumerEnvelope` validates the inbound `request_model_id` and publishes a
+   typed `emptyModelIdRejectionResult` to the result topic instead of delegating to
+   the generic engine path when it is empty. `assertContextModelMap` in
+   `test/unit/Spec.hs` covers the invariants. The WS-handler-publishes-`ContextCreated`
+   piece needs a Pulsar transport plumbed into `WebSocketOptions`; that wiring
+   lands with Sprint 7.14 chaos validation.
+5. **Sprint 7.13 PureScript layer (closed).** `web/test/Infernix/Web/ChatSpec.purs`
+   covers 12 view-model cases; `web/test/Infernix/Web/ArtifactsSpec.purs` covers 11.
+   `infernix test unit` reports 69/69 passing across the full PS suite.
+
+`infernix test lint`, `infernix test unit`, `infernix lint files|chart|docs|proto`
+all exit zero against this state.
+
 ## Architecture
 
 The product-agnostic design lives at
@@ -497,28 +549,69 @@ dependency:
 `infernix test unit`, and `infernix test lint` all exit zero with the new chart assets in
 place.
 
+The May 24, 2026 `linux-gpu` validation pass surfaced a missing
+operator-managed PV reconcile for the keycloak-postgresql Patroni cluster
+and a multi-arch Docker push regression on `envoyproxy/gateway:v1.7.2`.
+Both fixes landed the same day in `src/Infernix/Cluster.hs` and
+`src/Infernix/Cluster/PublishImages.hs`:
+
+- `Cluster.hs.reconcileFinalPhaseOperatorManagedPersistentVolumes`
+  runs after the FinalPhase `deployChart` call and waits for the
+  combined `harborPostgresExpectedOperatorClaims + keycloakPostgresExpectedOperatorClaims = 8`
+  operator-managed PVCs, creates matching PVs, and binds them. The
+  previous warmup-only `reconcileOperatorManagedPersistentVolumes`
+  call only ever saw Harbor's 4 PVCs because the keycloak-postgresql
+  PerconaPGCluster CR is gated to FinalPhase
+  (`upstreamCharts.keycloakpg.enabled`).
+- `PublishImages.hs.pushUpstreamMultiArchViaImagetools` is a
+  `pushImageOnce` fallback that uses
+  `docker buildx imagetools create --tag DEST SRC@<amd64-digest>`
+  whenever a `docker push` of an upstream multi-arch image
+  (e.g. `envoyproxy/gateway:v1.7.2`) fails on Docker 29.x +
+  containerd-snapshotter with the "manifest list … not all platforms
+  available locally" error. The imagetools path bypasses the local
+  docker store entirely and operates on the registry API.
+
+After the fixes were baked into the `infernix-linux-gpu:local` image,
+`./bootstrap/linux-gpu.sh up` reached `lifecyclePhase: steady-state`
+on `linux-gpu` with:
+
+- `infernix-keycloak 2/2` (both replicas Running, supported `infernix`
+  realm imported from `--import-realm`, bootstrap admin user created)
+- `keycloak-postgresql-instance1-{0,1,2}-0 4/4` (Patroni cluster
+  fully healthy via the new FinalPhase PV reconcile)
+- `keycloak-postgresql-pgbouncer 3/3`, `keycloak-postgresql-repo-host 2/2`
+- `harbor-postgresql-instance1-{0,1,2}-0 4/4` (unchanged — covered
+  by the existing warmup reconcile)
+- `infernix-coordinator 2/2`, `infernix-engine 1/1`, `infernix-demo 1/1`,
+  `infernix-minio 4/4`, Pulsar 3-broker + 3-bookie + 3-zookeeper +
+  3-recovery + 3-proxy all Running, Envoy Gateway 1/1, all eleven
+  supported HTTPRoutes registered
+- the Pulsar admin reconcile created the `infernix` tenant +
+  `infernix/demo` + `infernix/system` namespaces + the
+  `model.bootstrap.request` topic and set the 100 MiB compaction
+  threshold on `infernix/demo`
+- the coordinator daemon log reports
+  `serviceResultBridgeMode: failover-subscription`,
+  `serviceModelBootstrapMode: failover-subscription`, and
+  `serviceDispatcherMode: per-context-failover` in steady state
+
 Pending closure:
 
-- A dedicated `src/Infernix/Cluster/Keycloak.hs` reconcile module is not required —
-  Keycloak's native `--import-realm` flag consumes the mounted realm ConfigMap at
-  startup, and the Patroni cluster's user + database creation is owned by the Percona
-  operator. `cluster up` already waits for the final Helm rollout, which includes the
-  Keycloak Deployment + Service + ConfigMap + admin Secret + Patroni cluster as
-  Helm-managed resources.
-- Real-cluster validation: `./bootstrap/linux-cpu.sh up` with the new chart, then
-  `infernix kubectl -n platform get postgrescluster` shows `keycloak-postgresql`,
-  `infernix kubectl -n platform get deployments/infernix-keycloak` is `Available`, a
-  browser at `/auth` reaches the Keycloak login page, self-signup succeeds without an
-  email-verification step, and `cluster up` with `demo_ui = false` shows neither the
-  Keycloak Deployment, Service, ConfigMap, Secret, nor the `keycloak-postgresql`
-  Patroni cluster.
+- Real-cluster validation gates that need browser-side coverage:
+  a browser at `/auth` reaches the Keycloak login page, self-signup
+  succeeds without an email-verification step, and `cluster up` with
+  `demo_ui = false` shows neither the Keycloak Deployment, Service,
+  ConfigMap, Secret, nor the `keycloak-postgresql` Patroni cluster.
+  These browser checks land together with the Sprint 7.15 Playwright
+  E2E pass.
 
 ---
 
-## Sprint 7.2: Browser-Contract ADTs and WS Envelope [Active]
+## Sprint 7.2: Browser-Contract ADTs and WS Envelope [Done]
 
-**Status**: Active
-**Implementation**: `src/Infernix/Web/Contracts.hs`, `web/src/Generated/Contracts.purs`
+**Status**: Done
+**Implementation**: `src/Infernix/Web/Contracts.hs`, `web/src/Generated/Contracts.purs`, `web/test/Infernix/Web/ContractsSpec.purs`, `src/Infernix/CLI.hs` (import normalization)
 **Docs to update**: `documents/development/frontend_contracts.md`, `documents/architecture/durable_context_design.md`, `documents/architecture/demo_app_design.md`
 
 ### Objective
@@ -550,18 +643,31 @@ imports type-safe wire bindings.
 
 ### Remaining Work
 
-The Haskell side of this sprint is implemented: every named type lives in
+Sprint 7.2 is fully landed. The Haskell side: every named type lives in
 `src/Infernix/Web/Contracts.hs` with Aeson tagged-object encoding for the sum variants,
 `infernix internal generate-purs-contracts` emits the full set into
 `web/src/Generated/Contracts.purs` deterministically (byte-identical across repeated
-invocations, verified in `infernix test unit`), and `infernix test unit` exercises Haskell-side
+invocations, verified in `infernix test unit`), and the Haskell-side suite exercises
 encode/decode roundtrip across every new type.
 
-Pending closure: the PureScript-side encode/decode roundtrip suite (`web/test/...`). The
-generated module currently exposes `data X = A | B | ...` sum types with no
-`ReadForeign`/`WriteForeign` instances, so a follow-on adds either custom Simple.JSON tagged-sum
-instances in the generator footer or a PureScript test harness that asserts the same tagged
-wire format the Haskell side already produces.
+The May 24, 2026 pass closed the PureScript side: the generator footer in
+`src/Infernix/Web/Contracts.hs` (helpers `renderPhase7PursInstances`,
+`renderPursRecordKind`, `renderPursSum`) emits hand-rolled Simple.JSON
+`WriteForeign` / `ReadForeign` instances for every Phase 7 type. String-wrapping
+newtypes (`UserId`, `ContextId`, `MessageId`, `ClientIdempotencyKey`,
+`ArtifactMimeType`) encode as bare strings on the wire (matching the Haskell-side
+`deriving newtype (ToJSON)`); record-wrapping newtypes unwrap their inner record;
+nullary sums emit `{"tag": "ConstructorName"}`; positional sums emit
+`{"tag": "...", "contents": ...}`; record-syntax sums spread the constructor's
+fields beside the `tag` key (exactly matching Aeson's `TaggedObject "tag" "contents"`
+behavior). The matching `Foreign (ForeignError(..), fail) as Foreign` import is added
+to the generated module by the normalization pass in `src/Infernix/CLI.hs`. The
+PureScript roundtrip suite at `web/test/Infernix/Web/ContractsSpec.purs` covers
+43 cases — every Phase 7 newtype, every nullary sum, every positional sum
+constructor, every record-syntax sum constructor, and representative `Ws*Message`
+envelopes — and asserts byte-identical re-encoding plus structural wire-shape
+spot checks (`"tag"`, `"contents"`, spread field names). `infernix test unit`
+reports 46/46 passing.
 
 ---
 
@@ -810,15 +916,64 @@ unit` exercises empty log, single prompt, two-prompts-in-a-row, and promote-afte
 cases. The shared library imports nothing from `Infernix.Runtime.*`, `Infernix.Demo.*`,
 `Infernix.Objects.*`, `Infernix.Auth.*`, or any WebSocket module.
 
+The May 24, 2026 pass landed the per-context dispatcher runtime loop
+in `src/Infernix/Runtime/Pulsar.hs.runDispatcherLoop` and wired it into
+`runProductionDaemon` for the `Coordinator` daemon role alongside
+`runResultBridgeLoop` and `runModelBootstrapLoop`. The loop:
+
+- Polls the supported demo namespace (`infernix/demo`) every 30s via
+  Pulsar admin `GET /admin/v2/persistent/<tenant>/<namespace>` and
+  extracts `(UserId, ContextId)` pairs from any topic matching the
+  `demo.conversation.<userId>.<contextId>` shape.
+- Forks one per-context worker keyed by `ContextId` (tracked in a
+  process-local `MVar (Set Text)` so repeated discovery cycles do not
+  start duplicates). The worker subscribes Failover on the
+  conversation topic with subscription name
+  `dispatcher-<contextId>` (`Dispatch.SingleFlight.dispatcherSubscriptionName`)
+  and `subscriptionInitialPosition=Earliest` so a recovered replica
+  replays from the start of the log.
+- Decodes each `PulsarEnvelope.envelopePayload` as a JSON
+  `ConversationEvent` (via the `taggedSumOptions` instance already
+  landed in Sprint 7.2), lifts it into a `ConversationMessage`
+  using the envelope's broker `MessageId`, and folds it through
+  `Conversation.Reducer.stepReducer` against a per-worker
+  `IORef ReducerState`.
+- Calls `Dispatch.SingleFlight.buildDispatchDecision`; on
+  `DispatchPrompt`, builds an `InferenceRequest` proto envelope
+  populated with the dispatcher fields (`userId`, `contextId`,
+  `userPromptMessageId`, `clientIdempotencyKey`,
+  `conversationLogOffset`, `prefixHash`, `causalRef`) and publishes
+  it to the substrate's inference request topic. Producer name is
+  `dispatcher-<contextId>` and sequence id is
+  `parseMessageIdToSequenceId promptMessageIdText` so the broker
+  dedup gate collapses retries from a recovered replica.
+
+The daemon log reports `serviceDispatcherMode: per-context-failover`
+on startup when the daemon role is `Coordinator`. `cabal build all`,
+`infernix lint files|chart|docs|proto`, `infernix test lint|unit`
+all exit zero against this state.
+
 Pending closure:
 
-- Pulsar producer-dedup wiring in `Infernix.Runtime.Pulsar` that configures
-  `enableProducerDeduplication = true` and uses `producerDedupSequenceId` as the sequence ID
-  on the inference-request topic. Lands together with Sprint 7.3's WS endpoint, where
-  the dispatcher is first wired into the coordinator pod.
-- Per-context Failover subscription wiring against real Pulsar (Sprint 7.14).
-- The dispatcher's deployment into the `infernix-coordinator` Deployment lands in
-  Sprint 7.7 alongside the daemon split.
+- The dispatcher publishes envelopes with an empty
+  `request_model_id`. Per-context model id lookup
+  awaits Sprint 7.12 (SPA Model Picker writes
+  `ContextCreated { contextCreatedModelId }` to
+  `demo.user.<userId>.contexts`; a follow-on coordinator subscription
+  caches `ContextId → modelId` for the dispatcher to consult). Until
+  then, the engine will reject dispatched requests; the integration
+  loop in Sprint 7.14 covers the end-to-end gate.
+- Pulsar Reader-style crash recovery: the dispatcher acks each
+  message immediately after stepping the reducer, so a recovered
+  replica picks up at the cursor with empty in-memory state. Producer
+  dedup prevents duplicate dispatches but the single-flight queue
+  guard ("hold prompt 2 until prompt 1 resolves") only covers the
+  case where the recovered replica observes both prompts in the
+  same session. Full crash-tolerant state recovery lands together
+  with Sprint 7.14's chaos validation pass that proves
+  Failover-handoff correctness under coordinator-kill mid-flight.
+- Per-context Failover subscription real-cluster validation lands
+  in Sprint 7.14.
 
 ---
 
@@ -1313,11 +1468,11 @@ Pending closure:
 
 ---
 
-## Sprint 7.10: SPA Chat View [Planned]
+## Sprint 7.10: SPA Chat View [Active]
 
-**Status**: Planned
+**Status**: Active
 **Blocked by**: 7.2, 7.3, 7.4, 7.5
-**Implementation**: `web/src/Infernix/Web/Chat.purs`, `web/src/Infernix/Web/WebSocket.purs`, `web/src/Infernix/Web/Auth.purs`, `web/src/Infernix/Web/Router.purs`, `web/src/Main.purs`
+**Implementation**: `web/src/Infernix/Web/Chat.purs`, `web/src/Infernix/Web/WebSocket.purs`, `web/src/Infernix/Web/WebSocket.js`, `web/src/Infernix/Web/Auth.purs`, `web/src/Infernix/Web/Router.purs`, `web/spago.yaml`, `web/test/Infernix/Web/ChatSpec.purs`, `web/src/Main.purs`
 **Docs to update**: `documents/architecture/web_ui_architecture.md`, `documents/architecture/demo_app_design.md`, `documents/development/purescript_policy.md`
 
 ### Objective
@@ -1347,15 +1502,57 @@ mechanical helpers; no business rule is reimplemented in PureScript.
 
 ### Remaining Work
 
-All work pending.
+The May 24, 2026 pass landed the structural transport + patch-helper
+surface this sprint owns:
+
+- `web/spago.yaml` adds `web-socket` to the package dependency list so
+  the browser binding for the @WebSocket@ API is in scope.
+- `web/src/Infernix/Web/WebSocket.purs` implements the real send /
+  receive loop: `connect` opens @ws[s]://<edgeOrigin>/ws?token=<JWT>@
+  via @Web.Socket.WebSocket.create@, wires open / close / message
+  listeners via @Web.Event.EventTarget@, decodes each frame as a
+  `WsServerMessage` via Simple.JSON (the tagged-sum instances landed
+  in Sprint 7.2), and exposes a typed `sendClientMessage` plus a live
+  `connectionStatus` ref the SPA shell can poll. A tiny FFI shim
+  (`WebSocket.js`) accepts raw WS payloads as strings.
+- `web/src/Infernix/Web/Chat.purs` exposes the mechanical patch-
+  application helpers (`applyConversationStatePatch`,
+  `applyContextListPatch`, `applyDraftMapPatch`) plus the
+  `handleServerMessage` dispatcher the WS handler hands off to. The
+  `pendingPromptCount` helper drives the two-prompt queued indicator.
+  None of these helpers reimplement any reducer rule — they are pure
+  upserts / replaces over the projected view state.
+- `web/src/Infernix/Web/Auth.purs` + `web/src/Infernix/Web/Router.purs`
+  carry the typed `TokenStore` and `Route` enumerations the future
+  shell will consume; the OIDC redirect + token exchange remain
+  Sprint 7.15-tied because they need the routed Keycloak realm.
+- `web/test/Infernix/Web/ChatSpec.purs` covers the patch helpers + the
+  WS dispatcher + the queued-prompt counter across 12 cases.
+  `infernix test unit` reports 69/69 passing.
+
+Pending closure:
+
+- DOM-level renderer in `Chat.purs` (the @<div>@ structure for the
+  left rail, conversation pane, draft text box, cancel button, and
+  the two-prompt queued indicator). The pure patch helpers above
+  already give the renderer the projected state to draw from.
+- Update `web/src/Main.purs` + `web/src/index.html` to mount the new
+  Chat shell. Replacing the workbench-oriented `index.html` and
+  retiring the legacy `Workbench.purs` is deferred to Sprint 7.15's
+  Playwright E2E pass: that pass is the supported validation gate for
+  the full SPA shell against a real cluster + Keycloak realm + WS
+  upgrade path, and replacing the shell without that validation would
+  silently break the existing routed Playwright suite.
+- Update `web/test/Main.purs` + `web/playwright/inference.spec.js` to
+  target the new shell — also Sprint 7.15-tied.
 
 ---
 
-## Sprint 7.11: SPA Artifacts View [Planned]
+## Sprint 7.11: SPA Artifacts View [Active]
 
-**Status**: Planned
+**Status**: Active
 **Blocked by**: 7.2, 7.3, 7.9, 7.10
-**Implementation**: `web/src/Infernix/Web/Artifacts.purs`
+**Implementation**: `web/src/Infernix/Web/Artifacts.purs`, `web/test/Infernix/Web/ArtifactsSpec.purs`
 **Docs to update**: `documents/architecture/web_ui_architecture.md`, `documents/architecture/demo_app_design.md`, `documents/development/purescript_policy.md`
 
 ### Objective
@@ -1385,15 +1582,54 @@ state is delivered as server-sent patches over the WS; the view is a renderer.
 
 ### Remaining Work
 
-All work pending.
+The May 24, 2026 pass landed the typed view-state container, the
+MIME-to-disposition classifier, the per-user/per-context artifact
+library upsert helpers, the WS `ServerArtifactReady` dispatch path,
+and the typed `ArtifactUploadRequest` builder the multipart upload
+helper hands off to `/api/objects/upload`:
+
+- `web/src/Infernix/Web/Artifacts.purs` exposes `ArtifactsViewState`
+  (per-user library, contextually filtered via
+  `artifactsForContext`), `artifactEntryFromReady` (heuristic MIME
+  inference from object key when only the WS notification has
+  arrived), `recordArtifactReady` (upsert keyed on bucket+key so
+  repeated WS notifications collapse), `handleArtifactsServerMessage`
+  (dispatch path the WS handler delegates to), and `buildUploadRequest`
+  (typed @ArtifactUploadRequest@ for the @POST /api/objects/upload@
+  body). `dispositionFor` is the supported MIME-to-disposition mapping:
+  images / audio / video render inline, PDFs use the browser-native
+  viewer, JSON / text preview bounded, MIDI / MusicXML / MXL / unknown
+  / generic binary fall back to download-only.
+- `web/test/Infernix/Web/ArtifactsSpec.purs` covers 11 cases — every
+  MIME-to-disposition branch plus the library upsert, per-context
+  filter, and typed upload-request shape.
+
+`infernix test unit` reports 69/69 passing across the full PS suite.
+
+Pending closure:
+
+- DOM-level renderer (per-context list, per-user library, upload UI
+  with progress bar, download UI, inline rendering via `<img>` /
+  `<audio>` / `<video>` against presigned URLs, bounded text/JSON
+  preview, browser-native PDF handling, download-only fallback for
+  MIDI / MusicXML / generic binary). The pure helpers above already
+  give the renderer the projected state to draw from.
+- HTTP multipart upload helper that issues a presigned PUT to
+  `/api/objects/upload`, uploads directly to MinIO, then publishes a
+  typed `ClientSubmitPrompt` with `promptUserUploads` populated. The
+  builder side (`buildUploadRequest`) is landed; the
+  Aff-based HTTP / MinIO PUT wiring lands with Sprint 7.15.
+- Mounting the Artifacts view on a routed page in `Main.purs` and
+  exercising the full upload/download/render lifecycle from
+  Playwright lands with Sprint 7.15.
 
 ---
 
-## Sprint 7.12: SPA Model Picker Integration [Planned]
+## Sprint 7.12: SPA Model Picker Integration [Active]
 
-**Status**: Planned
+**Status**: Active
 **Blocked by**: 7.10
-**Implementation**: `web/src/Infernix/Web/Chat.purs`, `src/Infernix/Demo/Api.hs`
+**Implementation**: `web/src/Infernix/Web/Chat.purs`, `src/Infernix/Demo/Api.hs`, `src/Infernix/Dispatch/ContextModelMap.hs`, `src/Infernix/Runtime/Pulsar.hs` (`runContextsMetadataConsumer`, `emptyModelIdRejectionResult`)
 **Docs to update**: `documents/architecture/demo_app_design.md`
 
 ### Objective
@@ -1419,7 +1655,56 @@ context for life; switching models mid-context is out of scope.
 
 ### Remaining Work
 
-All work pending.
+The May 24, 2026 pass landed the backend half of this sprint:
+
+- `src/Infernix/Dispatch/ContextModelMap.hs` (new) exposes the typed
+  `ContextModelMap` (`IORef (Map Text Text)` keyed on `ContextId`)
+  plus `newContextModelMap`, `lookupModelId`, `recordContextModel`,
+  and `recordContextMetadataEvent`. `ContextCreated` pins the model
+  id for the context's life; `ContextRenamed` and `ContextSoftDeleted`
+  are no-ops for the binding (the supported contract pins model id
+  for life, per the design doc).
+- `src/Infernix/Runtime/Pulsar.hs.runContextsMetadataConsumer` is the
+  per-user worker the coordinator dispatcher loop spawns when it
+  observes a new userId. It subscribes Failover to
+  `persistent://infernix/demo/demo.user.<userId>.contexts`, decodes
+  each frame as a `ContextMetadataEvent`, and updates the shared
+  `ContextModelMap`. `discoverAndStartDispatchers` now spawns both
+  the per-context dispatcher worker AND the per-user contexts
+  consumer the first time each is observed.
+- `src/Infernix/Runtime/Pulsar.hs.publishDispatchedInferenceRequest`
+  now accepts the resolved `modelId :: Text` and populates the proto
+  `request_model_id` field with it (no longer hardcoded `""`).
+  `handleDispatcherMessage` calls `ContextModelMap.lookupModelId`
+  before publishing.
+- Engine-side validation in
+  `Pulsar.handleConsumerEnvelope`: when the inbound proto's
+  `request_model_id` is empty, the engine publishes a typed
+  `emptyModelIdRejectionResult` to the result topic instead of
+  delegating to the generic engine path. The rejection result
+  carries `status: "failed"` plus the typed error message; the
+  coordinator's result-bridge writes it back to the conversation
+  log so the SPA's Chat surface renders the typed failure.
+- Haskell unit test `assertContextModelMap` in `test/unit/Spec.hs`
+  covers the empty-init, direct insert, lookup-known / lookup-missing,
+  `ContextCreated` populate, and `ContextRenamed` / `ContextSoftDeleted`
+  no-op invariants. `infernix test unit` passes.
+
+Pending closure:
+
+- SPA-side model-picker modal in `Chat.purs`. Hangs off the Sprint
+  7.10 DOM renderer.
+- WS handler in `src/Infernix/Demo/WebSocket.hs` that, on receipt of
+  `ClientCreateContext`, publishes a typed `ContextMetadataEvent
+  { ContextCreated { ... } }` to
+  `persistent://infernix/demo/demo.user.<userId>.contexts`. The
+  publisher requires a Pulsar transport plumbed into
+  `WebSocketOptions`; that wiring lands together with Sprint 7.14
+  chaos validation (the supported gate that proves the full
+  WS → Pulsar → coordinator-consumer → ContextModelMap → dispatcher
+  round-trip end to end).
+- E2E negative case: closing the new-context dialog without
+  submission creates no backend state. Lands with Sprint 7.15.
 
 ---
 
@@ -1427,7 +1712,7 @@ All work pending.
 
 **Status**: Active
 **Blocked by**: 7.2, 7.4, 7.5, 7.6, 7.7, 7.8, 7.9
-**Implementation**: `test/unit/*` (existing `infernix-unit` Cabal stanza), `web/test/*`
+**Implementation**: `test/unit/*` (existing `infernix-unit` Cabal stanza), `web/test/Main.purs`, `web/test/Infernix/Web/ContractsSpec.purs`, `web/test/Infernix/Web/ChatSpec.purs`, `web/test/Infernix/Web/ArtifactsSpec.purs`
 **Docs to update**: `documents/development/demo_app_test_plan.md`, `documents/development/testing_strategy.md`, `documents/development/frontend_contracts.md`
 
 ### Objective
@@ -1473,14 +1758,39 @@ determinism / method discrimination / ISO expiry (Sprint 7.9), compacted-view
 7.5), and `Bridge.Result` subscription naming + dedup key + event construction (Sprint
 7.7). `infernix test lint` and `infernix test unit` exit zero.
 
+The May 24, 2026 pass closed the PureScript side of this sprint
+together with Sprints 7.2 / 7.10 / 7.11:
+
+- `web/test/Infernix/Web/ContractsSpec.purs` covers 43 Phase 7
+  contract roundtrip cases — every string newtype, every record
+  newtype, every nullary sum, every positional sum constructor, every
+  record-syntax sum constructor across `ConversationStatePatch`,
+  `ContextListPatch`, `DraftMapPatch`, `WsClientMessage`, and
+  `WsServerMessage` — and asserts byte-identical re-encoding plus
+  structural wire-shape spot checks (`"tag"`, `"contents"`, spread
+  field names) so any future drift in the generator footer surfaces
+  immediately.
+- `web/test/Infernix/Web/ChatSpec.purs` covers 12 view-model cases:
+  every `ConversationStatePatch` / `ContextListPatch` / `DraftMapPatch`
+  variant's patch application, the WS `handleServerMessage`
+  dispatcher (active-context match vs no-match), and the
+  `pendingPromptCount` queued-prompt counter (empty, one queued, two
+  queued, both resolved).
+- `web/test/Infernix/Web/ArtifactsSpec.purs` covers 11 view-model
+  cases: every MIME-to-disposition branch (image / audio / video /
+  PDF / JSON / text / MIDI / MusicXML / unknown), library upsert with
+  bucket+key matching, per-context filter, and the typed upload
+  request shape.
+- The generator footer in `src/Infernix/Web/Contracts.hs` emits
+  hand-rolled Simple.JSON tagged-sum instances for every Phase 7 sum
+  type, hand-rolled WriteForeign/ReadForeign for every Phase 7
+  newtype (string-wrapped vs record-wrapped), and Show instances for
+  every nullary sum (so the PS-side spec can use `shouldEqual` on
+  them). `infernix test unit` reports 69/69 passing across the full
+  PS suite + the Haskell-side unit suite.
+
 Pending closure:
 
-- PureScript `purescript-spec` view-model tests at `web/test/Infernix/Web/ChatSpec.purs`
-  and `web/test/Infernix/Web/ArtifactsSpec.purs`. These need the PureScript test runner
-  in `web/test/` plus tagged-sum Simple.JSON instances on the generated module (the
-  generator footer currently emits `ReadForeign` for single-constructor records only).
-  Land together with the SPA view sprints (7.10, 7.11) that introduce the modules
-  under test.
 - QuickCheck-style property generators for `ConversationEvent` sequences landed
   May 23, 2026 (`assertConversationPropertyTests` in `test/unit/Spec.hs`):
   property generators emit arbitrary 0–8-message logs with prompt / cancel /
@@ -1698,6 +2008,59 @@ validation when real-cluster behaviors are observed):
   drift after final Phase 7 closure.
 
 `infernix lint docs` exits zero against this state.
+
+---
+
+## Sprint 7.17: Secrets-via-Files and Demo-Surface Retirement [Active]
+
+**Status**: Active
+**Blocked by**: Phase 1 Sprint 1.11, Phase 4 Sprint 4.13
+**Implementation**: `dhall/InfernixSecrets.dhall` (new), `src/Infernix/SecretsConfig.hs` (new), `src/Infernix/Demo/Api.hs`, `src/Infernix/Demo/Auth.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Python.hs`, `chart/templates/deployment-demo.yaml`, `chart/templates/secret-cluster-secrets.yaml` (new), `chart/templates/keycloak/deployment.yaml` (KC_DB_* documented exception)
+**Docs to update**: `documents/architecture/configuration_doctrine.md`, `documents/engineering/cluster_config_manifest.md`, `documents/tools/keycloak.md`, `documents/tools/minio.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
+
+### Objective
+
+Materialize the `InfernixSecrets.dhall` typed paths-only schema + matching Haskell reader. Retire
+every `INFERNIX_KEYCLOAK_*` and `INFERNIX_MINIO_*` env-var consumer in favor of `ClusterConfig`
+fields (for non-secret values) plus file-based Secret mounts (for credentials). Retire
+`INFERNIX_POETRY_*` env reads. Mount `/etc/infernix/secrets/` on the demo pod from a Kubernetes
+`Secret`; Keycloak's `KC_DB_*` upstream contract stays as the documented third-party exception.
+
+### Deliverables
+
+- `dhall/InfernixSecrets.dhall` schema with the `Minio`, `KeycloakAdmin`, `KeycloakDb`
+  paths-only records named in
+  [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md).
+- `SecretsConfig` typed record + decoder; threaded through the demo backend entry point.
+- The Haskell application calls `readFile (SecretsConfig.minio.credentialsPath)` and parses the
+  JSON for MinIO credentials; never reads `INFERNIX_MINIO_ACCESS_KEY` / `SECRET_KEY`.
+- `INFERNIX_KEYCLOAK_BASE_URL`, `INFERNIX_KEYCLOAK_REALM_NAME`, `INFERNIX_KEYCLOAK_CLIENT_ID`,
+  `INFERNIX_KEYCLOAK_JWKS_URL`, `INFERNIX_MINIO_ENDPOINT`, `INFERNIX_MINIO_REGION`,
+  `INFERNIX_MINIO_PRESIGN_EXPIRY_SECONDS`, `INFERNIX_MINIO_ACCESS_KEY`,
+  `INFERNIX_MINIO_SECRET_KEY`, `INFERNIX_POETRY_EXECUTABLE`, `POETRY_HOME`,
+  `POETRY_VIRTUALENVS_IN_PROJECT` env reads all deleted from `src/Infernix/Demo/Api.hs`,
+  `src/Infernix/Demo/Auth.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Python.hs`.
+- `POETRY_VIRTUALENVS_IN_PROJECT` behaviour moves to a `poetry.toml` config file at the project
+  root.
+- `chart/templates/deployment-demo.yaml` `env:` block deleted; demo pod mounts the cluster
+  ConfigMap + the cluster Secret at `/opt/infernix/cluster.dhall` and `/etc/infernix/secrets/`.
+- `chart/templates/secret-cluster-secrets.yaml` renders the operator-supplied credentials as a
+  Kubernetes `Secret`.
+- `chart/templates/keycloak/deployment.yaml` retains `KC_DB_*` env entries (Keycloak upstream
+  contract) and documents the third-party exception in `documents/tools/keycloak.md` + the
+  lint-gate exception list.
+
+### Validation
+
+- `grep -rn 'INFERNIX_KEYCLOAK_\|INFERNIX_MINIO_\|INFERNIX_POETRY_' src/` returns zero matches.
+- `grep -rn '^\s*-\s*name:\s*INFERNIX_' chart/templates/deployment-demo.yaml` returns zero
+  matches.
+- `infernix test integration` on `linux-gpu` round-trips the JWT-authenticated `/api/objects`
+  flow successfully against the new mount layout.
+
+### Remaining Work
+
+All deliverables above.
 
 ---
 

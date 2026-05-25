@@ -73,8 +73,8 @@ service:
     httpBaseUrl: http://infernix-infernix-pulsar-proxy.platform.svc.cluster.local
     webSocketBaseUrl: ws://infernix-infernix-pulsar-proxy.platform.svc.cluster.local/ws/v2
     serviceUrl: pulsar://infernix-infernix-pulsar-proxy.platform.svc.cluster.local:6650
-    tenant: public
-    namespace: default
+    tenant: infernix
+    namespace: demo
   engineAdapters:
     commandEnv: {}
 
@@ -421,10 +421,19 @@ keycloak:
     tag: "26.0.7"
     pullPolicy: IfNotPresent
   replicaCount: 2
+  # Phase 7 Sprint 7.14: operator-facing base URL the demo backend
+  # expects the issuer claim to match. The default value reflects the
+  # default Envoy Gateway routing topology (Envoy strips the @:port@
+  # suffix from X-Forwarded-Host when proxying to Keycloak, so the
+  # emitted @iss@ omits the operator-facing edge port). Operators with
+  # a different routing topology should override this to match the
+  # routing topology, e.g. @https://infernix.example.com/auth@.
+  externalBaseUrl: http://127.0.0.1/auth
   realm:
     name: infernix
     displayName: Infernix Demo
     clientId: infernix-spa
+    spaClientId: infernix-spa
     issuerUrl: /auth/realms/infernix
   admin:
     user: admin

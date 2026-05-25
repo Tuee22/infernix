@@ -1,7 +1,7 @@
 # Phase 6: Validation, E2E, and HA Hardening
 
-**Status**: Done
-**Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md)
+**Status**: Active (Sprint 6.28 in flight; Sprints 6.1–6.27 Done)
+**Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/development/no_env_vars.md](../documents/development/no_env_vars.md)
 
 > **Purpose**: Define the supported static-quality and single-substrate validation contract for the
 > two-binary topology, the README-matrix-driven integration suite, the Pulsar-driven production
@@ -1325,9 +1325,50 @@ None.
 
 ---
 
+## Sprint 6.28: Test Fixture and Lint Gate Retirement [Active]
+
+**Status**: Active
+**Blocked by**: Phase 1 Sprint 1.11, Phase 4 Sprint 4.13
+**Implementation**: `test/unit/Spec.hs`, `test/integration/Spec.hs`, `src/Infernix/Lint/HaskellStyle.hs`, `src/Infernix/Lint/Docs.hs`, `src/Infernix/Lint/Chart.hs`
+**Docs to update**: `documents/development/no_env_vars.md`, `documents/development/testing_strategy.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
+
+### Objective
+
+Retire env-driven test isolation; land the durable lint gates that prevent future env-var or
+PATH-resolved invocation regressions.
+
+### Deliverables
+
+- `test/unit/Spec.hs` and `test/integration/Spec.hs` replace every `setEnv`/`unsetEnv` call with
+  typed `HostConfig` fixtures. Every `getEnvironment` whole-env capture is replaced with a fixed
+  `[(String, String)]` list.
+- `src/Infernix/Lint/HaskellStyle.hs` `disallowedFunctions` set includes `lookupEnv`, `getEnv`,
+  `getEnvironment`, `setEnv`, `unsetEnv`.
+- `src/Infernix/Lint/HaskellStyle.hs` `disallowedProcCommands` (new check) rejects any
+  `proc "<bare-name>"` whose name matches a `HostTool` enum constructor.
+- `src/Infernix/Lint/Docs.hs` rejects any governed doc containing `INFERNIX_*` or `$PATH`
+  outside `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md` and the documented Keycloak
+  `KC_DB_*` third-party exception in `documents/tools/keycloak.md`.
+- `src/Infernix/Lint/Chart.hs` rejects any `env:` block in
+  `chart/templates/deployment-{coordinator,engine,demo}.yaml`.
+
+### Validation
+
+- `grep -rn 'setEnv\|unsetEnv\|getEnvironment' test/` returns zero matches.
+- `infernix lint files`, `infernix lint chart`, `infernix lint docs`, `infernix test lint`,
+  `infernix test unit` all exit zero.
+- The new lint gates each have one self-test fixture that intentionally violates the rule and is
+  expected to fail; the test scaffold confirms the gate fires.
+
+### Remaining Work
+
+All deliverables above.
+
+---
+
 ## Remaining Work
 
-None.
+Sprint 6.28 in flight. Sprints 6.1–6.27 closed.
 
 ## Documentation Requirements
 

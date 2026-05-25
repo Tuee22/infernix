@@ -715,6 +715,8 @@ renderPursContractFooter activeRuntimeMode =
             "instance readForeignEngineBinding :: JSON.ReadForeign EngineBinding where",
             "  readImpl value = EngineBinding <$> JSON.readImpl value"
           ]
+        <> "\n"
+        <> renderPhase7PursInstances
 
 engineBindingFromInternal :: Types.EngineBinding -> EngineBinding
 engineBindingFromInternal internalBinding =
@@ -861,3 +863,319 @@ renderRequestField requestField =
     <> ", fieldType: "
     <> show (Text.unpack (fieldType requestField))
     <> " }"
+
+-- ----------------------------------------------------------------------------
+-- Phase 7 Simple.JSON instance generator for the durable-context surface
+-- ----------------------------------------------------------------------------
+
+-- | Phase 7 sum constructors describe how a tagged-object wire format maps
+-- onto a PureScript-side constructor: nullary, single positional arg, or a
+-- record with named fields (the Aeson record-syntax case spreads fields at
+-- the top level alongside the @tag@ field).
+data PursSumCase
+  = PursNullary String
+  | PursPositional String String
+  | PursRecord String [(String, String)]
+
+-- | Phase 7 record types that need explicit 'JSON.WriteForeign' /
+-- 'JSON.ReadForeign' instances. PureScript-bridge emits the data declarations
+-- but does not auto-derive Simple.JSON instances, so we add them mechanically
+-- in the generator footer.
+data PursRecordKind
+  = -- | newtype @X { unX :: String }@ that encodes as a bare string on the
+    -- wire, matching Haskell-side @deriving newtype (ToJSON)@.
+    PursStringNewtype String
+  | -- | newtype @X { ...record }@ that encodes as the inner record on the
+    -- wire.
+    PursRecordNewtype String
+
+renderPhase7PursInstances :: String
+renderPhase7PursInstances =
+  intercalate "\n" $
+    map renderPursRecordKind phase7RecordKinds
+      ++ map renderPursSum phase7Sums
+
+phase7RecordKinds :: [PursRecordKind]
+phase7RecordKinds =
+  [ PursStringNewtype "UserId",
+    PursStringNewtype "ContextId",
+    PursStringNewtype "MessageId",
+    PursStringNewtype "ClientIdempotencyKey",
+    PursStringNewtype "ArtifactMimeType",
+    PursRecordNewtype "ObjectRef",
+    PursRecordNewtype "UserPromptPayload",
+    PursRecordNewtype "ConversationInferenceResultPayload",
+    PursRecordNewtype "ConversationCancelPayload",
+    PursRecordNewtype "ConversationUserUploadPayload",
+    PursRecordNewtype "ConversationMessage",
+    PursRecordNewtype "ConversationState",
+    PursRecordNewtype "ContextSummary",
+    PursRecordNewtype "ContextListState",
+    PursRecordNewtype "DraftEntry",
+    PursRecordNewtype "DraftMapState",
+    PursRecordNewtype "ArtifactUploadRequest",
+    PursRecordNewtype "ArtifactUploadGrant",
+    PursRecordNewtype "ArtifactDownloadGrant"
+  ]
+
+phase7Sums :: [(String, [PursSumCase])]
+phase7Sums =
+  [ ( "ArtifactKind",
+      [ PursNullary "ArtifactKindUpload",
+        PursNullary "ArtifactKindGenerated"
+      ]
+    ),
+    ( "ArtifactRenderDisposition",
+      [ PursNullary "RenderInline",
+        PursNullary "DownloadOnly",
+        PursNullary "BoundedTextPreview",
+        PursNullary "BrowserNativePdf"
+      ]
+    ),
+    ( "ConversationEvent",
+      [ PursPositional "ConversationUserPromptEvent" "UserPromptPayload",
+        PursPositional "ConversationInferenceResultEvent" "ConversationInferenceResultPayload",
+        PursPositional "ConversationCancelEvent" "ConversationCancelPayload",
+        PursPositional "ConversationUserUploadEvent" "ConversationUserUploadPayload"
+      ]
+    ),
+    ( "ContextMetadataEvent",
+      [ PursRecord
+          "ContextCreated"
+          [ ("contextCreatedContextId", "ContextId"),
+            ("contextCreatedModelId", "String"),
+            ("contextCreatedTitle", "String")
+          ],
+        PursRecord
+          "ContextRenamed"
+          [ ("contextRenamedContextId", "ContextId"),
+            ("contextRenamedTitle", "String")
+          ],
+        PursRecord
+          "ContextSoftDeleted"
+          [("contextSoftDeletedContextId", "ContextId")]
+      ]
+    ),
+    ( "DraftEvent",
+      [ PursRecord
+          "DraftUpdated"
+          [ ("draftUpdatedContextId", "ContextId"),
+            ("draftUpdatedText", "String")
+          ],
+        PursRecord
+          "DraftCleared"
+          [("draftClearedContextId", "ContextId")]
+      ]
+    ),
+    ( "ConversationStatePatch",
+      [ PursRecord
+          "ConversationStateAppendMessage"
+          [ ("appendMessage", "ConversationMessage"),
+            ("appendNewPrefixHash", "String")
+          ],
+        PursRecord
+          "ConversationStateReplaceSnapshot"
+          [("replaceSnapshot", "ConversationState")]
+      ]
+    ),
+    ( "ContextListPatch",
+      [ PursRecord
+          "ContextListUpsert"
+          [("contextListUpsertSummary", "ContextSummary")],
+        PursRecord
+          "ContextListReplaceSnapshot"
+          [("contextListReplaceSnapshot", "ContextListState")]
+      ]
+    ),
+    ( "DraftMapPatch",
+      [ PursRecord
+          "DraftMapUpsert"
+          [("draftMapUpsertEntry", "DraftEntry")],
+        PursRecord
+          "DraftMapRemove"
+          [("draftMapRemoveContextId", "ContextId")],
+        PursRecord
+          "DraftMapReplaceSnapshot"
+          [("draftMapReplaceSnapshot", "DraftMapState")]
+      ]
+    ),
+    ( "WsClientMessage",
+      [ PursRecord
+          "ClientHello"
+          [("clientHelloUserId", "UserId")],
+        PursRecord
+          "ClientSubscribeContext"
+          [("clientSubscribeContextId", "ContextId")],
+        PursRecord
+          "ClientSubmitPrompt"
+          [ ("clientSubmitPromptContextId", "ContextId"),
+            ("clientSubmitPromptPayload", "UserPromptPayload")
+          ],
+        PursRecord
+          "ClientCancelPrompt"
+          [ ("clientCancelPromptContextId", "ContextId"),
+            ("clientCancelPromptUserPromptMessageId", "MessageId")
+          ],
+        PursRecord
+          "ClientUpdateDraft"
+          [ ("clientUpdateDraftContextId", "ContextId"),
+            ("clientUpdateDraftText", "String")
+          ],
+        PursRecord
+          "ClientCreateContext"
+          [ ("clientCreateContextId", "ContextId"),
+            ("clientCreateContextModelId", "String"),
+            ("clientCreateContextTitle", "String")
+          ],
+        PursRecord
+          "ClientRenameContext"
+          [ ("clientRenameContextId", "ContextId"),
+            ("clientRenameContextTitle", "String")
+          ],
+        PursRecord
+          "ClientSoftDeleteContext"
+          [("clientSoftDeleteContextId", "ContextId")]
+      ]
+    ),
+    ( "WsServerMessage",
+      [ PursRecord
+          "ServerConversationSnapshot"
+          [("serverConversationSnapshot", "ConversationState")],
+        PursRecord
+          "ServerConversationPatch"
+          [ ("serverConversationPatchContextId", "ContextId"),
+            ("serverConversationPatch", "ConversationStatePatch")
+          ],
+        PursRecord
+          "ServerContextListSnapshot"
+          [("serverContextListSnapshot", "ContextListState")],
+        PursRecord
+          "ServerContextListPatch"
+          [("serverContextListPatch", "ContextListPatch")],
+        PursRecord
+          "ServerDraftMapSnapshot"
+          [("serverDraftMapSnapshot", "DraftMapState")],
+        PursRecord
+          "ServerDraftMapPatch"
+          [("serverDraftMapPatch", "DraftMapPatch")],
+        PursRecord
+          "ServerArtifactReady"
+          [ ("serverArtifactReadyContextId", "ContextId"),
+            ("serverArtifactReadyObjectRef", "ObjectRef"),
+            ("serverArtifactReadyKind", "ArtifactKind")
+          ],
+        PursRecord
+          "ServerInferenceProgress"
+          [ ("serverInferenceProgressContextId", "ContextId"),
+            ("serverInferenceProgressUserPromptMessageId", "MessageId"),
+            ("serverInferenceProgressFractionDone", "Number")
+          ],
+        PursRecord
+          "ServerError"
+          [ ("serverErrorErrorCode", "String"),
+            ("serverErrorMessage", "String")
+          ]
+      ]
+    )
+  ]
+
+renderPursRecordKind :: PursRecordKind -> String
+renderPursRecordKind (PursStringNewtype typeName) =
+  unlines
+    [ "instance writeForeign" <> typeName <> " :: JSON.WriteForeign " <> typeName <> " where",
+      "  writeImpl (" <> typeName <> " record) = JSON.writeImpl record.un" <> typeName,
+      "",
+      "instance readForeign" <> typeName <> " :: JSON.ReadForeign " <> typeName <> " where",
+      "  readImpl value = do",
+      "    raw :: String <- JSON.readImpl value",
+      "    pure (" <> typeName <> " { un" <> typeName <> ": raw })"
+    ]
+renderPursRecordKind (PursRecordNewtype typeName) =
+  unlines
+    [ "instance writeForeign" <> typeName <> " :: JSON.WriteForeign " <> typeName <> " where",
+      "  writeImpl (" <> typeName <> " record) = JSON.writeImpl record",
+      "",
+      "instance readForeign" <> typeName <> " :: JSON.ReadForeign " <> typeName <> " where",
+      "  readImpl value = " <> typeName <> " <$> JSON.readImpl value"
+    ]
+
+renderPursSum :: (String, [PursSumCase]) -> String
+renderPursSum (typeName, cases) =
+  unlines
+    ( [ "instance writeForeign" <> typeName <> " :: JSON.WriteForeign " <> typeName <> " where",
+        intercalate "\n" (map renderWriteImplCase cases),
+        "",
+        "instance readForeign" <> typeName <> " :: JSON.ReadForeign " <> typeName <> " where",
+        "  readImpl value = do",
+        "    tagged :: { tag :: String } <- JSON.readImpl value",
+        "    case tagged.tag of",
+        intercalate "\n" (map renderReadImplCase cases),
+        "      other -> Foreign.fail (Foreign.ForeignError (\"Unknown " <> typeName <> " tag: \" <> other))"
+      ]
+        <> renderShowInstanceIfAllNullary typeName cases
+    )
+
+renderShowInstanceIfAllNullary :: String -> [PursSumCase] -> [String]
+renderShowInstanceIfAllNullary typeName cases
+  | all isNullary cases =
+      ""
+        : ("instance show" <> typeName <> " :: Show " <> typeName <> " where")
+        : map showCase cases
+  | otherwise = []
+  where
+    isNullary (PursNullary _) = True
+    isNullary _ = False
+    showCase (PursNullary constructor) =
+      "  show " <> constructor <> " = " <> show constructor
+    showCase _ = ""
+
+renderWriteImplCase :: PursSumCase -> String
+renderWriteImplCase (PursNullary constructor) =
+  "  writeImpl " <> constructor <> " = JSON.writeImpl { tag: " <> show constructor <> " }"
+renderWriteImplCase (PursPositional constructor _) =
+  "  writeImpl ("
+    <> constructor
+    <> " contents) = JSON.writeImpl { tag: "
+    <> show constructor
+    <> ", contents: contents }"
+renderWriteImplCase (PursRecord constructor fields) =
+  let fieldPairs = intercalate ", " (map (\(fieldName, _) -> fieldName <> ": record." <> fieldName) fields)
+   in "  writeImpl ("
+        <> constructor
+        <> " record) = JSON.writeImpl { tag: "
+        <> show constructor
+        <> ", "
+        <> fieldPairs
+        <> " }"
+
+renderReadImplCase :: PursSumCase -> String
+renderReadImplCase (PursNullary constructor) =
+  "      " <> show constructor <> " -> pure " <> constructor
+renderReadImplCase (PursPositional constructor payloadType) =
+  unlines
+    [ "      " <> show constructor <> " -> do",
+      "        (record :: { contents :: " <> payloadType <> " }) <- JSON.readImpl value",
+      "        pure (" <> constructor <> " record.contents)"
+    ]
+    & dropTrailingNewline
+renderReadImplCase (PursRecord constructor fields) =
+  let fieldDecls = intercalate ", " (map (\(fieldName, fieldType) -> fieldName <> " :: " <> fieldType) fields)
+   in unlines
+        [ "      " <> show constructor <> " -> do",
+          "        (record :: { " <> fieldDecls <> " }) <- JSON.readImpl value",
+          "        pure (" <> constructor <> " record)"
+        ]
+        & dropTrailingNewline
+
+dropTrailingNewline :: String -> String
+dropTrailingNewline str = case reverse str of
+  '\n' : rest -> reverse rest
+  _ -> str
+
+-- | Local pipeline operator to keep the renderer terse; we cannot rely on the
+-- @flow@ package because this module is part of the cabal library boundary
+-- and intentionally has zero extra dependencies beyond what generation needs.
+(&) :: a -> (a -> b) -> b
+x & f = f x
+
+infixl 1 &

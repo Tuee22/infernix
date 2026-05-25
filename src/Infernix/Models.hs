@@ -60,17 +60,26 @@ engineBindingsForMode :: RuntimeMode -> [EngineBinding]
 engineBindingsForMode runtimeMode =
   uniqueEngineBindings (map (engineBindingForSelectedEngine runtimeMode . selectedEngine) (catalogForMode runtimeMode))
 
+-- | Phase 7 Sprint 7.7 (legacy row 21): the supported default Pulsar
+-- tenant + namespace for inference topics is @infernix/demo@. The
+-- @infernix@ tenant and @infernix/demo@ namespace are reconciled by
+-- 'Infernix.Runtime.Pulsar.reconcileSupportedNamespaces' at daemon
+-- startup. The previous @persistent://public/default/@ prefix is
+-- retired.
+defaultPulsarTopicPrefix :: Text
+defaultPulsarTopicPrefix = "persistent://infernix/demo/"
+
 requestTopicsForMode :: RuntimeMode -> [Text]
 requestTopicsForMode runtimeMode =
-  ["persistent://public/default/inference.request." <> runtimeModeId runtimeMode]
+  [defaultPulsarTopicPrefix <> "inference.request." <> runtimeModeId runtimeMode]
 
 resultTopicForMode :: RuntimeMode -> Text
 resultTopicForMode runtimeMode =
-  "persistent://public/default/inference.result." <> runtimeModeId runtimeMode
+  defaultPulsarTopicPrefix <> "inference.result." <> runtimeModeId runtimeMode
 
 -- | Phase 7 Sprint 7.7: the coordinator-to-engine handoff topic on
 -- every substrate. The supported three-role daemon split publishes
--- pre-batched inference work to @persistent://public/default/inference.batch.<mode>@;
+-- pre-batched inference work to @persistent://infernix/demo/inference.batch.<mode>@;
 -- the engine role consumes from it and publishes the result back to
 -- @inference.result.<mode>@. On Apple silicon, the engine is on-host
 -- and the topic name is suffixed with @.host@ for backward
@@ -78,7 +87,7 @@ resultTopicForMode runtimeMode =
 hostBatchTopicForMode :: RuntimeMode -> Maybe Text
 hostBatchTopicForMode runtimeMode =
   case runtimeMode of
-    AppleSilicon -> Just ("persistent://public/default/inference.batch." <> runtimeModeId runtimeMode <> ".host")
+    AppleSilicon -> Just (defaultPulsarTopicPrefix <> "inference.batch." <> runtimeModeId runtimeMode <> ".host")
     LinuxCpu -> Just (canonicalBatchTopicForMode runtimeMode)
     LinuxGpu -> Just (canonicalBatchTopicForMode runtimeMode)
 
@@ -90,7 +99,7 @@ hostBatchTopicForMode runtimeMode =
 -- supported Sprint 7.7 daemon-split rollout.
 canonicalBatchTopicForMode :: RuntimeMode -> Text
 canonicalBatchTopicForMode runtimeMode =
-  "persistent://public/default/inference.batch." <> runtimeModeId runtimeMode
+  defaultPulsarTopicPrefix <> "inference.batch." <> runtimeModeId runtimeMode
 
 engineBindingForSelectedEngine :: RuntimeMode -> Text -> EngineBinding
 engineBindingForSelectedEngine _runtimeMode selectedEngineValue =

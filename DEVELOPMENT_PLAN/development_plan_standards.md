@@ -654,3 +654,94 @@ from unsupported product features, runtime surfaces, or validation requirements.
 - Non-adopted external doctrine items must not be treated as current blockers, deliverables, or
   completion criteria unless the repository later implements them and updates the plan, governed
   docs, and validation surface in the same change.
+
+### T. No Environment Variables, No PATH
+
+The supported control plane owns every runtime setting through typed `.dhall` configuration files
+read natively by the `dhall` Haskell library, and owns every external command invocation through
+fully-qualified absolute paths. Process-inherited environment variables (`INFERNIX_*`, `PATH`,
+`HOME`, `KUBECONFIG`, `DOCKER_HOST`, anything operator-set) are not part of the supported
+contract.
+
+The configuration substrate is three typed Dhall records:
+
+| File | Scope | Reader |
+|------|-------|--------|
+| `dhall/InfernixHost.dhall` | every external tool the project ever invokes (absolute path), filesystem conventions (`repoRoot`, `buildRoot`, `dataRoot`, `runtimeRoot`, `kubeconfigPath`, `secretsRoot`, `homeDirectory`), host execution context | every Haskell entry point at startup |
+| `dhall/InfernixCluster.dhall` | every in-cluster wiring value (Pulsar HTTP/WS/service URLs + tenant + namespace, MinIO endpoint + region + presign expiry, Keycloak base URL + realm + client id + JWKS URL, demo bind host, bridge mode, publication state path, model cache root, engine command overrides) | every Haskell entry point at startup; materialized into a Kubernetes `ConfigMap` and mounted read-only at `/opt/infernix/cluster.dhall` in coordinator / engine / demo pods |
+| `dhall/InfernixSecrets.dhall` | the file *paths* at which secret material lives, never the values themselves | every Haskell entry point at startup; the application then reads the named JSON files via `readFile`. On-cluster the files come from a Kubernetes `Secret` mounted at `/etc/infernix/secrets/`; on host they live under `./.data/runtime/secrets/` (gitignored, operator-edited) |
+
+Rules:
+
+- No Haskell module may call `lookupEnv`, `getEnv`, `getEnvironment`, `setEnv`, or `unsetEnv`.
+  Tests pass typed `HostConfig` / `ClusterConfig` / `SecretsConfig` records as fixtures.
+- No Haskell module may call `proc "<bare-command-name>"` where the command name resolves through
+  `$PATH`. Every external invocation reads the absolute path from `HostConfig.toolPaths.*`.
+- No bash / shell script may consume an inherited env var. Bootstrap scripts derive every variable
+  from `${BASH_SOURCE[0]}` (script location), `/etc/passwd` (operator home), or literal absolute
+  constants written into the script. Each script's first line resets `PATH=/usr/bin:/bin` so the
+  operator's ambient `PATH` cannot influence resolution.
+- No Python adapter may consume `os.environ`. Adapters receive a typed JSON config blob on stdin
+  from the Haskell daemon and parse it once at startup.
+- No web / Playwright test script may consume `process.env`. The Playwright config file emits the
+  typed fixture via Playwright's `use:` block sourced from a Dhall-decoded JSON file written to
+  `/workspace/.data/runtime/playwright-fixture.json` at test setup; the test reads
+  `test.info().project.use.*`.
+- No `chart/templates/deployment-*.yaml` carries an `env:` block. Each pod mounts the cluster
+  ConfigMap + cluster Secret and the Haskell daemon reads both natively.
+- The `compose.yaml` file shrinks to one `infernix` service with exactly two bind mounts
+  (`./.data` and `/var/run/docker.sock`) and no `environment:` block, no `build.args:` block, and
+  no `playwright` sidecar service.
+- Build artefacts (the `infernix` binary, staged `.dhall` files, Helm dependency cache, generated
+  proto stubs) live inside the Linux launcher image only. The host has no `./.build/` directory
+  for Linux substrates. Apple still has `./.build/` because Apple builds the binary host-native.
+- Playwright runs inside the same `infernix-linux-<mode>:local` image; the dedicated
+  `infernix-playwright:local` image and `docker/playwright.Dockerfile` are removed.
+
+Third-party-upstream exceptions:
+
+- Keycloak's own image consumes `KC_DB_*` env vars at startup (these are Keycloak's upstream
+  contract, not Infernix's). The Keycloak pod spec retains these env entries, sourced from a
+  mounted Secret where the Keycloak release supports it. The exception is documented in
+  `documents/tools/keycloak.md`.
+
+The chicken-and-egg "stage-zero" problem (the bootstrap shell needs to find *something* before it
+can read configuration) is resolved with one fixed convention, not an env var: the project root
+is the directory containing the bootstrap script that invoked the shell, derived from
+`${BASH_SOURCE[0]}`. The operator's home directory comes from
+`getent passwd "$(/usr/bin/id -u)" | /usr/bin/cut -d: -f6`. The Haskell binary uses
+`System.Environment.getExecutablePath` and walks up to the directory that contains the staged
+`infernix-host.dhall` file.
+
+The canonical home for this doctrine is
+[../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md);
+this plan rule cross-references it as the authoritative source.
+
+### U. Host Tools Manifest
+
+`dhall/InfernixHost.dhall` is the authoritative inventory of every external command the project
+ever invokes. The schema is a typed record whose fields enumerate each tool by absolute path.
+
+Rules:
+
+- When a sprint adds a new external command (e.g. a new third-party CLI used by a lifecycle
+  helper), the sprint adds the field to `dhall/InfernixHost.dhall` first and only then writes the
+  invocation in Haskell or shell.
+- Every Haskell invocation reads the absolute path from the loaded `HostConfig` record (the
+  canonical helper is `runHostTool :: HostConfig -> HostTool -> [String] -> IO a`). Bare
+  `proc "<name>"` calls are forbidden and rejected by the Haskell-style lint gate added in
+  Phase 6 Sprint 6.28.
+- Every bootstrap-script invocation uses either a hardcoded absolute-path constant (for the small
+  set of commands that precede the launcher binary — `apt-get`, `sudo`, `docker`, `ghcup` paths
+  under the operator's `/etc/passwd`-derived home) or delegates to the launcher binary after it
+  exists. Bare-name shell invocations are forbidden and rejected by the chart-and-script lint
+  gate.
+- The schema field names match the command names exactly; no abbreviation or rewriting. The
+  schema is the single source of truth for "every tool this project ever runs."
+- Operator-specific overrides (e.g. operator A's ghcup lives at one path, operator B's at
+  another) happen by editing the staged `./.build/infernix-host.dhall` (Apple host-native) or
+  the in-image `/opt/infernix/dhall/InfernixHost.dhall` (Linux container) — never by setting an
+  env var.
+
+The schema is documented in
+[../documents/engineering/host_tools_manifest.md](../documents/engineering/host_tools_manifest.md).

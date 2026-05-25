@@ -710,7 +710,7 @@ defaultEngineDaemonConfig runtimeMode resultTopicValue =
 defaultHostBatchTopic :: RuntimeMode -> Maybe Text
 defaultHostBatchTopic runtimeMode =
   case runtimeMode of
-    AppleSilicon -> Just ("persistent://public/default/inference.batch." <> runtimeModeId runtimeMode <> ".host")
+    AppleSilicon -> Just ("persistent://infernix/demo/inference.batch." <> runtimeModeId runtimeMode <> ".host")
     _ -> Nothing
 
 formatUtc :: UTCTime -> String
