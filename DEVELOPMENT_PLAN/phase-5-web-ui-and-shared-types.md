@@ -186,14 +186,15 @@ Playwright executor from the active substrate image on Linux.
   Playwright image and sidecar service are retired by Phase 3 Sprint 3.10
 - `infernix test e2e` invokes `npm --prefix web exec -- playwright test` inside the Linux
   launcher image; Apple host-native E2E uses host `npm exec` with the same typed fixture and
-  awaits the Apple validation pass
+  is queued for the Apple cohort validation batch
 - the chart does not deploy a separate web workload or web image
 - supported Playwright invocations use `npm --prefix web exec -- playwright ...`
 
 ### Validation
 
 - the Linux substrate image build succeeds and carries the Playwright runtime
-- Apple host-native routed E2E runner code is fixture-driven and awaits the Apple validation pass
+- Apple host-native routed E2E runner code is fixture-driven and queued for the Apple cohort
+  validation batch
 - Linux routed E2E passes with `npm --prefix web exec -- playwright test` invoked from the outer
   container against the routed cluster
 - `rg -n 'npx playwright' README.md documents src web/package.json` returns no supported workflow references
@@ -279,8 +280,8 @@ the inference batch execution moves to host daemons.
 ### Deliverables
 
 - the routed demo app remains cluster-resident on Apple and Linux substrates alike
-- Apple host-native E2E orchestration uses host `npm exec` with the same typed fixture and awaits
-  the Apple validation pass
+- Apple host-native E2E orchestration uses host `npm exec` with the same typed fixture and is
+  queued for the Apple cohort validation batch
 - Linux outer-container E2E orchestration runs `npm --prefix web exec -- playwright test` from
   inside the active substrate image
 - Docker is a hard prerequisite for `infernix test e2e` on Linux substrates; the Apple branch runs
@@ -299,7 +300,7 @@ the inference batch execution moves to host daemons.
 
 ### Validation
 
-- Apple routed E2E runner code is landed and awaits the Apple validation pass
+- Apple routed E2E runner code is landed and queued for the Apple cohort validation batch
 - Linux routed E2E passes through the in-substrate Playwright executor without any host daemon
   management
 - Apple and Linux routed E2E pass through the same browser-visible flows without substrate-specific

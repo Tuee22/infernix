@@ -1,6 +1,6 @@
 # Phase 3: HA Platform Services and Edge Routing
 
-**Status**: Active (Sprint 3.10 Linux in-container Playwright E2E validated May 27, 2026; Apple host-native E2E runner code landed and awaits Apple validation; Sprints 3.1–3.9 Done)
+**Status**: Active (Sprint 3.10 CUDA Linux cohort in-container Playwright E2E validated May 27, 2026; Apple host-native E2E runner code landed and Apple cohort validation remains queued; Sprints 3.1–3.9 Done)
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Define the mandatory local HA Harbor, MinIO, operator-managed PostgreSQL, and
@@ -12,9 +12,10 @@
 
 Phase 3 is closed around the mandatory HA service set, the shared routed edge, and the
 Haskell-owned route registry implemented in this worktree. Sprints 3.1–3.9 remain `Done` for
-their original scope. The clarified Apple daemon-role model is implemented in Phase 6 Sprint 6.25
-and separates cluster daemon location from host inference executor location in publication
-metadata.
+their original scope. Sprint 3.10 is `Active` only for the Apple cohort E2E closure batch; the
+CUDA Linux cohort validated the replacement in-container Playwright path on May 27, 2026. The
+clarified Apple daemon-role model is implemented in Phase 6 Sprint 6.25 and separates cluster
+daemon location from host inference executor location in publication metadata.
 
 ## HA Reconcile Surface
 
@@ -399,7 +400,7 @@ favor of substrate `.dhall` fields plus a Dhall-driven Playwright fixture file.
 - May 27, 2026: Apple host-native E2E runner code landed. Linux validation covered
   `cabal build all`, `cabal test infernix-unit`, `cabal test infernix-haskell-style`, and
   `node --check` for `web/playwright.config.js` and `web/playwright/inference.spec.js`. Host
-  Playwright execution remains pending for the Apple Silicon validation pass.
+  Playwright execution remains queued for the Apple Silicon cohort validation batch.
 
 ### Remaining Work
 
@@ -452,7 +453,7 @@ documentation refresh. The Sprint 3.10 grep gate
 returns only the two retirement doc comments
 (`src/Infernix/CLI.hs:344`, `web/playwright.config.js:4`).
 
-Pending closure (deferred to the Apple validation pass):
+Pending closure (queued for the Apple cohort validation batch):
 
 - **Linux in-container Playwright E2E closed May 27, 2026.** The
   clean-env compose-run command
@@ -463,8 +464,8 @@ Pending closure (deferred to the Apple validation pass):
   `infernix-playwright:local` lane on the Linux CUDA host.
 - Apple host-native E2E validation. The host-side `npm exec`
   Playwright invocation fed by the same typed fixture is implemented,
-  but the end-to-end run remains deferred until the Apple Silicon
-  validation pass can exercise the real host-native browser lane.
+  but the end-to-end run remains queued until the Apple Silicon
+  cohort batch can exercise the real host-native browser lane.
 
 ---
 
@@ -473,7 +474,7 @@ Pending closure (deferred to the Apple validation pass):
 Sprint 3.10 substantively landed May 24, 2026. The Linux in-container
 Playwright path was validated on `linux-gpu` May 27, 2026. The
 Apple host-native E2E runner code landed May 27, 2026; Apple
-host-native E2E validation remains the only Sprint 3.10 residual.
+host-native E2E validation remains the only Sprint 3.10 cohort residual.
 Sprints 3.1–3.9 closed.
 
 ---

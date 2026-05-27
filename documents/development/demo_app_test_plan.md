@@ -82,7 +82,7 @@ Lands in Sprint 7.13. Additions to the existing `infernix-integration` Cabal sta
 
 Lands in Sprint 7.15. Linux Playwright suites run inside the substrate image with
 `npm --prefix web exec -- playwright test`; Apple host-native E2E uses host `npm exec` with the
-same typed fixture and awaits the Apple validation pass.
+same typed fixture and is covered by the Apple cohort validation batch.
 
 - **Auth lifecycle.** Signup; login; logout; re-login with same credentials; JWT refresh.
 - **Context lifecycle.** New-context creation defers backend state until first submit; rename;

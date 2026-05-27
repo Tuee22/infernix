@@ -23,6 +23,9 @@
   prerequisites probe-driven and idempotent; the CPU path stops at Docker Engine plus the Docker
   buildx and Compose plugins, and the GPU path adds only the supported NVIDIA driver and
   container-toolkit setup
+- development and validation are organized by hardware cohort: operators can keep phase work on
+  the current Apple Silicon or CUDA-capable Linux machine, then batch the counterpart machine's
+  full-suite run at phase closure instead of switching hosts for every sprint
 - the target bootstrap responsibility boundary keeps shell scripts out of Kind, Kubernetes
   manifests, and cluster workload image-pull orchestration: after prerequisites and the
   substrate-specific launcher are available, lifecycle commands are ordinary `infernix` binary
@@ -77,6 +80,21 @@ reference path uses the same `compose.yaml` service and prefixes the direct comm
 supported bootstrap installs the recommended Ubuntu compute driver, stops, and instructs the
 operator to reboot before rerunning the same command.
 
+## Cross-Hardware Development Cadence
+
+The supported workflow keeps day-to-day phase work local to one hardware cohort whenever possible.
+
+- Apple-owned changes use the Apple host-native bootstrap and direct `./.build/infernix` commands
+  for local validation, then queue the CUDA Linux cohort for the phase closure batch.
+- Linux, CUDA, chart, and outer-container changes use the `linux-gpu` bootstrap and
+  `docker compose run --rm infernix infernix ...` reference path for local validation, then queue
+  the Apple Silicon cohort for the phase closure batch.
+- `linux-cpu` remains a portable CPU-only lane and may be exercised from either host through the
+  outer-container workflow, but it does not replace the CUDA Linux cohort for GPU-sensitive
+  closure.
+- A phase reaches full cross-hardware closure only after the Apple Silicon and CUDA Linux cohorts
+  both run the relevant full-suite gates against the same phase state.
+
 ## Engine Adapter Testing
 
 When exercising a Python-native engine adapter, Poetry materializes a local environment only for
@@ -112,7 +130,8 @@ the shared adapter project:
   Harbor, MinIO, Pulsar, or Playwright work begins
 - on Linux, routed E2E runs Playwright inside the substrate image on Docker's private `kind`
   network against the Kind control-plane DNS instead of `host.docker.internal`; Apple host-native
-  routed E2E uses host `npm exec` with the same typed fixture and awaits the Apple validation pass
+  routed E2E uses host `npm exec` with the same typed fixture and is covered by the Apple cohort
+  validation batch
 - on Apple, retained Kind state under `./.data/kind/apple-silicon/` is replayed into and out of
   the worker instead of being bind-mounted, so large retained state can make `up`, `test`, and
   `down` noticeably slower than Linux

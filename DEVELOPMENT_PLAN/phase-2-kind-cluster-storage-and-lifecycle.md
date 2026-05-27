@@ -1,6 +1,6 @@
 # Phase 2: Kind Cluster Storage and Lifecycle
 
-**Status**: Active (Sprint 2.13 code-side env capture retirement and HostTool routing landed; clean-env `linux-gpu` lifecycle validation passed May 27, 2026; Apple host lifecycle validation remains deferred; Sprints 2.1–2.12 Done)
+**Status**: Active (Sprint 2.13 code-side env capture retirement and HostTool routing landed; CUDA Linux cohort clean-env `linux-gpu` lifecycle validation passed May 27, 2026; Apple cohort validation remains queued; Sprints 2.1–2.12 Done)
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Define the supported Kind bootstrap path, the manual storage doctrine, the Helm
@@ -23,7 +23,8 @@ Poetry setup entrypoint with an explicit `--install-root` argument and an empty 
 environment. The May 27, 2026 clean-environment Linux GPU validation passed:
 `env -i /usr/bin/bash ./bootstrap/linux-gpu.sh build`, `up`, and `status` completed, with
 `status` reporting `runtimeMode: linux-gpu`, `lifecyclePhase: steady-state`, 2 Kubernetes nodes,
-and 79 pods. The remaining work is the Apple host lifecycle validation pass.
+and 79 pods. The remaining work is the Apple host lifecycle run queued for the next Apple cohort
+validation batch.
 
 ## Storage Doctrine
 
@@ -523,7 +524,7 @@ None.
 
 ---
 
-## Sprint 2.13: Cluster Lifecycle Host-Manifest Retirement [Active — code landed, Apple validation pending]
+## Sprint 2.13: Cluster Lifecycle Host-Manifest Retirement [Active - code landed, Apple cohort pending]
 
 **Status**: Active
 **Blocked by**: Phase 1 Sprint 1.11 (Host Manifest Materialization)
@@ -625,7 +626,7 @@ The Phase 2 forbidden-env grep gate
 returns only documented-retirement comment references — no live
 reads remain.
 
-Pending closure (deferred and named so the sprint status stays
+Pending closure (queued and named so the sprint status stays
 honest):
 
 - **Bare-name `proc "<command>"` retirement across `Cluster.hs`,
@@ -679,7 +680,7 @@ cluster command helpers resolve known tools through the staged host manifest, an
 `Cluster/PublishImages.hs` receives resolved `docker` + `skopeo` commands through
 `HarborPublishOptions`. The env-clean `linux-gpu` cluster validation passed May 27, 2026 after
 the compose Docker-config bind mount regression was removed. Apple host lifecycle validation
-remains deferred to the Apple Silicon pass. Sprints 2.1–2.12 closed.
+remains queued for the next Apple Silicon cohort batch. Sprints 2.1–2.12 closed.
 
 ---
 

@@ -125,7 +125,7 @@ operations have a buildx-capable CLI when needed.
   `./.build/infernix` and `./.build/infernix-demo` binaries locally, uses `./.build/infernix` for
   ordinary operator commands and the host inference daemon, keeps the routed demo workload
   cluster-resident when `demo_ui` is enabled, and runs host-native routed E2E through host
-  `npm exec` with the same typed fixture when the Apple validation pass exercises it
+  `npm exec` with the same typed fixture during Apple cohort validation batches
 
 ## Unsupported Usage
 

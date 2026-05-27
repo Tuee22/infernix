@@ -40,7 +40,8 @@ execution run from the cluster-resident substrate image.
 On Linux, the substrate image owns the web build prerequisites, the baked `web/dist/` bundle,
 Playwright system packages, and the browser engines. Routed Playwright execution runs inside that
 same image with `npm --prefix web exec -- playwright test`. On Apple Silicon, host-native routed
-E2E uses host `npm exec` with the same typed fixture and awaits the Apple validation pass.
+E2E uses host `npm exec` with the same typed fixture and is covered by the Apple cohort
+validation batch.
 
 ## PureScript Application
 
@@ -71,7 +72,8 @@ E2E uses host `npm exec` with the same typed fixture and awaits the Apple valida
   submission, object-reference results, daemon-location reporting, inference-executor reporting,
   and inference-dispatch-mode reporting
 - supported routed E2E on Linux uses Playwright from the substrate image; Apple host-native E2E
-  uses host `npm exec` with the same typed fixture and awaits the Apple validation pass
+  uses host `npm exec` with the same typed fixture and is covered by the Apple cohort validation
+  batch
 
 ## Durable Context Surface
 

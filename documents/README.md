@@ -45,8 +45,8 @@
 - [development/frontend_contracts.md](development/frontend_contracts.md) records the Haskell-owned
   PureScript contract-generation path and browser-visible catalog contract
 - [development/testing_strategy.md](development/testing_strategy.md) records operator-facing
-  validation-lane detail, active-substrate selection, and implemented coverage beneath the canonical testing
-  doctrine
+  validation-lane detail, active-substrate selection, hardware-cohort cadence, and implemented
+  coverage beneath the canonical testing doctrine
 - [development/chaos_testing.md](development/chaos_testing.md) records the current HA-failure
   validation status and the Phase 6 ownership for that coverage
 - [development/demo_app_test_plan.md](development/demo_app_test_plan.md) defines the unit,

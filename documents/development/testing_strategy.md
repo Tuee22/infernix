@@ -15,6 +15,8 @@ mode-specific coverage, matrix behavior, and operator detail behind those canoni
   `linux-gpu` validate through the Linux outer-container control plane
 - the active staged substrate remains the source of truth for validation scope, generated catalog
   selection, and routed demo-surface expectations
+- phase work validates on the current hardware cohort first, then batches the counterpart Apple
+  Silicon or CUDA Linux full-suite run at phase closure
 - the auxiliary routed-prefix checks require the live Harbor, MinIO, and Pulsar upstream
   responses on the shared edge
 
@@ -27,6 +29,8 @@ mode-specific coverage, matrix behavior, and operator detail behind those canoni
 - the implemented lifecycle progress surface now persists the active phase, child operation, and
   heartbeat in `cluster status` while supported `cluster up` or `cluster down` work is still in
   flight
+- active phase docs record hardware-cohort residuals explicitly when one machine has validated and
+  the counterpart Apple Silicon or CUDA Linux closure batch remains
 
 ## Validation Layers
 
@@ -56,6 +60,23 @@ mode-specific coverage, matrix behavior, and operator detail behind those canoni
   host disk headroom for Kind image preload, Harbor-backed image publication, and Pulsar
   BookKeeper durability; low disk headroom can block `infernix-service` readiness after cluster
   creation even when the NVIDIA preflight passes
+
+## Hardware Cohort Cadence
+
+The validation plan minimizes switching between the Apple Silicon and CUDA-capable Linux hosts.
+
+- Work that is naturally Apple-owned validates locally with the Apple host-native bootstrap and
+  direct `./.build/infernix` commands, then queues the CUDA Linux cohort for the next phase
+  closure batch.
+- Work that is naturally Linux, CUDA, chart, or outer-container owned validates locally with the
+  `linux-gpu` bootstrap and Compose-launched `infernix`, then queues the Apple Silicon cohort for
+  the next phase closure batch.
+- The counterpart cohort runs after a coherent phase slice is ready, not after every small sprint.
+- Full phase closure requires both cohorts to run the relevant complete gates against the same
+  phase state; one cohort passing leaves an explicit residual instead of silently claiming full
+  cross-hardware evidence.
+- `linux-cpu` remains a portable check and a fallback substrate, but it is not the CUDA Linux
+  cohort for GPU-sensitive work.
 
 ## Lifecycle Interpretation
 
@@ -122,7 +143,7 @@ mode-specific coverage, matrix behavior, and operator detail behind those canoni
   inference through the cluster-daemon-to-host-daemon batch path
 - the supported Linux routed E2E path uses Playwright from the substrate image with
   `npm --prefix web exec -- playwright test`; Apple host-native routed E2E uses host
-  `npm exec` with the same typed fixture and awaits the Apple validation pass
+  `npm exec` with the same typed fixture and is covered by the Apple cohort validation batch
 - on the Linux lane, routed E2E targets the Kind control-plane DNS on Docker's private `kind`
   network instead of `host.docker.internal`
 - supported Playwright launchers clear conflicting `NO_COLOR` and `FORCE_COLOR` values from the

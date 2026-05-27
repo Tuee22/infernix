@@ -32,9 +32,11 @@ parallel long-form workflow contracts.
 
 - prefer the supported stage-0 bootstrap entrypoints:
   `./bootstrap/apple-silicon.sh`, `./bootstrap/linux-cpu.sh`, and `./bootstrap/linux-gpu.sh`
-- use direct host builds:
+- use direct host builds only for the Apple Silicon host-native control plane:
   `cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes`
-- on the supported Linux outer-container path, lifecycle commands are invoked as
+- on supported Linux and CUDA paths, do not build or validate with host `cabal`; use the
+  containerized Linux outer-control-plane path through `./bootstrap/linux-cpu.sh`,
+  `./bootstrap/linux-gpu.sh`, or
   `docker compose run --rm infernix infernix <command>`; the bootstrap does not manage Kind or
   images directly
 - preserve the distinction between current implementation state and the target platform contract in

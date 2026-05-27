@@ -15,6 +15,9 @@
   rewriting tracked source or substituting another lane.
 - Integration and routed E2E coverage derive their target set from the active generated catalog,
   so changing the staged substrate changes the exercised entries automatically.
+- Cross-hardware validation is cohort-based: day-to-day phase work validates on the current
+  Apple Silicon or CUDA Linux machine, and the counterpart machine's full-suite run is batched at
+  phase closure.
 - Monitoring is not a supported first-class surface, so no validation entrypoint claims to gate
   dashboards, scrape config, or alerting behavior.
 
@@ -34,6 +37,11 @@
   container-toolkit setup
 - real-cluster `linux-gpu` validation also expects enough disk headroom for Kind image preload,
   Harbor-backed rollout, and Pulsar BookKeeper durability
+- phase-local validation should run on the machine that owns the changed path; full
+  cross-hardware closure requires both the Apple Silicon and CUDA Linux cohorts to rerun the
+  relevant full-suite gates against the same phase state
+- `linux-cpu` validation may be used as a portable CPU-only check, but it does not substitute for
+  `linux-gpu` when GPU behavior is in scope
 
 ## Lifecycle Failure Classification
 
@@ -95,6 +103,9 @@ moving, not hard product failure. The May 15 and May 17 lifecycle reruns also va
   conflicting `NO_COLOR` and `FORCE_COLOR` pairs before the child process starts.
 - `infernix test all` proves that the repository passes the supported aggregate validation flow for
   the active staged substrate without dropping any layer.
+- phase closure evidence records the host cohort that ran it; one cohort passing may leave a named
+  counterpart-cohort residual, but `Done` requires the relevant Apple Silicon and CUDA Linux
+  closure runs.
 
 ## Unsupported Paths
 
@@ -104,6 +115,8 @@ moving, not hard product failure. The May 15 and May 17 lifecycle reruns also va
 - silently narrowing integration or E2E coverage to one representative model when the generated
   active-mode catalog contains more entries
 - quietly swapping to another runtime mode when required substrate preflights are absent
+- claiming cross-hardware closure from one host cohort, or requiring developers to alternate
+  machines for every sprint instead of batching counterpart validation at a phase boundary
 - treating monitoring dashboards, metrics stacks, or scrape configuration as a supported gated
   contract in the current repository state
 
@@ -137,4 +150,7 @@ moving, not hard product failure. The May 15 and May 17 lifecycle reruns also va
   bridge rather than treating an in-cluster pod as the Apple-native inference executor
 - `infernix test e2e` requires Docker on Linux substrates and has no host-native npm fallback
   path there; Apple host-native routed E2E uses host `npm exec` with the same typed fixture
-  and awaits the Apple validation pass
+  and is covered by the Apple cohort validation batch
+- full cross-hardware validation is complete only when the Apple Silicon host-native lane and the
+  CUDA Linux `linux-gpu` lane have both run their relevant closure gates; `linux-cpu` is an
+  additional portable lane when CPU-specific behavior changes

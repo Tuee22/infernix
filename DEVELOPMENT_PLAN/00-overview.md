@@ -94,6 +94,7 @@ with bounded retries across transient registry resets.
 | Demo UI gating | the staged substrate file can disable the clustered demo surface | implemented; the supported materialization path accepts `--demo-ui false` |
 | Simulation stance | no simulated cluster, route, or generic inference-success fallback remains in the supported runtime or validation contract, and routed Pulsar checks require the real Gateway-backed upstream | implemented and validated; inference execution goes through typed adapter harnesses, unsupported adapters fail fast, and the remaining repo-local topic spool under `./.data/runtime/pulsar/` is a harness-only path for unit-level or intentionally endpoint-absent daemon checks |
 | Validation scope | integration uses one `.dhall`-driven suite over the README matrix, E2E stays substrate-agnostic at the browser layer, and `test all` runs every supported validation layer for one built substrate at a time | implemented and validated across the governed Linux and Apple lifecycle reruns |
+| Hardware cohort cadence | phase work validates first on the current Apple Silicon or CUDA Linux machine, then batches counterpart full-suite validation at phase closure so contributors do not switch machines after every sprint | implemented in the plan doctrine; active phase documents name the validated cohort and any queued counterpart cohort residual explicitly |
 
 Monitoring is not a supported first-class surface.
 
@@ -201,6 +202,10 @@ the only daemon Deployment present is `infernix-engine`.
   mandatory doctrine
 - supported validation is substrate-specific: integration, E2E, and `test all` run the complete
   supported suites against the built and deployed substrate and report that substrate explicitly
+- phase validation is hardware-cohort based: Apple Silicon and CUDA Linux can each carry local
+  development plus active-substrate validation without alternating hosts for every sprint, and
+  `Done` phase closure batches the counterpart host run so both machines validate the same phase
+  state
 - the supported control plane keeps one Haskell command registry,
   imperative cluster or host prerequisite orchestration, the current `ormolu` plus `hlint` plus
   `cabal format` style stack,
@@ -439,8 +444,8 @@ The plan keeps control-plane execution context separate from substrate.
 - Apple host-native control plane is the canonical operator surface on Apple Silicon
 - Linux outer-container control plane is the only supported Linux CLI surface
 - Apple operators do not use Compose as a user-facing launcher for ordinary CLI work; the
-  routed Apple-host E2E surface is deferred (see Hard Constraint 10) until the host-native
-  `npm exec` Playwright refactor lands
+  routed Apple-host E2E surface uses host `npm exec` and is covered by Apple cohort validation
+  batches
 - Linux host-native `infernix` execution outside a container is not a supported operator workflow
 
 ### 3. Three Supported Substrates
@@ -567,8 +572,8 @@ The plan keeps control-plane execution context separate from substrate.
   `npm --prefix web exec -- playwright test ...` against the routed cluster on Docker's private
   `kind` network
 - on Apple Silicon, host-native E2E now uses host `npm exec` Playwright fed by the same typed
-  fixture against the published localhost edge port; the real run remains pending for the Apple
-  validation pass
+  fixture against the published localhost edge port; real execution is recorded by Apple cohort
+  validation batches
 - browser and Playwright code do not branch on substrate id or engine family; `infernix-demo`
   reads the active `.dhall` and owns substrate-appropriate engine dispatch
 - supported workflows use `npm --prefix web exec -- playwright ...`; `npx` is not part of the

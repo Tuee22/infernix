@@ -114,8 +114,8 @@
   supported suites against the active substrate encoded in the generated `.dhall`
 - `infernix test e2e` uses the Playwright runtime baked into the Linux launcher image on Linux
   substrates and invokes `npm --prefix web exec -- playwright test` from inside the outer
-  container against Docker's private `kind` network; the Apple host-native npm lane remains
-  deferred to the Apple-validation pass. Apple host-native flows reconcile `kind`, `kubectl`,
+  container against Docker's private `kind` network; the Apple host-native npm lane is covered by
+  the Apple cohort validation batch. Apple host-native flows reconcile `kind`, `kubectl`,
   `helm`, Node.js, and Poetry on demand after `./.build/infernix` exists, and Linux flows rely on
   the documented outer-container
   host baseline

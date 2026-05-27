@@ -1,6 +1,6 @@
 # Phase 1: Repository and Control-Plane Foundation
 
-**Status**: Active (Sprint 1.11 in flight; Sprints 1.1–1.10 Done)
+**Status**: Active (Sprint 1.11 Linux cohort validated; Apple cohort queued; Sprints 1.1–1.10 Done)
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/engineering/host_tools_manifest.md](../documents/engineering/host_tools_manifest.md)
 
 > **Purpose**: Establish the canonical repository scaffold, the two-binary topology
@@ -25,7 +25,8 @@ record. The Linux bootstrap entrypoints now use the `PATH=/usr/bin:/bin` + `BASH
 `/etc/passwd` + hardcoded absolute-path discovery convention, and the Linux launcher image bakes
 the Helm dependency archive cache at `/opt/infernix/chart/charts/` with
 `/workspace/chart/charts` linked to that image-local cache for Helm compatibility. The Apple
-bootstrap entrypoint remains deferred to the Apple validation pass.
+bootstrap entrypoint remains queued for the next Apple cohort validation batch so contributors do
+not need to switch machines before the Linux-owned slice is complete.
 
 ## Current Repo Assessment
 
@@ -663,13 +664,13 @@ Linux residuals landed and validated May 27, 2026:
   the previously-retired `ENV INFERNIX_BUILD_ROOT=...` directive
   with the typed Dhall manifest the doctrine actually demands.
 
-Pending closure (deferred to the Apple validation pass, named so closure status stays
+Pending closure (queued for the Apple cohort validation batch, named so closure status stays
 honest):
 
-- **Apple bootstrap script (`bootstrap/apple-silicon.sh`).** Deferred
-  to the Apple-host validation pass per the active-substrate priority.
+- **Apple bootstrap script (`bootstrap/apple-silicon.sh`).** Queued
+  for the Apple cohort closure batch per the hardware-cohort cadence.
   The shared `bootstrap/common.sh` `--yes` flag wiring already covers
-  the Apple lane when it lands.
+  the Apple lane when that batch runs.
 
 ---
 
@@ -677,8 +678,8 @@ honest):
 
 Sprint 1.11 partially landed (foundational schema + decoder + helper +
 materializer + unit tests). The Linux residuals named above are landed and validated; the only
-pending closure is the Apple bootstrap script deferred to the Apple-host validation pass. Sprints
-1.1–1.10 closed.
+pending closure is the Apple bootstrap script queued for the Apple cohort validation batch.
+Sprints 1.1–1.10 closed.
 
 ## Documentation Requirements
 

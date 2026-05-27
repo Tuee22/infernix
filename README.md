@@ -438,6 +438,17 @@ edge port plus the published route inventory, and the demo UI is available at
 validation layer for the currently staged substrate; full repository substrate closure is obtained
 by restaging and rerunning the same complete suite for each supported substrate.
 
+Development and validation are organized by hardware cohort to avoid needless machine switching.
+Work on a phase can stay on the current machine until a coherent slice is ready: Apple-specific
+work validates through the Apple Silicon host-native lane, and Linux or CUDA work validates on the
+CUDA-capable Linux lane. Phase closure batches the counterpart host run, so full cross-hardware
+evidence comes from one Apple Silicon full-suite pass and one CUDA Linux full-suite pass against
+the same phase state rather than alternating machines for every sprint.
+
+Direct host `cabal install --installdir=./.build ... all:exes` is the Apple Silicon host-native
+reference path only. On Linux CPU and Linux GPU, build, lifecycle, docs lint, and validation
+commands run through the outer-container launcher.
+
 - `infernix test lint`
 - `infernix test unit`
 - `infernix test integration`
@@ -709,7 +720,7 @@ contracts.
   system packages, and the three browser engines; `infernix test e2e` runs
   `npm --prefix web exec -- playwright test` inside that same image
 - the Apple Silicon host-native routed-E2E executor uses host `npm exec` with the same typed
-  fixture path as Linux and awaits the Apple validation pass
+  fixture path as Linux and is covered by the Apple cohort validation batch
 - the `infernix-demo` workload is deployed through repo-owned Helm chart templates and values, and
   is gated by the `.dhall` `demo_ui` flag; production deployments leave it off
 - the demo UI catalog is derived from the generated mode-specific demo `.dhall` file for the active

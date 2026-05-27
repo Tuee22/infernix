@@ -239,7 +239,7 @@ browser surface through the shared edge.
   into `docker/linux-substrate.Dockerfile`, and moved Linux-substrate routed E2E to in-container
   `npm --prefix web exec -- playwright test ...` against the routed cluster on Docker's private
   `kind` network. The Apple host-native routed-E2E executor now uses host `npm exec` with the
-  same typed fixture and awaits the Apple validation pass.
+  same typed fixture and is covered by Apple cohort validation batches.
 - the previous `INFERNIX_PLAYWRIGHT_NETWORK`, `INFERNIX_EDGE_PORT`, `INFERNIX_PLAYWRIGHT_HOST`,
   `INFERNIX_EXPECT_DAEMON_LOCATION`, `INFERNIX_EXPECT_INFERENCE_DISPATCH_MODE`, and
   `INFERNIX_EXPECT_API_UPSTREAM_MODE` env vars are retired by Sprint 3.10; the same spec covers
@@ -882,7 +882,7 @@ integration and E2E ownership in the final `.dhall`-driven terms.
   daemon is needed
 - Apple host-native `test e2e` is launched from the host CLI; the host-native Playwright executor
   now uses host `npm exec` fed by the same typed fixture against the published localhost edge port,
-  with the real run still pending the Apple validation pass
+  with real execution recorded by Apple cohort validation batches
 - Linux substrate test commands all run through `docker compose run --rm infernix infernix ...`,
   and those flows do not manage a host daemon because request consumption, inference, and result
   publication all run from cluster daemons

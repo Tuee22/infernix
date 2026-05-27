@@ -311,7 +311,7 @@ Rules:
   configuration source.
 - On Apple Silicon, operators do not use Compose as a user-facing launcher for ordinary CLI work.
   Host-native routed E2E uses host `npm exec` Playwright fed by the same typed fixture against the
-  published localhost edge port and still needs the Apple validation pass. Phase 3 Sprint 3.10
+  published localhost edge port and is covered by Apple cohort validation batches. Phase 3 Sprint 3.10
   (May 24, 2026) retired the previous dedicated `infernix-playwright:local` image and the
   `docker compose run --rm playwright` invocation; Linux substrates now run Playwright in-container
   inside the substrate image via `npm --prefix web exec -- playwright test ...`.
@@ -573,7 +573,7 @@ Substrate-specific validation is explicit.
   Apple-native inference, validates the Pulsar batch handoff from cluster daemon to host daemon, and
   verifies that the host daemon publishes the result; host-native routed E2E now uses host
   `npm exec` Playwright fed by the same typed fixture against the published localhost edge port and
-  still needs the Apple validation pass.
+  is covered by Apple cohort validation batches.
 - On Linux substrates, all supported CLI and test commands run through
   `docker compose run --rm infernix infernix ...`, and test flows do not manage a host daemon
   because request consumption, inference, and result publication all run from deployed cluster
@@ -585,7 +585,40 @@ Substrate-specific validation is explicit.
   the built substrate. Repository closure requires separate substrate-specific reruns instead of
   one default matrix run that silently covers Apple, CPU, and GPU together.
 
-### Q. Haskell Quality Gate Contract
+### Q. Hardware Cohort Validation Cadence
+
+Phase work is planned around hardware cohorts, not repeated machine hopping.
+
+Definitions:
+
+- **Apple cohort:** the Apple Silicon host-native workflow through
+  `./bootstrap/apple-silicon.sh ...` or direct `./.build/infernix ...` commands.
+- **CUDA Linux cohort:** the CUDA-capable Linux workflow through
+  `./bootstrap/linux-gpu.sh ...` or the Compose-launched
+  `docker compose run --rm infernix infernix ...` command surface.
+- **Portable CPU lane:** the `linux-cpu` outer-container workflow. It may validate CPU-only
+  behavior from either host, but it does not replace the CUDA Linux cohort when GPU behavior,
+  CUDA image construction, `nvkind`, or NVIDIA scheduling is in scope.
+
+Rules:
+
+- Sprint development and first validation should be possible on the machine that owns the changed
+  path. A phase must not require alternating between Apple Silicon and CUDA Linux after every
+  sprint.
+- Sprint `Validation` sections distinguish local cohort gates from counterpart cohort closure
+  when hardware-specific evidence is required.
+- A phase may stay `Active` with an explicit `Apple cohort pending` or
+  `CUDA Linux cohort pending` residual after one cohort validates, but it cannot move to `Done`
+  until both relevant hardware cohorts have run their full-suite gates against the same phase
+  state.
+- The paired closure batch is the preferred switching boundary: finish a coherent phase slice on
+  one machine, record that evidence, then run the counterpart machine's full validation once for
+  the batch.
+- Current-state text in `DEVELOPMENT_PLAN/README.md`, `00-overview.md`, and each affected phase
+  document must name which cohort has validated and which cohort remains, rather than describing
+  a vague deferred validation pass.
+
+### R. Haskell Quality Gate Contract
 
 Static quality and compiler hygiene are first-class repository requirements.
 
@@ -617,7 +650,7 @@ Static quality and compiler hygiene are first-class repository requirements.
 - If the repository later adopts additional external formatters or linters, the plan must be updated
   atomically with that implementation change so the named tools match reality.
 
-### R. Supported Control-Plane Architecture Contract
+### S. Supported Control-Plane Architecture Contract
 
 The standards govern current repository truth, not imported doctrine. When the plan names control-
 plane architecture patterns, they must match the implementation that actually exists in the
@@ -646,7 +679,7 @@ worktree and the governed docs that describe it.
   `lint chart`, and `docs check` behavior. The plan must not claim broader generated-path or
   negative-space registries until the implementation actually carries them.
 
-### S. Imported Practices and Explicit Non-Adoption
+### T. Imported Practices and Explicit Non-Adoption
 
 When the plan cites another repository or doctrine, it must distinguish imported maintenance ideas
 from unsupported product features, runtime surfaces, or validation requirements.
@@ -659,7 +692,7 @@ from unsupported product features, runtime surfaces, or validation requirements.
   completion criteria unless the repository later implements them and updates the plan, governed
   docs, and validation surface in the same change.
 
-### T. No Environment Variables, No PATH
+### U. No Environment Variables, No PATH
 
 The supported control plane owns every runtime setting through typed `.dhall` configuration files
 read natively by the `dhall` Haskell library, and owns every external command invocation through
@@ -726,7 +759,7 @@ The canonical home for this doctrine is
 [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md);
 this plan rule cross-references it as the authoritative source.
 
-### U. Host Tools Manifest
+### V. Host Tools Manifest
 
 `dhall/InfernixHost.dhall` is the authoritative inventory of every external command the project
 ever invokes. The schema is a typed record whose fields enumerate each tool by absolute path.

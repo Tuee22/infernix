@@ -34,7 +34,7 @@ The demo UI is served by the `infernix-demo` Haskell binary and gated by the act
   active Linux substrate image build, both on Node.js 22.5+
 - supported routed Playwright E2E on Linux stays container-owned inside the substrate image with
   `npm --prefix web exec -- playwright test`; Apple host-native routed E2E uses host
-  `npm exec` with the same typed fixture and awaits the Apple validation pass
+  `npm exec` with the same typed fixture and is covered by the Apple cohort validation batch
 - the substrate image copies `web/scripts/` before npm `postinstall`, so the official PureScript
   compiler acquisition path is available in the image build context
 

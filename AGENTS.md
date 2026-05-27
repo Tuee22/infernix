@@ -25,7 +25,12 @@ Read first:
 - keep `DEVELOPMENT_PLAN/` truthful as implementation status changes
 - update `README.md`, `AGENTS.md`, and `CLAUDE.md` together when root workflow guidance or the
   supported bootstrap entrypoints change
-- run `infernix lint docs` before closing documentation changes
+- run `infernix lint docs` before closing documentation changes, using the active execution
+  context: direct `./.build/infernix` only on Apple Silicon, and the Linux outer-container
+  launcher for `linux-cpu` or `linux-gpu`
+- do not use host `cabal` builds for Linux or CUDA validation; direct
+  `cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes`
+  is the Apple Silicon host-native reference path only
 - no Haskell `lookupEnv` / `getEnv` / `setEnv` calls in new code; no `proc "<bare-name>"`
   external invocations; no `env:` blocks in infernix-owned chart templates; no `process.env` or
   `os.environ` reads in web / Python code. The supported configuration substrate is the typed
