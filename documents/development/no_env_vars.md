@@ -25,7 +25,7 @@
 
 ```haskell
 -- BAD: env-var consumption
-maybeEndpoint <- lookupEnv "INFERNIX_MINIO_ENDPOINT"
+maybeEndpoint <- lookupEnv "LEGACY_MINIO_ENDPOINT"
 let endpoint = fromMaybe "http://localhost:9000" maybeEndpoint
 
 -- GOOD: typed config from ClusterConfig
@@ -55,7 +55,7 @@ enum has one constructor per tool listed in
 
 ```haskell
 -- BAD: setEnv-driven test isolation
-setEnv "INFERNIX_DATA_ROOT" "/tmp/test-data-123"
+setEnv "LEGACY_DATA_ROOT" "/tmp/test-data-123"
 
 -- GOOD: typed HostConfig override for the test
 let testHostConfig = baseHostConfig
@@ -74,7 +74,7 @@ and passes the typed JSON config blob on stdin. The adapter parses it once at st
 ```python
 # BAD: env-var consumption
 import os
-endpoint = os.environ.get("INFERNIX_MINIO_ENDPOINT", "http://localhost:9000")
+endpoint = os.environ.get("LEGACY_MINIO_ENDPOINT", "http://localhost:9000")
 
 # GOOD: stdin config blob
 import json, sys
@@ -91,7 +91,7 @@ Dhall-decoded JSON file written at test setup. The test reads `test.info().proje
 
 ```javascript
 // BAD: process.env consumption
-const edgePort = process.env.INFERNIX_EDGE_PORT || "9090";
+const edgePort = process.env.LEGACY_EDGE_PORT || "9090";
 
 // GOOD: Playwright fixture
 test("…", async ({ page }, testInfo) => {
@@ -134,7 +134,7 @@ spec:
   containers:
     - name: infernix-demo
       env:
-        - name: INFERNIX_MINIO_ENDPOINT
+        - name: LEGACY_MINIO_ENDPOINT
           value: "http://infernix-minio.platform.svc.cluster.local:9000"
 
 # GOOD: ConfigMap + Secret mount
@@ -175,8 +175,9 @@ Phase 6 Sprint 6.28 adds these gates:
 - `src/Infernix/Lint/HaskellStyle.hs.disallowedProcCommands` — rejects
   `proc "<bare-name>"` whose name matches a tool in
   `dhall/InfernixHost.dhall`.
-- `src/Infernix/Lint/Docs.hs` — rejects any governed doc with `INFERNIX_*` or `$PATH`
-  substrings outside the legacy-tracking ledger and the documented exception docs.
+- `src/Infernix/Lint/Docs.hs` — rejects governed-doc language that presents project-prefixed env
+  names or shell path overrides as supported operator configuration outside the legacy-tracking
+  ledger and documented exception docs.
 - `src/Infernix/Lint/Chart.hs` — rejects any `env:` block in
   `chart/templates/deployment-{coordinator,engine,demo}.yaml`.
 

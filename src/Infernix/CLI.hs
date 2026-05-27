@@ -32,6 +32,8 @@ import Infernix.DemoConfig
   )
 import Infernix.Error (InfernixError (EdgePortNotPublished))
 import Infernix.HostPrereqs (ensureAppleHostPrerequisites)
+import Infernix.HostTools (HostTool (..))
+import Infernix.HostTools qualified as HostTools
 import Infernix.Lint.Chart (runChartLint)
 import Infernix.Lint.Docs (runDocsLint)
 import Infernix.Lint.Files (runFilesLint)
@@ -135,8 +137,9 @@ dispatch command =
       mapM_ (putStrLn . renderPersistentClaimLine) =<< discoverChartClaimsFile renderedChartPath
     InternalDiscoverHarborOverlayCommand overlayPath ->
       mapM_ putStrLn =<< discoverHarborOverlayImageRefsFile overlayPath
-    InternalPublishChartImagesCommand renderedChartPath outputPath ->
-      PublishImages.publishChartImagesFile PublishImages.defaultHarborPublishOptions (\_ -> pure Nothing) renderedChartPath outputPath
+    InternalPublishChartImagesCommand renderedChartPath outputPath -> do
+      paths <- discoverPaths
+      PublishImages.publishChartImagesFile (harborPublishOptionsForPaths paths) (\_ -> pure Nothing) renderedChartPath outputPath
     InternalMaterializeSubstrateCommand runtimeMode demoUiEnabledValue -> do
       paths <- discoverPaths
       ensureRepoLayout paths
@@ -212,6 +215,23 @@ ensureActiveSubstrateFile = do
 
 configuredRuntimeMode :: Paths -> IO RuntimeMode
 configuredRuntimeMode = targetRuntimeModeForExecutionContext
+
+harborPublishOptionsForPaths :: Paths -> PublishImages.HarborPublishOptions
+harborPublishOptionsForPaths paths =
+  PublishImages.defaultHarborPublishOptions
+    { PublishImages.harborDockerCommand = hostToolPathOrName paths HostDocker,
+      PublishImages.harborSkopeoCommand = hostToolPathOrName paths HostSkopeo
+    }
+
+hostToolPathOrName :: Paths -> HostTool -> FilePath
+hostToolPathOrName paths tool =
+  case pathsHostConfig paths of
+    Just hostConfig ->
+      let candidate = HostTools.hostToolPath hostConfig tool
+       in if Text.null candidate
+            then Text.unpack (HostTools.hostToolName tool)
+            else Text.unpack candidate
+    Nothing -> Text.unpack (HostTools.hostToolName tool)
 
 runLint :: Maybe RuntimeMode -> IO ()
 runLint maybeRuntimeMode = do
@@ -610,7 +630,7 @@ runPythonQualityIfPresent maybeRuntimeMode = do
     poetryExecutable <- ensurePoetryExecutable paths
     runCommandWithCwdAndEnv
       maybeRuntimeMode
-      [("POETRY_VIRTUALENVS_IN_PROJECT", "true")]
+      []
       poetryExecutable
       ["--directory", projectDirectory, "run", "check-code"]
       projectDirectory

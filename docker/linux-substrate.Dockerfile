@@ -20,7 +20,7 @@ ARG HELM_VERSION=v3.18.6
 ARG UBUNTU_APT_MIRROR=http://mirrors.edge.kernel.org/ubuntu/
 ARG TARGETARCH
 
-# Phase 1 Sprint 1.11 — INFERNIX_BUILD_ROOT removed. The Haskell binary
+# Phase 1 Sprint 1.11 — the build-root env override was removed. The Haskell binary
 # discovers its build root through 'discoverPaths' (cwd-walk + optional
 # host-manifest lookup) instead of consuming a process-inherited env
 # var. The supported in-image build root is the convention default
@@ -69,6 +69,7 @@ RUN apt-get update \
         python3-dev \
         python3-pip \
         python3-venv \
+        skopeo \
         tini \
         xz-utils \
         zlib1g-dev \
@@ -166,6 +167,7 @@ RUN printf '%s\n' \
     '    , chown = "/usr/bin/chown"' \
     '    , nvidiaSmi = "/usr/bin/nvidia-smi"' \
     '    , nvkind = "/usr/local/bin/nvkind"' \
+    '    , skopeo = "/usr/bin/skopeo"' \
     '    , hostname = "/usr/bin/hostname"' \
     '    }' \
     ', filesystem =' \

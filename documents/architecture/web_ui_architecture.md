@@ -37,11 +37,11 @@ stack, while the canonical Apple inference executor remains a host-native `infer
 process that consumes host batches. On Linux substrates, both the demo workload and inference
 execution run from the cluster-resident substrate image.
 
-On Linux, the substrate image owns the web build prerequisites and the baked `web/dist/` bundle.
-Routed Playwright execution lives in a separate dedicated `infernix-playwright:local` image built
-from `docker/playwright.Dockerfile`. On Apple Silicon, the host CLI invokes
-`docker compose run --rm playwright` directly against that dedicated image; on Linux substrates,
-the outer container forwards the same compose invocation through the mounted host docker socket.
+On Linux, the substrate image owns the web build prerequisites, the baked `web/dist/` bundle,
+Playwright system packages, and the browser engines. Routed Playwright execution runs inside that
+same image with `npm --prefix web exec -- playwright test`. On Apple Silicon, the host-native
+routed-E2E executor refactor is deferred and surfaces an explicit diagnostic until the Apple
+validation pass lands it.
 
 ## PureScript Application
 
@@ -71,10 +71,8 @@ the outer container forwards the same compose invocation through the mounted hos
   separately exercises browser UI interaction for publication-detail rendering, model selection,
   submission, object-reference results, daemon-location reporting, inference-executor reporting,
   and inference-dispatch-mode reporting
-- supported routed E2E uses the dedicated `infernix-playwright:local` container on Apple and Linux
-  alike, invoked via `docker compose run --rm playwright`; Apple host-native orchestration reaches
-  it directly while the Linux outer-container path forwards the call through the mounted host
-  docker socket
+- supported routed E2E on Linux uses Playwright from the substrate image; Apple host-native E2E
+  is deferred to the Apple validation pass
 
 ## Durable Context Surface
 

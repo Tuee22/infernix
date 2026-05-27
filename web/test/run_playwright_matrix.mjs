@@ -34,7 +34,7 @@ const result = spawnSync(infernixCommand, ["test", "e2e"], {
   // typed Dhall-backed fixture (see Sprint 3.10's playwright config);
   // no env-var inheritance is required for this launcher wrapper.
   env: {
-    HOME: process.env.HOME ?? "/tmp",
+    HOME: "/tmp",
     PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
     LANG: "C.UTF-8",
     LC_ALL: "C.UTF-8",

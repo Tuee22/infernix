@@ -226,25 +226,15 @@ envFunctionExemptedFiles =
     -- the same workstream and lands together with the
     -- `Cluster.hs`-side @proc@ retirement.
     "src/Infernix/CLI.hs",
-    -- Phase 7 Sprint 7.17 retires the Poetry env reads + the
-    -- @POETRY_VIRTUALENVS_IN_PROJECT@ PATH munging once
-    -- `poetry.toml` ships at the project root.
-    "src/Infernix/Python.hs",
     -- Apple validation pass: the Apple host workflow's
     -- @getEnvironment@ + PATH munging is intentionally deferred
     -- until the user finalizes the Apple lane.
     "src/Infernix/Engines/AppleSilicon.hs",
     "src/Infernix/HostPrereqs.hs",
-    -- Phase 5 Sprint 5.9 pending Python adapter rewire keeps
-    -- @Workflow.hs@'s legacy Python-adapter ready-check together
-    -- with the @proc "node"@ web-build invocation; both close
-    -- together in the focused Python-adapter session.
-    "src/Infernix/Workflow.hs",
-    -- The test harness intentionally injects env vars to exercise
-    -- legacy fallback paths; the test-suite retirement is its own
-    -- Sprint 6.28 work item tracked separately.
-    "test/unit/Spec.hs",
-    "test/integration/Spec.hs"
+    -- Apple validation pass: Poetry bootstrap keeps @POETRY_HOME@
+    -- + @PATH@ compatibility until the user finalizes the Apple
+    -- lane.
+    "src/Infernix/Python.hs"
   ]
 
 -- | Phase 6 Sprint 6.28 (initial landing — May 25, 2026): reject
@@ -286,6 +276,7 @@ forbiddenBareProcCommands =
     "apt-get",
     "brew",
     "colima",
+    "skopeo",
     "sudo",
     "systemctl"
   ]
@@ -303,17 +294,13 @@ bareNameProcExemptedFiles =
     -- @proc "git" ["ls-files"]@ to enumerate the tracked file set
     -- (genuine bootstrap-time call before HostConfig is available).
     "src/Infernix/Lint/Files.hs",
-    -- Apple validation pass.
+    -- Apple validation pass: host prerequisite reconciliation still
+    -- shells out to Homebrew / Colima before the Apple lane is
+    -- finalized.
     "src/Infernix/HostPrereqs.hs",
-    -- See note above in @envFunctionExemptedFiles@.
-    "src/Infernix/Workflow.hs",
-    "src/Infernix/Python.hs",
-    "src/Infernix/CLI.hs",
-    -- Integration test scaffolding uses `proc "python3"` to invoke
-    -- a fixture script. The supported retirement here passes
-    -- through `HostTools` once the integration suite picks up
-    -- typed-fixture threading.
-    "test/integration/Spec.hs"
+    -- Web dependency readiness still probes the host Node executable
+    -- before installing the web toolchain.
+    "src/Infernix/Workflow.hs"
   ]
 
 hangingCaseViolations :: FilePath -> [(Int, String)] -> [String]

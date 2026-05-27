@@ -65,7 +65,9 @@ data HarborPublishOptions = HarborPublishOptions
     harborApiHost :: String,
     harborProject :: String,
     harborUser :: String,
-    harborPassword :: String
+    harborPassword :: String,
+    harborDockerCommand :: FilePath,
+    harborSkopeoCommand :: FilePath
   }
   deriving (Eq, Show)
 
@@ -85,7 +87,9 @@ defaultHarborPublishOptions =
       harborApiHost = "localhost:30002",
       harborProject = "library",
       harborUser = "admin",
-      harborPassword = "Harbor12345"
+      harborPassword = "Harbor12345",
+      harborDockerCommand = "docker",
+      harborSkopeoCommand = "skopeo"
     }
 
 harborPrefixes :: [String]
@@ -163,8 +167,8 @@ publishImage ::
   String ->
   IO (String, PublishedImage)
 publishImage manager options commandMonitorFactory sourceImage = do
-  ensureLocalImageAvailable commandMonitorFactory sourceImage
-  targetTag <- contentAddressTag sourceImage
+  ensureLocalImageAvailable options commandMonitorFactory sourceImage
+  targetTag <- contentAddressTag options sourceImage
   let repositoryPath = normalizeRepositoryPath sourceImage
       publishedRepository = harborHost options <> "/" <> harborProject options <> "/" <> repositoryPath
       clientRepository = harborClientHost options <> "/" <> harborProject options <> "/" <> repositoryPath
@@ -172,9 +176,9 @@ publishImage manager options commandMonitorFactory sourceImage = do
   pure (sourceImage, (publishedRepository, targetTag))
 
 -- type CommandMonitorFactory = String -> IO (Maybe ProcessMonitor.CommandMonitor)
-ensureLocalImageAvailable :: CommandMonitorFactory -> String -> IO ()
-ensureLocalImageAvailable commandMonitorFactory imageRef = do
-  maybePresent <- tryRunCommand "docker" ["image", "inspect", imageRef] ""
+ensureLocalImageAvailable :: HarborPublishOptions -> CommandMonitorFactory -> String -> IO ()
+ensureLocalImageAvailable options commandMonitorFactory imageRef = do
+  maybePresent <- tryRunCommand (harborDockerCommand options) ["image", "inspect", imageRef] ""
   case maybePresent of
     Right _ -> pure ()
     Left _ ->
@@ -194,8 +198,8 @@ ensureLocalImageAvailable commandMonitorFactory imageRef = do
       -- keep the strict requireLocalImagePresent gate because their
       -- pull-then-inspect cycle is the supported readiness signal.
       if isUpstreamMultiArchImage imageRef
-        then pullUpstreamMultiArchImage commandMonitorFactory imageRef
-        else pullImageWithFallback commandMonitorFactory imageRef
+        then pullUpstreamMultiArchImage options commandMonitorFactory imageRef
+        else pullImageWithFallback options commandMonitorFactory imageRef
   -- Phase 7 Sprint 7.7 follow-on: with Docker 29.x + the containerd
   -- snapshotter image store, @docker push@ of a multi-arch upstream
   -- image fails with "image with reference X was found but does not
@@ -208,7 +212,7 @@ ensureLocalImageAvailable commandMonitorFactory imageRef = do
   -- specific digest, and re-tag it under the original tag name so the
   -- subsequent @docker push@ sees a single-platform local image.
   when (isUpstreamMultiArchImage imageRef) $
-    pinLocalImageToAmd64 commandMonitorFactory imageRef
+    pinLocalImageToAmd64 options commandMonitorFactory imageRef
 
 -- | Pull a multi-arch upstream image without requiring the post-pull
 -- inspect to succeed. The supported invariant is that @docker pull@
@@ -216,33 +220,33 @@ ensureLocalImageAvailable commandMonitorFactory imageRef = do
 -- 'pushUpstreamMultiArchViaImagetools') handles the
 -- containerd-snapshotter-specific inspectability gap.
 -- type CommandMonitorFactory = String -> IO (Maybe ProcessMonitor.CommandMonitor)
-pullUpstreamMultiArchImage :: CommandMonitorFactory -> String -> IO ()
-pullUpstreamMultiArchImage commandMonitorFactory imageRef = do
+pullUpstreamMultiArchImage :: HarborPublishOptions -> CommandMonitorFactory -> String -> IO ()
+pullUpstreamMultiArchImage options commandMonitorFactory imageRef = do
   pullMonitor <- commandMonitorFactory ("docker pull " <> imageRef)
-  pullResult <- tryRunCommandMaybeMonitored "docker" ["pull", imageRef] "" pullMonitor
+  pullResult <- tryRunCommandMaybeMonitored (harborDockerCommand options) ["pull", imageRef] "" pullMonitor
   case pullResult of
     Right _ -> pure ()
     Left pullFailure ->
       failWith ("docker pull failed for " <> imageRef <> "\n" <> pullFailure)
 
 -- type CommandMonitorFactory = String -> IO (Maybe ProcessMonitor.CommandMonitor)
-pullImageWithFallback :: CommandMonitorFactory -> String -> IO ()
-pullImageWithFallback commandMonitorFactory imageRef = do
+pullImageWithFallback :: HarborPublishOptions -> CommandMonitorFactory -> String -> IO ()
+pullImageWithFallback options commandMonitorFactory imageRef = do
   initialMonitor <- commandMonitorFactory ("docker pull " <> imageRef)
-  pullResult <- tryRunCommandMaybeMonitored "docker" ["pull", imageRef] "" initialMonitor
+  pullResult <- tryRunCommandMaybeMonitored (harborDockerCommand options) ["pull", imageRef] "" initialMonitor
   case pullResult of
-    Right _ -> requireLocalImagePresent imageRef ("docker pull completed for " <> imageRef <> ", but the image is still not inspectable locally")
+    Right _ -> requireLocalImagePresent options imageRef ("docker pull completed for " <> imageRef <> ", but the image is still not inspectable locally")
     Left pullFailure ->
       case dockerHubMirrorRef imageRef of
         Nothing ->
           failWith ("docker pull failed for " <> imageRef <> "\n" <> pullFailure)
         Just mirrorRef -> do
           mirrorMonitor <- commandMonitorFactory ("docker pull " <> mirrorRef)
-          mirrorPullResult <- tryRunCommandMaybeMonitored "docker" ["pull", mirrorRef] "" mirrorMonitor
+          mirrorPullResult <- tryRunCommandMaybeMonitored (harborDockerCommand options) ["pull", mirrorRef] "" mirrorMonitor
           case mirrorPullResult of
             Right _ -> do
-              runCommand "docker" ["tag", mirrorRef, imageRef] ""
-              requireLocalImagePresent imageRef ("mirror pull completed for " <> mirrorRef <> ", but " <> imageRef <> " is still not inspectable locally after tagging")
+              runCommand (harborDockerCommand options) ["tag", mirrorRef, imageRef] ""
+              requireLocalImagePresent options imageRef ("mirror pull completed for " <> mirrorRef <> ", but " <> imageRef <> " is still not inspectable locally after tagging")
             Left mirrorFailure ->
               failWith
                 ( "docker pull failed for "
@@ -255,9 +259,9 @@ pullImageWithFallback commandMonitorFactory imageRef = do
                     <> mirrorFailure
                 )
 
-requireLocalImagePresent :: String -> String -> IO ()
-requireLocalImagePresent imageRef message = do
-  imagePresent <- tryRunCommand "docker" ["image", "inspect", imageRef] ""
+requireLocalImagePresent :: HarborPublishOptions -> String -> String -> IO ()
+requireLocalImagePresent options imageRef message = do
+  imagePresent <- tryRunCommand (harborDockerCommand options) ["image", "inspect", imageRef] ""
   case imagePresent of
     Right _ -> pure ()
     Left inspectFailure -> failWith (message <> "\n" <> inspectFailure)
@@ -304,7 +308,7 @@ publishIfNeeded ::
   IO ()
 publishIfNeeded manager options commandMonitorFactory sourceImage clientRepository repositoryPath targetTag = do
   let targetRef = clientRepository <> ":" <> targetTag
-  runCommand "docker" ["tag", sourceImage, targetRef] ""
+  runCommand (harborDockerCommand options) ["tag", sourceImage, targetRef] ""
   tagPresent <- harborTagExists manager options repositoryPath targetTag
   if tagPresent
     then verifyRegistryPull manager options commandMonitorFactory targetRef
@@ -337,7 +341,7 @@ pushImageWithRetries manager options commandMonitorFactory sourceImage targetRef
               retryPush remainingAttempts failureMessage
 
     pushImageOnce = do
-      retagResult <- tryRunCommand "docker" ["tag", sourceImage, targetRef] ""
+      retagResult <- tryRunCommand (harborDockerCommand options) ["tag", sourceImage, targetRef] ""
       case retagResult of
         Left tagFailure ->
           pure (PushFailed ("docker tag failed for " <> sourceImage <> " as " <> targetRef <> "\n" <> tagFailure))
@@ -356,13 +360,14 @@ pushImageWithRetries manager options commandMonitorFactory sourceImage targetRef
           -- on the registry API. See
           -- 'pushUpstreamMultiArchViaImagetools' for the helper.
           monitor <- commandMonitorFactory ("docker push " <> targetRef)
-          pushResult <- tryRunCommandMaybeMonitored "docker" ["push", targetRef] "" monitor
+          pushResult <- tryRunCommandMaybeMonitored (harborDockerCommand options) ["push", targetRef] "" monitor
           case pushResult of
             Right _ -> pure PushSucceeded
             Left failureMessage
               | isUpstreamMultiArchImage sourceImage -> do
                   imagetoolsResult <-
                     pushUpstreamMultiArchViaImagetools
+                      options
                       commandMonitorFactory
                       sourceImage
                       targetRef
@@ -373,7 +378,7 @@ pushImageWithRetries manager options commandMonitorFactory sourceImage targetRef
 
     recoverCompletedPush failureMessage = do
       tagPresent <- harborTagExists manager options repositoryPath targetTag
-      registryPullable <- registryPullSucceeds targetRef
+      registryPullable <- registryPullSucceeds options targetRef
       pure $
         if tagPresent || registryPullable
           then PushSucceeded
@@ -409,9 +414,9 @@ pushRetryDelayMicros :: Int -> Int
 pushRetryDelayMicros attemptsUsed =
   min pushRetryMaxDelayMicros (attemptsUsed * pushRetryBaseDelayMicros)
 
-registryPullSucceeds :: String -> IO Bool
-registryPullSucceeds imageRef =
-  either (const False) (const True) <$> tryRunCommand "docker" ["pull", imageRef] ""
+registryPullSucceeds :: HarborPublishOptions -> String -> IO Bool
+registryPullSucceeds options imageRef =
+  either (const False) (const True) <$> tryRunCommand (harborDockerCommand options) ["pull", imageRef] ""
 
 -- type CommandMonitorFactory = String -> IO (Maybe ProcessMonitor.CommandMonitor)
 verifyRegistryPull ::
@@ -429,7 +434,7 @@ verifyRegistryPull manager options commandMonitorFactory targetRef = do
           failWith ("docker pull verification failed for " <> targetRef <> "\n" <> lastFailure)
       | otherwise = do
           monitor <- commandMonitorFactory ("docker pull verify " <> targetRef)
-          result <- tryRunCommandMaybeMonitored "docker" ["pull", targetRef] "" monitor
+          result <- tryRunCommandMaybeMonitored (harborDockerCommand options) ["pull", targetRef] "" monitor
           case result of
             Right _ -> pure ()
             Left failureMessage ->
@@ -453,7 +458,7 @@ loginHarborWithRetries manager options = do
       | otherwise = do
           result <-
             tryRunCommand
-              "docker"
+              (harborDockerCommand options)
               ["login", harborClientHost options, "--username", harborUser options, "--password-stdin"]
               (harborPassword options <> "\n")
           case result of
@@ -539,9 +544,9 @@ harborRepositoryUrl apiHost project repositoryPath =
     <> urlEncodeString (urlEncodeString repositoryPath)
     <> "/artifacts?page_size=100&with_tag=true"
 
-contentAddressTag :: String -> IO String
-contentAddressTag imageRef = do
-  payload <- captureCommand "docker" ["image", "inspect", imageRef] ""
+contentAddressTag :: HarborPublishOptions -> String -> IO String
+contentAddressTag options imageRef = do
+  payload <- captureCommand (harborDockerCommand options) ["image", "inspect", imageRef] ""
   case contentAddressTagFromInspectPayload payload of
     Right tagValue -> pure tagValue
     Left err -> failWith err
@@ -582,9 +587,9 @@ repoDigestTag inspection =
 -- single-platform reference. The @rm@ is best-effort: an unknown-tag
 -- failure is benign (the tag wasn't present yet).
 -- type CommandMonitorFactory = String -> IO (Maybe ProcessMonitor.CommandMonitor)
-pinLocalImageToAmd64 :: CommandMonitorFactory -> String -> IO ()
-pinLocalImageToAmd64 commandMonitorFactory imageRef = do
-  inspectResult <- tryRunCommand "docker" ["manifest", "inspect", imageRef] ""
+pinLocalImageToAmd64 :: HarborPublishOptions -> CommandMonitorFactory -> String -> IO ()
+pinLocalImageToAmd64 options commandMonitorFactory imageRef = do
+  inspectResult <- tryRunCommand (harborDockerCommand options) ["manifest", "inspect", imageRef] ""
   case inspectResult of
     Left _ -> pure ()
     Right manifestJson ->
@@ -596,7 +601,7 @@ pinLocalImageToAmd64 commandMonitorFactory imageRef = do
           digestMonitor <- commandMonitorFactory ("docker pull --platform linux/amd64 " <> imageByDigest)
           digestPullResult <-
             tryRunCommandMaybeMonitored
-              "docker"
+              (harborDockerCommand options)
               ["pull", "--platform", "linux/amd64", imageByDigest]
               ""
               digestMonitor
@@ -607,7 +612,7 @@ pinLocalImageToAmd64 commandMonitorFactory imageRef = do
               -- single-platform reference rather than overlaying the
               -- multi-arch manifest list still attached to the tag.
               -- The @rm@ may fail benignly (the tag wasn't present).
-              _ <- tryRunCommand "docker" ["image", "rm", "--no-prune", imageRef] ""
+              _ <- tryRunCommand (harborDockerCommand options) ["image", "rm", "--no-prune", imageRef] ""
               -- @docker tag <image>\@<digest> <image>:<tag>@ fails
               -- under the Docker 29.x containerd snapshotter
               -- because the digest reference is not directly
@@ -616,15 +621,15 @@ pinLocalImageToAmd64 commandMonitorFactory imageRef = do
               -- @docker inspect <image>\@<digest> --format '{{.Id}}'@
               -- (which DOES work after the digest pull) and tag the
               -- resolved ID under the original ref.
-              idResult <- tryRunCommand "docker" ["inspect", imageByDigest, "--format", "{{.Id}}"] ""
+              idResult <- tryRunCommand (harborDockerCommand options) ["inspect", imageByDigest, "--format", "{{.Id}}"] ""
               case idResult of
                 Right rawId -> do
                   let imageId = trimNewlines rawId
-                  tagResult <- tryRunCommand "docker" ["tag", imageId, imageRef] ""
+                  tagResult <- tryRunCommand (harborDockerCommand options) ["tag", imageId, imageRef] ""
                   case tagResult of
                     Right _ -> pure ()
-                    Left _ -> recoverOriginalTag commandMonitorFactory imageRef
-                Left _ -> recoverOriginalTag commandMonitorFactory imageRef
+                    Left _ -> recoverOriginalTag options commandMonitorFactory imageRef
+                Left _ -> recoverOriginalTag options commandMonitorFactory imageRef
 
 -- | Parse the JSON output of @docker manifest inspect@ and return the
 -- digest of the @linux/amd64@ entry, if any. Uses the Aeson FromJSON
@@ -683,12 +688,13 @@ instance FromJSON ManifestEntry where
 -- Returns 'Left' with the captured stderr on any step that fails.
 -- type CommandMonitorFactory = String -> IO (Maybe ProcessMonitor.CommandMonitor)
 pushUpstreamMultiArchViaImagetools ::
+  HarborPublishOptions ->
   CommandMonitorFactory ->
   String ->
   String ->
   IO (Either String ())
-pushUpstreamMultiArchViaImagetools commandMonitorFactory sourceImage targetRef = do
-  manifestResult <- tryRunCommand "docker" ["manifest", "inspect", sourceImage] ""
+pushUpstreamMultiArchViaImagetools options commandMonitorFactory sourceImage targetRef = do
+  manifestResult <- tryRunCommand (harborDockerCommand options) ["manifest", "inspect", sourceImage] ""
   case manifestResult of
     Left manifestFailure ->
       pure (Left ("docker manifest inspect failed for " <> sourceImage <> "\n" <> manifestFailure))
@@ -699,44 +705,57 @@ pushUpstreamMultiArchViaImagetools commandMonitorFactory sourceImage targetRef =
         Just amd64Digest -> do
           let sourceRepository = takeBefore ':' sourceImage
               sourceByDigest = sourceRepository <> "@" <> amd64Digest
-              -- @docker buildx imagetools create@ resolves the
-              -- target registry via the host's glibc resolver, which
-              -- prefers IPv6 (@[::1]@) for @localhost@. Harbor's
-              -- NodePort 30002 is bound to @127.0.0.1@ only (Kind's
-              -- @extraPortMappings@ emit IPv4 listeners), so the
-              -- IPv6 dial path fails with @connection refused@
-              -- before glibc falls through to IPv4. Substituting
-              -- @localhost@ with @127.0.0.1@ in the buildx target
-              -- ref forces the IPv4 path. Regular @docker push@
-              -- already works against the same NodePort because the
-              -- launcher's @docker push@ runs through the local
-              -- daemon, which inherits the launcher's @kind@
-              -- network attachment + IPv4 routing.
-              imagetoolsTargetRef = substituteLocalhostWithLoopbackV4 targetRef
-          imagetoolsMonitor <-
+              -- Phase 7 Sprint 7.14 (May 25, 2026): retired the
+              -- @docker buildx imagetools create@ fallback in favor
+              -- of @skopeo copy@. The buildx imagetools path delegates
+              -- to a buildkit container that runs on docker's default
+              -- bridge network, so it cannot reach Harbor's NodePort
+              -- 30002. @skopeo copy@ runs in the launcher container's
+              -- own network namespace and CAN reach Harbor at
+              -- @127.0.0.1:30002@. We substitute @localhost@ with
+              -- @127.0.0.1@ in the target ref because glibc prefers
+              -- IPv6 for @localhost@ and Harbor's NodePort listener
+              -- is IPv4-only (Kind's @extraPortMappings@ emit IPv4
+              -- bindings). @--src-tls-verify=false@ +
+              -- @--dest-tls-verify=false@ accept the Harbor self-
+              -- signed HTTP listener; @--override-os=linux@ +
+              -- @--override-arch=amd64@ ensure the copy is the
+              -- supported single-platform variant.
+              skopeoTargetRef = substituteLocalhostWithLoopbackV4 targetRef
+              skopeoSource = "docker://" <> sourceByDigest
+              skopeoTarget = "docker://" <> skopeoTargetRef
+          skopeoMonitor <-
             commandMonitorFactory
-              ( "docker buildx imagetools create --tag "
-                  <> imagetoolsTargetRef
+              ( "skopeo copy --src-tls-verify=false --dest-tls-verify=false "
+                  <> "--override-os=linux --override-arch=amd64 "
+                  <> skopeoSource
                   <> " "
-                  <> sourceByDigest
+                  <> skopeoTarget
               )
-          imagetoolsResult <-
+          skopeoResult <-
             tryRunCommandMaybeMonitored
-              "docker"
-              ["buildx", "imagetools", "create", "--tag", imagetoolsTargetRef, sourceByDigest]
+              (harborSkopeoCommand options)
+              [ "copy",
+                "--src-tls-verify=false",
+                "--dest-tls-verify=false",
+                "--override-os=linux",
+                "--override-arch=amd64",
+                skopeoSource,
+                skopeoTarget
+              ]
               ""
-              imagetoolsMonitor
-          case imagetoolsResult of
+              skopeoMonitor
+          case skopeoResult of
             Right _ -> pure (Right ())
-            Left imagetoolsFailure ->
+            Left skopeoFailure ->
               pure
                 ( Left
-                    ( "docker buildx imagetools create failed for "
+                    ( "skopeo copy failed for "
                         <> sourceByDigest
                         <> " -> "
                         <> targetRef
                         <> "\n"
-                        <> imagetoolsFailure
+                        <> skopeoFailure
                     )
                 )
 
@@ -939,10 +958,10 @@ takeBefore delimiter = takeWhile (/= delimiter)
 
 -- | Phase 7 Sprint 7.14 follow-on (May 25, 2026): rewrite a
 -- @localhost@-prefixed image reference to use @127.0.0.1@ so the
--- buildx imagetools fallback dials Harbor's IPv4-only NodePort
--- listener instead of the unbound IPv6 loopback. Returns the input
--- unchanged when the prefix doesn't match (e.g. operator-overridden
--- @harbor.local@ targets).
+-- @skopeo copy@ fallback dials Harbor's IPv4-only NodePort listener
+-- instead of the unbound IPv6 loopback (glibc prefers IPv6 for
+-- @localhost@). Returns the input unchanged when the prefix doesn't
+-- match (e.g. operator-overridden @harbor.local@ targets).
 substituteLocalhostWithLoopbackV4 :: String -> String
 substituteLocalhostWithLoopbackV4 imageRef =
   case List.stripPrefix "localhost:" imageRef of
@@ -969,12 +988,12 @@ trailingWhitespaceCharacters = " \n\r\t"
 -- fallback can do the work. Failure here is silent because the
 -- caller already failed to pin and is doing best-effort recovery.
 -- type CommandMonitorFactory = String -> IO (Maybe ProcessMonitor.CommandMonitor)
-recoverOriginalTag :: CommandMonitorFactory -> String -> IO ()
-recoverOriginalTag commandMonitorFactory imageRef = do
+recoverOriginalTag :: HarborPublishOptions -> CommandMonitorFactory -> String -> IO ()
+recoverOriginalTag options commandMonitorFactory imageRef = do
   recoverMonitor <- commandMonitorFactory ("docker pull --platform linux/amd64 " <> imageRef)
   _ <-
     tryRunCommandMaybeMonitored
-      "docker"
+      (harborDockerCommand options)
       ["pull", "--platform", "linux/amd64", imageRef]
       ""
       recoverMonitor

@@ -77,6 +77,7 @@ data HostTool
   | HostChown
   | HostNvidiaSmi
   | HostNvkind
+  | HostSkopeo
   | HostHostname
   deriving (Eq, Show)
 
@@ -120,6 +121,7 @@ hostToolName tool = case tool of
   HostChown -> "chown"
   HostNvidiaSmi -> "nvidia-smi"
   HostNvkind -> "nvkind"
+  HostSkopeo -> "skopeo"
   HostHostname -> "hostname"
 
 -- | Look up the absolute path for a tool. An empty path means the
@@ -166,6 +168,7 @@ pickToolPath tool paths = case tool of
   HostChown -> hostChown paths
   HostNvidiaSmi -> hostNvidiaSmi paths
   HostNvkind -> hostNvkind paths
+  HostSkopeo -> hostSkopeo paths
   HostHostname -> hostHostname paths
 
 -- | Build a 'CreateProcess' for a tool invocation. The returned value

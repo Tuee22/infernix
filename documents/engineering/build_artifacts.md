@@ -8,8 +8,8 @@
 ## TL;DR
 
 - Host-native builds write repo-local outputs under `./.build/`; supported outer-container flows
-  also write under `./.build/outer-container/` on the host through a `./.build:/workspace/.build`
-  bind mount, plus durable repo-local state under `./.data/`.
+  keep build artifacts inside the launcher image overlay and write durable repo-local state under
+  `./.data/`.
 - Generated frontend contracts live only under `web/src/Generated/`, and generated browser bundles
   live under `web/dist/`.
 - Runtime inference results reload only from protobuf-backed `./.data/runtime/results/*.pb`
@@ -19,10 +19,9 @@
 
 The current worktree follows the supported artifact layout directly: the host path stages
 `./.build/infernix` and `./.build/infernix-demo`, the Linux substrate images own
-`/usr/local/bin/infernix*` while outer-container build state lives under
-`./.build/outer-container/` on the host through the `./.build:/workspace/.build` bind mount,
-generated frontend contracts stay under `web/src/Generated/`, and runtime result or
-cache-manifest state uses protobuf-backed `*.pb` files instead of legacy text-state fallbacks.
+`/usr/local/bin/infernix*` and image-local outer-container build state, generated frontend
+contracts stay under `web/src/Generated/`, and runtime result or cache-manifest state uses
+protobuf-backed `*.pb` files instead of legacy text-state fallbacks.
 Kind and `nvkind` cluster create or delete uses transient scratch kubeconfig state under the
 execution context's temp directory, and only the published repo-local kubeconfig paths are part
 of the supported artifact contract.
@@ -36,13 +35,12 @@ of the supported artifact contract.
   the launcher binaries under `./.build/`
 - on the supported outer-container path, cabal-home and the cabal builddir live at the toolchain's
   natural in-image locations (`/root/.cabal/`, `dist-newstyle/`); they are not bind-mounted to the
-  host, and `${INFERNIX_BUILD_ROOT}=/workspace/.build/outer-container/build` only carries the
-  staged substrate file
+  host, and `/workspace/.build/outer-container/build` only carries the staged substrate file
 - on the outer-container path, the baked launcher binaries remain `/usr/local/bin/infernix` and
   `/usr/local/bin/infernix-demo`; the substrate image uses `tini` as its `ENTRYPOINT` for clean
   signal handling and zombie reaping
 - the substrate image captures the sorted source snapshot at
-  `/opt/infernix/source-snapshot-files.txt`, which sits outside the bind-mounted `./.build/` tree
+  `/opt/infernix/source-snapshot-files.txt`, which stays in the image overlay
   so it stays in the image overlay where git-less `infernix lint files` runs can read it
 - `cluster up` publishes `./.build/infernix.kubeconfig` on the host path after Kind create or
   delete uses a transient host-local scratch kubeconfig

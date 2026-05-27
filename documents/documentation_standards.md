@@ -128,8 +128,8 @@ Rules:
   builders: they may install host prerequisites and build or enter the substrate-specific
   `infernix` launcher, but cluster lifecycle, Kubernetes manifests, cluster workload image pulls,
   Harbor publication, validation, and teardown behavior must be described as binary-owned
-- no governed doc may reference `$INFERNIX_*` or `$PATH` as a supported operator override; the
-  supported configuration substrate is the typed `.dhall` files named in
+- no governed doc may reference project-prefixed env names or shell path overrides as a supported
+  operator override; the supported configuration substrate is the typed `.dhall` files named in
   [architecture/configuration_doctrine.md](architecture/configuration_doctrine.md). Mentions in
   [DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md](../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md)
   and the documented third-party-upstream exception in

@@ -1,6 +1,6 @@
 # Phase 7: Demo App Multi-User Durable Context
 
-**Status**: Active (Sprints 7.1, 7.3–7.6, 7.7–7.13, 7.16 in various partial-landed states with `Active` headers; Sprints 7.14, 7.15 `Planned`; Sprint 7.17 schema + Haskell decoder + chart Secret + chart env stripping + Python `INFERNIX_POETRY_EXECUTABLE` retirement + the full `Demo/Api.hs` / `Demo/Auth.hs` / `Runtime/Pulsar.hs.loadBootstrapPresignedConfig` `INFERNIX_KEYCLOAK_*` / `INFERNIX_MINIO_*` retirement all landed May 25, 2026; only the Apple-only `POETRY_HOME` / `PATH` munging in `Python.hs.bootstrapPoetryOnAppleHost` + the `linux-gpu` integration validation rerun remain open)
+**Status**: Active (Sprints 7.1, 7.3–7.6, 7.7–7.13, 7.16 in various partial-landed states with `Active` headers; Sprints 7.14, 7.15 `Planned`; Sprint 7.17 schema + Haskell decoder + chart Secret + chart env stripping + Python `INFERNIX_POETRY_EXECUTABLE` retirement + the full `Demo/Api.hs` / `Demo/Auth.hs` / `Runtime/Pulsar.hs.loadBootstrapPresignedConfig` `INFERNIX_KEYCLOAK_*` / `INFERNIX_MINIO_*` retirement all landed May 25, 2026 and the `linux-gpu` `test all` validation passed May 26, 2026; only the Apple-only Poetry/bootstrap env handoff remains open)
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/durable_context_design.md](../documents/architecture/durable_context_design.md), [../documents/architecture/demo_app_design.md](../documents/architecture/demo_app_design.md), [../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Define the multi-user, durable-context shape of the `infernix-demo` workload —
@@ -11,11 +11,10 @@
 
 ## Phase Status
 
-Phase 7 is `Active`. Phases 0–6 are `Active` after the Phase 0 Sprint 0.9 configuration-doctrine
-landing introduced a per-phase retirement sprint in every earlier phase (1.11, 2.13, 3.10, 4.13,
-5.9, 6.28), but their pre-doctrine scope landed and the platform foundation, runtime, routed
-edge, HA platform services, generated demo catalog, and validation surface this phase builds on
-are all in place. As of May 24, 2026 (afternoon pass): Sprint 7.2 is `Done` (PureScript-side
+Phase 7 is `Active`. Phases 4–6 are `Done`; Phases 0–3 remain `Active` only for named
+configuration-doctrine and deferred Apple-lane follow-ons. The platform foundation, runtime,
+routed edge, HA platform services, generated demo catalog, and validation surface this phase
+builds on are in place. As of May 24, 2026 (afternoon pass): Sprint 7.2 is `Done` (PureScript-side
 tagged-sum encoders + roundtrip suite); Sprints 7.4, 7.5, 7.6, 7.13, and 7.16 are landed at
 the shared-library, unit-test, and docs-alignment level; Sprints 7.7 and 7.8 land the
 real-Pulsar coordinator runtime loops (`runResultBridgeLoop`, `runModelBootstrapLoop`,
@@ -2013,11 +2012,11 @@ validation when real-cluster behaviors are observed):
 
 ---
 
-## Sprint 7.17: Secrets-via-Files and Demo-Surface Retirement [Active — Dhall schema + Haskell decoder + chart Secret + chart env stripping landed; Haskell app-side wiring + Python POETRY retirement pending]
+## Sprint 7.17: Secrets-via-Files and Demo-Surface Retirement [Active — Linux lane landed and validated; Apple Poetry path pending]
 
 **Status**: Active
-**Blocked by**: nothing (Phase 4 Sprint 4.13 code-side landed May 25, 2026; the `ClusterConfig` record the credential-bearing handlers thread through is available)
-**Implementation**: `dhall/InfernixSecrets.dhall` (to create), `src/Infernix/SecretsConfig.hs` (to create), `src/Infernix/Demo/Api.hs`, `src/Infernix/Demo/Auth.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Python.hs`, `chart/templates/deployment-demo.yaml`, `chart/templates/secret-cluster-secrets.yaml` (to create), `chart/templates/keycloak/deployment.yaml` (KC_DB_* documented exception). As of audit: none of the (to create) files exist on disk yet, the `INFERNIX_KEYCLOAK_*`, `INFERNIX_MINIO_*`, and `INFERNIX_POETRY_*` env reads remain in `src/Infernix/Demo/Api.hs`, `src/Infernix/Demo/Auth.hs`, `src/Infernix/Runtime/Pulsar.hs`, and `src/Infernix/Python.hs`, and `chart/templates/deployment-demo.yaml` still carries the `env:` block. The sprint begins after Phase 1 Sprint 1.11 lands the `HostConfig` retirement and Phase 4 Sprint 4.13 lands the `ClusterConfig` retirement.
+**Blocked by**: Apple validation pass for the remaining Apple-only Poetry bootstrap path.
+**Implementation**: `dhall/InfernixSecrets.dhall`, `src/Infernix/SecretsConfig.hs`, `src/Infernix/Demo/Api.hs`, `src/Infernix/Demo/Auth.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Python.hs`, `chart/templates/deployment-demo.yaml`, `chart/templates/secret-cluster-secrets.yaml`, `chart/templates/keycloak/deployment.yaml` (KC_DB_* documented exception).
 **Docs to update**: `documents/architecture/configuration_doctrine.md`, `documents/engineering/cluster_config_manifest.md`, `documents/tools/keycloak.md`, `documents/tools/minio.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 
 ### Objective
@@ -2054,96 +2053,35 @@ fields (for non-secret values) plus file-based Secret mounts (for credentials). 
 
 ### Validation
 
-- `grep -rn 'INFERNIX_KEYCLOAK_\|INFERNIX_MINIO_\|INFERNIX_POETRY_' src/` returns zero matches.
+- `rg -n 'lookupEnv|getEnv' src/Infernix/Demo/Api.hs src/Infernix/Demo/Auth.hs src/Infernix/Runtime/Pulsar.hs` returns zero matches.
 - `grep -rn '^\s*-\s*name:\s*INFERNIX_' chart/templates/deployment-demo.yaml` returns zero
   matches.
-- `infernix test integration` on `linux-gpu` round-trips the JWT-authenticated `/api/objects`
-  flow successfully against the new mount layout.
+- May 26, 2026: governed `linux-gpu` `infernix test all` passed against the live cluster,
+  including the integration and routed E2E layers that exercise the new mount layout.
 
 ### Remaining Work
 
-Schema + chart side landed (May 25, 2026):
-
-- **`dhall/InfernixSecrets.dhall`** schema with the `MinioCredentials`,
-  `KeycloakAdminCredentials`, `KeycloakDbCredentials` paths-only
-  records. Each record carries exactly one `credentialsPath : Text`
-  field; the credential values themselves never appear in the
-  manifest.
-- **`src/Infernix/SecretsConfig.hs`** typed `SecretsConfig` Haskell
-  record + Dhall decoder. Exposes `defaultClusterSecretsMountPath`
-  (`/etc/infernix/secrets/InfernixSecrets.dhall`) and
-  `defaultHostSecretsManifestPath` (`./.data/runtime/secrets/InfernixSecrets.dhall`).
-  Includes a typed `MinioCredentials` JSON wrapper +
-  `readMinioCredentials` helper that decodes the JSON file at the
-  path declared by `SecretsConfig.minio.credentialsPath`. Wired
-  into `infernix.cabal`'s exposed-modules + extra-source-files.
-- **`chart/templates/secret-cluster-secrets.yaml`** new Helm template
-  materializing `Secret/infernix-cluster-secrets` with four keys:
-  `InfernixSecrets.dhall` (the typed manifest), `minio.json`,
-  `keycloak-admin.json`, `keycloak-db.json`. The Secret is mounted
-  read-only at `/etc/infernix/secrets/` on every infernix-owned pod.
-- **Chart deployment templates env-stripping (coordinator + engine +
-  demo).** Every `INFERNIX_MINIO_ACCESS_KEY` and
-  `INFERNIX_MINIO_SECRET_KEY` env entry is removed from
-  `chart/templates/deployment-{coordinator,engine,demo}.yaml`. Each
-  Deployment now mounts both `cluster-config` (from Sprint 4.13) and
-  `cluster-secrets` (new) volumes. Only the non-credential
-  `INFERNIX_DATA_ROOT` + `INFERNIX_MODEL_CACHE_ROOT` (engine only)
-  entries remain in the env blocks — both are pure typed path
-  declarations, not secrets.
-- **`python/poetry.toml`** new typed Poetry config replacing the
-  `POETRY_VIRTUALENVS_IN_PROJECT=true` env-var convention. Operators
-  edit this file to control Poetry's virtualenv placement; the env
-  var stops being a supported override path.
-- **Chart lint expectations updated.** `src/Infernix/Lint/Chart.hs`
-  adds requiredPhrases for the new
-  `chart/templates/secret-cluster-secrets.yaml` template (asserts
-  `kind: Secret`, the four expected keys, and the JSON shape
-  marker), and the coordinator + engine + demo deployment-template
-  requiredPhrases now assert the `cluster-secrets` volume mount +
-  `/etc/infernix/secrets` mount path + `secretName: infernix-cluster-secrets`
-  volume source. The `INFERNIX_MINIO_ACCESS_KEY` / `SECRET_KEY`
-  expectations are removed.
-
-Verified end-to-end on the host: `cabal build all`, `cabal test
-infernix-unit` (70/70), `cabal test infernix-haskell-style`,
-`./.build/infernix lint {chart,files,docs,proto}` all exit zero.
-
-Pending closure (deferred and named so the sprint status stays
-honest):
-
-- **`src/Infernix/Demo/Api.hs`, `src/Infernix/Demo/Auth.hs`,
-  `src/Infernix/Runtime/Pulsar.hs.loadBootstrapPresignedConfig` env
-  retirement — landed (verified May 25, 2026 via comprehensive
-  audit).** A repository-wide `grep -rn 'lookupEnv\|getEnv\b' src/`
-  confirms there are no live env reads remaining in any of these
-  three modules; the existing `Demo/Api.hs.serveMintObjectUrl`,
-  `Demo/Auth.hs.fetchJwksCachingMint`, and
-  `Runtime/Pulsar.hs.loadBootstrapPresignedConfig` already thread
-  through `ClusterConfig.minio.*`, `ClusterConfig.keycloak.*`, and
-  `SecretsConfig.readMinioCredentials` as designed. The Sprint 6.28
-  lint gate is durably active on these modules — none of them
-  appear in `envFunctionExemptedFiles`.
 - **`src/Infernix/Python.hs` env retirement.** Partial landing
   May 25, 2026: the @INFERNIX_POETRY_EXECUTABLE@ env override is
   retired in favor of `HostConfig.toolPaths.hostPoetry` looked up
   via `pathsHostConfig paths`, with `onlyIfExists` guarding stale
   fixture paths so unit tests without a real Poetry at the manifest
-  path fall through to the legacy `findExecutable "poetry"` lookup
-  on the operator's `$PATH`. The remaining `POETRY_HOME` env read,
-  the `PATH` lookupEnv / setEnv around the Apple Poetry bootstrap,
-  and the matching Apple-only `bootstrapPoetryOnAppleHost` ladder
-  are all Apple-specific code paths whose retirement is deferred
-  per the user's "stay on Linux with CUDA" priority. The
-  `POETRY_VIRTUALENVS_IN_PROJECT` env-set was already retired into
-  `python/poetry.toml` earlier in this sprint. The
-  `bareNameProcExemptedFiles` and `envFunctionExemptedFiles`
-  exemption rows for `src/Infernix/Python.hs` remain because the
-  Apple bootstrap path still consumes `POETRY_HOME` / `PATH`.
-- **`infernix test integration` round-trip on `linux-gpu`** through
-  the JWT-authenticated `/api/objects` flow against the new mount
-  layout. Deferred to a focused validation session shared with the
-  Sprint 4.13 / 5.9 pending integration tests.
+  path fall through to the legacy `findExecutable "poetry"` lookup on
+  the operator's path. The Linux worker and Python-quality paths no
+  longer inject Poetry virtualenv configuration through env; the
+  typed source is `python/poetry.toml`. The remaining
+  `POETRY_HOME` read, path lookup / mutation around the Apple Poetry
+  bootstrap, and Apple host adapter setup env handoff in
+  `Engines/AppleSilicon.hs` are all Apple-specific code paths whose
+  retirement is deferred per the user's "stay on Linux with CUDA"
+  priority. The `bareNameProcExemptedFiles` and
+  `envFunctionExemptedFiles` exemption rows for `src/Infernix/Python.hs`
+  remain because the Apple bootstrap path still consumes `POETRY_HOME`
+  / path state.
+- **Linux validation — closed May 26, 2026.** The governed
+  `linux-gpu` `infernix test all` pass validated the mounted
+  `ClusterConfig` / `SecretsConfig` path, including the routed
+  integration and Playwright layers, against the live cluster.
 
 ---
 

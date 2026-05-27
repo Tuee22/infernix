@@ -1,6 +1,6 @@
 # Phase 3: HA Platform Services and Edge Routing
 
-**Status**: Active (Sprint 3.10 substantively landed May 24, 2026 with two deferred items; Sprints 3.1–3.9 Done)
+**Status**: Active (Sprint 3.10 Linux in-container Playwright E2E validated May 27, 2026; Apple host-native E2E refactor remains deferred; Sprints 3.1–3.9 Done)
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Define the mandatory local HA Harbor, MinIO, operator-managed PostgreSQL, and
@@ -392,7 +392,8 @@ fields plus a Dhall-driven Playwright fixture file. Apple host-native E2E is una
 - `cabal build all` clean, `infernix test lint` clean.
 - `docker images` shows no `infernix-playwright:local` image after a fresh
   `./bootstrap/linux-gpu.sh build`.
-- `infernix test e2e` on `linux-gpu` succeeds end-to-end via the in-container Playwright path.
+- May 27, 2026: clean-env `linux-gpu` compose-run `infernix test e2e` passed via the
+  in-container Playwright path (`1 passed`).
 
 ### Remaining Work
 
@@ -444,12 +445,13 @@ returns only the two retirement doc comments
 
 Pending closure (deferred to a follow-on turn):
 
-- A real `linux-gpu` cluster bring-up + `infernix test e2e` rerun on
-  the freshly rebuilt launcher image. The image rebuild adds the
-  Playwright system packages and browsers, so the rerun is the durable
-  proof that the in-container Playwright path replaces the retired
-  `infernix-playwright:local` lane. Tracked under the user's
-  validation-checkpoint preference.
+- **Linux in-container Playwright E2E closed May 27, 2026.** The
+  clean-env compose-run command
+  `env -i /usr/bin/docker compose --project-name infernix-linux-gpu --file compose.yaml --file compose.linux-gpu.yaml run --rm infernix infernix test e2e`
+  reconciled the live `linux-gpu` cluster, ran Playwright inside the
+  launcher image, reported `1 passed`, then executed its teardown
+  cleanup. This validates the replacement for the retired
+  `infernix-playwright:local` lane on the Linux CUDA host.
 - Apple host-native E2E refactor. The current Apple branch in
   `runRuntimeModeE2E` surfaces an explicit deferral diagnostic so the
   Linux closure is honest about the gap. The Apple replacement (a
@@ -467,9 +469,10 @@ Pending closure (deferred to a follow-on turn):
 
 ## Remaining Work
 
-Sprint 3.10 substantively landed (May 24, 2026). The two deferred
-items above (linux-gpu rerun + Apple e2e refactor) close the residual
-gap. Sprints 3.1–3.9 closed.
+Sprint 3.10 substantively landed May 24, 2026. The Linux in-container
+Playwright path was validated on `linux-gpu` May 27, 2026. Apple
+host-native E2E refactor remains the only Sprint 3.10 residual.
+Sprints 3.1–3.9 closed.
 
 ---
 

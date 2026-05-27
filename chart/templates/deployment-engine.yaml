@@ -56,32 +56,28 @@ spec:
           # (`--role engine`) instead of an `INFERNIX_DAEMON_ROLE` env
           # var. The full `INFERNIX_PULSAR_*` env family is retired;
           # the daemon decodes those values from the mounted
-          # `infernix-cluster-config` ConfigMap at startup. The retained
-          # `INFERNIX_MODEL_CACHE_ROOT` + `INFERNIX_DATA_ROOT` env vars
-          # are scheduled to retire together with the Python adapter
-          # env-var sweep in Phase 5 Sprint 5.9 (model-cache root) and
-          # Phase 7 Sprint 7.17 (demo deployment).
+          # `infernix-cluster-config` ConfigMap at startup.
           # `INFERNIX_ENGINE_COMMAND_*` overrides have moved to the
-          # `engine.commandOverrides` field on the cluster manifest;
-          # the chart no longer materializes per-binding env entries.
+          # `engine.commandOverrides` field on the cluster manifest.
+          # Phase 6 Sprint 6.28 follow-on (May 26, 2026): the
+          # `INFERNIX_DATA_ROOT` env entry was retired together with
+          # the chart path realignment from `/srv/infernix/.data` to
+          # `/workspace/.data` (matching the baked
+          # `InfernixHost.dhall.filesystem.dataRoot` default). The
+          # `INFERNIX_MODEL_CACHE_ROOT` env entry was also retired —
+          # `Paths.modelCacheRoot` derives from the host manifest's
+          # `runtimeRoot </> "model-cache"` and the engine's
+          # adapter-driven cache materialization writes there
+          # directly (the previously-mounted `/model-cache` emptyDir
+          # was unused — the daemon never consumed the env override).
           args:
             - service
             - --role
             - engine
-          # Phase 7 Sprint 7.17: `INFERNIX_MINIO_ACCESS_KEY` /
-          # `INFERNIX_MINIO_SECRET_KEY` env entries retire (see
-          # coordinator template note). `INFERNIX_DATA_ROOT` +
-          # `INFERNIX_MODEL_CACHE_ROOT` are the two remaining residual
-          # entries; both are pure path declarations the engine binary
-          # consumes for in-pod local state — both can move to a typed
-          # arg or to a `ClusterConfig.engine.*` field in a focused
-          # follow-up, but neither is sensitive material so the
-          # closure here matches the "no credential env" rule.
-          env:
-            - name: INFERNIX_DATA_ROOT
-              value: "/srv/infernix/.data"
-            - name: INFERNIX_MODEL_CACHE_ROOT
-              value: /model-cache
+          # Phase 7 Sprint 7.17: credentials live in
+          # `Secret/infernix-cluster-secrets` mounted at
+          # `/etc/infernix/secrets/`; no `env:` block remains on the
+          # engine template.
 {{- if eq .Values.runtimeMode "linux-gpu" }}
           resources:
             limits:
@@ -106,7 +102,7 @@ spec:
               subPath: {{ .Values.publication.fileName }}
               readOnly: true
             - name: engine-data
-              mountPath: /srv/infernix/.data
+              mountPath: /workspace/.data
             - name: model-cache
               mountPath: /model-cache
           readinessProbe:
@@ -114,7 +110,7 @@ spec:
               command:
                 - /bin/sh
                 - -lc
-                - test -f /srv/infernix/.data/runtime/service/subscription.ready
+                - test -f /workspace/.data/runtime/service/subscription.ready
             periodSeconds: 5
             timeoutSeconds: 3
             failureThreshold: 120

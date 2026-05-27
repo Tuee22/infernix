@@ -65,19 +65,17 @@ Python, or Poetry reconciles those prerequisites automatically.
 Direct reference path:
 
 ```bash
-docker compose run --rm infernix infernix cluster up
-docker compose run --rm infernix infernix cluster status
-docker compose run --rm infernix infernix test all
-docker compose run --rm infernix infernix cluster down
+docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm infernix infernix cluster up
+docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm infernix infernix cluster status
+docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm infernix infernix test all
+docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm infernix infernix cluster down
 ```
 
 For `linux-gpu`, use `./bootstrap/linux-gpu.sh ...` as the supported entrypoint. The underlying
-reference path exports `INFERNIX_COMPOSE_IMAGE=infernix-linux-gpu:local`,
-`INFERNIX_COMPOSE_SUBSTRATE=linux-gpu`, and
-`INFERNIX_COMPOSE_BASE_IMAGE=nvidia/cuda:13.2.1-cudnn-runtime-ubuntu24.04` before the same
-`docker compose run --rm infernix infernix ...` surface. If the host does not already pass
-`nvidia-smi -L`, the supported bootstrap installs the recommended Ubuntu compute driver, stops,
-and instructs the operator to reboot before rerunning the same command.
+reference path adds `--file compose.linux-gpu.yaml` to the same Compose service shape. If the
+host does not already pass `nvidia-smi -L`, the supported bootstrap installs the recommended
+Ubuntu compute driver, stops, and instructs the operator to reboot before rerunning the same
+command.
 
 ## Engine Adapter Testing
 
@@ -112,9 +110,9 @@ the shared adapter project:
 - Colima is the only supported Docker environment on Apple Silicon
 - supported Apple Docker-backed paths reconcile Colima to at least `8 CPU / 16 GiB` before Kind,
   Harbor, MinIO, Pulsar, or Playwright work begins
-- on Apple, routed E2E readiness probes use the published host edge on `127.0.0.1:<edge-port>`,
-  but the dedicated Playwright container runs on the private Docker `kind` network against the
-  Kind control-plane DNS instead of `host.docker.internal`
+- on Linux, routed E2E runs Playwright inside the substrate image on Docker's private `kind`
+  network against the Kind control-plane DNS instead of `host.docker.internal`; Apple host-native
+  routed E2E remains deferred to the Apple validation pass
 - on Apple, retained Kind state under `./.data/kind/apple-silicon/` is replayed into and out of
   the worker instead of being bind-mounted, so large retained state can make `up`, `test`, and
   `down` noticeably slower than Linux
@@ -128,24 +126,19 @@ the shared adapter project:
   context's system temp directory, then publishes the supported repo-local kubeconfig at
   `./.build/infernix.kubeconfig` on Apple or `./.data/runtime/infernix.kubeconfig` on Linux;
   stale repo-local `*.lock` files are disposable lifecycle byproducts
-- container mode keeps the staged substrate file under `./.build/outer-container/build/` on the
-  host through the `./.build:/workspace/.build` bind mount, while cabal-home and the cabal
-  builddir live at the toolchain's natural in-image locations rather than on any bind-mounted
-  host path
-- container mode runs against a baked image snapshot and bind-mounts `./.data/`, `./.build/`,
-  `./chart/charts/`, and the host `compose.yaml` (read-only) together with the Docker socket; no
-  docker-managed named volumes back the outer-container build root, and the substrate image uses
-  `tini` as its entrypoint for clean signal handling
-- container mode forwards the host repo root into the launcher so generated Linux Kind or `nvkind`
-  configs mount host-resolved `./.data/kind/<runtime-mode>/` and `./.build/kind/registry/`
-  directories directly into node containers instead of replaying retained state with `docker cp`
-- on the Linux outer-container path, `./chart/charts/` is the supported host-persisted cache for
-  the top-level Harbor, PostgreSQL, Pulsar, MinIO, and Envoy Gateway chart archives so fresh
-  `docker compose run --rm infernix ...` invocations can reuse the same dependency bundle instead
-  of reconstructing it from the network every time
-- when the outer container shells out to `docker compose run --rm playwright` for routed E2E, it
-  forwards `INFERNIX_HOST_REPO_ROOT` so the host docker daemon resolves the playwright service's
-  bind mounts against the host repo root
+- container mode keeps the staged substrate file under the image-local
+  `/workspace/.build/outer-container/build/` path, while cabal-home and the cabal builddir live at
+  the toolchain's natural in-image locations rather than on any bind-mounted host path
+- container mode runs against a baked image snapshot and bind-mounts only `./.data/` plus the
+  Docker socket; no docker-managed named volumes back the outer-container build root, and the
+  substrate image uses `tini` as its entrypoint for clean signal handling
+- Linux Kind or `nvkind` configs use repo-local state under `./.data/`; the outer container no
+  longer forwards a host-repo-root override
+- on the Linux outer-container path, the baked image carries the chart archive cache for Harbor,
+  PostgreSQL, Pulsar, MinIO, and Envoy Gateway so fresh launcher containers can reuse the same
+  dependency bundle without reconstructing it from the network every time
+- routed E2E on Linux runs Playwright inside the same substrate image with
+  `npm --prefix web exec -- playwright test`
 - when `demo_ui` is enabled, the demo surface stays cluster-resident on Apple and Linux alike
 - `docker compose up` and `docker compose exec` are not supported operator workflows
 - assistant-facing repository workflow rules live in [assistant_workflow.md](assistant_workflow.md)

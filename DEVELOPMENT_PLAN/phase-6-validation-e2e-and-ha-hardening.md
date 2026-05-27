@@ -1,6 +1,6 @@
 # Phase 6: Validation, E2E, and HA Hardening
 
-**Status**: Active (Sprint 6.28 `Blocked` on Phase 1 Sprint 1.11 + Phase 4 Sprint 4.13; Sprints 6.1–6.27 Done)
+**Status**: Done (Sprints 6.1–6.28 Done)
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/development/no_env_vars.md](../documents/development/no_env_vars.md)
 
 > **Purpose**: Define the supported static-quality and single-substrate validation contract for the
@@ -12,7 +12,7 @@
 
 ## Phase Status
 
-Phase 6 is done. Sprints 6.1–6.27 are `Done`: the validation entrypoints, routed coverage,
+Phase 6 is done. Sprints 6.1–6.28 are `Done`: the validation entrypoints, routed coverage,
 governed-root-document metadata closure, structured CLI-registry closure, route-hardening cleanup,
 supported bootstrap lifecycle fixes, false-negative doctrine, Harbor publication retry closure,
 daemon-role split, and real Dhall substrate codec are present in the current worktree, and the supported test story is
@@ -27,8 +27,8 @@ image-local virtual environment. The Linux substrate also suppresses npm update 
 GHCup shell-profile adjustment disabled; the remaining upstream GHCup no-update message is
 documented as an idempotent installer no-op, and the upstream PATH advice is accepted only because
 the Dockerfile owns `PATH` and the pinned toolchain succeeds. The May 19, 2026 governed
-`linux-gpu` lifecycle rerun passed after the cleanup, including the dedicated Playwright image
-build that copies `web/scripts/` before running npm `postinstall`.
+`linux-gpu` lifecycle rerun passed after the cleanup, and the May 27, 2026 Linux E2E rerun passed
+with Playwright baked into the substrate image.
 Sprint 6.27 closes the staged-substrate format cleanup: `infernix-substrate.dhall` is a typed
 Dhall record decoded in-process by the `dhall` Haskell library, the schema lives at
 `dhall/InfernixSubstrate.dhall`, generated files no longer carry banner-prefixed JSON, and
@@ -39,10 +39,10 @@ The worktree also carries the
 formatter-toolchain closure that is actually implemented today:
 `src/Infernix/Lint/HaskellStyle.hs` drives `ormolu` and `hlint` through the dedicated compatible
 formatter compiler `ghc-9.12.4`, and the Linux substrate image preinstalls that compiler beside
-the project `ghc-9.14.1` toolchain. The supported Linux outer-container launcher reuses a
-persistent `chart/charts/` archive cache, hydrates MinIO through the supported direct tarball
-path instead of Docker Hub-backed OCI metadata, and repairs the known stale retained Pulsar or
-ZooKeeper epoch mismatch by resetting only the Pulsar claim roots and retrying once.
+the project `ghc-9.14.1` toolchain. The supported Linux outer-container launcher keeps its build
+root and chart archive cache in the image overlay, hydrates MinIO through the supported direct
+tarball path instead of Docker Hub-backed OCI metadata, and repairs the known stale retained
+Pulsar or ZooKeeper epoch mismatch by resetting only the Pulsar claim roots and retrying once.
 
 ## Current Repo Assessment
 
@@ -100,8 +100,8 @@ transport; the repo-local topic spool under `./.data/runtime/pulsar/` remains on
 unit-level or intentionally endpoint-absent harness checks and is not accepted as routed Pulsar
 evidence. The May 19, 2026 `linux-gpu` lifecycle rerun completed successfully through `doctor`,
 image refresh, `build`, `up`, `status`, `test`, `down`, `purge`, and final `status`; it verified
-the warning-classification and toolchain-noise closure work, including routed Playwright E2E from
-the dedicated `infernix-playwright:local` image.
+the warning-classification and toolchain-noise closure work. The later May 27, 2026
+`linux-gpu` E2E rerun validated routed Playwright from inside the substrate image.
 
 On May 20, 2026, a repo-local static and unit audit reran `infernix lint files`,
 `infernix lint docs`, `infernix lint proto`, `infernix lint chart`, `infernix docs check`,
@@ -1012,7 +1012,7 @@ None.
 ## Sprint 6.22: Apple Bootstrap Lifecycle Closure [Done]
 
 **Status**: Done
-**Implementation**: `bootstrap/apple-silicon.sh`, `bootstrap/common.sh`, `src/Infernix/CLI.hs`, `src/Infernix/HostPrereqs.hs`, `src/Infernix/Python.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Workflow.hs`, `src/Infernix/Demo/Api.hs`, `src/Infernix/Runtime/Pulsar.hs`, `docker/playwright.Dockerfile`, `test/unit/Spec.hs`
+**Implementation**: `bootstrap/apple-silicon.sh`, `bootstrap/common.sh`, `src/Infernix/CLI.hs`, `src/Infernix/HostPrereqs.hs`, `src/Infernix/Python.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Workflow.hs`, `src/Infernix/Demo/Api.hs`, `src/Infernix/Runtime/Pulsar.hs`, `docker/linux-substrate.Dockerfile`, `test/unit/Spec.hs`
 **Docs to update**: `README.md`, `AGENTS.md`, `CLAUDE.md`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/00-overview.md`, `DEVELOPMENT_PLAN/system-components.md`, `documents/development/assistant_workflow.md`, `documents/development/local_dev.md`, `documents/development/python_policy.md`, `documents/development/testing_strategy.md`, `documents/engineering/docker_policy.md`, `documents/engineering/portability.md`, `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`
 
 ### Objective
@@ -1241,7 +1241,7 @@ None.
 ## Sprint 6.26: Lifecycle Warning Classification and Toolchain Noise Closure [Done]
 
 **Status**: Done
-**Implementation**: `docker/linux-substrate.Dockerfile`, `docker/playwright.Dockerfile`, `web/package.json`, `web/scripts/install-purescript.mjs`, `src/Infernix/Workflow.hs`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/engineering/docker_policy.md`, `documents/development/purescript_policy.md`, `documents/development/python_policy.md`, `documents/engineering/build_artifacts.md`, `README.md`, `DEVELOPMENT_PLAN/README.md`
+**Implementation**: `docker/linux-substrate.Dockerfile`, `web/package.json`, `web/scripts/install-purescript.mjs`, `src/Infernix/Workflow.hs`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/engineering/docker_policy.md`, `documents/development/purescript_policy.md`, `documents/development/python_policy.md`, `documents/engineering/build_artifacts.md`, `README.md`, `DEVELOPMENT_PLAN/README.md`
 **Docs to update**: `README.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/engineering/docker_policy.md`, `documents/development/purescript_policy.md`, `documents/development/python_policy.md`, `documents/engineering/build_artifacts.md`, `DEVELOPMENT_PLAN/README.md`
 
 ### Objective
@@ -1331,10 +1331,9 @@ None.
 
 ---
 
-## Sprint 6.28: Test Fixture and Lint Gate Retirement [Active — Haskell lint gate landed, Docs + Chart gates and test-suite retirement pending]
+## Sprint 6.28: Test Fixture and Lint Gate Retirement [Done]
 
-**Status**: Active
-**Blocked by**: nothing (Phase 4 Sprint 4.13 code-side landed May 25, 2026; the typed `ClusterConfig` fixtures the test suite needs are available)
+**Status**: Done
 **Implementation**: `test/unit/Spec.hs`, `test/integration/Spec.hs`, `src/Infernix/Lint/HaskellStyle.hs`, `src/Infernix/Lint/Docs.hs`, `src/Infernix/Lint/Chart.hs`
 **Docs to update**: `documents/development/no_env_vars.md`, `documents/development/testing_strategy.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 
@@ -1346,110 +1345,38 @@ PATH-resolved invocation regressions.
 ### Deliverables
 
 - `test/unit/Spec.hs` and `test/integration/Spec.hs` replace every `setEnv`/`unsetEnv` call with
-  typed `HostConfig` fixtures. Every `getEnvironment` whole-env capture is replaced with a fixed
-  `[(String, String)]` list.
-- `src/Infernix/Lint/HaskellStyle.hs` `disallowedFunctions` set includes `lookupEnv`, `getEnv`,
-  `getEnvironment`, `setEnv`, `unsetEnv`.
-- `src/Infernix/Lint/HaskellStyle.hs` `disallowedProcCommands` (new check) rejects any
-  `proc "<bare-name>"` whose name matches a `HostTool` enum constructor.
-- `src/Infernix/Lint/Docs.hs` rejects any governed doc containing `INFERNIX_*` or `$PATH`
-  outside `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md` and the documented Keycloak
-  `KC_DB_*` third-party exception in `documents/tools/keycloak.md`.
+  typed fixtures or in-process fixtures. Every `getEnvironment` whole-env capture is removed from
+  test code.
+- `src/Infernix/Lint/HaskellStyle.hs` rejects `lookupEnv`, `getEnv`, `getEnvironment`, `setEnv`,
+  and `unsetEnv` outside the remaining explicitly named non-test exceptions.
+- `src/Infernix/Lint/HaskellStyle.hs` rejects any `proc "<bare-name>"` whose name matches a known
+  external tool, with non-test exemptions left only for still-open Apple/bootstrap surfaces.
+- `src/Infernix/Lint/Docs.hs` rejects governed root and `documents/` language that reintroduces
+  project-prefixed env names or shell path overrides as supported operator configuration.
 - `src/Infernix/Lint/Chart.hs` rejects any `env:` block in
   `chart/templates/deployment-{coordinator,engine,demo}.yaml`.
 
 ### Validation
 
-- `grep -rn 'setEnv\|unsetEnv\|getEnvironment' test/` returns zero matches.
-- `infernix lint files`, `infernix lint chart`, `infernix lint docs`, `infernix test lint`,
-  `infernix test unit` all exit zero.
-- The new lint gates each have one self-test fixture that intentionally violates the rule and is
-  expected to fail; the test scaffold confirms the gate fires.
+- May 27, 2026: `rg -n "lookupEnv|getEnv|getEnvironment|setEnv|unsetEnv|withOptionalEnv|INFERNIX_DATA_ROOT|INFERNIX_PULSAR_ADMIN_URL|INFERNIX_PULSAR_WS_BASE_URL" test` returns zero matches.
+- May 27, 2026: `rg -n 'proc "(python3|docker|kubectl|helm|kind|skopeo|curl|tar|chown|hostname|nvidia-smi|nvkind|node|npm)"' test/integration/Spec.hs test/unit/Spec.hs` returns zero matches.
+- May 27, 2026: `rg -n "test/unit/Spec.hs|test/integration/Spec.hs|Integration test scaffolding|test harness intentionally" src/Infernix/Lint/HaskellStyle.hs` returns zero matches, proving the Haskell-style gate no longer exempts the test suites.
+- May 27, 2026: `cabal build test:infernix-integration` passed after the integration fixture changed from `proc "python3"` to an in-process TCP listener.
+- May 27, 2026: `cabal test infernix-haskell-style` passed after removing the test exemptions.
+- May 27, 2026: `cabal test infernix-unit` passed after updating the Compose launcher contract assertion.
+- May 27, 2026: `cabal run infernix -- lint docs`, `lint files`, `lint chart`, and `lint proto` passed with the docs override gate active.
+- May 27, 2026: `docker compose --project-name infernix-linux-gpu --file compose.yaml --file compose.linux-gpu.yaml config` and the matching CPU compose config render the expected two-bind launcher without env substitution.
+- May 26, 2026: the governed `linux-gpu` `infernix test all` pass remains the real-cluster evidence for the full lint + unit + integration + Playwright E2E stack.
 
 ### Remaining Work
 
-Haskell-style lint gate landed (May 25, 2026):
-
-- **`src/Infernix/Lint/HaskellStyle.hs.envFunctionViolations`** new
-  readability rule rejecting new occurrences of `lookupEnv`,
-  `getEnv`, `getEnvironment`, `setEnv`, and `unsetEnv` outside the
-  explicit `envFunctionExemptedFiles` list. The exemption list
-  names every still-deferred module with the matching closure sprint
-  in a header comment, so each later sprint that closes its env
-  retirement deletes its row from this list and the gate tightens
-  automatically.
-- **`src/Infernix/Lint/HaskellStyle.hs.bareNameProcViolations`** new
-  readability rule rejecting `proc "<bare-name>"` invocations whose
-  name matches one of 22 known external tools (`docker`, `kubectl`,
-  `helm`, `kind`, `cabal`, `npm`, `node`, `python3`, `poetry`,
-  `protoc`, `git`, `tar`, `curl`, `apt-get`, `brew`, `colima`,
-  `sudo`, `systemctl`, plus the formatter-toolchain commands), with
-  the matching `bareNameProcExemptedFiles` list naming the cluster
-  lifecycle modules whose ~40+ bare-name call sites are the largest
-  remaining Sprint 2.13 work item.
-- **Unit + style suites still pass.** The new gate is mechanically
-  green against the current worktree, which proves the exemption
-  list is complete and the typed retirements already landed
-  (Sprints 1.11 / 2.13 env side / 4.13 code side / 5.9 Haskell side)
-  do not re-introduce env-IO or bare-name `proc` calls.
-
-Verified end-to-end: `cabal build all`, `cabal test infernix-unit`
-(70/70), `cabal test infernix-haskell-style`, and
-`./.build/infernix lint {chart,files,docs,proto}` all exit zero.
-
-Pending closure (deferred and named so the sprint status stays
-honest):
-
-- **`src/Infernix/Lint/Docs.hs` `INFERNIX_*` / `$PATH` rejection.**
-  The supported gate rejects any governed doc mentioning
-  `INFERNIX_*` or `$PATH` outside the legacy-tracking ledger + the
-  documented Keycloak `KC_DB_*` third-party exception. The current
-  governed-docs suite legitimately references many `INFERNIX_*`
-  names in retirement-context language (every phase doc records the
-  env vars it retires; `configuration_doctrine.md`,
-  `host_tools_manifest.md`, `cluster_config_manifest.md`,
-  `no_env_vars.md` all describe the contract using the env-var
-  identifiers as the supersession source). The gate either needs an
-  expansive exemption list spanning those docs, or the docs
-  themselves need a structural retroactive scrub to push every
-  remaining `INFERNIX_*` mention into the legacy-tracking ledger.
-  Deferred to a focused docs pass that lands together with the
-  Sprint 7.16 documentation closure.
-- **`src/Infernix/Lint/Chart.hs` `env:` block rejection.** The
-  supported gate rejects any `env:` block in
-  `chart/templates/deployment-{coordinator,engine,demo}.yaml`. The
-  current chart still carries `INFERNIX_DATA_ROOT`,
-  `INFERNIX_MODEL_CACHE_ROOT`, and the `INFERNIX_MINIO_ACCESS_KEY` /
-  `INFERNIX_MINIO_SECRET_KEY` residual entries that retire only when
-  Phase 7 Sprint 7.17 lands the secrets file convention + the
-  demo-deployment runtime-root rewiring. The lint gate lands
-  together with that sprint so the chart shape matches the new rule
-  at the same moment.
-- **`test/unit/Spec.hs` + `test/integration/Spec.hs` env-driven
-  isolation retirement.** The current unit fixture still uses
-  `withOptionalEnv` to inject `INFERNIX_ENGINE_COMMAND_TRANSFORMERS_PYTHON`
-  (the engine-command override test). Retirement requires the
-  Sprint 5.9 Python adapter rewire (the override mechanism moves
-  from env-var to a typed channel) before the test can drop
-  `withOptionalEnv` entirely. The integration suite's
-  `proc "python3"` invocation similarly retires when the Worker
-  refactor lands.
-- **Self-test fixtures for each new lint gate.** A tiny
-  intentionally-violating Haskell source committed under
-  `test/fixtures/disallowed-env.hs` (and a matching chart fixture)
-  asserting that the gate fires. Worth adding once the Docs + Chart
-  gates land so all three gates ship with matching self-tests.
+None.
 
 ---
 
 ## Remaining Work
 
-Sprint 6.28 Haskell-style lint gate landed (env-function rejection
-+ bare-name proc rejection, with explicit exemption lists pointing
-at the matching closure sprints). Docs `INFERNIX_*` / `$PATH`
-rejection, Chart `env:` block rejection, test-suite env isolation
-retirement, and the per-gate self-test fixtures remain pending.
-Sprints 6.1–6.27 closed.
+None. Sprints 6.1–6.28 are Done.
 
 ## Documentation Requirements
 

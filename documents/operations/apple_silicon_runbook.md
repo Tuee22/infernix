@@ -146,9 +146,8 @@ Direct reference path:
   Node.js, and related operator tools rather than a broader manual prerequisite list
 - the Apple host bootstrap reconciles Colima to at least `8 CPU / 16 GiB` before Docker-backed
   lifecycle or validation work proceeds
-- routed Apple E2E readiness probes use the published host edge on `127.0.0.1:<edge-port>`, but
-  the dedicated Playwright container joins the private Docker `kind` network and targets the Kind
-  control-plane DNS instead of `host.docker.internal`
+- routed Apple E2E remains deferred to the Apple validation pass; the Linux lane already targets
+  the Kind control-plane DNS instead of `host.docker.internal`
 - retained Apple Kind state under `./.data/kind/apple-silicon/` is replayed into and out of the
   worker instead of being bind-mounted, so large retained state can make `up`, `test`, and
   `down` noticeably slower than Linux

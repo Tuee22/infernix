@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import argparse
 import hashlib
 import importlib
 import json
-import os
 import subprocess
 import sys
 from collections.abc import Callable
@@ -14,9 +14,13 @@ from typing import Any, cast
 
 
 def _repo_root() -> Path:
-    configured = os.environ.get("INFERNIX_REPO_ROOT")
-    if configured:
-        return Path(configured)
+    # Phase 5 Sprint 5.9 follow-on (May 26, 2026): the supported repo
+    # root is the parent of the python project that contains this
+    # adapters module. The previous INFERNIX_REPO_ROOT env override
+    # was redundant — the canonical Poetry invocation always runs from
+    # `<repoRoot>/python` and `__file__`-anchored resolution gives the
+    # same path. Retiring the env read closes the configuration-doctrine
+    # rule that adapters may not read process environments for config.
     return Path(__file__).resolve().parents[2]
 
 
@@ -37,7 +41,37 @@ __all__ = [
     "run_check_code",
     "run_context_adapter",
     "run_setup_bootstrap",
+    "run_setup_from_argv",
 ]
+
+
+def run_setup_from_argv(adapter_id: str) -> int:
+    """Phase 5 Sprint 5.9 follow-on (May 26, 2026): the supported
+    setup entrypoint reads ``--install-root <path>`` from argv instead
+    of consuming ``INFERNIX_ENGINE_INSTALL_ROOT`` from the
+    environment. The Haskell daemon's ``runSetupInvocation`` passes
+    the path as a typed CLI argument. When invoked without
+    ``--install-root`` (legacy code path), the helper falls through
+    to the repo-local default behind ``run_setup_bootstrap`` for direct
+    developer calls that are outside the supported Haskell invocation.
+    """
+    parser = argparse.ArgumentParser(
+        prog=f"setup-{adapter_id}",
+        description=(
+            f"Run the {adapter_id} adapter's setup bootstrap. The supported "
+            "invocation passes --install-root explicitly; direct developer "
+            "calls fall back to the repo-local adapter install root."
+        ),
+    )
+    parser.add_argument(
+        "--install-root",
+        required=False,
+        default=None,
+        help="Absolute path to the engine install root for this adapter.",
+    )
+    args = parser.parse_args()
+    install_root = Path(args.install_root) if args.install_root else None
+    return run_setup_bootstrap(adapter_id, install_root=install_root)
 
 
 @dataclass(frozen=True)
@@ -86,13 +120,26 @@ def run_context_adapter(transform: Callable[[AdapterContext], str]) -> int:
     return 0
 
 
-def run_setup_bootstrap(adapter_id: str) -> int:
-    install_root = _engine_install_root(adapter_id)
-    install_root.mkdir(parents=True, exist_ok=True)
+def run_setup_bootstrap(adapter_id: str, install_root: Path | None = None) -> int:
+    # Phase 5 Sprint 5.9 follow-on (May 26, 2026): `install_root` is
+    # passed explicitly by the setup entrypoint's argparse layer
+    # (`--install-root <path>`). Direct developer calls that omit it
+    # fall back to the repo-local default in `_engine_install_root`.
+    # The bootstrap manifest no longer carries a `runtimeMode` field
+    # discovered from process environment. The supported per-substrate
+    # adapter dispatch happens upstream of this setup helper (the
+    # Haskell daemon decodes the active substrate from the staged
+    # `infernix-substrate.dhall` before selecting which adapters to
+    # bootstrap), so this manifest just records the adapter identity
+    # and a freshness timestamp.
+    resolved_install_root = (
+        install_root if install_root is not None else _engine_install_root(adapter_id)
+    )
+    resolved_install_root.mkdir(parents=True, exist_ok=True)
+    install_root = resolved_install_root
     bootstrap_manifest = {
         "adapterId": adapter_id,
         "repoRoot": str(_repo_root()),
-        "runtimeMode": os.environ.get("INFERNIX_ACTIVE_SUBSTRATE", "unknown"),
         "updatedAt": datetime.now(UTC).isoformat(),
     }
     (install_root / "bootstrap.json").write_text(
@@ -105,13 +152,7 @@ def run_setup_bootstrap(adapter_id: str) -> int:
 
 def run_check_code() -> int:
     project_root = Path(__file__).resolve().parent.parent
-    env = os.environ.copy()
-    existing_mypy_path = env.get("MYPYPATH")
-    env["MYPYPATH"] = (
-        str(generated_proto_root)
-        if not existing_mypy_path
-        else existing_mypy_path + os.pathsep + str(generated_proto_root)
-    )
+    env = {"MYPYPATH": str(generated_proto_root)}
     commands = [
         [sys.executable, "-m", "mypy", "--strict", "adapters"],
         [sys.executable, "-m", "black", "--check", "adapters"],
@@ -171,9 +212,14 @@ def word_list(value: str) -> list[str]:
 
 
 def _engine_install_root(adapter_id: str) -> Path:
-    configured = os.environ.get("INFERNIX_ENGINE_INSTALL_ROOT")
-    if configured:
-        return Path(configured)
+    # Phase 5 Sprint 5.9 follow-on (May 26, 2026): the
+    # INFERNIX_ENGINE_INSTALL_ROOT env override is retired. The
+    # supported setup invocation passes `--install-root` as a typed
+    # CLI arg through `run_setup_from_argv`, so this fallback is
+    # reached only when a direct caller invokes
+    # `run_setup_bootstrap(adapter_id)` without an explicit
+    # `install_root`. The supported convention is then
+    # `<repoRoot>/.data/engines/<adapter_id>`.
     return _repo_root() / ".data" / "engines" / adapter_id
 
 

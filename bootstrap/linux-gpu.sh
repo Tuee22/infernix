@@ -1,7 +1,31 @@
 #!/usr/bin/env bash
+PATH=/usr/bin:/bin
+export PATH
 set -euo pipefail
 
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+BOOTSTRAP_DIRNAME=/usr/bin/dirname
+BOOTSTRAP_APT_GET=/usr/bin/apt-get
+BOOTSTRAP_CHMOD=/usr/bin/chmod
+BOOTSTRAP_CMP=/usr/bin/cmp
+BOOTSTRAP_CP=/usr/bin/cp
+BOOTSTRAP_CURL=/usr/bin/curl
+BOOTSTRAP_DOCKER=/usr/bin/docker
+BOOTSTRAP_DPKG=/usr/bin/dpkg
+BOOTSTRAP_GPG=/usr/bin/gpg
+BOOTSTRAP_GREP=/usr/bin/grep
+BOOTSTRAP_INSTALL=/usr/bin/install
+BOOTSTRAP_MKTEMP=/usr/bin/mktemp
+BOOTSTRAP_NVIDIA_CTK=/usr/bin/nvidia-ctk
+BOOTSTRAP_NVIDIA_SMI=/usr/bin/nvidia-smi
+BOOTSTRAP_RM=/usr/bin/rm
+BOOTSTRAP_SED=/usr/bin/sed
+BOOTSTRAP_SUDO=/usr/bin/sudo
+BOOTSTRAP_SYSTEMCTL=/usr/bin/systemctl
+BOOTSTRAP_TR=/usr/bin/tr
+BOOTSTRAP_UBUNTU_DRIVERS=/usr/bin/ubuntu-drivers
+BOOTSTRAP_USERMOD=/usr/sbin/usermod
+
+SCRIPT_DIR="$(cd -- "$("${BOOTSTRAP_DIRNAME}" -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=bootstrap/common.sh
 source "${SCRIPT_DIR}/common.sh"
 
@@ -11,6 +35,7 @@ COMPOSE_SUBSTRATE="linux-gpu"
 COMPOSE_BASE_IMAGE="nvidia/cuda:13.2.1-cudnn-runtime-ubuntu24.04"
 NVIDIA_PROBE_IMAGE="nvidia/cuda:12.4.1-base-ubuntu22.04"
 COMPOSE_PROJECT="infernix-linux-gpu"
+COMPOSE_FILES=(--file compose.yaml --file compose.linux-gpu.yaml)
 
 show_help() {
   cat <<EOF
@@ -55,10 +80,10 @@ Available Linux GPU commands:
 
 Direct reference commands:
   docker build -f docker/linux-substrate.Dockerfile -t ${COMPOSE_IMAGE} --build-arg RUNTIME_MODE=${COMPOSE_SUBSTRATE} --build-arg BASE_IMAGE=${COMPOSE_BASE_IMAGE} --build-arg DEMO_UI=true .
-  INFERNIX_COMPOSE_IMAGE=${COMPOSE_IMAGE} docker compose run --rm infernix infernix cluster up
-  INFERNIX_COMPOSE_IMAGE=${COMPOSE_IMAGE} docker compose run --rm infernix infernix cluster status
-  INFERNIX_COMPOSE_IMAGE=${COMPOSE_IMAGE} docker compose run --rm infernix infernix test all
-  INFERNIX_COMPOSE_IMAGE=${COMPOSE_IMAGE} docker compose run --rm infernix infernix cluster down
+  docker compose --project-name ${COMPOSE_PROJECT} --file compose.yaml --file compose.linux-gpu.yaml run --rm infernix infernix cluster up
+  docker compose --project-name ${COMPOSE_PROJECT} --file compose.yaml --file compose.linux-gpu.yaml run --rm infernix infernix cluster status
+  docker compose --project-name ${COMPOSE_PROJECT} --file compose.yaml --file compose.linux-gpu.yaml run --rm infernix infernix test all
+  docker compose --project-name ${COMPOSE_PROJECT} --file compose.yaml --file compose.linux-gpu.yaml run --rm infernix infernix cluster down
 
 Teardown and cleanup:
   ${SCRIPT_LABEL} down
@@ -68,14 +93,9 @@ EOF
 
 # Phase 1 Sprint 1.11 — compose.yaml has no build: block, no
 # environment: block, and no substrate-selection env var. The script
-# sets exactly @INFERNIX_COMPOSE_IMAGE@ (compose's image-name selector)
-# and @INFERNIX_HOST_REPO_ROOT@ (Sprint 2.10 territory, still consumed
-# by @Cluster.hs@ for host-side kind config path resolution).
-compose_env() {
-  COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT}" \
-    INFERNIX_COMPOSE_IMAGE="${COMPOSE_IMAGE}" \
-    INFERNIX_HOST_REPO_ROOT="${BOOTSTRAP_REPO_ROOT}" \
-    "$@"
+# selects the project and compose files with explicit CLI arguments.
+compose_run() {
+  bootstrap::run "${BOOTSTRAP_DOCKER}" compose --project-name "${COMPOSE_PROJECT}" "${COMPOSE_FILES[@]}" run --rm infernix infernix "$@"
 }
 
 # Phase 1 Sprint 1.11 — explicit @docker build@ replaces the previous
@@ -83,7 +103,7 @@ compose_env() {
 # configuration-doctrine standards). Build args feed the Dockerfile;
 # the resulting image is referenced from compose.yaml by name only.
 build_launcher_image() {
-  bootstrap::run docker build \
+  bootstrap::run "${BOOTSTRAP_DOCKER}" build \
     --file docker/linux-substrate.Dockerfile \
     --tag "${COMPOSE_IMAGE}" \
     --build-arg "RUNTIME_MODE=${COMPOSE_SUBSTRATE}" \
@@ -95,50 +115,50 @@ build_launcher_image() {
 ensure_platform_shape() {
   bootstrap::require_linux
   bootstrap::require_ubuntu_24_04
-  [[ "$(dpkg --print-architecture)" == "amd64" ]] || bootstrap::die "The supported linux-gpu host shape is Ubuntu 24.04 amd64."
+  [[ "$("${BOOTSTRAP_DPKG}" --print-architecture)" == "amd64" ]] || bootstrap::die "The supported linux-gpu host shape is Ubuntu 24.04 amd64."
 }
 
 docker_ready() {
-  docker version >/dev/null 2>&1
+  "${BOOTSTRAP_DOCKER}" version >/dev/null 2>&1
 }
 
 docker_compose_ready() {
-  docker compose version >/dev/null 2>&1
+  "${BOOTSTRAP_DOCKER}" compose version >/dev/null 2>&1
 }
 
 docker_gpu_runtime_ready() {
-  docker run --rm --gpus all "${NVIDIA_PROBE_IMAGE}" nvidia-smi -L >/dev/null 2>&1
+  "${BOOTSTRAP_DOCKER}" run --rm --gpus all "${NVIDIA_PROBE_IMAGE}" "${BOOTSTRAP_NVIDIA_SMI}" -L >/dev/null 2>&1
 }
 
 docker_gpu_volume_mount_ready() {
-  docker run --rm --gpus all -v /dev/null:/var/run/nvidia-container-devices/all "${NVIDIA_PROBE_IMAGE}" nvidia-smi -L >/dev/null 2>&1
+  "${BOOTSTRAP_DOCKER}" run --rm --gpus all -v /dev/null:/var/run/nvidia-container-devices/all "${NVIDIA_PROBE_IMAGE}" "${BOOTSTRAP_NVIDIA_SMI}" -L >/dev/null 2>&1
 }
 
 ensure_docker_service_running() {
   if docker_ready; then
     return 0
   fi
-  if bootstrap::have systemctl; then
+  if [[ -x "${BOOTSTRAP_SYSTEMCTL}" ]]; then
     bootstrap::ensure_sudo_session
-    bootstrap::run sudo systemctl enable --now docker
+    bootstrap::run "${BOOTSTRAP_SUDO}" "${BOOTSTRAP_SYSTEMCTL}" enable --now docker
   fi
 }
 
 write_docker_sources_file() {
   local temp_file
-  temp_file="$(mktemp)"
-  cat >"${temp_file}" <<EOF
-Types: deb
-URIs: https://download.docker.com/linux/ubuntu
-Suites: ${BOOTSTRAP_OS_CODENAME}
-Components: stable
-Architectures: $(dpkg --print-architecture)
-Signed-By: /etc/apt/keyrings/docker.asc
-EOF
-  if ! sudo cmp -s "${temp_file}" /etc/apt/sources.list.d/docker.sources 2>/dev/null; then
-    bootstrap::run sudo cp "${temp_file}" /etc/apt/sources.list.d/docker.sources
+  temp_file="$("${BOOTSTRAP_MKTEMP}")"
+  {
+    printf '%s\n' "Types: deb"
+    printf '%s\n' "URIs: https://download.docker.com/linux/ubuntu"
+    printf '%s\n' "Suites: ${BOOTSTRAP_OS_CODENAME}"
+    printf '%s\n' "Components: stable"
+    printf '%s\n' "Architectures: $("${BOOTSTRAP_DPKG}" --print-architecture)"
+    printf '%s\n' "Signed-By: /etc/apt/keyrings/docker.asc"
+  } >"${temp_file}"
+  if ! "${BOOTSTRAP_SUDO}" "${BOOTSTRAP_CMP}" -s "${temp_file}" /etc/apt/sources.list.d/docker.sources 2>/dev/null; then
+    bootstrap::run "${BOOTSTRAP_SUDO}" "${BOOTSTRAP_CP}" "${temp_file}" /etc/apt/sources.list.d/docker.sources
   fi
-  rm -f "${temp_file}"
+  "${BOOTSTRAP_RM}" -f "${temp_file}"
 }
 
 ensure_docker_engine() {
@@ -149,16 +169,16 @@ ensure_docker_engine() {
   ensure_platform_shape
   bootstrap::ensure_sudo_session
 
-  bootstrap::run sudo apt-get update
-  bootstrap::run sudo apt-get install -y ca-certificates curl gnupg
-  bootstrap::run sudo install -m 0755 -d /etc/apt/keyrings
+  bootstrap::run "${BOOTSTRAP_SUDO}" "${BOOTSTRAP_APT_GET}" update
+  bootstrap::run "${BOOTSTRAP_SUDO}" "${BOOTSTRAP_APT_GET}" install -y ca-certificates curl gnupg
+  bootstrap::run "${BOOTSTRAP_SUDO}" "${BOOTSTRAP_INSTALL}" -m 0755 -d /etc/apt/keyrings
   if [[ ! -f /etc/apt/keyrings/docker.asc ]]; then
-    bootstrap::run sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
-    bootstrap::run sudo chmod a+r /etc/apt/keyrings/docker.asc
+    bootstrap::run "${BOOTSTRAP_SUDO}" "${BOOTSTRAP_CURL}" -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+    bootstrap::run "${BOOTSTRAP_SUDO}" "${BOOTSTRAP_CHMOD}" a+r /etc/apt/keyrings/docker.asc
   fi
   write_docker_sources_file
-  bootstrap::run sudo apt-get update
-  bootstrap::run sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+  bootstrap::run "${BOOTSTRAP_SUDO}" "${BOOTSTRAP_APT_GET}" update
+  bootstrap::run "${BOOTSTRAP_SUDO}" "${BOOTSTRAP_APT_GET}" install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
   ensure_docker_service_running
 }
 
@@ -168,9 +188,11 @@ ensure_docker_socket_access() {
     return 0
   fi
 
-  if sudo docker version >/dev/null 2>&1; then
-    if ! id -nG "${USER}" | tr ' ' '\n' | grep -qx docker; then
-      bootstrap::run sudo usermod -aG docker "${USER}"
+  if "${BOOTSTRAP_SUDO}" "${BOOTSTRAP_DOCKER}" version >/dev/null 2>&1; then
+    local effective_user
+    effective_user="$(bootstrap::effective_user)"
+    if ! "${BOOTSTRAP_ID}" -nG "${effective_user}" | "${BOOTSTRAP_TR}" ' ' '\n' | "${BOOTSTRAP_GREP}" -qx docker; then
+      bootstrap::run "${BOOTSTRAP_SUDO}" "${BOOTSTRAP_USERMOD}" -aG docker "${effective_user}"
     fi
     bootstrap::pending "Docker is installed, but this shell does not yet have Docker socket access. Open a new shell, then rerun ${SCRIPT_LABEL}."
   fi
@@ -179,36 +201,36 @@ ensure_docker_socket_access() {
 }
 
 driver_packages_present() {
-  dpkg -l 'nvidia-driver*' 2>/dev/null | grep -q '^ii'
+  "${BOOTSTRAP_DPKG}" -l 'nvidia-driver*' 2>/dev/null | "${BOOTSTRAP_GREP}" -q '^ii'
 }
 
 ensure_nvidia_driver() {
-  if bootstrap::have nvidia-smi && nvidia-smi -L >/dev/null 2>&1; then
+  if [[ -x "${BOOTSTRAP_NVIDIA_SMI}" ]] && "${BOOTSTRAP_NVIDIA_SMI}" -L >/dev/null 2>&1; then
     return 0
   fi
 
   ensure_platform_shape
   bootstrap::ensure_sudo_session
-  bootstrap::run sudo apt-get update
-  bootstrap::run sudo apt-get install -y ubuntu-drivers-common
+  bootstrap::run "${BOOTSTRAP_SUDO}" "${BOOTSTRAP_APT_GET}" update
+  bootstrap::run "${BOOTSTRAP_SUDO}" "${BOOTSTRAP_APT_GET}" install -y ubuntu-drivers-common
 
   if driver_packages_present; then
     bootstrap::pending "NVIDIA driver packages appear installed, but nvidia-smi is still not ready. Reboot the host, then rerun ${SCRIPT_LABEL}."
   fi
 
-  bootstrap::run sudo ubuntu-drivers install --gpgpu
+  bootstrap::run "${BOOTSTRAP_SUDO}" "${BOOTSTRAP_UBUNTU_DRIVERS}" install --gpgpu
   bootstrap::pending "Installed the recommended Ubuntu NVIDIA compute driver. Reboot the host, then rerun ${SCRIPT_LABEL}."
 }
 
 write_nvidia_toolkit_list() {
   local temp_file
-  temp_file="$(mktemp)"
-  curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
-    | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' >"${temp_file}"
-  if ! sudo cmp -s "${temp_file}" /etc/apt/sources.list.d/nvidia-container-toolkit.list 2>/dev/null; then
-    bootstrap::run sudo cp "${temp_file}" /etc/apt/sources.list.d/nvidia-container-toolkit.list
+  temp_file="$("${BOOTSTRAP_MKTEMP}")"
+  "${BOOTSTRAP_CURL}" -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
+    | "${BOOTSTRAP_SED}" 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' >"${temp_file}"
+  if ! "${BOOTSTRAP_SUDO}" "${BOOTSTRAP_CMP}" -s "${temp_file}" /etc/apt/sources.list.d/nvidia-container-toolkit.list 2>/dev/null; then
+    bootstrap::run "${BOOTSTRAP_SUDO}" "${BOOTSTRAP_CP}" "${temp_file}" /etc/apt/sources.list.d/nvidia-container-toolkit.list
   fi
-  rm -f "${temp_file}"
+  "${BOOTSTRAP_RM}" -f "${temp_file}"
 }
 
 ensure_nvidia_container_toolkit() {
@@ -221,21 +243,21 @@ ensure_nvidia_container_toolkit() {
   ensure_nvidia_driver
   bootstrap::ensure_sudo_session
 
-  bootstrap::run sudo apt-get update
-  bootstrap::run sudo apt-get install -y ca-certificates curl gnupg
-  bootstrap::run sudo install -m 0755 -d /usr/share/keyrings
+  bootstrap::run "${BOOTSTRAP_SUDO}" "${BOOTSTRAP_APT_GET}" update
+  bootstrap::run "${BOOTSTRAP_SUDO}" "${BOOTSTRAP_APT_GET}" install -y ca-certificates curl gnupg
+  bootstrap::run "${BOOTSTRAP_SUDO}" "${BOOTSTRAP_INSTALL}" -m 0755 -d /usr/share/keyrings
   if [[ ! -f /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg ]]; then
-    curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
-      | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+    "${BOOTSTRAP_CURL}" -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
+      | "${BOOTSTRAP_SUDO}" "${BOOTSTRAP_GPG}" --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
   fi
   write_nvidia_toolkit_list
-  bootstrap::run sudo apt-get update
-  bootstrap::run sudo apt-get install -y nvidia-container-toolkit
-  if ! sudo nvidia-ctk runtime configure --runtime=docker --set-as-default --cdi.enabled; then
-    bootstrap::run sudo nvidia-ctk runtime configure --runtime=docker
+  bootstrap::run "${BOOTSTRAP_SUDO}" "${BOOTSTRAP_APT_GET}" update
+  bootstrap::run "${BOOTSTRAP_SUDO}" "${BOOTSTRAP_APT_GET}" install -y nvidia-container-toolkit
+  if ! "${BOOTSTRAP_SUDO}" "${BOOTSTRAP_NVIDIA_CTK}" runtime configure --runtime=docker --set-as-default --cdi.enabled; then
+    bootstrap::run "${BOOTSTRAP_SUDO}" "${BOOTSTRAP_NVIDIA_CTK}" runtime configure --runtime=docker
   fi
-  bootstrap::run sudo nvidia-ctk config --set accept-nvidia-visible-devices-as-volume-mounts=true --in-place
-  bootstrap::run sudo systemctl restart docker
+  bootstrap::run "${BOOTSTRAP_SUDO}" "${BOOTSTRAP_NVIDIA_CTK}" config --set accept-nvidia-visible-devices-as-volume-mounts=true --in-place
+  bootstrap::run "${BOOTSTRAP_SUDO}" "${BOOTSTRAP_SYSTEMCTL}" restart docker
 
   if ! docker_gpu_runtime_ready || ! docker_gpu_volume_mount_ready; then
     bootstrap::die "Docker GPU probes are still failing after NVIDIA Container Toolkit configuration. Verify \`nvidia-smi -L\` and rerun ${SCRIPT_LABEL} doctor."
@@ -256,7 +278,7 @@ ensure_gpu_runtime_prerequisites() {
 
 run_infernix() {
   ensure_host_prerequisites
-  bootstrap::run compose_env docker compose run --rm infernix infernix "$@"
+  compose_run "$@"
 }
 
 command_doctor() {
@@ -295,8 +317,7 @@ command_purge() {
 }
 
 main() {
-  # Phase 1 Sprint 1.11 — @--yes@ replaces the @INFERNIX_BOOTSTRAP_YES@
-  # env-var sense for destructive-confirmation gates.
+  # Phase 1 Sprint 1.11 — @--yes@ owns destructive-confirmation gates.
   if ! bootstrap::parse_yes_flag "${1:-}"; then
     shift
   fi

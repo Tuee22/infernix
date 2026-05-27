@@ -14,13 +14,16 @@ Phase 1 closed Sprints 1.1–1.10 around the current repository scaffold, the tw
 the staged substrate-file contract, the baked Linux launcher image, and the governed
 root-document posture implemented in this worktree. Phase 1 is now Active again because Phase 0
 Sprint 0.9 declared the no-env-var + absolute-path doctrine and Phase 1 owns the host-manifest
-materialization that closes that doctrine for the host tool-path surface. Sprint 1.11 retires
+materialization that closes that doctrine for the host tool-path surface. Sprint 1.11 is retiring
 `INFERNIX_BUILD_ROOT`, `INFERNIX_DATA_ROOT`, the `INFERNIX_COMPOSE_SUBSTRATE` /
 `INFERNIX_COMPOSE_DEMO_UI` runtime fallbacks, `INFERNIX_BOOTSTRAP_YES`, the
-`bootstrap::prepend_path` helper, and the host-side `.build` / `chart/charts` bind mounts. It
-introduces `dhall/InfernixHost.dhall` + the matching `HostConfig` Haskell record and refactors
-every bootstrap script to the `PATH=/usr/bin:/bin` + `BASH_SOURCE` + `/etc/passwd` + hardcoded
-absolute-path discovery convention.
+`bootstrap::prepend_path` helper, and the host-side `.build` / `chart/charts` bind mounts. The
+Linux launcher now selects the GPU image through `compose.linux-gpu.yaml` rather than compose
+environment substitution, and no longer forwards the host-repo override. It
+introduces `dhall/InfernixHost.dhall` + the matching `HostConfig` Haskell record. The Linux
+bootstrap entrypoints now use the `PATH=/usr/bin:/bin` + `BASH_SOURCE` + `/etc/passwd` +
+hardcoded absolute-path discovery convention; the Apple bootstrap entrypoint remains deferred to
+the Apple validation pass.
 
 ## Current Repo Assessment
 
@@ -30,8 +33,8 @@ Haskell command registry, the governed root docs point at canonical
 stage or verify `infernix-substrate.dhall` under the active build root through binary-owned
 preflight, while explicit helper invocations remain available for direct inspection or restaging.
 The Linux substrate Dockerfile also materializes a build-arg-selected copy inside the image
-overlay during image build, but supported Compose runs bind-mount the host `./.build/` tree over
-that location.
+overlay during image build, and supported Compose runs keep the Linux build root in the image
+overlay rather than bind-mounting the host `./.build/` tree.
 
 ## Substrate Foundation
 
@@ -495,6 +498,9 @@ shrinks to `./.data` plus the Docker socket only.
 - `grep -rn 'lookupEnv\|getEnv' src/Infernix/{Config,CLI,DemoCLI}.hs` returns zero matches.
 - `grep -rn 'INFERNIX_BUILD_ROOT\|INFERNIX_DATA_ROOT\|INFERNIX_COMPOSE_SUBSTRATE\|INFERNIX_COMPOSE_DEMO_UI\|INFERNIX_BOOTSTRAP_YES' src/ bootstrap/ compose.yaml docker/` returns zero matches.
 - `./bootstrap/linux-cpu.sh doctor` runs cleanly under `env -i /usr/bin/bash` (empty starting env).
+- May 27, 2026: `env -i /usr/bin/bash ./bootstrap/linux-cpu.sh doctor` and
+  `env -i /usr/bin/bash ./bootstrap/linux-gpu.sh doctor` both passed after the Linux stage-zero
+  bootstrap cleanup.
 - `./bootstrap/linux-gpu.sh build` produces an image whose `docker run --rm infernix-linux-gpu:local
   /usr/bin/ls /opt/infernix/chart/charts` lists the expected Helm chart archives (no bind mount
   needed).
@@ -555,26 +561,25 @@ Haskell-side env-var retirement landed (May 24, 2026):
   and the Apple bootstrap script keep the file present on the
   supported paths.
 - `src/Infernix/Config.discoverPathsWithHostManifest` exposes
-  fixture-driven discovery for tests (Sprint 6.28 will codify the
-  lint gate that forbids any new `setEnv`/`unsetEnv` regressions).
+  fixture-driven discovery for tests; Sprint 6.28 codifies the lint
+  gate that forbids new `setEnv`/`unsetEnv` regressions.
 - `test/unit/Spec.hs` replaces the `withOptionalEnv "INFERNIX_BUILD_ROOT"`
   and `withTestRoot` `setEnv "INFERNIX_DATA_ROOT"` patterns with two
   typed `HostConfig` fixtures (`hostNativeUnitTestFixture`,
   `linuxOuterContainerUnitTestFixture`) that route every test-time
   `Paths` value through `discoverPathsWithHostManifest`.
 
-Infra-side cleanup landed (May 24, 2026):
+Infra-side cleanup landed (May 24, 2026; Linux compose-image selection tightened May 27, 2026):
 
 - `compose.yaml` shrunk: the `infernix` service drops the previous
-  `build:` block, the `environment:` block (the four forbidden
-  `INFERNIX_BUILD_ROOT` / `INFERNIX_COMPOSE_SUBSTRATE` / `INFERNIX_COMPOSE_DEMO_UI`
-  references plus the `INFERNIX_HOST_REPO_ROOT` runtime echo), and the
-  `./.build` / `./chart/charts` / `./compose.yaml` bind mounts. The
-  service now references the launcher image by name only and bind-mounts
-  exactly `./.data:/workspace/.data` and `/var/run/docker.sock`. The
-  `playwright` sidecar service stays in compose.yaml for now; Sprint 3.10
-  deletes it together with `docker/playwright.Dockerfile` and the
-  matching `runEndToEnd` refactor.
+  `build:` block, the `environment:` block, and the `./.build` /
+  `./chart/charts` / `./compose.yaml` bind mounts. The service now
+  references the CPU launcher image by name only and bind-mounts exactly
+  `./.data:/workspace/.data` and `/var/run/docker.sock`. The
+  `compose.linux-gpu.yaml` override selects `infernix-linux-gpu:local`
+  for the GPU lane without compose environment substitution. Sprint
+  3.10 deleted the old Playwright sidecar service together with its
+  Dockerfile and the matching `runEndToEnd` refactor.
 - `docker/linux-substrate.Dockerfile`: removed the
   `ENV INFERNIX_BUILD_ROOT=/workspace/.build/outer-container/build`
   directive. The supported in-image build root is now the convention
@@ -587,36 +592,35 @@ Infra-side cleanup landed (May 24, 2026):
   set via the new `bootstrap::parse_yes_flag` helper that pops a
   leading `--yes` from each entrypoint's argv.
 - `bootstrap/linux-cpu.sh`, `bootstrap/linux-gpu.sh`:
-  `compose_env` no longer passes `INFERNIX_COMPOSE_SUBSTRATE` or
-  `INFERNIX_COMPOSE_BASE_IMAGE`; the substrate is fed exclusively via
-  the new `build_launcher_image` helper that invokes
-  `docker build --build-arg RUNTIME_MODE=…` directly (compose.yaml has
-  no `build.args:` block per the standards). `command_build` calls
-  `build_launcher_image` before the smoke-test `infernix --help`.
-  Both scripts parse `--yes` as the first argument.
+  `compose_run` passes `--project-name` and explicit `--file`
+  arguments to Docker Compose instead of setting compose-control env
+  vars; the substrate is fed exclusively via the `build_launcher_image`
+  helper that invokes `docker build --build-arg RUNTIME_MODE=…`
+  directly (compose.yaml has no `build.args:` block per the standards).
+  `command_build` calls `build_launcher_image` before the smoke-test
+  `infernix --help`. Both scripts parse `--yes` as the first argument.
+- `bootstrap/linux-cpu.sh`, `bootstrap/linux-gpu.sh`, and
+  `bootstrap/common.sh`: Linux entrypoints now reset
+  `PATH=/usr/bin:/bin` before any setup work, resolve the script root
+  from `BASH_SOURCE`, derive the effective user/home from
+  `/etc/passwd` via `getent`, and route Docker / apt / sudo / dpkg /
+  NVIDIA / file-utility calls through explicit `/usr/bin` or
+  `/usr/sbin` constants. They no longer depend on `$USER`, `$HOME`,
+  `$PATH`, or `command -v` on the Linux lane.
 
 Verified end-to-end on the host: `cabal build all`, `cabal test
 infernix-unit`, `cabal test infernix-haskell-style`, and
 `cabal run infernix -- lint {files,chart,docs,proto}` all exit zero.
 The Sprint 1.11 forbidden-env grep gate
 (`grep -rEn 'INFERNIX_BUILD_ROOT|INFERNIX_DATA_ROOT|INFERNIX_COMPOSE_SUBSTRATE|INFERNIX_COMPOSE_DEMO_UI|INFERNIX_BOOTSTRAP_YES' src/ bootstrap/ compose.yaml docker/`)
-returns only the documented-retirement comment references plus one
-chart-lint expectation entry in `src/Infernix/Lint/Chart.hs:67` that
-asserts `chart/templates/deployment-demo.yaml` still carries the
-`INFERNIX_DATA_ROOT` env var (the chart still does — Sprint 5.9 +
-Sprint 7.17 retire it together with the demo deployment's env block
-and the Python adapter's `os.environ` reads).
+returns only documented-retirement comment references. The live Linux
+launcher path also passes the targeted grep for the removed compose
+selection and host-repo override env names across `bootstrap/`,
+`compose.yaml`, `compose.linux-gpu.yaml`, `docker/`, and `src/`.
 
 Pending closure (deferred to later turns, named so closure status stays
 honest):
 
-- **Stage-zero `PATH=/usr/bin:/bin` + absolute-path constants in
-  bootstrap scripts.** The current scripts already pass the
-  forbidden-env grep gate, but they still use `command -v` to resolve
-  `docker`, `sudo`, `apt-get`, etc. The full stage-zero refactor
-  (Section T of the development-plan standards) lands together with
-  Sprint 2.13's `proc "<bare-name>"` retirement, since the two changes
-  share the same `HostConfig.toolPaths.*` absolute-path table.
 - **Apple bootstrap script (`bootstrap/apple-silicon.sh`).** Deferred
   to the Apple-host validation pass per the active-substrate priority.
   The shared `bootstrap/common.sh` `--yes` flag wiring already covers
@@ -644,21 +648,6 @@ honest):
   `ensureSupportedRuntimeModeForExecutionContext`. The fix replaces
   the previously-retired `ENV INFERNIX_BUILD_ROOT=...` directive
   with the typed Dhall manifest the doctrine actually demands.
-- **`src/Infernix/DemoCLI.hs` env-var retirement.** Sprint 1.11 named
-  `DemoCLI.hs` in its in-scope list at "Every Haskell external-command
-  invocation in this phase's scope", and the grep gate
-  `grep -rn 'lookupEnv\|getEnv' src/Infernix/{Config,CLI,DemoCLI}.hs`
-  is part of the sprint's validation. `DemoCLI.hs` still calls
-  `lookupEnv "INFERNIX_BIND_HOST"`, `lookupEnv "INFERNIX_DEMO_BRIDGE_MODE"`,
-  and `lookupEnv "INFERNIX_PUBLICATION_STATE_PATH"`. Those reads are
-  retired together with the rest of the demo-backend `ClusterConfig`
-  threading in Phase 5 Sprint 5.9 because the replacement values
-  (`ClusterConfig.demoBackend.*`) are introduced by Phase 4 Sprint 4.13
-  rather than Phase 1.
-- **Sprint 3.10's compose.yaml `playwright` service removal + the
-  `docker/playwright.Dockerfile` deletion** are now landed — the Sprint
-  3.10 closure (May 24, 2026) removed both. This row stays here for
-  ledger traceability of the temporary in-Sprint-1.11 carve-out.
 
 ---
 

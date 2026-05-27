@@ -34,9 +34,10 @@ import Infernix.Web.Contracts (ObjectRef (..))
 -- @infernix-minio.platform.svc.cluster.local:9000@. @presignedScheme@ is
 -- @http@ for the supported in-cluster MinIO deployment (the chart does
 -- not provision TLS for the MinIO service) and @https@ for TLS-fronted
--- MinIO. Operators feed either through @INFERNIX_MINIO_ENDPOINT@; the
--- loader strips any @http://@ or @https://@ prefix and records the
--- scheme separately so the minted URL points at the right transport.
+-- MinIO. Config loaders derive both fields from
+-- @ClusterConfig.minio.endpoint@, stripping any @http://@ or
+-- @https://@ prefix and recording the scheme separately so the minted
+-- URL points at the right transport.
 data PresignedUrlConfig = PresignedUrlConfig
   { presignedScheme :: Text,
     presignedEndpoint :: Text,

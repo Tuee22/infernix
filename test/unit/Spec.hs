@@ -36,10 +36,13 @@ import Infernix.ClusterConfig
   ( ClusterConfig (..),
     CoordinatorWiring (..),
     DemoBackendWiring (..),
+    EngineCommandOverride (..),
     EngineWiring (..),
     KeycloakWiring (..),
     MinioWiring (..),
     PulsarWiring (..),
+    decodeClusterConfigFile,
+    renderClusterConfig,
   )
 import Infernix.CommandRegistry
   ( Command (..),
@@ -161,25 +164,23 @@ main = do
     ("`/minio/s3` -> `infernix-minio:9000`" `isInfixOf` renderChartRouteRegistryCommentSection)
     "the chart route summary includes the MinIO S3 backend from the route registry"
   -- Phase 1 Sprint 1.11 — compose.yaml shrunk to the supported shape:
-  -- one infernix service that picks its image via @INFERNIX_COMPOSE_IMAGE@
-  -- only. The previous @${INFERNIX_COMPOSE_SUBSTRATE:-linux-cpu}@ and
-  -- @${INFERNIX_COMPOSE_BASE_IMAGE:-ubuntu:24.04}@ assertions are
-  -- retired together with the build.args: block (forbidden by the
-  -- configuration-doctrine standards); the bootstrap scripts now feed
-  -- substrate and base image as @docker build --build-arg@ values.
+  -- one infernix service for the default CPU lane, plus a small GPU
+  -- override file. Bootstrap scripts select the project and compose
+  -- files with explicit Docker Compose CLI arguments.
   composeLauncherContents <- readFile "compose.yaml"
+  composeGpuOverrideContents <- readFile "compose.linux-gpu.yaml"
   assert
-    ("${INFERNIX_COMPOSE_IMAGE:-infernix-linux-cpu:local}" `isInfixOf` composeLauncherContents)
-    "compose defaults to the linux-cpu launcher image while allowing image selection"
+    ("image: infernix-linux-cpu:local" `isInfixOf` composeLauncherContents)
+    "compose defaults to the linux-cpu launcher image"
   assert
-    (not ("INFERNIX_COMPOSE_SUBSTRATE" `isInfixOf` composeLauncherContents))
-    "Sprint 1.11: compose.yaml no longer references INFERNIX_COMPOSE_SUBSTRATE"
+    ("image: infernix-linux-gpu:local" `isInfixOf` composeGpuOverrideContents)
+    "compose.linux-gpu.yaml selects the linux-gpu launcher image"
   assert
-    (not ("INFERNIX_BUILD_ROOT" `isInfixOf` composeLauncherContents))
-    "Sprint 1.11: compose.yaml no longer references INFERNIX_BUILD_ROOT"
+    (not ("INFERNIX_" `isInfixOf` composeLauncherContents || "INFERNIX_" `isInfixOf` composeGpuOverrideContents))
+    "Sprint 1.11: compose launcher files no longer use project env substitution"
   assert
-    (not ("INFERNIX_COMPOSE_DEMO_UI" `isInfixOf` composeLauncherContents))
-    "Sprint 1.11: compose.yaml no longer references INFERNIX_COMPOSE_DEMO_UI"
+    (not ("build:" `isInfixOf` composeLauncherContents || "build:" `isInfixOf` composeGpuOverrideContents))
+    "Sprint 1.11: compose launcher files do not carry build blocks"
   assert
     (appleHostRequirementIds AppleSilicon ClusterUpCommand == ["docker", "colima", "kind", "kubectl", "helm", "node", "python", "poetry"])
     "apple host prerequisite planning includes the full cluster and adapter toolchain for apple-silicon cluster up"
@@ -420,6 +421,7 @@ main = do
       assert (resultTopic decodedConfig == resultTopicForMode LinuxCpu) "demo-config decode preserves the result topic"
       assert (engines decodedConfig == engineBindingsForMode LinuxCpu) "demo-config decode preserves engine bindings"
       assert (length (models decodedConfig) == length (catalogForMode LinuxCpu)) "demo-config decode preserves the model list"
+      assertClusterConfig unitTestRoot demoConfigPath
       let appleHostConfig =
             DemoConfig
               { configRuntimeMode = AppleSilicon,
@@ -2074,3 +2076,28 @@ assertHostConfig testRoot = do
   assert
     (decoded == linuxConfig)
     "HostConfig round-trip through renderHostConfig + decodeHostConfigFile preserves every field"
+
+-- Phase 4 Sprint 4.13 — ClusterConfig renderer + decoder roundtrip.
+assertClusterConfig :: FilePath -> FilePath -> IO ()
+assertClusterConfig testRoot demoConfigPathValue = do
+  let baseConfig = unitTestClusterConfigFixture demoConfigPathValue
+      clusterConfig =
+        baseConfig
+          { clusterEngine =
+              (clusterEngine baseConfig)
+                { engineCommandOverrides =
+                    [ EngineCommandOverride
+                        { engineOverrideKey = "transformers-python",
+                          engineOverrideValue = "/tmp/infernix-test/python-worker-wrapper.sh "
+                        }
+                    ]
+                }
+          }
+      clusterManifestRoot = testRoot </> "cluster-manifest"
+      clusterManifestPath = clusterManifestRoot </> "infernix-cluster.dhall"
+  createDirectoryIfMissing True clusterManifestRoot
+  writeFile clusterManifestPath (renderClusterConfig clusterConfig)
+  decoded <- decodeClusterConfigFile clusterManifestPath
+  assert
+    (decoded == clusterConfig)
+    "ClusterConfig round-trip through renderClusterConfig + decodeClusterConfigFile preserves every field"

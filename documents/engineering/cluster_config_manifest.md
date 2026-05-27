@@ -115,44 +115,25 @@ secret file via `readFile (SecretsConfig.<service>.credentialsPath)`.
 
 ## Per-field origin mapping
 
-This table replaces every env var that previously appeared in
-`chart/templates/deployment-*.yaml`:
+This table records the typed replacement families for the retired deployment-env inputs. The
+exact retired names live only in the deletion ledger.
 
-| Previous env var | New Dhall field | Read by |
-|------------------|------------------|---------|
-| `INFERNIX_PULSAR_ADMIN_URL` | `pulsar.adminUrl` | `src/Infernix/Runtime/Pulsar.hs` |
-| `INFERNIX_PULSAR_WS_BASE_URL` | `pulsar.wsBaseUrl` | `src/Infernix/Runtime/Pulsar.hs` |
-| `INFERNIX_PULSAR_HTTP_BASE_URL` | `pulsar.httpBaseUrl` | `src/Infernix/Runtime/Pulsar.hs` |
-| `INFERNIX_PULSAR_SERVICE_URL` | `pulsar.serviceUrl` | `src/Infernix/Runtime/Pulsar.hs` |
-| `INFERNIX_PULSAR_TENANT` | `pulsar.tenant` | `src/Infernix/Conversation/Topic.hs` |
-| `INFERNIX_PULSAR_NAMESPACE` | `pulsar.namespace` | `src/Infernix/Conversation/Topic.hs` |
-| `INFERNIX_MINIO_ENDPOINT` | `minio.endpoint` | `src/Infernix/Demo/Api.hs`, `src/Infernix/Runtime/Pulsar.hs` |
-| `INFERNIX_MINIO_REGION` | `minio.region` | `src/Infernix/Demo/Api.hs` |
-| `INFERNIX_MINIO_PRESIGN_EXPIRY_SECONDS` | `minio.presignExpirySeconds` | `src/Infernix/Demo/Api.hs` |
-| `INFERNIX_MINIO_ACCESS_KEY` | `readFile (SecretsConfig.minio.credentialsPath)` → `accessKey` | `src/Infernix/Demo/Api.hs`, `src/Infernix/Runtime/Pulsar.hs` |
-| `INFERNIX_MINIO_SECRET_KEY` | `readFile (SecretsConfig.minio.credentialsPath)` → `secretKey` | same |
-| `INFERNIX_MODELS_BUCKET` | `minio.modelsBucket` | `python/adapters/model_cache.py` (via stdin config from Haskell) |
-| `INFERNIX_KEYCLOAK_BASE_URL` | `keycloak.baseUrl` | `src/Infernix/Demo/Auth.hs` |
-| `INFERNIX_KEYCLOAK_REALM_NAME` | `keycloak.realmName` | `src/Infernix/Demo/Auth.hs` |
-| `INFERNIX_KEYCLOAK_CLIENT_ID` | `keycloak.clientId` | `src/Infernix/Demo/Auth.hs` |
-| `INFERNIX_KEYCLOAK_JWKS_URL` | `keycloak.jwksUrl` | `src/Infernix/Demo/Api.hs` |
-| `INFERNIX_BIND_HOST` | `demoBackend.bindHost` | `src/Infernix/DemoCLI.hs` |
-| `INFERNIX_DEMO_BRIDGE_MODE` | `demoBackend.bridgeMode` | `src/Infernix/DemoCLI.hs` |
-| `INFERNIX_PUBLICATION_STATE_PATH` | `demoBackend.publicationStatePath` | `src/Infernix/DemoCLI.hs` |
-| `INFERNIX_DEMO_CONFIG_PATH` | `demoBackend.demoConfigPath` | `src/Infernix/Service.hs` |
-| `INFERNIX_MODEL_CACHE_ROOT` | `engine.modelCacheRoot` | `python/adapters/model_cache.py` |
-| `INFERNIX_MODEL_CACHE_QUOTA_BYTES` | `engine.modelCacheQuotaBytes` | `python/adapters/model_cache.py` |
-| `INFERNIX_ENGINE_COMMAND_<NAME>` | `engine.commandOverrides` (Map) | `src/Infernix/Runtime/Worker.hs` |
-| `INFERNIX_CATALOG_SOURCE` | `coordinator.catalogSource` | `src/Infernix/Runtime/Pulsar.hs` |
-| `INFERNIX_CONTROL_PLANE_CONTEXT` | `coordinator.controlPlaneContext` | `src/Infernix/Runtime/Pulsar.hs` |
-| `INFERNIX_DAEMON_LOCATION` | `coordinator.daemonLocation` | `src/Infernix/Runtime/Pulsar.hs` |
-| `INFERNIX_DAEMON_ROLE` | the substrate `.dhall` `daemonRole` field already | `src/Infernix/Service.hs` |
+| Retired source family | New Dhall field family | Read by |
+|-----------------------|------------------------|---------|
+| Pulsar admin, WebSocket, HTTP, service URL, tenant, and namespace inputs | `pulsar.*` | `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Conversation/Topic.hs` |
+| MinIO endpoint, region, presign-expiry, and model-bucket inputs | `minio.*` | `src/Infernix/Demo/Api.hs`, `src/Infernix/Runtime/Pulsar.hs`, `python/adapters/model_cache.py` |
+| MinIO access-key and secret-key inputs | `readFile (SecretsConfig.minio.credentialsPath)` -> `accessKey` / `secretKey` | `src/Infernix/Demo/Api.hs`, `src/Infernix/Runtime/Pulsar.hs` |
+| Keycloak base URL, realm, client id, and JWKS URL inputs | `keycloak.*` | `src/Infernix/Demo/Auth.hs`, `src/Infernix/Demo/Api.hs` |
+| Demo bind host, bridge mode, publication state path, and demo-config path inputs | `demoBackend.*` | `src/Infernix/DemoCLI.hs`, `src/Infernix/Service.hs` |
+| Model-cache root and quota inputs | `engine.modelCacheRoot`, `engine.modelCacheQuotaBytes` | `python/adapters/model_cache.py` |
+| Engine command override inputs | `engine.commandOverrides` | `src/Infernix/Runtime/Worker.hs` |
+| Coordinator catalog-source, control-plane-context, daemon-location, and daemon-role inputs | `coordinator.*` plus the substrate `.dhall` role field | `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Service.hs` |
 
 ## Validation
 
 - `infernix lint chart` rejects any `env:` block in
   `chart/templates/deployment-{coordinator,engine,demo}.yaml`.
-- `infernix lint files` rejects any new `lookupEnv "INFERNIX_*"` call in the Haskell sources.
+- `infernix lint files` rejects any new project-prefixed env lookup in the Haskell sources.
 - `infernix test integration` round-trips a complete `/api/objects` flow on `linux-gpu`,
   proving the coordinator + demo + engine pods all read their config from the Dhall file +
   Secret files and never consult `env`.

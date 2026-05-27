@@ -50,26 +50,25 @@ spec:
           # env var. The full `INFERNIX_PULSAR_*` env family is retired;
           # the daemon decodes those values from the mounted
           # `infernix-cluster-config` ConfigMap below at startup.
-          # `INFERNIX_DATA_ROOT` stays as an env var for now (Phase 1
-          # Sprint 1.11 deferred its retirement to the demo-deployment
-          # rewiring that happens in Phase 7 Sprint 7.17).
+          # Phase 6 Sprint 6.28 follow-on (May 26, 2026): the
+          # `INFERNIX_DATA_ROOT` env entry was retired together with
+          # the chart path realignment from `/srv/infernix/.data` to
+          # `/workspace/.data` (matching the baked
+          # `InfernixHost.dhall.filesystem.dataRoot` default). The
+          # daemon reads `dataRoot` from the manifest; the env var
+          # was a redundant override the daemon never consumed once
+          # the host manifest replaced env-var-driven path
+          # discovery.
           args:
             - service
             - --role
             - coordinator
-          # Phase 7 Sprint 7.17: `INFERNIX_MINIO_ACCESS_KEY` /
-          # `INFERNIX_MINIO_SECRET_KEY` env entries retire. The
-          # supported flow mounts `Secret/infernix-cluster-secrets`
-          # at `/etc/infernix/secrets/`; the daemon decodes
-          # `InfernixSecrets.dhall` to find the credential file paths
-          # and reads JSON-encoded credentials from those files. The
-          # remaining `INFERNIX_DATA_ROOT` env entry is the supported
-          # writable durable-state root for the subscription-ready
-          # marker; an emptyDir volume backs it because Pulsar
-          # subscription cursors live broker-side.
-          env:
-            - name: INFERNIX_DATA_ROOT
-              value: "/srv/infernix/.data"
+          # Phase 7 Sprint 7.17: credentials live in
+          # `Secret/infernix-cluster-secrets` mounted at
+          # `/etc/infernix/secrets/`; the daemon decodes
+          # `InfernixSecrets.dhall` to find credential file paths and
+          # reads JSON-encoded credentials from those files. No
+          # `env:` block remains on the coordinator template.
           volumeMounts:
             - name: cluster-config
               mountPath: /opt/infernix/cluster.dhall
@@ -87,13 +86,13 @@ spec:
               subPath: {{ .Values.publication.fileName }}
               readOnly: true
             - name: coordinator-data
-              mountPath: /srv/infernix/.data
+              mountPath: /workspace/.data
           readinessProbe:
             exec:
               command:
                 - /bin/sh
                 - -lc
-                - test -f /srv/infernix/.data/runtime/service/subscription.ready
+                - test -f /workspace/.data/runtime/service/subscription.ready
             periodSeconds: 5
             timeoutSeconds: 3
             failureThreshold: 120

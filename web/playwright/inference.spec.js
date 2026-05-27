@@ -1,115 +1,40 @@
-// Phase 3 Sprint 3.10 — the spec reads its expectations from
-// `test.info().project.use.infernixFixture` rather than
-// `process.env.INFERNIX_*`. The fixture is materialized to
-// `/workspace/.data/runtime/playwright-fixture.json` by the Haskell
-// `runEndToEnd` driver before Playwright launches, and exposed via
-// Playwright's `use:` block in `web/playwright.config.js`.
+// Phase 7 follow-on (May 26, 2026): the legacy stateless workbench
+// surface that this spec used to exercise (`POST /api/inference`,
+// the workbench SPA DOM, the `/objects/:objectRef` shape) is retired
+// in favor of the durable-context Chat surface. Per the legacy-
+// tracking ledger, this spec is slated for replacement by a
+// durable-context Chat E2E that exercises Keycloak auth + the
+// `/ws` WebSocket transport + the `/api/objects` presigned MinIO
+// flow. Until that replacement lands, the spec here is a minimal
+// routed-surface smoke test that confirms the operator-facing edge
+// is up and serves the SPA + the published platform-state JSON
+// endpoints. The deeper inference correctness is covered end-to-end
+// by `infernix test integration`'s per-model Pulsar roundtrip
+// against the same cluster.
+import { readFileSync } from "node:fs";
 import { test, expect } from "playwright/test";
 
-test("active mode catalog is fully exercised through the routed HTTP surface", async ({ request }, testInfo) => {
-  const fixture = testInfo.project.use.infernixFixture;
+const fixturePath = "/workspace/.data/runtime/playwright-fixture.json";
+const fixture = JSON.parse(readFileSync(fixturePath, "utf8"));
+
+test("routed edge surfaces the SPA + the published platform state", async ({ page, request }) => {
   const baseUrl = `http://${fixture.host}:${fixture.edgePort}`;
-  const expectedDaemonLocation = fixture.expectedDaemonLocation;
-  const expectedInferenceExecutorLocation = fixture.expectedInferenceExecutorLocation;
-  const expectedInferenceDispatchMode = fixture.expectedInferenceDispatchMode;
 
   const publicationResponse = await request.get(`${baseUrl}/api/publication`);
-  const demoConfigResponse = await request.get(`${baseUrl}/api/demo-config`);
   expect(publicationResponse.ok()).toBeTruthy();
-  expect(demoConfigResponse.ok()).toBeTruthy();
   const publication = await publicationResponse.json();
-  const demoConfig = await demoConfigResponse.json();
-  const models = demoConfig.models;
+  expect(publication.runtimeMode).toBeTruthy();
 
-  const homeResponse = await request.get(`${baseUrl}/`);
-  expect(homeResponse.ok()).toBeTruthy();
-  expect(await homeResponse.text()).toContain("Infernix");
+  const demoConfigResponse = await request.get(`${baseUrl}/api/demo-config`);
+  expect(demoConfigResponse.ok()).toBeTruthy();
+  const demoConfig = await demoConfigResponse.json();
+  expect(Array.isArray(demoConfig.models)).toBe(true);
 
   const catalogResponse = await request.get(`${baseUrl}/api/models`);
   expect(catalogResponse.ok()).toBeTruthy();
   const routedModels = await catalogResponse.json();
-  expect(routedModels).toEqual(models);
-  expect(publication.runtimeMode).toBe(models[0]?.runtimeMode ?? publication.runtimeMode);
-  expect(publication.workerExecutionMode).toBe("process-isolated-engine-workers");
-  expect(publication.workerAdapterMode).toBe("engine-specific-runner-defaults");
-  expect(publication.artifactAcquisitionMode).toBe("engine-ready-artifact-manifests");
-  if (expectedInferenceDispatchMode) {
-    expect(publication.inferenceDispatchMode).toBe(expectedInferenceDispatchMode);
-  }
-  if (expectedDaemonLocation) {
-    expect(publication.daemonLocation).toBe(expectedDaemonLocation);
-  }
-  if (expectedInferenceExecutorLocation) {
-    expect(publication.inferenceExecutorLocation).toBe(expectedInferenceExecutorLocation);
-  }
-
-  for (const model of models) {
-    const inferenceResponse = await request.post(`${baseUrl}/api/inference`, {
-      data: {
-        requestModelId: model.modelId,
-        inputText: `exercise ${model.modelId}`,
-      },
-    });
-    expect(inferenceResponse.ok()).toBeTruthy();
-    const payload = await inferenceResponse.json();
-    expect(payload.resultModelId).toBe(model.modelId);
-    expect(payload.runtimeMode).toBe(model.runtimeMode);
-    expect(payload.selectedEngine).toBe(model.selectedEngine);
-  }
-});
-
-test("manual inference workbench renders generated catalog entries and result state in the browser", async ({ page, request }, testInfo) => {
-  const fixture = testInfo.project.use.infernixFixture;
-  const baseUrl = `http://${fixture.host}:${fixture.edgePort}`;
-  const expectedDaemonLocation = fixture.expectedDaemonLocation;
-  const expectedInferenceDispatchMode = fixture.expectedInferenceDispatchMode;
-  const expectedApiUpstreamMode = fixture.expectedApiUpstreamMode;
-
-  const publicationResponse = await request.get(`${baseUrl}/api/publication`);
-  const demoConfigResponse = await request.get(`${baseUrl}/api/demo-config`);
-  expect(publicationResponse.ok()).toBeTruthy();
-  expect(demoConfigResponse.ok()).toBeTruthy();
-  const publication = await publicationResponse.json();
-  const demoConfig = await demoConfigResponse.json();
-  const models = demoConfig.models;
+  expect(routedModels).toEqual(demoConfig.models);
 
   await page.goto(baseUrl);
   await expect(page.locator("h1")).toHaveText("Infernix");
-  await expect(page.locator("#runtime-mode")).toHaveText(publication.runtimeMode);
-  await expect(page.locator("#control-plane-context")).not.toHaveText("loading…");
-  await expect(page.locator("#daemon-location")).not.toHaveText("loading…");
-  if (expectedDaemonLocation) {
-    await expect(page.locator("#daemon-location")).toHaveText(expectedDaemonLocation);
-  }
-  if (expectedInferenceDispatchMode) {
-    await expect(page.locator("#inference-dispatch-mode")).toHaveText(expectedInferenceDispatchMode);
-  }
-  await expect(page.locator("#catalog-source")).not.toHaveText("loading…");
-  if (expectedApiUpstreamMode) {
-    await expect(page.locator("#api-upstream-mode")).toHaveText(expectedApiUpstreamMode);
-  }
-  await expect(page.locator("#route-list li")).toHaveCount(publication.routes.length);
-  await expect(page.locator("#upstream-list li")).toHaveCount(publication.upstreams.length);
-  const catalogItems = page.locator(".catalog-item");
-  await expect(catalogItems).toHaveCount(models.length);
-
-  for (const [index, model] of models.entries()) {
-    await catalogItems.nth(index).click();
-    await expect(page.locator("#selected-model-name")).toHaveText(model.displayName);
-    await expect(page.locator("#selected-engine")).toHaveText(model.selectedEngine);
-    await expect(page.locator("#selected-family")).not.toHaveText("Loading…");
-    await expect(page.locator("#selected-artifact-type")).toHaveText(model.artifactType);
-    await expect(page.locator("#request-guidance")).not.toHaveText(/Select a model/);
-    await expect(page.locator("#submit-button")).not.toHaveText("Run Inference");
-
-    await page.locator("#inputText").fill(`browser exercise ${model.modelId} ${"x".repeat(120)}`);
-    await page.locator("#submit-button").click();
-
-    await expect(page.locator("#request-status")).toContainText("Completed request");
-    await expect(page.locator("#request-status")).toContainText(model.selectedEngine);
-    await expect(page.locator("#result-label")).not.toHaveText("Result payload");
-    await expect(page.locator("#result-output")).toContainText("Stored object reference");
-    await expect(page.locator("#object-link-container a")).toHaveAttribute("href", /\/objects\/results\/req-/);
-    await expect(page.locator("#object-link-container a")).not.toHaveText("Open large output");
-  }
 });

@@ -128,14 +128,12 @@ moving, not hard product failure. The May 15 and May 17 lifecycle reruns also va
   pairs before Playwright starts
 - `infernix test integration`, `infernix test e2e`, and `infernix test all` run against and report
   the active substrate encoded in the generated `.dhall`
-- supported Apple E2E keeps the host CLI in charge of orchestration while the actual Playwright
-  executor runs through `docker compose run --rm playwright` against the dedicated
-  `infernix-playwright:local` image; the Linux outer-container path forwards the same compose
-  invocation through the mounted host docker socket
+- supported Linux E2E keeps the outer-container CLI in charge of orchestration while Playwright
+  runs from inside the substrate image with `npm --prefix web exec -- playwright test`; the Apple
+  host-native routed-E2E executor refactor is deferred and currently surfaces an explicit
+  diagnostic
 - supported Apple integration and E2E own the host daemon lifecycle when the routed demo surface
   needs it, so the validation contract proves the cluster daemon plus host inference executor
   bridge rather than treating an in-cluster pod as the Apple-native inference executor
-- `infernix test e2e` requires Docker on every substrate and has no host-native npm fallback
-  path; on Apple host-native flows the supported command reconciles `kind`, `kubectl`, `helm`,
-  Node.js, and Poetry on demand after `./.build/infernix` exists, while Linux flows rely on the
-  documented outer-container host baseline
+- `infernix test e2e` requires Docker on Linux substrates and has no host-native npm fallback
+  path there; Apple host-native routed E2E remains deferred to the Apple validation pass

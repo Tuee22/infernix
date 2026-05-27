@@ -3,7 +3,7 @@ module Infernix.Lint.Chart
   )
 where
 
-import Control.Monad (forM_, unless)
+import Control.Monad (forM_, unless, when)
 import Infernix.Config (Paths (..), discoverPaths)
 import Infernix.Routes (renderChartRouteRegistryCommentSection)
 import System.Directory (doesFileExist)
@@ -60,8 +60,9 @@ requiredPhrases =
     -- Phase 7 Sprint 7.17: the demo Deployment's `INFERNIX_MINIO_ACCESS_KEY`
     -- / `INFERNIX_MINIO_SECRET_KEY` entries retire together with the
     -- `cluster-secrets` Secret mount at `/etc/infernix/secrets/`.
-    -- Only the non-credential `INFERNIX_DATA_ROOT` writable-state path
-    -- remains in the `env:` block.
+    -- Phase 6 Sprint 6.28 follow-on (May 26, 2026): the data-root
+    -- override env entry retired too; `dataRoot` decodes from the
+    -- mounted host manifest.
     ( "chart/templates/deployment-demo.yaml",
       [ ".Values.demo.enabled",
         "name: infernix-demo",
@@ -73,7 +74,6 @@ requiredPhrases =
         "name: cluster-secrets",
         "mountPath: /etc/infernix/secrets",
         "secretName: infernix-cluster-secrets",
-        "INFERNIX_DATA_ROOT",
         "emptyDir: {}"
       ]
     ),
@@ -213,6 +213,53 @@ runChartLint = do
   forM_ generatedSectionRules $ \rule -> do
     contents <- readFile (repoRoot paths </> generatedSectionPath rule)
     validateGeneratedSection rule contents
+  forM_ envBlockRejectionPaths $ \relativePath -> do
+    contents <- readFile (repoRoot paths </> relativePath)
+    forM_ (lines contents) $ \lineValue ->
+      when
+        (isEnvBlockStartLine lineValue)
+        ( ioError
+            ( userError
+                ( relativePath
+                    <> ": Phase 6 Sprint 6.28 chart lint gate rejects `env:` blocks "
+                    <> "in infernix-owned deployment templates. The supported flow reads "
+                    <> "runtime wiring from the mounted `cluster.dhall` ConfigMap and "
+                    <> "credentials from the mounted `infernix-cluster-secrets` Secret. "
+                    <> "Found `env:` at: "
+                    <> lineValue
+                )
+            )
+        )
+
+-- | Phase 6 Sprint 6.28 follow-on (May 26, 2026): the chart lint
+-- gate rejects new @env:@ blocks in the three infernix-owned
+-- daemon deployment templates. Runtime wiring must flow through
+-- the mounted @cluster.dhall@ ConfigMap; credentials must flow
+-- through the mounted @infernix-cluster-secrets@ Secret. Comments
+-- mentioning @env:@ are fine — the check only looks at top-level
+-- pod-spec @env:@ lines (whitespace + @env:@).
+envBlockRejectionPaths :: [FilePath]
+envBlockRejectionPaths =
+  [ "chart/templates/deployment-coordinator.yaml",
+    "chart/templates/deployment-engine.yaml",
+    "chart/templates/deployment-demo.yaml"
+  ]
+
+-- | Whether a single chart-template line starts an @env:@ block.
+-- Matches the canonical pod-spec position (leading whitespace, then
+-- the literal @env:@, optionally trailing whitespace). Comment lines
+-- starting with @#@ are skipped.
+isEnvBlockStartLine :: String -> Bool
+isEnvBlockStartLine lineValue =
+  let leadingTrimmed = dropWhile (`elem` (" \t" :: String)) lineValue
+   in isEnvBlockTrimmed leadingTrimmed
+
+isEnvBlockTrimmed :: String -> Bool
+isEnvBlockTrimmed ('#' : _) = False
+isEnvBlockTrimmed trimmed = dropTrailingWhitespace trimmed == "env:"
+
+dropTrailingWhitespace :: String -> String
+dropTrailingWhitespace = reverse . dropWhile (`elem` (" \t\r" :: String)) . reverse
 
 contains :: String -> String -> Bool
 contains needle haystack = any (needle `prefixOf`) (tails haystack)

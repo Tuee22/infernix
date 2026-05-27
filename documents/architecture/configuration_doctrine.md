@@ -138,8 +138,9 @@ any future third-party upstream contract.
   documented exception list.
 - `infernix lint chart` rejects any `env:` block in
   `chart/templates/deployment-{coordinator,engine,demo}.yaml`.
-- `infernix lint docs` rejects any governed doc with `INFERNIX_*` or `$PATH` substrings outside
-  the legacy-tracking ledger and the documented exception docs.
+- `infernix lint docs` rejects governed-doc language that presents project-prefixed env names or
+  shell path overrides as supported operator configuration outside the legacy-tracking ledger and
+  documented exception docs.
 - End-to-end coverage: `env -i /usr/bin/bash ./bootstrap/linux-gpu.sh up` (empty starting env)
   reaches `lifecyclePhase: steady-state` — proving the contract holds when the operator's shell
   starts with no env vars at all.

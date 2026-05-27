@@ -420,12 +420,12 @@ loadPresignedConfig = do
               }
         )
 
--- | Phase 7 Sprint 7.7 follow-on: the @INFERNIX_MINIO_ENDPOINT@ env var
--- the chart injects carries a full @http://host:port@ URL, but the SigV4
--- canonical request signs only the @host:port@ as the @host@ header.
--- Strip any scheme prefix and record it separately so the minted URL
--- points at the correct transport (plain HTTP for in-cluster MinIO,
--- HTTPS for TLS-fronted MinIO).
+-- | Phase 7 Sprint 7.17: the @ClusterConfig.minio.endpoint@ field
+-- carries a full @http://host:port@ URL, but the SigV4 canonical
+-- request signs only the @host:port@ as the @host@ header. Strip any
+-- scheme prefix and record it separately so the minted URL points at
+-- the correct transport (plain HTTP for in-cluster MinIO, HTTPS for
+-- TLS-fronted MinIO).
 splitMinioEndpoint :: Text -> (Text, Text)
 splitMinioEndpoint raw =
   case Text.stripPrefix "https://" raw of

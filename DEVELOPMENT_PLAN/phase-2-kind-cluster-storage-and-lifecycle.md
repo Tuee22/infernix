@@ -1,6 +1,6 @@
 # Phase 2: Kind Cluster Storage and Lifecycle
 
-**Status**: Active (Sprint 2.13 env-side + partial bare-name proc retirement landed May 25, 2026; the ClusterState-paths threading pass for the deeper Cluster.hs helpers + Apple `Engines/AppleSilicon.hs` + `./bootstrap/linux-gpu.sh up` under-`env -i` validation remain open; Sprints 2.1–2.12 Done)
+**Status**: Active (Sprint 2.13 Linux env-side + HostTool routing landed and clean-env `linux-gpu` lifecycle validation passed May 27, 2026; Apple `Engines/AppleSilicon.hs` remains open; Sprints 2.1–2.12 Done)
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Define the supported Kind bootstrap path, the manual storage doctrine, the Helm
@@ -14,13 +14,14 @@ Sprints 2.1–2.12 are closed. The Kind bootstrap, manual PV doctrine, Harbor-fi
 shared substrate publication path, Linux outer-container launcher contract, lifecycle progress
 surface, retained-state repair behavior, narrowed bootstrap responsibility boundary, and teardown
 preservation contract are implemented in this worktree. Sprint 2.13 (Cluster Lifecycle
-Host-Manifest Retirement) is `Active`: the cluster lifecycle code in `src/Infernix/Cluster.hs`,
-`src/Infernix/Cluster/PublishImages.hs`, `src/Infernix/Cluster/Discover.hs`,
-`src/Infernix/ProcessMonitor.hs`, and `src/Infernix/Engines/AppleSilicon.hs` still reads
-`INFERNIX_HOST_KIND_ROOT`, `INFERNIX_HOST_REPO_ROOT`, and `HOSTNAME` via `lookupEnv`, still calls
-`getEnvironment` to inherit the parent process env, and still invokes `proc "docker"`,
-`proc "kubectl"`, `proc "helm"`, and `proc "kind"` with PATH-resolved bare names; Sprint 2.13
-retires all of these onto the `HostConfig` record materialized in Phase 1 Sprint 1.11.
+Host-Manifest Retirement) is `Active`: the Linux cluster lifecycle path no longer consumes
+`INFERNIX_HOST_KIND_ROOT`, `INFERNIX_HOST_REPO_ROOT`, or `HOSTNAME`, no longer inherits the parent
+process environment in the shared cluster/process-monitor helpers, and routes known cluster tools
+through the `HostConfig`-backed HostTool resolver. The May 27, 2026 clean-environment Linux GPU
+validation passed: `env -i /usr/bin/bash ./bootstrap/linux-gpu.sh build`, `up`, and `status`
+completed, with `status` reporting `runtimeMode: linux-gpu`, `lifecyclePhase: steady-state`,
+2 Kubernetes nodes, and 79 pods. The remaining work is the Apple-only
+`src/Infernix/Engines/AppleSilicon.hs` environment capture.
 
 ## Storage Doctrine
 
@@ -319,10 +320,8 @@ self-contained in the final `linux-gpu` image.
 ### Validation
 
 - the `linux-gpu` substrate image build produces a runnable `nvkind` binary
-- after exporting `INFERNIX_COMPOSE_IMAGE=infernix-linux-gpu:local`,
-  `INFERNIX_COMPOSE_SUBSTRATE=linux-gpu`, and
-  `INFERNIX_COMPOSE_BASE_IMAGE=nvidia/cuda:13.2.1-cudnn-runtime-ubuntu24.04`,
-  `docker compose run --rm infernix infernix cluster up` succeeds on a supported NVIDIA host
+- `docker compose --project-name infernix-linux-gpu --file compose.yaml --file
+  compose.linux-gpu.yaml run --rm infernix infernix cluster up` succeeds on a supported NVIDIA host
   without a host-visible `nvkind` handoff path or a shell-owned substrate staging step
 - repeated `linux-gpu` cluster lifecycle runs preserve GPU visibility and durable storage behavior
 
@@ -346,14 +345,14 @@ around one Compose-driven outer container for both Linux substrates.
 - `cluster up` publishes the cluster-role substrate payload into `ConfigMap/infernix-demo-config`
 - cluster-resident consumers mount that ConfigMap at
   `/opt/build/infernix-substrate.dhall`
-- the outer-container control plane stages the Linux cluster-role payload on the host at
-  `./.build/outer-container/build/infernix-substrate.dhall` through the host-anchored bind mount
-  when it needs to know its own substrate
+- the outer-container control plane stages the Linux cluster-role payload at the image-local
+  `/workspace/.build/outer-container/build/infernix-substrate.dhall` path when it needs to know
+  its own substrate
 - the cluster publication contract uses the same stable `infernix-substrate.dhall` filename in the
   repo-local mirror and in-cluster mount
 - the supported Linux control-plane launcher is Compose for both `linux-cpu` and `linux-gpu`
-- `compose.yaml` selects the active `infernix-linux-<mode>:local` snapshot through
-  `INFERNIX_COMPOSE_*` launcher variables while keeping the supported `docker compose run --rm infernix infernix ...`
+- `compose.yaml` defines the base CPU launcher and `compose.linux-gpu.yaml` selects the active
+  `infernix-linux-gpu:local` snapshot for the GPU lane while keeping the supported Compose service
   surface unchanged
 - the outer control-plane container never requires the NVIDIA runtime for its own process, even
   when the built image targets `linux-gpu`
@@ -362,15 +361,14 @@ around one Compose-driven outer container for both Linux substrates.
 
 ### Validation
 
-- `docker compose run --rm infernix infernix cluster up` materializes or verifies the Linux CPU
-  cluster-role substrate payload and publishes it into the ConfigMap without any runtime-mode flag
+- `docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm infernix infernix
+  cluster up` materializes or verifies the Linux CPU cluster-role substrate payload and publishes
+  it into the ConfigMap without any runtime-mode flag
 - `infernix kubectl get configmap infernix-demo-config -n platform -o yaml` shows the current
   `infernix-substrate.dhall` key and the cluster-role payload
-- with `INFERNIX_COMPOSE_IMAGE=infernix-linux-gpu:local`,
-  `INFERNIX_COMPOSE_SUBSTRATE=linux-gpu`, and
-  `INFERNIX_COMPOSE_BASE_IMAGE=nvidia/cuda:13.2.1-cudnn-runtime-ubuntu24.04`,
-  `docker compose run --rm infernix infernix cluster up` exercises the same supported launcher
-  surface for `linux-gpu` without shell-owned substrate staging
+- `docker compose --project-name infernix-linux-gpu --file compose.yaml --file
+  compose.linux-gpu.yaml run --rm infernix infernix cluster up` exercises the same supported
+  launcher surface for `linux-gpu` without shell-owned substrate staging
 
 ### Remaining Work
 
@@ -523,7 +521,7 @@ None.
 
 ---
 
-## Sprint 2.13: Cluster Lifecycle Host-Manifest Retirement [Active — env-side done, bare-name proc retirement + cluster validation pending]
+## Sprint 2.13: Cluster Lifecycle Host-Manifest Retirement [Active — Linux path validated, Apple residual pending]
 
 **Status**: Active
 **Blocked by**: Phase 1 Sprint 1.11 (Host Manifest Materialization)
@@ -554,8 +552,10 @@ materialized in Phase 1 Sprint 1.11.
 
 - `cabal build all` clean, `infernix test lint` clean.
 - `grep -rEn '\bproc "(docker|kubectl|helm|kind)"' src/Infernix/Cluster.hs src/Infernix/Cluster/` returns zero matches.
-- `./bootstrap/linux-gpu.sh up` reaches `lifecyclePhase: steady-state` under `env -i /usr/bin/bash`
-  (empty starting env).
+- May 27, 2026: `env -i /usr/bin/bash ./bootstrap/linux-gpu.sh build` passed, then
+  `env -i /usr/bin/bash ./bootstrap/linux-gpu.sh up` reached `cluster up complete`, and
+  `env -i /usr/bin/bash ./bootstrap/linux-gpu.sh status` reported
+  `lifecyclePhase: steady-state`.
 
 ### Remaining Work
 
@@ -617,8 +617,8 @@ Pending closure (deferred and named so the sprint status stays
 honest):
 
 - **Bare-name `proc "<command>"` retirement across `Cluster.hs`,
-  `Cluster/PublishImages.hs`, `Cluster/Discover.hs` — partially
-  landed May 25, 2026.** `Infernix.Config.Paths` now carries
+  `Cluster/PublishImages.hs`, `Cluster/Discover.hs` — Linux path
+  landed.** `Infernix.Config.Paths` now carries
   `pathsHostConfig :: Maybe HostConfig`; the host manifest decoded
   during `discoverPaths` flows into every helper that already has
   `Paths` in scope. `Cluster.hs` ships four new HostTool-routed
@@ -629,43 +629,49 @@ honest):
   when the manifest is absent (first-run bootstrap, unit tests
   without an explicit fixture). The HostTool enum + Dhall schema +
   Linux/Apple defaults now include `chown`, `nvidiaSmi`, `nvkind`,
-  and `hostname` in addition to the original 31 tools. ~30 of
-  `Cluster.hs`'s `runCommand Nothing [] "docker"` / `tryCommand
-  Nothing [] "kubectl"` / `captureCommand Nothing [] "kubectl"` /
-  `tryCommand Nothing [] "nvidia-smi"` callsites that had `paths`
-  in scope now route through the typed `HostTool` enum. The
-  remaining ~60 sites live in helpers that take `ClusterState`
-  rather than `Paths`. Two paths to close out the rest:
-  (a) add `Paths` to `ClusterState` (touches `Types.hs`, mass
-      signature change downstream), or
-  (b) thread `Paths` alongside `ClusterState` through every
-      helper individually (~20 functions).
-  The `bareNameProcViolations` lint gate no longer exempts
-  `Cluster.hs`, `Cluster/PublishImages.hs`, or `Cluster/Discover.hs`
-  because their current helper layer keeps the literal tool-name
-  string inside `kubectlOutput` / `kubectlLineCountIfReachable` /
-  `tryRunCommand` / `runCommand` — the lint pattern `proc "<bare>"`
-  no longer fires from any cluster-family module after the partial
-  refactor.
+  `skopeo`, and `hostname` in addition to the original tool set.
+  The remaining `ClusterState`-only helper layer now flows through
+  the shared `resolveClusterCommand` / `resolveClusterCommandWithPaths`
+  helpers, which map known tool names (`docker`, `kubectl`, `helm`,
+  `kind`, `curl`, `tar`, `chown`, `hostname`, `nvidia-smi`, `nvkind`,
+  `skopeo`) to HostTool paths before spawning. This avoids widening
+  the persisted `ClusterState` record while removing the helper-layer
+  PATH dependency when a host manifest is present.
+  `src/Infernix/Cluster/PublishImages.hs` now receives the resolved
+  `docker` and `skopeo` paths through `HarborPublishOptions`, so the
+  multi-arch `skopeo copy` fallback is covered by the same manifest
+  inventory.
 - **`Engines/AppleSilicon.hs` `getEnvironment` capture.** Apple-only
   code path; retirement deferred per the user's "stay on Linux with
   CUDA" instruction.
-- **`./bootstrap/linux-gpu.sh up` under `env -i` validation.** The
-  named integration test (`reaches lifecyclePhase: steady-state under
-  env -i /usr/bin/bash`) requires a fresh launcher image build +
-  cluster bring-up (~30+ min wall-clock per the documented
-  Harbor-first phase timings). Deferred to a focused validation
-  session.
+- **Clean-env `linux-gpu` lifecycle validation closed May 27, 2026.**
+  `env -i /usr/bin/bash ./bootstrap/linux-gpu.sh build` rebuilt
+  `infernix-linux-gpu:local`, and the follow-on clean-env `up`
+  completed after Harbor image publication and final routed workload
+  rollout. The first clean-env `up` attempt exposed a launcher
+  regression from the temporary
+  `${HOME}/.docker/config.json:/root/.docker/config.json:ro` bind
+  mount in `compose.yaml`: with an empty starting environment,
+  Compose expanded `${HOME}` to blank and created
+  `/root/.docker/config.json` as a directory inside the launcher,
+  causing `docker login localhost:30002` to fail. Removing that bind
+  mount restored the documented two-bind-mount compose contract and
+  the rerun reached steady state.
 
 ---
 
 ## Remaining Work
 
-Sprint 2.13 env-side closed (5 env reads retired in `Cluster.hs`, 1
-`getEnvironment` retired in `ProcessMonitor.hs`, `engineCommandOverridesFromEnvironment`
-deleted, supporting unit-test fixture rewired, all lints + tests
-green). Bare-name `proc` retirement and the env-clean cluster
-validation remain pending. Sprints 2.1–2.12 closed.
+Sprint 2.13 Linux code-side closed for env reads and HostTool routing:
+5 env reads retired in `Cluster.hs`, 1 `getEnvironment` retired in
+`ProcessMonitor.hs`, `engineCommandOverridesFromEnvironment` deleted,
+supporting unit-test fixture rewired, shared cluster command helpers
+resolve known tools through the staged host manifest, and
+`Cluster/PublishImages.hs` receives resolved `docker` + `skopeo`
+commands through `HarborPublishOptions`. Apple-only environment
+capture remains pending. The env-clean `linux-gpu` cluster validation
+passed May 27, 2026 after the compose Docker-config bind mount
+regression was removed. Sprints 2.1–2.12 closed.
 
 ---
 

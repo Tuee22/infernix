@@ -4,7 +4,7 @@ from adapters.common import (
     AdapterContext,
     render_engine_output,
     run_context_adapter,
-    run_setup_bootstrap,
+    run_setup_from_argv,
 )
 
 
@@ -19,7 +19,7 @@ def main() -> int:
 
 
 def setup() -> int:
-    return run_setup_bootstrap("tensorflow-python")
+    return run_setup_from_argv("tensorflow-python")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,3 @@
+services:
+  infernix:
+    image: infernix-linux-gpu:local

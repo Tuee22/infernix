@@ -91,9 +91,9 @@
 - `infernix cache status` reports the manifest-backed cache inventory for the active runtime
   mode; `cache evict` and `cache rebuild` only affect derived cache state
 - `infernix kubectl ...` wraps upstream `kubectl` and injects the repo-local kubeconfig
-- `cluster up` forwards any `INFERNIX_ENGINE_COMMAND_*` environment variables into the service
-  deployment so adapter-specific engine command prefixes can be configured on the cluster path
-  without rebuilding the image
+- `cluster up` renders adapter-specific engine command prefixes from
+  `ClusterConfig.engine.commandOverrides` into the cluster ConfigMap so the cluster path can
+  configure adapter wrappers without rebuilding the image
 - on the Linux outer-container cluster path, `cluster up`, `cluster status`, and `kubectl` keep
   host-published Kind and edge ports on `127.0.0.1` while reaching Kubernetes through the private
   Docker `kind` network and the internal kubeconfig
@@ -112,12 +112,12 @@
   `npm --prefix web run test:unit`
 - `infernix test integration`, `infernix test e2e`, and `infernix test all` run their complete
   supported suites against the active substrate encoded in the generated `.dhall`
-- `infernix test e2e` uses the dedicated `infernix-playwright:local` container on every substrate,
-  invoked via `docker compose run --rm playwright`; Apple host-native flows run that compose
-  invocation directly while Linux flows forward it from the outer container through the mounted
-  host docker socket; Docker is required on every substrate, there is no host-native npm fallback
-  path, Apple host-native flows reconcile `kind`, `kubectl`, `helm`, Node.js, and Poetry on
-  demand after `./.build/infernix` exists, and Linux flows rely on the documented outer-container
+- `infernix test e2e` uses the Playwright runtime baked into the Linux launcher image on Linux
+  substrates and invokes `npm --prefix web exec -- playwright test` from inside the outer
+  container against Docker's private `kind` network; the Apple host-native npm lane remains
+  deferred to the Apple-validation pass. Apple host-native flows reconcile `kind`, `kubectl`,
+  `helm`, Node.js, and Poetry on demand after `./.build/infernix` exists, and Linux flows rely on
+  the documented outer-container
   host baseline
 - `infernix internal pulsar-roundtrip ...` is an internal validation helper that publishes one
   protobuf request through the configured Pulsar endpoints and waits for the matching result

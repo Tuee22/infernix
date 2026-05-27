@@ -53,6 +53,7 @@ let ToolPaths =
       , chown : Text
       , nvidiaSmi : Text
       , nvkind : Text
+      , skopeo : Text
       , hostname : Text
       }
 

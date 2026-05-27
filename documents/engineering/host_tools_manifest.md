@@ -57,6 +57,12 @@ let ToolPaths =
       , cut : HostTool
       , dirname : HostTool
       , bash : HostTool
+      , crictl : HostTool
+      , chown : HostTool
+      , nvidiaSmi : HostTool
+      , nvkind : HostTool
+      , skopeo : HostTool
+      , hostname : HostTool
       }
 
 let FilesystemConventions =
@@ -113,6 +119,12 @@ The schema itself lives in `dhall/InfernixHost.dhall`; the materialized operator
 | colima | `toolPaths.colima` | `/opt/homebrew/bin/colima` | n/a |
 | sudo | `toolPaths.sudo` | `/usr/bin/sudo` | `/usr/bin/sudo` |
 | systemctl | `toolPaths.systemctl` | n/a | `/usr/bin/systemctl` |
+| crictl | `toolPaths.crictl` | n/a | `/usr/local/bin/crictl` |
+| chown | `toolPaths.chown` | `/usr/sbin/chown` | `/usr/bin/chown` |
+| nvidia-smi | `toolPaths.nvidiaSmi` | n/a | `/usr/bin/nvidia-smi` |
+| nvkind | `toolPaths.nvkind` | n/a | `/usr/local/bin/nvkind` |
+| skopeo | `toolPaths.skopeo` | n/a | `/usr/bin/skopeo` |
+| hostname | `toolPaths.hostname` | `/bin/hostname` | `/usr/bin/hostname` |
 
 The Apple defaults assume Homebrew (`/opt/homebrew/bin`) and ghcup. The Linux launcher defaults
 are baked into the launcher image at build time and updated only by rebuilding the image. Apple
@@ -173,7 +185,7 @@ When a sprint introduces a new external CLI:
 - `infernix test lint` — the Haskell-style lint gate rejects any `proc "<bare-name>"` whose name
   matches a `ToolPaths` field. Adding a new command without adding the schema field first fails
   this check.
-- `grep -rEn '\bproc "(docker|kubectl|helm|kind|cabal|ghc|ghcup|npm|node|python3|poetry|protoc|git|tar|curl|apt-get|brew|colima|sudo|systemctl)"' src/ test/` returns zero matches.
+- `grep -rEn '\bproc "(docker|kubectl|helm|kind|cabal|ghc|ghcup|npm|node|python3|poetry|protoc|git|tar|curl|apt-get|brew|colima|skopeo|sudo|systemctl)"' src/ test/` returns zero matches.
 
 ## Cross-References
 

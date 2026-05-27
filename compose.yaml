@@ -1,6 +1,7 @@
 services:
   infernix:
-    image: "${INFERNIX_COMPOSE_IMAGE:-infernix-linux-cpu:local}"
+    image: infernix-linux-cpu:local
+    pull_policy: never
     volumes:
       - ./.data:/workspace/.data
       - /var/run/docker.sock:/var/run/docker.sock

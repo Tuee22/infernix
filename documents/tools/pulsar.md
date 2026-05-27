@@ -18,9 +18,9 @@
 - repo-owned `.proto` schemas define the payload contract for request and result topics; the same
   schemas feed both `proto-lens`-generated Haskell bindings and auto-generated Python protobuf
   modules consumed by the active substrate adapter package
-- when `INFERNIX_PULSAR_WS_BASE_URL` and `INFERNIX_PULSAR_ADMIN_URL` are set, the production
-  daemon uses Pulsar's WebSocket producer or consumer endpoints plus the admin schema API for the
-  configured topics
+- the production daemon reads `ClusterConfig.pulsar.wsBaseUrl` and
+  `ClusterConfig.pulsar.adminUrl` from the mounted cluster manifest, then uses Pulsar's WebSocket
+  producer or consumer endpoints plus the admin schema API for the configured topics
 - when those endpoints are intentionally absent in unit-level harnesses, the daemon can exercise
   the repo-local topic spool rooted at `./.data/runtime/pulsar/`: request topics and the result
   topic become directories, and schema registration is mirrored as marker files under
@@ -52,10 +52,10 @@
 The active `.dhall` config carries the production inference fields consumed by `infernix service`:
 
 - `daemonRole : Text` - the role selected by the colocated file for the daemon process
-- `clusterDaemon` - cluster-role metadata, including request topics, result topic, location, and,
-  on Apple, the host batch topic used for handoff
-- `hostDaemon` - Apple host-role metadata, including the host batch topic to consume, result
-  topic, and publication-edge auto-discovery mode for routed Pulsar connection details
+- `coordinator` - coordinator-role metadata, including request topics, result topic, location,
+  and, on Apple, the host batch topic used for handoff
+- `engine` - engine-role metadata, including the batch topic to consume, result topic, and
+  publication-edge auto-discovery mode for Apple host daemons
 - `request_topics : List Text` - topic names the cluster daemon watches for inbound inference
   requests
 - `result_topic : Text` - the topic that completed results are written to

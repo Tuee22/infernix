@@ -80,8 +80,9 @@ Lands in Sprint 7.13. Additions to the existing `infernix-integration` Cabal sta
 
 ## E2E Layer
 
-Lands in Sprint 7.14. Playwright suites against the dedicated `infernix-playwright:local`
-image, invoked via `docker compose run --rm playwright`.
+Lands in Sprint 7.14. Linux Playwright suites run inside the substrate image with
+`npm --prefix web exec -- playwright test`; Apple host-native E2E remains deferred to the Apple
+validation pass.
 
 - **Auth lifecycle.** Signup; login; logout; re-login with same credentials; JWT refresh.
 - **Context lifecycle.** New-context creation defers backend state until first submit; rename;

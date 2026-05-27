@@ -69,6 +69,7 @@ import Infernix.DemoConfig (decodeDemoConfigFile)
 import Infernix.Dispatch.ContextModelMap (ContextModelMap)
 import Infernix.Dispatch.ContextModelMap qualified as ContextModelMap
 import Infernix.Dispatch.SingleFlight qualified as Dispatch
+import Infernix.HostConfig qualified as HostConfig
 import Infernix.Objects.Presigned qualified as Presigned
 import Infernix.Runtime (executeInference)
 import Infernix.Runtime.Worker (EngineCommandOverrideMap)
@@ -101,8 +102,10 @@ import System.Directory
     listDirectory,
     removeFile,
   )
+import System.Exit (ExitCode (ExitSuccess))
 import System.FilePath (takeDirectory, (<.>), (</>))
 import System.IO (hPutStrLn, stderr)
+import System.Process (readProcessWithExitCode)
 import System.Timeout (timeout)
 
 data PulsarTransport = PulsarTransport
@@ -463,7 +466,83 @@ discoverPulsarTransport paths runtimeMode maybeClusterConfig =
   where
     fallback = case (controlPlaneContext paths, runtimeMode) of
       (HostNative, AppleSilicon) -> discoverAppleHostPulsarTransport paths
+      -- Phase 6 Sprint 6.28 follow-on (May 26, 2026): the Linux
+      -- outer-container test path (`infernix internal
+      -- pulsar-roundtrip`, integration `validateServiceRuntimeLoop`)
+      -- runs inside the launcher container without a mounted
+      -- @ClusterConfig@. The supported transport is the routed
+      -- Pulsar edge: the launcher is attached to Kind's @kind@
+      -- network via @ensureOuterContainerKindNetworkAccess@, so the
+      -- published edge port (default 9090) routes
+      -- @ws://127.0.0.1:<edgePort>/pulsar/ws/v2@ to the in-cluster
+      -- Pulsar proxy. Without this, the test wrote to the
+      -- filesystem-topic-spool fallback that the cluster daemon does
+      -- not consume.
+      (OuterContainer, _) ->
+        case pathsHostConfig paths of
+          Just hostConfig -> discoverOuterContainerPulsarTransport hostConfig runtimeMode
+          Nothing -> pure Nothing
       _ -> pure Nothing
+
+-- | Phase 6 Sprint 6.28 follow-on (May 26, 2026): outer-container
+-- Pulsar transport discovery via the kind control-plane's IPv4 +
+-- NodePort 30090. The launcher cannot use @127.0.0.1:9090@ from
+-- inside its own network namespace, and Kind's docker-DNS entry for
+-- @<cluster>-control-plane@ returns an IPv6 ULA address first
+-- (@fc00:f853:ccd:e793::/64@) that Haskell's getAddrInfo+connect
+-- doesn't route on the kind bridge. The supported flow asks Docker
+-- for the kind control-plane container's IPv4 on the @kind@ network
+-- directly, then connects to that explicit IPv4 on the supported
+-- NodePort 30090 — which the launcher reaches over the attached
+-- @kind@ bridge via @ensureOuterContainerKindNetworkAccess@.
+discoverOuterContainerPulsarTransport :: HostConfig.HostConfig -> RuntimeMode -> IO (Maybe PulsarTransport)
+discoverOuterContainerPulsarTransport hostConfig runtimeMode = do
+  let containerName =
+        "infernix-" <> Text.unpack (runtimeModeId runtimeMode) <> "-control-plane"
+      dockerPath = Text.unpack (HostConfig.hostDocker (HostConfig.hostToolPaths hostConfig))
+      dockerArgs =
+        [ "inspect",
+          containerName,
+          "--format",
+          "{{.NetworkSettings.Networks.kind.IPAddress}}"
+        ]
+  ipResult <- try (readProcessWithExitCode dockerPath dockerArgs "") :: IO (Either SomeException (ExitCode, String, String))
+  pure (buildOuterContainerTransport ipResult)
+
+buildOuterContainerTransport ::
+  Either SomeException (ExitCode, String, String) -> Maybe PulsarTransport
+buildOuterContainerTransport ipResult =
+  case ipResult of
+    Right (ExitSuccess, rawOutput, _) ->
+      let ipv4 = filter (/= '\n') (trimWhitespacePulsar rawOutput)
+       in if null ipv4
+            then Nothing
+            else buildOuterContainerTransportFromIpv4 ipv4
+    _ -> Nothing
+
+buildOuterContainerTransportFromIpv4 :: String -> Maybe PulsarTransport
+buildOuterContainerTransportFromIpv4 ipv4 =
+  fmap (transportFromBase adminUrl) (eitherToMaybe (parsePulsarWebSocketBase wsUrl))
+  where
+    outerContainerPort = 30090 :: Int
+    wsUrl =
+      "ws://" <> ipv4 <> ":" <> show outerContainerPort <> "/pulsar/ws/v2"
+    adminUrl =
+      "http://" <> ipv4 <> ":" <> show outerContainerPort <> "/pulsar/admin/admin/v2"
+
+transportFromBase :: String -> PulsarWebSocketBase -> PulsarTransport
+transportFromBase adminUrl parsedWebSocketBase =
+  PulsarTransport
+    { pulsarAdminBaseUrl = Just adminUrl,
+      pulsarWebSocketBase = parsedWebSocketBase
+    }
+
+eitherToMaybe :: Either a b -> Maybe b
+eitherToMaybe (Right value) = Just value
+eitherToMaybe (Left _) = Nothing
+
+trimWhitespacePulsar :: String -> String
+trimWhitespacePulsar = dropWhile (`elem` (" \t\n\r" :: String)) . reverse . dropWhile (`elem` (" \t\n\r" :: String)) . reverse
 
 discoverPulsarTransportFromCluster ::
   ClusterConfig ->
@@ -1723,7 +1802,8 @@ publishDispatchedInferenceRequest transport runtimeMode requestTopic resolvedMod
 --    topology that reaches the public internet).
 -- 3. @PUT@ the downloaded bytes to MinIO under
 --    @infernix-models/<modelId>/payload@ via a presigned PUT URL
---    minted with the chart-injected @INFERNIX_MINIO_*@ credentials.
+--    minted from mounted @ClusterConfig.minio@ wiring and
+--    @SecretsConfig.minio.credentialsPath@ credentials.
 -- 4. @PUT@ the @.ready@ sentinel last so partial uploads are not
 --    visible to engines (the engine helper waits on this sentinel).
 -- 5. Publish a 'ModelBootstrapReadyEvent' on the matching ready topic

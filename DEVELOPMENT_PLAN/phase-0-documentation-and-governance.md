@@ -346,9 +346,8 @@ later-phase retirement sprints. The three configuration Dhall files (`InfernixHo
 ### Remaining Work
 
 Sprint 0.9 closes when the seven retirement sprints (1.11, 2.13, 3.10, 4.13, 5.9, 6.28, 7.17)
-land. Until then Sprint 0.9 stays Active and Phase 0 stays Active because the doctrine it
-declares is not yet enforced by code or chart shape; the lint gates land in Phase 6 Sprint 6.28
-and become the durable enforcement mechanism at that point.
+land. Sprint 6.28 has landed the durable lint gates, but Sprint 0.9 stays Active until the
+remaining retirement sprints and deferred Apple validation pass close their named residuals.
 
 ---
 

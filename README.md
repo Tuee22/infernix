@@ -58,8 +58,8 @@ This repository serves two aligned purposes:
   containers
 - one validation surface spanning repo-owned Haskell `ormolu`/`cabal format`/`hlint`,
   `poetry run check-code` against `python/adapters/`, unit tests, integration tests,
-  `purescript-spec` view and contract tests, and Playwright launched from the dedicated
-  `infernix-playwright:local` image
+  `purescript-spec` view and contract tests, and Linux Playwright launched from inside the
+  substrate image
 - one shared Linux substrate build definition (`docker/linux-substrate.Dockerfile`) emits
   `infernix-linux-cpu` and `infernix-linux-gpu`, each with ghcup-pinned GHC 9.14.1 + Cabal
   3.16.1.0, Python 3 + Poetry, node, the demo UI build toolchain, `nvkind`, and the
@@ -419,9 +419,8 @@ warning classification. In short:
 - buildx, npm update notices, npm deprecation warnings, Python root-pip warnings, and GHCup
   shell-profile warnings are eliminated on the current supported image and web toolchain; if they
   return, treat them as regressions unless the canonical policy doc names a new upstream constraint
-- Playwright image build failures for a missing `web/scripts/install-purescript.mjs` are image
-  contract regressions; the dedicated Playwright image must copy `web/scripts/` before npm
-  `postinstall`
+- Playwright failures for a missing `web/scripts/install-purescript.mjs` are image contract
+  regressions; the substrate image must copy `web/scripts/` before npm `postinstall`
 - the remaining GHCup no-update message and generic PATH advice come from the upstream `get-ghcup`
   installer; accept them only when the Dockerfile-owned `PATH` works, the pinned toolchain installs,
   and the image build exits zero
@@ -478,8 +477,8 @@ tools and Poetry bootstrap before an adapter setup or validation path first need
 
 The `linux-cpu` substrate ships one baked image snapshot, `infernix-linux-cpu:local`, built from
 `docker/linux-substrate.Dockerfile` with `BASE_IMAGE=ubuntu:24.04`. That image acts as the
-Compose-launched control plane and the in-cluster workload image source, while routed E2E uses the
-dedicated `infernix-playwright:local` image.
+Compose-launched control plane, the in-cluster workload image source, and the Linux routed-E2E
+executor.
 
 Supported bootstrap path:
 
@@ -493,30 +492,28 @@ Supported bootstrap path:
 Direct reference commands:
 
 ```bash
-docker compose run --rm infernix infernix cluster up
-docker compose run --rm infernix infernix cluster status
-docker compose run --rm infernix infernix test all
-docker compose run --rm infernix infernix cluster down
+docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm infernix infernix cluster up
+docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm infernix infernix cluster status
+docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm infernix infernix test all
+docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm infernix infernix cluster down
 ```
 
-The Linux launcher bind-mounts `./.data/`, `./.build/`, the host `compose.yaml`, and the Docker
-socket. It also forwards the host repo root so the generated Kind or `nvkind` config can mount
-the host's `./.data/kind/<runtime-mode>/` and `./.build/kind/registry/` directories directly into
-node containers. The baked image owns the full toolchain, so the supported runtime path does not
-install anything via `apt`, `pip`, or ad hoc host-side `cabal build`. The Linux bootstrap invokes
-the same `docker compose run --rm infernix infernix <command>` shape that operators use directly,
-letting Compose build the missing launcher image and letting the binary own substrate staging,
-cluster lifecycle, image preparation, and validation. On both Linux substrates, Kind or `nvkind`
-create or delete uses a launcher-local scratch kubeconfig under the container temp directory and
-the lifecycle publishes the durable operator-facing kubeconfig afterward to
+The Linux launcher bind-mounts only `./.data/` and the Docker socket. The baked image owns the
+full toolchain, source snapshot, build root, and chart archive cache, so the supported runtime
+path does not install anything via `apt`, `pip`, or ad hoc host-side `cabal build`. The Linux
+bootstrap invokes the same Compose service shape that operators use directly, while the binary
+owns substrate staging, cluster lifecycle, image preparation, and validation. On both Linux
+substrates, Kind or `nvkind` create or delete uses a launcher-local scratch kubeconfig under the
+container temp directory and the lifecycle publishes the durable operator-facing kubeconfig
+afterward to
 `./.data/runtime/infernix.kubeconfig`.
 
 ### Linux GPU (outer container)
 
 The `linux-gpu` substrate ships one baked image snapshot, `infernix-linux-gpu:local`, built
 from `docker/linux-substrate.Dockerfile` with a CUDA base image. The same supported Compose
-launcher surface used on Linux CPU selects that image through environment variables while keeping
-the outer control-plane container itself off the NVIDIA runtime path.
+launcher surface used on Linux CPU selects that image through `compose.linux-gpu.yaml` while
+keeping the outer control-plane container itself off the NVIDIA runtime path.
 
 Supported bootstrap path:
 
@@ -534,20 +531,16 @@ the same command.
 Direct reference commands:
 
 ```bash
-export INFERNIX_COMPOSE_IMAGE=infernix-linux-gpu:local
-export INFERNIX_COMPOSE_SUBSTRATE=linux-gpu
-export INFERNIX_COMPOSE_BASE_IMAGE=nvidia/cuda:13.2.1-cudnn-runtime-ubuntu24.04
-docker compose run --rm infernix infernix cluster up
-docker compose run --rm infernix infernix cluster status
-docker compose run --rm infernix infernix kubectl -n platform exec deployment/infernix-engine -- nvidia-smi -L
-docker compose run --rm infernix infernix test all
-docker compose run --rm infernix infernix cluster down
+docker compose --project-name infernix-linux-gpu --file compose.yaml --file compose.linux-gpu.yaml run --rm infernix infernix cluster up
+docker compose --project-name infernix-linux-gpu --file compose.yaml --file compose.linux-gpu.yaml run --rm infernix infernix cluster status
+docker compose --project-name infernix-linux-gpu --file compose.yaml --file compose.linux-gpu.yaml run --rm infernix infernix kubectl -n platform exec deployment/infernix-engine -- nvidia-smi -L
+docker compose --project-name infernix-linux-gpu --file compose.yaml --file compose.linux-gpu.yaml run --rm infernix infernix test all
+docker compose --project-name infernix-linux-gpu --file compose.yaml --file compose.linux-gpu.yaml run --rm infernix infernix cluster down
 ```
 
 The CUDA substrate image bundles CUDA-aware engine builds such as `llama.cpp` CUDA and `vLLM` at
 image build time. `cluster up` installs the Envoy Gateway controller, the NVIDIA device plugin,
-and `RuntimeClass/nvidia` before scheduling the GPU-requesting service workload. When you switch
-back to the CPU lane, unset the `INFERNIX_COMPOSE_*` overrides or start a fresh shell.
+and `RuntimeClass/nvidia` before scheduling the GPU-requesting service workload.
 
 ## CLI Surface
 
@@ -711,14 +704,11 @@ contracts.
 - the demo UI host is the `infernix-demo` Haskell binary (separate executable from `infernix`,
   shares the default Cabal library exposed by the `infernix` package, ships in the same
   per-substrate OCI image on Linux); it serves `web/dist/` produced by `spago bundle`
-- on Linux substrates, the substrate container carries the spago plus purs toolchain (used at
-  image build time to bundle the demo UI); the substrate image carries no browser-runtime weight,
-  and routed Playwright execution lives in a dedicated `infernix-playwright:local` image built
-  from `docker/playwright.Dockerfile`
-- on every substrate, `infernix test e2e` invokes the dedicated Playwright image through
-  `docker compose run --rm playwright`; on Apple Silicon the host CLI runs that compose service
-  directly, on Linux substrates the outer container runs it through the mounted host docker
-  socket
+- on Linux substrates, the substrate container carries the spago plus purs toolchain, Playwright
+  system packages, and the three browser engines; `infernix test e2e` runs
+  `npm --prefix web exec -- playwright test` inside that same image
+- the Apple Silicon host-native routed-E2E executor refactor is deferred and currently surfaces an
+  explicit diagnostic instead of using the old Compose sidecar path
 - the `infernix-demo` workload is deployed through repo-owned Helm chart templates and values, and
   is gated by the `.dhall` `demo_ui` flag; production deployments leave it off
 - the demo UI catalog is derived from the generated mode-specific demo `.dhall` file for the active
@@ -726,9 +716,8 @@ contracts.
 - repo-owned `purescript-spec` suites under `web/test/` cover generated contracts, publication
   rendering, and view behavior; `infernix test unit` runs `spago test` alongside the Haskell unit
   suites
-- Playwright stays container-owned on supported paths: routed E2E always runs from the dedicated
-  `infernix-playwright:local` image through `docker compose run --rm playwright`, regardless of
-  substrate; the test orchestration lives in the Haskell integration test suite
+- Playwright stays container-owned on Linux supported paths: routed E2E runs from the substrate
+  image, and the test orchestration lives in the Haskell integration test suite
 - the demo UI can submit manual inference requests against any registered model in the active demo
   catalog; the production inference surface remains Pulsar topics named in the active `.dhall`
 - the demo UI, demo API surface, generated PureScript contracts, and validation suites must expand

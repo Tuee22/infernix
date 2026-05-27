@@ -8,8 +8,9 @@ library supports bytes-loading natively.
 
 The helper exposes one stable entry point::
 
-    from adapters.model_cache import get_model_path
+    from adapters.model_cache import configure, get_model_path, ModelCacheConfig
 
+    configure(ModelCacheConfig(...))
     weights_dir = get_model_path("audio-bark-small")
 
 ``get_model_path`` is idempotent: first call for a given ``model_id``
@@ -20,13 +21,18 @@ calls return the existing path immediately. After populating a new
 entry the helper runs LRU eviction to keep the cache tree under its
 size budget.
 
-The MinIO client uses boto3's S3 surface against the
-``INFERNIX_MINIO_*`` env vars the chart injects. If the bucket has not
-yet been populated by the coordinator (i.e. the upstream
-``.ready`` sentinel object is absent), the helper raises
-``ModelCacheNotPopulated`` so the Haskell engine daemon can publish a
-``model.bootstrap.request`` envelope and retry once the coordinator
-broadcasts the matching ``model.bootstrap.ready.<modelId>`` event.
+Phase 5 Sprint 5.9 follow-on (May 26, 2026): MinIO connection details
++ cache root + quota are passed via the typed ``ModelCacheConfig``
+record via ``configure()`` instead of read from ``INFERNIX_MINIO_*``
++ ``INFERNIX_MODEL_CACHE_*`` env vars. The engine daemon decodes the
+chart-mounted ``ClusterConfig.minio`` + ``SecretsConfig.minio`` (via
+the mounted ``Secret/infernix-cluster-secrets`` JSON files) and
+passes the resolved values through. If the bucket has not yet been
+populated by the coordinator (i.e. the upstream ``.ready`` sentinel
+object is absent), the helper raises ``ModelCacheNotPopulated`` so
+the Haskell engine daemon can publish a ``model.bootstrap.request``
+envelope and retry once the coordinator broadcasts the matching
+``model.bootstrap.ready.<modelId>`` event.
 """
 
 from __future__ import annotations
@@ -34,12 +40,15 @@ from __future__ import annotations
 import os
 import shutil
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
 __all__ = [
+    "ModelCacheConfig",
     "ModelCacheNotPopulated",
     "READY_SENTINEL_NAME",
+    "configure",
     "get_model_path",
     "model_cache_root",
 ]
@@ -47,9 +56,9 @@ __all__ = [
 
 # Supported on-disk root mounted into engine pods (and into the host-engine
 # daemon on Apple silicon) as an ``emptyDir`` ``sizeLimit``-backed volume.
-# Operators may point a unit-test or isolated daemon run at a different
-# directory through ``INFERNIX_MODEL_CACHE_ROOT`` so test fixtures do not
-# require a writable ``/model-cache`` mount.
+# Test fixtures or isolated daemon runs pass a different directory via
+# ``ModelCacheConfig.cache_root`` so they do not require a writable
+# ``/model-cache`` mount.
 DEFAULT_MODEL_CACHE_ROOT = "/model-cache"
 
 # Name of the per-model sentinel the coordinator's bootstrap subscription
@@ -60,13 +69,13 @@ DEFAULT_MODEL_CACHE_ROOT = "/model-cache"
 READY_SENTINEL_NAME = ".ready"
 
 # Default LRU quota matches ``chart/values.yaml`` ``engine.modelCache.sizeLimit``
-# of ``32Gi``. Operators override via ``INFERNIX_MODEL_CACHE_QUOTA_BYTES``
-# for isolated daemon runs and unit tests.
+# of ``32Gi``. Isolated daemon runs and unit tests override it through
+# ``ModelCacheConfig.quota_bytes``.
 DEFAULT_QUOTA_BYTES = 32 * 1024 * 1024 * 1024
 
 # Default MinIO bucket. The chart provisions this bucket as
-# ``infernix-models``; operators may override via ``INFERNIX_MODELS_BUCKET``
-# for tenant isolation or test fixtures.
+# ``infernix-models``; callers override it through
+# ``ModelCacheConfig.models_bucket`` for tenant isolation or test fixtures.
 DEFAULT_MODELS_BUCKET = "infernix-models"
 
 
@@ -83,15 +92,66 @@ class ModelCacheNotPopulated(RuntimeError):
     """
 
 
+@dataclass(frozen=True)
+class ModelCacheConfig:
+    """Typed model-cache + MinIO wiring the engine daemon passes through.
+
+    Phase 5 Sprint 5.9 follow-on (May 26, 2026): replaces the
+    ``INFERNIX_MODEL_CACHE_*`` + ``INFERNIX_MINIO_*`` env-var family.
+    Callers populate this from the chart-mounted ``ClusterConfig``
+    + ``SecretsConfig`` records the Haskell engine daemon decodes at
+    startup. The default values match the previously-env-fallback
+    constants so callers may omit fields they want the supported
+    default for.
+    """
+
+    cache_root: Path = Path(DEFAULT_MODEL_CACHE_ROOT)
+    quota_bytes: int = DEFAULT_QUOTA_BYTES
+    models_bucket: str = DEFAULT_MODELS_BUCKET
+    minio_endpoint: str = ""
+    minio_access_key: str = ""
+    minio_secret_key: str = ""
+    minio_region: str = "us-east-1"
+
+
+_CONFIG: ModelCacheConfig | None = None
+
+
+def configure(config: ModelCacheConfig) -> None:
+    """Set the typed model-cache config the helpers read from.
+
+    Must be called before ``get_model_path`` invokes MinIO. The
+    supported caller is the engine daemon's adapter bootstrap entry
+    point, which decodes the cluster manifest + secrets manifest
+    once at startup and passes the resolved values through.
+    """
+    global _CONFIG
+    _CONFIG = config
+
+
+def _require_config() -> ModelCacheConfig:
+    if _CONFIG is None:
+        raise ModelCacheNotPopulated(
+            "adapters.model_cache.configure() must be called with a "
+            "ModelCacheConfig before invoking get_model_path / "
+            "model_cache_root. The supported caller is the engine "
+            "daemon's adapter bootstrap which decodes the chart-mounted "
+            "cluster + secrets manifests once at startup."
+        )
+    return _CONFIG
+
+
 def model_cache_root() -> Path:
     """Return the absolute root path the engine reads cached weights from.
 
-    Honours ``INFERNIX_MODEL_CACHE_ROOT`` so isolated daemon runs and
-    unit tests can redirect the helper without mutating
-    ``/model-cache``.
+    Reads from the typed ``ModelCacheConfig`` populated via
+    ``configure()``. When ``configure()`` has not been called, falls
+    through to ``ModelCacheConfig()``'s default (``/model-cache``)
+    for callers that want only the supported default location.
     """
-    configured = os.environ.get("INFERNIX_MODEL_CACHE_ROOT")
-    return Path(configured) if configured else Path(DEFAULT_MODEL_CACHE_ROOT)
+    if _CONFIG is None:
+        return Path(DEFAULT_MODEL_CACHE_ROOT)
+    return _CONFIG.cache_root
 
 
 def get_model_path(model_id: str) -> Path:
@@ -146,17 +206,19 @@ def _populate_from_minio(model_id: str, dest_dir: Path) -> None:
     the local cache in a recoverable (re-poll) state rather than a
     false-ready state that would mislead the engine adapter.
     """
-    endpoint = os.environ.get("INFERNIX_MINIO_ENDPOINT")
-    access_key = os.environ.get("INFERNIX_MINIO_ACCESS_KEY")
-    secret_key = os.environ.get("INFERNIX_MINIO_SECRET_KEY")
-    region = os.environ.get("INFERNIX_MINIO_REGION", "us-east-1")
-    bucket = os.environ.get("INFERNIX_MODELS_BUCKET", DEFAULT_MODELS_BUCKET)
+    config = _require_config()
+    endpoint = config.minio_endpoint
+    access_key = config.minio_access_key
+    secret_key = config.minio_secret_key
+    region = config.minio_region
+    bucket = config.models_bucket
 
     if not (endpoint and access_key and secret_key):
         raise ModelCacheNotPopulated(
-            f"MinIO connection env vars missing; cannot populate model "
-            f"{model_id!r}. Set INFERNIX_MINIO_ENDPOINT, "
-            "INFERNIX_MINIO_ACCESS_KEY, and INFERNIX_MINIO_SECRET_KEY."
+            f"MinIO connection details missing in the supplied "
+            f"ModelCacheConfig; cannot populate model {model_id!r}. "
+            "Populate config.minio_endpoint, config.minio_access_key, "
+            "and config.minio_secret_key via configure()."
         )
 
     try:
@@ -242,8 +304,8 @@ def _strip_prefix(key: str, prefix: str) -> str:
 def _enforce_lru_quota(cache_root: Path) -> None:
     """Evict least-recently-used model entries when the cache exceeds quota.
 
-    Quota is read from ``INFERNIX_MODEL_CACHE_QUOTA_BYTES`` or defaults
-    to ``DEFAULT_QUOTA_BYTES``. The function preserves at least one
+    Quota is read from ``ModelCacheConfig.quota_bytes`` or defaults to
+    ``DEFAULT_QUOTA_BYTES``. The function preserves at least one
     entry so a tightly bounded cache (less than one model's footprint)
     still serves the most-recently-loaded model.
     """
@@ -269,13 +331,12 @@ def _enforce_lru_quota(cache_root: Path) -> None:
 
 
 def _cache_quota_bytes() -> int:
-    configured = os.environ.get("INFERNIX_MODEL_CACHE_QUOTA_BYTES")
-    if configured:
-        try:
-            return int(configured)
-        except ValueError:
-            return DEFAULT_QUOTA_BYTES
-    return DEFAULT_QUOTA_BYTES
+    # Phase 5 Sprint 5.9 follow-on (May 26, 2026): quota now comes
+    # from the typed ModelCacheConfig the engine daemon passes via
+    # configure().
+    if _CONFIG is None:
+        return DEFAULT_QUOTA_BYTES
+    return _CONFIG.quota_bytes
 
 
 def _directory_size_bytes(path: Path) -> int:

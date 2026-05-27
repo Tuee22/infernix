@@ -179,15 +179,17 @@ now use that id consistently.
 | Phase | Name | Status | Document |
 |-------|------|--------|----------|
 | 0 | Documentation and Governance | Active (Sprint 0.9: Configuration Doctrine) | [phase-0-documentation-and-governance.md](phase-0-documentation-and-governance.md) |
-| 1 | Repository and Control-Plane Foundation | Active (Sprint 1.11: Host Manifest Materialization) | [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md) |
-| 2 | Kind Cluster Storage and Lifecycle | Active (Sprint 2.13 env-side + partial bare-name proc retirement landed May 25, 2026 — HostTool wrappers + `pathsHostConfig` + 30+ callsites converted, lint exemption removed; pending ClusterState-paths threading + linux-gpu env-i validation) | [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md) |
-| 3 | HA Platform Services and Edge Routing | Active (Sprint 3.10 substantively landed May 24, 2026 with two deferred items: linux-gpu E2E rerun + Apple host-native E2E refactor) | [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md) |
-| 4 | Inference Service and Durable Runtime | Active (Sprint 4.13 code-side closed May 25, 2026 including the engine-command override retirement; pending the MinIO endpoint/region migration paired with Sprint 7.17 secrets retirement + linux-gpu cluster integration validation) | [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) |
-| 5 | Web UI and Shared Types | Active (Sprint 5.9 Haskell + web-script side landed May 25, 2026; Python-adapter rewire + linux-gpu integration validation pending) | [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md) |
-| 6 | Validation, E2E, and HA Hardening | Active (Sprint 6.28 Haskell-style lint gate landed May 25, 2026; Docs + Chart gates and test-suite env retirement pending) | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) |
-| 7 | Demo App Multi-User Durable Context | Active (Sprints 7.1, 7.3–7.13, 7.16 partial-landed; 7.14, 7.15 Planned; Sprint 7.17 fully landed code-side May 25, 2026 — Dhall schema + Haskell decoder + chart Secret + chart env stripping + `Demo/Api.hs` + `Demo/Auth.hs` + `Runtime/Pulsar.hs` `INFERNIX_KEYCLOAK_*` / `INFERNIX_MINIO_*` wirings via `ClusterConfig` + `SecretsConfig` + Python `INFERNIX_POETRY_EXECUTABLE` env retirement via `HostConfig.toolPaths.hostPoetry`; only Apple-only `POETRY_HOME`/`PATH` munging + linux-gpu integration validation remain) | [phase-7-demo-app-durable-context.md](phase-7-demo-app-durable-context.md) |
+| 1 | Repository and Control-Plane Foundation | Active (Sprint 1.11: Host Manifest Materialization; Linux compose selection and stage-zero bootstrap cleanup validated May 27, 2026; Apple bootstrap and the optional `/opt/infernix/chart/charts` relocation remain) | [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md) |
+| 2 | Kind Cluster Storage and Lifecycle | Active (Sprint 2.13 Linux code-side HostTool routing is closed and clean-env `linux-gpu` lifecycle validation passed May 27, 2026; Apple-only `Engines/AppleSilicon.hs` environment capture remains) | [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md) |
+| 3 | HA Platform Services and Edge Routing | Active (Sprint 3.10 Linux in-container Playwright E2E validated on `linux-gpu` May 27, 2026; Apple host-native E2E refactor remains) | [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md) |
+| 4 | Inference Service and Durable Runtime | Done (Sprint 4.13 closed May 27, 2026: `ClusterConfig` renderer + decoder roundtrip covered by unit tests; MinIO endpoint / region / credential wiring reads mounted `ClusterConfig` + `SecretsConfig`; the `linux-gpu` `test all` PASS on May 26, 2026 confirms the typed `ClusterConfig.engine.commandOverrides` threading through `Worker.hs.runInferenceWorker` works against the real cluster) | [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) |
+| 5 | Web UI and Shared Types | Done (Sprint 5.9 closed May 27, 2026: demo backend reads `ClusterConfig.demoBackend.*`; Python adapters no longer read `os.environ`; web/Node helper scripts no longer read `process.env`; `poetry run check-code`, Node syntax checks, grep gates, and the May 26 `linux-gpu` `test all` PASS validate the closure) | [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md) |
+| 6 | Validation, E2E, and HA Hardening | Done (Sprint 6.28 closed May 27, 2026: test-suite env isolation and bare `proc "python3"` fixtures retired; Haskell-style, docs, and chart lint gates are active; the May 26 `linux-gpu` `test all` PASS remains the full real-cluster validation baseline) | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) |
+| 7 | Demo App Multi-User Durable Context | Active (Sprints 7.1, 7.3–7.13, 7.16 partial-landed; 7.14, 7.15 Planned; Sprint 7.17 Linux lane landed and was validated end-to-end via the `linux-gpu` `test all` PASS on May 26, 2026; only the Apple-only Poetry/bootstrap env handoff remains as the explicit Apple follow-on) | [phase-7-demo-app-durable-context.md](phase-7-demo-app-durable-context.md) |
 
-> **Note**: All phases are `Active` as of the Phase 0 Sprint 0.9 configuration-doctrine landing.
+> **Note**: Phase statuses describe current repository state. Earlier governed phases may remain
+> `Active` for named follow-ons while later phases can be `Done` when their owned work and
+> validation are complete.
 > Each phase 1-7 gained a retirement sprint that eliminates the env-var fallbacks and
 > PATH-resolved external commands the phase originally introduced. See
 > [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
@@ -241,10 +243,8 @@ The supported platform now closes around these rules:
   move through Pulsar to host daemons
 - on Apple Silicon, Compose is not a user-facing launcher for ordinary CLI work; the host-native
   routed-E2E executor refactor is deferred and the current Apple branch in `runRuntimeModeE2E`
-  surfaces an explicit deferral diagnostic. Phase 3 Sprint 3.10 (May 24, 2026) retired the
-  dedicated `infernix-playwright:local` image and `docker/playwright.Dockerfile`; Linux substrates
-  now run Playwright in-container inside the substrate image via
-  `npm --prefix web exec -- playwright test ...`
+  surfaces an explicit deferral diagnostic. Linux substrates run Playwright in-container inside
+  the substrate image via `npm --prefix web exec -- playwright test ...`
 - on Linux substrates, all supported CLI commands run through
   `docker compose run --rm infernix infernix ...`; there is no supported Linux host-native build or
   CLI surface outside the outer container

@@ -1,14 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+BOOTSTRAP_DIRNAME="${BOOTSTRAP_DIRNAME:-/usr/bin/dirname}"
+BOOTSTRAP_GETENT="${BOOTSTRAP_GETENT:-/usr/bin/getent}"
+BOOTSTRAP_ID="${BOOTSTRAP_ID:-/usr/bin/id}"
+BOOTSTRAP_SUDO="${BOOTSTRAP_SUDO:-/usr/bin/sudo}"
+BOOTSTRAP_UNAME="${BOOTSTRAP_UNAME:-/usr/bin/uname}"
+
 # Phase 1 Sprint 1.11 — destructive-confirmation gate is set explicitly
 # from the bootstrap entrypoint's CLI parsing (typically the @--yes@
-# flag), not by consulting @INFERNIX_BOOTSTRAP_YES@ in the operator's
-# inherited environment. See @bootstrap::confirm_destructive@ below.
-BOOTSTRAP_SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# flag), not by consulting the operator's inherited environment. See
+# @bootstrap::confirm_destructive@ below.
+BOOTSTRAP_SCRIPT_DIR="$(cd -- "$("${BOOTSTRAP_DIRNAME}" -- "${BASH_SOURCE[0]}")" && pwd)"
 BOOTSTRAP_REPO_ROOT="$(cd -- "${BOOTSTRAP_SCRIPT_DIR}/.." && pwd)"
 BOOTSTRAP_PENDING_EXIT_CODE=20
 BOOTSTRAP_ASSUME_YES=0
+BOOTSTRAP_EFFECTIVE_USER=""
+BOOTSTRAP_EFFECTIVE_HOME=""
 
 bootstrap::repo_root() {
   printf '%s\n' "${BOOTSTRAP_REPO_ROOT}"
@@ -19,7 +27,12 @@ bootstrap::cd_repo_root() {
 }
 
 bootstrap::have() {
-  command -v "$1" >/dev/null 2>&1
+  local command_name="$1"
+  local candidate
+  for candidate in "/usr/bin/${command_name}" "/bin/${command_name}" "/usr/sbin/${command_name}" "/sbin/${command_name}"; do
+    [[ -x "${candidate}" ]] && return 0
+  done
+  command -v "${command_name}" >/dev/null 2>&1
 }
 
 bootstrap::info() {
@@ -46,11 +59,11 @@ bootstrap::run() {
 }
 
 bootstrap::require_macos() {
-  [[ "$(uname -s)" == "Darwin" ]] || bootstrap::die "This bootstrap entrypoint only supports macOS."
+  [[ "$("${BOOTSTRAP_UNAME}" -s)" == "Darwin" ]] || bootstrap::die "This bootstrap entrypoint only supports macOS."
 }
 
 bootstrap::require_linux() {
-  [[ "$(uname -s)" == "Linux" ]] || bootstrap::die "This bootstrap entrypoint only supports Linux."
+  [[ "$("${BOOTSTRAP_UNAME}" -s)" == "Linux" ]] || bootstrap::die "This bootstrap entrypoint only supports Linux."
 }
 
 bootstrap::load_os_release() {
@@ -69,10 +82,36 @@ bootstrap::require_ubuntu_24_04() {
 }
 
 bootstrap::ensure_sudo_session() {
-  if [[ "$(id -u)" -eq 0 ]]; then
+  if [[ "$("${BOOTSTRAP_ID}" -u)" -eq 0 ]]; then
     return 0
   fi
-  bootstrap::run sudo -v
+  bootstrap::run "${BOOTSTRAP_SUDO}" -v
+}
+
+bootstrap::load_effective_user() {
+  local uid
+  local passwd_entry
+
+  [[ -n "${BOOTSTRAP_EFFECTIVE_USER}" ]] && return 0
+  uid="$("${BOOTSTRAP_ID}" -u)"
+  passwd_entry="$("${BOOTSTRAP_GETENT}" passwd "${uid}" 2>/dev/null || true)"
+  [[ -n "${passwd_entry}" ]] || bootstrap::die "Unable to resolve current user from /etc/passwd."
+  BOOTSTRAP_EFFECTIVE_USER="${passwd_entry%%:*}"
+  passwd_entry="${passwd_entry#*:}"
+  passwd_entry="${passwd_entry#*:}"
+  passwd_entry="${passwd_entry#*:}"
+  passwd_entry="${passwd_entry#*:}"
+  BOOTSTRAP_EFFECTIVE_HOME="${passwd_entry%%:*}"
+}
+
+bootstrap::effective_user() {
+  bootstrap::load_effective_user
+  printf '%s\n' "${BOOTSTRAP_EFFECTIVE_USER}"
+}
+
+bootstrap::effective_home() {
+  bootstrap::load_effective_user
+  printf '%s\n' "${BOOTSTRAP_EFFECTIVE_HOME}"
 }
 
 bootstrap::prepend_path() {

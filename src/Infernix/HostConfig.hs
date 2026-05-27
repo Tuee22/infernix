@@ -80,6 +80,7 @@ data HostToolPaths = HostToolPaths
     hostChown :: Text,
     hostNvidiaSmi :: Text,
     hostNvkind :: Text,
+    hostSkopeo :: Text,
     hostHostname :: Text
   }
   deriving (Eq, Show, Generic)
@@ -218,6 +219,7 @@ renderHostConfig hostConfig =
             <> renderText "chown" hostChown
             <> renderText "nvidiaSmi" hostNvidiaSmi
             <> renderText "nvkind" hostNvkind
+            <> renderText "skopeo" hostSkopeo
             <> renderText "hostname" hostHostname
             <> "  }",
           ", filesystem =",
@@ -279,7 +281,8 @@ defaultLinuxOuterContainerHostConfig homeDir =
             hostCrictl = "/usr/local/bin/crictl",
             hostChown = "/usr/bin/chown",
             hostNvidiaSmi = "/usr/bin/nvidia-smi",
-            hostNvkind = "",
+            hostNvkind = "/usr/local/bin/nvkind",
+            hostSkopeo = "/usr/bin/skopeo",
             hostHostname = "/usr/bin/hostname"
           },
       hostFilesystem =
@@ -342,6 +345,7 @@ defaultAppleHostNativeHostConfig repoRoot homeDir =
             hostChown = "/usr/sbin/chown",
             hostNvidiaSmi = "",
             hostNvkind = "",
+            hostSkopeo = "",
             hostHostname = "/bin/hostname"
           },
       hostFilesystem =

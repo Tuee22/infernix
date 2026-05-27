@@ -35,9 +35,9 @@
   before the final Helm rollout on every substrate
 - because Pulsar is first enabled in the final Harbor-backed Helm phase, `cluster up` forces the
   upstream Pulsar initialization jobs there before final broker or proxy readiness gates close
-- `cluster up` forwards any `INFERNIX_ENGINE_COMMAND_*` environment variables from the control
-  plane into the service deployment so adapter-specific engine command prefixes can be supplied on
-  the cluster path without rebuilding the runtime image
+- `cluster up` renders adapter-specific engine command prefixes from
+  `ClusterConfig.engine.commandOverrides` into the cluster ConfigMap so the cluster path can
+  supply adapter wrappers without rebuilding the runtime image
 - the plan contract for the `linux-gpu` Kind path requires NVIDIA container runtime support
   inside Kind plus usable `nvidia.com/gpu` resources for scheduled workloads
 - the supported real-cluster `linux-gpu` path also requires enough host disk headroom for Kind

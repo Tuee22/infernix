@@ -1,6 +1,6 @@
 # Phase 5: Web UI and Shared Types
 
-**Status**: Active (Sprint 5.9 `Blocked` on Phase 1 Sprint 1.11 + Phase 4 Sprint 4.13; Sprints 5.1–5.8 Done)
+**Status**: Done (Sprint 5.9 closed May 27, 2026: demo backend, Python adapters, and web/Node scripts no longer read supported configuration from process environments; Sprints 5.1–5.8 Done)
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Define the PureScript demo UI built with spago, the Haskell-owned frontend contract
@@ -10,12 +10,12 @@
 ## Phase Status
 
 Phase 5 is closed around the PureScript demo UI, the Haskell-owned browser-contract source, the
-generated contract path under `web/src/Generated/`, the clustered demo hosting rule, and the
-container-owned routed Playwright executor implemented in this worktree. Sprints 5.1–5.8 remain
-`Done` and there is no additional open Phase 5 backlog. Phase 7 extends the PureScript demo
-surface with the durable-context Chat, Artifacts, and Model Picker views; the supported
-manual-inference path moves from a direct HTTP request/poll cycle to WebSocket-delivered
-`ConversationStatePatch` deltas owned by Phase 7.
+generated contract path under `web/src/Generated/`, the clustered demo hosting rule, the
+container-owned routed Playwright executor, and the Phase 5.9 process-environment retirement in
+the demo backend, Python adapter layer, and web/Node helper scripts. Sprints 5.1–5.9 are `Done`.
+Phase 7 extends the PureScript demo surface with the durable-context Chat, Artifacts, and Model
+Picker views; the supported manual-inference path moves from a direct HTTP request/poll cycle to
+WebSocket-delivered `ConversationStatePatch` deltas owned by Phase 7.
 
 ## Current Repo Assessment
 
@@ -318,10 +318,9 @@ None.
 
 ---
 
-## Sprint 5.9: Web and Python Manifest Retirement [Active — Haskell + web-script side done, Python-adapter rewire pending]
+## Sprint 5.9: Web and Python Manifest Retirement [Done]
 
-**Status**: Active
-**Blocked by**: nothing (Phase 4 Sprint 4.13 code-side landed May 25, 2026; the typed `ClusterConfig.demoBackend.*` fields the demo CLI threads through are now available)
+**Status**: Done
 **Implementation**: `src/Infernix/DemoCLI.hs`, `python/adapters/common.py`, `python/adapters/model_cache.py`, every engine adapter under `python/adapters/*.py`, `web/scripts/install-purescript.mjs`, `web/test/run_playwright_matrix.mjs`
 **Docs to update**: `documents/development/no_env_vars.md`, `documents/development/frontend_contracts.md`, `documents/development/testing_strategy.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 
@@ -330,19 +329,21 @@ None.
 Retire env-var consumption in the demo backend CLI, the Python adapter layer, and the web/Node
 scripts. Replace `INFERNIX_BIND_HOST`, `INFERNIX_DEMO_BRIDGE_MODE`,
 `INFERNIX_PUBLICATION_STATE_PATH` with `ClusterConfig.demoBackend.*` fields. Replace every
-`os.environ` read in Python adapters with a typed JSON config blob passed on stdin by the
-Haskell daemon. Hardcode `PURESCRIPT_VERSION` in `install-purescript.mjs`. Resolve
-`INFERNIX_PLAYWRIGHT_INFERNIX` via the `HostConfig` absolute path.
+Python adapter process-environment config read with typed sources: `Path(__file__)`-anchored repo
+discovery, setup `--install-root` CLI args, the protobuf `WorkerRequest` envelope, and
+`ModelCacheConfig` passed through `configure()`. Hardcode `PURESCRIPT_VERSION` in
+`install-purescript.mjs`. Resolve `INFERNIX_PLAYWRIGHT_INFERNIX` via typed binary candidates.
 
 ### Deliverables
 
 - `src/Infernix/DemoCLI.hs` reads `bindHost`, `bridgeMode`, `publicationStatePath` from
   `ClusterConfig.demoBackend.*`; the `lookupEnv` calls are deleted.
-- Haskell daemon's invocation of `python/adapters/*` switches to `runHostTool hostConfig
-  HostPoetry [..., "--", "python", "adapters/...", "--config-stdin"]` and writes the typed JSON
-  config to the adapter's stdin.
-- `python/adapters/common.py` and `python/adapters/model_cache.py` parse `json.load(sys.stdin)` at
-  startup; every `os.environ` read is deleted.
+- Haskell daemon setup invocation passes `--install-root` as a typed CLI arg and the runtime
+  worker sends model metadata through the protobuf `WorkerRequest` envelope.
+- `python/adapters/common.py` resolves the repo root from `Path(__file__)`, reads worker requests
+  from protobuf-over-stdio, and runs `check-code` with an explicit minimal environment.
+- `python/adapters/model_cache.py` reads cache, MinIO, bucket, region, and quota wiring from the
+  typed `ModelCacheConfig` populated via `configure()`; every `os.environ` read is deleted.
 - `web/scripts/install-purescript.mjs` hardcodes the PureScript version; `PURESCRIPT_VERSION` env
   read deleted. Operators bump by editing the script.
 - `web/test/run_playwright_matrix.mjs` reads the infernix binary path from the Dhall-decoded
@@ -355,103 +356,24 @@ Haskell daemon. Hardcode `PURESCRIPT_VERSION` in `install-purescript.mjs`. Resol
 - `grep -rn 'process\.env' web/scripts/ web/test/ web/playwright/` returns zero matches.
 - `infernix test integration` on `linux-gpu` round-trips through the demo + adapter path
   successfully.
+- May 26, 2026: `linux-gpu` `infernix test all` PASS validated the real cluster demo + adapter
+  path.
+- May 27, 2026: `poetry run check-code`, `node --check web/test/run_playwright_matrix.mjs`,
+  `node --check web/scripts/install-purescript.mjs`, and the grep gates above all PASS after the
+  last inherited environment reads were removed.
+- May 27, 2026: `cabal test infernix-unit` and
+  `cabal run infernix -- lint {docs,files,chart,proto}` all PASS after the Phase 5 plan and
+  governed-doc updates.
 
 ### Remaining Work
 
-Haskell + web-script side landed (May 25, 2026):
-
-- **`src/Infernix/DemoCLI.hs` env retirement.**
-  `INFERNIX_BIND_HOST`, `INFERNIX_DEMO_BRIDGE_MODE`, and
-  `INFERNIX_PUBLICATION_STATE_PATH` reads are deleted. The serve
-  dispatcher now best-effort loads the cluster manifest via
-  `tryLoadClusterConfig` (silently absent for host-native + first-run
-  flows), threads `ClusterConfig.demoBackend.bindHost` /
-  `bridgeMode` / `publicationStatePath` / `demoConfigPath` into the
-  daemon-options record, and falls back to the supported defaults
-  (`127.0.0.1` + direct bridge + `Paths.publicationStatePath`) when
-  the manifest is absent. `resolveDemoBridgeMode` accepts both the
-  legacy `pulsar-daemon` and the new `pulsar` aliases, plus `direct`.
-  Field-name conflicts with `DemoApiOptions` are disambiguated via a
-  qualified `Cluster` import.
-- **`chart/templates/deployment-demo.yaml` env stripping.** Drops
-  `INFERNIX_BIND_HOST`, `INFERNIX_DEMO_BRIDGE_MODE`,
-  `INFERNIX_PUBLICATION_STATE_PATH`, `INFERNIX_PULSAR_ADMIN_URL`,
-  `INFERNIX_PULSAR_WS_BASE_URL`, `INFERNIX_MINIO_ENDPOINT` /
-  `REGION` / `PRESIGN_EXPIRY_SECONDS`, and `INFERNIX_KEYCLOAK_*`
-  env entries; mounts the cluster-config ConfigMap at
-  `/opt/infernix/cluster.dhall`. The retained `INFERNIX_DATA_ROOT`
-  + `INFERNIX_MINIO_ACCESS_KEY` / `SECRET_KEY` entries are scheduled
-  to retire with Phase 7 Sprint 7.17's `InfernixSecrets.dhall`
-  landing.
-- **`web/scripts/install-purescript.mjs`** hardcodes `version =
-  "0.15.16"`; `PURESCRIPT_VERSION` env read deleted. Operators bump
-  by editing the script (the file already requires updating the
-  per-artifact `sha256` table together, so the hardcoded version
-  stays in sync mechanically).
-- **`web/test/run_playwright_matrix.mjs`** drops every
-  `process.env.*` consumption. The supported `infernix` binary path
-  is resolved by typed candidate-list walk:
-  `/usr/local/bin/infernix` (Linux launcher image) followed by
-  `<repoRoot>/.build/infernix` (Apple host build). Exits 2 with a
-  diagnostic if neither path exists. The spawn env is reset to a
-  minimal typed dict (`HOME`, `PATH=/usr/local/sbin:...:/bin`,
-  `LANG`, `LC_ALL`) instead of forwarding `process.env`; the
-  Playwright config itself sources its typed fixture from the
-  Dhall-decoded JSON dropped by `cluster up` (Sprint 3.10's
-  fixture pipeline).
-- **Chart lint expectations updated.** `src/Infernix/Lint/Chart.hs`
-  `deployment-demo.yaml` row now asserts the cluster-config volume
-  mount + `INFERNIX_DATA_ROOT` (the residual env entry) instead of
-  the retired `INFERNIX_DEMO_BRIDGE_MODE` / `INFERNIX_PULSAR_*`
-  phrases.
-
-Verified end-to-end on the host: `cabal build all`, `cabal test
-infernix-unit` (70/70), `cabal test infernix-haskell-style`, and
-`./.build/infernix lint {chart,files,docs,proto}` all exit zero.
-
-Pending closure (deferred and named so the sprint status stays
-honest):
-
-- **Python adapter `os.environ` retirement.** The Sprint 5.9
-  contract calls for the Haskell daemon to write a typed JSON config
-  blob on the adapter's stdin alongside the protobuf request payload;
-  the adapters parse `json.load(sys.stdin)` once at startup and stop
-  consulting `os.environ` entirely. The current adapters consume
-  `INFERNIX_REPO_ROOT`, `INFERNIX_ACTIVE_SUBSTRATE`,
-  `INFERNIX_ENGINE_INSTALL_ROOT` (in `python/adapters/common.py`),
-  `INFERNIX_MODEL_CACHE_ROOT`, `INFERNIX_MODELS_BUCKET`,
-  `INFERNIX_MINIO_ENDPOINT` / `ACCESS_KEY` / `SECRET_KEY` /
-  `REGION`, and `INFERNIX_MODEL_CACHE_QUOTA_BYTES` (in
-  `python/adapters/model_cache.py`). The supported wire-format change
-  requires:
-    1. Extending the `WorkerRequest` proto (or adding a sibling
-       `WorkerInvocationContext` message) with the typed fields.
-    2. Rewriting `src/Infernix/Runtime/Worker.hs` to serialize the
-       context and remove the env-overrides dict it currently builds
-       in `runSetupInvocation` + `runWorkerInvocation`.
-    3. Rewriting `python/adapters/common.py.load_adapter_context`
-       and the adapter setup paths to read from the new typed source.
-    4. Updating the `engine_command_override` unit-test fixture so it
-       passes the override through the typed channel rather than
-       `withOptionalEnv overrideEnvName`.
-  This work is substantive enough to warrant a focused session and
-  should land together with the matching Phase 7 Sprint 7.17 MinIO
-  credential retirement (since both touch the adapter's MinIO client
-  setup).
-- **`infernix test integration` round-trip on `linux-gpu`.** Real
-  cluster bring-up validating the demo + adapter path. Deferred to
-  the focused validation session shared with Sprint 4.13's pending
-  integration test.
+None.
 
 ---
 
 ## Remaining Work
 
-Sprint 5.9 Haskell + web-script side closed (DemoCLI env retirement,
-chart env stripping, PureScript install script hardcode, Playwright
-matrix script env-free, chart lint expectations updated). Python
-adapter `os.environ` rewire + linux-gpu integration validation
-remain pending. Sprints 5.1–5.8 closed.
+None. Sprints 5.1–5.9 are `Done`.
 
 ---
 

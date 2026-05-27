@@ -344,11 +344,13 @@ runDocsLint = do
     validateGovernedDocumentMetadata relativePath contents
     validateRelativeLinks paths relativePath contents
     validateForbiddenPhrases relativePath contents
+    validateForbiddenConfigurationOverrideReferences relativePath contents
   forM_ rootDocRules $ \rule -> do
     contents <- readFile (repoRoot paths </> rootDocPath rule)
     validateRootDocMetadata rule contents
     validateRelativeLinks paths (rootDocPath rule) contents
     validateForbiddenPhrases (rootDocPath rule) contents
+    validateForbiddenConfigurationOverrideReferences (rootDocPath rule) contents
   forM_ generatedSectionRules $ \rule -> do
     contents <- readFile (repoRoot paths </> generatedSectionPath rule)
     validateGeneratedSection rule contents
@@ -430,6 +432,33 @@ validateForbiddenPhrases relativePath contents =
   when
     (any (`isInfixOf` contents) forbiddenPhrases)
     (ioError (userError ("forbidden retired-doctrine phrase found in " <> relativePath)))
+
+validateForbiddenConfigurationOverrideReferences :: FilePath -> String -> IO ()
+validateForbiddenConfigurationOverrideReferences relativePath contents =
+  case violations of
+    [] -> pure ()
+    _ ->
+      ioError
+        ( userError
+            ( "forbidden env/PATH override reference found in "
+                <> relativePath
+                <> ":\n"
+                <> intercalate "\n" violations
+            )
+        )
+  where
+    violations =
+      [ show lineNumber <> ": " <> lineValue
+      | (lineNumber, lineValue) <- zip [1 :: Int ..] (lines contents),
+        any (`isInfixOf` lineValue) forbiddenConfigurationOverrideTokens
+      ]
+
+forbiddenConfigurationOverrideTokens :: [String]
+forbiddenConfigurationOverrideTokens =
+  [ "INFERNIX_",
+    "$INFERNIX",
+    "$PATH"
+  ]
 
 validateDocumentStructure :: DocumentStructureRule -> String -> IO ()
 validateDocumentStructure rule contents =

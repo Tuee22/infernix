@@ -93,7 +93,7 @@ data:
             }
         , engine =
             { modelCacheRoot = {{ .Values.clusterConfig.engine.modelCacheRoot | quote }}
-            , modelCacheQuotaBytes = {{ .Values.clusterConfig.engine.modelCacheQuotaBytes }}
+            , modelCacheQuotaBytes = {{ printf "%d" (int64 .Values.clusterConfig.engine.modelCacheQuotaBytes) }}
             , commandOverrides =
                 [
 {{- $first := true -}}

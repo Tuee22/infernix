@@ -138,20 +138,26 @@ ensurePythonEngineSetupReady paths runtimeMode engineBinding = do
       runSetupInvocation paths poetryExecutable projectDirectory installRoot runtimeMode engineBinding
 
 runSetupInvocation :: Paths -> FilePath -> FilePath -> FilePath -> RuntimeMode -> EngineBinding -> IO ()
-runSetupInvocation paths poetryExecutable projectDirectory installRoot runtimeMode engineBinding = do
+runSetupInvocation paths poetryExecutable projectDirectory installRoot _runtimeMode engineBinding = do
+  -- Phase 5 Sprint 5.9 follow-on (May 26, 2026): @--install-root@ is
+  -- passed as a typed CLI argument to the setup entrypoint instead
+  -- of via the legacy engine-install-root env. The supported Python
+  -- adapter's @setup()@ routes through @run_setup_from_argv@ which
+  -- parses argv with argparse. The previous repo-root and active-substrate
+  -- env overrides are retired: the
+  -- adapter resolves its repo root via @Path(__file__)@-anchored
+  -- traversal (canonical Poetry invocation always runs from
+  -- @<repoRoot>/python@), and the bootstrap manifest no longer
+  -- records a @runtimeMode@ field.
   let setupArgs =
         [ "--directory",
           projectDirectory,
           "run",
-          Text.unpack (engineBindingSetupEntrypoint engineBinding)
+          Text.unpack (engineBindingSetupEntrypoint engineBinding),
+          "--install-root",
+          installRoot
         ]
-      envOverrides =
-        [ ("POETRY_VIRTUALENVS_IN_PROJECT", "true"),
-          ("INFERNIX_REPO_ROOT", repoRoot paths),
-          ("INFERNIX_ENGINE_INSTALL_ROOT", installRoot),
-          ("INFERNIX_ACTIVE_SUBSTRATE", Text.unpack (runtimeModeId runtimeMode))
-        ]
-  processEnvironment <- workerProcessEnvironment paths envOverrides
+  processEnvironment <- workerProcessEnvironment paths []
   (_, _, maybeWorkerError, workerHandle) <-
     createProcess
       (proc poetryExecutable setupArgs)
@@ -295,14 +301,11 @@ workerInvocationCwd invocation =
     DirectWorkerInvocation _command workingDirectory _args -> workingDirectory
     ShellWorkerInvocation workingDirectory _command -> workingDirectory
 
+-- Phase 7 Sprint 7.17: Poetry virtualenv placement is owned by
+-- @python/poetry.toml@. The worker no longer injects Poetry or
+-- adapter configuration through the process environment.
 workerProcessEnvironment :: Paths -> [(String, String)] -> IO [(String, String)]
-workerProcessEnvironment paths extraEnvironment =
-  pure
-    ( [ ("POETRY_VIRTUALENVS_IN_PROJECT", "true"),
-        ("INFERNIX_REPO_ROOT", repoRoot paths)
-      ]
-        <> extraEnvironment
-    )
+workerProcessEnvironment _paths = pure
 
 describeInvocation :: WorkerInvocation -> String
 describeInvocation invocation =

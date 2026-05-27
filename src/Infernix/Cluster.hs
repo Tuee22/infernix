@@ -321,11 +321,12 @@ lifecycleCommandMonitor paths state =
 
 runCommandMonitored :: Paths -> ClusterState -> Maybe FilePath -> [(String, String)] -> FilePath -> [String] -> IO ()
 runCommandMonitored paths state maybeWorkingDirectory envOverrides command args = do
+  let resolvedCommand = resolveClusterCommandWithPaths paths command
   result <-
     ProcessMonitor.tryCommandMonitored
       maybeWorkingDirectory
       envOverrides
-      command
+      resolvedCommand
       args
       (Just (lifecycleCommandMonitor paths state))
   case result of
@@ -1591,7 +1592,9 @@ publishClusterImages paths state renderedChartPath runtimeMode = do
           </> ("harbor-image-overrides-" <> Text.unpack (runtimeModeId runtimeMode) <> ".yaml")
   PublishImages.publishChartImagesFile
     PublishImages.defaultHarborPublishOptions
-      { PublishImages.harborApiHost = harborApiHost paths runtimeMode
+      { PublishImages.harborApiHost = harborApiHost paths runtimeMode,
+        PublishImages.harborDockerCommand = resolveHostToolForCluster paths HostDocker,
+        PublishImages.harborSkopeoCommand = resolveHostToolForCluster paths HostSkopeo
       }
     ( \detail -> do
         detailState <- startLifecyclePhase paths state "cluster-up" "publish-harbor-images" detail
@@ -2812,7 +2815,7 @@ writeRegistryHostsConfig paths runtimeMode = do
       createDirectoryIfMissing True registryDirectory
       writeFile hostsFile hostsToml
 
--- | Phase 2 Sprint 2.13: @INFERNIX_HOST_KIND_ROOT@ env override
+-- | Phase 2 Sprint 2.13: legacy host-kind-root env override
 -- retired. The supported flow now derives @hostKindRoot@ from the
 -- typed @HostConfig.hostFilesystem.kindRoot@ field that
 -- 'Infernix.Config.discoverPaths' already threads through 'Paths', so
@@ -2825,7 +2828,7 @@ resolveHostRegistryHostsRoot :: Paths -> IO FilePath
 resolveHostRegistryHostsRoot paths =
   resolveHostRepoPath paths (repoRoot paths </> ".build" </> "kind" </> "registry")
 
--- | Phase 2 Sprint 2.13: @INFERNIX_HOST_REPO_ROOT@ env override
+-- | Phase 2 Sprint 2.13: legacy host-repo-root env override
 -- retired. On host-native Apple, the typed
 -- @HostConfig.hostFilesystem.repoRoot@ already matches the host
 -- filesystem so we return it directly. On the Linux outer-container
@@ -2839,7 +2842,7 @@ resolveHostRegistryHostsRoot paths =
 -- the operator's real repo root.
 resolveHostRepoRoot :: Paths -> IO FilePath
 resolveHostRepoRoot paths
-  | Config.controlPlaneContext paths /= OuterContainer = pure (repoRoot paths)
+  | not (isBakedLinuxOuterContainerManifest paths) = pure (repoRoot paths)
   | otherwise = do
       launcherContainer <- currentLauncherContainerName
       mountResult <-
@@ -2860,6 +2863,22 @@ resolveHostRepoRoot paths
                 then pure (repoRoot paths)
                 else pure (takeDirectory trimmedSource)
         Left _ -> pure (repoRoot paths)
+
+-- | Detect whether 'paths' was discovered from the baked Linux outer-
+-- container host manifest (the one shipped with the launcher image)
+-- versus a unit-test fixture or operator-edited manifest. The
+-- docker-inspect host-path translation only fires for the fully-baked
+-- profile; tests + operator-overridden manifests are taken verbatim.
+-- The check compares 'repoRoot', 'kindRoot', and 'dataRoot'
+-- simultaneously: a unit test that synthesises a fixture overrides
+-- @kindRoot@ + @dataRoot@ to point at the test sandbox, which falls
+-- out of this check.
+isBakedLinuxOuterContainerManifest :: Paths -> Bool
+isBakedLinuxOuterContainerManifest paths =
+  Config.controlPlaneContext paths == OuterContainer
+    && repoRoot paths == "/workspace"
+    && kindRoot paths == "/workspace/.data/runtime/kind"
+    && dataRoot paths == "/workspace/.data"
 
 resolveHostRepoPath :: Paths -> FilePath -> IO FilePath
 resolveHostRepoPath paths containerPath = do
@@ -2949,7 +2968,7 @@ renderKindConfig paths runtimeMode edgePortValue hostKindRoot registryHostsDirec
       | role == "control-plane" = "InitConfiguration"
       | otherwise = "JoinConfiguration"
 
--- | Phase 2 Sprint 2.13: @INFERNIX_HOST_REPO_ROOT@ env check
+-- | Phase 2 Sprint 2.13: legacy host-repo-root env check
 -- retired. The supported control-plane-context detector is the typed
 -- @Paths.controlPlaneContext@ already derived from 'HostConfig'; no
 -- env consultation is needed.
@@ -3484,15 +3503,11 @@ clusterEdgePort paths state
   | Config.controlPlaneContext paths == OuterContainer = 30090
   | otherwise = edgePort state
 
--- | Phase 2 Sprint 2.13 carve-out: 'kubectlOutput' and
--- 'kubectlLineCountIfReachable' are called from a large family of
--- 'ClusterState'-only helpers that do not currently thread the active
--- 'Paths' record. They continue to use 'captureCommand' /
--- 'tryCommand' with a literal @"kubectl"@ string. The bare-name lint
--- gate stays happy because the literal lives inside this helper, not
--- in a @proc "kubectl"@ pattern at the call sites. Full retirement of
--- this carve-out lands together with the ClusterState-paths threading
--- pass tracked under the remaining Sprint 2.13 work.
+-- | Capture kubectl output for helpers that only carry 'ClusterState'.
+-- The shared command helpers resolve the literal @"kubectl"@ through
+-- the staged host manifest before spawning, so these state-only call
+-- sites stay on the HostTool path without widening every helper
+-- signature to carry 'Paths'.
 kubectlOutput :: ClusterState -> [String] -> IO String
 kubectlOutput state args = captureCommand Nothing [] "kubectl" (kubeconfigArgs state <> args)
 
@@ -3615,10 +3630,11 @@ runCommand maybeWorkingDirectory envOverrides command args = do
 -- or in 'envOverrides'.
 runCommandWithInput :: Maybe FilePath -> [(String, String)] -> FilePath -> [String] -> String -> IO ()
 runCommandWithInput maybeWorkingDirectory envOverrides command args inputPayload = do
+  resolvedCommand <- resolveClusterCommand command
   let mergedEnv = mergeEnvironment clusterSubprocessBaseEnv envOverrides
   (exitCode, _, stderrOutput) <-
     readCreateProcessWithExitCode
-      (proc command args)
+      (proc resolvedCommand args)
         { cwd = maybeWorkingDirectory,
           env = Just mergedEnv
         }
@@ -3631,11 +3647,12 @@ runCommandWithInput maybeWorkingDirectory envOverrides command args inputPayload
 
 tryCommand :: Maybe FilePath -> [(String, String)] -> FilePath -> [String] -> IO (Either String String)
 tryCommand maybeWorkingDirectory envOverrides command args = do
+  resolvedCommand <- resolveClusterCommand command
   let mergedEnv = mergeEnvironment clusterSubprocessBaseEnv envOverrides
   processResult <-
     try
       ( readCreateProcessWithExitCode
-          (proc command args)
+          (proc resolvedCommand args)
             { cwd = maybeWorkingDirectory,
               env = Just mergedEnv
             }
@@ -3672,6 +3689,33 @@ captureCommand maybeWorkingDirectory envOverrides command args = do
     Right stdoutOutput -> pure stdoutOutput
     Left err ->
       ioError (userError ("command failed: " <> command <> " " <> unwords args <> "\n" <> err))
+
+resolveClusterCommand :: FilePath -> IO FilePath
+resolveClusterCommand command = do
+  paths <- Config.discoverPaths
+  pure (resolveClusterCommandWithPaths paths command)
+
+resolveClusterCommandWithPaths :: Paths -> FilePath -> FilePath
+resolveClusterCommandWithPaths paths command =
+  case hostToolForClusterCommand command of
+    Just tool -> resolveHostToolForCluster paths tool
+    Nothing -> command
+
+hostToolForClusterCommand :: FilePath -> Maybe HostTool
+hostToolForClusterCommand command =
+  case command of
+    "docker" -> Just HostDocker
+    "kubectl" -> Just HostKubectl
+    "helm" -> Just HostHelm
+    "kind" -> Just HostKind
+    "curl" -> Just HostCurl
+    "tar" -> Just HostTar
+    "chown" -> Just HostChown
+    "hostname" -> Just HostHostname
+    "nvidia-smi" -> Just HostNvidiaSmi
+    "nvkind" -> Just HostNvkind
+    "skopeo" -> Just HostSkopeo
+    _ -> Nothing
 
 mergeEnvironment :: [(String, String)] -> [(String, String)] -> [(String, String)]
 mergeEnvironment baseEnv overrides =

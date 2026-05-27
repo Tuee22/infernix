@@ -26,16 +26,15 @@ spec:
             - "{{ .Values.demoConfig.mountPath }}/{{ .Values.demoConfig.fileName }}"
             - --port
             - {{ .Values.demo.port | quote }}
-          # Phase 7 Sprint 7.17: `INFERNIX_MINIO_ACCESS_KEY` /
-          # `INFERNIX_MINIO_SECRET_KEY` env entries retire. The
-          # supported flow mounts `Secret/infernix-cluster-secrets`
-          # at `/etc/infernix/secrets/` (see coordinator template
-          # note). `INFERNIX_DATA_ROOT` is the writable durable-state
-          # root for any subscription-ready marker the demo daemon
-          # writes locally.
-          env:
-            - name: INFERNIX_DATA_ROOT
-              value: "/srv/infernix/.data"
+          # Phase 7 Sprint 7.17: credentials live in
+          # `Secret/infernix-cluster-secrets` mounted at
+          # `/etc/infernix/secrets/`. Phase 6 Sprint 6.28 follow-on
+          # (May 26, 2026): the `INFERNIX_DATA_ROOT` env entry was
+          # retired together with the chart path realignment to
+          # `/workspace/.data` (matches the baked
+          # `InfernixHost.dhall.filesystem.dataRoot` default the
+          # demo daemon decodes at startup). No `env:` block remains
+          # on the demo template.
           ports:
             - containerPort: {{ .Values.demo.port }}
           volumeMounts:
@@ -55,7 +54,7 @@ spec:
               subPath: {{ .Values.publication.fileName }}
               readOnly: true
             - name: demo-data
-              mountPath: /srv/infernix/.data
+              mountPath: /workspace/.data
       volumes:
         - name: cluster-config
           configMap:

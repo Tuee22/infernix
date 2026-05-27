@@ -57,8 +57,8 @@ data Paths = Paths
 -- repo-root walk with any staged host manifest. When the manifest is
 -- present (post-bootstrap), its @filesystem@ record overrides the
 -- convention defaults so operators can edit the typed Dhall record
--- instead of setting @INFERNIX_BUILD_ROOT@ / @INFERNIX_DATA_ROOT@ env
--- vars. When the manifest is absent (first-run bootstrap, before the
+-- instead of setting process-inherited build/data-root overrides.
+-- When the manifest is absent (first-run bootstrap, before the
 -- binary has materialized it), the convention defaults still apply so
 -- the binary remains workable enough to materialize the manifest from
 -- itself.
