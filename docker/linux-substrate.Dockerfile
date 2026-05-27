@@ -113,11 +113,22 @@ RUN set -eu; \
 
 COPY --from=nvkind-builder /go/bin/nvkind /usr/local/bin/nvkind
 
+RUN set -eu; \
+    mkdir -p /opt/infernix/chart/charts; \
+    helm pull harbor --repo https://helm.goharbor.io --version 1.18.3 --destination /opt/infernix/chart/charts; \
+    helm pull pg-operator --repo https://percona.github.io/percona-helm-charts --version 2.9.0 --destination /opt/infernix/chart/charts; \
+    helm pull pg-db --repo https://percona.github.io/percona-helm-charts --version 2.9.0 --destination /opt/infernix/chart/charts; \
+    helm pull pulsar --repo https://pulsar.apache.org/charts --version 4.5.0 --destination /opt/infernix/chart/charts; \
+    curl -fsSL --retry 5 --retry-delay 2 -o /opt/infernix/chart/charts/minio-17.0.21.tgz https://charts.bitnami.com/bitnami/minio-17.0.21.tgz; \
+    helm pull oci://docker.io/envoyproxy/gateway-helm --version v1.7.2 --destination /opt/infernix/chart/charts
+
 WORKDIR /workspace
 
 COPY . /workspace
 
 RUN mkdir -p /workspace/.build /opt/infernix /opt/infernix/dhall \
+    && rm -rf /workspace/chart/charts \
+    && ln -s /opt/infernix/chart/charts /workspace/chart/charts \
     && cd /workspace \
     && find . -type f | sed 's#^\\./##' | LC_ALL=C sort > /opt/infernix/source-snapshot-files.txt
 

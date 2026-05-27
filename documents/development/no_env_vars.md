@@ -12,8 +12,8 @@
 - **Never call** `lookupEnv`, `getEnv`, `getEnvironment`, `setEnv`, or `unsetEnv` in Haskell.
 - **Never call** `proc "<bare-name>"` for any external command. Use
   `runHostTool hostConfig <toolName> args` instead.
-- **Never read** `process.env` in Node/web/Playwright code, `os.environ` in Python, or `$VAR`
-  in bash (except `${BASH_SOURCE[0]}` which is a bash array, not an env var).
+- **Never read** `process.env` in Node/web/Playwright code, `os.environ` in Python, or inherited
+  `$VAR` values in bash (except `${BASH_SOURCE[0]}` which is a bash array, not an env var).
 - **Never add** an `env:` entry to `chart/templates/deployment-{coordinator,engine,demo}.yaml`.
   Mount the cluster ConfigMap + Secret instead.
 - **Always thread** typed `HostConfig` / `ClusterConfig` / `SecretsConfig` records as
@@ -100,9 +100,10 @@ test("…", async ({ page }, testInfo) => {
 });
 ```
 
-The fixture is set up in `web/playwright.config.js` from
-`/workspace/.data/runtime/playwright-fixture.json` (written by the Haskell test driver from
-`ClusterConfig` + `HostConfig` at test start).
+The fixture is set up in `web/playwright.config.js` from the repo-relative
+`.data/runtime/playwright-fixture.json` (written by the Haskell test driver from `ClusterConfig` +
+`HostConfig` at test start and resolved to `/workspace/.data/runtime/playwright-fixture.json`
+inside the Linux launcher).
 
 ## Shell / Bootstrap
 
@@ -122,6 +123,11 @@ HOME_DIR="$(/usr/bin/getent passwd "$(/usr/bin/id -u)" | /usr/bin/cut -d: -f6)"
 
 The first line resets `PATH=/usr/bin:/bin` so the operator's ambient PATH cannot influence
 resolution. Every pre-binary command uses an absolute-path constant.
+
+The only shell-level exception is the bootstrap-owned `LAUNCHER_IMAGE=... docker compose ...`
+prefix used to select the already-built Linux launcher image for one Docker Compose process. It is
+set by the bootstrap script or written explicitly in direct-reference commands; Infernix code
+never reads it, and all runtime configuration still comes from Dhall.
 
 ## Chart templates
 

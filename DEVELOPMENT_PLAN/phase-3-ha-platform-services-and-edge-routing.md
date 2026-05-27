@@ -1,6 +1,6 @@
 # Phase 3: HA Platform Services and Edge Routing
 
-**Status**: Active (Sprint 3.10 Linux in-container Playwright E2E validated May 27, 2026; Apple host-native E2E refactor remains deferred; Sprints 3.1–3.9 Done)
+**Status**: Active (Sprint 3.10 Linux in-container Playwright E2E validated May 27, 2026; Apple host-native E2E runner code landed and awaits Apple validation; Sprints 3.1–3.9 Done)
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Define the mandatory local HA Harbor, MinIO, operator-managed PostgreSQL, and
@@ -364,9 +364,10 @@ Eliminate the dedicated `infernix-playwright:local` image and the separate `play
 service. Playwright runtime (Chromium/Firefox/WebKit dependencies, fonts, gstreamer plugins, xvfb)
 moves into `docker/linux-substrate.Dockerfile`. `infernix test e2e` invokes Playwright via the
 in-container `npm exec --prefix web -- playwright test …` against the routed cluster on Docker's
-private `kind` network. Retire `INFERNIX_EDGE_PORT`, `INFERNIX_PLAYWRIGHT_HOST`,
-`INFERNIX_PLAYWRIGHT_NETWORK`, and the `INFERNIX_EXPECT_*` family in favor of substrate `.dhall`
-fields plus a Dhall-driven Playwright fixture file. Apple host-native E2E is unaffected.
+private `kind` network. Apple host-native E2E invokes the same fixture-driven Playwright suite via
+host `npm exec` against the published localhost edge port. Retire `INFERNIX_EDGE_PORT`,
+`INFERNIX_PLAYWRIGHT_HOST`, `INFERNIX_PLAYWRIGHT_NETWORK`, and the `INFERNIX_EXPECT_*` family in
+favor of substrate `.dhall` fields plus a Dhall-driven Playwright fixture file.
 
 ### Deliverables
 
@@ -375,14 +376,15 @@ fields plus a Dhall-driven Playwright fixture file. Apple host-native E2E is una
 - `docker/linux-substrate.Dockerfile` gains the Playwright system packages and runs
   `npm exec --prefix web -- playwright install --with-deps chromium firefox webkit` at image
   build time.
-- `src/Infernix/CLI.hs` `runEndToEnd` invokes `runHostTool hostConfig HostNpm
-  ["exec", "--prefix", "web", "--", "playwright", "test", "playwright/inference.spec.js"]`
-  inside the launcher container. The browser connects to `http://127.0.0.1:9090`.
+- `src/Infernix/CLI.hs` `runEndToEnd` invokes the fixture-driven Playwright path inside the
+  launcher container for Linux and through host-native `npm exec` on Apple. The Linux browser
+  connects to the Kind control-plane node on Docker's private network; the Apple browser connects
+  to `127.0.0.1:<published-edge-port>`.
 - `INFERNIX_EDGE_PORT`, `INFERNIX_PLAYWRIGHT_HOST`, `INFERNIX_PLAYWRIGHT_NETWORK`,
   `INFERNIX_EXPECT_DAEMON_LOCATION`, `INFERNIX_EXPECT_INFERENCE_DISPATCH_MODE`,
   `INFERNIX_EXPECT_API_UPSTREAM_MODE`, `INFERNIX_EXPECT_INFERENCE_EXECUTOR_LOCATION` all
   deleted from `compose.yaml`, `src/Infernix/CLI.hs`, and `web/playwright/inference.spec.js`.
-- `web/playwright.config.js` reads `/workspace/.data/runtime/playwright-fixture.json`
+- `web/playwright.config.js` reads the repo-relative `.data/runtime/playwright-fixture.json`
   (Dhall-decoded by the Haskell test driver at test start) and exposes the expectations via
   Playwright's `use:` block; the spec reads `test.info().project.use.*`.
 - legacy-tracking row 3.10 moves from Pending Removal to Completed.
@@ -394,6 +396,10 @@ fields plus a Dhall-driven Playwright fixture file. Apple host-native E2E is una
   `./bootstrap/linux-gpu.sh build`.
 - May 27, 2026: clean-env `linux-gpu` compose-run `infernix test e2e` passed via the
   in-container Playwright path (`1 passed`).
+- May 27, 2026: Apple host-native E2E runner code landed. Linux validation covered
+  `cabal build all`, `cabal test infernix-unit`, `cabal test infernix-haskell-style`, and
+  `node --check` for `web/playwright.config.js` and `web/playwright/inference.spec.js`. Host
+  Playwright execution remains pending for the Apple Silicon validation pass.
 
 ### Remaining Work
 
@@ -414,17 +420,18 @@ Landed May 24, 2026:
   then runs `npm --prefix web exec -- playwright test playwright/inference.spec.js`
   inside the launcher container. The retired
   `runPlaywrightImage`/`docker compose run --rm playwright` path is
-  gone. The Apple host-native branch surfaces a typed deferral
-  diagnostic — host-native E2E lands together with the Apple bootstrap
-  refactor.
-- `web/playwright.config.js` (new) reads
-  `/workspace/.data/runtime/playwright-fixture.json` and exposes the
+  gone. The Apple host-native branch now writes the same fixture and
+  runs the same Playwright suite via host-native `npm exec` against
+  the published localhost edge port.
+- `web/playwright.config.js` (new) reads the repo-relative
+  `.data/runtime/playwright-fixture.json` and exposes the
   expected daemon location / executor location / dispatch mode /
   upstream mode through Playwright's `use:` block under the
   `infernix-e2e` project.
 - `web/playwright/inference.spec.js` rewritten: the per-test handler
   pulls `testInfo.project.use.infernixFixture` instead of reading any
-  `process.env.INFERNIX_*` field.
+  `process.env.INFERNIX_*` field or a hardcoded `/workspace` fixture
+  path.
 - The seven retired env vars
   (`INFERNIX_EDGE_PORT`, `INFERNIX_PLAYWRIGHT_HOST`,
   `INFERNIX_PLAYWRIGHT_NETWORK`,
@@ -437,41 +444,36 @@ Landed May 24, 2026:
 
 Verified end-to-end on the host: `cabal build all` clean,
 `cabal test infernix-unit` and `cabal test infernix-haskell-style`
-pass, `infernix lint {files,chart,docs,proto}` exit zero. The
-Sprint 3.10 grep gate
+pass, `node --check web/playwright.config.js`,
+`node --check web/playwright/inference.spec.js`, and
+`infernix lint {files,chart,docs,proto}` exit zero after the May 27
+documentation refresh. The Sprint 3.10 grep gate
 (`grep -rEn 'INFERNIX_EDGE_PORT|INFERNIX_PLAYWRIGHT_*|INFERNIX_EXPECT_*' src/ compose.yaml docker/ web/`)
 returns only the two retirement doc comments
 (`src/Infernix/CLI.hs:344`, `web/playwright.config.js:4`).
 
-Pending closure (deferred to a follow-on turn):
+Pending closure (deferred to the Apple validation pass):
 
 - **Linux in-container Playwright E2E closed May 27, 2026.** The
   clean-env compose-run command
-  `env -i /usr/bin/docker compose --project-name infernix-linux-gpu --file compose.yaml --file compose.linux-gpu.yaml run --rm infernix infernix test e2e`
+  `env -i LAUNCHER_IMAGE=infernix-linux-gpu:local /usr/bin/docker compose --project-name infernix-linux-gpu --file compose.yaml run --rm infernix infernix test e2e`
   reconciled the live `linux-gpu` cluster, ran Playwright inside the
   launcher image, reported `1 passed`, then executed its teardown
   cleanup. This validates the replacement for the retired
   `infernix-playwright:local` lane on the Linux CUDA host.
-- Apple host-native E2E refactor. The current Apple branch in
-  `runRuntimeModeE2E` surfaces an explicit deferral diagnostic so the
-  Linux closure is honest about the gap. The Apple replacement (a
-  host-side `npm exec` Playwright invocation fed by the same typed
-  fixture) lands together with the deferred `bootstrap/apple-silicon.sh`
-  stage-zero refactor.
-- `documents/engineering/host_tools_manifest.md` and
-  `documents/development/testing_strategy.md` reference touch-ups for
-  the new fixture-driven path. The shape is consistent with the
-  existing docs (the doc-update list in this sprint's header already
-  names the targets); the per-doc reword lands in a Sprint 7.16
-  documentation-closure pass.
+- Apple host-native E2E validation. The host-side `npm exec`
+  Playwright invocation fed by the same typed fixture is implemented,
+  but the end-to-end run remains deferred until the Apple Silicon
+  validation pass can exercise the real host-native browser lane.
 
 ---
 
 ## Remaining Work
 
 Sprint 3.10 substantively landed May 24, 2026. The Linux in-container
-Playwright path was validated on `linux-gpu` May 27, 2026. Apple
-host-native E2E refactor remains the only Sprint 3.10 residual.
+Playwright path was validated on `linux-gpu` May 27, 2026. The
+Apple host-native E2E runner code landed May 27, 2026; Apple
+host-native E2E validation remains the only Sprint 3.10 residual.
 Sprints 3.1–3.9 closed.
 
 ---

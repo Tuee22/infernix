@@ -26,13 +26,13 @@
 
 The durable-context surface this test plan covers is implemented over
 [../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md](../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md).
-The validation suites described here land in Sprints 7.12 (unit), 7.13 (integration), and
-7.14 (E2E). Until those sprints close, the supported validation surface remains the Phase 6
-suite plus the catalog, publication, and cache demo-API checks already in place.
+The validation suites described here land in Sprints 7.13 (unit), 7.14 (integration), and
+7.15 (E2E). Sprint 7.14's WebSocket-to-Pulsar publish plumbing is code-complete as of
+May 27, 2026, but the real-cluster integration and chaos suites remain pending.
 
 ## Unit Layer
 
-Lands in Sprint 7.12. Additions to the existing `infernix-unit` Cabal stanza and the
+Lands in Sprint 7.13. Additions to the existing `infernix-unit` Cabal stanza and the
 PureScript `purescript-spec` suite under `web/test/`.
 
 - **Reducer property tests.** Determinism over arbitrary `ConversationEvent` logs; idempotency
@@ -80,9 +80,9 @@ Lands in Sprint 7.13. Additions to the existing `infernix-integration` Cabal sta
 
 ## E2E Layer
 
-Lands in Sprint 7.14. Linux Playwright suites run inside the substrate image with
-`npm --prefix web exec -- playwright test`; Apple host-native E2E remains deferred to the Apple
-validation pass.
+Lands in Sprint 7.15. Linux Playwright suites run inside the substrate image with
+`npm --prefix web exec -- playwright test`; Apple host-native E2E uses host `npm exec` with the
+same typed fixture and awaits the Apple validation pass.
 
 - **Auth lifecycle.** Signup; login; logout; re-login with same credentials; JWT refresh.
 - **Context lifecycle.** New-context creation defers backend state until first submit; rename;
@@ -113,7 +113,7 @@ validation pass.
 
 ## Per-Model Smoke Matrix
 
-Lands in Sprint 7.14 as a parameterized Playwright flow.
+Lands in Sprint 7.15 as a parameterized Playwright flow.
 
 - Reads the active substrate's generated `.dhall` catalog — the same source the SPA uses.
 - Iterates every catalog entry whose engine cell for the active substrate is not

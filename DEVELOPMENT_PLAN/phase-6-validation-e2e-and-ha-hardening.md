@@ -65,9 +65,8 @@ services may pull upstream before Harbor is responsive. Recorded validation for 
 the governed
 `linux-cpu` and `linux-gpu` bootstrap surfaces. Recorded Apple validation on May 11, 2026 reran
 cleanly through `./bootstrap/apple-silicon.sh doctor`, `build`, `up`, `status`, `test`, and
-`down`. On Apple, routed Playwright no longer times out on `host.docker.internal`: host-side
-readiness probes `127.0.0.1:<edge-port>`, the browser container joins the private Docker `kind`
-network and targets the Kind control-plane DNS on port `30090`, and the dedicated Playwright
+`down`. Current Apple routed Playwright validation runs host-native `npm exec` against the
+published `127.0.0.1:<edge-port>` edge port, and the retired dedicated Playwright
 image no longer bakes a conflicting `NO_COLOR` default. On May 13, 2026, the supported Apple
 lifecycle reran cleanly through `./bootstrap/apple-silicon.sh doctor`, `build`, `up`, `status`,
 `test`, and `down` on the patched shared lifecycle: `cluster status` reported the active
@@ -239,13 +238,14 @@ browser surface through the shared edge.
   `docker/playwright.Dockerfile`, baked the Playwright system packages and the three browsers
   into `docker/linux-substrate.Dockerfile`, and moved Linux-substrate routed E2E to in-container
   `npm --prefix web exec -- playwright test ...` against the routed cluster on Docker's private
-  `kind` network. The Apple host-native routed-E2E executor refactor is deferred and currently
-  surfaces an explicit deferral diagnostic in `runRuntimeModeE2E`
+  `kind` network. The Apple host-native routed-E2E executor now uses host `npm exec` with the
+  same typed fixture and awaits the Apple validation pass.
 - the previous `INFERNIX_PLAYWRIGHT_NETWORK`, `INFERNIX_EDGE_PORT`, `INFERNIX_PLAYWRIGHT_HOST`,
   `INFERNIX_EXPECT_DAEMON_LOCATION`, `INFERNIX_EXPECT_INFERENCE_DISPATCH_MODE`, and
   `INFERNIX_EXPECT_API_UPSTREAM_MODE` env vars are retired by Sprint 3.10; the same spec covers
-  every substrate by reading typed fixture data from a Dhall-decoded JSON written to
-  `/workspace/.data/runtime/playwright-fixture.json` at test setup (Playwright reads
+  every substrate by reading typed fixture data from a Dhall-decoded JSON written to the
+  repo-relative `.data/runtime/playwright-fixture.json` at test setup (resolving to
+  `/workspace/.data/runtime/playwright-fixture.json` inside the Linux launcher; Playwright reads
   `test.info().project.use.*`)
 - supported Playwright invocations use `npm --prefix web exec -- playwright ...`
 - E2E covers publication details, model selection, manual inference submission, and result rendering
@@ -881,9 +881,8 @@ integration and E2E ownership in the final `.dhall`-driven terms.
   cluster daemon, and manages the host inference daemon for the duration of the test when that
   daemon is needed
 - Apple host-native `test e2e` is launched from the host CLI; the host-native Playwright executor
-  refactor (host-side `npm exec` fed by the same typed fixture) is deferred together with the
-  Apple bootstrap stage-zero refactor and currently surfaces an explicit deferral diagnostic in
-  `runRuntimeModeE2E` (Phase 3 Sprint 3.10 closure)
+  now uses host `npm exec` fed by the same typed fixture against the published localhost edge port,
+  with the real run still pending the Apple validation pass
 - Linux substrate test commands all run through `docker compose run --rm infernix infernix ...`,
   and those flows do not manage a host daemon because request consumption, inference, and result
   publication all run from cluster daemons
@@ -977,9 +976,9 @@ ZooKeeper epoch mismatch without requiring manual lane cleanup.
 
 ### Deliverables
 
-- the supported Linux outer-container launcher bind-mounts a reusable host cache for
-  `chart/charts/` so fresh `docker compose run --rm infernix ...` invocations can reuse the same
-  chart dependency archives
+- the supported Linux outer-container launcher bakes a reusable image-local cache at
+  `/opt/infernix/chart/charts/` and links `/workspace/chart/charts` to it so fresh
+  `docker compose run --rm infernix ...` invocations can reuse the same chart dependency archives
 - `src/Infernix/Cluster.hs` stops relying on `helm dependency build` to discover the MinIO chart
   through Docker Hub-backed OCI metadata and instead hydrates the governed archive cache with the
   supported direct MinIO tarball URL together with the remaining top-level chart archives
@@ -1041,12 +1040,11 @@ substrate-mismatched compatibility shims.
   does not perform broad pre-Harbor support-image preloads, preloads only Harbor-backed final
   image refs after Harbor publication, and keeps the routed demo API aligned with the active
   staged runtime mode during routed validation
-- routed Apple Playwright validation probes publication readiness from the host on
-  `127.0.0.1:<edge-port>` but runs the browser container on the private Docker `kind` network
-  against the Kind control-plane DNS on port `30090`, so the Apple lane no longer depends on
-  `host.docker.internal`
-- the dedicated Playwright image no longer bakes a conflicting `NO_COLOR` default back into the
-  routed E2E lane
+- routed Apple Playwright validation runs host-native `npm exec` against the published
+  `127.0.0.1:<edge-port>` edge port, so the Apple lane no longer depends on
+  `host.docker.internal` or a dedicated browser container
+- the Linux substrate image no longer bakes a conflicting `NO_COLOR` default back into the routed
+  E2E lane
 - the governed local-development, portability, Python-policy, Apple runbook, cluster-bootstrap,
   assistant-workflow, and root orientation docs describe the implemented Apple lifecycle contract
   instead of the older rerun workaround or built-in-Python bootstrap story
@@ -1071,7 +1069,7 @@ substrate-mismatched compatibility shims.
 - the Apple bootstrap fails fast with actionable messages if the resolved ghcup-managed toolchain,
   Homebrew `protoc`, or supported Colima profile still cannot be used in the current process
 - the supported Apple routed Playwright lane passes without timing out on
-  `host.docker.internal`, and the later Playwright image rebuild does not reintroduce the prior
+  `host.docker.internal`, and the later substrate image rebuild does not reintroduce the prior
   `NO_COLOR`/`FORCE_COLOR` warning conflict
 - `infernix lint docs` fails if the governed local-development, Python-policy, portability, or
   runbook docs drift from the implemented Apple lifecycle contract
@@ -1288,7 +1286,7 @@ container-build packaging behavior, or normal Kubernetes convergence.
   `./bootstrap/linux-gpu.sh build`, `up`, `status`, `test`, `down`, `purge`, and final `status`
 - the final `./bootstrap/linux-gpu.sh test` rerun passed Haskell style, Python checks, Haskell
   unit, PureScript unit, Haskell integration, routed Playwright E2E, retained-state replay, and
-  final teardown after the Playwright image copied `web/scripts/` before npm `postinstall`
+  final teardown after the substrate image copied `web/scripts/` before npm `postinstall`
 
 ### Remaining Work
 
@@ -1365,7 +1363,7 @@ PATH-resolved invocation regressions.
 - May 27, 2026: `cabal test infernix-haskell-style` passed after removing the test exemptions.
 - May 27, 2026: `cabal test infernix-unit` passed after updating the Compose launcher contract assertion.
 - May 27, 2026: `cabal run infernix -- lint docs`, `lint files`, `lint chart`, and `lint proto` passed with the docs override gate active.
-- May 27, 2026: `docker compose --project-name infernix-linux-gpu --file compose.yaml --file compose.linux-gpu.yaml config` and the matching CPU compose config render the expected two-bind launcher without env substitution.
+- May 27, 2026: `LAUNCHER_IMAGE=infernix-linux-gpu:local docker compose --project-name infernix-linux-gpu --file compose.yaml config` and the matching CPU compose config render the expected two-bind launcher from the single Compose file.
 - May 26, 2026: the governed `linux-gpu` `infernix test all` pass remains the real-cluster evidence for the full lint + unit + integration + Playwright E2E stack.
 
 ### Remaining Work

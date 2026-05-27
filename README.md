@@ -243,11 +243,10 @@ Current status:
   reconciling the Homebrew-managed `python@3.12` formula and `python3.12` command, or reusing a
   compatible Python 3.12+ executable that is already available, plus a user-local Poetry bootstrap
   when needed
-- Apple routed Playwright validation probes the published edge from the host on `127.0.0.1` but
-  runs the dedicated browser container on the private Docker `kind` network against the Kind
-  control-plane DNS; because Apple retained Kind state is replayed into and out of the worker
-  rather than bind-mounted, large `./.data/kind/apple-silicon/` trees can make `up`, `test`, and
-  `down` slower than Linux
+- Apple routed Playwright validation now runs host-native `npm exec` against the published edge on
+  `127.0.0.1`; because Apple retained Kind state is replayed into and out of the worker rather
+  than bind-mounted, large `./.data/kind/apple-silicon/` trees can make `up`, `test`, and `down`
+  slower than Linux
 - Linux outer-container lifecycle runs pass host-resolved `./.data/kind/<runtime-mode>/` and
   `./.build/kind/registry/` paths into the generated Kind or `nvkind` node config so node-local
   PVs and registry host config are preserved by direct Docker bind mounts instead of replay copies
@@ -499,7 +498,8 @@ docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm in
 ```
 
 The Linux launcher bind-mounts only `./.data/` and the Docker socket. The baked image owns the
-full toolchain, source snapshot, build root, and chart archive cache, so the supported runtime
+full toolchain, source snapshot, build root, and `/opt/infernix/chart/charts/` chart archive
+cache, so the supported runtime
 path does not install anything via `apt`, `pip`, or ad hoc host-side `cabal build`. The Linux
 bootstrap invokes the same Compose service shape that operators use directly, while the binary
 owns substrate staging, cluster lifecycle, image preparation, and validation. On both Linux
@@ -511,9 +511,10 @@ afterward to
 ### Linux GPU (outer container)
 
 The `linux-gpu` substrate ships one baked image snapshot, `infernix-linux-gpu:local`, built
-from `docker/linux-substrate.Dockerfile` with a CUDA base image. The same supported Compose
-launcher surface used on Linux CPU selects that image through `compose.linux-gpu.yaml` while
-keeping the outer control-plane container itself off the NVIDIA runtime path.
+from `docker/linux-substrate.Dockerfile` with a CUDA base image. The same single
+`compose.yaml` service used on Linux CPU selects that image through an explicit one-shot
+Compose image selector while keeping the outer control-plane container itself off the NVIDIA
+runtime path. CPU hosts keep using `infernix-linux-cpu:local`, so they do not carry CUDA baggage.
 
 Supported bootstrap path:
 
@@ -531,11 +532,11 @@ the same command.
 Direct reference commands:
 
 ```bash
-docker compose --project-name infernix-linux-gpu --file compose.yaml --file compose.linux-gpu.yaml run --rm infernix infernix cluster up
-docker compose --project-name infernix-linux-gpu --file compose.yaml --file compose.linux-gpu.yaml run --rm infernix infernix cluster status
-docker compose --project-name infernix-linux-gpu --file compose.yaml --file compose.linux-gpu.yaml run --rm infernix infernix kubectl -n platform exec deployment/infernix-engine -- nvidia-smi -L
-docker compose --project-name infernix-linux-gpu --file compose.yaml --file compose.linux-gpu.yaml run --rm infernix infernix test all
-docker compose --project-name infernix-linux-gpu --file compose.yaml --file compose.linux-gpu.yaml run --rm infernix infernix cluster down
+LAUNCHER_IMAGE=infernix-linux-gpu:local docker compose --project-name infernix-linux-gpu --file compose.yaml run --rm infernix infernix cluster up
+LAUNCHER_IMAGE=infernix-linux-gpu:local docker compose --project-name infernix-linux-gpu --file compose.yaml run --rm infernix infernix cluster status
+LAUNCHER_IMAGE=infernix-linux-gpu:local docker compose --project-name infernix-linux-gpu --file compose.yaml run --rm infernix infernix kubectl -n platform exec deployment/infernix-engine -- nvidia-smi -L
+LAUNCHER_IMAGE=infernix-linux-gpu:local docker compose --project-name infernix-linux-gpu --file compose.yaml run --rm infernix infernix test all
+LAUNCHER_IMAGE=infernix-linux-gpu:local docker compose --project-name infernix-linux-gpu --file compose.yaml run --rm infernix infernix cluster down
 ```
 
 The CUDA substrate image bundles CUDA-aware engine builds such as `llama.cpp` CUDA and `vLLM` at
@@ -598,7 +599,7 @@ around upstream `kubectl`, not a parallel lifecycle surface.
 - after Harbor is responsive, `cluster up` mirrors every remaining non-Harbor image into Harbor
   before deploying those workloads, including third-party platform images and the active
   `infernix` runtime image
-- on Linux substrates the active runtime image is the same Compose-selected
+- on Linux substrates the active runtime image is the same launcher-selected
   `infernix-linux-<mode>:local` image used by the outer control-plane launcher; on Apple Silicon
   the host-native `infernix` binary builds the cluster-resident runtime image and publishes it to
   Harbor after Harbor is ready
@@ -657,7 +658,7 @@ rebuildable.
   `./.build/infernix internal materialize-substrate apple-silicon` remains the direct helper for
   explicit restaging or inspection
 - Linux outer-container lifecycle and validation commands materialize or verify that file under
-  `./.build/outer-container/build/` on the host through the bind-mounted build tree;
+  `/workspace/.build/outer-container/build/` inside the launcher image;
   `docker compose run --rm infernix infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>`
   remains the direct helper for explicit restaging or inspection
 - the generated demo `.dhall` file enumerates the demo-visible models and workloads for that mode
@@ -707,8 +708,8 @@ contracts.
 - on Linux substrates, the substrate container carries the spago plus purs toolchain, Playwright
   system packages, and the three browser engines; `infernix test e2e` runs
   `npm --prefix web exec -- playwright test` inside that same image
-- the Apple Silicon host-native routed-E2E executor refactor is deferred and currently surfaces an
-  explicit diagnostic instead of using the old Compose sidecar path
+- the Apple Silicon host-native routed-E2E executor uses host `npm exec` with the same typed
+  fixture path as Linux and awaits the Apple validation pass
 - the `infernix-demo` workload is deployed through repo-owned Helm chart templates and values, and
   is gated by the `.dhall` `demo_ui` flag; production deployments leave it off
 - the demo UI catalog is derived from the generated mode-specific demo `.dhall` file for the active

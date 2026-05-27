@@ -19,7 +19,9 @@
 - No `chart/templates/deployment-*.yaml` carries an `env:` block; pods mount the cluster Dhall
   ConfigMap + the cluster Secret instead.
 - `compose.yaml` carries exactly two bind mounts (`./.data` and `/var/run/docker.sock`) and no
-  `environment:` block, no `build.args:` block, no `playwright` sidecar service.
+  `environment:` block, no `build.args:` block, no `playwright` sidecar service. Its only
+  interpolation surface is the one-shot launcher image selector used to keep CPU and GPU
+  substrate images separate without adding CUDA baggage to CPU hosts.
 
 ## Why
 
@@ -93,7 +95,8 @@ every subsequent command to the launcher.
 
 Convention:
 
-1. First line: `PATH=/usr/bin:/bin`. The operator's ambient `$PATH` cannot influence resolution.
+1. First line: `PATH=/usr/bin:/bin`. The operator's ambient shell search path cannot influence
+   resolution.
 2. Repo root: `REPO_ROOT="$(/usr/bin/dirname "${BASH_SOURCE[0]}")/.."` — derived from the
    bash array `BASH_SOURCE`, not an env var.
 3. Operator home: `HOME_DIR="$(/usr/bin/getent passwd "$(/usr/bin/id -u)" | /usr/bin/cut -d: -f6)"`
@@ -105,6 +108,11 @@ Convention:
 5. Once the launcher exists, every operation delegates to the binary:
    - **Apple**: `"${REPO_ROOT}/.build/infernix" <command>`
    - **Linux**: `/usr/bin/docker compose --file "${REPO_ROOT}/compose.yaml" run --rm infernix infernix <command>`
+
+The Linux GPU bootstrap sets `LAUNCHER_IMAGE=infernix-linux-gpu:local` only for the Docker Compose
+process it launches. That value selects the already-built launcher image; it is not read by
+Infernix code, is not an operator configuration substrate, and does not replace the typed Dhall
+files.
 
 The shell never reads a `.dhall` file directly. The Haskell binary is the only Dhall reader.
 

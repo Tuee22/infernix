@@ -11,6 +11,7 @@ BOOTSTRAP_CP=/usr/bin/cp
 BOOTSTRAP_CURL=/usr/bin/curl
 BOOTSTRAP_DOCKER=/usr/bin/docker
 BOOTSTRAP_DPKG=/usr/bin/dpkg
+BOOTSTRAP_ENV=/usr/bin/env
 BOOTSTRAP_GPG=/usr/bin/gpg
 BOOTSTRAP_GREP=/usr/bin/grep
 BOOTSTRAP_INSTALL=/usr/bin/install
@@ -35,7 +36,7 @@ COMPOSE_SUBSTRATE="linux-gpu"
 COMPOSE_BASE_IMAGE="nvidia/cuda:13.2.1-cudnn-runtime-ubuntu24.04"
 NVIDIA_PROBE_IMAGE="nvidia/cuda:12.4.1-base-ubuntu22.04"
 COMPOSE_PROJECT="infernix-linux-gpu"
-COMPOSE_FILES=(--file compose.yaml --file compose.linux-gpu.yaml)
+COMPOSE_FILES=(--file compose.yaml)
 
 show_help() {
   cat <<EOF
@@ -80,10 +81,10 @@ Available Linux GPU commands:
 
 Direct reference commands:
   docker build -f docker/linux-substrate.Dockerfile -t ${COMPOSE_IMAGE} --build-arg RUNTIME_MODE=${COMPOSE_SUBSTRATE} --build-arg BASE_IMAGE=${COMPOSE_BASE_IMAGE} --build-arg DEMO_UI=true .
-  docker compose --project-name ${COMPOSE_PROJECT} --file compose.yaml --file compose.linux-gpu.yaml run --rm infernix infernix cluster up
-  docker compose --project-name ${COMPOSE_PROJECT} --file compose.yaml --file compose.linux-gpu.yaml run --rm infernix infernix cluster status
-  docker compose --project-name ${COMPOSE_PROJECT} --file compose.yaml --file compose.linux-gpu.yaml run --rm infernix infernix test all
-  docker compose --project-name ${COMPOSE_PROJECT} --file compose.yaml --file compose.linux-gpu.yaml run --rm infernix infernix cluster down
+  LAUNCHER_IMAGE=${COMPOSE_IMAGE} docker compose --project-name ${COMPOSE_PROJECT} --file compose.yaml run --rm infernix infernix cluster up
+  LAUNCHER_IMAGE=${COMPOSE_IMAGE} docker compose --project-name ${COMPOSE_PROJECT} --file compose.yaml run --rm infernix infernix cluster status
+  LAUNCHER_IMAGE=${COMPOSE_IMAGE} docker compose --project-name ${COMPOSE_PROJECT} --file compose.yaml run --rm infernix infernix test all
+  LAUNCHER_IMAGE=${COMPOSE_IMAGE} docker compose --project-name ${COMPOSE_PROJECT} --file compose.yaml run --rm infernix infernix cluster down
 
 Teardown and cleanup:
   ${SCRIPT_LABEL} down
@@ -95,7 +96,7 @@ EOF
 # environment: block, and no substrate-selection env var. The script
 # selects the project and compose files with explicit CLI arguments.
 compose_run() {
-  bootstrap::run "${BOOTSTRAP_DOCKER}" compose --project-name "${COMPOSE_PROJECT}" "${COMPOSE_FILES[@]}" run --rm infernix infernix "$@"
+  bootstrap::run "${BOOTSTRAP_ENV}" "LAUNCHER_IMAGE=${COMPOSE_IMAGE}" "${BOOTSTRAP_DOCKER}" compose --project-name "${COMPOSE_PROJECT}" "${COMPOSE_FILES[@]}" run --rm infernix infernix "$@"
 }
 
 # Phase 1 Sprint 1.11 — explicit @docker build@ replaces the previous

@@ -11,13 +11,10 @@
 // endpoints. The deeper inference correctness is covered end-to-end
 // by `infernix test integration`'s per-model Pulsar roundtrip
 // against the same cluster.
-import { readFileSync } from "node:fs";
 import { test, expect } from "playwright/test";
 
-const fixturePath = "/workspace/.data/runtime/playwright-fixture.json";
-const fixture = JSON.parse(readFileSync(fixturePath, "utf8"));
-
-test("routed edge surfaces the SPA + the published platform state", async ({ page, request }) => {
+test("routed edge surfaces the SPA + the published platform state", async ({ page, request }, testInfo) => {
+  const fixture = testInfo.project.use.infernixFixture;
   const baseUrl = `http://${fixture.host}:${fixture.edgePort}`;
 
   const publicationResponse = await request.get(`${baseUrl}/api/publication`);

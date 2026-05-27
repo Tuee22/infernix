@@ -65,6 +65,7 @@ import Infernix.Runtime
     listCacheManifests,
     rebuildCache,
   )
+import Infernix.Runtime.Pulsar qualified as RuntimePulsar
 import Infernix.SecretsConfig qualified as SecretsConfig
 import Infernix.Types
 import Infernix.Web.Contracts
@@ -176,7 +177,7 @@ runDemoApiServer options = do
       settings =
         setHost (fromStringHost (demoBindHost options)) $
           setPort (demoPort options) defaultSettings
-  runSettings settings (application options jwksCache realmConfig)
+  runSettings settings (application options jwksCache realmConfig maybeClusterConfig)
 
 -- | Phase 7 Sprint 7.17: best-effort load of the cluster manifest
 -- mounted by the chart at the supported path. The demo daemon pod
@@ -191,8 +192,8 @@ tryLoadClusterConfig = do
     else pure Nothing
 
 -- type Application = Request -> (Response -> IO ResponseReceived) -> IO ResponseReceived
-application :: DemoApiOptions -> JwksCache -> KeycloakRealmConfig -> Application
-application options jwksCache realmConfig request respond = do
+application :: DemoApiOptions -> JwksCache -> KeycloakRealmConfig -> Maybe ClusterConfig.ClusterConfig -> Application
+application options jwksCache realmConfig maybeClusterConfig request respond = do
   demoEnabled <- demoUiEnabled <$> decodeDemoConfigFile (demoConfigPath options)
   case pathInfo request of
     ["healthz"]
@@ -231,7 +232,11 @@ application options jwksCache realmConfig request respond = do
     ["ws"]
       | demoEnabled ->
           DemoWebSocket.wsApplication
-            (DemoWebSocket.defaultWebSocketOptions (loadJwksCached jwksCache realmConfig))
+            ( webSocketOptions
+                options
+                maybeClusterConfig
+                (loadJwksCached jwksCache realmConfig)
+            )
             request
             respond
     staticSegments
@@ -239,6 +244,33 @@ application options jwksCache realmConfig request respond = do
           serveStaticSegments options staticSegments respond
     _ ->
       respond (textResponse status404 "route not found")
+
+webSocketOptions ::
+  DemoApiOptions ->
+  Maybe ClusterConfig.ClusterConfig ->
+  IO (Either String Jwks) ->
+  DemoWebSocket.WebSocketOptions
+webSocketOptions options maybeClusterConfig loadJwks =
+  (DemoWebSocket.defaultWebSocketOptions loadJwks)
+    { DemoWebSocket.wsRealmConfig = loadRealmConfigFromCluster maybeClusterConfig,
+      DemoWebSocket.wsDispatchClientMessage =
+        \userIdValue clientMessage ->
+          mapDispatchError
+            ( RuntimePulsar.publishDemoClientMessage
+                (demoPaths options)
+                (demoRuntimeMode options)
+                maybeClusterConfig
+                userIdValue
+                clientMessage
+            )
+    }
+
+mapDispatchError :: IO () -> IO (Either String ())
+mapDispatchError action = do
+  result <- try @SomeException action
+  case result of
+    Right () -> pure (Right ())
+    Left err -> pure (Left (show err))
 
 -- | Phase 7 Sprint 7.9: /api/objects upload-grant + download-grant
 -- handlers. Both endpoints consume a Keycloak-signed JWT in the

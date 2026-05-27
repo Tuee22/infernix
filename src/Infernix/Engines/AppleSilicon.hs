@@ -13,7 +13,6 @@ import Infernix.Models (engineBindingsForMode)
 import Infernix.Python (ensurePoetryExecutable, ensurePoetryProjectReady, pythonProjectDirectory)
 import Infernix.Types (EngineBinding (..), RuntimeMode (AppleSilicon))
 import System.Directory (createDirectoryIfMissing, doesFileExist)
-import System.Environment (getEnvironment)
 import System.Exit (ExitCode (ExitSuccess))
 import System.FilePath ((</>))
 import System.Process (CreateProcess (cwd, env), proc, readCreateProcessWithExitCode)
@@ -59,21 +58,19 @@ runAppleSetupStep paths step =
       bootstrapReady <- doesFileExist bootstrapManifestPath
       unless bootstrapReady $ do
         poetryExecutable <- ensurePoetryExecutable paths
-        baseEnvironment <- getEnvironment
-        let processEnvironment =
-              [ ("POETRY_VIRTUALENVS_IN_PROJECT", "true"),
-                ("INFERNIX_REPO_ROOT", repoRoot paths),
-                ("INFERNIX_ENGINE_INSTALL_ROOT", engineInstallRoot),
-                ("INFERNIX_ACTIVE_SUBSTRATE", "apple-silicon")
+        let setupArgs =
+              [ "--directory",
+                projectDirectory,
+                "run",
+                entrypoint,
+                "--install-root",
+                engineInstallRoot
               ]
-                <> filter
-                  (\(name, _) -> name `notElem` ["POETRY_VIRTUALENVS_IN_PROJECT", "INFERNIX_REPO_ROOT", "INFERNIX_ENGINE_INSTALL_ROOT", "INFERNIX_ACTIVE_SUBSTRATE"])
-                  baseEnvironment
         (exitCode, _, stderrOutput) <-
           readCreateProcessWithExitCode
-            ( (proc poetryExecutable ["--directory", projectDirectory, "run", entrypoint])
+            ( (proc poetryExecutable setupArgs)
                 { cwd = Just projectDirectory,
-                  env = Just processEnvironment
+                  env = Just appleSetupProcessEnvironment
                 }
             )
             ""
@@ -88,3 +85,10 @@ runAppleSetupStep paths step =
                       <> stderrOutput
                   )
               )
+
+-- | Phase 2 Sprint 2.13: the Apple setup entrypoint no longer
+-- inherits the operator process environment. Poetry virtualenv
+-- placement is owned by @python/poetry.toml@, while the adapter
+-- install root is passed as @--install-root@.
+appleSetupProcessEnvironment :: [(String, String)]
+appleSetupProcessEnvironment = []

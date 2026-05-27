@@ -18,23 +18,27 @@ materialization that closes that doctrine for the host tool-path surface. Sprint
 `INFERNIX_BUILD_ROOT`, `INFERNIX_DATA_ROOT`, the `INFERNIX_COMPOSE_SUBSTRATE` /
 `INFERNIX_COMPOSE_DEMO_UI` runtime fallbacks, `INFERNIX_BOOTSTRAP_YES`, the
 `bootstrap::prepend_path` helper, and the host-side `.build` / `chart/charts` bind mounts. The
-Linux launcher now selects the GPU image through `compose.linux-gpu.yaml` rather than compose
-environment substitution, and no longer forwards the host-repo override. It
-introduces `dhall/InfernixHost.dhall` + the matching `HostConfig` Haskell record. The Linux
-bootstrap entrypoints now use the `PATH=/usr/bin:/bin` + `BASH_SOURCE` + `/etc/passwd` +
-hardcoded absolute-path discovery convention; the Apple bootstrap entrypoint remains deferred to
-the Apple validation pass.
+Linux launcher now selects the GPU image through the same single `compose.yaml` service using a
+one-shot `LAUNCHER_IMAGE=infernix-linux-gpu:local` Compose selector, and no longer forwards the
+host-repo override. It introduces `dhall/InfernixHost.dhall` + the matching `HostConfig` Haskell
+record. The Linux bootstrap entrypoints now use the `PATH=/usr/bin:/bin` + `BASH_SOURCE` +
+`/etc/passwd` + hardcoded absolute-path discovery convention, and the Linux launcher image bakes
+the Helm dependency archive cache at `/opt/infernix/chart/charts/` with
+`/workspace/chart/charts` linked to that image-local cache for Helm compatibility. The Apple
+bootstrap entrypoint remains deferred to the Apple validation pass.
 
 ## Current Repo Assessment
 
 The repo matches the supported Phase 1 ownership contract: the control plane has a
 Haskell command registry, the governed root docs point at canonical
-`documents/` topics with explicit metadata, and the Linux launcher uses a baked image snapshot. Lifecycle and validation commands
+`documents/` topics with explicit metadata, and the Linux launcher uses a baked image snapshot.
+Lifecycle and validation commands
 stage or verify `infernix-substrate.dhall` under the active build root through binary-owned
 preflight, while explicit helper invocations remain available for direct inspection or restaging.
 The Linux substrate Dockerfile also materializes a build-arg-selected copy inside the image
-overlay during image build, and supported Compose runs keep the Linux build root in the image
-overlay rather than bind-mounting the host `./.build/` tree.
+overlay during image build, supported Compose runs keep the Linux build root in the image
+overlay rather than bind-mounting the host `./.build/` tree, and the Helm chart archive cache
+lives in the image overlay at `/opt/infernix/chart/charts/`.
 
 ## Substrate Foundation
 
@@ -174,9 +178,9 @@ static quality enforceable through canonical entrypoints.
 ### Deliverables
 
 - host-native Haskell builds materialize `./.build/infernix` and `./.build/infernix-demo`
-- outer-container staged substrate output stays under `./.build/outer-container/` through a
-  host-anchored bind mount, while cabal package state and cabal's build directory stay in the
-  image overlay
+- outer-container staged substrate output stays under `/workspace/.build/outer-container/` inside
+  the launcher image, while cabal package state and cabal's build directory stay in the image
+  overlay
 - explicit substrate materialization stages `infernix-substrate.dhall` under the active build
   root; `cluster up` consumes that staged file, republishes it for cluster consumers, and fails
   fast if it is absent
@@ -358,9 +362,14 @@ supported browser workflow.
 
 ### Deliverables
 
-- `compose.yaml` runs against a baked image snapshot and bind-mounts `./.data/`, `./.build/`,
-  `./chart/charts/`, and `./compose.yaml` together with the Docker socket
-- the only outer-container build state surfaced on the host through `./.build/outer-container/build/` is the staged substrate file; the source snapshot manifest lives separately at `/opt/infernix/source-snapshot-files.txt` in the image overlay, and cabal-home plus the cabal builddir stay at the toolchain's natural in-image locations (`/root/.cabal/`, `dist-newstyle/`) and are not bind-mounted, so the supported CLI never overrides cabal's default builddir or `CABAL_DIR`
+- `compose.yaml` runs against a baked image snapshot and bind-mounts only `./.data/` plus the
+  Docker socket
+- the outer-container build root, staged substrate file, and Helm chart archive cache live in the
+  image overlay; the source snapshot manifest lives separately at
+  `/opt/infernix/source-snapshot-files.txt`, the Helm dependency archive cache lives at
+  `/opt/infernix/chart/charts/`, and cabal-home plus the cabal builddir stay at the toolchain's
+  natural in-image locations (`/root/.cabal/`, `dist-newstyle/`) and are not bind-mounted, so the
+  supported CLI never overrides cabal's default builddir or `CABAL_DIR`
 - the substrate image uses `tini` as its `ENTRYPOINT` for clean signal handling and zombie reaping rather than running a custom launcher wrapper script
 - the repo-wide `.:/workspace` bind mount and `web/node_modules` runtime volume are removed
 - operators rebuild the image when source changes instead of relying on live repo mounts
@@ -369,18 +378,19 @@ supported browser workflow.
 ### Validation
 
 - after `docker compose run --rm infernix infernix internal materialize-substrate linux-cpu --demo-ui true`,
-  `docker compose run --rm infernix infernix cluster status` works against the host-anchored
-  `./.build/` and `./.data/` bind mounts
-- the launcher container sees `./.data/`, `./.build/`, `./chart/charts/`, the live
-  `./compose.yaml`, and the Docker socket only
+  `docker compose run --rm infernix infernix cluster status` works against the image-local build
+  root and the host `./.data/` bind mount
+- the launcher container sees the host `./.data/` tree and the Docker socket only; build output,
+  chart archives, source, and the live `compose.yaml` stay in the image overlay
 - `docker volume ls` lists no `infernix-build` or `infernix-cabal-home` named volumes
-- `docker compose down -v` leaves `./.build/` and `./.data/` intact on the host
+- `docker compose down -v` leaves `./.data/` intact on the host and does not manage Linux
+  `.build/` state
 - `docker inspect infernix-linux-cpu:local --format '{{json .Config.Entrypoint}}'` shows
   `/usr/bin/tini`, and smoke probes confirm normal launched commands run through that entrypoint
 - after `docker compose run --rm infernix infernix internal materialize-substrate linux-cpu --demo-ui true`,
-  a fresh `docker compose run --rm infernix infernix test unit` against an otherwise empty
-  `./.build/outer-container/` succeeds because cabal-home and the cabal builddir live at the
-  toolchain's natural in-image locations and survive the bind mount untouched
+  a fresh `docker compose run --rm infernix infernix test unit` succeeds because cabal-home and
+  the cabal builddir live at the toolchain's natural in-image locations and are not hidden by a
+  host bind mount
 - `rg -n 'npx playwright' README.md documents src web/package.json` returns no supported workflow references
 
 ### Remaining Work
@@ -405,12 +415,11 @@ launcher story onto the requested Apple-host-native and Linux-Compose doctrines.
 - the supported CLI removes `--runtime-mode` and all use of `INFERNIX_RUNTIME_MODE`
 - the build or explicit staging flow emits one substrate file under the active build root and the
   CLI reads that file as the primary source of truth for active substrate; the Linux Dockerfile's
-  image-local copy exists for image-build-time work, while supported Compose commands rely on the
-  explicitly restaged host-visible copy
+  image-local copy is the supported outer-container copy
 - Apple host-native workflows stage `./.build/infernix-substrate.dhall` with
   `./.build/infernix internal materialize-substrate apple-silicon [--demo-ui true|false]`
-- Linux outer-container workflows stage `./.build/outer-container/build/infernix-substrate.dhall`
-  through the host-anchored `./.build/` bind mount with
+- Linux outer-container workflows stage
+  `/workspace/.build/outer-container/build/infernix-substrate.dhall` inside the launcher image with
   `docker compose run --rm infernix infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>`
 - supported runtime, cluster, cache, Kubernetes-wrapper, frontend-contract generation, and
   aggregate `infernix test ...` entrypoints fail fast when the staged file is absent; focused
@@ -419,9 +428,9 @@ launcher story onto the requested Apple-host-native and Linux-Compose doctrines.
 - Linux host-native `infernix` execution is not a supported operator surface
 - Linux outer-container commands use Compose as the only supported launcher for both `linux-cpu`
   and `linux-gpu`
-- Apple operators do not use Compose as a user-facing launcher for ordinary CLI work; Apple E2E
-  orchestration invokes `docker compose run --rm playwright` against the dedicated
-  `infernix-playwright:local` image during routed E2E validation
+- Apple operators do not use Compose as a user-facing launcher for ordinary CLI work; Apple
+  host-native routed E2E uses host `npm exec` with the same typed fixture and awaits the Apple
+  validation pass, while Linux E2E runs Playwright inside the active substrate image
 - the NVIDIA-backed Linux substrate is standardized as `linux-gpu`, with the old `linux-cuda`
   naming retired as an explicit compatibility cleanup item
 
@@ -432,9 +441,8 @@ launcher story onto the requested Apple-host-native and Linux-Compose doctrines.
   without any runtime-mode flag or user-facing environment override
 - supported Linux containerized commands run through `docker compose run --rm infernix infernix ...`
   without any runtime-mode flag or user-facing environment override
-- supported Linux lifecycle and aggregate test commands are preceded by
-  `docker compose run --rm infernix infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>`
-  so the host bind-mounted build root carries the active substrate file
+- supported Linux lifecycle and aggregate test commands use the substrate file materialized in the
+  launcher image build root, without a host `.build` bind mount
 
 ### Remaining Work
 
@@ -501,9 +509,14 @@ shrinks to `./.data` plus the Docker socket only.
 - May 27, 2026: `env -i /usr/bin/bash ./bootstrap/linux-cpu.sh doctor` and
   `env -i /usr/bin/bash ./bootstrap/linux-gpu.sh doctor` both passed after the Linux stage-zero
   bootstrap cleanup.
-- `./bootstrap/linux-gpu.sh build` produces an image whose `docker run --rm infernix-linux-gpu:local
-  /usr/bin/ls /opt/infernix/chart/charts` lists the expected Helm chart archives (no bind mount
-  needed).
+- May 27, 2026: `env -i /usr/bin/bash ./bootstrap/linux-gpu.sh status` entered the single
+  `compose.yaml` launcher with `LAUNCHER_IMAGE=infernix-linux-gpu:local` and reported the
+  expected `linux-gpu` `cluster-absent` status without requiring `compose.linux-gpu.yaml`.
+- May 27, 2026: `env -i /usr/bin/bash ./bootstrap/linux-gpu.sh build` produced the
+  `infernix-linux-gpu:local` launcher image, ran the built-in `infernix --help` smoke check
+  through the single `compose.yaml` launcher, and a direct `docker run --rm
+  infernix-linux-gpu:local ...` inspection verified `/workspace/chart/charts` links to
+  `/opt/infernix/chart/charts` and the expected Helm archives are present without a bind mount.
 - `docker inspect <launcher-container> --format '{{json .Mounts}}'` shows exactly two mounts:
   `./.data` and `/var/run/docker.sock`.
 
@@ -574,10 +587,11 @@ Infra-side cleanup landed (May 24, 2026; Linux compose-image selection tightened
 - `compose.yaml` shrunk: the `infernix` service drops the previous
   `build:` block, the `environment:` block, and the `./.build` /
   `./chart/charts` / `./compose.yaml` bind mounts. The service now
-  references the CPU launcher image by name only and bind-mounts exactly
-  `./.data:/workspace/.data` and `/var/run/docker.sock`. The
-  `compose.linux-gpu.yaml` override selects `infernix-linux-gpu:local`
-  for the GPU lane without compose environment substitution. Sprint
+  defaults to the CPU launcher image, and bind-mounts exactly
+  `./.data:/workspace/.data` and `/var/run/docker.sock`. The GPU lane
+  selects `infernix-linux-gpu:local` by setting `LAUNCHER_IMAGE` for
+  the Docker Compose process only, keeping CPU hosts on the smaller
+  Ubuntu-based snapshot without adding a second Compose file. Sprint
   3.10 deleted the old Playwright sidecar service together with its
   Dockerfile and the matching `runEndToEnd` refactor.
 - `docker/linux-substrate.Dockerfile`: removed the
@@ -611,26 +625,26 @@ Infra-side cleanup landed (May 24, 2026; Linux compose-image selection tightened
 Verified end-to-end on the host: `cabal build all`, `cabal test
 infernix-unit`, `cabal test infernix-haskell-style`, and
 `cabal run infernix -- lint {files,chart,docs,proto}` all exit zero.
+The single-file Compose selector renders `infernix-linux-cpu:local`
+by default and `infernix-linux-gpu:local` when `LAUNCHER_IMAGE` is set
+for the Compose process.
 The Sprint 1.11 forbidden-env grep gate
 (`grep -rEn 'INFERNIX_BUILD_ROOT|INFERNIX_DATA_ROOT|INFERNIX_COMPOSE_SUBSTRATE|INFERNIX_COMPOSE_DEMO_UI|INFERNIX_BOOTSTRAP_YES' src/ bootstrap/ compose.yaml docker/`)
 returns only documented-retirement comment references. The live Linux
 launcher path also passes the targeted grep for the removed compose
 selection and host-repo override env names across `bootstrap/`,
-`compose.yaml`, `compose.linux-gpu.yaml`, `docker/`, and `src/`.
+`compose.yaml`, `docker/`, and `src/`.
 
-Pending closure (deferred to later turns, named so closure status stays
-honest):
+Linux residuals landed and validated May 27, 2026:
 
-- **Apple bootstrap script (`bootstrap/apple-silicon.sh`).** Deferred
-  to the Apple-host validation pass per the active-substrate priority.
-  The shared `bootstrap/common.sh` `--yes` flag wiring already covers
-  the Apple lane when it lands.
 - **Move `chart/charts/` cache into the launcher image at
-  `/opt/infernix/chart/charts/`.** The current `COPY . /workspace`
-  step already bakes the chart-deps archives into the image at
-  `/workspace/chart/charts/`, so the supported lifecycle works after
-  the compose.yaml shrink. The `/opt/infernix/` relocation is an
-  organizational nicety.
+  `/opt/infernix/chart/charts/` — landed and validated May 27, 2026.**
+  `docker/linux-substrate.Dockerfile` now fetches Harbor, Percona
+  PostgreSQL operator, Percona PostgreSQL database, Pulsar, MinIO, and
+  Envoy Gateway archives into `/opt/infernix/chart/charts/` during
+  image build, then links `/workspace/chart/charts` to that image-local
+  cache so Helm continues to find dependency archives through the
+  chart-standard path without a host bind mount.
 - **In-image host-manifest baking at
   `/opt/infernix/dhall/InfernixHost.dhall` — landed May 25, 2026.**
   `docker/linux-substrate.Dockerfile` now writes the supported Linux
@@ -649,13 +663,22 @@ honest):
   the previously-retired `ENV INFERNIX_BUILD_ROOT=...` directive
   with the typed Dhall manifest the doctrine actually demands.
 
+Pending closure (deferred to the Apple validation pass, named so closure status stays
+honest):
+
+- **Apple bootstrap script (`bootstrap/apple-silicon.sh`).** Deferred
+  to the Apple-host validation pass per the active-substrate priority.
+  The shared `bootstrap/common.sh` `--yes` flag wiring already covers
+  the Apple lane when it lands.
+
 ---
 
 ## Remaining Work
 
 Sprint 1.11 partially landed (foundational schema + decoder + helper +
-materializer + unit tests). Pending closure named in the sprint
-section above. Sprints 1.1–1.10 closed.
+materializer + unit tests). The Linux residuals named above are landed and validated; the only
+pending closure is the Apple bootstrap script deferred to the Apple-host validation pass. Sprints
+1.1–1.10 closed.
 
 ## Documentation Requirements
 

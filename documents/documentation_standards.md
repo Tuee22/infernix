@@ -135,6 +135,9 @@ Rules:
   and the documented third-party-upstream exception in
   [tools/keycloak.md](tools/keycloak.md) (Keycloak's own `KC_DB_*` upstream contract) are the only
   permitted occurrences.
+- the Linux launcher image selector is a narrow Compose invocation detail documented in
+  [engineering/docker_policy.md](engineering/docker_policy.md), not an operator configuration
+  override. It may be named when explaining direct Linux GPU reference commands.
 
 ## Update Rules
 

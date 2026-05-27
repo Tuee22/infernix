@@ -39,6 +39,9 @@ of the supported artifact contract.
 - on the outer-container path, the baked launcher binaries remain `/usr/local/bin/infernix` and
   `/usr/local/bin/infernix-demo`; the substrate image uses `tini` as its `ENTRYPOINT` for clean
   signal handling and zombie reaping
+- on the outer-container path, the Helm dependency archive cache is baked into
+  `/opt/infernix/chart/charts/`, and `/workspace/chart/charts` links to that image-local cache so
+  Helm uses local archives without a host bind mount
 - the substrate image captures the sorted source snapshot at
   `/opt/infernix/source-snapshot-files.txt`, which stays in the image overlay
   so it stays in the image overlay where git-less `infernix lint files` runs can read it
@@ -48,9 +51,8 @@ of the supported artifact contract.
   Kind or `nvkind` create or delete uses a transient launcher-local scratch kubeconfig under the
   container temp directory
 - the active generated substrate file lives at `./.build/infernix-substrate.dhall` on the Apple
-  host path and `./.build/outer-container/build/infernix-substrate.dhall` on the host for the
-  Linux outer-container path, where it is visible inside the launcher container as
-  `/workspace/.build/outer-container/build/infernix-substrate.dhall`
+  host path and `/workspace/.build/outer-container/build/infernix-substrate.dhall` inside the
+  Linux launcher image
 - `cluster up` writes `./.data/runtime/publication.json` as the publication inventory consumed by
   routed status surfaces
 - the web build stages `web/src/Generated/Contracts.purs`, written by
@@ -74,8 +76,8 @@ that consume the file link the same library through the in-cluster `infernix` bi
   under `./.build/`; `./.build/infernix internal materialize-substrate apple-silicon` remains the
   direct helper for explicit restaging or inspection
 - Linux outer-container lifecycle and validation flows materialize or verify
-  `./.build/outer-container/build/infernix-substrate.dhall` on the host through the bind-mounted
-  build tree; `docker compose run --rm infernix infernix internal materialize-substrate <substrate> --demo-ui <true|false>`
+  `/workspace/.build/outer-container/build/infernix-substrate.dhall` inside the launcher image;
+  `docker compose run --rm infernix infernix internal materialize-substrate <substrate> --demo-ui <true|false>`
   remains the direct helper for explicit restaging or inspection
 - `cluster up` mirrors the cluster-role substrate payload under
   `./.data/runtime/configmaps/infernix-demo-config/` and publishes it into

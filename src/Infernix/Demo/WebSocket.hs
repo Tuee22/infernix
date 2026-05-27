@@ -17,13 +17,10 @@
 -- nothing in this module reaches into per-user identity state on the
 -- pod's local filesystem.
 --
--- Today's contract intentionally stops short of wiring the Pulsar
--- Reader / Failover subscription paths — those land together with the
--- Sprint 7.14 chaos validation once a real cluster is available. The
--- handshake, JWT verification, framed-envelope decode + dispatch shape,
--- and the per-frame error-response surface are landed and exercised at
--- the unit-test level so the cluster validation only proves the Pulsar
--- coordination on top.
+-- Browser-originated state-changing frames now dispatch through an
+-- injected Pulsar publisher. The remaining Sprint 7.14 work is the
+-- Reader / Failover subscription path that streams snapshots and
+-- patches back to the client after coordinator failover.
 module Infernix.Demo.WebSocket
   ( WebSocketOptions (..),
     DemoWebSocketApp,
@@ -76,7 +73,8 @@ import Network.WebSockets qualified as WS
 -- tests.
 data WebSocketOptions = WebSocketOptions
   { wsRealmConfig :: KeycloakRealmConfig,
-    wsLoadJwks :: IO (Either String Jwks)
+    wsLoadJwks :: IO (Either String Jwks),
+    wsDispatchClientMessage :: UserId -> WsClientMessage -> IO (Either String ())
   }
 
 -- | A WAI 'Application' that handles WebSocket upgrades at the WS layer
@@ -91,7 +89,13 @@ defaultWebSocketOptions :: IO (Either String Jwks) -> WebSocketOptions
 defaultWebSocketOptions jwksLoader =
   WebSocketOptions
     { wsRealmConfig = defaultInfernixRealmConfig,
-      wsLoadJwks = jwksLoader
+      wsLoadJwks = jwksLoader,
+      wsDispatchClientMessage =
+        \_ _ ->
+          pure
+            ( Left
+                "Pulsar dispatch is not configured for this WebSocket app; pass wsDispatchClientMessage in WebSocketOptions"
+            )
     }
 
 -- | Build the WAI application that handles WS upgrades on the @/ws@
@@ -153,22 +157,23 @@ handleWsUpgrade options pending = do
                   }
             Right claims -> do
               connection <- WS.acceptRequest pending
-              runSession connection (UserId (jwtClaimSubject claims))
+              runSession options connection (UserId (jwtClaimSubject claims))
 
 -- | Drive the framed-envelope receive loop. Per-WS state is limited to
 -- the WebSocket handle plus the authenticated 'UserId' captured at
--- handshake — Pulsar Reader cursors land on top of this loop in
--- Sprint 7.14 when the real Pulsar transport is available.
-runSession :: WS.Connection -> UserId -> IO ()
-runSession connection userId =
+-- handshake. The dispatch callback publishes state-changing frames to
+-- Pulsar; Reader cursors that stream snapshots back to the client land
+-- with Sprint 7.14's real-cluster chaos validation.
+runSession :: WebSocketOptions -> WS.Connection -> UserId -> IO ()
+runSession options connection userId =
   forever $ do
     incomingResult <- try @SomeException (WS.receiveData connection)
     case incomingResult of
       Left _ -> WS.sendClose connection ("connection closed" :: Text)
-      Right frame -> handleFrame connection userId frame
+      Right frame -> handleFrame options connection userId frame
 
-handleFrame :: WS.Connection -> UserId -> Lazy.ByteString -> IO ()
-handleFrame connection userId frame =
+handleFrame :: WebSocketOptions -> WS.Connection -> UserId -> Lazy.ByteString -> IO ()
+handleFrame options connection userId frame =
   case eitherDecodeStrict' (Lazy.toStrict frame) of
     Left decodeError ->
       sendServerMessage
@@ -181,18 +186,21 @@ handleFrame connection userId frame =
     Right clientMessage ->
       case classifyClientMessage userId clientMessage of
         AcknowledgePending ->
-          -- The full Pulsar dispatch wiring lands in Sprint 7.14; until
-          -- then the supported response shape is an explicit "queued for
-          -- Pulsar handoff" acknowledgement that surfaces in client logs.
-          sendServerMessage
-            connection
-            ( ServerError
-                { serverErrorErrorCode = "ws_pulsar_dispatch_pending",
-                  serverErrorMessage =
-                    "Pulsar dispatch for this message family lands in Phase 7 Sprint 7.14; "
-                      <> "the WS handshake + JWT validation surface is the supported contract today"
-                }
-            )
+          dispatchClientMessage options connection userId clientMessage
+
+dispatchClientMessage :: WebSocketOptions -> WS.Connection -> UserId -> WsClientMessage -> IO ()
+dispatchClientMessage options connection userId clientMessage = do
+  dispatchResult <- wsDispatchClientMessage options userId clientMessage
+  case dispatchResult of
+    Right () -> pure ()
+    Left dispatchError ->
+      sendServerMessage
+        connection
+        ( ServerError
+            { serverErrorErrorCode = "ws_pulsar_dispatch_failed",
+              serverErrorMessage = Text.pack dispatchError
+            }
+        )
 
 sendServerMessage :: WS.Connection -> WsServerMessage -> IO ()
 sendServerMessage connection message =

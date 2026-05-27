@@ -58,8 +58,8 @@ requiredPhrases =
       ]
     ),
     -- Phase 7 Sprint 7.17: the demo Deployment's `INFERNIX_MINIO_ACCESS_KEY`
-    -- / `INFERNIX_MINIO_SECRET_KEY` entries retire together with the
-    -- `cluster-secrets` Secret mount at `/etc/infernix/secrets/`.
+    -- / `INFERNIX_MINIO_SECRET_KEY` entries are retired; credentials now
+    -- come from the `cluster-secrets` Secret mount at `/etc/infernix/secrets/`.
     -- Phase 6 Sprint 6.28 follow-on (May 26, 2026): the data-root
     -- override env entry retired too; `dataRoot` decodes from the
     -- mounted host manifest.

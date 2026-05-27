@@ -50,10 +50,10 @@ in-cluster `Coordinator` and the on-host `Engine` (renamed from
 the cluster-daemon-to-host-daemon batch bridge is unchanged. The
 coordinator's runtime Pulsar wiring (per-context dispatcher Failover
 subscription, result-bridge Failover subscription, model-bootstrap
-Failover subscription against `infernix-models`) lands its real
-broker-side wiring together with Sprint 7.14's chaos validation
-cycle. The pure-Haskell shared-library shape that hosts those
-subscriptions is in place today.
+Failover subscription against `infernix-models`, and WebSocket-originated
+event publication) is implemented. Sprint 7.14's remaining work is the
+real-cluster chaos validation cycle that proves failover and exactly-once
+behavior under pod failure.
 
 ## Roles and Responsibilities
 

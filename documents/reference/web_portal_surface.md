@@ -89,8 +89,8 @@ contract.
   config returned by `GET /api/demo-config` and separately validates publication details from
   `/api/publication`
 - supported routed E2E on Linux uses Playwright from the substrate image with
-  `npm --prefix web exec -- playwright test`; Apple host-native routed E2E remains deferred to
-  the Apple validation pass
+  `npm --prefix web exec -- playwright test`; Apple host-native routed E2E uses host
+  `npm exec` with the same typed fixture and awaits the Apple validation pass
 - the SPA surfaces the active runtime mode, control-plane context, daemon location, inference
   executor location in the publication payload, catalog source, chosen edge port, inference
   dispatch mode, demo-config path, and routed publication inventory through

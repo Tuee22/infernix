@@ -11,8 +11,9 @@
   runs through baked substrate images instead of live repo-mounted containers.
 - `docker compose --project-name <lane> --file compose.yaml ... run --rm infernix infernix ...`
   is the supported Linux control-plane launcher shape for both `linux-cpu` and `linux-gpu`; the
-  GPU lane adds `--file compose.linux-gpu.yaml` to select the CUDA snapshot. Bootstrap scripts
-  invoke that same shape after building the required launcher image.
+  GPU lane uses the same single `compose.yaml` with an explicit one-shot `LAUNCHER_IMAGE`
+  selector to choose the CUDA snapshot. Bootstrap scripts invoke that same shape after building
+  the required launcher image.
 - Routed Playwright execution on Linux runs inside the same substrate image with
   `npm --prefix web exec -- playwright test`.
 - Buildx support is part of the supported Docker toolchain. Host bootstraps install the Docker
@@ -31,12 +32,12 @@
 The current worktree follows the substrate-image policy directly: the image family
 (`infernix-linux-cpu:local` and `infernix-linux-gpu:local`) comes from
 `docker/linux-substrate.Dockerfile` and owns the control plane, the baked `web/dist/` bundle, and
-the Linux Playwright runtime. `compose.yaml` defines the `infernix` service for the default CPU
-lane; `compose.linux-gpu.yaml` is a small override that selects the CUDA snapshot. The service
-bind-mounts only `./.data/` and the Docker socket. The Harbor-first bootstrap path no longer
-depends on any retired helper-registry container cleanup. Kind and `nvkind` cluster create or
-delete uses launcher-local scratch kubeconfig state under the container temp directory, and the
-durable operator-facing kubeconfig is published afterward to
+the Linux Playwright runtime. `compose.yaml` defines the single `infernix` service for both Linux
+lanes, defaults to the CPU image, and accepts `LAUNCHER_IMAGE=infernix-linux-gpu:local` for the
+GPU Docker Compose invocation. The service bind-mounts only `./.data/` and the Docker socket. The
+Harbor-first bootstrap path no longer depends on any retired helper-registry container cleanup.
+Kind and `nvkind` cluster create or delete uses launcher-local scratch kubeconfig state under the
+container temp directory, and the durable operator-facing kubeconfig is published afterward to
 `./.data/runtime/infernix.kubeconfig`. The host Linux bootstrap installs `docker-buildx-plugin`,
 and the Linux substrate image installs Ubuntu's `docker-buildx` package so nested Docker image
 operations have a buildx-capable CLI when needed.
@@ -61,9 +62,9 @@ operations have a buildx-capable CLI when needed.
   bootstrap scripts call that build before entering the launcher.
 - `docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm infernix
   infernix ...` is the direct Linux CPU outer control-plane entrypoint.
-- `docker compose --project-name infernix-linux-gpu --file compose.yaml --file
-  compose.linux-gpu.yaml run --rm infernix infernix ...` is the direct Linux GPU outer
-  control-plane entrypoint.
+- `LAUNCHER_IMAGE=infernix-linux-gpu:local docker compose --project-name infernix-linux-gpu
+  --file compose.yaml run --rm infernix infernix ...` is the direct Linux GPU outer control-plane
+  entrypoint.
 - the `infernix` launcher container forwards the Docker socket and bind-mounts only `./.data/`
   into `/workspace/.data`
 - the `infernix` launcher container sets `/workspace/.build/outer-container/build` as the
@@ -71,8 +72,9 @@ operations have a buildx-capable CLI when needed.
   lives separately at `/opt/infernix/source-snapshot-files.txt` in the image overlay and
   cabal-home plus the cabal builddir stay at the toolchain's natural in-image locations
   (`/root/.cabal/`, `dist-newstyle/`) rather than on any bind-mounted host path
-- the supported Linux launcher reuses the chart archive cache baked into the image for the
-  top-level Harbor, PostgreSQL, Pulsar, MinIO, and Envoy Gateway dependencies
+- the supported Linux launcher reuses the chart archive cache baked into the image at
+  `/opt/infernix/chart/charts/`; `/workspace/chart/charts` links to that image-local cache so
+  Helm finds the top-level Harbor, PostgreSQL, Pulsar, MinIO, and Envoy Gateway dependencies
 - the substrate image uses `tini` as its `ENTRYPOINT` so PID 1 forwards signals cleanly and reaps
   zombie processes for cluster lifecycle commands
 - the baked launcher binaries under `/usr/local/bin/` are authoritative
@@ -80,8 +82,9 @@ operations have a buildx-capable CLI when needed.
   generated outputs are created so git-less image runs of `infernix lint files` validate the
   source snapshot rather than the mutated runtime tree; the manifest stays in the image overlay
 - on the supported outer-container path, `cluster up` reuses the already-built
-  `infernix-linux-<mode>:local` snapshot selected by Compose and publishes that image into Harbor
-  before final rollout instead of asking the shell bootstrap to build or push images directly
+  `infernix-linux-<mode>:local` snapshot selected by the launcher and publishes that image into
+  Harbor before final rollout instead of asking the shell bootstrap to build or push images
+  directly
 - cluster-backed outer-container commands keep host-published Kind API and routed ports on
   `127.0.0.1`
 - cluster-backed outer-container commands join the private Docker `kind` network and use
@@ -121,8 +124,8 @@ operations have a buildx-capable CLI when needed.
 - Apple Silicon has no substrate Dockerfile; the host-native workflow builds the
   `./.build/infernix` and `./.build/infernix-demo` binaries locally, uses `./.build/infernix` for
   ordinary operator commands and the host inference daemon, keeps the routed demo workload
-  cluster-resident when `demo_ui` is enabled, and defers host-native routed E2E to the Apple
-  validation pass
+  cluster-resident when `demo_ui` is enabled, and runs host-native routed E2E through host
+  `npm exec` with the same typed fixture when the Apple validation pass exercises it
 
 ## Unsupported Usage
 

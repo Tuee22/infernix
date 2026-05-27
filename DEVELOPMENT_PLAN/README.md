@@ -63,10 +63,9 @@ The repository implements the substrate-file doctrine described by this plan. Su
 stage one `infernix-substrate.dhall` beside the active build root through the `infernix` command
 that needs it; the explicit
 `infernix internal materialize-substrate ...` helpers remain the direct restaging or inspection
-surface. The Linux substrate Dockerfile also materializes a build-arg-selected substrate file
-inside the image overlay during image build, but supported Compose runs bind-mount the host
-`./.build/` tree over that location and therefore rely on the binary-owned host-visible staging
-path before lifecycle or aggregate test commands. Focused `infernix lint ...` and
+surface. The Linux substrate Dockerfile materializes a build-arg-selected substrate file inside
+the image overlay during image build, and supported Compose runs keep that active build root
+image-local instead of bind-mounting the host `./.build/` tree. Focused `infernix lint ...` and
 `infernix docs check` remain substrate-file independent. The final substrate payload also
 distinguishes cluster and host daemon
 roles: cluster-role configs name the substrate, request and result topics, and any Apple
@@ -107,7 +106,8 @@ preflight belongs to the binary command that needs the file. The formatter-toolc
 remains in place: the Haskell style bootstrap drives `ormolu` and
 `hlint` through the dedicated compatible formatter compiler `ghc-9.12.4`, while the Linux
 substrate image preinstalls that compiler beside the project `ghc-9.14.1` toolchain. The
-supported Linux outer-container launcher reuses a persistent `chart/charts/` archive cache,
+supported Linux outer-container launcher reuses the image-local
+`/opt/infernix/chart/charts/` archive cache,
 hydrates the MinIO dependency through the supported direct tarball path instead of Docker
 Hub-backed OCI metadata, and detects the known stale Pulsar or ZooKeeper epoch mismatch by
 resetting only the retained Pulsar claim roots and retrying `cluster up` once. The Apple
@@ -117,9 +117,9 @@ direct `cabal install`, reconciles Homebrew `protoc`, reconciles Colima to the s
 paths reconcile the Homebrew-managed `python@3.12` formula and `python3.12` command plus a
 user-local Poetry bootstrap on demand. The Poetry bootstrap may reuse an already available
 compatible Python 3.12+ executable when one passes the implemented version check. Routed Apple
-Playwright readiness probes `127.0.0.1` from the host while the browser container joins the
-private Docker `kind` network and targets the Kind control-plane DNS, and the dedicated
-Playwright image no longer bakes a conflicting `NO_COLOR` default. The shared cluster lifecycle
+Playwright validation runs host-native `npm exec` against the published `127.0.0.1` edge port,
+and the in-image
+Playwright runtime no longer bakes a conflicting `NO_COLOR` default. The shared cluster lifecycle
 now surfaces explicit in-progress phase, child-operation detail, and heartbeat data through
 `cluster status` during monitored Docker build, Harbor publication, Harbor-backed final-image
 preload, and Apple retained-state replay steps; explicit substrate materialization writes the
@@ -147,7 +147,7 @@ target tag. The earlier May 13 lifecycle investigation remains the proof point t
 `build-cluster-images` can remain healthy well past thirty minutes before Harbor publication
 begins and that Harbor image pushes are readiness-gated with bounded retries across transient
 registry resets. Sprint 6.26 closes the buildx, npm, GHCup shell-profile, Python packaging, and
-Playwright image-script warning cleanup with the governed `linux-gpu` lifecycle rerun complete.
+Playwright script warning cleanup with the governed `linux-gpu` lifecycle rerun complete.
 Sprint 6.27 closes the staged-substrate format cleanup: `infernix-substrate.dhall` is now a real
 typed Dhall record decoded in-process by the `dhall` Haskell library, with the schema documented at
 `dhall/InfernixSubstrate.dhall`.
@@ -179,13 +179,13 @@ now use that id consistently.
 | Phase | Name | Status | Document |
 |-------|------|--------|----------|
 | 0 | Documentation and Governance | Active (Sprint 0.9: Configuration Doctrine) | [phase-0-documentation-and-governance.md](phase-0-documentation-and-governance.md) |
-| 1 | Repository and Control-Plane Foundation | Active (Sprint 1.11: Host Manifest Materialization; Linux compose selection and stage-zero bootstrap cleanup validated May 27, 2026; Apple bootstrap and the optional `/opt/infernix/chart/charts` relocation remain) | [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md) |
-| 2 | Kind Cluster Storage and Lifecycle | Active (Sprint 2.13 Linux code-side HostTool routing is closed and clean-env `linux-gpu` lifecycle validation passed May 27, 2026; Apple-only `Engines/AppleSilicon.hs` environment capture remains) | [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md) |
-| 3 | HA Platform Services and Edge Routing | Active (Sprint 3.10 Linux in-container Playwright E2E validated on `linux-gpu` May 27, 2026; Apple host-native E2E refactor remains) | [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md) |
+| 1 | Repository and Control-Plane Foundation | Active (Sprint 1.11: Host Manifest Materialization; Linux single-file Compose image selection, stage-zero bootstrap cleanup, and image-local `/opt/infernix/chart/charts` cache validated May 27, 2026; Apple bootstrap remains) | [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md) |
+| 2 | Kind Cluster Storage and Lifecycle | Active (Sprint 2.13 code-side env capture retirement + HostTool routing closed and clean-env `linux-gpu` lifecycle validation passed May 27, 2026; Apple host lifecycle validation remains deferred) | [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md) |
+| 3 | HA Platform Services and Edge Routing | Active (Sprint 3.10 Linux in-container Playwright E2E validated on `linux-gpu` May 27, 2026; Apple host-native E2E runner code landed and awaits Apple validation) | [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md) |
 | 4 | Inference Service and Durable Runtime | Done (Sprint 4.13 closed May 27, 2026: `ClusterConfig` renderer + decoder roundtrip covered by unit tests; MinIO endpoint / region / credential wiring reads mounted `ClusterConfig` + `SecretsConfig`; the `linux-gpu` `test all` PASS on May 26, 2026 confirms the typed `ClusterConfig.engine.commandOverrides` threading through `Worker.hs.runInferenceWorker` works against the real cluster) | [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) |
 | 5 | Web UI and Shared Types | Done (Sprint 5.9 closed May 27, 2026: demo backend reads `ClusterConfig.demoBackend.*`; Python adapters no longer read `os.environ`; web/Node helper scripts no longer read `process.env`; `poetry run check-code`, Node syntax checks, grep gates, and the May 26 `linux-gpu` `test all` PASS validate the closure) | [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md) |
 | 6 | Validation, E2E, and HA Hardening | Done (Sprint 6.28 closed May 27, 2026: test-suite env isolation and bare `proc "python3"` fixtures retired; Haskell-style, docs, and chart lint gates are active; the May 26 `linux-gpu` `test all` PASS remains the full real-cluster validation baseline) | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) |
-| 7 | Demo App Multi-User Durable Context | Active (Sprints 7.1, 7.3–7.13, 7.16 partial-landed; 7.14, 7.15 Planned; Sprint 7.17 Linux lane landed and was validated end-to-end via the `linux-gpu` `test all` PASS on May 26, 2026; only the Apple-only Poetry/bootstrap env handoff remains as the explicit Apple follow-on) | [phase-7-demo-app-durable-context.md](phase-7-demo-app-durable-context.md) |
+| 7 | Demo App Multi-User Durable Context | Active (Sprints 7.1, 7.3–7.14, 7.16 partial-landed; 7.15 Planned; Sprint 7.14 WebSocket-to-Pulsar publish plumbing landed May 27, 2026 and awaits real-cluster integration / chaos validation; Sprint 7.17 Linux lane landed and was validated end-to-end via the `linux-gpu` `test all` PASS on May 26, 2026; only the Apple-only Poetry bootstrap compatibility path in `Python.hs` remains as the explicit Apple follow-on) | [phase-7-demo-app-durable-context.md](phase-7-demo-app-durable-context.md) |
 
 > **Note**: Phase statuses describe current repository state. Earlier governed phases may remain
 > `Active` for named follow-ons while later phases can be `Done` when their owned work and
@@ -216,14 +216,13 @@ The supported platform now closes around these rules:
   `./.build/infernix internal materialize-substrate apple-silicon [--demo-ui true|false]`
   remains available for direct restaging or inspection
 - Linux outer-container lifecycle and validation commands materialize or verify
-  `./.build/outer-container/build/infernix-substrate.dhall` on the host through the bind-mounted
-  build tree; the explicit helper
+  `/workspace/.build/outer-container/build/infernix-substrate.dhall` inside the launcher image;
+  the explicit helper
   `docker compose run --rm infernix infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>`
   remains available for direct restaging or inspection
 - the Linux substrate Dockerfile materializes a build-arg-selected copy inside the image overlay,
-  but the supported outer-container command surface bind-mounts the host `./.build/` tree, so
-  lifecycle and aggregate test commands materialize or verify the host-visible substrate file
-  before doing substrate-aware work
+  and the supported outer-container command surface keeps that copy image-local before doing
+  substrate-aware work
 - supported runtime, cluster, cache, Kubernetes-wrapper, frontend-contract generation, and
   aggregate `infernix test ...` entrypoints own substrate-file preflight for their execution
   context and fail with a substrate-specific diagnostic if the file cannot be materialized or
@@ -241,10 +240,10 @@ The supported platform now closes around these rules:
 - when the demo UI is enabled on Apple Silicon, the routed demo surface stays cluster-resident and
   manual inference flows through the cluster daemon's batching path before Apple inference batches
   move through Pulsar to host daemons
-- on Apple Silicon, Compose is not a user-facing launcher for ordinary CLI work; the host-native
-  routed-E2E executor refactor is deferred and the current Apple branch in `runRuntimeModeE2E`
-  surfaces an explicit deferral diagnostic. Linux substrates run Playwright in-container inside
-  the substrate image via `npm --prefix web exec -- playwright test ...`
+- on Apple Silicon, Compose is not a user-facing launcher for ordinary CLI work; host-native routed
+  E2E now uses host `npm exec` Playwright fed by the same typed fixture against the published
+  localhost edge port and still needs the Apple validation pass. Linux substrates run Playwright
+  in-container inside the substrate image via `npm --prefix web exec -- playwright test ...`
 - on Linux substrates, all supported CLI commands run through
   `docker compose run --rm infernix infernix ...`; there is no supported Linux host-native build or
   CLI surface outside the outer container
@@ -256,8 +255,9 @@ The supported platform now closes around these rules:
 - for `linux-gpu`, the outer control-plane image is still built from the CUDA base image, and that
   same built image is the artifact pushed to Harbor and deployed as the cluster daemon
 - the staged substrate file lives under the active build root:
-  `./.build/infernix-substrate.dhall` on Apple and `./.build/outer-container/build/infernix-substrate.dhall`
-  on the host on the Linux outer-container path; cluster deployment republishes that payload
+  `./.build/infernix-substrate.dhall` on Apple and
+  `/workspace/.build/outer-container/build/infernix-substrate.dhall` inside the Linux launcher
+  image; cluster deployment republishes that payload
   through `ConfigMap/infernix-demo-config` whenever the active topology has cluster-resident
   consumers and mounts the same filename inside those workloads at `/opt/build/infernix-substrate.dhall`
 - each daemon reads its staged substrate `.dhall` at startup; automatic file-watching or reload is

@@ -125,7 +125,8 @@ deduplication enabled) are reconciled on daemon startup by
 `reconcileSupportedNamespaces` (`src/Infernix/Runtime/Pulsar.hs`); the
 `persistent://infernix/system/model.bootstrap.request` topic is created during the same
 reconcile pass. The coordinator's bootstrap consumer + downloader + MinIO uploader
-runtime loop lands together with Sprint 7.14's chaos validation:
+runtime loop is implemented; Sprint 7.14's remaining chaos validation proves failover and
+exactly-once behavior on a real cluster:
 
 | Topic | Pattern | Purpose |
 |---|---|---|

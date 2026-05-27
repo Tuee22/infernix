@@ -305,12 +305,13 @@ Rules:
   toolkit. The shell relies on `docker compose run --rm infernix infernix <command>` to build or
   reuse the active `infernix-linux-<mode>:local` launcher image and then run the binary command.
 - When the active Linux snapshot differs from the default `linux-cpu` image, phase docs call out
-  the `INFERNIX_COMPOSE_*` launcher variables that select the built image and Dockerfile build
-  arguments while keeping that same supported Compose command surface unchanged.
+  the one-shot Compose launcher image selector that chooses the already-built
+  `infernix-linux-gpu:local` image while keeping the same single-file Compose command surface
+  unchanged. This selector is a Docker Compose invocation detail, not an Infernix runtime
+  configuration source.
 - On Apple Silicon, operators do not use Compose as a user-facing launcher for ordinary CLI work.
-  The Apple host-native routed-E2E refactor (host-side `npm exec` Playwright fed by the same typed
-  fixture) is deferred together with the Apple bootstrap stage-zero refactor; the current Apple
-  branch in `runRuntimeModeE2E` surfaces an explicit deferral diagnostic. Phase 3 Sprint 3.10
+  Host-native routed E2E uses host `npm exec` Playwright fed by the same typed fixture against the
+  published localhost edge port and still needs the Apple validation pass. Phase 3 Sprint 3.10
   (May 24, 2026) retired the previous dedicated `infernix-playwright:local` image and the
   `docker compose run --rm playwright` invocation; Linux substrates now run Playwright in-container
   inside the substrate image via `npm --prefix web exec -- playwright test ...`.
@@ -341,8 +342,8 @@ Substrates are the product-facing inference lanes:
 | Substrate | Canonical substrate id | Current staging rule |
 |-----------|------------------------|----------------------|
 | Apple Silicon / Metal | `apple-silicon` | host-native lifecycle and validation commands materialize or verify `./.build/infernix-substrate.dhall`; `./.build/infernix internal materialize-substrate apple-silicon [--demo-ui true|false]` remains the explicit restaging helper |
-| Linux / CPU | `linux-cpu` | outer-container lifecycle and validation commands materialize or verify `./.build/outer-container/build/infernix-substrate.dhall` on the host; `docker compose run --rm infernix infernix internal materialize-substrate linux-cpu --demo-ui <true|false>` remains the explicit restaging helper |
-| Linux / NVIDIA GPU | `linux-gpu` | outer-container lifecycle and validation commands materialize or verify `./.build/outer-container/build/infernix-substrate.dhall` on the host; `docker compose run --rm infernix infernix internal materialize-substrate linux-gpu --demo-ui <true|false>` remains the explicit restaging helper |
+| Linux / CPU | `linux-cpu` | outer-container lifecycle and validation commands materialize or verify `/workspace/.build/outer-container/build/infernix-substrate.dhall` inside the launcher image; `docker compose run --rm infernix infernix internal materialize-substrate linux-cpu --demo-ui <true|false>` remains the explicit restaging helper |
+| Linux / NVIDIA GPU | `linux-gpu` | outer-container lifecycle and validation commands materialize or verify `/workspace/.build/outer-container/build/infernix-substrate.dhall` inside the launcher image; `docker compose run --rm infernix infernix internal materialize-substrate linux-gpu --demo-ui <true|false>` remains the explicit restaging helper |
 
 Rules:
 
@@ -418,8 +419,8 @@ Rules:
   through the binary-owned lifecycle or validation command; the explicit helper remains
   `./.build/infernix internal materialize-substrate apple-silicon [--demo-ui true|false]`.
 - A supported outer-container workflow materializes or verifies the Linux substrate file under
-  `./.build/outer-container/build/` on the host through the bind-mounted build tree from the
-  binary-owned lifecycle or validation command; the explicit helper remains
+  `/workspace/.build/outer-container/build/` inside the launcher image from the binary-owned
+  lifecycle or validation command; the explicit helper remains
   `docker compose run --rm infernix infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>`.
 - Supported runtime, cluster, cache, Kubernetes-wrapper, frontend-contract generation, and
   aggregate `infernix test ...` entrypoints own the substrate-file preflight for their execution
@@ -570,9 +571,9 @@ Substrate-specific validation is explicit.
 - On Apple Silicon, the supported host CLI owns test orchestration. It proves that the cluster
   daemon is deployed, starts the same-binary host inference daemon when the service-loop checks need
   Apple-native inference, validates the Pulsar batch handoff from cluster daemon to host daemon, and
-  verifies that the host daemon publishes the result; the host-native routed-E2E executor refactor
-  (host-side `npm exec` Playwright fed by the same typed fixture) is deferred and the current Apple
-  branch in `runRuntimeModeE2E` surfaces an explicit deferral diagnostic until that work lands.
+  verifies that the host daemon publishes the result; host-native routed E2E now uses host
+  `npm exec` Playwright fed by the same typed fixture against the published localhost edge port and
+  still needs the Apple validation pass.
 - On Linux substrates, all supported CLI and test commands run through
   `docker compose run --rm infernix infernix ...`, and test flows do not manage a host daemon
   because request consumption, inference, and result publication all run from deployed cluster
@@ -684,11 +685,16 @@ Rules:
   from `${BASH_SOURCE[0]}` (script location), `/etc/passwd` (operator home), or literal absolute
   constants written into the script. Each script's first line resets `PATH=/usr/bin:/bin` so the
   operator's ambient `PATH` cannot influence resolution.
+- The one shell-level exception is the bootstrap-owned `LAUNCHER_IMAGE=... docker compose ...`
+  prefix for selecting the already-built Linux launcher image for a single Compose process. The
+  value is set by the bootstrap script or written explicitly in direct-reference commands; no
+  Infernix process reads it, and runtime configuration still comes from Dhall.
 - No Python adapter may consume `os.environ`. Adapters receive a typed JSON config blob on stdin
   from the Haskell daemon and parse it once at startup.
 - No web / Playwright test script may consume `process.env`. The Playwright config file emits the
-  typed fixture via Playwright's `use:` block sourced from a Dhall-decoded JSON file written to
-  `/workspace/.data/runtime/playwright-fixture.json` at test setup; the test reads
+  typed fixture via Playwright's `use:` block sourced from a Dhall-decoded JSON file written to the
+  repo-relative `.data/runtime/playwright-fixture.json` at test setup, which resolves to
+  `/workspace/.data/runtime/playwright-fixture.json` inside the Linux launcher; the test reads
   `test.info().project.use.*`.
 - No `chart/templates/deployment-*.yaml` carries an `env:` block. Each pod mounts the cluster
   ConfigMap + cluster Secret and the Haskell daemon reads both natively.

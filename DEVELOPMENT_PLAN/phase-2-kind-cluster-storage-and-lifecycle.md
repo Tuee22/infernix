@@ -1,6 +1,6 @@
 # Phase 2: Kind Cluster Storage and Lifecycle
 
-**Status**: Active (Sprint 2.13 Linux env-side + HostTool routing landed and clean-env `linux-gpu` lifecycle validation passed May 27, 2026; Apple `Engines/AppleSilicon.hs` remains open; Sprints 2.1–2.12 Done)
+**Status**: Active (Sprint 2.13 code-side env capture retirement and HostTool routing landed; clean-env `linux-gpu` lifecycle validation passed May 27, 2026; Apple host lifecycle validation remains deferred; Sprints 2.1–2.12 Done)
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Define the supported Kind bootstrap path, the manual storage doctrine, the Helm
@@ -17,11 +17,13 @@ preservation contract are implemented in this worktree. Sprint 2.13 (Cluster Lif
 Host-Manifest Retirement) is `Active`: the Linux cluster lifecycle path no longer consumes
 `INFERNIX_HOST_KIND_ROOT`, `INFERNIX_HOST_REPO_ROOT`, or `HOSTNAME`, no longer inherits the parent
 process environment in the shared cluster/process-monitor helpers, and routes known cluster tools
-through the `HostConfig`-backed HostTool resolver. The May 27, 2026 clean-environment Linux GPU
-validation passed: `env -i /usr/bin/bash ./bootstrap/linux-gpu.sh build`, `up`, and `status`
-completed, with `status` reporting `runtimeMode: linux-gpu`, `lifecyclePhase: steady-state`,
-2 Kubernetes nodes, and 79 pods. The remaining work is the Apple-only
-`src/Infernix/Engines/AppleSilicon.hs` environment capture.
+through the `HostConfig`-backed HostTool resolver. The Apple setup path in
+`src/Infernix/Engines/AppleSilicon.hs` no longer inherits the parent environment; it invokes the
+Poetry setup entrypoint with an explicit `--install-root` argument and an empty process
+environment. The May 27, 2026 clean-environment Linux GPU validation passed:
+`env -i /usr/bin/bash ./bootstrap/linux-gpu.sh build`, `up`, and `status` completed, with
+`status` reporting `runtimeMode: linux-gpu`, `lifecyclePhase: steady-state`, 2 Kubernetes nodes,
+and 79 pods. The remaining work is the Apple host lifecycle validation pass.
 
 ## Storage Doctrine
 
@@ -320,8 +322,8 @@ self-contained in the final `linux-gpu` image.
 ### Validation
 
 - the `linux-gpu` substrate image build produces a runnable `nvkind` binary
-- `docker compose --project-name infernix-linux-gpu --file compose.yaml --file
-  compose.linux-gpu.yaml run --rm infernix infernix cluster up` succeeds on a supported NVIDIA host
+- `LAUNCHER_IMAGE=infernix-linux-gpu:local docker compose --project-name infernix-linux-gpu
+  --file compose.yaml run --rm infernix infernix cluster up` succeeds on a supported NVIDIA host
   without a host-visible `nvkind` handoff path or a shell-owned substrate staging step
 - repeated `linux-gpu` cluster lifecycle runs preserve GPU visibility and durable storage behavior
 
@@ -351,9 +353,9 @@ around one Compose-driven outer container for both Linux substrates.
 - the cluster publication contract uses the same stable `infernix-substrate.dhall` filename in the
   repo-local mirror and in-cluster mount
 - the supported Linux control-plane launcher is Compose for both `linux-cpu` and `linux-gpu`
-- `compose.yaml` defines the base CPU launcher and `compose.linux-gpu.yaml` selects the active
-  `infernix-linux-gpu:local` snapshot for the GPU lane while keeping the supported Compose service
-  surface unchanged
+- `compose.yaml` defines the single launcher service and defaults to the CPU snapshot; the GPU lane
+  selects the active `infernix-linux-gpu:local` snapshot through a one-shot Compose image selector
+  while keeping the supported Compose service surface unchanged
 - the outer control-plane container never requires the NVIDIA runtime for its own process, even
   when the built image targets `linux-gpu`
 - the same built `linux-gpu` image is the artifact mirrored to Harbor and deployed as the cluster
@@ -366,9 +368,9 @@ around one Compose-driven outer container for both Linux substrates.
   it into the ConfigMap without any runtime-mode flag
 - `infernix kubectl get configmap infernix-demo-config -n platform -o yaml` shows the current
   `infernix-substrate.dhall` key and the cluster-role payload
-- `docker compose --project-name infernix-linux-gpu --file compose.yaml --file
-  compose.linux-gpu.yaml run --rm infernix infernix cluster up` exercises the same supported
-  launcher surface for `linux-gpu` without shell-owned substrate staging
+- `LAUNCHER_IMAGE=infernix-linux-gpu:local docker compose --project-name infernix-linux-gpu
+  --file compose.yaml run --rm infernix infernix cluster up` exercises the same supported launcher
+  surface for `linux-gpu` without shell-owned substrate staging
 
 ### Remaining Work
 
@@ -521,7 +523,7 @@ None.
 
 ---
 
-## Sprint 2.13: Cluster Lifecycle Host-Manifest Retirement [Active — Linux path validated, Apple residual pending]
+## Sprint 2.13: Cluster Lifecycle Host-Manifest Retirement [Active — code landed, Apple validation pending]
 
 **Status**: Active
 **Blocked by**: Phase 1 Sprint 1.11 (Host Manifest Materialization)
@@ -556,6 +558,10 @@ materialized in Phase 1 Sprint 1.11.
   `env -i /usr/bin/bash ./bootstrap/linux-gpu.sh up` reached `cluster up complete`, and
   `env -i /usr/bin/bash ./bootstrap/linux-gpu.sh status` reported
   `lifecyclePhase: steady-state`.
+- May 27, 2026: `src/Infernix/Engines/AppleSilicon.hs` stopped importing
+  `System.Environment.getEnvironment`; the setup invocation now passes `--install-root`
+  explicitly and uses an empty `env = Just []` process environment. `cabal build all`,
+  `cabal test infernix-unit`, and `cabal test infernix-haskell-style` pass on Linux.
 
 ### Remaining Work
 
@@ -604,12 +610,18 @@ Env-side retirement landed (May 25, 2026):
   `linuxOuterContainerUnitTestFixture` `HostConfig.hostRepoRoot`
   field directly; the assertion compares against the typed fixture's
   `realRepoRoot` instead.
+- **`Engines/AppleSilicon.hs` `getEnvironment` capture retired
+  (code-side).** The host setup entrypoint invocation now matches the
+  supported Python worker setup path: Poetry virtualenv placement is
+  owned by `python/poetry.toml`, the adapter install root is passed as
+  `--install-root`, and the spawned setup process receives an empty
+  environment rather than inheriting the operator process environment.
 
 Verified end-to-end on the host: `cabal build all`, `cabal test
 infernix-unit` (70/70 tests), `cabal test infernix-haskell-style`,
 and `./.build/infernix lint {chart,files,docs,proto}` all exit zero.
 The Phase 2 forbidden-env grep gate
-(`grep -rEn 'lookupEnv|getEnv |getEnvironment|setEnv|unsetEnv' src/Infernix/Cluster.hs src/Infernix/ProcessMonitor.hs`)
+(`grep -rEn 'lookupEnv|getEnv |getEnvironment|setEnv|unsetEnv' src/Infernix/Cluster.hs src/Infernix/ProcessMonitor.hs src/Infernix/Engines/AppleSilicon.hs`)
 returns only documented-retirement comment references — no live
 reads remain.
 
@@ -641,9 +653,6 @@ honest):
   `docker` and `skopeo` paths through `HarborPublishOptions`, so the
   multi-arch `skopeo copy` fallback is covered by the same manifest
   inventory.
-- **`Engines/AppleSilicon.hs` `getEnvironment` capture.** Apple-only
-  code path; retirement deferred per the user's "stay on Linux with
-  CUDA" instruction.
 - **Clean-env `linux-gpu` lifecycle validation closed May 27, 2026.**
   `env -i /usr/bin/bash ./bootstrap/linux-gpu.sh build` rebuilt
   `infernix-linux-gpu:local`, and the follow-on clean-env `up`
@@ -662,16 +671,15 @@ honest):
 
 ## Remaining Work
 
-Sprint 2.13 Linux code-side closed for env reads and HostTool routing:
-5 env reads retired in `Cluster.hs`, 1 `getEnvironment` retired in
-`ProcessMonitor.hs`, `engineCommandOverridesFromEnvironment` deleted,
-supporting unit-test fixture rewired, shared cluster command helpers
-resolve known tools through the staged host manifest, and
-`Cluster/PublishImages.hs` receives resolved `docker` + `skopeo`
-commands through `HarborPublishOptions`. Apple-only environment
-capture remains pending. The env-clean `linux-gpu` cluster validation
-passed May 27, 2026 after the compose Docker-config bind mount
-regression was removed. Sprints 2.1–2.12 closed.
+Sprint 2.13 code-side closed for env reads and HostTool routing: 5 env reads retired in
+`Cluster.hs`, 1 `getEnvironment` retired in `ProcessMonitor.hs`, the Apple setup
+`getEnvironment` capture retired in `Engines/AppleSilicon.hs`,
+`engineCommandOverridesFromEnvironment` deleted, supporting unit-test fixture rewired, shared
+cluster command helpers resolve known tools through the staged host manifest, and
+`Cluster/PublishImages.hs` receives resolved `docker` + `skopeo` commands through
+`HarborPublishOptions`. The env-clean `linux-gpu` cluster validation passed May 27, 2026 after
+the compose Docker-config bind mount regression was removed. Apple host lifecycle validation
+remains deferred to the Apple Silicon pass. Sprints 2.1–2.12 closed.
 
 ---
 

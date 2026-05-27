@@ -74,7 +74,11 @@ import Infernix.Routes
     renderReadmeRouteSummarySection,
   )
 import Infernix.Runtime
-import Infernix.Runtime.Pulsar (runProductionDaemon)
+import Infernix.Runtime.Pulsar
+  ( DemoClientMessagePublication (..),
+    planDemoClientMessagePublications,
+    runProductionDaemon,
+  )
 import Infernix.Topic.Drafts qualified as TopicDrafts
 import Infernix.Topic.Metadata qualified as TopicMetadata
 import Infernix.Types
@@ -164,23 +168,29 @@ main = do
     ("`/minio/s3` -> `infernix-minio:9000`" `isInfixOf` renderChartRouteRegistryCommentSection)
     "the chart route summary includes the MinIO S3 backend from the route registry"
   -- Phase 1 Sprint 1.11 — compose.yaml shrunk to the supported shape:
-  -- one infernix service for the default CPU lane, plus a small GPU
-  -- override file. Bootstrap scripts select the project and compose
-  -- files with explicit Docker Compose CLI arguments.
+  -- one infernix service, one Dockerfile-free Compose file, and a
+  -- bootstrap-owned image selector so CPU hosts do not carry CUDA
+  -- baggage.
   composeLauncherContents <- readFile "compose.yaml"
-  composeGpuOverrideContents <- readFile "compose.linux-gpu.yaml"
   assert
-    ("image: infernix-linux-cpu:local" `isInfixOf` composeLauncherContents)
-    "compose defaults to the linux-cpu launcher image"
+    ("image: ${LAUNCHER_IMAGE:-infernix-linux-cpu:local}" `isInfixOf` composeLauncherContents)
+    "compose defaults to the linux-cpu launcher image and allows bootstrap-owned image selection"
   assert
-    ("image: infernix-linux-gpu:local" `isInfixOf` composeGpuOverrideContents)
-    "compose.linux-gpu.yaml selects the linux-gpu launcher image"
+    ("infernix-linux-gpu:local" `notElem` words composeLauncherContents)
+    "compose.yaml does not hard-code the CUDA launcher image"
   assert
-    (not ("INFERNIX_" `isInfixOf` composeLauncherContents || "INFERNIX_" `isInfixOf` composeGpuOverrideContents))
-    "Sprint 1.11: compose launcher files no longer use project env substitution"
+    (not ("INFERNIX_" `isInfixOf` composeLauncherContents))
+    "Sprint 1.11: compose launcher does not use project-prefixed image substitution"
   assert
-    (not ("build:" `isInfixOf` composeLauncherContents || "build:" `isInfixOf` composeGpuOverrideContents))
-    "Sprint 1.11: compose launcher files do not carry build blocks"
+    (not ("build:" `isInfixOf` composeLauncherContents))
+    "Sprint 1.11: compose launcher file does not carry build blocks"
+  linuxDockerfileContents <- readFile "docker/linux-substrate.Dockerfile"
+  assert
+    ("/opt/infernix/chart/charts" `isInfixOf` linuxDockerfileContents)
+    "Sprint 1.11: Linux launcher image bakes the Helm archive cache under /opt/infernix/chart/charts"
+  assert
+    ("ln -s /opt/infernix/chart/charts /workspace/chart/charts" `isInfixOf` linuxDockerfileContents)
+    "Sprint 1.11: Linux launcher preserves Helm's chart/charts dependency lookup through an image-local symlink"
   assert
     (appleHostRequirementIds AppleSilicon ClusterUpCommand == ["docker", "colima", "kind", "kubectl", "helm", "node", "python", "poetry"])
     "apple host prerequisite planning includes the full cluster and adapter toolchain for apple-silicon cluster up"
@@ -332,6 +342,7 @@ main = do
       assertDemoBucketBootstrap
       assertConversationPropertyTests
       assertContextModelMap
+      assertDemoWebSocketPublicationPlanning
       assertHostConfig unitTestRoot
 
       let legacyRegistryNamespace = repoRoot paths </> ".build" </> "kind" </> "registry" </> "localhost:30001"
@@ -2042,6 +2053,111 @@ assertContextModelMap = do
   assert
     (resolvedAfterSoftDelete == Just "llm-tinyllama-gguf")
     "ContextSoftDeleted event does not alter the (contextId, modelId) binding"
+
+-- Phase 7 Sprint 7.14 — WebSocket client frames publish typed JSON
+-- events onto the durable Pulsar topic families.
+assertDemoWebSocketPublicationPlanning :: IO ()
+assertDemoWebSocketPublicationPlanning = do
+  let ns = ConversationTopic.defaultDemoTopicNamespace
+      userIdValue = Contracts.UserId "user-a"
+      contextIdValue = Contracts.ContextId "ctx-a"
+      promptPayload =
+        Contracts.UserPromptPayload
+          { Contracts.promptText = "hello",
+            Contracts.promptClientIdempotencyKey = Contracts.ClientIdempotencyKey "idem-1",
+            Contracts.promptUserUploads = []
+          }
+      promptPublications =
+        planDemoClientMessagePublications
+          ns
+          userIdValue
+          (Contracts.ClientSubmitPrompt contextIdValue promptPayload)
+
+  case promptPublications of
+    [publication] -> do
+      assert
+        (demoClientPublicationTopic publication == ConversationTopic.conversationTopicName ns userIdValue contextIdValue)
+        "ClientSubmitPrompt publishes to the per-context conversation topic"
+      assert
+        (demoClientPublicationProducerName publication == "frontend-conversation-user-a-ctx-a")
+        "ClientSubmitPrompt uses a stable per-context frontend producer"
+      assert
+        (demoClientPublicationSequenceKey publication == "idem-1")
+        "ClientSubmitPrompt uses the client idempotency key as the dedup sequence key"
+      assert
+        (decodeLazy (demoClientPublicationPayload publication) == Right (Contracts.ConversationUserPromptEvent promptPayload))
+        "ClientSubmitPrompt payload is a ConversationUserPromptEvent"
+    _ -> assert False "ClientSubmitPrompt creates exactly one publication"
+
+  let createPublications =
+        planDemoClientMessagePublications
+          ns
+          userIdValue
+          (Contracts.ClientCreateContext contextIdValue "llm-qwen25-safetensors" "Research")
+  case createPublications of
+    [publication] -> do
+      assert
+        (demoClientPublicationTopic publication == ConversationTopic.contextsMetadataTopicName ns userIdValue)
+        "ClientCreateContext publishes to the per-user contexts metadata topic"
+      assert
+        (demoClientPublicationProducerName publication == "frontend-contexts-user-a")
+        "ClientCreateContext uses a stable per-user contexts producer"
+      assert
+        ( decodeLazy (demoClientPublicationPayload publication)
+            == Right
+              ( Contracts.ContextCreated
+                  { Contracts.contextCreatedContextId = contextIdValue,
+                    Contracts.contextCreatedModelId = "llm-qwen25-safetensors",
+                    Contracts.contextCreatedTitle = "Research"
+                  }
+              )
+        )
+        "ClientCreateContext payload is a ContextCreated event"
+    _ -> assert False "ClientCreateContext creates exactly one publication"
+
+  let draftPublications =
+        planDemoClientMessagePublications
+          ns
+          userIdValue
+          (Contracts.ClientUpdateDraft contextIdValue "draft text")
+  case draftPublications of
+    [publication] -> do
+      assert
+        (demoClientPublicationTopic publication == ConversationTopic.draftsMetadataTopicName ns userIdValue)
+        "ClientUpdateDraft publishes to the per-user drafts metadata topic"
+      assert
+        (demoClientPublicationProducerName publication == "frontend-drafts-user-a")
+        "ClientUpdateDraft uses a stable per-user drafts producer"
+      assert
+        ( decodeLazy (demoClientPublicationPayload publication)
+            == Right (Contracts.DraftUpdated contextIdValue "draft text")
+        )
+        "ClientUpdateDraft payload is a DraftUpdated event"
+    _ -> assert False "ClientUpdateDraft creates exactly one publication"
+
+  let cancelPublications =
+        planDemoClientMessagePublications
+          ns
+          userIdValue
+          (Contracts.ClientCancelPrompt contextIdValue (Contracts.MessageId "prompt-1"))
+  case cancelPublications of
+    [publication] ->
+      assert
+        ( decodeLazy (demoClientPublicationPayload publication)
+            == Right (Contracts.ConversationCancelEvent (Contracts.ConversationCancelPayload (Contracts.MessageId "prompt-1")))
+        )
+        "ClientCancelPrompt payload is a ConversationCancelEvent"
+    _ -> assert False "ClientCancelPrompt creates exactly one publication"
+
+  assert
+    (null (planDemoClientMessagePublications ns userIdValue (Contracts.ClientHello userIdValue)))
+    "ClientHello does not publish a durable event"
+  assert
+    (null (planDemoClientMessagePublications ns userIdValue (Contracts.ClientSubscribeContext contextIdValue)))
+    "ClientSubscribeContext does not publish a durable event"
+
+decodeLazy :: (Aeson.FromJSON a) => Lazy.ByteString -> Either String a
+decodeLazy = Aeson.eitherDecode
 
 -- Phase 1 Sprint 1.11 — HostConfig roundtrip + HostTools resolution.
 assertHostConfig :: FilePath -> IO ()

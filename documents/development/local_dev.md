@@ -72,10 +72,10 @@ docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm in
 ```
 
 For `linux-gpu`, use `./bootstrap/linux-gpu.sh ...` as the supported entrypoint. The underlying
-reference path adds `--file compose.linux-gpu.yaml` to the same Compose service shape. If the
-host does not already pass `nvidia-smi -L`, the supported bootstrap installs the recommended
-Ubuntu compute driver, stops, and instructs the operator to reboot before rerunning the same
-command.
+reference path uses the same `compose.yaml` service and prefixes the direct command with
+`LAUNCHER_IMAGE=infernix-linux-gpu:local`. If the host does not already pass `nvidia-smi -L`, the
+supported bootstrap installs the recommended Ubuntu compute driver, stops, and instructs the
+operator to reboot before rerunning the same command.
 
 ## Engine Adapter Testing
 
@@ -112,7 +112,7 @@ the shared adapter project:
   Harbor, MinIO, Pulsar, or Playwright work begins
 - on Linux, routed E2E runs Playwright inside the substrate image on Docker's private `kind`
   network against the Kind control-plane DNS instead of `host.docker.internal`; Apple host-native
-  routed E2E remains deferred to the Apple validation pass
+  routed E2E uses host `npm exec` with the same typed fixture and awaits the Apple validation pass
 - on Apple, retained Kind state under `./.data/kind/apple-silicon/` is replayed into and out of
   the worker instead of being bind-mounted, so large retained state can make `up`, `test`, and
   `down` noticeably slower than Linux
@@ -134,9 +134,10 @@ the shared adapter project:
   substrate image uses `tini` as its entrypoint for clean signal handling
 - Linux Kind or `nvkind` configs use repo-local state under `./.data/`; the outer container no
   longer forwards a host-repo-root override
-- on the Linux outer-container path, the baked image carries the chart archive cache for Harbor,
-  PostgreSQL, Pulsar, MinIO, and Envoy Gateway so fresh launcher containers can reuse the same
-  dependency bundle without reconstructing it from the network every time
+- on the Linux outer-container path, the baked image carries the chart archive cache at
+  `/opt/infernix/chart/charts/` for Harbor, PostgreSQL, Pulsar, MinIO, and Envoy Gateway, with
+  `/workspace/chart/charts` linked to that image-local cache so fresh launcher containers can
+  reuse the same dependency bundle without reconstructing it from the network every time
 - routed E2E on Linux runs Playwright inside the same substrate image with
   `npm --prefix web exec -- playwright test`
 - when `demo_ui` is enabled, the demo surface stays cluster-resident on Apple and Linux alike

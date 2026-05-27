@@ -21,7 +21,7 @@ The repository and README matrix still point at `apple-silicon` as the Apple-nat
 inference lane, and the plan now records the clarified contract explicitly: Apple host workflows stage
 `./.build/infernix-substrate.dhall` through `./.build/infernix internal materialize-substrate
 apple-silicon`, Linux outer-container workflows stage
-`./.build/outer-container/build/infernix-substrate.dhall` on the host through
+`/workspace/.build/outer-container/build/infernix-substrate.dhall` inside the launcher image through
 `docker compose run --rm infernix infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>`,
 and the routed Apple path is clustered service orchestration plus host-native inference execution:
 cluster daemons remain present, and Apple inference batches move

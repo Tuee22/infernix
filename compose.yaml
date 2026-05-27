@@ -1,6 +1,6 @@
 services:
   infernix:
-    image: infernix-linux-cpu:local
+    image: ${LAUNCHER_IMAGE:-infernix-linux-cpu:local}
     pull_policy: never
     volumes:
       - ./.data:/workspace/.data

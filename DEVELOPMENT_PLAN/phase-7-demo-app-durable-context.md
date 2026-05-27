@@ -1,6 +1,6 @@
 # Phase 7: Demo App Multi-User Durable Context
 
-**Status**: Active (Sprints 7.1, 7.3–7.6, 7.7–7.13, 7.16 in various partial-landed states with `Active` headers; Sprints 7.14, 7.15 `Planned`; Sprint 7.17 schema + Haskell decoder + chart Secret + chart env stripping + Python `INFERNIX_POETRY_EXECUTABLE` retirement + the full `Demo/Api.hs` / `Demo/Auth.hs` / `Runtime/Pulsar.hs.loadBootstrapPresignedConfig` `INFERNIX_KEYCLOAK_*` / `INFERNIX_MINIO_*` retirement all landed May 25, 2026 and the `linux-gpu` `test all` validation passed May 26, 2026; only the Apple-only Poetry/bootstrap env handoff remains open)
+**Status**: Active (Sprints 7.1, 7.3–7.6, 7.7–7.14, 7.16 in various partial-landed states with `Active` headers; Sprint 7.15 `Planned`; Sprint 7.14's WebSocket-to-Pulsar publish plumbing landed May 27, 2026 and still needs the real-cluster integration / chaos suite; Sprint 7.17 schema + Haskell decoder + chart Secret + chart env stripping + Python `INFERNIX_POETRY_EXECUTABLE` retirement + the full `Demo/Api.hs` / `Demo/Auth.hs` / `Runtime/Pulsar.hs.loadBootstrapPresignedConfig` `INFERNIX_KEYCLOAK_*` / `INFERNIX_MINIO_*` retirement all landed May 25, 2026 and the `linux-gpu` `test all` validation passed May 26, 2026; only the Apple-only Poetry bootstrap compatibility path in `Python.hs` remains open)
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/durable_context_design.md](../documents/architecture/durable_context_design.md), [../documents/architecture/demo_app_design.md](../documents/architecture/demo_app_design.md), [../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Define the multi-user, durable-context shape of the `infernix-demo` workload —
@@ -27,9 +27,10 @@ Sprints 7.10 (SPA Chat patch helpers + real WebSocket client transport), 7.11
 (Artifacts view helpers + typed upload request builder + WS `ServerArtifactReady`
 dispatch), and 7.12 (`ContextModelMap` backend + coordinator-side contexts-metadata
 consumer + engine-side empty-model-id rejection) land their backend / pure-helper /
-unit-test halves but defer DOM-renderer + Pulsar publisher wiring to Sprint 7.15
-real-cluster validation. Sprints 7.14 (integration + chaos suite against real
-Pulsar / MinIO / Keycloak) and 7.15 (Playwright E2E) remain pending and gate the full
+unit-test halves. DOM renderer + SPA shell mount remain Sprint 7.15 work, while
+the WebSocket-to-Pulsar publisher wiring landed May 27, 2026 under Sprint 7.14.
+The integration + chaos suite against real Pulsar / MinIO / Keycloak remains pending.
+Sprint 7.15 (Playwright E2E) remains pending and gates the full
 SPA shell mount + Workbench retirement + per-user model-picker → ContextCreated →
 ContextModelMap round-trip end-to-end. Phase 7 closes only when every sprint below is
 `Done`, every doc named in the sprints is aligned with the implemented behavior,
@@ -218,11 +219,11 @@ topology — and validated them end-to-end on `linux-cpu`. The closure surfaces:
   (`service.minio.*`, `service.pulsar.*`, `service.engineAdapters.commandEnv`)
   the new Deployment templates consume.
 - `chart/templates/deployment-{coordinator,engine}.yaml` mount the
-  substrate ConfigMap + an `INFERNIX_DATA_ROOT=/srv/infernix/.data`
-  `emptyDir` for the supported `subscription.ready` marker; the
-  coordinator template additionally injects `INFERNIX_MINIO_*` and the
-  Keycloak JWKS URL so the `/api/objects` and `/ws` handlers can mint
-  presigned URLs and validate JWTs at startup.
+  substrate ConfigMap and use mounted typed manifests for runtime state.
+  Sprint 7.17 removed the remaining infernix-owned `env:` blocks from the
+  demo, coordinator, and engine Deployment templates; the demo backend now
+  reads MinIO and Keycloak wiring from mounted `ClusterConfig` plus
+  `SecretsConfig`.
 - `src/Infernix/Models.hs.hostBatchTopicForMode` now returns the
   canonical `inference.batch.<mode>` topic on every substrate (not just
   Apple), and `Infernix.DemoConfig.engineDaemonConfig` returns `Just`
@@ -289,14 +290,16 @@ items so the remaining open work is exclusively cluster-tied:
   `dispatcher-<contextId>`, sequence id drawn from the conversation
   log offset) is exposed by
   `Dispatch.SingleFlight.producerDedupSequenceId`; the runtime loop
-  that uses it lands with Sprint 7.14's chaos validation.
-- Sprint 7.9 JWKS TTL cache + chart env injection landed.
+  that uses it is implemented, with real duplicate-collapse evidence
+  pending Sprint 7.14's chaos validation.
+- Sprint 7.9 JWKS TTL cache landed; Sprint 7.17 subsequently retired the
+  chart env injection path.
   `Infernix.Demo.Api` owns a process-lifetime `JwksCache` built in
   `runDemoApiServer` and threaded through both the `/ws` WebSocket
   handshake and the `/api/objects/{upload,download}` handlers, with a
   5-minute TTL. `chart/templates/deployment-demo.yaml` already
-  injects `INFERNIX_MINIO_{ENDPOINT,ACCESS_KEY,SECRET_KEY,REGION,PRESIGN_EXPIRY_SECONDS}`
-  alongside `INFERNIX_KEYCLOAK_JWKS_URL`.
+  mounts the cluster ConfigMap and cluster Secret that carry the same
+  values without infernix-owned environment variables.
 
 `cabal build all`, `infernix lint files`, `infernix lint chart`,
 `infernix lint docs`, `infernix lint proto`, `infernix test lint`, and
@@ -387,9 +390,10 @@ The May 24, 2026 afternoon pass landed five focused increments on top of the May
    `handleConsumerEnvelope` validates the inbound `request_model_id` and publishes a
    typed `emptyModelIdRejectionResult` to the result topic instead of delegating to
    the generic engine path when it is empty. `assertContextModelMap` in
-   `test/unit/Spec.hs` covers the invariants. The WS-handler-publishes-`ContextCreated`
-   piece needs a Pulsar transport plumbed into `WebSocketOptions`; that wiring
-   lands with Sprint 7.14 chaos validation.
+   `test/unit/Spec.hs` covers the invariants. The May 27, 2026 follow-on
+   plumbed the WS handler's `WebSocketOptions` dispatch callback into
+   `Infernix.Runtime.Pulsar.publishDemoClientMessage`, so `ClientCreateContext`
+   now publishes `ContextCreated` to the per-user contexts metadata topic.
 5. **Sprint 7.13 PureScript layer (closed).** `web/test/Infernix/Web/ChatSpec.purs`
    covers 12 view-model cases; `web/test/Infernix/Web/ArtifactsSpec.purs` covers 11.
    `infernix test unit` reports 69/69 passing across the full PS suite.
@@ -722,17 +726,19 @@ dispatch:
   `Infernix.Auth.Jwt.verifyAndParseJwt`, captures `UserId` from the `sub` claim, and
   hands off to a per-connection receive loop that decodes the framed envelopes from
   Sprint 7.2 (`WsClientMessage` / `WsServerMessage`). Each decoded `ClientMessage`
-  family is classified through the pure `classifyClientMessage` helper, which today
-  returns `AcknowledgePending` for every variant — the supported handshake + decode +
-  routing shape is in place; the Pulsar Reader / Failover subscription wiring lands
-  together with the Sprint 7.14 real-cluster validation. Per-WS state is limited to the
-  WS handle plus the authenticated `UserId`.
+  family is classified through the pure `classifyClientMessage` helper. The May 27,
+  2026 follow-on wires state-changing frames through `wsDispatchClientMessage` into
+  `Infernix.Runtime.Pulsar.publishDemoClientMessage`, so prompt, cancel, draft, and
+  context metadata frames publish typed JSON events to their durable Pulsar topic
+  families. The Pulsar Reader / Failover subscription wiring that streams snapshots
+  and patches back to the browser still lands with Sprint 7.14 real-cluster validation.
+  Per-WS state is limited to the WS handle plus the authenticated `UserId`.
 - `chart/templates/service-demo.yaml` now sets `sessionAffinity: None` so any frontend
   replica can host any session and the pod-kill-survives-reconnect contract from
   Sprint 7.14 has the substrate it needs.
 - `src/Infernix/Demo/Api.hs` mounts the WebSocket handler at `/ws`, using the same
-  Keycloak JWKS loader the `/api/objects` handler uses (with the
-  `INFERNIX_KEYCLOAK_JWKS_URL` override).
+  Keycloak JWKS loader the `/api/objects` handler uses; Sprint 7.17 moved that
+  wiring to mounted `ClusterConfig.keycloak.*` fields instead of env overrides.
 - `infernix.cabal` exposes the new module and pulls in `wai-websockets 3.0`.
 
 `infernix lint chart`, `infernix lint files`, `infernix lint docs`, `infernix lint proto`,
@@ -741,9 +747,10 @@ module in place.
 
 Pending closure:
 
-- Pulsar Reader cursors per-context: the `runSession` loop today acknowledges client
-  messages but does not yet bind them to per-context Pulsar Reader subscriptions on
-  the conversation log topic. Lands together with Sprint 7.14.
+- Pulsar Reader cursors per-context: the `runSession` loop now publishes state-changing
+  client frames to Pulsar, but it does not yet bind the browser session to per-context
+  Reader subscriptions on the conversation log topic. Snapshot/patch streaming lands
+  together with Sprint 7.14.
 - Real-cluster validation: WS connection with a valid Keycloak-issued JWT succeeds,
   invalid/expired JWT closes the WS with the typed 401/503 reject, `sessionAffinity:
   None` is reported by `infernix kubectl -n platform get service/infernix-demo -o
@@ -799,19 +806,17 @@ result resolving the single-flight queue, and topic-name shape under a parameter
 
 Pending closure:
 
-- Conversation events ride the Pulsar WebSocket transport as JSON
-  payloads (base64-encoded into the producer envelope), so the
-  supported wire format is the Aeson instances already landed in
-  `Infernix.Web.Contracts`. A parallel protobuf schema for
-  `ConversationEvent` is not part of the supported contract; both the
-  demo backend (producer) and the engine consumer
-  (`Infernix.Bridge.Result`) decode the same Aeson surface.
-- Producer-side dedup *structural* wiring is landed (see Sprint 7.7
-  `Remaining Work` for the helper landing). The remaining bit is
-  per-context dispatcher wiring that uses
-  `Dispatch.SingleFlight.producerDedupSequenceId` + the
-  per-conversation Failover subscription — that loop lands together
-  with Sprint 7.14's chaos-validation cycle.
+- Conversation events now ride the Pulsar WebSocket transport as JSON
+  payloads (base64-encoded into the producer envelope) from the demo
+  WebSocket handler. The supported wire format is the Aeson instances
+  already landed in `Infernix.Web.Contracts`; a parallel protobuf schema
+  for `ConversationEvent` is not part of the supported contract.
+- Producer-side dedup *structural* wiring is landed for the WebSocket
+  producer and dispatcher paths: the WebSocket publisher supplies stable
+  producer names plus sequence ids derived from client idempotency,
+  prompt, draft, or context keys, and the dispatcher uses stable
+  per-context producer scoping. Real duplicate-collapse evidence still
+  belongs to Sprint 7.14's chaos-validation cycle.
 - Broker-side dedup namespace policy is reconciled on daemon startup
   (the May 22, 2026 `reconcileSupportedNamespaces` pass POSTs `true`
   to `/admin/v2/namespaces/<ns>/deduplication` for `infernix/demo` and
@@ -956,14 +961,12 @@ all exit zero against this state.
 
 Pending closure:
 
-- The dispatcher publishes envelopes with an empty
-  `request_model_id`. Per-context model id lookup
-  awaits Sprint 7.12 (SPA Model Picker writes
-  `ContextCreated { contextCreatedModelId }` to
-  `demo.user.<userId>.contexts`; a follow-on coordinator subscription
-  caches `ContextId → modelId` for the dispatcher to consult). Until
-  then, the engine will reject dispatched requests; the integration
-  loop in Sprint 7.14 covers the end-to-end gate.
+- The dispatcher-side model-id lookup is code-complete: `ClientCreateContext`
+  publishes `ContextCreated { contextCreatedModelId }` to
+  `demo.user.<userId>.contexts`, the contexts metadata consumer caches
+  `ContextId → modelId`, and `publishDispatchedInferenceRequest` carries
+  the resolved `request_model_id`. The remaining gate is a real-cluster
+  WS → Pulsar → coordinator-consumer → dispatcher round trip in Sprint 7.14.
 - Pulsar Reader-style crash recovery: the dispatcher acks each
   message immediately after stepping the reducer, so a recovered
   replica picks up at the cursor with empty in-memory state. Producer
@@ -1181,9 +1184,10 @@ validated through `infernix lint *` plus `infernix test unit`:
   with bounded retry, before schema registration.
 - `python/adapters/model_cache.py` exposes the supported `get_model_path(model_id)
   -> Path` contract with `ModelCacheNotPopulated` as the fail-fast surface. The
-  helper currently honours `INFERNIX_MODEL_CACHE_ROOT` and reads from
+  helper reads typed `ModelCacheConfig` configured by the engine daemon and uses
   `/model-cache/<modelId>/` with a `.ready` sentinel; the MinIO download client and
-  LRU eviction loop land together with Sprint 7.14's real-cluster validation.
+  LRU eviction loop are implemented, with real-cluster validation still pending
+  Sprint 7.14.
 
 Pending closure:
 
@@ -1199,8 +1203,8 @@ Pending closure:
   `.ready` sentinel last, then publishes a
   `ModelBootstrapReadyEvent` on the per-model ready topic. The
   loop reuses `Infernix.Objects.Presigned` (which now records
-  scheme + host:port separately so the chart-injected
-  `INFERNIX_MINIO_ENDPOINT=http://...` produces correct URLs).
+  scheme + host:port separately so the mounted
+  `ClusterConfig.minio.endpoint` value produces correct URLs).
   `runProductionDaemon` forks the bootstrap loop together with
   the result-bridge when `daemonRole == Coordinator`; the daemon
   log reports `serviceModelBootstrapMode: failover-subscription`
@@ -1215,10 +1219,10 @@ Pending closure:
   proceed until the upstream `.ready` sentinel exists, streams every
   file to `/model-cache/<modelId>/` via atomic temp-file rename,
   writes the local `.ready` sentinel last, and runs an LRU eviction
-  pass (32 GiB default quota, overridable via
-  `INFERNIX_MODEL_CACHE_QUOTA_BYTES`). The connection config reads
-  `INFERNIX_MINIO_{ENDPOINT,ACCESS_KEY,SECRET_KEY,REGION}` and
-  `INFERNIX_MODELS_BUCKET`. `python/pyproject.toml` declares the new
+  pass (32 GiB default quota). Sprint 5.9 / 7.17 moved the cache root,
+  quota, models bucket, MinIO endpoint, credentials, and region into
+  the typed `ModelCacheConfig` passed through `configure()` instead of
+  Python environment reads. `python/pyproject.toml` declares the new
   `boto3 ^1.35.0` dependency.
 - Code-level retirement of `./.data/object-store/`, `objectStoreRoot`,
   and `localPathFromUri` is landed. `src/Infernix/Runtime/Cache.hs` is
@@ -1418,16 +1422,14 @@ scope enforcement, and presigned URL minting:
   earlier in Sprint 7.9.
 - `src/Infernix/Demo/Api.hs` — `/api/objects/upload` and `/api/objects/download` HTTP
   handlers that read the `Authorization: Bearer …` header, fetch the Keycloak JWKS
-  (overridable via `INFERNIX_KEYCLOAK_JWKS_URL`), call
+  from mounted `ClusterConfig.keycloak.*`, call
   `Infernix.Auth.Jwt.verifyAndParseJwt`, derive `UserId` from the `sub` claim, scope
   the requested object to `users/<userId>/contexts/<contextId>/{uploads,generated}/`,
   validate the scope via `pathBelongsToUser`, mint a presigned PUT or GET URL via the
   shared `Infernix.Objects.Presigned` helper, and return the matching
-  `ArtifactUploadGrant` / `ArtifactDownloadGrant` JSON. The MinIO endpoint plus
-  credentials come from `INFERNIX_MINIO_ENDPOINT`, `INFERNIX_MINIO_ACCESS_KEY`,
-  `INFERNIX_MINIO_SECRET_KEY`, `INFERNIX_MINIO_REGION`, and
-  `INFERNIX_MINIO_PRESIGN_EXPIRY_SECONDS` env vars (defaults match the supported chart
-  injection).
+  `ArtifactUploadGrant` / `ArtifactDownloadGrant` JSON. The MinIO endpoint, region,
+  presign expiry, and credential path come from mounted `ClusterConfig.minio` plus
+  `SecretsConfig.minio`.
 - `src/Infernix/Demo/Bootstrap.hs` — `requiredDemoBuckets` plus the
   `planDemoBucketBootstrap` pure helper that names the supported `infernix-models` and
   `infernix-demo-objects` buckets and computes the missing-bucket diff.
@@ -1439,8 +1441,8 @@ scope enforcement, and presigned URL minting:
 `infernix test lint`, and `infernix test unit` all exit zero with the new handler in
 place.
 
-The May 23, 2026 Sprint 7.9 follow-on closed the JWKS-cache + chart env
-injection items:
+The May 23, 2026 Sprint 7.9 follow-on closed the JWKS-cache path; Sprint 7.17 later
+retired the chart env injection items:
 
 - `src/Infernix/Demo/Api.hs` now owns a per-process `JwksCache`
   built in `runDemoApiServer` (one `IORef (Maybe (UTCTime, Jwks))`
@@ -1449,11 +1451,9 @@ injection items:
   a 5-minute TTL so a JWKS rotation surfaces within one cache cycle
   without triggering an upstream `GET .../protocol/openid-connect/certs`
   per request.
-- `chart/templates/deployment-demo.yaml` injects
-  `INFERNIX_MINIO_ENDPOINT`, `INFERNIX_MINIO_ACCESS_KEY`,
-  `INFERNIX_MINIO_SECRET_KEY`, `INFERNIX_MINIO_REGION`,
-  `INFERNIX_MINIO_PRESIGN_EXPIRY_SECONDS`, and
-  `INFERNIX_KEYCLOAK_JWKS_URL` alongside the existing Pulsar env vars.
+- `chart/templates/deployment-demo.yaml` mounts the cluster ConfigMap and cluster Secret
+  so the demo backend can read `ClusterConfig` and `SecretsConfig` directly; it no longer
+  injects infernix-owned environment variables.
 
 Pending closure:
 
@@ -1695,15 +1695,14 @@ Pending closure:
 
 - SPA-side model-picker modal in `Chat.purs`. Hangs off the Sprint
   7.10 DOM renderer.
-- WS handler in `src/Infernix/Demo/WebSocket.hs` that, on receipt of
-  `ClientCreateContext`, publishes a typed `ContextMetadataEvent
-  { ContextCreated { ... } }` to
-  `persistent://infernix/demo/demo.user.<userId>.contexts`. The
-  publisher requires a Pulsar transport plumbed into
-  `WebSocketOptions`; that wiring lands together with Sprint 7.14
-  chaos validation (the supported gate that proves the full
+- The WS handler publish path is code-complete as of May 27, 2026:
+  `ClientCreateContext` publishes typed `ContextCreated` metadata to
+  `persistent://infernix/demo/demo.user.<userId>.contexts` through
+  `WebSocketOptions.wsDispatchClientMessage` and
+  `Infernix.Runtime.Pulsar.publishDemoClientMessage`. The remaining
+  gate is Sprint 7.14 real-cluster validation proving the full
   WS → Pulsar → coordinator-consumer → ContextModelMap → dispatcher
-  round-trip end to end).
+  round trip end to end.
 - E2E negative case: closing the new-context dialog without
   submission creates no backend state. Lands with Sprint 7.15.
 
@@ -1804,9 +1803,9 @@ Pending closure:
 
 ---
 
-## Sprint 7.14: Integration-Layer Validation [Planned]
+## Sprint 7.14: Integration-Layer Validation [Active]
 
-**Status**: Planned
+**Status**: Active (WebSocket-to-Pulsar publish plumbing landed May 27, 2026; real-cluster integration and chaos suites pending)
 **Blocked by**: 7.1, 7.4, 7.5, 7.6, 7.7, 7.8, 7.9
 **Implementation**: `test/integration/*` (existing `infernix-integration` Cabal stanza), `test/integration/Infernix/Test/Integration/Throughput.hs`
 **Docs to update**: `documents/development/demo_app_test_plan.md`, `documents/development/chaos_testing.md`, `documents/tools/pulsar.md`, `documents/architecture/daemon_topology.md`
@@ -1876,7 +1875,36 @@ and the multi-user throughput / fan-in batching / fan-out test.
 
 ### Remaining Work
 
-All work pending.
+May 27, 2026 code-side landing:
+
+- `src/Infernix/Runtime/Pulsar.hs.publishDemoClientMessage` discovers the active Pulsar
+  transport from mounted `ClusterConfig` (falling back through the existing transport discovery
+  path), maps browser `WsClientMessage` frames to typed JSON events, and publishes them to the
+  supported durable topic families:
+  - `ClientSubmitPrompt` / `ClientCancelPrompt` → per-context
+    `demo.conversation.<userId>.<contextId>`
+  - `ClientUpdateDraft` → per-user compacted `demo.user.<userId>.drafts`
+  - `ClientCreateContext` / `ClientRenameContext` / `ClientSoftDeleteContext` → per-user
+    compacted `demo.user.<userId>.contexts`
+- WebSocket producers use stable producer names and sequence ids derived from client
+  idempotency, prompt, draft, or context keys so the broker-side dedup gate can collapse
+  reconnect or retry duplicates.
+- `src/Infernix/Demo/WebSocket.hs` now dispatches through
+  `WebSocketOptions.wsDispatchClientMessage`; `src/Infernix/Demo/Api.hs` wires that callback to
+  `publishDemoClientMessage`.
+- `test/unit/Spec.hs.assertDemoWebSocketPublicationPlanning` covers the pure publication plan for
+  prompt, cancel, context-created, draft-update, hello, and subscribe frames.
+
+Pending closure:
+
+- real Pulsar publish + Reader subscribe assertions for conversation, contexts, drafts,
+  inference request/batch/result, and bootstrap topic families
+- real Pulsar producer dedup verification across simulated coordinator or frontend reconnect
+- real Keycloak signup + login + JWT validation round-trip
+- real MinIO presigned PUT/GET with per-user scoping and cross-user negative coverage
+- the listed chaos cases for frontend, coordinator, engine, bootstrap, anti-affinity, drain, and
+  concurrent model bootstrap
+- throughput / fan-in batching / fan-out module and metrics report
 
 ---
 
@@ -1884,13 +1912,13 @@ All work pending.
 
 **Status**: Planned
 **Blocked by**: 7.10, 7.11, 7.12, 7.14
-**Implementation**: Playwright suites under the repo's Playwright tree, run via the existing `infernix-playwright:local` image; `web/test/fixtures/`
+**Implementation**: Playwright suites under the repo's Playwright tree, run inside the active Linux substrate image; `web/test/fixtures/`
 **Docs to update**: `documents/development/demo_app_test_plan.md`, `documents/development/testing_strategy.md`
 
 ### Objective
 
-Land the E2E test layer through `docker compose run --rm playwright`. Substrate-agnostic at
-the browser layer. Includes per-model smoke matrix.
+Land the E2E test layer through the active substrate image's Playwright runtime. Substrate-agnostic
+at the browser layer. Includes per-model smoke matrix.
 
 ### Deliverables
 
@@ -1912,7 +1940,8 @@ the browser layer. Includes per-model smoke matrix.
 
 ### Validation
 
-- `infernix test e2e` runs the Playwright suite via the dedicated container
+- `infernix test e2e` runs the Playwright suite via the active substrate image's Playwright
+  runtime
 - per-model smoke matrix has one passing flow per non-`Not recommended` row in the README
   matrix for the active substrate; failure on any row fails the suite
 - the Playwright source is byte-identical across `apple-silicon`, `linux-cpu`, `linux-gpu`;
@@ -2069,12 +2098,13 @@ fields (for non-secret values) plus file-based Secret mounts (for credentials). 
   path fall through to the legacy `findExecutable "poetry"` lookup on
   the operator's path. The Linux worker and Python-quality paths no
   longer inject Poetry virtualenv configuration through env; the
-  typed source is `python/poetry.toml`. The remaining
-  `POETRY_HOME` read, path lookup / mutation around the Apple Poetry
-  bootstrap, and Apple host adapter setup env handoff in
-  `Engines/AppleSilicon.hs` are all Apple-specific code paths whose
-  retirement is deferred per the user's "stay on Linux with CUDA"
-  priority. The `bareNameProcExemptedFiles` and
+  typed source is `python/poetry.toml`. The Apple host adapter setup
+  env handoff in `Engines/AppleSilicon.hs` was retired May 27, 2026
+  by passing `--install-root` explicitly and using an empty process
+  environment. The remaining `POETRY_HOME` read and path lookup /
+  mutation around the Apple Poetry bootstrap are Apple-specific code
+  paths whose retirement is deferred per the user's "stay on Linux
+  with CUDA" priority. The `bareNameProcExemptedFiles` and
   `envFunctionExemptedFiles` exemption rows for `src/Infernix/Python.hs`
   remain because the Apple bootstrap path still consumes `POETRY_HOME`
   / path state.

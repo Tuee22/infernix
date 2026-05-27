@@ -264,7 +264,7 @@ runRuntimeModeE2E paths runtimeMode =
       clusterUp (Just runtimeMode)
       let expectedInferenceDispatchMode = Text.unpack (expectedInferenceDispatchModeForRuntime runtimeMode)
       maybePort <- readEdgePortMaybe paths
-      _edgePort <-
+      edgePort <-
         case maybePort of
           Just port -> pure port
           Nothing -> throwIO EdgePortNotPublished
@@ -273,23 +273,14 @@ runRuntimeModeE2E paths runtimeMode =
       withRuntimeServiceDaemonIfNeeded paths runtimeMode $
         case controlPlaneContext paths of
           HostNative ->
-            -- Phase 3 Sprint 3.10 — Apple host-native E2E is deferred
-            -- to the Apple validation pass. The retired
-            -- @infernix-playwright:local@ container is no longer part
-            -- of the supported launcher set, and the supported Apple
-            -- replacement (host-native @npm exec@ Playwright fed by
-            -- the same typed fixture) lands together with the Apple
-            -- bootstrap refactor.
-            ioError
-              ( userError
-                  ( unlines
-                      [ "Apple host-native `infernix test e2e` is deferred (Phase 3 Sprint 3.10 follow-on).",
-                        "The retired infernix-playwright:local container has been removed; the supported",
-                        "Apple replacement (host-native `npm exec` Playwright fed by the typed fixture)",
-                        "lands together with the Apple bootstrap refactor."
-                      ]
-                  )
-              )
+            runHostNativePlaywright
+              paths
+              runtimeMode
+              edgePort
+              expectedDaemonLocation
+              expectedInferenceExecutorLocation
+              expectedInferenceDispatchMode
+              "cluster-demo"
           OuterContainer ->
             runInContainerPlaywright
               paths
@@ -355,14 +346,25 @@ printInternalPulsarResult resultValue = do
       putStrLn ("objectRef: " <> Text.unpack objectRefValue)
     _ -> pure ()
 
--- | Phase 3 Sprint 3.10 — invoke Playwright inside the launcher
--- container (already attached to Docker's private @kind@ network and
--- carrying the Playwright system packages + browser binaries baked in
--- by @docker/linux-substrate.Dockerfile@). Writes a typed JSON fixture
--- at @<runtimeRoot>/playwright-fixture.json@ that
--- @web/playwright.config.js@ reads to populate Playwright's @use:@
--- block, replacing the retired @INFERNIX_EDGE_PORT@ /
+-- | Phase 3 Sprint 3.10 — invoke Playwright against the routed
+-- surface using a typed JSON fixture at
+-- @<runtimeRoot>/playwright-fixture.json@. On Linux this runs inside
+-- the launcher container against Docker's private @kind@ network; on
+-- Apple it runs host-native @npm exec@ against the published localhost
+-- edge port. The fixture replaces the retired @INFERNIX_EDGE_PORT@ /
 -- @INFERNIX_PLAYWRIGHT_*@ / @INFERNIX_EXPECT_*@ env-var family.
+runHostNativePlaywright ::
+  Paths ->
+  RuntimeMode ->
+  Int ->
+  String ->
+  String ->
+  String ->
+  String ->
+  IO ()
+runHostNativePlaywright paths runtimeMode =
+  runPlaywrightWithFixture paths runtimeMode "127.0.0.1"
+
 runInContainerPlaywright ::
   Paths ->
   RuntimeMode ->
@@ -373,7 +375,19 @@ runInContainerPlaywright ::
   String ->
   String ->
   IO ()
-runInContainerPlaywright paths runtimeMode playwrightHost playwrightPort expectedDaemonLocation expectedInferenceExecutorLocation expectedInferenceDispatchMode expectedApiUpstreamMode = do
+runInContainerPlaywright = runPlaywrightWithFixture
+
+runPlaywrightWithFixture ::
+  Paths ->
+  RuntimeMode ->
+  String ->
+  Int ->
+  String ->
+  String ->
+  String ->
+  String ->
+  IO ()
+runPlaywrightWithFixture paths runtimeMode playwrightHost playwrightPort expectedDaemonLocation expectedInferenceExecutorLocation expectedInferenceDispatchMode expectedApiUpstreamMode = do
   waitForPlaywrightSurface playwrightHost playwrightPort expectedDaemonLocation expectedInferenceExecutorLocation expectedInferenceDispatchMode expectedApiUpstreamMode
   let fixturePath = runtimeRoot paths </> "playwright-fixture.json"
       fixturePayload =

@@ -51,10 +51,8 @@ Colima to the supported `8 CPU / 16 GiB` profile before Docker-backed work, and 
 adapter setup or validation paths reconcile the Homebrew-managed `python@3.12` formula and
 `python3.12` command plus a user-local Poetry bootstrap on demand. The Poetry bootstrap may reuse
 an already available compatible Python 3.12+ executable when one passes the implemented version
-check. Routed Apple
-Playwright readiness probes `127.0.0.1` from the host while
-the browser container joins the private Docker `kind` network and targets the Kind control-plane
-DNS. The shared cluster lifecycle persists explicit phase, child-operation detail, and heartbeat
+check. Routed Apple Playwright validation runs host-native `npm exec` against the published
+`127.0.0.1` edge port. The shared cluster lifecycle persists explicit phase, child-operation detail, and heartbeat
 data in `cluster status` during monitored Docker build, Harbor publication, Harbor-backed
 final-image preload, and Apple retained-state replay steps; explicit substrate-file
 materialization is atomic so concurrent readers do not observe truncated payloads; and
@@ -143,13 +141,13 @@ the only daemon Deployment present is `infernix-engine`.
 - the supported operator staging flow is binary-owned rather than shell-owned:
   Apple host-native lifecycle and validation commands materialize or verify
   `./.build/infernix-substrate.dhall`, Linux outer-container lifecycle and validation commands
-  materialize or verify `./.build/outer-container/build/infernix-substrate.dhall` on the host
-  through the bind-mounted build tree, and `infernix internal materialize-substrate ...` remains
+  materialize or verify `/workspace/.build/outer-container/build/infernix-substrate.dhall`
+  inside the launcher image, and `infernix internal materialize-substrate ...` remains
   the explicit restaging or inspection helper
 - the Linux substrate Dockerfile also materializes a build-arg-selected substrate file inside the
-  image overlay during image build; supported Compose runs bind-mount the host `./.build/` tree
-  over that location, so lifecycle and aggregate test commands rely on binary-owned
-  host-visible preflight
+  image overlay during image build; supported Compose runs keep that active build root
+  image-local, so lifecycle and aggregate test commands rely on binary-owned preflight inside the
+  launcher
 - repo-owned shell is limited to the `bootstrap/*.sh` stage-0 host bootstrap surface, which may
   reconcile supported host prerequisites and build or enter the active substrate launcher before
   handing off to the direct `infernix` command surface; shell code must not own Kind, Kubernetes
@@ -568,25 +566,25 @@ The plan keeps control-plane execution context separate from substrate.
 - on Linux substrates, routed Playwright execution runs in-container via
   `npm --prefix web exec -- playwright test ...` against the routed cluster on Docker's private
   `kind` network
-- on Apple Silicon, the host-native E2E refactor (host-side `npm exec` Playwright fed by the same
-  typed fixture) is deferred; the current Apple branch in `runRuntimeModeE2E` surfaces an explicit
-  deferral diagnostic so the Linux closure stays honest about the gap
+- on Apple Silicon, host-native E2E now uses host `npm exec` Playwright fed by the same typed
+  fixture against the published localhost edge port; the real run remains pending for the Apple
+  validation pass
 - browser and Playwright code do not branch on substrate id or engine family; `infernix-demo`
   reads the active `.dhall` and owns substrate-appropriate engine dispatch
 - supported workflows use `npm --prefix web exec -- playwright ...`; `npx` is not part of the
   supported final workflow
 
-### 11. Container Build Output Stays Under `./.build/outer-container/`
+### 11. Container Build Output Stays in the Launcher Image
 
-- Linux outer-container build output stays under `./.build/outer-container/` on the host through
-  a host-anchored bind mount; the staged substrate file lives in that tree while cabal builddir,
-  cabal package cache, and the source snapshot manifest stay in the image overlay
+- Linux outer-container build output stays in the launcher image overlay; the staged substrate
+  file lives under `/workspace/.build/outer-container/build/` while cabal builddir, cabal package
+  cache, and the source snapshot manifest stay in the image overlay
 - the outer-container launcher does not rely on a live repo bind mount for source code; the only
-  bind mounts are `./.data/`, `./.build/`, the host `compose.yaml`, and the Docker socket
+  bind mounts are `./.data/` and the Docker socket
 - the staged outer-container substrate `.dhall` sits at
-  `./.build/outer-container/build/infernix-substrate.dhall` on the host and is the source material
-  for cluster ConfigMap publication, which mounts the file at `/opt/build/infernix-substrate.dhall`
-  inside cluster-resident pods
+  `/workspace/.build/outer-container/build/infernix-substrate.dhall` inside the launcher and is
+  the source material for cluster ConfigMap publication, which mounts the file at
+  `/opt/build/infernix-substrate.dhall` inside cluster-resident pods
 
 ### 12. Apple Host Build Output Stays Under `./.build`
 

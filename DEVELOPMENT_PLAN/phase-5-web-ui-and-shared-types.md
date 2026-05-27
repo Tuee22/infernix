@@ -170,33 +170,32 @@ None.
 ## Sprint 5.5: Web Runtime Image and Dedicated Playwright Container [Done]
 
 **Status**: Done
-**Implementation**: `docker/linux-substrate.Dockerfile`, `docker/playwright.Dockerfile`, `compose.yaml`, `web/playwright/`, `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `chart/templates/deployment-demo.yaml`, `chart/templates/deployment-service.yaml`
+**Implementation**: `docker/linux-substrate.Dockerfile`, `compose.yaml`, `web/playwright/`, `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `chart/templates/deployment-demo.yaml`, `chart/templates/deployment-service.yaml`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/architecture/web_ui_architecture.md`
 
 ### Objective
 
-Bake the packaged PureScript demo bundle into the Linux substrate image and home the routed
-Playwright executor in a dedicated single-purpose image used by every substrate.
+Bake the packaged PureScript demo bundle into the Linux substrate image and run the routed
+Playwright executor from the active substrate image on Linux.
 
 ### Deliverables
 
-- the final Linux substrate image includes the built `web/dist/` bundle and the Node toolchain
-  needed to regenerate it; it carries no browser-runtime weight
-- routed Playwright execution runs from the dedicated `infernix-playwright:local` image built by
-  `docker/playwright.Dockerfile`, which owns Node, the Playwright runtime, and the three browsers
-- `infernix test e2e` invokes that Playwright image through `docker compose run --rm playwright`
-  on every substrate; on Apple Silicon the host CLI runs it directly, on Linux substrates the
-  outer container runs it through the mounted host docker socket
+- the final Linux substrate image includes the built `web/dist/` bundle, the Node toolchain needed
+  to regenerate it, and the Playwright runtime used by Linux routed E2E
+- routed Playwright execution runs from the active Linux substrate image; the former dedicated
+  Playwright image and sidecar service are retired by Phase 3 Sprint 3.10
+- `infernix test e2e` invokes `npm --prefix web exec -- playwright test` inside the Linux
+  launcher image; Apple host-native E2E uses host `npm exec` with the same typed fixture and
+  awaits the Apple validation pass
 - the chart does not deploy a separate web workload or web image
 - supported Playwright invocations use `npm --prefix web exec -- playwright ...`
 
 ### Validation
 
-- `docker compose build infernix && docker compose build playwright` succeeds and produces both
-  images on supported Linux paths
-- Apple routed E2E passes with `docker compose run --rm playwright` invoked from the host CLI
-- Linux routed E2E passes with `docker compose run --rm playwright` invoked from the outer
-  container against the host docker daemon
+- the Linux substrate image build succeeds and carries the Playwright runtime
+- Apple host-native routed E2E runner code is fixture-driven and awaits the Apple validation pass
+- Linux routed E2E passes with `npm --prefix web exec -- playwright test` invoked from the outer
+  container against the routed cluster
 - `rg -n 'npx playwright' README.md documents src web/package.json` returns no supported workflow references
 
 ### Remaining Work
@@ -280,12 +279,12 @@ the inference batch execution moves to host daemons.
 ### Deliverables
 
 - the routed demo app remains cluster-resident on Apple and Linux substrates alike
-- Apple host-native E2E orchestration runs from the host CLI and invokes
-  `docker compose run --rm playwright` for the dedicated `infernix-playwright:local` image
-- Linux outer-container E2E orchestration runs `docker compose run --rm playwright` from inside
-  the outer container against the host docker daemon mounted through `/var/run/docker.sock`
-- Docker is a hard prerequisite for `infernix test e2e` on every substrate; the CLI no longer
-  carries a host-native npm fallback
+- Apple host-native E2E orchestration uses host `npm exec` with the same typed fixture and awaits
+  the Apple validation pass
+- Linux outer-container E2E orchestration runs `npm --prefix web exec -- playwright test` from
+  inside the active substrate image
+- Docker is a hard prerequisite for `infernix test e2e` on Linux substrates; the Apple branch runs
+  the host-native Playwright lane through `npm exec`
 - user-facing Apple docs describe `cluster up` as the way to launch the demo surface instead of a
   direct host `infernix-demo serve` workflow, while also making the routed Apple inference path
   explicitly host-backed
@@ -300,10 +299,9 @@ the inference batch execution moves to host daemons.
 
 ### Validation
 
-- Apple routed E2E passes from the host CLI through `docker compose run --rm playwright` against
-  the clustered routed surface
-- Linux routed E2E passes through the same compose-driven Playwright executor without any host
-  daemon management
+- Apple routed E2E runner code is landed and awaits the Apple validation pass
+- Linux routed E2E passes through the in-substrate Playwright executor without any host daemon
+  management
 - Apple and Linux routed E2E pass through the same browser-visible flows without substrate-specific
   Playwright branching; only launcher or orchestration differs
 - `infernix test e2e` fails fast with an actionable message when Docker, kind, kubectl, or helm

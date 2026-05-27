@@ -121,8 +121,8 @@ mode-specific coverage, matrix behavior, and operator detail behind those canoni
   `inferenceDispatchMode = pulsar-bridge-to-host-daemon`, and still complete routed manual
   inference through the cluster-daemon-to-host-daemon batch path
 - the supported Linux routed E2E path uses Playwright from the substrate image with
-  `npm --prefix web exec -- playwright test`; Apple host-native routed E2E remains deferred to
-  the Apple validation pass
+  `npm --prefix web exec -- playwright test`; Apple host-native routed E2E uses host
+  `npm exec` with the same typed fixture and awaits the Apple validation pass
 - on the Linux lane, routed E2E targets the Kind control-plane DNS on Docker's private `kind`
   network instead of `host.docker.internal`
 - supported Playwright launchers clear conflicting `NO_COLOR` and `FORCE_COLOR` values from the

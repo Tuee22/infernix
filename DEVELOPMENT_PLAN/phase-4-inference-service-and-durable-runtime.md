@@ -366,14 +366,12 @@ produces the two real Linux runtime images and supports the image-snapshot launc
 - one shared `docker/linux-substrate.Dockerfile` builds `infernix-linux-cpu` and
   `infernix-linux-gpu`
 - build arguments cover at least the base image and the substrate-selecting `RUNTIME_MODE` value;
-  shared build stages own the common toolchain, and `compose.yaml` selects those inputs through
-  `INFERNIX_COMPOSE_*` launcher variables without changing the supported `docker compose run --rm infernix infernix ...`
-  surface
+  shared build stages own the common toolchain, and `compose.yaml` selects the already-built
+  launcher image through a one-shot Compose image selector without changing the supported
+  `docker compose run --rm infernix infernix ...` surface
 - `docker/linux-base.Dockerfile` is removed from the supported architecture
 - the shared substrate image definition owns ghcup-pinned GHC or Cabal, Python, Poetry, the
-  Node-based web bundle build, and the Kind toolbelt; routed Playwright execution lives in the
-  separate `docker/playwright.Dockerfile` image so the substrate image carries no browser-runtime
-  weight
+  Node-based web bundle build, the Kind toolbelt, and the Linux Playwright runtime
 - on the supported Linux outer-container path, `cluster up` reuses the already-built
   `infernix-linux-<mode>:local` snapshot instead of rebuilding the identical runtime image inside
   the launcher
@@ -505,7 +503,7 @@ extends this startup contract with explicit cluster and host daemon roles.
   `./.build/infernix internal materialize-substrate apple-silicon [--demo-ui true|false]`, Linux
   outer-container workflows stage it through
   `docker compose run --rm infernix infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>`
-  onto the host-anchored `./.build/outer-container/build/` bind mount, and supported runtime
+  under `/workspace/.build/outer-container/build/` inside the launcher image, and supported runtime
   entrypoints fail fast if it is absent
 - the direct `infernix service` entrypoint remains host-side for Apple inference execution, while
   the routed clustered demo app reads the same staged `.dhall` and enters the cluster daemon path

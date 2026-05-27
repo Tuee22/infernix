@@ -226,10 +226,6 @@ envFunctionExemptedFiles =
     -- the same workstream and lands together with the
     -- `Cluster.hs`-side @proc@ retirement.
     "src/Infernix/CLI.hs",
-    -- Apple validation pass: the Apple host workflow's
-    -- @getEnvironment@ + PATH munging is intentionally deferred
-    -- until the user finalizes the Apple lane.
-    "src/Infernix/Engines/AppleSilicon.hs",
     "src/Infernix/HostPrereqs.hs",
     -- Apple validation pass: Poetry bootstrap keeps @POETRY_HOME@
     -- + @PATH@ compatibility until the user finalizes the Apple

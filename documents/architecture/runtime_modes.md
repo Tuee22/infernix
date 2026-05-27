@@ -32,8 +32,8 @@ is a typed Dhall record; the schema is defined at `dhall/InfernixSubstrate.dhall
 in-process by the `dhall` Haskell library. Apple host lifecycle and validation commands
 materialize or verify that file under `./.build/`, and
 Linux outer-container lifecycle and validation commands materialize or verify
-`./.build/outer-container/build/infernix-substrate.dhall` on the host through the bind-mounted
-build tree. `infernix internal materialize-substrate <substrate> --demo-ui <true|false>` remains
+`/workspace/.build/outer-container/build/infernix-substrate.dhall` inside the launcher image.
+`infernix internal materialize-substrate <substrate> --demo-ui <true|false>` remains
 the direct helper for explicit restaging or inspection. `cluster up` publishes a cluster-role
 `infernix-substrate.dhall` payload into the repo-local publication mirror and
 `ConfigMap/infernix-demo-config`; on Apple this cluster-role payload is rendered from the active

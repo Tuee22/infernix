@@ -11,6 +11,7 @@ BOOTSTRAP_CP=/usr/bin/cp
 BOOTSTRAP_CURL=/usr/bin/curl
 BOOTSTRAP_DOCKER=/usr/bin/docker
 BOOTSTRAP_DPKG=/usr/bin/dpkg
+BOOTSTRAP_ENV=/usr/bin/env
 BOOTSTRAP_INSTALL=/usr/bin/install
 BOOTSTRAP_MKTEMP=/usr/bin/mktemp
 BOOTSTRAP_RM=/usr/bin/rm
@@ -87,7 +88,7 @@ EOF
 # environment: block, and no substrate-selection env var. The script
 # selects the project and compose files with explicit CLI arguments.
 compose_run() {
-  bootstrap::run "${BOOTSTRAP_DOCKER}" compose --project-name "${COMPOSE_PROJECT}" "${COMPOSE_FILES[@]}" run --rm infernix infernix "$@"
+  bootstrap::run "${BOOTSTRAP_ENV}" "LAUNCHER_IMAGE=${COMPOSE_IMAGE}" "${BOOTSTRAP_DOCKER}" compose --project-name "${COMPOSE_PROJECT}" "${COMPOSE_FILES[@]}" run --rm infernix infernix "$@"
 }
 
 # Phase 1 Sprint 1.11 — explicit @docker build@ replaces the previous

@@ -1,13 +1,14 @@
-// Phase 3 Sprint 3.10 — Playwright runs inside the launcher container,
-// fed by a typed JSON fixture written by `infernix test e2e` at test
-// start (see `runEndToEnd` in `src/Infernix/CLI.hs`). The fixture
-// replaces the retired `INFERNIX_EDGE_PORT` / `INFERNIX_PLAYWRIGHT_HOST`
-// / `INFERNIX_EXPECT_*` env-var family so no Playwright code path
-// reads `process.env.INFERNIX_*` anymore.
+// Phase 3 Sprint 3.10 — Playwright is fed by a typed JSON fixture
+// written by `infernix test e2e` at test start. The repo-relative
+// fixture path works both in the Linux launcher (`/workspace`) and
+// on the Apple host-native checkout, replacing the retired
+// `INFERNIX_EDGE_PORT` / `INFERNIX_PLAYWRIGHT_HOST` /
+// `INFERNIX_EXPECT_*` env-var family.
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "@playwright/test";
 
-const fixturePath = "/workspace/.data/runtime/playwright-fixture.json";
+const fixturePath = fileURLToPath(new URL("../.data/runtime/playwright-fixture.json", import.meta.url));
 const fixture = JSON.parse(readFileSync(fixturePath, "utf8"));
 
 export default defineConfig({

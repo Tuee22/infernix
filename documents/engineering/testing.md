@@ -129,11 +129,12 @@ moving, not hard product failure. The May 15 and May 17 lifecycle reruns also va
 - `infernix test integration`, `infernix test e2e`, and `infernix test all` run against and report
   the active substrate encoded in the generated `.dhall`
 - supported Linux E2E keeps the outer-container CLI in charge of orchestration while Playwright
-  runs from inside the substrate image with `npm --prefix web exec -- playwright test`; the Apple
-  host-native routed-E2E executor refactor is deferred and currently surfaces an explicit
-  diagnostic
+  runs from inside the substrate image with `npm --prefix web exec -- playwright test`; Apple
+  host-native E2E uses host `npm exec` with the same typed fixture and awaits the Apple
+  validation pass
 - supported Apple integration and E2E own the host daemon lifecycle when the routed demo surface
   needs it, so the validation contract proves the cluster daemon plus host inference executor
   bridge rather than treating an in-cluster pod as the Apple-native inference executor
 - `infernix test e2e` requires Docker on Linux substrates and has no host-native npm fallback
-  path there; Apple host-native routed E2E remains deferred to the Apple validation pass
+  path there; Apple host-native routed E2E uses host `npm exec` with the same typed fixture
+  and awaits the Apple validation pass

@@ -3,7 +3,10 @@
 {-# LANGUAGE TypeApplications #-}
 
 module Infernix.Runtime.Pulsar
-  ( publishInferenceRequest,
+  ( DemoClientMessagePublication (..),
+    planDemoClientMessagePublications,
+    publishDemoClientMessage,
+    publishInferenceRequest,
     readPublishedInferenceResultMaybe,
     runDispatcherLoop,
     runModelBootstrapLoop,
@@ -20,8 +23,10 @@ import Control.Concurrent (forkIO, threadDelay)
 import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar)
 import Control.Exception (SomeAsyncException, SomeException, displayException, fromException, throwIO, try)
 import Control.Monad (forM_, forever, unless, void, when)
+import Crypto.Hash.SHA256 qualified as SHA256
 import Data.Aeson
   ( FromJSON (parseJSON),
+    ToJSON,
     Value,
     eitherDecode,
     eitherDecodeStrict',
@@ -352,6 +357,172 @@ publishInferenceRequest paths runtimeMode topic requestValue = do
               )
       publishTopicPayload transport topic options requestIdValue (encodeMessage protoPayload)
       pure requestIdValue
+
+-- | Phase 7 Sprint 7.14 wiring for the demo WebSocket frontend:
+-- browser-originated durable-context messages publish onto the same
+-- Pulsar topic families consumed by the coordinator loops. This
+-- keeps the WebSocket pod stateless: after JWT validation it only
+-- translates client frames into typed JSON events and lets Pulsar
+-- own ordering, compaction, and Failover handoff.
+publishDemoClientMessage ::
+  Paths ->
+  RuntimeMode ->
+  Maybe ClusterConfig ->
+  Contracts.UserId ->
+  Contracts.WsClientMessage ->
+  IO ()
+publishDemoClientMessage paths runtimeMode maybeClusterConfig userIdValue clientMessage = do
+  maybeTransport <- discoverPulsarTransport paths runtimeMode maybeClusterConfig
+  case maybeTransport of
+    Nothing ->
+      ioError
+        ( userError
+            ( "demo WebSocket Pulsar dispatch is unavailable for "
+                <> Text.unpack (runtimeModeId runtimeMode)
+                <> "; no Pulsar transport could be discovered"
+            )
+        )
+    Just transport ->
+      forM_
+        (planDemoClientMessagePublications ConversationTopic.defaultDemoTopicNamespace userIdValue clientMessage)
+        (publishDemoClientMessagePublication transport)
+
+data DemoClientMessagePublication = DemoClientMessagePublication
+  { demoClientPublicationTopic :: Text.Text,
+    demoClientPublicationProducerName :: Text.Text,
+    demoClientPublicationSequenceKey :: Text.Text,
+    demoClientPublicationPayload :: Lazy.ByteString
+  }
+  deriving (Eq, Show)
+
+planDemoClientMessagePublications ::
+  ConversationTopic.TopicNamespace ->
+  Contracts.UserId ->
+  Contracts.WsClientMessage ->
+  [DemoClientMessagePublication]
+planDemoClientMessagePublications namespace userIdValue clientMessage =
+  case clientMessage of
+    Contracts.ClientHello _ ->
+      []
+    Contracts.ClientSubscribeContext _ ->
+      []
+    Contracts.ClientSubmitPrompt contextIdValue payload ->
+      [ conversationPublication
+          namespace
+          userIdValue
+          contextIdValue
+          (Contracts.unClientIdempotencyKey (Contracts.promptClientIdempotencyKey payload))
+          (Contracts.ConversationUserPromptEvent payload)
+      ]
+    Contracts.ClientCancelPrompt contextIdValue promptMessageId ->
+      [ conversationPublication
+          namespace
+          userIdValue
+          contextIdValue
+          (Contracts.unMessageId promptMessageId)
+          (Contracts.ConversationCancelEvent (Contracts.ConversationCancelPayload promptMessageId))
+      ]
+    Contracts.ClientUpdateDraft contextIdValue draftText ->
+      [ compactedUserPublication
+          (ConversationTopic.draftsMetadataTopicName namespace userIdValue)
+          "frontend-drafts"
+          userIdValue
+          (Contracts.unContextId contextIdValue <> ":" <> draftText)
+          (Contracts.DraftUpdated contextIdValue draftText)
+      ]
+    Contracts.ClientCreateContext contextIdValue modelId title ->
+      [ contextMetadataPublication
+          namespace
+          userIdValue
+          contextIdValue
+          (Contracts.ContextCreated contextIdValue modelId title)
+      ]
+    Contracts.ClientRenameContext contextIdValue title ->
+      [ contextMetadataPublication
+          namespace
+          userIdValue
+          contextIdValue
+          (Contracts.ContextRenamed contextIdValue title)
+      ]
+    Contracts.ClientSoftDeleteContext contextIdValue ->
+      [ contextMetadataPublication
+          namespace
+          userIdValue
+          contextIdValue
+          (Contracts.ContextSoftDeleted contextIdValue)
+      ]
+
+conversationPublication ::
+  ConversationTopic.TopicNamespace ->
+  Contracts.UserId ->
+  Contracts.ContextId ->
+  Text.Text ->
+  Contracts.ConversationEvent ->
+  DemoClientMessagePublication
+conversationPublication namespace userIdValue contextIdValue sequenceKey event =
+  let Contracts.UserId userIdText = userIdValue
+      Contracts.ContextId contextIdText = contextIdValue
+   in DemoClientMessagePublication
+        { demoClientPublicationTopic =
+            ConversationTopic.conversationTopicName namespace userIdValue contextIdValue,
+          demoClientPublicationProducerName =
+            "frontend-conversation-" <> userIdText <> "-" <> contextIdText,
+          demoClientPublicationSequenceKey = sequenceKey,
+          demoClientPublicationPayload = encode event
+        }
+
+contextMetadataPublication ::
+  ConversationTopic.TopicNamespace ->
+  Contracts.UserId ->
+  Contracts.ContextId ->
+  Contracts.ContextMetadataEvent ->
+  DemoClientMessagePublication
+contextMetadataPublication namespace userIdValue contextIdValue event =
+  let Contracts.ContextId contextIdText = contextIdValue
+   in compactedUserPublication
+        (ConversationTopic.contextsMetadataTopicName namespace userIdValue)
+        "frontend-contexts"
+        userIdValue
+        contextIdText
+        event
+
+compactedUserPublication ::
+  (ToJSON event) =>
+  Text.Text ->
+  Text.Text ->
+  Contracts.UserId ->
+  Text.Text ->
+  event ->
+  DemoClientMessagePublication
+compactedUserPublication topicValue producerPrefix (Contracts.UserId userIdText) sequenceKey event =
+  DemoClientMessagePublication
+    { demoClientPublicationTopic = topicValue,
+      demoClientPublicationProducerName = producerPrefix <> "-" <> userIdText,
+      demoClientPublicationSequenceKey = sequenceKey,
+      demoClientPublicationPayload = encode event
+    }
+
+publishDemoClientMessagePublication ::
+  PulsarTransport ->
+  DemoClientMessagePublication ->
+  IO ()
+publishDemoClientMessagePublication transport publication =
+  publishTopicPayload
+    transport
+    (demoClientPublicationTopic publication)
+    ( (defaultPublishOptions (demoClientPublicationProducerName publication))
+        { publishSequenceId =
+            Just (stableSequenceId (demoClientPublicationSequenceKey publication))
+        }
+    )
+    (demoClientPublicationSequenceKey publication)
+    (Lazy.toStrict (demoClientPublicationPayload publication))
+
+stableSequenceId :: Text.Text -> Integer
+stableSequenceId value =
+  ByteString.foldl' step 0 (ByteString.take 8 (SHA256.hash (TextEncoding.encodeUtf8 value)))
+  where
+    step acc byte = acc * 256 + fromIntegral byte
 
 readPublishedInferenceResultMaybe :: Paths -> RuntimeMode -> Text.Text -> Text.Text -> IO (Maybe InferenceResult)
 readPublishedInferenceResultMaybe paths runtimeMode topic requestIdValue = do
@@ -861,9 +1032,9 @@ ensureNamespaceCompactionThreshold manager adminBaseUrl namespaceValue threshold
 -- | Enable broker-side message deduplication on a namespace via the
 -- admin API. With this policy on, the broker tracks
 -- @(producerName, sequenceId)@ pairs and rejects duplicates. The
--- producer-side wiring (stable @producerName@ + monotonic
--- @sequenceId@) lands together with Sprint 7.14's chaos validation;
--- the broker policy is the supported namespace-level gate.
+-- producer-side wiring supplies stable @producerName@ + monotonic
+-- @sequenceId@ values; Sprint 7.14's chaos validation proves the
+-- duplicate-collapse behavior on a real broker.
 ensureNamespaceDeduplicationEnabled :: Manager -> String -> Text.Text -> IO ()
 ensureNamespaceDeduplicationEnabled manager adminBaseUrl namespaceValue = do
   let url = adminBaseUrl <> "/namespaces/" <> Text.unpack namespaceValue <> "/deduplication"
