@@ -1,6 +1,6 @@
 # Phase 6: Validation, E2E, and HA Hardening
 
-**Status**: Done (Sprints 6.1–6.28 Done)
+**Status**: Active (Sprints 6.1–6.28 code closed; the prior real-cluster validation evidence for this phase was produced on the retired Apple Silicon and Linux/CUDA hardware and no longer counts as current proof points; Apple cohort and CUDA Linux cohort full-suite validation are both pending on the new Apple Silicon host before Phase 6 can return to `Done`)
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/development/no_env_vars.md](../documents/development/no_env_vars.md)
 
 > **Purpose**: Define the supported static-quality and single-substrate validation contract for the
@@ -12,11 +12,16 @@
 
 ## Phase Status
 
-Phase 6 is done. Sprints 6.1–6.28 are `Done`: the validation entrypoints, routed coverage,
+Phase 6's code work is closed but its real-cluster validation evidence is retired (see the
+host-switch note in the Current Repo Assessment below). Sprints 6.1–6.28 had their code-side
+deliverables closed in the worktree; their real-cluster proof points were produced on the retired
+Apple Silicon and Linux/CUDA hardware and the phase now reads as `Active` until Apple cohort and
+CUDA Linux cohort validation are both rerun on the new Apple Silicon host. The validation
+entrypoints, routed coverage,
 governed-root-document metadata closure, structured CLI-registry closure, route-hardening cleanup,
 supported bootstrap lifecycle fixes, false-negative doctrine, Harbor publication retry closure,
 daemon-role split, and real Dhall substrate codec are present in the current worktree, and the supported test story is
-substrate-specific. Sprint 6.25 closes around the implemented split topology: cluster daemons
+substrate-specific in code. Sprint 6.25 closes around the implemented split topology: cluster daemons
 always run, Apple cluster daemons own request-topic consumption and host-batch handoff, Apple
 inference work moves through Pulsar to same-binary host daemons, and publication distinguishes
 cluster daemon location from inference executor location. Sprint 6.26 closes the lifecycle-warning
@@ -27,8 +32,10 @@ image-local virtual environment. The Linux substrate also suppresses npm update 
 GHCup shell-profile adjustment disabled; the remaining upstream GHCup no-update message is
 documented as an idempotent installer no-op, and the upstream PATH advice is accepted only because
 the Dockerfile owns `PATH` and the pinned toolchain succeeds. The May 19, 2026 governed
-`linux-gpu` lifecycle rerun passed after the cleanup, and the May 27, 2026 Linux E2E rerun passed
-with Playwright baked into the substrate image.
+`linux-gpu` lifecycle rerun and the May 27, 2026 Linux E2E rerun had originally validated the
+cleanup work; both were performed on the retired Linux/CUDA host and no longer count as current
+proof points. CUDA Linux cohort rerun on the new Apple Silicon host (through Colima's amd64 VM)
+is pending.
 Sprint 6.27 closes the staged-substrate format cleanup: `infernix-substrate.dhall` is a typed
 Dhall record decoded in-process by the `dhall` Haskell library, the schema lives at
 `dhall/InfernixSubstrate.dhall`, generated files no longer carry banner-prefixed JSON, and
@@ -62,52 +69,65 @@ performs the targeted Pulsar claim-root reset when the known retained ZooKeeper 
 corruption blocks bootstrap. The current lifecycle skips broad pre-Harbor support-image preloads
 on supported lanes, may hydrate and stream only the narrow Harbor warmup dependency set into Linux
 Kind workers before Helm warmup, and follows the stricter Harbor-first boundary where only
-Harbor-required services may pull upstream before Harbor is responsive. Recorded validation for
-this phase covers the governed
-`linux-cpu` and `linux-gpu` bootstrap surfaces. Recorded Apple validation on May 11, 2026 reran
-cleanly through `./bootstrap/apple-silicon.sh doctor`, `build`, `up`, `status`, `test`, and
-`down`. Current Apple routed Playwright validation runs host-native `npm exec` against the
-published `127.0.0.1:<edge-port>` edge port, and the retired dedicated Playwright
-image no longer bakes a conflicting `NO_COLOR` default. On May 13, 2026, the supported Apple
-lifecycle reran cleanly through `./bootstrap/apple-silicon.sh doctor`, `build`, `up`, `status`,
-`test`, and `down` on the patched shared lifecycle: `cluster status` reported the active
-in-progress lifecycle phase, child-operation detail, and heartbeat while `up` and `down` were
-still running; steady-state status reported two nodes and sixty-five pods; final post-teardown
-status returned `clusterPresent: False`, `lifecycleStatus: idle`, and
-`lifecyclePhase: cluster-absent`; the governed testing doctrine, operator-facing testing strategy,
-lifecycle runbooks, and CLI references use the same inactivity-aware interpretation contract; and
-retained-state Harbor PostgreSQL replicas recovered through the supported targeted
-reinitialization path when timeline drift leaves replicas stopped after promotion. That rerun also
-confirmed that Apple `build-cluster-images` can remain healthy well past thirty minutes before
-Harbor publication begins, that Harbor image pushes are readiness-gated with bounded retries
-across transient registry resets, and that the governed `test` lane may perform multiple internal
-cluster bring-up or teardown cycles before the outer bootstrap command returns. The runtime-topology
-implementation now deploys `infernix-service` on Apple and reports `daemonLocation: cluster-pod`,
-`inferenceExecutorLocation: control-plane-host`, and the Apple host batch topic in publication
-metadata. On May 15, 2026, and again on May 17, 2026, the full governed Apple lifecycle reran cleanly through
-`./bootstrap/apple-silicon.sh doctor`, `build`, `up`, `status`, `test`, `down`, and final
-`status` on the split topology. The `test` lane passed Haskell style, Haskell unit, PureScript
-unit, Haskell integration, routed Playwright, repeated retained-state `cluster down` and
-`cluster up` cycles, Apple host-batch inference for every active generated catalog entry, and
-final retained-state teardown. Those reruns also validate the Harbor publication closure for
-repo-owned local images: publication pushes the `infernix-linux-cpu:local` payload before
-third-party chart dependencies and re-tags the source image before each bounded push retry, so
-retry recovery does not depend on a previously retained target tag. Final post-teardown status
-returned `clusterPresent: False`, `lifecycleStatus: idle`, `lifecyclePhase: cluster-absent`,
-`runtimeResultCount: 31`, `objectStoreObjectCount: 73`, `modelCacheEntryCount: 30`, and
-`durableManifestCount: 15`. The supported routed and cluster validation path uses real Pulsar
-transport; the repo-local topic spool under `./.data/runtime/pulsar/` remains only for
-unit-level or intentionally endpoint-absent harness checks and is not accepted as routed Pulsar
-evidence. The May 19, 2026 `linux-gpu` lifecycle rerun completed successfully through `doctor`,
-image refresh, `build`, `up`, `status`, `test`, `down`, `purge`, and final `status`; it verified
-the warning-classification and toolchain-noise closure work. The later May 27, 2026
-`linux-gpu` E2E rerun validated routed Playwright from inside the substrate image.
+Harbor-required services may pull upstream before Harbor is responsive.
+
+**Apple Silicon validation reset (2026-05-29).** The repository's primary development machine has
+moved to a new Apple Silicon host, and the prior Apple Silicon hardware is no longer available.
+The phase's previously recorded validation evidence on those retired machines remains
+historically accurate, but it no longer counts as a current real-cluster proof point. All Apple
+cohort lifecycle, `test all`, routed Playwright E2E, split-topology host-batch Pulsar handoff,
+retained-state replay, and Harbor publication assertions therefore carry an explicit Apple
+cohort validation pending on the new host residual. The CUDA Linux cohort evidence on the
+`linux-gpu` substrate was also produced on the retired hardware and is similarly pending
+re-validation (through Colima's amd64 VM on the new Apple Silicon host, or on a separately
+re-provisioned Linux/CUDA machine if one is reintroduced). `linux-cpu` validation on the new
+host is pending as well.
+
+Historical evidence summary (retained for traceability; no longer current proof points):
+
+- Apple `./bootstrap/apple-silicon.sh doctor`, `build`, `up`, `status`, `test`, and `down`
+  reruns on May 11, 2026; May 13, 2026; May 15, 2026; and May 17, 2026 had validated the patched
+  shared lifecycle (`cluster status` reporting active in-progress lifecycle phase, child-operation
+  detail, and heartbeat during `up` and `down`; steady-state status reporting two nodes and
+  sixty-five pods; final post-teardown status returning `clusterPresent: False`,
+  `lifecycleStatus: idle`, and `lifecyclePhase: cluster-absent`; the inactivity-aware
+  interpretation contract used by the governed testing doctrine, operator-facing testing
+  strategy, lifecycle runbooks, and CLI references; retained-state Harbor PostgreSQL replica
+  recovery through the supported targeted reinitialization path; long-running Apple
+  `build-cluster-images` staying healthy past thirty minutes before Harbor publication; Harbor
+  image pushes being readiness-gated with bounded retries across transient registry resets; and
+  the governed `test` lane performing multiple internal cluster bring-up/teardown cycles before
+  the outer bootstrap command returns) on the retired Apple Silicon hardware.
+- The May 15, 2026 and May 17, 2026 Apple reruns had also validated the split topology, with
+  the `test` lane passing Haskell style, Haskell unit, PureScript unit, Haskell integration,
+  routed Playwright, repeated retained-state `cluster down`/`cluster up` cycles, Apple host-batch
+  inference for every active generated catalog entry, retained-state teardown, and the Harbor
+  publication closure for repo-owned local images (publication pushes the
+  `infernix-linux-cpu:local` payload before third-party chart dependencies and re-tags the
+  source image before each bounded push retry, so retry recovery does not depend on a
+  previously retained target tag). Final post-teardown status had returned
+  `clusterPresent: False`, `lifecycleStatus: idle`, `lifecyclePhase: cluster-absent`,
+  `runtimeResultCount: 31`, `objectStoreObjectCount: 73`, `modelCacheEntryCount: 30`, and
+  `durableManifestCount: 15` on the retired hardware.
+- The May 19, 2026 and May 27, 2026 `linux-gpu` reruns through `doctor`, image refresh,
+  `build`, `up`, `status`, `test`, `down`, `purge`, and final `status` had validated the
+  warning-classification and toolchain-noise closure and the routed Playwright closure from
+  inside the substrate image on the retired Linux/CUDA host.
+
+The runtime-topology implementation deploys `infernix-service` on Apple and reports
+`daemonLocation: cluster-pod`, `inferenceExecutorLocation: control-plane-host`, and the Apple
+host batch topic in publication metadata; the underlying code paths exist in the worktree, but
+the prior real-cluster reports of these fields came from the retired hardware. The supported
+routed and cluster validation path uses real Pulsar transport; the repo-local topic spool under
+`./.data/runtime/pulsar/` remains only for unit-level or intentionally endpoint-absent harness
+checks and is not accepted as routed Pulsar evidence.
 
 On May 20, 2026, a repo-local static and unit audit reran `infernix lint files`,
 `infernix lint docs`, `infernix lint proto`, `infernix lint chart`, `infernix docs check`,
 `infernix test lint`, and `infernix test unit` successfully after the plan-truth cleanup. That
-pass observed `cluster status` in `lifecyclePhase: not-yet-reconciled`, so it does not add new
-routed integration or E2E lifecycle evidence beyond the governed cluster reruns recorded above.
+pass was repo-local and did not require real cluster execution, but it was also performed on the
+retired hardware; the static/unit gates can be rerun trivially on the new Apple Silicon host as
+part of the Apple cohort re-validation batch.
 
 ## Validation Surface
 
@@ -1009,9 +1029,9 @@ None.
 
 ---
 
-## Sprint 6.22: Apple Bootstrap Lifecycle Closure [Done]
+## Sprint 6.22: Apple Bootstrap Lifecycle Closure [Active - code landed, Apple cohort validation pending on new host]
 
-**Status**: Done
+**Status**: Active (code landed; the May 11 and May 17, 2026 Apple lifecycle proof points were on the retired Apple Silicon hardware and Apple cohort validation is pending on the new host)
 **Implementation**: `bootstrap/apple-silicon.sh`, `bootstrap/common.sh`, `src/Infernix/CLI.hs`, `src/Infernix/HostPrereqs.hs`, `src/Infernix/Python.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Workflow.hs`, `src/Infernix/Demo/Api.hs`, `src/Infernix/Runtime/Pulsar.hs`, `docker/linux-substrate.Dockerfile`, `test/unit/Spec.hs`
 **Docs to update**: `README.md`, `AGENTS.md`, `CLAUDE.md`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/00-overview.md`, `DEVELOPMENT_PLAN/system-components.md`, `documents/development/assistant_workflow.md`, `documents/development/local_dev.md`, `documents/development/python_policy.md`, `documents/development/testing_strategy.md`, `documents/engineering/docker_policy.md`, `documents/engineering/portability.md`, `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`
 
@@ -1060,13 +1080,18 @@ substrate-mismatched compatibility shims.
 - the supported Apple lifecycle rerun closes through
   `./bootstrap/apple-silicon.sh doctor`, `build`, `up`, `status`, `test`, `down`, and final
   `status`
-- on May 11, 2026, the supported Apple lifecycle reran cleanly through
-  `./bootstrap/apple-silicon.sh doctor`, `build`, `up`, `status`, `test`, and `down`
-- on May 17, 2026, with Colima 0.10.1 reporting multiple profiles from
-  `colima list --json`, the supported Apple lifecycle reran cleanly through
+- on May 11, 2026 (retired hardware), the supported Apple lifecycle had reran cleanly through
+  `./bootstrap/apple-silicon.sh doctor`, `build`, `up`, `status`, `test`, and `down`; that
+  evidence is no longer current
+- on May 17, 2026 (retired hardware), with Colima 0.10.1 reporting multiple profiles from
+  `colima list --json`, the supported Apple lifecycle had reran cleanly through
   `./bootstrap/apple-silicon.sh doctor`, `build`, `up`, `status`, `test`, `down`, and final
-  `status`, and the post-teardown `status` surface reported `clusterPresent: False`,
-  `lifecycleStatus: idle`, and `lifecyclePhase: cluster-absent`
+  `status`, with the post-teardown `status` surface reporting `clusterPresent: False`,
+  `lifecycleStatus: idle`, and `lifecyclePhase: cluster-absent`; that evidence is no longer
+  current
+- **Apple cohort validation pending on new host:** the clean-host Apple bootstrap, Colima
+  profile discovery, post-teardown status, and full lifecycle rerun must be re-validated on the
+  new Apple Silicon host before this sprint can return to `Done`
 - the Apple bootstrap fails fast with actionable messages if the resolved ghcup-managed toolchain,
   Homebrew `protoc`, or supported Colima profile still cannot be used in the current process
 - the supported Apple routed Playwright lane passes without timing out on
@@ -1081,9 +1106,9 @@ None.
 
 ---
 
-## Sprint 6.23: False-Negative Validation Doctrine and Documentation Closure [Done]
+## Sprint 6.23: False-Negative Validation Doctrine and Documentation Closure [Active - code and docs landed, Apple cohort validation pending on new host]
 
-**Status**: Done
+**Status**: Active (doctrine docs landed and progress surfaces are implemented; the prior Apple lifecycle proof points were on the retired hardware and Apple cohort re-validation is pending on the new host)
 **Implementation**: `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/00-overview.md`, `DEVELOPMENT_PLAN/system-components.md`, `documents/development/testing_strategy.md`, `documents/engineering/testing.md`, `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/reference/cli_reference.md`, `documents/reference/cli_surface.md`, `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Cluster/PublishImages.hs`, `src/Infernix/ProcessMonitor.hs`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/engineering/testing.md`, `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/reference/cli_reference.md`, `documents/reference/cli_surface.md`
 
@@ -1103,9 +1128,13 @@ failure.
   first-run phases that can take minutes without emitting steady log lines
 - CLI reference docs describe the supported status or progress surfaces operators use before
   concluding that a lifecycle action actually failed
-- the plan, runbooks, and testing docs cite the May 13, 2026 Apple lifecycle investigation plus
-  the May 15, 2026 and May 17, 2026 split-topology reruns as proof points for the supported
-  false-negative doctrine on the current worktree
+- the plan, runbooks, and testing docs had cited the May 13, 2026 Apple lifecycle investigation
+  plus the May 15, 2026 and May 17, 2026 split-topology reruns as proof points for the supported
+  false-negative doctrine; those reruns were performed on the retired Apple Silicon hardware and
+  no longer count as current proof points. The doctrine itself, the implemented progress
+  surfaces, and the docs that describe them remain accurate, but the Apple cohort re-validation
+  on the new host needs to demonstrate the same inactivity-aware behavior before this sprint can
+  return to `Done`
 
 ### Validation
 
@@ -1125,9 +1154,9 @@ None.
 
 ---
 
-## Sprint 6.24: Harbor Publication Retry Hardening [Done]
+## Sprint 6.24: Harbor Publication Retry Hardening [Active - code landed, Apple cohort validation pending on new host]
 
-**Status**: Done
+**Status**: Active (code landed; the May 13 and May 15, 2026 Apple lifecycle proof points were on the retired Apple Silicon hardware and Apple cohort re-validation of the Harbor retry behavior is pending on the new host)
 **Implementation**: `src/Infernix/Cluster/PublishImages.hs`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/00-overview.md`, `DEVELOPMENT_PLAN/system-components.md`, `documents/development/testing_strategy.md`, `documents/engineering/testing.md`, `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/engineering/testing.md`, `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`
 
@@ -1147,32 +1176,42 @@ otherwise depend on a transient target tag that no longer exists locally.
   retry can recover even when the prior target tag disappeared locally
 - a failed push still exits successfully when the expected tag is already present or a registry
   pull proves the content became available despite the client-side push failure
-- plan, testing, and runbook docs record the May 13, 2026 Apple lifecycle proof point with the
-  current steady-state pod count and the supported retry interpretation, plus the May 15, 2026
-  repo-owned-image ordering and re-tagging proof point
+- plan, testing, and runbook docs had recorded the May 13, 2026 Apple lifecycle proof point with
+  the then-current steady-state pod count and the supported retry interpretation, plus the
+  May 15, 2026 repo-owned-image ordering and re-tagging proof point; both proof points were on
+  the retired Apple Silicon hardware and no longer count as current evidence. The retry logic
+  itself remains implemented in `src/Infernix/Cluster/PublishImages.hs`, but Apple cohort
+  re-validation on the new host is pending before this deliverable line can return to closed
 
 ### Validation
 
-- `PATH=/Users/matt/.ghcup/bin:$PATH /Users/matt/.ghcup/bin/cabal test infernix-unit` passes
-- `./bootstrap/apple-silicon.sh doctor`, `build`, `up`, `status`, `test`, and `down` pass on May
-  13, 2026 after the retry hardening
-- the full `./bootstrap/apple-silicon.sh test` lifecycle exercises the large Pulsar Harbor
+- `cabal test infernix-unit` passes on the new Apple Silicon host
+- `./bootstrap/apple-silicon.sh doctor`, `build`, `up`, `status`, `test`, and `down` had passed
+  on May 13, 2026 on the retired hardware after the retry hardening; that proof point is no
+  longer current
+- the full `./bootstrap/apple-silicon.sh test` lifecycle had exercised the large Pulsar Harbor
   publication path, integration coverage, routed Playwright E2E, retained-state replay, and final
-  cluster teardown successfully
-- the May 15, 2026 Apple lifecycle validates that the repo-owned `infernix-linux-cpu:local` image
-  is pushed before third-party images and remains retryable through source re-tagging
+  cluster teardown successfully on the retired hardware; that proof point is no longer current
+- the May 15, 2026 Apple lifecycle had validated that the repo-owned `infernix-linux-cpu:local`
+  image is pushed before third-party images and remains retryable through source re-tagging on
+  the retired hardware; that proof point is no longer current
 - final `./bootstrap/apple-silicon.sh status` reports `clusterPresent: False`,
   `lifecycleStatus: idle`, and `lifecyclePhase: cluster-absent`
+- **Apple cohort validation pending on new host:** the retry hardening, retryable source
+  re-tagging, and final post-teardown status must be re-validated on the new Apple Silicon host
+  before this sprint can return to `Done`
 
 ### Remaining Work
 
-None.
+- Apple cohort rerun of the full `./bootstrap/apple-silicon.sh doctor`, `build`, `up`, `status`,
+  `test`, `down`, and final `status` lifecycle on the new Apple Silicon host, exercising the
+  large-image Harbor publication and retry paths
 
 ---
 
-## Sprint 6.25: Cluster-Daemon and Apple Host-Inference Split [Done]
+## Sprint 6.25: Cluster-Daemon and Apple Host-Inference Split [Active - code landed, Apple cohort validation pending on new host]
 
-**Status**: Done
+**Status**: Active (code landed; the split-topology proof points were on the retired Apple Silicon hardware and Apple cohort re-validation is pending on the new host)
 **Implementation**: `src/Infernix/Types.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Service.hs`, `src/Infernix/Models.hs`, `src/Infernix/DemoConfig.hs`, `src/Infernix/Runtime/Pulsar.hs`, `chart/templates/deployment-service.yaml`, `chart/values.yaml`, `infernix.cabal`, `test/unit/Spec.hs`, `test/integration/Spec.hs`, `web/playwright/inference.spec.js`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/00-overview.md`, `DEVELOPMENT_PLAN/system-components.md`, `DEVELOPMENT_PLAN/development_plan_standards.md`, `DEVELOPMENT_PLAN/phase-3-ha-platform-services-and-edge-routing.md`, `DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md`, `DEVELOPMENT_PLAN/phase-5-web-ui-and-shared-types.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 **Docs to update**: `README.md`, `documents/architecture/runtime_modes.md`, `documents/architecture/web_ui_architecture.md`, `documents/development/testing_strategy.md`, `documents/engineering/model_lifecycle.md`, `documents/engineering/portability.md`, `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/reference/api_surface.md`, `documents/reference/web_portal_surface.md`, `documents/tools/pulsar.md`
 
@@ -1222,24 +1261,30 @@ same-binary host daemon fed by Pulsar batches.
   browser surface
 - docs lint fails if the plan or governed docs describe Apple cluster-daemon absence as the final
   contract
-- `PATH=/Users/matt/.ghcup/bin:$PATH /Users/matt/.ghcup/bin/cabal test infernix-unit` passes
-- `PATH=/Users/matt/.ghcup/bin:$PATH /Users/matt/.ghcup/bin/cabal test infernix-haskell-style`
-  passes
+- `cabal test infernix-unit` passes on the new Apple Silicon host
+- `cabal test infernix-haskell-style` passes on the new Apple Silicon host
 - `./bootstrap/apple-silicon.sh doctor`, `build`, `up`, `status`, `test`, `down`, and final
-  `status` pass on May 15, 2026 and May 17, 2026 on the split topology
-- the full `./bootstrap/apple-silicon.sh test` lifecycle exercises the Apple host-batch topic,
-  the host daemon, every active generated catalog entry, routed Playwright, repeated retained-state
-  cluster teardown and bring-up, and final cluster teardown successfully
+  `status` had passed on May 15, 2026 and May 17, 2026 on the retired Apple Silicon hardware
+  exercising the split topology; that proof point is no longer current
+- the full `./bootstrap/apple-silicon.sh test` lifecycle had exercised the Apple host-batch
+  topic, the host daemon, every active generated catalog entry, routed Playwright, repeated
+  retained-state cluster teardown and bring-up, and final cluster teardown successfully on the
+  retired hardware; that proof point is no longer current
+- **Apple cohort validation pending on new host:** the split-topology lifecycle, host-batch
+  Pulsar handoff, host-daemon execution of every active generated catalog entry, routed
+  Playwright on the published localhost edge port, and retained-state replay cycles must be
+  re-validated on the new Apple Silicon host before this sprint can return to `Done`
 
 ### Remaining Work
 
-None.
+- Apple cohort rerun of the split-topology `./bootstrap/apple-silicon.sh` lifecycle and `test`
+  lane on the new Apple Silicon host
 
 ---
 
-## Sprint 6.26: Lifecycle Warning Classification and Toolchain Noise Closure [Done]
+## Sprint 6.26: Lifecycle Warning Classification and Toolchain Noise Closure [Active - code landed, CUDA Linux cohort validation pending on new host]
 
-**Status**: Done
+**Status**: Active (code and docs landed; the May 19, 2026 `linux-gpu` lifecycle proof point was on the retired Linux/CUDA host and CUDA Linux cohort re-validation is pending on the new Apple Silicon host through Colima's amd64 VM)
 **Implementation**: `docker/linux-substrate.Dockerfile`, `web/package.json`, `web/scripts/install-purescript.mjs`, `src/Infernix/Workflow.hs`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/engineering/docker_policy.md`, `documents/development/purescript_policy.md`, `documents/development/python_policy.md`, `documents/engineering/build_artifacts.md`, `README.md`, `DEVELOPMENT_PLAN/README.md`
 **Docs to update**: `README.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/engineering/docker_policy.md`, `documents/development/purescript_policy.md`, `documents/development/python_policy.md`, `documents/engineering/build_artifacts.md`, `DEVELOPMENT_PLAN/README.md`
 
@@ -1282,16 +1327,22 @@ container-build packaging behavior, or normal Kubernetes convergence.
   adjustment messages
 - supported lifecycle reruns still pass after warning cleanup and do not reclassify command failures
   as acceptable warning noise
-- on May 19, 2026, the supported `linux-gpu` lifecycle passed through
+- on May 19, 2026 (retired hardware), the supported `linux-gpu` lifecycle had passed through
   `./bootstrap/linux-gpu.sh doctor`, forced `docker compose build infernix` image refresh,
-  `./bootstrap/linux-gpu.sh build`, `up`, `status`, `test`, `down`, `purge`, and final `status`
-- the final `./bootstrap/linux-gpu.sh test` rerun passed Haskell style, Python checks, Haskell
-  unit, PureScript unit, Haskell integration, routed Playwright E2E, retained-state replay, and
-  final teardown after the substrate image copied `web/scripts/` before npm `postinstall`
+  `./bootstrap/linux-gpu.sh build`, `up`, `status`, `test`, `down`, `purge`, and final `status`;
+  that proof point is no longer current
+- the final `./bootstrap/linux-gpu.sh test` rerun had passed Haskell style, Python checks,
+  Haskell unit, PureScript unit, Haskell integration, routed Playwright E2E, retained-state
+  replay, and final teardown after the substrate image copied `web/scripts/` before npm
+  `postinstall`; that proof point was on the retired Linux/CUDA host and is no longer current
+- **CUDA Linux cohort validation pending on new host:** the warning-classification closure and
+  toolchain-noise gates must be re-validated through a clean `linux-gpu` lifecycle on the new
+  Apple Silicon host (run through Colima's amd64 VM) before this sprint can return to `Done`
 
 ### Remaining Work
 
-None.
+- CUDA Linux cohort rerun of the full `./bootstrap/linux-gpu.sh` lifecycle on the new Apple
+  Silicon host (through Colima's amd64 VM)
 
 ---
 
@@ -1330,9 +1381,9 @@ None.
 
 ---
 
-## Sprint 6.28: Test Fixture and Lint Gate Retirement [Done]
+## Sprint 6.28: Test Fixture and Lint Gate Retirement [Active - code landed, cohort validation pending on new host]
 
-**Status**: Done
+**Status**: Active (code landed; the prior May 26 and May 27, 2026 Linux/CUDA validation proof points were on the retired hardware; Apple cohort and CUDA Linux cohort lint, unit, integration, and `test all` reruns are pending on the new Apple Silicon host)
 **Implementation**: `test/unit/Spec.hs`, `test/integration/Spec.hs`, `src/Infernix/Lint/HaskellStyle.hs`, `src/Infernix/Lint/Docs.hs`, `src/Infernix/Lint/Chart.hs`
 **Docs to update**: `documents/development/no_env_vars.md`, `documents/development/testing_strategy.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 
@@ -1347,9 +1398,14 @@ PATH-resolved invocation regressions.
   typed fixtures or in-process fixtures. Every `getEnvironment` whole-env capture is removed from
   test code.
 - `src/Infernix/Lint/HaskellStyle.hs` rejects `lookupEnv`, `getEnv`, `getEnvironment`, `setEnv`,
-  and `unsetEnv` outside the remaining explicitly named non-test exceptions.
+  and `unsetEnv` outside the remaining explicitly named non-test exceptions. After the Sprint 7.17
+  Apple cohort closure (2026-05-29), the `envFunctionExemptedFiles` list narrows to `Setup.hs`,
+  the lint module itself, `src/Infernix/CLI.hs`, and `src/Infernix/HostPrereqs.hs`. The
+  `src/Infernix/Python.hs` row is gone with that closure.
 - `src/Infernix/Lint/HaskellStyle.hs` rejects any `proc "<bare-name>"` whose name matches a known
-  external tool, with non-test exemptions left only for still-open Apple/bootstrap surfaces.
+  external tool, with non-test exemptions left only for still-open Apple/bootstrap surfaces
+  (`src/Infernix/Lint/HaskellStyle.hs` self, `src/Infernix/Lint/Files.hs`,
+  `src/Infernix/HostPrereqs.hs`, `src/Infernix/Workflow.hs`).
 - `src/Infernix/Lint/Docs.hs` rejects governed root and `documents/` language that reintroduces
   project-prefixed env names or shell path overrides as supported operator configuration.
 - `src/Infernix/Lint/Chart.hs` rejects any `env:` block in
@@ -1357,25 +1413,44 @@ PATH-resolved invocation regressions.
 
 ### Validation
 
-- May 27, 2026: `rg -n "lookupEnv|getEnv|getEnvironment|setEnv|unsetEnv|withOptionalEnv|INFERNIX_DATA_ROOT|INFERNIX_PULSAR_ADMIN_URL|INFERNIX_PULSAR_WS_BASE_URL" test` returns zero matches.
-- May 27, 2026: `rg -n 'proc "(python3|docker|kubectl|helm|kind|skopeo|curl|tar|chown|hostname|nvidia-smi|nvkind|node|npm)"' test/integration/Spec.hs test/unit/Spec.hs` returns zero matches.
-- May 27, 2026: `rg -n "test/unit/Spec.hs|test/integration/Spec.hs|Integration test scaffolding|test harness intentionally" src/Infernix/Lint/HaskellStyle.hs` returns zero matches, proving the Haskell-style gate no longer exempts the test suites.
-- May 27, 2026: `cabal build test:infernix-integration` passed after the integration fixture changed from `proc "python3"` to an in-process TCP listener.
-- May 27, 2026: `cabal test infernix-haskell-style` passed after removing the test exemptions.
-- May 27, 2026: `cabal test infernix-unit` passed after updating the Compose launcher contract assertion.
-- May 27, 2026: `cabal run infernix -- lint docs`, `lint files`, `lint chart`, and `lint proto` passed with the docs override gate active.
-- May 27, 2026: `LAUNCHER_IMAGE=infernix-linux-gpu:local docker compose --project-name infernix-linux-gpu --file compose.yaml config` and the matching CPU compose config render the expected two-bind launcher from the single Compose file.
-- May 26, 2026: the governed `linux-gpu` `infernix test all` pass remains the real-cluster evidence for the full lint + unit + integration + Playwright E2E stack.
+- The static greps and the typed lint gates themselves remain trivially re-runnable on any host:
+  `rg -n "lookupEnv|getEnv|getEnvironment|setEnv|unsetEnv|withOptionalEnv|INFERNIX_DATA_ROOT|INFERNIX_PULSAR_ADMIN_URL|INFERNIX_PULSAR_WS_BASE_URL" test` must return zero matches; the
+  `rg` invocation against `proc "<bare-tool>"` must return zero matches; the
+  Haskell-style gate must no longer exempt the test suites.
+- May 27, 2026 (retired hardware): `cabal build test:infernix-integration` had passed after the
+  integration fixture changed from `proc "python3"` to an in-process TCP listener;
+  `cabal test infernix-haskell-style` had passed after removing the test exemptions;
+  `cabal test infernix-unit` had passed after updating the Compose launcher contract assertion;
+  `cabal run infernix -- lint docs`, `lint files`, `lint chart`, and `lint proto` had passed
+  with the docs override gate active;
+  `LAUNCHER_IMAGE=infernix-linux-gpu:local docker compose --project-name infernix-linux-gpu --file compose.yaml config`
+  and the matching CPU compose config had rendered the expected two-bind launcher from the
+  single Compose file. All of those passes were on the retired hardware and no longer count as
+  current proof points; the code paths themselves are unchanged and the same commands are
+  expected to pass on the new Apple Silicon host.
+- May 26, 2026 (retired hardware): the governed `linux-gpu` `infernix test all` pass had been the
+  real-cluster evidence for the full lint + unit + integration + Playwright E2E stack on the
+  retired Linux/CUDA host; that proof point is no longer current. CUDA Linux cohort
+  `infernix test all` re-validation on the new host (through Colima's amd64 VM) is pending.
+- **Apple cohort and CUDA Linux cohort validation pending on new host:** the static greps, lint
+  gates, unit tests, integration build, and full `test all` must be rerun on the new Apple
+  Silicon host before this sprint can return to `Done`
 
 ### Remaining Work
 
-None.
+- Apple cohort lint/unit/integration/`test all` rerun on the new Apple Silicon host
+- CUDA Linux cohort lint/unit/integration/`test all` rerun on the new host (through Colima's
+  amd64 VM)
 
 ---
 
 ## Remaining Work
 
-None. Sprints 6.1–6.28 are Done.
+Sprints 6.1–6.28 closed their code-side deliverables. Their real-cluster validation evidence was
+produced on the retired Apple Silicon and Linux/CUDA hardware and no longer counts as current
+proof points. Phase 6 returns to `Done` only after Apple cohort and CUDA Linux cohort full-suite
+validation are both rerun on the new Apple Silicon host (the CUDA Linux lane through Colima's
+amd64 VM, or on a separately re-provisioned Linux/CUDA machine if one is reintroduced).
 
 ## Documentation Requirements
 

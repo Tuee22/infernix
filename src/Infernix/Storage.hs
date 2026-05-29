@@ -4,8 +4,10 @@
 
 module Infernix.Storage
   ( edgePortPath,
+    harborPortPath,
     readCacheManifestProtoMaybe,
     readEdgePortMaybe,
+    readHarborPortMaybe,
     readInferenceResultProtoMaybe,
     readStateFileMaybe,
     writeCacheManifestProto,
@@ -42,8 +44,25 @@ edgePortPath :: Paths -> FilePath
 edgePortPath paths = runtimeRoot paths </> "edge-port.json"
 
 readEdgePortMaybe :: Paths -> IO (Maybe Int)
-readEdgePortMaybe paths = do
-  let filePath = edgePortPath paths
+readEdgePortMaybe paths = readPortFileMaybe (edgePortPath paths)
+
+-- | Phase 3 follow-on (2026-05-29): Harbor's host-side NodePort is
+-- dynamically selected at @cluster up@ time using the same
+-- bind-test / increment loop that the edge port uses, and persisted
+-- here for downstream probes, the publication path, and the
+-- containerd registry-hosts namespace mapping. The in-cluster
+-- Kubernetes NodePort number stays fixed at @30002@; only the Kind
+-- hostPort mapping observed by the operator host shifts when another
+-- process (e.g. an unrelated VSCode debug worker) already holds the
+-- baseline.
+harborPortPath :: Paths -> FilePath
+harborPortPath paths = runtimeRoot paths </> "harbor-port.json"
+
+readHarborPortMaybe :: Paths -> IO (Maybe Int)
+readHarborPortMaybe paths = readPortFileMaybe (harborPortPath paths)
+
+readPortFileMaybe :: FilePath -> IO (Maybe Int)
+readPortFileMaybe filePath = do
   fileExists <- doesFileExist filePath
   if fileExists
     then do

@@ -64,44 +64,60 @@ Linux lanes may hydrate and stream only the narrow Harbor warmup dependency set 
 Helm warmup, only Harbor-required services may pull upstream before Harbor is responsive, and
 every remaining image, including the active `infernix` runtime image, is loaded into Harbor before
 final rollout.
-Phase 6 records clean governed
-bootstrap reruns for the supported Linux and Apple lifecycle surfaces, including Apple reruns
-on May 15, 2026 and May 17, 2026 through `doctor`, `build`, `up`, `status`, `test`, `down`, and
-final `status`, plus the May 19, 2026 post-warning-cleanup `linux-gpu` rerun through `doctor`,
-forced image refresh, `build`, `up`, `status`, `test`, `down`, `purge`, and final `status`; those
-reruns validated the split daemon topology, host-batch Pulsar handoff, routed Playwright E2E,
-repeated retained-state cluster bring-up or teardown cycles inside the governed `test` lane, and
+Phase 6 had previously recorded clean governed bootstrap reruns for the supported Linux and Apple
+lifecycle surfaces on the retired hardware, including Apple reruns on May 15, 2026 and May 17,
+2026 through `doctor`, `build`, `up`, `status`, `test`, `down`, and final `status`, plus the
+May 19, 2026 post-warning-cleanup `linux-gpu` rerun through `doctor`, forced image refresh,
+`build`, `up`, `status`, `test`, `down`, `purge`, and final `status`. Those historical reruns
+originally covered the split daemon topology, host-batch Pulsar handoff, routed Playwright E2E,
+repeated retained-state cluster bring-up or teardown cycles inside the governed `test` lane,
 final post-teardown status returning `clusterPresent: False`, `lifecycleStatus: idle`, and
-`lifecyclePhase: cluster-absent`. Those reruns also validate the Harbor publication closure
-for repo-owned local images: publication pushes the `infernix-linux-cpu:local` payload before
-third-party chart dependencies and re-tags the source image before each bounded push retry, so
-retry recovery does not depend on a previously retained target tag. The earlier May 13 lifecycle
-investigation remains the proof point that Apple `build-cluster-images` can stay healthy well past
+`lifecyclePhase: cluster-absent`, and the Harbor publication closure for repo-owned local images
+where publication pushes the `infernix-linux-cpu:local` payload before third-party chart
+dependencies and re-tags the source image before each bounded push retry so retry recovery does
+not depend on a previously retained target tag. The earlier May 13, 2026 lifecycle investigation
+originally served as the proof point that Apple `build-cluster-images` can stay healthy well past
 thirty minutes before Harbor publication begins and that Harbor image pushes are readiness-gated
 with bounded retries across transient registry resets.
 
+**Apple Silicon validation reset (2026-05-29).** The project moved its primary development
+machine to a new Apple Silicon host on 2026-05-29, and the prior Apple Silicon hardware is no
+longer available. Every recorded Apple Silicon lifecycle, test, and bootstrap validation listed
+above, including the May 13, May 15, and May 17, 2026 reruns, is retired as a current proof
+point. The underlying implementation contracts they exercised still describe the supported
+behavior, but Apple Silicon validation must be redone end to end on the new host before any
+current Apple proof point can be claimed. The CUDA Linux cohort evidence (most recently the
+May 19, May 26, and May 27, 2026 `linux-gpu` reruns) was performed on the retired host as well,
+so CUDA Linux cohort validation is also currently pending on the new host (run through the
+supported `docker compose run --rm infernix infernix ...` outer-container path inside Colima's
+amd64 VM, or on a separate Linux/CUDA machine if and when one is reintroduced). The `linux-cpu`
+portable lane similarly carries pending-on-new-host status until it is rerun.
+
 | Area | Supported contract | Current repo state |
 |------|--------------------|--------------------|
-| Root-document governance | the governed docs, root docs, and plan describe the same staged-substrate doctrine and Apple daemon-role topology | implemented and validated |
+| Root-document governance | the governed docs, root docs, and plan describe the same staged-substrate doctrine and Apple daemon-role topology | implemented; the prior Apple validation evidence for the root-document posture was on the retired Apple hardware, so Apple cohort validation is pending on the new host |
 | CLI ownership | one Haskell command registry owns the supported command surface without any `--runtime-mode` override | implemented |
 | Substrate selection | one staged substrate file beside the active build root is the primary source of truth for substrate identity and generated catalog selection | implemented |
 | Staged substrate-file format | the substrate file and its mirrors use one explicit and consistent file format and filename contract | implemented; the current contract is a shared `infernix-substrate.dhall` filename carrying a typed Dhall record on local and cluster-mounted paths, decoded in-process by the `dhall` Haskell library |
 | Apple split-executor lane | the host-built binary manages Kind, the cluster always runs `infernix service` daemons, and Apple-native inference batches are delegated to same-binary host daemons through Pulsar | implemented |
-| Apple stage-0 bootstrap determinism | a first-run Apple bootstrap verifies newly installed same-process tool resolution before handing off to direct `cabal` work | implemented and validated through the governed Apple `doctor`, `build`, `up`, `status`, `test`, and `down` lifecycle |
-| Bootstrap responsibility boundary | shell bootstrap builds or enters the active launcher only, then delegates lifecycle, validation, image preparation, and teardown to `infernix`; Harbor-first image loading includes the active runtime image on every substrate after Harbor is responsive | implemented and validated |
-| Lifecycle false-negative protection | supported lifecycle surfaces report long-running build, publication, preload, and teardown phases clearly enough that operators do not mistake progress for failure | implemented and validated; `cluster status` now reports in-progress lifecycle phase, detail, and heartbeat fields during the monitored long-running phases, and the governed docs use the same inactivity-aware interpretation contract |
-| Linux control plane | all supported Linux CLI commands run through `docker compose run --rm infernix infernix ...` | implemented and validated through the supported `linux-cpu` and `linux-gpu` bootstrap lifecycles |
+| Apple stage-0 bootstrap determinism | a first-run Apple bootstrap verifies newly installed same-process tool resolution before handing off to direct `cabal` work | implemented; the prior governed Apple `doctor`, `build`, `up`, `status`, `test`, and `down` lifecycle evidence was on the retired Apple hardware, so Apple cohort validation is pending on the new host |
+| Bootstrap responsibility boundary | shell bootstrap builds or enters the active launcher only, then delegates lifecycle, validation, image preparation, and teardown to `infernix`; Harbor-first image loading includes the active runtime image on every substrate after Harbor is responsive | implemented; the prior validation evidence was on the retired Apple and CUDA Linux hardware, so Apple cohort and CUDA Linux cohort validation are both pending on the new host |
+| Lifecycle false-negative protection | supported lifecycle surfaces report long-running build, publication, preload, and teardown phases clearly enough that operators do not mistake progress for failure | implemented; `cluster status` now reports in-progress lifecycle phase, detail, and heartbeat fields during the monitored long-running phases, and the governed docs use the same inactivity-aware interpretation contract; the prior cohort validation was on the retired hardware, so Apple cohort and CUDA Linux cohort validation are both pending on the new host |
+| Linux control plane | all supported Linux CLI commands run through `docker compose run --rm infernix infernix ...` | implemented; the prior `linux-cpu` and `linux-gpu` bootstrap lifecycle validation was on the retired hardware, so CUDA Linux cohort and portable `linux-cpu` validation are both pending on the new Apple Silicon host (run through Colima's amd64 VM) |
 | Linux GPU naming | the NVIDIA-backed Linux substrate is standardized as `linux-gpu` | implemented |
 | Serialized substrate naming | the generated substrate file, publication JSON, `cluster status`, and browser contracts still carry the active substrate under `runtimeMode` field names | implemented |
 | Demo UI gating | the staged substrate file can disable the clustered demo surface | implemented; the supported materialization path accepts `--demo-ui false` |
-| Simulation stance | no simulated cluster, route, or generic inference-success fallback remains in the supported runtime or validation contract, and routed Pulsar checks require the real Gateway-backed upstream | implemented and validated; inference execution goes through typed adapter harnesses, unsupported adapters fail fast, and the remaining repo-local topic spool under `./.data/runtime/pulsar/` is a harness-only path for unit-level or intentionally endpoint-absent daemon checks |
-| Validation scope | integration uses one `.dhall`-driven suite over the README matrix, E2E stays substrate-agnostic at the browser layer, and `test all` runs every supported validation layer for one built substrate at a time | implemented and validated across the governed Linux and Apple lifecycle reruns |
+| Simulation stance | no simulated cluster, route, or generic inference-success fallback remains in the supported runtime or validation contract, and routed Pulsar checks require the real Gateway-backed upstream | implemented; inference execution goes through typed adapter harnesses, unsupported adapters fail fast, and the remaining repo-local topic spool under `./.data/runtime/pulsar/` is a harness-only path for unit-level or intentionally endpoint-absent daemon checks; the prior cohort validation that exercised the real Gateway-backed routed surfaces was on the retired hardware, so Apple cohort and CUDA Linux cohort validation are both pending on the new host |
+| Validation scope | integration uses one `.dhall`-driven suite over the README matrix, E2E stays substrate-agnostic at the browser layer, and `test all` runs every supported validation layer for one built substrate at a time | implemented; the prior governed Linux and Apple lifecycle reruns that exercised this scope were on the retired hardware, so Apple cohort and CUDA Linux cohort full-suite validation are both pending on the new Apple Silicon host |
 | Hardware cohort cadence | phase work validates first on the current Apple Silicon or CUDA Linux machine, then batches counterpart full-suite validation at phase closure so contributors do not switch machines after every sprint | implemented in the plan doctrine; active phase documents name the validated cohort and any queued counterpart cohort residual explicitly |
 
 Monitoring is not a supported first-class surface.
 
-Phase 7 (`Active`) adds the multi-user durable-context demo application on top of this
-validated platform. The product-agnostic primitives live at
+Phase 7 (`Active`) adds the multi-user durable-context demo application on top of this platform.
+The platform contract above is implemented in the worktree, but its real-cluster validation
+evidence was generated on the retired hardware; both the Apple and CUDA Linux cohorts therefore
+carry pending validation on the new Apple Silicon host before any current real-cluster claim can
+be made. The product-agnostic primitives live at
 [../documents/architecture/durable_context_design.md](../documents/architecture/durable_context_design.md);
 the demo's concrete bindings live at
 [../documents/architecture/demo_app_design.md](../documents/architecture/demo_app_design.md);

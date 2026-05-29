@@ -1,6 +1,6 @@
 # Phase 7: Demo App Multi-User Durable Context
 
-**Status**: Active (Sprint 7.5 is `Done` as of May 28, 2026 with Linux GPU real-broker compaction validation for context and draft metadata topics; Sprints 7.1, 7.3, 7.4, 7.6-7.16 remain in various partial-landed states with `Active` headers; Sprint 7.14's WebSocket-to-Pulsar publish plumbing, Linux GPU real-cluster coordinator-to-engine handoff validation, real Pulsar Reader roundtrip coverage for conversation, contexts, drafts, and bootstrap-ready topic families, compacted-reader latest-per-key validation, frontend producer-dedup validation, and non-chaos dispatcher/result-bridge durable prompt roundtrip landed May 27-28, 2026, while coordinator/result/bootstrap Failover chaos and throughput suites remain pending; Sprint 7.15's durable-context SPA shell mount, Workbench unmount, minimal routed Playwright SPA/publication smoke, routed Keycloak self-registration auth-code smoke, routed WebSocket valid/malformed JWT handshake validation plus expired-token rejection and typed malformed-frame error validation, routed real-Keycloak-JWT `/api/objects` grant validation, same-user routed presigned MinIO PUT/GET byte roundtrip, routed cross-user object-prefix isolation, routed `/api/objects/download` render-disposition MIME matrix, browser artifact upload-render coverage for bounded text/JSON previews, inline image/audio/video media, browser-native PDF grants, MIDI / MusicXML / generic download-only cases, browser-upload `ClientRecordUpload` -> `ConversationUserUploadEvent` publication wiring, browser conversation-visible upload event assertions, browser model-select `ClientCreateContext` / context-summary assertions, browser new-context dialog close-negative assertions, browser context rename/soft-delete frame and patch assertions, backend `ClientCreateContext` unknown-model rejection, browser prompt-submit `ClientSubmitPrompt.promptUserUploads` outbound-frame coverage, per-context `ClientSubscribeContext` -> `ServerConversationPatch` browser coverage for submitted prompts, `ClientHello`-started `ServerContextListSnapshot` / `ServerDraftMapSnapshot` plus `ServerContextListPatch` / `ServerDraftMapPatch` browser coverage for context creation and draft update/clear, browser logout/re-login plus refresh-token WebSocket re-auth coverage, browser WebSocket reconnect/reconstitution coverage, browser cancel lifecycle coverage, draft restore across WebSocket reconnect/page reload coverage, and two-prompt queued indicator browser assertions landed May 29, 2026, while the per-model smoke matrix remains pending; Sprint 7.17 schema + Haskell decoder + chart Secret + chart env stripping + Python `INFERNIX_POETRY_EXECUTABLE` retirement + the full `Demo/Api.hs` / `Demo/Auth.hs` / `Runtime/Pulsar.hs.loadBootstrapPresignedConfig` `INFERNIX_KEYCLOAK_*` / `INFERNIX_MINIO_*` retirement all landed May 25, 2026 and the CUDA Linux `linux-gpu` `test all` validation passed May 26, 2026; the Apple-only Poetry bootstrap compatibility path in `Python.hs` remains queued for the Apple cohort closure batch)
+**Status**: Active (substantial code work landed across Sprints 7.1, 7.3-7.17 in May 2026; Sprint 7.17's Apple-only Poetry bootstrap env-var residual in `src/Infernix/Python.hs` retired 2026-05-29, closing the Linux + Apple code surface for the configuration-doctrine retirement cohort; the prior Linux GPU and Linux/CUDA real-broker, real-cluster, and routed Playwright validation proof points (May 25 through May 29, 2026) were all on the retired Linux/CUDA host and no longer count as current proof points; Sprint 7.5's compaction validation, Sprint 7.14's coordinator-to-engine handoff and dispatcher/result-bridge roundtrip coverage, Sprint 7.15's routed Keycloak / WebSocket / `/api/objects` / browser durable-context flows, Sprint 7.17's `linux-gpu` `test all` PASS, and every other dated proof point in this phase are retired; Apple cohort and CUDA Linux cohort full-suite validation are both pending on the new Apple Silicon host; per-model smoke matrix and coordinator/result/bootstrap Failover chaos and throughput suites remain pending)
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/durable_context_design.md](../documents/architecture/durable_context_design.md), [../documents/architecture/demo_app_design.md](../documents/architecture/demo_app_design.md), [../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Define the multi-user, durable-context shape of the `infernix-demo` workload —
@@ -11,10 +11,25 @@
 
 ## Phase Status
 
-Phase 7 is `Active`. Phases 4–6 are `Done`; Phases 0–3 remain `Active` only for named
-configuration-doctrine and queued Apple-cohort follow-ons. The platform foundation, runtime,
-routed edge, HA platform services, generated demo catalog, and validation surface this phase
-builds on are in place. As of May 24, 2026 (afternoon pass): Sprint 7.2 is `Done` (PureScript-side
+Phase 7 is `Active`.
+
+**Apple Silicon validation reset (2026-05-29).** The repository's primary development machine
+moved to a new Apple Silicon host on 2026-05-29; the prior Apple Silicon and Linux/CUDA
+machines are no longer the active validation hosts. Every dated Linux GPU and Apple Silicon
+proof point cited below (May 25, May 26, May 27, May 28, and May 29, 2026, plus earlier dates)
+was produced on the retired hardware and no longer counts as a current proof point. The
+underlying code paths each proof point exercised remain implemented in the worktree, but Apple
+cohort and CUDA Linux cohort full-suite validation must be rerun on the new Apple Silicon host
+(the CUDA Linux lane through Colima's amd64 VM) before any current real-cluster claim can be
+made. The dated narrative below is retained for traceability of what was implemented and
+originally validated; read every "validated", "passed", or "PASS" entry below as "had been
+validated on retired hardware; pending re-validation on the new host."
+
+Phases 4–6 had their code closed; Phases 0–6 are all currently pending Apple cohort and CUDA
+Linux cohort re-validation on the new host (see each phase's Status line). The platform
+foundation, runtime, routed edge, HA platform services, generated demo catalog, and validation
+surface this phase builds on are present in code; only the validation evidence is retired. As of
+May 24, 2026 (afternoon pass): Sprint 7.2 is `Done` (PureScript-side
 tagged-sum encoders + roundtrip suite); Sprint 7.5 is `Done` after the May 28, 2026
 Linux GPU broker-compaction validation; Sprints 7.4, 7.6, 7.13, and 7.16 are landed at
 the shared-library, unit-test, and docs-alignment level; Sprints 7.7 and 7.8 land the
@@ -2519,10 +2534,10 @@ validation when real-cluster behaviors are observed):
 
 ---
 
-## Sprint 7.17: Secrets-via-Files and Demo-Surface Retirement [Active - CUDA Linux cohort landed; Apple cohort pending]
+## Sprint 7.17: Secrets-via-Files and Demo-Surface Retirement [Active - code closed; Apple cohort + CUDA Linux cohort validation pending on new Apple Silicon host]
 
 **Status**: Active
-**Blocked by**: Apple cohort validation batch for the remaining Apple-only Poetry bootstrap path.
+**Blocked by**: Apple cohort + CUDA Linux cohort full-suite validation reruns on the new Apple Silicon host (the prior Linux/CUDA proof points were on retired hardware; see the Apple Silicon validation reset note in `DEVELOPMENT_PLAN/README.md`).
 **Implementation**: `dhall/InfernixSecrets.dhall`, `src/Infernix/SecretsConfig.hs`, `src/Infernix/Demo/Api.hs`, `src/Infernix/Demo/Auth.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Python.hs`, `chart/templates/deployment-demo.yaml`, `chart/templates/secret-cluster-secrets.yaml`, `chart/templates/keycloak/deployment.yaml` (KC_DB_* documented exception).
 **Docs to update**: `documents/architecture/configuration_doctrine.md`, `documents/engineering/cluster_config_manifest.md`, `documents/tools/keycloak.md`, `documents/tools/minio.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 
@@ -2568,24 +2583,27 @@ fields (for non-secret values) plus file-based Secret mounts (for credentials). 
 
 ### Remaining Work
 
-- **`src/Infernix/Python.hs` env retirement.** Partial landing
-  May 25, 2026: the @INFERNIX_POETRY_EXECUTABLE@ env override is
-  retired in favor of `HostConfig.toolPaths.hostPoetry` looked up
-  via `pathsHostConfig paths`, with `onlyIfExists` guarding stale
-  fixture paths so unit tests without a real Poetry at the manifest
-  path fall through to the legacy `findExecutable "poetry"` lookup on
-  the operator's path. The Linux worker and Python-quality paths no
-  longer inject Poetry virtualenv configuration through env; the
-  typed source is `python/poetry.toml`. The Apple host adapter setup
-  env handoff in `Engines/AppleSilicon.hs` was retired May 27, 2026
-  by passing `--install-root` explicitly and using an empty process
-  environment. The remaining `POETRY_HOME` read and path lookup /
-  mutation around the Apple Poetry bootstrap are Apple-specific code
-  paths whose retirement is queued for the Apple cohort closure batch
-  so Linux-owned work can finish without per-sprint host switching. The `bareNameProcExemptedFiles` and
-  `envFunctionExemptedFiles` exemption rows for `src/Infernix/Python.hs`
-  remain because the Apple bootstrap path still consumes `POETRY_HOME`
-  / path state.
+- **`src/Infernix/Python.hs` env retirement — closed 2026-05-29.** The
+  May 25, 2026 partial closed the @INFERNIX_POETRY_EXECUTABLE@ env
+  override (replaced by `HostConfig.toolPaths.hostPoetry` via
+  `pathsHostConfig paths`, with `onlyIfExists` guarding stale fixture
+  paths). The Linux worker and Python-quality paths no longer inject
+  Poetry virtualenv configuration through env (`python/poetry.toml`
+  is the typed source). The Apple host adapter setup env handoff in
+  `Engines/AppleSilicon.hs` was retired May 27, 2026. The remaining
+  `POETRY_HOME` read and `PATH` lookup / mutation around the Apple
+  Poetry bootstrap retired 2026-05-29: `bootstrapPoetryOnAppleHost`
+  now takes a `Paths` argument and routes through
+  `HostConfig.hostFilesystem.hostHomeDirectory` for the Poetry install
+  root and `HostConfig.toolPaths.hostPython3` for the bootstrap Python
+  interpreter; `prependDirectoryToPath` / `activatePoetryExecutable` /
+  `firstCompatibleCommandOnPath` are deleted, and downstream callers
+  invoke Poetry through the absolute path returned by
+  `ensurePoetryExecutable`. The
+  `src/Infernix/Lint/HaskellStyle.hs.envFunctionExemptedFiles`
+  exemption row for `src/Infernix/Python.hs` was deleted in the same
+  change; the `bareNameProcExemptedFiles` list never carried a Python.hs
+  row.
 - **Linux validation — closed May 26, 2026.** The governed
   `linux-gpu` `infernix test all` pass validated the mounted
   `ClusterConfig` / `SecretsConfig` path, including the routed

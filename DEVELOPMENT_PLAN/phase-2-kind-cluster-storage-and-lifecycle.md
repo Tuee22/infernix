@@ -1,6 +1,6 @@
 # Phase 2: Kind Cluster Storage and Lifecycle
 
-**Status**: Active (Sprint 2.13 code-side env capture retirement and HostTool routing landed; CUDA Linux cohort clean-env `linux-gpu` lifecycle validation passed May 27, 2026; Apple cohort validation remains queued; Sprints 2.1–2.12 Done)
+**Status**: Active (Sprint 2.13 code-side env capture retirement and HostTool routing landed; the prior CUDA Linux clean-env `linux-gpu` lifecycle validation (May 27, 2026) was on the retired hardware and no longer counts as a current proof point; Apple cohort and CUDA Linux cohort validation both pending on the new Apple Silicon host; Sprints 2.1–2.12 code closed but their real-cluster proof points were on the retired hardware and are similarly pending re-validation)
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Define the supported Kind bootstrap path, the manual storage doctrine, the Helm
@@ -20,11 +20,13 @@ process environment in the shared cluster/process-monitor helpers, and routes kn
 through the `HostConfig`-backed HostTool resolver. The Apple setup path in
 `src/Infernix/Engines/AppleSilicon.hs` no longer inherits the parent environment; it invokes the
 Poetry setup entrypoint with an explicit `--install-root` argument and an empty process
-environment. The May 27, 2026 clean-environment Linux GPU validation passed:
-`env -i /usr/bin/bash ./bootstrap/linux-gpu.sh build`, `up`, and `status` completed, with
-`status` reporting `runtimeMode: linux-gpu`, `lifecyclePhase: steady-state`, 2 Kubernetes nodes,
-and 79 pods. The remaining work is the Apple host lifecycle run queued for the next Apple cohort
-validation batch.
+environment. The May 27, 2026 clean-environment Linux GPU validation
+(`env -i /usr/bin/bash ./bootstrap/linux-gpu.sh build`, `up`, `status` with `runtimeMode:
+linux-gpu`, `lifecyclePhase: steady-state`, 2 Kubernetes nodes, and 79 pods) ran on the retired
+Linux/CUDA host and no longer counts as a current proof point. The remaining work is the full
+real-cluster validation rerun on the new Apple Silicon host for both the Apple lane and the CUDA
+Linux lane (the latter run through Colima's amd64 VM or a separately re-provisioned Linux/CUDA
+machine if one is reintroduced).
 
 ## Storage Doctrine
 
@@ -62,18 +64,22 @@ image, including the active runtime image, into Harbor after Harbor is responsiv
 `infernix-substrate.dhall` writes are atomic so concurrent status readers do not observe truncated
 payloads, and retained-state Apple reruns automatically reinitialize stopped Harbor PostgreSQL
 replicas from the current Patroni leader when timeline drift leaves replicas unready after
-promotion. Phase 6 records clean supported `./bootstrap/apple-silicon.sh` lifecycle reruns from
-May 15, 2026 and May 17, 2026 through `doctor`, `build`, `up`, `status`, `test`, `down`, and
-final `status`; those reruns validated the split daemon topology, host-batch Pulsar handoff,
-repeated retained-state cluster bring-up or teardown cycles inside the governed `test` lane, and
-final post-teardown status returning `clusterPresent: False`, `lifecycleStatus: idle`, and
-`lifecyclePhase: cluster-absent`. The May 17, 2026 rerun also validated that the shell delegated
-cluster lifecycle to the rebuilt host binary, that the binary built and published the active
-runtime image through Harbor before final rollout, and that broad pre-Harbor support-image preload
-did not run. The earlier May 13 lifecycle investigation remains the proof point that Apple
-`build-cluster-images` can stay healthy well past thirty minutes before Harbor publication begins
-and that Harbor image pushes are readiness-gated with bounded retries across transient registry
-resets.
+promotion. Phase 6 had previously recorded clean supported `./bootstrap/apple-silicon.sh` lifecycle reruns
+from May 15, 2026 and May 17, 2026 through `doctor`, `build`, `up`, `status`, `test`, `down`, and
+final `status` covering the split daemon topology, host-batch Pulsar handoff, repeated
+retained-state cluster bring-up or teardown cycles inside the governed `test` lane, and final
+post-teardown status returning `clusterPresent: False`, `lifecycleStatus: idle`, and
+`lifecyclePhase: cluster-absent`; the May 17, 2026 rerun additionally exercised the
+shell-to-rebuilt-binary delegation, Harbor publication of the active runtime image before final
+rollout, and the absence of broad pre-Harbor support-image preload; the earlier May 13, 2026
+lifecycle investigation originally served as the proof point that Apple `build-cluster-images`
+can stay healthy well past thirty minutes before Harbor publication begins and that Harbor image
+pushes are readiness-gated with bounded retries across transient registry resets. **Apple
+Silicon validation reset (2026-05-29).** All of those reruns were performed on the retired Apple
+Silicon hardware (no longer available) and no longer count as current proof points; Apple cohort
+validation must be rerun on the new Apple Silicon host before the storage doctrine, Helm
+rollout, Harbor-first image flow, retained-state replay, and lifecycle-progress contracts above
+can be claimed as currently real-cluster-validated.
 
 ## Sprint 2.1: Kind Bootstrap and StorageClass Reset [Done]
 
@@ -380,9 +386,9 @@ None.
 
 ---
 
-## Sprint 2.10: Lifecycle Progress Surfaces and False-Negative Hardening [Done]
+## Sprint 2.10: Lifecycle Progress Surfaces and False-Negative Hardening [Active - code landed, Apple cohort validation pending on new host]
 
-**Status**: Done
+**Status**: Active (code landed; the prior Apple lifecycle proof points were on the retired Apple Silicon hardware and Apple cohort validation is pending on the new host)
 **Implementation**: `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Cluster/PublishImages.hs`, `src/Infernix/ProcessMonitor.hs`
 **Docs to update**: `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/reference/cli_reference.md`, `documents/reference/cli_surface.md`
 
@@ -414,27 +420,35 @@ distinguish real failure from ongoing first-run progress.
 
 - a cold `./bootstrap/apple-silicon.sh up` surfaces the image-build, Harbor-publication, and
   Harbor-backed final-image preload phases explicitly while it is still making forward progress
-- the May 17, 2026 Apple lifecycle output records the broad pre-Harbor support-image preload
-  phase as skipped and then verifies or loads Harbor-backed final image refs before rollout
-- the May 15, 2026 supported Apple lifecycle rerun exercises the large Pulsar image publication
-  path through Harbor, retained-state replay, split-daemon inference, and final teardown after the
-  bounded Docker-push retry hardening
+- the May 17, 2026 Apple lifecycle output had recorded the broad pre-Harbor support-image preload
+  phase as skipped and then verified or loaded Harbor-backed final image refs before rollout; that
+  output was produced on the retired Apple Silicon hardware and no longer counts as a current
+  proof point
+- the May 15, 2026 supported Apple lifecycle rerun had exercised the large Pulsar image
+  publication path through Harbor, retained-state replay, split-daemon inference, and final
+  teardown after the bounded Docker-push retry hardening; that rerun was also on the retired
+  Apple Silicon hardware and no longer counts as a current proof point
 - `./bootstrap/apple-silicon.sh down` surfaces the retained-state replay phase before Kind
   deletion when the Apple worker still owns durable cluster data
 - the supported status surface shows the in-progress lifecycle phase instead of only the last
   completed steady-state snapshot during monitored lifecycle work
 - `infernix lint docs` fails if the Apple or cluster runbooks or CLI references drift from the
   supported progress-surface and failure-classification contract
+- **Apple cohort validation pending on new host:** the dated proof points above must be rerun
+  end-to-end (`doctor`, `build`, `up`, `status`, `test`, `down`, final `status`) on the new Apple
+  Silicon host before this sprint can return to `Done`
 
 ### Remaining Work
 
-None.
+- Apple cohort lifecycle rerun on the new Apple Silicon host covering cold `up` progress
+  surfacing, pre-Harbor preload-skip recording, large-image Harbor publication, retained-state
+  replay during `down`, and inactivity-aware failure handling
 
 ---
 
-## Sprint 2.11: Retained-State Harbor PostgreSQL and Atomic Staging Closure [Done]
+## Sprint 2.11: Retained-State Harbor PostgreSQL and Atomic Staging Closure [Active - code landed, Apple cohort validation pending on new host]
 
-**Status**: Done
+**Status**: Active (code landed; the prior Apple lifecycle proof points were on the retired Apple Silicon hardware and Apple cohort validation is pending on the new host)
 **Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/DemoConfig.hs`
 **Docs to update**: `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`
 
@@ -460,16 +474,20 @@ status reads remain reliable and retained Harbor PostgreSQL replicas recover wit
   replica repair and reach ready Harbor PostgreSQL members
 - the supported Apple lifecycle reruns cleanly through `./bootstrap/apple-silicon.sh doctor`,
   `build`, `up`, `status`, `test`, and `down`
+- **Apple cohort validation pending on new host:** the atomic-staging and retained-state
+  PostgreSQL recovery proof points must be rerun on the new Apple Silicon host before this sprint
+  can return to `Done`
 
 ### Remaining Work
 
-None.
+- Apple cohort rerun on the new Apple Silicon host covering concurrent-status reads against an
+  in-flight lifecycle and retained-state Patroni replica reinitialization
 
 ---
 
-## Sprint 2.12: Bootstrap Responsibility and Harbor-First Image Boundary Refactor [Done]
+## Sprint 2.12: Bootstrap Responsibility and Harbor-First Image Boundary Refactor [Active - code landed, Apple cohort validation pending on new host]
 
-**Status**: Done
+**Status**: Active (code landed; the prior May 17, 2026 Apple lifecycle proof points were on the retired Apple Silicon hardware and Apple cohort validation is pending on the new host)
 **Implementation**: `bootstrap/apple-silicon.sh`, `bootstrap/linux-cpu.sh`, `bootstrap/linux-gpu.sh`, `src/Infernix/Cluster.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Cluster/PublishImages.hs`
 **Docs to update**: `README.md`, `documents/development/local_dev.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/operations/apple_silicon_runbook.md`, `documents/engineering/k8s_native_dev_policy.md`, `documents/engineering/docker_policy.md`, `documents/engineering/build_artifacts.md`, `documents/tools/harbor.md`
 
@@ -507,25 +525,34 @@ Make bootstrap scripts narrow stage-0 launchers and move lifecycle responsibilit
 - `cabal build all` passes with binary-owned substrate preflight, Harbor-first publication, and
   retained-state repair changes
 - on May 17, 2026, `./bootstrap/apple-silicon.sh doctor`, `build`, `up`, `status`, `test`,
-  `down`, and final `status` passed while the shell script built the host binary and delegated
-  lifecycle commands to `./.build/infernix`
-- the May 17, 2026 Apple `up` and `test all` output showed `preload-bootstrap-images` skipping
-  broad pre-Harbor support-image preload, then publishing and verifying Harbor-backed image refs
-  before final rollout
-- the May 17, 2026 Apple `test` lane passed Haskell style, Haskell unit, PureScript unit,
+  `down`, and final `status` had passed on the retired Apple Silicon hardware with the shell
+  script building the host binary and delegating lifecycle commands to `./.build/infernix`;
+  that proof point no longer counts as current evidence
+- the May 17, 2026 Apple `up` and `test all` output had shown `preload-bootstrap-images`
+  skipping broad pre-Harbor support-image preload and then publishing and verifying Harbor-backed
+  image refs before final rollout on the retired hardware; this is no longer a current proof
+  point
+- the May 17, 2026 Apple `test` lane had passed Haskell style, Haskell unit, PureScript unit,
   Haskell integration, routed Playwright E2E, split-daemon Apple inference, and repeated internal
-  retained-state cluster `down` or `up` cycles
-- final May 17, 2026 Apple `status` after explicit bootstrap `down` reported
+  retained-state cluster `down` or `up` cycles on the retired hardware; this is no longer a
+  current proof point
+- final May 17, 2026 Apple `status` after explicit bootstrap `down` had reported
   `clusterPresent: False`, `lifecycleStatus: idle`, and `lifecyclePhase: cluster-absent`, with
-  retained `./.build/`, `./.data/`, local images, and the Apple host binary still present
+  retained `./.build/`, `./.data/`, local images, and the Apple host binary still present, on
+  the retired hardware; this is no longer a current proof point
+- **Apple cohort validation pending on new host:** the shell-to-binary delegation, Harbor-first
+  publication, host runtime image publication, retained-`./.build/`/`./.data/` teardown
+  behavior, and `test all` lane all need a clean rerun on the new Apple Silicon host before this
+  sprint can return to `Done`
 
 ### Remaining Work
 
-None.
+- Apple cohort rerun of `./bootstrap/apple-silicon.sh doctor`, `build`, `up`, `status`, `test`,
+  `down`, and final `status` on the new Apple Silicon host
 
 ---
 
-## Sprint 2.13: Cluster Lifecycle Host-Manifest Retirement [Active - code landed, Apple cohort pending]
+## Sprint 2.13: Cluster Lifecycle Host-Manifest Retirement [Active - code landed, Apple cohort and CUDA Linux cohort validation pending on new host]
 
 **Status**: Active
 **Blocked by**: Phase 1 Sprint 1.11 (Host Manifest Materialization)
@@ -556,14 +583,17 @@ materialized in Phase 1 Sprint 1.11.
 
 - `cabal build all` clean, `infernix test lint` clean.
 - `grep -rEn '\bproc "(docker|kubectl|helm|kind)"' src/Infernix/Cluster.hs src/Infernix/Cluster/` returns zero matches.
-- May 27, 2026: `env -i /usr/bin/bash ./bootstrap/linux-gpu.sh build` passed, then
-  `env -i /usr/bin/bash ./bootstrap/linux-gpu.sh up` reached `cluster up complete`, and
-  `env -i /usr/bin/bash ./bootstrap/linux-gpu.sh status` reported
-  `lifecyclePhase: steady-state`.
-- May 27, 2026: `src/Infernix/Engines/AppleSilicon.hs` stopped importing
+- May 27, 2026 (retired hardware): `env -i /usr/bin/bash ./bootstrap/linux-gpu.sh build` had
+  passed, then `env -i /usr/bin/bash ./bootstrap/linux-gpu.sh up` had reached
+  `cluster up complete`, and `env -i /usr/bin/bash ./bootstrap/linux-gpu.sh status` had reported
+  `lifecyclePhase: steady-state`. That proof point was produced on the retired Linux/CUDA host
+  and no longer counts as current evidence; CUDA Linux cohort rerun on the new host is pending.
+- May 27, 2026 (retired hardware): `src/Infernix/Engines/AppleSilicon.hs` stopped importing
   `System.Environment.getEnvironment`; the setup invocation now passes `--install-root`
   explicitly and uses an empty `env = Just []` process environment. `cabal build all`,
-  `cabal test infernix-unit`, and `cabal test infernix-haskell-style` pass on Linux.
+  `cabal test infernix-unit`, and `cabal test infernix-haskell-style` had passed on the retired
+  Linux host. The Apple host cohort cannot exercise `Engines/AppleSilicon.hs` until Apple cohort
+  validation is rerun on the new Apple Silicon host.
 
 ### Remaining Work
 
@@ -588,12 +618,39 @@ Env-side retirement landed (May 25, 2026):
   alternative.
 - **`getEnvironment` whole-env captures retired in
   `Cluster.hs.runCommandWithInput`, `Cluster.hs.tryCommand`, and
-  `ProcessMonitor.hs.tryCommandMonitored`.** Each now uses a fixed
-  minimal `[(String, String)]` base env (`clusterSubprocessBaseEnv`
-  in `Cluster.hs`, `processMonitorBaseEnv` in `ProcessMonitor.hs`)
-  with the same `PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`
-  + `LANG=C.UTF-8` + `LC_ALL=C.UTF-8` shape; nothing inherits from
-  the daemon's `environ`.
+  `ProcessMonitor.hs.tryCommandMonitored`.** Each now derives the
+  subprocess `PATH` from the staged host manifest's `toolPaths.*`
+  parent directories (`clusterSubprocessBaseEnvFor` in `Cluster.hs`,
+  `processMonitorBaseEnvFor` in `ProcessMonitor.hs`) so nested
+  third-party invocations (most importantly `kind` shelling out to
+  `docker` via PATH lookup) resolve the same absolute binaries the
+  binary itself uses, including Apple Silicon Homebrew's
+  `/opt/homebrew/bin` prefix; the minimal POSIX
+  `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`
+  chain stays as the fallback for unit-test fixtures without a
+  `HostConfig`. `LANG=C.UTF-8` + `LC_ALL=C.UTF-8` round out the
+  fixed env; nothing inherits from the daemon's `environ`. The
+  prior hardcoded-only PATH constant
+  (`/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`)
+  was insufficient on Apple Silicon because Homebrew installs at
+  `/opt/homebrew/bin`, and was surfaced by the 2026-05-29 Apple
+  cohort rerun (`kind get clusters` failed with "exec: docker:
+  executable file not found in $PATH"). The manifest-derived PATH
+  helper fixed it without re-introducing env-var consumption.
+- **Harbor registry health probe (`waitForHarborRegistryResult` in
+  `src/Infernix/Cluster.hs`) now passes `-m 30` to `curl`** so the
+  bounded 60-attempt × 5s retry loop actually surfaces a typed
+  "Harbor registry never became ready" error within ~30 minutes
+  when the host-side NodePort target is unreachable. The 2026-05-29
+  Apple cohort rerun surfaced an indefinite hang when an unrelated
+  host process (a VSCode Helper plugin worker) was squatting on
+  `127.0.0.1:30002`, leaving the `cluster up` Harbor publication
+  step waiting forever on an `ESTABLISHED` TCP connection that
+  never returned an HTTP response. The Kind hostPort mapping is
+  hardcoded at `30002` today; replacing it with the same dynamic
+  port-discovery contract used for the edge port (Section O) is a
+  Phase 3 / Phase 7 follow-on so the supported cluster lifecycle
+  remains operator-environment-agnostic.
 - **`engineCommandOverridesFromEnvironment` retired.** The Sprint 4.13
   chart no longer renders per-binding `INFERNIX_ENGINE_COMMAND_*` env
   entries, so `Cluster.hs.writeHelmValuesFile` passes an empty
@@ -655,19 +712,24 @@ honest):
   `docker` and `skopeo` paths through `HarborPublishOptions`, so the
   multi-arch `skopeo copy` fallback is covered by the same manifest
   inventory.
-- **Clean-env `linux-gpu` lifecycle validation closed May 27, 2026.**
+- **Clean-env `linux-gpu` lifecycle validation passed on retired hardware
+  May 27, 2026; pending re-validation on new host.**
+  On the retired Linux/CUDA host,
   `env -i /usr/bin/bash ./bootstrap/linux-gpu.sh build` rebuilt
   `infernix-linux-gpu:local`, and the follow-on clean-env `up`
   completed after Harbor image publication and final routed workload
-  rollout. The first clean-env `up` attempt exposed a launcher
+  rollout. That run had exposed a launcher
   regression from the temporary
   `${HOME}/.docker/config.json:/root/.docker/config.json:ro` bind
-  mount in `compose.yaml`: with an empty starting environment,
+  mount in `compose.yaml` (with an empty starting environment,
   Compose expanded `${HOME}` to blank and created
   `/root/.docker/config.json` as a directory inside the launcher,
-  causing `docker login localhost:30002` to fail. Removing that bind
+  causing `docker login localhost:30002` to fail); removing that bind
   mount restored the documented two-bind-mount compose contract and
-  the rerun reached steady state.
+  the rerun reached steady state. The fix landed in the worktree, but
+  the May 27, 2026 proof point is on the retired hardware and no
+  longer counts as current evidence. CUDA Linux cohort rerun on the
+  new Apple Silicon host (through Colima's amd64 VM) is pending.
 
 ---
 
@@ -679,9 +741,12 @@ Sprint 2.13 code-side closed for env reads and HostTool routing: 5 env reads ret
 `engineCommandOverridesFromEnvironment` deleted, supporting unit-test fixture rewired, shared
 cluster command helpers resolve known tools through the staged host manifest, and
 `Cluster/PublishImages.hs` receives resolved `docker` + `skopeo` commands through
-`HarborPublishOptions`. The env-clean `linux-gpu` cluster validation passed May 27, 2026 after
-the compose Docker-config bind mount regression was removed. Apple host lifecycle validation
-remains queued for the next Apple Silicon cohort batch. Sprints 2.1–2.12 closed.
+`HarborPublishOptions`. The May 27, 2026 env-clean `linux-gpu` cluster validation was performed
+on the retired Linux/CUDA host and no longer counts as a current proof point. Apple host
+lifecycle validation and CUDA Linux cohort full-suite validation are both pending on the new
+Apple Silicon host. Sprints 2.1–2.12 had their code closure recorded; each one's prior
+real-cluster validation evidence was on the retired hardware, so those sprints now read as
+`Active` until the new-host validation batch reruns them.
 
 ---
 

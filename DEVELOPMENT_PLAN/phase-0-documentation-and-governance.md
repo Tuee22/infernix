@@ -346,8 +346,15 @@ later-phase retirement sprints. The three configuration Dhall files (`InfernixHo
 ### Remaining Work
 
 Sprint 0.9 closes when the seven retirement sprints (1.11, 2.13, 3.10, 4.13, 5.9, 6.28, 7.17)
-land. Sprint 6.28 has landed the durable lint gates, but Sprint 0.9 stays Active until the
-remaining retirement sprints and queued Apple cohort validation batch close their named residuals.
+land and the Apple cohort plus CUDA Linux cohort full-suite validation reruns close on the new
+Apple Silicon host. All seven retirement sprints' code paths have landed in the worktree:
+Sprint 6.28 carries the durable lint gates, Sprints 1.11 / 2.13 / 3.10 / 4.13 / 5.9 retired the
+named env-var / PATH-resolved invocation surfaces, and Sprint 7.17 closed its remaining
+Apple-only Poetry bootstrap env-var residual in `src/Infernix/Python.hs` on 2026-05-29 alongside
+the matching `envFunctionExemptedFiles` exemption removal. The prior Linux/CUDA validation
+proof points for the retirement sprints were all on the retired hardware and no longer count as
+current evidence; Sprint 0.9 stays Active until Apple cohort and CUDA Linux cohort validation
+are both rerun on the new Apple Silicon host (the CUDA Linux lane through Colima's amd64 VM).
 
 ---
 

@@ -310,7 +310,7 @@ defaultAppleHostNativeHostConfig repoRoot homeDir =
     { hostExecutionContext = AppleHostNative,
       hostToolPaths =
         HostToolPaths
-          { hostDocker = "/usr/local/bin/docker",
+          { hostDocker = "/opt/homebrew/bin/docker",
             hostKubectl = "/opt/homebrew/bin/kubectl",
             hostHelm = "/opt/homebrew/bin/helm",
             hostKind = "/opt/homebrew/bin/kind",

@@ -21,12 +21,10 @@ import System.Directory
     doesDirectoryExist,
     doesFileExist,
     findExecutable,
-    getHomeDirectory,
     listDirectory,
   )
-import System.Environment (lookupEnv, setEnv)
 import System.Exit (ExitCode (ExitSuccess))
-import System.FilePath (takeDirectory, (</>))
+import System.FilePath ((</>))
 import System.Info (os)
 import System.Process (CreateProcess (cwd), proc, readCreateProcessWithExitCode)
 
@@ -47,11 +45,16 @@ pythonAdaptersPresent projectDirectory = do
 -- @HostConfig.toolPaths.poetry@ (mounted via the host manifest at
 -- @./.build/infernix-host.dhall@ on Apple and
 -- @/opt/infernix/dhall/InfernixHost.dhall@ in the Linux launcher
--- image). When the manifest is absent (first-run bootstrap, pre-binary
--- adapter setup), the helper falls back to a @\$PATH@ lookup so the
--- one-time bootstrap can install Poetry on Apple. After the binary
--- materializes the manifest, supported flows use the typed path
--- exclusively.
+-- image). When the manifest is absent (unit-test fixture without a
+-- supplied 'HostConfig'), the helper falls back to a @\$PATH@ lookup so
+-- those fixtures still resolve a Poetry executable. The Apple
+-- host-native one-time bootstrap path
+-- ('bootstrapPoetryOnAppleHost') requires the staged manifest because
+-- the install location is derived from @HostFilesystem.homeDirectory@.
+-- Phase 7 Sprint 7.17 Apple cohort closure (2026-05-29) retired the
+-- remaining @POETRY_HOME@ / @PATH@ env reads alongside the
+-- 'Infernix.Lint.HaskellStyle.envFunctionExemptedFiles' row for this
+-- module.
 ensurePoetryExecutable :: Paths -> IO FilePath
 ensurePoetryExecutable paths = do
   let manifestPoetry = case pathsHostConfig paths of
@@ -68,7 +71,7 @@ ensurePoetryExecutable paths = do
     Just executablePath -> pure executablePath
     Nothing
       | os == "darwin" && controlPlaneContext paths == HostNative ->
-          bootstrapPoetryOnAppleHost
+          bootstrapPoetryOnAppleHost paths
       | otherwise -> throwIO PoetryUnavailable
 
 ensurePoetryProjectReady :: Paths -> FilePath -> IO ()
@@ -153,23 +156,35 @@ runPoetryCommand paths projectDirectory args failurePrefix = do
             processCwd = Just projectDirectory
           }
 
-bootstrapPoetryOnAppleHost :: IO FilePath
-bootstrapPoetryOnAppleHost = do
-  candidatePaths <- poetryCandidatePaths
-  maybeExisting <- findFirstM doesFileExist candidatePaths
-  maybe installPoetryOnAppleHost activatePoetryExecutable maybeExisting
+-- | Phase 7 Sprint 7.17 Apple cohort closure (2026-05-29): the Apple
+-- Poetry bootstrap path now reads its install location, candidate
+-- paths, and required Python executable from the typed
+-- 'HostConfig.HostConfig' record carried on 'Paths', so the previous
+-- @POETRY_HOME@ / @PATH@ env reads are gone. The bootstrap requires a
+-- staged host manifest; the binary materializes that manifest as part
+-- of its lifecycle before any adapter flow needs Poetry, so a missing
+-- manifest at this point indicates a real bug rather than a
+-- legitimate first-run.
+bootstrapPoetryOnAppleHost :: Paths -> IO FilePath
+bootstrapPoetryOnAppleHost paths =
+  case pathsHostConfig paths of
+    Nothing -> throwIO PoetryUnavailable
+    Just hostConfig -> do
+      let candidatePaths = poetryCandidatePaths hostConfig
+      maybeExisting <- findFirstM doesFileExist candidatePaths
+      maybe (installPoetryOnAppleHost hostConfig) pure maybeExisting
 
-installPoetryOnAppleHost :: IO FilePath
-installPoetryOnAppleHost = do
-  pythonExecutable <- requireAppleBootstrapPython
-  poetryHome <- resolvedPoetryHome
-  let poetryVenv = poetryHome </> "venv"
+installPoetryOnAppleHost :: HostConfig.HostConfig -> IO FilePath
+installPoetryOnAppleHost hostConfig = do
+  pythonExecutable <- requireAppleBootstrapPython hostConfig
+  let poetryHome = poetryHomeFromConfig hostConfig
+      poetryVenv = poetryHome </> "venv"
       poetryExecutable = poetryVenv </> "bin" </> "poetry"
       poetryPython = poetryVenv </> "bin" </> "python"
   createDirectoryIfMissing True poetryHome
   createPoetryBootstrapVenv pythonExecutable poetryVenv
   installPoetryIntoBootstrapVenv poetryPython
-  resolveInstalledPoetry poetryExecutable
+  resolveInstalledPoetry hostConfig poetryExecutable
 
 createPoetryBootstrapVenv :: FilePath -> FilePath -> IO ()
 createPoetryBootstrapVenv pythonExecutable poetryVenv = do
@@ -203,31 +218,30 @@ installPoetryIntoBootstrapVenv poetryPython = do
             processCwd = Nothing
           }
 
-resolveInstalledPoetry :: FilePath -> IO FilePath
-resolveInstalledPoetry poetryExecutable = do
-  refreshedCandidatePaths <- poetryCandidatePaths
+resolveInstalledPoetry :: HostConfig.HostConfig -> FilePath -> IO FilePath
+resolveInstalledPoetry hostConfig poetryExecutable = do
+  let refreshedCandidatePaths = poetryCandidatePaths hostConfig
   maybeInstalled <- findFirstM doesFileExist refreshedCandidatePaths
   case maybeInstalled of
-    Just installedExecutable -> activatePoetryExecutable installedExecutable
+    Just installedExecutable -> pure installedExecutable
     Nothing -> do
       installed <- doesFileExist poetryExecutable
       if installed
-        then activatePoetryExecutable poetryExecutable
+        then pure poetryExecutable
         else
           ioError
             ( userError
                 "Poetry bootstrap completed but no poetry executable was found in the expected user-local locations."
             )
 
-activatePoetryExecutable :: FilePath -> IO FilePath
-activatePoetryExecutable executablePath = do
-  prependDirectoryToPath (takeDirectory executablePath)
-  pure executablePath
-
-requireAppleBootstrapPython :: IO FilePath
-requireAppleBootstrapPython = do
-  maybeCompatibleOnPath <- firstCompatibleCommandOnPath ["python3.13", "python3.12", "python3"]
-  case maybeCompatibleOnPath of
+requireAppleBootstrapPython :: HostConfig.HostConfig -> IO FilePath
+requireAppleBootstrapPython hostConfig = do
+  let manifestPython = Text.unpack (HostConfig.hostPython3 (HostConfig.hostToolPaths hostConfig))
+  manifestCompatible <-
+    if null manifestPython
+      then pure Nothing
+      else firstCompatiblePath [manifestPython]
+  case manifestCompatible of
     Just executablePath -> pure executablePath
     Nothing -> do
       maybeCompatibleFallback <-
@@ -241,38 +255,24 @@ requireAppleBootstrapPython = do
         Nothing ->
           ioError
             ( userError
-                "Apple host-native Poetry bootstrap requires a compatible Python 3.12+ executable. The supported Apple host prerequisite reconciliation installs python@3.12 through Homebrew when adapter flows need it."
+                "Apple host-native Poetry bootstrap requires a compatible Python 3.12+ executable. The supported Apple host prerequisite reconciliation installs python@3.12 through Homebrew when adapter flows need it, and the staged host manifest's toolPaths.python3 must point at a compatible interpreter."
             )
 
-resolvedPoetryHome :: IO FilePath
-resolvedPoetryHome = do
-  homeDirectory <- getHomeDirectory
-  maybePoetryHome <- lookupEnv "POETRY_HOME"
-  pure $
-    case maybePoetryHome of
-      Just poetryHome -> poetryHome
-      Nothing -> homeDirectory </> ".local" </> "share" </> "pypoetry"
+poetryHomeFromConfig :: HostConfig.HostConfig -> FilePath
+poetryHomeFromConfig hostConfig =
+  Text.unpack (HostConfig.hostHomeDirectory (HostConfig.hostFilesystem hostConfig))
+    </> ".local"
+    </> "share"
+    </> "pypoetry"
 
-poetryCandidatePaths :: IO [FilePath]
-poetryCandidatePaths = do
-  homeDirectory <- getHomeDirectory
-  poetryHome <- resolvedPoetryHome
-  pure
-    [ poetryHome </> "bin" </> "poetry",
-      poetryHome </> "venv" </> "bin" </> "poetry",
-      homeDirectory </> ".local" </> "bin" </> "poetry"
-    ]
-
-prependDirectoryToPath :: FilePath -> IO ()
-prependDirectoryToPath directoryPath = do
-  maybeCurrentPath <- lookupEnv "PATH"
-  let updatedPath =
-        case maybeCurrentPath of
-          Nothing -> directoryPath
-          Just currentPath
-            | null currentPath -> directoryPath
-            | otherwise -> directoryPath <> ":" <> currentPath
-  setEnv "PATH" updatedPath
+poetryCandidatePaths :: HostConfig.HostConfig -> [FilePath]
+poetryCandidatePaths hostConfig =
+  let homeDirectory = Text.unpack (HostConfig.hostHomeDirectory (HostConfig.hostFilesystem hostConfig))
+      poetryHome = poetryHomeFromConfig hostConfig
+   in [ poetryHome </> "bin" </> "poetry",
+        poetryHome </> "venv" </> "bin" </> "poetry",
+        homeDirectory </> ".local" </> "bin" </> "poetry"
+      ]
 
 pythonSupportsApplePoetryBootstrap :: FilePath -> IO Bool
 pythonSupportsApplePoetryBootstrap executablePath = do
@@ -281,18 +281,6 @@ pythonSupportsApplePoetryBootstrap executablePath = do
       (proc executablePath ["-c", "import sys; raise SystemExit(0 if (3, 12) <= sys.version_info[:2] < (4, 0) else 1)"])
       ""
   pure (exitCode == ExitSuccess)
-
-firstCompatibleCommandOnPath :: [FilePath] -> IO (Maybe FilePath)
-firstCompatibleCommandOnPath [] = pure Nothing
-firstCompatibleCommandOnPath (commandName : remainingNames) = do
-  maybeExecutable <- findExecutable commandName
-  case maybeExecutable of
-    Just executablePath -> do
-      compatible <- pythonSupportsApplePoetryBootstrap executablePath
-      if compatible
-        then pure (Just executablePath)
-        else firstCompatibleCommandOnPath remainingNames
-    Nothing -> firstCompatibleCommandOnPath remainingNames
 
 firstCompatiblePath :: [FilePath] -> IO (Maybe FilePath)
 firstCompatiblePath [] = pure Nothing

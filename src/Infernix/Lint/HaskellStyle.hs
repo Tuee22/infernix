@@ -228,11 +228,7 @@ envFunctionExemptedFiles =
     -- the same workstream and lands together with the
     -- `Cluster.hs`-side @proc@ retirement.
     "src/Infernix/CLI.hs",
-    "src/Infernix/HostPrereqs.hs",
-    -- Apple validation pass: Poetry bootstrap keeps @POETRY_HOME@
-    -- + @PATH@ compatibility until the user finalizes the Apple
-    -- lane.
-    "src/Infernix/Python.hs"
+    "src/Infernix/HostPrereqs.hs"
   ]
 
 -- | Phase 6 Sprint 6.28 (initial landing — May 25, 2026): reject

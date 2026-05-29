@@ -1,6 +1,6 @@
 # Phase 3: HA Platform Services and Edge Routing
 
-**Status**: Active (Sprint 3.10 CUDA Linux cohort in-container Playwright E2E validated May 27, 2026; Apple host-native E2E runner code landed and Apple cohort validation remains queued; Sprints 3.1–3.9 Done)
+**Status**: Active (Sprint 3.10 code landed; the prior CUDA Linux cohort in-container Playwright E2E proof point (May 27, 2026) was on the retired Linux/CUDA host and no longer counts as current evidence; Apple host-native E2E runner code landed; Apple cohort and CUDA Linux cohort validation both pending on the new Apple Silicon host; Sprints 3.1–3.9 had their code-side deliverables closed but their prior real-cluster validation evidence was on the retired hardware and is similarly pending re-validation)
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Define the mandatory local HA Harbor, MinIO, operator-managed PostgreSQL, and
@@ -10,12 +10,15 @@
 
 ## Phase Status
 
-Phase 3 is closed around the mandatory HA service set, the shared routed edge, and the
-Haskell-owned route registry implemented in this worktree. Sprints 3.1–3.9 remain `Done` for
-their original scope. Sprint 3.10 is `Active` only for the Apple cohort E2E closure batch; the
-CUDA Linux cohort validated the replacement in-container Playwright path on May 27, 2026. The
-clarified Apple daemon-role model is implemented in Phase 6 Sprint 6.25 and separates cluster
-daemon location from host inference executor location in publication metadata.
+Phase 3's code work is closed around the mandatory HA service set, the shared routed edge, and
+the Haskell-owned route registry implemented in this worktree. Sprints 3.1–3.9 had their
+code-side deliverables closed; their prior real-cluster validation evidence was on the retired
+Apple Silicon and Linux/CUDA hardware and no longer counts as current proof points. Sprint 3.10
+is `Active`: the in-container Playwright path was originally validated on the retired Linux/CUDA
+host on May 27, 2026, but that proof point is no longer current; the Apple host-native E2E
+runner code is landed but the Apple cohort closure batch is pending on the new Apple Silicon
+host. The clarified Apple daemon-role model is implemented in Phase 6 Sprint 6.25 and separates
+cluster daemon location from host inference executor location in publication metadata.
 
 ## HA Reconcile Surface
 
@@ -396,12 +399,16 @@ favor of substrate `.dhall` fields plus a Dhall-driven Playwright fixture file.
 - `cabal build all` clean, `infernix test lint` clean.
 - `docker images` shows no `infernix-playwright:local` image after a fresh
   `./bootstrap/linux-gpu.sh build`.
-- May 27, 2026: clean-env `linux-gpu` compose-run `infernix test e2e` passed via the
-  in-container Playwright path (`1 passed`).
-- May 27, 2026: Apple host-native E2E runner code landed. Linux validation covered
-  `cabal build all`, `cabal test infernix-unit`, `cabal test infernix-haskell-style`, and
-  `node --check` for `web/playwright.config.js` and `web/playwright/inference.spec.js`. Host
-  Playwright execution remains queued for the Apple Silicon cohort validation batch.
+- May 27, 2026 (retired hardware): clean-env `linux-gpu` compose-run `infernix test e2e` had
+  passed via the in-container Playwright path (`1 passed`). That proof point was on the retired
+  Linux/CUDA host and no longer counts as current evidence.
+- May 27, 2026 (retired hardware): Apple host-native E2E runner code landed; `cabal build all`,
+  `cabal test infernix-unit`, `cabal test infernix-haskell-style`, and `node --check` for
+  `web/playwright.config.js` and `web/playwright/inference.spec.js` had passed. Those are
+  retried trivially on the new host but the historical pass is no longer cited as current proof.
+- **Apple cohort and CUDA Linux cohort validation pending on new host:** the Apple host-native
+  Playwright lane and the Linux in-container Playwright lane both need to be rerun on the new
+  Apple Silicon host before this sprint can return to `Done`.
 
 ### Remaining Work
 
@@ -454,29 +461,29 @@ documentation refresh. The Sprint 3.10 grep gate
 returns only the two retirement doc comments
 (`src/Infernix/CLI.hs:344`, `web/playwright.config.js:4`).
 
-Pending closure (queued for the Apple cohort validation batch):
+Pending closure (queued for the new-host validation batch):
 
-- **Linux in-container Playwright E2E closed May 27, 2026.** The
+- **Linux in-container Playwright E2E proof point May 27, 2026 (retired hardware).** The
   clean-env compose-run command
   `env -i LAUNCHER_IMAGE=infernix-linux-gpu:local /usr/bin/docker compose --project-name infernix-linux-gpu --file compose.yaml run --rm infernix infernix test e2e`
-  reconciled the live `linux-gpu` cluster, ran Playwright inside the
+  had reconciled the live `linux-gpu` cluster, ran Playwright inside the
   launcher image, reported `1 passed`, then executed its teardown
-  cleanup. This validates the replacement for the retired
-  `infernix-playwright:local` lane on the Linux CUDA host.
+  cleanup on the retired Linux/CUDA host. That proof point is no longer current; CUDA Linux
+  cohort rerun on the new Apple Silicon host (through Colima's amd64 VM) is pending.
 - Apple host-native E2E validation. The host-side `npm exec`
   Playwright invocation fed by the same typed fixture is implemented,
-  but the end-to-end run remains queued until the Apple Silicon
-  cohort batch can exercise the real host-native browser lane.
+  but the end-to-end run is pending the Apple Silicon cohort batch on the new host.
 
 ---
 
 ## Remaining Work
 
-Sprint 3.10 substantively landed May 24, 2026. The Linux in-container
-Playwright path was validated on `linux-gpu` May 27, 2026. The
-Apple host-native E2E runner code landed May 27, 2026; Apple
-host-native E2E validation remains the only Sprint 3.10 cohort residual.
-Sprints 3.1–3.9 closed.
+Sprint 3.10 substantively landed in May 2026. The Linux in-container Playwright path's prior
+`linux-gpu` validation was on the retired Linux/CUDA host. The Apple host-native E2E runner
+code landed but has not yet been validated on the new Apple Silicon host. Sprints 3.1–3.9
+closed in code; their prior real-cluster validation evidence was on the retired hardware. Both
+Apple cohort and CUDA Linux cohort full-suite validation are pending on the new Apple Silicon
+host before this phase can return to `Done`.
 
 ---
 

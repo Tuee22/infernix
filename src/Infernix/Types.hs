@@ -191,6 +191,7 @@ data LifecycleProgress = LifecycleProgress
 data ClusterState = ClusterState
   { clusterPresent :: Bool,
     edgePort :: Int,
+    harborPort :: Int,
     routes :: [RouteInfo],
     storageClass :: Text,
     claims :: [PersistentClaim],

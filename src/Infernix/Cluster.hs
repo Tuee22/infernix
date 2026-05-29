@@ -35,6 +35,7 @@ import Infernix.Config (ControlPlaneContext (..), Paths (..), controlPlaneContex
 import Infernix.Config qualified as Config
 import Infernix.DemoConfig (decodeDemoConfigFile, ensureGeneratedDemoConfigFile, renderGeneratedDemoConfigPayload)
 import Infernix.Engines.AppleSilicon (ensureAppleSiliconRuntimeReady)
+import Infernix.HostConfig qualified as HostConfig
 import Infernix.HostTools (HostTool (..))
 import Infernix.HostTools qualified as HostTools
 import Infernix.Models
@@ -80,6 +81,7 @@ nodeMountedKindRoot = "/var/infernix-data"
 data ClusterUpInputs = ClusterUpInputs
   { clusterUpControlPlane :: ControlPlaneContext,
     clusterUpRequestedEdgePort :: Int,
+    clusterUpRequestedHarborPort :: Int,
     clusterUpDemoUiEnabled :: Bool,
     clusterUpDemoConfigPath :: FilePath,
     clusterUpKubeconfigPath :: FilePath,
@@ -443,6 +445,7 @@ clusterUpWithPlatform paths runtimeMode = do
           runtimeMode
           False
           (clusterUpRequestedEdgePort inputs)
+          (clusterUpRequestedHarborPort inputs)
           (routeInventory (clusterUpDemoUiEnabled inputs))
           (platformClaimsForRuntime runtimeMode)
           claimDiscoveryTime
@@ -465,13 +468,15 @@ clusterUpWithPlatform paths runtimeMode = do
       "cluster-up"
       "prepare-kind-cluster"
       "creating or reusing the Kind cluster and preparing retained runtime data"
-  (edgePortValue, kubeconfigContents, clusterCreated) <- ensureKindCluster paths runtimeMode (clusterUpRequestedEdgePort inputs)
+  (edgePortValue, harborPortValue, kubeconfigContents, clusterCreated) <-
+    ensureKindCluster paths runtimeMode (clusterUpRequestedEdgePort inputs) (clusterUpRequestedHarborPort inputs)
   usesHostBindMounts <- kindUsesHostBindMounts paths runtimeMode
   when (clusterCreated && not usesHostBindMounts) $
     prepareKindNodeRuntimePaths paths clusterPrepareState runtimeMode
   unless usesHostBindMounts $
     prepareKindNodeClaimDirectories paths clusterPrepareState runtimeMode discoveredClaims
   writeFile (edgePortPath paths) (show edgePortValue)
+  writeFile (harborPortPath paths) (show harborPortValue)
   publishGeneratedKubeconfig paths (Text.pack kubeconfigContents)
   activeStateTime <- getCurrentTime
   let activeState0 =
@@ -480,6 +485,7 @@ clusterUpWithPlatform paths runtimeMode = do
           runtimeMode
           True
           edgePortValue
+          harborPortValue
           discoveredRoutes
           discoveredClaims
           activeStateTime
@@ -602,6 +608,7 @@ clusterUpWithPlatform paths runtimeMode = do
   putStrLn ("controlPlaneContext: " <> controlPlaneContextId (clusterUpControlPlane inputs))
   putStrLn ("runtimeMode: " <> Text.unpack (runtimeModeId runtimeMode))
   putStrLn ("edgePort: " <> show edgePortValue)
+  putStrLn ("harborPort: " <> show harborPortValue)
   putStrLn ("generatedDemoConfigPath: " <> clusterUpDemoConfigPath inputs)
   putStrLn ("publishedDemoConfigPath: " <> clusterUpPublishedCatalogPath inputs)
   putStrLn ("mountedDemoConfigPath: " <> clusterUpMountedCatalogPath inputs)
@@ -609,6 +616,7 @@ clusterUpWithPlatform paths runtimeMode = do
 prepareClusterUpInputs :: Paths -> RuntimeMode -> IO ClusterUpInputs
 prepareClusterUpInputs paths runtimeMode = do
   requestedPort <- chooseEdgePort paths
+  requestedHarborPort <- chooseHarborPort paths
   generatedConfigPath <- requireGeneratedDemoConfigFile paths runtimeMode
   generatedConfig <- decodeDemoConfigFile generatedConfigPath
   let demoUiEnabledValue = demoUiEnabled generatedConfig
@@ -627,6 +635,7 @@ prepareClusterUpInputs paths runtimeMode = do
     ClusterUpInputs
       { clusterUpControlPlane = Config.controlPlaneContext paths,
         clusterUpRequestedEdgePort = requestedPort,
+        clusterUpRequestedHarborPort = requestedHarborPort,
         clusterUpDemoUiEnabled = demoUiEnabledValue,
         clusterUpDemoConfigPath = generatedConfigPath,
         clusterUpKubeconfigPath = Config.generatedKubeconfigPath paths,
@@ -636,11 +645,12 @@ prepareClusterUpInputs paths runtimeMode = do
         clusterUpPayload = payload
       }
 
-clusterUpState :: ClusterUpInputs -> RuntimeMode -> Bool -> Int -> [RouteInfo] -> [PersistentClaim] -> UTCTime -> ClusterState
-clusterUpState inputs runtimeMode clusterPresentValue edgePortValue routesValue claimsValue updatedAtValue =
+clusterUpState :: ClusterUpInputs -> RuntimeMode -> Bool -> Int -> Int -> [RouteInfo] -> [PersistentClaim] -> UTCTime -> ClusterState
+clusterUpState inputs runtimeMode clusterPresentValue edgePortValue harborPortValue routesValue claimsValue updatedAtValue =
   ClusterState
     { clusterPresent = clusterPresentValue,
       edgePort = edgePortValue,
+      harborPort = harborPortValue,
       routes = routesValue,
       storageClass = "infernix-manual",
       claims = claimsValue,
@@ -946,16 +956,29 @@ readQuotedValue value =
     _ -> Nothing
 
 chooseEdgePort :: Paths -> IO Int
-chooseEdgePort paths = do
-  maybeStoredPort <- readEdgePortMaybe paths
+chooseEdgePort paths = chooseDynamicPort 9090 =<< readEdgePortMaybe paths
+
+-- | Phase 3 follow-on (2026-05-29): pick a free host-side TCP port for
+-- Harbor's Kind hostPort mapping, mirroring 'chooseEdgePort'. The
+-- in-cluster Kubernetes NodePort number stays @30002@ — only the
+-- Kind hostPort observed by the operator host is dynamic, so the
+-- chart's Harbor sub-chart still resolves to @<node>:30002@ for
+-- in-cluster reachability while the host probe and the containerd
+-- registry-hosts namespace honor whatever port is actually free on
+-- the operator's machine.
+chooseHarborPort :: Paths -> IO Int
+chooseHarborPort paths = chooseDynamicPort 30002 =<< readHarborPortMaybe paths
+
+chooseDynamicPort :: Int -> Maybe Int -> IO Int
+chooseDynamicPort baseline maybeStoredPort =
   case maybeStoredPort of
     Just storedPort
-      | storedPort >= 9090 -> do
+      | storedPort >= baseline -> do
           storedPortFree <- portIsFree storedPort
           if storedPortFree
             then pure storedPort
             else firstAvailablePort (storedPort + 1)
-    _ -> firstAvailablePort 9090
+    _ -> firstAvailablePort baseline
 
 firstAvailablePort :: Int -> IO Int
 firstAvailablePort = go
@@ -1020,27 +1043,28 @@ claimOwner claimSpec
   | "harbor-postgresql" `List.isPrefixOf` Text.unpack (workload claimSpec) = Just "26:26"
   | otherwise = Nothing
 
-ensureKindCluster :: Paths -> RuntimeMode -> Int -> IO (Int, String, Bool)
-ensureKindCluster paths runtimeMode requestedPort = do
+ensureKindCluster :: Paths -> RuntimeMode -> Int -> Int -> IO (Int, Int, String, Bool)
+ensureKindCluster paths runtimeMode requestedPort requestedHarborPort = do
   clusterExists <- kindClusterExists paths runtimeMode
-  (selectedPort, clusterCreated) <-
+  (selectedPort, selectedHarborPort, clusterCreated) <-
     if clusterExists
       then do
         maybeExistingPort <- currentKindEdgePort paths runtimeMode
-        pure (fromMaybe requestedPort maybeExistingPort, False)
+        maybeExistingHarborPort <- currentKindHarborPort paths runtimeMode
+        pure (fromMaybe requestedPort maybeExistingPort, fromMaybe requestedHarborPort maybeExistingHarborPort, False)
       else do
-        createdPort <- createKindCluster paths runtimeMode requestedPort
-        pure (createdPort, True)
+        (createdPort, createdHarborPort) <- createKindCluster paths runtimeMode requestedPort requestedHarborPort
+        pure (createdPort, createdHarborPort, True)
   kubeconfigResult <- waitForKindKubeconfig paths runtimeMode
   case kubeconfigResult of
     Right kubeconfigContents ->
-      pure (selectedPort, normalizeKubeconfigServer (Config.controlPlaneContext paths) kubeconfigContents, clusterCreated)
+      pure (selectedPort, selectedHarborPort, normalizeKubeconfigServer (Config.controlPlaneContext paths) kubeconfigContents, clusterCreated)
     Left err
       | clusterExists -> do
           deleteKindCluster paths runtimeMode
-          recreatedPort <- createKindCluster paths runtimeMode requestedPort
+          (recreatedPort, recreatedHarborPort) <- createKindCluster paths runtimeMode requestedPort requestedHarborPort
           recreatedKubeconfig <- waitForKindKubeconfigOrFail paths runtimeMode
-          pure (recreatedPort, normalizeKubeconfigServer (Config.controlPlaneContext paths) recreatedKubeconfig, True)
+          pure (recreatedPort, recreatedHarborPort, normalizeKubeconfigServer (Config.controlPlaneContext paths) recreatedKubeconfig, True)
       | otherwise ->
           ioError
             ( userError
@@ -1051,13 +1075,13 @@ ensureKindCluster paths runtimeMode requestedPort = do
                 )
             )
 
-createKindCluster :: Paths -> RuntimeMode -> Int -> IO Int
+createKindCluster :: Paths -> RuntimeMode -> Int -> Int -> IO (Int, Int)
 createKindCluster paths runtimeMode = case runtimeMode of
   LinuxGpu -> createLinuxGpuCluster paths
   _ -> go
   where
-    go candidatePort = do
-      configPath <- writeGeneratedKindConfig paths runtimeMode candidatePort
+    go candidatePort harborPortCandidate = do
+      configPath <- writeGeneratedKindConfig paths runtimeMode candidatePort harborPortCandidate
       result <- withKindScratchKubeconfig paths runtimeMode $ \scratchKubeconfig ->
         tryCommand
           Nothing
@@ -1065,21 +1089,21 @@ createKindCluster paths runtimeMode = case runtimeMode of
           "kind"
           ["create", "cluster", "--name", kindClusterName paths runtimeMode, "--config", configPath]
       case result of
-        Right _ -> pure candidatePort
+        Right _ -> pure (candidatePort, harborPortCandidate)
         Left err
           | "address already in use" `List.isInfixOf` err ->
-              go (candidatePort + 1)
+              go (candidatePort + 1) (harborPortCandidate + 1)
           | otherwise ->
               ioError
                 (userError ("kind create cluster failed for " <> kindClusterName paths runtimeMode <> ":\n" <> err))
 
-createLinuxGpuCluster :: Paths -> Int -> IO Int
+createLinuxGpuCluster :: Paths -> Int -> Int -> IO (Int, Int)
 createLinuxGpuCluster paths = go
   where
-    go candidatePort = do
+    go candidatePort harborPortCandidate = do
       ensureLinuxGpuHostPrerequisites paths
       nvkindBinary <- ensureNvkindBinary paths
-      configPath <- writeGeneratedKindConfig paths LinuxGpu candidatePort
+      configPath <- writeGeneratedKindConfig paths LinuxGpu candidatePort harborPortCandidate
       result <- withKindScratchKubeconfig paths LinuxGpu $ \scratchKubeconfig ->
         tryCommand
           Nothing
@@ -1097,17 +1121,17 @@ createLinuxGpuCluster paths = go
             "5m"
           ]
       case result of
-        Right _ -> pure candidatePort
+        Right _ -> pure (candidatePort, harborPortCandidate)
         Left err
           | "address already in use" `List.isInfixOf` err ->
-              go (candidatePort + 1)
+              go (candidatePort + 1) (harborPortCandidate + 1)
           | linuxGpuNvkindConfigMapBug err -> do
               clusterCreated <- kindClusterExists paths LinuxGpu
               if clusterCreated
                 then do
                   putStrLn "nvkind hit its known configmap persistence bug; continuing with repo-owned linux-gpu node setup"
                   completeLinuxGpuNodeBootstrap paths
-                  pure candidatePort
+                  pure (candidatePort, harborPortCandidate)
                 else
                   ioError
                     (userError ("nvkind cluster create failed for " <> kindClusterName paths LinuxGpu <> ":\n" <> err))
@@ -1559,6 +1583,7 @@ applyBootstrapState paths runtimeMode demoUiEnabledValue claimInventory = do
         ClusterState
           { clusterPresent = True,
             edgePort = 0,
+            harborPort = 0,
             routes = routeInventory demoUiEnabledValue,
             storageClass = "infernix-manual",
             claims = claimInventory,
@@ -1709,9 +1734,12 @@ publishClusterImages paths state renderedChartPath runtimeMode = do
   let outputPath =
         buildRoot paths
           </> ("harbor-image-overrides-" <> Text.unpack (runtimeModeId runtimeMode) <> ".yaml")
+      hostHarborAddress = "localhost:" <> show (harborPort state)
   PublishImages.publishChartImagesFile
     PublishImages.defaultHarborPublishOptions
-      { PublishImages.harborApiHost = harborApiHost paths runtimeMode,
+      { PublishImages.harborHost = hostHarborAddress,
+        PublishImages.harborClientHost = hostHarborAddress,
+        PublishImages.harborApiHost = harborApiHost paths runtimeMode (harborPort state),
         PublishImages.harborDockerCommand = resolveHostToolForCluster paths HostDocker,
         PublishImages.harborSkopeoCommand = resolveHostToolForCluster paths HostSkopeo
       }
@@ -1898,25 +1926,25 @@ maybeRun command arguments = do
   result <- tryCommand Nothing [] command arguments
   pure (either (const False) (const True) result)
 
-waitForHarborRegistry :: Paths -> RuntimeMode -> IO ()
-waitForHarborRegistry paths runtimeMode = do
-  result <- waitForHarborRegistryResult paths runtimeMode 60 5000000
+waitForHarborRegistry :: Paths -> RuntimeMode -> Int -> IO ()
+waitForHarborRegistry paths runtimeMode harborPortValue = do
+  result <- waitForHarborRegistryResult paths runtimeMode harborPortValue 60 5000000
   case result of
     Right _ -> pure ()
     Left err ->
       ioError
         (userError ("Harbor registry never became ready enough for image publication:\n" <> err))
 
-waitForHarborRegistryResult :: Paths -> RuntimeMode -> Int -> Int -> IO (Either String String)
-waitForHarborRegistryResult paths runtimeMode attempts delayMicros = do
-  let registryApiUrl = "http://" <> harborApiHost paths runtimeMode <> "/api/v2.0/health"
+waitForHarborRegistryResult :: Paths -> RuntimeMode -> Int -> Int -> Int -> IO (Either String String)
+waitForHarborRegistryResult paths runtimeMode harborPortValue attempts delayMicros = do
+  let registryApiUrl = "http://" <> harborApiHost paths runtimeMode harborPortValue <> "/api/v2.0/health"
       probeCommand = do
         response <-
           tryCommand
             Nothing
             []
             "curl"
-            ["-sS", "-o", "-", "-w", "\n%{http_code}", registryApiUrl]
+            ["-sS", "-m", "30", "-o", "-", "-w", "\n%{http_code}", registryApiUrl]
         pure $
           response >>= \payload ->
             case parseCurlBodyAndStatus payload of
@@ -1947,7 +1975,7 @@ bootstrapHarborWithRepair paths state valuesPaths = go (3 :: Int)
                   go (remainingAttempts - 1)
               | otherwise -> do
                   repairHarborBootstrapState paths state Nothing
-                  waitForHarborRegistry paths (clusterRuntimeMode state)
+                  waitForHarborRegistry paths (clusterRuntimeMode state) (harborPort state)
             HarborBootstrapTimedOut err
               | remainingAttempts > 1 -> do
                   repairHarborBootstrapState paths state (Just err)
@@ -1991,7 +2019,7 @@ waitForHarborRegistryOrDirty :: Paths -> ClusterState -> IO HarborBootstrapOutco
 waitForHarborRegistryOrDirty paths state = go (24 :: Int) ""
   where
     go remainingAttempts lastError = do
-      registryResult <- waitForHarborRegistryResult paths (clusterRuntimeMode state) 1 0
+      registryResult <- waitForHarborRegistryResult paths (clusterRuntimeMode state) (harborPort state) 1 0
       case registryResult of
         Right _ -> pure HarborRegistryReady
         Left err -> do
@@ -3344,23 +3372,30 @@ reconcilePersistentVolumes state =
           "    path: " <> nodeMountedClaimPath persistentClaim
         ]
 
-writeGeneratedKindConfig :: Paths -> RuntimeMode -> Int -> IO FilePath
-writeGeneratedKindConfig paths runtimeMode edgePortValue = do
+writeGeneratedKindConfig :: Paths -> RuntimeMode -> Int -> Int -> IO FilePath
+writeGeneratedKindConfig paths runtimeMode edgePortValue harborPortValue = do
   let outputPath =
         buildRoot paths
           </> "kind"
           </> ("cluster-" <> Text.unpack (runtimeModeId runtimeMode) <> ".generated.yaml")
   hostKindRoot <- resolveHostKindRoot paths runtimeMode
   usesHostBindMounts <- kindUsesHostBindMounts paths runtimeMode
-  writeRegistryHostsConfig paths runtimeMode
+  writeRegistryHostsConfig paths runtimeMode harborPortValue
   hostRegistryHostsDirectory <- resolveHostRegistryHostsRoot paths
-  writeTextFile outputPath (Text.pack (renderKindConfig paths runtimeMode edgePortValue hostKindRoot hostRegistryHostsDirectory usesHostBindMounts))
+  writeTextFile outputPath (Text.pack (renderKindConfig paths runtimeMode edgePortValue harborPortValue hostKindRoot hostRegistryHostsDirectory usesHostBindMounts))
   pure outputPath
 
-writeRegistryHostsConfig :: Paths -> RuntimeMode -> IO ()
-writeRegistryHostsConfig paths runtimeMode = do
+-- | Phase 3 follow-on (2026-05-29): the containerd registry-hosts
+-- namespace is keyed on @localhost:<host-port>@ — the same address
+-- @docker push@ targets when publishing images — so the resolution
+-- target points containerd at @<kind-node>:30002@ (the in-cluster
+-- NodePort, which stays fixed).
+writeRegistryHostsConfig :: Paths -> RuntimeMode -> Int -> IO ()
+writeRegistryHostsConfig paths runtimeMode harborPortValue = do
   let registryRoot = repoRoot paths </> ".build" </> "kind" </> "registry"
-  writeRegistryNamespace "localhost:30002" (kindClusterName paths runtimeMode <> "-control-plane:30002") registryRoot
+      namespaceName = "localhost:" <> show harborPortValue
+      inClusterTarget = kindClusterName paths runtimeMode <> "-control-plane:30002"
+  writeRegistryNamespace namespaceName inClusterTarget registryRoot
   where
     writeRegistryNamespace registryNamespace reachableRegistryHost registryRoot = do
       let registryDirectory = registryRoot </> registryNamespace
@@ -3457,9 +3492,9 @@ resolveHostRepoPathFromNormalized hostRepoRoot normalizedRepoRoot repoRootPrefix
         Just relativePath -> hostRepoRoot </> relativePath
         Nothing -> normalizedContainerPath
 
-renderKindConfig :: Paths -> RuntimeMode -> Int -> FilePath -> FilePath -> Bool -> String
-renderKindConfig paths runtimeMode edgePortValue hostKindRoot registryHostsDirectory usesHostBindMounts =
-  unlines (preamble <> ["nodes:"] <> nodeBlock "control-plane" initLabels edgePortLines <> nodeBlock "worker" workerLabels [])
+renderKindConfig :: Paths -> RuntimeMode -> Int -> Int -> FilePath -> FilePath -> Bool -> String
+renderKindConfig paths runtimeMode edgePortValue harborPortValue hostKindRoot registryHostsDirectory usesHostBindMounts =
+  unlines (preamble <> containerdConfigPatchesBlock <> ["nodes:"] <> nodeBlock "control-plane" initLabels edgePortLines <> nodeBlock "worker" workerLabels [])
   where
     preamble =
       [ "kind: Cluster",
@@ -3467,6 +3502,22 @@ renderKindConfig paths runtimeMode edgePortValue hostKindRoot registryHostsDirec
         "name: " <> kindClusterName paths runtimeMode,
         "networking:",
         "  apiServerAddress: \"127.0.0.1\""
+      ]
+    -- Phase 3 follow-on (2026-05-29): enable containerd's
+    -- hosts.toml-driven registry resolution so each Kind node treats
+    -- /etc/containerd/certs.d/<namespace>/hosts.toml as the authoritative
+    -- mapping for that namespace. Without this, containerd ignores the
+    -- registry-hosts files we mount via extraMounts and kubelet dials
+    -- @localhost:<harborPort>@ literally inside the node, which has
+    -- nothing listening and refuses the connection. Kind 0.31 does not
+    -- emit @config_path@ by default; the patch matches what
+    -- @writeRegistryHostsConfig@ already provisions under
+    -- @\/etc\/containerd\/certs.d@.
+    containerdConfigPatchesBlock =
+      [ "containerdConfigPatches:",
+        "  - |-",
+        "    [plugins.\"io.containerd.grpc.v1.cri\".registry]",
+        "      config_path = \"/etc/containerd/certs.d\""
       ]
     initLabels = controlPlaneRuntimeModeLabels runtimeMode
     workerLabels = runtimeModeLabels runtimeMode
@@ -3477,7 +3528,7 @@ renderKindConfig paths runtimeMode edgePortValue hostKindRoot registryHostsDirec
         "        listenAddress: \"127.0.0.1\"",
         "        protocol: TCP",
         "      - containerPort: 30002",
-        "        hostPort: 30002",
+        "        hostPort: " <> show harborPortValue,
         "        listenAddress: \"127.0.0.1\"",
         "        protocol: TCP",
         "      - containerPort: 30011",
@@ -3545,8 +3596,9 @@ prepareKindNodeRuntimePaths :: Paths -> ClusterState -> RuntimeMode -> IO ()
 prepareKindNodeRuntimePaths paths state runtimeMode = do
   let localKindRoot = kindRuntimeRoot paths runtimeMode
       localRegistryHostsRoot = repoRoot paths </> ".build" </> "kind" </> "registry"
-      registryDirectoryInNode = "/etc/containerd/certs.d/localhost:30002"
-      registryHostsPath = localRegistryHostsRoot </> "localhost:30002" </> "hosts.toml"
+      namespaceDirName = "localhost:" <> show (harborPort state)
+      registryDirectoryInNode = "/etc/containerd/certs.d/" <> namespaceDirName
+      registryHostsPath = localRegistryHostsRoot </> namespaceDirName </> "hosts.toml"
       controlPlaneNodeName = kindControlPlaneNodeName paths runtimeMode
   createDirectoryIfMissing True localKindRoot
   registryHostsContents <- readFile registryHostsPath
@@ -3783,8 +3835,20 @@ clusterNameHash =
   (`mod` 100000) . List.foldl' (\acc character -> (acc * 33) + fromEnum character) 5381
 
 currentKindEdgePort :: Paths -> RuntimeMode -> IO (Maybe Int)
-currentKindEdgePort paths runtimeMode = do
-  result <- tryHostToolCmd paths Nothing [] HostDocker ["port", kindClusterName paths runtimeMode <> "-control-plane", "30090/tcp"]
+currentKindEdgePort paths runtimeMode = currentKindContainerPort paths runtimeMode "30090/tcp"
+
+-- | Phase 3 follow-on (2026-05-29): the Harbor-facing Kind hostPort
+-- mapping is now dynamic. When the cluster already exists, the
+-- supported reconcile honors the port the existing Kind container is
+-- actually publishing rather than re-using a stale persisted value,
+-- so the binary's Harbor health probe + publication path target the
+-- same address operators see from the host.
+currentKindHarborPort :: Paths -> RuntimeMode -> IO (Maybe Int)
+currentKindHarborPort paths runtimeMode = currentKindContainerPort paths runtimeMode "30002/tcp"
+
+currentKindContainerPort :: Paths -> RuntimeMode -> String -> IO (Maybe Int)
+currentKindContainerPort paths runtimeMode containerSpec = do
+  result <- tryHostToolCmd paths Nothing [] HostDocker ["port", kindClusterName paths runtimeMode <> "-control-plane", containerSpec]
   case result of
     Left _ -> pure Nothing
     Right output ->
@@ -3848,6 +3912,13 @@ renderHelmValues paths controlPlane state demoConfigPayload deployPhase engineCo
         "  publishedPort: " <> show (edgePort state),
         "  publishedNodePort: 30090",
         "  listenerPort: 80",
+        -- Phase 3 follow-on (2026-05-29): Harbor's @externalURL@ in
+        -- the chart references the dynamically chosen host-side port
+        -- so Harbor's own redirect responses point clients at the
+        -- same address the binary's publication path and the
+        -- containerd registry-hosts namespace use.
+        "harbor:",
+        "  externalURL: \"http://localhost:" <> show (harborPort state) <> "\"",
         "demoConfig:",
         "  fileName: infernix-substrate.dhall",
         "  catalogPayload: |",
@@ -4033,10 +4104,15 @@ renderHelmValues paths controlPlane state demoConfigPayload deployPhase engineCo
           "  enableMigrateHelmHook: true"
         ]
 
-harborApiHost :: Paths -> RuntimeMode -> String
-harborApiHost paths runtimeMode
+-- | Phase 3 follow-on (2026-05-29): the host-side variant honors the
+-- dynamic Harbor port chosen by 'chooseHarborPort' (passed in from
+-- 'ClusterState.harborPort'). The outer-container variant stays on
+-- the fixed in-cluster NodePort because in-cluster wiring is
+-- independent of the operator's host port allocations.
+harborApiHost :: Paths -> RuntimeMode -> Int -> String
+harborApiHost paths runtimeMode harborPortValue
   | Config.controlPlaneContext paths == OuterContainer = kindControlPlaneNodeName paths runtimeMode <> ":30002"
-  | otherwise = "127.0.0.1:30002"
+  | otherwise = "127.0.0.1:" <> show harborPortValue
 
 harborAdminUser :: String
 harborAdminUser = "admin"
@@ -4218,8 +4294,9 @@ runCommand maybeWorkingDirectory envOverrides command args = do
 -- or in 'envOverrides'.
 runCommandWithInput :: Maybe FilePath -> [(String, String)] -> FilePath -> [String] -> String -> IO ()
 runCommandWithInput maybeWorkingDirectory envOverrides command args inputPayload = do
-  resolvedCommand <- resolveClusterCommand command
-  let mergedEnv = mergeEnvironment clusterSubprocessBaseEnv envOverrides
+  paths <- Config.discoverPaths
+  let resolvedCommand = resolveClusterCommandWithPaths paths command
+      mergedEnv = mergeEnvironment (clusterSubprocessBaseEnvFor paths) envOverrides
   (exitCode, _, stderrOutput) <-
     readCreateProcessWithExitCode
       (proc resolvedCommand args)
@@ -4235,8 +4312,9 @@ runCommandWithInput maybeWorkingDirectory envOverrides command args inputPayload
 
 tryCommand :: Maybe FilePath -> [(String, String)] -> FilePath -> [String] -> IO (Either String String)
 tryCommand maybeWorkingDirectory envOverrides command args = do
-  resolvedCommand <- resolveClusterCommand command
-  let mergedEnv = mergeEnvironment clusterSubprocessBaseEnv envOverrides
+  paths <- Config.discoverPaths
+  let resolvedCommand = resolveClusterCommandWithPaths paths command
+      mergedEnv = mergeEnvironment (clusterSubprocessBaseEnvFor paths) envOverrides
   processResult <-
     try
       ( readCreateProcessWithExitCode
@@ -4254,21 +4332,60 @@ tryCommand maybeWorkingDirectory envOverrides command args = do
         ExitSuccess -> pure (Right stdoutOutput)
         _ -> pure (Left (stdoutOutput <> stderrOutput))
 
--- | Phase 2 Sprint 2.13: the supported base env for every cluster
--- lifecycle subprocess. Set the minimal @PATH@ + locale knobs the
--- third-party tools (`docker`, `kubectl`, `helm`, `kind`) need; the
--- absolute-path resolution itself comes from 'HostConfig.toolPaths.*'
--- once Sprint 1.11's stage-zero refactor wires it through, so even
--- this @PATH@ entry becomes redundant in the final shape. Until then
--- it keeps subprocess shells (e.g. @sh -lc …@ used by some chart
--- post-render hooks) able to find common Unix utilities at the
--- expected absolute paths.
-clusterSubprocessBaseEnv :: [(String, String)]
-clusterSubprocessBaseEnv =
-  [ ("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"),
+-- | Phase 2 Sprint 2.13 + Phase 7 Sprint 7.17 Apple cohort closure
+-- (2026-05-29): the supported base env for every cluster lifecycle
+-- subprocess. The PATH entry is derived from the staged host
+-- manifest's @toolPaths@ when present so nested third-party
+-- invocations (most importantly @kind@ shelling out to @docker@) can
+-- locate the same absolute binaries the binary itself uses, including
+-- Apple Silicon Homebrew's @\/opt\/homebrew\/bin@ prefix. When the
+-- manifest is absent (unit-test fixture without a 'HostConfig'), the
+-- helper falls back to the minimal POSIX PATH.
+clusterSubprocessBaseEnvFor :: Paths -> [(String, String)]
+clusterSubprocessBaseEnvFor paths =
+  [ ("PATH", subprocessSearchPath paths),
     ("LANG", "C.UTF-8"),
     ("LC_ALL", "C.UTF-8")
   ]
+
+subprocessSearchPath :: Paths -> String
+subprocessSearchPath paths =
+  let fallback =
+        [ "/usr/local/sbin",
+          "/usr/local/bin",
+          "/usr/sbin",
+          "/usr/bin",
+          "/sbin",
+          "/bin"
+        ]
+      manifestDirs = maybe [] hostToolParentDirs (pathsHostConfig paths)
+   in List.intercalate ":" (List.nub (manifestDirs <> fallback))
+
+hostToolParentDirs :: HostConfig.HostConfig -> [FilePath]
+hostToolParentDirs config =
+  let allTools =
+        [ HostDocker,
+          HostKubectl,
+          HostHelm,
+          HostKind,
+          HostCurl,
+          HostTar,
+          HostBash,
+          HostSkopeo,
+          HostHostname,
+          HostChown,
+          HostNvidiaSmi,
+          HostNvkind,
+          HostCrictl
+        ]
+      pathFor tool = Text.unpack (HostTools.hostToolPath config tool)
+      absoluteEntries =
+        [ takeDirectory entry
+        | tool <- allTools,
+          let entry = pathFor tool,
+          not (null entry)
+        ]
+   in List.nub absoluteEntries
 
 captureCommand :: Maybe FilePath -> [(String, String)] -> FilePath -> [String] -> IO String
 captureCommand maybeWorkingDirectory envOverrides command args = do
@@ -4277,11 +4394,6 @@ captureCommand maybeWorkingDirectory envOverrides command args = do
     Right stdoutOutput -> pure stdoutOutput
     Left err ->
       ioError (userError ("command failed: " <> command <> " " <> unwords args <> "\n" <> err))
-
-resolveClusterCommand :: FilePath -> IO FilePath
-resolveClusterCommand command = do
-  paths <- Config.discoverPaths
-  pure (resolveClusterCommandWithPaths paths command)
 
 resolveClusterCommandWithPaths :: Paths -> FilePath -> FilePath
 resolveClusterCommandWithPaths paths command =

@@ -1,6 +1,6 @@
 # Phase 1: Repository and Control-Plane Foundation
 
-**Status**: Active (Sprint 1.11 Linux cohort validated; Apple cohort queued; Sprints 1.1–1.10 Done)
+**Status**: Active (Sprint 1.11 code landed; the prior Linux cohort validation was on the retired Linux/CUDA host and no longer counts as a current proof point; Apple cohort and CUDA Linux cohort validation both pending on the new Apple Silicon host; Sprints 1.1–1.10 had their code-side deliverables closed but their prior real-cluster validation evidence was on the retired hardware and is similarly pending re-validation)
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/engineering/host_tools_manifest.md](../documents/engineering/host_tools_manifest.md)
 
 > **Purpose**: Establish the canonical repository scaffold, the two-binary topology
@@ -507,17 +507,24 @@ shrinks to `./.data` plus the Docker socket only.
 - `grep -rn 'lookupEnv\|getEnv' src/Infernix/{Config,CLI,DemoCLI}.hs` returns zero matches.
 - `grep -rn 'INFERNIX_BUILD_ROOT\|INFERNIX_DATA_ROOT\|INFERNIX_COMPOSE_SUBSTRATE\|INFERNIX_COMPOSE_DEMO_UI\|INFERNIX_BOOTSTRAP_YES' src/ bootstrap/ compose.yaml docker/` returns zero matches.
 - `./bootstrap/linux-cpu.sh doctor` runs cleanly under `env -i /usr/bin/bash` (empty starting env).
-- May 27, 2026: `env -i /usr/bin/bash ./bootstrap/linux-cpu.sh doctor` and
-  `env -i /usr/bin/bash ./bootstrap/linux-gpu.sh doctor` both passed after the Linux stage-zero
-  bootstrap cleanup.
-- May 27, 2026: `env -i /usr/bin/bash ./bootstrap/linux-gpu.sh status` entered the single
-  `compose.yaml` launcher with `LAUNCHER_IMAGE=infernix-linux-gpu:local` and reported the
-  expected `linux-gpu` `cluster-absent` status without requiring `compose.linux-gpu.yaml`.
-- May 27, 2026: `env -i /usr/bin/bash ./bootstrap/linux-gpu.sh build` produced the
-  `infernix-linux-gpu:local` launcher image, ran the built-in `infernix --help` smoke check
-  through the single `compose.yaml` launcher, and a direct `docker run --rm
-  infernix-linux-gpu:local ...` inspection verified `/workspace/chart/charts` links to
+- May 27, 2026 (retired hardware): `env -i /usr/bin/bash ./bootstrap/linux-cpu.sh doctor` and
+  `env -i /usr/bin/bash ./bootstrap/linux-gpu.sh doctor` had both passed after the Linux
+  stage-zero bootstrap cleanup. That proof point was produced on the retired Linux/CUDA host and
+  no longer counts as current evidence; the same commands need to be rerun on the new Apple
+  Silicon host (through Colima's amd64 VM).
+- May 27, 2026 (retired hardware): `env -i /usr/bin/bash ./bootstrap/linux-gpu.sh status` had
+  entered the single `compose.yaml` launcher with `LAUNCHER_IMAGE=infernix-linux-gpu:local` and
+  reported the expected `linux-gpu` `cluster-absent` status without requiring
+  `compose.linux-gpu.yaml`. That proof point is no longer current.
+- May 27, 2026 (retired hardware): `env -i /usr/bin/bash ./bootstrap/linux-gpu.sh build` had
+  produced the `infernix-linux-gpu:local` launcher image, ran the built-in `infernix --help`
+  smoke check through the single `compose.yaml` launcher, and a direct `docker run --rm
+  infernix-linux-gpu:local ...` inspection had verified `/workspace/chart/charts` links to
   `/opt/infernix/chart/charts` and the expected Helm archives are present without a bind mount.
+  That proof point is no longer current.
+- **Apple cohort and CUDA Linux cohort validation pending on new host:** the doctor, status,
+  build, and launcher inspection runs must be rerun on the new Apple Silicon host (CUDA Linux
+  lane through Colima's amd64 VM) before this sprint can return to `Done`.
 - `docker inspect <launcher-container> --format '{{json .Mounts}}'` shows exactly two mounts:
   `./.data` and `/var/run/docker.sock`.
 
@@ -537,7 +544,18 @@ Foundational pieces landed:
   `HostConfig` instead of bare-name `proc` calls.
 - `src/Infernix/DemoConfig.hs.materializeHostManifestFile` writes the
   manifest beside the substrate file on `infernix internal
-  materialize-substrate`; the CLI also prints `hostManifestPath`.
+  materialize-substrate`; the CLI also prints `hostManifestPath`. The
+  operator's home directory used to anchor Apple defaults
+  (`hostCabal`, `hostGhc`, `hostGhcup`, `hostPoetry`,
+  `hostHomeDirectory`) is resolved through
+  `System.Posix.User.getEffectiveUserID` + `getUserEntryForID` so the
+  materialization path stays env-free per Section U.
+- The Apple host-native `hostDocker` default in
+  `src/Infernix/HostConfig.hs.defaultAppleHostNativeHostConfig` is
+  `/opt/homebrew/bin/docker`, matching Apple Silicon Homebrew. The
+  earlier `/usr/local/bin/docker` Intel-Mac default was incorrect for
+  the only supported Mac target and was fixed during the 2026-05-29
+  Apple cohort rerun on the new host.
 - `test/unit/Spec.hs.assertHostConfig` covers decoder roundtrip +
   tool-path lookup + the absent-tool empty-path convention.
 
@@ -636,10 +654,13 @@ launcher path also passes the targeted grep for the removed compose
 selection and host-repo override env names across `bootstrap/`,
 `compose.yaml`, `docker/`, and `src/`.
 
-Linux residuals landed and validated May 27, 2026:
+Linux residuals: code landed; the May 27, 2026 Linux validation was performed on the retired
+Linux/CUDA host and no longer counts as a current proof point. CUDA Linux cohort re-validation
+on the new Apple Silicon host (through Colima's amd64 VM) is pending.
 
 - **Move `chart/charts/` cache into the launcher image at
-  `/opt/infernix/chart/charts/` — landed and validated May 27, 2026.**
+  `/opt/infernix/chart/charts/` — code landed; CUDA Linux cohort validation on retired hardware
+  May 27, 2026 no longer counts as current evidence.**
   `docker/linux-substrate.Dockerfile` now fetches Harbor, Percona
   PostgreSQL operator, Percona PostgreSQL database, Pulsar, MinIO, and
   Envoy Gateway archives into `/opt/infernix/chart/charts/` during
@@ -677,9 +698,12 @@ honest):
 ## Remaining Work
 
 Sprint 1.11 partially landed (foundational schema + decoder + helper +
-materializer + unit tests). The Linux residuals named above are landed and validated; the only
-pending closure is the Apple bootstrap script queued for the Apple cohort validation batch.
-Sprints 1.1–1.10 closed.
+materializer + unit tests). The Linux residuals named above are landed; their May 27, 2026
+proof points were on the retired Linux/CUDA host and no longer count as current evidence. The
+Apple bootstrap script remains queued for the Apple cohort validation batch. Sprints 1.1–1.10
+closed in code; their prior real-cluster proof points were on the retired hardware. Both Apple
+cohort and CUDA Linux cohort full-suite validation are pending on the new Apple Silicon host
+before this phase can return to `Done`.
 
 ## Documentation Requirements
 

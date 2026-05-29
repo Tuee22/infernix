@@ -29,6 +29,7 @@ import Infernix.Types
 import System.Directory (createDirectoryIfMissing, doesFileExist, removeFile, renameFile)
 import System.FilePath (takeDirectory, (</>))
 import System.IO (hClose, openBinaryTempFile)
+import System.Posix.User (getEffectiveUserID, getUserEntryForID, homeDirectory)
 
 demoConfigBannerBytes :: ByteString.ByteString
 demoConfigBannerBytes = ByteStringChar8.pack demoConfigGeneratedBannerLine
@@ -93,13 +94,14 @@ materializeHostManifestFile paths = do
   if alreadyMaterialized
     then pure filePath
     else do
+      operatorHome <- resolveOperatorHomeDirectory
       let hostConfig = case Config.controlPlaneContext paths of
             Config.OuterContainer ->
               HostConfig.defaultLinuxOuterContainerHostConfig (Text.pack "/root")
             _ ->
               HostConfig.defaultAppleHostNativeHostConfig
                 (Text.pack (Config.repoRoot paths))
-                (Text.pack "")
+                (Text.pack operatorHome)
           payload = ByteStringChar8.pack (HostConfig.renderHostConfig hostConfig)
       bracketOnError
         (openBinaryTempFile buildRootPath "infernix-host.dhall.tmp")
@@ -329,3 +331,16 @@ duplicates values =
 
 occurrences :: (Eq a) => a -> [a] -> Int
 occurrences wantedValue = length . filter (== wantedValue)
+
+-- | Phase 7 Sprint 7.17 Apple cohort closure (2026-05-29): the
+-- operator's home directory used to anchor Apple host manifest defaults
+-- ('HostConfig.defaultAppleHostNativeHostConfig') is resolved through
+-- the libc user database via 'System.Posix.User.getEffectiveUserID' +
+-- 'getUserEntryForID'. This matches the configuration-doctrine rule
+-- (Section U) that operator home discovery comes from the system user
+-- database, not the @\$HOME@ env var.
+resolveOperatorHomeDirectory :: IO FilePath
+resolveOperatorHomeDirectory = do
+  uid <- getEffectiveUserID
+  entry <- getUserEntryForID uid
+  pure (homeDirectory entry)

@@ -356,7 +356,7 @@ main = do
       let legacyRegistryNamespace = repoRoot paths </> ".build" </> "kind" </> "registry" </> "localhost:30001"
       createDirectoryIfMissing True legacyRegistryNamespace
       writeFile (legacyRegistryNamespace </> "hosts.toml") "legacy helper registry\n"
-      _ <- writeGeneratedKindConfig paths LinuxCpu 30090
+      _ <- writeGeneratedKindConfig paths LinuxCpu 30090 30002
       legacyRegistryNamespaceExists <- doesDirectoryExist legacyRegistryNamespace
       legacyRegistryHostsContents <- readFile (legacyRegistryNamespace </> "hosts.toml")
       assert
@@ -378,7 +378,7 @@ main = do
       let outerFixture = linuxOuterContainerUnitTestFixture realRepoRoot unitTestRoot (unitTestRoot </> "outer-container" </> "build")
       outerPaths <- discoverPathsWithHostManifest (Just outerFixture)
       ensureRepoLayout outerPaths
-      generatedLinuxGpuKindConfigPath <- writeGeneratedKindConfig outerPaths LinuxGpu 30090
+      generatedLinuxGpuKindConfigPath <- writeGeneratedKindConfig outerPaths LinuxGpu 30090 30002
       generatedLinuxGpuKindConfig <- readFile generatedLinuxGpuKindConfigPath
       let expectedHostKindMount = "hostPath: " <> realRepoRoot </> ".build/test-unit/.data/kind/linux-gpu"
           expectedHostRegistryMount = "hostPath: " <> realRepoRoot </> ".build/kind/registry"

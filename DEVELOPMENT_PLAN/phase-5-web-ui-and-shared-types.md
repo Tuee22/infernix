@@ -1,6 +1,6 @@
 # Phase 5: Web UI and Shared Types
 
-**Status**: Done (Sprint 5.9 closed May 27, 2026: demo backend, Python adapters, and web/Node scripts no longer read supported configuration from process environments; Sprints 5.1–5.8 Done)
+**Status**: Active (Sprint 5.9 code landed: demo backend, Python adapters, and web/Node scripts no longer read supported configuration from process environments; the May 26, 2026 `linux-gpu` `test all` PASS that originally validated this closure was on the retired Linux/CUDA host and no longer counts as a current proof point; Apple cohort and CUDA Linux cohort `test all` validation both pending on the new Apple Silicon host; Sprints 5.1–5.8 had their code-side deliverables closed but their prior real-cluster validation evidence was on the retired hardware and is similarly pending re-validation)
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Define the PureScript demo UI built with spago, the Haskell-owned frontend contract
@@ -9,10 +9,15 @@
 
 ## Phase Status
 
-Phase 5 is closed around the PureScript demo UI, the Haskell-owned browser-contract source, the
-generated contract path under `web/src/Generated/`, the clustered demo hosting rule, the
-container-owned routed Playwright executor, and the Phase 5.9 process-environment retirement in
-the demo backend, Python adapter layer, and web/Node helper scripts. Sprints 5.1–5.9 are `Done`.
+Phase 5's code work is closed around the PureScript demo UI, the Haskell-owned browser-contract
+source, the generated contract path under `web/src/Generated/`, the clustered demo hosting rule,
+the container-owned routed Playwright executor, and the Phase 5.9 process-environment retirement
+in the demo backend, Python adapter layer, and web/Node helper scripts. Sprints 5.1–5.9 had
+their code-side deliverables closed in the worktree; their prior real-cluster validation
+evidence (most recently the May 26, 2026 `linux-gpu` `test all` PASS) was on the retired
+Linux/CUDA host and no longer counts as a current proof point. Apple cohort and CUDA Linux
+cohort full-suite validation are pending on the new Apple Silicon host before this phase can
+return to `Done`.
 Phase 7 extends the PureScript demo surface with the durable-context Chat, Artifacts, and Model
 Picker views; the supported manual-inference path moves from a direct HTTP request/poll cycle to
 WebSocket-delivered `ConversationStatePatch` deltas owned by Phase 7.
@@ -317,9 +322,9 @@ None.
 
 ---
 
-## Sprint 5.9: Web and Python Manifest Retirement [Done]
+## Sprint 5.9: Web and Python Manifest Retirement [Active - code landed, cohort validation pending on new host]
 
-**Status**: Done
+**Status**: Active (code landed; the May 26-27, 2026 validation proof points were on the retired Linux/CUDA host; Apple cohort and CUDA Linux cohort `test all` re-validation are pending on the new Apple Silicon host)
 **Implementation**: `src/Infernix/DemoCLI.hs`, `python/adapters/common.py`, `python/adapters/model_cache.py`, every engine adapter under `python/adapters/*.py`, `web/scripts/install-purescript.mjs`, `web/test/run_playwright_matrix.mjs`
 **Docs to update**: `documents/development/no_env_vars.md`, `documents/development/frontend_contracts.md`, `documents/development/testing_strategy.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 
@@ -355,24 +360,34 @@ discovery, setup `--install-root` CLI args, the protobuf `WorkerRequest` envelop
 - `grep -rn 'process\.env' web/scripts/ web/test/ web/playwright/` returns zero matches.
 - `infernix test integration` on `linux-gpu` round-trips through the demo + adapter path
   successfully.
-- May 26, 2026: `linux-gpu` `infernix test all` PASS validated the real cluster demo + adapter
-  path.
-- May 27, 2026: `poetry run check-code`, `node --check web/test/run_playwright_matrix.mjs`,
-  `node --check web/scripts/install-purescript.mjs`, and the grep gates above all PASS after the
-  last inherited environment reads were removed.
-- May 27, 2026: `cabal test infernix-unit` and
-  `cabal run infernix -- lint {docs,files,chart,proto}` all PASS after the Phase 5 plan and
-  governed-doc updates.
+- May 26, 2026 (retired hardware): `linux-gpu` `infernix test all` PASS had validated the real
+  cluster demo + adapter path on the retired Linux/CUDA host; that proof point is no longer
+  current.
+- May 27, 2026 (retired hardware): `poetry run check-code`,
+  `node --check web/test/run_playwright_matrix.mjs`,
+  `node --check web/scripts/install-purescript.mjs`, and the grep gates above had all PASSED
+  after the last inherited environment reads were removed. The static checks are trivially
+  re-runnable on the new host.
+- May 27, 2026 (retired hardware): `cabal test infernix-unit` and
+  `cabal run infernix -- lint {docs,files,chart,proto}` had all PASSED. The unit and lint gates
+  are trivially re-runnable on the new host.
+- **Apple cohort and CUDA Linux cohort validation pending on new host:** the real-cluster demo +
+  adapter path under `infernix test all` must be rerun on the new Apple Silicon host (CUDA Linux
+  lane through Colima's amd64 VM) before this sprint can return to `Done`.
 
 ### Remaining Work
 
-None.
+- Apple cohort `infernix test all` rerun on the new Apple Silicon host
+- CUDA Linux cohort `infernix test all` rerun on the new host (through Colima's amd64 VM)
 
 ---
 
 ## Remaining Work
 
-None. Sprints 5.1–5.9 are `Done`.
+Sprints 5.1–5.9 closed their code-side deliverables. Their real-cluster validation evidence was
+produced on the retired Linux/CUDA hardware and no longer counts as current proof points. Phase
+5 returns to `Done` only after Apple cohort and CUDA Linux cohort full-suite validation are both
+rerun on the new Apple Silicon host.
 
 ---
 

@@ -1,6 +1,6 @@
 # Phase 4: Inference Service and Durable Runtime
 
-**Status**: Done (Sprint 4.13 closed May 27, 2026: `ClusterConfig` renderer + decoder roundtrip covered by unit tests, MinIO endpoint / region / credential wiring reads mounted `ClusterConfig` + `SecretsConfig`, and the `linux-gpu` `test all` PASS from May 26, 2026 validated the real cluster path; Sprints 4.1–4.12 Done)
+**Status**: Active (Sprint 4.13 code landed: `ClusterConfig` renderer + decoder roundtrip covered by unit tests and MinIO endpoint / region / credential wiring reads mounted `ClusterConfig` + `SecretsConfig`; the May 26, 2026 `linux-gpu` `test all` PASS that originally validated the real cluster path was on the retired Linux/CUDA host and no longer counts as a current proof point; Apple cohort and CUDA Linux cohort `test all` validation both pending on the new Apple Silicon host; Sprints 4.1–4.12 had their code-side deliverables closed but their prior real-cluster validation evidence was on the retired hardware and is similarly pending re-validation)
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/engineering/cluster_config_manifest.md](../documents/engineering/cluster_config_manifest.md)
 
 > **Purpose**: Define the Haskell service runtime, the shared Python engine-adapter contract, the
@@ -11,11 +11,15 @@
 
 ## Phase Status
 
-Phase 4 is closed around the staged-substrate runtime contract, the shared Python adapter
-boundary, the Pulsar-driven request or result contract, the explicit engine-runner dispatch, and
-the mounted `InfernixCluster.dhall` cluster-wiring contract. Sprints 4.1–4.13 are `Done`. The
-later clarification that a cluster daemon always exists while Apple inference execution moves to a
-same-binary host daemon is implemented in Phase 6 Sprint 6.25.
+Phase 4's code work is closed around the staged-substrate runtime contract, the shared Python
+adapter boundary, the Pulsar-driven request or result contract, the explicit engine-runner
+dispatch, and the mounted `InfernixCluster.dhall` cluster-wiring contract. Sprints 4.1–4.13 had
+their code-side deliverables closed in the worktree; their prior real-cluster validation
+evidence (most recently the May 26, 2026 `linux-gpu` `test all` PASS) was on the retired
+Linux/CUDA host and no longer counts as a current proof point. Apple cohort and CUDA Linux
+cohort full-suite validation are pending on the new Apple Silicon host before this phase can
+return to `Done`. The later clarification that a cluster daemon always exists while Apple
+inference execution moves to a same-binary host daemon is implemented in Phase 6 Sprint 6.25.
 
 ## Current Repo Assessment
 
@@ -540,9 +544,9 @@ None.
 
 ---
 
-## Sprint 4.13: Cluster Manifest Materialization [Done]
+## Sprint 4.13: Cluster Manifest Materialization [Active - code landed, cohort validation pending on new host]
 
-**Status**: Done
+**Status**: Active (code landed; the May 26, 2026 `linux-gpu` `test all` PASS that originally validated the real cluster `ClusterConfig.engine.commandOverrides` path was on the retired Linux/CUDA host; Apple cohort and CUDA Linux cohort `test all` re-validation are pending on the new Apple Silicon host)
 **Implementation**: `dhall/InfernixCluster.dhall` (new), `src/Infernix/ClusterConfig.hs` (new), `src/Infernix/Service.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Worker.hs`, `chart/templates/deployment-coordinator.yaml`, `chart/templates/deployment-engine.yaml`, `chart/templates/configmap-cluster-config.yaml` (new)
 **Docs to update**: `documents/engineering/cluster_config_manifest.md`, `documents/tools/pulsar.md`, `documents/architecture/daemon_topology.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 
@@ -581,18 +585,25 @@ favor of typed `ClusterConfig` fields.
 - `infernix test integration` on `linux-gpu` round-trips through coordinator + engine pods that
   read from the mounted Dhall ConfigMap (proven by removing the corresponding `env:` entries
   before the test runs).
-- May 26, 2026: the `linux-gpu` `infernix test all` PASS validated the mounted
-  `ClusterConfig.engine.commandOverrides` path against the real cluster.
-- May 27, 2026: `cabal test infernix-unit` PASS includes
+- May 26, 2026 (retired hardware): the `linux-gpu` `infernix test all` PASS had validated the
+  mounted `ClusterConfig.engine.commandOverrides` path against the real cluster on the retired
+  Linux/CUDA host. That proof point is no longer current.
+- May 27, 2026 (retired hardware): `cabal test infernix-unit` had PASSED with
   `assertClusterConfig`, which renders a `ClusterConfig` fixture with a non-empty
-  `engine.commandOverrides` list and decodes it back through `decodeClusterConfigFile`.
-- May 27, 2026: `cabal build all`, `cabal test infernix-haskell-style`, and
-  `cabal run infernix -- lint {docs,files,chart,proto}` all PASS after the
-  `ClusterConfig` renderer and plan-status updates.
+  `engine.commandOverrides` list and decodes it back through `decodeClusterConfigFile`. The
+  unit suite is trivially re-runnable on the new host.
+- May 27, 2026 (retired hardware): `cabal build all`, `cabal test infernix-haskell-style`, and
+  `cabal run infernix -- lint {docs,files,chart,proto}` had all PASSED after the
+  `ClusterConfig` renderer and plan-status updates. The same gates are trivially re-runnable on
+  the new host.
+- **Apple cohort and CUDA Linux cohort validation pending on new host:** the real-cluster
+  `infernix test all` against the mounted `ClusterConfig` must be rerun on the new Apple Silicon
+  host (CUDA Linux lane through Colima's amd64 VM) before this sprint can return to `Done`.
 
 ### Remaining Work
 
-None.
+- Apple cohort `infernix test all` rerun on the new Apple Silicon host
+- CUDA Linux cohort `infernix test all` rerun on the new host (through Colima's amd64 VM)
 
 ---
 

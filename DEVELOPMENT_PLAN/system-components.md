@@ -96,21 +96,26 @@
   into Kind before Helm warmup, only Harbor-required services may pull upstream before Harbor is
   responsive, and every remaining image, including the active `infernix` runtime image, is loaded
   into Harbor before final rollout
-- Phase 6 records clean governed bootstrap reruns for `linux-cpu`, `linux-gpu`, and the
-  supported Apple lifecycle, including Apple reruns on May 15, 2026 and May 17, 2026 through
-  `doctor`, `build`, `up`, `status`, `test`, `down`, and final `status`; those reruns validated
-  the split daemon topology, host-batch Pulsar handoff, routed Playwright E2E, repeated
-  retained-state cluster bring-up or teardown cycles inside the governed `test` lane, and final
-  post-teardown status returning `clusterPresent: False`, `lifecycleStatus: idle`, and
-  `lifecyclePhase: cluster-absent`; the May 19, 2026 `linux-gpu` post-warning-cleanup rerun
-  passed through `doctor`, forced image refresh, `build`, `up`, `status`, `test`, `down`, `purge`,
-  and final `status`; those reruns also validate that Harbor publication pushes repo-owned local
-  images before third-party chart dependencies and re-tags the source image before each bounded
-  push retry, so retry recovery does not depend on a previously retained target tag; the earlier
-  May 13 lifecycle investigation remains the proof
-  point that Apple `build-cluster-images` can stay healthy well past thirty minutes before Harbor
-  publication begins and that Harbor image pushes are readiness-gated with bounded retries across
-  transient registry resets
+- Phase 6 had previously recorded clean governed bootstrap reruns for `linux-cpu`, `linux-gpu`,
+  and the supported Apple lifecycle on the retired hardware, including Apple reruns on
+  May 15, 2026 and May 17, 2026 through `doctor`, `build`, `up`, `status`, `test`, `down`, and
+  final `status`; those historical reruns covered the split daemon topology, host-batch Pulsar
+  handoff, routed Playwright E2E, repeated retained-state cluster bring-up or teardown cycles
+  inside the governed `test` lane, final post-teardown status returning `clusterPresent: False`,
+  `lifecycleStatus: idle`, and `lifecyclePhase: cluster-absent`, and the May 19, 2026
+  `linux-gpu` post-warning-cleanup rerun through `doctor`, forced image refresh, `build`, `up`,
+  `status`, `test`, `down`, `purge`, and final `status`, plus the Harbor publication closure
+  where repo-owned local images are pushed before third-party chart dependencies and the source
+  image is re-tagged before each bounded push retry so retry recovery does not depend on a
+  previously retained target tag; the earlier May 13, 2026 lifecycle investigation originally
+  served as the proof point that Apple `build-cluster-images` can stay healthy well past thirty
+  minutes before Harbor publication begins and that Harbor image pushes are readiness-gated with
+  bounded retries across transient registry resets. **Apple Silicon validation reset
+  (2026-05-29).** Following the move to a new Apple Silicon host (the prior Apple hardware is
+  no longer available), every Apple Silicon proof point above is retired as a current proof
+  point and Apple cohort validation is pending on the new host. The CUDA Linux cohort evidence
+  was also produced on the retired hardware and is similarly pending re-validation; the
+  `linux-cpu` portable lane carries the same pending-on-new-host status
 - Monitoring is not a supported first-class surface.
 
 ## Operator and Host Components
