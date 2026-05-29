@@ -4,11 +4,12 @@
 module Infernix.Demo.Api
   ( DemoApiOptions (..),
     DemoBridgeMode (..),
+    renderDispositionForMime,
     runDemoApiServer,
   )
 where
 
-import Control.Exception (SomeException, try)
+import Control.Exception (SomeException, fromException, try)
 import Data.Aeson
   ( FromJSON (parseJSON),
     ToJSON,
@@ -70,7 +71,7 @@ import Infernix.SecretsConfig qualified as SecretsConfig
 import Infernix.Types
 import Infernix.Web.Contracts
   ( ArtifactDownloadGrant (..),
-    ArtifactMimeType,
+    ArtifactMimeType (..),
     ArtifactRenderDisposition (..),
     ArtifactUploadGrant (..),
     ArtifactUploadRequest (..),
@@ -84,6 +85,8 @@ import Network.HTTP.Client
     parseRequest,
     responseBody,
     responseStatus,
+    responseTimeout,
+    responseTimeoutMicro,
   )
 import Network.HTTP.Types
   ( Status,
@@ -262,15 +265,42 @@ webSocketOptions options maybeClusterConfig loadJwks =
                 maybeClusterConfig
                 userIdValue
                 clientMessage
-            )
+            ),
+      DemoWebSocket.wsStartUserStreams =
+        RuntimePulsar.streamDemoUserMetadata
+          (demoPaths options)
+          (demoRuntimeMode options)
+          maybeClusterConfig,
+      DemoWebSocket.wsStartContextStream =
+        RuntimePulsar.streamDemoContextConversation
+          (demoPaths options)
+          (demoRuntimeMode options)
+          maybeClusterConfig
     }
 
-mapDispatchError :: IO () -> IO (Either String ())
+mapDispatchError :: IO () -> IO (Either DemoWebSocket.WebSocketDispatchError ())
 mapDispatchError action = do
   result <- try @SomeException action
   case result of
     Right () -> pure (Right ())
-    Left err -> pure (Left (show err))
+    Left err ->
+      case fromException err of
+        Just validationError ->
+          pure
+            ( Left
+                DemoWebSocket.WebSocketDispatchError
+                  { DemoWebSocket.webSocketDispatchErrorCode = RuntimePulsar.demoClientMessageErrorCode validationError,
+                    DemoWebSocket.webSocketDispatchErrorMessage = RuntimePulsar.demoClientMessageErrorMessage validationError
+                  }
+            )
+        Nothing ->
+          pure
+            ( Left
+                DemoWebSocket.WebSocketDispatchError
+                  { DemoWebSocket.webSocketDispatchErrorCode = "ws_pulsar_dispatch_failed",
+                    DemoWebSocket.webSocketDispatchErrorMessage = Text.pack (show err)
+                  }
+            )
 
 -- | Phase 7 Sprint 7.9: /api/objects upload-grant + download-grant
 -- handlers. Both endpoints consume a Keycloak-signed JWT in the
@@ -401,7 +431,7 @@ loadJwksFromKeycloak realmConfig = do
   manager <- newManager defaultManagerSettings
   fetchAttempt <- try @SomeException $ do
     requestValue <- parseRequest (Text.unpack jwksUrl)
-    httpLbs requestValue manager
+    httpLbs (requestValue {responseTimeout = responseTimeoutMicro 5000000}) manager
   case fetchAttempt of
     Left err -> pure (Left (show err))
     Right response
@@ -439,12 +469,13 @@ loadPresignedConfig = do
       secretsConfig <- SecretsConfig.decodeSecretsConfigFile SecretsConfig.defaultClusterSecretsMountPath
       minioCreds <- SecretsConfig.readMinioCredentials (SecretsConfig.secretsMinio secretsConfig)
       let minio = ClusterConfig.clusterMinio clusterConfig
-          (scheme, hostPort) = splitMinioEndpoint (ClusterConfig.minioEndpoint minio)
+          (scheme, hostPort, pathPrefix) = splitMinioPublicEndpoint (ClusterConfig.minioPresignPublicEndpoint minio)
       pure
         ( Right
             PresignedUrlConfig
               { presignedScheme = scheme,
                 presignedEndpoint = hostPort,
+                presignedPathPrefix = pathPrefix,
                 presignedRegion = ClusterConfig.minioRegion minio,
                 presignedAccessKeyId = SecretsConfig.minioAccessKey minioCreds,
                 presignedSecretAccessKey = SecretsConfig.minioSecretKey minioCreds,
@@ -452,12 +483,10 @@ loadPresignedConfig = do
               }
         )
 
--- | Phase 7 Sprint 7.17: the @ClusterConfig.minio.endpoint@ field
--- carries a full @http://host:port@ URL, but the SigV4 canonical
--- request signs only the @host:port@ as the @host@ header. Strip any
--- scheme prefix and record it separately so the minted URL points at
--- the correct transport (plain HTTP for in-cluster MinIO, HTTPS for
--- TLS-fronted MinIO).
+-- | Phase 7 Sprint 7.17: MinIO endpoint fields carry full
+-- @http://host:port@ URLs, but the SigV4 canonical request signs only
+-- the @host:port@ as the @host@ header. Strip any scheme prefix and
+-- record it separately so the minted URL points at the right transport.
 splitMinioEndpoint :: Text -> (Text, Text)
 splitMinioEndpoint raw =
   case Text.stripPrefix "https://" raw of
@@ -467,11 +496,26 @@ splitMinioEndpoint raw =
         Just hostPort -> ("http", hostPort)
         Nothing -> ("http", raw)
 
+splitMinioPublicEndpoint :: Text -> (Text, Text, Text)
+splitMinioPublicEndpoint raw =
+  let (scheme, withoutScheme) = splitMinioEndpoint raw
+      (hostPort, pathPrefix) = Text.breakOn "/" withoutScheme
+   in (scheme, hostPort, pathPrefix)
+
 renderJwtError :: JwtError -> String
 renderJwtError = show
 
 renderDispositionForMime :: ArtifactMimeType -> ArtifactRenderDisposition
-renderDispositionForMime _ = RenderInline
+renderDispositionForMime (ArtifactMimeType mimeType)
+  | mimeType == "audio/midi" = DownloadOnly
+  | mimeType == "audio/x-midi" = DownloadOnly
+  | "image/" `Text.isPrefixOf` mimeType = RenderInline
+  | "audio/" `Text.isPrefixOf` mimeType = RenderInline
+  | "video/" `Text.isPrefixOf` mimeType = RenderInline
+  | mimeType == "application/pdf" = BrowserNativePdf
+  | mimeType == "application/json" = BoundedTextPreview
+  | "text/" `Text.isPrefixOf` mimeType = BoundedTextPreview
+  | otherwise = DownloadOnly
 
 data CacheMutation = EvictCache | RebuildCache
 

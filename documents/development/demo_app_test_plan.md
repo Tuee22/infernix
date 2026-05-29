@@ -28,7 +28,43 @@ The durable-context surface this test plan covers is implemented over
 [../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md](../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md).
 The validation suites described here land in Sprints 7.13 (unit), 7.14 (integration), and
 7.15 (E2E). Sprint 7.14's WebSocket-to-Pulsar publish plumbing is code-complete as of
-May 27, 2026, but the real-cluster integration and chaos suites remain pending.
+May 27, 2026, and the Linux GPU integration suite now validates the real-cluster
+coordinator-to-engine request -> batch -> result handoff through publication JSON,
+`cluster status`, generated demo config, and the active service runtime loop. As of
+May 28, 2026, the same suite also publishes and reads real Pulsar records for the
+conversation, compacted contexts, compacted drafts, and bootstrap-ready topic families,
+including broker message-key assertions for the compacted and bootstrap-ready records. The same
+Linux GPU validation now reads the `infernix/demo` compaction threshold from Pulsar admin,
+explicitly compacts the contexts and drafts topics, and uses a Java Pulsar client compacted
+reader to prove one latest record per `contextId`. The suite also publishes duplicate frontend
+conversation and draft messages with the same mutation-scoped producer name and WebSocket
+`initialSequenceId`-backed sequence id, then proves the broker stores exactly one message for each
+duplicate set. It now also drives a real durable-context prompt through the dispatcher,
+request/batch handoff, engine, result bridge, and conversation-log writeback, proving the normal
+non-chaos path end to end on Linux GPU. Sprint 7.15's top-level PureScript shell now
+mounts the durable-context Chat and Artifacts renderers
+instead of the retired Workbench form, and the minimal routed SPA/publication Playwright smoke
+passed on the clean rebuilt Linux GPU launcher May 28, 2026. The routed Keycloak browser
+self-registration smoke now reaches `/auth`, creates a fresh account without email
+verification, and returns to the SPA with an OIDC authorization code on the same clean rebuilt
+Linux GPU launcher. The routed Playwright suite now also exchanges that code for a real access
+token, proves malformed bearer rejection on `/api/objects/upload`, proves the backend accepts
+the real token for scoped `/api/objects` upload/download grant minting, then PUTs and GETs bytes
+through the routed presigned MinIO URLs with exact content equality. The same routed suite now
+opens `/ws` with a real Keycloak access token and verifies a malformed token does not open a
+browser WebSocket; the same valid connection returns a tagged `ServerError` for a malformed frame.
+The same suite also registers a second Keycloak user for the same context id and display name,
+proves the second user's grant points at a distinct `users/<sub>/...` prefix, observes `404`
+before the second user uploads, then verifies each user reads only that user's bytes by default.
+It also validates the routed `/api/objects/download` render-disposition matrix for inline
+image/audio/video, browser-native PDF, bounded JSON/text preview, and download-only MIDI /
+MusicXML / generic-binary grants. The browser artifact flow now starts from the routed SPA login
+button, completes the app-owned PKCE redirect through Keycloak self-registration, creates a
+context, uploads supported browser artifact classes through the rendered Artifacts form, and
+validates bounded text/JSON previews, inline image/audio/video routed media URLs,
+browser-native PDF URL wiring, and MIDI / MusicXML / generic-binary download-only states through
+routed presigned grants.
+The chaos, full durable-context Playwright flow matrix, and throughput suites remain pending.
 
 ## Unit Layer
 
@@ -56,19 +92,57 @@ PureScript `purescript-spec` suite under `web/test/`.
   Selection, left-rail rendering, draft restore, queued-state rendering, cancelled-result
   rendering, artifact-kind dispatch. These exercise the trivial patch-application helpers
   and rendering only; they do not test reducer logic, which is Haskell-only.
+- **Engine runtime import-boundary lint.** The Haskell style gate rejects imports of
+  frontend, coordinator, auth, object-presign, or WebSocket modules from the concrete engine
+  runtime modules (`Infernix.Runtime`, `.Cache`, `.Worker`).
+- **Shared-library import-boundary lint.** The same style gate rejects upward demo, runtime,
+  auth, object-presign, or WebSocket imports from the Phase 7 conversation, dispatcher, result
+  bridge, and bootstrap helper modules.
 
 ## Integration Layer
 
-Lands in Sprint 7.13. Additions to the existing `infernix-integration` Cabal stanza.
+Owned by Sprint 7.14. Additions to the existing `infernix-integration` Cabal stanza.
 
-- **Real Pulsar publish + Reader subscribe round-trip** per topic family (conversation,
-  compacted contexts, compacted drafts, inference request and result).
-- **Real Pulsar producer-dedup verification.** Simulate dispatcher restart mid-flight; assert
-  exactly-one inference dispatch and exactly-one result.
+Implemented as of May 28, 2026:
+
+- **Linux GPU coordinator-to-engine handoff.** The integration suite asserts routed
+  publication JSON reports the active `hostInferenceBatchTopic`, `cluster status` reports
+  the matching `publicationHostInferenceBatchTopic`, and the generated demo config routes
+  the coordinator from `inference.request.linux-gpu` to `inference.batch.linux-gpu` while
+  the engine consumes the batch topic without forwarding again.
+- **Linux GPU service-loop round-trip.** The same run exercises cluster up, routed API
+  probes, per-model inference, cache lifecycle, service runtime loop, and clean cluster down
+  from the rebuilt CUDA launcher image.
+- **Durable Pulsar topic-family round-trip.** The May 28, 2026 Linux GPU integration run
+  publishes `ClientCreateContext`, `ClientUpdateDraft`, `ClientCancelPrompt`, and a raw
+  `ModelBootstrapReadyEvent`, reads them back with Pulsar Readers, asserts the compacted
+  contexts/drafts keys are `contextId`, asserts the bootstrap-ready key is `modelId`, asserts
+  conversation records are unkeyed, and decodes each typed payload.
+- **Broker compaction behavior.** The same suite asserts the live `infernix/demo` namespace has
+  the supported 100 MiB compaction threshold, publishes superseded and latest context/draft
+  records under isolated users, triggers topic compaction, and reads with a Java Pulsar
+  `readCompacted(true)` reader to assert exactly one latest payload per `contextId`.
+- **Frontend producer-dedup behavior.** The same suite simulates a frontend reconnect by
+  publishing duplicate `ClientCancelPrompt` and `ClientUpdateDraft` messages with the same
+  mutation-scoped producer names and WebSocket `initialSequenceId`-backed sequence ids, then reads
+  the isolated topics with Pulsar Readers and asserts the broker stored exactly one conversation
+  event and one draft event.
+- **Durable-context prompt round-trip.** The same suite publishes context metadata, creates the
+  conversation topic, waits for dispatcher discovery, submits a prompt, and asserts a completed
+  `ConversationInferenceResultEvent` appears on the real conversation log after the coordinator
+  contexts consumer hydrates `ContextModelMap` and the dispatcher -> request/batch -> engine ->
+  result-bridge path runs.
+
+Pending integration-layer work:
+
+- **Real Pulsar producer-dedup verification.** Simulate dispatcher, result-bridge, and bootstrap
+  replay mid-flight; assert exactly-one inference dispatch and exactly-one result.
 - **Real Pulsar Failover handoff.** Kill the active dispatcher subscription consumer; assert
   the surviving consumer resumes from the same cursor.
-- **Real MinIO presigned PUT/GET** with per-user scoping; cross-user negative assertion.
-- **Real Keycloak signup + login + JWT validation** round-trip against a deployed Keycloak.
+- **Integration-layer JWT edge coverage** against deployed Keycloak. Browser self-registration,
+  auth-code exchange, backend acceptance of the real access token, malformed bearer rejection,
+  routed WebSocket valid/malformed/expired-token handshake behavior, and typed malformed-frame
+  `ServerError` handling are covered in E2E; issuer/audience and cache edge cases remain open.
 - **Chaos tests** for the failure semantics described in
   [../architecture/demo_app_design.md](../architecture/demo_app_design.md):
   - WS pod kill mid-session; client reconnects to a surviving replica; full state preserved.
@@ -84,21 +158,89 @@ Lands in Sprint 7.15. Linux Playwright suites run inside the substrate image wit
 `npm --prefix web exec -- playwright test`; Apple host-native E2E uses host `npm exec` with the
 same typed fixture and is covered by the Apple cohort validation batch.
 
-- **Auth lifecycle.** Signup; login; logout; re-login with same credentials; JWT refresh.
-- **Context lifecycle.** New-context creation defers backend state until first submit; rename;
-  soft-delete; select context.
+Current partial landing: `web/src/Main.purs` and `web/src/index.html` mount the durable-context
+Chat and Artifacts panes. The May 28, 2026 clean rebuilt Linux GPU
+`infernix test e2e` run passed the minimal routed smoke that checks the typed Playwright
+fixture, `/api/publication`, `/api/demo-config`, `/api/models` parity, and the routed SPA
+root heading. A same-day follow-on added a routed Keycloak self-registration smoke that verifies
+the `/auth` browser surface, fresh account creation without email verification, and OIDC
+authorization-code redirect back to the SPA. A later follow-on exchanges that code through the
+routed token endpoint and validates `/api/objects` with both malformed and real bearer tokens,
+proving JWT-backed grant minting and per-user object-key scoping; it then PUTs bytes through the
+minted routed MinIO upload URL, GETs them through the minted download URL, and asserts exact
+content equality. The same suite opens `/ws` with the real token and verifies a malformed token
+does not open a browser WebSocket; it also sends a malformed frame on the valid connection and
+asserts the tagged `ServerError`. The object-grant flow also registers a second user, proves the
+same context/display name maps to that second user's prefix, gets `404` before the second upload,
+then verifies each user's grant reads that user's own bytes. The same object-grant flow validates
+the server-side download-grant render disposition for image, audio, video, PDF, JSON, text, MIDI,
+MusicXML, and generic binary MIME cases. The browser artifact flow covers the app-owned PKCE login
+path, local context creation, bounded text/JSON previews, inline image/audio/video media URL
+wiring, browser-native PDF URL wiring, and MIDI / MusicXML / generic-binary download-only states.
+The same browser flow now asserts the initial `ClientHello`, inbound context-list and draft
+snapshots, context-create `ServerContextListPatch`, draft-upsert `ServerDraftMapPatch`, prompt
+submit `ClientSubmitPrompt.promptUserUploads`, inbound prompt `ServerConversationPatch`, and
+draft-remove `ServerDraftMapPatch` after submit clears the durable draft. It also force-closes
+the live WebSocket, verifies `ClientHello` and active `ClientSubscribeContext` are resent,
+observes a fresh `ServerConversationSnapshot`, and submits another prompt through the reconnected
+socket. The same flow now clicks the browser cancel control for the canonical prompt id from the
+prompt append patch, asserts outbound `ClientCancelPrompt`, observes the inbound
+`ConversationCancelEvent` append patch, and verifies the rendered cancel entry.
+The same browser flow now keeps only the active context id/model id in browser session storage,
+asserts an in-progress draft returns after forced WebSocket reconnect, reloads the page, signs in
+again through Keycloak, observes the restored `ClientSubscribeContext`, and verifies the broker
+draft replay restores the textarea value.
+The flows below are still the Sprint 7.15 closure target.
+
+- **Auth lifecycle.** Login; logout; re-login with same credentials; JWT refresh. Signup,
+  authorization-code redirect, token exchange, backend `/api/objects` JWT acceptance, and routed
+  WebSocket valid/malformed-token handshake plus expired-token rejection and typed malformed-frame
+  error behavior are covered by the current routed smoke. The browser app now also covers local
+  logout, same-browser re-login, and refresh-token WebSocket re-auth through a new `ClientHello`
+  after the refresh grant.
+- **Context lifecycle.** New-context dialog open/close without backend state; create; rename;
+  soft-delete; select context. The browser now opens and closes the new-context dialog without
+  sending `ClientCreateContext` or adding a local context, then selects a supported model, asserts
+  the outbound `ClientCreateContext`, observes the context-create patch from the broker-backed
+  stream, and verifies the active context rail preserves that model id. It also sends
+  `ClientRenameContext` and `ClientSoftDeleteContext`, observes the broker-backed
+  `ServerContextListPatch` upserts, and verifies the active context rail shows the renamed title
+  plus soft-deleted state. The backend `ContextModelMap` path is covered by integration, and the
+  routed WebSocket test now sends an absent catalog model id and asserts typed `ServerError` code
+  `unknown-model`.
 - **Conversation lifecycle.** Submit; see response; two-prompts-in-a-row "queued" state;
-  cancel-mid-inference; order preservation across reload.
+  cancel-mid-inference; order preservation across reload. The browser now covers submitted prompt
+  visibility, the two-prompt queued indicator, and cancel request visibility through routed
+  WebSocket frames, patches, and the rendered Chat DOM; response rendering and reload order
+  preservation remain open.
 - **Draft lifecycle.** Type draft; refresh page; draft restored per context; submit clears
-  draft.
+  draft. Browser draft upsert, submit-clear, forced-reconnect restore, and page-reload restore
+  are covered through routed WebSocket frames and broker-backed draft patches.
+- **Client reconnect/reconstitution.** Force-close the live WebSocket; verify the SPA keeps the
+  authenticated shell mounted, resends `ClientHello` and active `ClientSubscribeContext`,
+  receives a fresh `ServerConversationSnapshot`, and submits another prompt through the
+  reconnected socket. It also preserves the active context id/model id across reload login so the
+  active context can be resubscribed and its draft restored. Full storage-clear reconstitution
+  remains open.
 - **Artifact upload lifecycle** per supported artifact class (image, playable audio, video,
   text/JSON, PDF, MIDI, MusicXML/MXL notation, generic binary): open upload, select file,
   observe progress, see artifact appear in Artifacts view AND in the per-context conversation
-  thread as a `UserUpload` event.
+  thread as a `UserUpload` event. Browser upload to MinIO is covered for text, JSON, PNG, WAV,
+  MP4, PDF, MIDI, MusicXML, and generic binary fixtures with Artifacts view render/download
+  states asserted. Browser uploads now send `ClientRecordUpload` and the backend maps it to a
+  `ConversationUserUploadEvent`. Prompt submit now sends the current context's uploaded
+  `ObjectRef`s in `ClientSubmitPrompt.promptUserUploads`, asserted from the outbound browser
+  WebSocket frame; the active context also sends `ClientSubscribeContext`, and the prompt event is
+  asserted through an inbound `ServerConversationPatch` append frame. Browser-visible upload-event
+  assertions now cover the outbound `ClientRecordUpload`, inbound `ConversationUserUploadEvent`
+  append patch, and rendered Chat upload message for each supported browser fixture.
 - **Artifact download lifecycle.** Click an artifact; presigned GET resolves; inline render
   via `<img>` / `<audio>` / `<video>` where applicable; bounded text/JSON preview and
   browser-native PDF handling where applicable; MIDI, MusicXML/MXL, unknown, and generic
-  binary artifacts download otherwise.
+  binary artifacts download otherwise. The routed backend grant-disposition matrix for these
+  MIME classes is covered; browser click/render behavior is covered for bounded text/JSON
+  previews, inline image/audio/video media URL wiring, browser-native PDF URL wiring, and
+  MIDI / MusicXML / generic-binary download-only states.
 - **Generated artifact lifecycle.** Prompt a model that generates a non-text artifact
   (e.g., SDXL Turbo for an image, bark-small for audio, Basic Pitch for MIDI, Audiveris for
   MusicXML/PDF notation); confirm the artifact appears in the conversation AND in the
@@ -145,7 +287,7 @@ Lands in Sprint 7.15 as a parameterized Playwright flow.
 
 ## Multi-User Throughput / Fan-In Batching / Fan-Out Test
 
-Lands in Sprint 7.13 as `Infernix.Test.Integration.Throughput`. Real-cluster assertion that
+Lands in Sprint 7.14 as `Infernix.Test.Integration.Throughput`. Real-cluster assertion that
 the inference pipeline behaves correctly under concurrent load from multiple users on the
 same model.
 

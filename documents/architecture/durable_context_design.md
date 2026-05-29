@@ -21,8 +21,8 @@
   `purescript-bridge` generates every wire ADT. The browser is a thin
   renderer that applies typed patches.
 - Pulsar carries an append-only per-context conversation log plus compacted
-  per-user metadata topics. The shared `inference.request.<mode>` and
-  `inference.result.<mode>` topics carry dispatch.
+  per-user metadata topics keyed by `contextId`. The shared
+  `inference.request.<mode>` and `inference.result.<mode>` topics carry dispatch.
 - Each application binds the primitives by choosing concrete values for the
   parameters in [§ Parametricity Surface](#parametricity-surface).
   [demo_app_design.md](demo_app_design.md) is the first such binding;
@@ -43,6 +43,15 @@ Phases 0–6 are `Done`, so the Pulsar, MinIO, Keycloak-capable, and routed
 edge foundations the primitives build on are all in place. The shared
 library modules listed in [§ Module Layout](#module-layout) are the Phase 7
 deliverables that make these primitives reusable by any future application.
+As of May 28, 2026, Linux GPU integration validates the compacted metadata
+broker contract with live Pulsar admin compaction, a Java compacted reader,
+latest-per-`contextId` assertions for context and draft topics, and duplicate
+frontend publish collapse through broker producer deduplication. The same
+integration layer now validates the normal dispatcher -> request/batch -> engine
+-> result-bridge -> conversation-log writeback path for one durable-context
+prompt. The browser E2E layer covers active-context WebSocket re-subscribe and
+draft restoration after both reconnect and reload login; pod-kill Failover
+coverage remains pending.
 
 ## Parametricity Surface
 
@@ -82,7 +91,7 @@ this section names the surface so primitives-doc readers can locate it.
   - `Infernix.Dispatch.SingleFlight` — per-context dispatcher rule and
     inference request envelope construction
   - `Infernix.Objects.{Layout,Presigned}` — bucket/prefix layout and
-    presigned URL minting with per-user scope policy
+    presigned URL minting with per-user grant-time scope checks
   - `Infernix.Auth.Jwt` — JWKS-backed JWT validation parametric in
     `<jwtIssuer>` and `<jwtAudience>`
 - **Application glue (`<appNamespace>.*`).** Concrete IdP wiring, WS
@@ -154,8 +163,8 @@ the SSoT; the IdP's `sub` claim is the stable per-user identifier.
 
 Reconstitution sequence after a fresh login from any device:
 
-1. Browser obtains a JWT from the IdP; opens `<wsPath>` with the JWT.
-2. Pod validates JWT, extracts `sub`, opens compacted Reader on
+1. Browser obtains a JWT from the IdP; opens `<wsPath>` with the JWT; sends `ClientHello`.
+2. Pod validates JWT, extracts `sub`, then starts per-user Readers on
    `<topicNamespace>.user.<sub>.contexts` and
    `<topicNamespace>.user.<sub>.drafts`.
 3. Server forwards `ContextListState` and `DraftMapState` snapshots;
@@ -193,7 +202,7 @@ All business logic lives only in Haskell:
 - the dispatcher rule
 - event construction and validation
 - topic naming, schema registration, and producer dedup configuration
-- presigned URL minting and per-user scope policies
+- presigned URL minting and per-user grant-time scope checks
 - JWT validation against a JWKS endpoint
 
 `purescript-bridge` generates every wire-crossing ADT and JSON instance
@@ -256,11 +265,23 @@ The application's topics sit under `persistent://<topicNamespace>/`.
 
 Single-partition topics give total broker order over messages from any
 number of producers. Schemas are registered via the Pulsar admin API at
-application startup. Producer-side deduplication is enabled on the
-conversation, inference-request, and inference-result topics with named
-producers and dedup sequence IDs derived from upstream `MessageId`s or
-`ClientIdempotencyKey`s. See [../tools/pulsar.md](../tools/pulsar.md) for
-the broker-level contract.
+application startup. Producer-side deduplication is enabled at the broker level
+and on the demo namespace's conversation, contexts, drafts, inference-request,
+and inference-result topics with named producers and dedup sequence IDs derived
+from upstream `MessageId`s or mutation-scoped one-message frontend producers. Frontend
+publishers include the mutation key in the producer scope and set the WebSocket
+`initialSequenceId` baseline so arbitrary client keys remain idempotent without violating
+Pulsar's monotonic sequence rule inside a producer.
+Conversation events are unkeyed append-log entries; context metadata
+and draft records carry Pulsar message key `contextId` so broker compaction collapses by
+the same key the reducers use. See [../tools/pulsar.md](../tools/pulsar.md) for the
+broker-level contract. The May 28, 2026 Linux GPU integration run validates the live
+`infernix/demo` namespace compaction threshold, explicitly compacts context and draft
+metadata topics, proves the compacted reader returns one latest payload per `contextId`,
+and publishes duplicate frontend conversation/draft messages to prove broker producer dedup stores
+one message for each duplicate mutation-scoped producer/sequence pair. It also submits a real
+durable-context prompt and observes the completed result event on the conversation log after the
+dispatcher, engine, and result bridge run.
 
 The demo binding sets `<topicNamespace> = infernix/demo` and reuses the
 existing shared `inference.request.<mode>` and `inference.result.<mode>`
@@ -278,10 +299,12 @@ users/<userId>/contexts/<contextId>/uploads/<objectKey>
 users/<userId>/contexts/<contextId>/generated/<objectKey>
 ```
 
-Presigned URL minting is performed by `<objectsApiPath>` with scope
-policies that constrain the URL to the authenticated user's prefix.
-Cross-user URL access is rejected at MinIO via the scope policy. See
-[../tools/minio.md](../tools/minio.md) for the bucket contract.
+Presigned URL minting is performed by `<objectsApiPath>` with grant-time
+scope checks that derive the object prefix from the authenticated user's
+`sub` claim. Users cannot mint the default route for another user's
+prefix. Presigned URLs are bearer capabilities until expiry, so they are
+treated as session-confidential. See [../tools/minio.md](../tools/minio.md)
+for the bucket contract.
 
 The demo binding sets `<objectsBucket> = infernix-demo-objects` and
 `<objectsApiPath> = /api/objects`.
@@ -388,7 +411,10 @@ covered by:
   valid)
 - presigned URL minting tests with arbitrary `<objectsBucket>` and scope
   policy variants
-- compacted-topic projection tests with synthetic in-memory broker
+- compacted-topic projection tests with synthetic in-memory broker plus live Pulsar compaction
+  validation for the demo binding
+- non-chaos live Pulsar prompt roundtrip through the demo binding's dispatcher, engine, result
+  bridge, and conversation-log writeback
 
 A second application reuses every test above by binding the same
 parameters to its own concrete values; only the application-specific

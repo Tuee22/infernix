@@ -60,8 +60,10 @@ retained-state Apple reruns
 automatically reinitialize stopped Harbor PostgreSQL replicas from the current Patroni leader when
 timeline drift leaves replicas unready after promotion. The shared lifecycle skips broad
 pre-Harbor support-image preloads and performs binary-owned Harbor-first image preparation, where
-only Harbor-required services may pull upstream before Harbor is responsive and every remaining
-image, including the active `infernix` runtime image, is loaded into Harbor before final rollout.
+Linux lanes may hydrate and stream only the narrow Harbor warmup dependency set into Kind before
+Helm warmup, only Harbor-required services may pull upstream before Harbor is responsive, and
+every remaining image, including the active `infernix` runtime image, is loaded into Harbor before
+final rollout.
 Phase 6 records clean governed
 bootstrap reruns for the supported Linux and Apple lifecycle surfaces, including Apple reruns
 on May 15, 2026 and May 17, 2026 through `doctor`, `build`, `up`, `status`, `test`, `down`, and

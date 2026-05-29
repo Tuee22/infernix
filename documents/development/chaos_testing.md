@@ -26,6 +26,13 @@
   Pulsar cluster services while keeping inference host-native
 - route, publication, cache, and service-loop coverage that does not require pod-failure injection
   remains owned by the ordinary unit, integration, and routed E2E entrypoints
+- the May 27, 2026 Linux GPU integration extension validates the non-chaos
+  coordinator-to-engine handoff contract through publication JSON, `cluster status`, generated
+  demo config, and the active service runtime loop; the durable-context pod-failure cases below
+  remain pending
+- the May 28, 2026 Linux GPU integration follow-on validates the non-chaos durable-context prompt
+  path through dispatcher, request/batch handoff, engine, result bridge, and conversation-log
+  writeback; the same pod-failure cases below remain pending
 
 ## Durable-Context Demo Chaos Cases
 

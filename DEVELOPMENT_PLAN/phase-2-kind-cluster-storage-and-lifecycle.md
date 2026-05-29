@@ -56,8 +56,9 @@ heartbeat during the monitored Docker build, Harbor publication, Harbor-backed K
 preload, and Apple retained-state replay windows. Bootstrap shells build or enter the active
 launcher only and then delegate lifecycle, validation, image preparation, and teardown to
 `infernix`; the shared
-lifecycle skips broad pre-Harbor support-image preloads and loads every remaining image, including
-the active runtime image, into Harbor after Harbor is responsive. Staged
+lifecycle skips broad pre-Harbor support-image preloads, may hydrate and stream only the narrow
+Harbor warmup dependency set into Linux Kind workers before Helm warmup, and loads every remaining
+image, including the active runtime image, into Harbor after Harbor is responsive. Staged
 `infernix-substrate.dhall` writes are atomic so concurrent status readers do not observe truncated
 payloads, and retained-state Apple reruns automatically reinitialize stopped Harbor PostgreSQL
 replicas from the current Patroni leader when timeline drift leaves replicas unready after

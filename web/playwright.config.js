@@ -6,7 +6,7 @@
 // `INFERNIX_EXPECT_*` env-var family.
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { defineConfig } from "@playwright/test";
+import { defineConfig } from "playwright/test";
 
 const fixturePath = fileURLToPath(new URL("../.data/runtime/playwright-fixture.json", import.meta.url));
 const fixture = JSON.parse(readFileSync(fixturePath, "utf8"));

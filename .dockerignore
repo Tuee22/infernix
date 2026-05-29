@@ -2,6 +2,7 @@
 .gitignore
 .data
 .claude
+.kube
 .build
 .build/*.dhall
 .build/infernix-demo-*.dhall

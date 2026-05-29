@@ -23,6 +23,7 @@ module Infernix.Web.WebSocket
 import Prelude
 
 import Data.Either (Either(..))
+import Data.Foldable (traverse_)
 import Data.Maybe (Maybe(..))
 import Data.Newtype (un)
 import Data.String (Pattern(..), stripPrefix)
@@ -44,12 +45,14 @@ import Web.Socket.WebSocket as WS
 type WsClientConfig =
   { edgeOrigin :: String
   , token :: String
+  , initialMessages :: Array WsClientMessage
   }
 
 defaultWsClientConfig :: String -> String -> WsClientConfig
 defaultWsClientConfig origin token =
   { edgeOrigin: origin
   , token: token
+  , initialMessages: []
   }
 
 -- | Connection lifecycle states the SPA shell renders.
@@ -94,16 +97,19 @@ wsEndpointUrl config =
 connect
   :: WsClientConfig
   -> (WsServerMessage -> Effect Unit)
+  -> (String -> Effect Unit)
   -> Effect WsConnection
-connect config onServerMessage = do
+connect config onServerMessage onClose = do
   statusRef <- Ref.new Connecting
   socket <- WS.create (wsEndpointUrl config) []
   let target = WS.toEventTarget socket
   openListener <- EventTarget.eventListener \_ ->
     Ref.write Connected statusRef
+      *> traverse_ (WS.sendString socket <<< JSON.writeJSON) config.initialMessages
   closeListener <- EventTarget.eventListener \evt -> do
     let reason = un EventType (Event.type_ evt)
     Ref.write (Disconnected reason) statusRef
+    onClose reason
   messageListener <- EventTarget.eventListener \evt ->
     case MessageEvent.fromEvent evt of
       Nothing -> Console.warn "WS message event missing payload"

@@ -260,11 +260,10 @@ Rules:
   `requiredDuringSchedulingIgnoredDuringExecution` pod anti-affinity rule; on Apple silicon
   the engine role runs as the on-host `infernix service` daemon, with the same one-per-node
   rule enforced via an exclusive `flock(2)` on `engine.lock` acquired at daemon startup.
-  The chart's generated supported values currently still run a single fused
-  `infernix-service` Deployment on Linux substrates; Sprint 7.7 of Phase 7 splits that pod
-  into role-specific Deployments, removes the previous service-data PVC, introduces
+  Sprint 7.7 of Phase 7 split the retired fused `infernix-service` pod
+  into role-specific Deployments, removed the previous service-data PVC, introduced
   `coordinator.replicaCount` and `engine.replicaCount` knobs (defaults ≥ 2 for the stateless
-  roles; engine replicas operator-set up to the number of engine-capable nodes), and adds
+  demo-on roles; engine replicas operator-set up to the number of engine-capable nodes), and added
   the lazy model-weight bootstrap workflow described in
   [../documents/engineering/object_storage.md](../documents/engineering/object_storage.md).
   Production deployments (`demo_ui = false`) run only the engine role. The substrate decides
@@ -727,8 +726,8 @@ Rules:
 - No web / Playwright test script may consume `process.env`. The Playwright config file emits the
   typed fixture via Playwright's `use:` block sourced from a Dhall-decoded JSON file written to the
   repo-relative `.data/runtime/playwright-fixture.json` at test setup, which resolves to
-  `/workspace/.data/runtime/playwright-fixture.json` inside the Linux launcher; the test reads
-  `test.info().project.use.*`.
+  `/workspace/.data/runtime/playwright-fixture.json` inside the Linux launcher; the test declares
+  and receives the typed Playwright option fixture.
 - No `chart/templates/deployment-*.yaml` carries an `env:` block. Each pod mounts the cluster
   ConfigMap + cluster Secret and the Haskell daemon reads both natively.
 - The `compose.yaml` file shrinks to one `infernix` service with exactly two bind mounts

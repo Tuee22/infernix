@@ -102,15 +102,16 @@ clusterConfig:
   pulsar:
     systemNamespace: system
   minio:
+    presignPublicEndpoint: http://127.0.0.1/minio/s3
     region: us-east-1
     presignExpirySeconds: 900
     modelsBucket: infernix-models
     demoArtifactsBucket: infernix-demo-objects
   keycloak:
-    baseUrl: http://infernix-keycloak.platform.svc.cluster.local
+    baseUrl: http://127.0.0.1/auth
     realmName: infernix
-    clientId: infernix-demo
-    jwksUrl: http://infernix-keycloak.platform.svc.cluster.local/realms/infernix/protocol/openid-connect/certs
+    clientId: infernix-spa
+    jwksUrl: http://infernix-keycloak.platform.svc.cluster.local:8080/auth/realms/infernix/protocol/openid-connect/certs
   demoBackend:
     bindHost: 0.0.0.0
     port: 8080
@@ -458,7 +459,11 @@ keycloak:
     repository: quay.io/keycloak/keycloak
     tag: "26.0.7"
     pullPolicy: IfNotPresent
-  replicaCount: 2
+  # The local demo runs one Keycloak application pod until Sprint 7.14
+  # validates cookie-aware `/auth` proxy affinity or clustered embedded
+  # cache behavior through Envoy Gateway. The backing Patroni Postgres
+  # cluster remains HA.
+  replicaCount: 1
   # Phase 7 Sprint 7.14: operator-facing base URL the demo backend
   # expects the issuer claim to match. The default value reflects the
   # default Envoy Gateway routing topology (Envoy strips the @:port@
@@ -538,6 +543,9 @@ pulsar:
       enabled: false
     affinity:
       anti_affinity: false
+    configData:
+      # Required before namespace/topic-level producer dedup policies take effect.
+      brokerDeduplicationEnabled: "true"
   proxy:
     replicaCount: 3
     configData:

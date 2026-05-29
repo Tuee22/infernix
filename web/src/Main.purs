@@ -2,16 +2,12 @@ module Main where
 
 import Prelude
 
-import Affjax.RequestBody as RequestBody
-import Affjax.RequestHeader as RequestHeader
 import Affjax.ResponseFormat as ResponseFormat
 import Affjax.StatusCode (StatusCode(..))
 import Affjax.Web as AXWeb
-import Data.Array (head, length)
+import Data.Array (filter, head, length, snoc)
 import Data.Either (Either(..))
 import Data.Foldable (traverse_)
-import Data.HTTP.Method (Method(..))
-import Data.MediaType.Common (applicationJSON)
 import Data.Maybe (Maybe(..), fromMaybe)
 import Effect (Effect)
 import Effect.Aff (Aff, launchAff_)
@@ -19,21 +15,70 @@ import Effect.Class (liftEffect)
 import Effect.Exception (throw)
 import Effect.Ref as Ref
 import Generated.Contracts
-  ( ErrorResponse
+  ( ArtifactKind(..)
+  , ArtifactMimeType(..)
+  , ClientIdempotencyKey(..)
+  , ContextId(..)
+  , ContextSummary(..)
+  , ConversationUserUploadPayload(..)
+  , ConversationState(..)
+  , DraftEntry(..)
   , ModelDescriptor
-  , apiBasePath
-  , errorResponseRecord
+  , ObjectRef(..)
+  , UserId(..)
+  , UserPromptPayload(..)
+  , WsClientMessage(..)
+  , WsServerMessage(..)
   , modelDescriptorRecord
   , runtimeMode
   )
-import Infernix.Web.Workbench
-  ( CompletedRequestSummary
-  , Publication
-  , catalogCards
-  , describeCompletedRequest
-  , publicationSummary
-  , selectedModel
-  , selectionSummary
+import Infernix.Web.ArtifactTransport
+  ( UploadedArtifact
+  , bindArtifactTransport
+  )
+import Infernix.Web.Artifacts
+  ( ArtifactEntry
+  , ArtifactsViewState
+  , dispositionFor
+  , handleArtifactsServerMessage
+  , initialArtifactsViewState
+  , recordArtifactReady
+  , renderArtifactsView
+  )
+import Infernix.Web.Auth
+  ( TokenStore
+  , beginLoginRedirect
+  , clearBrowserAuthSession
+  , clearToken
+  , completeRedirect
+  , defaultInfernixRealmConfig
+  , newTokenStore
+  , readToken
+  )
+import Infernix.Web.Browser
+  ( clearStoredActiveContext
+  , currentOrigin
+  , installForceWebSocketClose
+  , newUuid
+  , readStoredActiveContext
+  , scheduleEffect
+  , writeStoredActiveContext
+  )
+import Infernix.Web.Chat
+  ( ChatViewState
+  , handleServerMessage
+  , initialChatViewState
+  , latestPendingPromptMessageId
+  , renderChatView
+  )
+import Infernix.Web.DomEvents (bindChatChrome)
+import Infernix.Web.Router (Route(..), routePath)
+import Infernix.Web.WebSocket
+  ( WsConnection
+  , close
+  , connect
+  , defaultWsClientConfig
+  , sendClientMessage
   )
 import Simple.JSON as JSON
 import Web.DOM.Document as Document
@@ -45,366 +90,834 @@ import Web.Event.EventTarget as EventTarget
 import Web.HTML (window)
 import Web.HTML.Event.EventTypes as EventTypes
 import Web.HTML.HTMLDocument as HTMLDocument
-import Web.HTML.HTMLFormElement as HTMLFormElement
-import Web.HTML.HTMLInputElement as HTMLInputElement
-import Web.HTML.HTMLTextAreaElement as HTMLTextAreaElement
 import Web.HTML.Window as Window
+
+type Publication =
+  { runtimeMode :: Maybe String
+  , controlPlaneContext :: Maybe String
+  , daemonLocation :: Maybe String
+  , inferenceDispatchMode :: Maybe String
+  , edgePort :: Maybe Int
+  , routes :: Maybe (Array PublishedRoute)
+  }
+
+type PublishedRoute =
+  { path :: String
+  , purpose :: String
+  }
+
+type StoredActiveContext =
+  { contextId :: String
+  , modelId :: String
+  }
 
 type AppState =
   { models :: Array ModelDescriptor
   , publication :: Maybe Publication
-  , runtimeMode :: String
+  , route :: Route
   , selectedModelId :: Maybe String
+  , newContextDialogOpen :: Boolean
+  , activeContextId :: Maybe ContextId
+  , chat :: ChatViewState
+  , artifacts :: ArtifactsViewState
+  , authenticated :: Boolean
+  , token :: Maybe String
+  , wsConnection :: Maybe WsConnection
+  , wsGeneration :: Int
+  , reconnectAttempts :: Int
   }
 
 type Refs =
   { document :: Document.Document
-  , catalog :: Element.Element
-  , catalogCount :: Element.Element
-  , search :: HTMLInputElement.HTMLInputElement
-  , inputText :: HTMLTextAreaElement.HTMLTextAreaElement
-  , form :: HTMLFormElement.HTMLFormElement
-  , inputLabel :: Element.Element
-  , modelName :: Element.Element
-  , modelEngine :: Element.Element
-  , modelLane :: Element.Element
-  , modelFamily :: Element.Element
-  , modelArtifact :: Element.Element
-  , modelNotes :: Element.Element
-  , requestGuidance :: Element.Element
+  , appStatus :: Element.Element
+  , loginButton :: Element.Element
+  , logoutButton :: Element.Element
+  , routeChat :: Element.Element
+  , routeArtifacts :: Element.Element
   , runtimeModeValue :: Element.Element
   , controlPlaneContext :: Element.Element
   , daemonLocation :: Element.Element
   , inferenceDispatchMode :: Element.Element
-  , catalogSource :: Element.Element
   , edgePort :: Element.Element
-  , apiUpstreamMode :: Element.Element
-  , demoConfigPath :: Element.Element
+  , catalogCount :: Element.Element
+  , connectionState :: Element.Element
   , routeList :: Element.Element
-  , upstreamList :: Element.Element
-  , selectionStatus :: Element.Element
-  , requestStatus :: Element.Element
-  , submitButton :: Element.Element
-  , resultLabel :: Element.Element
-  , resultOutput :: Element.Element
-  , objectLinkContainer :: Element.Element
+  , chatRoot :: Element.Element
+  , artifactsRoot :: Element.Element
   }
-
-data InferenceSubmissionResult
-  = InferenceSubmissionFailed String
-  | InferenceSubmissionCompleted CompletedRequestSummary
 
 main :: Effect Unit
 main = do
   htmlDocument <- Window.document =<< window
   refs <- captureRefs htmlDocument
+  tokenStore <- newTokenStore
+  maybeToken <- readToken tokenStore
+  storedActiveContextJson <- readStoredActiveContext
+  let
+    storedActiveContext = decodeStoredActiveContext storedActiveContextJson
+    restoredActiveContextId =
+      case storedActiveContext of
+        Just stored -> Just (ContextId { unContextId: stored.contextId })
+        Nothing -> Nothing
+    restoredSelectedModelId =
+      case storedActiveContext of
+        Just stored | stored.modelId /= "" -> Just stored.modelId
+        _ -> Nothing
+    restoredConversation =
+      case restoredActiveContextId of
+        Just contextId ->
+          Just
+            ( ConversationState
+                { conversationStateContextId: contextId
+                , conversationStateMessages: []
+                , conversationStatePrefixHash: ""
+                }
+            )
+        Nothing -> Nothing
   stateRef <-
     Ref.new
       { models: []
       , publication: Nothing
-      , runtimeMode
-      , selectedModelId: Nothing
+      , route: RouteChat
+      , selectedModelId: restoredSelectedModelId
+      , newContextDialogOpen: false
+      , activeContextId: restoredActiveContextId
+      , chat: initialChatViewState { activeConversation = restoredConversation }
+      , artifacts: initialArtifactsViewState
+      , authenticated: case maybeToken of
+          Just _ -> true
+          Nothing -> false
+      , token: maybeToken
+      , wsConnection: Nothing
+      , wsGeneration: 0
+      , reconnectAttempts: 0
       }
-  bindEvents stateRef refs
+  bindEvents tokenStore stateRef refs
+  bindArtifactTransport refs.artifactsRoot (handleUploadedArtifact stateRef refs) (handleArtifactError refs)
   renderAll stateRef refs
+  completeRedirect tokenStore defaultInfernixRealmConfig (establishAuthenticatedSession stateRef refs)
+  case maybeToken of
+    Just token -> establishAuthenticatedSession stateRef refs token
+    Nothing -> pure unit
   launchAff_ do
     loadPublication stateRef refs
     loadCatalog stateRef refs
+  pure unit
+
+decodeStoredActiveContext :: String -> Maybe StoredActiveContext
+decodeStoredActiveContext raw =
+  case JSON.readJSON raw of
+    Right stored | stored.contextId /= "" -> Just stored
+    _ -> Nothing
 
 captureRefs :: HTMLDocument.HTMLDocument -> Effect Refs
 captureRefs htmlDocument = do
   let document = HTMLDocument.toDocument htmlDocument
-  catalog <- requireElement htmlDocument "catalog"
-  catalogCount <- requireElement htmlDocument "catalog-count"
-  search <- requireInput htmlDocument "search"
-  inputText <- requireTextArea htmlDocument "inputText"
-  form <- requireForm htmlDocument "inference-form"
-  inputLabel <- requireElement htmlDocument "input-label"
-  modelName <- requireElement htmlDocument "selected-model-name"
-  modelEngine <- requireElement htmlDocument "selected-engine"
-  modelLane <- requireElement htmlDocument "selected-lane"
-  modelFamily <- requireElement htmlDocument "selected-family"
-  modelArtifact <- requireElement htmlDocument "selected-artifact-type"
-  modelNotes <- requireElement htmlDocument "selected-notes"
-  requestGuidance <- requireElement htmlDocument "request-guidance"
+  appStatus <- requireElement htmlDocument "app-status"
+  loginButton <- requireElement htmlDocument "login-button"
+  logoutButton <- requireElement htmlDocument "logout-button"
+  routeChat <- requireElement htmlDocument "route-chat"
+  routeArtifacts <- requireElement htmlDocument "route-artifacts"
   runtimeModeValue <- requireElement htmlDocument "runtime-mode"
   controlPlaneContext <- requireElement htmlDocument "control-plane-context"
   daemonLocation <- requireElement htmlDocument "daemon-location"
   inferenceDispatchMode <- requireElement htmlDocument "inference-dispatch-mode"
-  catalogSource <- requireElement htmlDocument "catalog-source"
   edgePort <- requireElement htmlDocument "edge-port"
-  apiUpstreamMode <- requireElement htmlDocument "api-upstream-mode"
-  demoConfigPath <- requireElement htmlDocument "demo-config-path"
+  catalogCount <- requireElement htmlDocument "catalog-count"
+  connectionState <- requireElement htmlDocument "connection-state"
   routeList <- requireElement htmlDocument "route-list"
-  upstreamList <- requireElement htmlDocument "upstream-list"
-  selectionStatus <- requireElement htmlDocument "selection-status"
-  requestStatus <- requireElement htmlDocument "request-status"
-  submitButton <- requireElement htmlDocument "submit-button"
-  resultLabel <- requireElement htmlDocument "result-label"
-  resultOutput <- requireElement htmlDocument "result-output"
-  objectLinkContainer <- requireElement htmlDocument "object-link-container"
+  chatRoot <- requireElement htmlDocument "chat-root"
+  artifactsRoot <- requireElement htmlDocument "artifacts-root"
   pure
     { document
-    , catalog
-    , catalogCount
-    , search
-    , inputText
-    , form
-    , inputLabel
-    , modelName
-    , modelEngine
-    , modelLane
-    , modelFamily
-    , modelArtifact
-    , modelNotes
-    , requestGuidance
+    , appStatus
+    , loginButton
+    , logoutButton
+    , routeChat
+    , routeArtifacts
     , runtimeModeValue
     , controlPlaneContext
     , daemonLocation
     , inferenceDispatchMode
-    , catalogSource
     , edgePort
-    , apiUpstreamMode
-    , demoConfigPath
+    , catalogCount
+    , connectionState
     , routeList
-    , upstreamList
-    , selectionStatus
-    , requestStatus
-    , submitButton
-    , resultLabel
-    , resultOutput
-    , objectLinkContainer
+    , chatRoot
+    , artifactsRoot
     }
 
-bindEvents :: Ref.Ref AppState -> Refs -> Effect Unit
-bindEvents stateRef refs = do
-  searchListener <-
-    EventTarget.eventListener \_ ->
-      renderCatalog stateRef refs
-  EventTarget.addEventListener EventTypes.input searchListener false (HTMLInputElement.toEventTarget refs.search)
-
-  submitListener <-
+bindEvents :: TokenStore -> Ref.Ref AppState -> Refs -> Effect Unit
+bindEvents tokenStore stateRef refs = do
+  loginListener <-
     EventTarget.eventListener \event -> do
       Event.preventDefault event
-      launchAff_ (submitInference stateRef refs)
-  EventTarget.addEventListener EventTypes.submit submitListener false (HTMLFormElement.toEventTarget refs.form)
+      beginLoginRedirect defaultInfernixRealmConfig
+  EventTarget.addEventListener EventTypes.click loginListener false (Element.toEventTarget refs.loginButton)
+
+  logoutListener <-
+    EventTarget.eventListener \event -> do
+      Event.preventDefault event
+      state <- Ref.read stateRef
+      Ref.modify_
+        ( \current ->
+            current
+              { authenticated = false
+              , token = Nothing
+              , wsConnection = Nothing
+              , newContextDialogOpen = false
+              , wsGeneration = current.wsGeneration + 1
+              , reconnectAttempts = 0
+              }
+        )
+        stateRef
+      case state.wsConnection of
+        Just connection -> close connection
+        Nothing -> pure unit
+      clearToken tokenStore
+      clearBrowserAuthSession
+      clearStoredActiveContext
+      renderAll stateRef refs
+  EventTarget.addEventListener EventTypes.click logoutListener false (Element.toEventTarget refs.logoutButton)
+
+  chatListener <-
+    EventTarget.eventListener \event -> do
+      Event.preventDefault event
+      Ref.modify_ (_ { route = RouteChat }) stateRef
+      renderAll stateRef refs
+  EventTarget.addEventListener EventTypes.click chatListener false (Element.toEventTarget refs.routeChat)
+
+  artifactsListener <-
+    EventTarget.eventListener \event -> do
+      Event.preventDefault event
+      Ref.modify_ (_ { route = RouteArtifacts }) stateRef
+      renderAll stateRef refs
+  EventTarget.addEventListener EventTypes.click artifactsListener false (Element.toEventTarget refs.routeArtifacts)
+
+  bindChatChrome
+    refs.chatRoot
+    (openNewContextDialog stateRef refs)
+    (createContext stateRef refs)
+    (closeNewContextDialog stateRef refs)
+    (renameContext stateRef refs)
+    (softDeleteContext stateRef refs)
+    (selectContext stateRef refs)
+    (selectModel stateRef refs)
+    (submitPrompt stateRef refs)
+    (cancelLatestPrompt stateRef refs)
+    (updateDraft stateRef refs)
+
+establishAuthenticatedSession :: Ref.Ref AppState -> Refs -> String -> Effect Unit
+establishAuthenticatedSession stateRef refs token =
+  mountAuthenticatedSession true stateRef refs token
+
+mountAuthenticatedSession :: Boolean -> Ref.Ref AppState -> Refs -> String -> Effect Unit
+mountAuthenticatedSession resetReconnectAttempts stateRef refs token = do
+  previous <- Ref.read stateRef
+  let nextGeneration = previous.wsGeneration + 1
+  Ref.modify_
+    ( \current ->
+        current
+          { authenticated = true
+          , token = Just token
+          , wsConnection = Nothing
+          , wsGeneration = nextGeneration
+          , reconnectAttempts =
+              if resetReconnectAttempts then 0 else current.reconnectAttempts
+          }
+    )
+    stateRef
+  case previous.wsConnection of
+    Just connection -> close connection
+    Nothing -> pure unit
+  origin <- currentOrigin
+  latest <- Ref.read stateRef
+  connection <-
+    connect
+      ( (defaultWsClientConfig origin token)
+          { initialMessages = initialSessionMessages latest
+          }
+      )
+      ( \message -> do
+        Ref.modify_ (applyServerMessage message) stateRef
+        renderServerMessage message stateRef refs
+      )
+      (handleSocketClose stateRef refs nextGeneration)
+  installForceWebSocketClose (close connection)
+  Ref.modify_
+    ( \current ->
+        if current.wsGeneration == nextGeneration then
+          current { wsConnection = Just connection }
+        else
+          current
+    )
+    stateRef
+  setStatus refs.appStatus "app-status ready" "Ready"
+  renderAll stateRef refs
+
+initialSessionMessages :: AppState -> Array WsClientMessage
+initialSessionMessages state =
+  case state.activeContextId of
+    Just contextId ->
+      [ clientHelloMessage
+      , ClientSubscribeContext
+          { clientSubscribeContextId: contextId
+          }
+      ]
+    Nothing -> [ clientHelloMessage ]
+
+clientHelloMessage :: WsClientMessage
+clientHelloMessage =
+  ClientHello
+    { clientHelloUserId: UserId { unUserId: "" }
+    }
+
+handleSocketClose :: Ref.Ref AppState -> Refs -> Int -> String -> Effect Unit
+handleSocketClose stateRef refs generation _reason = do
+  state <- Ref.read stateRef
+  if state.authenticated && state.wsGeneration == generation then do
+    let nextAttempts = state.reconnectAttempts + 1
+    Ref.modify_
+      ( \current ->
+          if current.wsGeneration == generation then
+            current { wsConnection = Nothing, reconnectAttempts = nextAttempts }
+          else
+            current
+      )
+      stateRef
+    renderAll stateRef refs
+    scheduleEffect (reconnectDelayMs nextAttempts) do
+      scheduled <- Ref.read stateRef
+      case scheduled.token of
+        Just token
+          | scheduled.authenticated && scheduled.wsGeneration == generation ->
+              mountAuthenticatedSession false stateRef refs token
+        _ -> pure unit
+  else
+    pure unit
+
+reconnectDelayMs :: Int -> Int
+reconnectDelayMs attempt =
+  if attempt <= 1 then 500
+  else if attempt == 2 then 1000
+  else if attempt == 3 then 2000
+  else 5000
+
+applyServerMessage :: WsServerMessage -> AppState -> AppState
+applyServerMessage message state =
+  state
+    { chat = handleServerMessage state.activeContextId message state.chat
+    , artifacts = handleArtifactsServerMessage message state.artifacts
+    }
+
+createContext :: Ref.Ref AppState -> Refs -> Effect Unit
+createContext stateRef refs = do
+  state <- Ref.read stateRef
+  case state.selectedModelId of
+    Nothing ->
+      setStatus refs.appStatus "app-status error" "Model catalog is not loaded"
+    Just modelId -> do
+      uuid <- newUuid
+      let
+        contextIdText = "ctx-" <> uuid
+        contextId = ContextId { unContextId: contextIdText }
+        title = "New context"
+        summary =
+          ContextSummary
+            { contextSummaryId: contextId
+            , contextSummaryModelId: modelId
+            , contextSummaryTitle: title
+            , contextSummarySoftDeleted: false
+            }
+        conversation =
+          ConversationState
+            { conversationStateContextId: contextId
+            , conversationStateMessages: []
+            , conversationStatePrefixHash: ""
+            }
+      case state.wsConnection of
+        Just connection -> do
+          sendClientMessage
+            connection
+            ( ClientCreateContext
+                { clientCreateContextId: contextId
+                , clientCreateContextModelId: modelId
+                , clientCreateContextTitle: title
+                }
+            )
+          subscribeContext connection contextId
+        Nothing -> pure unit
+      writeStoredActiveContext contextIdText modelId
+      Ref.modify_
+        ( \current ->
+            current
+              { activeContextId = Just contextId
+              , newContextDialogOpen = false
+              , chat =
+                  current.chat
+                    { contexts = snoc current.chat.contexts summary
+                    , activeConversation = Just conversation
+                    }
+              }
+        )
+        stateRef
+      renderAll stateRef refs
+
+openNewContextDialog :: Ref.Ref AppState -> Refs -> Effect Unit
+openNewContextDialog stateRef refs = do
+  Ref.modify_ (_ { newContextDialogOpen = true }) stateRef
+  renderAll stateRef refs
+
+closeNewContextDialog :: Ref.Ref AppState -> Refs -> Effect Unit
+closeNewContextDialog stateRef refs = do
+  Ref.modify_ (_ { newContextDialogOpen = false }) stateRef
+  renderAll stateRef refs
+
+renameContext :: Ref.Ref AppState -> Refs -> String -> String -> Effect Unit
+renameContext stateRef refs contextIdText title = do
+  state <- Ref.read stateRef
+  if contextIdText == "" then
+    setStatus refs.appStatus "app-status error" "Select a context before renaming"
+  else if title == "" then
+    setStatus refs.appStatus "app-status error" "Context title is empty"
+  else
+    case state.wsConnection of
+      Just connection -> do
+        sendClientMessage
+          connection
+          ( ClientRenameContext
+              { clientRenameContextId: ContextId { unContextId: contextIdText }
+              , clientRenameContextTitle: title
+              }
+          )
+        setStatus refs.appStatus "app-status ready" "Rename requested"
+      Nothing ->
+        setStatus refs.appStatus "app-status error" "WebSocket is not connected"
+
+softDeleteContext :: Ref.Ref AppState -> Refs -> String -> Effect Unit
+softDeleteContext stateRef refs contextIdText = do
+  state <- Ref.read stateRef
+  if contextIdText == "" then
+    setStatus refs.appStatus "app-status error" "Select a context before deleting"
+  else
+    case state.wsConnection of
+      Just connection -> do
+        sendClientMessage
+          connection
+          ( ClientSoftDeleteContext
+              { clientSoftDeleteContextId: ContextId { unContextId: contextIdText }
+              }
+          )
+        setStatus refs.appStatus "app-status ready" "Delete requested"
+      Nothing ->
+        setStatus refs.appStatus "app-status error" "WebSocket is not connected"
+
+selectContext :: Ref.Ref AppState -> Refs -> String -> String -> Effect Unit
+selectContext stateRef refs contextIdText modelId = do
+  currentState <- Ref.read stateRef
+  let
+    contextId = ContextId { unContextId: contextIdText }
+    selectedContextModelId = if modelId == "" then fromMaybe "" currentState.selectedModelId else modelId
+    conversation =
+      ConversationState
+        { conversationStateContextId: contextId
+        , conversationStateMessages: []
+        , conversationStatePrefixHash: ""
+        }
+  writeStoredActiveContext contextIdText selectedContextModelId
+  Ref.modify_
+    ( \state ->
+        state
+          { activeContextId = Just contextId
+          , newContextDialogOpen = false
+          , selectedModelId = if selectedContextModelId == "" then state.selectedModelId else Just selectedContextModelId
+          , chat = state.chat { activeConversation = Just conversation }
+          }
+    )
+    stateRef
+  case currentState.wsConnection of
+    Just connection -> subscribeContext connection contextId
+    Nothing -> pure unit
+  renderAll stateRef refs
+
+subscribeContext :: WsConnection -> ContextId -> Effect Unit
+subscribeContext connection contextId =
+  sendClientMessage
+    connection
+    ( ClientSubscribeContext
+        { clientSubscribeContextId: contextId
+        }
+    )
+
+selectModel :: Ref.Ref AppState -> Refs -> String -> Effect Unit
+selectModel stateRef refs modelId = do
+  Ref.modify_ (_ { selectedModelId = if modelId == "" then Nothing else Just modelId }) stateRef
+  renderAll stateRef refs
+
+submitPrompt :: Ref.Ref AppState -> Refs -> String -> Effect Unit
+submitPrompt stateRef refs promptText = do
+  state <- Ref.read stateRef
+  case state.activeContextId of
+    Nothing ->
+      setStatus refs.appStatus "app-status error" "Create or select a context before sending a prompt"
+    Just contextId ->
+      if promptText == "" then
+        setStatus refs.appStatus "app-status error" "Prompt text is empty"
+      else do
+        uuid <- newUuid
+        let
+          idempotencyKey = ClientIdempotencyKey { unClientIdempotencyKey: "prompt-" <> uuid }
+          payload =
+            UserPromptPayload
+              { promptText: promptText
+              , promptClientIdempotencyKey: idempotencyKey
+              , promptUserUploads: uploadedObjectRefsForContext contextId state.artifacts
+              }
+        case state.wsConnection of
+          Just connection -> do
+            sendClientMessage
+              connection
+              ( ClientSubmitPrompt
+                  { clientSubmitPromptContextId: contextId
+                  , clientSubmitPromptPayload: payload
+                  }
+              )
+            sendClientMessage
+              connection
+              ( ClientUpdateDraft
+                  { clientUpdateDraftContextId: contextId
+                  , clientUpdateDraftText: ""
+                  }
+              )
+            Ref.modify_
+              ( \current ->
+                  current { chat = dropDraftForContext contextId current.chat }
+              )
+              stateRef
+            setStatus refs.appStatus "app-status ready" "Prompt sent"
+            renderAll stateRef refs
+          Nothing ->
+            setStatus refs.appStatus "app-status error" "WebSocket is not connected"
+
+cancelLatestPrompt :: Ref.Ref AppState -> Refs -> Effect Unit
+cancelLatestPrompt stateRef refs = do
+  state <- Ref.read stateRef
+  case state.activeContextId of
+    Nothing ->
+      setStatus refs.appStatus "app-status error" "Create or select a context before cancelling"
+    Just contextId ->
+      case latestPendingPromptMessageId state.chat of
+        Nothing ->
+          setStatus refs.appStatus "app-status error" "No prompt is available to cancel"
+        Just promptMessageId -> do
+          case state.wsConnection of
+            Just connection -> do
+              sendClientMessage
+                connection
+                ( ClientCancelPrompt
+                    { clientCancelPromptContextId: contextId
+                    , clientCancelPromptUserPromptMessageId: promptMessageId
+                    }
+              )
+              setStatus refs.appStatus "app-status ready" "Cancel requested"
+            Nothing ->
+              setStatus refs.appStatus "app-status error" "WebSocket is not connected"
+
+updateDraft :: Ref.Ref AppState -> Refs -> String -> Effect Unit
+updateDraft stateRef _refs draftText = do
+  state <- Ref.read stateRef
+  case state.activeContextId of
+    Nothing -> pure unit
+    Just contextId -> do
+      case state.wsConnection of
+        Just connection ->
+          sendClientMessage
+            connection
+            ( ClientUpdateDraft
+                { clientUpdateDraftContextId: contextId
+                , clientUpdateDraftText: draftText
+                }
+            )
+        Nothing -> pure unit
+      Ref.modify_
+        ( \current ->
+            current
+              { chat =
+                  if draftText == "" then
+                    dropDraftForContext contextId current.chat
+                  else
+                    upsertDraftForContext contextId draftText current.chat
+              }
+        )
+        stateRef
+
+handleUploadedArtifact :: Ref.Ref AppState -> Refs -> String -> Effect Unit
+handleUploadedArtifact stateRef refs rawPayload =
+  case JSON.readJSON rawPayload of
+    Left decodeError ->
+      setStatus refs.appStatus "app-status error" ("Unable to decode uploaded artifact: " <> show decodeError)
+    Right uploaded -> do
+      state <- Ref.read stateRef
+      let entry = uploadedArtifactEntry uploaded
+      case state.wsConnection of
+        Just connection ->
+          sendClientMessage
+            connection
+            ( ClientRecordUpload
+                { clientRecordUploadContextId: entry.contextId
+                , clientRecordUploadPayload: uploadedArtifactPayload uploaded
+                }
+            )
+        Nothing -> pure unit
+      Ref.modify_
+        ( \current ->
+            current
+              { artifacts =
+                  recordArtifactReady entry current.artifacts
+              }
+        )
+        stateRef
+      setStatus refs.appStatus "app-status ready" "Uploaded"
+      renderAll stateRef refs
+
+uploadedArtifactEntry :: UploadedArtifact -> ArtifactEntry
+uploadedArtifactEntry uploaded =
+  let
+    mimeType = uploaded.mimeType
+  in
+    { contextId: ContextId { unContextId: uploaded.contextId }
+    , objectRef: uploadedObjectRef uploaded
+    , kind: ArtifactKindUpload
+    , mimeType: mimeType
+    , disposition: dispositionFor mimeType
+    }
+
+uploadedArtifactPayload :: UploadedArtifact -> ConversationUserUploadPayload
+uploadedArtifactPayload uploaded =
+  ConversationUserUploadPayload
+    { uploadObjectRef: uploadedObjectRef uploaded
+    , uploadMimeType: ArtifactMimeType { unArtifactMimeType: uploaded.mimeType }
+    , uploadDisplayName: uploaded.displayName
+    }
+
+uploadedObjectRef :: UploadedArtifact -> ObjectRef
+uploadedObjectRef uploaded =
+  ObjectRef
+    { objectBucket: uploaded.objectBucket
+    , objectKey: uploaded.objectKey
+    }
+
+uploadedObjectRefsForContext :: ContextId -> ArtifactsViewState -> Array ObjectRef
+uploadedObjectRefsForContext contextId artifacts =
+  map _.objectRef
+    ( filter
+        ( \entry ->
+            entry.contextId == contextId && entry.kind == ArtifactKindUpload
+        )
+        artifacts.entries
+    )
+
+dropDraftForContext :: ContextId -> ChatViewState -> ChatViewState
+dropDraftForContext contextId chat =
+  chat { drafts = filter (not <<< draftEntryMatches contextId) chat.drafts }
+
+upsertDraftForContext :: ContextId -> String -> ChatViewState -> ChatViewState
+upsertDraftForContext contextId draftText chat =
+  let
+    nextDraft =
+      DraftEntry
+        { draftEntryContextId: contextId
+        , draftEntryText: draftText
+        }
+    replaced =
+      map
+        ( \draft ->
+            if draftEntryMatches contextId draft then nextDraft else draft
+        )
+        chat.drafts
+    matched = filter (draftEntryMatches contextId) chat.drafts
+  in
+    chat
+      { drafts =
+          if matched == [] then
+            snoc chat.drafts nextDraft
+          else
+            replaced
+      }
+
+draftEntryMatches :: ContextId -> DraftEntry -> Boolean
+draftEntryMatches contextId (DraftEntry draft) =
+  draft.draftEntryContextId == contextId
+
+handleArtifactError :: Refs -> String -> Effect Unit
+handleArtifactError refs message =
+  setStatus refs.appStatus "app-status error" message
 
 loadPublication :: Ref.Ref AppState -> Refs -> Aff Unit
 loadPublication stateRef refs = do
-  response <- AXWeb.get ResponseFormat.string (apiBasePath <> "/publication")
-  case response of
-    Left _ ->
-      liftEffect do
-        Ref.modify_ (\state -> state { publication = Nothing }) stateRef
-        renderPublication stateRef refs
-    Right httpResponse ->
-      case JSON.readJSON httpResponse.body of
-        Left _ ->
-          liftEffect do
-            Ref.modify_ (\state -> state { publication = Nothing }) stateRef
-            renderPublication stateRef refs
-        Right publicationValue ->
-          liftEffect do
-            Ref.modify_ (\state -> state { publication = Just publicationValue }) stateRef
-            renderPublication stateRef refs
-
-loadCatalog :: Ref.Ref AppState -> Refs -> Aff Unit
-loadCatalog stateRef refs = do
-  response <- AXWeb.get ResponseFormat.string (apiBasePath <> "/models")
+  response <- AXWeb.get ResponseFormat.string "/api/publication"
   case response of
     Left requestError ->
       liftEffect do
-        Ref.modify_ (\state -> state { models = [], selectedModelId = Nothing }) stateRef
-        setStatus refs.selectionStatus "status error" (AXWeb.printError requestError)
+        Ref.modify_ (_ { publication = Nothing }) stateRef
+        setStatus refs.appStatus "app-status error" (AXWeb.printError requestError)
         renderAll stateRef refs
     Right httpResponse ->
       if statusCode httpResponse.status >= 400 then
         liftEffect do
-          Ref.modify_ (\state -> state { models = [], selectedModelId = Nothing }) stateRef
-          setStatus refs.selectionStatus "status error" ("Catalog request failed with " <> show (statusCode httpResponse.status))
+          Ref.modify_ (_ { publication = Nothing }) stateRef
+          setStatus refs.appStatus "app-status error" ("Publication request failed with " <> show (statusCode httpResponse.status))
           renderAll stateRef refs
       else
         case JSON.readJSON httpResponse.body of
           Left decodeError ->
             liftEffect do
-              Ref.modify_ (\state -> state { models = [], selectedModelId = Nothing }) stateRef
-              setStatus refs.selectionStatus "status error" ("Unable to decode catalog payload: " <> show decodeError)
+              Ref.modify_ (_ { publication = Nothing }) stateRef
+              setStatus refs.appStatus "app-status error" ("Unable to decode publication: " <> show decodeError)
+              renderAll stateRef refs
+          Right publicationValue ->
+            liftEffect do
+              Ref.modify_ (_ { publication = Just publicationValue }) stateRef
+              renderAll stateRef refs
+
+loadCatalog :: Ref.Ref AppState -> Refs -> Aff Unit
+loadCatalog stateRef refs = do
+  response <- AXWeb.get ResponseFormat.string "/api/models"
+  case response of
+    Left requestError ->
+      liftEffect do
+        Ref.modify_ (_ { models = [], selectedModelId = Nothing }) stateRef
+        setStatus refs.appStatus "app-status error" (AXWeb.printError requestError)
+        renderAll stateRef refs
+    Right httpResponse ->
+      if statusCode httpResponse.status >= 400 then
+        liftEffect do
+          Ref.modify_ (_ { models = [], selectedModelId = Nothing }) stateRef
+          setStatus refs.appStatus "app-status error" ("Catalog request failed with " <> show (statusCode httpResponse.status))
+          renderAll stateRef refs
+      else
+        case JSON.readJSON httpResponse.body of
+          Left decodeError ->
+            liftEffect do
+              Ref.modify_ (_ { models = [], selectedModelId = Nothing }) stateRef
+              setStatus refs.appStatus "app-status error" ("Unable to decode catalog: " <> show decodeError)
               renderAll stateRef refs
           Right modelsValue ->
             liftEffect do
               Ref.modify_ (updateCatalog modelsValue) stateRef
-              state <- Ref.read stateRef
-              setStatus refs.selectionStatus "status success" ("Model catalog loaded for " <> state.runtimeMode)
+              setStatus refs.appStatus "app-status ready" "Ready"
               renderAll stateRef refs
 
-submitInference :: Ref.Ref AppState -> Refs -> Aff Unit
-submitInference stateRef refs = do
-  inputValue <- liftEffect (HTMLTextAreaElement.value refs.inputText)
-  state <- liftEffect (Ref.read stateRef)
-  case state.selectedModelId of
-    Nothing ->
-      liftEffect (renderInferenceFailure refs "No model selected.")
-    Just selectedModelIdValue -> do
-      liftEffect do
-        setStatus refs.requestStatus "status muted" "Submitting request…"
-        setText refs.objectLinkContainer ""
-      submissionResult <- submitSelectedInference state selectedModelIdValue inputValue
-      liftEffect (renderInferenceSubmission refs submissionResult)
-
-submitSelectedInference :: AppState -> String -> String -> Aff InferenceSubmissionResult
-submitSelectedInference state selectedModelIdValue inputValue = do
-  response <- AXWeb.request (inferenceRequest selectedModelIdValue inputValue)
-  pure $
-    case response of
-      Left requestError ->
-        InferenceSubmissionFailed (AXWeb.printError requestError)
-      Right httpResponse
-        | statusCode httpResponse.status >= 400 ->
-            InferenceSubmissionFailed (decodeErrorMessage httpResponse.body)
-        | otherwise ->
-            decodeInferenceResponse state httpResponse.body
-
-inferenceRequest :: String -> String -> AXWeb.Request String
-inferenceRequest selectedModelIdValue inputValue =
-  AXWeb.defaultRequest
-    { method = Left POST
-    , url = apiBasePath <> "/inference"
-    , headers = [ RequestHeader.ContentType applicationJSON ]
-    , content =
-        Just
-          ( RequestBody.string
-              ( JSON.writeJSON
-                  { requestModelId: selectedModelIdValue
-                  , inputText: inputValue
-                  }
-              )
-          )
-    , responseFormat = ResponseFormat.string
+updateCatalog :: Array ModelDescriptor -> AppState -> AppState
+updateCatalog modelsValue state =
+  state
+    { models = modelsValue
+    , selectedModelId =
+        case state.selectedModelId of
+          Just existing -> Just existing
+          Nothing -> (_.modelId <<< modelDescriptorRecord) <$> head modelsValue
     }
-
-decodeInferenceResponse :: AppState -> String -> InferenceSubmissionResult
-decodeInferenceResponse state responseBody =
-  case JSON.readJSON responseBody of
-    Left decodeError ->
-      InferenceSubmissionFailed ("Unable to decode inference result: " <> show decodeError)
-    Right inferenceResult ->
-      InferenceSubmissionCompleted (describeCompletedRequest inferenceResult (selectedModel state.models state.selectedModelId))
-
-renderInferenceSubmission :: Refs -> InferenceSubmissionResult -> Effect Unit
-renderInferenceSubmission refs submissionResult =
-  case submissionResult of
-    InferenceSubmissionFailed message ->
-      renderInferenceFailure refs message
-    InferenceSubmissionCompleted summary -> do
-      setStatus refs.requestStatus "status success" summary.statusText
-      setText refs.resultLabel summary.resultLabel
-      setText refs.resultOutput summary.outputText
-      renderObjectLink refs summary.objectHref summary.objectLinkLabel
-
-renderInferenceFailure :: Refs -> String -> Effect Unit
-renderInferenceFailure refs message = do
-  setStatus refs.requestStatus "status error" message
-  setText refs.resultOutput "No result yet."
-  clearChildren refs.objectLinkContainer
 
 renderAll :: Ref.Ref AppState -> Refs -> Effect Unit
 renderAll stateRef refs = do
-  renderCatalog stateRef refs
-  renderPublication stateRef refs
-
-renderCatalog :: Ref.Ref AppState -> Refs -> Effect Unit
-renderCatalog stateRef refs = do
   state <- Ref.read stateRef
-  query <- HTMLInputElement.value refs.search
-  let
-    visibleModels = catalogCards state.models query state.selectedModelId
-    noResultsMessage =
-      if query == "" && state.models == [] then
-        "Live catalog unavailable."
-      else
-        "No models match \"" <> query <> "\"."
-  setText refs.catalogCount (show (length visibleModels) <> " visible / " <> show (length state.models) <> " total")
-  setText refs.runtimeModeValue state.runtimeMode
-  clearChildren refs.catalog
-  if visibleModels == [] then
-    appendMessage refs.document refs.catalog noResultsMessage
-  else
-    traverse_ (appendCatalogCard stateRef refs) visibleModels
-  renderSelectionDetails state refs
+  renderSummary refs state
+  renderRoutes refs.document refs.routeList state.publication
+  renderRouteChrome refs state.route
+  renderChatSection refs state
+  renderArtifactsSection refs state
 
-renderSelectionDetails :: AppState -> Refs -> Effect Unit
-renderSelectionDetails state refs = do
-  let summary = selectionSummary (selectedModel state.models state.selectedModelId)
-  setText refs.modelName summary.name
-  setText refs.modelEngine summary.engine
-  setText refs.modelLane summary.lane
-  setText refs.modelFamily summary.familyLabel
-  setText refs.modelArtifact summary.artifactType
-  setText refs.modelNotes summary.notes
-  setText refs.inputLabel summary.inputLabel
-  HTMLTextAreaElement.setPlaceholder summary.placeholder refs.inputText
-  setText refs.requestGuidance summary.requestGuidance
-  setText refs.submitButton summary.submitLabel
-  setText refs.resultLabel summary.resultLabel
-
-renderPublication :: Ref.Ref AppState -> Refs -> Effect Unit
-renderPublication stateRef refs = do
+renderServerMessage :: WsServerMessage -> Ref.Ref AppState -> Refs -> Effect Unit
+renderServerMessage message stateRef refs = do
   state <- Ref.read stateRef
-  let summary = publicationSummary state.publication state.runtimeMode
-  setText refs.runtimeModeValue summary.runtimeMode
-  setText refs.controlPlaneContext summary.controlPlaneContext
-  setText refs.daemonLocation summary.daemonLocation
-  setText refs.inferenceDispatchMode summary.inferenceDispatchMode
-  setText refs.catalogSource summary.catalogSource
-  setText refs.edgePort summary.edgePort
-  setText refs.apiUpstreamMode summary.apiUpstreamMode
-  setText refs.demoConfigPath summary.demoConfigPath
-  renderList refs.document refs.routeList (\route -> route.path <> " -> " <> route.purpose) summary.routes
-  renderList refs.document refs.upstreamList (\upstream -> upstream.id <> " -> " <> upstream.healthStatus <> " via " <> upstream.targetSurface <> " (" <> upstream.durableBackendState <> ")") summary.upstreams
+  renderSummary refs state
+  case message of
+    ServerConversationSnapshot _ -> renderChatSection refs state
+    ServerConversationPatch _ -> renderChatSection refs state
+    ServerContextListSnapshot _ -> renderChatSection refs state
+    ServerContextListPatch _ -> renderChatSection refs state
+    ServerDraftMapSnapshot _ -> renderChatSection refs state
+    ServerDraftMapPatch _ -> renderChatSection refs state
+    ServerArtifactReady _ -> renderArtifactsSection refs state
+    ServerInferenceProgress _ -> renderChatSection refs state
+    ServerError _ -> pure unit
 
-appendCatalogCard :: Ref.Ref AppState -> Refs -> { modelId :: String, displayName :: String, description :: String, family :: String, artifactType :: String, selectedEngine :: String, isActive :: Boolean } -> Effect Unit
-appendCatalogCard stateRef refs card = do
-  button <- Document.createElement "button" refs.document
-  Element.setAttribute "type" "button" button
-  Element.setClassName
-    (if card.isActive then "catalog-item active" else "catalog-item")
-    button
-  setText button (card.displayName <> " · " <> card.modelId <> " · " <> card.family <> " · " <> card.artifactType <> " · " <> card.selectedEngine <> " · " <> card.description)
-  listener <-
-    EventTarget.eventListener \_ -> do
-      Ref.modify_ (\state -> state { selectedModelId = Just card.modelId }) stateRef
-      setStatus refs.selectionStatus "status success" (card.displayName <> " selected on " <> card.selectedEngine)
-      renderCatalog stateRef refs
-  EventTarget.addEventListener EventTypes.click listener false (Element.toEventTarget button)
-  Node.appendChild (Element.toNode button) (Element.toNode refs.catalog)
+renderChatSection :: Refs -> AppState -> Effect Unit
+renderChatSection refs state =
+  renderChatView
+    refs.document
+    refs.chatRoot
+    { activeContextId: state.activeContextId
+    , selectedModelId: state.selectedModelId
+    , models: state.models
+    , newContextDialogOpen: state.newContextDialogOpen
+    }
+    state.chat
 
-renderList :: forall a. Document.Document -> Element.Element -> (a -> String) -> Array a -> Effect Unit
-renderList document container renderItem items = do
+renderArtifactsSection :: Refs -> AppState -> Effect Unit
+renderArtifactsSection refs state =
+  renderArtifactsView
+    refs.document
+    refs.artifactsRoot
+    { activeContextId: state.activeContextId }
+    state.artifacts
+
+renderSummary :: Refs -> AppState -> Effect Unit
+renderSummary refs state = do
+  let publicationRuntime =
+        state.publication >>= _.runtimeMode
+      renderedRuntime = fromMaybe runtimeMode publicationRuntime
+      renderedControlPlane =
+        fromMaybe "Unavailable" (state.publication >>= _.controlPlaneContext)
+      renderedDaemon =
+        fromMaybe "Unavailable" (state.publication >>= _.daemonLocation)
+      renderedDispatch =
+        fromMaybe "Unavailable" (state.publication >>= _.inferenceDispatchMode)
+      renderedEdgePort =
+        case state.publication >>= _.edgePort of
+          Just port -> show port
+          Nothing -> "Unavailable"
+      renderedConnection =
+        if state.authenticated then "Authenticated" else "Signed out"
+  setText refs.runtimeModeValue renderedRuntime
+  setText refs.controlPlaneContext renderedControlPlane
+  setText refs.daemonLocation renderedDaemon
+  setText refs.inferenceDispatchMode renderedDispatch
+  setText refs.edgePort renderedEdgePort
+  setText refs.catalogCount (show (length state.models))
+  setText refs.connectionState renderedConnection
+
+renderRoutes :: Document.Document -> Element.Element -> Maybe Publication -> Effect Unit
+renderRoutes document container maybePublication = do
   clearChildren container
-  traverse_ appendItem items
-  where
-  appendItem item = do
-    listItem <- Document.createElement "li" document
-    setText listItem (renderItem item)
-    Node.appendChild (Element.toNode listItem) (Element.toNode container)
+  case maybePublication >>= _.routes of
+    Just routes ->
+      if length routes == 0 then appendRoutePlaceholder document container
+      else traverse_ (appendRoute document container) routes
+    Nothing -> appendRoutePlaceholder document container
 
-renderObjectLink :: Refs -> Maybe String -> Maybe String -> Effect Unit
-renderObjectLink refs maybeHref maybeLabel = do
-  clearChildren refs.objectLinkContainer
-  case maybeHref of
-    Nothing -> pure unit
-    Just href -> do
-      anchor <- Document.createElement "a" refs.document
-      Element.setAttribute "href" href anchor
-      setText anchor (fromMaybe "Open large output" maybeLabel)
-      Node.appendChild (Element.toNode anchor) (Element.toNode refs.objectLinkContainer)
+appendRoute :: Document.Document -> Element.Element -> PublishedRoute -> Effect Unit
+appendRoute document container route = do
+  item <- Document.createElement "li" document
+  setText item (route.path <> " -> " <> route.purpose)
+  appendElement container item
 
-appendMessage :: Document.Document -> Element.Element -> String -> Effect Unit
-appendMessage document container message = do
-  paragraph <- Document.createElement "p" document
-  Element.setClassName "muted" paragraph
-  setText paragraph message
-  Node.appendChild (Element.toNode paragraph) (Element.toNode container)
+appendRoutePlaceholder :: Document.Document -> Element.Element -> Effect Unit
+appendRoutePlaceholder document container = do
+  item <- Document.createElement "li" document
+  setText item "Unavailable"
+  appendElement container item
+
+renderRouteChrome :: Refs -> Route -> Effect Unit
+renderRouteChrome refs route = do
+  Element.setClassName (routeButtonClass RouteChat route) refs.routeChat
+  Element.setClassName (routeButtonClass RouteArtifacts route) refs.routeArtifacts
+  Element.setAttribute "href" (routePath RouteChat) refs.routeChat
+  Element.setAttribute "href" (routePath RouteArtifacts) refs.routeArtifacts
+
+routeButtonClass :: Route -> Route -> String
+routeButtonClass candidate active =
+  if candidate == active then "app-tab active" else "app-tab"
 
 requireElement :: HTMLDocument.HTMLDocument -> String -> Effect Element.Element
 requireElement htmlDocument elementId = do
@@ -413,26 +926,8 @@ requireElement htmlDocument elementId = do
     Just elementValue -> pure elementValue
     Nothing -> throw ("Missing required element #" <> elementId)
 
-requireInput :: HTMLDocument.HTMLDocument -> String -> Effect HTMLInputElement.HTMLInputElement
-requireInput htmlDocument elementId = do
-  elementValue <- requireElement htmlDocument elementId
-  case HTMLInputElement.fromElement elementValue of
-    Just inputValue -> pure inputValue
-    Nothing -> throw ("Element #" <> elementId <> " is not an input element")
-
-requireTextArea :: HTMLDocument.HTMLDocument -> String -> Effect HTMLTextAreaElement.HTMLTextAreaElement
-requireTextArea htmlDocument elementId = do
-  elementValue <- requireElement htmlDocument elementId
-  case HTMLTextAreaElement.fromElement elementValue of
-    Just textAreaValue -> pure textAreaValue
-    Nothing -> throw ("Element #" <> elementId <> " is not a textarea element")
-
-requireForm :: HTMLDocument.HTMLDocument -> String -> Effect HTMLFormElement.HTMLFormElement
-requireForm htmlDocument elementId = do
-  elementValue <- requireElement htmlDocument elementId
-  case HTMLFormElement.fromElement elementValue of
-    Just formValue -> pure formValue
-    Nothing -> throw ("Element #" <> elementId <> " is not a form element")
+statusCode :: StatusCode -> Int
+statusCode (StatusCode value) = value
 
 setStatus :: Element.Element -> String -> String -> Effect Unit
 setStatus elementValue classNameValue message =
@@ -446,33 +941,6 @@ clearChildren :: Element.Element -> Effect Unit
 clearChildren elementValue =
   Node.setTextContent "" (Element.toNode elementValue)
 
-decodeErrorMessage :: String -> String
-decodeErrorMessage payload =
-  case JSON.readJSON payload of
-    Right (errorValue :: ErrorResponse) -> (errorResponseRecord errorValue).message
-    Left _ -> "Request failed"
-
-statusCode :: StatusCode -> Int
-statusCode (StatusCode value) = value
-
-updateCatalog :: Array ModelDescriptor -> AppState -> AppState
-updateCatalog modelsValue state =
-  let
-    nextRuntimeMode = fromMaybe state.runtimeMode ((_.runtimeMode <<< modelDescriptorRecord) <$> head modelsValue)
-    nextSelection =
-      case state.selectedModelId of
-        Just selectedId
-          | hasModelId selectedId modelsValue -> Just selectedId
-        _ -> (_.modelId <<< modelDescriptorRecord) <$> head modelsValue
-  in
-    state
-      { models = modelsValue
-      , runtimeMode = nextRuntimeMode
-      , selectedModelId = nextSelection
-      }
-
-hasModelId :: String -> Array ModelDescriptor -> Boolean
-hasModelId selectedId modelsValue =
-  case selectedModel modelsValue (Just selectedId) of
-    Just _ -> true
-    Nothing -> false
+appendElement :: Element.Element -> Element.Element -> Effect Unit
+appendElement parent child =
+  void (Node.appendChild (Element.toNode child) (Element.toNode parent))

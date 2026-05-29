@@ -403,7 +403,7 @@ runPlaywrightWithFixture paths runtimeMode playwrightHost playwrightPort expecte
           )
   createDirectoryIfMissing True (runtimeRoot paths)
   LazyChar8.writeFile fixturePath fixturePayload
-  runWebNpmCommand (Just runtimeMode) ["--prefix", "web", "exec", "--", "playwright", "test", "playwright/inference.spec.js"]
+  runWebNpmCommand (Just runtimeMode) ["--prefix", "web", "exec", "--", "playwright", "test", "--config", "web/playwright.config.js"]
 
 waitForPlaywrightSurface :: String -> Int -> String -> String -> String -> String -> IO ()
 waitForPlaywrightSurface host edgePort expectedDaemonLocation expectedInferenceExecutorLocation expectedInferenceDispatchMode expectedApiUpstreamMode = go (60 :: Int)

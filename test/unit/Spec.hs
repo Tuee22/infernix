@@ -27,6 +27,7 @@ import Infernix.Cluster.Discover
 import Infernix.Cluster.PublishImages
   ( PublishedImage,
     contentAddressTagFromInspectPayload,
+    contentAddressTagFromManifestPayload,
     dockerHubMirrorRef,
     normalizeRepositoryPath,
     prioritizePublishableImages,
@@ -56,6 +57,7 @@ import Infernix.Conversation.Hash qualified as ConversationHash
 import Infernix.Conversation.Idempotency qualified as ConversationIdempotency
 import Infernix.Conversation.Reducer qualified as ConversationReducer
 import Infernix.Conversation.Topic qualified as ConversationTopic
+import Infernix.Demo.Api qualified as DemoApi
 import Infernix.Demo.Auth qualified as DemoAuth
 import Infernix.Demo.Bootstrap qualified as DemoBootstrap
 import Infernix.DemoConfig (decodeDemoConfigFile)
@@ -75,9 +77,13 @@ import Infernix.Routes
   )
 import Infernix.Runtime
 import Infernix.Runtime.Pulsar
-  ( DemoClientMessagePublication (..),
+  ( DemoClientMessageError (..),
+    DemoClientMessagePublication (..),
+    drainTopic,
     planDemoClientMessagePublications,
     runProductionDaemon,
+    topicDirectoryPath,
+    validateDemoClientMessageCatalog,
   )
 import Infernix.Topic.Drafts qualified as TopicDrafts
 import Infernix.Topic.Metadata qualified as TopicMetadata
@@ -336,7 +342,9 @@ main = do
       assertSingleFlightDispatcher
       assertJwtValidation
       assertObjectsLayoutAndPresigning
+      assertArtifactDownloadDispositionMatrix
       assertResultBridgeAndBatchTopics
+      assertLinuxHostBatchForwarding paths
       assertDemoAuthRealm
       assertBootstrapModels
       assertDemoBucketBootstrap
@@ -458,7 +466,7 @@ main = do
                         daemonConfigLocation = "control-plane-host",
                         daemonConfigRequestTopics = maybe [] pure (hostBatchTopicForMode AppleSilicon),
                         daemonConfigResultTopic = resultTopicForMode AppleSilicon,
-                        daemonConfigHostBatchTopic = hostBatchTopicForMode AppleSilicon,
+                        daemonConfigHostBatchTopic = Nothing,
                         daemonConfigPulsarConnectionMode = PublicationEdgeAutoDiscovery
                       },
                 requestTopics = requestTopicsForMode AppleSilicon,
@@ -474,6 +482,7 @@ main = do
       assert (activeDaemonRole decodedAppleConfig == Engine) "apple host demo-config keeps host as the active local daemon role"
       assert (daemonConfigHostBatchTopic (coordinatorDaemon decodedAppleConfig) == hostBatchTopicForMode AppleSilicon) "apple cluster daemon metadata publishes the host batch topic"
       assert (fmap daemonConfigRequestTopics (engineDaemon decodedAppleConfig) == Just (maybe [] pure (hostBatchTopicForMode AppleSilicon))) "apple host daemon metadata consumes the host batch topic"
+      assert (fmap daemonConfigHostBatchTopic (engineDaemon decodedAppleConfig) == Just Nothing) "apple host daemon metadata does not forward its own engine batch topic"
       let readinessMarkerPath = runtimeRoot paths </> "service" </> "subscription.ready"
       -- Phase 4 Sprint 4.13: the previous test injected the Pulsar
       -- endpoint + demo-config path via @INFERNIX_PULSAR_*@ +
@@ -700,6 +709,9 @@ main = do
     assert
       (contentAddressTagFromInspectPayload sampleDockerImageInspectWithoutRepoDigest == Right "sha256-fallback")
       "docker inspect parsing falls back to the image id when no repo digest is present"
+    assert
+      (contentAddressTagFromManifestPayload sampleDockerManifestList == Right "sha256-amd64")
+      "manifest inspect parsing derives a content tag from the linux/amd64 entry"
   putStrLn "unit tests passed"
 
 -- | Phase 1 Sprint 1.11 — set up a unit-test sandbox at @root@. The
@@ -791,6 +803,7 @@ unitTestClusterConfigFixture demoConfigPathValue =
       clusterMinio =
         MinioWiring
           { minioEndpoint = "http://127.0.0.1:9000",
+            minioPresignPublicEndpoint = "http://127.0.0.1:9090/minio/s3",
             minioRegion = "us-east-1",
             minioPresignExpirySeconds = 900,
             minioModelsBucket = "infernix-models",
@@ -798,10 +811,10 @@ unitTestClusterConfigFixture demoConfigPathValue =
           },
       clusterKeycloak =
         KeycloakWiring
-          { keycloakBaseUrl = "http://127.0.0.1:8080",
+          { keycloakBaseUrl = "http://127.0.0.1:8080/auth",
             keycloakRealmName = "infernix",
-            keycloakClientId = "infernix-demo",
-            keycloakJwksUrl = "http://127.0.0.1:8080/realms/infernix/protocol/openid-connect/certs"
+            keycloakClientId = "infernix-spa",
+            keycloakJwksUrl = "http://127.0.0.1:8080/auth/realms/infernix/protocol/openid-connect/certs"
           },
       clusterDemoBackend =
         DemoBackendWiring
@@ -1508,6 +1521,7 @@ assertObjectsLayoutAndPresigning = do
         ObjPresigned.PresignedUrlConfig
           { ObjPresigned.presignedScheme = "http",
             ObjPresigned.presignedEndpoint = "infernix-minio:9000",
+            ObjPresigned.presignedPathPrefix = "",
             ObjPresigned.presignedRegion = "us-east-1",
             ObjPresigned.presignedAccessKeyId = "AKIAIOSFODNN7EXAMPLE",
             ObjPresigned.presignedSecretAccessKey = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
@@ -1528,6 +1542,11 @@ assertObjectsLayoutAndPresigning = do
   assert
     ("X-Amz-Expires=900" `Text.isInfixOf` ObjPresigned.unPresignedUrl url1)
     "presigned URL records the supplied expiry"
+  let routedCfg = cfg {ObjPresigned.presignedEndpoint = "127.0.0.1:9090", ObjPresigned.presignedPathPrefix = "/minio/s3"}
+      routedUrl = ObjPresigned.presignedPutUrl routedCfg fixedNow upload
+  assert
+    ("http://127.0.0.1:9090/minio/s3/infernix-demo-objects/" `Text.isPrefixOf` ObjPresigned.unPresignedUrl routedUrl)
+    "presigned URL can include a public Gateway path prefix without changing the object path"
 
   -- Different method -> different signature
   let getUrl = ObjPresigned.presignedGetUrl cfg fixedNow upload
@@ -1633,6 +1652,12 @@ assertResultBridgeAndBatchTopics = do
   assert
     (canonicalBatchTopicForMode LinuxGpu == "persistent://infernix/demo/inference.batch.linux-gpu")
     "canonicalBatchTopicForMode emits the supported topic name for linux-gpu"
+  assert
+    (hostBatchTopicForMode LinuxCpu == Just (canonicalBatchTopicForMode LinuxCpu))
+    "linux-cpu coordinator metadata enables request-to-batch forwarding"
+  assert
+    (hostBatchTopicForMode LinuxGpu == Just (canonicalBatchTopicForMode LinuxGpu))
+    "linux-gpu coordinator metadata enables request-to-batch forwarding"
 
   -- Result-bridge subscription naming
   let bridgeConfig =
@@ -1669,6 +1694,46 @@ assertResultBridgeAndBatchTopics = do
         (Contracts.inferenceResultInlineOutput payload == Just "done")
         "result-bridge event carries the inline output"
     _ -> fail "inferenceResultEventFor should produce a ConversationInferenceResultEvent"
+
+assertLinuxHostBatchForwarding :: Paths -> IO ()
+assertLinuxHostBatchForwarding paths = do
+  let requestTopic = "persistent://infernix/demo/inference.request.linux-cpu"
+      batchTopic = "persistent://infernix/demo/inference.batch.linux-cpu"
+      resultTopic = "persistent://infernix/demo/inference.result.linux-cpu"
+      requestDirectory = topicDirectoryPath paths requestTopic
+      batchDirectory = topicDirectoryPath paths batchTopic
+      resultDirectory = topicDirectoryPath paths resultTopic
+      requestPath = requestDirectory </> "forwarded.pb"
+      batchPath = batchDirectory </> "forwarded.pb"
+      resultPath = resultDirectory </> "forwarded.pb"
+      payloadBytes = "forward-me-without-decoding"
+      daemonConfig =
+        DaemonConfig
+          { daemonConfigRole = Coordinator,
+            daemonConfigLocation = "cluster-pod",
+            daemonConfigRequestTopics = [requestTopic],
+            daemonConfigResultTopic = resultTopic,
+            daemonConfigHostBatchTopic = Just batchTopic,
+            daemonConfigPulsarConnectionMode = ConfiguredTransport
+          }
+  mapM_ removeIfPresent [requestDirectory, batchDirectory, resultDirectory]
+  createDirectoryIfMissing True requestDirectory
+  BS.writeFile requestPath payloadBytes
+  drainTopic paths LinuxCpu [] daemonConfig requestTopic
+  requestStillExists <- doesFileExist requestPath
+  batchExists <- doesFileExist batchPath
+  resultExists <- doesFileExist resultPath
+  batchPayload <- BS.readFile batchPath
+  assert (not requestStillExists) "linux host-batch forwarding removes the source request file"
+  assert batchExists "linux host-batch forwarding writes the request to the batch topic"
+  assert (not resultExists) "linux host-batch forwarding does not execute inference inline"
+  assert (batchPayload == payloadBytes) "linux host-batch forwarding preserves the request payload bytes"
+  where
+    removeIfPresent path =
+      catchIOError (removePathForcibly path) $ \err ->
+        if isDoesNotExistError err
+          then pure ()
+          else ioError err
 
 mangleLastChar :: Text.Text -> Text.Text
 mangleLastChar token =
@@ -1857,6 +1922,23 @@ sampleDockerImageInspectWithoutRepoDigest =
       "    \"Id\": \"sha256:fallback\"",
       "  }",
       "]"
+    ]
+
+sampleDockerManifestList :: String
+sampleDockerManifestList =
+  unlines
+    [ "{",
+      "  \"manifests\": [",
+      "    {",
+      "      \"digest\": \"sha256:arm64\",",
+      "      \"platform\": { \"architecture\": \"arm64\", \"os\": \"linux\" }",
+      "    },",
+      "    {",
+      "      \"digest\": \"sha256:amd64\",",
+      "      \"platform\": { \"architecture\": \"amd64\", \"os\": \"linux\" }",
+      "    }",
+      "  ]",
+      "}"
     ]
 
 -- | Phase 7 Sprint 7.13 QuickCheck-style property generators for
@@ -2054,6 +2136,24 @@ assertContextModelMap = do
     (resolvedAfterSoftDelete == Just "llm-tinyllama-gguf")
     "ContextSoftDeleted event does not alter the (contextId, modelId) binding"
 
+-- Phase 7 Sprint 7.11 — the server-side artifact download grant uses
+-- the same MIME-to-render-disposition matrix as the SPA fallback.
+assertArtifactDownloadDispositionMatrix :: IO ()
+assertArtifactDownloadDispositionMatrix = do
+  let assertDisposition mime expected =
+        assert
+          (DemoApi.renderDispositionForMime (Contracts.ArtifactMimeType mime) == expected)
+          ("artifact download disposition for " <> Text.unpack mime)
+  assertDisposition "image/png" Contracts.RenderInline
+  assertDisposition "audio/wav" Contracts.RenderInline
+  assertDisposition "video/mp4" Contracts.RenderInline
+  assertDisposition "application/pdf" Contracts.BrowserNativePdf
+  assertDisposition "application/json" Contracts.BoundedTextPreview
+  assertDisposition "text/plain" Contracts.BoundedTextPreview
+  assertDisposition "audio/midi" Contracts.DownloadOnly
+  assertDisposition "application/vnd.recordare.musicxml+xml" Contracts.DownloadOnly
+  assertDisposition "application/octet-stream" Contracts.DownloadOnly
+
 -- Phase 7 Sprint 7.14 — WebSocket client frames publish typed JSON
 -- events onto the durable Pulsar topic families.
 assertDemoWebSocketPublicationPlanning :: IO ()
@@ -2072,6 +2172,17 @@ assertDemoWebSocketPublicationPlanning = do
           ns
           userIdValue
           (Contracts.ClientSubmitPrompt contextIdValue promptPayload)
+      uploadRef =
+        Contracts.ObjectRef
+          { Contracts.objectBucket = "infernix-demo-objects",
+            Contracts.objectKey = "users/user-a/contexts/ctx-a/uploads/browser.png"
+          }
+      uploadPayload =
+        Contracts.ConversationUserUploadPayload
+          { Contracts.uploadObjectRef = uploadRef,
+            Contracts.uploadMimeType = Contracts.ArtifactMimeType "image/png",
+            Contracts.uploadDisplayName = "browser.png"
+          }
 
   case promptPublications of
     [publication] -> do
@@ -2079,15 +2190,39 @@ assertDemoWebSocketPublicationPlanning = do
         (demoClientPublicationTopic publication == ConversationTopic.conversationTopicName ns userIdValue contextIdValue)
         "ClientSubmitPrompt publishes to the per-context conversation topic"
       assert
-        (demoClientPublicationProducerName publication == "frontend-conversation-user-a-ctx-a")
-        "ClientSubmitPrompt uses a stable per-context frontend producer"
+        ("frontend-conversation-user-a-ctx-a-" `Text.isPrefixOf` demoClientPublicationProducerName publication)
+        "ClientSubmitPrompt scopes the frontend producer by context and mutation key"
       assert
         (demoClientPublicationSequenceKey publication == "idem-1")
         "ClientSubmitPrompt uses the client idempotency key as the dedup sequence key"
       assert
+        (isNothing (demoClientPublicationMessageKey publication))
+        "ClientSubmitPrompt does not set a compaction key on the append-only conversation topic"
+      assert
         (decodeLazy (demoClientPublicationPayload publication) == Right (Contracts.ConversationUserPromptEvent promptPayload))
         "ClientSubmitPrompt payload is a ConversationUserPromptEvent"
     _ -> assert False "ClientSubmitPrompt creates exactly one publication"
+
+  let uploadPublications =
+        planDemoClientMessagePublications
+          ns
+          userIdValue
+          (Contracts.ClientRecordUpload contextIdValue uploadPayload)
+  case uploadPublications of
+    [publication] -> do
+      assert
+        (demoClientPublicationTopic publication == ConversationTopic.conversationTopicName ns userIdValue contextIdValue)
+        "ClientRecordUpload publishes to the per-context conversation topic"
+      assert
+        ("frontend-conversation-user-a-ctx-a-" `Text.isPrefixOf` demoClientPublicationProducerName publication)
+        "ClientRecordUpload scopes the frontend producer by context and uploaded object key"
+      assert
+        (demoClientPublicationSequenceKey publication == "upload:infernix-demo-objects:users/user-a/contexts/ctx-a/uploads/browser.png")
+        "ClientRecordUpload deduplicates by uploaded object ref"
+      assert
+        (decodeLazy (demoClientPublicationPayload publication) == Right (Contracts.ConversationUserUploadEvent uploadPayload))
+        "ClientRecordUpload payload is a ConversationUserUploadEvent"
+    _ -> assert False "ClientRecordUpload creates exactly one publication"
 
   let createPublications =
         planDemoClientMessagePublications
@@ -2100,8 +2235,14 @@ assertDemoWebSocketPublicationPlanning = do
         (demoClientPublicationTopic publication == ConversationTopic.contextsMetadataTopicName ns userIdValue)
         "ClientCreateContext publishes to the per-user contexts metadata topic"
       assert
-        (demoClientPublicationProducerName publication == "frontend-contexts-user-a")
-        "ClientCreateContext uses a stable per-user contexts producer"
+        ("frontend-contexts-user-a-" `Text.isPrefixOf` demoClientPublicationProducerName publication)
+        "ClientCreateContext scopes the contexts producer by user and mutation key"
+      assert
+        (demoClientPublicationMessageKey publication == Just (Contracts.unContextId contextIdValue))
+        "ClientCreateContext keys the compacted contexts topic by context id"
+      assert
+        (demoClientPublicationSequenceKey publication == "ctx-a:create:llm-qwen25-safetensors:Research")
+        "ClientCreateContext uses an event-specific sequence key so later context updates are not deduplicated"
       assert
         ( decodeLazy (demoClientPublicationPayload publication)
             == Right
@@ -2115,6 +2256,56 @@ assertDemoWebSocketPublicationPlanning = do
         "ClientCreateContext payload is a ContextCreated event"
     _ -> assert False "ClientCreateContext creates exactly one publication"
 
+  case catalogForMode LinuxGpu of
+    knownModel : activeCatalogTail -> do
+      let activeCatalog = knownModel : activeCatalogTail
+          validCreate =
+            Contracts.ClientCreateContext
+              contextIdValue
+              (modelId knownModel)
+              "Known model"
+          invalidModelId = "not-in-active-catalog"
+          invalidCreate =
+            Contracts.ClientCreateContext
+              contextIdValue
+              invalidModelId
+              "Unknown model"
+      assert
+        (validateDemoClientMessageCatalog activeCatalog validCreate == Right ())
+        "ClientCreateContext accepts model ids from the active catalog"
+      case validateDemoClientMessageCatalog activeCatalog invalidCreate of
+        Left DemoClientMessageError {demoClientMessageErrorCode = errorCode, demoClientMessageErrorMessage = errorMessage} -> do
+          assert (errorCode == "unknown-model") "unknown ClientCreateContext model ids use the typed error code"
+          assert (invalidModelId `Text.isInfixOf` errorMessage) "unknown ClientCreateContext model error names the rejected model id"
+        Right () -> assert False "ClientCreateContext rejects model ids outside the active catalog"
+    [] -> assert False "linux-gpu active catalog is non-empty"
+
+  let renamePublications =
+        planDemoClientMessagePublications
+          ns
+          userIdValue
+          (Contracts.ClientRenameContext contextIdValue "Renamed")
+  case renamePublications of
+    [publication] -> do
+      assert
+        (demoClientPublicationTopic publication == ConversationTopic.contextsMetadataTopicName ns userIdValue)
+        "ClientRenameContext publishes to the per-user contexts metadata topic"
+      assert
+        ("frontend-contexts-user-a-" `Text.isPrefixOf` demoClientPublicationProducerName publication)
+        "ClientRenameContext scopes the contexts producer by user and mutation key"
+      assert
+        (demoClientPublicationMessageKey publication == Just (Contracts.unContextId contextIdValue))
+        "ClientRenameContext keeps the context id as the compaction key"
+      assert
+        (demoClientPublicationSequenceKey publication == "ctx-a:rename:Renamed")
+        "ClientRenameContext uses an event-specific sequence key distinct from create"
+      assert
+        ( decodeLazy (demoClientPublicationPayload publication)
+            == Right (Contracts.ContextRenamed contextIdValue "Renamed")
+        )
+        "ClientRenameContext payload is a ContextRenamed event"
+    _ -> assert False "ClientRenameContext creates exactly one publication"
+
   let draftPublications =
         planDemoClientMessagePublications
           ns
@@ -2126,14 +2317,34 @@ assertDemoWebSocketPublicationPlanning = do
         (demoClientPublicationTopic publication == ConversationTopic.draftsMetadataTopicName ns userIdValue)
         "ClientUpdateDraft publishes to the per-user drafts metadata topic"
       assert
-        (demoClientPublicationProducerName publication == "frontend-drafts-user-a")
-        "ClientUpdateDraft uses a stable per-user drafts producer"
+        ("frontend-drafts-user-a-" `Text.isPrefixOf` demoClientPublicationProducerName publication)
+        "ClientUpdateDraft scopes the drafts producer by user and mutation key"
+      assert
+        (demoClientPublicationMessageKey publication == Just (Contracts.unContextId contextIdValue))
+        "ClientUpdateDraft keys the compacted drafts topic by context id"
       assert
         ( decodeLazy (demoClientPublicationPayload publication)
             == Right (Contracts.DraftUpdated contextIdValue "draft text")
         )
         "ClientUpdateDraft payload is a DraftUpdated event"
     _ -> assert False "ClientUpdateDraft creates exactly one publication"
+
+  let clearDraftPublications =
+        planDemoClientMessagePublications
+          ns
+          userIdValue
+          (Contracts.ClientUpdateDraft contextIdValue "")
+  case clearDraftPublications of
+    [publication] -> do
+      assert
+        (demoClientPublicationSequenceKey publication == "ctx-a:clear")
+        "empty ClientUpdateDraft uses an explicit draft-clear sequence key"
+      assert
+        ( decodeLazy (demoClientPublicationPayload publication)
+            == Right (Contracts.DraftCleared contextIdValue)
+        )
+        "empty ClientUpdateDraft payload is a DraftCleared event"
+    _ -> assert False "empty ClientUpdateDraft creates exactly one publication"
 
   let cancelPublications =
         planDemoClientMessagePublications

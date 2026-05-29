@@ -13,9 +13,9 @@ module Infernix.Cluster
 where
 
 import Control.Concurrent (threadDelay)
-import Control.Exception (IOException, bracket, finally, try)
+import Control.Exception (IOException, SomeException, bracket, displayException, finally, try)
 import Control.Monad (unless, when)
-import Data.Aeson (Value (..), eitherDecode)
+import Data.Aeson (FromJSON (parseJSON), Value (..), eitherDecode, encode, object, withObject, (.:), (.=))
 import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.ByteString.Base64 qualified as Base64
@@ -25,7 +25,7 @@ import Data.ByteString.Lazy.Char8 qualified as LazyChar8
 import Data.Char (isSpace, toLower)
 import Data.List qualified as List
 import Data.Map.Strict qualified as Map
-import Data.Maybe (catMaybes, fromMaybe, mapMaybe)
+import Data.Maybe (catMaybes, fromMaybe, mapMaybe, maybeToList)
 import Data.Text qualified as Text
 import Data.Time (UTCTime, diffUTCTime, getCurrentTime)
 import Data.Vector qualified as Vector
@@ -43,6 +43,23 @@ import Infernix.Routes (routeHelmValues)
 import Infernix.Storage
 import Infernix.Types
 import Infernix.Workflow (platformCommandsAvailable)
+import Network.HTTP.Client
+  ( Manager,
+    RequestBody (RequestBodyLBS),
+    defaultManagerSettings,
+    httpLbs,
+    method,
+    newManager,
+    parseRequest,
+    requestBody,
+    requestHeaders,
+    responseBody,
+    responseStatus,
+    urlEncodedBody,
+  )
+import Network.HTTP.Types.Header (Header)
+import Network.HTTP.Types.Status (statusCode)
+import Network.HTTP.Types.URI (urlEncode)
 import Network.Socket qualified as Socket
 import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, findExecutable, getTemporaryDirectory, listDirectory, removeFile, removePathForcibly, renameFile)
 import System.Exit (ExitCode (..))
@@ -107,22 +124,26 @@ envoyGatewayDependencyArchive = "chart/charts/gateway-helm-v1.7.2.tgz"
 helmDependencyArchivesDirectory :: Paths -> FilePath
 helmDependencyArchivesDirectory paths = repoRoot paths </> "chart/charts"
 
--- | Phase 7 Sprint 7.7: the supported three-role daemon split wait
--- list. Always include the coordinator + engine Deployments (they run
--- on every substrate that brings up Pulsar). The demo Deployment is
--- demo-gated. The retired @infernix-service@ Deployment is no longer
--- part of the chart.
+-- | Phase 7 Sprint 7.7: the supported daemon-split wait list. The
+-- production-shaped @demo_ui = false@ topology brings up only the
+-- engine role; the coordinator, Keycloak, and browser demo Deployments
+-- are demo-gated. The retired @infernix-service@ Deployment is no
+-- longer part of the chart.
 finalPhaseDeployments :: ClusterState -> [String]
 finalPhaseDeployments state =
   baseDeployments
-    <> [deployment | clusterStateHasDemoUi state, deployment <- ["deployment/infernix-demo", "deployment/infernix-keycloak"]]
+    <> [deployment | clusterStateHasDemoUi state, deployment <- demoDeployments]
   where
     baseDeployments =
       [ "deployment/infernix-minio-console",
-        "deployment/infernix-coordinator",
         "deployment/infernix-engine"
       ]
         <> [deployment | clusterServiceEnabled (clusterRuntimeMode state), deployment <- ["deployment/infernix-service"]]
+    demoDeployments =
+      [ "deployment/infernix-coordinator",
+        "deployment/infernix-demo",
+        "deployment/infernix-keycloak"
+      ]
 
 finalPhaseStatefulSets :: [String]
 finalPhaseStatefulSets =
@@ -227,6 +248,28 @@ harborPostgresUserName = "harbor"
 
 harborPostgresUserSecretName :: String
 harborPostgresUserSecretName = "infernix-harbor-db-user"
+
+keycloakRealmName :: String
+keycloakRealmName = "infernix"
+
+keycloakSpaClientId :: String
+keycloakSpaClientId = "infernix-spa"
+
+keycloakAdminSecretName :: String
+keycloakAdminSecretName = "infernix-keycloak-admin"
+
+data KeycloakAdminCredentials = KeycloakAdminCredentials
+  { keycloakAdminUsername :: String,
+    keycloakAdminPassword :: String
+  }
+
+newtype KeycloakAdminToken = KeycloakAdminToken
+  { keycloakAdminAccessToken :: Text.Text
+  }
+
+instance FromJSON KeycloakAdminToken where
+  parseJSON = withObject "KeycloakAdminToken" $ \value ->
+    KeycloakAdminToken <$> value .: "access_token"
 
 pulsarZookeeperPodNames :: [String]
 pulsarZookeeperPodNames =
@@ -459,6 +502,7 @@ clusterUpWithPlatform paths runtimeMode = do
   renderedChartPath <- renderHelmChart paths runtimeMode [finalValuesPath]
   when clusterCreated $
     putStrLn "cluster-up phase: preload-bootstrap-images - skipped broad pre-Harbor support-image preload; Harbor-first publication owns remaining images"
+  preloadHostCachedWarmupImagesOnKindWorker paths seedState runtimeMode
   applyBootstrapState paths runtimeMode (clusterUpDemoUiEnabled inputs) discoveredClaims
   let initialState = seedState {claims = discoveredClaims}
   initialStateWithDependencies <-
@@ -517,29 +561,38 @@ clusterUpWithPlatform paths runtimeMode = do
       "cluster-up"
       "deploy-final-phase"
       "deploying the final chart and waiting for routed workloads to become ready"
-  -- Phase 7 Sprint 7.1: the FinalPhase chart deploy applies (among others)
-  -- the @keycloak-postgresql@ PerconaPGCluster CR; the Percona operator
-  -- then creates 4 PVCs (3 data + 1 pgbackrest repo) on the supported
-  -- @infernix-manual@ storage class, which has no provisioner.
-  -- 'reconcileFinalPhaseOperatorManagedPersistentVolumes' below creates
-  -- matching PVs and waits for them to bind so Keycloak's Deployment
-  -- is not blocked behind a Pending database. The helm install
-  -- intentionally runs WITHOUT @--wait@ here — helm's @--wait@ blocks
-  -- on every Deployment becoming Ready, and Keycloak's TCP probe
-  -- never succeeds while its postgres backend is unbound, which
-  -- would deadlock the whole flow (helm hangs on Keycloak → PV
-  -- reconcile never runs → PVCs never bind → Keycloak never starts).
-  -- The explicit 'waitForFinalPhaseRollouts' below is the supported
-  -- wait, and it runs after the PV reconcile so it observes a healthy
-  -- Keycloak.
+  -- Phase 7 Sprint 7.1: when the demo surface is enabled, the
+  -- FinalPhase chart deploy applies the @keycloak-postgresql@
+  -- PerconaPGCluster CR; the Percona operator then creates 4 PVCs
+  -- (3 data + 1 pgbackrest repo) on the supported @infernix-manual@
+  -- storage class, which has no provisioner. The explicit final-phase
+  -- PV reconcile creates matching PVs and waits for them to bind before
+  -- rollout checks observe Keycloak. For @demo_ui = false@, Keycloak
+  -- and its Patroni cluster are absent, so this extra reconcile is
+  -- skipped.
   deployChart paths finalDeployState [finalValuesPath, imageOverridesPath] False
-  finalDeployStateWithKeycloakPg <-
-    reconcileFinalPhaseOperatorManagedPersistentVolumes paths finalDeployState
-  waitForFinalPhaseRollouts finalDeployStateWithKeycloakPg
+  finalDeployStateWithOperatorClaims <-
+    if clusterStateHasDemoUi finalDeployState
+      then reconcileFinalPhaseOperatorManagedPersistentVolumes paths finalDeployState
+      else pure finalDeployState
+  waitForFinalPhaseRollouts finalDeployStateWithOperatorClaims
+  postKeycloakRealmState <-
+    if clusterStateHasDemoUi finalDeployStateWithOperatorClaims
+      then do
+        keycloakRealmState <-
+          startLifecyclePhase
+            paths
+            finalDeployStateWithOperatorClaims
+            "cluster-up"
+            "reconcile-keycloak-realm"
+            "reconciling the demo Keycloak realm and browser redirect URIs"
+        reconcileKeycloakRealmConfiguration paths keycloakRealmState
+        pure keycloakRealmState
+      else pure finalDeployStateWithOperatorClaims
   routedPublicationState <-
     startLifecyclePhase
       paths
-      finalDeployState
+      postKeycloakRealmState
       "cluster-up"
       "wait-for-routed-publication"
       "probing the routed publication surface on the chosen edge before declaring success"
@@ -815,8 +868,9 @@ publicationStateSummaryLines publicationPath = do
     else do
       contents <- readFile publicationPath
       pure
-        ( maybe [] (\mode -> ["publicationInferenceDispatchMode: " <> mode]) (publicationInferenceDispatchMode contents)
-            <> maybe [] (\mode -> ["publicationApiUpstreamMode: " <> mode]) (publicationApiUpstreamMode contents)
+        ( map ("publicationInferenceDispatchMode: " <>) (maybeToList (publicationInferenceDispatchMode contents))
+            <> map ("publicationHostInferenceBatchTopic: " <>) (maybeToList (publicationHostInferenceBatchTopic contents))
+            <> map ("publicationApiUpstreamMode: " <>) (maybeToList (publicationApiUpstreamMode contents))
             <> publicationUpstreamLines contents
         )
 
@@ -825,6 +879,13 @@ publicationInferenceDispatchMode contents =
   firstJsonStringField
     "\"inferenceDispatchMode\":"
     "inferenceDispatchMode"
+    (lines contents)
+
+publicationHostInferenceBatchTopic :: String -> Maybe String
+publicationHostInferenceBatchTopic contents =
+  firstJsonStringField
+    "\"hostInferenceBatchTopic\":"
+    "hostInferenceBatchTopic"
     (lines contents)
 
 publicationApiUpstreamMode :: String -> Maybe String
@@ -1556,6 +1617,7 @@ buildClusterImages :: Paths -> ClusterState -> RuntimeMode -> IO ()
 buildClusterImages paths state runtimeMode = do
   let runtimeModeName = Text.unpack (runtimeModeId (clusterWorkloadRuntimeMode runtimeMode))
       imageRef = clusterWorkloadImageRef runtimeMode
+      goImage = "golang:1.24"
       baseImage =
         case clusterWorkloadRuntimeMode runtimeMode of
           LinuxGpu -> "nvidia/cuda:13.2.1-cudnn-runtime-ubuntu24.04"
@@ -1564,6 +1626,8 @@ buildClusterImages paths state runtimeMode = do
         [ "build",
           "-f",
           "docker/linux-substrate.Dockerfile",
+          "--build-arg",
+          "GO_IMAGE=" <> goImage,
           "--build-arg",
           "BASE_IMAGE=" <> baseImage,
           "--build-arg",
@@ -1577,6 +1641,8 @@ buildClusterImages paths state runtimeMode = do
     then putStrLn ("reusing baked cluster image for " <> runtimeModeName <> ": " <> imageRef)
     else do
       putStrLn ("building cluster images for " <> runtimeModeName)
+      ensureDockerBuildBaseImage paths state goImage
+      ensureDockerBuildBaseImage paths state baseImage
       runCommandMonitored
         paths
         state
@@ -1584,6 +1650,59 @@ buildClusterImages paths state runtimeMode = do
         []
         "docker"
         (dockerBuildArgs imageRef)
+
+ensureDockerBuildBaseImage :: Paths -> ClusterState -> String -> IO ()
+ensureDockerBuildBaseImage paths state imageRef = do
+  imagePresent <- maybeRun "docker" ["image", "inspect", imageRef]
+  unless imagePresent $
+    case dockerHubMirrorRef imageRef of
+      Nothing -> pure ()
+      Just mirrorRef -> do
+        mirrorState <-
+          startLifecyclePhase
+            paths
+            state
+            "cluster-up"
+            "build-cluster-images"
+            ("pulling Docker build base image " <> imageRef <> " via " <> mirrorRef)
+        runCommandMonitored paths mirrorState Nothing [] "docker" ["pull", mirrorRef]
+        runCommandMonitored paths mirrorState Nothing [] "docker" ["tag", mirrorRef, imageRef]
+        requireDockerImagePresent imageRef ("mirror pull completed for " <> mirrorRef <> ", but " <> imageRef <> " is still not inspectable locally after tagging")
+
+requireDockerImagePresent :: String -> String -> IO ()
+requireDockerImagePresent imageRef message = do
+  imagePresent <- maybeRun "docker" ["image", "inspect", imageRef]
+  unless imagePresent (ioError (userError message))
+
+dockerHubMirrorRef :: String -> Maybe String
+dockerHubMirrorRef imageRef =
+  ("mirror.gcr.io/" <>) <$> normalizedDockerHubPath imageRef
+  where
+    normalizedDockerHubPath rawImage =
+      case stripRegistryPrefix rawImage of
+        Just pathValue -> Just (ensureLibraryPrefix pathValue)
+        Nothing ->
+          if usesImplicitDockerHub rawImage
+            then Just (ensureLibraryPrefix rawImage)
+            else Nothing
+
+    stripRegistryPrefix rawImage =
+      case break (== '/') rawImage of
+        ("docker.io", '/' : pathValue) -> Just pathValue
+        _ -> Nothing
+
+    usesImplicitDockerHub rawImage =
+      case break (== '/') rawImage of
+        (_, []) -> True
+        (registryOrNamespace, _ : _) -> not (hasExplicitRegistryComponent registryOrNamespace)
+
+    hasExplicitRegistryComponent component =
+      '.' `elem` component || ':' `elem` component || component == "localhost"
+
+    ensureLibraryPrefix pathValue =
+      case break (== '/') pathValue of
+        (_, []) -> "library/" <> pathValue
+        _ -> pathValue
 
 publishClusterImages :: Paths -> ClusterState -> FilePath -> RuntimeMode -> IO FilePath
 publishClusterImages paths state renderedChartPath runtimeMode = do
@@ -1603,6 +1722,103 @@ publishClusterImages paths state renderedChartPath runtimeMode = do
     renderedChartPath
     outputPath
   pure outputPath
+
+preloadHostCachedWarmupImagesOnKindWorker :: Paths -> ClusterState -> RuntimeMode -> IO ()
+preloadHostCachedWarmupImagesOnKindWorker paths state runtimeMode =
+  when (runtimeMode /= AppleSilicon) $ do
+    let workerContainer = kindClusterName paths runtimeMode <> "-worker"
+    mapM_ (preloadHostCachedWarmupImage paths state workerContainer) hostCachedWarmupImageRefs
+
+hostCachedWarmupImageRefs :: [String]
+hostCachedWarmupImageRefs =
+  [ "docker.io/apachepulsar/pulsar-all:4.0.9",
+    "docker.io/bitnamilegacy/minio:2025.7.23-debian-12-r3",
+    "docker.io/bitnamilegacy/minio-object-browser:2.0.2-debian-12-r3",
+    "docker.io/bitnamilegacy/os-shell:12-debian-12-r50",
+    "docker.io/envoyproxy/gateway:v1.7.2",
+    "docker.io/percona/percona-distribution-postgresql:18.3-1",
+    "docker.io/percona/percona-pgbackrest:2.58.0-1",
+    "docker.io/percona/percona-pgbouncer:1.25.1-1",
+    "docker.io/percona/percona-postgresql-operator:2.9.0",
+    "quay.io/keycloak/keycloak:26.0.7"
+  ]
+
+preloadHostCachedWarmupImage :: Paths -> ClusterState -> String -> String -> IO ()
+preloadHostCachedWarmupImage paths state workerContainer imageRef = do
+  imagePresent <- ensureHostWarmupImageCached paths state imageRef
+  when imagePresent $ do
+    preloadState <-
+      startLifecyclePhase
+        paths
+        state
+        "cluster-up"
+        "preload-bootstrap-images"
+        ("preloading host-cached warmup image " <> imageRef <> " on " <> workerContainer)
+    let dockerCommand = resolveClusterCommandWithPaths paths "docker"
+        streamImportScript =
+          "set -euo pipefail; \"$1\" image save \"$2\" | \"$1\" exec -i \"$3\" ctr --namespace=k8s.io images import -"
+    result <-
+      ( try
+          ( runCommandMonitored
+              paths
+              preloadState
+              Nothing
+              []
+              "bash"
+              ["-lc", streamImportScript, "infernix-image-stream", dockerCommand, imageRef, workerContainer]
+          ) ::
+          IO (Either IOException ())
+      )
+    case result of
+      Right _ -> pure ()
+      Left err -> do
+        putStrLn
+          ( "warmup image preload skipped after failure for "
+              <> imageRef
+              <> ": "
+              <> displayException err
+          )
+
+ensureHostWarmupImageCached :: Paths -> ClusterState -> String -> IO Bool
+ensureHostWarmupImageCached paths state imageRef = do
+  imagePresent <- maybeRun "docker" ["image", "inspect", imageRef]
+  if imagePresent
+    then pure True
+    else hydrateMissingHostWarmupImage paths state imageRef
+
+hydrateMissingHostWarmupImage :: Paths -> ClusterState -> String -> IO Bool
+hydrateMissingHostWarmupImage paths state imageRef =
+  case dockerHubMirrorRef imageRef of
+    Nothing -> pure False
+    Just mirrorRef -> do
+      hydrateState <-
+        startLifecyclePhase
+          paths
+          state
+          "cluster-up"
+          "preload-bootstrap-images"
+          ("hydrating warmup image " <> imageRef <> " via " <> mirrorRef)
+      hydrateResult <-
+        ( try
+            ( do
+                runCommandMonitored paths hydrateState Nothing [] "docker" ["pull", "--platform", "linux/amd64", mirrorRef]
+                runCommandMonitored paths hydrateState Nothing [] "docker" ["tag", mirrorRef, imageRef]
+                requireDockerImagePresent imageRef ("mirror pull completed for " <> mirrorRef <> ", but " <> imageRef <> " is still not inspectable locally after tagging")
+            ) ::
+            IO (Either IOException ())
+        )
+      case hydrateResult of
+        Right _ -> pure True
+        Left err -> do
+          putStrLn
+            ( "warmup image mirror hydration skipped after failure for "
+                <> imageRef
+                <> " via "
+                <> mirrorRef
+                <> ": "
+                <> displayException err
+            )
+          pure False
 
 preloadHarborBackedImagesOnKindWorker :: Paths -> ClusterState -> RuntimeMode -> FilePath -> IO ()
 preloadHarborBackedImagesOnKindWorker paths state runtimeMode imageOverridesPath = do
@@ -2015,26 +2231,38 @@ reinitializeHarborPostgresReplicasIfStuck state attemptsElapsed restartIssued st
         ( "repairing Harbor PostgreSQL replicas from leader: "
             <> List.intercalate ", " (replicaPodNames primaryPodName)
         )
-      runCommand
-        Nothing
-        []
-        "kubectl"
-        ( kubeconfigArgs state
-            <> [ "-n",
-                 "platform",
-                 "exec",
-                 primaryPodName,
-                 "-c",
-                 "database",
-                 "--",
-                 "patronictl",
-                 "-k",
-                 "reinit",
-                 harborPostgresPatroniClusterName
-               ]
-            <> replicaPodNames primaryPodName
-            <> ["--force", "--wait", "--from-leader"]
+      result <-
+        ( try
+            ( runCommand
+                Nothing
+                []
+                "kubectl"
+                ( kubeconfigArgs state
+                    <> [ "-n",
+                         "platform",
+                         "exec",
+                         primaryPodName,
+                         "-c",
+                         "database",
+                         "--",
+                         "patronictl",
+                         "-k",
+                         "reinit",
+                         harborPostgresPatroniClusterName
+                       ]
+                    <> replicaPodNames primaryPodName
+                    <> ["--force", "--wait", "--from-leader"]
+                )
+            ) ::
+            IO (Either IOException ())
         )
+      case result of
+        Right _ -> pure ()
+        Left err ->
+          putStrLn
+            ( "Harbor PostgreSQL replica reinitialization command failed; continuing rollout wait: "
+                <> displayException err
+            )
       pure True
     else pure False
   where
@@ -2218,6 +2446,339 @@ waitForFinalPhaseRollouts state = do
   mapM_ (waitForWorkloadRollout state 1200) finalPhaseStatefulSets
   mapM_ (waitForWorkloadRollout state 900) (finalPhaseDeployments state)
   waitForHarborDatabaseReadyWithRepair state
+
+reconcileKeycloakRealmConfiguration :: Paths -> ClusterState -> IO ()
+reconcileKeycloakRealmConfiguration paths state =
+  when (clusterStateHasDemoUi state) $ do
+    putStrLn "reconciling Keycloak demo realm"
+    manager <- newManager defaultManagerSettings
+    go manager (30 :: Int) ""
+  where
+    go manager remainingAttempts lastError = do
+      result <-
+        ( try
+            (reconcileKeycloakRealmConfigurationOnce paths state manager) ::
+            IO (Either SomeException ())
+        )
+      case result of
+        Right _ -> pure ()
+        Left err
+          | remainingAttempts > 1 -> do
+              threadDelay 2000000
+              go manager (remainingAttempts - 1) (displayException err)
+          | otherwise ->
+              ioError
+                ( userError
+                    ( "Keycloak realm reconcile failed:\n"
+                        <> chooseError (displayException err) lastError
+                    )
+                )
+    chooseError current previous
+      | null current = previous
+      | otherwise = current
+
+reconcileKeycloakRealmConfigurationOnce :: Paths -> ClusterState -> Manager -> IO ()
+reconcileKeycloakRealmConfigurationOnce paths state manager = do
+  credentials <- readKeycloakAdminCredentials state
+  token <- requestKeycloakAdminToken manager (clusterEdgeBaseUrl paths state) credentials
+  putKeycloakJson
+    manager
+    token
+    (keycloakAdminRealmUrl paths state)
+    keycloakRealmReconcilePayload
+  clientValue <- fetchKeycloakSpaClient paths state manager token
+  clientIdValue <- requireKeycloakClientInternalId clientValue
+  clientPayload <-
+    case keycloakSpaClientReconcilePayload paths state clientValue of
+      Right value -> pure value
+      Left err -> ioError (userError err)
+  putKeycloakJson
+    manager
+    token
+    (keycloakAdminRealmUrl paths state <> "/clients/" <> urlEncodedString clientIdValue)
+    clientPayload
+
+readKeycloakAdminCredentials :: ClusterState -> IO KeycloakAdminCredentials
+readKeycloakAdminCredentials state = do
+  encodedUsername <-
+    kubectlOutput
+      state
+      [ "-n",
+        "platform",
+        "get",
+        "secret",
+        keycloakAdminSecretName,
+        "-o",
+        "jsonpath={.data.username}"
+      ]
+  encodedPassword <-
+    kubectlOutput
+      state
+      [ "-n",
+        "platform",
+        "get",
+        "secret",
+        keycloakAdminSecretName,
+        "-o",
+        "jsonpath={.data.password}"
+      ]
+  KeycloakAdminCredentials
+    <$> decodeKubernetesSecretField keycloakAdminSecretName "username" encodedUsername
+    <*> decodeKubernetesSecretField keycloakAdminSecretName "password" encodedPassword
+
+decodeKubernetesSecretField :: String -> String -> String -> IO String
+decodeKubernetesSecretField secretName fieldName encodedValue =
+  case Base64.decode (ByteString8.pack (trim encodedValue)) of
+    Left err ->
+      ioError
+        ( userError
+            ( "failed to decode "
+                <> secretName
+                <> "."
+                <> fieldName
+                <> ": "
+                <> err
+            )
+        )
+    Right decodedValue -> pure (ByteString8.unpack decodedValue)
+
+requestKeycloakAdminToken :: Manager -> String -> KeycloakAdminCredentials -> IO KeycloakAdminToken
+requestKeycloakAdminToken manager edgeBaseUrl credentials = do
+  baseRequest <- parseRequest (edgeBaseUrl <> "/auth/realms/master/protocol/openid-connect/token")
+  let formBody =
+        [ ("grant_type", "password"),
+          ("client_id", "admin-cli"),
+          ("username", ByteString8.pack (keycloakAdminUsername credentials)),
+          ("password", ByteString8.pack (keycloakAdminPassword credentials))
+        ]
+      tokenRequest =
+        urlEncodedBody formBody (baseRequest {method = "POST"})
+  response <- httpLbs tokenRequest manager
+  let code = statusCode (responseStatus response)
+  if code == 200
+    then decodeKeycloakAdminTokenResponse (responseBody response)
+    else
+      ioError
+        ( userError
+            ( "Keycloak admin token request failed with status "
+                <> show code
+                <> ":\n"
+                <> lazyBodyToString (responseBody response)
+            )
+        )
+
+decodeKeycloakAdminTokenResponse :: Lazy.ByteString -> IO KeycloakAdminToken
+decodeKeycloakAdminTokenResponse responsePayload =
+  case eitherDecode responsePayload of
+    Right token -> pure token
+    Left decodeError ->
+      ioError
+        ( userError
+            ( "failed to decode Keycloak admin token response:\n"
+                <> decodeError
+            )
+        )
+
+fetchKeycloakSpaClient :: Paths -> ClusterState -> Manager -> KeycloakAdminToken -> IO Value
+fetchKeycloakSpaClient paths state manager token = do
+  clientsValue <-
+    getKeycloakJson
+      manager
+      token
+      ( keycloakAdminRealmUrl paths state
+          <> "/clients?clientId="
+          <> urlEncodedString keycloakSpaClientId
+      )
+  clientValues <-
+    case requireJsonArrayPath [] clientsValue of
+      Right values -> pure values
+      Left err -> ioError (userError ("invalid Keycloak clients response: " <> err))
+  case List.find isSpaClient clientValues of
+    Just clientValue -> pure clientValue
+    Nothing ->
+      ioError
+        ( userError
+            ( "Keycloak client "
+                <> keycloakSpaClientId
+                <> " was not present in realm "
+                <> keycloakRealmName
+            )
+        )
+  where
+    isSpaClient clientValue =
+      lookupJsonStringPath ["clientId"] clientValue == Just keycloakSpaClientId
+
+requireKeycloakClientInternalId :: Value -> IO String
+requireKeycloakClientInternalId clientValue =
+  case lookupJsonStringPath ["id"] clientValue of
+    Just clientIdValue -> pure clientIdValue
+    Nothing ->
+      ioError
+        ( userError
+            ( "Keycloak client "
+                <> keycloakSpaClientId
+                <> " did not include an internal id"
+            )
+        )
+
+getKeycloakJson :: Manager -> KeycloakAdminToken -> String -> IO Value
+getKeycloakJson manager token url = do
+  request <- parseRequest url
+  response <-
+    httpLbs
+      request
+        { requestHeaders =
+            keycloakAuthorizationHeader token : requestHeaders request
+        }
+      manager
+  let code = statusCode (responseStatus response)
+  if code >= 200 && code < 300
+    then decodeKeycloakJsonResponse url (responseBody response)
+    else
+      ioError
+        ( userError
+            ( "Keycloak GET "
+                <> url
+                <> " failed with status "
+                <> show code
+                <> ":\n"
+                <> lazyBodyToString (responseBody response)
+            )
+        )
+
+decodeKeycloakJsonResponse :: String -> Lazy.ByteString -> IO Value
+decodeKeycloakJsonResponse url responsePayload =
+  case eitherDecode responsePayload of
+    Right value -> pure value
+    Left decodeError ->
+      ioError
+        ( userError
+            ( "failed to decode Keycloak JSON response from "
+                <> url
+                <> ":\n"
+                <> decodeError
+            )
+        )
+
+putKeycloakJson :: Manager -> KeycloakAdminToken -> String -> Value -> IO ()
+putKeycloakJson manager token url payload = do
+  request <- parseRequest url
+  response <-
+    httpLbs
+      request
+        { method = "PUT",
+          requestHeaders =
+            [ keycloakAuthorizationHeader token,
+              ("Content-Type", "application/json")
+            ],
+          requestBody = RequestBodyLBS (encode payload)
+        }
+      manager
+  let code = statusCode (responseStatus response)
+  unless (code `elem` [200, 204]) $
+    ioError
+      ( userError
+          ( "Keycloak PUT "
+              <> url
+              <> " failed with status "
+              <> show code
+              <> ":\n"
+              <> lazyBodyToString (responseBody response)
+          )
+      )
+
+keycloakAuthorizationHeader :: KeycloakAdminToken -> Header
+keycloakAuthorizationHeader token =
+  ( "Authorization",
+    ByteString8.pack ("Bearer " <> Text.unpack (keycloakAdminAccessToken token))
+  )
+
+keycloakRealmReconcilePayload :: Value
+keycloakRealmReconcilePayload =
+  object
+    [ "realm" .= keycloakRealmName,
+      "registrationAllowed" .= True,
+      "registrationEmailAsUsername" .= False,
+      "verifyEmail" .= False,
+      "loginWithEmailAllowed" .= False,
+      "duplicateEmailsAllowed" .= True,
+      "resetPasswordAllowed" .= False,
+      "editUsernameAllowed" .= False,
+      "passwordPolicy" .= ("length(8)" :: String)
+    ]
+
+keycloakSpaClientReconcilePayload :: Paths -> ClusterState -> Value -> Either String Value
+keycloakSpaClientReconcilePayload paths state (Object objectValue) =
+  Right
+    ( Object
+        ( foldr
+            (\(fieldName, fieldValue) -> KeyMap.insert (Key.fromText fieldName) fieldValue)
+            objectValue
+            [ ("redirectUris", keycloakStringArray (keycloakSpaRedirectUris paths state)),
+              ("webOrigins", keycloakStringArray (keycloakSpaWebOrigins paths state)),
+              ("publicClient", Bool True),
+              ("standardFlowEnabled", Bool True),
+              ("directAccessGrantsEnabled", Bool False),
+              ("serviceAccountsEnabled", Bool False),
+              ("implicitFlowEnabled", Bool False),
+              ("protocol", String "openid-connect"),
+              ("attributes", Object reconciledAttributes)
+            ]
+        )
+    )
+  where
+    currentAttributes =
+      case KeyMap.lookup (Key.fromText "attributes") objectValue of
+        Just (Object attributesValue) -> attributesValue
+        _ -> KeyMap.empty
+    reconciledAttributes =
+      foldr
+        (\(fieldName, fieldValue) -> KeyMap.insert (Key.fromText fieldName) fieldValue)
+        currentAttributes
+        [ ("pkce.code.challenge.method", String "S256"),
+          ("post.logout.redirect.uris", String "+")
+        ]
+keycloakSpaClientReconcilePayload _paths _state _ =
+  Left "Keycloak SPA client representation was not a JSON object"
+
+keycloakSpaRedirectUris :: Paths -> ClusterState -> [String]
+keycloakSpaRedirectUris paths state =
+  List.nub
+    [ "/*",
+      "http://127.0.0.1:" <> show (edgePort state) <> "/*",
+      "http://localhost:" <> show (edgePort state) <> "/*",
+      "http://infernix-linux-cpu-control-plane:30090/*",
+      "http://infernix-linux-gpu-control-plane:30090/*",
+      "http://infernix-apple-silicon-control-plane:30090/*",
+      clusterEdgeBaseUrl paths state <> "/*"
+    ]
+
+keycloakSpaWebOrigins :: Paths -> ClusterState -> [String]
+keycloakSpaWebOrigins paths state =
+  List.nub
+    [ "+",
+      "http://127.0.0.1:" <> show (edgePort state),
+      "http://localhost:" <> show (edgePort state),
+      "http://infernix-linux-cpu-control-plane:30090",
+      "http://infernix-linux-gpu-control-plane:30090",
+      "http://infernix-apple-silicon-control-plane:30090",
+      clusterEdgeBaseUrl paths state
+    ]
+
+keycloakStringArray :: [String] -> Value
+keycloakStringArray values =
+  Array (Vector.fromList (map (String . Text.pack) values))
+
+keycloakAdminRealmUrl :: Paths -> ClusterState -> String
+keycloakAdminRealmUrl paths state =
+  clusterEdgeBaseUrl paths state <> "/auth/admin/realms/" <> keycloakRealmName
+
+urlEncodedString :: String -> String
+urlEncodedString =
+  ByteString8.unpack . urlEncode True . ByteString8.pack
+
+lazyBodyToString :: Lazy.ByteString -> String
+lazyBodyToString = LazyChar8.unpack
 
 detectDirtyPulsarBootstrapState :: Paths -> RuntimeMode -> IO (Maybe String)
 detectDirtyPulsarBootstrapState paths runtimeMode = do
@@ -3250,7 +3811,7 @@ writeHelmValuesFile paths controlPlane state demoConfigPayload deployPhase = do
   let outputPath =
         buildRoot paths
           </> ("helm-values-" <> phaseSuffix deployPhase <> "-" <> Text.unpack (runtimeModeId (clusterRuntimeMode state)) <> ".yaml")
-  writeFile outputPath (renderHelmValues controlPlane state demoConfigPayload deployPhase [])
+  writeFile outputPath (renderHelmValues paths controlPlane state demoConfigPayload deployPhase [])
   pure outputPath
   where
     phaseSuffix phaseValue = case phaseValue of
@@ -3278,8 +3839,8 @@ discoverPersistentClaims :: Paths -> FilePath -> IO [PersistentClaim]
 discoverPersistentClaims _paths =
   discoverChartClaimsFile
 
-renderHelmValues :: ControlPlaneContext -> ClusterState -> Lazy.ByteString -> HelmDeployPhase -> [(String, String)] -> String
-renderHelmValues controlPlane state demoConfigPayload deployPhase engineCommandOverrides =
+renderHelmValues :: Paths -> ControlPlaneContext -> ClusterState -> Lazy.ByteString -> HelmDeployPhase -> [(String, String)] -> String
+renderHelmValues paths controlPlane state demoConfigPayload deployPhase engineCommandOverrides =
   unlines
     ( [ "runtimeMode: " <> Text.unpack (runtimeModeId (clusterRuntimeMode state)),
         "controlPlaneContext: " <> show (controlPlaneContextId controlPlane),
@@ -3292,7 +3853,7 @@ renderHelmValues controlPlane state demoConfigPayload deployPhase engineCommandO
         "  catalogPayload: |",
         indentBlock 4 (LazyChar8.unpack demoConfigPayload),
         "demo:",
-        "  enabled: " <> yamlBool (clusterStateHasDemoUi state),
+        "  enabled: " <> yamlBool demoUiEnabledValue,
         "  replicaCount: " <> show (repoWorkloadReplicaCount deployPhase),
         "  port: 8080",
         "  image:",
@@ -3310,6 +3871,7 @@ renderHelmValues controlPlane state demoConfigPayload deployPhase engineCommandO
         -- brings the upstream Pulsar chart up. `demo.replicaCount` was
         -- already phase-gated for the same reason.
         "coordinator:",
+        "  enabled: " <> yamlBool demoUiEnabledValue,
         "  replicaCount: " <> show (repoCoordinatorReplicaCount deployPhase),
         "  image:",
         "    repository: " <> clusterWorkloadImageRepository (clusterRuntimeMode state),
@@ -3322,13 +3884,15 @@ renderHelmValues controlPlane state demoConfigPayload deployPhase engineCommandO
         "    tag: local",
         "    pullPolicy: IfNotPresent"
       ]
-        <> routeHelmValues (clusterStateHasDemoUi state)
+        <> routeHelmValues demoUiEnabledValue
         <> unsupportedMonitoringOverrides
         <> serviceEngineAdapterOverrides
         <> phaseChartOverrides deployPhase
         <> bootstrapHarborOverrides deployPhase
     )
   where
+    demoUiEnabledValue = clusterStateHasDemoUi state
+
     repoWorkloadReplicaCount :: HelmDeployPhase -> Int
     repoWorkloadReplicaCount phaseValue = case phaseValue of
       WarmupPhase -> 0
@@ -3373,7 +3937,30 @@ renderHelmValues controlPlane state demoConfigPayload deployPhase engineCommandO
       WarmupPhase -> preFinalChartOverrides False
       BootstrapPhase -> preFinalChartOverrides False
       HarborFinalPhase -> preFinalChartOverrides True
-      FinalPhase -> []
+      FinalPhase -> finalChartOverrides
+    finalChartOverrides =
+      [ "upstreamCharts:",
+        "  keycloakpg:",
+        "    enabled: " <> yamlBool demoUiEnabledValue,
+        "keycloak:",
+        "  enabled: " <> yamlBool demoUiEnabledValue
+      ]
+        <> [ "  externalBaseUrl: " <> clusterEdgeBaseUrl paths state <> "/auth"
+           | demoUiEnabledValue
+           ]
+        <> if demoUiEnabledValue
+          then
+            [ "clusterConfig:",
+              "  minio:",
+              "    presignPublicEndpoint: " <> clusterEdgeBaseUrl paths state <> "/minio/s3",
+              "  keycloak:",
+              "    baseUrl: " <> clusterEdgeBaseUrl paths state <> "/auth",
+              "    clientId: " <> keycloakSpaClientId,
+              "    jwksUrl: http://infernix-keycloak.platform.svc.cluster.local:8080/auth/realms/"
+                <> keycloakRealmName
+                <> "/protocol/openid-connect/certs"
+            ]
+          else []
     preFinalChartOverrides envoyGatewayEnabled =
       [ "upstreamCharts:",
         "  harbor:",
@@ -3400,6 +3987,7 @@ renderHelmValues controlPlane state demoConfigPayload deployPhase engineCommandO
         "repoGateway:",
         "  enabled: false",
         "keycloak:",
+        "  externalBaseUrl: " <> clusterEdgeBaseUrl paths state <> "/auth",
         "  enabled: false",
         "minio:",
         "  console:",
@@ -3715,6 +4303,7 @@ hostToolForClusterCommand command =
     "nvidia-smi" -> Just HostNvidiaSmi
     "nvkind" -> Just HostNvkind
     "skopeo" -> Just HostSkopeo
+    "bash" -> Just HostBash
     _ -> Nothing
 
 mergeEnvironment :: [(String, String)] -> [(String, String)] -> [(String, String)]

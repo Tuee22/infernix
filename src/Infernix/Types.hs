@@ -702,7 +702,7 @@ defaultEngineDaemonConfig runtimeMode resultTopicValue =
             daemonConfigLocation = "control-plane-host",
             daemonConfigRequestTopics = maybe [] pure (defaultHostBatchTopic runtimeMode),
             daemonConfigResultTopic = resultTopicValue,
-            daemonConfigHostBatchTopic = defaultHostBatchTopic runtimeMode,
+            daemonConfigHostBatchTopic = Nothing,
             daemonConfigPulsarConnectionMode = PublicationEdgeAutoDiscovery
           }
     _ -> Nothing
@@ -711,7 +711,7 @@ defaultHostBatchTopic :: RuntimeMode -> Maybe Text
 defaultHostBatchTopic runtimeMode =
   case runtimeMode of
     AppleSilicon -> Just ("persistent://infernix/demo/inference.batch." <> runtimeModeId runtimeMode <> ".host")
-    _ -> Nothing
+    _ -> Just ("persistent://infernix/demo/inference.batch." <> runtimeModeId runtimeMode)
 
 formatUtc :: UTCTime -> String
 formatUtc = formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%S%QZ"

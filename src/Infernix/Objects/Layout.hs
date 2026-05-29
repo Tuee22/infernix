@@ -43,9 +43,9 @@ newtype DemoObjectsBucket = DemoObjectsBucket {unDemoObjectsBucket :: Text}
 defaultDemoObjectsBucket :: DemoObjectsBucket
 defaultDemoObjectsBucket = DemoObjectsBucket "infernix-demo-objects"
 
--- | The per-user prefix in @infernix-demo-objects@. Per-user scope policy
--- forbids any caller from listing or fetching outside this prefix; the
--- presigned URL minter enforces that constraint by mint time.
+-- | The per-user prefix in @infernix-demo-objects@. The presigned URL
+-- minter derives object keys from the authenticated user's subject and
+-- enforces this prefix at grant time.
 newtype UserPrefix = UserPrefix {unUserPrefix :: Text}
   deriving (Eq, Show)
 
@@ -105,7 +105,7 @@ modelReadySentinelKey modelId = modelObjectKey modelId ".ready"
 
 -- | Per-user scope enforcement helper. Returns 'True' iff the supplied
 -- object key prefix is owned by the named user. The demo backend uses this
--- to reject presigned-URL requests that point outside the caller's scope.
+-- as the final guard before minting a presigned URL.
 pathBelongsToUser :: UserId -> Text -> Bool
 pathBelongsToUser uid key =
   let UserPrefix prefix = userPrefix uid

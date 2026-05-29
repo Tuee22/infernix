@@ -87,15 +87,19 @@ endpoint = config["minio"]["endpoint"]
 ## Web / Node / Playwright
 
 The Playwright config file emits the typed fixture via Playwright's `use:` block from a
-Dhall-decoded JSON file written at test setup. The test reads `test.info().project.use.*`:
+Dhall-decoded JSON file written at test setup. The test declares a typed Playwright option fixture:
 
 ```javascript
 // BAD: process.env consumption
 const edgePort = process.env.LEGACY_EDGE_PORT || "9090";
 
-// GOOD: Playwright fixture
-test("…", async ({ page }, testInfo) => {
-  const edgePort = testInfo.project.use.edgePort;
+// GOOD: Playwright option fixture
+const test = base.extend({
+  infernixFixture: [undefined, { option: true }],
+});
+
+test("...", async ({ page, infernixFixture }) => {
+  const edgePort = infernixFixture.edgePort;
   ...
 });
 ```

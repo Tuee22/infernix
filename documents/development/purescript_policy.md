@@ -9,10 +9,11 @@
 ## Scope
 
 The demo UI is the only browser-facing surface in this repository. It is implemented in
-PureScript. JavaScript exists as compiled output under `web/dist/`; source-level `.js` or `.mjs`
-files are not part of the supported browser application. The remaining `.js` or `.mjs` files under
-`web/playwright/`, `web/test/run_playwright_matrix.mjs`, and
-`web/scripts/install-purescript.mjs` are test or toolchain assets.
+PureScript. JavaScript exists as compiled output under `web/dist/`, or as narrow FFI shims
+co-located with PureScript modules when browser APIs are not exposed by the supported PureScript
+packages. The remaining `.js` or `.mjs` files under `web/playwright/`,
+`web/test/run_playwright_matrix.mjs`, and `web/scripts/install-purescript.mjs` are test or
+toolchain assets.
 
 The demo UI is served by the `infernix-demo` Haskell binary and gated by the active `.dhall`
 `demo_ui` flag. Production deployments leave the flag off and the cluster has no demo UI workload.
@@ -71,7 +72,20 @@ web/
 ├── spago.yaml
 ├── src/
 │   ├── Main.purs
-│   ├── Infernix/Web/Workbench.purs
+│   ├── Infernix/Web/Artifacts.purs
+│   ├── Infernix/Web/ArtifactTransport.purs
+│   ├── Infernix/Web/ArtifactTransport.js
+│   ├── Infernix/Web/Auth.purs
+│   ├── Infernix/Web/Auth.js
+│   ├── Infernix/Web/Browser.purs
+│   ├── Infernix/Web/Browser.js
+│   ├── Infernix/Web/Chat.purs
+│   ├── Infernix/Web/DomEvents.purs
+│   ├── Infernix/Web/DomEvents.js
+│   ├── Infernix/Web/Router.purs
+│   ├── Infernix/Web/WebSocket.purs
+│   ├── Infernix/Web/WebSocket.js
+│   ├── Infernix/Web/Workbench.purs  (legacy helper, not mounted by Main.purs)
 │   └── Generated/        (build-time generated contracts, not tracked)
 ├── test/
 │   └── Main.purs
@@ -87,12 +101,16 @@ Rules:
 - handwritten PureScript modules under `web/src/*.purs` import generated modules from
   `web/src/Generated/` for shared types; they do not declare their own request or response types
 - `web/test/*.purs` modules use `purescript-spec` and run via `spago test`
-- when the durable-context demo lands (Phase 7), additional handwritten view modules under
-  `web/src/Infernix/Web/` (`Chat.purs`, `Artifacts.purs`, `Auth.purs`, `WebSocket.purs`,
-  `Router.purs`) follow the same import-from-`Generated/` rule and the same `purescript-spec`
-  test framework. They are renderers plus input handlers and apply server-sent state patches
-  via trivial mechanical helpers; they do not reimplement business rules. See
+- durable-context handwritten view modules under `web/src/Infernix/Web/` follow the same
+  import-from-`Generated/` rule and the same `purescript-spec` test framework. They are renderers
+  plus input handlers and apply server-sent state patches via trivial mechanical helpers; they do
+  not reimplement business rules. `Main.purs` mounts the durable-context shell; the legacy
+  `Workbench.purs` helper is not the supported top-level page. See
   [frontend_contracts.md](frontend_contracts.md) for the Haskell-first logic discipline.
+- source-level browser `.js` files under `web/src/Infernix/Web/` must be FFI shims for adjacent
+  PureScript modules. They may wrap browser-native surfaces such as PKCE crypto, delegated DOM
+  events, file upload, and `fetch`, but they must not introduce separate application state
+  machines or duplicate Haskell-owned contract logic.
 
 ## Contract Derivation
 

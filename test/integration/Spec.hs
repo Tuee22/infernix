@@ -6,15 +6,22 @@ import Control.Concurrent (threadDelay)
 import Control.Exception (SomeException, bracket, displayException, finally, try)
 import Control.Monad (forM_, when)
 import Data.Aeson qualified as Aeson
+import Data.ByteString qualified as ByteString
+import Data.ByteString.Char8 qualified as ByteString8
+import Data.ByteString.Lazy qualified as LazyByteString
 import Data.ByteString.Lazy.Char8 qualified as LazyByteStringChar8
 import Data.Char (isAsciiUpper)
 import Data.List (find, isInfixOf, isPrefixOf)
 import Data.Map.Strict qualified as Map
+import Data.Maybe (isJust, isNothing, maybeToList)
 import Data.Set qualified as Set
 import Data.Text qualified as Text
+import Data.Time.Clock.POSIX (getPOSIXTime)
+import Infernix.Bootstrap.Models qualified as BootstrapModels
 import Infernix.Cluster
 import Infernix.Config (Paths (..))
 import Infernix.Config qualified as Config
+import Infernix.Conversation.Topic qualified as ConversationTopic
 import Infernix.DemoConfig (decodeDemoConfigFile)
 import Infernix.Models
   ( expectedDaemonLocationForRuntime,
@@ -24,11 +31,20 @@ import Infernix.Models
     resultTopicForMode,
   )
 import Infernix.Runtime.Pulsar
-  ( publishInferenceRequest,
+  ( RawTopicMessage,
+    compactTopicAndWait,
+    publishDemoClientMessage,
+    publishInferenceRequest,
+    publishRawTopicPayload,
+    rawTopicMessageKey,
+    rawTopicMessagePayload,
+    readNamespaceCompactionThreshold,
     readPublishedInferenceResultMaybe,
+    readRawTopicPayloads,
     serviceReadinessMarkerPath,
   )
 import Infernix.Types
+import Infernix.Web.Contracts qualified as Contracts
 import Network.Socket
   ( Family (AF_INET),
     SockAddr (SockAddrInet),
@@ -57,6 +73,12 @@ import System.Process
     terminateProcess,
     waitForProcess,
   )
+
+data CompactedTopicMessage = CompactedTopicMessage
+  { compactedTopicMessageKey :: Maybe Text.Text,
+    compactedTopicMessagePayload :: ByteString.ByteString
+  }
+  deriving (Eq, Show)
 
 main :: IO ()
 main = do
@@ -88,6 +110,7 @@ withClusterLifecycle runtimeMode action =
 
 exerciseRuntimeMode :: Paths -> RuntimeMode -> IO ()
 exerciseRuntimeMode paths runtimeMode = do
+  materializeGeneratedSubstrate runtimeMode True
   withClusterLifecycle runtimeMode $ do
     withRuntimeServiceDaemonIfNeeded paths runtimeMode $ do
       reportStep ("cluster state reload: " <> showRuntimeMode runtimeMode)
@@ -132,15 +155,10 @@ exerciseRuntimeMode paths runtimeMode = do
       assert
         (("\"inferenceExecutorLocation\":\"" <> expectedInferenceExecutorLocation <> "\"") `isInfixOf` compact publicationResponse)
         "publication reports the substrate-specific inference executor location"
-      when (runtimeMode == AppleSilicon) $
-        assert
-          (maybe False (\topic -> ("\"hostInferenceBatchTopic\":\"" <> Text.unpack topic <> "\"") `isInfixOf` compact publicationResponse) (hostBatchTopicForMode runtimeMode))
-          "apple publication reports the host inference batch topic"
+      assertHostBatchPublication runtimeMode publicationResponse
       assert ("\"demo_ui\":true" `isInfixOf` compact demoConfigResponse) "demo config reports the enabled demo UI flag"
       assert (activeDaemonRole routedDemoConfig == Coordinator) "cluster-mounted demo config reports the coordinator role"
-      assert (daemonConfigRole (coordinatorDaemon routedDemoConfig) == Coordinator) "demo config reports coordinator metadata"
-      when (runtimeMode == AppleSilicon) $
-        assert (fmap daemonConfigRole (engineDaemon routedDemoConfig) == Just Engine) "apple demo config reports engine metadata"
+      assertRoutedDaemonSplit runtimeMode routedDemoConfig
       assert
         ( ("\"request_topics\":[\"persistent://infernix/demo/inference.request." <> showRuntimeMode runtimeMode <> "\"]")
             `isInfixOf` compact demoConfigResponse
@@ -194,6 +212,9 @@ exerciseRuntimeMode paths runtimeMode = do
       reportStep ("service runtime loop: " <> showRuntimeMode runtimeMode)
       validateServiceRuntimeLoop paths runtimeMode representativeModelId
 
+      reportStep ("durable Pulsar topic families: " <> showRuntimeMode runtimeMode)
+      validateDurableTopicFamilyRoundTrips paths runtimeMode representativeModelId
+
       when (runtimeMode == LinuxCpu) $ do
         reportStep "harbor recovery"
         validateHarborRecovery state
@@ -211,6 +232,7 @@ exerciseRuntimeMode paths runtimeMode = do
       assert (("runtimeMode: " <> showRuntimeMode runtimeMode) `isInfixOf` statusOutput) "cluster status reports the runtime mode"
       assert ("lifecycleStatus: idle" `isInfixOf` statusOutput) "cluster status reports idle lifecycle state after successful reconcile"
       assert (("publicationInferenceDispatchMode: " <> expectedDispatchMode) `isInfixOf` statusOutput) "cluster status reports the inference dispatch mode"
+      assertHostBatchStatus runtimeMode statusOutput
       assert ("publicationStatePath: " `isInfixOf` statusOutput) "cluster status reports the publication state path"
       assert ("kubernetesNodeCount: 0" `notElemString` statusOutput) "cluster status reports reachable Kubernetes nodes"
       assert ("kubernetesPodCount: 0" `notElemString` statusOutput) "cluster status reports reachable Kubernetes pods"
@@ -248,6 +270,52 @@ validateCatalogModelInference paths runtimeMode modelIdValue = do
         (resultRuntimeMode resultValue == runtimeMode)
         ("service daemon preserves the runtime mode in published results for " <> modelIdValue)
 
+assertHostBatchPublication :: RuntimeMode -> String -> IO ()
+assertHostBatchPublication runtimeMode publicationResponse =
+  maybe assertNoHostBatch assertHostBatch (hostBatchTopicForMode runtimeMode)
+  where
+    assertNoHostBatch =
+      assert
+        ("\"hostInferenceBatchTopic\":null" `isInfixOf` compact publicationResponse)
+        ("publication reports no host inference batch topic for " <> showRuntimeMode runtimeMode)
+
+    assertHostBatch topic =
+      assert
+        (("\"hostInferenceBatchTopic\":\"" <> Text.unpack topic <> "\"") `isInfixOf` compact publicationResponse)
+        ("publication reports the configured inference batch handoff topic for " <> showRuntimeMode runtimeMode)
+
+assertHostBatchStatus :: RuntimeMode -> String -> IO ()
+assertHostBatchStatus runtimeMode statusOutput =
+  mapM_ assertHostBatch (hostBatchTopicForMode runtimeMode)
+  where
+    assertHostBatch topic =
+      assert
+        (("publicationHostInferenceBatchTopic: " <> Text.unpack topic) `isInfixOf` statusOutput)
+        ("cluster status reports the inference batch handoff topic for " <> showRuntimeMode runtimeMode)
+
+assertRoutedDaemonSplit :: RuntimeMode -> DemoConfig -> IO ()
+assertRoutedDaemonSplit runtimeMode routedDemoConfig = do
+  assert (daemonConfigRole (coordinatorDaemon routedDemoConfig) == Coordinator) "demo config reports coordinator metadata"
+  assert
+    (daemonConfigRequestTopics (coordinatorDaemon routedDemoConfig) == requestTopicsForMode runtimeMode)
+    "coordinator consumes the substrate request topic"
+  assert
+    (daemonConfigHostBatchTopic (coordinatorDaemon routedDemoConfig) == hostBatchTopicForMode runtimeMode)
+    "coordinator publishes the configured inference batch handoff topic"
+  maybe
+    (fail ("demo config omits engine metadata for " <> showRuntimeMode runtimeMode))
+    assertEngineConfig
+    (engineDaemon routedDemoConfig)
+  where
+    assertEngineConfig engineConfig = do
+      assert (daemonConfigRole engineConfig == Engine) "demo config reports engine metadata"
+      assert
+        (daemonConfigRequestTopics engineConfig == maybeToList (hostBatchTopicForMode runtimeMode))
+        "engine consumes the configured inference batch handoff topic"
+      assert
+        (isNothing (daemonConfigHostBatchTopic engineConfig))
+        "engine does not forward its own inference batch topic"
+
 assertClusterServiceDeployment :: ClusterState -> IO ()
 assertClusterServiceDeployment state = do
   deploymentName <-
@@ -263,6 +331,21 @@ assertClusterServiceDeployment state = do
           "jsonpath={.metadata.name}"
         ]
   assert (deploymentName == "infernix-coordinator") "cluster deploys the supported daemon-split coordinator on every substrate"
+  serviceSessionAffinity <-
+    trim
+      <$> kubectlOutputForState
+        state
+        [ "-n",
+          "platform",
+          "get",
+          "service",
+          "infernix-demo",
+          "-o",
+          "jsonpath={.spec.sessionAffinity}"
+        ]
+  assert
+    (serviceSessionAffinity == "None")
+    "demo Service disables Kubernetes session affinity so any stateless frontend replica can host WebSocket sessions"
 
 validateServiceRuntimeLoop :: Paths -> RuntimeMode -> String -> IO ()
 validateServiceRuntimeLoop paths runtimeMode representativeModelId = do
@@ -286,6 +369,364 @@ validateServiceRuntimeLoop paths runtimeMode representativeModelId = do
     Just resultValue -> do
       assert (resultModelId resultValue == Text.pack representativeModelId) "service daemon publishes the selected model id"
       assert (resultRuntimeMode resultValue == runtimeMode) "service daemon preserves the runtime mode in published results"
+
+validateDurableTopicFamilyRoundTrips :: Paths -> RuntimeMode -> String -> IO ()
+validateDurableTopicFamilyRoundTrips paths runtimeMode representativeModelId = do
+  runToken <- integrationRunToken
+  let namespace = ConversationTopic.defaultDemoTopicNamespace
+      systemNamespace = ConversationTopic.systemTopicNamespace
+      runtimeText = runtimeModeId runtimeMode
+      tokenText = Text.pack runToken
+      userIdValue = Contracts.UserId ("integration-user-" <> runtimeText <> "-" <> tokenText)
+      contextIdValue = Contracts.ContextId ("integration-context-" <> runtimeText <> "-" <> tokenText)
+      contextIdText = Contracts.unContextId contextIdValue
+      modelIdText = Text.pack representativeModelId
+      contextTopic = ConversationTopic.contextsMetadataTopicName namespace userIdValue
+      draftsTopic = ConversationTopic.draftsMetadataTopicName namespace userIdValue
+      conversationTopic = ConversationTopic.conversationTopicName namespace userIdValue contextIdValue
+      bootstrapModelId = "integration-bootstrap-" <> runtimeText <> "-" <> tokenText
+      bootstrapReadyTopic =
+        ConversationTopic.modelBootstrapReadyTopicName systemNamespace bootstrapModelId
+      createdEvent =
+        Contracts.ContextCreated
+          { Contracts.contextCreatedContextId = contextIdValue,
+            Contracts.contextCreatedModelId = modelIdText,
+            Contracts.contextCreatedTitle = "Integration Roundtrip"
+          }
+      draftEvent = Contracts.DraftUpdated contextIdValue "draft from integration"
+      cancelEvent =
+        Contracts.ConversationCancelEvent
+          ( Contracts.ConversationCancelPayload
+              (Contracts.MessageId ("prompt-for-cancel-" <> runtimeText))
+          )
+      bootstrapReadyEvent =
+        BootstrapModels.ModelBootstrapReadyEvent
+          { BootstrapModels.readyEventModelId = bootstrapModelId,
+            BootstrapModels.readyEventReadyAtIso8601 = "2026-05-28T00:00:00Z"
+          }
+
+  publishDemoClientMessage
+    paths
+    runtimeMode
+    Nothing
+    userIdValue
+    (Contracts.ClientCreateContext contextIdValue modelIdText "Integration Roundtrip")
+  contextMessages <- waitForRawTopicMessages paths runtimeMode contextTopic 1
+  assertTopicMessageKey contextMessages (Just contextIdText) "contexts metadata topic carries the context id as the Pulsar message key"
+  assertTopicHasDecoded contextMessages createdEvent "contexts metadata topic round-trips the ContextCreated event"
+
+  publishDemoClientMessage
+    paths
+    runtimeMode
+    Nothing
+    userIdValue
+    (Contracts.ClientUpdateDraft contextIdValue "draft from integration")
+  draftMessages <- waitForRawTopicMessages paths runtimeMode draftsTopic 1
+  assertTopicMessageKey draftMessages (Just contextIdText) "drafts topic carries the context id as the Pulsar message key"
+  assertTopicHasDecoded draftMessages draftEvent "drafts topic round-trips the DraftUpdated event"
+
+  validateCompactedTopicBrokerBehavior paths runtimeMode modelIdText tokenText
+  validateProducerDeduplicationBehavior paths runtimeMode tokenText
+  validateDurableContextPromptRoundTrip paths runtimeMode modelIdText tokenText
+
+  publishDemoClientMessage
+    paths
+    runtimeMode
+    Nothing
+    userIdValue
+    (Contracts.ClientCancelPrompt contextIdValue (Contracts.MessageId ("prompt-for-cancel-" <> runtimeText)))
+  conversationMessages <- waitForRawTopicMessages paths runtimeMode conversationTopic 1
+  assertTopicMessageKey conversationMessages Nothing "conversation log topic remains append-only without a compaction key"
+  assertTopicHasDecoded conversationMessages cancelEvent "conversation topic round-trips the ConversationCancelEvent"
+
+  publishRawTopicPayload
+    paths
+    runtimeMode
+    Nothing
+    bootstrapReadyTopic
+    ("integration-bootstrap-" <> runtimeText)
+    (Just bootstrapModelId)
+    bootstrapModelId
+    (LazyByteString.toStrict (Aeson.encode bootstrapReadyEvent))
+  bootstrapMessages <- waitForRawTopicMessages paths runtimeMode bootstrapReadyTopic 1
+  assertTopicMessageKey bootstrapMessages (Just bootstrapModelId) "model-bootstrap ready topic carries the model id as the Pulsar message key"
+  assertTopicHasDecoded bootstrapMessages bootstrapReadyEvent "model-bootstrap ready topic round-trips the ready event"
+
+integrationRunToken :: IO String
+integrationRunToken = do
+  now <- getPOSIXTime
+  pure (show (floor (now * 1000000) :: Integer))
+
+validateCompactedTopicBrokerBehavior :: Paths -> RuntimeMode -> Text.Text -> Text.Text -> IO ()
+validateCompactedTopicBrokerBehavior paths runtimeMode modelIdText tokenText = do
+  threshold <- readNamespaceCompactionThreshold paths runtimeMode Nothing "infernix/demo"
+  assert (threshold == 100 * 1024 * 1024) "Pulsar admin reports the supported demo namespace compaction threshold"
+
+  let namespace = ConversationTopic.defaultDemoTopicNamespace
+      runtimeText = runtimeModeId runtimeMode
+      userIdValue = Contracts.UserId ("integration-compacted-user-" <> runtimeText <> "-" <> tokenText)
+      contextA = Contracts.ContextId ("compacted-context-a-" <> tokenText)
+      contextB = Contracts.ContextId ("compacted-context-b-" <> tokenText)
+      contextAText = Contracts.unContextId contextA
+      contextBText = Contracts.unContextId contextB
+      contextTopic = ConversationTopic.contextsMetadataTopicName namespace userIdValue
+      contextAOld = Contracts.ContextCreated contextA modelIdText "old context title"
+      contextBEvent = Contracts.ContextCreated contextB modelIdText "stable context title"
+      contextALatest = Contracts.ContextRenamed contextA "new context title"
+  publishDemoClientMessage paths runtimeMode Nothing userIdValue (Contracts.ClientCreateContext contextA modelIdText "old context title")
+  publishDemoClientMessage paths runtimeMode Nothing userIdValue (Contracts.ClientCreateContext contextB modelIdText "stable context title")
+  publishDemoClientMessage paths runtimeMode Nothing userIdValue (Contracts.ClientRenameContext contextA "new context title")
+  compactTopicAndWait paths runtimeMode Nothing contextTopic
+  compactedContextMessages <- waitForJavaCompactedTopicMessages paths contextTopic 2
+  assertCompactedTopicMessageKeysExactly
+    compactedContextMessages
+    (Set.fromList [Just contextAText, Just contextBText])
+    "compacted contexts topic yields one latest message per context id"
+  assertCompactedTopicHasDecoded compactedContextMessages contextALatest "compacted contexts topic keeps the latest event for context A"
+  assertCompactedTopicHasDecoded compactedContextMessages contextBEvent "compacted contexts topic keeps context B's latest event"
+  assertCompactedTopicDoesNotHaveDecoded compactedContextMessages contextAOld "compacted contexts topic omits context A's superseded event"
+
+  let draftA = Contracts.ContextId ("compacted-draft-a-" <> tokenText)
+      draftB = Contracts.ContextId ("compacted-draft-b-" <> tokenText)
+      draftAText = Contracts.unContextId draftA
+      draftBText = Contracts.unContextId draftB
+      draftsTopic = ConversationTopic.draftsMetadataTopicName namespace userIdValue
+      draftAOld = Contracts.DraftUpdated draftA "old draft"
+      draftBEvent = Contracts.DraftUpdated draftB "stable draft"
+      draftALatest = Contracts.DraftUpdated draftA "new draft"
+  publishDemoClientMessage paths runtimeMode Nothing userIdValue (Contracts.ClientUpdateDraft draftA "old draft")
+  publishDemoClientMessage paths runtimeMode Nothing userIdValue (Contracts.ClientUpdateDraft draftB "stable draft")
+  publishDemoClientMessage paths runtimeMode Nothing userIdValue (Contracts.ClientUpdateDraft draftA "new draft")
+  compactTopicAndWait paths runtimeMode Nothing draftsTopic
+  compactedDraftMessages <- waitForJavaCompactedTopicMessages paths draftsTopic 2
+  assertCompactedTopicMessageKeysExactly
+    compactedDraftMessages
+    (Set.fromList [Just draftAText, Just draftBText])
+    "compacted drafts topic yields one latest message per context id"
+  assertCompactedTopicHasDecoded compactedDraftMessages draftALatest "compacted drafts topic keeps the latest draft for context A"
+  assertCompactedTopicHasDecoded compactedDraftMessages draftBEvent "compacted drafts topic keeps context B's latest draft"
+  assertCompactedTopicDoesNotHaveDecoded compactedDraftMessages draftAOld "compacted drafts topic omits context A's superseded draft"
+
+validateProducerDeduplicationBehavior :: Paths -> RuntimeMode -> Text.Text -> IO ()
+validateProducerDeduplicationBehavior paths runtimeMode tokenText = do
+  let namespace = ConversationTopic.defaultDemoTopicNamespace
+      runtimeText = runtimeModeId runtimeMode
+      userIdValue = Contracts.UserId ("integration-dedup-user-" <> runtimeText <> "-" <> tokenText)
+      contextIdValue = Contracts.ContextId ("dedup-context-" <> tokenText)
+      conversationTopic = ConversationTopic.conversationTopicName namespace userIdValue contextIdValue
+      promptMessageId = Contracts.MessageId ("dedup-prompt-" <> runtimeText <> "-" <> tokenText)
+      cancelEvent =
+        Contracts.ConversationCancelEvent
+          (Contracts.ConversationCancelPayload promptMessageId)
+  publishDemoClientMessage paths runtimeMode Nothing userIdValue (Contracts.ClientCancelPrompt contextIdValue promptMessageId)
+  publishDemoClientMessage paths runtimeMode Nothing userIdValue (Contracts.ClientCancelPrompt contextIdValue promptMessageId)
+  conversationMessages <- waitForSettledRawTopicMessages paths runtimeMode conversationTopic 2
+  assert
+    (length conversationMessages == 1)
+    "Pulsar producer dedup collapses duplicate append-only conversation publishes with the same frontend sequence id"
+  assertTopicHasDecoded conversationMessages cancelEvent "deduplicated conversation publish keeps the original event payload"
+
+  let draftsTopic = ConversationTopic.draftsMetadataTopicName namespace userIdValue
+      draftEvent = Contracts.DraftUpdated contextIdValue "dedup draft"
+  publishDemoClientMessage paths runtimeMode Nothing userIdValue (Contracts.ClientUpdateDraft contextIdValue "dedup draft")
+  publishDemoClientMessage paths runtimeMode Nothing userIdValue (Contracts.ClientUpdateDraft contextIdValue "dedup draft")
+  draftMessages <- waitForSettledRawTopicMessages paths runtimeMode draftsTopic 2
+  assert
+    (length draftMessages == 1)
+    "Pulsar producer dedup collapses duplicate compacted draft publishes with the same frontend sequence id"
+  assertTopicHasDecoded draftMessages draftEvent "deduplicated draft publish keeps the original event payload"
+
+validateDurableContextPromptRoundTrip :: Paths -> RuntimeMode -> Text.Text -> Text.Text -> IO ()
+validateDurableContextPromptRoundTrip paths runtimeMode modelIdText tokenText = do
+  let namespace = ConversationTopic.defaultDemoTopicNamespace
+      runtimeText = runtimeModeId runtimeMode
+      userIdValue = Contracts.UserId ("integration-prompt-user-" <> runtimeText <> "-" <> tokenText)
+      contextIdValue = Contracts.ContextId ("prompt-context-" <> tokenText)
+      conversationTopic = ConversationTopic.conversationTopicName namespace userIdValue contextIdValue
+      promptPayload =
+        Contracts.UserPromptPayload
+          { Contracts.promptText = "durable context prompt roundtrip",
+            Contracts.promptClientIdempotencyKey = Contracts.ClientIdempotencyKey ("prompt-idem-" <> tokenText),
+            Contracts.promptUserUploads = []
+          }
+  publishDemoClientMessage paths runtimeMode Nothing userIdValue (Contracts.ClientCreateContext contextIdValue modelIdText "Prompt Roundtrip")
+  publishDemoClientMessage paths runtimeMode Nothing userIdValue (Contracts.ClientCancelPrompt contextIdValue (Contracts.MessageId ("prompt-roundtrip-warmup-" <> tokenText)))
+  _ <- waitForRawTopicMessages paths runtimeMode conversationTopic 1
+  -- The coordinator discovers conversation topics every 30 seconds. The warmup cancel creates the
+  -- topic without dispatching inference, giving the dispatcher and context-model consumer one poll
+  -- cycle to attach before the real prompt is published.
+  threadDelay 35000000
+  publishDemoClientMessage paths runtimeMode Nothing userIdValue (Contracts.ClientSubmitPrompt contextIdValue promptPayload)
+  resultPayload <- waitForConversationResultPayload paths runtimeMode conversationTopic
+  assert
+    (Contracts.inferenceResultStatus resultPayload == "completed")
+    "durable context prompt roundtrip writes a completed inference result to the conversation log"
+  assert
+    (isJust (Contracts.inferenceResultInlineOutput resultPayload))
+    "durable context prompt roundtrip writes inline output to the conversation log"
+
+waitForConversationResultPayload :: Paths -> RuntimeMode -> Text.Text -> IO Contracts.ConversationInferenceResultPayload
+waitForConversationResultPayload paths runtimeMode conversationTopic = go (120 :: Int)
+  where
+    go remainingAttempts
+      | remainingAttempts <= 0 =
+          fail ("timed out waiting for durable context inference result on " <> Text.unpack conversationTopic)
+      | otherwise = do
+          messages <- readRawTopicPayloads paths runtimeMode Nothing conversationTopic 12
+          case conversationResultPayloads messages of
+            resultPayload : _ -> pure resultPayload
+            [] -> do
+              threadDelay 1000000
+              go (remainingAttempts - 1)
+
+conversationResultPayloads :: [RawTopicMessage] -> [Contracts.ConversationInferenceResultPayload]
+conversationResultPayloads messages =
+  [ resultPayload
+  | rawMessage <- messages,
+    Right conversationEvent <- [Aeson.eitherDecodeStrict' (rawTopicMessagePayload rawMessage)],
+    Contracts.ConversationInferenceResultEvent resultPayload <- [conversationEvent]
+  ]
+
+waitForRawTopicMessages :: Paths -> RuntimeMode -> Text.Text -> Int -> IO [RawTopicMessage]
+waitForRawTopicMessages paths runtimeMode topic expectedCount = go (6 :: Int)
+  where
+    go remainingAttempts
+      | remainingAttempts <= 0 = fail ("timed out waiting for Pulsar topic " <> Text.unpack topic)
+      | otherwise = do
+          messages <- readRawTopicPayloads paths runtimeMode Nothing topic expectedCount
+          if length messages >= expectedCount
+            then pure messages
+            else do
+              threadDelay 500000
+              go (remainingAttempts - 1)
+
+waitForSettledRawTopicMessages :: Paths -> RuntimeMode -> Text.Text -> Int -> IO [RawTopicMessage]
+waitForSettledRawTopicMessages paths runtimeMode topic maxMessages = do
+  _ <- waitForRawTopicMessages paths runtimeMode topic 1
+  threadDelay 1000000
+  readRawTopicPayloads paths runtimeMode Nothing topic maxMessages
+
+waitForJavaCompactedTopicMessages :: Paths -> Text.Text -> Int -> IO [CompactedTopicMessage]
+waitForJavaCompactedTopicMessages paths topic expectedCount = go (10 :: Int)
+  where
+    go remainingAttempts
+      | remainingAttempts <= 0 = fail ("timed out waiting for compacted Pulsar topic " <> Text.unpack topic)
+      | otherwise = do
+          messages <- readCompactedTopicMessagesWithJavaReader paths topic expectedCount
+          if length messages >= expectedCount
+            then pure messages
+            else do
+              threadDelay 1000000
+              go (remainingAttempts - 1)
+
+assertTopicMessageKey :: [RawTopicMessage] -> Maybe Text.Text -> String -> IO ()
+assertTopicMessageKey messages expectedKey =
+  assert (any ((== expectedKey) . rawTopicMessageKey) messages)
+
+assertCompactedTopicMessageKeysExactly :: [CompactedTopicMessage] -> Set.Set (Maybe Text.Text) -> String -> IO ()
+assertCompactedTopicMessageKeysExactly messages expectedKeys =
+  assert (Set.fromList (map compactedTopicMessageKey messages) == expectedKeys)
+
+assertTopicHasDecoded :: (Aeson.FromJSON a, Eq a) => [RawTopicMessage] -> a -> String -> IO ()
+assertTopicHasDecoded messages expectedValue =
+  assert (expectedValue `elem` decodedValues)
+  where
+    decodedValues =
+      [ decoded
+      | rawMessage <- messages,
+        Right decoded <- [Aeson.eitherDecodeStrict' (rawTopicMessagePayload rawMessage)]
+      ]
+
+assertCompactedTopicHasDecoded :: (Aeson.FromJSON a, Eq a) => [CompactedTopicMessage] -> a -> String -> IO ()
+assertCompactedTopicHasDecoded messages expectedValue =
+  assert (expectedValue `elem` decodedValues)
+  where
+    decodedValues =
+      [ decoded
+      | rawMessage <- messages,
+        Right decoded <- [Aeson.eitherDecodeStrict' (compactedTopicMessagePayload rawMessage)]
+      ]
+
+assertCompactedTopicDoesNotHaveDecoded :: (Aeson.FromJSON a, Eq a) => [CompactedTopicMessage] -> a -> String -> IO ()
+assertCompactedTopicDoesNotHaveDecoded messages unexpectedValue =
+  assert (unexpectedValue `notElem` decodedValues)
+  where
+    decodedValues =
+      [ decoded
+      | rawMessage <- messages,
+        Right decoded <- [Aeson.eitherDecodeStrict' (compactedTopicMessagePayload rawMessage)]
+      ]
+
+readCompactedTopicMessagesWithJavaReader :: Paths -> Text.Text -> Int -> IO [CompactedTopicMessage]
+readCompactedTopicMessagesWithJavaReader paths topic expectedCount = do
+  output <-
+    readProcess
+      "kubectl"
+      [ "--kubeconfig",
+        Config.generatedKubeconfigPath paths,
+        "-n",
+        "platform",
+        "exec",
+        "infernix-infernix-pulsar-toolset-0",
+        "--",
+        "bash",
+        "-lc",
+        compactedReaderScript topic expectedCount
+      ]
+      ""
+  traverse parseCompactedReaderLine (filter (elem '\t') (lines output))
+
+compactedReaderScript :: Text.Text -> Int -> String
+compactedReaderScript topic expectedCount =
+  unlines
+    [ "cat >/tmp/InfernixReadCompacted.java <<'JAVA'",
+      "import java.nio.charset.StandardCharsets;",
+      "import java.util.concurrent.TimeUnit;",
+      "import org.apache.pulsar.client.api.Message;",
+      "import org.apache.pulsar.client.api.MessageId;",
+      "import org.apache.pulsar.client.api.PulsarClient;",
+      "import org.apache.pulsar.client.api.Reader;",
+      "public class InfernixReadCompacted {",
+      "  public static void main(String[] args) throws Exception {",
+      "    try (PulsarClient client = PulsarClient.builder().serviceUrl(args[0]).build();",
+      "         Reader<byte[]> reader = client.newReader().topic(args[1]).startMessageId(MessageId.earliest).readCompacted(true).create()) {",
+      "      int expected = Integer.parseInt(args[2]);",
+      "      for (int i = 0; i < expected; i++) {",
+      "        Message<byte[]> message = reader.readNext(5, TimeUnit.SECONDS);",
+      "        if (message == null) { break; }",
+      "        String key = message.getKey() == null ? \"\" : message.getKey();",
+      "        System.out.println(key + \"\\t\" + new String(message.getData(), StandardCharsets.UTF_8));",
+      "      }",
+      "    }",
+      "  }",
+      "}",
+      "JAVA",
+      "/opt/jvm/bin/javac -cp '/pulsar/lib/*' /tmp/InfernixReadCompacted.java",
+      "/opt/jvm/bin/java -cp '/tmp:/pulsar/lib/*' InfernixReadCompacted "
+        <> shellSingleQuote "pulsar://infernix-infernix-pulsar-proxy:6650"
+        <> " "
+        <> shellSingleQuote (Text.unpack topic)
+        <> " "
+        <> shellSingleQuote (show expectedCount)
+    ]
+
+parseCompactedReaderLine :: String -> IO CompactedTopicMessage
+parseCompactedReaderLine raw =
+  case break (== '\t') raw of
+    (rawKey, '\t' : payload) ->
+      pure
+        CompactedTopicMessage
+          { compactedTopicMessageKey = if null rawKey then Nothing else Just (Text.pack rawKey),
+            compactedTopicMessagePayload = ByteString8.pack payload
+          }
+    _ -> fail ("unexpected compacted-reader output line: " <> raw)
+
+shellSingleQuote :: String -> String
+shellSingleQuote value =
+  "'" <> concatMap quoteChar value <> "'"
+  where
+    quoteChar '\'' = "'\\''"
+    quoteChar ch = [ch]
 
 -- | Phase 6 Sprint 6.28 follow-on (May 26, 2026): bumped the
 -- per-request inference roundtrip timeout from 6 s (60 attempts at

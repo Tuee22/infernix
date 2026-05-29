@@ -415,6 +415,10 @@ data WsClientMessage
       { clientCancelPromptContextId :: ContextId,
         clientCancelPromptUserPromptMessageId :: MessageId
       }
+  | ClientRecordUpload
+      { clientRecordUploadContextId :: ContextId,
+        clientRecordUploadPayload :: ConversationUserUploadPayload
+      }
   | ClientUpdateDraft
       { clientUpdateDraftContextId :: ContextId,
         clientUpdateDraftText :: Text.Text
@@ -1015,6 +1019,11 @@ phase7Sums =
           "ClientCancelPrompt"
           [ ("clientCancelPromptContextId", "ContextId"),
             ("clientCancelPromptUserPromptMessageId", "MessageId")
+          ],
+        PursRecord
+          "ClientRecordUpload"
+          [ ("clientRecordUploadContextId", "ContextId"),
+            ("clientRecordUploadPayload", "ConversationUserUploadPayload")
           ],
         PursRecord
           "ClientUpdateDraft"

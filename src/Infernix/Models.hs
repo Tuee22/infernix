@@ -91,12 +91,10 @@ hostBatchTopicForMode runtimeMode =
     LinuxCpu -> Just (canonicalBatchTopicForMode runtimeMode)
     LinuxGpu -> Just (canonicalBatchTopicForMode runtimeMode)
 
--- | Canonical @inference.batch.<mode>@ topic name for any substrate. The
--- auto-generated dhall file does not enable handoff on Linux substrates by
--- default ('hostBatchTopicForMode' returns 'Nothing' for those), but operators
--- can wire this topic name into a custom staged @.dhall@ once the supported
--- coordinator + engine daemon split lands. Used by chart helpers and by the
--- supported Sprint 7.7 daemon-split rollout.
+-- | Canonical @inference.batch.<mode>@ topic name for any substrate.
+-- The auto-generated Dhall file enables coordinator-to-engine handoff
+-- through this topic family on Linux substrates, while the Apple lane keeps
+-- the @.host@ suffix for the host-native engine daemon.
 canonicalBatchTopicForMode :: RuntimeMode -> Text
 canonicalBatchTopicForMode runtimeMode =
   defaultPulsarTopicPrefix <> "inference.batch." <> runtimeModeId runtimeMode

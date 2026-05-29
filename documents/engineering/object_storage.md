@@ -44,8 +44,9 @@ shape uses them.
   bootstrap worker; only the coordinator's service account has PUT
   permission. The bucket is not browser-addressable directly; weights
   never leave the cluster.
-- `infernix-demo-objects` uses per-user scope policies that restrict
-  presigned URL access to the authenticated user's prefix. See
+- `infernix-demo-objects` uses per-user grant-minting scope checks that restrict
+  the default object path to the authenticated user's prefix. Presigned URLs are bearer
+  capabilities until expiry, so callers must treat them as session-confidential. See
   [../tools/minio.md](../tools/minio.md) for the policy details.
 - Cross-bucket access is not part of the supported contract.
 
@@ -152,10 +153,15 @@ authenticated user's prefix in `infernix-demo-objects`. Artifact bytes
 flow directly between the browser and MinIO; the demo backend never
 proxies artifact bytes on the durable-context path. The supported
 MIME contract for browser-rendered artifacts (image, audio, video,
-generic-binary download) lives in
+text/JSON preview, browser-native PDF, MIDI / MusicXML download-only,
+and generic-binary download) lives in
 [../architecture/demo_app_design.md](../architecture/demo_app_design.md)
 and [../tools/minio.md](../tools/minio.md); model-weight or runtime
 formats are not upload MIME families.
+
+The May 28, 2026 routed Linux GPU E2E flow validates the server-side
+`/api/objects/download` grant disposition for those MIME classes. The
+remaining open work is the browser click/upload/render lifecycle.
 
 The historical `/objects/:objectRef` route is **retired** in Sprint
 7.7 and is not part of the supported target surface.
@@ -171,6 +177,11 @@ The historical `/objects/:objectRef` route is **retired** in Sprint
 - `infernix test integration` covers the `emptyDir` LRU eviction
   policy in the adapter helper: sustained load does not exhaust
   ephemeral storage and does not restart the engine pod.
+- The May 28, 2026 Linux GPU routed E2E run covers `/api/objects`
+  grant minting from a real Keycloak JWT and same-user routed
+  presigned MinIO PUT/GET byte equality. A same-day follow-on covers
+  cross-user object-prefix isolation for two real Keycloak users with
+  the same context id and display name.
 - Production-shape test (`demo_ui = false`) confirms `infernix-models`
   is present, `infernix-demo-objects` is absent, no daemon has a PVC,
   and the `/objects/:objectRef` route is not registered.

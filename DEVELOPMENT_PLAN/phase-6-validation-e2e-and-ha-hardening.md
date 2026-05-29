@@ -60,9 +60,10 @@ upstream behavior, persists cluster state before later Linux rollout phases, own
 substrate preflight in the binary command, reuses a persistent Linux chart-archive cache, and
 performs the targeted Pulsar claim-root reset when the known retained ZooKeeper epoch-state
 corruption blocks bootstrap. The current lifecycle skips broad pre-Harbor support-image preloads
-on supported lanes and follows the stricter Harbor-first boundary where only Harbor-required
-services may pull upstream before Harbor is responsive. Recorded validation for this phase covers
-the governed
+on supported lanes, may hydrate and stream only the narrow Harbor warmup dependency set into Linux
+Kind workers before Helm warmup, and follows the stricter Harbor-first boundary where only
+Harbor-required services may pull upstream before Harbor is responsive. Recorded validation for
+this phase covers the governed
 `linux-cpu` and `linux-gpu` bootstrap surfaces. Recorded Apple validation on May 11, 2026 reran
 cleanly through `./bootstrap/apple-silicon.sh doctor`, `build`, `up`, `status`, `test`, and
 `down`. Current Apple routed Playwright validation runs host-native `npm exec` against the
@@ -245,8 +246,8 @@ browser surface through the shared edge.
   `INFERNIX_EXPECT_API_UPSTREAM_MODE` env vars are retired by Sprint 3.10; the same spec covers
   every substrate by reading typed fixture data from a Dhall-decoded JSON written to the
   repo-relative `.data/runtime/playwright-fixture.json` at test setup (resolving to
-  `/workspace/.data/runtime/playwright-fixture.json` inside the Linux launcher; Playwright reads
-  `test.info().project.use.*`)
+  `/workspace/.data/runtime/playwright-fixture.json` inside the Linux launcher; Playwright exposes
+  it as the `infernixFixture` option fixture)
 - supported Playwright invocations use `npm --prefix web exec -- playwright ...`
 - E2E covers publication details, model selection, manual inference submission, and result rendering
 

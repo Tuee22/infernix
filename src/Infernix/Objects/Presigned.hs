@@ -34,13 +34,13 @@ import Infernix.Web.Contracts (ObjectRef (..))
 -- @infernix-minio.platform.svc.cluster.local:9000@. @presignedScheme@ is
 -- @http@ for the supported in-cluster MinIO deployment (the chart does
 -- not provision TLS for the MinIO service) and @https@ for TLS-fronted
--- MinIO. Config loaders derive both fields from
--- @ClusterConfig.minio.endpoint@, stripping any @http://@ or
--- @https://@ prefix and recording the scheme separately so the minted
--- URL points at the right transport.
+-- MinIO. @presignedPathPrefix@ is not part of the SigV4 canonical path;
+-- it is only prepended to the public URL for Gateway prefixes that rewrite
+-- away before the request reaches MinIO.
 data PresignedUrlConfig = PresignedUrlConfig
   { presignedScheme :: Text,
     presignedEndpoint :: Text,
+    presignedPathPrefix :: Text,
     presignedRegion :: Text,
     presignedAccessKeyId :: Text,
     presignedSecretAccessKey :: Text,
@@ -126,7 +126,8 @@ presignedUrlForRequest config request =
       signature = hmacHex signingKey (TextEncoding.encodeUtf8 stringToSign)
       finalQuery = canonicalQuery <> "&X-Amz-Signature=" <> signature
       scheme = presignedScheme config
-   in PresignedUrl (scheme <> "://" <> host <> canonicalPath <> "?" <> finalQuery)
+      publicPath = normalizePathPrefix (presignedPathPrefix config) <> canonicalPath
+   in PresignedUrl (scheme <> "://" <> host <> publicPath <> "?" <> finalQuery)
 
 presignedPutUrl :: PresignedUrlConfig -> UTCTime -> ObjectRef -> PresignedUrl
 presignedPutUrl config now object =
@@ -199,7 +200,6 @@ uriEncode = Text.concatMap encodeChar
         || c == '_'
         || c == '.'
         || c == '~'
-        || c == '/'
     hexByte n =
       let highNibble = n `div` 16
           lowNibble = n `mod` 16
@@ -207,3 +207,11 @@ uriEncode = Text.concatMap encodeChar
     hexDigit n
       | n < 10 = toEnum (fromEnum '0' + n)
       | otherwise = toEnum (fromEnum 'A' + n - 10)
+
+normalizePathPrefix :: Text -> Text
+normalizePathPrefix raw
+  | Text.null stripped = ""
+  | "/" `Text.isPrefixOf` stripped = Text.dropWhileEnd (== '/') stripped
+  | otherwise = "/" <> Text.dropWhileEnd (== '/') stripped
+  where
+    stripped = Text.strip raw

@@ -6,9 +6,9 @@ subscriptions, the result-bridge writeback to the conversation log, and
 the lazy model-weight bootstrap subscription.
 
 No PVC — coordinator state is broker-side (Pulsar subscription cursors
-plus producer-side dedup). The deployment is demo-gated except in
-production where the bootstrap subscription still runs on a single
-coordinator-shape replica to honour the engine-only deployment shape.
+plus producer-side dedup). The deployment is demo-gated; production
+`demo_ui = false` clusters omit the coordinator entirely and run only
+the engine daemon among infernix-owned workloads.
 */}}
 {{- if and .Values.daemonSplit.enabled .Values.coordinator.enabled }}
 apiVersion: apps/v1

@@ -174,6 +174,11 @@ spec = do
             { clientSubmitPromptContextId: ContextId { unContextId: "c-1" }
             , clientSubmitPromptPayload: sampleUserPromptPayload
             })
+      roundtripJson "ClientRecordUpload"
+        (ClientRecordUpload
+            { clientRecordUploadContextId: ContextId { unContextId: "c-1" }
+            , clientRecordUploadPayload: sampleUserUploadPayload
+            })
       roundtripJson "ClientCreateContext"
         (ClientCreateContext
             { clientCreateContextId: ContextId { unContextId: "c-1" }

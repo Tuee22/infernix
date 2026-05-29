@@ -33,8 +33,22 @@ data:
           "directAccessGrantsEnabled": false,
           "serviceAccountsEnabled": false,
           "implicitFlowEnabled": false,
-          "redirectUris": ["/*"],
-          "webOrigins": ["+"],
+          "redirectUris": [
+            "/*",
+            "http://127.0.0.1:{{ .Values.gateway.publishedPort }}/*",
+            "http://localhost:{{ .Values.gateway.publishedPort }}/*",
+            "http://infernix-linux-cpu-control-plane:{{ .Values.gateway.publishedNodePort }}/*",
+            "http://infernix-linux-gpu-control-plane:{{ .Values.gateway.publishedNodePort }}/*",
+            "http://infernix-apple-silicon-control-plane:{{ .Values.gateway.publishedNodePort }}/*"
+          ],
+          "webOrigins": [
+            "+",
+            "http://127.0.0.1:{{ .Values.gateway.publishedPort }}",
+            "http://localhost:{{ .Values.gateway.publishedPort }}",
+            "http://infernix-linux-cpu-control-plane:{{ .Values.gateway.publishedNodePort }}",
+            "http://infernix-linux-gpu-control-plane:{{ .Values.gateway.publishedNodePort }}",
+            "http://infernix-apple-silicon-control-plane:{{ .Values.gateway.publishedNodePort }}"
+          ],
           "protocol": "openid-connect",
           "attributes": {
             "pkce.code.challenge.method": "S256",

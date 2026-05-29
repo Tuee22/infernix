@@ -31,6 +31,10 @@
   log a targeted Patroni replica reinitialization from the current leader and wait for those
   replicas to resync; treat that as supported retained-state repair rather than hard bootstrap
   failure
+- if the retained Harbor PostgreSQL Patroni reinitialization command itself fails because the
+  upstream CLI or pod runtime throws during the repair attempt, `cluster up` logs the failure and
+  continues the rollout wait; classify the repair attempt as recoverable unless the owning
+  lifecycle command exits non-zero or reports completion with Harbor still unready
 - on the Apple host-native path, the command reconciles Homebrew-managed Colima, Docker CLI,
   `kind`, `kubectl`, and `helm` before it attempts the real Kind workflow, reconciles Colima to
   the supported `8 CPU / 16 GiB` profile before Docker-backed work, and verifies the selected
@@ -69,6 +73,12 @@
 - Harbor image publication waits for registry readiness before Docker push attempts and retries
   transient push resets with bounded backoff; treat registry-reset logs during large image pushes
   as recoverable until the command exhausts that retry budget
+- upstream multi-arch chart images may be published through the digest-pinned `skopeo copy`
+  fallback when Docker's containerd image store leaves the original tag non-inspectable or
+  non-taggable after a successful pull; the publisher reuses an already discovered linux/amd64
+  digest when available so later Docker Hub manifest-rate limits do not force a second manifest
+  request; this is expected recovery as long as Harbor pull verification succeeds for the
+  resulting content-addressed tag
 - repo-owned local images are published before third-party chart dependencies and re-tagged from
   their source image before each bounded push retry, so a missing transient target tag is
   recoverable while the source image remains present
@@ -78,6 +88,13 @@
 - on the real Kind path, confirm that Harbor is the first deployed service on a pristine cluster
   and that only Harbor-required backend services pull from public container repositories before
   Harbor is ready
+- on Linux Kind lanes, `cluster up` may hydrate missing Docker Hub warmup dependency images from
+  `mirror.gcr.io`, tag them under the original chart reference, and stream warmup images into the
+  worker before the Helm warmup pass by piping `docker image save` into
+  `docker exec -i <worker> ctr --namespace=k8s.io images import -`; missing non-Docker-Hub
+  host-cache entries fall back to normal chart pulls, and the flow intentionally avoids `docker cp`
+  because CUDA-enabled Kind workers can reject copied paths through the NVIDIA runtime mount
+  boundary
 - after Harbor is responsive, confirm that every remaining image is mirrored or published into
   Harbor before its workload rolls out, including the active `infernix` runtime image on every
   substrate
@@ -89,11 +106,11 @@
   launcher
 - confirm that `cluster up` preloads Harbor-backed final image refs onto the Kind worker before the
   remaining non-Harbor workloads begin their final rollout
-- confirm that `infernix kubectl get pods -n platform` shows the Envoy Gateway data plane, the
-  `infernix-coordinator` and `infernix-engine` Deployments (per the three-role daemon model in
-  [../architecture/daemon_topology.md](../architecture/daemon_topology.md)), the Harbor
-  application-plane workloads, the MinIO statefulset, the Pulsar statefulsets, and the
-  PostgreSQL operator-managed members
+- confirm that `infernix kubectl get pods -n platform` shows the Envoy Gateway data plane,
+  the Harbor application-plane workloads, the MinIO statefulset, the Pulsar statefulsets,
+  the PostgreSQL operator-managed members, and the infernix-owned daemon set for the active
+  shape: `infernix-coordinator` plus `infernix-engine` when `demo_ui = true`, and only
+  `infernix-engine` when `demo_ui = false`
 - confirm `infernix kubectl get deployments -n platform` returns `infernix-coordinator` and
   `infernix-engine` (and `infernix-demo` when `demo_ui = true`); under `demo_ui = false` only
   `infernix-engine` is present
@@ -115,6 +132,9 @@
   `Programmed=True`, and `infernix kubectl -n platform get envoyproxy infernix-edge` is present
 - when the active `.dhall` enables the demo UI (`demo_ui = True`), also confirm that
   `infernix-demo` is present; when it does not, confirm `infernix-demo` is absent
+- when `demo_ui = True`, confirm `infernix-keycloak` is present, the Keycloak Patroni cluster is
+  healthy, and `/auth` serves the routed Keycloak login page; the local demo default is one
+  Keycloak application pod backed by HA Patroni Postgres
 - confirm that `infernix kubectl get storageclass` shows only `infernix-manual`
 - confirm routes with `infernix cluster status`
 - inspect `./.data/runtime/publication.json` or `GET /api/publication` to confirm the routed
@@ -144,7 +164,8 @@ constraints, or normal Kubernetes convergence.
 |------------------|----------------|-------------------|
 | `nvkind hit its known configmap persistence bug` | Recoverable only when the cluster was actually created and the repo-owned Linux GPU node bootstrap finishes | Treat as handled when `cluster up complete` follows. Treat as fatal if the command exits non-zero, if the cluster was not created, or if later `linux-gpu` node setup fails. This warning remains documented because the repository can work around the `nvkind` bug but cannot remove the upstream `nvkind` failure mode by itself. |
 | Harbor, MinIO, PostgreSQL, or Pulsar readiness probe failures, startup `BackOff`, volume-binding races, or early scheduling warnings | Normal Kubernetes convergence during bootstrap, retained-state repair, image swap, or final rollout | Treat as recoverable while `cluster up`, `test integration`, `test e2e`, or `test all` is still active and the lifecycle heartbeat continues. Treat as failure when the owning command exits non-zero, the heartbeat stops refreshing across multiple monitor intervals, or pods remain unready after the command reports completion. |
-| Long Docker builds, Harbor image publication, or Kind-worker Harbor image preload | Expected long-running lifecycle work, especially on cold `linux-gpu` runs and during large Pulsar or runtime-image publication | Use `infernix cluster status` and its `lifecycleStatus`, `lifecyclePhase`, `lifecycleDetail`, and `lifecycleHeartbeatAt` fields before abandoning the run. Elapsed wall time alone is not evidence of failure. |
+| Long Docker builds, host-cached warmup image streaming, Harbor image publication, or Kind-worker Harbor image preload | Expected long-running lifecycle work, especially on cold `linux-gpu` runs and during large Pulsar or runtime-image publication | Use `infernix cluster status` and its `lifecycleStatus`, `lifecyclePhase`, `lifecycleDetail`, and `lifecycleHeartbeatAt` fields before abandoning the run. Elapsed wall time alone is not evidence of failure. |
+| Harbor PostgreSQL Patroni replica reinitialization command failure during retained-state repair | Recoverable retained-state repair fallback when the lifecycle continues waiting for Harbor readiness | Treat the logged repair-command exception as informational if the surrounding lifecycle later reaches `cluster up complete`. Treat it as actionable only when the owning command exits non-zero or Harbor remains unready after completion. |
 | `SystemOOM` events naming unrelated host processes | Host resource contention, not an accepted product warning | Stop unrelated memory-heavy workloads, increase memory or swap, and rerun the lifecycle. Repeated `SystemOOM` on an otherwise idle supported host is actionable environment failure even when the current run eventually passes. |
 | Docker Compose warning that Bake is configured but buildx is missing | Tooling regression after the substrate-image buildx fix | The host bootstrap installs `docker-buildx-plugin`, and the Linux substrate image installs `docker-buildx`. Rebuild the substrate image if the warning appears from an old image. If it appears from a freshly built image, treat it as a regression to fix rather than accepted lifecycle noise. |
 | GHCup `[ Warn ] No GHCup update available` during `get-ghcup` bootstrap | Upstream bootstrap no-op warning | The upstream installer runs `ghcup upgrade` after downloading the current `ghcup` binary and reports the no-op through its warning channel. Accept only when the pinned `ghc`, pinned `cabal`, and formatter `ghc` installs complete and the image build exits zero. Do not replace the supported `ghcup` path just to hide this upstream no-op. |
@@ -174,7 +195,9 @@ constraints, or normal Kubernetes convergence.
 
 When the active substrate's generated `.dhall` carries `demo_ui = true`, `cluster up`
 performs the following additional reconciliation steps (validated end-to-end on `linux-cpu`
-on May 22, 2026 and on `linux-gpu` on May 22, 2026):
+on May 22, 2026 and on `linux-gpu` on May 22, 2026; the routed SPA/publication and Keycloak
+self-registration smokes were revalidated on the clean rebuilt `linux-gpu` launcher on
+May 28, 2026):
 
 - deploys a Keycloak Helm release together with its dedicated Patroni Postgres cluster managed
   by the Percona operator; expects Harbor to be responsive first, then the Keycloak Patroni

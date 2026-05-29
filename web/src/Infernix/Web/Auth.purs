@@ -14,12 +14,11 @@
 -- | * Schedule a refresh before expiry so the WebSocket lifetime never
 -- |   straddles a token-expiry boundary.
 -- |
--- | Today's contract intentionally stops short of the full token
--- | exchange — that needs the Keycloak realm to be reachable from the
--- | browser, which only happens in the routed E2E lane. The skeleton
--- | here gives the SPA shell a typed 'TokenStore' it can hand to
--- | downstream modules; the realm exchange wiring lands together with
--- | the Sprint 7.15 Playwright E2E pass.
+-- | The routed SPA owns the PKCE redirect, authorization-code exchange,
+-- | and in-memory access-token handoff used by WebSocket and artifact
+-- | HTTP calls. Tokens are intentionally kept out of persistent storage;
+-- | only the short-lived PKCE verifier/state pair is held in
+-- | sessionStorage across the Keycloak redirect.
 module Infernix.Web.Auth
   ( TokenStore
   , RealmConfig
@@ -30,6 +29,7 @@ module Infernix.Web.Auth
   , clearToken
   , beginLoginRedirect
   , completeRedirect
+  , clearBrowserAuthSession
   ) where
 
 import Prelude
@@ -51,7 +51,7 @@ type RealmConfig =
 defaultInfernixRealmConfig :: RealmConfig
 defaultInfernixRealmConfig =
   { issuerUrl: "/auth/realms/infernix"
-  , clientId: "infernix-demo"
+  , clientId: "infernix-spa"
   , redirectUri: "/"
   }
 
@@ -71,15 +71,24 @@ writeToken (TokenStore ref) token = Ref.write (Just token) ref
 clearToken :: TokenStore -> Effect Unit
 clearToken (TokenStore ref) = Ref.write Nothing ref
 
--- | Begin the OIDC redirect. Placeholder until the Sprint 7.15 E2E
--- | pass wires the full PKCE handshake. Today the function logs the
--- | intent so the SPA shell can render an explicit "login pending"
--- | state without crashing.
 beginLoginRedirect :: RealmConfig -> Effect Unit
-beginLoginRedirect _config = pure unit
+beginLoginRedirect = beginLoginRedirectImpl
 
 -- | Inspect the current page URL for an authorization-code redirect
--- | parameter and, when present, exchange it for an access token.
--- | Placeholder until Sprint 7.15.
-completeRedirect :: TokenStore -> RealmConfig -> Effect (Maybe String)
-completeRedirect _store _config = pure Nothing
+-- | parameter and, when present, exchange it for an access token. The
+-- | exchange is browser-async, so the caller supplies a callback that
+-- | mounts the token into the rest of the SPA once the fetch completes.
+completeRedirect :: TokenStore -> RealmConfig -> (String -> Effect Unit) -> Effect Unit
+completeRedirect store config onToken =
+  completeRedirectImpl config \token -> do
+    writeToken store token
+    onToken token
+
+foreign import beginLoginRedirectImpl :: RealmConfig -> Effect Unit
+
+foreign import completeRedirectImpl
+  :: RealmConfig
+  -> (String -> Effect Unit)
+  -> Effect Unit
+
+foreign import clearBrowserAuthSession :: Effect Unit

@@ -34,6 +34,7 @@ let PulsarConfig =
 
 let MinioConfig =
       { endpoint : Url
+      , presignPublicEndpoint : Url
       , region : Text
       , presignExpirySeconds : Natural
       , modelsBucket : Text
@@ -121,7 +122,7 @@ exact retired names live only in the deletion ledger.
 | Retired source family | New Dhall field family | Read by |
 |-----------------------|------------------------|---------|
 | Pulsar admin, WebSocket, HTTP, service URL, tenant, and namespace inputs | `pulsar.*` | `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Conversation/Topic.hs` |
-| MinIO endpoint, region, presign-expiry, and model-bucket inputs | `minio.*` | `src/Infernix/Demo/Api.hs`, `src/Infernix/Runtime/Pulsar.hs`, `python/adapters/model_cache.py` |
+| MinIO endpoint, public presign endpoint, region, presign-expiry, and model-bucket inputs | `minio.*` | `src/Infernix/Demo/Api.hs`, `src/Infernix/Runtime/Pulsar.hs`, `python/adapters/model_cache.py` |
 | MinIO access-key and secret-key inputs | `readFile (SecretsConfig.minio.credentialsPath)` -> `accessKey` / `secretKey` | `src/Infernix/Demo/Api.hs`, `src/Infernix/Runtime/Pulsar.hs` |
 | Keycloak base URL, realm, client id, and JWKS URL inputs | `keycloak.*` | `src/Infernix/Demo/Auth.hs`, `src/Infernix/Demo/Api.hs` |
 | Demo bind host, bridge mode, publication state path, and demo-config path inputs | `demoBackend.*` | `src/Infernix/DemoCLI.hs`, `src/Infernix/Service.hs` |
@@ -129,14 +130,27 @@ exact retired names live only in the deletion ledger.
 | Engine command override inputs | `engine.commandOverrides` | `src/Infernix/Runtime/Worker.hs` |
 | Coordinator catalog-source, control-plane-context, daemon-location, and daemon-role inputs | `coordinator.*` plus the substrate `.dhall` role field | `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Service.hs` |
 
+`keycloak.baseUrl` is the issuer-facing public base URL and includes the routed `/auth` prefix
+when the local Gateway publishes Keycloak there. `keycloak.clientId` is the public SPA client id
+(`infernix-spa` for the supported demo realm). `keycloak.jwksUrl` is the backend fetch URL for
+the same realm's signing keys; it may use the in-cluster Keycloak Service, but it must include the
+Service port and the same `/auth/realms/<realm>/protocol/openid-connect/certs` path.
+
+`minio.endpoint` is the in-cluster Service URL used by coordinator/bootstrap code that talks to
+MinIO from inside Kubernetes. `minio.presignPublicEndpoint` is the browser-facing base used only
+when the demo backend mints `/api/objects` grants; on the local Gateway it is
+`<edge>/minio/s3`, and the route rewrites that prefix away before the request reaches MinIO.
+
 ## Validation
 
 - `infernix lint chart` rejects any `env:` block in
   `chart/templates/deployment-{coordinator,engine,demo}.yaml`.
 - `infernix lint files` rejects any new project-prefixed env lookup in the Haskell sources.
-- `infernix test integration` round-trips a complete `/api/objects` flow on `linux-gpu`,
-  proving the coordinator + demo + engine pods all read their config from the Dhall file +
-  Secret files and never consult `env`.
+- The May 28, 2026 Linux GPU routed E2E run proves the demo pod reads the mounted
+  `keycloak.*` fields correctly by exchanging a real routed Keycloak auth code, rejecting a
+  malformed bearer token, accepting the real access token for `/api/objects` upload/download grant
+  minting, and using `minio.presignPublicEndpoint` for same-user routed presigned PUT/GET byte
+  equality plus cross-user object-prefix isolation.
 
 ## Cross-References
 

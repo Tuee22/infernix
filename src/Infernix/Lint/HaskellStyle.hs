@@ -180,6 +180,8 @@ checkSourceReadability repoRoot sourceFile = do
         <> aliasCommentViolations sourceFile numberedLines
         <> envFunctionViolations sourceFile numberedLines
         <> bareNameProcViolations sourceFile numberedLines
+        <> engineRuntimeBoundaryViolations sourceFile numberedLines
+        <> sharedPhase7BoundaryViolations sourceFile numberedLines
     )
 
 -- | Phase 6 Sprint 6.28 (initial landing — May 25, 2026): reject new
@@ -299,6 +301,113 @@ bareNameProcExemptedFiles =
     "src/Infernix/Workflow.hs"
   ]
 
+-- | Phase 7 Sprint 7.8: keep the engine runtime surface from
+-- importing frontend, coordinator, auth, object-presign, or WebSocket
+-- modules. `Runtime.Pulsar` still owns role orchestration today, so
+-- this gate is scoped to the concrete engine runtime modules.
+engineRuntimeBoundaryViolations :: FilePath -> [(Int, String)] -> [String]
+engineRuntimeBoundaryViolations sourceFile numberedLines
+  | sourceFile `notElem` engineRuntimeBoundaryFiles = []
+  | otherwise =
+      [ sourceFile <> ":" <> show lineNumber <> ": engine runtime module must not import `" <> forbiddenModule <> "`"
+      | (lineNumber, lineValue) <- numberedLines,
+        let trimmedLine = trimWhitespace lineValue,
+        not (isCommentLine lineValue),
+        "import " `isPrefixOfString` trimmedLine,
+        forbiddenModule <- forbiddenEngineRuntimeImports,
+        forbiddenModule `isInfixOf` trimmedLine
+      ]
+
+engineRuntimeBoundaryFiles :: [FilePath]
+engineRuntimeBoundaryFiles =
+  [ "src/Infernix/Runtime.hs",
+    "src/Infernix/Runtime/Cache.hs",
+    "src/Infernix/Runtime/Worker.hs"
+  ]
+
+forbiddenEngineRuntimeImports :: [String]
+forbiddenEngineRuntimeImports =
+  [ "Infernix.Demo.",
+    "Infernix.Auth.Jwt",
+    "Infernix.Objects.Presigned",
+    "Infernix.Dispatch.SingleFlight",
+    "Infernix.Bridge.Result",
+    "Infernix.Bootstrap.Models",
+    "Network.WebSockets"
+  ]
+
+-- | Phase 7 shared-library modules must remain product/runtime agnostic.
+-- Conversation primitives are allowed to depend on generated wire contracts,
+-- but not on demo application modules. The pure dispatcher/result/bootstrap
+-- helpers must also stay out of runtime orchestration, auth, object-presign,
+-- and WebSocket concerns.
+sharedPhase7BoundaryViolations :: FilePath -> [(Int, String)] -> [String]
+sharedPhase7BoundaryViolations sourceFile numberedLines =
+  case lookup sourceFile sharedPhase7BoundaryFiles of
+    Nothing -> []
+    Just forbiddenImports ->
+      [ sourceFile <> ":" <> show lineNumber <> ": shared Phase 7 module must not import `" <> forbiddenModule <> "`"
+      | (lineNumber, lineValue) <- numberedLines,
+        let trimmedLine = trimWhitespace lineValue,
+        not (isCommentLine lineValue),
+        "import " `isPrefixOfString` trimmedLine,
+        forbiddenModule <- forbiddenImports,
+        forbiddenModule `isInfixOf` trimmedLine
+      ]
+
+sharedPhase7BoundaryFiles :: [(FilePath, [String])]
+sharedPhase7BoundaryFiles =
+  map conversationBoundaryFile conversationPrimitiveFiles
+    <> [ ( "src/Infernix/Dispatch/SingleFlight.hs",
+           productAgnosticHelperForbiddenImports
+         ),
+         ( "src/Infernix/Dispatch/ContextModelMap.hs",
+           productAgnosticHelperForbiddenImports
+         ),
+         ( "src/Infernix/Bridge/Result.hs",
+           productAgnosticHelperForbiddenImports
+         ),
+         ( "src/Infernix/Bootstrap/Models.hs",
+           productAgnosticHelperForbiddenImports
+         )
+       ]
+
+conversationBoundaryFile :: FilePath -> (FilePath, [String])
+conversationBoundaryFile sourceFile =
+  (sourceFile, conversationForbiddenImports)
+
+conversationPrimitiveFiles :: [FilePath]
+conversationPrimitiveFiles =
+  [ "src/Infernix/Conversation/Event.hs",
+    "src/Infernix/Conversation/Hash.hs",
+    "src/Infernix/Conversation/Idempotency.hs",
+    "src/Infernix/Conversation/Reducer.hs",
+    "src/Infernix/Conversation/Topic.hs"
+  ]
+
+conversationForbiddenImports :: [String]
+conversationForbiddenImports =
+  [ "Infernix.Demo",
+    "Infernix.Runtime",
+    "Infernix.Auth.Jwt",
+    "Infernix.Objects.Presigned",
+    "Network.WebSockets"
+  ]
+
+productAgnosticHelperForbiddenImports :: [String]
+productAgnosticHelperForbiddenImports =
+  conversationForbiddenImports
+    <> [ "Infernix.Dispatch.SingleFlight",
+         "Infernix.Bridge.Result",
+         "Infernix.Bootstrap.Models"
+       ]
+
+isPrefixOfString :: String -> String -> Bool
+isPrefixOfString expected value =
+  case stripPrefix expected value of
+    Just _ -> True
+    Nothing -> False
+
 hangingCaseViolations :: FilePath -> [(Int, String)] -> [String]
 hangingCaseViolations sourceFile numberedLines =
   [ sourceFile <> ":" <> show lineNumber <> ": avoid hanging `case`; move it into a named helper or make it the outer expression"
@@ -409,10 +518,10 @@ makeRelative root fullPath =
 
 runCommand :: FilePath -> FilePath -> [String] -> IO ()
 runCommand workingDirectory command args = do
-  (exitCode, _, stderrOutput) <- readCreateProcessWithExitCode (proc command args) {cwd = Just workingDirectory} ""
+  (exitCode, stdoutOutput, stderrOutput) <- readCreateProcessWithExitCode (proc command args) {cwd = Just workingDirectory} ""
   case exitCode of
     ExitSuccess -> pure ()
-    _ -> ioError (userError ("command failed: " <> command <> " " <> unwords args <> "\n" <> stderrOutput))
+    _ -> ioError (userError ("command failed: " <> command <> " " <> unwords args <> "\n" <> stdoutOutput <> stderrOutput))
 
 stripPrefix :: String -> String -> Maybe String
 stripPrefix [] value = Just value

@@ -694,10 +694,11 @@ rebuildable.
 ## Messaging and Lane Model
 
 - the supported production topic contract centers on the configured request topics, result topic,
-  daemon role metadata, and any Apple host batch topic carried in the active `.dhall`; the
+  daemon role metadata, and the optional batch handoff topic carried in the active `.dhall`; the
   generated defaults are one `inference.request.<runtime-mode>` topic family, one
-  `inference.result.<runtime-mode>` topic family, and, on Apple, one
-  `inference.batch.apple-silicon.host` topic
+  `inference.result.<runtime-mode>` topic family, `inference.batch.linux-cpu` /
+  `inference.batch.linux-gpu` for Linux coordinator-to-engine handoff, and
+  `inference.batch.apple-silicon.host` for Apple host-native handoff
 - request routing is lane-oriented: one engine, one model, one device class or allocation, one
   runtime-owned execution stream
 - engine-specific workers remain responsible for batching and execution internals after Infernix

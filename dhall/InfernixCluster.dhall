@@ -29,6 +29,7 @@ let PulsarConfig =
 
 let MinioConfig =
       { endpoint : Text
+      , presignPublicEndpoint : Text
       , region : Text
       , presignExpirySeconds : Natural
       , modelsBucket : Text

@@ -5,6 +5,7 @@ module Infernix.Cluster.PublishImages
     PublishedImage,
     buildHarborOverridesValue,
     contentAddressTagFromInspectPayload,
+    contentAddressTagFromManifestPayload,
     dockerHubMirrorRef,
     ensureLocalImageAvailable,
     defaultHarborPublishOptions,
@@ -18,7 +19,7 @@ where
 import Control.Applicative ((<|>))
 import Control.Concurrent (threadDelay)
 import Control.Exception (SomeException, try)
-import Control.Monad (unless, when)
+import Control.Monad (unless)
 import Data.Aeson
   ( FromJSON (parseJSON),
     Value,
@@ -167,39 +168,45 @@ publishImage ::
   String ->
   IO (String, PublishedImage)
 publishImage manager options commandMonitorFactory sourceImage = do
-  ensureLocalImageAvailable options commandMonitorFactory sourceImage
-  targetTag <- contentAddressTag options sourceImage
+  (maybeSourceDigest, fallbackSourceImage) <- ensureLocalImageAvailable options commandMonitorFactory sourceImage
+  targetTag <-
+    case maybeSourceDigest of
+      Just sourceDigest -> pure (replaceColon sourceDigest)
+      Nothing -> contentAddressTag options sourceImage
   let repositoryPath = normalizeRepositoryPath sourceImage
       publishedRepository = harborHost options <> "/" <> harborProject options <> "/" <> repositoryPath
       clientRepository = harborClientHost options <> "/" <> harborProject options <> "/" <> repositoryPath
-  publishIfNeeded manager options commandMonitorFactory sourceImage clientRepository repositoryPath targetTag
+  publishIfNeeded manager options commandMonitorFactory maybeSourceDigest fallbackSourceImage sourceImage clientRepository repositoryPath targetTag
   pure (sourceImage, (publishedRepository, targetTag))
 
 -- type CommandMonitorFactory = String -> IO (Maybe ProcessMonitor.CommandMonitor)
-ensureLocalImageAvailable :: HarborPublishOptions -> CommandMonitorFactory -> String -> IO ()
+ensureLocalImageAvailable :: HarborPublishOptions -> CommandMonitorFactory -> String -> IO (Maybe String, String)
 ensureLocalImageAvailable options commandMonitorFactory imageRef = do
   maybePresent <- tryRunCommand (harborDockerCommand options) ["image", "inspect", imageRef] ""
-  case maybePresent of
-    Right _ -> pure ()
-    Left _ ->
-      -- Phase 7 Sprint 7.7 follow-on (May 24, 2026 afternoon): on
-      -- Docker 29.x + the containerd snapshotter image store,
-      -- @docker pull <multi-arch-tag>@ reports success but the
-      -- post-pull @docker image inspect@ still fails because the
-      -- snapshotter stores the manifest list rather than a
-      -- single-platform image. The supported flow for multi-arch
-      -- upstream images is to skip the post-pull inspect gate (the
-      -- pull itself succeeded; the inspect-failure surface is the
-      -- supported signal to switch to the digest-pinned path) and
-      -- jump straight to the @pinLocalImageToAmd64@ helper, which
-      -- runs @docker manifest inspect@ + @docker pull <image>\@<amd64-digest>@
-      -- + @docker tag@ so the subsequent @docker push@ sees a
-      -- single-platform local image. For non-multi-arch images we
-      -- keep the strict requireLocalImagePresent gate because their
-      -- pull-then-inspect cycle is the supported readiness signal.
-      if isUpstreamMultiArchImage imageRef
-        then pullUpstreamMultiArchImage options commandMonitorFactory imageRef
-        else pullImageWithFallback options commandMonitorFactory imageRef
+  manifestSourceImage <-
+    case maybePresent of
+      Right _ -> pure imageRef
+      Left _ ->
+        -- Phase 7 Sprint 7.7 follow-on (May 24, 2026): on
+        -- Docker 29.x + the containerd snapshotter image store,
+        -- @docker pull <multi-arch-tag>@ reports success but the
+        -- post-pull @docker image inspect@ still fails because the
+        -- snapshotter stores the manifest list rather than a
+        -- single-platform image. The supported flow for multi-arch
+        -- upstream images is to skip the post-pull inspect gate (the
+        -- pull itself succeeded; the inspect-failure surface is the
+        -- supported signal to switch to the digest-pinned path) and
+        -- jump straight to the @pinLocalImageToAmd64@ helper, which
+        -- runs @docker manifest inspect@ + @docker pull <image>\@<amd64-digest>@
+        -- + @docker tag@ so the subsequent @docker push@ sees a
+        -- single-platform local image. For non-multi-arch images we
+        -- keep the strict requireLocalImagePresent gate because their
+        -- pull-then-inspect cycle is the supported readiness signal.
+        if isUpstreamMultiArchImage imageRef
+          then pullUpstreamMultiArchImage options commandMonitorFactory imageRef
+          else do
+            pullImageWithFallback options commandMonitorFactory imageRef
+            pure imageRef
   -- Phase 7 Sprint 7.7 follow-on: with Docker 29.x + the containerd
   -- snapshotter image store, @docker push@ of a multi-arch upstream
   -- image fails with "image with reference X was found but does not
@@ -211,23 +218,48 @@ ensureLocalImageAvailable options commandMonitorFactory imageRef = do
   -- linux/amd64 digest from the upstream manifest list, pull that
   -- specific digest, and re-tag it under the original tag name so the
   -- subsequent @docker push@ sees a single-platform local image.
-  when (isUpstreamMultiArchImage imageRef) $
-    pinLocalImageToAmd64 options commandMonitorFactory imageRef
+  if isUpstreamMultiArchImage imageRef
+    then do
+      maybePinnedSource <- pinLocalImageToAmd64 options commandMonitorFactory imageRef manifestSourceImage
+      case maybePinnedSource of
+        Just (amd64Digest, digestSourceImage) -> pure (Just amd64Digest, digestSourceImage)
+        Nothing -> pure (Nothing, manifestSourceImage)
+    else pure (Nothing, imageRef)
 
 -- | Pull a multi-arch upstream image without requiring the post-pull
 -- inspect to succeed. The supported invariant is that @docker pull@
--- itself returns success; downstream code ('pinLocalImageToAmd64' +
--- 'pushUpstreamMultiArchViaImagetools') handles the
--- containerd-snapshotter-specific inspectability gap.
+-- itself returns success, either from the original reference or its
+-- Docker Hub mirror. The returned reference is the manifest source that
+-- downstream code ('pinLocalImageToAmd64' +
+-- 'pushUpstreamMultiArchViaImagetools') should keep using so a Docker
+-- Hub rate limit does not force a later registry roundtrip.
 -- type CommandMonitorFactory = String -> IO (Maybe ProcessMonitor.CommandMonitor)
-pullUpstreamMultiArchImage :: HarborPublishOptions -> CommandMonitorFactory -> String -> IO ()
+pullUpstreamMultiArchImage :: HarborPublishOptions -> CommandMonitorFactory -> String -> IO String
 pullUpstreamMultiArchImage options commandMonitorFactory imageRef = do
   pullMonitor <- commandMonitorFactory ("docker pull " <> imageRef)
   pullResult <- tryRunCommandMaybeMonitored (harborDockerCommand options) ["pull", imageRef] "" pullMonitor
   case pullResult of
-    Right _ -> pure ()
+    Right _ -> pure imageRef
     Left pullFailure ->
-      failWith ("docker pull failed for " <> imageRef <> "\n" <> pullFailure)
+      case dockerHubMirrorRef imageRef of
+        Nothing ->
+          failWith ("docker pull failed for " <> imageRef <> "\n" <> pullFailure)
+        Just mirrorRef -> do
+          mirrorMonitor <- commandMonitorFactory ("docker pull " <> mirrorRef)
+          mirrorPullResult <- tryRunCommandMaybeMonitored (harborDockerCommand options) ["pull", mirrorRef] "" mirrorMonitor
+          case mirrorPullResult of
+            Right _ -> pure mirrorRef
+            Left mirrorFailure ->
+              failWith
+                ( "docker pull failed for "
+                    <> imageRef
+                    <> "\n"
+                    <> pullFailure
+                    <> "\nmirror fallback failed for "
+                    <> mirrorRef
+                    <> "\n"
+                    <> mirrorFailure
+                )
 
 -- type CommandMonitorFactory = String -> IO (Maybe ProcessMonitor.CommandMonitor)
 pullImageWithFallback :: HarborPublishOptions -> CommandMonitorFactory -> String -> IO ()
@@ -301,19 +333,20 @@ publishIfNeeded ::
   Manager ->
   HarborPublishOptions ->
   CommandMonitorFactory ->
+  Maybe String ->
+  String ->
   String ->
   String ->
   String ->
   String ->
   IO ()
-publishIfNeeded manager options commandMonitorFactory sourceImage clientRepository repositoryPath targetTag = do
+publishIfNeeded manager options commandMonitorFactory maybeSourceDigest fallbackSourceImage sourceImage clientRepository repositoryPath targetTag = do
   let targetRef = clientRepository <> ":" <> targetTag
-  runCommand (harborDockerCommand options) ["tag", sourceImage, targetRef] ""
   tagPresent <- harborTagExists manager options repositoryPath targetTag
   if tagPresent
     then verifyRegistryPull manager options commandMonitorFactory targetRef
     else do
-      pushImageWithRetries manager options commandMonitorFactory sourceImage targetRef
+      pushImageWithRetries manager options commandMonitorFactory maybeSourceDigest fallbackSourceImage sourceImage targetRef
       verifyRegistryPull manager options commandMonitorFactory targetRef
 
 -- type CommandMonitorFactory = String -> IO (Maybe ProcessMonitor.CommandMonitor)
@@ -321,10 +354,12 @@ pushImageWithRetries ::
   Manager ->
   HarborPublishOptions ->
   CommandMonitorFactory ->
+  Maybe String ->
+  String ->
   String ->
   String ->
   IO ()
-pushImageWithRetries manager options commandMonitorFactory sourceImage targetRef = go pushAttempts ""
+pushImageWithRetries manager options commandMonitorFactory maybeSourceDigest fallbackSourceImage sourceImage targetRef = go pushAttempts ""
   where
     (targetRepository, _, targetTag) = breakRepositoryAndTag targetRef
     repositoryPath = normalizeRepositoryPath targetRepository
@@ -343,8 +378,33 @@ pushImageWithRetries manager options commandMonitorFactory sourceImage targetRef
     pushImageOnce = do
       retagResult <- tryRunCommand (harborDockerCommand options) ["tag", sourceImage, targetRef] ""
       case retagResult of
+        Left tagFailure
+          | isUpstreamMultiArchImage sourceImage -> do
+              imagetoolsResult <-
+                pushUpstreamMultiArchViaImagetools
+                  options
+                  commandMonitorFactory
+                  maybeSourceDigest
+                  fallbackSourceImage
+                  targetRef
+              case imagetoolsResult of
+                Right _ -> pure PushSucceeded
+                Left imagetoolsFailure ->
+                  recoverCompletedPush
+                    ( "docker tag failed for "
+                        <> sourceImage
+                        <> " as "
+                        <> targetRef
+                        <> "\n"
+                        <> tagFailure
+                        <> "\nfallback multi-arch copy failed:\n"
+                        <> imagetoolsFailure
+                    )
         Left tagFailure ->
-          pure (PushFailed ("docker tag failed for " <> sourceImage <> " as " <> targetRef <> "\n" <> tagFailure))
+          pure
+            ( PushFailed
+                ("docker tag failed for " <> sourceImage <> " as " <> targetRef <> "\n" <> tagFailure)
+            )
         Right _ -> do
           -- Phase 7 Sprint 7.7 follow-on (May 24, 2026): on Docker
           -- 29.x + containerd snapshotter, @docker push@ of a tag
@@ -355,9 +415,8 @@ pushImageWithRetries manager options commandMonitorFactory sourceImage targetRef
           -- found@ because the other platform manifests are not in
           -- the local store. The supported fallback is to copy the
           -- amd64 digest straight from the upstream registry into
-          -- Harbor via @docker buildx imagetools create@, which
-          -- bypasses the local docker store entirely and operates
-          -- on the registry API. See
+          -- Harbor via @skopeo copy@, which bypasses the local
+          -- docker store entirely and operates on the registry API. See
           -- 'pushUpstreamMultiArchViaImagetools' for the helper.
           monitor <- commandMonitorFactory ("docker push " <> targetRef)
           pushResult <- tryRunCommandMaybeMonitored (harborDockerCommand options) ["push", targetRef] "" monitor
@@ -369,11 +428,12 @@ pushImageWithRetries manager options commandMonitorFactory sourceImage targetRef
                     pushUpstreamMultiArchViaImagetools
                       options
                       commandMonitorFactory
-                      sourceImage
+                      maybeSourceDigest
+                      fallbackSourceImage
                       targetRef
                   case imagetoolsResult of
                     Right _ -> pure PushSucceeded
-                    Left imagetoolsFailure -> recoverCompletedPush (failureMessage <> "\nfallback imagetools failed:\n" <> imagetoolsFailure)
+                    Left imagetoolsFailure -> recoverCompletedPush (failureMessage <> "\nfallback multi-arch copy failed:\n" <> imagetoolsFailure)
               | otherwise -> recoverCompletedPush failureMessage
 
     recoverCompletedPush failureMessage = do
@@ -546,10 +606,40 @@ harborRepositoryUrl apiHost project repositoryPath =
 
 contentAddressTag :: HarborPublishOptions -> String -> IO String
 contentAddressTag options imageRef = do
-  payload <- captureCommand (harborDockerCommand options) ["image", "inspect", imageRef] ""
-  case contentAddressTagFromInspectPayload payload of
-    Right tagValue -> pure tagValue
-    Left err -> failWith err
+  inspectResult <- tryRunCommand (harborDockerCommand options) ["image", "inspect", imageRef] ""
+  case inspectResult of
+    Right payload ->
+      case contentAddressTagFromInspectPayload payload of
+        Right tagValue -> pure tagValue
+        Left err -> failWith err
+    Left inspectFailure
+      | isUpstreamMultiArchImage imageRef -> do
+          manifestResult <- tryRunCommand (harborDockerCommand options) ["manifest", "inspect", imageRef] ""
+          case manifestResult of
+            Right manifestPayload ->
+              case contentAddressTagFromManifestPayload manifestPayload of
+                Right tagValue -> pure tagValue
+                Left err -> failWith (err <> "\n" <> inspectFailure)
+            Left manifestFailure ->
+              failWith
+                ( "command failed: "
+                    <> harborDockerCommand options
+                    <> " image inspect "
+                    <> imageRef
+                    <> "\n"
+                    <> inspectFailure
+                    <> "\nmanifest fallback failed:\n"
+                    <> manifestFailure
+                )
+    Left inspectFailure ->
+      failWith
+        ( "command failed: "
+            <> harborDockerCommand options
+            <> " image inspect "
+            <> imageRef
+            <> "\n"
+            <> inspectFailure
+        )
 
 contentAddressTagFromInspectPayload :: String -> Either String String
 contentAddressTagFromInspectPayload payload = do
@@ -573,6 +663,12 @@ repoDigestTag inspection =
       Just (_, digestValue) <- [breakOn '@' repoDigestValue]
     ]
 
+contentAddressTagFromManifestPayload :: String -> Either String String
+contentAddressTagFromManifestPayload manifestPayload =
+  case extractAmd64Digest manifestPayload of
+    Just digestValue -> Right (replaceColon digestValue)
+    Nothing -> Left "manifest inspect did not include a linux/amd64 digest"
+
 -- | Pull the linux/amd64 sub-image from a multi-arch upstream and
 -- re-tag it under the original tag name so subsequent @docker push@
 -- works against a single-platform local image. See
@@ -587,49 +683,62 @@ repoDigestTag inspection =
 -- single-platform reference. The @rm@ is best-effort: an unknown-tag
 -- failure is benign (the tag wasn't present yet).
 -- type CommandMonitorFactory = String -> IO (Maybe ProcessMonitor.CommandMonitor)
-pinLocalImageToAmd64 :: HarborPublishOptions -> CommandMonitorFactory -> String -> IO ()
-pinLocalImageToAmd64 options commandMonitorFactory imageRef = do
-  inspectResult <- tryRunCommand (harborDockerCommand options) ["manifest", "inspect", imageRef] ""
-  case inspectResult of
-    Left _ -> pure ()
-    Right manifestJson ->
-      case extractAmd64Digest manifestJson of
-        Nothing -> pure ()
-        Just amd64Digest -> do
-          let imageWithoutTag = takeBefore ':' imageRef
-              imageByDigest = imageWithoutTag <> "@" <> amd64Digest
-          digestMonitor <- commandMonitorFactory ("docker pull --platform linux/amd64 " <> imageByDigest)
-          digestPullResult <-
-            tryRunCommandMaybeMonitored
-              (harborDockerCommand options)
-              ["pull", "--platform", "linux/amd64", imageByDigest]
-              ""
-              digestMonitor
-          case digestPullResult of
-            Left _ -> pure ()
-            Right _ -> do
-              -- Best-effort untag so 'docker tag' writes a fresh
-              -- single-platform reference rather than overlaying the
-              -- multi-arch manifest list still attached to the tag.
-              -- The @rm@ may fail benignly (the tag wasn't present).
-              _ <- tryRunCommand (harborDockerCommand options) ["image", "rm", "--no-prune", imageRef] ""
-              -- @docker tag <image>\@<digest> <image>:<tag>@ fails
-              -- under the Docker 29.x containerd snapshotter
-              -- because the digest reference is not directly
-              -- tag-able even after @docker pull@ succeeds. The
-              -- supported workaround is to look up the image ID via
-              -- @docker inspect <image>\@<digest> --format '{{.Id}}'@
-              -- (which DOES work after the digest pull) and tag the
-              -- resolved ID under the original ref.
-              idResult <- tryRunCommand (harborDockerCommand options) ["inspect", imageByDigest, "--format", "{{.Id}}"] ""
-              case idResult of
-                Right rawId -> do
-                  let imageId = trimNewlines rawId
-                  tagResult <- tryRunCommand (harborDockerCommand options) ["tag", imageId, imageRef] ""
-                  case tagResult of
-                    Right _ -> pure ()
-                    Left _ -> recoverOriginalTag options commandMonitorFactory imageRef
-                Left _ -> recoverOriginalTag options commandMonitorFactory imageRef
+pinLocalImageToAmd64 :: HarborPublishOptions -> CommandMonitorFactory -> String -> String -> IO (Maybe (String, String))
+pinLocalImageToAmd64 options commandMonitorFactory imageRef preferredManifestSource =
+  tryManifestSources manifestSources
+  where
+    manifestSources =
+      nub
+        ( preferredManifestSource
+            : case dockerHubMirrorRef imageRef of
+              Just mirrorRef -> [mirrorRef]
+              Nothing -> []
+        )
+
+    tryManifestSources [] = pure Nothing
+    tryManifestSources (manifestSource : rest) = do
+      inspectResult <- tryRunCommand (harborDockerCommand options) ["manifest", "inspect", manifestSource] ""
+      case inspectResult of
+        Left _ -> tryManifestSources rest
+        Right manifestJson ->
+          case extractAmd64Digest manifestJson of
+            Nothing -> tryManifestSources rest
+            Just amd64Digest -> do
+              let imageWithoutTag = takeBefore ':' manifestSource
+                  imageByDigest = imageWithoutTag <> "@" <> amd64Digest
+              digestMonitor <- commandMonitorFactory ("docker pull --platform linux/amd64 " <> imageByDigest)
+              digestPullResult <-
+                tryRunCommandMaybeMonitored
+                  (harborDockerCommand options)
+                  ["pull", "--platform", "linux/amd64", imageByDigest]
+                  ""
+                  digestMonitor
+              case digestPullResult of
+                Left _ -> tryManifestSources rest
+                Right _ -> do
+                  -- Best-effort untag so 'docker tag' writes a fresh
+                  -- single-platform reference rather than overlaying the
+                  -- multi-arch manifest list still attached to the tag.
+                  -- The @rm@ may fail benignly (the tag wasn't present).
+                  _ <- tryRunCommand (harborDockerCommand options) ["image", "rm", "--no-prune", imageRef] ""
+                  -- @docker tag <image>\@<digest> <image>:<tag>@ fails
+                  -- under the Docker 29.x containerd snapshotter
+                  -- because the digest reference is not directly
+                  -- tag-able even after @docker pull@ succeeds. The
+                  -- supported workaround is to look up the image ID via
+                  -- @docker inspect <image>\@<digest> --format '{{.Id}}'@
+                  -- (which DOES work after the digest pull) and tag the
+                  -- resolved ID under the original ref.
+                  idResult <- tryRunCommand (harborDockerCommand options) ["inspect", imageByDigest, "--format", "{{.Id}}"] ""
+                  case idResult of
+                    Right rawId -> do
+                      let imageId = trimNewlines rawId
+                      tagResult <- tryRunCommand (harborDockerCommand options) ["tag", imageId, imageRef] ""
+                      case tagResult of
+                        Right _ -> pure ()
+                        Left _ -> recoverOriginalTag options commandMonitorFactory imageRef manifestSource
+                    Left _ -> recoverOriginalTag options commandMonitorFactory imageRef manifestSource
+                  pure (Just (amd64Digest, manifestSource))
 
 -- | Parse the JSON output of @docker manifest inspect@ and return the
 -- digest of the @linux/amd64@ entry, if any. Uses the Aeson FromJSON
@@ -678,96 +787,101 @@ instance FromJSON ManifestEntry where
         }
 
 -- | Push the @linux/amd64@ manifest of an upstream multi-arch image
--- straight into Harbor via @docker buildx imagetools create@. The
--- imagetools path operates on the registry API and accepts a
--- digest-pinned source, so the Docker 29.x + containerd snapshotter
--- pitfalls that block @docker push@ for multi-arch tags do not apply.
--- The helper extracts the @linux/amd64@ digest from the upstream
--- manifest list, then runs
--- @docker buildx imagetools create --tag DEST SRC\@DIGEST@.
+-- straight into Harbor via @skopeo copy@. The copy path operates on
+-- the registry API and accepts a digest-pinned source, so the Docker
+-- 29.x + containerd snapshotter pitfalls that block @docker push@ for
+-- multi-arch tags do not apply. The helper reuses an earlier manifest
+-- digest when available; otherwise it extracts the @linux/amd64@
+-- digest from the upstream manifest list, then copies
+-- @docker://SRC\@DIGEST@ to @docker://DEST@.
 -- Returns 'Left' with the captured stderr on any step that fails.
 -- type CommandMonitorFactory = String -> IO (Maybe ProcessMonitor.CommandMonitor)
 pushUpstreamMultiArchViaImagetools ::
   HarborPublishOptions ->
   CommandMonitorFactory ->
+  Maybe String ->
   String ->
   String ->
   IO (Either String ())
-pushUpstreamMultiArchViaImagetools options commandMonitorFactory sourceImage targetRef = do
-  manifestResult <- tryRunCommand (harborDockerCommand options) ["manifest", "inspect", sourceImage] ""
-  case manifestResult of
-    Left manifestFailure ->
-      pure (Left ("docker manifest inspect failed for " <> sourceImage <> "\n" <> manifestFailure))
-    Right manifestJson ->
-      case extractAmd64Digest manifestJson of
-        Nothing ->
-          pure (Left ("no linux/amd64 entry in upstream manifest for " <> sourceImage))
-        Just amd64Digest -> do
-          let sourceRepository = takeBefore ':' sourceImage
-              sourceByDigest = sourceRepository <> "@" <> amd64Digest
-              -- Phase 7 Sprint 7.14 (May 25, 2026): retired the
-              -- @docker buildx imagetools create@ fallback in favor
-              -- of @skopeo copy@. The buildx imagetools path delegates
-              -- to a buildkit container that runs on docker's default
-              -- bridge network, so it cannot reach Harbor's NodePort
-              -- 30002. @skopeo copy@ runs in the launcher container's
-              -- own network namespace and CAN reach Harbor at
-              -- @127.0.0.1:30002@. We substitute @localhost@ with
-              -- @127.0.0.1@ in the target ref because glibc prefers
-              -- IPv6 for @localhost@ and Harbor's NodePort listener
-              -- is IPv4-only (Kind's @extraPortMappings@ emit IPv4
-              -- bindings). @--src-tls-verify=false@ +
-              -- @--dest-tls-verify=false@ accept the Harbor self-
-              -- signed HTTP listener; @--override-os=linux@ +
-              -- @--override-arch=amd64@ ensure the copy is the
-              -- supported single-platform variant.
-              skopeoTargetRef = substituteLocalhostWithLoopbackV4 targetRef
-              skopeoSource = "docker://" <> sourceByDigest
-              skopeoTarget = "docker://" <> skopeoTargetRef
-          skopeoMonitor <-
-            commandMonitorFactory
-              ( "skopeo copy --src-tls-verify=false --dest-tls-verify=false "
-                  <> "--override-os=linux --override-arch=amd64 "
-                  <> skopeoSource
-                  <> " "
-                  <> skopeoTarget
-              )
-          skopeoResult <-
-            tryRunCommandMaybeMonitored
-              (harborSkopeoCommand options)
-              [ "copy",
-                "--src-tls-verify=false",
-                "--dest-tls-verify=false",
-                "--override-os=linux",
-                "--override-arch=amd64",
-                skopeoSource,
-                skopeoTarget
-              ]
-              ""
-              skopeoMonitor
-          case skopeoResult of
-            Right _ -> pure (Right ())
-            Left skopeoFailure ->
-              pure
-                ( Left
-                    ( "skopeo copy failed for "
-                        <> sourceByDigest
-                        <> " -> "
-                        <> targetRef
-                        <> "\n"
-                        <> skopeoFailure
-                    )
+pushUpstreamMultiArchViaImagetools options commandMonitorFactory maybeKnownSourceDigest sourceImage targetRef =
+  case maybeKnownSourceDigest of
+    Just amd64Digest -> copyDigest amd64Digest
+    Nothing -> do
+      manifestResult <- tryRunCommand (harborDockerCommand options) ["manifest", "inspect", sourceImage] ""
+      case manifestResult of
+        Left manifestFailure ->
+          pure (Left ("docker manifest inspect failed for " <> sourceImage <> "\n" <> manifestFailure))
+        Right manifestJson ->
+          case extractAmd64Digest manifestJson of
+            Nothing ->
+              pure (Left ("no linux/amd64 entry in upstream manifest for " <> sourceImage))
+            Just amd64Digest -> copyDigest amd64Digest
+  where
+    copyDigest amd64Digest = do
+      let sourceRepository = takeBefore ':' sourceImage
+          sourceByDigest = sourceRepository <> "@" <> amd64Digest
+          -- Phase 7 Sprint 7.14 (May 25, 2026): retired the
+          -- @docker buildx imagetools create@ fallback in favor
+          -- of @skopeo copy@. The buildx imagetools path delegates
+          -- to a buildkit container that runs on docker's default
+          -- bridge network, so it cannot reach Harbor's NodePort
+          -- 30002. @skopeo copy@ runs in the launcher container's
+          -- own network namespace and CAN reach Harbor at
+          -- @127.0.0.1:30002@. We substitute @localhost@ with
+          -- @127.0.0.1@ in the target ref because glibc prefers
+          -- IPv6 for @localhost@ and Harbor's NodePort listener
+          -- is IPv4-only (Kind's @extraPortMappings@ emit IPv4
+          -- bindings). @--src-tls-verify=false@ +
+          -- @--dest-tls-verify=false@ accept the Harbor self-
+          -- signed HTTP listener; @--override-os=linux@ +
+          -- @--override-arch=amd64@ ensure the copy is the
+          -- supported single-platform variant.
+          skopeoTargetRef = substituteLocalhostWithLoopbackV4 targetRef
+          skopeoSource = "docker://" <> sourceByDigest
+          skopeoTarget = "docker://" <> skopeoTargetRef
+      skopeoMonitor <-
+        commandMonitorFactory
+          ( "skopeo copy --src-tls-verify=false --dest-tls-verify=false "
+              <> "--override-os=linux --override-arch=amd64 "
+              <> skopeoSource
+              <> " "
+              <> skopeoTarget
+          )
+      skopeoResult <-
+        tryRunCommandMaybeMonitored
+          (harborSkopeoCommand options)
+          [ "copy",
+            "--src-tls-verify=false",
+            "--dest-tls-verify=false",
+            "--override-os=linux",
+            "--override-arch=amd64",
+            skopeoSource,
+            skopeoTarget
+          ]
+          ""
+          skopeoMonitor
+      case skopeoResult of
+        Right _ -> pure (Right ())
+        Left skopeoFailure ->
+          pure
+            ( Left
+                ( "skopeo copy failed for "
+                    <> sourceByDigest
+                    <> " -> "
+                    <> targetRef
+                    <> "\n"
+                    <> skopeoFailure
                 )
+            )
 
 -- | Heuristic: an image is considered upstream-multi-arch (and routed
--- through @docker buildx imagetools create@ instead of plain
+-- through the digest-pinned @skopeo copy@ fallback instead of plain
 -- @docker push@) when its reference does NOT start with the supported
 -- locally-built prefix. Sprint 7.7's follow-on Docker-29 + containerd
 -- snapshotter issue rejects pushes of multi-arch manifest lists, so
--- the supported workaround is to use the registry V2 API path
--- imagetools talks to. Locally-built repo images stay on the fast
--- legacy @docker push@ path because they are single-platform by
--- construction.
+-- the supported workaround is to use a registry API copy path.
+-- Locally-built repo images stay on the fast legacy @docker push@
+-- path because they are single-platform by construction.
 isUpstreamMultiArchImage :: String -> Bool
 isUpstreamMultiArchImage imageRef =
   not (any (`hasPrefix` imageRef) localImagePrefixes)
@@ -923,13 +1037,6 @@ runCommand command args inputPayload = do
     Right _ -> pure ()
     Left err -> failWith ("command failed: " <> command <> " " <> unwords args <> "\n" <> err)
 
-captureCommand :: FilePath -> [String] -> String -> IO String
-captureCommand command args inputPayload = do
-  result <- tryRunCommand command args inputPayload
-  case result of
-    Right stdoutOutput -> pure stdoutOutput
-    Left err -> failWith ("command failed: " <> command <> " " <> unwords args <> "\n" <> err)
-
 tryRunCommand :: FilePath -> [String] -> String -> IO (Either String String)
 tryRunCommand command args inputPayload = do
   processResult <- try (readCreateProcessWithExitCode (proc command args) inputPayload) :: IO (Either SomeException (ExitCode, String, String))
@@ -988,15 +1095,19 @@ trailingWhitespaceCharacters = " \n\r\t"
 -- fallback can do the work. Failure here is silent because the
 -- caller already failed to pin and is doing best-effort recovery.
 -- type CommandMonitorFactory = String -> IO (Maybe ProcessMonitor.CommandMonitor)
-recoverOriginalTag :: HarborPublishOptions -> CommandMonitorFactory -> String -> IO ()
-recoverOriginalTag options commandMonitorFactory imageRef = do
-  recoverMonitor <- commandMonitorFactory ("docker pull --platform linux/amd64 " <> imageRef)
+recoverOriginalTag :: HarborPublishOptions -> CommandMonitorFactory -> String -> String -> IO ()
+recoverOriginalTag options commandMonitorFactory imageRef manifestSource = do
+  recoverMonitor <- commandMonitorFactory ("docker pull --platform linux/amd64 " <> manifestSource)
   _ <-
     tryRunCommandMaybeMonitored
       (harborDockerCommand options)
-      ["pull", "--platform", "linux/amd64", imageRef]
+      ["pull", "--platform", "linux/amd64", manifestSource]
       ""
       recoverMonitor
+  _ <-
+    if manifestSource == imageRef
+      then pure (Right "")
+      else tryRunCommand (harborDockerCommand options) ["tag", manifestSource, imageRef] ""
   pure ()
 
 breakTagSuffix :: String -> Maybe String

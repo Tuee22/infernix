@@ -33,6 +33,7 @@ data:
           }
     let MinioConfig =
           { endpoint : Text
+          , presignPublicEndpoint : Text
           , region : Text
           , presignExpirySeconds : Natural
           , modelsBucket : Text
@@ -73,6 +74,7 @@ data:
             }
         , minio =
             { endpoint = {{ .Values.service.minio.endpoint | quote }}
+            , presignPublicEndpoint = {{ .Values.clusterConfig.minio.presignPublicEndpoint | quote }}
             , region = {{ .Values.clusterConfig.minio.region | quote }}
             , presignExpirySeconds = {{ .Values.clusterConfig.minio.presignExpirySeconds }}
             , modelsBucket = {{ .Values.clusterConfig.minio.modelsBucket | quote }}

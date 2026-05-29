@@ -16,6 +16,7 @@ import Generated.Contracts
   , ContextId(..)
   , ContextListPatch(..)
   , ContextSummary(..)
+  , ConversationCancelPayload(..)
   , ConversationEvent(..)
   , ConversationInferenceResultPayload(..)
   , ConversationMessage(..)
@@ -24,7 +25,7 @@ import Generated.Contracts
   , DraftEntry(..)
   , DraftMapPatch(..)
   , MessageId(..)
-  , ObjectRef(..)
+  , ObjectRef
   , UserPromptPayload(..)
   , WsServerMessage(..)
   )
@@ -34,6 +35,7 @@ import Infernix.Web.Chat
   , applyDraftMapPatch
   , handleServerMessage
   , initialChatViewState
+  , latestPendingPromptMessageId
   , pendingPromptCount
   )
 import Test.Spec (Spec, describe, it)
@@ -146,6 +148,20 @@ spec = do
         Just conv -> conversationMessageCount conv `shouldEqual` 1
         Nothing -> "<should still have activeConversation>" `shouldEqual` "<set>"
 
+    it "replaces an optimistic prompt when the broker patch carries the same idempotency key" do
+      let snapshot = sampleConversation [ promptMessage "prompt-local" "hi" ]
+      let patched =
+            applyConversationStatePatch
+              ( ConversationStateAppendMessage
+                  { appendMessage: promptMessageWithKey "ledger-1:0" "prompt-local" "hi"
+                  , appendNewPrefixHash: "canonical"
+                  }
+              )
+              snapshot
+      conversationMessageCount patched `shouldEqual` 1
+      conversationMessageIdAt 0 patched `shouldEqual` "ledger-1:0"
+      conversationPrefixHash patched `shouldEqual` "canonical"
+
   describe "ChatView pendingPromptCount" do
     it "is zero when the conversation is empty" do
       pendingPromptCount initialChatViewState `shouldEqual` 0
@@ -185,6 +201,33 @@ spec = do
               initialChatViewState
       pendingPromptCount state `shouldEqual` 0
 
+    it "treats a cancel event as resolving its target prompt" do
+      let snapshot =
+            sampleConversation
+              [ promptMessage "m-1" "first"
+              , cancelMessage "m-1"
+              ]
+      let state =
+            handleServerMessage
+              (Just (ContextId { unContextId: "c-1" }))
+              (ServerConversationSnapshot { serverConversationSnapshot: snapshot })
+              initialChatViewState
+      pendingPromptCount state `shouldEqual` 0
+
+    it "returns the latest unresolved prompt id for the cancel action" do
+      let snapshot =
+            sampleConversation
+              [ promptMessage "m-1" "first"
+              , cancelMessage "m-1"
+              , promptMessage "m-2" "second"
+              ]
+      let state =
+            handleServerMessage
+              (Just (ContextId { unContextId: "c-1" }))
+              (ServerConversationSnapshot { serverConversationSnapshot: snapshot })
+              initialChatViewState
+      messageIdMaybeText (latestPendingPromptMessageId state) `shouldEqual` Just "m-2"
+
 -- Sample fixtures.
 
 sampleConversation :: Array ConversationMessage -> ConversationState
@@ -197,12 +240,16 @@ sampleConversation messages =
 
 promptMessage :: String -> String -> ConversationMessage
 promptMessage messageId text =
+  promptMessageWithKey messageId messageId text
+
+promptMessageWithKey :: String -> String -> String -> ConversationMessage
+promptMessageWithKey messageId idempotencyKey text =
   ConversationMessage
     { conversationMessageId: MessageId { unMessageId: messageId }
     , conversationMessageEvent: ConversationUserPromptEvent
         ( UserPromptPayload
             { promptText: text
-            , promptClientIdempotencyKey: ClientIdempotencyKey { unClientIdempotencyKey: messageId }
+            , promptClientIdempotencyKey: ClientIdempotencyKey { unClientIdempotencyKey: idempotencyKey }
             , promptUserUploads: ([] :: Array ObjectRef)
             }
         )
@@ -220,6 +267,14 @@ resultMessage promptMessageId =
             , inferenceResultArtifacts: []
             }
         )
+    }
+
+cancelMessage :: String -> ConversationMessage
+cancelMessage promptMessageId =
+  ConversationMessage
+    { conversationMessageId: MessageId { unMessageId: promptMessageId <> "-cancel" }
+    , conversationMessageEvent: ConversationCancelEvent
+        (ConversationCancelPayload { cancelUserPromptMessageId: MessageId { unMessageId: promptMessageId } })
     }
 
 sampleContextSummary :: String -> String -> ContextSummary
@@ -243,6 +298,20 @@ conversationMessageCount (ConversationState record) = length record.conversation
 
 conversationPrefixHash :: ConversationState -> String
 conversationPrefixHash (ConversationState record) = record.conversationStatePrefixHash
+
+conversationMessageIdAt :: Int -> ConversationState -> String
+conversationMessageIdAt idx (ConversationState record) =
+  case record.conversationStateMessages !! idx of
+    Just (ConversationMessage message) ->
+      case message.conversationMessageId of
+        MessageId messageId -> messageId.unMessageId
+    Nothing -> "<missing>"
+
+messageIdMaybeText :: Maybe MessageId -> Maybe String
+messageIdMaybeText maybeMessageId =
+  case maybeMessageId of
+    Just (MessageId messageId) -> Just messageId.unMessageId
+    Nothing -> Nothing
 
 contextSummaryTitleAt :: Int -> Array ContextSummary -> String
 contextSummaryTitleAt idx contexts =

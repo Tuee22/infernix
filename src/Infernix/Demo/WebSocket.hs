@@ -23,6 +23,7 @@
 -- patches back to the client after coordinator failover.
 module Infernix.Demo.WebSocket
   ( WebSocketOptions (..),
+    WebSocketDispatchError (..),
     DemoWebSocketApp,
     wsApplication,
     defaultWebSocketOptions,
@@ -33,12 +34,15 @@ module Infernix.Demo.WebSocket
   )
 where
 
-import Control.Exception (SomeException, try)
-import Control.Monad (forever)
+import Control.Concurrent (forkIO)
+import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar)
+import Control.Exception (SomeException, displayException, try)
+import Control.Monad (forever, unless, void)
 import Data.Aeson (eitherDecodeStrict', encode)
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as Lazy
+import Data.IORef (IORef, atomicModifyIORef', newIORef)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
@@ -54,7 +58,8 @@ import Infernix.Demo.Auth
     realmValidationConfig,
   )
 import Infernix.Web.Contracts
-  ( UserId (..),
+  ( ContextId,
+    UserId (..),
     WsClientMessage (..),
     WsServerMessage (..),
   )
@@ -74,8 +79,16 @@ import Network.WebSockets qualified as WS
 data WebSocketOptions = WebSocketOptions
   { wsRealmConfig :: KeycloakRealmConfig,
     wsLoadJwks :: IO (Either String Jwks),
-    wsDispatchClientMessage :: UserId -> WsClientMessage -> IO (Either String ())
+    wsDispatchClientMessage :: UserId -> WsClientMessage -> IO (Either WebSocketDispatchError ()),
+    wsStartUserStreams :: UserId -> (WsServerMessage -> IO ()) -> IO (),
+    wsStartContextStream :: UserId -> ContextId -> (WsServerMessage -> IO ()) -> IO ()
   }
+
+data WebSocketDispatchError = WebSocketDispatchError
+  { webSocketDispatchErrorCode :: Text,
+    webSocketDispatchErrorMessage :: Text
+  }
+  deriving (Eq, Show)
 
 -- | A WAI 'Application' that handles WebSocket upgrades at the WS layer
 -- and falls back to a fallback HTTP handler for non-upgrade requests on
@@ -94,7 +107,22 @@ defaultWebSocketOptions jwksLoader =
         \_ _ ->
           pure
             ( Left
-                "Pulsar dispatch is not configured for this WebSocket app; pass wsDispatchClientMessage in WebSocketOptions"
+                WebSocketDispatchError
+                  { webSocketDispatchErrorCode = "ws_pulsar_dispatch_failed",
+                    webSocketDispatchErrorMessage =
+                      "Pulsar dispatch is not configured for this WebSocket app; pass wsDispatchClientMessage in WebSocketOptions"
+                  }
+            ),
+      wsStartUserStreams =
+        \_ _ -> pure (),
+      wsStartContextStream =
+        \_ _ send ->
+          send
+            ( ServerError
+                { serverErrorErrorCode = "ws_context_stream_unavailable",
+                  serverErrorMessage =
+                    "Pulsar context streaming is not configured for this WebSocket app; pass wsStartContextStream in WebSocketOptions"
+                }
             )
     }
 
@@ -165,18 +193,21 @@ handleWsUpgrade options pending = do
 -- Pulsar; Reader cursors that stream snapshots back to the client land
 -- with Sprint 7.14's real-cluster chaos validation.
 runSession :: WebSocketOptions -> WS.Connection -> UserId -> IO ()
-runSession options connection userId =
+runSession options connection userId = do
+  sendLock <- newMVar ()
+  userStreamsStarted <- newIORef False
   forever $ do
     incomingResult <- try @SomeException (WS.receiveData connection)
     case incomingResult of
       Left _ -> WS.sendClose connection ("connection closed" :: Text)
-      Right frame -> handleFrame options connection userId frame
+      Right frame -> handleFrame options sendLock userStreamsStarted connection userId frame
 
-handleFrame :: WebSocketOptions -> WS.Connection -> UserId -> Lazy.ByteString -> IO ()
-handleFrame options connection userId frame =
+handleFrame :: WebSocketOptions -> MVar () -> IORef Bool -> WS.Connection -> UserId -> Lazy.ByteString -> IO ()
+handleFrame options sendLock userStreamsStarted connection userId frame =
   case eitherDecodeStrict' (Lazy.toStrict frame) of
     Left decodeError ->
       sendServerMessage
+        sendLock
         connection
         ( ServerError
             { serverErrorErrorCode = "ws_frame_decode_failed",
@@ -186,25 +217,72 @@ handleFrame options connection userId frame =
     Right clientMessage ->
       case classifyClientMessage userId clientMessage of
         AcknowledgePending ->
-          dispatchClientMessage options connection userId clientMessage
+          dispatchClientMessage options sendLock userStreamsStarted connection userId clientMessage
 
-dispatchClientMessage :: WebSocketOptions -> WS.Connection -> UserId -> WsClientMessage -> IO ()
-dispatchClientMessage options connection userId clientMessage = do
-  dispatchResult <- wsDispatchClientMessage options userId clientMessage
-  case dispatchResult of
-    Right () -> pure ()
-    Left dispatchError ->
-      sendServerMessage
-        connection
-        ( ServerError
-            { serverErrorErrorCode = "ws_pulsar_dispatch_failed",
-              serverErrorMessage = Text.pack dispatchError
-            }
-        )
+dispatchClientMessage :: WebSocketOptions -> MVar () -> IORef Bool -> WS.Connection -> UserId -> WsClientMessage -> IO ()
+dispatchClientMessage options sendLock userStreamsStarted connection userId clientMessage =
+  case clientMessage of
+    ClientHello {} -> do
+      alreadyStarted <-
+        atomicModifyIORef' userStreamsStarted $ \started ->
+          if started then (started, True) else (True, False)
+      unless alreadyStarted $
+        void $
+          forkIO $ do
+            streamResult <-
+              try @SomeException
+                (wsStartUserStreams options userId (sendServerMessage sendLock connection))
+            case streamResult of
+              Right () -> pure ()
+              Left streamError ->
+                void $
+                  try @SomeException $
+                    sendServerMessage
+                      sendLock
+                      connection
+                      ( ServerError
+                          { serverErrorErrorCode = "ws_user_stream_failed",
+                            serverErrorMessage = Text.pack (displayException streamError)
+                          }
+                      )
+    ClientSubscribeContext contextId -> do
+      void $
+        forkIO $ do
+          streamResult <-
+            try @SomeException
+              (wsStartContextStream options userId contextId (sendServerMessage sendLock connection))
+          case streamResult of
+            Right () -> pure ()
+            Left streamError ->
+              void $
+                try @SomeException $
+                  sendServerMessage
+                    sendLock
+                    connection
+                    ( ServerError
+                        { serverErrorErrorCode = "ws_context_stream_failed",
+                          serverErrorMessage = Text.pack (displayException streamError)
+                        }
+                    )
+    _ -> do
+      dispatchResult <- wsDispatchClientMessage options userId clientMessage
+      case dispatchResult of
+        Right () -> pure ()
+        Left dispatchError ->
+          sendServerMessage
+            sendLock
+            connection
+            ( ServerError
+                { serverErrorErrorCode = webSocketDispatchErrorCode dispatchError,
+                  serverErrorMessage = webSocketDispatchErrorMessage dispatchError
+                }
+            )
 
-sendServerMessage :: WS.Connection -> WsServerMessage -> IO ()
-sendServerMessage connection message =
-  WS.sendTextData connection (encode message)
+sendServerMessage :: MVar () -> WS.Connection -> WsServerMessage -> IO ()
+sendServerMessage sendLock connection message =
+  modifyMVar_ sendLock $ \() -> do
+    WS.sendTextData connection (encode message)
+    pure ()
 
 -- | Pure classification of a decoded client message. Today every
 -- supported message family acknowledges back through Pulsar; the
@@ -221,6 +299,7 @@ classifyClientMessage _userId clientMessage =
     ClientSubscribeContext {} -> AcknowledgePending
     ClientSubmitPrompt {} -> AcknowledgePending
     ClientCancelPrompt {} -> AcknowledgePending
+    ClientRecordUpload {} -> AcknowledgePending
     ClientUpdateDraft {} -> AcknowledgePending
     ClientCreateContext {} -> AcknowledgePending
     ClientRenameContext {} -> AcknowledgePending

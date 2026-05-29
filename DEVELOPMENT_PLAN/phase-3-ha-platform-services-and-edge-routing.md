@@ -387,7 +387,8 @@ favor of substrate `.dhall` fields plus a Dhall-driven Playwright fixture file.
   deleted from `compose.yaml`, `src/Infernix/CLI.hs`, and `web/playwright/inference.spec.js`.
 - `web/playwright.config.js` reads the repo-relative `.data/runtime/playwright-fixture.json`
   (Dhall-decoded by the Haskell test driver at test start) and exposes the expectations via
-  Playwright's `use:` block; the spec reads `test.info().project.use.*`.
+  Playwright's `use:` block; the spec declares `infernixFixture` as a Playwright option fixture
+  and receives it in the test callback.
 - legacy-tracking row 3.10 moves from Pending Removal to Completed.
 
 ### Validation
@@ -430,7 +431,7 @@ Landed May 24, 2026:
   upstream mode through Playwright's `use:` block under the
   `infernix-e2e` project.
 - `web/playwright/inference.spec.js` rewritten: the per-test handler
-  pulls `testInfo.project.use.infernixFixture` instead of reading any
+  receives the typed `infernixFixture` Playwright option instead of reading any
   `process.env.INFERNIX_*` field or a hardcoded `/workspace` fixture
   path.
 - The seven retired env vars

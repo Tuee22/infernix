@@ -33,10 +33,16 @@ surface is the `.dhall` topic contract described in [../tools/pulsar.md](../tool
   MIME/content type, display name, byte count for uploads), the requested object key is
   scoped against `users/<userId>/contexts/<contextId>/{uploads,generated}/`, and the
   response carries the presigned URL plus the canonical MinIO object reference and a
-  render disposition (`inline-media`, `text-preview`, `browser-document`, or
-  `download-only`). Cross-user URL requests are rejected at the route layer; the
-  per-user MinIO scope policy is the second line of defence. Demo-gated and absent
-  when `demo_ui = false`. See [../tools/minio.md](../tools/minio.md) and
+  typed render disposition (`RenderInline`, `BoundedTextPreview`, `BrowserNativePdf`, or
+  `DownloadOnly`). The May 28, 2026 routed Linux GPU E2E flow validates the disposition matrix
+  for image/audio/video, PDF, JSON, text, MIDI, MusicXML, and generic binary MIME cases. The route
+  derives the object path from the authenticated `sub`, so another user with the same
+  context/display name receives a distinct `users/<sub>/...` prefix. Presigned URLs are bearer
+  capabilities until expiry. The browser E2E flow now exercises bounded text/JSON preview,
+  inline image/audio/video media URLs, browser-native PDF URL wiring, and MIDI / MusicXML /
+  generic-binary download-only states through these presigned grants. Demo-gated and absent when
+  `demo_ui = false`. See
+  [../tools/minio.md](../tools/minio.md) and
   [../architecture/demo_app_design.md](../architecture/demo_app_design.md).
 
 ## Rules

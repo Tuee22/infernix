@@ -54,12 +54,24 @@ Phase 7 Sprint 7.7 landed the `infernix-demo-objects` bucket alongside the alway
   - `users/<userId>/contexts/<contextId>/snapshots/...` is reserved but unused in the supported
     contract; conversation rehydration is direct Pulsar replay, not snapshot replay
 - `userId` is the Keycloak `sub` claim, stable across login/logout/password change/device
-- the `infernix-demo` backend mints presigned PUT and GET URLs via `/api/objects`; URLs are
-  scoped to the user's prefix via MinIO scope policies, so cross-user URL access is rejected
-  at the storage layer
+- the `infernix-demo` backend mints presigned PUT and GET URLs via `/api/objects`; grant minting
+  is scoped to the authenticated user's prefix, so a user cannot mint the default route for
+  another user's object key. Presigned URLs remain bearer capabilities until expiry and should not
+  be shared outside the authenticated session.
 - artifact bytes never traverse the demo backend; the browser performs multipart upload
   directly to MinIO using the presigned URL and downloads directly using the presigned GET
 - bucket creation happens idempotently during `cluster up` when `demo_ui = true`
+- the May 28, 2026 Linux GPU routed Playwright run validates `/api/objects` grant minting with a
+  real Keycloak access token and verifies malformed bearer rejection plus per-user key scoping in
+  the grant response, then performs a same-user routed presigned PUT/GET byte roundtrip with exact
+  content equality. A same-day follow-on registers a second Keycloak user for the same
+  context/display name, confirms the grant points at the second user's `sub` prefix, observes
+  `404` before the second upload, and verifies each user reads only that user's bytes by default.
+  The routed download-grant MIME disposition matrix is also covered for inline image/audio/video,
+  browser-native PDF, bounded JSON/text preview, and download-only MIDI / MusicXML /
+  generic-binary grants. The browser artifact flow now covers bounded text/JSON previews,
+  inline image/audio/video rendering, browser-native PDF URL wiring, and MIDI / MusicXML /
+  generic-binary download-only states through routed presigned URLs.
 - supported artifact MIME families on the UI side: `image/*`, playable `audio/*`, `video/*`,
   text/structured-text artifacts (`text/*`, `application/json`), PDF documents
   (`application/pdf`), MIDI variants (`audio/midi`, `audio/x-midi`, `application/x-midi`),

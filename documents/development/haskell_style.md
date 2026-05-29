@@ -68,6 +68,9 @@
   `hlint`
 - the style gate checks `infernix.cabal` by formatting a temporary copy with `cabal format` and
   comparing the result rather than rewriting the tracked manifest in place
+- the style gate enforces the engine-runtime import boundary and the Phase 7 shared-library
+  import boundary described in
+  [implementation_boundaries.md](../engineering/implementation_boundaries.md)
 - `infernix test lint` runs the Haskell style gate together with the repo-owned files, chart,
   proto, docs, Python, and build-warning checks
 

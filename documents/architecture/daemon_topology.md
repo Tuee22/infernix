@@ -51,9 +51,15 @@ the cluster-daemon-to-host-daemon batch bridge is unchanged. The
 coordinator's runtime Pulsar wiring (per-context dispatcher Failover
 subscription, result-bridge Failover subscription, model-bootstrap
 Failover subscription against `infernix-models`, and WebSocket-originated
-event publication) is implemented. Sprint 7.14's remaining work is the
-real-cluster chaos validation cycle that proves failover and exactly-once
-behavior under pod failure.
+event publication) is implemented. The May 27, 2026 Linux GPU integration
+run validates the real-cluster coordinator-to-engine handoff contract:
+`/api/publication`, `cluster status`, and the generated demo config all
+report the configured Linux batch topic, and the service runtime loop
+round-trips inference through the coordinator and engine roles. A May
+28, 2026 follow-on submits a durable-context prompt through the dispatcher,
+engine, and result bridge and observes the completed conversation-log
+writeback. Sprint 7.14's remaining work is the chaos validation cycle that
+proves failover and exactly-once behavior under pod failure.
 
 ## Roles and Responsibilities
 
@@ -139,13 +145,23 @@ The product-agnostic inference executor. Owns:
 
 The engine loads only the engine-side surface of the shared library
 (`Infernix.Conversation.Reducer` and `.Hash` for cache-consistency
-verification) plus `Infernix.Runtime.*`. It never imports any
+verification) plus the engine runtime modules. It never imports any
 application namespace, never imports `Infernix.Objects.Presigned`,
 never imports `Infernix.Auth.Jwt`, never imports
 `Infernix.Dispatch.SingleFlight`, never imports
 `Infernix.Bridge.Result`, never imports `Infernix.Bootstrap.Models`,
 and never imports a WebSocket module. **The engine has no PVC** —
 the only on-disk state is the ephemeral `emptyDir` model cache.
+The Haskell style gate enforces this import boundary for
+`Infernix.Runtime`, `Infernix.Runtime.Cache`, and
+`Infernix.Runtime.Worker`. `Infernix.Runtime.Pulsar` remains the
+current multi-role Pulsar transport and daemon-orchestration module
+until the coordinator transport split lands.
+
+The style gate also enforces the Phase 7 shared-library boundary for the
+conversation primitives, dispatcher helpers, result bridge helper, and
+bootstrap helper so those modules cannot import demo, runtime, auth,
+object-presign, or WebSocket modules.
 
 ## HA and Node-Policy Contract
 
@@ -262,10 +278,13 @@ Subscription primitives used at each hop:
 - **Failover** (coordinator): exactly one active subscriber per topic
   at a time; Pulsar promotes a surviving replica on crash and
   redelivers unacked messages.
-- **Producer-side dedup** (`enableProducerDeduplication = true`) on
-  the conversation, inference-request, inference-batch, and
-  inference-result topics with named producers and dedup sequence
-  IDs derived from upstream `MessageId`s.
+- **Producer-side dedup** with broker-level
+  `brokerDeduplicationEnabled = true` plus namespace dedup policies on
+  the conversation, context, draft, inference-request,
+  inference-batch, and inference-result topics with named producers and
+  dedup sequence IDs derived from upstream `MessageId`s. Frontend
+  mutation retries use mutation-scoped one-message producers with the
+  WebSocket `initialSequenceId` baseline set from the mutation key.
 
 ## Library Footprint per Role
 
@@ -288,7 +307,8 @@ this table lists which shared modules each role loads at runtime.
 | `Infernix.Objects.Layout` | ✓ | — | — |
 | `Infernix.Objects.Presigned` | ✓ | — | — |
 | `Infernix.Auth.Jwt` | ✓ | — | — |
-| `Infernix.Runtime.*` | — | — | ✓ |
+| `Infernix.Runtime`, `.Cache`, `.Worker` | — | — | ✓ |
+| `Infernix.Runtime.Pulsar` transport/orchestration | — | ✓ | ✓ |
 | `<appNamespace>.*` (e.g. `Infernix.Demo.*`) | ✓ | — | — |
 
 ## Batching Ownership
@@ -317,7 +337,7 @@ three roles share access to:
 - **Pulsar named Failover subscriptions** on the dispatcher, the
   result-bridge, and the engine's batch consumer
 - **Pulsar producer-side deduplication** on every topic the role
-  writes
+  writes, backed by broker-level dedup and namespace policies
 - **Projection-layer dedup** in the reducer on `(contextId,
   clientIdempotencyKey)` for browser-driven retries
 
@@ -339,11 +359,10 @@ stays consistent.
   becomes `infernix-coordinator` in the supported target shape: it
   consumes `inference.request.apple-silicon`, runs the dispatch,
   result-bridge, and model-bootstrap work, and publishes to
-  `inference.batch.apple-silicon` (which becomes the supported
-  name for what the implementation currently calls
-  `inference.batch.apple-silicon.host`).
+  `inference.batch.apple-silicon.host`, the Apple host-native handoff
+  topic.
 - The existing on-host Apple daemon (current `HostDaemon` role)
-  becomes the engine role: it consumes `inference.batch.apple-silicon`,
+  becomes the engine role: it consumes `inference.batch.apple-silicon.host`,
   pulls model weights from `infernix-models` via the shared adapter
   helper into a host-local cache under
   `./.data/runtime/model-cache/`, runs the Apple-native adapter, owns
@@ -388,6 +407,8 @@ The three-role contract is validated by:
 
 - `infernix lint chart` against the role-specific Deployment
   templates and PodDisruptionBudgets
+- the May 28, 2026 Linux GPU integration roundtrip for the normal
+  dispatcher -> engine -> result-bridge writeback path
 - `infernix test integration` chaos tests for coordinator-pod kill,
   engine-pod kill, and engine-node drain (defined in
   [../development/chaos_testing.md](../development/chaos_testing.md))

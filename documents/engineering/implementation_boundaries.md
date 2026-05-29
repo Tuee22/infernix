@@ -100,7 +100,7 @@ Pulsar+MinIO wiring together with Sprint 7.14's chaos validation cycle.
   `infernix-engine` Deployment on Linux substrates, and the on-host
   daemon on Apple silicon, load `Infernix.Conversation.Reducer` and
   `Infernix.Conversation.Hash` for engine-side KV-cache consistency
-  plus `Infernix.Runtime.*` for adapter management. They must not
+  plus the engine runtime modules for adapter management. They must not
   import `Infernix.Demo.*` (or any other `<appNamespace>.*`),
   `Infernix.Objects.Presigned`, `Infernix.Auth.Jwt`,
   `Infernix.Dispatch.SingleFlight`, `Infernix.Bridge.Result`,
@@ -109,6 +109,18 @@ Pulsar+MinIO wiring together with Sprint 7.14's chaos validation cycle.
   model-weight cache populated lazily from the `infernix-models`
   MinIO bucket through the shared adapter helper
   `python/adapters/common/model_cache.py`.
+
+The Haskell style gate enforces that engine-runtime import boundary for
+`src/Infernix/Runtime.hs`, `src/Infernix/Runtime/Cache.hs`, and
+`src/Infernix/Runtime/Worker.hs`. `src/Infernix/Runtime/Pulsar.hs` is
+still the current multi-role Pulsar transport and daemon-orchestration
+module, so the full coordinator transport split remains separate
+Phase 7 work.
+
+The same style gate also enforces the Phase 7 shared-library boundary for
+the conversation primitives, dispatcher helpers, result bridge helper, and
+model-bootstrap helper: those modules cannot import demo application code,
+runtime orchestration, auth, object-presign, or WebSocket modules.
 
 The dependency arrows are strict: shared library has no upward
 dependencies; the demo binary, the coordinator daemon, and the engine
@@ -132,6 +144,8 @@ demo binding.
 - `infernix docs check` fails if this governed boundary document loses its required structure or
   drifts from the metadata contract enforced by `src/Infernix/Lint/Docs.hs`.
 - `infernix lint files` fails if generated-only artifacts return to tracked source paths.
+- `infernix test lint` runs the Haskell style gate that rejects forbidden frontend,
+  coordinator, auth, object-presign, or WebSocket imports from the engine runtime modules.
 - `infernix test unit` covers the Haskell-to-Python protobuf-over-stdio worker handshake together
   with generated browser-contract behavior.
 

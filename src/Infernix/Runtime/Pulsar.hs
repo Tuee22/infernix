@@ -4,10 +4,20 @@
 
 module Infernix.Runtime.Pulsar
   ( DemoClientMessagePublication (..),
+    DemoClientMessageError (..),
+    RawTopicMessage (..),
+    compactTopicAndWait,
     planDemoClientMessagePublications,
     publishDemoClientMessage,
+    streamDemoContextConversation,
+    streamDemoUserMetadata,
+    publishRawTopicPayload,
+    validateDemoClientMessageCatalog,
     publishInferenceRequest,
+    readNamespaceCompactionThreshold,
+    readRawTopicPayloads,
     readPublishedInferenceResultMaybe,
+    drainTopic,
     runDispatcherLoop,
     runModelBootstrapLoop,
     runProductionDaemon,
@@ -21,7 +31,7 @@ where
 import Control.Applicative ((<|>))
 import Control.Concurrent (forkIO, threadDelay)
 import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar)
-import Control.Exception (SomeAsyncException, SomeException, displayException, fromException, throwIO, try)
+import Control.Exception (Exception, SomeAsyncException, SomeException, displayException, fromException, throwIO, try)
 import Control.Monad (forM_, forever, unless, void, when)
 import Crypto.Hash.SHA256 qualified as SHA256
 import Data.Aeson
@@ -43,6 +53,8 @@ import Data.ByteString.Char8 qualified as ByteString8
 import Data.ByteString.Lazy qualified as Lazy
 import Data.IORef (IORef, atomicModifyIORef', newIORef)
 import Data.List (intercalate, sort)
+import Data.Map.Strict (Map)
+import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe)
 import Data.ProtoLens (Message, decodeMessage, defMessage, encodeMessage)
 import Data.ProtoLens.Field (field)
@@ -138,8 +150,22 @@ data ProducerResponse = ProducerResponse
 
 data PulsarEnvelope = PulsarEnvelope
   { envelopeMessageId :: Text.Text,
+    envelopeKey :: Maybe Text.Text,
     envelopePayload :: Text.Text
   }
+
+data RawTopicMessage = RawTopicMessage
+  { rawTopicMessageId :: Text.Text,
+    rawTopicMessageKey :: Maybe Text.Text,
+    rawTopicMessagePayload :: ByteString.ByteString
+  }
+  deriving (Eq, Show)
+
+data LongRunningProcessStatus = LongRunningProcessStatus
+  { longRunningProcessStatus :: Text.Text,
+    longRunningProcessLastError :: Maybe Text.Text
+  }
+  deriving (Eq, Show)
 
 data HostDiscoveredPublication = HostDiscoveredPublication
   { hostPublicationClusterPresent :: Bool,
@@ -156,6 +182,7 @@ instance FromJSON PulsarEnvelope where
   parseJSON = withObject "PulsarEnvelope" $ \value ->
     PulsarEnvelope
       <$> value .: "messageId"
+      <*> ((value .:? "key") <|> (value .:? "partitionKey"))
       <*> value .: "payload"
 
 instance FromJSON HostDiscoveredPublication where
@@ -163,6 +190,12 @@ instance FromJSON HostDiscoveredPublication where
     HostDiscoveredPublication
       <$> value .: "clusterPresent"
       <*> value .:? "edgePort"
+
+instance FromJSON LongRunningProcessStatus where
+  parseJSON = withObject "LongRunningProcessStatus" $ \value ->
+    LongRunningProcessStatus
+      <$> value .: "status"
+      <*> value .:? "lastError"
 
 -- | Phase 4 Sprint 4.13: env-var override family retired. Wiring
 -- values previously read from @INFERNIX_CONTROL_PLANE_CONTEXT@,
@@ -372,6 +405,7 @@ publishDemoClientMessage ::
   Contracts.WsClientMessage ->
   IO ()
 publishDemoClientMessage paths runtimeMode maybeClusterConfig userIdValue clientMessage = do
+  validateDemoClientMessage paths maybeClusterConfig clientMessage
   maybeTransport <- discoverPulsarTransport paths runtimeMode maybeClusterConfig
   case maybeTransport of
     Nothing ->
@@ -387,13 +421,430 @@ publishDemoClientMessage paths runtimeMode maybeClusterConfig userIdValue client
         (planDemoClientMessagePublications ConversationTopic.defaultDemoTopicNamespace userIdValue clientMessage)
         (publishDemoClientMessagePublication transport)
 
+validateDemoClientMessage :: Paths -> Maybe ClusterConfig -> Contracts.WsClientMessage -> IO ()
+validateDemoClientMessage paths maybeClusterConfig clientMessage =
+  case clientMessage of
+    Contracts.ClientCreateContext {} -> do
+      demoConfig <- decodeDemoConfigFile (demoClientMessageDemoConfigPath paths maybeClusterConfig)
+      case validateDemoClientMessageCatalog (models demoConfig) clientMessage of
+        Right () -> pure ()
+        Left validationError -> throwIO validationError
+    _ -> pure ()
+
+demoClientMessageDemoConfigPath :: Paths -> Maybe ClusterConfig -> FilePath
+demoClientMessageDemoConfigPath paths maybeClusterConfig =
+  case maybeClusterConfig of
+    Just clusterConfig ->
+      let demoPath = Text.unpack (demoConfigFilePath (clusterDemoBackend clusterConfig))
+       in if null demoPath then Infernix.Config.generatedDemoConfigPath paths else demoPath
+    Nothing -> Infernix.Config.generatedDemoConfigPath paths
+
+-- | Stream per-user compacted metadata after the browser sends
+-- 'Contracts.ClientHello'. Context and draft topics are independent, so
+-- each owns its own session-local reader cursor and in-memory projection.
+streamDemoUserMetadata ::
+  Paths ->
+  RuntimeMode ->
+  Maybe ClusterConfig ->
+  Contracts.UserId ->
+  (Contracts.WsServerMessage -> IO ()) ->
+  IO ()
+streamDemoUserMetadata paths runtimeMode maybeClusterConfig userIdValue sendMessage = do
+  maybeTransport <- discoverPulsarTransport paths runtimeMode maybeClusterConfig
+  case maybeTransport of
+    Nothing ->
+      ioError
+        ( userError
+            ( "demo WebSocket user metadata streaming is unavailable for "
+                <> Text.unpack (runtimeModeId runtimeMode)
+                <> "; no Pulsar transport could be discovered"
+            )
+        )
+    Just transport ->
+      streamUserMetadataViaPulsar
+        transport
+        ConversationTopic.defaultDemoTopicNamespace
+        userIdValue
+        sendMessage
+
+streamUserMetadataViaPulsar ::
+  PulsarTransport ->
+  ConversationTopic.TopicNamespace ->
+  Contracts.UserId ->
+  (Contracts.WsServerMessage -> IO ()) ->
+  IO ()
+streamUserMetadataViaPulsar transport namespace userIdValue sendMessage = do
+  sendMessage (Contracts.ServerContextListSnapshot (contextListStateFromMap Map.empty))
+  sendMessage (Contracts.ServerDraftMapSnapshot (draftMapStateFromMap Map.empty))
+  void $
+    forkIO
+      (streamUserContextListViaPulsar transport namespace userIdValue sendMessage)
+  void $
+    forkIO
+      (streamUserDraftMapViaPulsar transport namespace userIdValue sendMessage)
+  forever (threadDelay 60_000_000)
+
+streamUserContextListViaPulsar ::
+  PulsarTransport ->
+  ConversationTopic.TopicNamespace ->
+  Contracts.UserId ->
+  (Contracts.WsServerMessage -> IO ()) ->
+  IO ()
+streamUserContextListViaPulsar transport namespace userIdValue sendMessage = do
+  let contextsTopic =
+        ConversationTopic.contextsMetadataTopicName namespace userIdValue
+      readerName =
+        "browser-context-list-"
+          <> sanitizeTopic (Contracts.unUserId userIdValue)
+  stateRef <- newIORef Map.empty
+  topicRef <- requireTopicRef contextsTopic
+  let readerPath = buildReaderSocketPath (pulsarWebSocketBase transport) topicRef readerName
+  forever $ do
+    sessionResult <-
+      try @SomeException
+        ( runPulsarWebSocketClient (pulsarWebSocketBase transport) readerPath $ \connection ->
+            forever
+              (handleContextMetadataStreamMessage stateRef sendMessage connection)
+        )
+    case sessionResult of
+      Right _ -> threadDelay 1_000_000
+      Left err -> do
+        hPutStrLn
+          stderr
+          ( "browser context-list stream for "
+              <> Text.unpack contextsTopic
+              <> " failed:\n"
+              <> displayException err
+          )
+        threadDelay 1_000_000
+
+handleContextMetadataStreamMessage ::
+  IORef (Map Contracts.ContextId Contracts.ContextSummary) ->
+  (Contracts.WsServerMessage -> IO ()) ->
+  WebSockets.Connection ->
+  IO ()
+handleContextMetadataStreamMessage stateRef sendMessage connection = do
+  rawEnvelope <- receiveJsonFrame "Pulsar browser context metadata stream message" connection
+  envelope <- decodeJsonText "Pulsar browser context metadata stream message" rawEnvelope
+  eventBytes <- conversationPayloadBytes envelope
+  case eitherDecode (Lazy.fromStrict eventBytes) of
+    Left decodeError ->
+      hPutStrLn
+        stderr
+        ( "browser context-list stream skipping undecodable context metadata event "
+            <> Text.unpack (envelopeMessageId envelope)
+            <> ": "
+            <> decodeError
+        )
+    Right contextEvent -> do
+      patch <- atomicModifyIORef' stateRef $ \state ->
+        let (nextState, nextPatch) = applyContextMetadataPatch state contextEvent
+         in (nextState, nextPatch)
+      sendMessage (Contracts.ServerContextListPatch patch)
+  sendAck connection (envelopeMessageId envelope)
+
+applyContextMetadataPatch ::
+  Map Contracts.ContextId Contracts.ContextSummary ->
+  Contracts.ContextMetadataEvent ->
+  (Map Contracts.ContextId Contracts.ContextSummary, Contracts.ContextListPatch)
+applyContextMetadataPatch state event =
+  let summary = contextSummaryForEvent state event
+      nextState = Map.insert (Contracts.contextSummaryId summary) summary state
+   in (nextState, Contracts.ContextListUpsert summary)
+
+contextSummaryForEvent ::
+  Map Contracts.ContextId Contracts.ContextSummary ->
+  Contracts.ContextMetadataEvent ->
+  Contracts.ContextSummary
+contextSummaryForEvent state event =
+  case event of
+    Contracts.ContextCreated contextIdValue modelId title ->
+      Contracts.ContextSummary
+        { Contracts.contextSummaryId = contextIdValue,
+          Contracts.contextSummaryModelId = modelId,
+          Contracts.contextSummaryTitle = title,
+          Contracts.contextSummarySoftDeleted = False
+        }
+    Contracts.ContextRenamed contextIdValue title ->
+      case Map.lookup contextIdValue state of
+        Just existing ->
+          Contracts.ContextSummary
+            { Contracts.contextSummaryId = Contracts.contextSummaryId existing,
+              Contracts.contextSummaryModelId = Contracts.contextSummaryModelId existing,
+              Contracts.contextSummaryTitle = title,
+              Contracts.contextSummarySoftDeleted = Contracts.contextSummarySoftDeleted existing
+            }
+        Nothing ->
+          Contracts.ContextSummary
+            { Contracts.contextSummaryId = contextIdValue,
+              Contracts.contextSummaryModelId = "",
+              Contracts.contextSummaryTitle = title,
+              Contracts.contextSummarySoftDeleted = False
+            }
+    Contracts.ContextSoftDeleted contextIdValue ->
+      case Map.lookup contextIdValue state of
+        Just existing ->
+          Contracts.ContextSummary
+            { Contracts.contextSummaryId = Contracts.contextSummaryId existing,
+              Contracts.contextSummaryModelId = Contracts.contextSummaryModelId existing,
+              Contracts.contextSummaryTitle = Contracts.contextSummaryTitle existing,
+              Contracts.contextSummarySoftDeleted = True
+            }
+        Nothing ->
+          Contracts.ContextSummary
+            { Contracts.contextSummaryId = contextIdValue,
+              Contracts.contextSummaryModelId = "",
+              Contracts.contextSummaryTitle = "",
+              Contracts.contextSummarySoftDeleted = True
+            }
+
+contextListStateFromMap :: Map Contracts.ContextId Contracts.ContextSummary -> Contracts.ContextListState
+contextListStateFromMap state =
+  Contracts.ContextListState
+    { Contracts.contextListStateContexts = Map.elems state
+    }
+
+streamUserDraftMapViaPulsar ::
+  PulsarTransport ->
+  ConversationTopic.TopicNamespace ->
+  Contracts.UserId ->
+  (Contracts.WsServerMessage -> IO ()) ->
+  IO ()
+streamUserDraftMapViaPulsar transport namespace userIdValue sendMessage = do
+  let draftsTopic =
+        ConversationTopic.draftsMetadataTopicName namespace userIdValue
+      readerName =
+        "browser-draft-map-"
+          <> sanitizeTopic (Contracts.unUserId userIdValue)
+  stateRef <- newIORef Map.empty
+  topicRef <- requireTopicRef draftsTopic
+  let readerPath = buildReaderSocketPath (pulsarWebSocketBase transport) topicRef readerName
+  forever $ do
+    sessionResult <-
+      try @SomeException
+        ( runPulsarWebSocketClient (pulsarWebSocketBase transport) readerPath $ \connection ->
+            forever
+              (handleDraftMetadataStreamMessage stateRef sendMessage connection)
+        )
+    case sessionResult of
+      Right _ -> threadDelay 1_000_000
+      Left err -> do
+        hPutStrLn
+          stderr
+          ( "browser draft-map stream for "
+              <> Text.unpack draftsTopic
+              <> " failed:\n"
+              <> displayException err
+          )
+        threadDelay 1_000_000
+
+handleDraftMetadataStreamMessage ::
+  IORef (Map Text.Text Text.Text) ->
+  (Contracts.WsServerMessage -> IO ()) ->
+  WebSockets.Connection ->
+  IO ()
+handleDraftMetadataStreamMessage stateRef sendMessage connection = do
+  rawEnvelope <- receiveJsonFrame "Pulsar browser draft metadata stream message" connection
+  envelope <- decodeJsonText "Pulsar browser draft metadata stream message" rawEnvelope
+  eventBytes <- conversationPayloadBytes envelope
+  case eitherDecode (Lazy.fromStrict eventBytes) of
+    Left decodeError ->
+      hPutStrLn
+        stderr
+        ( "browser draft-map stream skipping undecodable draft event "
+            <> Text.unpack (envelopeMessageId envelope)
+            <> ": "
+            <> decodeError
+        )
+    Right draftEvent -> do
+      patch <- atomicModifyIORef' stateRef $ \state ->
+        let (nextState, nextPatch) = applyDraftMetadataPatch state draftEvent
+         in (nextState, nextPatch)
+      sendMessage (Contracts.ServerDraftMapPatch patch)
+  sendAck connection (envelopeMessageId envelope)
+
+applyDraftMetadataPatch ::
+  Map Text.Text Text.Text ->
+  Contracts.DraftEvent ->
+  (Map Text.Text Text.Text, Contracts.DraftMapPatch)
+applyDraftMetadataPatch state event =
+  case event of
+    Contracts.DraftUpdated contextIdValue textValue ->
+      let key = Contracts.unContextId contextIdValue
+          entry = Contracts.DraftEntry contextIdValue textValue
+       in (Map.insert key textValue state, Contracts.DraftMapUpsert entry)
+    Contracts.DraftCleared contextIdValue ->
+      let key = Contracts.unContextId contextIdValue
+       in (Map.delete key state, Contracts.DraftMapRemove contextIdValue)
+
+draftMapStateFromMap :: Map Text.Text Text.Text -> Contracts.DraftMapState
+draftMapStateFromMap state =
+  Contracts.DraftMapState
+    { Contracts.draftMapStateDrafts =
+        [ Contracts.DraftEntry (Contracts.ContextId key) textValue
+        | (key, textValue) <- Map.toAscList state
+        ]
+    }
+
+-- | Stream the canonical broker view for one browser-selected context.
+-- The WebSocket pod remains stateless: it owns only this session-local
+-- reader cursor and reducer cache, while Pulsar remains the source of
+-- truth for the append-only conversation log.
+streamDemoContextConversation ::
+  Paths ->
+  RuntimeMode ->
+  Maybe ClusterConfig ->
+  Contracts.UserId ->
+  Contracts.ContextId ->
+  (Contracts.WsServerMessage -> IO ()) ->
+  IO ()
+streamDemoContextConversation paths runtimeMode maybeClusterConfig userIdValue contextIdValue sendMessage = do
+  maybeTransport <- discoverPulsarTransport paths runtimeMode maybeClusterConfig
+  case maybeTransport of
+    Nothing ->
+      ioError
+        ( userError
+            ( "demo WebSocket context streaming is unavailable for "
+                <> Text.unpack (runtimeModeId runtimeMode)
+                <> "; no Pulsar transport could be discovered"
+            )
+        )
+    Just transport ->
+      streamContextConversationViaPulsar
+        transport
+        ConversationTopic.defaultDemoTopicNamespace
+        userIdValue
+        contextIdValue
+        sendMessage
+
+streamContextConversationViaPulsar ::
+  PulsarTransport ->
+  ConversationTopic.TopicNamespace ->
+  Contracts.UserId ->
+  Contracts.ContextId ->
+  (Contracts.WsServerMessage -> IO ()) ->
+  IO ()
+streamContextConversationViaPulsar transport namespace userIdValue contextIdValue sendMessage = do
+  let conversationTopic =
+        ConversationTopic.conversationTopicName namespace userIdValue contextIdValue
+      initialSnapshot =
+        Contracts.ConversationState
+          { Contracts.conversationStateContextId = contextIdValue,
+            Contracts.conversationStateMessages = [],
+            Contracts.conversationStatePrefixHash = ""
+          }
+      readerName =
+        "browser-context-"
+          <> sanitizeTopic
+            ( Contracts.unUserId userIdValue
+                <> "-"
+                <> Contracts.unContextId contextIdValue
+            )
+  sendMessage (Contracts.ServerConversationSnapshot initialSnapshot)
+  reducerStateRef <- newIORef (initialReducerState contextIdValue)
+  seenMessageIdsRef <- newIORef Set.empty
+  topicRef <- requireTopicRef conversationTopic
+  let readerPath = buildReaderSocketPath (pulsarWebSocketBase transport) topicRef readerName
+  forever $ do
+    sessionResult <-
+      try @SomeException
+        ( runPulsarWebSocketClient (pulsarWebSocketBase transport) readerPath $ \connection ->
+            forever
+              ( handleConversationStreamMessage
+                  contextIdValue
+                  reducerStateRef
+                  seenMessageIdsRef
+                  sendMessage
+                  connection
+              )
+        )
+    case sessionResult of
+      Right _ -> threadDelay 1_000_000
+      Left err -> do
+        hPutStrLn
+          stderr
+          ( "browser context stream for "
+              <> Text.unpack conversationTopic
+              <> " failed:\n"
+              <> displayException err
+          )
+        threadDelay 1_000_000
+
+handleConversationStreamMessage ::
+  Contracts.ContextId ->
+  IORef ReducerState ->
+  IORef (Set Contracts.MessageId) ->
+  (Contracts.WsServerMessage -> IO ()) ->
+  WebSockets.Connection ->
+  IO ()
+handleConversationStreamMessage contextIdValue reducerStateRef seenMessageIdsRef sendMessage connection = do
+  rawEnvelope <- receiveJsonFrame "Pulsar browser conversation stream message" connection
+  envelope <- decodeJsonText "Pulsar browser conversation stream message" rawEnvelope
+  let messageId = Contracts.MessageId (envelopeMessageId envelope)
+  alreadySeen <-
+    atomicModifyIORef' seenMessageIdsRef $ \seen ->
+      if Set.member messageId seen
+        then (seen, True)
+        else (Set.insert messageId seen, False)
+  unless alreadySeen $ do
+    eventBytes <- conversationPayloadBytes envelope
+    case eitherDecode (Lazy.fromStrict eventBytes) of
+      Left decodeError ->
+        hPutStrLn
+          stderr
+          ( "browser context stream skipping undecodable conversation event "
+              <> Text.unpack (envelopeMessageId envelope)
+              <> ": "
+              <> decodeError
+          )
+      Right conversationEvent -> do
+        let conversationMessage =
+              Contracts.ConversationMessage messageId conversationEvent
+        maybePatch <- atomicModifyIORef' reducerStateRef $ \state ->
+          case stepReducer state conversationMessage of
+            StepAdvanced advanced patch -> (advanced, Just patch)
+            StepDropped unchanged -> (unchanged, Nothing)
+        forM_ maybePatch $ \patch ->
+          sendMessage
+            ( Contracts.ServerConversationPatch
+                contextIdValue
+                patch
+            )
+  sendAck connection (envelopeMessageId envelope)
+
 data DemoClientMessagePublication = DemoClientMessagePublication
   { demoClientPublicationTopic :: Text.Text,
     demoClientPublicationProducerName :: Text.Text,
+    demoClientPublicationMessageKey :: Maybe Text.Text,
     demoClientPublicationSequenceKey :: Text.Text,
     demoClientPublicationPayload :: Lazy.ByteString
   }
   deriving (Eq, Show)
+
+data DemoClientMessageError = DemoClientMessageError
+  { demoClientMessageErrorCode :: Text.Text,
+    demoClientMessageErrorMessage :: Text.Text
+  }
+  deriving (Eq, Show)
+
+instance Exception DemoClientMessageError
+
+validateDemoClientMessageCatalog :: [ModelDescriptor] -> Contracts.WsClientMessage -> Either DemoClientMessageError ()
+validateDemoClientMessageCatalog catalog clientMessage =
+  case clientMessage of
+    Contracts.ClientCreateContext _ modelIdValue _ ->
+      if modelIdValue `Set.member` activeModelIds
+        then Right ()
+        else
+          Left
+            DemoClientMessageError
+              { demoClientMessageErrorCode = "unknown-model",
+                demoClientMessageErrorMessage =
+                  "modelId " <> modelIdValue <> " is not in the active catalog"
+              }
+    _ -> Right ()
+  where
+    activeModelIds = Set.fromList (map modelId catalog)
 
 planDemoClientMessagePublications ::
   ConversationTopic.TopicNamespace ->
@@ -422,19 +873,32 @@ planDemoClientMessagePublications namespace userIdValue clientMessage =
           (Contracts.unMessageId promptMessageId)
           (Contracts.ConversationCancelEvent (Contracts.ConversationCancelPayload promptMessageId))
       ]
+    Contracts.ClientRecordUpload contextIdValue payload ->
+      [ conversationPublication
+          namespace
+          userIdValue
+          contextIdValue
+          (uploadEventSequenceKey payload)
+          (Contracts.ConversationUserUploadEvent payload)
+      ]
     Contracts.ClientUpdateDraft contextIdValue draftText ->
       [ compactedUserPublication
           (ConversationTopic.draftsMetadataTopicName namespace userIdValue)
           "frontend-drafts"
           userIdValue
-          (Contracts.unContextId contextIdValue <> ":" <> draftText)
-          (Contracts.DraftUpdated contextIdValue draftText)
+          (Contracts.unContextId contextIdValue)
+          (draftEventSequenceKey contextIdValue draftText)
+          ( if Text.null draftText
+              then Contracts.DraftCleared contextIdValue
+              else Contracts.DraftUpdated contextIdValue draftText
+          )
       ]
     Contracts.ClientCreateContext contextIdValue modelId title ->
       [ contextMetadataPublication
           namespace
           userIdValue
           contextIdValue
+          (Contracts.unContextId contextIdValue <> ":create:" <> modelId <> ":" <> title)
           (Contracts.ContextCreated contextIdValue modelId title)
       ]
     Contracts.ClientRenameContext contextIdValue title ->
@@ -442,6 +906,7 @@ planDemoClientMessagePublications namespace userIdValue clientMessage =
           namespace
           userIdValue
           contextIdValue
+          (Contracts.unContextId contextIdValue <> ":rename:" <> title)
           (Contracts.ContextRenamed contextIdValue title)
       ]
     Contracts.ClientSoftDeleteContext contextIdValue ->
@@ -449,8 +914,19 @@ planDemoClientMessagePublications namespace userIdValue clientMessage =
           namespace
           userIdValue
           contextIdValue
+          (Contracts.unContextId contextIdValue <> ":soft-delete")
           (Contracts.ContextSoftDeleted contextIdValue)
       ]
+
+uploadEventSequenceKey :: Contracts.ConversationUserUploadPayload -> Text.Text
+uploadEventSequenceKey payload =
+  let ref = Contracts.uploadObjectRef payload
+   in "upload:" <> Contracts.objectBucket ref <> ":" <> Contracts.objectKey ref
+
+draftEventSequenceKey :: Contracts.ContextId -> Text.Text -> Text.Text
+draftEventSequenceKey contextIdValue draftText
+  | Text.null draftText = Contracts.unContextId contextIdValue <> ":clear"
+  | otherwise = Contracts.unContextId contextIdValue <> ":" <> draftText
 
 conversationPublication ::
   ConversationTopic.TopicNamespace ->
@@ -466,7 +942,10 @@ conversationPublication namespace userIdValue contextIdValue sequenceKey event =
         { demoClientPublicationTopic =
             ConversationTopic.conversationTopicName namespace userIdValue contextIdValue,
           demoClientPublicationProducerName =
-            "frontend-conversation-" <> userIdText <> "-" <> contextIdText,
+            dedupProducerName
+              ("frontend-conversation-" <> userIdText <> "-" <> contextIdText)
+              sequenceKey,
+          demoClientPublicationMessageKey = Nothing,
           demoClientPublicationSequenceKey = sequenceKey,
           demoClientPublicationPayload = encode event
         }
@@ -475,15 +954,17 @@ contextMetadataPublication ::
   ConversationTopic.TopicNamespace ->
   Contracts.UserId ->
   Contracts.ContextId ->
+  Text.Text ->
   Contracts.ContextMetadataEvent ->
   DemoClientMessagePublication
-contextMetadataPublication namespace userIdValue contextIdValue event =
+contextMetadataPublication namespace userIdValue contextIdValue sequenceKey event =
   let Contracts.ContextId contextIdText = contextIdValue
    in compactedUserPublication
         (ConversationTopic.contextsMetadataTopicName namespace userIdValue)
         "frontend-contexts"
         userIdValue
         contextIdText
+        sequenceKey
         event
 
 compactedUserPublication ::
@@ -492,15 +973,24 @@ compactedUserPublication ::
   Text.Text ->
   Contracts.UserId ->
   Text.Text ->
+  Text.Text ->
   event ->
   DemoClientMessagePublication
-compactedUserPublication topicValue producerPrefix (Contracts.UserId userIdText) sequenceKey event =
+compactedUserPublication topicValue producerPrefix (Contracts.UserId userIdText) messageKey sequenceKey event =
   DemoClientMessagePublication
     { demoClientPublicationTopic = topicValue,
-      demoClientPublicationProducerName = producerPrefix <> "-" <> userIdText,
+      demoClientPublicationProducerName =
+        dedupProducerName
+          (producerPrefix <> "-" <> userIdText)
+          sequenceKey,
+      demoClientPublicationMessageKey = Just messageKey,
       demoClientPublicationSequenceKey = sequenceKey,
       demoClientPublicationPayload = encode event
     }
+
+dedupProducerName :: Text.Text -> Text.Text -> Text.Text
+dedupProducerName producerScope sequenceKey =
+  producerScope <> "-" <> Text.pack (show (stableSequenceId sequenceKey))
 
 publishDemoClientMessagePublication ::
   PulsarTransport ->
@@ -511,7 +1001,8 @@ publishDemoClientMessagePublication transport publication =
     transport
     (demoClientPublicationTopic publication)
     ( (defaultPublishOptions (demoClientPublicationProducerName publication))
-        { publishSequenceId =
+        { publishMessageKey = demoClientPublicationMessageKey publication,
+          publishSequenceId =
             Just (stableSequenceId (demoClientPublicationSequenceKey publication))
         }
     )
@@ -521,8 +1012,153 @@ publishDemoClientMessagePublication transport publication =
 stableSequenceId :: Text.Text -> Integer
 stableSequenceId value =
   ByteString.foldl' step 0 (ByteString.take 8 (SHA256.hash (TextEncoding.encodeUtf8 value)))
+    -- Pulsar WebSocket producer URLs parse @initialSequenceId@ as a signed Java long.
+    `mod` 9223372036854775807
   where
     step acc byte = acc * 256 + fromIntegral byte
+
+publishRawTopicPayload ::
+  Paths ->
+  RuntimeMode ->
+  Maybe ClusterConfig ->
+  Text.Text ->
+  Text.Text ->
+  Maybe Text.Text ->
+  Text.Text ->
+  ByteString.ByteString ->
+  IO ()
+publishRawTopicPayload paths runtimeMode maybeClusterConfig topic producerName messageKey contextValue payload = do
+  maybeTransport <- discoverPulsarTransport paths runtimeMode maybeClusterConfig
+  case maybeTransport of
+    Nothing ->
+      ioError
+        ( userError
+            ( "Pulsar publish is unavailable for "
+                <> Text.unpack (runtimeModeId runtimeMode)
+                <> "; no Pulsar transport could be discovered"
+            )
+        )
+    Just transport ->
+      publishTopicPayload
+        transport
+        topic
+        ((defaultPublishOptions producerName) {publishMessageKey = messageKey})
+        contextValue
+        payload
+
+readRawTopicPayloads ::
+  Paths ->
+  RuntimeMode ->
+  Maybe ClusterConfig ->
+  Text.Text ->
+  Int ->
+  IO [RawTopicMessage]
+readRawTopicPayloads paths runtimeMode maybeClusterConfig topic maxMessages
+  | maxMessages <= 0 = pure []
+  | otherwise = do
+      maybeTransport <- discoverPulsarTransport paths runtimeMode maybeClusterConfig
+      case maybeTransport of
+        Nothing ->
+          ioError
+            ( userError
+                ( "Pulsar read is unavailable for "
+                    <> Text.unpack (runtimeModeId runtimeMode)
+                    <> "; no Pulsar transport could be discovered"
+                )
+            )
+        Just transport ->
+          readRawTopicPayloadsViaPulsar transport topic maxMessages
+
+readNamespaceCompactionThreshold ::
+  Paths ->
+  RuntimeMode ->
+  Maybe ClusterConfig ->
+  Text.Text ->
+  IO Int
+readNamespaceCompactionThreshold paths runtimeMode maybeClusterConfig namespaceValue = do
+  maybeTransport <- discoverPulsarTransport paths runtimeMode maybeClusterConfig
+  case maybeTransport of
+    Nothing ->
+      ioError
+        ( userError
+            ( "Pulsar namespace compaction threshold read is unavailable for "
+                <> Text.unpack (runtimeModeId runtimeMode)
+                <> "; no Pulsar transport could be discovered"
+            )
+        )
+    Just transport ->
+      readNamespaceCompactionThresholdViaPulsar transport namespaceValue
+
+compactTopicAndWait ::
+  Paths ->
+  RuntimeMode ->
+  Maybe ClusterConfig ->
+  Text.Text ->
+  IO ()
+compactTopicAndWait paths runtimeMode maybeClusterConfig topic = do
+  maybeTransport <- discoverPulsarTransport paths runtimeMode maybeClusterConfig
+  case maybeTransport of
+    Nothing ->
+      ioError
+        ( userError
+            ( "Pulsar topic compaction is unavailable for "
+                <> Text.unpack (runtimeModeId runtimeMode)
+                <> "; no Pulsar transport could be discovered"
+            )
+        )
+    Just transport -> do
+      triggerTopicCompactionViaPulsar transport topic
+      waitForTopicCompactionCompleteViaPulsar transport topic
+
+readRawTopicPayloadsViaPulsar :: PulsarTransport -> Text.Text -> Int -> IO [RawTopicMessage]
+readRawTopicPayloadsViaPulsar transport topic maxMessages = do
+  topicRef <- requireTopicRef topic
+  let readerName =
+        "infernix-read-"
+          <> sanitizeTopic topic
+          <> "-"
+          <> show maxMessages
+      readerPath = buildReaderSocketPath (pulsarWebSocketBase transport) topicRef readerName
+  runPulsarWebSocketClient (pulsarWebSocketBase transport) readerPath $ \connection ->
+    go connection maxMessages []
+  where
+    go _connection remaining acc
+      | remaining <= 0 = pure (reverse acc)
+    go connection remaining acc = do
+      maybeRawEnvelope <- timeout 5000000 (receiveJsonFrame "Pulsar raw reader message" connection)
+      case maybeRawEnvelope of
+        Nothing -> pure (reverse acc)
+        Just rawEnvelope -> do
+          envelope <- decodeJsonText "Pulsar raw reader message" rawEnvelope
+          sendAck connection (envelopeMessageId envelope)
+          decoded <- decodeRawTopicMessage envelope
+          go connection (remaining - 1) (decoded : acc)
+
+decodeRawTopicMessage :: PulsarEnvelope -> IO RawTopicMessage
+decodeRawTopicMessage envelope = do
+  payloadBytes <- decodeEnvelopeBase64Payload "raw topic" envelope
+  pure
+    RawTopicMessage
+      { rawTopicMessageId = envelopeMessageId envelope,
+        rawTopicMessageKey = envelopeKey envelope,
+        rawTopicMessagePayload = payloadBytes
+      }
+
+decodeEnvelopeBase64Payload :: String -> PulsarEnvelope -> IO ByteString.ByteString
+decodeEnvelopeBase64Payload payloadLabel envelope =
+  case Base64.decode (TextEncoding.encodeUtf8 (envelopePayload envelope)) of
+    Right raw -> pure raw
+    Left err ->
+      ioError
+        ( userError
+            ( "failed to decode base64 "
+                <> payloadLabel
+                <> " payload for message "
+                <> Text.unpack (envelopeMessageId envelope)
+                <> ":\n"
+                <> err
+            )
+        )
 
 readPublishedInferenceResultMaybe :: Paths -> RuntimeMode -> Text.Text -> Text.Text -> IO (Maybe InferenceResult)
 readPublishedInferenceResultMaybe paths runtimeMode topic requestIdValue = do
@@ -547,9 +1183,8 @@ readPublishedInferenceResultMaybe paths runtimeMode topic requestIdValue = do
 drainTopic :: Paths -> RuntimeMode -> EngineCommandOverrideMap -> DaemonConfig -> Text.Text -> IO ()
 drainTopic paths runtimeMode overrides daemonConfig requestTopicValue =
   case daemonConfigHostBatchTopic daemonConfig of
-    Just hostBatchTopicValue
-      | runtimeMode == AppleSilicon && daemonConfigRole daemonConfig == Coordinator ->
-          forwardTopic paths hostBatchTopicValue requestTopicValue
+    Just hostBatchTopicValue ->
+      forwardTopic paths hostBatchTopicValue requestTopicValue
     _ ->
       drainInferenceTopic paths runtimeMode overrides (daemonConfigResultTopic daemonConfig) requestTopicValue
 
@@ -875,11 +1510,11 @@ reconcileSupportedNamespaces transport _demoConfig = do
   -- Phase 7 Sprint 7.7: enable broker-side message deduplication on
   -- both supported namespaces. The full exactly-once contract also
   -- requires the producer to send a stable @producerName@ plus a
-  -- monotonically increasing @sequenceId@ per message; today's
-  -- WebSocket-based @publishTopicPayload@ uses an ephemeral producer
-  -- name, so the broker policy is the supported namespace-level gate
-  -- and the per-message producer wiring lands together with Sprint
-  -- 7.14's chaos validation pass.
+  -- monotonically increasing @sequenceId@ within that producer scope.
+  -- WebSocket publishers express the sequence baseline through the
+  -- @initialSequenceId@ URL parameter; frontend mutation producers use
+  -- one-message mutation-scoped names so arbitrary client keys remain
+  -- safe.
   ensureNamespaceDeduplicationEnabled manager adminBaseUrl "infernix/demo"
   ensureNamespaceDeduplicationEnabled manager adminBaseUrl "infernix/system"
   -- The bootstrap request topic itself. Pulsar auto-creates topics on
@@ -1028,6 +1663,130 @@ ensureNamespaceCompactionThreshold manager adminBaseUrl namespaceValue threshold
               <> lazyBodyToString (responseBody response)
           )
       )
+
+readNamespaceCompactionThresholdViaPulsar :: PulsarTransport -> Text.Text -> IO Int
+readNamespaceCompactionThresholdViaPulsar transport namespaceValue = do
+  adminBaseUrl <- requirePulsarAdminBaseUrl transport
+  manager <- newManager defaultManagerSettings
+  let url = adminBaseUrl <> "/namespaces/" <> Text.unpack namespaceValue <> "/compactionThreshold"
+  requestValue <- parseRequest url
+  response <- httpLbs requestValue manager
+  case statusCode (responseStatus response) of
+    200 ->
+      case eitherDecode (responseBody response) of
+        Right threshold -> pure threshold
+        Left decodeError ->
+          ioError
+            ( userError
+                ( "failed to parse Pulsar namespace compaction threshold for "
+                    <> Text.unpack namespaceValue
+                    <> ":\n"
+                    <> decodeError
+                )
+            )
+    code ->
+      ioError
+        ( userError
+            ( "failed to read Pulsar namespace compaction threshold for "
+                <> Text.unpack namespaceValue
+                <> " (status "
+                <> show code
+                <> "):\n"
+                <> lazyBodyToString (responseBody response)
+            )
+        )
+
+triggerTopicCompactionViaPulsar :: PulsarTransport -> Text.Text -> IO ()
+triggerTopicCompactionViaPulsar transport topicValue = do
+  adminBaseUrl <- requirePulsarAdminBaseUrl transport
+  topicRef <- requireTopicRef topicValue
+  manager <- newManager defaultManagerSettings
+  requestValue <- parseRequest (topicCompactionUrl adminBaseUrl topicRef)
+  let compactRequest =
+        requestValue
+          { method = "PUT",
+            requestHeaders = [("Content-Type", "application/json")]
+          }
+  response <- httpLbs compactRequest manager
+  let code = statusCode (responseStatus response)
+  unless (code `elem` [200, 202, 204]) $
+    ioError
+      ( userError
+          ( "failed to trigger Pulsar topic compaction for "
+              <> Text.unpack topicValue
+              <> " (status "
+              <> show code
+              <> "):\n"
+              <> lazyBodyToString (responseBody response)
+          )
+      )
+
+waitForTopicCompactionCompleteViaPulsar :: PulsarTransport -> Text.Text -> IO ()
+waitForTopicCompactionCompleteViaPulsar transport topicValue = go (60 :: Int)
+  where
+    go attemptsRemaining
+      | attemptsRemaining <= 0 =
+          ioError (userError ("timed out waiting for Pulsar topic compaction for " <> Text.unpack topicValue))
+      | otherwise = do
+          statusValue <- readTopicCompactionStatusViaPulsar transport topicValue
+          case Text.toUpper (longRunningProcessStatus statusValue) of
+            "SUCCESS" -> pure ()
+            "ERROR" ->
+              ioError
+                ( userError
+                    ( "Pulsar topic compaction failed for "
+                        <> Text.unpack topicValue
+                        <> maybe "" ((": " <>) . Text.unpack) (longRunningProcessLastError statusValue)
+                    )
+                )
+            _ -> do
+              threadDelay 1000000
+              go (attemptsRemaining - 1)
+
+readTopicCompactionStatusViaPulsar :: PulsarTransport -> Text.Text -> IO LongRunningProcessStatus
+readTopicCompactionStatusViaPulsar transport topicValue = do
+  adminBaseUrl <- requirePulsarAdminBaseUrl transport
+  topicRef <- requireTopicRef topicValue
+  manager <- newManager defaultManagerSettings
+  requestValue <- parseRequest (topicCompactionUrl adminBaseUrl topicRef)
+  response <- httpLbs requestValue manager
+  case statusCode (responseStatus response) of
+    200 ->
+      case eitherDecode (responseBody response) of
+        Right statusValue -> pure statusValue
+        Left decodeError ->
+          ioError
+            ( userError
+                ( "failed to parse Pulsar topic compaction status for "
+                    <> Text.unpack topicValue
+                    <> ":\n"
+                    <> decodeError
+                    <> "\n"
+                    <> lazyBodyToString (responseBody response)
+                )
+            )
+    code ->
+      ioError
+        ( userError
+            ( "failed to read Pulsar topic compaction status for "
+                <> Text.unpack topicValue
+                <> " (status "
+                <> show code
+                <> "):\n"
+                <> lazyBodyToString (responseBody response)
+            )
+        )
+
+topicCompactionUrl :: String -> TopicRef -> String
+topicCompactionUrl adminBaseUrl topicRef =
+  trimTrailingSlash adminBaseUrl
+    <> "/persistent/"
+    <> Text.unpack (topicTenant topicRef)
+    <> "/"
+    <> Text.unpack (topicNamespace topicRef)
+    <> "/"
+    <> Text.unpack (topicName topicRef)
+    <> "/compaction"
 
 -- | Enable broker-side message deduplication on a namespace via the
 -- admin API. With this policy on, the broker tracks
@@ -1260,18 +2019,17 @@ consumeTopicSession transport paths runtimeMode overrides daemonConfig requestTo
       sendAck connection (envelopeMessageId envelope)
 
 -- | Phase 7 Sprint 7.7 producer-side dedup wiring. Each publish carries
--- a stable @producerName@ in the URL query plus a per-message
--- @sequenceId@ in the JSON payload; the broker-side dedup gate
--- reconciled by 'reconcileSupportedNamespaces' rejects duplicate
--- @(producerName, sequenceId)@ tuples. When the application has a
--- monotonic dedup key (e.g. the conversation-log offset of the user
--- prompt event), callers pass it via 'publishSequenceId' so application
--- retries are observably idempotent end-to-end. When no application
--- key is available, callers leave 'publishSequenceId' as 'Nothing' and
--- the broker assigns the sequence; dedup degenerates to "no broker
--- side dedup, only producer-name stability for observability".
+-- a stable @producerName@ in the URL query. For the WebSocket API, the
+-- sequence baseline is also a producer query parameter
+-- (@initialSequenceId@), not a message JSON field. Because this module
+-- opens one WebSocket producer per publish, a requested message
+-- sequence @N@ is represented as @initialSequenceId = N - 1@ so the
+-- first and only message on that producer has sequence @N@. The
+-- broker-side dedup gate reconciled by 'reconcileSupportedNamespaces'
+-- rejects duplicate @(producerName, sequenceId)@ tuples.
 data PublishOptions = PublishOptions
   { publishProducerName :: Text.Text,
+    publishMessageKey :: Maybe Text.Text,
     publishSequenceId :: Maybe Integer
   }
 
@@ -1279,6 +2037,7 @@ defaultPublishOptions :: Text.Text -> PublishOptions
 defaultPublishOptions producerName =
   PublishOptions
     { publishProducerName = producerName,
+      publishMessageKey = Nothing,
       publishSequenceId = Nothing
     }
 
@@ -1319,15 +2078,16 @@ publishTopicPayload transport topicValue options contextValue payload = do
           (pulsarWebSocketBase transport)
           topicRef
           (publishProducerName options)
+          (publishSequenceId options)
       baseFields =
         [ "payload" .= TextEncoding.decodeUtf8 (Base64.encode payload),
           "context" .= contextValue
         ]
-      payloadFields =
-        case publishSequenceId options of
-          Just seqId -> ("sequenceId" .= seqId) : baseFields
+      keyedFields =
+        case publishMessageKey options of
+          Just messageKey -> ("key" .= messageKey) : baseFields
           Nothing -> baseFields
-      producerPayload = object payloadFields
+      producerPayload = object keyedFields
   runPulsarWebSocketClient (pulsarWebSocketBase transport) producerPath $ \connection -> do
     sendJsonFrame connection producerPayload
     rawResponse <- receiveJsonFrame "Pulsar producer response" connection
@@ -2118,7 +2878,9 @@ publishBootstrapReadyEvent transport systemNamespace request = do
               Text.pack (formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%SZ" now)
           }
       options =
-        defaultPublishOptions ("infernix-model-bootstrap-" <> modelId)
+        (defaultPublishOptions ("infernix-model-bootstrap-" <> modelId))
+          { publishMessageKey = Just modelId
+          }
   publishTopicPayload
     transport
     readyTopic
@@ -2228,6 +2990,7 @@ loadBootstrapPresignedConfig = do
             Presigned.PresignedUrlConfig
               { Presigned.presignedScheme = scheme,
                 Presigned.presignedEndpoint = hostPort,
+                Presigned.presignedPathPrefix = "",
                 Presigned.presignedRegion = Cluster.minioRegion minio,
                 Presigned.presignedAccessKeyId = Secrets.minioAccessKey minioCreds,
                 Presigned.presignedSecretAccessKey = Secrets.minioSecretKey minioCreds,
@@ -2437,15 +3200,20 @@ runPulsarWebSocketClient :: PulsarWebSocketBase -> String -> (WebSockets.Connect
 runPulsarWebSocketClient websocketBase =
   WebSockets.runClient (pulsarWsHost websocketBase) (pulsarWsPort websocketBase)
 
--- | Build the Pulsar WebSocket producer URL with a stable
--- @producerName@ query parameter so the broker-side dedup gate can
--- track @(producerName, sequenceId)@ tuples.
-buildProducerSocketPath :: PulsarWebSocketBase -> TopicRef -> Text.Text -> String
-buildProducerSocketPath websocketBase topicRef producerName =
+-- | Build the Pulsar WebSocket producer URL with stable @producerName@
+-- plus optional @initialSequenceId@ query parameters so the broker-side
+-- dedup gate can track @(producerName, sequenceId)@ tuples.
+buildProducerSocketPath :: PulsarWebSocketBase -> TopicRef -> Text.Text -> Maybe Integer -> String
+buildProducerSocketPath websocketBase topicRef producerName maybeSequenceId =
   buildSocketPath
     websocketBase
     ("producer/" <> renderTopicPath topicRef)
-    [("producerName", Text.unpack producerName)]
+    ( [("producerName", Text.unpack producerName)]
+        <> maybe
+          []
+          (\seqId -> [("initialSequenceId", show (seqId - 1))])
+          maybeSequenceId
+    )
 
 buildConsumerSocketPath :: PulsarWebSocketBase -> TopicRef -> String -> String -> String
 buildConsumerSocketPath websocketBase topicRef subscriptionName consumerName =

@@ -13,24 +13,35 @@
 - Keycloak runs against a dedicated Patroni Postgres cluster managed by the Percona Kubernetes
   operator, in line with [postgresql.md](postgresql.md); Keycloak's chart-embedded database
   path is disabled
+- the local demo runs one Keycloak application pod while the backing Patroni Postgres cluster
+  remains HA; raising the Keycloak application replica count requires the Sprint 7.14
+  proxy-affinity or clustered-cache validation pass
 - the Keycloak workload image is mirrored into Harbor before deployment and pulled from
   Harbor at runtime; no other registries are used after Harbor is ready
 - the realm definition is pre-seeded by an in-binary reconcile path during `cluster up`; the
   realm allows self-signup with username and password, has email verification disabled, has
   no MFA, no federation, and no social login
-- the realm includes a public OIDC client for the SPA at the demo SPA route; the JWT
-  audience claim and issuer URL are stable across `cluster up` re-runs
+- the realm includes a public OIDC client for the SPA at the demo SPA route; `cluster up`
+  reconciles browser redirect URIs and web origins for the operator-facing edge URL before the
+  routed publication probe declares the cluster ready
 - the routed `/auth` prefix forwards to the Keycloak service; this route is added to the
   Haskell-owned route registry source so README, the web portal surface doc, and
   publication JSON all carry it via the auto-rendered route registry markers
 - the `infernix-demo` backend validates JWTs against the Keycloak JWKS endpoint and caches
   the JWKS with a short TTL so transient Keycloak unavailability does not break existing
   sessions
+- the mounted `ClusterConfig.keycloak.baseUrl` is the public routed issuer base that includes
+  `/auth`; the mounted `clientId` is the public SPA client `infernix-spa`; the mounted
+  `jwksUrl` may use the in-cluster Keycloak Service and must include the service port plus the
+  `/auth/realms/<realm>/protocol/openid-connect/certs` path
 - the Keycloak `sub` claim is the canonical per-user identifier and is stable across login,
   logout, password change, and device change; demo backend code derives Pulsar topic
   namespaces and MinIO prefixes from `sub`, not from username
 - when `demo_ui = false`, the Keycloak release, its Patroni cluster, the `/auth` route, and
   the demo MinIO bucket are absent from the cluster
+- the May 28, 2026 clean rebuilt-image Linux GPU production-shape check validated that
+  `demo_ui = false` omits the Keycloak Deployment, Service, realm ConfigMap, admin Secret,
+  and the `keycloak-postgresql` Patroni cluster while keeping `infernix-engine` present
 
 ## Bootstrap Order
 
@@ -41,8 +52,8 @@ cluster reports readiness. Order:
    registry pulls allowed only for them
 2. Operator-managed Patroni Postgres for Keycloak is created and reports ready
 3. Keycloak Deployment is created from a Harbor-mirrored image
-4. Realm pre-seed runs idempotently; subsequent `cluster up` runs verify the realm matches
-   without rewriting it
+4. Realm pre-seed runs idempotently; subsequent `cluster up` runs reconcile the realm flags,
+   public SPA client, redirect URIs, web origins, and PKCE setting through the Keycloak admin API
 5. `/auth` HTTPRoute is created; route registry rendering picks it up
 
 ## JWT Validation Surface
@@ -56,6 +67,19 @@ The `infernix-demo` binary uses `Infernix.Auth.Jwt` (shared library) parameteriz
 Validation rules: standard OIDC `iss`, `aud`, `exp`, `nbf`, `iat`, signature against JWKS;
 `sub` extracted as the canonical user id. Failed validation closes the WS or rejects the HTTP
 request with a typed error.
+
+The May 28, 2026 Linux GPU routed Playwright run validates the public Keycloak path end to end
+for the object-grant API: a fresh user self-registers through `/auth`, the authorization code is
+exchanged for a real access token, `/api/objects/upload` rejects a malformed bearer token with
+`401`, the backend accepts the real token for scoped upload/download grant minting, and the same
+user completes a routed presigned MinIO PUT/GET byte roundtrip. A second fresh user with the same
+context/display name receives a different `users/<sub>/...` object prefix and cannot read the
+first user's object by default. The same routed suite opens `/ws` with the real token, verifies a
+malformed token does not open a browser WebSocket, and asserts a typed `ServerError` for a
+malformed frame on a valid connection. The browser artifact flow now also starts from the SPA's
+own sign-in button, lets `web/src/Infernix/Web/Auth.purs` / `.js` generate the PKCE verifier and
+complete the authorization-code exchange, then uses the in-memory access token for routed
+artifact upload and preview calls.
 
 ## Reconstitution Contract
 
