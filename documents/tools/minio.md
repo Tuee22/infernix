@@ -36,7 +36,6 @@
 ## Routed Surfaces
 
 <!-- infernix:route-registry:minio:start -->
-- `/minio/console` -> `infernix-minio-console:9090`; rewrites to upstream `/`
 - `/minio/s3` -> `infernix-minio:9000`; rewrites to upstream `/`
 <!-- infernix:route-registry:minio:end -->
 - the supported Gateway contract targets the live MinIO console and S3 surfaces, and integration
@@ -86,6 +85,29 @@ Phase 7 Sprint 7.7 landed the `infernix-demo-objects` bucket alongside the alway
 See [../architecture/demo_app_design.md](../architecture/demo_app_design.md) for the full
 storage contract and [../engineering/object_storage.md](../engineering/object_storage.md) for
 the presigned-URL contract.
+
+## Image Inventory
+
+The supported MinIO deployment uses upstream multi-arch images. `bitnamilegacy/*` is not part
+of the supported contract.
+
+| Component | Image | Notes |
+|-----------|-------|-------|
+| MinIO server | `minio/minio` | Multi-arch (`linux/amd64`, `linux/arm64`); the chart override pins a specific `RELEASE.*` tag |
+| MinIO client (`mc`) | `minio/mc` | Multi-arch; used by the chart's `minio-provisioning` Job to create buckets at install time |
+| Volume-permissions init container | `busybox` | Multi-arch; provides the `sh`/`chmod`/`chown` the chart's `defaultInitContainers.volumePermissions` block runs to seed PV permissions before MinIO starts |
+
+The standalone Console deployment (`bitnamilegacy/minio-object-browser`) is disabled
+(`minio.console.enabled: false`). There is no supported `/minio` browser route — operators
+access object data through presigned URLs from the demo backend rather than a browser
+console. If a future plan reintroduces the browser UI, it will use a multi-arch upstream
+image at a known tag and the change will land in the chart together with a new supported
+route.
+
+The substrate → container architecture mapping is owned by
+[../architecture/runtime_modes.md](../architecture/runtime_modes.md); Harbor publication
+pulls the substrate-matched manifest from each multi-arch upstream image and pushes the
+single-platform variant into the cluster's Harbor namespace.
 
 ## Cross-References
 

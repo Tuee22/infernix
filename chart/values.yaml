@@ -17,8 +17,11 @@ upstreamCharts:
   # plus its database entirely.
   keycloakpg:
     enabled: true
-  minio:
-    enabled: true
+  # Phase 3 Sprint 3.11 (2026-05-29): the upstream bitnami minio
+  # sub-chart was retired in favor of the hand-authored MinIO
+  # StatefulSet under `chart/templates/minio/`. The `infernixMinio:`
+  # block at the bottom of this file is the supported MinIO
+  # configuration surface.
   pulsar:
     enabled: true
   envoyGateway:
@@ -174,63 +177,48 @@ demoSplit:
   podDisruptionBudget:
     maxUnavailable: 1
 
-minio:
-  mode: distributed
-  fullnameOverride: infernix-minio
+# Phase 3 Sprint 3.11 (2026-05-29): the hand-authored MinIO
+# StatefulSet under `chart/templates/minio/` replaces the retired
+# `bitnami/minio` v17.0.21 sub-chart. Bitnami moved free multi-arch
+# images to `bitnamilegacy/*` (frozen amd64-only) in late 2025, and the
+# upstream `minio/minio` image is not a drop-in replacement under the
+# bitnami chart wrapper (the chart invokes the image with no args while
+# the upstream image expects `minio server <path>` as CMD). Hand-
+# authored templates give the platform full control over the StatefulSet
+# CMD, distributed-mode endpoints, root credentials, and provisioning
+# Job — no Bitnami licensing exposure ever again.
+infernixMinio:
+  enabled: true
+  replicaCount: 4
   image:
-    registry: docker.io
-    repository: bitnamilegacy/minio
+    repository: docker.io/minio/minio
+    tag: "RELEASE.2025-09-07T16-13-09Z"
+    pullPolicy: IfNotPresent
   clientImage:
-    registry: docker.io
-    repository: bitnamilegacy/minio-client
-  defaultInitContainers:
-    volumePermissions:
-      image:
-        registry: docker.io
-        repository: bitnamilegacy/os-shell
-  auth:
-    rootUser: minioadmin
-    rootPassword: minioadmin123
+    repository: docker.io/minio/mc
+    tag: "RELEASE.2025-08-13T08-35-41Z"
+    pullPolicy: IfNotPresent
+  initImage:
+    repository: docker.io/busybox
+    tag: "1.36"
+    pullPolicy: IfNotPresent
   service:
-    type: NodePort
-    nodePorts:
-      api: "30011"
+    nodePort: 30011
   persistence:
     storageClass: infernix-manual
     size: 20Gi
-  statefulset:
-    replicaCount: 4
-    zones: 1
-    drivesPerNode: 1
-  console:
-    enabled: true
-    replicaCount: 1
-    image:
-      registry: docker.io
-      repository: bitnamilegacy/minio-object-browser
-    service:
-      type: ClusterIP
-    ingress:
-      enabled: false
-  provisioning:
-    enabled: true
-    buckets:
-      - name: harbor-registry
-        versioning: Unchanged
-      # Phase 7 Sprint 7.7: always-on platform model-weights bucket. The
-      # coordinator role's bootstrap subscription PUTs `<modelId>/<filename>`
-      # entries here on first use of a model and writes the `.ready` sentinel
-      # last; engines read from this bucket via the per-adapter model cache.
-      # The retired `infernix-runtime` + `infernix-results` placeholder
-      # buckets are removed together with the legacy `service.*` stanza.
-      - name: infernix-models
-        versioning: Unchanged
-      # Phase 7 Sprint 7.7: demo-gated user-artifact bucket. Hosts per-user
-      # prefixes `users/<userId>/contexts/<contextId>/{uploads,generated}/`
-      # for the durable-context surface; presigned PUT/GET URLs minted at
-      # `/api/objects` are scoped per user.
-      - name: infernix-demo-objects
-        versioning: Unchanged
+  buckets:
+    - harbor-registry
+    # Phase 7 Sprint 7.7: always-on platform model-weights bucket. The
+    # coordinator role's bootstrap subscription PUTs `<modelId>/<filename>`
+    # entries here on first use of a model and writes the `.ready` sentinel
+    # last; engines read from this bucket via the per-adapter model cache.
+    - infernix-models
+    # Phase 7 Sprint 7.7: demo-gated user-artifact bucket. Hosts per-user
+    # prefixes `users/<userId>/contexts/<contextId>/{uploads,generated}/`
+    # for the durable-context surface; presigned PUT/GET URLs minted at
+    # `/api/objects` are scoped per user.
+    - infernix-demo-objects
 
 harbor:
   expose:

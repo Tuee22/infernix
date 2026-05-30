@@ -166,9 +166,50 @@ Direct reference path:
 - the current `setup-*` entrypoints remain idempotent preflight hooks layered on top of that
   prerequisite bootstrap and shared-project install flow
 
+## Apple Silicon Native Architecture
+
+The supported Apple Silicon control plane runs cluster workloads natively as `linux/arm64`.
+Colima's aarch64 VM is the only virtualization the supported lifecycle requires; the
+publication path does not depend on Rosetta or any other amd64 → arm64 emulation layer.
+`clusterWorkloadArchitecture AppleSilicon` returns `"arm64"` in `src/Infernix/Cluster.hs`,
+and every Harbor `docker pull --platform linux/<arch>` and `skopeo copy --override-arch=<arch>`
+invocation reads from that mapping. The chart's MinIO sub-chart uses upstream multi-arch
+images (`minio/minio`, `minio/mc`, `busybox`) — not the retired amd64-only `bitnamilegacy/*`
+packaging. Operators do not need to enable Colima's Rosetta-on-Linux setting; the supported
+profile is the default `vz` virtualization framework with `arch: aarch64`.
+
+The canonical home for the substrate → container architecture mapping is
+[../architecture/runtime_modes.md](../architecture/runtime_modes.md) (see the "Substrate
+Architecture" subsection); the MinIO image inventory is at
+[../tools/minio.md](../tools/minio.md).
+
+## Harbor Host-Port Conflicts
+
+`cluster up` selects Harbor's host-side Kind hostPort dynamically. The chooser
+(`chooseHarborPort` in `src/Infernix/Cluster.hs`) probes `127.0.0.1:30002` first and
+increments until an open port is found, persists the selection to
+`./.data/runtime/harbor-port.json`, and re-uses it on subsequent `cluster up` runs when the
+stored port is still free. Operators read the chosen port from `cluster status`
+(`harborPort` alongside `edgePort`) or directly from `harbor-port.json`.
+
+The typical conflict source on Apple Silicon developer hosts is an editor's debug adapter
+or language-server worker binding `127.0.0.1:30002` deliberately (the port falls outside
+macOS's ephemeral range `49152-65535`, so any process holding it asked for that exact port).
+The dynamic selection unblocks `cluster up` without touching the editor or its extensions;
+the in-cluster Kubernetes NodePort and chart references stay fixed at `30002` so cluster-
+internal wiring is unaffected.
+
+See [../tools/harbor.md](../tools/harbor.md) for the supported Harbor surface and
+[../engineering/docker_policy.md](../engineering/docker_policy.md) for the containerd
+registry-hosts patch the same Sprint 3.11 work landed.
+
 ## Cross-References
 
 - [cluster_bootstrap_runbook.md](cluster_bootstrap_runbook.md)
 - [../architecture/runtime_modes.md](../architecture/runtime_modes.md)
 - [../architecture/daemon_topology.md](../architecture/daemon_topology.md)
+- [../tools/harbor.md](../tools/harbor.md)
+- [../tools/minio.md](../tools/minio.md)
+- [../engineering/portability.md](../engineering/portability.md)
+- [../engineering/docker_policy.md](../engineering/docker_policy.md)
 - [../reference/cli_reference.md](../reference/cli_reference.md)

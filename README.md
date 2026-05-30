@@ -105,6 +105,15 @@ the HA testing and demo ground used to validate and demonstrate them.
 | Ubuntu 24.04 / CPU | containerized Linux CPU path | CPU-only validation, fallback, and non-GPU workloads under the same manifests, messaging, and runtime contract | `llama.cpp`, `whisper.cpp`, `PyTorch` CPU, `ONNX Runtime` CPU, JVM-hosted tools |
 | Ubuntu 24.04 / NVIDIA CUDA Container | pinned CUDA container lane with NVIDIA runtime | high-throughput GPU execution under the same manifests, messaging, and runtime contract | `vLLM`, `PyTorch` CUDA, `Diffusers` or `ComfyUI`, `CTranslate2`, `TensorFlow` CUDA, `JAX/XLA`, `llama.cpp` when GGUF is the right artifact |
 
+Each substrate fixes the Linux container architecture cluster workloads use: Apple Silicon
+runs `linux/arm64` natively (the supported control plane never emulates amd64 on Apple
+Silicon — no Rosetta), and both Linux substrates run `linux/amd64`. The MinIO sub-chart uses
+upstream multi-arch images (`minio/minio`, `minio/mc`, `busybox`) rather than the retired
+amd64-only `bitnamilegacy/*` packaging; see
+[documents/architecture/runtime_modes.md](documents/architecture/runtime_modes.md) for the
+substrate → architecture mapping and
+[documents/tools/minio.md](documents/tools/minio.md) for the supported MinIO image inventory.
+
 On Apple Silicon, the operator workflow has no generic Python prerequisite before the host build.
 When Apple adapter setup or validation paths are exercised, `infernix` reconciles the
 Homebrew-managed `python@3.12` formula and `python3.12` command when needed, bootstraps a
@@ -151,9 +160,9 @@ The supported local platform is built around:
   create or delete so lifecycle-owned lock files never become part of the supported repo contract
 
 <!-- infernix:route-registry:readme:start -->
-- always-published routed prefixes: `/harbor/api`, `/harbor`, `/minio/console`, `/minio/s3`, `/pulsar/admin`, `/pulsar/ws`
+- always-published routed prefixes: `/harbor/api`, `/harbor`, `/minio/s3`, `/pulsar/admin`, `/pulsar/ws`
 - demo-only routed prefixes (present when `.dhall` `demo_ui = True`): `/`, `/api`, `/auth`, `/ws`, `/api/objects`
-- registry-owned rewrites: `/harbor/api` -> `/api`; `/harbor` -> `/`; `/minio/console` -> `/`; `/minio/s3` -> `/`; `/pulsar/admin` -> `/`; `/pulsar/ws` -> `/ws`
+- registry-owned rewrites: `/harbor/api` -> `/api`; `/harbor` -> `/`; `/minio/s3` -> `/`; `/pulsar/admin` -> `/`; `/pulsar/ws` -> `/ws`
 <!-- infernix:route-registry:readme:end -->
 
 The optional demo UI runs in the cluster as the `infernix-demo` workload when the active `.dhall`

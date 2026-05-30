@@ -36,7 +36,6 @@ compatibility payload.
 | `/api` | demo-only | Demo API | `infernix-demo:80` | no rewrite |
 | `/harbor/api` | always published | Harbor API | `infernix-harbor-core:80` | `/harbor/api` -> `/api` |
 | `/harbor` | always published | Harbor portal | `infernix-harbor-portal:80` | `/harbor` -> `/` |
-| `/minio/console` | always published | MinIO console | `infernix-minio-console:9090` | `/minio/console` -> `/` |
 | `/minio/s3` | always published | MinIO S3 API | `infernix-minio:9000` | `/minio/s3` -> `/` |
 | `/pulsar/admin` | always published | Pulsar admin surface | `infernix-infernix-pulsar-proxy:80` | `/pulsar/admin` -> `/` |
 | `/pulsar/ws` | always published | Pulsar websocket surface | `infernix-infernix-pulsar-proxy:80` | `/pulsar/ws` -> `/ws` |

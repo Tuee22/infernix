@@ -68,7 +68,16 @@ data HarborPublishOptions = HarborPublishOptions
     harborUser :: String,
     harborPassword :: String,
     harborDockerCommand :: FilePath,
-    harborSkopeoCommand :: FilePath
+    harborSkopeoCommand :: FilePath,
+    -- | Phase 3 Sprint 3.11 (2026-05-29): the substrate-matched
+    -- container architecture (@\"amd64\"@ or @\"arm64\"@) the
+    -- publication path pins on every @docker pull --platform
+    -- linux\/<arch>@ and @skopeo copy --override-arch=<arch>@.
+    -- 'Cluster.publishClusterImages' overrides from
+    -- 'clusterWorkloadArchitecture'; the default below stays at
+    -- @\"amd64\"@ for backward compat with callers that have not
+    -- yet been updated.
+    harborTargetArchitecture :: String
   }
   deriving (Eq, Show)
 
@@ -90,7 +99,8 @@ defaultHarborPublishOptions =
       harborUser = "admin",
       harborPassword = "Harbor12345",
       harborDockerCommand = "docker",
-      harborSkopeoCommand = "skopeo"
+      harborSkopeoCommand = "skopeo",
+      harborTargetArchitecture = "amd64"
     }
 
 harborPrefixes :: [String]
@@ -196,7 +206,7 @@ ensureLocalImageAvailable options commandMonitorFactory imageRef = do
         -- upstream images is to skip the post-pull inspect gate (the
         -- pull itself succeeded; the inspect-failure surface is the
         -- supported signal to switch to the digest-pinned path) and
-        -- jump straight to the @pinLocalImageToAmd64@ helper, which
+        -- jump straight to the @pinLocalImageToTargetArchitecture@ helper, which
         -- runs @docker manifest inspect@ + @docker pull <image>\@<amd64-digest>@
         -- + @docker tag@ so the subsequent @docker push@ sees a
         -- single-platform local image. For non-multi-arch images we
@@ -220,7 +230,7 @@ ensureLocalImageAvailable options commandMonitorFactory imageRef = do
   -- subsequent @docker push@ sees a single-platform local image.
   if isUpstreamMultiArchImage imageRef
     then do
-      maybePinnedSource <- pinLocalImageToAmd64 options commandMonitorFactory imageRef manifestSourceImage
+      maybePinnedSource <- pinLocalImageToTargetArchitecture options commandMonitorFactory imageRef manifestSourceImage
       case maybePinnedSource of
         Just (amd64Digest, digestSourceImage) -> pure (Just amd64Digest, digestSourceImage)
         Nothing -> pure (Nothing, manifestSourceImage)
@@ -230,7 +240,7 @@ ensureLocalImageAvailable options commandMonitorFactory imageRef = do
 -- inspect to succeed. The supported invariant is that @docker pull@
 -- itself returns success, either from the original reference or its
 -- Docker Hub mirror. The returned reference is the manifest source that
--- downstream code ('pinLocalImageToAmd64' +
+-- downstream code ('pinLocalImageToTargetArchitecture' +
 -- 'pushUpstreamMultiArchViaImagetools') should keep using so a Docker
 -- Hub rate limit does not force a later registry roundtrip.
 -- type CommandMonitorFactory = String -> IO (Maybe ProcessMonitor.CommandMonitor)
@@ -617,7 +627,7 @@ contentAddressTag options imageRef = do
           manifestResult <- tryRunCommand (harborDockerCommand options) ["manifest", "inspect", imageRef] ""
           case manifestResult of
             Right manifestPayload ->
-              case contentAddressTagFromManifestPayload manifestPayload of
+              case contentAddressTagFromManifestPayload (harborTargetArchitecture options) manifestPayload of
                 Right tagValue -> pure tagValue
                 Left err -> failWith (err <> "\n" <> inspectFailure)
             Left manifestFailure ->
@@ -663,15 +673,16 @@ repoDigestTag inspection =
       Just (_, digestValue) <- [breakOn '@' repoDigestValue]
     ]
 
-contentAddressTagFromManifestPayload :: String -> Either String String
-contentAddressTagFromManifestPayload manifestPayload =
-  case extractAmd64Digest manifestPayload of
+contentAddressTagFromManifestPayload :: String -> String -> Either String String
+contentAddressTagFromManifestPayload targetArchitecture manifestPayload =
+  case extractDigestForArchitecture targetArchitecture manifestPayload of
     Just digestValue -> Right (replaceColon digestValue)
-    Nothing -> Left "manifest inspect did not include a linux/amd64 digest"
+    Nothing -> Left ("manifest inspect did not include a linux/" <> targetArchitecture <> " digest")
 
--- | Pull the linux/amd64 sub-image from a multi-arch upstream and
--- re-tag it under the original tag name so subsequent @docker push@
--- works against a single-platform local image. See
+-- | Pull the substrate-matched sub-image (e.g. @linux/arm64@ on
+-- Apple Silicon, @linux/amd64@ on Linux substrates) from a multi-arch
+-- upstream and re-tag it under the original tag name so subsequent
+-- @docker push@ works against a single-platform local image. See
 -- 'ensureLocalImageAvailable' for the supported context.
 --
 -- Phase 7 Sprint 7.7 follow-on (May 24, 2026): on Docker 29.x + the
@@ -682,11 +693,19 @@ contentAddressTagFromManifestPayload manifestPayload =
 -- before the pin so the subsequent @docker tag@ writes a fresh,
 -- single-platform reference. The @rm@ is best-effort: an unknown-tag
 -- failure is benign (the tag wasn't present yet).
+--
+-- Phase 3 Sprint 3.11 (2026-05-29): the platform pin is now derived
+-- from @options.harborTargetArchitecture@ instead of hardcoded amd64,
+-- so Apple Silicon substrates publish arm64 sub-images natively
+-- without Rosetta emulation.
 -- type CommandMonitorFactory = String -> IO (Maybe ProcessMonitor.CommandMonitor)
-pinLocalImageToAmd64 :: HarborPublishOptions -> CommandMonitorFactory -> String -> String -> IO (Maybe (String, String))
-pinLocalImageToAmd64 options commandMonitorFactory imageRef preferredManifestSource =
+pinLocalImageToTargetArchitecture :: HarborPublishOptions -> CommandMonitorFactory -> String -> String -> IO (Maybe (String, String))
+pinLocalImageToTargetArchitecture options commandMonitorFactory imageRef preferredManifestSource =
   tryManifestSources manifestSources
   where
+    targetArchitecture = harborTargetArchitecture options
+    platformFlagValue = "linux/" <> targetArchitecture
+
     manifestSources =
       nub
         ( preferredManifestSource
@@ -701,16 +720,16 @@ pinLocalImageToAmd64 options commandMonitorFactory imageRef preferredManifestSou
       case inspectResult of
         Left _ -> tryManifestSources rest
         Right manifestJson ->
-          case extractAmd64Digest manifestJson of
+          case extractDigestForArchitecture targetArchitecture manifestJson of
             Nothing -> tryManifestSources rest
-            Just amd64Digest -> do
+            Just archDigest -> do
               let imageWithoutTag = takeBefore ':' manifestSource
-                  imageByDigest = imageWithoutTag <> "@" <> amd64Digest
-              digestMonitor <- commandMonitorFactory ("docker pull --platform linux/amd64 " <> imageByDigest)
+                  imageByDigest = imageWithoutTag <> "@" <> archDigest
+              digestMonitor <- commandMonitorFactory ("docker pull --platform " <> platformFlagValue <> " " <> imageByDigest)
               digestPullResult <-
                 tryRunCommandMaybeMonitored
                   (harborDockerCommand options)
-                  ["pull", "--platform", "linux/amd64", imageByDigest]
+                  ["pull", "--platform", platformFlagValue, imageByDigest]
                   ""
                   digestMonitor
               case digestPullResult of
@@ -738,24 +757,27 @@ pinLocalImageToAmd64 options commandMonitorFactory imageRef preferredManifestSou
                         Right _ -> pure ()
                         Left _ -> recoverOriginalTag options commandMonitorFactory imageRef manifestSource
                     Left _ -> recoverOriginalTag options commandMonitorFactory imageRef manifestSource
-                  pure (Just (amd64Digest, manifestSource))
+                  pure (Just (archDigest, manifestSource))
 
--- | Parse the JSON output of @docker manifest inspect@ and return the
--- digest of the @linux/amd64@ entry, if any. Uses the Aeson FromJSON
--- machinery to decode just the shape we need without enumerating the
--- full manifest-list schema.
-extractAmd64Digest :: String -> Maybe String
-extractAmd64Digest manifestJson =
+-- | Phase 3 Sprint 3.11 (2026-05-29): parse the JSON output of
+-- @docker manifest inspect@ and return the digest of the entry whose
+-- architecture matches the supplied @targetArchitecture@ (typically
+-- @\"arm64\"@ on Apple Silicon or @\"amd64\"@ on Linux substrates).
+-- Uses the Aeson FromJSON machinery to decode just the shape we need
+-- without enumerating the full manifest-list schema.
+extractDigestForArchitecture :: String -> String -> Maybe String
+extractDigestForArchitecture targetArchitecture manifestJson =
   case eitherDecode (LazyChar8.pack manifestJson) :: Either String ManifestList of
     Left _ -> Nothing
-    Right ml -> Text.unpack <$> findAmd64Digest (manifestListEntries ml)
+    Right ml -> Text.unpack <$> findArchDigest (manifestListEntries ml)
   where
-    findAmd64Digest [] = Nothing
-    findAmd64Digest (entry : rest)
-      | manifestEntryArchitecture entry == "amd64"
+    targetArchText = Text.pack targetArchitecture
+    findArchDigest [] = Nothing
+    findArchDigest (entry : rest)
+      | manifestEntryArchitecture entry == targetArchText
           && manifestEntryOs entry == "linux" =
           Just (manifestEntryDigest entry)
-      | otherwise = findAmd64Digest rest
+      | otherwise = findArchDigest rest
 
 newtype ManifestList = ManifestList
   { manifestListEntries :: [ManifestEntry]
@@ -805,21 +827,23 @@ pushUpstreamMultiArchViaImagetools ::
   IO (Either String ())
 pushUpstreamMultiArchViaImagetools options commandMonitorFactory maybeKnownSourceDigest sourceImage targetRef =
   case maybeKnownSourceDigest of
-    Just amd64Digest -> copyDigest amd64Digest
+    Just archDigest -> copyDigest archDigest
     Nothing -> do
       manifestResult <- tryRunCommand (harborDockerCommand options) ["manifest", "inspect", sourceImage] ""
       case manifestResult of
         Left manifestFailure ->
           pure (Left ("docker manifest inspect failed for " <> sourceImage <> "\n" <> manifestFailure))
         Right manifestJson ->
-          case extractAmd64Digest manifestJson of
+          case extractDigestForArchitecture targetArchitecture manifestJson of
             Nothing ->
-              pure (Left ("no linux/amd64 entry in upstream manifest for " <> sourceImage))
-            Just amd64Digest -> copyDigest amd64Digest
+              pure (Left ("no linux/" <> targetArchitecture <> " entry in upstream manifest for " <> sourceImage))
+            Just archDigest -> copyDigest archDigest
   where
-    copyDigest amd64Digest = do
+    targetArchitecture = harborTargetArchitecture options
+
+    copyDigest archDigest = do
       let sourceRepository = takeBefore ':' sourceImage
-          sourceByDigest = sourceRepository <> "@" <> amd64Digest
+          sourceByDigest = sourceRepository <> "@" <> archDigest
           -- Phase 7 Sprint 7.14 (May 25, 2026): retired the
           -- @docker buildx imagetools create@ fallback in favor
           -- of @skopeo copy@. The buildx imagetools path delegates
@@ -833,16 +857,38 @@ pushUpstreamMultiArchViaImagetools options commandMonitorFactory maybeKnownSourc
           -- is IPv4-only (Kind's @extraPortMappings@ emit IPv4
           -- bindings). @--src-tls-verify=false@ +
           -- @--dest-tls-verify=false@ accept the Harbor self-
-          -- signed HTTP listener; @--override-os=linux@ +
-          -- @--override-arch=amd64@ ensure the copy is the
-          -- supported single-platform variant.
+          -- signed HTTP listener.
+          -- Phase 3 Sprint 3.11 (2026-05-29):
+          -- @--override-os=linux@ + @--override-arch=<arch>@
+          -- ensure the copy is the substrate-matched
+          -- single-platform variant. On Apple Silicon this is
+          -- @arm64@; on Linux substrates it stays @amd64@.
           skopeoTargetRef = substituteLocalhostWithLoopbackV4 targetRef
           skopeoSource = "docker://" <> sourceByDigest
           skopeoTarget = "docker://" <> skopeoTargetRef
+          archOverrideArg = "--override-arch=" <> targetArchitecture
+          destCredsArg = "--dest-creds=" <> harborUser options <> ":" <> harborPassword options
+      -- Phase 3 Sprint 3.11 follow-on (2026-05-30): Homebrew's
+      -- @skopeo@ on macOS does not ship a default
+      -- @/etc/containers/policy.json@, so the binary's fallback
+      -- aborts with "Error loading trust policy" unless we pass
+      -- @--insecure-policy@. Linux distros + the launcher image's
+      -- @skopeo@ ship the policy file by default; the flag is a
+      -- no-op there because the policy in the file is already the
+      -- supported @\"insecureAcceptAnything\"@ default. The supported
+      -- contract uses HTTP against Harbor inside the cluster's
+      -- private network, so insecure-policy + insecure-tls is the
+      -- intended posture. @--dest-creds@ is also required because
+      -- @skopeo@ reads its auth defaults from
+      -- @~/.config/containers/auth.json@ (XDG-style) rather than
+      -- @~/.docker/config.json@, so the @docker login@ credentials
+      -- the binary already established do not transfer.
       skopeoMonitor <-
         commandMonitorFactory
-          ( "skopeo copy --src-tls-verify=false --dest-tls-verify=false "
-              <> "--override-os=linux --override-arch=amd64 "
+          ( "skopeo --insecure-policy copy --src-tls-verify=false --dest-tls-verify=false "
+              <> "--override-os=linux "
+              <> archOverrideArg
+              <> " --dest-creds=<redacted> "
               <> skopeoSource
               <> " "
               <> skopeoTarget
@@ -850,11 +896,13 @@ pushUpstreamMultiArchViaImagetools options commandMonitorFactory maybeKnownSourc
       skopeoResult <-
         tryRunCommandMaybeMonitored
           (harborSkopeoCommand options)
-          [ "copy",
+          [ "--insecure-policy",
+            "copy",
             "--src-tls-verify=false",
             "--dest-tls-verify=false",
             "--override-os=linux",
-            "--override-arch=amd64",
+            archOverrideArg,
+            destCredsArg,
             skopeoSource,
             skopeoTarget
           ]
@@ -913,16 +961,22 @@ writeHarborOverridesFile publishedImages outputPath =
 buildHarborOverridesValue :: Map String PublishedImage -> Either String Value
 buildHarborOverridesValue publishedImages = do
   runtimeImage <- requiredRuntimeImage publishedImages
-  minioImage <- requireDiscoveredImage (findPublishedImageWithSuffix "/minio:2025.7.23-debian-12-r3" publishedImages)
-  minioShellImage <- requireDiscoveredImage (findPublishedImageWithSuffix "/os-shell:12-debian-12-r50" publishedImages)
-  minioConsoleImage <- requireDiscoveredImage (findPublishedImageWithSuffix "/minio-object-browser:2.0.2-debian-12-r3" publishedImages)
+  -- Phase 3 Sprint 3.11 (2026-05-29): the hand-authored MinIO
+  -- StatefulSet under `chart/templates/minio/` consumes its image
+  -- repository + tag from the `infernixMinio` block in
+  -- `chart/values.yaml`. The Harbor overlay therefore overrides
+  -- `infernixMinio.image` / `clientImage` / `initImage` to the
+  -- Harbor-mirrored refs after publication, replacing the retired
+  -- bitnami sub-chart's per-component overlay structure.
+  minioImage <- requireDiscoveredImage (findPublishedImageWithSuffix "/minio:RELEASE.2025-09-07T16-13-09Z" publishedImages)
+  minioInitImage <- requireDiscoveredImage (findPublishedImageWithSuffix "/busybox:1.36" publishedImages)
+  minioClientImage <- requireDiscoveredImage (findPublishedImageWithSuffix "/mc:RELEASE.2025-08-13T08-35-41Z" publishedImages)
   pulsarImage <- requireDiscoveredImage (findPublishedImageWithSuffix "/pulsar-all:4.0.9" publishedImages)
   postgresOperatorPublished <- requireDiscoveredImage (Map.lookup postgresOperatorImage publishedImages)
   postgresDatabasePublished <- requireDiscoveredImage (Map.lookup postgresDatabaseImage publishedImages)
   postgresPgBouncerPublished <- requireDiscoveredImage (Map.lookup postgresPgBouncerImage publishedImages)
   postgresPgBackRestPublished <- requireDiscoveredImage (Map.lookup postgresPgBackRestImage publishedImages)
-  let minioClientImage = findPublishedImageWithSuffix "/minio-client:2025.7.21-debian-12-r2" publishedImages
-      baseOverlay =
+  let baseOverlay =
         object
           [ "service" .= workloadImageOverlay runtimeImage,
             "demo" .= workloadImageOverlay runtimeImage,
@@ -933,8 +987,8 @@ buildHarborOverridesValue publishedImages = do
             -- present on Kind worker nodes.
             "coordinator" .= workloadImageOverlay runtimeImage,
             "engine" .= workloadImageOverlay runtimeImage,
-            "minio"
-              .= minioObject minioImage minioShellImage minioConsoleImage minioClientImage,
+            "infernixMinio"
+              .= infernixMinioOverlay minioImage minioClientImage minioInitImage,
             "pulsar"
               .= pulsarImageOverlay pulsarImage,
             "postgresOperator"
@@ -970,28 +1024,24 @@ buildHarborOverridesValue publishedImages = do
           "backups" .= object ["pgbackrest" .= object ["image" .= renderRepositoryAndTag pgBackRestPublished]],
           "proxy" .= object ["pgBouncer" .= object ["image" .= renderRepositoryAndTag pgBouncerPublished]]
         ]
-    minioObject minioPublished minioShellPublished minioConsolePublished maybeMinioClientPublished =
-      let baseObject =
-            [ "image" .= splitRegistryRepository minioPublished,
-              "defaultInitContainers"
-                .= object
-                  [ "volumePermissions"
-                      .= object
-                        [ "image" .= splitRegistryRepository minioShellPublished
-                        ]
-                  ],
-              "console"
-                .= object
-                  [ "image" .= splitRegistryRepository minioConsolePublished
-                  ]
-            ]
-       in object
-            ( baseObject
-                <> maybe
-                  []
-                  (\published -> ["clientImage" .= splitRegistryRepository published])
-                  maybeMinioClientPublished
-            )
+    -- Phase 3 Sprint 3.11 (2026-05-29): override the hand-authored
+    -- MinIO chart values directly. The `chart/templates/minio/*`
+    -- templates reference `infernixMinio.image.repository`,
+    -- `infernixMinio.image.tag`, `infernixMinio.clientImage.*`, and
+    -- `infernixMinio.initImage.*`; the overlay rewrites those to
+    -- point at the Harbor-mirrored content-addressed tags.
+    infernixMinioOverlay minioPublished minioClientPublished minioInitPublished =
+      object
+        [ "image" .= harborImageWithPullPolicy minioPublished,
+          "clientImage" .= harborImageWithPullPolicy minioClientPublished,
+          "initImage" .= harborImageWithPullPolicy minioInitPublished
+        ]
+    harborImageWithPullPolicy (repository, tagValue) =
+      object
+        [ "repository" .= repository,
+          "tag" .= tagValue,
+          "pullPolicy" .= ("IfNotPresent" :: String)
+        ]
 
 -- type PublishedImage = (String, String)
 requiredRuntimeImage :: Map String PublishedImage -> Either String PublishedImage
@@ -1015,16 +1065,6 @@ requireDiscoveredImage =
   maybe
     (Left "did not discover every non-Harbor third-party image required for the final Harbor-backed rollout")
     Right
-
--- type PublishedImage = (String, String)
-splitRegistryRepository :: PublishedImage -> Value
-splitRegistryRepository (repository, tagValue) =
-  let (registryValue, repositoryRemainder) = breakOnFirst '/' repository
-   in object
-        [ "registry" .= registryValue,
-          "repository" .= repositoryRemainder,
-          "tag" .= tagValue
-        ]
 
 -- type PublishedImage = (String, String)
 renderRepositoryAndTag :: PublishedImage -> String
@@ -1097,11 +1137,12 @@ trailingWhitespaceCharacters = " \n\r\t"
 -- type CommandMonitorFactory = String -> IO (Maybe ProcessMonitor.CommandMonitor)
 recoverOriginalTag :: HarborPublishOptions -> CommandMonitorFactory -> String -> String -> IO ()
 recoverOriginalTag options commandMonitorFactory imageRef manifestSource = do
-  recoverMonitor <- commandMonitorFactory ("docker pull --platform linux/amd64 " <> manifestSource)
+  let platformFlagValue = "linux/" <> harborTargetArchitecture options
+  recoverMonitor <- commandMonitorFactory ("docker pull --platform " <> platformFlagValue <> " " <> manifestSource)
   _ <-
     tryRunCommandMaybeMonitored
       (harborDockerCommand options)
-      ["pull", "--platform", "linux/amd64", manifestSource]
+      ["pull", "--platform", platformFlagValue, manifestSource]
       ""
       recoverMonitor
   _ <-
@@ -1146,12 +1187,6 @@ breakOn delimiter value =
   case break (== delimiter) value of
     (prefix, _ : suffix) -> Just (prefix, suffix)
     _ -> Nothing
-
-breakOnFirst :: Char -> String -> (String, String)
-breakOnFirst delimiter value =
-  case break (== delimiter) value of
-    (prefix, _ : suffix) -> (prefix, suffix)
-    _ -> (value, "")
 
 replaceColon :: String -> String
 replaceColon = map (\char -> if char == ':' then '-' else char)

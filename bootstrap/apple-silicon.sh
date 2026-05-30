@@ -120,11 +120,23 @@ ensure_protobuf_compiler() {
   APPLE_PROTOC_BIN="$(bootstrap::require_command protoc "${protobuf_prefix}/bin/protoc" "Protocol Buffers compiler" --version)"
 }
 
+# Phase 3 Sprint 3.11 follow-on (2026-05-29): the supported Apple
+# host-native publication path falls back to `skopeo copy` when
+# `docker push` hits the Docker 29.x containerd snapshotter
+# "Unavailable" layers race. Reconcile the Homebrew-managed `skopeo`
+# formula so the binary's fallback resolves through
+# `HostConfig.toolPaths.skopeo` (defaulting to
+# `/opt/homebrew/bin/skopeo`) without requiring operator setup.
+ensure_skopeo() {
+  ensure_brew_formula skopeo
+}
+
 ensure_build_prerequisites() {
   bootstrap::require_macos
   ensure_homebrew
   ensure_ghcup_toolchain
   ensure_protobuf_compiler
+  ensure_skopeo
 }
 
 build_launcher() {

@@ -145,7 +145,6 @@
 <!-- infernix:route-registry:cluster-bootstrap:start -->
 - `curl http://127.0.0.1:<port>/harbor` checks the Harbor portal route.
 - `curl http://127.0.0.1:<port>/harbor/api/v2.0/projects` checks the `/harbor/api -> /api` rewrite into the Harbor core service.
-- `curl http://127.0.0.1:<port>/minio/console/browser` checks the `/minio/console -> /` rewrite into the MinIO console service.
 - `curl http://127.0.0.1:<port>/minio/s3/models/demo.bin` checks the `/minio/s3 -> /` rewrite into the MinIO S3 service.
 - `curl http://127.0.0.1:<port>/pulsar/admin/admin/v2/clusters` checks the `/pulsar/admin -> /` rewrite into Pulsar's `/admin/v2` surface.
 - `curl http://127.0.0.1:<port>/pulsar/ws/v2/producer/infernix/demo/demo` checks the `/pulsar/ws -> /ws` rewrite and returns `405 Method Not Allowed` on the real cluster path.
@@ -153,6 +152,23 @@
 
 Those probes validate the real Gateway-backed upstream responses only; direct `infernix-demo`
 execution is not a supported compatibility fallback for the Harbor, MinIO, or Pulsar tool routes.
+
+## Repo-Local Lifecycle State
+
+`cluster up` persists two host-side port selections under `./.data/runtime/` so subsequent
+reconciles stay deterministic:
+
+- `./.data/runtime/edge-port.json` — the Envoy Gateway hostPort the routed edge listens on.
+  Selected by `chooseEdgePort` starting at `9090`; reused on subsequent runs when still free.
+- `./.data/runtime/harbor-port.json` — the Kind hostPort observed from the operator host
+  for Harbor. Selected by `chooseHarborPort` starting at `30002`; reused on subsequent runs
+  when still free. The in-cluster Kubernetes NodePort stays fixed at `30002`; only the
+  host-side mapping is dynamic, so operators with unrelated processes on `30002` (e.g. an
+  editor's debug worker) see `cluster up` select `30003` or higher automatically.
+
+Both ports appear in `cluster status` (`edgePort`, `harborPort`) alongside `lifecyclePhase`
+and the heartbeat surface. See [../tools/harbor.md](../tools/harbor.md) for the Harbor
+host-port contract.
 
 ## Warning Classification
 

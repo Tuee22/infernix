@@ -1,0 +1,69 @@
+{{/*
+Phase 3 Sprint 3.11 (2026-05-29): hand-authored provisioning Job
+replaces the retired bitnami `minio-provisioning` Job.
+
+Uses upstream `minio/mc` to wait for MinIO readiness, register a local
+alias against the in-cluster Service, and ensure every required bucket
+exists (idempotent via `--ignore-existing`):
+
+- `harbor-registry` — Harbor's S3 storage backend
+- `infernix-models` — platform model-weights bucket (lazy bootstrap)
+- `infernix-demo-objects` — demo user-artifact bucket (Phase 7)
+
+The chart's Helm post-install hook semantics turn this into a
+deploy-time barrier: `cluster up` waits for the Job to succeed before
+calling the warmup phase complete. Restart policy `Never` keeps the
+Job from masking real failures behind silent retries; the `mc alias`
+retry loop covers transient pod readiness while MinIO statefulset
+pods stabilize.
+*/}}
+{{- if .Values.infernixMinio.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: infernix-minio-provisioning
+  namespace: platform
+  labels:
+    app.kubernetes.io/name: infernix-minio-provisioning
+    app.kubernetes.io/component: object-store
+    app.kubernetes.io/part-of: infernix
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: 6
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: infernix-minio-provisioning
+        app.kubernetes.io/component: object-store
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: mc
+          image: "{{ .Values.infernixMinio.clientImage.repository }}:{{ .Values.infernixMinio.clientImage.tag }}"
+          imagePullPolicy: {{ .Values.infernixMinio.clientImage.pullPolicy }}
+          envFrom:
+            - secretRef:
+                name: infernix-minio-root
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              attempts=0
+              until mc alias set local http://infernix-minio.platform.svc.cluster.local:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" 2>/dev/null; do
+                attempts=$((attempts + 1))
+                if [ "$attempts" -ge 60 ]; then
+                  echo "minio not ready after 60 attempts" >&2
+                  exit 1
+                fi
+                sleep 5
+              done
+              {{- range .Values.infernixMinio.buckets }}
+              mc mb --ignore-existing local/{{ . }}
+              {{- end }}
+              mc admin info local
+{{- end }}

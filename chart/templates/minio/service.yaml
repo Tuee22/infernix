@@ -1,0 +1,35 @@
+{{/*
+Phase 3 Sprint 3.11 (2026-05-29): hand-authored MinIO Service replaces
+the retired bitnami sub-chart's NodePort Service. This is the
+in-cluster S3 endpoint referenced by:
+
+- `cluster.dhall.MinioConfig.endpoint` -> `http://infernix-minio.platform.svc.cluster.local:9000`
+- the Envoy Gateway `/minio/s3` HTTPRoute -> forwards to `infernix-minio:9000`
+- the Harbor registry's S3 storage backend (`regionendpoint: http://infernix-minio.platform.svc.cluster.local:9000`)
+- the demo backend's presigned-URL signer (operator user/password from `infernix-cluster-secrets`)
+
+NodePort `30011` keeps the existing Kind `extraPortMappings` entry valid
+so operators can hit the S3 surface from the host when debugging.
+*/}}
+{{- if .Values.infernixMinio.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: infernix-minio
+  namespace: platform
+  labels:
+    app.kubernetes.io/name: infernix-minio
+    app.kubernetes.io/component: object-store
+    app.kubernetes.io/part-of: infernix
+spec:
+  type: NodePort
+  selector:
+    app.kubernetes.io/name: infernix-minio
+    app.kubernetes.io/component: object-store
+  ports:
+    - name: s3
+      port: 9000
+      targetPort: 9000
+      nodePort: {{ .Values.infernixMinio.service.nodePort }}
+      protocol: TCP
+{{- end }}

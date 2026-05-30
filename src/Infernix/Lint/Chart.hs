@@ -24,6 +24,13 @@ requiredFiles =
     "chart/templates/httproutes.yaml",
     "chart/templates/runtimeclass-nvidia.yaml",
     "chart/templates/service-demo.yaml",
+    -- Phase 3 Sprint 3.11 (2026-05-29): hand-authored MinIO
+    -- templates replacing the retired bitnami sub-chart.
+    "chart/templates/minio/service-headless.yaml",
+    "chart/templates/minio/service.yaml",
+    "chart/templates/minio/secret.yaml",
+    "chart/templates/minio/statefulset.yaml",
+    "chart/templates/minio/job-provisioning.yaml",
     "kind/cluster-apple-silicon.yaml",
     "kind/cluster-linux-cpu.yaml",
     "kind/cluster-linux-gpu.yaml"
@@ -36,7 +43,10 @@ requiredPhrases =
         "upstreamCharts:",
         "envoyGateway:",
         "harbor:",
-        "minio:",
+        -- Phase 3 Sprint 3.11 (2026-05-29): the bitnami `minio:`
+        -- sub-chart block was retired in favor of the hand-authored
+        -- StatefulSet configured under `infernixMinio:`.
+        "infernixMinio:",
         "pulsar:",
         "gateway:",
         "repoGateway:",

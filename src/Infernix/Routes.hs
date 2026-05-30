@@ -99,7 +99,7 @@ renderHarborRouteSummarySection =
 
 renderMinioRouteSummarySection :: String
 renderMinioRouteSummarySection =
-  renderToolRouteSummarySection (filter (\routeSpec -> routePathPrefix routeSpec `elem` ["/minio/console", "/minio/s3"]) routeSpecs)
+  renderToolRouteSummarySection (filter (\routeSpec -> routePathPrefix routeSpec == "/minio/s3") routeSpecs)
 
 renderPulsarRouteSummarySection :: String
 renderPulsarRouteSummarySection =
@@ -110,7 +110,6 @@ renderClusterBootstrapRouteChecksSection =
   unlines
     [ "- `curl http://127.0.0.1:<port>/harbor` checks the Harbor portal route.",
       "- `curl http://127.0.0.1:<port>/harbor/api/v2.0/projects` checks the `/harbor/api -> /api` rewrite into the Harbor core service.",
-      "- `curl http://127.0.0.1:<port>/minio/console/browser` checks the `/minio/console -> /` rewrite into the MinIO console service.",
       "- `curl http://127.0.0.1:<port>/minio/s3/models/demo.bin` checks the `/minio/s3 -> /` rewrite into the MinIO S3 service.",
       "- `curl http://127.0.0.1:<port>/pulsar/admin/admin/v2/clusters` checks the `/pulsar/admin -> /` rewrite into Pulsar's `/admin/v2` surface.",
       "- `curl http://127.0.0.1:<port>/pulsar/ws/v2/producer/infernix/demo/demo` checks the `/pulsar/ws -> /ws` rewrite and returns `405 Method Not Allowed` on the real cluster path."
@@ -200,17 +199,6 @@ routeSpecs =
       (Just "harbor")
       (Just "HTTPRoute -> Harbor portal Service")
       (Just "envoy-gateway-routed harbor deployment"),
-    RouteSpec
-      "infernix-minio-console"
-      "/minio/console"
-      "MinIO console"
-      "infernix-minio-console"
-      9090
-      (Just "/")
-      False
-      Nothing
-      Nothing
-      Nothing,
     RouteSpec
       "infernix-minio-s3"
       "/minio/s3"
@@ -385,7 +373,6 @@ webPortalNotes routeSpec =
     "/api" -> "Covers `/api/publication`, `/api/cache`, `/api/models`, and `/api/demo-config`."
     "/harbor/api" -> "Rewrites to upstream `/api` before forwarding to `infernix-harbor-core:80`."
     "/harbor" -> "Rewrites to upstream `/` before forwarding to `infernix-harbor-portal:80`."
-    "/minio/console" -> "Rewrites to upstream `/` before forwarding to `infernix-minio-console:9090`."
     "/minio/s3" -> "Rewrites to upstream `/` before forwarding to `infernix-minio:9000`."
     "/pulsar/admin" -> "Rewrites to upstream `/` before forwarding to `infernix-infernix-pulsar-proxy:80`."
     "/pulsar/ws" -> "Rewrites to upstream `/ws` before forwarding to `infernix-infernix-pulsar-proxy:80`."

@@ -1,0 +1,37 @@
+{{/*
+Phase 3 Sprint 3.11 (2026-05-29): hand-authored MinIO StatefulSet
+replaces the retired `bitnami/minio` v17.0.21 sub-chart. The bitnami
+images moved to `bitnamilegacy/*` (frozen amd64-only) in late 2025, and
+the upstream `minio/minio` image is not a drop-in replacement under the
+bitnami chart wrapper (the chart invokes the image with no args while
+the upstream image expects `minio server <path>` as CMD). The supported
+platform now ships its own MinIO templates so Apple Silicon runs the
+multi-arch upstream image natively without bitnami licensing exposure.
+
+The headless Service `infernix-minio-headless` powers per-pod DNS for
+the distributed MinIO StatefulSet — each replica reaches its peers via
+`infernix-minio-<ordinal>.infernix-minio-headless.platform.svc.cluster.local`.
+*/}}
+{{- if .Values.infernixMinio.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: infernix-minio-headless
+  namespace: platform
+  labels:
+    app.kubernetes.io/name: infernix-minio
+    app.kubernetes.io/component: object-store
+    app.kubernetes.io/part-of: infernix
+spec:
+  type: ClusterIP
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app.kubernetes.io/name: infernix-minio
+    app.kubernetes.io/component: object-store
+  ports:
+    - name: s3
+      port: 9000
+      targetPort: 9000
+      protocol: TCP
+{{- end }}

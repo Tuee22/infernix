@@ -110,13 +110,16 @@ helmRepositories =
     ("nvdp", "https://nvidia.github.io/k8s-device-plugin")
   ]
 
+-- | Phase 3 Sprint 3.11 (2026-05-29): the bitnami minio sub-chart is
+-- retired in favor of the hand-authored MinIO StatefulSet under
+-- `chart/templates/minio/`, so the Helm dependency closure no longer
+-- includes `chart/charts/minio-17.0.21.tgz`.
 helmDependencyArchives :: [FilePath]
 helmDependencyArchives =
   [ "chart/charts/harbor-1.18.3.tgz",
     "chart/charts/pg-operator-2.9.0.tgz",
     "chart/charts/pg-db-2.9.0.tgz",
     "chart/charts/pulsar-4.5.0.tgz",
-    "chart/charts/minio-17.0.21.tgz",
     "chart/charts/gateway-helm-v1.7.2.tgz"
   ]
 
@@ -137,8 +140,7 @@ finalPhaseDeployments state =
     <> [deployment | clusterStateHasDemoUi state, deployment <- demoDeployments]
   where
     baseDeployments =
-      [ "deployment/infernix-minio-console",
-        "deployment/infernix-engine"
+      [ "deployment/infernix-engine"
       ]
         <> [deployment | clusterServiceEnabled (clusterRuntimeMode state), deployment <- ["deployment/infernix-service"]]
     demoDeployments =
@@ -1741,7 +1743,8 @@ publishClusterImages paths state renderedChartPath runtimeMode = do
         PublishImages.harborClientHost = hostHarborAddress,
         PublishImages.harborApiHost = harborApiHost paths runtimeMode (harborPort state),
         PublishImages.harborDockerCommand = resolveHostToolForCluster paths HostDocker,
-        PublishImages.harborSkopeoCommand = resolveHostToolForCluster paths HostSkopeo
+        PublishImages.harborSkopeoCommand = resolveHostToolForCluster paths HostSkopeo,
+        PublishImages.harborTargetArchitecture = clusterWorkloadArchitecture runtimeMode
       }
     ( \detail -> do
         detailState <- startLifecyclePhase paths state "cluster-up" "publish-harbor-images" detail
@@ -1757,12 +1760,18 @@ preloadHostCachedWarmupImagesOnKindWorker paths state runtimeMode =
     let workerContainer = kindClusterName paths runtimeMode <> "-worker"
     mapM_ (preloadHostCachedWarmupImage paths state workerContainer) hostCachedWarmupImageRefs
 
+-- | Phase 3 Sprint 3.11 (2026-05-29): the warmup-preload list tracks
+-- the multi-arch upstream image inventory after the `bitnamilegacy/*`
+-- retirement. The MinIO server image is `minio/minio` (multi-arch); the
+-- volume-permissions init container uses `busybox` (multi-arch); the
+-- separate `minio-object-browser` Deployment was removed when
+-- `console.enabled` flipped to `false` in `chart/values.yaml`.
 hostCachedWarmupImageRefs :: [String]
 hostCachedWarmupImageRefs =
   [ "docker.io/apachepulsar/pulsar-all:4.0.9",
-    "docker.io/bitnamilegacy/minio:2025.7.23-debian-12-r3",
-    "docker.io/bitnamilegacy/minio-object-browser:2.0.2-debian-12-r3",
-    "docker.io/bitnamilegacy/os-shell:12-debian-12-r50",
+    "docker.io/minio/minio:RELEASE.2025-09-07T16-13-09Z",
+    "docker.io/minio/mc:RELEASE.2025-08-13T08-35-41Z",
+    "docker.io/busybox:1.36",
     "docker.io/envoyproxy/gateway:v1.7.2",
     "docker.io/percona/percona-distribution-postgresql:18.3-1",
     "docker.io/percona/percona-pgbackrest:2.58.0-1",
@@ -1826,10 +1835,16 @@ hydrateMissingHostWarmupImage paths state imageRef =
           "cluster-up"
           "preload-bootstrap-images"
           ("hydrating warmup image " <> imageRef <> " via " <> mirrorRef)
+      -- Phase 3 Sprint 3.11 (2026-05-29): the @--platform@ pin is
+      -- derived from the active substrate so Apple Silicon hydrates
+      -- arm64 base images natively. The hardcoded @linux/amd64@ this
+      -- replaced was the Docker 29.x mirror fallback added when only
+      -- amd64 substrates were supported.
+      let platformFlagValue = "linux/" <> clusterWorkloadArchitecture (clusterRuntimeMode state)
       hydrateResult <-
         ( try
             ( do
-                runCommandMonitored paths hydrateState Nothing [] "docker" ["pull", "--platform", "linux/amd64", mirrorRef]
+                runCommandMonitored paths hydrateState Nothing [] "docker" ["pull", "--platform", platformFlagValue, mirrorRef]
                 runCommandMonitored paths hydrateState Nothing [] "docker" ["tag", mirrorRef, imageRef]
                 requireDockerImagePresent imageRef ("mirror pull completed for " <> mirrorRef <> ", but " <> imageRef <> " is still not inspectable locally after tagging")
             ) ::
@@ -2961,16 +2976,6 @@ fetchHelmDependencyArchive paths archiveRelativePath destinationDirectory =
       fetchChartFromHelmRepository paths "pg-db" "2.9.0" "https://percona.github.io/percona-helm-charts" destinationDirectory
     "chart/charts/pulsar-4.5.0.tgz" ->
       fetchChartFromHelmRepository paths "pulsar" "4.5.0" "https://pulsar.apache.org/charts" destinationDirectory
-    "chart/charts/minio-17.0.21.tgz" ->
-      runCommand
-        Nothing
-        []
-        "curl"
-        [ "-fsSL",
-          "https://charts.bitnami.com/bitnami/minio-17.0.21.tgz",
-          "-o",
-          destinationDirectory </> "minio-17.0.21.tgz"
-        ]
     "chart/charts/gateway-helm-v1.7.2.tgz" ->
       runCommand
         Nothing
@@ -3601,6 +3606,15 @@ prepareKindNodeRuntimePaths paths state runtimeMode = do
       registryHostsPath = localRegistryHostsRoot </> namespaceDirName </> "hosts.toml"
       controlPlaneNodeName = kindControlPlaneNodeName paths runtimeMode
   createDirectoryIfMissing True localKindRoot
+  -- Phase 2 Sprint 2.13 follow-on (2026-05-29): scrub any stale
+  -- operator-managed Patroni Postgres directories from the local
+  -- kind root before the bulk copy. Older binaries retained these
+  -- trees on `cluster down`; the new retention contract excludes
+  -- them, but operators upgrading from an older binary may still
+  -- have pre-existing trees on the host that would otherwise be
+  -- replayed into the new cluster and crash the @postgres-startup@
+  -- init container on partial-init state.
+  scrubStalePatroniDirectories paths runtimeMode
   registryHostsContents <- readFile registryHostsPath
   nodeNames <- kindNodeNames paths runtimeMode
   mapM_
@@ -3632,6 +3646,30 @@ prepareKindNodeRuntimePaths paths state runtimeMode = do
         "docker"
         ["exec", "-i", nodeName, "cp", "/dev/stdin", registryDirectoryInNode </> "hosts.toml"]
         registryHostsContents
+
+-- | Phase 2 Sprint 2.13 follow-on (2026-05-29): defensively remove
+-- any retained Patroni directory trees from the on-host kind root
+-- before the next cluster up's bulk replay copies them into the
+-- worker. The Patroni claim directories live at
+-- @<kindRuntimeRoot>/platform/infernix/<workload>/...@ for the known
+-- operator-managed PostgreSQL clusters (Harbor + Keycloak).
+scrubStalePatroniDirectories :: Paths -> RuntimeMode -> IO ()
+scrubStalePatroniDirectories paths runtimeMode =
+  mapM_ scrubDirectory patroniWorkloadDirectories
+  where
+    patroniWorkloadDirectories =
+      [ "platform" </> "infernix" </> name
+      | name <-
+          [ "harbor-postgresql-instance1",
+            "harbor-postgresql-pgbackrest",
+            "keycloak-postgresql-instance1",
+            "keycloak-postgresql-pgbackrest"
+          ]
+      ]
+    scrubDirectory relativePath = do
+      let absolutePath = kindRuntimeRoot paths runtimeMode </> relativePath
+      directoryPresent <- doesDirectoryExist absolutePath
+      when directoryPresent (removePathForcibly absolutePath)
 
 prepareKindNodeClaimDirectories :: Paths -> ClusterState -> RuntimeMode -> [PersistentClaim] -> IO ()
 prepareKindNodeClaimDirectories paths _state runtimeMode persistentClaims = do
@@ -3678,13 +3716,29 @@ syncClaimDirectoriesWhenAvailable paths maybeState =
     Just state | not (null (claims state)) -> syncClaimDirectoriesFromOwningNodes paths state
     _ -> pure False
 
+-- | Phase 2 Sprint 2.13 follow-on (2026-05-29): operator-managed
+-- Patroni Postgres claims are not retained across cluster lifecycles.
+-- The Percona Operator recreates the cluster from scratch on each
+-- `cluster up`, and the upstream chart + this binary reconcile the
+-- demo Keycloak realm config separately. Retaining the partial
+-- `/pgdata/pg18` tree from a previous interrupted run causes the
+-- @postgres-startup@ init container in the new pod to crash on
+-- invalid bootstrap state (surfaced by the 2026-05-29 Apple cohort
+-- `infernix test all` integration replay).
+isPatroniManagedClaim :: PersistentClaim -> Bool
+isPatroniManagedClaim persistentClaim =
+  let workloadName = Text.unpack (workload persistentClaim)
+   in "harbor-postgresql-" `List.isPrefixOf` workloadName
+        || "keycloak-postgresql-" `List.isPrefixOf` workloadName
+
 syncClaimDirectoriesFromOwningNodes :: Paths -> ClusterState -> IO Bool
 syncClaimDirectoriesFromOwningNodes paths state = do
   claimNodeBindings <- discoverClaimNodeBindings state
+  let retainedClaims = filter (not . isPatroniManagedClaim) (claims state)
   claimSyncResults <-
     mapM
       (\persistentClaim -> syncClaimDirectoryFromOwningNode paths state persistentClaim claimNodeBindings)
-      (claims state)
+      retainedClaims
   pure (or claimSyncResults)
 
 discoverClaimNodeBindings :: ClusterState -> IO (Map.Map String String)
@@ -3981,12 +4035,20 @@ renderHelmValues paths controlPlane state demoConfigPayload deployPhase engineCo
       BootstrapPhase -> 0
       HarborFinalPhase -> 0
       FinalPhase -> 2
+    -- Phase 3 Sprint 3.11 follow-on (2026-05-30): on Apple Silicon the
+    -- engine role runs host-native (the same-binary host daemon launched
+    -- from `./.build/infernix`); the cluster substrate must NOT deploy
+    -- an in-cluster engine pod because it would subscribe to the same
+    -- Shared subscription on `inference.batch.apple-silicon.host` and
+    -- compete with the host daemon, producing non-deterministic results.
+    -- Linux substrates keep the in-cluster engine deployment.
     repoEngineReplicaCount :: HelmDeployPhase -> Int
-    repoEngineReplicaCount phaseValue = case phaseValue of
-      WarmupPhase -> 0
-      BootstrapPhase -> 0
-      HarborFinalPhase -> 0
-      FinalPhase -> 1
+    repoEngineReplicaCount phaseValue = case (phaseValue, clusterRuntimeMode state) of
+      (WarmupPhase, _) -> 0
+      (BootstrapPhase, _) -> 0
+      (HarborFinalPhase, _) -> 0
+      (FinalPhase, AppleSilicon) -> 0
+      (FinalPhase, _) -> 1
     yamlBool value
       | value = "true"
       | otherwise = "false"
@@ -4201,6 +4263,20 @@ clusterWorkloadImageRepository runtimeMode =
 clusterWorkloadImageRef :: RuntimeMode -> String
 clusterWorkloadImageRef runtimeMode =
   clusterWorkloadImageRepository runtimeMode <> ":local"
+
+-- | Phase 3 Sprint 3.11 (2026-05-29): each supported substrate fixes
+-- the Linux container architecture that cluster workloads use.
+-- Apple Silicon runs natively as @linux/arm64@ — no host-level
+-- Rosetta emulation; both Linux substrates run as @linux/amd64@.
+-- This is the source of truth consumed by every publication-path
+-- helper that previously hardcoded @amd64@ (`pinLocalImageToArchitecture`,
+-- `pushUpstreamMultiArchViaImagetools`, `extractDigestForArchitecture`,
+-- `recoverOriginalTag`, the build-base-image fallback in
+-- `buildClusterImages`).
+clusterWorkloadArchitecture :: RuntimeMode -> String
+clusterWorkloadArchitecture AppleSilicon = "arm64"
+clusterWorkloadArchitecture LinuxCpu = "amd64"
+clusterWorkloadArchitecture LinuxGpu = "amd64"
 
 deleteKindCluster :: Paths -> RuntimeMode -> IO ()
 deleteKindCluster paths runtimeMode = go (3 :: Int) ""

@@ -113,13 +113,18 @@ RUN set -eu; \
 
 COPY --from=nvkind-builder /go/bin/nvkind /usr/local/bin/nvkind
 
+# Phase 3 Sprint 3.11 (2026-05-29): the bitnami minio sub-chart is
+# retired in favor of the hand-authored MinIO StatefulSet under
+# `chart/templates/minio/`, so this pre-fetch stops pulling
+# `minio-17.0.21.tgz` from charts.bitnami.com. The supported MinIO
+# image inventory uses upstream multi-arch `minio/minio` + `minio/mc`
+# + `busybox` (see chart/values.yaml.infernixMinio).
 RUN set -eu; \
     mkdir -p /opt/infernix/chart/charts; \
     helm pull harbor --repo https://helm.goharbor.io --version 1.18.3 --destination /opt/infernix/chart/charts; \
     helm pull pg-operator --repo https://percona.github.io/percona-helm-charts --version 2.9.0 --destination /opt/infernix/chart/charts; \
     helm pull pg-db --repo https://percona.github.io/percona-helm-charts --version 2.9.0 --destination /opt/infernix/chart/charts; \
     helm pull pulsar --repo https://pulsar.apache.org/charts --version 4.5.0 --destination /opt/infernix/chart/charts; \
-    curl -fsSL --retry 5 --retry-delay 2 -o /opt/infernix/chart/charts/minio-17.0.21.tgz https://charts.bitnami.com/bitnami/minio-17.0.21.tgz; \
     helm pull oci://docker.io/envoyproxy/gateway-helm --version v1.7.2 --destination /opt/infernix/chart/charts
 
 WORKDIR /workspace

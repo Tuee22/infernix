@@ -127,6 +127,24 @@ operations have a buildx-capable CLI when needed.
   cluster-resident when `demo_ui` is enabled, and runs host-native routed E2E through host
   `npm exec` with the same typed fixture during Apple cohort validation batches
 
+## Kind Containerd Registry Resolution
+
+`renderKindConfig` in `src/Infernix/Cluster.hs` emits a `containerdConfigPatches` block in
+the generated Kind config that enables containerd's hosts.toml-driven registry resolution:
+
+```toml
+[plugins."io.containerd.grpc.v1.cri".registry]
+  config_path = "/etc/containerd/certs.d"
+```
+
+Kind 0.31 does not emit this `config_path` by default. Without the patch, containerd inside
+each Kind node ignores the `localhost:<harborPort>/hosts.toml` file that `writeRegistryHostsConfig`
+provisions (via the `extraMounts` entry mapping `./.build/kind/registry` → `/etc/containerd/certs.d`),
+and kubelet dials `localhost:<harborPort>` literally inside the node — where nothing listens —
+so every Harbor-mirrored image pull fails with `connect: connection refused`. The patch is
+therefore part of the supported Kind config contract; the binary owns it (operators do not
+hand-author Kind config).
+
 ## Unsupported Usage
 
 - `docker compose up`

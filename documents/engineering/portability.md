@@ -75,12 +75,24 @@ operator-facing kubeconfig remains repo-local in the active execution context.
 - pretending Apple host-native inference and Linux outer-container inference are interchangeable
   substrate shapes when the underlying bootstrap and hardware contracts differ
 
+## Apple Silicon Native Architecture
+
+The Apple Silicon substrate runs cluster workloads natively as `linux/arm64`. The supported
+control plane does not depend on Rosetta or any other amd64 → arm64 emulation layer; the
+publication path pulls and pushes arm64-only image variants on Apple Silicon, the chart's
+MinIO sub-chart uses upstream multi-arch images (no `bitnamilegacy/*`), and the Kind nodes
+run the native arm64 `kindest/node` image under Colima's aarch64 VM. Operators do not need
+to enable Rosetta in Colima for the supported lifecycle. The substrate → container-architecture
+mapping is owned by [../architecture/runtime_modes.md](../architecture/runtime_modes.md) (see
+the "Substrate Architecture" subsection); this document does not duplicate the table.
+
 ## Cross-References
 
 - [docker_policy.md](docker_policy.md)
 - [implementation_boundaries.md](implementation_boundaries.md)
 - [../architecture/runtime_modes.md](../architecture/runtime_modes.md)
 - [../architecture/daemon_topology.md](../architecture/daemon_topology.md)
+- [../tools/minio.md](../tools/minio.md)
 - [../operations/apple_silicon_runbook.md](../operations/apple_silicon_runbook.md)
 
 ## Validation

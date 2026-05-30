@@ -1,6 +1,6 @@
 # Phase 3: HA Platform Services and Edge Routing
 
-**Status**: Active (Sprint 3.10 code landed; the prior CUDA Linux cohort in-container Playwright E2E proof point (May 27, 2026) was on the retired Linux/CUDA host and no longer counts as current evidence; Apple host-native E2E runner code landed; Apple cohort and CUDA Linux cohort validation both pending on the new Apple Silicon host; Sprints 3.1–3.9 had their code-side deliverables closed but their prior real-cluster validation evidence was on the retired hardware and is similarly pending re-validation)
+**Status**: Active (Sprint 3.10 code landed; Sprint 3.11 reopens this phase with substrate-aware publication architecture, `bitnamilegacy/*` retirement + hand-authored MinIO StatefulSet, Harbor host-port dynamic discovery, and the containerd `config_path` patch — code landed 2026-05-29; the prior CUDA Linux cohort in-container Playwright E2E proof point (May 27, 2026) was on the retired Linux/CUDA host and no longer counts as current evidence; Apple host-native E2E runner code landed; **Apple cohort `cluster up → status (steady-state) → cluster down → status (cluster-absent)` lifecycle proof point validated 2026-05-29 on the new Apple Silicon host** with arm64-native publication of all 9 platform images, hand-authored MinIO StatefulSet, dynamic Harbor port (`30003` selected because `30002` was squatted), and the containerd hosts.toml registry resolution all working end-to-end; the full `infernix test all` integration layer had previously exposed an independent Phase 2 Sprint 2.13 follow-on issue with retained-state Keycloak Patroni replay; the fix landed 2026-05-30 (`isPatroniManagedClaim` + `scrubStalePatroniDirectories` in `src/Infernix/Cluster.hs`); the Sprint 3.11 platform proof itself is validated; CUDA Linux cohort validation still pending on the new Apple Silicon host through Colima's amd64 VM; Sprints 3.1–3.9 had their code-side deliverables closed but their prior real-cluster validation evidence was on the retired hardware and is similarly pending re-validation)
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Define the mandatory local HA Harbor, MinIO, operator-managed PostgreSQL, and
@@ -476,6 +476,171 @@ Pending closure (queued for the new-host validation batch):
 
 ---
 
+## Sprint 3.11: Apple Silicon Native Architecture, Bitnamilegacy Retirement, Harbor Port Dynamic Discovery [Active]
+
+**Status**: Active
+**Blocked by**: Apple cohort + CUDA Linux cohort full-suite validation reruns on the new Apple Silicon host.
+**Implementation**: `src/Infernix/Cluster.hs` (`clusterWorkloadArchitecture`, `chooseHarborPort`, `currentKindHarborPort`, `clusterSubprocessBaseEnvFor`, `renderKindConfig`, `renderHelmValues`, `harborApiHost`, `publishClusterImages`, `prepareKindNodeRuntimePaths`, `writeRegistryHostsConfig`), `src/Infernix/Cluster/PublishImages.hs` (`HarborPublishOptions.harborTargetArchitecture`, `pinLocalImageToTargetArchitecture`, `extractDigestForArchitecture`, `contentAddressTagFromManifestPayload`, `pushUpstreamMultiArchViaImagetools`, `recoverOriginalTag`, the MinIO overlay), `src/Infernix/ProcessMonitor.hs` (`processMonitorBaseEnvFor`), `src/Infernix/Storage.hs` (`harborPortPath`, `readHarborPortMaybe`), `src/Infernix/Types.hs` (`ClusterState.harborPort`), `src/Infernix/HostConfig.hs` (`defaultAppleHostNativeHostConfig`), `src/Infernix/DemoConfig.hs` (`materializeHostManifestFile`, `resolveOperatorHomeDirectory`), `app/Main.hs` (`hSetBuffering LineBuffering`), `chart/values.yaml` (MinIO overrides + console disabled), `test/unit/Spec.hs` (`samplePublishedImages`, overlay assertions, `contentAddressTagFromManifestPayload` arch fixture).
+**Docs to update**: `documents/architecture/runtime_modes.md`, `documents/engineering/portability.md`, `documents/engineering/docker_policy.md`, `documents/tools/minio.md`, `documents/tools/harbor.md`, `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/architecture/overview.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`, `README.md`.
+
+### Objective
+
+Close the four coupled architectural gaps that blocked Apple Silicon
+`cluster up` on the new host: (a) the publication path forced amd64
+end-to-end, so the substrate's Kind nodes ran amd64 images under Colima
+Rosetta and crashed on the Percona Postgres Operator's `-march=x86-64-v3`
+ISA assumption; (b) the chart's MinIO sub-chart pinned
+`bitnamilegacy/*` images that are frozen amd64-only; (c) Harbor's host-side
+NodePort was hardcoded to `30002` and conflicted with unrelated host
+processes (e.g. an editor's debug worker); (d) the rendered Kind config
+did not enable containerd's hosts.toml-driven registry resolution, so the
+mounted `localhost:<harborPort>/hosts.toml` files were ignored and Kind
+workers dialed `localhost` literally.
+
+### Deliverables
+
+- **Substrate-aware publication arch.** `clusterWorkloadArchitecture ::
+  RuntimeMode -> String` returns `"arm64"` for `AppleSilicon`, `"amd64"`
+  for `LinuxCpu` / `LinuxGpu`. The publication helpers
+  (`pinLocalImageToTargetArchitecture`, `pushUpstreamMultiArchViaImagetools`,
+  `extractDigestForArchitecture`, `recoverOriginalTag`,
+  `contentAddressTagFromManifestPayload`) consume the substrate arch
+  through `HarborPublishOptions.harborTargetArchitecture`. The
+  `hydrateMissingHostWarmupImage` mirror.gcr.io fallback (formerly
+  hardcoded `linux/amd64`) reads arch from `clusterRuntimeMode state`.
+- **`bitnamilegacy/*` retirement.** `chart/values.yaml` overrides
+  `minio.image.repository → minio/minio`,
+  `minio.clientImage.repository → minio/mc`,
+  `minio.defaultInitContainers.volumePermissions.image.repository → busybox`,
+  and sets `minio.console.enabled: false`. The Harbor overlay code in
+  `PublishImages.hs` drops the `console` block. `hostCachedWarmupImageRefs`
+  tracks the new image inventory.
+- **Harbor port dynamic discovery.** `chooseHarborPort` selects a free
+  host-side port starting at `30002`, persists to
+  `./.data/runtime/harbor-port.json`, and is reused on subsequent
+  reconciles. `ClusterState` gains `harborPort`. `renderKindConfig`,
+  `renderHelmValues` (`harbor.externalURL`), `harborApiHost`, the
+  registry-hosts namespace name, `currentKindHarborPort`, and
+  `publishClusterImages` all consume the chosen port. The in-cluster
+  Kubernetes NodePort stays fixed at `30002`; only the Kind hostPort
+  observed from the operator host is dynamic. Section O of
+  `DEVELOPMENT_PLAN/development_plan_standards.md` (edge port pattern)
+  now applies to Harbor too.
+- **Containerd `config_path` patch.** `renderKindConfig` emits a
+  `containerdConfigPatches` block enabling
+  `config_path = "/etc/containerd/certs.d"`. Kind 0.31 does not emit this
+  by default, so the hosts.toml mappings provisioned by
+  `writeRegistryHostsConfig` are only honored once the patch is in place.
+- **Defensive lifecycle improvements** (Phase 2 Sprint 2.13 follow-on,
+  cross-listed here):
+  - `clusterSubprocessBaseEnvFor` + `processMonitorBaseEnvFor` derive
+    subprocess PATH from `HostConfig.toolPaths.*` parent directories.
+  - `defaultAppleHostNativeHostConfig.hostDocker` is now
+    `/opt/homebrew/bin/docker` (was `/usr/local/bin/docker`).
+  - `materializeHostManifestFile` resolves the operator home via
+    `System.Posix.User.getEffectiveUserID` + `getUserEntryForID` (was an
+    empty placeholder).
+  - `waitForHarborRegistryResult` passes `-m 30` to `curl`.
+  - `app/Main.hs` enables `LineBuffering` for `stdout` + `stderr`.
+
+### Validation
+
+- `cabal build all`, `cabal test infernix-haskell-style`, and
+  `cabal test infernix-unit` all exit zero on the new Apple Silicon host
+  (2026-05-29).
+- `infernix lint files|chart|docs|proto` all exit zero.
+- `rg -n 'bitnamilegacy' chart/ src/` returns matches only inside the
+  retirement comments documenting what was removed; no active code refs.
+- `rg -n '"--platform","linux/amd64"' src/Infernix/Cluster/` returns zero
+  matches; all `--platform` flags now read from
+  `harborTargetArchitecture` or `clusterWorkloadArchitecture`.
+- 2026-05-29 Apple cohort lifecycle proof point (`./.build/infernix`
+  on the new Apple Silicon host):
+  - `chooseHarborPort` selected `30003` when an unrelated host process
+    held `127.0.0.1:30002` — proof that the bind-test + increment loop
+    fires correctly.
+  - Substrate-aware publication ran every upstream image through
+    `docker pull --platform linux/arm64` and `skopeo` paths with
+    `--override-arch=arm64` (verified in the streamed phase output).
+    All 9 platform images (`infernix-linux-cpu`, `apachepulsar/pulsar-all`,
+    `busybox`, `envoyproxy/gateway`, `minio/mc`, `minio/minio`,
+    `percona/percona-distribution-postgresql`,
+    `percona/percona-pgbackrest`, `percona/percona-pgbouncer`,
+    `percona/percona-postgresql-operator`, `quay.io/keycloak/keycloak`)
+    published as native arm64 through Harbor at `localhost:30003`.
+  - Kind workers pulled and ran every Harbor-mirrored image natively;
+    the previous `Fatal glibc error: CPU does not support x86-64-v3`
+    Percona operator crash is gone — the operator runs as
+    `linux/arm64` and reports `Running 1/1`.
+  - The hand-authored MinIO StatefulSet (`chart/templates/minio/`)
+    reached `Running 4/4` and the `infernix-minio-provisioning` Job
+    completed (`mc mb --ignore-existing local/harbor-registry
+    local/infernix-models local/infernix-demo-objects`) without
+    bitnami chart wrapper interference.
+  - Containerd `config_path = "/etc/containerd/certs.d"` patch
+    honored — Kind workers resolved `localhost:30003/library/*` via
+    the rendered registry-hosts mapping.
+  - **Full lifecycle:** `cluster up` reached
+    `lifecyclePhase: steady-state` with `kubernetesPodCount: 76` and
+    `storageHealth: 26 chart-owned claim roots prepared`;
+    `cluster down` completed; final `cluster status` reported
+    `clusterPresent: False`, `lifecycleStatus: idle`,
+    `lifecyclePhase: cluster-absent`.
+
+- **`infernix test all` Apple cohort residual.** The May 29, 2026
+  Apple `cluster up → status → cluster down → status` cycle above is
+  the validated platform proof point. The full `test all` integration
+  layer additionally exercises a clean-state cluster down + cluster
+  up replay; that pattern surfaced a retained-state Keycloak Patroni
+  corruption issue (the previous instance's partial `/pgdata/pg18`
+  tree, when copied back from the retained host directory into a
+  fresh Kind worker, causes `postgres-startup` to crash with an
+  initialization error). The supported fix landed 2026-05-30 in
+  `src/Infernix/Cluster.hs`: `isPatroniManagedClaim` filters operator-
+  managed Patroni claims (`harbor-postgresql-*`,
+  `keycloak-postgresql-*`) out of `syncClaimDirectoriesFromOwningNodes`
+  so retained Patroni trees are no longer copied back to the host on
+  `cluster down`, and `scrubStalePatroniDirectories` defensively removes
+  any pre-existing trees from `<kindRuntimeRoot>/platform/infernix/`
+  on the next `cluster up`'s `prepare-kind-cluster` phase. The Apple
+  cohort `infernix test all` integration replay revalidation on the
+  new host is the remaining proof point.
+- **Apple cohort + CUDA Linux cohort full-suite validation pending on
+  new host:** the new substrate-arch + bitnamilegacy + Harbor-port
+  changes need a full `cluster up → status (steady-state) → test all
+  PASS → cluster down → status (cluster-absent)` rerun on Apple
+  Silicon, and the same on `linux-gpu` through Colima's amd64 VM
+  (or a separately reintroduced Linux/CUDA box). Until both cohorts
+  rerun, this sprint stays `Active` per Section Q.
+
+### Remaining Work
+
+- Apple cohort `cabal test infernix-integration` full-suite **PASS
+  validated 2026-05-30** on the new Apple Silicon host after the
+  `repoEngineReplicaCount FinalPhase + AppleSilicon -> 0` follow-on
+  landed in `src/Infernix/Cluster.hs`. The fix eliminates the
+  in-cluster `infernix-engine` Deployment on Apple Silicon so the
+  host engine daemon is the only consumer of the host-batch Pulsar
+  topic; previously the in-cluster pod (running with the substrate
+  dhall's `runtime_mode = apple-silicon` but unable to bootstrap
+  Apple Metal inside a Linux container) competed on the Shared
+  subscription and produced inconsistent runtime-mode results. The
+  rerun validated every `validateCatalogModelInference` model
+  assertion, `validateDurableContextPromptRoundTrip`
+  (`inferenceResultStatus = completed`), `validateServiceRuntimeLoop`,
+  `validateDurableTopicFamilyRoundTrips`, and
+  `validateEdgePortConflictAndRediscovery` end-to-end. The new
+  `engineProcessed: request=... model=... status=...` trace in
+  `consumeTopicSession` recorded 16 per-model + 1 dispatcher-envelope
+  handoff all `status=completed` against the host daemon.
+- Apple host-native routed Playwright E2E on the new host remains
+  the open Apple residual.
+- CUDA Linux cohort full-suite revalidation on the new Apple Silicon
+  host through Colima's amd64 VM (or a separately reintroduced
+  Linux/CUDA box).
+
+---
+
 ## Remaining Work
 
 Sprint 3.10 substantively landed in May 2026. The Linux in-container Playwright path's prior
@@ -493,16 +658,21 @@ host before this phase can return to `Done`.
 - `documents/engineering/edge_routing.md` - Envoy Gateway installation, single listener, route-registry ownership, and no-auth demo-cluster posture
 - `documents/engineering/object_storage.md` - repo-local object-store rules plus reserved MinIO path and routed access
 - `documents/engineering/k8s_storage.md` - manual PV doctrine and PostgreSQL claim binding
-- `documents/tools/minio.md` - MinIO deployment and routed surfaces
+- `documents/engineering/portability.md` - arm64-native Apple Silicon posture (Sprint 3.11)
+- `documents/engineering/docker_policy.md` - containerd `config_path` rendered into Kind config (Sprint 3.11)
+- `documents/tools/minio.md` - MinIO deployment, routed surfaces, and the upstream-multi-arch image inventory after the `bitnamilegacy/*` retirement (Sprint 3.11)
 - `documents/tools/postgresql.md` - Percona operator and Patroni deployment rules
 - `documents/tools/pulsar.md` - Pulsar deployment and routed surfaces
-- `documents/tools/harbor.md` - Harbor deployment and routed portal or API split
+- `documents/tools/harbor.md` - Harbor deployment, routed portal or API split, and the dynamic Kind hostPort behavior (Sprint 3.11)
+- `documents/architecture/runtime_modes.md` - substrate→architecture mapping (Sprint 3.11)
+- `documents/architecture/overview.md` - substrate-matched container architecture cross-link (Sprint 3.11)
 - no monitoring engineering doc is created while monitoring remains unsupported; Monitoring is not
   a supported first-class surface.
 
 **Product or reference docs to create/update:**
 - `documents/reference/web_portal_surface.md` - browser-visible route inventory and active-substrate catalog behavior
-- `documents/operations/apple_silicon_runbook.md` - Apple host-mode startup and host-inference bridge behavior
+- `documents/operations/apple_silicon_runbook.md` - Apple host-mode startup, host-inference bridge behavior, Harbor host-port conflict resolution, and the arm64-native posture (Sprint 3.11)
+- `documents/operations/cluster_bootstrap_runbook.md` - Harbor port selection language alongside `edge-port.json` (Sprint 3.11)
 
 **Cross-references to add:**
 - keep [00-overview.md](00-overview.md) and [system-components.md](system-components.md) aligned

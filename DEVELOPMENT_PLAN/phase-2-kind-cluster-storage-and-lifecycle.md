@@ -1,6 +1,6 @@
 # Phase 2: Kind Cluster Storage and Lifecycle
 
-**Status**: Active (Sprint 2.13 code-side env capture retirement and HostTool routing landed; the prior CUDA Linux clean-env `linux-gpu` lifecycle validation (May 27, 2026) was on the retired hardware and no longer counts as a current proof point; Apple cohort and CUDA Linux cohort validation both pending on the new Apple Silicon host; Sprints 2.1–2.12 code closed but their real-cluster proof points were on the retired hardware and are similarly pending re-validation)
+**Status**: Active (Sprint 2.13 code-side env capture retirement and HostTool routing landed; Sprint 2.13 follow-on lifecycle fixes for Apple Silicon — subprocess PATH derivation from `HostConfig.toolPaths.*`, corrected `/opt/homebrew/bin/docker` default, libc-derived operator home, `curl -m 30` Harbor probe timeout, `LineBuffering` on stdout/stderr — landed 2026-05-29 and are cross-listed with Phase 3 Sprint 3.11; the prior CUDA Linux clean-env `linux-gpu` lifecycle validation (May 27, 2026) was on the retired hardware and no longer counts as a current proof point; Apple cohort and CUDA Linux cohort validation both pending on the new Apple Silicon host; Sprints 2.1–2.12 code closed but their real-cluster proof points were on the retired hardware and are similarly pending re-validation)
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Define the supported Kind bootstrap path, the manual storage doctrine, the Helm
@@ -712,6 +712,35 @@ honest):
   `docker` and `skopeo` paths through `HarborPublishOptions`, so the
   multi-arch `skopeo copy` fallback is covered by the same manifest
   inventory.
+- **Sprint 2.13 follow-on lifecycle fixes landed 2026-05-29 during the
+  Apple cohort revalidation.** Cross-listed with Phase 3 Sprint 3.11.
+  Five Apple-Silicon-surfaced lifecycle bugs landed in code:
+  - `clusterSubprocessBaseEnvFor` and `processMonitorBaseEnvFor` derive
+    the subprocess PATH from `HostConfig.toolPaths.*` parent directories
+    (the previous hardcoded minimal POSIX PATH
+    `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin` did
+    not include `/opt/homebrew/bin`, so `kind` could not find `docker`
+    when invoked from the binary on Apple Silicon).
+  - `defaultAppleHostNativeHostConfig.hostDocker` corrected from the
+    Intel-Mac path `/usr/local/bin/docker` to the Apple Silicon
+    Homebrew path `/opt/homebrew/bin/docker`.
+  - `materializeHostManifestFile` resolves the operator home directory
+    through `System.Posix.User.getEffectiveUserID` +
+    `getUserEntryForID` (which read the libc user database, no env)
+    instead of passing an empty placeholder. This unblocked the
+    `hostCabal` / `hostGhcup` / `hostPoetry` / `hostHomeDirectory`
+    defaults that depend on `homeDir`.
+  - `waitForHarborRegistryResult` now passes `-m 30` to `curl` so the
+    bounded 60-attempt × 5s retry envelope surfaces a typed "Harbor
+    registry never became ready" error within ~30 minutes when the
+    host-side NodePort target is unreachable. The previous indefinite
+    hang was surfaced by an unrelated host process squatting on
+    `127.0.0.1:30002`.
+  - `app/Main.hs` calls `hSetBuffering LineBuffering` on `stdout` and
+    `stderr` so long-running lifecycle phases stream observably
+    through pipes; previously the GHC default block-buffered stdout
+    hid all phase output when the binary was invoked through a tee or
+    background-launcher wrapper.
 - **Clean-env `linux-gpu` lifecycle validation passed on retired hardware
   May 27, 2026; pending re-validation on new host.**
   On the retired Linux/CUDA host,

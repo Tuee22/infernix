@@ -655,10 +655,9 @@ main = do
     assert
       ( overlayImages
           == [ "harbor.local/library/infernix-linux-cpu:sha256-runtime",
-               "harbor.local/library/bitnamilegacy/minio:sha256-minio",
-               "harbor.local/library/bitnamilegacy/os-shell:sha256-shell",
-               "harbor.local/library/bitnamilegacy/minio-object-browser:sha256-console",
-               "harbor.local/library/bitnamilegacy/minio-client:sha256-client",
+               "harbor.local/library/minio/minio:sha256-minio",
+               "harbor.local/library/busybox:sha256-shell",
+               "harbor.local/library/minio/mc:sha256-client",
                "harbor.local/library/apachepulsar/pulsar-all:sha256-pulsar"
              ]
       )
@@ -668,10 +667,9 @@ main = do
     assert
       ( generatedOverlayImages
           == [ "harbor.local/library/infernix-linux-cpu:sha256-runtime",
-               "harbor.local/library/bitnamilegacy/minio:sha256-minio",
-               "harbor.local/library/bitnamilegacy/os-shell:sha256-shell",
-               "harbor.local/library/bitnamilegacy/minio-object-browser:sha256-console",
-               "harbor.local/library/bitnamilegacy/minio-client:sha256-client",
+               "harbor.local/library/minio/minio:sha256-minio",
+               "harbor.local/library/busybox:sha256-shell",
+               "harbor.local/library/minio/mc:sha256-client",
                "harbor.local/library/apachepulsar/pulsar-all:sha256-pulsar"
              ]
       )
@@ -710,8 +708,11 @@ main = do
       (contentAddressTagFromInspectPayload sampleDockerImageInspectWithoutRepoDigest == Right "sha256-fallback")
       "docker inspect parsing falls back to the image id when no repo digest is present"
     assert
-      (contentAddressTagFromManifestPayload sampleDockerManifestList == Right "sha256-amd64")
-      "manifest inspect parsing derives a content tag from the linux/amd64 entry"
+      (contentAddressTagFromManifestPayload "amd64" sampleDockerManifestList == Right "sha256-amd64")
+      "manifest inspect parsing derives a content tag from the linux/amd64 entry on Linux substrates"
+    assert
+      (contentAddressTagFromManifestPayload "arm64" sampleDockerManifestList == Right "sha256-arm64")
+      "manifest inspect parsing derives a content tag from the linux/arm64 entry on Apple Silicon"
   putStrLn "unit tests passed"
 
 -- | Phase 1 Sprint 1.11 — set up a unit-test sandbox at @root@. The
@@ -1861,40 +1862,38 @@ sampleHarborOverlay =
       "    registry: harbor.local",
       "    repository: library/infernix-linux-cpu",
       "    tag: sha256-runtime",
-      "minio:",
+      "infernixMinio:",
       "  image:",
-      "    registry: harbor.local",
-      "    repository: library/bitnamilegacy/minio",
+      "    repository: harbor.local/library/minio/minio",
       "    tag: sha256-minio",
-      "  defaultInitContainers:",
-      "    volumePermissions:",
-      "      image:",
-      "        registry: harbor.local",
-      "        repository: library/bitnamilegacy/os-shell",
-      "        tag: sha256-shell",
-      "  console:",
-      "    image:",
-      "      registry: harbor.local",
-      "      repository: library/bitnamilegacy/minio-object-browser",
-      "      tag: sha256-console",
+      "    pullPolicy: IfNotPresent",
+      "  initImage:",
+      "    repository: harbor.local/library/busybox",
+      "    tag: sha256-shell",
+      "    pullPolicy: IfNotPresent",
       "  clientImage:",
-      "    registry: harbor.local",
-      "    repository: library/bitnamilegacy/minio-client",
+      "    repository: harbor.local/library/minio/mc",
       "    tag: sha256-client",
+      "    pullPolicy: IfNotPresent",
       "pulsar:",
       "  defaultPulsarImageRepository: harbor.local/library/apachepulsar/pulsar-all",
       "  defaultPulsarImageTag: sha256-pulsar"
     ]
 
 -- type PublishedImage = (String, String)
+
+-- | Phase 3 Sprint 3.11 (2026-05-29): the supported MinIO image
+-- inventory uses upstream multi-arch images (`minio/minio`,
+-- `minio/mc`) and `busybox` for the volume-permissions init. The
+-- bitnamilegacy `minio-object-browser` standalone-console image is
+-- absent because the chart's `console` Deployment is disabled.
 samplePublishedImages :: Map.Map String PublishedImage
 samplePublishedImages =
   Map.fromList
     [ ("infernix-linux-cpu:local", ("harbor.local/library/infernix-linux-cpu", "sha256-runtime")),
-      ("docker.io/bitnamilegacy/minio:2025.7.23-debian-12-r3", ("harbor.local/library/bitnamilegacy/minio", "sha256-minio")),
-      ("docker.io/bitnamilegacy/os-shell:12-debian-12-r50", ("harbor.local/library/bitnamilegacy/os-shell", "sha256-shell")),
-      ("docker.io/bitnamilegacy/minio-object-browser:2.0.2-debian-12-r3", ("harbor.local/library/bitnamilegacy/minio-object-browser", "sha256-console")),
-      ("docker.io/bitnamilegacy/minio-client:2025.7.21-debian-12-r2", ("harbor.local/library/bitnamilegacy/minio-client", "sha256-client")),
+      ("docker.io/minio/minio:RELEASE.2025-09-07T16-13-09Z", ("harbor.local/library/minio/minio", "sha256-minio")),
+      ("docker.io/busybox:1.36", ("harbor.local/library/busybox", "sha256-shell")),
+      ("docker.io/minio/mc:RELEASE.2025-08-13T08-35-41Z", ("harbor.local/library/minio/mc", "sha256-client")),
       ("docker.io/apachepulsar/pulsar-all:4.0.9", ("harbor.local/library/apachepulsar/pulsar-all", "sha256-pulsar")),
       ("docker.io/percona/percona-postgresql-operator:2.9.0", ("harbor.local/library/percona/percona-postgresql-operator", "sha256-pg-operator")),
       ("docker.io/percona/percona-distribution-postgresql:18.3-1", ("harbor.local/library/percona/percona-distribution-postgresql", "sha256-pg-db")),

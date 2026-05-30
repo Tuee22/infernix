@@ -2002,10 +2002,24 @@ consumeTopicSession transport paths runtimeMode overrides daemonConfig requestTo
             (encodeMessage decodedRequest)
         Nothing -> do
           let modelIdValue = view ProtoInferenceFields.requestModelId decodedRequest
+              requestIdValue = view ProtoInferenceFields.requestId decodedRequest
           publishedResult <-
             if Text.null modelIdValue
               then pure (emptyModelIdRejectionResult runtimeMode decodedRequest)
               else publishedResultFromRequest paths runtimeMode overrides decodedRequest
+          -- Phase 7 Sprint 7.14 follow-on (2026-05-30): one-line trace per
+          -- engine-side inference so the host daemon log surfaces the
+          -- request id, resolved model id, and final status. Diagnoses
+          -- empty-model-id rejection vs adapter failure vs success without
+          -- attaching a debugger.
+          putStrLn
+            ( "engineProcessed: request="
+                <> Text.unpack requestIdValue
+                <> " model="
+                <> Text.unpack modelIdValue
+                <> " status="
+                <> Text.unpack (status publishedResult)
+            )
           let resultOptions =
                 (defaultPublishOptions ("infernix-engine-result-" <> runtimeModeId runtimeMode))
                   { publishSequenceId = inferenceRequestSequenceId decodedRequest

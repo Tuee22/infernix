@@ -48,6 +48,10 @@ discoverChartRoutesFile renderedChartPath = do
     then failWith "discover-chart-routes" "rendered chart did not contain any HTTPRoute path inventory"
     else pure (List.sortOn path discovered)
 
+-- | Phase 3 Sprint 3.11 (2026-05-29): the bitnami `minio:` overlay
+-- block was retired in favor of `infernixMinio:` consumed by the
+-- hand-authored MinIO StatefulSet. The new overlay carries flat
+-- @repository@ + @tag@ image refs (no @registry@/@repository@ split).
 discoverHarborOverlayImageRefsFile :: FilePath -> IO [String]
 discoverHarborOverlayImageRefsFile overlayPath = do
   overlay <- loadSingleYamlDocument overlayPath
@@ -55,10 +59,9 @@ discoverHarborOverlayImageRefsFile overlayPath = do
     concat
       [ maybe [] pure (overlayImageRef overlay ["service", "image"]),
         maybe [] pure (overlayImageRef overlay ["demo", "image"]),
-        maybe [] pure (overlayImageRef overlay ["minio", "image"]),
-        maybe [] pure (overlayImageRef overlay ["minio", "defaultInitContainers", "volumePermissions", "image"]),
-        maybe [] pure (overlayImageRef overlay ["minio", "console", "image"]),
-        maybe [] pure (overlayImageRef overlay ["minio", "clientImage"]),
+        maybe [] pure (overlayFlatImageRef overlay ["infernixMinio", "image"]),
+        maybe [] pure (overlayFlatImageRef overlay ["infernixMinio", "initImage"]),
+        maybe [] pure (overlayFlatImageRef overlay ["infernixMinio", "clientImage"]),
         maybe [] pure (overlayScalarImageRef overlay ["pulsar", "defaultPulsarImageRepository"] ["pulsar", "defaultPulsarImageTag"])
       ]
 
@@ -297,6 +300,18 @@ overlayScalarImageRef :: Value -> [Text] -> [Text] -> Maybe String
 overlayScalarImageRef overlay repositoryPath tagPath = do
   repository <- lookupTextPath repositoryPath overlay
   tag <- lookupTextPath tagPath overlay
+  pure (Text.unpack repository <> ":" <> Text.unpack tag)
+
+-- | Phase 3 Sprint 3.11 (2026-05-29): read a flat
+-- @{ repository, tag, pullPolicy }@ image overlay (as emitted by the
+-- new `infernixMinio` overlay) rather than the bitnami chart's split
+-- @{ registry, repository, tag }@ structure. Unlike 'overlayImageRef',
+-- the @repository@ field already carries the full registry prefix.
+overlayFlatImageRef :: Value -> [Text] -> Maybe String
+overlayFlatImageRef overlay pathSegments = do
+  imageValue <- lookupValuePath pathSegments overlay
+  repository <- lookupTextPath ["repository"] imageValue
+  tag <- lookupTextPath ["tag"] imageValue
   pure (Text.unpack repository <> ":" <> Text.unpack tag)
 
 deriveRelease :: KeyMap.KeyMap Value -> String

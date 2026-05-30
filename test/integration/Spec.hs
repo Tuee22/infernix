@@ -62,10 +62,11 @@ import Network.Socket
 import System.Directory
 import System.Exit (ExitCode (ExitSuccess))
 import System.FilePath ((</>))
-import System.IO (hFlush, stdout)
+import System.IO (BufferMode (LineBuffering), IOMode (WriteMode), hClose, hFlush, hSetBuffering, openFile, stdout)
 import System.IO.Error (catchIOError, isDoesNotExistError)
 import System.Process
-  ( CreateProcess (cwd),
+  ( CreateProcess (cwd, std_err, std_out),
+    StdStream (UseHandle),
     createProcess,
     proc,
     readProcess,
@@ -139,7 +140,11 @@ exerciseRuntimeMode paths runtimeMode = do
       modelsResponse <- httpGet (baseUrl <> "/api/models")
       harborResponse <- httpGet (baseUrl <> "/harbor")
       (harborApiStatus, harborApiResponse) <- httpGetWithStatus (baseUrl <> "/harbor/api/v2.0/projects")
-      minioConsoleResponse <- httpGet (baseUrl <> "/minio/console/browser")
+      -- Phase 3 Sprint 3.11 (2026-05-30): the standalone MinIO Console
+      -- Deployment was retired together with the bitnami sub-chart;
+      -- the `/minio/console` route is gone and operators reach
+      -- artifacts through presigned MinIO URLs minted by the demo
+      -- backend instead.
       (minioS3Status, minioS3Response) <- httpGetWithStatus (baseUrl <> "/minio/s3/models/demo.bin")
       pulsarAdminResponse <- httpGet (baseUrl <> "/pulsar/admin/admin/v2/clusters")
       (pulsarHttpStatus, _) <- httpGetWithStatus (baseUrl <> "/pulsar/ws/v2/producer/public/default/demo")
@@ -180,9 +185,6 @@ exerciseRuntimeMode paths runtimeMode = do
       assert
         (harborApiStatus == 200 && "\"name\":\"library\"" `isInfixOf` compact harborApiResponse)
         "harbor API routes strip the /harbor prefix and reach the live Harbor project API on the cluster path"
-      assert
-        ("MinIO Console" `isInfixOf` minioConsoleResponse)
-        "minio console routes strip the /minio/console prefix and reach the live MinIO console on the cluster path"
       assert
         (minioS3Status `elem` [200, 401, 403, 404] && "\"rewrittenPath\"" `notElemString` compact minioS3Response)
         "minio S3 route stays published and reaches the live MinIO S3 upstream on the cluster path"
@@ -749,19 +751,6 @@ waitForPublishedResult paths runtimeMode resultTopic requestIdValue = go (3000 :
               threadDelay 100000
               go (remainingAttempts - 1)
 
-waitForFile :: FilePath -> IO ()
-waitForFile filePath = go (60 :: Int)
-  where
-    go remainingAttempts
-      | remainingAttempts <= 0 = fail ("timed out waiting for " <> filePath)
-      | otherwise = do
-          exists <- doesFileExist filePath
-          if exists
-            then pure ()
-            else do
-              threadDelay 100000
-              go (remainingAttempts - 1)
-
 validateEdgePortConflictAndRediscovery :: Paths -> RuntimeMode -> IO ()
 validateEdgePortConflictAndRediscovery paths runtimeMode = do
   cleanupRuntimeState paths
@@ -1069,16 +1058,54 @@ withRuntimeServiceDaemonIfNeeded :: Paths -> RuntimeMode -> IO a -> IO a
 withRuntimeServiceDaemonIfNeeded paths runtimeMode action
   | requiresHostServiceHarness paths runtimeMode =
       let readinessMarker = serviceReadinessMarkerPath paths
+          logPath = hostServiceDaemonLogPath paths
        in do
             catchIOError (removeFile readinessMarker) ignoreMissing
             withRuntimeServiceDaemon paths $ do
-              waitForFile readinessMarker
+              waitForFileWithLog readinessMarker logPath hostServiceDaemonReadinessAttempts
               action
   | otherwise = action
   where
     ignoreMissing err
       | isDoesNotExistError err = pure ()
       | otherwise = ioError err
+
+-- | The host engine daemon discovers the Apple-substrate Pulsar
+-- transport from the published edge port, reconciles supported
+-- namespaces, and registers schemas before it writes the readiness
+-- marker. The supported envelope is 5 minutes; failures surface the
+-- daemon log so the operator does not have to guess.
+hostServiceDaemonReadinessAttempts :: Int
+hostServiceDaemonReadinessAttempts = 3000
+
+waitForFileWithLog :: FilePath -> FilePath -> Int -> IO ()
+waitForFileWithLog filePath logPath = go
+  where
+    go remainingAttempts
+      | remainingAttempts <= 0 = do
+          logSnapshot <- readDaemonLogSnapshot logPath
+          fail
+            ( "timed out waiting for "
+                <> filePath
+                <> "\n--- host service daemon log ("
+                <> logPath
+                <> ") ---\n"
+                <> logSnapshot
+            )
+      | otherwise = do
+          exists <- doesFileExist filePath
+          if exists
+            then pure ()
+            else do
+              threadDelay 100000
+              go (remainingAttempts - 1)
+
+readDaemonLogSnapshot :: FilePath -> IO String
+readDaemonLogSnapshot logPath = do
+  present <- doesFileExist logPath
+  if not present
+    then pure "(no host service daemon log was produced)\n"
+    else readFile logPath
 
 requiresHostServiceHarness :: Paths -> RuntimeMode -> Bool
 requiresHostServiceHarness paths runtimeMode =
@@ -1087,16 +1114,33 @@ requiresHostServiceHarness paths runtimeMode =
 withRuntimeServiceDaemon :: Paths -> IO a -> IO a
 withRuntimeServiceDaemon paths action = do
   infernixExecutable <- resolveInfernixExecutable
+  let logPath = hostServiceDaemonLogPath paths
+  createDirectoryIfMissing True (takeDirectoryPortable logPath)
+  logHandle <- openFile logPath WriteMode
+  hSetBuffering logHandle LineBuffering
+  reportStep ("apple host service daemon log: " <> logPath)
   (_, _, _, processHandle) <-
     createProcess
       (proc infernixExecutable ["service"])
-        { cwd = Just (repoRoot paths)
+        { cwd = Just (repoRoot paths),
+          std_out = UseHandle logHandle,
+          std_err = UseHandle logHandle
         }
   action
     `finally` do
       terminateProcess processHandle
       _ <- waitForProcess processHandle
-      pure ()
+      hClose logHandle
+
+hostServiceDaemonLogPath :: Paths -> FilePath
+hostServiceDaemonLogPath paths =
+  runtimeRoot paths </> "service" </> "host-service-daemon.log"
+
+takeDirectoryPortable :: FilePath -> FilePath
+takeDirectoryPortable filePath =
+  case reverse (dropWhile (/= '/') (reverse filePath)) of
+    "" -> "."
+    parentWithSlash -> reverse (dropWhile (== '/') (reverse parentWithSlash))
 
 expectedInferenceDispatchMode :: RuntimeMode -> String
 expectedInferenceDispatchMode runtimeMode =

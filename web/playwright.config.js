@@ -17,6 +17,15 @@ export default defineConfig({
   timeout: 30000,
   use: {
     baseURL: `http://${fixture.host}:${fixture.edgePort}`,
+    // Phase 7 Sprint 7.15 follow-on (2026-05-30): capture a full Playwright
+    // trace + video + screenshot on every failure so the supported route
+    // to diagnosing routed-browser failures (timing-sensitive WebSocket
+    // reconnect + form submit, draft-restore + dispatcher race) is a
+    // `playwright show-trace web/test-results/<test>/trace.zip`, not a
+    // page-snapshot guess.
+    trace: "retain-on-failure",
+    video: "retain-on-failure",
+    screenshot: "only-on-failure",
   },
   projects: [
     {

@@ -345,7 +345,7 @@ defaultAppleHostNativeHostConfig repoRoot homeDir =
             hostChown = "/usr/sbin/chown",
             hostNvidiaSmi = "",
             hostNvkind = "",
-            hostSkopeo = "",
+            hostSkopeo = "/opt/homebrew/bin/skopeo",
             hostHostname = "/bin/hostname"
           },
       hostFilesystem =

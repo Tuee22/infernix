@@ -28,10 +28,6 @@ dependencies:
     version: 4.5.0
     repository: https://pulsar.apache.org/charts
     condition: upstreamCharts.pulsar.enabled
-  - name: minio
-    version: 17.0.21
-    repository: https://charts.bitnami.com/bitnami
-    condition: upstreamCharts.minio.enabled
   - name: gateway-helm
     alias: envoygateway
     version: v1.7.2

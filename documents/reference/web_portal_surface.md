@@ -35,7 +35,6 @@ Always-published operator prefixes:
 |---------------|---------|-------|
 | `/harbor/api` | Harbor API | Rewrites to upstream `/api` before forwarding to `infernix-harbor-core:80`. |
 | `/harbor` | Harbor portal | Rewrites to upstream `/` before forwarding to `infernix-harbor-portal:80`. |
-| `/minio/console` | MinIO console | Rewrites to upstream `/` before forwarding to `infernix-minio-console:9090`. |
 | `/minio/s3` | MinIO S3 API | Rewrites to upstream `/` before forwarding to `infernix-minio:9000`. |
 | `/pulsar/admin` | Pulsar admin surface | Rewrites to upstream `/` before forwarding to `infernix-infernix-pulsar-proxy:80`. |
 | `/pulsar/ws` | Pulsar websocket surface | Rewrites to upstream `/ws` before forwarding to `infernix-infernix-pulsar-proxy:80`. |
