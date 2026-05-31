@@ -1,6 +1,6 @@
 # Phase 5: Web UI and Shared Types
 
-**Status**: Active (Sprint 5.9 code landed: demo backend, Python adapters, and web/Node scripts no longer read supported configuration from process environments; the May 26, 2026 `linux-gpu` `test all` PASS that originally validated this closure was on the retired Linux/CUDA host and no longer counts as a current proof point; Apple cohort and CUDA Linux cohort `test all` validation both pending on the new Apple Silicon host; Sprints 5.1–5.8 had their code-side deliverables closed but their prior real-cluster validation evidence was on the retired hardware and is similarly pending re-validation)
+**Status**: Active (Sprints 5.1–5.9 code-side closed: demo backend, Python adapters, and web/Node scripts no longer read supported configuration from process environments; `poetry run check-code`, Node syntax checks, and grep gates active; Apple cohort gate closed in [Wave A](cohort-validation-waves.md) via `cabal test infernix-integration` full PASS + 5/6 e2e PASS; CUDA Linux cohort gate pending [Wave C](cohort-validation-waves.md))
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Define the PureScript demo UI built with spago, the Haskell-owned frontend contract
@@ -324,7 +324,7 @@ None.
 
 ## Sprint 5.9: Web and Python Manifest Retirement [Active - code landed, cohort validation pending on new host]
 
-**Status**: Active (code landed; the May 26-27, 2026 validation proof points were on the retired Linux/CUDA host; Apple cohort and CUDA Linux cohort `test all` re-validation are pending on the new Apple Silicon host)
+**Status**: Active (code-side closed; Apple cohort gate closed in [Wave A](cohort-validation-waves.md); CUDA Linux cohort gate pending [Wave C](cohort-validation-waves.md))
 **Implementation**: `src/Infernix/DemoCLI.hs`, `python/adapters/common.py`, `python/adapters/model_cache.py`, every engine adapter under `python/adapters/*.py`, `web/scripts/install-purescript.mjs`, `web/test/run_playwright_matrix.mjs`
 **Docs to update**: `documents/development/no_env_vars.md`, `documents/development/frontend_contracts.md`, `documents/development/testing_strategy.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 
@@ -377,8 +377,11 @@ discovery, setup `--install-root` CLI args, the protobuf `WorkerRequest` envelop
 
 ### Remaining Work
 
-- Apple cohort `infernix test all` rerun on the new Apple Silicon host
-- CUDA Linux cohort `infernix test all` rerun on the new host (through Colima's amd64 VM)
+- Apple cohort gate closed in [Wave A](cohort-validation-waves.md) (`cabal test infernix-integration`
+  full PASS + 5/6 e2e PASS exercising the demo backend's mounted ClusterConfig reads and the
+  Python adapter / Node script env retirement).
+- CUDA Linux cohort gate pending [Wave C](cohort-validation-waves.md) (full `test all` through
+  Colima's amd64 VM, or on a separately reintroduced Linux/CUDA box).
 
 ---
 

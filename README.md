@@ -452,7 +452,9 @@ Work on a phase can stay on the current machine until a coherent slice is ready:
 work validates through the Apple Silicon host-native lane, and Linux or CUDA work validates on the
 CUDA-capable Linux lane. Phase closure batches the counterpart host run, so full cross-hardware
 evidence comes from one Apple Silicon full-suite pass and one CUDA Linux full-suite pass against
-the same phase state rather than alternating machines for every sprint.
+the same phase state rather than alternating machines for every sprint. The active cycle's
+batched-switch boundaries are tracked in
+[DEVELOPMENT_PLAN/cohort-validation-waves.md](DEVELOPMENT_PLAN/cohort-validation-waves.md).
 
 Direct host `cabal install --installdir=./.build ... all:exes` is the Apple Silicon host-native
 reference path only. On Linux CPU and Linux GPU, build, lifecycle, docs lint, and validation

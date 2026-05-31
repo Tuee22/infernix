@@ -616,6 +616,10 @@ Rules:
 - Current-state text in `DEVELOPMENT_PLAN/README.md`, `00-overview.md`, and each affected phase
   document must name which cohort has validated and which cohort remains, rather than describing
   a vague deferred validation pass.
+- The operational layer that names explicit batched-switch boundaries for the current closure cycle
+  lives in [cohort-validation-waves.md](cohort-validation-waves.md). Phase doc Status headers and
+  `Remaining Work` blocks reference the active wave instead of restating per-sprint cohort
+  residuals.
 
 ### R. Haskell Quality Gate Contract
 

@@ -116,8 +116,38 @@
 | Duplicate demo-config generated-banner literals in `src/Infernix/Workflow.hs` and `src/Infernix/DemoConfig.hs` | The shared workflow-helper closure was not complete while the demo-config banner constant still existed in parallel definitions | Phase 6 Sprint 6.16 |
 | `documents/development/testing_strategy.md` metadata and purpose text that framed it as an authoritative canonical validation surface alongside `documents/engineering/testing.md` | The testing doctrine now closes through one canonical home, with `documents/development/testing_strategy.md` reduced to supporting operator detail instead of a competing authoritative source | Phase 6 Sprint 6.16 |
 
+## Retired Historical Validation Evidence
+
+The 2026-05-29 Apple Silicon validation reset retired every dated proof
+point on the prior Apple Silicon and Linux/CUDA hardware (see
+[../README.md](../README.md) and [00-overview.md](00-overview.md)). This
+table is the canonical home for those retired dates per Section I of
+[development_plan_standards.md](development_plan_standards.md); phase
+docs cite this table instead of inlining the dates. The underlying
+contracts each entry exercised still describe supported behavior — the
+revalidation lives in [cohort-validation-waves.md](cohort-validation-waves.md)
+Wave A (Apple cohort, closed 2026-05-30) and Wave C (CUDA Linux cohort,
+pending).
+
+| Cohort | Date | Validation | Hardware | Owning phase or sprint |
+|--------|------|------------|----------|------------------------|
+| Apple Silicon | 2026-05-13 | Lifecycle investigation: `build-cluster-images` healthy past 30 min before Harbor publication; Harbor image pushes readiness-gated with bounded retries across transient registry resets | Retired Apple Silicon machine | Phase 6 |
+| Apple Silicon | 2026-05-15 | `./bootstrap/apple-silicon.sh doctor / build / up / status / test / down / status` full lifecycle | Retired Apple Silicon machine | Phase 6 |
+| Apple Silicon | 2026-05-17 | `./bootstrap/apple-silicon.sh` full lifecycle rerun covering split daemon topology, host-batch Pulsar handoff, routed Playwright E2E, retained-state replay | Retired Apple Silicon machine | Phase 6 |
+| CUDA Linux | 2026-05-19 | `./bootstrap/linux-gpu.sh doctor / forced image refresh / build / up / status / test / down / purge / status` post-warning-cleanup rerun | Retired Linux/CUDA host | Phase 6 |
+| CUDA Linux | 2026-05-25 | Sprint 7.17 Dhall schema + Haskell decoder + chart Secret + chart env stripping + Python `INFERNIX_POETRY_EXECUTABLE` retirement + full Linux-lane `INFERNIX_KEYCLOAK_*` / `INFERNIX_MINIO_*` Haskell wiring landed and validated end-to-end | Retired Linux/CUDA host | Phase 7 Sprint 7.17 |
+| CUDA Linux | 2026-05-26 | `linux-gpu` `test all` PASS validating `ClusterConfig.engine.commandOverrides` threading through `Worker.hs.runInferenceWorker` against the real cluster; Sprint 7.17 end-to-end | Retired Linux/CUDA host | Phases 4, 5, 7 |
+| CUDA Linux | 2026-05-26 | Sprint 6.28 chart `env:` rejection + last `INFERNIX_DATA_ROOT`/`MODEL_CACHE_ROOT` chart strip landed and validated | Retired Linux/CUDA host | Phase 6 Sprint 6.28 |
+| CUDA Linux | 2026-05-27 | Clean-env `linux-gpu` compose-run `infernix test e2e` reporting `1 passed`; full Sprint 3.10 Playwright-container retirement closure | Retired Linux/CUDA host | Phase 3 Sprint 3.10 |
+| CUDA Linux | 2026-05-27 | `env -i /usr/bin/bash ./bootstrap/linux-gpu.sh build / up / status` full clean-env lifecycle; Sprint 2.13 host-manifest closure | Retired Linux/CUDA host | Phase 2 Sprint 2.13 |
+| CUDA Linux | 2026-05-27 | Worker / Python-quality Poetry virtualenv env toggle removed; Apple setup env handoff removed | Retired Linux/CUDA host | Phase 7 Sprint 7.17 |
+| CUDA Linux | 2026-05-27 | `cabal build all`, `cabal test infernix-haskell-style`, `cabal test infernix-unit`, and `cabal run infernix -- lint {docs,files,chart,proto}` all PASS after `ClusterConfig` renderer + plan-status updates | Retired Linux/CUDA host | Phase 4 Sprint 4.13 |
+| CUDA Linux | 2026-05-27 | Compose single-file Compose selector + bootstrap-shell cleanup landed and validated through clean-env CPU/GPU doctor + lifecycle | Retired Linux/CUDA host | Phase 1 Sprint 1.11 |
+| Apple Silicon | 2026-05-29 | `repoEngineReplicaCount` substrate-aware fix, Apple host manifest defaults, Patroni retained-state filter, dynamic Harbor port code-side closure (pre-Wave A) | New Apple Silicon host | Cross-listed Phases 2 (Sprint 2.13 follow-on) and 3 (Sprint 3.11) |
+
 ## Cross-References
 
 - [README.md](README.md)
 - [00-overview.md](00-overview.md)
 - [development_plan_standards.md](development_plan_standards.md)
+- [cohort-validation-waves.md](cohort-validation-waves.md)

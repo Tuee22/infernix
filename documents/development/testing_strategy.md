@@ -82,6 +82,11 @@ The validation plan minimizes switching between the Apple Silicon and CUDA-capab
   cross-hardware evidence.
 - `linux-cpu` remains a portable check and a fallback substrate, but it is not the CUDA Linux
   cohort for GPU-sensitive work.
+- The active cycle's batched-switch boundaries — which work runs on which machine in which
+  validation wave — are tracked in
+  [../../DEVELOPMENT_PLAN/cohort-validation-waves.md](../../DEVELOPMENT_PLAN/cohort-validation-waves.md).
+  Operators picking up validation work should check the active wave before bringing up a cluster
+  on either substrate.
 
 ## Lifecycle Interpretation
 

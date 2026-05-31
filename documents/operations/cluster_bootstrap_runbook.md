@@ -240,6 +240,14 @@ Keycloak release, demo MinIO bucket, and demo Pulsar namespaces are absent from 
 See [../architecture/demo_app_design.md](../architecture/demo_app_design.md) and
 [../tools/keycloak.md](../tools/keycloak.md) for the full contract.
 
+## Cohort Validation Cadence
+
+Lifecycle validation work on either substrate is batched into the active wave named in
+[../../DEVELOPMENT_PLAN/cohort-validation-waves.md](../../DEVELOPMENT_PLAN/cohort-validation-waves.md).
+Operators bringing up a cluster for validation should check the active wave before starting a
+batched lifecycle: the waves doc names which substrate is in scope, what closure evidence is
+expected, and which counterpart cohort is queued for the next switch boundary.
+
 ## Cross-References
 
 - [../engineering/k8s_native_dev_policy.md](../engineering/k8s_native_dev_policy.md)
@@ -249,3 +257,4 @@ See [../architecture/demo_app_design.md](../architecture/demo_app_design.md) and
 - [../tools/keycloak.md](../tools/keycloak.md)
 - [../architecture/demo_app_design.md](../architecture/demo_app_design.md)
 - [../architecture/daemon_topology.md](../architecture/daemon_topology.md)
+- [../../DEVELOPMENT_PLAN/cohort-validation-waves.md](../../DEVELOPMENT_PLAN/cohort-validation-waves.md)

@@ -1,6 +1,6 @@
 # Phase 1: Repository and Control-Plane Foundation
 
-**Status**: Active (Sprint 1.11 code landed; the prior Linux cohort validation was on the retired Linux/CUDA host and no longer counts as a current proof point; Apple cohort and CUDA Linux cohort validation both pending on the new Apple Silicon host; Sprints 1.1–1.10 had their code-side deliverables closed but their prior real-cluster validation evidence was on the retired hardware and is similarly pending re-validation)
+**Status**: Active (Sprints 1.1–1.11 code-side closed; Apple cohort gate closed in [Wave A](cohort-validation-waves.md); CUDA Linux cohort gate pending [Wave C](cohort-validation-waves.md))
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/engineering/host_tools_manifest.md](../documents/engineering/host_tools_manifest.md)
 
 > **Purpose**: Establish the canonical repository scaffold, the two-binary topology

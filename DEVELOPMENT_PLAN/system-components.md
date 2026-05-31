@@ -107,15 +107,15 @@
   `status`, `test`, `down`, `purge`, and final `status`, plus the Harbor publication closure
   where repo-owned local images are pushed before third-party chart dependencies and the source
   image is re-tagged before each bounded push retry so retry recovery does not depend on a
-  previously retained target tag; the earlier May 13, 2026 lifecycle investigation originally
-  served as the proof point that Apple `build-cluster-images` can stay healthy well past thirty
-  minutes before Harbor publication begins and that Harbor image pushes are readiness-gated with
-  bounded retries across transient registry resets. **Apple Silicon validation reset
-  (2026-05-29).** Following the move to a new Apple Silicon host (the prior Apple hardware is
-  no longer available), every Apple Silicon proof point above is retired as a current proof
-  point and Apple cohort validation is pending on the new host. The CUDA Linux cohort evidence
-  was also produced on the retired hardware and is similarly pending re-validation; the
-  `linux-cpu` portable lane carries the same pending-on-new-host status
+  previously retained target tag. **Apple Silicon validation reset
+  (2026-05-29).** The project moved its primary development machine to a new Apple Silicon host
+  on 2026-05-29; the prior Apple Silicon hardware and the prior Linux/CUDA host are both no
+  longer available. The retired dated proof points are inventoried in
+  [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) under "Retired Historical
+  Validation Evidence". Revalidation on the new host is tracked by
+  [cohort-validation-waves.md](cohort-validation-waves.md): [Wave A](cohort-validation-waves.md)
+  (Apple cohort) closed 2026-05-30; [Wave C](cohort-validation-waves.md) (CUDA Linux cohort)
+  remains pending
 - Monitoring is not a supported first-class surface.
 
 ## Operator and Host Components

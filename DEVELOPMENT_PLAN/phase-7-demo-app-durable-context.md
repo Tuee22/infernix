@@ -1,6 +1,6 @@
 # Phase 7: Demo App Multi-User Durable Context
 
-**Status**: Active (substantial code work landed across Sprints 7.1, 7.3-7.17 in May 2026; Sprint 7.17's Apple-only Poetry bootstrap env-var residual in `src/Infernix/Python.hs` retired 2026-05-29, closing the Linux + Apple code surface for the configuration-doctrine retirement cohort; the prior Linux GPU and Linux/CUDA real-broker, real-cluster, and routed Playwright validation proof points (May 25 through May 29, 2026) were all on the retired Linux/CUDA host and no longer count as current proof points; Sprint 7.5's compaction validation, Sprint 7.14's coordinator-to-engine handoff and dispatcher/result-bridge roundtrip coverage, Sprint 7.15's routed Keycloak / WebSocket / `/api/objects` / browser durable-context flows, Sprint 7.17's `linux-gpu` `test all` PASS, and every other dated proof point in this phase are retired; Apple cohort and CUDA Linux cohort full-suite validation are both pending on the new Apple Silicon host; per-model smoke matrix and coordinator/result/bootstrap Failover chaos and throughput suites remain pending)
+**Status**: Active (Sprints 7.1, 7.3–7.13, 7.16–7.17 code-side closed including the full daemon-split, durable-context shell, routed Keycloak / WebSocket / `/api/objects` / browser flows, and Sprint 7.17 configuration-doctrine retirement; Sprints 7.14–7.15 partially closed in code; Apple cohort gate closed in [Wave A](cohort-validation-waves.md) for the durable-context prompt roundtrip + 5/6 e2e specs; [Wave B](cohort-validation-waves.md) residuals on Apple Silicon — Sprint 7.15 artifact-upload e2e fix, Sprint 7.15 per-model smoke matrix, Sprint 7.14 chaos + throughput suites; CUDA Linux cohort gate pending [Wave C](cohort-validation-waves.md))
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/durable_context_design.md](../documents/architecture/durable_context_design.md), [../documents/architecture/demo_app_design.md](../documents/architecture/demo_app_design.md), [../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Define the multi-user, durable-context shape of the `infernix-demo` workload —
@@ -581,7 +581,7 @@ the per-pod placement, replica policy, and one-per-node engine rule are codified
 
 ## Sprint 7.1: Keycloak Release and Realm Pre-Seed [Active]
 
-**Status**: Active (clean rebuilt Linux GPU routed browser self-registration and `demo_ui = false` absence checks passed May 28, 2026; Apple cohort validation remains)
+**Status**: Active (code-side closed; Apple cohort gate closed in [Wave A](cohort-validation-waves.md); CUDA Linux cohort gate pending [Wave C](cohort-validation-waves.md))
 **Implementation**: `chart/templates/keycloak/`, `chart/values.yaml`, `src/Infernix/Cluster.hs`, `src/Infernix/Cluster/Keycloak.hs`
 **Docs to update**: `documents/tools/keycloak.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/architecture/demo_app_design.md`
 
@@ -787,7 +787,7 @@ reports 46/46 passing.
 
 ## Sprint 7.3: WS Endpoint, JWT Validation, and Stateless Coordination [Active]
 
-**Status**: Active (Linux GPU routed valid/malformed JWT and malformed-frame browser validation landed May 28, 2026; Linux GPU integration session-affinity assertion added May 29, 2026; per-context conversation Reader and per-user context-list/draft Reader snapshot/patch browser coverage landed May 29, 2026; expired-token browser rejection landed May 29, 2026; pod-kill reconnect coverage remains open)
+**Status**: Active (code-side closed for routed JWT, malformed-frame, expired-token, and per-context Reader browser coverage; Apple cohort gate closed in [Wave A](cohort-validation-waves.md); pod-kill reconnect chaos coverage is a [Wave B](cohort-validation-waves.md) residual under Sprint 7.14; CUDA Linux cohort gate pending [Wave C](cohort-validation-waves.md))
 **Blocked by**: 7.1
 **Implementation**: `src/Infernix/Demo/WebSocket.hs`, `src/Infernix/Demo/Auth.hs`, `src/Infernix/Auth/Jwt.hs`, `chart/templates/demo/service.yaml` (or equivalent), `src/Infernix/Demo/Api.hs`
 **Docs to update**: `documents/architecture/durable_context_design.md`, `documents/architecture/demo_app_design.md`, `documents/reference/web_portal_surface.md`, `documents/tools/keycloak.md`
@@ -2078,7 +2078,7 @@ Pending closure:
 
 ## Sprint 7.14: Integration-Layer Validation [Active]
 
-**Status**: Active (WebSocket-to-Pulsar publish plumbing and the Linux GPU real-cluster coordinator-to-engine handoff contract landed May 27, 2026; real Pulsar Reader roundtrip coverage for conversation, contexts, drafts, and bootstrap-ready topic families plus broker compacted-reader latest-per-key coverage for context and draft metadata landed May 28, 2026; routed Keycloak browser self-registration, routed WebSocket valid/malformed JWT handshake validation plus expired-token rejection and typed malformed-frame error validation, routed real-Keycloak-JWT `/api/objects` grant validation, same-user routed presigned MinIO PUT/GET byte equality, and routed cross-user object-prefix isolation are covered by Sprint 7.15 as of May 29, 2026; real broker producer-dedup validation for duplicate frontend conversation and draft publishes plus the non-chaos dispatcher/result-bridge durable prompt roundtrip landed May 28, 2026; coordinator/result/bootstrap Failover, chaos, and throughput suites pending)
+**Status**: Active (code-side closed for WebSocket-to-Pulsar publish plumbing, the coordinator-to-engine handoff contract, real Pulsar Reader roundtrip coverage for conversation/contexts/drafts/bootstrap-ready topic families, broker compacted-reader latest-per-key coverage, real broker producer-dedup validation, and the non-chaos dispatcher/result-bridge durable prompt roundtrip; Apple cohort gate closed in [Wave A](cohort-validation-waves.md) via `cabal test infernix-integration` full PASS exercising the durable-context prompt roundtrip; coordinator/result/bootstrap Failover, chaos, and throughput suites remain [Wave B](cohort-validation-waves.md) residuals; CUDA Linux cohort gate pending [Wave C](cohort-validation-waves.md))
 **Blocked by**: 7.1, 7.4, 7.6, 7.7, 7.8, 7.9
 **Implementation**: `test/integration/*` (existing `infernix-integration` Cabal stanza), `test/integration/Infernix/Test/Integration/Throughput.hs`
 **Docs to update**: `documents/development/demo_app_test_plan.md`, `documents/development/chaos_testing.md`, `documents/tools/pulsar.md`, `documents/architecture/daemon_topology.md`

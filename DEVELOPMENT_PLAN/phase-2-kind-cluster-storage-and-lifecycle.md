@@ -1,6 +1,6 @@
 # Phase 2: Kind Cluster Storage and Lifecycle
 
-**Status**: Active (Sprint 2.13 code-side env capture retirement and HostTool routing landed; Sprint 2.13 follow-on lifecycle fixes for Apple Silicon — subprocess PATH derivation from `HostConfig.toolPaths.*`, corrected `/opt/homebrew/bin/docker` default, libc-derived operator home, `curl -m 30` Harbor probe timeout, `LineBuffering` on stdout/stderr — landed 2026-05-29 and are cross-listed with Phase 3 Sprint 3.11; the prior CUDA Linux clean-env `linux-gpu` lifecycle validation (May 27, 2026) was on the retired hardware and no longer counts as a current proof point; Apple cohort and CUDA Linux cohort validation both pending on the new Apple Silicon host; Sprints 2.1–2.12 code closed but their real-cluster proof points were on the retired hardware and are similarly pending re-validation)
+**Status**: Active (Sprints 2.1–2.13 code-side closed including the Sprint 2.13 follow-on for Apple Silicon lifecycle fixes — subprocess PATH from `HostConfig.toolPaths.*`, corrected `/opt/homebrew/bin/docker` default, libc-derived operator home, `curl -m 30` Harbor probe timeout, `LineBuffering` on stdout/stderr — cross-listed with Phase 3 Sprint 3.11, plus the retained-state Keycloak Patroni replay fix (`isPatroniManagedClaim` + `scrubStalePatroniDirectories`); Apple cohort gate closed in [Wave A](cohort-validation-waves.md); CUDA Linux cohort gate pending [Wave C](cohort-validation-waves.md))
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Define the supported Kind bootstrap path, the manual storage doctrine, the Helm
@@ -388,7 +388,7 @@ None.
 
 ## Sprint 2.10: Lifecycle Progress Surfaces and False-Negative Hardening [Active - code landed, Apple cohort validation pending on new host]
 
-**Status**: Active (code landed; the prior Apple lifecycle proof points were on the retired Apple Silicon hardware and Apple cohort validation is pending on the new host)
+**Status**: Active (code-side closed; Apple cohort gate closed in [Wave A](cohort-validation-waves.md); CUDA Linux cohort gate pending [Wave C](cohort-validation-waves.md))
 **Implementation**: `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Cluster/PublishImages.hs`, `src/Infernix/ProcessMonitor.hs`
 **Docs to update**: `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/reference/cli_reference.md`, `documents/reference/cli_surface.md`
 
@@ -440,15 +440,16 @@ distinguish real failure from ongoing first-run progress.
 
 ### Remaining Work
 
-- Apple cohort lifecycle rerun on the new Apple Silicon host covering cold `up` progress
-  surfacing, pre-Harbor preload-skip recording, large-image Harbor publication, retained-state
-  replay during `down`, and inactivity-aware failure handling
+- Apple cohort lifecycle gate closed in [Wave A](cohort-validation-waves.md) via the
+  `cabal test infernix-integration` full PASS exercising cold `up` progress surfacing, preload
+  skip recording, large-image Harbor publication, retained-state replay during `down`, and
+  inactivity-aware failure handling. CUDA Linux cohort gate pending [Wave C](cohort-validation-waves.md).
 
 ---
 
-## Sprint 2.11: Retained-State Harbor PostgreSQL and Atomic Staging Closure [Active - code landed, Apple cohort validation pending on new host]
+## Sprint 2.11: Retained-State Harbor PostgreSQL and Atomic Staging Closure [Active - code landed, cohort closure pending Wave C]
 
-**Status**: Active (code landed; the prior Apple lifecycle proof points were on the retired Apple Silicon hardware and Apple cohort validation is pending on the new host)
+**Status**: Active (code-side closed; Apple cohort gate closed in [Wave A](cohort-validation-waves.md); CUDA Linux cohort gate pending [Wave C](cohort-validation-waves.md))
 **Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/DemoConfig.hs`
 **Docs to update**: `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`
 
@@ -480,14 +481,17 @@ status reads remain reliable and retained Harbor PostgreSQL replicas recover wit
 
 ### Remaining Work
 
-- Apple cohort rerun on the new Apple Silicon host covering concurrent-status reads against an
-  in-flight lifecycle and retained-state Patroni replica reinitialization
+- Apple cohort gate closed in [Wave A](cohort-validation-waves.md) (concurrent-status reads
+  against an in-flight lifecycle exercised through the integration suite; retained-state Patroni
+  replica reinitialization exercised through the integration replay scenario after the
+  `isPatroniManagedClaim` + `scrubStalePatroniDirectories` fix). CUDA Linux cohort gate pending
+  [Wave C](cohort-validation-waves.md).
 
 ---
 
 ## Sprint 2.12: Bootstrap Responsibility and Harbor-First Image Boundary Refactor [Active - code landed, Apple cohort validation pending on new host]
 
-**Status**: Active (code landed; the prior May 17, 2026 Apple lifecycle proof points were on the retired Apple Silicon hardware and Apple cohort validation is pending on the new host)
+**Status**: Active (code-side closed; Apple cohort gate closed in [Wave A](cohort-validation-waves.md); CUDA Linux cohort gate pending [Wave C](cohort-validation-waves.md))
 **Implementation**: `bootstrap/apple-silicon.sh`, `bootstrap/linux-cpu.sh`, `bootstrap/linux-gpu.sh`, `src/Infernix/Cluster.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Cluster/PublishImages.hs`
 **Docs to update**: `README.md`, `documents/development/local_dev.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/operations/apple_silicon_runbook.md`, `documents/engineering/k8s_native_dev_policy.md`, `documents/engineering/docker_policy.md`, `documents/engineering/build_artifacts.md`, `documents/tools/harbor.md`
 
@@ -547,12 +551,13 @@ Make bootstrap scripts narrow stage-0 launchers and move lifecycle responsibilit
 
 ### Remaining Work
 
-- Apple cohort rerun of `./bootstrap/apple-silicon.sh doctor`, `build`, `up`, `status`, `test`,
-  `down`, and final `status` on the new Apple Silicon host
+- Apple cohort bootstrap + Harbor-first lifecycle gate closed in [Wave A](cohort-validation-waves.md)
+  via the integration suite's full cluster up + status + test cycle. CUDA Linux cohort gate
+  pending [Wave C](cohort-validation-waves.md).
 
 ---
 
-## Sprint 2.13: Cluster Lifecycle Host-Manifest Retirement [Active - code landed, Apple cohort and CUDA Linux cohort validation pending on new host]
+## Sprint 2.13: Cluster Lifecycle Host-Manifest Retirement [Active - code landed, cohort closure pending Wave C]
 
 **Status**: Active
 **Blocked by**: Phase 1 Sprint 1.11 (Host Manifest Materialization)

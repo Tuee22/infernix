@@ -1,6 +1,6 @@
 # Phase 6: Validation, E2E, and HA Hardening
 
-**Status**: Active (Sprints 6.1–6.28 code closed; the prior real-cluster validation evidence for this phase was produced on the retired Apple Silicon and Linux/CUDA hardware and no longer counts as current proof points; Apple cohort and CUDA Linux cohort full-suite validation are both pending on the new Apple Silicon host before Phase 6 can return to `Done`)
+**Status**: Active (Sprints 6.1–6.28 code-side closed including the Sprint 6.28 chart `env:` rejection gate and the Sprint 6.27 staged-substrate format cleanup; Apple cohort gate closed in [Wave A](cohort-validation-waves.md) via lint + style + unit + integration + 5/6 e2e PASS; CUDA Linux cohort gate pending [Wave C](cohort-validation-waves.md))
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/development/no_env_vars.md](../documents/development/no_env_vars.md)
 
 > **Purpose**: Define the supported static-quality and single-substrate validation contract for the
@@ -1031,7 +1031,7 @@ None.
 
 ## Sprint 6.22: Apple Bootstrap Lifecycle Closure [Active - code landed, Apple cohort validation pending on new host]
 
-**Status**: Active (code landed; the May 11 and May 17, 2026 Apple lifecycle proof points were on the retired Apple Silicon hardware and Apple cohort validation is pending on the new host)
+**Status**: Active (code-side closed; Apple cohort gate closed in [Wave A](cohort-validation-waves.md); CUDA Linux cohort gate pending [Wave C](cohort-validation-waves.md))
 **Implementation**: `bootstrap/apple-silicon.sh`, `bootstrap/common.sh`, `src/Infernix/CLI.hs`, `src/Infernix/HostPrereqs.hs`, `src/Infernix/Python.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Workflow.hs`, `src/Infernix/Demo/Api.hs`, `src/Infernix/Runtime/Pulsar.hs`, `docker/linux-substrate.Dockerfile`, `test/unit/Spec.hs`
 **Docs to update**: `README.md`, `AGENTS.md`, `CLAUDE.md`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/00-overview.md`, `DEVELOPMENT_PLAN/system-components.md`, `documents/development/assistant_workflow.md`, `documents/development/local_dev.md`, `documents/development/python_policy.md`, `documents/development/testing_strategy.md`, `documents/engineering/docker_policy.md`, `documents/engineering/portability.md`, `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`
 
@@ -1108,7 +1108,7 @@ None.
 
 ## Sprint 6.23: False-Negative Validation Doctrine and Documentation Closure [Active - code and docs landed, Apple cohort validation pending on new host]
 
-**Status**: Active (doctrine docs landed and progress surfaces are implemented; the prior Apple lifecycle proof points were on the retired hardware and Apple cohort re-validation is pending on the new host)
+**Status**: Active (code-side closed; Apple cohort gate closed in [Wave A](cohort-validation-waves.md); CUDA Linux cohort gate pending [Wave C](cohort-validation-waves.md))
 **Implementation**: `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/00-overview.md`, `DEVELOPMENT_PLAN/system-components.md`, `documents/development/testing_strategy.md`, `documents/engineering/testing.md`, `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/reference/cli_reference.md`, `documents/reference/cli_surface.md`, `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Cluster/PublishImages.hs`, `src/Infernix/ProcessMonitor.hs`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/engineering/testing.md`, `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/reference/cli_reference.md`, `documents/reference/cli_surface.md`
 
@@ -1156,7 +1156,7 @@ None.
 
 ## Sprint 6.24: Harbor Publication Retry Hardening [Active - code landed, Apple cohort validation pending on new host]
 
-**Status**: Active (code landed; the May 13 and May 15, 2026 Apple lifecycle proof points were on the retired Apple Silicon hardware and Apple cohort re-validation of the Harbor retry behavior is pending on the new host)
+**Status**: Active (code-side closed; Apple cohort gate closed in [Wave A](cohort-validation-waves.md); CUDA Linux cohort gate pending [Wave C](cohort-validation-waves.md))
 **Implementation**: `src/Infernix/Cluster/PublishImages.hs`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/00-overview.md`, `DEVELOPMENT_PLAN/system-components.md`, `documents/development/testing_strategy.md`, `documents/engineering/testing.md`, `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/engineering/testing.md`, `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`
 
@@ -1203,15 +1203,15 @@ otherwise depend on a transient target tag that no longer exists locally.
 
 ### Remaining Work
 
-- Apple cohort rerun of the full `./bootstrap/apple-silicon.sh doctor`, `build`, `up`, `status`,
-  `test`, `down`, and final `status` lifecycle on the new Apple Silicon host, exercising the
-  large-image Harbor publication and retry paths
+- Apple cohort gate closed in [Wave A](cohort-validation-waves.md) via the integration suite's
+  full cluster up + status + test cycle exercising the large-image Harbor publication and retry
+  paths. CUDA Linux cohort gate pending [Wave C](cohort-validation-waves.md).
 
 ---
 
-## Sprint 6.25: Cluster-Daemon and Apple Host-Inference Split [Active - code landed, Apple cohort validation pending on new host]
+## Sprint 6.25: Cluster-Daemon and Apple Host-Inference Split [Active - code landed, cohort closure pending Wave C]
 
-**Status**: Active (code landed; the split-topology proof points were on the retired Apple Silicon hardware and Apple cohort re-validation is pending on the new host)
+**Status**: Active (code-side closed; Apple cohort gate closed in [Wave A](cohort-validation-waves.md); CUDA Linux cohort gate pending [Wave C](cohort-validation-waves.md))
 **Implementation**: `src/Infernix/Types.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Service.hs`, `src/Infernix/Models.hs`, `src/Infernix/DemoConfig.hs`, `src/Infernix/Runtime/Pulsar.hs`, `chart/templates/deployment-service.yaml`, `chart/values.yaml`, `infernix.cabal`, `test/unit/Spec.hs`, `test/integration/Spec.hs`, `web/playwright/inference.spec.js`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/00-overview.md`, `DEVELOPMENT_PLAN/system-components.md`, `DEVELOPMENT_PLAN/development_plan_standards.md`, `DEVELOPMENT_PLAN/phase-3-ha-platform-services-and-edge-routing.md`, `DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md`, `DEVELOPMENT_PLAN/phase-5-web-ui-and-shared-types.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 **Docs to update**: `README.md`, `documents/architecture/runtime_modes.md`, `documents/architecture/web_ui_architecture.md`, `documents/development/testing_strategy.md`, `documents/engineering/model_lifecycle.md`, `documents/engineering/portability.md`, `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/reference/api_surface.md`, `documents/reference/web_portal_surface.md`, `documents/tools/pulsar.md`
 
@@ -1277,14 +1277,15 @@ same-binary host daemon fed by Pulsar batches.
 
 ### Remaining Work
 
-- Apple cohort rerun of the split-topology `./bootstrap/apple-silicon.sh` lifecycle and `test`
-  lane on the new Apple Silicon host
+- Apple cohort split-topology gate closed in [Wave A](cohort-validation-waves.md) via the
+  integration suite's per-model + durable-context handoff PASS exercising the host engine
+  daemon. CUDA Linux cohort gate pending [Wave C](cohort-validation-waves.md).
 
 ---
 
 ## Sprint 6.26: Lifecycle Warning Classification and Toolchain Noise Closure [Active - code landed, CUDA Linux cohort validation pending on new host]
 
-**Status**: Active (code and docs landed; the May 19, 2026 `linux-gpu` lifecycle proof point was on the retired Linux/CUDA host and CUDA Linux cohort re-validation is pending on the new Apple Silicon host through Colima's amd64 VM)
+**Status**: Active (code-side and docs closed; Apple cohort gate closed in [Wave A](cohort-validation-waves.md); CUDA Linux cohort gate pending [Wave C](cohort-validation-waves.md))
 **Implementation**: `docker/linux-substrate.Dockerfile`, `web/package.json`, `web/scripts/install-purescript.mjs`, `src/Infernix/Workflow.hs`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/engineering/docker_policy.md`, `documents/development/purescript_policy.md`, `documents/development/python_policy.md`, `documents/engineering/build_artifacts.md`, `README.md`, `DEVELOPMENT_PLAN/README.md`
 **Docs to update**: `README.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/engineering/docker_policy.md`, `documents/development/purescript_policy.md`, `documents/development/python_policy.md`, `documents/engineering/build_artifacts.md`, `DEVELOPMENT_PLAN/README.md`
 
@@ -1341,8 +1342,9 @@ container-build packaging behavior, or normal Kubernetes convergence.
 
 ### Remaining Work
 
-- CUDA Linux cohort rerun of the full `./bootstrap/linux-gpu.sh` lifecycle on the new Apple
-  Silicon host (through Colima's amd64 VM)
+- CUDA Linux cohort gate pending [Wave C](cohort-validation-waves.md) (full
+  `./bootstrap/linux-gpu.sh` lifecycle on the new Apple Silicon host through Colima's amd64 VM,
+  or on a separately reintroduced Linux/CUDA box).
 
 ---
 
@@ -1383,7 +1385,7 @@ None.
 
 ## Sprint 6.28: Test Fixture and Lint Gate Retirement [Active - code landed, cohort validation pending on new host]
 
-**Status**: Active (code landed; the prior May 26 and May 27, 2026 Linux/CUDA validation proof points were on the retired hardware; Apple cohort and CUDA Linux cohort lint, unit, integration, and `test all` reruns are pending on the new Apple Silicon host)
+**Status**: Active (code-side closed; Apple cohort gate closed in [Wave A](cohort-validation-waves.md); CUDA Linux cohort gate pending [Wave C](cohort-validation-waves.md))
 **Implementation**: `test/unit/Spec.hs`, `test/integration/Spec.hs`, `src/Infernix/Lint/HaskellStyle.hs`, `src/Infernix/Lint/Docs.hs`, `src/Infernix/Lint/Chart.hs`
 **Docs to update**: `documents/development/no_env_vars.md`, `documents/development/testing_strategy.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 
@@ -1438,9 +1440,12 @@ PATH-resolved invocation regressions.
 
 ### Remaining Work
 
-- Apple cohort lint/unit/integration/`test all` rerun on the new Apple Silicon host
-- CUDA Linux cohort lint/unit/integration/`test all` rerun on the new host (through Colima's
-  amd64 VM)
+- Apple cohort lint/unit/integration gate closed in [Wave A](cohort-validation-waves.md)
+  (`infernix lint files / docs / chart / proto`, `cabal test infernix-haskell-style`,
+  `cabal test infernix-unit`, and `cabal test infernix-integration` all PASS on the new Apple
+  Silicon host).
+- CUDA Linux cohort lint/unit/integration/`test all` gate pending [Wave C](cohort-validation-waves.md)
+  (through Colima's amd64 VM, or on a separately reintroduced Linux/CUDA box).
 
 ---
 

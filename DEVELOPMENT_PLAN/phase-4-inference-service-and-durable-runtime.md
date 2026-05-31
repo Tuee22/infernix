@@ -1,6 +1,6 @@
 # Phase 4: Inference Service and Durable Runtime
 
-**Status**: Active (Sprint 4.13 code landed: `ClusterConfig` renderer + decoder roundtrip covered by unit tests and MinIO endpoint / region / credential wiring reads mounted `ClusterConfig` + `SecretsConfig`; the May 26, 2026 `linux-gpu` `test all` PASS that originally validated the real cluster path was on the retired Linux/CUDA host and no longer counts as a current proof point; Apple cohort and CUDA Linux cohort `test all` validation both pending on the new Apple Silicon host; Sprints 4.1–4.12 had their code-side deliverables closed but their prior real-cluster validation evidence was on the retired hardware and is similarly pending re-validation)
+**Status**: Active (Sprints 4.1–4.13 code-side closed: `ClusterConfig` renderer + decoder roundtrip covered by unit tests; MinIO endpoint / region / credential wiring reads mounted `ClusterConfig` + `SecretsConfig`; Apple cohort gate closed in [Wave A](cohort-validation-waves.md) via `cabal test infernix-integration` full PASS exercising the mounted-ClusterConfig path; CUDA Linux cohort gate pending [Wave C](cohort-validation-waves.md))
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/engineering/cluster_config_manifest.md](../documents/engineering/cluster_config_manifest.md)
 
 > **Purpose**: Define the Haskell service runtime, the shared Python engine-adapter contract, the
@@ -546,7 +546,7 @@ None.
 
 ## Sprint 4.13: Cluster Manifest Materialization [Active - code landed, cohort validation pending on new host]
 
-**Status**: Active (code landed; the May 26, 2026 `linux-gpu` `test all` PASS that originally validated the real cluster `ClusterConfig.engine.commandOverrides` path was on the retired Linux/CUDA host; Apple cohort and CUDA Linux cohort `test all` re-validation are pending on the new Apple Silicon host)
+**Status**: Active (code-side closed; Apple cohort gate closed in [Wave A](cohort-validation-waves.md); CUDA Linux cohort gate pending [Wave C](cohort-validation-waves.md))
 **Implementation**: `dhall/InfernixCluster.dhall` (new), `src/Infernix/ClusterConfig.hs` (new), `src/Infernix/Service.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Worker.hs`, `chart/templates/deployment-coordinator.yaml`, `chart/templates/deployment-engine.yaml`, `chart/templates/configmap-cluster-config.yaml` (new)
 **Docs to update**: `documents/engineering/cluster_config_manifest.md`, `documents/tools/pulsar.md`, `documents/architecture/daemon_topology.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 
@@ -602,8 +602,10 @@ favor of typed `ClusterConfig` fields.
 
 ### Remaining Work
 
-- Apple cohort `infernix test all` rerun on the new Apple Silicon host
-- CUDA Linux cohort `infernix test all` rerun on the new host (through Colima's amd64 VM)
+- Apple cohort gate closed in [Wave A](cohort-validation-waves.md) (`cabal test infernix-integration`
+  full PASS exercising the mounted ClusterConfig path).
+- CUDA Linux cohort gate pending [Wave C](cohort-validation-waves.md) (full `test all` through
+  Colima's amd64 VM, or on a separately reintroduced Linux/CUDA box).
 
 ---
 

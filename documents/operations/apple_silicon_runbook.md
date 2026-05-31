@@ -203,6 +203,14 @@ See [../tools/harbor.md](../tools/harbor.md) for the supported Harbor surface an
 [../engineering/docker_policy.md](../engineering/docker_policy.md) for the containerd
 registry-hosts patch the same Sprint 3.11 work landed.
 
+## Cohort Validation Cadence
+
+Apple cohort validation work is batched into the active wave named in
+[../../DEVELOPMENT_PLAN/cohort-validation-waves.md](../../DEVELOPMENT_PLAN/cohort-validation-waves.md).
+Operators running an Apple Silicon validation pass should check the active wave's scope before
+bringing up a cluster; the waves doc names which work runs locally on this host and which work
+batches into the counterpart CUDA Linux pass.
+
 ## Cross-References
 
 - [cluster_bootstrap_runbook.md](cluster_bootstrap_runbook.md)
@@ -212,4 +220,5 @@ registry-hosts patch the same Sprint 3.11 work landed.
 - [../tools/minio.md](../tools/minio.md)
 - [../engineering/portability.md](../engineering/portability.md)
 - [../engineering/docker_policy.md](../engineering/docker_policy.md)
+- [../../DEVELOPMENT_PLAN/cohort-validation-waves.md](../../DEVELOPMENT_PLAN/cohort-validation-waves.md)
 - [../reference/cli_reference.md](../reference/cli_reference.md)
