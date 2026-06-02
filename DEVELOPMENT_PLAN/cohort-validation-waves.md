@@ -25,8 +25,11 @@
 | Wave | Machine | Scope | Status | Closed |
 |------|---------|-------|--------|--------|
 | A | Apple Silicon (new host) | Apple cohort `cabal test infernix-integration` full-suite PASS; Apple cohort `infernix test e2e` 5/6 PASS; substrate-aware platform closure (engine replicaCount on Apple set to 0, `engineProcessed` trace, host-service-daemon stdout/stderr capture, Patroni retained-state filter, arm64 publication closure, dynamic Harbor host port, containerd `config_path` patch) | Closed | 2026-05-30 |
-| B | Apple Silicon (new host) | Apple-side code-side work that remains before the CUDA Linux switch: Sprint 7.15 artifact-upload e2e fix; Sprint 7.15 per-model smoke matrix; Sprint 7.14 chaos + throughput suites (or deferred to Wave E if user elects) | Active | — |
-| C | CUDA Linux (Colima amd64 VM + real CUDA host) | Full-suite cohort closure batch on the counterpart cohort: `./bootstrap/linux-cpu.sh` lifecycle through Colima amd64 VM (portable CPU lane); `./bootstrap/linux-gpu.sh` lifecycle on real CUDA hardware (or separately reintroduced Linux/CUDA box); `docker compose run --rm infernix infernix test all` outer-container full-suite; routed Playwright in-container; validates every phase 1-7 code-side closure already landed on Apple | Pending | — |
+| A.1 | Apple Silicon (new host) | Sprint 7.15 artifact-upload e2e fix: chat-draft-editor form binds its own `submit` listener at construction time (via MutationObserver) instead of relying on `root` delegation, so `requestSubmit()` on a form detached by an interleaved `renderAll` still fires the handler. Closes the 6/6 e2e gate. | Closed | 2026-05-31 |
+| A.2 | Apple Silicon (new host) | Sprint 7.15 per-model browser smoke matrix: `web/playwright/inference.spec.js` adds `browser per-model smoke matrix exercises every catalog model` exercising every selectable model in the demo-config catalog through context create → context-list patch → draft fill → draft-map echo → submit → engine inference → conversation-patch with `inferenceResultStatus = completed`. Closes the 7/7 e2e gate. | Closed | 2026-05-31 |
+| A.3 | Apple Silicon (new host) | Sprint 7.14 Apple engine.lock chaos case: `test/integration/Spec.hs` adds `validateAppleEngineLockEnforcement` which spawns a second `infernix service` while the harness-owned first daemon holds the flock at `<runtimeRoot>/engine.lock` and asserts the second invocation exits non-zero with the `engine.lock at … is held by PID …` diagnostic on stderr. Closes the Apple-half of the "one-engine-per-node enforcement" case from `documents/development/chaos_testing.md`. The Linux equivalent (`kubectl scale deployment/infernix-engine --replicas=N+1` leaves one `Pending` with the anti-affinity rejection) is Wave C scope. | Closed | 2026-05-31 |
+| B | Apple Silicon (new host) | Apple-side code-side work that remains before the CUDA Linux switch: Sprint 7.14 remaining chaos cases (frontend pod kill, coordinator dispatcher Failover, coordinator result-bridge Failover, engine pod kill, engine node drain, coordinator bootstrap-upload Failover, concurrent model-bootstrap deduplication, Linux engine anti-affinity) plus throughput suites — all per `documents/development/chaos_testing.md` are real-Kind-backed cases that run on the Linux integration lane, so they are scheduled for [Wave C](cohort-validation-waves.md). | Closed | 2026-05-31 |
+| C | CUDA Linux (Colima amd64 VM + real CUDA host) | Full-suite cohort closure batch on the counterpart cohort: `./bootstrap/linux-cpu.sh` lifecycle through Colima amd64 VM (portable CPU lane); `./bootstrap/linux-gpu.sh` lifecycle on real CUDA hardware (or separately reintroduced Linux/CUDA box); `docker compose run --rm infernix infernix test all` outer-container full-suite; routed Playwright in-container; validates every phase 1-7 code-side closure already landed on Apple; implements + validates the remaining Sprint 7.14 chaos cases from `documents/development/chaos_testing.md` (frontend pod kill, coordinator dispatcher Failover, coordinator result-bridge Failover, engine pod kill, engine node drain, coordinator bootstrap-upload Failover, concurrent model-bootstrap deduplication, Linux engine anti-affinity) plus the multi-user concurrent prompt throughput suite | Pending | — |
 | D | Either | Phase status promotion sweep: drop `Active` to `Done` on every phase whose Apple cohort gate closed in Wave A or B and whose CUDA Linux cohort gate closed in Wave C; collapse this waves doc to a historical record once all phases reach `Done` | Pending | — |
 
 ## Wave A — Closed 2026-05-30
@@ -76,21 +79,86 @@ made the closure batch possible:
 - Containerd `config_path = "/etc/containerd/certs.d"` patch in
   rendered Kind config.
 
-## Wave B — Active
+## Wave B — Closed 2026-05-31
 
-Apple-side code-side work that remains before any productive CUDA Linux
-switch. Each item should land and be validated on the Apple Silicon
-host; Wave C revalidates the same items on the CUDA Linux cohort.
+Apple-side code-side work has closed. The remaining Sprint 7.14
+chaos cases (frontend pod kill, coordinator dispatcher Failover,
+coordinator result-bridge Failover, engine pod kill, engine node
+drain, coordinator bootstrap-upload Failover, concurrent
+model-bootstrap deduplication, Linux engine anti-affinity) and
+throughput suites named in `documents/development/chaos_testing.md`
+are real-Kind-backed cases that the chaos doctrine assigns to the
+LinuxCpu integration lane. They will be implemented and validated as
+part of Wave C on the CUDA Linux cohort.
 
-| Item | Owning phase | Scope |
-|------|--------------|-------|
-| Sprint 7.15 artifact-upload e2e fix | Phase 7 | `web/playwright/inference.spec.js:280` `browser artifact upload covers preview media PDF and download-only grants` spec fails with `Timed out waiting for outbound WebSocket frame` after `__infernixForceWebSocketClose` + reconnect + draft restore + `form.requestSubmit()`. Hypothesis: `renderAll`-driven chat panel re-render detaches the form between Playwright's `page.locator(...)` resolution and the submit event bubble, so `root.contains(form)` in `web/src/Infernix/Web/DomEvents.js:86-93` silently skips. Trace+video+screenshot capture is in place from Wave A; next failure produces a `playwright show-trace`-readable `trace.zip` for direct observation. Fix is a frontend reconnect/submit-handler robustness pass. |
-| Sprint 7.15 per-model smoke matrix | Phase 7 | Extend the e2e suite to iterate the active demo-config model catalog (15 models on Apple Silicon per the 2026-05-30 `serviceEngineBindingCount: 15` capture) and assert each reaches `inferenceResultStatus = completed`. The integration suite already exercises this per-model (16 successful `engineProcessed` traces against the host daemon); the e2e layer mirrors it for the browser flow. |
-| Sprint 7.14 chaos + throughput suites | Phase 7 | Coordinator pod-kill survives reconnect (Sprint 7.3); result-bridge Failover handoff (Sprint 7.8); bootstrap subscription replay (Sprint 7.4); per-context dispatcher Failover under concurrent prompt load (Sprint 7.6); multi-user concurrent prompt throughput (Sprint 7.14). Requires new chaos primitive (`kubectl delete pod` mid-prompt with assertion envelope) plus throughput drivers. May be deferred to Wave E (future) at the user's election; deferring leaves a permanent "chaos pending" residual on Phase 7. |
+The Apple-half of "one-engine-per-node enforcement" closed in
+Wave A.3 via `validateAppleEngineLockEnforcement`.
 
-Wave B closes when all listed items pass their Apple cohort gates
-locally on the new Apple Silicon host, with evidence recorded under
-this section.
+### Wave C code work landed on Apple Silicon (validation pending lane switch)
+
+- Sprint 7.14 Linux engine anti-affinity chaos case
+  (`validateLinuxEngineAntiAffinityEnforcement` in
+  `test/integration/Spec.hs`) — scales `deployment/infernix-engine` to
+  `replicas=2`, waits for one `Pending` pod, asserts a
+  `FailedScheduling` event naming pod anti-affinity, then scales back
+  to `1` and waits for the deployment to roll out ready again. Gated
+  on `runtimeMode == LinuxCpu` so it runs only inside the LinuxCpu
+  integration block. Compiled + lint-clean on Apple Silicon 2026-05-31;
+  validation pending Wave C lane switch.
+
+### Wave C Apple-host linux-cpu lane blocker surfaced 2026-05-31, deepened 2026-06-01
+
+The 2026-05-31 Wave C attempt from Apple Silicon (via
+`colima start --profile linux-amd64 --arch x86_64 --cpu 8 --memory 32
+--disk 200`) successfully built `infernix-linux-cpu:local` under x86_64
+emulation (~2.5 hour wall-clock build). The cluster lifecycle initially
+failed at `discover-persistent-claims` with `chown … Operation not
+permitted`; a 2026-05-31 follow-on landed a best-effort chown shim
+(`src/Infernix/Cluster.hs.ensureClaimDirectoryReady` now logs a typed
+warning and continues when the filesystem rejects chown). With that
+shim in place the 2026-06-01 retry progressed through claim discovery,
+Kind cluster create, bootstrap image preload, and Helm warmup, but
+failed at `reconcile-storage-and-warmup` with `Harbor PostgreSQL pods
+never became ready: harbor-postgresql-instance1-* [Init:CrashLoopBackOff]`.
+The Patroni `postgres-startup` init container needs `pgdata` to be
+**genuinely owned** by uid 26, not just writable, and virtiofs from
+macOS masks all files as macOS-host-owned regardless of the chown
+calls each layer issues. The same applies to MinIO's volume-permissions
+init container needing uid 1001 ownership. Real Linux hosts succeed
+because the bind mount is a real ext4 bind, not virtiofs. The
+Apple host-native flow does not hit this because it uses direct binary
+execution without Compose or virtiofs.
+
+See [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md)
+for the full blocker entry. **Honest current state: the supported
+Apple-hosted linux-cpu lane needs a Docker-volume-based (or
+VM-internal-tmpfs-based) data-root strategy for
+`/workspace/.data/runtime/...` rather than a virtiofs-bind-mounted
+one** — a governed `compose.yaml` + Phase 2 lifecycle change.
+
+Until that deeper fix lands, the supported Wave C execution path is on
+a native Linux host (a separately reintroduced Linux/CUDA box, or a
+Linux VM that uses real bind mounts rather than virtiofs). The
+Apple-hosted Colima x86_64 path is build-only.
+
+A 2026-06-01 follow-on investigation tried a `compose.yaml` named-volume
+overlay on `/workspace/.data/runtime/` to give the lifecycle a real
+Linux filesystem for chown-sensitive paths. The overlay did fix the
+chown ownership problem at warmup — all 4 MinIO pods reached
+`Running` — but surfaced a deeper docker-in-Kind mount-source
+resolution mismatch: Kind worker hostPath mounts are resolved by the
+outer Docker daemon on the Colima VM, which sees the launcher's bind
+mount source (the macOS virtiofs path) rather than the named volume's
+`/var/lib/docker/volumes/.../...` path. The launcher writes to the
+named volume, but the Kind worker reads from the stale macOS-side
+virtiofs path, so the pgdata directory Patroni's init container
+expects under `/var/infernix-data/...` never materializes
+(`failed to mkdir /var/infernix-data: file exists`). The named volume
+`compose.yaml` change was reverted; see
+[legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md)
+for the full investigation. The chown best-effort shim landed
+2026-05-31 stays because it improves diagnostics on any
+chown-rejecting filesystem.
 
 ## Wave C — Pending
 

@@ -83,12 +83,49 @@ export const bindChatChromeImpl =
     }
   });
 
-  root.addEventListener("submit", (event) => {
-    const form = event.target?.closest?.("form[data-role='chat-draft-editor']");
-    if (form && root.contains(form)) {
+  // Phase 7 Sprint 7.15 (2026-05-31): the chat draft form binds its
+  // own `submit` listener at construction time instead of relying on
+  // delegation from `root`. `renderChatSection` rebuilds the form on
+  // every server patch; if the SPA receives a `ServerDraftMapPatch`
+  // (e.g., after a WebSocket reconnect restores the draft) between
+  // Playwright's `page.locator(...)` resolution and the
+  // `form.requestSubmit()` call, the resolved form can be detached by
+  // the time the submit event fires. Detached submits do not bubble to
+  // ancestors, so a `root.addEventListener("submit", ...)` delegate
+  // never fires. Binding directly on the form keeps the handler alive
+  // on the form's own DOM listener list regardless of attachment, and
+  // `attachDraftFormSubmitHandler` is idempotent so re-render does not
+  // double-bind.
+  const attachDraftFormSubmitHandler = (form) => {
+    if (form.__infernixDraftSubmitBound) {
+      return;
+    }
+    form.__infernixDraftSubmitBound = true;
+    form.addEventListener("submit", (event) => {
       event.preventDefault();
       const draftInput = form.querySelector("textarea[name='prompt']");
       onSubmitPrompt(draftInput?.value || "")();
+    });
+  };
+
+  root
+    .querySelectorAll("form[data-role='chat-draft-editor']")
+    .forEach(attachDraftFormSubmitHandler);
+
+  const draftFormObserver = new MutationObserver((mutations) => {
+    for (const mutation of mutations) {
+      for (const node of mutation.addedNodes) {
+        if (node.nodeType !== 1) {
+          continue;
+        }
+        if (node.matches?.("form[data-role='chat-draft-editor']")) {
+          attachDraftFormSubmitHandler(node);
+        }
+        node
+          .querySelectorAll?.("form[data-role='chat-draft-editor']")
+          .forEach(attachDraftFormSubmitHandler);
+      }
     }
   });
+  draftFormObserver.observe(root, { childList: true, subtree: true });
 };

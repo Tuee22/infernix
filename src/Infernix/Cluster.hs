@@ -1031,9 +1031,33 @@ ensureClaimDirectoryReady paths runtimeMode persistentClaim = do
   case claimOwner persistentClaim of
     Nothing -> pure ()
     Just owner
-      | hostClaimOwnershipAlignmentSupported paths ->
-          runCommand Nothing [] "chown" ["-R", owner, directoryPath]
+      | hostClaimOwnershipAlignmentSupported paths -> do
+          -- Phase 2 Sprint 2.13 follow-on (2026-05-31): the Linux outer-container
+          -- lane runs from macOS hosts via Colima's x86_64 VM with a virtiofs-
+          -- backed `./.data:/workspace/.data` bind mount. virtiofs rejects
+          -- `chown` across the host/guest boundary because the macOS host owns
+          -- the underlying files. The chown alignment is a best-effort source-
+          -- ownership tag; the actual Kind worker pod copies its own
+          -- ownership during `prepareKindNodeRuntimePaths`, so a failure here
+          -- is non-fatal as long as the directory is broadly writable (it is,
+          -- per the `chmod a+rwX` above). Treat the chown as advisory: log
+          -- the failure and continue so the lifecycle keeps moving.
+          chownResult <- tryCommand Nothing [] "chown" ["-R", owner, directoryPath]
+          case chownResult of
+            Right _ -> pure ()
+            Left err ->
+              putStrLn
+                ( "warning: chown advisory failed for "
+                    <> directoryPath
+                    <> " (filesystem does not honor host-side ownership for "
+                    <> owner
+                    <> "); continuing with broadly writable permissions instead. ("
+                    <> stripChownFailureNoise err
+                    <> ")"
+                )
       | otherwise -> pure ()
+  where
+    stripChownFailureNoise = takeWhile (/= '\n')
 
 hostClaimOwnershipAlignmentSupported :: Paths -> Bool
 hostClaimOwnershipAlignmentSupported paths =

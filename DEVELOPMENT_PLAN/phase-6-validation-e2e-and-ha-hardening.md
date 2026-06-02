@@ -71,63 +71,24 @@ on supported lanes, may hydrate and stream only the narrow Harbor warmup depende
 Kind workers before Helm warmup, and follows the stricter Harbor-first boundary where only
 Harbor-required services may pull upstream before Harbor is responsive.
 
-**Apple Silicon validation reset (2026-05-29).** The repository's primary development machine has
-moved to a new Apple Silicon host, and the prior Apple Silicon hardware is no longer available.
-The phase's previously recorded validation evidence on those retired machines remains
-historically accurate, but it no longer counts as a current real-cluster proof point. All Apple
-cohort lifecycle, `test all`, routed Playwright E2E, split-topology host-batch Pulsar handoff,
-retained-state replay, and Harbor publication assertions therefore carry an explicit Apple
-cohort validation pending on the new host residual. The CUDA Linux cohort evidence on the
-`linux-gpu` substrate was also produced on the retired hardware and is similarly pending
-re-validation (through Colima's amd64 VM on the new Apple Silicon host, or on a separately
-re-provisioned Linux/CUDA machine if one is reintroduced). `linux-cpu` validation on the new
-host is pending as well.
-
-Historical evidence summary (retained for traceability; no longer current proof points):
-
-- Apple `./bootstrap/apple-silicon.sh doctor`, `build`, `up`, `status`, `test`, and `down`
-  reruns on May 11, 2026; May 13, 2026; May 15, 2026; and May 17, 2026 had validated the patched
-  shared lifecycle (`cluster status` reporting active in-progress lifecycle phase, child-operation
-  detail, and heartbeat during `up` and `down`; steady-state status reporting two nodes and
-  sixty-five pods; final post-teardown status returning `clusterPresent: False`,
-  `lifecycleStatus: idle`, and `lifecyclePhase: cluster-absent`; the inactivity-aware
-  interpretation contract used by the governed testing doctrine, operator-facing testing
-  strategy, lifecycle runbooks, and CLI references; retained-state Harbor PostgreSQL replica
-  recovery through the supported targeted reinitialization path; long-running Apple
-  `build-cluster-images` staying healthy past thirty minutes before Harbor publication; Harbor
-  image pushes being readiness-gated with bounded retries across transient registry resets; and
-  the governed `test` lane performing multiple internal cluster bring-up/teardown cycles before
-  the outer bootstrap command returns) on the retired Apple Silicon hardware.
-- The May 15, 2026 and May 17, 2026 Apple reruns had also validated the split topology, with
-  the `test` lane passing Haskell style, Haskell unit, PureScript unit, Haskell integration,
-  routed Playwright, repeated retained-state `cluster down`/`cluster up` cycles, Apple host-batch
-  inference for every active generated catalog entry, retained-state teardown, and the Harbor
-  publication closure for repo-owned local images (publication pushes the
-  `infernix-linux-cpu:local` payload before third-party chart dependencies and re-tags the
-  source image before each bounded push retry, so retry recovery does not depend on a
-  previously retained target tag). Final post-teardown status had returned
-  `clusterPresent: False`, `lifecycleStatus: idle`, `lifecyclePhase: cluster-absent`,
-  `runtimeResultCount: 31`, `objectStoreObjectCount: 73`, `modelCacheEntryCount: 30`, and
-  `durableManifestCount: 15` on the retired hardware.
-- The May 19, 2026 and May 27, 2026 `linux-gpu` reruns through `doctor`, image refresh,
-  `build`, `up`, `status`, `test`, `down`, `purge`, and final `status` had validated the
-  warning-classification and toolchain-noise closure and the routed Playwright closure from
-  inside the substrate image on the retired Linux/CUDA host.
+**Apple Silicon validation reset (2026-05-29).** The repository's primary development machine
+moved to a new Apple Silicon host on 2026-05-29; the prior Apple Silicon and Linux/CUDA hardware
+are no longer available. The retired dated proof points are inventoried in
+[legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) under "Retired Historical
+Validation Evidence"; the underlying contracts they exercised still describe supported behavior.
+Revalidation on the new host is tracked by
+[cohort-validation-waves.md](cohort-validation-waves.md): the Apple cohort gate closed in
+[Wave A](cohort-validation-waves.md) (lint + style + unit + integration full PASS plus 7/7 e2e
+PASS on the new Apple Silicon host across Waves A.1–A.3), and the CUDA Linux cohort gate is
+pending [Wave C](cohort-validation-waves.md) (through Colima's amd64 VM on the new Apple Silicon
+host, or on a separately reintroduced Linux/CUDA box).
 
 The runtime-topology implementation deploys `infernix-service` on Apple and reports
 `daemonLocation: cluster-pod`, `inferenceExecutorLocation: control-plane-host`, and the Apple
-host batch topic in publication metadata; the underlying code paths exist in the worktree, but
-the prior real-cluster reports of these fields came from the retired hardware. The supported
-routed and cluster validation path uses real Pulsar transport; the repo-local topic spool under
-`./.data/runtime/pulsar/` remains only for unit-level or intentionally endpoint-absent harness
-checks and is not accepted as routed Pulsar evidence.
-
-On May 20, 2026, a repo-local static and unit audit reran `infernix lint files`,
-`infernix lint docs`, `infernix lint proto`, `infernix lint chart`, `infernix docs check`,
-`infernix test lint`, and `infernix test unit` successfully after the plan-truth cleanup. That
-pass was repo-local and did not require real cluster execution, but it was also performed on the
-retired hardware; the static/unit gates can be rerun trivially on the new Apple Silicon host as
-part of the Apple cohort re-validation batch.
+host batch topic in publication metadata. The supported routed and cluster validation path uses
+real Pulsar transport; the repo-local topic spool under `./.data/runtime/pulsar/` remains only
+for unit-level or intentionally endpoint-absent harness checks and is not accepted as routed
+Pulsar evidence.
 
 ## Validation Surface
 

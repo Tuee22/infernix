@@ -663,6 +663,154 @@ test("browser artifact upload covers preview media PDF and download-only grants"
   await expect(page.locator("textarea[name='prompt']")).toHaveValue(reloadDraftText, { timeout: 60000 });
 });
 
+// Phase 7 Sprint 7.15 (2026-05-31): browser-layer per-model smoke matrix.
+// The integration suite exercises every catalog model via the engine
+// daemon (`engineProcessed: ...` traces); this test mirrors the same
+// coverage at the browser layer so the routed SPA + WebSocket + Pulsar
+// + engine chain is proven against the full demo-config catalog, not
+// just the representative model the durable-context prompt roundtrip
+// spec exercises.
+test("browser per-model smoke matrix exercises every catalog model", async ({ page, request, infernixFixture }) => {
+  test.setTimeout(900000);
+  const fixture = infernixFixture;
+  expect(fixture?.host).toBeTruthy();
+  expect(fixture?.edgePort).toBeTruthy();
+  const baseUrl = `http://${fixture.host}:${fixture.edgePort}`;
+  const wsFrames = collectWebSocketFrames(page);
+
+  const demoConfigResponse = await request.get(`${baseUrl}/api/demo-config`);
+  expect(demoConfigResponse.ok()).toBeTruthy();
+  const demoConfig = await demoConfigResponse.json();
+  expect(Array.isArray(demoConfig.models)).toBe(true);
+  expect(demoConfig.models.length).toBeGreaterThan(0);
+
+  await page.goto(baseUrl);
+  await page.locator("#login-button").click();
+  await submitFreshRegistrationForm(page, baseUrl);
+  await expect(page.locator("#connection-state")).toHaveText("Authenticated", { timeout: 60000 });
+  await expect(page.locator("#catalog-count")).not.toHaveText("0", { timeout: 60000 });
+  await waitForSentFrame(wsFrames, (frame) => frame.tag === "ClientHello");
+  await waitForReceivedFrame(wsFrames, (frame) => frame.tag === "ServerContextListSnapshot");
+  await waitForReceivedFrame(wsFrames, (frame) => frame.tag === "ServerDraftMapSnapshot");
+
+  // The model picker only renders inside the new-context dialog;
+  // open the dialog once to enumerate selectable models, then close
+  // it so each per-model iteration starts from the same baseline.
+  await page.locator("[data-role='open-new-context']").click();
+  await expect(page.locator("[data-role='new-context-dialog']")).toBeVisible();
+  const modelPickerOptions = await page
+    .locator("[data-role='model-picker'] option")
+    .evaluateAll((nodes) =>
+      nodes
+        .map((node) => ({ value: node.value, label: node.textContent || "" }))
+        .filter((option) => option.value),
+    );
+  expect(modelPickerOptions.length).toBeGreaterThan(0);
+  await page.locator("[data-role='close-new-context']").click();
+  await expect(page.locator("[data-role='new-context-dialog']")).toHaveCount(0);
+
+  const matrixToken = randomUUID();
+  const contextByModel = new Map();
+
+  for (let index = 0; index < modelPickerOptions.length; index += 1) {
+    const { value: modelId } = modelPickerOptions[index];
+    const createSentStart = wsFrames.sent.length;
+    const createReceivedStart = wsFrames.received.length;
+
+    await page.locator("[data-role='open-new-context']").click();
+    await expect(page.locator("[data-role='new-context-dialog']")).toBeVisible();
+    await page.locator("[data-role='model-picker']").selectOption(modelId);
+    await expect(page.locator("[data-role='model-picker']")).toHaveValue(modelId);
+    await page.locator("[data-role='create-context']").click();
+    await expect(page.locator("[data-role='new-context-dialog']")).toHaveCount(0);
+
+    const createFrame = await waitForSentFrameAfter(
+      wsFrames,
+      createSentStart,
+      (frame) => frame.tag === "ClientCreateContext" && frame.clientCreateContextModelId === modelId,
+    );
+    expect(createFrame.clientCreateContextId).toBeTruthy();
+    contextByModel.set(modelId, createFrame.clientCreateContextId);
+
+    await waitForReceivedFrameAfter(
+      wsFrames,
+      createReceivedStart,
+      (frame) =>
+        frame.tag === "ServerContextListPatch" &&
+        JSON.stringify(frame).includes(createFrame.clientCreateContextId) &&
+        JSON.stringify(frame).includes(modelId),
+    );
+  }
+
+  // The per-context dispatcher polls every 30 seconds for new
+  // conversation topics. Wait one poll cycle so every freshly created
+  // context's worker has attached before we start submitting prompts;
+  // otherwise the first prompt to a brand-new context would race the
+  // dispatcher worker spawn and the test's bounded
+  // waitForReceivedFrame envelope would expire before the engine
+  // result flows back through the conversation topic.
+  await page.waitForTimeout(35000);
+
+  for (let index = 0; index < modelPickerOptions.length; index += 1) {
+    const { value: modelId } = modelPickerOptions[index];
+    const contextId = contextByModel.get(modelId);
+    expect(contextId).toBeTruthy();
+    const submitSentStart = wsFrames.sent.length;
+    const submitReceivedStart = wsFrames.received.length;
+
+    await page
+      .locator(`.chat-context-item[data-context-id="${contextId}"] [data-role='select-context']`)
+      .click();
+    await expect(
+      page.locator(`.chat-context-item.active[data-context-id="${contextId}"]`),
+    ).toBeVisible();
+
+    const promptText = `smoke ${modelId} ${matrixToken}-${index}`;
+    await page.locator("textarea[name='prompt']").fill(promptText);
+    await waitForSentFrameAfter(
+      wsFrames,
+      submitSentStart,
+      (frame) => frame.tag === "ClientUpdateDraft" && frame.clientUpdateDraftText === promptText,
+    );
+
+    // Wait for the broker echo before submitting so the SPA's
+    // `state.chat.draftMap` has the new draft text. Without this, an
+    // intervening `renderAll` (e.g. triggered by a late patch from a
+    // prior iteration) would re-render the textarea from a stale
+    // draftMap and reset its DOM value to empty before the submit
+    // handler reads it, dropping the prompt text on the wire.
+    await waitForReceivedFrameAfter(
+      wsFrames,
+      submitReceivedStart,
+      (frame) =>
+        frame.tag === "ServerDraftMapPatch" &&
+        JSON.stringify(frame).includes(contextId) &&
+        JSON.stringify(frame).includes(promptText),
+    );
+    await expect(page.locator("textarea[name='prompt']")).toHaveValue(promptText, { timeout: 30000 });
+
+    await page
+      .locator("form[data-role='chat-draft-editor']")
+      .evaluate((form) => form.requestSubmit());
+
+    await waitForSentFrameAfter(
+      wsFrames,
+      submitSentStart,
+      (frame) => frame.tag === "ClientSubmitPrompt" && frame.clientSubmitPromptPayload?.promptText === promptText,
+    );
+
+    const completedFrame = await waitForReceivedFrameAfter(
+      wsFrames,
+      submitReceivedStart,
+      (frame) =>
+        frame.tag === "ServerConversationPatch" &&
+        JSON.stringify(frame).includes(contextId) &&
+        JSON.stringify(frame).includes("\"inferenceResultStatus\":\"completed\""),
+    );
+    expect(JSON.stringify(completedFrame)).toContain("ConversationStateAppendMessage");
+  }
+});
+
 function renderDispositionTag(downloadGrant) {
   const disposition = downloadGrant.artifactDownloadGrantRenderDisposition;
   return typeof disposition === "string" ? disposition : disposition?.tag;

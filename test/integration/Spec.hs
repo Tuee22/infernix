@@ -69,6 +69,7 @@ import System.Process
     StdStream (UseHandle),
     createProcess,
     proc,
+    readCreateProcessWithExitCode,
     readProcess,
     readProcessWithExitCode,
     terminateProcess,
@@ -217,6 +218,18 @@ exerciseRuntimeMode paths runtimeMode = do
       reportStep ("durable Pulsar topic families: " <> showRuntimeMode runtimeMode)
       validateDurableTopicFamilyRoundTrips paths runtimeMode representativeModelId
 
+      -- Phase 7 Sprint 7.14 (2026-05-31): Apple engine.lock enforcement
+      -- chaos case. The chart-driven Linux engine pods rely on required
+      -- pod anti-affinity to prove one-engine-per-node; the Apple
+      -- host-native engine relies on the @engine.lock@ flock contract in
+      -- `Infernix.Service.acquireEngineLock`. The first host daemon is
+      -- already spawned by `withRuntimeServiceDaemonIfNeeded` above and
+      -- holds the lock; this case validates that a second spawn exits
+      -- non-zero with the named diagnostic.
+      when (requiresHostServiceHarness paths runtimeMode) $ do
+        reportStep ("apple engine.lock enforcement: " <> showRuntimeMode runtimeMode)
+        validateAppleEngineLockEnforcement paths
+
       when (runtimeMode == LinuxCpu) $ do
         reportStep "harbor recovery"
         validateHarborRecovery state
@@ -228,6 +241,17 @@ exerciseRuntimeMode paths runtimeMode = do
         validatePostgresFailover state
         reportStep "postgres lifecycle rebinding"
         validatePostgresLifecycleRebinding paths runtimeMode state
+        -- Phase 7 Sprint 7.14 (2026-05-31): Linux engine
+        -- one-engine-per-node enforcement. The chart deploys
+        -- `infernix-engine` with `requiredDuringSchedulingIgnoredDuringExecution`
+        -- pod anti-affinity keyed by hostname; scaling the deployment
+        -- past the available engine-capable node count must leave the
+        -- extra replica `Pending` with the anti-affinity rejection
+        -- message in its scheduler events. The Apple-host equivalent
+        -- (the `engine.lock` flock) is covered by
+        -- `validateAppleEngineLockEnforcement` above.
+        reportStep "linux engine anti-affinity enforcement"
+        validateLinuxEngineAntiAffinityEnforcement state
 
       statusOutput <- captureInfernixOutput ["cluster", "status"]
       assert ("clusterPresent: True" `isInfixOf` statusOutput) "cluster status reports the cluster presence"
@@ -1110,6 +1134,89 @@ readDaemonLogSnapshot logPath = do
 requiresHostServiceHarness :: Paths -> RuntimeMode -> Bool
 requiresHostServiceHarness paths runtimeMode =
   Config.controlPlaneContext paths /= Config.OuterContainer && runtimeMode == AppleSilicon
+
+-- | Phase 7 Sprint 7.14 (2026-05-31): Linux engine pod anti-affinity chaos case.
+-- The chart's `infernix-engine` Deployment carries
+-- `requiredDuringSchedulingIgnoredDuringExecution` anti-affinity keyed by
+-- hostname (`topologyKey: kubernetes.io/hostname`), so scaling the deployment
+-- past the available engine-capable node count must leave the extra replica
+-- `Pending` with a scheduler `FailedScheduling` event naming pod anti-affinity.
+-- The supported recovery is to scale back to the original replica count and
+-- wait for the deployment to roll back to ready.
+validateLinuxEngineAntiAffinityEnforcement :: ClusterState -> IO ()
+validateLinuxEngineAntiAffinityEnforcement state = do
+  runKubectl state ["-n", "platform", "rollout", "status", "deployment/infernix-engine", "--timeout=900s"]
+  runKubectl state ["-n", "platform", "scale", "deployment/infernix-engine", "--replicas=2"]
+  pendingPod <- waitForPendingEnginePod state
+  events <-
+    kubectlOutputForState
+      state
+      [ "-n",
+        "platform",
+        "get",
+        "events",
+        "--field-selector",
+        "involvedObject.name=" <> pendingPod,
+        "-o",
+        "jsonpath={range .items[*]}{.reason}|{.message}{\"\\n\"}{end}"
+      ]
+  assert
+    ("FailedScheduling" `isInfixOf` events)
+    "the surplus engine pod surfaces a FailedScheduling scheduler event under anti-affinity"
+  assert
+    ("anti-affinity" `isInfixOf` events || "AntiAffinity" `isInfixOf` events)
+    "the FailedScheduling event names pod anti-affinity as the reason"
+  runKubectl state ["-n", "platform", "scale", "deployment/infernix-engine", "--replicas=1"]
+  runKubectl state ["-n", "platform", "rollout", "status", "deployment/infernix-engine", "--timeout=900s"]
+
+waitForPendingEnginePod :: ClusterState -> IO String
+waitForPendingEnginePod state = go (60 :: Int)
+  where
+    go remainingAttempts
+      | remainingAttempts <= 0 =
+          fail "timed out waiting for a Pending infernix-engine pod after scaling the deployment past available engine nodes"
+      | otherwise = do
+          podLines <-
+            lines
+              <$> kubectlOutputForState
+                state
+                [ "-n",
+                  "platform",
+                  "get",
+                  "pods",
+                  "-l",
+                  "app.kubernetes.io/name=infernix-engine",
+                  "-o",
+                  "jsonpath={range .items[*]}{.metadata.name}|{.status.phase}{\"\\n\"}{end}"
+                ]
+          case find (\line -> "|Pending" `isInfixOf` line) podLines of
+            Just match -> pure (takeWhile (/= '|') match)
+            Nothing -> do
+              threadDelay 1000000
+              go (remainingAttempts - 1)
+
+-- | Phase 7 Sprint 7.14 (2026-05-31): Apple engine.lock enforcement chaos case.
+-- Spawn a second @infernix service@ while the harness-owned first daemon is
+-- alive. The second invocation must exit non-zero because
+-- `Infernix.Service.acquireEngineLock` cannot acquire the flock; the stderr
+-- must surface the supported diagnostic naming the holding PID so operators
+-- can find the existing daemon.
+validateAppleEngineLockEnforcement :: Paths -> IO ()
+validateAppleEngineLockEnforcement paths = do
+  infernixExecutable <- resolveInfernixExecutable
+  (exitCode, _stdoutOutput, stderrOutput) <-
+    readCreateProcessWithExitCode
+      (proc infernixExecutable ["service"]) {cwd = Just (repoRoot paths)}
+      ""
+  assert
+    (exitCode /= ExitSuccess)
+    "a second `infernix service` invocation exits non-zero when the engine.lock is already held"
+  assert
+    ("engine.lock" `isInfixOf` stderrOutput)
+    "the second `infernix service` invocation surfaces the engine.lock diagnostic on stderr"
+  assert
+    ("is held by PID" `isInfixOf` stderrOutput)
+    "the engine.lock diagnostic names the holder PID for operator triage"
 
 withRuntimeServiceDaemon :: Paths -> IO a -> IO a
 withRuntimeServiceDaemon paths action = do
