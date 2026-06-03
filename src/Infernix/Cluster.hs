@@ -14,7 +14,7 @@ where
 
 import Control.Concurrent (threadDelay)
 import Control.Exception (IOException, SomeException, bracket, displayException, finally, try)
-import Control.Monad (unless, when)
+import Control.Monad (forM_, unless, when)
 import Data.Aeson (FromJSON (parseJSON), Value (..), eitherDecode, encode, object, withObject, (.:), (.=))
 import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KeyMap
@@ -472,6 +472,8 @@ clusterUpWithPlatform paths runtimeMode = do
       "creating or reusing the Kind cluster and preparing retained runtime data"
   (edgePortValue, harborPortValue, kubeconfigContents, clusterCreated) <-
     ensureKindCluster paths runtimeMode (clusterUpRequestedEdgePort inputs) (clusterUpRequestedHarborPort inputs)
+  writeRegistryHostsConfig paths runtimeMode harborPortValue
+  primeKindNodeRegistryHosts paths runtimeMode harborPortValue
   usesHostBindMounts <- kindUsesHostBindMounts paths runtimeMode
   when (clusterCreated && not usesHostBindMounts) $
     prepareKindNodeRuntimePaths paths clusterPrepareState runtimeMode
@@ -1781,8 +1783,9 @@ publishClusterImages paths state renderedChartPath runtimeMode = do
 preloadHostCachedWarmupImagesOnKindWorker :: Paths -> ClusterState -> RuntimeMode -> IO ()
 preloadHostCachedWarmupImagesOnKindWorker paths state runtimeMode =
   when (runtimeMode /= AppleSilicon) $ do
-    let workerContainer = kindClusterName paths runtimeMode <> "-worker"
-    mapM_ (preloadHostCachedWarmupImage paths state workerContainer) hostCachedWarmupImageRefs
+    workerContainers <- kindWorkerNodeNames paths runtimeMode
+    forM_ workerContainers $ \workerContainer ->
+      mapM_ (preloadHostCachedWarmupImage paths state workerContainer) hostCachedWarmupImageRefs
 
 -- | Phase 3 Sprint 3.11 (2026-05-29): the warmup-preload list tracks
 -- the multi-arch upstream image inventory after the `bitnamilegacy/*`
@@ -1890,22 +1893,23 @@ hydrateMissingHostWarmupImage paths state imageRef =
 preloadHarborBackedImagesOnKindWorker :: Paths -> ClusterState -> RuntimeMode -> FilePath -> IO ()
 preloadHarborBackedImagesOnKindWorker paths state runtimeMode imageOverridesPath = do
   imageRefs <- harborOverlayImageRefs paths imageOverridesPath
-  let workerContainer = kindClusterName paths runtimeMode <> "-worker"
-      uniqueImageRefs = List.nub (filter shouldPreloadOnWorker (map trim imageRefs))
+  workerContainers <- kindWorkerNodeNames paths runtimeMode
+  let uniqueImageRefs = List.nub (filter shouldPreloadOnWorker (map trim imageRefs))
   unless (null uniqueImageRefs) $ do
-    putStrLn "preloading Harbor-backed final images on the Kind worker"
-    mapM_
-      ( \imageRef -> do
-          imageState <-
-            startLifecyclePhase
-              paths
-              state
-              "cluster-up"
-              "preload-harbor-images"
-              ("preloading Harbor-backed image " <> imageRef <> " on " <> workerContainer)
-          preloadHarborImageOnNode paths imageState workerContainer imageRef
-      )
-      uniqueImageRefs
+    putStrLn "preloading Harbor-backed final images on the Kind workers"
+    forM_ workerContainers $ \workerContainer ->
+      mapM_
+        ( \imageRef -> do
+            imageState <-
+              startLifecyclePhase
+                paths
+                state
+                "cluster-up"
+                "preload-harbor-images"
+                ("preloading Harbor-backed image " <> imageRef <> " on " <> workerContainer)
+            preloadHarborImageOnNode paths imageState workerContainer imageRef
+        )
+        uniqueImageRefs
   where
     shouldPreloadOnWorker imageRef = not (null imageRef)
 
@@ -3410,7 +3414,7 @@ writeGeneratedKindConfig paths runtimeMode edgePortValue harborPortValue = do
   hostKindRoot <- resolveHostKindRoot paths runtimeMode
   usesHostBindMounts <- kindUsesHostBindMounts paths runtimeMode
   writeRegistryHostsConfig paths runtimeMode harborPortValue
-  hostRegistryHostsDirectory <- resolveHostRegistryHostsRoot paths
+  hostRegistryHostsDirectory <- resolveHostRegistryHostsRoot paths runtimeMode
   writeTextFile outputPath (Text.pack (renderKindConfig paths runtimeMode edgePortValue harborPortValue hostKindRoot hostRegistryHostsDirectory usesHostBindMounts))
   pure outputPath
 
@@ -3421,10 +3425,9 @@ writeGeneratedKindConfig paths runtimeMode edgePortValue harborPortValue = do
 -- NodePort, which stays fixed).
 writeRegistryHostsConfig :: Paths -> RuntimeMode -> Int -> IO ()
 writeRegistryHostsConfig paths runtimeMode harborPortValue = do
-  let registryRoot = repoRoot paths </> ".build" </> "kind" </> "registry"
-      namespaceName = "localhost:" <> show harborPortValue
+  let namespaceName = "localhost:" <> show harborPortValue
       inClusterTarget = kindClusterName paths runtimeMode <> "-control-plane:30002"
-  writeRegistryNamespace namespaceName inClusterTarget registryRoot
+  writeRegistryNamespace namespaceName inClusterTarget (localRegistryHostsRoot paths runtimeMode)
   where
     writeRegistryNamespace registryNamespace reachableRegistryHost registryRoot = do
       let registryDirectory = registryRoot </> registryNamespace
@@ -3449,9 +3452,17 @@ resolveHostKindRoot :: Paths -> RuntimeMode -> IO FilePath
 resolveHostKindRoot paths runtimeMode =
   resolveHostRepoPath paths (kindRuntimeRoot paths runtimeMode)
 
-resolveHostRegistryHostsRoot :: Paths -> IO FilePath
-resolveHostRegistryHostsRoot paths =
-  resolveHostRepoPath paths (repoRoot paths </> ".build" </> "kind" </> "registry")
+localRegistryHostsRoot :: Paths -> RuntimeMode -> FilePath
+localRegistryHostsRoot paths runtimeMode =
+  repoRoot paths
+    </> ".build"
+    </> "kind"
+    </> Text.unpack (runtimeModeId runtimeMode)
+    </> "registry"
+
+resolveHostRegistryHostsRoot :: Paths -> RuntimeMode -> IO FilePath
+resolveHostRegistryHostsRoot paths runtimeMode =
+  resolveHostRepoPath paths (localRegistryHostsRoot paths runtimeMode)
 
 -- | Phase 2 Sprint 2.13: legacy host-repo-root env override
 -- retired. On host-native Apple, the typed
@@ -3523,7 +3534,7 @@ resolveHostRepoPathFromNormalized hostRepoRoot normalizedRepoRoot repoRootPrefix
 
 renderKindConfig :: Paths -> RuntimeMode -> Int -> Int -> FilePath -> FilePath -> Bool -> String
 renderKindConfig paths runtimeMode edgePortValue harborPortValue hostKindRoot registryHostsDirectory usesHostBindMounts =
-  unlines (preamble <> containerdConfigPatchesBlock <> ["nodes:"] <> nodeBlock "control-plane" initLabels edgePortLines <> nodeBlock "worker" workerLabels [])
+  unlines (preamble <> containerdConfigPatchesBlock <> ["nodes:"] <> nodeBlock "control-plane" initLabels edgePortLines <> workerNodeBlocks)
   where
     preamble =
       [ "kind: Cluster",
@@ -3550,6 +3561,8 @@ renderKindConfig paths runtimeMode edgePortValue harborPortValue hostKindRoot re
       ]
     initLabels = controlPlaneRuntimeModeLabels runtimeMode
     workerLabels = runtimeModeLabels runtimeMode
+    workerNodeBlocks =
+      concat (replicate (kindWorkerCount runtimeMode) (nodeBlock "worker" workerLabels []))
     edgePortLines =
       [ "    extraPortMappings:",
         "      - containerPort: 30090",
@@ -3609,6 +3622,12 @@ renderKindConfig paths runtimeMode edgePortValue harborPortValue hostKindRoot re
       | role == "control-plane" = "InitConfiguration"
       | otherwise = "JoinConfiguration"
 
+kindWorkerCount :: RuntimeMode -> Int
+kindWorkerCount runtimeMode =
+  case runtimeMode of
+    LinuxCpu -> 2
+    _ -> 1
+
 -- | Phase 2 Sprint 2.13: legacy host-repo-root env check
 -- retired. The supported control-plane-context detector is the typed
 -- @Paths.controlPlaneContext@ already derived from 'HostConfig'; no
@@ -3624,10 +3643,6 @@ kindUsesHostBindMounts paths runtimeMode =
 prepareKindNodeRuntimePaths :: Paths -> ClusterState -> RuntimeMode -> IO ()
 prepareKindNodeRuntimePaths paths state runtimeMode = do
   let localKindRoot = kindRuntimeRoot paths runtimeMode
-      localRegistryHostsRoot = repoRoot paths </> ".build" </> "kind" </> "registry"
-      namespaceDirName = "localhost:" <> show (harborPort state)
-      registryDirectoryInNode = "/etc/containerd/certs.d/" <> namespaceDirName
-      registryHostsPath = localRegistryHostsRoot </> namespaceDirName </> "hosts.toml"
       controlPlaneNodeName = kindControlPlaneNodeName paths runtimeMode
   createDirectoryIfMissing True localKindRoot
   -- Phase 2 Sprint 2.13 follow-on (2026-05-29): scrub any stale
@@ -3639,18 +3654,15 @@ prepareKindNodeRuntimePaths paths state runtimeMode = do
   -- replayed into the new cluster and crash the @postgres-startup@
   -- init container on partial-init state.
   scrubStalePatroniDirectories paths runtimeMode
-  registryHostsContents <- readFile registryHostsPath
   nodeNames <- kindNodeNames paths runtimeMode
   mapM_
     ( primeNode
         localKindRoot
         controlPlaneNodeName
-        registryDirectoryInNode
-        registryHostsContents
     )
     nodeNames
   where
-    primeNode localKindRoot controlPlaneNodeName registryDirectoryInNode registryHostsContents nodeName = do
+    primeNode localKindRoot controlPlaneNodeName nodeName = do
       runHostToolCmd paths Nothing [] HostDocker ["exec", nodeName, "mkdir", "-p", nodeMountedKindRoot]
       -- Stateful platform workloads schedule on worker nodes, so replay retained runtime data only
       -- there instead of copying large claim trees into the tainted control-plane node.
@@ -3663,6 +3675,17 @@ prepareKindNodeRuntimePaths paths state runtimeMode = do
             "prepare-kind-cluster"
             ("syncing retained Kind runtime data into " <> nodeName)
         copyDirectoryContentsToContainer paths (Just copyState) localKindRoot nodeName nodeMountedKindRoot
+
+primeKindNodeRegistryHosts :: Paths -> RuntimeMode -> Int -> IO ()
+primeKindNodeRegistryHosts paths runtimeMode harborPortValue = do
+  let namespaceDirName = "localhost:" <> show harborPortValue
+      registryDirectoryInNode = "/etc/containerd/certs.d/" <> namespaceDirName
+      registryHostsPath = localRegistryHostsRoot paths runtimeMode </> namespaceDirName </> "hosts.toml"
+  registryHostsContents <- readFile registryHostsPath
+  nodeNames <- kindNodeNames paths runtimeMode
+  mapM_ (primeNode registryDirectoryInNode registryHostsContents) nodeNames
+  where
+    primeNode registryDirectoryInNode registryHostsContents nodeName = do
       runHostToolCmd paths Nothing [] HostDocker ["exec", nodeName, "mkdir", "-p", registryDirectoryInNode]
       runCommandWithInput
         Nothing
@@ -3825,6 +3848,10 @@ kindNodeNames :: Paths -> RuntimeMode -> IO [String]
 kindNodeNames paths runtimeMode =
   filter (not . null) . lines
     <$> captureCommand Nothing [] "kind" ["get", "nodes", "--name", kindClusterName paths runtimeMode]
+
+kindWorkerNodeNames :: Paths -> RuntimeMode -> IO [String]
+kindWorkerNodeNames paths runtimeMode =
+  filter (/= kindControlPlaneNodeName paths runtimeMode) <$> kindNodeNames paths runtimeMode
 
 copyDirectoryContentsToContainer :: Paths -> Maybe ClusterState -> FilePath -> String -> FilePath -> IO ()
 copyDirectoryContentsToContainer paths maybeState localDirectory nodeName containerDirectory = do
@@ -4047,12 +4074,12 @@ renderHelmValues paths controlPlane state demoConfigPayload deployPhase engineCo
       WarmupPhase -> 0
       BootstrapPhase -> 0
       HarborFinalPhase -> 0
-      FinalPhase -> 1
+      FinalPhase -> 2
     -- Phase 7 Sprint 7.7: zero out the coordinator + engine roles in
     -- every pre-Pulsar phase, then come up with the supported supported
     -- HA replicaCount (coordinator >= 2 for stateless coordination;
-    -- engine 1 by default on single-node Kind clusters, raised by
-    -- operators on multi-engine-node deployments).
+    -- linux-cpu engines run at 2 on the two-worker CPU validation
+    -- lane; linux-gpu stays at 1 for single-GPU hosts).
     repoCoordinatorReplicaCount :: HelmDeployPhase -> Int
     repoCoordinatorReplicaCount phaseValue = case phaseValue of
       WarmupPhase -> 0
@@ -4072,6 +4099,7 @@ renderHelmValues paths controlPlane state demoConfigPayload deployPhase engineCo
       (BootstrapPhase, _) -> 0
       (HarborFinalPhase, _) -> 0
       (FinalPhase, AppleSilicon) -> 0
+      (FinalPhase, LinuxCpu) -> 2
       (FinalPhase, _) -> 1
     yamlBool value
       | value = "true"

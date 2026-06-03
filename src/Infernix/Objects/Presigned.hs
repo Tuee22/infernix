@@ -4,9 +4,11 @@
 module Infernix.Objects.Presigned
   ( PresignedUrlConfig (..),
     PresignedRequest (..),
+    PresignedBucketRequest (..),
     HttpMethod (..),
     PresignedUrl (..),
     presignedUrlForRequest,
+    presignedBucketUrl,
     presignedPutUrl,
     presignedGetUrl,
     isoExpiryFor,
@@ -62,6 +64,16 @@ data PresignedRequest = PresignedRequest
   }
   deriving (Eq, Show)
 
+-- | A presigned URL request scoped to a bucket-level S3 operation such as
+-- CreateBucket. Bucket repair uses this at demo backend startup when the
+-- chart-time MinIO provisioner was bypassed.
+data PresignedBucketRequest = PresignedBucketRequest
+  { presignedBucketRequestMethod :: HttpMethod,
+    presignedBucketRequestBucket :: Text,
+    presignedBucketRequestNow :: UTCTime
+  }
+  deriving (Eq, Show)
+
 newtype PresignedUrl = PresignedUrl {unPresignedUrl :: Text}
   deriving (Eq, Show)
 
@@ -80,19 +92,59 @@ presignedUrlForRequest config request =
       object = presignedRequestObject request
       bucket = objectBucket object
       key = objectKey object
-      host = presignedEndpoint config
+      canonicalPath = "/" <> bucket <> "/" <> key
+   in presignedS3Url config method canonicalPath (presignedRequestNow request)
+
+presignedBucketUrl :: PresignedUrlConfig -> PresignedBucketRequest -> PresignedUrl
+presignedBucketUrl config request =
+  presignedS3Url
+    config
+    (httpMethodText (presignedBucketRequestMethod request))
+    ("/" <> presignedBucketRequestBucket request)
+    (presignedBucketRequestNow request)
+
+presignedPutUrl :: PresignedUrlConfig -> UTCTime -> ObjectRef -> PresignedUrl
+presignedPutUrl config now object =
+  presignedUrlForRequest
+    config
+    PresignedRequest
+      { presignedRequestMethod = HttpPut,
+        presignedRequestObject = object,
+        presignedRequestNow = now
+      }
+
+presignedGetUrl :: PresignedUrlConfig -> UTCTime -> ObjectRef -> PresignedUrl
+presignedGetUrl config now object =
+  presignedUrlForRequest
+    config
+    PresignedRequest
+      { presignedRequestMethod = HttpGet,
+        presignedRequestObject = object,
+        presignedRequestNow = now
+      }
+
+-- | The ISO 8601 expiry timestamp the demo backend echoes back to the
+-- caller. Format matches @ArtifactUploadGrant / ArtifactDownloadGrant@'s
+-- @artifactUploadGrantExpiresAtIso8601@ field.
+isoExpiryFor :: PresignedUrlConfig -> UTCTime -> Text
+isoExpiryFor config now =
+  let expiry = fromIntegral (presignedExpirySeconds config) :: Double
+      expiresAt = addUTCTime (realToFrac expiry) now
+   in Text.pack (formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%SZ" expiresAt)
+
+presignedS3Url :: PresignedUrlConfig -> Text -> Text -> UTCTime -> PresignedUrl
+presignedS3Url config method canonicalPath now =
+  let host = presignedEndpoint config
       region = presignedRegion config
       service = "s3" :: Text
       accessKeyId = presignedAccessKeyId config
       secretAccessKey = presignedSecretAccessKey config
       expiry = presignedExpirySeconds config
-      now = presignedRequestNow request
       amzDate = Text.pack (formatTime defaultTimeLocale "%Y%m%dT%H%M%SZ" now)
       dateStamp = Text.pack (formatTime defaultTimeLocale "%Y%m%d" now)
       credentialScope = dateStamp <> "/" <> region <> "/" <> service <> "/aws4_request"
       credential = accessKeyId <> "/" <> credentialScope
       signedHeaders = "host" :: Text
-      canonicalPath = "/" <> bucket <> "/" <> key
       queryParams =
         sort
           [ ("X-Amz-Algorithm", "AWS4-HMAC-SHA256"),
@@ -128,35 +180,6 @@ presignedUrlForRequest config request =
       scheme = presignedScheme config
       publicPath = normalizePathPrefix (presignedPathPrefix config) <> canonicalPath
    in PresignedUrl (scheme <> "://" <> host <> publicPath <> "?" <> finalQuery)
-
-presignedPutUrl :: PresignedUrlConfig -> UTCTime -> ObjectRef -> PresignedUrl
-presignedPutUrl config now object =
-  presignedUrlForRequest
-    config
-    PresignedRequest
-      { presignedRequestMethod = HttpPut,
-        presignedRequestObject = object,
-        presignedRequestNow = now
-      }
-
-presignedGetUrl :: PresignedUrlConfig -> UTCTime -> ObjectRef -> PresignedUrl
-presignedGetUrl config now object =
-  presignedUrlForRequest
-    config
-    PresignedRequest
-      { presignedRequestMethod = HttpGet,
-        presignedRequestObject = object,
-        presignedRequestNow = now
-      }
-
--- | The ISO 8601 expiry timestamp the demo backend echoes back to the
--- caller. Format matches @ArtifactUploadGrant / ArtifactDownloadGrant@'s
--- @artifactUploadGrantExpiresAtIso8601@ field.
-isoExpiryFor :: PresignedUrlConfig -> UTCTime -> Text
-isoExpiryFor config now =
-  let expiry = fromIntegral (presignedExpirySeconds config) :: Double
-      expiresAt = addUTCTime (realToFrac expiry) now
-   in Text.pack (formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%SZ" expiresAt)
 
 deriveSigningKey :: Text -> Text -> Text -> Text -> ByteString
 deriveSigningKey secret dateStamp region service =

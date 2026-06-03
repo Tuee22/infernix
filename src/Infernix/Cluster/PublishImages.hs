@@ -12,6 +12,7 @@ module Infernix.Cluster.PublishImages
     normalizeRepositoryPath,
     prioritizePublishableImages,
     publishChartImagesFile,
+    skopeoTargetRefForHarborApiHost,
     writeHarborOverridesFile,
   )
 where
@@ -849,21 +850,20 @@ pushUpstreamMultiArchViaImagetools options commandMonitorFactory maybeKnownSourc
           -- of @skopeo copy@. The buildx imagetools path delegates
           -- to a buildkit container that runs on docker's default
           -- bridge network, so it cannot reach Harbor's NodePort
-          -- 30002. @skopeo copy@ runs in the launcher container's
-          -- own network namespace and CAN reach Harbor at
-          -- @127.0.0.1:30002@. We substitute @localhost@ with
-          -- @127.0.0.1@ in the target ref because glibc prefers
-          -- IPv6 for @localhost@ and Harbor's NodePort listener
-          -- is IPv4-only (Kind's @extraPortMappings@ emit IPv4
-          -- bindings). @--src-tls-verify=false@ +
-          -- @--dest-tls-verify=false@ accept the Harbor self-
-          -- signed HTTP listener.
+          -- 30002. @skopeo copy@ runs wherever the launcher command
+          -- is executed, so it must dial the Harbor API host for the
+          -- active control-plane context: @127.0.0.1:<port>@ for
+          -- host-native execution and @<kind-control-plane>:30002@
+          -- for the Linux outer-container lane. The rendered image
+          -- refs and docker push target remain on 'harborHost' /
+          -- 'harborClientHost'; only the skopeo transport target is
+          -- rewritten.
           -- Phase 3 Sprint 3.11 (2026-05-29):
           -- @--override-os=linux@ + @--override-arch=<arch>@
           -- ensure the copy is the substrate-matched
           -- single-platform variant. On Apple Silicon this is
           -- @arm64@; on Linux substrates it stays @amd64@.
-          skopeoTargetRef = substituteLocalhostWithLoopbackV4 targetRef
+          skopeoTargetRef = skopeoTargetRefForHarborApiHost options targetRef
           skopeoSource = "docker://" <> sourceByDigest
           skopeoTarget = "docker://" <> skopeoTargetRef
           archOverrideArg = "--override-arch=" <> targetArchitecture
@@ -1104,16 +1104,29 @@ takeBefore :: Char -> String -> String
 takeBefore delimiter = takeWhile (/= delimiter)
 
 -- | Phase 7 Sprint 7.14 follow-on (May 25, 2026): rewrite a
--- @localhost@-prefixed image reference to use @127.0.0.1@ so the
--- @skopeo copy@ fallback dials Harbor's IPv4-only NodePort listener
--- instead of the unbound IPv6 loopback (glibc prefers IPv6 for
--- @localhost@). Returns the input unchanged when the prefix doesn't
--- match (e.g. operator-overridden @harbor.local@ targets).
+-- @localhost@-prefixed host to @127.0.0.1@ so host-native @skopeo
+-- dials Harbor's IPv4-only NodePort listener instead of the unbound
+-- IPv6 loopback (glibc prefers IPv6 for @localhost@).
 substituteLocalhostWithLoopbackV4 :: String -> String
 substituteLocalhostWithLoopbackV4 imageRef =
   case List.stripPrefix "localhost:" imageRef of
     Just remainder -> "127.0.0.1:" <> remainder
     Nothing -> imageRef
+
+-- | Return the transport ref used by @skopeo copy@. Docker push uses
+-- 'harborClientHost' because the host Docker daemon owns the push, but
+-- skopeo runs in the caller's network namespace. The registry host in
+-- the destination ref is therefore replaced with 'harborApiHost'.
+skopeoTargetRefForHarborApiHost :: HarborPublishOptions -> String -> String
+skopeoTargetRefForHarborApiHost options =
+  replaceImageRegistryHost (substituteLocalhostWithLoopbackV4 (harborApiHost options))
+
+replaceImageRegistryHost :: String -> String -> String
+replaceImageRegistryHost replacementHost imageRef =
+  case break (== '/') imageRef of
+    ("", _) -> imageRef
+    (_, '/' : repositoryPath) -> replacementHost <> "/" <> repositoryPath
+    _ -> imageRef
 
 -- | Phase 7 Sprint 7.14 follow-on (May 25, 2026): trim trailing
 -- newlines + whitespace from @docker inspect --format@ output. Docker

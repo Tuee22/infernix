@@ -44,7 +44,7 @@ demoConfig:
 
 demo:
   enabled: true
-  replicaCount: 1
+  replicaCount: 2
   port: 8080
   image:
     repository: infernix-linux-cpu

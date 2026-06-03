@@ -12,8 +12,20 @@
 // by `infernix test integration`'s per-model Pulsar roundtrip
 // against the same cluster.
 import { Buffer } from "node:buffer";
+import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { test as base, expect } from "playwright/test";
+import {
+  binaryArtifactBuffer,
+  jsonPreviewBody,
+  musicXmlBuffer,
+  textPreviewBody,
+  tinyMidiBuffer,
+  tinyMp4Buffer,
+  tinyPdfBuffer,
+  tinyPngBuffer,
+  tinyWavBuffer,
+} from "../test/fixtures/artifactSamples.js";
 
 const test = base.extend({
   infernixFixture: [undefined, { option: true }],
@@ -133,6 +145,10 @@ test("routed WebSocket validates JWTs and reports malformed frames", async ({ pa
   const invalidResult = await probeWebSocket(page, websocketUrl(baseUrl, "not-a-real-token"));
   expect(invalidResult.opened).toBe(false);
 
+  const wrongRealmToken = await keycloakAdminAccessToken(request, baseUrl);
+  const wrongRealmResult = await probeWebSocket(page, websocketUrl(baseUrl, wrongRealmToken));
+  expect(wrongRealmResult.opened).toBe(false);
+
   const expiredAccessToken = await mintExpiredAccessTokenViaRealmLifespan(request, page, baseUrl);
   const expiredResult = await probeWebSocket(page, websocketUrl(baseUrl, expiredAccessToken));
   expect(expiredResult.opened).toBe(false);
@@ -164,6 +180,13 @@ test("routed object grants isolate users by Keycloak subject", async ({ page, br
     data: grantRequest,
   });
   expect(invalidGrant.status()).toBe(401);
+
+  const wrongRealmToken = await keycloakAdminAccessToken(request, baseUrl);
+  const wrongRealmGrant = await request.post(`${baseUrl}/api/objects/upload`, {
+    headers: { Authorization: `Bearer ${wrongRealmToken}` },
+    data: grantRequest,
+  });
+  expect(wrongRealmGrant.status()).toBe(401);
 
   const uploadGrantResponse = await request.post(`${baseUrl}/api/objects/upload`, {
     headers: { Authorization: `Bearer ${accessToken}` },
@@ -278,7 +301,7 @@ test("routed object grants isolate users by Keycloak subject", async ({ page, br
 });
 
 test("browser artifact upload covers preview media PDF and download-only grants", async ({ page, infernixFixture }) => {
-  test.setTimeout(120000);
+  test.setTimeout(300000);
   const fixture = infernixFixture;
   expect(fixture?.host).toBeTruthy();
   expect(fixture?.edgePort).toBeTruthy();
@@ -383,23 +406,21 @@ test("browser artifact upload covers preview media PDF and download-only grants"
 
   await page.locator("#route-artifacts").click();
 
-  const textBody = "browser text preview from routed artifact upload\n";
   const textName = `browser-upload-${randomUUID()}.txt`;
   const textCard = await uploadAndDownloadArtifact(page, {
     name: textName,
     mimeType: "text/plain",
-    buffer: Buffer.from(textBody, "utf8"),
+    buffer: Buffer.from(textPreviewBody, "utf8"),
   });
-  await expect(textCard.locator(".artifact-preview-text")).toHaveText(textBody);
+  await expect(textCard.locator(".artifact-preview-text")).toHaveText(textPreviewBody);
 
-  const jsonBody = "{\"source\":\"browser\",\"preview\":\"json\"}";
   const jsonName = `browser-json-${randomUUID()}.json`;
   const jsonCard = await uploadAndDownloadArtifact(page, {
     name: jsonName,
     mimeType: "application/json",
-    buffer: Buffer.from(jsonBody, "utf8"),
+    buffer: Buffer.from(jsonPreviewBody, "utf8"),
   });
-  await expect(jsonCard.locator(".artifact-preview-text")).toHaveText(jsonBody);
+  await expect(jsonCard.locator(".artifact-preview-text")).toHaveText(jsonPreviewBody);
 
   const pngName = `browser-inline-${randomUUID()}.png`;
   const imageCard = await uploadAndDownloadArtifact(page, {
@@ -446,7 +467,7 @@ test("browser artifact upload covers preview media PDF and download-only grants"
   const musicXmlCard = await uploadAndDownloadArtifact(page, {
     name: musicXmlName,
     mimeType: "application/vnd.recordare.musicxml+xml",
-    buffer: Buffer.from("<score-partwise version=\"4.0\"></score-partwise>", "utf8"),
+    buffer: musicXmlBuffer(),
   });
   await expectDownloadOnlyReady(musicXmlCard);
 
@@ -454,7 +475,7 @@ test("browser artifact upload covers preview media PDF and download-only grants"
   const binaryCard = await uploadAndDownloadArtifact(page, {
     name: binaryName,
     mimeType: "application/octet-stream",
-    buffer: Buffer.from([0, 1, 2, 3, 4, 5, 6, 7]),
+    buffer: binaryArtifactBuffer(),
   });
   await expectDownloadOnlyReady(binaryCard);
 
@@ -625,6 +646,55 @@ test("browser artifact upload covers preview media PDF and download-only grants"
     wsFrames,
     postReconnectReceivedStartIndex,
     (frame) => frame.tag === "ServerConversationPatch" && JSON.stringify(frame).includes(postReconnectPrompt),
+  );
+
+  const podReplacementSentStartIndex = wsFrames.sent.length;
+  const podReplacementReceivedStartIndex = wsFrames.received.length;
+  await replaceDemoPods(infernixFixture);
+  await waitForSentFrameAfter(wsFrames, podReplacementSentStartIndex, (frame) => frame.tag === "ClientHello", 120000);
+  await waitForSentFrameAfter(
+    wsFrames,
+    podReplacementSentStartIndex,
+    (frame) => frame.tag === "ClientSubscribeContext" && frame.clientSubscribeContextId === subscribeFrame.clientSubscribeContextId,
+    120000,
+  );
+  await waitForReceivedFrameAfter(
+    wsFrames,
+    podReplacementReceivedStartIndex,
+    (frame) => frame.tag === "ServerConversationSnapshot" && JSON.stringify(frame).includes(subscribeFrame.clientSubscribeContextId),
+    120000,
+  );
+
+  const postPodReplacementPrompt = `continue after frontend pod replacement ${randomUUID()}`;
+  const postPodReplacementSentStartIndex = wsFrames.sent.length;
+  const postPodReplacementReceivedStartIndex = wsFrames.received.length;
+  await page.locator("textarea[name='prompt']").fill(postPodReplacementPrompt);
+  await waitForSentFrameAfter(
+    wsFrames,
+    postPodReplacementSentStartIndex,
+    (frame) => frame.tag === "ClientUpdateDraft" && frame.clientUpdateDraftText === postPodReplacementPrompt,
+  );
+  await waitForReceivedFrameAfter(
+    wsFrames,
+    postPodReplacementReceivedStartIndex,
+    (frame) =>
+      frame.tag === "ServerDraftMapPatch" &&
+      JSON.stringify(frame).includes(subscribeFrame.clientSubscribeContextId) &&
+      JSON.stringify(frame).includes(postPodReplacementPrompt),
+    120000,
+  );
+  await expect(page.locator("textarea[name='prompt']")).toHaveValue(postPodReplacementPrompt, { timeout: 30000 });
+  await page.locator("form[data-role='chat-draft-editor']").evaluate((form) => form.requestSubmit());
+  await waitForSentFrameAfter(
+    wsFrames,
+    postPodReplacementSentStartIndex,
+    (frame) => frame.tag === "ClientSubmitPrompt" && frame.clientSubmitPromptPayload?.promptText === postPodReplacementPrompt,
+  );
+  await waitForReceivedFrameAfter(
+    wsFrames,
+    postPodReplacementReceivedStartIndex,
+    (frame) => frame.tag === "ServerConversationPatch" && JSON.stringify(frame).includes(postPodReplacementPrompt),
+    120000,
   );
 
   const reloadDraftText = `restore this draft after reload ${randomUUID()}`;
@@ -799,13 +869,14 @@ test("browser per-model smoke matrix exercises every catalog model", async ({ pa
       (frame) => frame.tag === "ClientSubmitPrompt" && frame.clientSubmitPromptPayload?.promptText === promptText,
     );
 
-    const completedFrame = await waitForReceivedFrameAfter(
+    const completedFrame = await waitForCompletedConversationPatchAfter(
       wsFrames,
       submitReceivedStart,
-      (frame) =>
-        frame.tag === "ServerConversationPatch" &&
-        JSON.stringify(frame).includes(contextId) &&
-        JSON.stringify(frame).includes("\"inferenceResultStatus\":\"completed\""),
+      {
+        contextId,
+        modelId,
+        promptText,
+      },
     );
     expect(JSON.stringify(completedFrame)).toContain("ConversationStateAppendMessage");
   }
@@ -915,16 +986,47 @@ async function waitForSentFrame(frames, predicate) {
   return waitForFrame(frames.sent, predicate, "outbound");
 }
 
-async function waitForSentFrameAfter(frames, startIndex, predicate) {
-  return waitForFrameAfter(frames.sent, startIndex, predicate, "outbound");
+async function waitForSentFrameAfter(frames, startIndex, predicate, timeoutMs) {
+  return waitForFrameAfter(frames.sent, startIndex, predicate, "outbound", timeoutMs);
 }
 
 async function waitForReceivedFrame(frames, predicate) {
   return waitForFrame(frames.received, predicate, "inbound");
 }
 
-async function waitForReceivedFrameAfter(frames, startIndex, predicate) {
-  return waitForFrameAfter(frames.received, startIndex, predicate, "inbound");
+async function waitForReceivedFrameAfter(frames, startIndex, predicate, timeoutMs) {
+  return waitForFrameAfter(frames.received, startIndex, predicate, "inbound", timeoutMs);
+}
+
+async function waitForCompletedConversationPatchAfter(frames, startIndex, details) {
+  const timeoutMs = 300000;
+  const deadline = Date.now() + timeoutMs;
+  let lastContextPatch = null;
+  while (Date.now() < deadline) {
+    const receivedFrames = frames.received.slice(startIndex);
+    for (const frame of receivedFrames) {
+      if (frame.tag !== "ServerConversationPatch") {
+        continue;
+      }
+      const encoded = JSON.stringify(frame);
+      if (!encoded.includes(details.contextId)) {
+        continue;
+      }
+      lastContextPatch = frame;
+      if (encoded.includes("\"inferenceResultStatus\":\"failed\"")) {
+        throw new Error(
+          `Model ${details.modelId} returned a failed inference result for prompt ${details.promptText}: ${encoded}`,
+        );
+      }
+      if (encoded.includes("\"inferenceResultStatus\":\"completed\"")) {
+        return frame;
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(
+    `Timed out waiting for completed conversation result for model ${details.modelId} after ${timeoutMs}ms; received ${frames.received.length - startIndex} inbound frames after index ${startIndex}; last context patch: ${JSON.stringify(lastContextPatch)}`,
+  );
 }
 
 async function waitForFrame(frames, predicate, direction) {
@@ -939,8 +1041,8 @@ async function waitForFrame(frames, predicate, direction) {
   throw new Error(`Timed out waiting for ${direction} WebSocket frame`);
 }
 
-async function waitForFrameAfter(frames, startIndex, predicate, direction) {
-  const deadline = Date.now() + 10000;
+async function waitForFrameAfter(frames, startIndex, predicate, direction, timeoutMs = 10000) {
+  const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const match = frames.slice(startIndex).find(predicate);
     if (match) {
@@ -949,6 +1051,72 @@ async function waitForFrameAfter(frames, startIndex, predicate, direction) {
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   throw new Error(`Timed out waiting for ${direction} WebSocket frame after index ${startIndex}`);
+}
+
+async function replaceDemoPods(fixture) {
+  const originalPods = demoPodNames(fixture);
+  expect(originalPods.length).toBeGreaterThan(0);
+  runInfernixKubectl(fixture, [
+    "-n",
+    "platform",
+    "delete",
+    "pod",
+    "-l",
+    "app.kubernetes.io/name=infernix-demo",
+    "--wait=false",
+  ]);
+  const replacementPods = await waitForReplacementDemoPods(fixture, originalPods);
+  for (const podName of replacementPods) {
+    runInfernixKubectl(
+      fixture,
+      ["-n", "platform", "wait", "--for=condition=Ready", `pod/${podName}`, "--timeout=180s"],
+      200000,
+    );
+  }
+}
+
+async function waitForReplacementDemoPods(fixture, originalPods) {
+  const deadline = Date.now() + 180000;
+  while (Date.now() < deadline) {
+    const replacements = demoPodNames(fixture).filter((podName) => !originalPods.includes(podName));
+    if (replacements.length >= originalPods.length) {
+      return replacements.slice(0, originalPods.length);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  throw new Error(`Timed out waiting for replacement infernix-demo pods after deleting ${originalPods.join(", ")}`);
+}
+
+function demoPodNames(fixture) {
+  return runInfernixKubectl(fixture, [
+    "-n",
+    "platform",
+    "get",
+    "pods",
+    "-l",
+    "app.kubernetes.io/name=infernix-demo",
+    "-o",
+    "jsonpath={.items[*].metadata.name}",
+  ])
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+function runInfernixKubectl(fixture, args, timeoutMs = 120000) {
+  expect(fixture?.infernixCommand).toBeTruthy();
+  try {
+    return execFileSync(fixture.infernixCommand, ["kubectl", ...args], {
+      cwd: fixture.repoRoot || process.cwd(),
+      encoding: "utf8",
+      maxBuffer: 10 * 1024 * 1024,
+      timeout: timeoutMs,
+    });
+  } catch (error) {
+    const stdout = error.stdout ? String(error.stdout) : "";
+    const stderr = error.stderr ? String(error.stderr) : "";
+    throw new Error(`infernix kubectl ${args.join(" ")} failed\n${stdout}${stderr}`);
+  }
 }
 
 async function completeLoginPromptIfPresent(page, credentials) {
@@ -1272,30 +1440,4 @@ async function expectRoutedPreviewSource(card, selector) {
 async function expectDownloadOnlyReady(card) {
   await expect(card).toHaveAttribute("data-render-disposition", "DownloadOnly");
   await expect(card.locator(".artifact-preview-download-only")).toHaveAttribute("data-preview-status", "ready");
-}
-
-function tinyPngBuffer() {
-  return Buffer.from(
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=",
-    "base64",
-  );
-}
-
-function tinyWavBuffer() {
-  return Buffer.from(
-    "UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA=",
-    "base64",
-  );
-}
-
-function tinyMp4Buffer() {
-  return Buffer.from("000000186674797069736f6d0000020069736f6d69736f3261766331", "hex");
-}
-
-function tinyPdfBuffer() {
-  return Buffer.from("%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n", "utf8");
-}
-
-function tinyMidiBuffer() {
-  return Buffer.from("TVRoZAAAAAYAAAABAGBNVHJrAAAABAAP/w==", "base64");
 }

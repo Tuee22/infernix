@@ -389,12 +389,15 @@ runPlaywrightWithFixture ::
   IO ()
 runPlaywrightWithFixture paths runtimeMode playwrightHost playwrightPort expectedDaemonLocation expectedInferenceExecutorLocation expectedInferenceDispatchMode expectedApiUpstreamMode = do
   waitForPlaywrightSurface playwrightHost playwrightPort expectedDaemonLocation expectedInferenceExecutorLocation expectedInferenceDispatchMode expectedApiUpstreamMode
+  infernixExecutable <- getExecutablePath
   let fixturePath = runtimeRoot paths </> "playwright-fixture.json"
       fixturePayload =
         encode
           ( object
               [ Key.fromText "host" .= playwrightHost,
                 Key.fromText "edgePort" .= playwrightPort,
+                Key.fromText "repoRoot" .= repoRoot paths,
+                Key.fromText "infernixCommand" .= infernixExecutable,
                 Key.fromText "expectedDaemonLocation" .= expectedDaemonLocation,
                 Key.fromText "expectedInferenceExecutorLocation" .= expectedInferenceExecutorLocation,
                 Key.fromText "expectedInferenceDispatchMode" .= expectedInferenceDispatchMode,

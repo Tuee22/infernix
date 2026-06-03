@@ -9,7 +9,9 @@ module Infernix.Demo.Api
   )
 where
 
+import Control.Concurrent (threadDelay)
 import Control.Exception (SomeException, fromException, try)
+import Control.Monad (unless, when)
 import Data.Aeson
   ( FromJSON (parseJSON),
     ToJSON,
@@ -46,6 +48,7 @@ import Infernix.Demo.Auth
     realmJwksUrl,
     realmValidationConfig,
   )
+import Infernix.Demo.Bootstrap (requiredDemoBuckets)
 import Infernix.Demo.WebSocket qualified as DemoWebSocket
 import Infernix.DemoConfig (decodeDemoConfigFile)
 import Infernix.Models (engineBindingForSelectedEngine)
@@ -55,10 +58,12 @@ import Infernix.Objects.Layout
   )
 import Infernix.Objects.Presigned
   ( HttpMethod (..),
+    PresignedBucketRequest (..),
     PresignedRequest (..),
     PresignedUrl (..),
     PresignedUrlConfig (..),
     isoExpiryFor,
+    presignedBucketUrl,
     presignedUrlForRequest,
   )
 import Infernix.Runtime
@@ -79,10 +84,13 @@ import Infernix.Web.Contracts
     UserId (..),
   )
 import Network.HTTP.Client
-  ( defaultManagerSettings,
+  ( RequestBody (RequestBodyLBS),
+    defaultManagerSettings,
     httpLbs,
+    method,
     newManager,
     parseRequest,
+    requestBody,
     responseBody,
     responseStatus,
     responseTimeout,
@@ -94,6 +102,7 @@ import Network.HTTP.Types
     hContentType,
     methodGet,
     methodPost,
+    methodPut,
     status200,
     status400,
     status401,
@@ -117,6 +126,7 @@ import Network.Wai
 import Network.Wai.Handler.Warp (HostPreference, defaultSettings, runSettings, setHost, setPort)
 import System.Directory (doesDirectoryExist, doesFileExist)
 import System.FilePath (takeExtension, (</>))
+import System.IO (hPutStrLn, stderr)
 
 data DemoApiOptions = DemoApiOptions
   { demoPaths :: Paths,
@@ -169,18 +179,113 @@ loadJwksCached (JwksCache cacheRef) realmConfig = do
 runDemoApiServer :: DemoApiOptions -> IO ()
 runDemoApiServer options = do
   -- Fail fast when the generated catalog is invalid so cluster/test flows surface the error early.
-  _ <- decodeDemoConfigFile (demoConfigPath options)
+  demoConfig <- decodeDemoConfigFile (demoConfigPath options)
   jwksCache <- newJwksCache
   -- Phase 7 Sprint 7.17: realm wiring now comes from the typed
   -- @ClusterConfig.keycloak.*@ fields when the chart ConfigMap is
   -- mounted; host-native + unit-test flows that don't mount the
   -- manifest fall back to 'defaultInfernixRealmConfig'.
   maybeClusterConfig <- tryLoadClusterConfig
+  when (demoUiEnabled demoConfig) (repairDemoBucketsAtStartup maybeClusterConfig)
   let realmConfig = loadRealmConfigFromCluster maybeClusterConfig
       settings =
         setHost (fromStringHost (demoBindHost options)) $
           setPort (demoPort options) defaultSettings
   runSettings settings (application options jwksCache realmConfig maybeClusterConfig)
+
+-- | Sprint 7.9 runtime repair path. Chart-time MinIO provisioning is the
+-- supported normal path, but the demo backend also reconciles its buckets
+-- at startup when it is running in a cluster with mounted config/secrets.
+-- Host-native test runs without the cluster mounts skip this edge repair.
+repairDemoBucketsAtStartup :: Maybe ClusterConfig.ClusterConfig -> IO ()
+repairDemoBucketsAtStartup Nothing =
+  hPutStrLn stderr "demo bucket reconcile skipped: cluster ConfigMap is not mounted"
+repairDemoBucketsAtStartup (Just clusterConfig) = do
+  repairConfig <- loadBucketRepairConfig clusterConfig
+  ensureDemoBucketsWithRetry repairConfig requiredDemoBuckets
+
+loadBucketRepairConfig :: ClusterConfig.ClusterConfig -> IO PresignedUrlConfig
+loadBucketRepairConfig clusterConfig = do
+  secretsExists <- doesFileExist SecretsConfig.defaultClusterSecretsMountPath
+  unless secretsExists $
+    ioError
+      ( userError
+          ( "demo bucket reconcile requires the secrets Secret at "
+              <> SecretsConfig.defaultClusterSecretsMountPath
+          )
+      )
+  secretsConfig <- SecretsConfig.decodeSecretsConfigFile SecretsConfig.defaultClusterSecretsMountPath
+  minioCreds <- SecretsConfig.readMinioCredentials (SecretsConfig.secretsMinio secretsConfig)
+  let minio = ClusterConfig.clusterMinio clusterConfig
+      (scheme, hostPort) = splitMinioEndpoint (ClusterConfig.minioEndpoint minio)
+  pure
+    PresignedUrlConfig
+      { presignedScheme = scheme,
+        presignedEndpoint = hostPort,
+        presignedPathPrefix = "",
+        presignedRegion = ClusterConfig.minioRegion minio,
+        presignedAccessKeyId = SecretsConfig.minioAccessKey minioCreds,
+        presignedSecretAccessKey = SecretsConfig.minioSecretKey minioCreds,
+        presignedExpirySeconds = 60
+      }
+
+ensureDemoBucketsWithRetry :: PresignedUrlConfig -> [Text] -> IO ()
+ensureDemoBucketsWithRetry config bucketNames = go (12 :: Int)
+  where
+    go attemptsRemaining = do
+      result <- try @SomeException (mapM_ (ensureDemoBucket config) bucketNames)
+      case result of
+        Right () ->
+          hPutStrLn stderr "demo bucket reconcile complete"
+        Left err
+          | attemptsRemaining <= 1 ->
+              ioError
+                ( userError
+                    ( "demo bucket reconcile failed after retries: "
+                        <> show err
+                    )
+                )
+          | otherwise -> do
+              hPutStrLn
+                stderr
+                ( "demo bucket reconcile attempt failed; retrying: "
+                    <> show err
+                )
+              threadDelay 5000000
+              go (attemptsRemaining - 1)
+
+ensureDemoBucket :: PresignedUrlConfig -> Text -> IO ()
+ensureDemoBucket config bucketName = do
+  now <- getCurrentTime
+  let signed =
+        presignedBucketUrl
+          config
+          PresignedBucketRequest
+            { presignedBucketRequestMethod = HttpPut,
+              presignedBucketRequestBucket = bucketName,
+              presignedBucketRequestNow = now
+            }
+  manager <- newManager defaultManagerSettings
+  requestValue <- parseRequest (Text.unpack (unPresignedUrl signed))
+  response <-
+    httpLbs
+      ( requestValue
+          { method = methodPut,
+            requestBody = RequestBodyLBS "",
+            responseTimeout = responseTimeoutMicro 5000000
+          }
+      )
+      manager
+  let code = statusCode (responseStatus response)
+  unless (code == 200 || code == 409) $
+    ioError
+      ( userError
+          ( "MinIO bucket reconcile for "
+              <> Text.unpack bucketName
+              <> " returned HTTP "
+              <> show code
+          )
+      )
 
 -- | Phase 7 Sprint 7.17: best-effort load of the cluster manifest
 -- mounted by the chart at the supported path. The demo daemon pod

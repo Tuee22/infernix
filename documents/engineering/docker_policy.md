@@ -139,11 +139,13 @@ the generated Kind config that enables containerd's hosts.toml-driven registry r
 
 Kind 0.31 does not emit this `config_path` by default. Without the patch, containerd inside
 each Kind node ignores the `localhost:<harborPort>/hosts.toml` file that `writeRegistryHostsConfig`
-provisions (via the `extraMounts` entry mapping `./.build/kind/registry` → `/etc/containerd/certs.d`),
-and kubelet dials `localhost:<harborPort>` literally inside the node — where nothing listens —
-so every Harbor-mirrored image pull fails with `connect: connection refused`. The patch is
-therefore part of the supported Kind config contract; the binary owns it (operators do not
-hand-author Kind config).
+provisions (via the `extraMounts` entry mapping
+`./.build/kind/<runtime-mode>/registry` → `/etc/containerd/certs.d`), and kubelet dials
+`localhost:<harborPort>` literally inside the node — where nothing listens — so every
+Harbor-mirrored image pull fails with `connect: connection refused`. The registry-hosts root is
+runtime-scoped so a CPU and GPU validation lane cannot overwrite each other's
+`localhost:<harborPort>` mirror target. The patch is therefore part of the supported Kind config
+contract; the binary owns it (operators do not hand-author Kind config).
 
 ## Unsupported Usage
 

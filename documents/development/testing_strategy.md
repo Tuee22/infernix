@@ -163,7 +163,9 @@ The validation plan minimizes switching between the Apple Silicon and CUDA-capab
   selection through `ClientCreateContext` plus the broker-backed context summary, context
   rename/soft-delete through `ClientRenameContext` / `ClientSoftDeleteContext` and
   `ServerContextListPatch`, and a routed unknown-model `ClientCreateContext` backend rejection
-  with typed `ServerError`; Sprint 7.15 still extends toward the per-model smoke matrix.
+  with typed `ServerError`. The 2026-06-03 Linux GPU full gate passed the per-model smoke matrix
+  across all 16 active catalog rows, and the residual sweep extracts the browser artifact payloads
+  into `web/test/fixtures/artifactSamples.js`.
 - the Apple host-native routed E2E lane also fails if the clustered routed surface cannot keep
   `apiUpstream.mode = cluster-demo`, preserve one browser-visible base URL, match the Apple
   publication payload `daemonLocation = cluster-pod`, advertise
@@ -201,9 +203,12 @@ relationship to the existing entrypoints.
   **multi-user throughput / fan-in batching / fan-out** test (N users × K contexts × P
   prompts on one model) asserting per-context ordering, no duplicates or losses,
   cross-context independence, batching gain, bounded p95 latency, and dedup correctness.
-  The current Linux GPU integration suite already covers the coordinator-to-engine
+  The current Linux GPU integration suite covers the coordinator-to-engine
   request/batch/result service loop plus real Reader roundtrips for conversation, compacted
-  contexts, compacted drafts, and bootstrap-ready topic families.
+  contexts, compacted drafts, and bootstrap-ready topic families. The LinuxCpu integration suite
+  carries the Wave C chaos/throughput block: two-worker CPU Kind topology, frontend/coordinator/
+  engine pod replacement, engine node drain, model-bootstrap deduplication across coordinator
+  replacement, Linux engine anti-affinity, and compact multi-user prompt throughput.
 - **E2E layer** (Sprint 7.15, `infernix test e2e`) — Playwright flows for auth, context,
   conversation (including two-in-a-row and cancel), drafts, artifact upload/download plus
   render, preview, document handling, or download-only behavior per supported artifact class,

@@ -59,7 +59,10 @@ Phase 7 Sprint 7.7 landed the `infernix-demo-objects` bucket alongside the alway
   be shared outside the authenticated session.
 - artifact bytes never traverse the demo backend; the browser performs multipart upload
   directly to MinIO using the presigned URL and downloads directly using the presigned GET
-- bucket creation happens idempotently during `cluster up` when `demo_ui = true`
+- bucket creation happens idempotently during `cluster up` when `demo_ui = true`; the
+  `infernix-demo` backend also runs a startup repair pass from mounted `ClusterConfig` /
+  `SecretsConfig` and creates the required buckets with presigned bucket-level PUTs when
+  chart-time provisioning was bypassed or raced
 - the May 28, 2026 Linux GPU routed Playwright run validates `/api/objects` grant minting with a
   real Keycloak access token and verifies malformed bearer rejection plus per-user key scoping in
   the grant response, then performs a same-user routed presigned PUT/GET byte roundtrip with exact

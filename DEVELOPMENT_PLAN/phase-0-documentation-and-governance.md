@@ -1,6 +1,6 @@
 # Phase 0: Documentation and Governance
 
-**Status**: Active (Sprint 0.9 in flight; Sprints 0.1–0.8 Done)
+**Status**: Done
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Establish the governed `documents/` suite, the standards that keep the plan and
@@ -292,9 +292,9 @@ None.
 
 ---
 
-## Sprint 0.9: Configuration Doctrine [Active]
+## Sprint 0.9: Configuration Doctrine [Done]
 
-**Status**: Active
+**Status**: Done
 **Implementation**: `DEVELOPMENT_PLAN/development_plan_standards.md` (Sections T+U), `documents/architecture/configuration_doctrine.md` (new), `documents/engineering/host_tools_manifest.md` (new), `documents/engineering/cluster_config_manifest.md` (new), `documents/development/no_env_vars.md` (new), `documents/documentation_standards.md`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`, `README.md`, `AGENTS.md`, `CLAUDE.md`
 **Docs to update**: every doc named above
 
@@ -345,22 +345,15 @@ later-phase retirement sprints. The three configuration Dhall files (`InfernixHo
 
 ### Remaining Work
 
-Sprint 0.9 closes when the seven retirement sprints (1.11, 2.13, 3.10, 4.13, 5.9, 6.28, 7.17)
-land and the Apple cohort plus CUDA Linux cohort full-suite validation reruns close on the new
-Apple Silicon host. All seven retirement sprints' code paths have landed in the worktree:
-Sprint 6.28 carries the durable lint gates, Sprints 1.11 / 2.13 / 3.10 / 4.13 / 5.9 retired the
-named env-var / PATH-resolved invocation surfaces, and Sprint 7.17 closed its remaining
-Apple-only Poetry bootstrap env-var residual in `src/Infernix/Python.hs` on 2026-05-29 alongside
-the matching `envFunctionExemptedFiles` exemption removal. The prior Linux/CUDA validation
-proof points for the retirement sprints were all on the retired hardware and no longer count as
-current evidence; Sprint 0.9 stays Active until Apple cohort and CUDA Linux cohort validation
-are both rerun on the new Apple Silicon host (the CUDA Linux lane through Colima's amd64 VM).
+None. The seven retirement sprints (1.11, 2.13, 3.10, 4.13, 5.9, 6.28, 7.17)
+landed, the Apple cohort closed in Wave A, and the CUDA Linux cohort closed in Wave C with
+`linux-cpu` passing on 2026-06-02 and `linux-gpu` passing on 2026-06-03.
 
 ---
 
 ## Remaining Work
 
-Sprint 0.9 in flight. Sprints 0.1–0.8 closed.
+None. Sprints 0.1–0.9 are `Done`.
 
 ## Documentation Requirements
 

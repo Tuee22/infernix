@@ -41,7 +41,14 @@ conversation and draft messages with the same mutation-scoped producer name and 
 `initialSequenceId`-backed sequence id, then proves the broker stores exactly one message for each
 duplicate set. It now also drives a real durable-context prompt through the dispatcher,
 request/batch handoff, engine, result bridge, and conversation-log writeback, proving the normal
-non-chaos path end to end on Linux GPU. Sprint 7.15's top-level PureScript shell now
+non-chaos path end to end on Linux GPU. As of 2026-06-02, the LinuxCpu integration suite also
+contains the code-side Wave C chaos and throughput block: two-worker CPU Kind topology,
+two engine replicas, frontend/coordinator/engine pod replacement checks, engine node drain,
+model-bootstrap deduplication across coordinator replacement, Linux engine anti-affinity, and a
+compact multi-user durable prompt throughput matrix. The mounted `test:infernix-integration`
+compile gate passes, and the native `linux-cpu` `infernix test all` gate passed on 2026-06-02;
+`linux-gpu` `infernix test all` validation passed on 2026-06-03. Sprint 7.15's
+top-level PureScript shell now
 mounts the durable-context Chat and Artifacts renderers
 instead of the retired Workbench form, and the minimal routed SPA/publication Playwright smoke
 passed on the clean rebuilt Linux GPU launcher May 28, 2026. The routed Keycloak browser
@@ -64,7 +71,17 @@ context, uploads supported browser artifact classes through the rendered Artifac
 validates bounded text/JSON previews, inline image/audio/video routed media URLs,
 browser-native PDF URL wiring, and MIDI / MusicXML / generic-binary download-only states through
 routed presigned grants.
-The chaos, full durable-context Playwright flow matrix, and throughput suites remain pending.
+The 2026-06-03 `linux-gpu` routed Playwright run passed the per-model smoke matrix across all 16
+active LinuxGpu catalog rows, and the final rebuilt-image full gate completed the matrix in 2.2
+minutes. The same final full gate passed the durable-context browser flow with frontend pod
+replacement: the test deletes all `infernix-demo` pods, waits for replacements, verifies reconnect
+plus active-context resubscribe, and submits another prompt. The 2026-06-03 residual sweep adds
+startup MinIO bucket repair, real wrong-realm Keycloak token rejection for `/api/objects` and
+`/ws`, throughput matrix parameterization, and extracted Playwright artifact fixtures under
+`web/test/fixtures/artifactSamples.js`. Those residual changes passed the rebuilt-image
+`linux-gpu` full gate on 2026-06-03 against launcher image digest
+`sha256:521a56ac6f79bf1ce5bc9d7dcd9c872e897ce4b4882661d4ada2f62faa108d7b`; rebuilt-image
+`linux-cpu` validation remains pending.
 
 ## Unit Layer
 
@@ -132,25 +149,27 @@ Implemented as of May 28, 2026:
   `ConversationInferenceResultEvent` appears on the real conversation log after the coordinator
   contexts consumer hydrates `ContextModelMap` and the dispatcher -> request/batch -> engine ->
   result-bridge path runs.
+- **LinuxCpu durable-context chaos block.** The 2026-06-02 code-side landing renders the
+  `linux-cpu` validation topology with two workers and two engine replicas, then validates
+  frontend pod replacement, coordinator pod replacement, engine pod replacement, engine node
+  drain, model-bootstrap request/ready-event deduplication across coordinator replacement, and
+  engine anti-affinity. Each prompt-oriented case asserts completed conversation writeback plus
+  exactly-one request/batch/result/conversation-result broker counts.
+- **Compact multi-user throughput.** The same code-side landing submits the default
+  `ThroughputMatrix` (3 users x 2 contexts x 2 prompts) through the durable prompt path, asserts
+  exact per-context prompt/result counts with no extras, and reports p95 completion latency for
+  the full-suite smoke gate. The suite also exposes
+  `validateMultiUserDurablePromptThroughputWith` so larger matrices can run without changing the
+  test body.
 
 Pending integration-layer work:
 
-- **Real Pulsar producer-dedup verification.** Simulate dispatcher, result-bridge, and bootstrap
-  replay mid-flight; assert exactly-one inference dispatch and exactly-one result.
-- **Real Pulsar Failover handoff.** Kill the active dispatcher subscription consumer; assert
-  the surviving consumer resumes from the same cursor.
-- **Integration-layer JWT edge coverage** against deployed Keycloak. Browser self-registration,
-  auth-code exchange, backend acceptance of the real access token, malformed bearer rejection,
-  routed WebSocket valid/malformed/expired-token handshake behavior, and typed malformed-frame
-  `ServerError` handling are covered in E2E; issuer/audience and cache edge cases remain open.
-- **Chaos tests** for the failure semantics described in
-  [../architecture/demo_app_design.md](../architecture/demo_app_design.md):
-  - WS pod kill mid-session; client reconnects to a surviving replica; full state preserved.
-  - Dispatcher pod kill mid-prompt; Failover + producer dedup → exactly one inference
-    dispatch and exactly one result.
-  - Cluster daemon kill mid-inference; engine on surviving pod rebuilds KV cache from log;
-    exactly one result.
-- **Multi-User Throughput / Fan-In Batching / Fan-Out test** (see dedicated section below).
+- **Rebuilt-image CPU residual validation.** The wrong-realm Keycloak token negatives and
+  throughput matrix parameterization passed the rebuilt-image `linux-gpu` full gate and still need
+  the matching full `linux-cpu` launcher gate.
+- **Real KV-cache engine failover.** The current deterministic adapter layer exposes no reusable
+  KV-cache surface, so cache-hit/cache-miss verification under engine failover remains owned by
+  Sprint 7.8.
 
 ## E2E Layer
 
@@ -169,14 +188,18 @@ routed token endpoint and validates `/api/objects` with both malformed and real 
 proving JWT-backed grant minting and per-user object-key scoping; it then PUTs bytes through the
 minted routed MinIO upload URL, GETs them through the minted download URL, and asserts exact
 content equality. The same suite opens `/ws` with the real token and verifies a malformed token
-does not open a browser WebSocket; it also sends a malformed frame on the valid connection and
-asserts the tagged `ServerError`. The object-grant flow also registers a second user, proves the
+does not open a browser WebSocket; it also verifies a token minted from the Keycloak admin realm
+does not open `/ws`, and the same wrong-realm token receives `401` from `/api/objects/upload`. It
+also sends a malformed frame on the valid connection and asserts the tagged `ServerError`. The
+object-grant flow also registers a second user, proves the
 same context/display name maps to that second user's prefix, gets `404` before the second upload,
 then verifies each user's grant reads that user's own bytes. The same object-grant flow validates
 the server-side download-grant render disposition for image, audio, video, PDF, JSON, text, MIDI,
 MusicXML, and generic binary MIME cases. The browser artifact flow covers the app-owned PKCE login
 path, local context creation, bounded text/JSON previews, inline image/audio/video media URL
 wiring, browser-native PDF URL wiring, and MIDI / MusicXML / generic-binary download-only states.
+The canonical browser artifact payloads now live in
+`web/test/fixtures/artifactSamples.js` and are imported by the Playwright suite.
 The same browser flow now asserts the initial `ClientHello`, inbound context-list and draft
 snapshots, context-create `ServerContextListPatch`, draft-upsert `ServerDraftMapPatch`, prompt
 submit `ClientSubmitPrompt.promptUserUploads`, inbound prompt `ServerConversationPatch`, and
@@ -291,14 +314,17 @@ Lands in Sprint 7.14 as `Infernix.Test.Integration.Throughput`. Real-cluster ass
 the inference pipeline behaves correctly under concurrent load from multiple users on the
 same model.
 
-Defaults:
+Ordinary full-suite defaults:
 
-- N = 10 Keycloak users
-- K = 3 independent contexts per user
-- P = 5 prompts per context, fired in rapid succession without waiting for prior responses
+- N = 3 synthetic users
+- K = 2 independent contexts per user
+- P = 2 prompts per context, fired in rapid succession without waiting for prior responses
 - model: substrate-appropriate primary LLM lane
   (`linux-cpu` → Qwen2.5-1.5B-Instruct on Transformers + PyTorch CPU; `linux-gpu` →
   Qwen2.5-1.5B-Instruct on vLLM; `apple-silicon` → Qwen1.5-1.8B-Chat-4bit on MLX-LM)
+
+The helper is parameterized by `ThroughputMatrix`; stress runs can raise N/K/P, while the ordinary
+full-suite gate keeps the compact matrix so validation remains bounded.
 
 Assertions:
 

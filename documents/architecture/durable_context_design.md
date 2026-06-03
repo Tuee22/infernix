@@ -48,10 +48,11 @@ broker contract with live Pulsar admin compaction, a Java compacted reader,
 latest-per-`contextId` assertions for context and draft topics, and duplicate
 frontend publish collapse through broker producer deduplication. The same
 integration layer now validates the normal dispatcher -> request/batch -> engine
--> result-bridge -> conversation-log writeback path for one durable-context
-prompt. The browser E2E layer covers active-context WebSocket re-subscribe and
-draft restoration after both reconnect and reload login; pod-kill Failover
-coverage remains pending.
+  -> result-bridge -> conversation-log writeback path for one durable-context
+prompt. The browser E2E layer covers active-context WebSocket re-subscribe,
+draft restoration after both reconnect and reload login, and frontend pod
+replacement by deleting all `infernix-demo` pods during the routed flow and
+submitting another prompt after reconnect.
 
 ## Parametricity Surface
 

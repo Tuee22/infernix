@@ -1,6 +1,6 @@
 # Phase 3: HA Platform Services and Edge Routing
 
-**Status**: Active (Sprints 3.1–3.11 code-side closed including substrate-aware publication via `clusterWorkloadArchitecture`, `bitnamilegacy/*` retirement + hand-authored MinIO StatefulSet, Harbor host-port dynamic discovery via `chooseHarborPort`, containerd `config_path` patch in rendered Kind config, Sprint 3.11 follow-on `repoEngineReplicaCount` substrate-aware fix on Apple Silicon, and the Phase 2 Sprint 2.13 follow-on retained-state Keycloak Patroni replay fix; Apple cohort gate closed in [Wave A](cohort-validation-waves.md) including the `cluster up → status (steady-state) → cluster down → status (cluster-absent)` lifecycle proof point on the new Apple Silicon host plus arm64-native publication of all 9 platform images and `chooseHarborPort` selecting `30003`; CUDA Linux cohort gate pending [Wave C](cohort-validation-waves.md))
+**Status**: Done
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Define the mandatory local HA Harbor, MinIO, operator-managed PostgreSQL, and
@@ -10,14 +10,10 @@
 
 ## Phase Status
 
-Phase 3's code work is closed around the mandatory HA service set, the shared routed edge, and
-the Haskell-owned route registry implemented in this worktree. Sprints 3.1–3.9 had their
-code-side deliverables closed; their prior real-cluster validation evidence was on the retired
-Apple Silicon and Linux/CUDA hardware and no longer counts as current proof points. Sprint 3.10
-is `Active`: the in-container Playwright path was originally validated on the retired Linux/CUDA
-host on May 27, 2026, but that proof point is no longer current; the Apple host-native E2E
-runner code is landed but the Apple cohort closure batch is pending on the new Apple Silicon
-host. The clarified Apple daemon-role model is implemented in Phase 6 Sprint 6.25 and separates
+Phase 3 closes around the mandatory HA service set, the shared routed edge, and the
+Haskell-owned route registry implemented in this worktree. Sprints 3.1–3.11 are `Done` after
+Apple cohort validation in Waves A/A.2 and CUDA Linux cohort validation in Wave C. The clarified
+Apple daemon-role model is implemented in Phase 6 Sprint 6.25 and separates
 cluster daemon location from host inference executor location in publication metadata.
 
 ## HA Reconcile Surface
@@ -355,10 +351,9 @@ None.
 
 ---
 
-## Sprint 3.10: Playwright Container Retirement and Edge Manifest Retirement [Active]
+## Sprint 3.10: Playwright Container Retirement and Edge Manifest Retirement [Done]
 
-**Status**: Active
-**Blocked by**: Phase 1 Sprint 1.11 (Host Manifest Materialization)
+**Status**: Done
 **Implementation**: `docker/playwright.Dockerfile` (deleted), `docker/linux-substrate.Dockerfile` (gains Playwright runtime), `compose.yaml` (drop `playwright` service), `src/Infernix/CLI.hs` (runEndToEnd refactor), `web/playwright/inference.spec.js`, `web/playwright.config.js` (new fixture-driven config)
 **Docs to update**: `documents/engineering/host_tools_manifest.md`, `documents/development/testing_strategy.md`, `documents/development/demo_app_test_plan.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 
@@ -406,9 +401,8 @@ favor of substrate `.dhall` fields plus a Dhall-driven Playwright fixture file.
   `cabal test infernix-unit`, `cabal test infernix-haskell-style`, and `node --check` for
   `web/playwright.config.js` and `web/playwright/inference.spec.js` had passed. Those are
   retried trivially on the new host but the historical pass is no longer cited as current proof.
-- **Apple cohort and CUDA Linux cohort validation pending on new host:** the Apple host-native
-  Playwright lane and the Linux in-container Playwright lane both need to be rerun on the new
-  Apple Silicon host before this sprint can return to `Done`.
+- Apple host-native Playwright validation closed in Waves A.1/A.2, and Linux in-container
+  Playwright validation closed in Wave C.
 
 ### Remaining Work
 
@@ -461,7 +455,7 @@ documentation refresh. The Sprint 3.10 grep gate
 returns only the two retirement doc comments
 (`src/Infernix/CLI.hs:344`, `web/playwright.config.js:4`).
 
-Pending closure (queued for the new-host validation batch):
+Closed validation:
 
 - **Linux in-container Playwright E2E proof point May 27, 2026 (retired hardware).** The
   clean-env compose-run command
@@ -469,17 +463,14 @@ Pending closure (queued for the new-host validation batch):
   had reconciled the live `linux-gpu` cluster, ran Playwright inside the
   launcher image, reported `1 passed`, then executed its teardown
   cleanup on the retired Linux/CUDA host. That proof point is no longer current; CUDA Linux
-  cohort rerun on the new Apple Silicon host (through Colima's amd64 VM) is pending.
-- Apple host-native E2E validation. The host-side `npm exec`
-  Playwright invocation fed by the same typed fixture is implemented,
-  but the end-to-end run is pending the Apple Silicon cohort batch on the new host.
+  cohort rerun closed in Wave C on the native Linux/CUDA host.
+- Apple host-native E2E validation closed in Waves A.1/A.2 using the same typed fixture path.
 
 ---
 
-## Sprint 3.11: Apple Silicon Native Architecture, Bitnamilegacy Retirement, Harbor Port Dynamic Discovery [Active]
+## Sprint 3.11: Apple Silicon Native Architecture, Bitnamilegacy Retirement, Harbor Port Dynamic Discovery [Done]
 
-**Status**: Active
-**Blocked by**: Apple cohort + CUDA Linux cohort full-suite validation reruns on the new Apple Silicon host.
+**Status**: Done
 **Implementation**: `src/Infernix/Cluster.hs` (`clusterWorkloadArchitecture`, `chooseHarborPort`, `currentKindHarborPort`, `clusterSubprocessBaseEnvFor`, `renderKindConfig`, `renderHelmValues`, `harborApiHost`, `publishClusterImages`, `prepareKindNodeRuntimePaths`, `writeRegistryHostsConfig`), `src/Infernix/Cluster/PublishImages.hs` (`HarborPublishOptions.harborTargetArchitecture`, `pinLocalImageToTargetArchitecture`, `extractDigestForArchitecture`, `contentAddressTagFromManifestPayload`, `pushUpstreamMultiArchViaImagetools`, `recoverOriginalTag`, the MinIO overlay), `src/Infernix/ProcessMonitor.hs` (`processMonitorBaseEnvFor`), `src/Infernix/Storage.hs` (`harborPortPath`, `readHarborPortMaybe`), `src/Infernix/Types.hs` (`ClusterState.harborPort`), `src/Infernix/HostConfig.hs` (`defaultAppleHostNativeHostConfig`), `src/Infernix/DemoConfig.hs` (`materializeHostManifestFile`, `resolveOperatorHomeDirectory`), `app/Main.hs` (`hSetBuffering LineBuffering`), `chart/values.yaml` (MinIO overrides + console disabled), `test/unit/Spec.hs` (`samplePublishedImages`, overlay assertions, `contentAddressTagFromManifestPayload` arch fixture).
 **Docs to update**: `documents/architecture/runtime_modes.md`, `documents/engineering/portability.md`, `documents/engineering/docker_policy.md`, `documents/tools/minio.md`, `documents/tools/harbor.md`, `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/architecture/overview.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`, `README.md`.
 
@@ -602,53 +593,27 @@ workers dialed `localhost` literally.
   so retained Patroni trees are no longer copied back to the host on
   `cluster down`, and `scrubStalePatroniDirectories` defensively removes
   any pre-existing trees from `<kindRuntimeRoot>/platform/infernix/`
-  on the next `cluster up`'s `prepare-kind-cluster` phase. The Apple
-  cohort `infernix test all` integration replay revalidation on the
-  new host is the remaining proof point.
-- **Apple cohort + CUDA Linux cohort full-suite validation pending on
-  new host:** the new substrate-arch + bitnamilegacy + Harbor-port
-  changes need a full `cluster up → status (steady-state) → test all
-  PASS → cluster down → status (cluster-absent)` rerun on Apple
-  Silicon, and the same on `linux-gpu` through Colima's amd64 VM
-  (or a separately reintroduced Linux/CUDA box). Until both cohorts
-  rerun, this sprint stays `Active` per Section Q.
+  on the next `cluster up`'s `prepare-kind-cluster` phase. Apple
+  cohort revalidation closed in Wave A after the integration replay
+  scenario exercised the retained-state fix.
+- **GPU cohort full-suite validation closed on the native Linux/CUDA
+  host:** the Apple cohort full-suite rerun passed on 2026-05-30, the
+  native `linux-cpu` full-suite rerun passed on 2026-06-02, and the
+  matching `linux-gpu` full-suite rerun passed on 2026-06-03.
 
 ### Remaining Work
 
-- Apple cohort `cabal test infernix-integration` full-suite **PASS
-  validated 2026-05-30** on the new Apple Silicon host after the
-  `repoEngineReplicaCount FinalPhase + AppleSilicon -> 0` follow-on
-  landed in `src/Infernix/Cluster.hs`. The fix eliminates the
-  in-cluster `infernix-engine` Deployment on Apple Silicon so the
-  host engine daemon is the only consumer of the host-batch Pulsar
-  topic; previously the in-cluster pod (running with the substrate
-  dhall's `runtime_mode = apple-silicon` but unable to bootstrap
-  Apple Metal inside a Linux container) competed on the Shared
-  subscription and produced inconsistent runtime-mode results. The
-  rerun validated every `validateCatalogModelInference` model
-  assertion, `validateDurableContextPromptRoundTrip`
-  (`inferenceResultStatus = completed`), `validateServiceRuntimeLoop`,
-  `validateDurableTopicFamilyRoundTrips`, and
-  `validateEdgePortConflictAndRediscovery` end-to-end. The new
-  `engineProcessed: request=... model=... status=...` trace in
-  `consumeTopicSession` recorded 16 per-model + 1 dispatcher-envelope
-  handoff all `status=completed` against the host daemon.
-- Apple host-native routed Playwright E2E on the new host remains
-  the open Apple residual.
-- CUDA Linux cohort full-suite revalidation on the new Apple Silicon
-  host through Colima's amd64 VM (or a separately reintroduced
-  Linux/CUDA box).
+None. Apple cohort validation closed in Waves A/A.2, including the
+`repoEngineReplicaCount FinalPhase + AppleSilicon -> 0` follow-on that
+removed the competing in-cluster Apple engine. CUDA Linux full-suite
+revalidation closed in Wave C.
 
 ---
 
 ## Remaining Work
 
-Sprint 3.10 substantively landed in May 2026. The Linux in-container Playwright path's prior
-`linux-gpu` validation was on the retired Linux/CUDA host. The Apple host-native E2E runner
-code landed but has not yet been validated on the new Apple Silicon host. Sprints 3.1–3.9
-closed in code; their prior real-cluster validation evidence was on the retired hardware. Both
-Apple cohort and CUDA Linux cohort full-suite validation are pending on the new Apple Silicon
-host before this phase can return to `Done`.
+None. Sprints 3.1–3.11 are `Done`; Apple cohort validation closed in Waves A/A.2 and CUDA
+Linux cohort validation closed in Wave C.
 
 ---
 

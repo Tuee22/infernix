@@ -141,7 +141,8 @@ Rules:
   latest payload per `contextId`
 - the same integration layer submits a real durable-context prompt and observes a completed
   `ConversationInferenceResultEvent` on the conversation log after the dispatcher,
-  request/batch handoff, engine, and result bridge run; pod-kill Failover remains pending
+  request/batch handoff, engine, and result bridge run; the browser E2E layer also proves
+  frontend pod replacement reconnects, resubscribes, and continues prompt submission
 
 ## Model-Bootstrap Topic
 

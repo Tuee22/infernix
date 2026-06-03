@@ -25,12 +25,15 @@ import Infernix.CLI (writeGeneratedPursContracts)
 import Infernix.Cluster (writeGeneratedKindConfig)
 import Infernix.Cluster.Discover
 import Infernix.Cluster.PublishImages
-  ( PublishedImage,
+  ( HarborPublishOptions (..),
+    PublishedImage,
     contentAddressTagFromInspectPayload,
     contentAddressTagFromManifestPayload,
+    defaultHarborPublishOptions,
     dockerHubMirrorRef,
     normalizeRepositoryPath,
     prioritizePublishableImages,
+    skopeoTargetRefForHarborApiHost,
     writeHarborOverridesFile,
   )
 import Infernix.ClusterConfig
@@ -80,6 +83,7 @@ import Infernix.Runtime.Pulsar
   ( DemoClientMessageError (..),
     DemoClientMessagePublication (..),
     drainTopic,
+    parseMessageIdToSequenceId,
     planDemoClientMessagePublications,
     runProductionDaemon,
     topicDirectoryPath,
@@ -344,6 +348,7 @@ main = do
       assertObjectsLayoutAndPresigning
       assertArtifactDownloadDispositionMatrix
       assertResultBridgeAndBatchTopics
+      assertPulsarMessageIdSequenceParsing
       assertLinuxHostBatchForwarding paths
       assertDemoAuthRealm
       assertBootstrapModels
@@ -381,7 +386,15 @@ main = do
       generatedLinuxGpuKindConfigPath <- writeGeneratedKindConfig outerPaths LinuxGpu 30090 30002
       generatedLinuxGpuKindConfig <- readFile generatedLinuxGpuKindConfigPath
       let expectedHostKindMount = "hostPath: " <> realRepoRoot </> ".build/test-unit/.data/kind/linux-gpu"
-          expectedHostRegistryMount = "hostPath: " <> realRepoRoot </> ".build/kind/registry"
+          expectedHostRegistryMount = "hostPath: " <> realRepoRoot </> ".build/kind/linux-gpu/registry"
+          expectedLinuxGpuRegistryHostsFile =
+            realRepoRoot
+              </> ".build"
+              </> "kind"
+              </> "linux-gpu"
+              </> "registry"
+              </> "localhost:30002"
+              </> "hosts.toml"
       assert
         (expectedHostKindMount `isInfixOf` generatedLinuxGpuKindConfig)
         "linux-gpu outer-container Kind config mounts host-resolved retained cluster data"
@@ -390,7 +403,13 @@ main = do
         "linux-gpu outer-container Kind config exposes retained data at the node PV root"
       assert
         (expectedHostRegistryMount `isInfixOf` generatedLinuxGpuKindConfig)
-        "linux-gpu outer-container Kind config mounts host-resolved registry hosts"
+        "linux-gpu outer-container Kind config mounts runtime-scoped host-resolved registry hosts"
+      linuxGpuRegistryHostsContents <- readFile expectedLinuxGpuRegistryHostsFile
+      assert
+        ( "server = \"http://infernix-linux-gpu-" `isInfixOf` linuxGpuRegistryHostsContents
+            && "-control-plane:30002\"" `isInfixOf` linuxGpuRegistryHostsContents
+        )
+        "linux-gpu registry hosts file targets the active linux-gpu control-plane mirror"
       assert
         ("containerPath: /var/run/nvidia-container-devices/all" `isInfixOf` generatedLinuxGpuKindConfig)
         "linux-gpu outer-container Kind config keeps the NVIDIA worker device mount"
@@ -680,6 +699,26 @@ main = do
     assert
       (normalizeRepositoryPath "localhost:30002/library/infernix-service@sha256:deadbeef" == "library/infernix-service")
       "repository normalization removes digests and loopback Harbor prefixes"
+    let linuxOuterHarborOptions =
+          defaultHarborPublishOptions
+            { harborHost = "localhost:30002",
+              harborClientHost = "localhost:30002",
+              harborApiHost = "infernix-linux-cpu-control-plane:30002"
+            }
+    assert
+      ( skopeoTargetRefForHarborApiHost
+          linuxOuterHarborOptions
+          "localhost:30002/library/envoyproxy/gateway:sha256-gateway"
+          == "infernix-linux-cpu-control-plane:30002/library/envoyproxy/gateway:sha256-gateway"
+      )
+      "outer-container skopeo publication targets the Kind control-plane NodePort instead of container loopback"
+    assert
+      ( skopeoTargetRefForHarborApiHost
+          defaultHarborPublishOptions
+          "localhost:30002/library/envoyproxy/gateway:sha256-gateway"
+          == "127.0.0.1:30002/library/envoyproxy/gateway:sha256-gateway"
+      )
+      "host-native skopeo publication keeps the IPv4 loopback NodePort target"
     assert
       (dockerHubMirrorRef "docker.io/percona/percona-pgbackrest:2.58.0-1" == Just "mirror.gcr.io/percona/percona-pgbackrest:2.58.0-1")
       "docker hub fallback maps explicit docker.io refs to mirror.gcr.io"
@@ -1548,6 +1587,20 @@ assertObjectsLayoutAndPresigning = do
   assert
     ("http://127.0.0.1:9090/minio/s3/infernix-demo-objects/" `Text.isPrefixOf` ObjPresigned.unPresignedUrl routedUrl)
     "presigned URL can include a public Gateway path prefix without changing the object path"
+  let bucketUrl =
+        ObjPresigned.presignedBucketUrl
+          cfg
+          ObjPresigned.PresignedBucketRequest
+            { ObjPresigned.presignedBucketRequestMethod = ObjPresigned.HttpPut,
+              ObjPresigned.presignedBucketRequestBucket = "infernix-demo-objects",
+              ObjPresigned.presignedBucketRequestNow = fixedNow
+            }
+  assert
+    ("http://infernix-minio:9000/infernix-demo-objects?" `Text.isPrefixOf` ObjPresigned.unPresignedUrl bucketUrl)
+    "bucket-level presigned URL targets the bucket path without a synthetic object key"
+  assert
+    ("X-Amz-Signature=" `Text.isInfixOf` ObjPresigned.unPresignedUrl bucketUrl)
+    "bucket-level presigned URL carries the X-Amz-Signature query parameter"
 
   -- Different method -> different signature
   let getUrl = ObjPresigned.presignedGetUrl cfg fixedNow upload
@@ -1695,6 +1748,18 @@ assertResultBridgeAndBatchTopics = do
         (Contracts.inferenceResultInlineOutput payload == Just "done")
         "result-bridge event carries the inline output"
     _ -> fail "inferenceResultEventFor should produce a ConversationInferenceResultEvent"
+
+assertPulsarMessageIdSequenceParsing :: IO ()
+assertPulsarMessageIdSequenceParsing = do
+  assert
+    (parseMessageIdToSequenceId "12:34:0" == Just (12 * (2 ^ (32 :: Int)) + 34))
+    "colon Pulsar message ids still derive a stable producer sequence"
+  assert
+    (parseMessageIdToSequenceId "CNgBEAEwAA==" == Just (216 * (2 ^ (32 :: Int)) + 1))
+    "base64 Pulsar WebSocket message ids derive a stable producer sequence"
+  assert
+    (isNothing (parseMessageIdToSequenceId "not-a-message-id"))
+    "unsupported message id encodings do not invent a sequence id"
 
 assertLinuxHostBatchForwarding :: Paths -> IO ()
 assertLinuxHostBatchForwarding paths = do

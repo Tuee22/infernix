@@ -257,8 +257,9 @@ Current status:
   than bind-mounted, large `./.data/kind/apple-silicon/` trees can make `up`, `test`, and `down`
   slower than Linux
 - Linux outer-container lifecycle runs pass host-resolved `./.data/kind/<runtime-mode>/` and
-  `./.build/kind/registry/` paths into the generated Kind or `nvkind` node config so node-local
-  PVs and registry host config are preserved by direct Docker bind mounts instead of replay copies
+  `./.build/kind/<runtime-mode>/registry/` paths into the generated Kind or `nvkind` node config
+  so node-local PVs and registry host config are preserved by direct Docker bind mounts instead of
+  replay copies
 - `linux-cpu` keeps its host prerequisites at Docker Engine plus the Docker buildx and Compose
   plugins, and `linux-gpu` adds the documented NVIDIA driver and container-toolkit requirements on
   top of that

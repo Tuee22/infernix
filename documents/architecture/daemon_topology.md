@@ -58,8 +58,13 @@ report the configured Linux batch topic, and the service runtime loop
 round-trips inference through the coordinator and engine roles. A May
 28, 2026 follow-on submits a durable-context prompt through the dispatcher,
 engine, and result bridge and observes the completed conversation-log
-writeback. Sprint 7.14's remaining work is the chaos validation cycle that
-proves failover and exactly-once behavior under pod failure.
+writeback. The 2026-06-02 LinuxCpu code-side landing adds the real-cluster
+chaos and throughput integration checks: frontend/coordinator/engine pod
+replacement, engine node drain, model-bootstrap deduplication across
+coordinator replacement, Linux engine anti-affinity, and compact multi-user
+durable prompt throughput. Full `linux-cpu` `infernix test all` validation
+passed on 2026-06-02, and full `linux-gpu` `infernix test all` validation
+passed on 2026-06-03.
 
 ## Roles and Responsibilities
 
@@ -225,8 +230,8 @@ state on the operator's machine, not durable cluster state.
 |---|---|---|---|---|
 | `apple-silicon` | `true` | `infernix-demo` in cluster (replicas ≥ 2) | `infernix-coordinator` in cluster (replicas ≥ 2) — the existing `ClusterDaemon` role | on host (existing `HostDaemon` role, one process per host) |
 | `apple-silicon` | `false` | absent | absent | on host only |
-| `linux-cpu` | `true` | `infernix-demo` in cluster | `infernix-coordinator` in cluster | `infernix-engine` in cluster, one per node |
-| `linux-cpu` | `false` | absent | absent | `infernix-engine` in cluster, one per node |
+| `linux-cpu` | `true` | `infernix-demo` in cluster (replicas >= 2) | `infernix-coordinator` in cluster (replicas >= 2) | `infernix-engine` in cluster, one per worker node; the supported local HA lane renders two workers and two engines |
+| `linux-cpu` | `false` | absent | absent | `infernix-engine` in cluster, one per worker node |
 | `linux-gpu` | `true` | `infernix-demo` in cluster | `infernix-coordinator` in cluster | `infernix-engine` in cluster, one per GPU-capable node, all local NVIDIA devices |
 | `linux-gpu` | `false` | absent | absent | `infernix-engine` in cluster, one per GPU-capable node |
 
@@ -409,9 +414,12 @@ The three-role contract is validated by:
   templates and PodDisruptionBudgets
 - the May 28, 2026 Linux GPU integration roundtrip for the normal
   dispatcher -> engine -> result-bridge writeback path
-- `infernix test integration` chaos tests for coordinator-pod kill,
-  engine-pod kill, and engine-node drain (defined in
-  [../development/chaos_testing.md](../development/chaos_testing.md))
+- `infernix test integration` chaos tests for frontend pod replacement,
+  coordinator pod replacement, engine pod replacement, engine-node drain,
+  bootstrap deduplication, and engine anti-affinity (defined in
+  [../development/chaos_testing.md](../development/chaos_testing.md)); these
+  landed as of 2026-06-02, the native `linux-cpu` full-suite gate passed on
+  2026-06-02, and `linux-gpu` Wave C validation passed on 2026-06-03
 - a production-shape test that deploys `demo_ui = false` and asserts
   only `infernix-engine` Deployment is present via
   `infernix kubectl -n platform get deployments`

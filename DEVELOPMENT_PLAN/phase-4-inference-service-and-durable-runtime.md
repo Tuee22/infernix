@@ -1,6 +1,6 @@
 # Phase 4: Inference Service and Durable Runtime
 
-**Status**: Active (Sprints 4.1–4.13 code-side closed: `ClusterConfig` renderer + decoder roundtrip covered by unit tests; MinIO endpoint / region / credential wiring reads mounted `ClusterConfig` + `SecretsConfig`; Apple cohort gate closed in [Wave A](cohort-validation-waves.md) via `cabal test infernix-integration` full PASS exercising the mounted-ClusterConfig path; CUDA Linux cohort gate pending [Wave C](cohort-validation-waves.md))
+**Status**: Done
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/engineering/cluster_config_manifest.md](../documents/engineering/cluster_config_manifest.md)
 
 > **Purpose**: Define the Haskell service runtime, the shared Python engine-adapter contract, the
@@ -11,14 +11,11 @@
 
 ## Phase Status
 
-Phase 4's code work is closed around the staged-substrate runtime contract, the shared Python
+Phase 4 closes around the staged-substrate runtime contract, the shared Python
 adapter boundary, the Pulsar-driven request or result contract, the explicit engine-runner
 dispatch, and the mounted `InfernixCluster.dhall` cluster-wiring contract. Sprints 4.1–4.13 had
-their code-side deliverables closed in the worktree; their prior real-cluster validation
-evidence (most recently the May 26, 2026 `linux-gpu` `test all` PASS) was on the retired
-Linux/CUDA host and no longer counts as a current proof point. Apple cohort and CUDA Linux
-cohort full-suite validation are pending on the new Apple Silicon host before this phase can
-return to `Done`. The later clarification that a cluster daemon always exists while Apple
+their deliverables closed in the worktree; Apple cohort validation closed in Wave A, and CUDA
+Linux cohort validation closed in Wave C. The later clarification that a cluster daemon always exists while Apple
 inference execution moves to a same-binary host daemon is implemented in Phase 6 Sprint 6.25.
 
 ## Current Repo Assessment
@@ -544,9 +541,9 @@ None.
 
 ---
 
-## Sprint 4.13: Cluster Manifest Materialization [Active - code landed, cohort validation pending on new host]
+## Sprint 4.13: Cluster Manifest Materialization [Done]
 
-**Status**: Active (code-side closed; Apple cohort gate closed in [Wave A](cohort-validation-waves.md); CUDA Linux cohort gate pending [Wave C](cohort-validation-waves.md))
+**Status**: Done
 **Implementation**: `dhall/InfernixCluster.dhall` (new), `src/Infernix/ClusterConfig.hs` (new), `src/Infernix/Service.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Worker.hs`, `chart/templates/deployment-coordinator.yaml`, `chart/templates/deployment-engine.yaml`, `chart/templates/configmap-cluster-config.yaml` (new)
 **Docs to update**: `documents/engineering/cluster_config_manifest.md`, `documents/tools/pulsar.md`, `documents/architecture/daemon_topology.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 
@@ -596,16 +593,13 @@ favor of typed `ClusterConfig` fields.
   `cabal run infernix -- lint {docs,files,chart,proto}` had all PASSED after the
   `ClusterConfig` renderer and plan-status updates. The same gates are trivially re-runnable on
   the new host.
-- **Apple cohort and CUDA Linux cohort validation pending on new host:** the real-cluster
-  `infernix test all` against the mounted `ClusterConfig` must be rerun on the new Apple Silicon
-  host (CUDA Linux lane through Colima's amd64 VM) before this sprint can return to `Done`.
+- Apple cohort validation closed in Wave A; CUDA Linux validation closed in Wave C with full
+  `linux-cpu` and `linux-gpu` gates against the mounted `ClusterConfig`.
 
 ### Remaining Work
 
-- Apple cohort gate closed in [Wave A](cohort-validation-waves.md) (`cabal test infernix-integration`
-  full PASS exercising the mounted ClusterConfig path).
-- CUDA Linux cohort gate pending [Wave C](cohort-validation-waves.md) (full `test all` through
-  Colima's amd64 VM, or on a separately reintroduced Linux/CUDA box).
+None. Apple cohort validation closed in [Wave A](cohort-validation-waves.md), and CUDA Linux
+cohort validation closed in [Wave C](cohort-validation-waves.md).
 
 ---
 

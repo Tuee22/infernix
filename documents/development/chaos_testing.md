@@ -28,11 +28,18 @@
   remains owned by the ordinary unit, integration, and routed E2E entrypoints
 - the May 27, 2026 Linux GPU integration extension validates the non-chaos
   coordinator-to-engine handoff contract through publication JSON, `cluster status`, generated
-  demo config, and the active service runtime loop; the durable-context pod-failure cases below
-  remain pending
+  demo config, and the active service runtime loop
 - the May 28, 2026 Linux GPU integration follow-on validates the non-chaos durable-context prompt
   path through dispatcher, request/batch handoff, engine, result bridge, and conversation-log
-  writeback; the same pod-failure cases below remain pending
+  writeback
+- the 2026-06-02 Linux/CUDA-host code-side landing adds the `linux-cpu` integration coverage for
+  frontend pod replacement, coordinator pod replacement, engine pod replacement, engine node
+  drain, model-bootstrap deduplication across coordinator replacement, Linux engine anti-affinity,
+  and compact multi-user durable prompt throughput; the mounted
+  `test:infernix-integration` compile gate passes, native `linux-cpu` full-suite validation passed
+  on 2026-06-02, and the full `linux-gpu` validation gate passed on 2026-06-03. The remaining
+  chaos gap is real KV-cache hit/miss verification under engine failover, which waits on a
+  runtime adapter with an exposed KV-cache surface.
 
 ## Durable-Context Demo Chaos Cases
 
@@ -81,9 +88,10 @@ redelivery, Pulsar producer-side deduplication, and projection-layer idempotency
   launching a second `infernix service` on the same host while one is already running exits
   non-zero with the `engine.lock held by PID …` diagnostic.
 
-These cases land in Sprint 7.14 (post-renumber) alongside the existing Harbor / MinIO /
-Patroni / Pulsar HA coverage. See [demo_app_test_plan.md](demo_app_test_plan.md) for the
-full validation contract.
+The `linux-cpu` integration lane implements these cases as pod replacement, node-drain, and
+deduplicated bootstrap replay checks against the real Kind cluster. They run alongside the
+existing Harbor / MinIO / Patroni / Pulsar HA coverage. See
+[demo_app_test_plan.md](demo_app_test_plan.md) for the full validation contract.
 
 ## Cross-References
 

@@ -1,6 +1,6 @@
 # Phase 5: Web UI and Shared Types
 
-**Status**: Active (Sprints 5.1–5.9 code-side closed: demo backend, Python adapters, and web/Node scripts no longer read supported configuration from process environments; `poetry run check-code`, Node syntax checks, and grep gates active; Apple cohort gate closed in [Wave A](cohort-validation-waves.md) via `cabal test infernix-integration` full PASS + 5/6 e2e PASS; CUDA Linux cohort gate pending [Wave C](cohort-validation-waves.md))
+**Status**: Done
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Define the PureScript demo UI built with spago, the Haskell-owned frontend contract
@@ -9,15 +9,12 @@
 
 ## Phase Status
 
-Phase 5's code work is closed around the PureScript demo UI, the Haskell-owned browser-contract
+Phase 5 closes around the PureScript demo UI, the Haskell-owned browser-contract
 source, the generated contract path under `web/src/Generated/`, the clustered demo hosting rule,
 the container-owned routed Playwright executor, and the Phase 5.9 process-environment retirement
 in the demo backend, Python adapter layer, and web/Node helper scripts. Sprints 5.1–5.9 had
-their code-side deliverables closed in the worktree; their prior real-cluster validation
-evidence (most recently the May 26, 2026 `linux-gpu` `test all` PASS) was on the retired
-Linux/CUDA host and no longer counts as a current proof point. Apple cohort and CUDA Linux
-cohort full-suite validation are pending on the new Apple Silicon host before this phase can
-return to `Done`.
+their deliverables closed in the worktree; Apple cohort validation closed in Waves A/A.2, and
+CUDA Linux cohort validation closed in Wave C.
 Phase 7 extends the PureScript demo surface with the durable-context Chat, Artifacts, and Model
 Picker views; the supported manual-inference path moves from a direct HTTP request/poll cycle to
 WebSocket-delivered `ConversationStatePatch` deltas owned by Phase 7.
@@ -322,9 +319,9 @@ None.
 
 ---
 
-## Sprint 5.9: Web and Python Manifest Retirement [Active - code landed, cohort validation pending on new host]
+## Sprint 5.9: Web and Python Manifest Retirement [Done]
 
-**Status**: Active (code-side closed; Apple cohort gate closed in [Wave A](cohort-validation-waves.md); CUDA Linux cohort gate pending [Wave C](cohort-validation-waves.md))
+**Status**: Done
 **Implementation**: `src/Infernix/DemoCLI.hs`, `python/adapters/common.py`, `python/adapters/model_cache.py`, every engine adapter under `python/adapters/*.py`, `web/scripts/install-purescript.mjs`, `web/test/run_playwright_matrix.mjs`
 **Docs to update**: `documents/development/no_env_vars.md`, `documents/development/frontend_contracts.md`, `documents/development/testing_strategy.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 
@@ -371,26 +368,20 @@ discovery, setup `--install-root` CLI args, the protobuf `WorkerRequest` envelop
 - May 27, 2026 (retired hardware): `cabal test infernix-unit` and
   `cabal run infernix -- lint {docs,files,chart,proto}` had all PASSED. The unit and lint gates
   are trivially re-runnable on the new host.
-- **Apple cohort and CUDA Linux cohort validation pending on new host:** the real-cluster demo +
-  adapter path under `infernix test all` must be rerun on the new Apple Silicon host (CUDA Linux
-  lane through Colima's amd64 VM) before this sprint can return to `Done`.
+- Apple cohort validation closed in Waves A/A.2; CUDA Linux validation closed in Wave C with
+  full `linux-cpu` and `linux-gpu` gates.
 
 ### Remaining Work
 
-- Apple cohort gate closed in [Wave A](cohort-validation-waves.md) (`cabal test infernix-integration`
-  full PASS + 5/6 e2e PASS exercising the demo backend's mounted ClusterConfig reads and the
-  Python adapter / Node script env retirement).
-- CUDA Linux cohort gate pending [Wave C](cohort-validation-waves.md) (full `test all` through
-  Colima's amd64 VM, or on a separately reintroduced Linux/CUDA box).
+None. Apple cohort validation closed in [Wave A/A.2](cohort-validation-waves.md), and CUDA Linux
+cohort validation closed in [Wave C](cohort-validation-waves.md).
 
 ---
 
 ## Remaining Work
 
-Sprints 5.1–5.9 closed their code-side deliverables. Their real-cluster validation evidence was
-produced on the retired Linux/CUDA hardware and no longer counts as current proof points. Phase
-5 returns to `Done` only after Apple cohort and CUDA Linux cohort full-suite validation are both
-rerun on the new Apple Silicon host.
+None. Sprints 5.1–5.9 are `Done`; Apple cohort validation closed in Waves A/A.2 and CUDA Linux
+cohort validation closed in Wave C.
 
 ---
 

@@ -1,6 +1,6 @@
 # Phase 2: Kind Cluster Storage and Lifecycle
 
-**Status**: Active (Sprints 2.1–2.13 code-side closed including the Sprint 2.13 follow-on for Apple Silicon lifecycle fixes — subprocess PATH from `HostConfig.toolPaths.*`, corrected `/opt/homebrew/bin/docker` default, libc-derived operator home, `curl -m 30` Harbor probe timeout, `LineBuffering` on stdout/stderr — cross-listed with Phase 3 Sprint 3.11, plus the retained-state Keycloak Patroni replay fix (`isPatroniManagedClaim` + `scrubStalePatroniDirectories`); Apple cohort gate closed in [Wave A](cohort-validation-waves.md); CUDA Linux cohort gate pending [Wave C](cohort-validation-waves.md))
+**Status**: Done
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Define the supported Kind bootstrap path, the manual storage doctrine, the Helm
@@ -10,23 +10,18 @@
 
 ## Phase Status
 
-Sprints 2.1–2.12 are closed. The Kind bootstrap, manual PV doctrine, Harbor-first image flow,
+Sprints 2.1–2.13 are closed. The Kind bootstrap, manual PV doctrine, Harbor-first image flow,
 shared substrate publication path, Linux outer-container launcher contract, lifecycle progress
 surface, retained-state repair behavior, narrowed bootstrap responsibility boundary, and teardown
 preservation contract are implemented in this worktree. Sprint 2.13 (Cluster Lifecycle
-Host-Manifest Retirement) is `Active`: the Linux cluster lifecycle path no longer consumes
+Host-Manifest Retirement) closed the Linux cluster lifecycle path so it no longer consumes
 `INFERNIX_HOST_KIND_ROOT`, `INFERNIX_HOST_REPO_ROOT`, or `HOSTNAME`, no longer inherits the parent
 process environment in the shared cluster/process-monitor helpers, and routes known cluster tools
 through the `HostConfig`-backed HostTool resolver. The Apple setup path in
 `src/Infernix/Engines/AppleSilicon.hs` no longer inherits the parent environment; it invokes the
 Poetry setup entrypoint with an explicit `--install-root` argument and an empty process
-environment. The May 27, 2026 clean-environment Linux GPU validation
-(`env -i /usr/bin/bash ./bootstrap/linux-gpu.sh build`, `up`, `status` with `runtimeMode:
-linux-gpu`, `lifecyclePhase: steady-state`, 2 Kubernetes nodes, and 79 pods) ran on the retired
-Linux/CUDA host and no longer counts as a current proof point. The remaining work is the full
-real-cluster validation rerun on the new Apple Silicon host for both the Apple lane and the CUDA
-Linux lane (the latter run through Colima's amd64 VM or a separately re-provisioned Linux/CUDA
-machine if one is reintroduced).
+environment. The Apple lane closed in Wave A, and the CUDA Linux lane closed in Wave C with
+full `linux-cpu` and `linux-gpu` gates on the native Linux/CUDA host.
 
 ## Storage Doctrine
 
@@ -76,10 +71,10 @@ lifecycle investigation originally served as the proof point that Apple `build-c
 can stay healthy well past thirty minutes before Harbor publication begins and that Harbor image
 pushes are readiness-gated with bounded retries across transient registry resets. **Apple
 Silicon validation reset (2026-05-29).** All of those reruns were performed on the retired Apple
-Silicon hardware (no longer available) and no longer count as current proof points; Apple cohort
-validation must be rerun on the new Apple Silicon host before the storage doctrine, Helm
-rollout, Harbor-first image flow, retained-state replay, and lifecycle-progress contracts above
-can be claimed as currently real-cluster-validated.
+Silicon hardware (no longer available) and no longer count as current proof points. The storage
+doctrine, Helm rollout, Harbor-first image flow, retained-state replay, and lifecycle-progress
+contracts are now covered by the current Apple cohort closure in Wave A and native Linux/CUDA
+cohort closure in Wave C.
 
 ## Sprint 2.1: Kind Bootstrap and StorageClass Reset [Done]
 
@@ -386,9 +381,9 @@ None.
 
 ---
 
-## Sprint 2.10: Lifecycle Progress Surfaces and False-Negative Hardening [Active - code landed, Apple cohort validation pending on new host]
+## Sprint 2.10: Lifecycle Progress Surfaces and False-Negative Hardening [Done]
 
-**Status**: Active (code-side closed; Apple cohort gate closed in [Wave A](cohort-validation-waves.md); CUDA Linux cohort gate pending [Wave C](cohort-validation-waves.md))
+**Status**: Done
 **Implementation**: `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Cluster/PublishImages.hs`, `src/Infernix/ProcessMonitor.hs`
 **Docs to update**: `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/reference/cli_reference.md`, `documents/reference/cli_surface.md`
 
@@ -434,22 +429,19 @@ distinguish real failure from ongoing first-run progress.
   completed steady-state snapshot during monitored lifecycle work
 - `infernix lint docs` fails if the Apple or cluster runbooks or CLI references drift from the
   supported progress-surface and failure-classification contract
-- **Apple cohort validation pending on new host:** the dated proof points above must be rerun
-  end-to-end (`doctor`, `build`, `up`, `status`, `test`, `down`, final `status`) on the new Apple
-  Silicon host before this sprint can return to `Done`
+- Apple cohort validation closed in Wave A; CUDA Linux validation closed in Wave C with full
+  `linux-cpu` and `linux-gpu` gates.
 
 ### Remaining Work
 
-- Apple cohort lifecycle gate closed in [Wave A](cohort-validation-waves.md) via the
-  `cabal test infernix-integration` full PASS exercising cold `up` progress surfacing, preload
-  skip recording, large-image Harbor publication, retained-state replay during `down`, and
-  inactivity-aware failure handling. CUDA Linux cohort gate pending [Wave C](cohort-validation-waves.md).
+None. Apple cohort lifecycle validation closed in [Wave A](cohort-validation-waves.md), and CUDA
+Linux cohort validation closed in [Wave C](cohort-validation-waves.md).
 
 ---
 
-## Sprint 2.11: Retained-State Harbor PostgreSQL and Atomic Staging Closure [Active - code landed, cohort closure pending Wave C]
+## Sprint 2.11: Retained-State Harbor PostgreSQL and Atomic Staging Closure [Done]
 
-**Status**: Active (code-side closed; Apple cohort gate closed in [Wave A](cohort-validation-waves.md); CUDA Linux cohort gate pending [Wave C](cohort-validation-waves.md))
+**Status**: Done
 **Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/DemoConfig.hs`
 **Docs to update**: `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`
 
@@ -475,23 +467,19 @@ status reads remain reliable and retained Harbor PostgreSQL replicas recover wit
   replica repair and reach ready Harbor PostgreSQL members
 - the supported Apple lifecycle reruns cleanly through `./bootstrap/apple-silicon.sh doctor`,
   `build`, `up`, `status`, `test`, and `down`
-- **Apple cohort validation pending on new host:** the atomic-staging and retained-state
-  PostgreSQL recovery proof points must be rerun on the new Apple Silicon host before this sprint
-  can return to `Done`
+- Apple cohort validation closed in Wave A; CUDA Linux validation closed in Wave C with full
+  `linux-cpu` and `linux-gpu` gates.
 
 ### Remaining Work
 
-- Apple cohort gate closed in [Wave A](cohort-validation-waves.md) (concurrent-status reads
-  against an in-flight lifecycle exercised through the integration suite; retained-state Patroni
-  replica reinitialization exercised through the integration replay scenario after the
-  `isPatroniManagedClaim` + `scrubStalePatroniDirectories` fix). CUDA Linux cohort gate pending
-  [Wave C](cohort-validation-waves.md).
+None. Apple cohort validation closed in [Wave A](cohort-validation-waves.md), and CUDA Linux
+cohort validation closed in [Wave C](cohort-validation-waves.md).
 
 ---
 
-## Sprint 2.12: Bootstrap Responsibility and Harbor-First Image Boundary Refactor [Active - code landed, Apple cohort validation pending on new host]
+## Sprint 2.12: Bootstrap Responsibility and Harbor-First Image Boundary Refactor [Done]
 
-**Status**: Active (code-side closed; Apple cohort gate closed in [Wave A](cohort-validation-waves.md); CUDA Linux cohort gate pending [Wave C](cohort-validation-waves.md))
+**Status**: Done
 **Implementation**: `bootstrap/apple-silicon.sh`, `bootstrap/linux-cpu.sh`, `bootstrap/linux-gpu.sh`, `src/Infernix/Cluster.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Cluster/PublishImages.hs`
 **Docs to update**: `README.md`, `documents/development/local_dev.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/operations/apple_silicon_runbook.md`, `documents/engineering/k8s_native_dev_policy.md`, `documents/engineering/docker_policy.md`, `documents/engineering/build_artifacts.md`, `documents/tools/harbor.md`
 
@@ -544,23 +532,20 @@ Make bootstrap scripts narrow stage-0 launchers and move lifecycle responsibilit
   `clusterPresent: False`, `lifecycleStatus: idle`, and `lifecyclePhase: cluster-absent`, with
   retained `./.build/`, `./.data/`, local images, and the Apple host binary still present, on
   the retired hardware; this is no longer a current proof point
-- **Apple cohort validation pending on new host:** the shell-to-binary delegation, Harbor-first
-  publication, host runtime image publication, retained-`./.build/`/`./.data/` teardown
-  behavior, and `test all` lane all need a clean rerun on the new Apple Silicon host before this
-  sprint can return to `Done`
+- Apple cohort validation closed in Wave A; CUDA Linux validation closed in Wave C with full
+  `linux-cpu` and `linux-gpu` gates.
 
 ### Remaining Work
 
-- Apple cohort bootstrap + Harbor-first lifecycle gate closed in [Wave A](cohort-validation-waves.md)
-  via the integration suite's full cluster up + status + test cycle. CUDA Linux cohort gate
-  pending [Wave C](cohort-validation-waves.md).
+None. Apple cohort bootstrap + Harbor-first lifecycle validation closed in
+[Wave A](cohort-validation-waves.md), and CUDA Linux cohort validation closed in
+[Wave C](cohort-validation-waves.md).
 
 ---
 
-## Sprint 2.13: Cluster Lifecycle Host-Manifest Retirement [Active - code landed, cohort closure pending Wave C]
+## Sprint 2.13: Cluster Lifecycle Host-Manifest Retirement [Done]
 
-**Status**: Active
-**Blocked by**: Phase 1 Sprint 1.11 (Host Manifest Materialization)
+**Status**: Done
 **Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Cluster/PublishImages.hs`, `src/Infernix/Cluster/Discover.hs`, `src/Infernix/ProcessMonitor.hs`, `src/Infernix/Engines/AppleSilicon.hs`, `compose.yaml`
 **Docs to update**: `documents/engineering/host_tools_manifest.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/operations/apple_silicon_runbook.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 
@@ -592,13 +577,13 @@ materialized in Phase 1 Sprint 1.11.
   passed, then `env -i /usr/bin/bash ./bootstrap/linux-gpu.sh up` had reached
   `cluster up complete`, and `env -i /usr/bin/bash ./bootstrap/linux-gpu.sh status` had reported
   `lifecyclePhase: steady-state`. That proof point was produced on the retired Linux/CUDA host
-  and no longer counts as current evidence; CUDA Linux cohort rerun on the new host is pending.
+  and no longer counts as current evidence; CUDA Linux cohort rerun closed in Wave C.
 - May 27, 2026 (retired hardware): `src/Infernix/Engines/AppleSilicon.hs` stopped importing
   `System.Environment.getEnvironment`; the setup invocation now passes `--install-root`
   explicitly and uses an empty `env = Just []` process environment. `cabal build all`,
   `cabal test infernix-unit`, and `cabal test infernix-haskell-style` had passed on the retired
   Linux host. The Apple host cohort cannot exercise `Engines/AppleSilicon.hs` until Apple cohort
-  validation is rerun on the new Apple Silicon host.
+  validation closed in Wave A on the new Apple Silicon host.
 
 ### Remaining Work
 
@@ -747,7 +732,7 @@ honest):
     hid all phase output when the binary was invoked through a tee or
     background-launcher wrapper.
 - **Clean-env `linux-gpu` lifecycle validation passed on retired hardware
-  May 27, 2026; pending re-validation on new host.**
+  May 27, 2026; current-host validation closed in Wave C.**
   On the retired Linux/CUDA host,
   `env -i /usr/bin/bash ./bootstrap/linux-gpu.sh build` rebuilt
   `infernix-linux-gpu:local`, and the follow-on clean-env `up`
@@ -762,25 +747,21 @@ honest):
   mount restored the documented two-bind-mount compose contract and
   the rerun reached steady state. The fix landed in the worktree, but
   the May 27, 2026 proof point is on the retired hardware and no
-  longer counts as current evidence. CUDA Linux cohort rerun on the
-  new Apple Silicon host (through Colima's amd64 VM) is pending.
+  longer counts as current evidence. CUDA Linux cohort rerun closed
+  in Wave C on the native Linux/CUDA host.
 
 ---
 
 ## Remaining Work
 
-Sprint 2.13 code-side closed for env reads and HostTool routing: 5 env reads retired in
-`Cluster.hs`, 1 `getEnvironment` retired in `ProcessMonitor.hs`, the Apple setup
-`getEnvironment` capture retired in `Engines/AppleSilicon.hs`,
+None. Sprints 2.1–2.13 are `Done`. Sprint 2.13 closed the env reads and HostTool routing:
+5 env reads retired in `Cluster.hs`, 1 `getEnvironment` retired in `ProcessMonitor.hs`, the
+Apple setup `getEnvironment` capture retired in `Engines/AppleSilicon.hs`,
 `engineCommandOverridesFromEnvironment` deleted, supporting unit-test fixture rewired, shared
 cluster command helpers resolve known tools through the staged host manifest, and
 `Cluster/PublishImages.hs` receives resolved `docker` + `skopeo` commands through
-`HarborPublishOptions`. The May 27, 2026 env-clean `linux-gpu` cluster validation was performed
-on the retired Linux/CUDA host and no longer counts as a current proof point. Apple host
-lifecycle validation and CUDA Linux cohort full-suite validation are both pending on the new
-Apple Silicon host. Sprints 2.1–2.12 had their code closure recorded; each one's prior
-real-cluster validation evidence was on the retired hardware, so those sprints now read as
-`Active` until the new-host validation batch reruns them.
+`HarborPublishOptions`. Apple cohort validation closed in Wave A, and CUDA Linux cohort
+validation closed in Wave C.
 
 ---
 

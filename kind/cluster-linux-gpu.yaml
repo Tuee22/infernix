@@ -28,7 +28,7 @@ nodes:
         listenAddress: "127.0.0.1"
         protocol: TCP
     extraMounts:
-      - hostPath: ./.build/kind/registry
+      - hostPath: ./.build/kind/linux-gpu/registry
         containerPath: /etc/containerd/certs.d
     kubeadmConfigPatches:
       - |
@@ -41,7 +41,7 @@ nodes:
     extraMounts:
       - hostPath: /dev/null
         containerPath: /var/run/nvidia-container-devices/all
-      - hostPath: ./.build/kind/registry
+      - hostPath: ./.build/kind/linux-gpu/registry
         containerPath: /etc/containerd/certs.d
     kubeadmConfigPatches:
       - |

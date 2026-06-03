@@ -1,6 +1,6 @@
 # Phase 1: Repository and Control-Plane Foundation
 
-**Status**: Active (Sprints 1.1–1.11 code-side closed; Apple cohort gate closed in [Wave A](cohort-validation-waves.md); CUDA Linux cohort gate pending [Wave C](cohort-validation-waves.md))
+**Status**: Done
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/engineering/host_tools_manifest.md](../documents/engineering/host_tools_manifest.md)
 
 > **Purpose**: Establish the canonical repository scaffold, the two-binary topology
@@ -10,11 +10,10 @@
 
 ## Phase Status
 
-Phase 1 closed Sprints 1.1–1.10 around the current repository scaffold, the two-binary topology,
-the staged substrate-file contract, the baked Linux launcher image, and the governed
-root-document posture implemented in this worktree. Phase 1 is now Active again because Phase 0
-Sprint 0.9 declared the no-env-var + absolute-path doctrine and Phase 1 owns the host-manifest
-materialization that closes that doctrine for the host tool-path surface. Sprint 1.11 is retiring
+Phase 1 closes Sprints 1.1–1.11 around the current repository scaffold, the two-binary topology,
+the staged substrate-file contract, the baked Linux launcher image, the governed
+root-document posture, and the host-manifest materialization implemented in this worktree.
+Sprint 1.11 retired
 `INFERNIX_BUILD_ROOT`, `INFERNIX_DATA_ROOT`, the `INFERNIX_COMPOSE_SUBSTRATE` /
 `INFERNIX_COMPOSE_DEMO_UI` runtime fallbacks, `INFERNIX_BOOTSTRAP_YES`, the
 `bootstrap::prepend_path` helper, and the host-side `.build` / `chart/charts` bind mounts. The
@@ -24,9 +23,9 @@ host-repo override. It introduces `dhall/InfernixHost.dhall` + the matching `Hos
 record. The Linux bootstrap entrypoints now use the `PATH=/usr/bin:/bin` + `BASH_SOURCE` +
 `/etc/passwd` + hardcoded absolute-path discovery convention, and the Linux launcher image bakes
 the Helm dependency archive cache at `/opt/infernix/chart/charts/` with
-`/workspace/chart/charts` linked to that image-local cache for Helm compatibility. The Apple
-bootstrap entrypoint remains queued for the next Apple cohort validation batch so contributors do
-not need to switch machines before the Linux-owned slice is complete.
+`/workspace/chart/charts` linked to that image-local cache for Helm compatibility. Apple cohort
+validation closed in Wave A, and the CUDA Linux cohort closed in Wave C with full `linux-cpu` and
+`linux-gpu` gates.
 
 ## Current Repo Assessment
 
@@ -451,10 +450,9 @@ None.
 
 ---
 
-## Sprint 1.11: Host Manifest Materialization [Active]
+## Sprint 1.11: Host Manifest Materialization [Done]
 
-**Status**: Active
-**Blocked by**: Phase 0 Sprint 0.9 (Configuration Doctrine declaration)
+**Status**: Done
 **Implementation**: `dhall/InfernixHost.dhall` (new), `src/Infernix/Substrate.hs` (extended), `src/Infernix/HostConfig.hs` (new), `src/Infernix/HostTools.hs` (new helper module), `src/Infernix/CLI.hs`, `src/Infernix/Config.hs`, `src/Infernix/DemoCLI.hs`, every `bootstrap/*.sh`, `compose.yaml`, `docker/linux-substrate.Dockerfile`
 **Docs to update**: `documents/architecture/configuration_doctrine.md`, `documents/engineering/host_tools_manifest.md`, `documents/development/local_dev.md`, `documents/engineering/portability.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 
@@ -510,8 +508,8 @@ shrinks to `./.data` plus the Docker socket only.
 - May 27, 2026 (retired hardware): `env -i /usr/bin/bash ./bootstrap/linux-cpu.sh doctor` and
   `env -i /usr/bin/bash ./bootstrap/linux-gpu.sh doctor` had both passed after the Linux
   stage-zero bootstrap cleanup. That proof point was produced on the retired Linux/CUDA host and
-  no longer counts as current evidence; the same commands need to be rerun on the new Apple
-  Silicon host (through Colima's amd64 VM).
+  no longer counts as current evidence; the same commands need to be rerun during Wave C on the
+  native Linux/CUDA host.
 - May 27, 2026 (retired hardware): `env -i /usr/bin/bash ./bootstrap/linux-gpu.sh status` had
   entered the single `compose.yaml` launcher with `LAUNCHER_IMAGE=infernix-linux-gpu:local` and
   reported the expected `linux-gpu` `cluster-absent` status without requiring
@@ -522,9 +520,9 @@ shrinks to `./.data` plus the Docker socket only.
   infernix-linux-gpu:local ...` inspection had verified `/workspace/chart/charts` links to
   `/opt/infernix/chart/charts` and the expected Helm archives are present without a bind mount.
   That proof point is no longer current.
-- **Apple cohort and CUDA Linux cohort validation pending on new host:** the doctor, status,
-  build, and launcher inspection runs must be rerun on the new Apple Silicon host (CUDA Linux
-  lane through Colima's amd64 VM) before this sprint can return to `Done`.
+- Apple cohort validation closed in Wave A. CUDA Linux cohort validation closed in Wave C:
+  `./bootstrap/linux-cpu.sh test` passed on 2026-06-02 and `./bootstrap/linux-gpu.sh test`
+  passed on 2026-06-03.
 - `docker inspect <launcher-container> --format '{{json .Mounts}}'` shows exactly two mounts:
   `./.data` and `/var/run/docker.sock`.
 
@@ -654,9 +652,7 @@ launcher path also passes the targeted grep for the removed compose
 selection and host-repo override env names across `bootstrap/`,
 `compose.yaml`, `docker/`, and `src/`.
 
-Linux residuals: code landed; the May 27, 2026 Linux validation was performed on the retired
-Linux/CUDA host and no longer counts as a current proof point. CUDA Linux cohort re-validation
-on the new Apple Silicon host (through Colima's amd64 VM) is pending.
+Linux residuals: code landed and was revalidated by Wave C on the native Linux/CUDA host.
 
 - **Move `chart/charts/` cache into the launcher image at
   `/opt/infernix/chart/charts/` — code landed; CUDA Linux cohort validation on retired hardware
@@ -685,25 +681,15 @@ on the new Apple Silicon host (through Colima's amd64 VM) is pending.
   the previously-retired `ENV INFERNIX_BUILD_ROOT=...` directive
   with the typed Dhall manifest the doctrine actually demands.
 
-Pending closure (queued for the Apple cohort validation batch, named so closure status stays
-honest):
-
-- **Apple bootstrap script (`bootstrap/apple-silicon.sh`).** Queued
-  for the Apple cohort closure batch per the hardware-cohort cadence.
-  The shared `bootstrap/common.sh` `--yes` flag wiring already covers
-  the Apple lane when that batch runs.
+No pending closure remains. The Apple lane closed in Wave A and the CUDA Linux lane closed in
+Wave C.
 
 ---
 
 ## Remaining Work
 
-Sprint 1.11 partially landed (foundational schema + decoder + helper +
-materializer + unit tests). The Linux residuals named above are landed; their May 27, 2026
-proof points were on the retired Linux/CUDA host and no longer count as current evidence. The
-Apple bootstrap script remains queued for the Apple cohort validation batch. Sprints 1.1–1.10
-closed in code; their prior real-cluster proof points were on the retired hardware. Both Apple
-cohort and CUDA Linux cohort full-suite validation are pending on the new Apple Silicon host
-before this phase can return to `Done`.
+None. Sprints 1.1–1.11 are `Done`; Apple cohort validation closed in Wave A and CUDA Linux
+cohort validation closed in Wave C.
 
 ## Documentation Requirements
 

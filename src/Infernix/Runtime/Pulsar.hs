@@ -11,11 +11,15 @@ module Infernix.Runtime.Pulsar
     publishDemoClientMessage,
     streamDemoContextConversation,
     streamDemoUserMetadata,
+    publishModelBootstrapRequest,
     publishRawTopicPayload,
     validateDemoClientMessageCatalog,
     publishInferenceRequest,
+    parseMessageIdToSequenceId,
     readNamespaceCompactionThreshold,
     readRawTopicPayloads,
+    rawTopicInferenceRequestPromptIds,
+    rawTopicInferenceResultCausalRefs,
     readPublishedInferenceResultMaybe,
     drainTopic,
     runDispatcherLoop,
@@ -47,15 +51,16 @@ import Data.Aeson
     (.:?),
     (.=),
   )
+import Data.Bits (shiftL, (.&.))
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Base64 qualified as Base64
 import Data.ByteString.Char8 qualified as ByteString8
 import Data.ByteString.Lazy qualified as Lazy
-import Data.IORef (IORef, atomicModifyIORef', newIORef)
+import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.List (intercalate, sort)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, listToMaybe)
 import Data.ProtoLens (Message, decodeMessage, defMessage, encodeMessage)
 import Data.ProtoLens.Field (field)
 import Data.Set (Set)
@@ -1046,6 +1051,39 @@ publishRawTopicPayload paths runtimeMode maybeClusterConfig topic producerName m
         contextValue
         payload
 
+publishModelBootstrapRequest ::
+  Paths ->
+  RuntimeMode ->
+  Maybe ClusterConfig ->
+  BootstrapModels.ModelBootstrapRequest ->
+  IO ()
+publishModelBootstrapRequest paths runtimeMode maybeClusterConfig request = do
+  maybeTransport <- discoverPulsarTransport paths runtimeMode maybeClusterConfig
+  case maybeTransport of
+    Nothing ->
+      ioError
+        ( userError
+            ( "model-bootstrap publish is unavailable for "
+                <> Text.unpack (runtimeModeId runtimeMode)
+                <> "; no Pulsar transport could be discovered"
+            )
+        )
+    Just transport -> do
+      let systemNamespace = ConversationTopic.systemTopicNamespace
+          requestTopic = ConversationTopic.modelBootstrapRequestTopicName systemNamespace
+          dedupKey = BootstrapModels.bootstrapRequestDedupKey request
+          options =
+            (defaultPublishOptions ("infernix-engine-model-bootstrap-" <> dedupKey))
+              { publishMessageKey = Just dedupKey,
+                publishSequenceId = Just (stableSequenceId dedupKey)
+              }
+      publishTopicPayload
+        transport
+        requestTopic
+        options
+        dedupKey
+        (Lazy.toStrict (encode request))
+
 readRawTopicPayloads ::
   Paths ->
   RuntimeMode ->
@@ -1990,8 +2028,13 @@ consumeTopicSession transport paths runtimeMode overrides daemonConfig requestTo
           -- the broker-side dedup gate ('reconcileSupportedNamespaces')
           -- accepts the resulting tuple. Phase 7 Sprint 7.14 wires the
           -- typed envelope read here.
-          let batchOptions =
-                (defaultPublishOptions ("infernix-coordinator-batch-" <> runtimeModeId runtimeMode))
+          let requestContextId = view ProtoInferenceFields.contextId decodedRequest
+              batchProducerScope =
+                if Text.null requestContextId
+                  then "infernix-coordinator-batch-" <> runtimeModeId runtimeMode
+                  else "infernix-coordinator-batch-" <> runtimeModeId runtimeMode <> "-" <> requestContextId
+              batchOptions =
+                (defaultPublishOptions batchProducerScope)
                   { publishSequenceId = inferenceRequestSequenceId decodedRequest
                   }
           publishTopicPayload
@@ -2020,8 +2063,13 @@ consumeTopicSession transport paths runtimeMode overrides daemonConfig requestTo
                 <> " status="
                 <> Text.unpack (status publishedResult)
             )
-          let resultOptions =
-                (defaultPublishOptions ("infernix-engine-result-" <> runtimeModeId runtimeMode))
+          let publishedResultContextId = resultContextId publishedResult
+              resultProducerScope =
+                if Text.null publishedResultContextId
+                  then "infernix-engine-result-" <> runtimeModeId runtimeMode
+                  else "infernix-engine-result-" <> runtimeModeId runtimeMode <> "-" <> publishedResultContextId
+              resultOptions =
+                (defaultPublishOptions resultProducerScope)
                   { publishSequenceId = inferenceRequestSequenceId decodedRequest
                   }
           publishTopicPayload
@@ -2072,17 +2120,55 @@ inferenceRequestSequenceId request =
 
 parseMessageIdToSequenceId :: Text.Text -> Maybe Integer
 parseMessageIdToSequenceId raw =
-  case Text.splitOn ":" raw of
-    (ledgerText : entryText : _) -> do
-      ledger <- parseInteger ledgerText
-      entry <- parseInteger entryText
-      pure (ledger * (2 ^ (32 :: Int)) + entry)
-    _ -> Nothing
+  parseColonMessageId raw <|> parseWebSocketMessageId raw
   where
+    parseColonMessageId value =
+      case Text.splitOn ":" value of
+        (ledgerText : entryText : _) -> do
+          ledger <- parseInteger ledgerText
+          entry <- parseInteger entryText
+          pure (ledger * (2 ^ (32 :: Int)) + entry)
+        _ -> Nothing
     parseInteger value =
       case reads (Text.unpack value) :: [(Integer, String)] of
         [(parsed, "")] -> Just parsed
         _ -> Nothing
+    parseWebSocketMessageId value = do
+      rawBytes <- either (const Nothing) Just (Base64.decode (TextEncoding.encodeUtf8 value))
+      fields <- parseVarintFields rawBytes
+      ledger <- listToMaybe [fieldValue | (1, fieldValue) <- fields]
+      entry <- listToMaybe [fieldValue | (2, fieldValue) <- fields]
+      pure (ledger * (2 ^ (32 :: Int)) + entry)
+
+parseVarintFields :: ByteString.ByteString -> Maybe [(Int, Integer)]
+parseVarintFields bytes
+  | ByteString.null bytes = Just []
+  | otherwise = do
+      (tag, afterTag) <- decodeUnsignedVarint bytes
+      let fieldNumber = fromIntegral (tag `div` 8)
+          wireType = tag `mod` 8
+      if fieldNumber <= (0 :: Int) || wireType /= 0
+        then Nothing
+        else do
+          (fieldValue, afterValue) <- decodeUnsignedVarint afterTag
+          remainingFields <- parseVarintFields afterValue
+          pure ((fieldNumber, fieldValue) : remainingFields)
+
+decodeUnsignedVarint :: ByteString.ByteString -> Maybe (Integer, ByteString.ByteString)
+decodeUnsignedVarint = go 0 0
+  where
+    go shift acc bytes =
+      case ByteString.uncons bytes of
+        Nothing -> Nothing
+        Just (byte, remaining) ->
+          let chunk = toInteger (byte .&. 0x7f)
+              nextAcc = acc + shiftL chunk shift
+           in if byte .&. 0x80 == 0
+                then Just (nextAcc, remaining)
+                else
+                  if shift >= (63 :: Int)
+                    then Nothing
+                    else go (shift + 7) nextAcc remaining
 
 publishTopicPayload :: PulsarTransport -> Text.Text -> PublishOptions -> Text.Text -> ByteString.ByteString -> IO ()
 publishTopicPayload transport topicValue options contextValue payload = do
@@ -2646,22 +2732,23 @@ handleDispatcherMessage transport runtimeMode requestTopic userIdValue contextId
               let messageId = Contracts.MessageId (envelopeMessageId envelope)
                   conversationMessage =
                     Contracts.ConversationMessage messageId conversationEvent
-              decision <- atomicModifyIORef' reducerStateRef $ \state ->
-                case stepReducer state conversationMessage of
-                  StepAdvanced advancedState _ ->
-                    (advancedState, Dispatch.buildDispatchDecision userIdValue advancedState)
-                  StepDropped unchanged ->
-                    (unchanged, Dispatch.DispatchNoOp)
-              case decision of
-                Dispatch.DispatchNoOp -> pure ()
-                Dispatch.DispatchPrompt inferenceEnvelope -> do
-                  maybeModelId <- ContextModelMap.lookupModelId contextModelMap contextIdValue
-                  publishDispatchedInferenceRequest
-                    transport
-                    runtimeMode
-                    requestTopic
-                    (fromMaybe Text.empty maybeModelId)
-                    inferenceEnvelope
+              currentState <- readIORef reducerStateRef
+              case stepReducer currentState conversationMessage of
+                StepDropped unchanged ->
+                  writeIORef reducerStateRef unchanged
+                StepAdvanced advancedState _patch ->
+                  case Dispatch.buildDispatchDecision userIdValue advancedState of
+                    Dispatch.DispatchNoOp ->
+                      writeIORef reducerStateRef advancedState
+                    Dispatch.DispatchPrompt inferenceEnvelope -> do
+                      modelIdValue <- resolveContextModelIdForDispatch contextModelMap contextIdValue
+                      publishDispatchedInferenceRequest
+                        transport
+                        runtimeMode
+                        requestTopic
+                        modelIdValue
+                        inferenceEnvelope
+                      writeIORef reducerStateRef advancedState
       )
   case handled of
     Right _ -> sendAck connection (envelopeMessageId envelope)
@@ -2672,6 +2759,28 @@ handleDispatcherMessage transport runtimeMode requestTopic userIdValue contextId
         ( "dispatcher message handling failed:\n"
             <> displayException err
         )
+
+resolveContextModelIdForDispatch :: ContextModelMap -> Contracts.ContextId -> IO Text.Text
+resolveContextModelIdForDispatch contextModelMap contextIdValue@(Contracts.ContextId contextIdText) =
+  go (120 :: Int)
+  where
+    go remainingAttempts
+      | remainingAttempts <= 0 = do
+          hPutStrLn
+            stderr
+            ( "dispatcher model id unresolved for context "
+                <> Text.unpack contextIdText
+                <> " after waiting for contexts metadata; publishing typed empty-model rejection"
+            )
+          pure Text.empty
+      | otherwise = do
+          maybeModelId <- ContextModelMap.lookupModelId contextModelMap contextIdValue
+          case maybeModelId of
+            Just modelIdValue
+              | not (Text.null modelIdValue) -> pure modelIdValue
+            _ -> do
+              threadDelay 500000
+              go (remainingAttempts - 1)
 
 conversationPayloadBytes :: PulsarEnvelope -> IO ByteString.ByteString
 conversationPayloadBytes envelope =
@@ -2891,9 +3000,11 @@ publishBootstrapReadyEvent transport systemNamespace request = do
             BootstrapModels.readyEventReadyAtIso8601 =
               Text.pack (formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%SZ" now)
           }
+      dedupKey = BootstrapModels.readyEventDedupKey event
       options =
-        (defaultPublishOptions ("infernix-model-bootstrap-" <> modelId))
-          { publishMessageKey = Just modelId
+        (defaultPublishOptions ("infernix-model-bootstrap-" <> dedupKey))
+          { publishMessageKey = Just modelId,
+            publishSequenceId = Just (stableSequenceId dedupKey)
           }
   publishTopicPayload
     transport
@@ -3405,6 +3516,20 @@ protoRequestToDomain protoRequest =
     { requestModelId = view ProtoInferenceFields.requestModelId protoRequest,
       inputText = view ProtoInferenceFields.inputText protoRequest
     }
+
+rawTopicInferenceRequestPromptIds :: [RawTopicMessage] -> [Text.Text]
+rawTopicInferenceRequestPromptIds messages =
+  [ view (field @"userPromptMessageId") request
+  | rawMessage <- messages,
+    Right request <- [decodeMessage (rawTopicMessagePayload rawMessage) :: Either String ProtoInference.InferenceRequest]
+  ]
+
+rawTopicInferenceResultCausalRefs :: [RawTopicMessage] -> [Text.Text]
+rawTopicInferenceResultCausalRefs messages =
+  [ view (field @"causalRef") resultValue
+  | rawMessage <- messages,
+    Right resultValue <- [decodeMessage (rawTopicMessagePayload rawMessage) :: Either String ProtoInference.InferenceResult]
+  ]
 
 domainResultToProto :: InferenceResult -> ProtoInference.InferenceResult
 domainResultToProto resultValue =

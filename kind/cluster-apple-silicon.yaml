@@ -28,7 +28,7 @@ nodes:
         listenAddress: "127.0.0.1"
         protocol: TCP
     extraMounts:
-      - hostPath: ./.build/kind/registry
+      - hostPath: ./.build/kind/apple-silicon/registry
         containerPath: /etc/containerd/certs.d
     kubeadmConfigPatches:
       - |
@@ -39,7 +39,7 @@ nodes:
   - role: worker
     image: kindest/node:v1.34.0
     extraMounts:
-      - hostPath: ./.build/kind/registry
+      - hostPath: ./.build/kind/apple-silicon/registry
         containerPath: /etc/containerd/certs.d
     kubeadmConfigPatches:
       - |

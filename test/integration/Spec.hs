@@ -4,16 +4,16 @@ module Main (main) where
 
 import Control.Concurrent (threadDelay)
 import Control.Exception (SomeException, bracket, displayException, finally, try)
-import Control.Monad (forM_, when)
+import Control.Monad (forM, forM_, when)
 import Data.Aeson qualified as Aeson
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Char8 qualified as ByteString8
 import Data.ByteString.Lazy qualified as LazyByteString
 import Data.ByteString.Lazy.Char8 qualified as LazyByteStringChar8
 import Data.Char (isAsciiUpper)
-import Data.List (find, isInfixOf, isPrefixOf)
+import Data.List (find, isInfixOf, isPrefixOf, sort)
 import Data.Map.Strict qualified as Map
-import Data.Maybe (isJust, isNothing, maybeToList)
+import Data.Maybe (isJust, isNothing, mapMaybe, maybeToList)
 import Data.Set qualified as Set
 import Data.Text qualified as Text
 import Data.Time.Clock.POSIX (getPOSIXTime)
@@ -35,7 +35,11 @@ import Infernix.Runtime.Pulsar
     compactTopicAndWait,
     publishDemoClientMessage,
     publishInferenceRequest,
+    publishModelBootstrapRequest,
     publishRawTopicPayload,
+    rawTopicInferenceRequestPromptIds,
+    rawTopicInferenceResultCausalRefs,
+    rawTopicMessageId,
     rawTopicMessageKey,
     rawTopicMessagePayload,
     readNamespaceCompactionThreshold,
@@ -231,6 +235,18 @@ exerciseRuntimeMode paths runtimeMode = do
         validateAppleEngineLockEnforcement paths
 
       when (runtimeMode == LinuxCpu) $ do
+        reportStep "frontend pod replacement preserves durable state"
+        validateFrontendPodReplacementPreservesDurableState paths state runtimeMode representativeModelId
+        reportStep "coordinator failover preserves durable prompt dispatch"
+        validateCoordinatorFailoverDurablePrompt paths state runtimeMode representativeModelId
+        reportStep "engine pod replacement preserves durable prompt result"
+        validateEnginePodReplacementDurablePrompt paths state runtimeMode representativeModelId
+        reportStep "engine node drain preserves durable prompt result"
+        validateEngineNodeDrainDurablePrompt paths state runtimeMode representativeModelId
+        reportStep "model bootstrap failover and deduplication"
+        validateModelBootstrapDeduplication paths state runtimeMode
+        reportStep "multi-user durable prompt throughput"
+        validateMultiUserDurablePromptThroughput paths runtimeMode representativeModelId
         reportStep "harbor recovery"
         validateHarborRecovery state
         reportStep "minio durability"
@@ -483,6 +499,499 @@ integrationRunToken = do
   now <- getPOSIXTime
   pure (show (floor (now * 1000000) :: Integer))
 
+data DurablePromptContext = DurablePromptContext
+  { durablePromptUserId :: Contracts.UserId,
+    durablePromptContextId :: Contracts.ContextId,
+    durablePromptConversationTopic :: Text.Text,
+    durablePromptToken :: Text.Text
+  }
+  deriving (Eq, Show)
+
+data DurablePromptRef = DurablePromptRef
+  { durablePromptRefContext :: DurablePromptContext,
+    durablePromptRefMessageId :: Contracts.MessageId,
+    durablePromptRefStartedAt :: Double
+  }
+  deriving (Eq, Show)
+
+data PromptPipelineCounts = PromptPipelineCounts
+  { promptPipelineRequestCount :: Int,
+    promptPipelineBatchCount :: Int,
+    promptPipelineResultCount :: Int,
+    promptPipelineConversationResultCount :: Int
+  }
+  deriving (Eq, Show)
+
+createDurablePromptContext :: Paths -> RuntimeMode -> Text.Text -> Text.Text -> IO DurablePromptContext
+createDurablePromptContext paths runtimeMode modelIdText label = do
+  runToken <- Text.pack <$> integrationRunToken
+  let namespace = ConversationTopic.defaultDemoTopicNamespace
+      runtimeText = runtimeModeId runtimeMode
+      userIdValue = Contracts.UserId ("chaos-user-" <> label <> "-" <> runtimeText <> "-" <> runToken)
+      contextIdValue = Contracts.ContextId ("chaos-context-" <> label <> "-" <> runToken)
+      conversationTopic = ConversationTopic.conversationTopicName namespace userIdValue contextIdValue
+      contextsTopic = ConversationTopic.contextsMetadataTopicName namespace userIdValue
+      warmupPrompt = Contracts.MessageId ("warmup-" <> label <> "-" <> runToken)
+  publishDemoClientMessage
+    paths
+    runtimeMode
+    Nothing
+    userIdValue
+    (Contracts.ClientCreateContext contextIdValue modelIdText ("Chaos " <> label))
+  _ <- waitForRawTopicMessages paths runtimeMode contextsTopic 1
+  publishDemoClientMessage
+    paths
+    runtimeMode
+    Nothing
+    userIdValue
+    (Contracts.ClientCancelPrompt contextIdValue warmupPrompt)
+  _ <- waitForRawTopicMessages paths runtimeMode conversationTopic 1
+  pure
+    DurablePromptContext
+      { durablePromptUserId = userIdValue,
+        durablePromptContextId = contextIdValue,
+        durablePromptConversationTopic = conversationTopic,
+        durablePromptToken = runToken
+      }
+
+waitForDispatcherDiscovery :: IO ()
+waitForDispatcherDiscovery =
+  threadDelay 35000000
+
+submitDurablePrompt :: Paths -> RuntimeMode -> DurablePromptContext -> Text.Text -> IO DurablePromptRef
+submitDurablePrompt paths runtimeMode context label = do
+  startedAt <- realToFrac <$> getPOSIXTime
+  let promptTextValue =
+        "durable chaos prompt "
+          <> label
+          <> " "
+          <> durablePromptToken context
+      promptPayload =
+        Contracts.UserPromptPayload
+          { Contracts.promptText = promptTextValue,
+            Contracts.promptClientIdempotencyKey =
+              Contracts.ClientIdempotencyKey
+                ("prompt-idem-" <> label <> "-" <> durablePromptToken context),
+            Contracts.promptUserUploads = []
+          }
+  publishDemoClientMessage
+    paths
+    runtimeMode
+    Nothing
+    (durablePromptUserId context)
+    (Contracts.ClientSubmitPrompt (durablePromptContextId context) promptPayload)
+  promptMessageId <-
+    waitForConversationPromptMessageId
+      paths
+      runtimeMode
+      (durablePromptConversationTopic context)
+      promptTextValue
+  pure
+    DurablePromptRef
+      { durablePromptRefContext = context,
+        durablePromptRefMessageId = promptMessageId,
+        durablePromptRefStartedAt = startedAt
+      }
+
+waitForConversationPromptMessageId :: Paths -> RuntimeMode -> Text.Text -> Text.Text -> IO Contracts.MessageId
+waitForConversationPromptMessageId paths runtimeMode conversationTopic promptTextValue = go (120 :: Int)
+  where
+    go remainingAttempts
+      | remainingAttempts <= 0 =
+          fail ("timed out waiting for conversation prompt event on " <> Text.unpack conversationTopic)
+      | otherwise = do
+          messages <- readRawTopicPayloads paths runtimeMode Nothing conversationTopic 128
+          case conversationPromptMessageIds promptTextValue messages of
+            promptId : _ -> pure promptId
+            [] -> do
+              threadDelay 500000
+              go (remainingAttempts - 1)
+
+conversationPromptMessageIds :: Text.Text -> [RawTopicMessage] -> [Contracts.MessageId]
+conversationPromptMessageIds promptTextValue messages =
+  [ Contracts.MessageId (rawTopicMessageId rawMessage)
+  | rawMessage <- messages,
+    Right (Contracts.ConversationUserPromptEvent payload) <- [Aeson.eitherDecodeStrict' (rawTopicMessagePayload rawMessage)],
+    Contracts.promptText payload == promptTextValue
+  ]
+
+waitForConversationResultPayloadForPrompt :: Paths -> RuntimeMode -> Text.Text -> Contracts.MessageId -> IO Contracts.ConversationInferenceResultPayload
+waitForConversationResultPayloadForPrompt paths runtimeMode conversationTopic promptMessageId = go (180 :: Int)
+  where
+    go remainingAttempts
+      | remainingAttempts <= 0 =
+          fail
+            ( "timed out waiting for durable-context inference result for "
+                <> Text.unpack (Contracts.unMessageId promptMessageId)
+                <> " on "
+                <> Text.unpack conversationTopic
+            )
+      | otherwise = do
+          messages <- readRawTopicPayloads paths runtimeMode Nothing conversationTopic 256
+          case conversationResultPayloadsForPrompt promptMessageId messages of
+            resultPayload : _ -> pure resultPayload
+            [] -> do
+              threadDelay 1000000
+              go (remainingAttempts - 1)
+
+conversationResultPayloadsForPrompt :: Contracts.MessageId -> [RawTopicMessage] -> [Contracts.ConversationInferenceResultPayload]
+conversationResultPayloadsForPrompt promptMessageId messages =
+  [ resultPayload
+  | rawMessage <- messages,
+    Right (Contracts.ConversationInferenceResultEvent resultPayload) <- [Aeson.eitherDecodeStrict' (rawTopicMessagePayload rawMessage)],
+    Contracts.inferenceResultUserPromptMessageId resultPayload == promptMessageId
+  ]
+
+waitForPromptPipelineCounts :: Paths -> RuntimeMode -> DurablePromptRef -> IO PromptPipelineCounts
+waitForPromptPipelineCounts paths runtimeMode promptRef = go (120 :: Int)
+  where
+    go remainingAttempts
+      | remainingAttempts <= 0 =
+          fail ("timed out waiting for prompt pipeline counts for " <> Text.unpack promptIdText)
+      | otherwise = do
+          counts <- readPromptPipelineCounts paths runtimeMode promptRef
+          if promptPipelineComplete counts
+            then do
+              threadDelay 2000000
+              readPromptPipelineCounts paths runtimeMode promptRef
+            else do
+              threadDelay 1000000
+              go (remainingAttempts - 1)
+    promptIdText = Contracts.unMessageId (durablePromptRefMessageId promptRef)
+    promptPipelineComplete counts =
+      promptPipelineRequestCount counts >= 1
+        && maybe True (const (promptPipelineBatchCount counts >= 1)) (hostBatchTopicForMode runtimeMode)
+        && promptPipelineResultCount counts >= 1
+        && promptPipelineConversationResultCount counts >= 1
+
+readPromptPipelineCounts :: Paths -> RuntimeMode -> DurablePromptRef -> IO PromptPipelineCounts
+readPromptPipelineCounts paths runtimeMode promptRef = do
+  requestTopic <-
+    case requestTopicsForMode runtimeMode of
+      topic : _ -> pure topic
+      [] -> fail ("no request topic configured for " <> showRuntimeMode runtimeMode)
+  let promptIdText = Contracts.unMessageId (durablePromptRefMessageId promptRef)
+      resultTopic = resultTopicForMode runtimeMode
+      conversationTopic = durablePromptConversationTopic (durablePromptRefContext promptRef)
+  requestMessages <- readRawTopicPayloads paths runtimeMode Nothing requestTopic 1024
+  batchMessages <-
+    case hostBatchTopicForMode runtimeMode of
+      Nothing -> pure []
+      Just batchTopic -> readRawTopicPayloads paths runtimeMode Nothing batchTopic 1024
+  resultMessages <- readRawTopicPayloads paths runtimeMode Nothing resultTopic 1024
+  conversationMessages <- readRawTopicPayloads paths runtimeMode Nothing conversationTopic 256
+  pure
+    PromptPipelineCounts
+      { promptPipelineRequestCount =
+          length
+            [ ()
+            | requestPromptId <- rawTopicInferenceRequestPromptIds requestMessages,
+              requestPromptId == promptIdText
+            ],
+        promptPipelineBatchCount =
+          length
+            [ ()
+            | requestPromptId <- rawTopicInferenceRequestPromptIds batchMessages,
+              requestPromptId == promptIdText
+            ],
+        promptPipelineResultCount =
+          length
+            [ ()
+            | resultCausalRef <- rawTopicInferenceResultCausalRefs resultMessages,
+              resultCausalRef == promptIdText
+            ],
+        promptPipelineConversationResultCount =
+          length (conversationResultPayloadsForPrompt (durablePromptRefMessageId promptRef) conversationMessages)
+      }
+
+assertPromptPipelineExactlyOnce :: Paths -> RuntimeMode -> DurablePromptRef -> IO ()
+assertPromptPipelineExactlyOnce paths runtimeMode promptRef = do
+  counts <- waitForPromptPipelineCounts paths runtimeMode promptRef
+  assert
+    (promptPipelineRequestCount counts == 1)
+    ("exactly one inference request is published for " <> Text.unpack promptIdText <> ": " <> show counts)
+  case hostBatchTopicForMode runtimeMode of
+    Nothing -> pure ()
+    Just _ ->
+      assert
+        (promptPipelineBatchCount counts == 1)
+        ("exactly one inference batch is published for " <> Text.unpack promptIdText <> ": " <> show counts)
+  assert
+    (promptPipelineResultCount counts == 1)
+    ("exactly one inference result is published for " <> Text.unpack promptIdText <> ": " <> show counts)
+  assert
+    (promptPipelineConversationResultCount counts == 1)
+    ("exactly one conversation result is written for " <> Text.unpack promptIdText <> ": " <> show counts)
+  where
+    promptIdText = Contracts.unMessageId (durablePromptRefMessageId promptRef)
+
+assertCompletedResultPayload :: Contracts.ConversationInferenceResultPayload -> String -> IO ()
+assertCompletedResultPayload resultPayload message =
+  assert
+    (Contracts.inferenceResultStatus resultPayload == "completed")
+    (message <> ": " <> show resultPayload)
+
+validateFrontendPodReplacementPreservesDurableState :: Paths -> ClusterState -> RuntimeMode -> String -> IO ()
+validateFrontendPodReplacementPreservesDurableState paths state runtimeMode representativeModelId = do
+  waitForDeploymentReadyReplicasAtLeast state "infernix-demo" 2
+  context <- createDurablePromptContext paths runtimeMode (Text.pack representativeModelId) "frontend"
+  let draftsTopic = ConversationTopic.draftsMetadataTopicName ConversationTopic.defaultDemoTopicNamespace (durablePromptUserId context)
+      draftText = "draft survives frontend pod replacement " <> durablePromptToken context
+      draftEvent = Contracts.DraftUpdated (durablePromptContextId context) draftText
+  publishDemoClientMessage
+    paths
+    runtimeMode
+    Nothing
+    (durablePromptUserId context)
+    (Contracts.ClientUpdateDraft (durablePromptContextId context) draftText)
+  draftMessages <- waitForRawTopicMessages paths runtimeMode draftsTopic 1
+  assertTopicHasDecoded draftMessages draftEvent "draft event is durable before frontend replacement"
+  oldPod <- requirePodByPrefix state "platform" "infernix-demo-"
+  runKubectl state ["-n", "platform", "delete", "pod", oldPod]
+  waitForRollout state "deployment/infernix-demo"
+  _ <- waitForPodByPrefix state "platform" "infernix-demo-" (Just oldPod)
+  let baseUrl = routeBaseUrl paths state
+  _ <- httpGet (baseUrl <> "/api/demo-config")
+  durableDraftMessages <- waitForRawTopicMessages paths runtimeMode draftsTopic 1
+  assertTopicHasDecoded durableDraftMessages draftEvent "draft event remains readable after frontend replacement"
+  waitForDispatcherDiscovery
+  promptRef <- submitDurablePrompt paths runtimeMode context "frontend-post-replacement"
+  resultPayload <-
+    waitForConversationResultPayloadForPrompt
+      paths
+      runtimeMode
+      (durablePromptConversationTopic context)
+      (durablePromptRefMessageId promptRef)
+  assertCompletedResultPayload resultPayload "durable prompt still completes after frontend pod replacement"
+  assertPromptPipelineExactlyOnce paths runtimeMode promptRef
+
+validateCoordinatorFailoverDurablePrompt :: Paths -> ClusterState -> RuntimeMode -> String -> IO ()
+validateCoordinatorFailoverDurablePrompt paths state runtimeMode representativeModelId = do
+  waitForDeploymentReadyReplicasAtLeast state "infernix-coordinator" 2
+  context <- createDurablePromptContext paths runtimeMode (Text.pack representativeModelId) "coordinator"
+  waitForDispatcherDiscovery
+  promptRef <- submitDurablePrompt paths runtimeMode context "coordinator-failover"
+  oldPod <- requirePodByPrefix state "platform" "infernix-coordinator-"
+  runKubectl state ["-n", "platform", "delete", "pod", oldPod]
+  waitForRollout state "deployment/infernix-coordinator"
+  _ <- waitForPodByPrefix state "platform" "infernix-coordinator-" (Just oldPod)
+  resultPayload <-
+    waitForConversationResultPayloadForPrompt
+      paths
+      runtimeMode
+      (durablePromptConversationTopic context)
+      (durablePromptRefMessageId promptRef)
+  assertCompletedResultPayload resultPayload "durable prompt completes through coordinator pod replacement"
+  assertPromptPipelineExactlyOnce paths runtimeMode promptRef
+
+validateEnginePodReplacementDurablePrompt :: Paths -> ClusterState -> RuntimeMode -> String -> IO ()
+validateEnginePodReplacementDurablePrompt paths state runtimeMode representativeModelId = do
+  waitForDeploymentReadyReplicasAtLeast state "infernix-engine" 2
+  context <- createDurablePromptContext paths runtimeMode (Text.pack representativeModelId) "engine"
+  waitForDispatcherDiscovery
+  promptRef <- submitDurablePrompt paths runtimeMode context "engine-replacement"
+  oldPod <- requirePodByPrefix state "platform" "infernix-engine-"
+  runKubectl state ["-n", "platform", "delete", "pod", oldPod]
+  waitForRollout state "deployment/infernix-engine"
+  _ <- waitForPodByPrefix state "platform" "infernix-engine-" (Just oldPod)
+  resultPayload <-
+    waitForConversationResultPayloadForPrompt
+      paths
+      runtimeMode
+      (durablePromptConversationTopic context)
+      (durablePromptRefMessageId promptRef)
+  assertCompletedResultPayload resultPayload "durable prompt completes through engine pod replacement"
+  assertPromptPipelineExactlyOnce paths runtimeMode promptRef
+
+validateEngineNodeDrainDurablePrompt :: Paths -> ClusterState -> RuntimeMode -> String -> IO ()
+validateEngineNodeDrainDurablePrompt paths state runtimeMode representativeModelId = do
+  waitForDeploymentReadyReplicasAtLeast state "infernix-engine" 2
+  (_, nodeName) <- requireReadyEnginePodNode state
+  let restore =
+        runKubectl state ["uncordon", nodeName]
+          >> waitForDeploymentReadyReplicasAtLeast state "infernix-engine" 2
+          >> waitForDeploymentReadyReplicasAtLeast state "infernix-coordinator" 2
+          >> waitForDeploymentReadyReplicasAtLeast state "infernix-demo" 2
+  ( do
+      runKubectl
+        state
+        [ "drain",
+          nodeName,
+          "--ignore-daemonsets",
+          "--delete-emptydir-data",
+          "--force",
+          "--timeout=180s"
+        ]
+      waitForDeploymentReadyReplicasAtLeast state "infernix-engine" 1
+      waitForDeploymentReadyReplicasAtLeast state "infernix-coordinator" 1
+      context <- createDurablePromptContext paths runtimeMode (Text.pack representativeModelId) "engine-drain"
+      waitForDispatcherDiscovery
+      promptRef <- submitDurablePrompt paths runtimeMode context "engine-node-drain"
+      resultPayload <-
+        waitForConversationResultPayloadForPrompt
+          paths
+          runtimeMode
+          (durablePromptConversationTopic context)
+          (durablePromptRefMessageId promptRef)
+      assertCompletedResultPayload resultPayload "durable prompt completes while an engine node is drained"
+      assertPromptPipelineExactlyOnce paths runtimeMode promptRef
+    )
+    `finally` restore
+
+validateModelBootstrapDeduplication :: Paths -> ClusterState -> RuntimeMode -> IO ()
+validateModelBootstrapDeduplication paths state runtimeMode = do
+  waitForDeploymentReadyReplicasAtLeast state "infernix-coordinator" 2
+  runToken <- Text.pack <$> integrationRunToken
+  let modelIdText = "integration-bootstrap-chaos-" <> runToken
+      request =
+        BootstrapModels.ModelBootstrapRequest
+          { BootstrapModels.bootstrapRequestModelId = modelIdText,
+            BootstrapModels.bootstrapRequestDownloadUrl = "http://infernix-demo.platform.svc.cluster.local/",
+            BootstrapModels.bootstrapRequestRequestedAtIso8601 = "2026-06-02T00:00:00Z"
+          }
+      readyTopic =
+        ConversationTopic.modelBootstrapReadyTopicName ConversationTopic.systemTopicNamespace modelIdText
+  publishModelBootstrapRequest paths runtimeMode Nothing request
+  oldPod <- requirePodByPrefix state "platform" "infernix-coordinator-"
+  runKubectl state ["-n", "platform", "delete", "pod", oldPod]
+  publishModelBootstrapRequest paths runtimeMode Nothing request
+  publishModelBootstrapRequest paths runtimeMode Nothing request
+  waitForRollout state "deployment/infernix-coordinator"
+  _ <- waitForPodByPrefix state "platform" "infernix-coordinator-" (Just oldPod)
+  readyMessages <- waitForBootstrapReadyMessages paths runtimeMode readyTopic modelIdText
+  assert
+    (length readyMessages == 1)
+    ("model-bootstrap producer dedup yields exactly one ready event, saw " <> show (length readyMessages))
+
+waitForBootstrapReadyMessages :: Paths -> RuntimeMode -> Text.Text -> Text.Text -> IO [BootstrapModels.ModelBootstrapReadyEvent]
+waitForBootstrapReadyMessages paths runtimeMode readyTopic modelIdText = go (120 :: Int)
+  where
+    go remainingAttempts
+      | remainingAttempts <= 0 =
+          fail ("timed out waiting for model-bootstrap ready event on " <> Text.unpack readyTopic)
+      | otherwise = do
+          messages <- readRawTopicPayloads paths runtimeMode Nothing readyTopic 16
+          let readyEvents =
+                [ readyEvent
+                | rawMessage <- messages,
+                  Right readyEvent <- [Aeson.eitherDecodeStrict' (rawTopicMessagePayload rawMessage)],
+                  BootstrapModels.readyEventModelId readyEvent == modelIdText
+                ]
+          if null readyEvents
+            then do
+              threadDelay 1000000
+              go (remainingAttempts - 1)
+            else do
+              threadDelay 2000000
+              settledMessages <- readRawTopicPayloads paths runtimeMode Nothing readyTopic 16
+              pure
+                [ readyEvent
+                | rawMessage <- settledMessages,
+                  Right readyEvent <- [Aeson.eitherDecodeStrict' (rawTopicMessagePayload rawMessage)],
+                  BootstrapModels.readyEventModelId readyEvent == modelIdText
+                ]
+
+data ThroughputMatrix = ThroughputMatrix
+  { throughputUserCount :: Int,
+    throughputContextsPerUser :: Int,
+    throughputPromptsPerContext :: Int
+  }
+
+defaultThroughputMatrix :: ThroughputMatrix
+defaultThroughputMatrix =
+  ThroughputMatrix
+    { throughputUserCount = 3,
+      throughputContextsPerUser = 2,
+      throughputPromptsPerContext = 2
+    }
+
+validateMultiUserDurablePromptThroughput :: Paths -> RuntimeMode -> String -> IO ()
+validateMultiUserDurablePromptThroughput =
+  validateMultiUserDurablePromptThroughputWith defaultThroughputMatrix
+
+validateMultiUserDurablePromptThroughputWith :: ThroughputMatrix -> Paths -> RuntimeMode -> String -> IO ()
+validateMultiUserDurablePromptThroughputWith matrix paths runtimeMode representativeModelId = do
+  let userCount = throughputUserCount matrix
+      contextsPerUser = throughputContextsPerUser matrix
+      promptsPerContext = throughputPromptsPerContext matrix
+      contextLabels =
+        [ "throughput-u" <> Text.pack (show userIndex) <> "-c" <> Text.pack (show contextIndex)
+        | userIndex <- [1 .. userCount],
+          contextIndex <- [1 .. contextsPerUser]
+        ]
+  contexts <-
+    forM contextLabels $
+      createDurablePromptContext paths runtimeMode (Text.pack representativeModelId)
+  waitForDispatcherDiscovery
+  promptRefs <-
+    fmap concat $
+      forM contexts $ \context ->
+        forM [1 .. promptsPerContext] $ \promptIndex ->
+          submitDurablePrompt
+            paths
+            runtimeMode
+            context
+            ("throughput-p" <> Text.pack (show promptIndex))
+  latencies <-
+    forM promptRefs $ \promptRef -> do
+      resultPayload <-
+        waitForConversationResultPayloadForPrompt
+          paths
+          runtimeMode
+          (durablePromptConversationTopic (durablePromptRefContext promptRef))
+          (durablePromptRefMessageId promptRef)
+      assertCompletedResultPayload resultPayload "throughput prompt writes a completed result"
+      finishedAt <- realToFrac <$> getPOSIXTime
+      pure (finishedAt - durablePromptRefStartedAt promptRef)
+  forM_ contexts $ \context ->
+    assertContextPromptAndResultCounts paths runtimeMode context promptsPerContext
+  let sortedLatencies = sort latencies
+      p95Latency = percentile95 sortedLatencies
+      totalPrompts = length promptRefs
+  putStrLn
+    ( "throughput-metrics users="
+        <> show userCount
+        <> " contextsPerUser="
+        <> show contextsPerUser
+        <> " promptsPerContext="
+        <> show promptsPerContext
+        <> " totalPrompts="
+        <> show totalPrompts
+        <> " p95Seconds="
+        <> show p95Latency
+    )
+
+assertContextPromptAndResultCounts :: Paths -> RuntimeMode -> DurablePromptContext -> Int -> IO ()
+assertContextPromptAndResultCounts paths runtimeMode context expectedPrompts = do
+  messages <- readRawTopicPayloads paths runtimeMode Nothing (durablePromptConversationTopic context) 256
+  let promptIds =
+        [ rawTopicMessageId rawMessage
+        | rawMessage <- messages,
+          Right (Contracts.ConversationUserPromptEvent _) <- [Aeson.eitherDecodeStrict' (rawTopicMessagePayload rawMessage)]
+        ]
+      resultPromptIds =
+        [ Contracts.unMessageId (Contracts.inferenceResultUserPromptMessageId resultPayload)
+        | resultPayload <- conversationResultPayloads messages
+        ]
+  assert
+    (length promptIds == expectedPrompts)
+    ("throughput context has exactly " <> show expectedPrompts <> " prompt events")
+  assert
+    (Set.fromList resultPromptIds == Set.fromList promptIds)
+    "throughput context has one result for every prompt and no extra result"
+  assert
+    (length resultPromptIds == expectedPrompts)
+    ("throughput context has exactly " <> show expectedPrompts <> " result events")
+
+percentile95 :: [Double] -> Double
+percentile95 [] = 0
+percentile95 values =
+  let position :: Double
+      position = 0.95 * fromIntegral (length values)
+      index :: Int
+      index = max 0 (ceiling position - 1)
+   in values !! min index (length values - 1)
+
 validateCompactedTopicBrokerBehavior :: Paths -> RuntimeMode -> Text.Text -> Text.Text -> IO ()
 validateCompactedTopicBrokerBehavior paths runtimeMode modelIdText tokenText = do
   threshold <- readNamespaceCompactionThreshold paths runtimeMode Nothing "infernix/demo"
@@ -564,46 +1073,23 @@ validateProducerDeduplicationBehavior paths runtimeMode tokenText = do
 
 validateDurableContextPromptRoundTrip :: Paths -> RuntimeMode -> Text.Text -> Text.Text -> IO ()
 validateDurableContextPromptRoundTrip paths runtimeMode modelIdText tokenText = do
-  let namespace = ConversationTopic.defaultDemoTopicNamespace
-      runtimeText = runtimeModeId runtimeMode
-      userIdValue = Contracts.UserId ("integration-prompt-user-" <> runtimeText <> "-" <> tokenText)
-      contextIdValue = Contracts.ContextId ("prompt-context-" <> tokenText)
-      conversationTopic = ConversationTopic.conversationTopicName namespace userIdValue contextIdValue
-      promptPayload =
-        Contracts.UserPromptPayload
-          { Contracts.promptText = "durable context prompt roundtrip",
-            Contracts.promptClientIdempotencyKey = Contracts.ClientIdempotencyKey ("prompt-idem-" <> tokenText),
-            Contracts.promptUserUploads = []
-          }
-  publishDemoClientMessage paths runtimeMode Nothing userIdValue (Contracts.ClientCreateContext contextIdValue modelIdText "Prompt Roundtrip")
-  publishDemoClientMessage paths runtimeMode Nothing userIdValue (Contracts.ClientCancelPrompt contextIdValue (Contracts.MessageId ("prompt-roundtrip-warmup-" <> tokenText)))
-  _ <- waitForRawTopicMessages paths runtimeMode conversationTopic 1
-  -- The coordinator discovers conversation topics every 30 seconds. The warmup cancel creates the
-  -- topic without dispatching inference, giving the dispatcher and context-model consumer one poll
-  -- cycle to attach before the real prompt is published.
-  threadDelay 35000000
-  publishDemoClientMessage paths runtimeMode Nothing userIdValue (Contracts.ClientSubmitPrompt contextIdValue promptPayload)
-  resultPayload <- waitForConversationResultPayload paths runtimeMode conversationTopic
+  context <- createDurablePromptContext paths runtimeMode modelIdText ("roundtrip-" <> tokenText)
+  waitForDispatcherDiscovery
+  promptRef <- submitDurablePrompt paths runtimeMode context "roundtrip"
+  resultPayload <-
+    waitForConversationResultPayloadForPrompt
+      paths
+      runtimeMode
+      (durablePromptConversationTopic context)
+      (durablePromptRefMessageId promptRef)
   assert
     (Contracts.inferenceResultStatus resultPayload == "completed")
-    "durable context prompt roundtrip writes a completed inference result to the conversation log"
+    ( "durable context prompt roundtrip writes a completed inference result to the conversation log: "
+        <> show resultPayload
+    )
   assert
     (isJust (Contracts.inferenceResultInlineOutput resultPayload))
     "durable context prompt roundtrip writes inline output to the conversation log"
-
-waitForConversationResultPayload :: Paths -> RuntimeMode -> Text.Text -> IO Contracts.ConversationInferenceResultPayload
-waitForConversationResultPayload paths runtimeMode conversationTopic = go (120 :: Int)
-  where
-    go remainingAttempts
-      | remainingAttempts <= 0 =
-          fail ("timed out waiting for durable context inference result on " <> Text.unpack conversationTopic)
-      | otherwise = do
-          messages <- readRawTopicPayloads paths runtimeMode Nothing conversationTopic 12
-          case conversationResultPayloads messages of
-            resultPayload : _ -> pure resultPayload
-            [] -> do
-              threadDelay 1000000
-              go (remainingAttempts - 1)
 
 conversationResultPayloads :: [RawTopicMessage] -> [Contracts.ConversationInferenceResultPayload]
 conversationResultPayloads messages =
@@ -1146,28 +1632,34 @@ requiresHostServiceHarness paths runtimeMode =
 validateLinuxEngineAntiAffinityEnforcement :: ClusterState -> IO ()
 validateLinuxEngineAntiAffinityEnforcement state = do
   runKubectl state ["-n", "platform", "rollout", "status", "deployment/infernix-engine", "--timeout=900s"]
-  runKubectl state ["-n", "platform", "scale", "deployment/infernix-engine", "--replicas=2"]
-  pendingPod <- waitForPendingEnginePod state
-  events <-
-    kubectlOutputForState
-      state
-      [ "-n",
-        "platform",
-        "get",
-        "events",
-        "--field-selector",
-        "involvedObject.name=" <> pendingPod,
-        "-o",
-        "jsonpath={range .items[*]}{.reason}|{.message}{\"\\n\"}{end}"
-      ]
-  assert
-    ("FailedScheduling" `isInfixOf` events)
-    "the surplus engine pod surfaces a FailedScheduling scheduler event under anti-affinity"
-  assert
-    ("anti-affinity" `isInfixOf` events || "AntiAffinity" `isInfixOf` events)
-    "the FailedScheduling event names pod anti-affinity as the reason"
-  runKubectl state ["-n", "platform", "scale", "deployment/infernix-engine", "--replicas=1"]
-  runKubectl state ["-n", "platform", "rollout", "status", "deployment/infernix-engine", "--timeout=900s"]
+  originalReplicas <- deploymentSpecReplicas state "infernix-engine"
+  let surplusReplicas = originalReplicas + 1
+      restore =
+        runKubectl state ["-n", "platform", "scale", "deployment/infernix-engine", "--replicas=" <> show originalReplicas]
+          >> runKubectl state ["-n", "platform", "rollout", "status", "deployment/infernix-engine", "--timeout=900s"]
+  ( do
+      runKubectl state ["-n", "platform", "scale", "deployment/infernix-engine", "--replicas=" <> show surplusReplicas]
+      pendingPod <- waitForPendingEnginePod state
+      events <-
+        kubectlOutputForState
+          state
+          [ "-n",
+            "platform",
+            "get",
+            "events",
+            "--field-selector",
+            "involvedObject.name=" <> pendingPod,
+            "-o",
+            "jsonpath={range .items[*]}{.reason}|{.message}{\"\\n\"}{end}"
+          ]
+      assert
+        ("FailedScheduling" `isInfixOf` events)
+        "the surplus engine pod surfaces a FailedScheduling scheduler event under anti-affinity"
+      assert
+        ("anti-affinity" `isInfixOf` events || "AntiAffinity" `isInfixOf` events)
+        "the FailedScheduling event names pod anti-affinity as the reason"
+    )
+    `finally` restore
 
 waitForPendingEnginePod :: ClusterState -> IO String
 waitForPendingEnginePod state = go (60 :: Int)
@@ -1426,6 +1918,60 @@ waitForRollout :: ClusterState -> String -> IO ()
 waitForRollout state workload =
   runKubectl state ["-n", "platform", "rollout", "status", workload, "--timeout=900s"]
 
+deploymentSpecReplicas :: ClusterState -> String -> IO Int
+deploymentSpecReplicas state deploymentName =
+  parseNonNegativeInt ("deployment/" <> deploymentName <> " spec.replicas")
+    . trim
+    <$> kubectlOutputForState
+      state
+      [ "-n",
+        "platform",
+        "get",
+        "deployment",
+        deploymentName,
+        "-o",
+        "jsonpath={.spec.replicas}"
+      ]
+
+waitForDeploymentReadyReplicasAtLeast :: ClusterState -> String -> Int -> IO ()
+waitForDeploymentReadyReplicasAtLeast state deploymentName expectedReplicas = go (120 :: Int)
+  where
+    go remainingAttempts
+      | remainingAttempts <= 0 =
+          fail ("timed out waiting for deployment/" <> deploymentName <> " ready replicas >= " <> show expectedReplicas)
+      | otherwise = do
+          readyReplicas <- deploymentReadyReplicas state deploymentName
+          if readyReplicas >= expectedReplicas
+            then pure ()
+            else do
+              threadDelay 1000000
+              go (remainingAttempts - 1)
+
+deploymentReadyReplicas :: ClusterState -> String -> IO Int
+deploymentReadyReplicas state deploymentName =
+  parseOptionalNonNegativeInt ("deployment/" <> deploymentName <> " status.readyReplicas")
+    . trim
+    <$> kubectlOutputForState
+      state
+      [ "-n",
+        "platform",
+        "get",
+        "deployment",
+        deploymentName,
+        "-o",
+        "jsonpath={.status.readyReplicas}"
+      ]
+
+parseOptionalNonNegativeInt :: String -> String -> Int
+parseOptionalNonNegativeInt _ "" = 0
+parseOptionalNonNegativeInt label value = parseNonNegativeInt label value
+
+parseNonNegativeInt :: String -> String -> Int
+parseNonNegativeInt label value =
+  case reads value of
+    [(parsed, "")] | parsed >= (0 :: Int) -> parsed
+    _ -> error ("unable to parse " <> label <> " as a non-negative integer: " <> value)
+
 requirePodWithMountByPrefix :: ClusterState -> String -> String -> String -> IO (String, String)
 requirePodWithMountByPrefix state namespaceName prefixValue mountName = do
   maybePod <- findPodWithMountByPrefix state namespaceName prefixValue mountName
@@ -1478,6 +2024,45 @@ findPodByPrefix state namespaceName prefixValue = do
         state
         ["-n", namespaceName, "get", "pods", "--no-headers", "-o", "custom-columns=:metadata.name"]
   pure (find (isPrefixOf prefixValue) podNames)
+
+requireReadyEnginePodNode :: ClusterState -> IO (String, String)
+requireReadyEnginePodNode state = do
+  maybePodNode <- findReadyEnginePodNode state
+  case maybePodNode of
+    Just podNode -> pure podNode
+    Nothing -> fail "did not find a Ready infernix-engine pod with an assigned node"
+
+findReadyEnginePodNode :: ClusterState -> IO (Maybe (String, String))
+findReadyEnginePodNode state = do
+  podLines <-
+    lines
+      <$> kubectlOutputForState
+        state
+        [ "-n",
+          "platform",
+          "get",
+          "pods",
+          "-l",
+          "app.kubernetes.io/name=infernix-engine",
+          "-o",
+          "jsonpath={range .items[*]}{.metadata.name}{\"\\t\"}{.spec.nodeName}{\"\\t\"}{.status.phase}{\"\\t\"}{range .status.conditions[?(@.type==\"Ready\")]}{.status}{end}{\"\\n\"}{end}"
+        ]
+  pure $
+    case find isReadyEnginePodNode (mapMaybe parseReadyPodNode podLines) of
+      Just (podName, nodeName, _, _) -> Just (podName, nodeName)
+      Nothing -> Nothing
+
+parseReadyPodNode :: String -> Maybe (String, String, String, String)
+parseReadyPodNode lineValue =
+  case splitTabs lineValue of
+    [podName, nodeName, phaseValue, readyValue]
+      | not (null podName) && not (null nodeName) ->
+          Just (podName, nodeName, phaseValue, readyValue)
+    _ -> Nothing
+
+isReadyEnginePodNode :: (String, String, String, String) -> Bool
+isReadyEnginePodNode (_, _, phaseValue, readyValue) =
+  phaseValue == "Running" && readyValue == "True"
 
 waitForPodByPrefix :: ClusterState -> String -> String -> Maybe String -> IO String
 waitForPodByPrefix state namespaceName prefixValue maybePreviousPod = go (72 :: Int)
