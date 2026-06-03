@@ -111,7 +111,8 @@ Pulsar+MinIO wiring together with Sprint 7.14's chaos validation cycle.
   `python/adapters/common/model_cache.py`.
 
 The Haskell style gate enforces that engine-runtime import boundary for
-`src/Infernix/Runtime.hs`, `src/Infernix/Runtime/Cache.hs`, and
+`src/Infernix/Runtime.hs`, `src/Infernix/Runtime/Cache.hs`,
+`src/Infernix/Runtime/KVCache.hs`, and
 `src/Infernix/Runtime/Worker.hs`. `src/Infernix/Runtime/Pulsar.hs` is
 still the current multi-role Pulsar transport and daemon-orchestration
 module, so the full coordinator transport split remains separate

@@ -130,6 +130,10 @@ Rules:
   coordinator replica is the active dispatcher per context at a time; the result-bridge in
   the coordinator pod uses a named **Failover** subscription on `inference.result.<mode>`
   with the same semantics
+- Failover ownership uses stable subscription names; individual
+  consumers use process-qualified names via `Infernix.Runtime.Pulsar.Failover`
+  so multiple coordinator replicas do not present identical member names
+  during broker promotion
 - the May 28, 2026 Linux GPU integration pass publishes `ClientCreateContext`,
   `ClientUpdateDraft`, and `ClientCancelPrompt` through the real broker, reads them back with
   Pulsar Readers, asserts the expected broker keys, decodes the typed JSON payloads, and

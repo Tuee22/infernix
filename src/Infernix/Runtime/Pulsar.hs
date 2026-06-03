@@ -38,6 +38,7 @@ import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar)
 import Control.Exception (Exception, SomeAsyncException, SomeException, displayException, fromException, throwIO, try)
 import Control.Monad (forM_, forever, unless, void, when)
 import Crypto.Hash.SHA256 qualified as SHA256
+import Crypto.Random (getRandomBytes)
 import Data.Aeson
   ( FromJSON (parseJSON),
     ToJSON,
@@ -53,6 +54,7 @@ import Data.Aeson
   )
 import Data.Bits (shiftL, (.&.))
 import Data.ByteString qualified as ByteString
+import Data.ByteString.Base16 qualified as Base16
 import Data.ByteString.Base64 qualified as Base64
 import Data.ByteString.Char8 qualified as ByteString8
 import Data.ByteString.Lazy qualified as Lazy
@@ -94,6 +96,7 @@ import Infernix.Dispatch.SingleFlight qualified as Dispatch
 import Infernix.HostConfig qualified as HostConfig
 import Infernix.Objects.Presigned qualified as Presigned
 import Infernix.Runtime (executeInference)
+import Infernix.Runtime.Pulsar.Failover qualified as PulsarFailover
 import Infernix.Runtime.Worker (EngineCommandOverrideMap)
 import Infernix.SecretsConfig qualified as Secrets
 import Infernix.Storage (readEdgePortMaybe)
@@ -127,6 +130,7 @@ import System.Directory
 import System.Exit (ExitCode (ExitSuccess))
 import System.FilePath (takeDirectory, (<.>), (</>))
 import System.IO (hPutStrLn, stderr)
+import System.Posix.Process (getProcessID)
 import System.Process (readProcessWithExitCode)
 import System.Timeout (timeout)
 
@@ -2226,9 +2230,10 @@ runResultBridgeLoop ::
   IO ()
 runResultBridgeLoop transport runtimeMode resultTopic topicNamespace = do
   topicRef <- requireTopicRef resultTopic
+  processLabel <- currentProcessLabel
   let runtimeModeText = runtimeModeId runtimeMode
       subscriptionName = "result-bridge-" <> runtimeModeText
-      consumerName = subscriptionName <> "-consumer"
+      consumerName = PulsarFailover.failoverConsumerName subscriptionName processLabel
       consumerPath =
         buildFailoverConsumerSocketPath
           (pulsarWebSocketBase transport)
@@ -2590,9 +2595,10 @@ runContextsMetadataConsumer transport topicNamespace userIdValue contextModelMap
   let topicUrl = ConversationTopic.contextsMetadataTopicName topicNamespace userIdValue
       Contracts.UserId userIdText = userIdValue
       subscriptionName = "infernix-coordinator-context-model-map-" <> userIdText
-      consumerName = subscriptionName <> "-consumer"
   topicRef <- requireTopicRef topicUrl
-  let consumerPath =
+  processLabel <- currentProcessLabel
+  let consumerName = PulsarFailover.failoverConsumerName subscriptionName processLabel
+      consumerPath =
         buildFailoverConsumerSocketPath
           (pulsarWebSocketBase transport)
           topicRef
@@ -2665,8 +2671,9 @@ runDispatcherForContext ::
   IO ()
 runDispatcherForContext transport runtimeMode requestTopic conversationTopic userIdValue contextIdValue contextModelMap = do
   reducerStateRef <- newIORef (initialReducerState contextIdValue)
+  processLabel <- currentProcessLabel
   let subscriptionName = Dispatch.dispatcherSubscriptionName contextIdValue
-      consumerName = subscriptionName <> "-consumer"
+      consumerName = PulsarFailover.failoverConsumerName subscriptionName processLabel
   topicRef <- requireTopicRef conversationTopic
   let consumerPath =
         buildFailoverConsumerSocketPath
@@ -2874,7 +2881,13 @@ runModelBootstrapLoop transport systemNamespace = do
   let requestTopic =
         ConversationTopic.modelBootstrapRequestTopicName systemNamespace
   topicRef <- requireTopicRef requestTopic
-  let consumerName = Text.unpack BootstrapModels.bootstrapSubscriptionName <> "-consumer"
+  processLabel <- currentProcessLabel
+  let consumerName =
+        Text.unpack
+          ( PulsarFailover.failoverConsumerName
+              BootstrapModels.bootstrapSubscriptionName
+              processLabel
+          )
       consumerPath =
         buildFailoverConsumerSocketPath
           (pulsarWebSocketBase transport)
@@ -3314,6 +3327,12 @@ sendJsonFrame connection value =
 
 receiveJsonFrame :: String -> WebSockets.Connection -> IO Text.Text
 receiveJsonFrame _label = WebSockets.receiveData
+
+currentProcessLabel :: IO Text.Text
+currentProcessLabel = do
+  nonce <- getRandomBytes 8
+  processId <- getProcessID
+  pure (TextEncoding.decodeUtf8 (Base16.encode nonce) <> "-" <> Text.pack (show processId))
 
 decodeJsonText :: (FromJSON a) => String -> Text.Text -> IO a
 decodeJsonText label rawValue =

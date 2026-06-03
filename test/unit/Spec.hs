@@ -79,6 +79,7 @@ import Infernix.Routes
     renderReadmeRouteSummarySection,
   )
 import Infernix.Runtime
+import Infernix.Runtime.KVCache qualified as KVCache
 import Infernix.Runtime.Pulsar
   ( DemoClientMessageError (..),
     DemoClientMessagePublication (..),
@@ -89,6 +90,7 @@ import Infernix.Runtime.Pulsar
     topicDirectoryPath,
     validateDemoClientMessageCatalog,
   )
+import Infernix.Runtime.Pulsar.Failover qualified as PulsarFailover
 import Infernix.Topic.Drafts qualified as TopicDrafts
 import Infernix.Topic.Metadata qualified as TopicMetadata
 import Infernix.Types
@@ -201,6 +203,12 @@ main = do
   assert
     ("ln -s /opt/infernix/chart/charts /workspace/chart/charts" `isInfixOf` linuxDockerfileContents)
     "Sprint 1.11: Linux launcher preserves Helm's chart/charts dependency lookup through an image-local symlink"
+  assert
+    ("hostArchitecture =" `isInfixOf` linuxDockerfileContents)
+    "Linux launcher image bakes hostArchitecture into the outer-container host manifest"
+  assert
+    (not ("colima" `isInfixOf` linuxDockerfileContents))
+    "Linux launcher image host manifest does not carry the retired Colima tool field"
   assert
     (appleHostRequirementIds AppleSilicon ClusterUpCommand == ["docker", "kind", "kubectl", "helm", "node", "python", "poetry"])
     "apple host prerequisite planning includes the full cluster and adapter toolchain for apple-silicon cluster up"
@@ -338,6 +346,7 @@ main = do
         "PureScript contract generation includes the Phase 7 ArtifactMimeType newtype"
       assertPhase7JsonRoundtrips
       assertConversationPrimitives
+      assertKVCacheConsistency
       assertCompactedMetadataPatterns
       assertSingleFlightDispatcher
       assertJwtValidation
@@ -1265,6 +1274,57 @@ assertConversationPrimitives = do
   where
     toList = foldr (:) []
 
+assertKVCacheConsistency :: IO ()
+assertKVCacheConsistency = do
+  let contextId = Contracts.ContextId "kv-context"
+      promptPayload key text =
+        Contracts.UserPromptPayload
+          { Contracts.promptText = text,
+            Contracts.promptClientIdempotencyKey = Contracts.ClientIdempotencyKey key,
+            Contracts.promptUserUploads = []
+          }
+      promptMessage messageIdText key text =
+        Contracts.ConversationMessage
+          { Contracts.conversationMessageId = Contracts.MessageId messageIdText,
+            Contracts.conversationMessageEvent =
+              Contracts.ConversationUserPromptEvent (promptPayload key text)
+          }
+      resultMessage messageIdText promptMessageId =
+        Contracts.ConversationMessage
+          { Contracts.conversationMessageId = Contracts.MessageId messageIdText,
+            Contracts.conversationMessageEvent =
+              Contracts.ConversationInferenceResultEvent
+                Contracts.ConversationInferenceResultPayload
+                  { Contracts.inferenceResultUserPromptMessageId = Contracts.MessageId promptMessageId,
+                    Contracts.inferenceResultStatus = "completed",
+                    Contracts.inferenceResultInlineOutput = Just "ok",
+                    Contracts.inferenceResultArtifacts = []
+                  }
+          }
+      logMessages =
+        [ promptMessage "1:1:0" "idem-1" "first prompt",
+          resultMessage "1:2:0" "1:1:0",
+          promptMessage "1:3:0" "idem-2" "second prompt"
+        ]
+      rebuiltPrefix = KVCache.rebuildPrefixHashFromLog contextId logMessages
+      chainPrefix = last (ConversationHash.prefixHashChainOver logMessages)
+      tamperedPrefix =
+        KVCache.rebuildPrefixHashFromLog
+          contextId
+          [promptMessage "1:1:0" "idem-1" "different prompt"]
+  assert
+    (rebuiltPrefix == chainPrefix)
+    "KV-cache rebuild uses the same Reducer/Hash projection as the conversation prefix chain"
+  assert
+    (KVCache.verifyKVCachePrefix rebuiltPrefix (Just rebuiltPrefix) == KVCache.ReuseKVCache rebuiltPrefix)
+    "KV-cache verification reuses a cache with a matching prefix hash"
+  assert
+    (KVCache.verifyKVCachePrefix rebuiltPrefix Nothing == KVCache.RebuildKVCache rebuiltPrefix Nothing)
+    "KV-cache verification rebuilds when no cache entry exists"
+  assert
+    (KVCache.verifyKVCachePrefix rebuiltPrefix (Just tamperedPrefix) == KVCache.RebuildKVCache rebuiltPrefix (Just tamperedPrefix))
+    "KV-cache verification rebuilds when a cached prefix hash diverges from the request"
+
 assertCompactedMetadataPatterns :: IO ()
 assertCompactedMetadataPatterns = do
   -- Generic compacted view: N events across M distinct keys yields M latest values
@@ -1740,6 +1800,9 @@ assertResultBridgeAndBatchTopics = do
   assert
     (ResultBridge.bridgeSubscriptionName bridgeConfig == "result-bridge-linux-cpu")
     "result-bridge Failover subscription name is result-bridge-<substrate>"
+  assert
+    (PulsarFailover.failoverConsumerName "result-bridge-linux-cpu" "12345" == "result-bridge-linux-cpu-consumer-12345")
+    "Failover consumer names are process-qualified while the subscription name stays stable"
 
   -- Dedup key derivation
   assert

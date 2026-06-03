@@ -313,6 +313,7 @@ engineRuntimeBoundaryFiles :: [FilePath]
 engineRuntimeBoundaryFiles =
   [ "src/Infernix/Runtime.hs",
     "src/Infernix/Runtime/Cache.hs",
+    "src/Infernix/Runtime/KVCache.hs",
     "src/Infernix/Runtime/Worker.hs"
   ]
 

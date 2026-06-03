@@ -268,8 +268,10 @@ Phase status promotion sweep performed after Waves A-C closed:
 - Phases 0-6 return to `Done`; their remaining `Active` status was only
   the cohort-validation residual closed by Wave C.
 - Phase 7 remains `Active` because that phase still lists explicit
-  non-cohort residuals: KV-cache verification for real KV-cache engines,
-  the wider coordinator transport split, and Failover-promotion refinement.
+  non-cohort residuals: real KV-cache validation for real KV-cache engines
+  and the wider coordinator transport split. The code-side KV-cache
+  decision helper and Failover consumer naming refinement landed on
+  2026-06-03 after Wave D.
 - Browser-level frontend pod-kill reconnect coverage closed after the Wave C
   full gates with a mounted-source `linux-gpu` E2E rerun and then the final
   rebuilt-image full `linux-gpu` gate: the browser test deleted all
@@ -343,7 +345,7 @@ docs may still be `Active` only when they list non-cohort remaining work.
 | 4 | Sprints 4.1–4.13 `Done` | Closed in Wave A (mounted ClusterConfig + SecretsConfig roundtrip via integration suite) | `linux-cpu` passed 2026-06-02; `linux-gpu` passed 2026-06-03 |
 | 5 | Sprints 5.1–5.9 `Done` | Closed in Wave A/A.2 (demo backend + adapter dhall reads via integration suite and routed E2E) | `linux-cpu` passed 2026-06-02; `linux-gpu` passed 2026-06-03 |
 | 6 | Sprints 6.1–6.28 `Done` | Closed in Wave A/A.1/A.2/A.3 (lint, style, unit, integration, routed E2E, and Apple engine-lock chaos) | `linux-cpu` passed 2026-06-02; `linux-gpu` passed 2026-06-03 |
-| 7 | Sprints 7.1–7.7, 7.10–7.13, and 7.17 `Done`; Sprint 7.8 remains `Active` for real KV-cache/runtime-split work, and Sprints 7.9/7.14/7.15/7.16 await only the phase-level 7.8/docs closure rules after the 2026-06-03 residual sweep | Closed in Wave A/A.1/A.2/A.3 for the listed Apple gates | `linux-cpu` passed 2026-06-02; `linux-gpu` passed 2026-06-03; residual rebuilt-image `linux-gpu` gate passed 2026-06-03 against `sha256:521a56ac6f79bf1ce5bc9d7dcd9c872e897ce4b4882661d4ada2f62faa108d7b`; residual rebuilt-image `linux-cpu` gate passed 2026-06-03 against `sha256:dc0c003e7cc2f2e359a474fa5ddb522c8715d271e322534db7798f260e9747fa` |
+| 7 | Sprints 7.1–7.7, 7.10–7.13, and 7.17 `Done`; Sprint 7.8 remains `Active` for real KV-cache engine validation and the wider runtime transport split after the 2026-06-03 code-side KV-cache decision and Failover naming follow-on; Sprints 7.9/7.14/7.15/7.16 await only the phase-level 7.8/docs closure rules after the 2026-06-03 residual sweep | Closed in Wave A/A.1/A.2/A.3 for the listed Apple gates | `linux-cpu` passed 2026-06-02; `linux-gpu` passed 2026-06-03; residual rebuilt-image `linux-gpu` gate passed 2026-06-03 against `sha256:521a56ac6f79bf1ce5bc9d7dcd9c872e897ce4b4882661d4ada2f62faa108d7b`; residual rebuilt-image `linux-cpu` gate passed 2026-06-03 against `sha256:dc0c003e7cc2f2e359a474fa5ddb522c8715d271e322534db7798f260e9747fa` |
 
 When a wave closes, this table is the place to update first. Phase
 docs follow.

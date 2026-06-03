@@ -657,6 +657,9 @@ cross-architecture `buildx`, or any non-native compatibility lane.
 - `rg -n '"amd64".*LinuxCpu|LinuxCpu.*"amd64"' src test` has no unsupported hardcode after the
   selector lands
 - `infernix lint docs` passes through the active execution context
+- 2026-06-03 Apple local gate: `cabal test infernix-unit` passed the LinuxCpu amd64/arm64
+  selector assertions, and `rg -n '"amd64".*LinuxCpu|LinuxCpu.*"amd64"' src test`
+  returned no matches. Native arm64 Linux validation is still required for `Done`.
 
 ### Remaining Work
 

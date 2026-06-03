@@ -53,6 +53,13 @@ prompt. The browser E2E layer covers active-context WebSocket re-subscribe,
 draft restoration after both reconnect and reload login, and frontend pod
 replacement by deleting all `infernix-demo` pods during the routed flow and
 submitting another prompt after reconnect.
+As of June 3, 2026, the engine-side prefix-hash cache decision helper
+(`Infernix.Runtime.KVCache`) is code-side landed and unit-tested against
+the same reducer/hash projection used by the conversation log. The
+Pulsar Failover transport keeps stable subscription names while
+process-qualifying consumer names for clearer coordinator promotion
+membership. Real KV-cache reuse validation remains tied to a future
+adapter that exposes reusable KV state.
 
 ## Parametricity Surface
 
@@ -100,11 +107,11 @@ this section names the surface so primitives-doc readers can locate it.
   first-run bootstrap, application-specific views. May import any shared
   module.
 - **Cluster daemon (`Infernix.Runtime.*`, engine path).** Imports
-  `Infernix.Conversation.Reducer` and `Infernix.Conversation.Hash` for
-  engine-side KV-cache consistency verification only. Must not import any
-  application namespace, must not import `Infernix.Objects.Presigned`,
-  must not import `Infernix.Auth.Jwt`, must not import any WebSocket
-  module.
+  `Infernix.Conversation.Reducer` and `Infernix.Conversation.Hash`
+  through `Infernix.Runtime.KVCache` for engine-side KV-cache
+  consistency decisions only. Must not import any application namespace,
+  must not import `Infernix.Objects.Presigned`, must not import
+  `Infernix.Auth.Jwt`, must not import any WebSocket module.
 
 Dependency arrows are strict: shared library has no upward dependencies;
 application glue and cluster daemon both depend on shared library; they

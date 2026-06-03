@@ -72,7 +72,9 @@ library
         Infernix.Routes
         Infernix.Runtime
         Infernix.Runtime.Cache
+        Infernix.Runtime.KVCache
         Infernix.Runtime.Pulsar
+        Infernix.Runtime.Pulsar.Failover
         Infernix.Runtime.Worker
         Infernix.Service
         Infernix.Storage

@@ -65,6 +65,12 @@ coordinator replacement, Linux engine anti-affinity, and compact multi-user
 durable prompt throughput. Full `linux-cpu` `infernix test all` validation
 passed on 2026-06-02, and full `linux-gpu` `infernix test all` validation
 passed on 2026-06-03.
+The June 3, 2026 code-side Sprint 7.8 follow-on adds
+`Infernix.Runtime.KVCache` for reducer/hash-backed prefix verification
+decisions and `Infernix.Runtime.Pulsar.Failover` for process-qualified
+Failover consumer names under stable subscription names. Real KV-cache
+reuse remains validation-bound to a future engine adapter that exposes
+reusable KV state.
 
 ## Roles and Responsibilities
 
@@ -121,6 +127,10 @@ has no PVC** (Pulsar subscription cursors are broker-side durable).
 Multiple replicas are an HA primitive — Pulsar Failover guarantees
 exactly one active subscriber per topic at a time, so multiple
 coordinator pods do not race.
+Each Failover subscription keeps a stable subscription name as the
+ownership key and uses a process-qualified consumer name for the member
+identity, so replica promotion is observable without changing the
+broker-side ownership boundary.
 
 ### Engine (`infernix-engine`)
 
@@ -158,7 +168,8 @@ never imports `Infernix.Auth.Jwt`, never imports
 and never imports a WebSocket module. **The engine has no PVC** —
 the only on-disk state is the ephemeral `emptyDir` model cache.
 The Haskell style gate enforces this import boundary for
-`Infernix.Runtime`, `Infernix.Runtime.Cache`, and
+`Infernix.Runtime`, `Infernix.Runtime.Cache`,
+`Infernix.Runtime.KVCache`, and
 `Infernix.Runtime.Worker`. `Infernix.Runtime.Pulsar` remains the
 current multi-role Pulsar transport and daemon-orchestration module
 until the coordinator transport split lands.

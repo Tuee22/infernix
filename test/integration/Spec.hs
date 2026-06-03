@@ -3,7 +3,7 @@
 module Main (main) where
 
 import Control.Concurrent (threadDelay)
-import Control.Exception (SomeException, bracket, displayException, finally, try)
+import Control.Exception (SomeException, bracket, bracketOnError, displayException, finally, try)
 import Control.Monad (forM, forM_, when)
 import Data.Aeson qualified as Aeson
 import Data.ByteString qualified as ByteString
@@ -1280,12 +1280,36 @@ validateEdgePortConflictAndRediscovery paths runtimeMode = do
       threadDelay 250000
 
 openBusyTcpPort :: Int -> IO Socket
-openBusyTcpPort port = do
-  busySocket <- socket AF_INET Stream defaultProtocol
-  setSocketOption busySocket ReuseAddr 1
-  bind busySocket (SockAddrInet (fromIntegral port) (tupleToHostAddress (127, 0, 0, 1)))
-  listen busySocket 1
-  pure busySocket
+openBusyTcpPort port = go (300 :: Int) Nothing
+  where
+    go remainingAttempts maybeLastError
+      | remainingAttempts <= 0 =
+          ioError
+            ( userError
+                ( "timed out waiting to bind busy edge-port fixture on 127.0.0.1:"
+                    <> show port
+                    <> maybe "" (("\nlast bind error: " <>) . displayException) maybeLastError
+                )
+            )
+      | otherwise = do
+          result <- try (openBusyTcpPortOnce port) :: IO (Either SomeException Socket)
+          case result of
+            Right busySocket -> pure busySocket
+            Left err -> do
+              threadDelay 100000
+              go (remainingAttempts - 1) (Just err)
+
+openBusyTcpPortOnce :: Int -> IO Socket
+openBusyTcpPortOnce port =
+  bracketOnError
+    (socket AF_INET Stream defaultProtocol)
+    close
+    ( \busySocket -> do
+        setSocketOption busySocket ReuseAddr 1
+        bind busySocket (SockAddrInet (fromIntegral port) (tupleToHostAddress (127, 0, 0, 1)))
+        listen busySocket 1
+        pure busySocket
+    )
 
 validateDemoUiDisabled :: Paths -> RuntimeMode -> IO ()
 validateDemoUiDisabled paths runtimeMode =

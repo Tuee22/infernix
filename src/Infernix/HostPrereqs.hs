@@ -34,9 +34,7 @@ data AppleHostRequirement
   | ApplePoetry
   deriving (Eq, Show)
 
-data DockerInfo = DockerInfo
-  { dockerInfoArchitecture :: String
-  }
+newtype DockerInfo = DockerInfo String
 
 instance FromJSON DockerInfo where
   parseJSON =
@@ -152,32 +150,32 @@ ensureHomebrewManagedTool brewExecutable requirement = do
       commandPath = homebrewCommandPath commandName
   executablePresent <- doesFileExist commandPath
   unless executablePresent $ do
-      let formulaName = homebrewFormula requirement
-      putStrLn ("reconciling Apple host prerequisite via Homebrew: " <> formulaName)
-      (exitCode, _, stderrOutput) <-
-        readCreateProcessWithExitCode (proc brewExecutable ["install", formulaName]) ""
-      case exitCode of
-        ExitSuccess -> do
-          installed <- doesFileExist commandPath
-          unless installed $
-            ioError
-              ( userError
-                  ( "Homebrew installed "
-                      <> formulaName
-                      <> " but "
-                      <> commandPath
-                      <> " is still missing."
-                  )
-              )
-        _ ->
+    let formulaName = homebrewFormula requirement
+    putStrLn ("reconciling Apple host prerequisite via Homebrew: " <> formulaName)
+    (exitCode, _, stderrOutput) <-
+      readCreateProcessWithExitCode (proc brewExecutable ["install", formulaName]) ""
+    case exitCode of
+      ExitSuccess -> do
+        installed <- doesFileExist commandPath
+        unless installed $
           ioError
             ( userError
-                ( "failed to install "
+                ( "Homebrew installed "
                     <> formulaName
-                    <> " with Homebrew\n"
-                    <> stderrOutput
+                    <> " but "
+                    <> commandPath
+                    <> " is still missing."
                 )
             )
+      _ ->
+        ioError
+          ( userError
+              ( "failed to install "
+                  <> formulaName
+                  <> " with Homebrew\n"
+                  <> stderrOutput
+              )
+          )
 
 ensureSelectedDockerDaemonReady :: IO ()
 ensureSelectedDockerDaemonReady = do

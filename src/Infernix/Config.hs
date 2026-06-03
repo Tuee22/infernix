@@ -22,7 +22,6 @@ module Infernix.Config
   )
 where
 
-import Control.Exception (SomeException, try)
 import Data.Text qualified as Text
 import Infernix.HostConfig qualified as HostConfig
 import Infernix.Substrate (resolveRuntimeModeFromSubstrateFile)
@@ -134,8 +133,11 @@ resolveAgainst anchor candidate
 -- preference order: Apple host-native build root, Linux outer-container
 -- bind-mount build root (legacy compose layout retained until Sprint
 -- 1.11's compose shrink lands), and the Linux launcher image's baked
--- default. Returns @Nothing@ if no candidate decodes; the caller falls
+-- default. Returns @Nothing@ if no candidate exists; the caller falls
 -- back to convention defaults so first-run bootstrap remains workable.
+-- If a candidate exists but is invalid, fail immediately: silently
+-- falling through to convention defaults can misclassify the execution
+-- context and route Linux launcher work through host-native guardrails.
 tryLoadHostManifest :: FilePath -> IO (Maybe HostConfig.HostConfig)
 tryLoadHostManifest repoRootPath = loop candidatePaths
   where
@@ -148,11 +150,7 @@ tryLoadHostManifest repoRootPath = loop candidatePaths
     loop (candidate : rest) = do
       exists <- doesFileExist candidate
       if exists
-        then do
-          decoded <- try (HostConfig.decodeHostConfigFile candidate) :: IO (Either SomeException HostConfig.HostConfig)
-          case decoded of
-            Right value -> pure (Just value)
-            Left _ -> loop rest
+        then Just <$> HostConfig.decodeHostConfigFile candidate
         else loop rest
 
 findRepoRoot :: FilePath -> IO FilePath

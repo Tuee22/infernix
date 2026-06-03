@@ -91,8 +91,10 @@ context id/model id in session storage and uses it to resubscribe after a reload
 now proves draft text is restored after forced WebSocket reconnect and page reload through the
 broker-backed draft stream. The routed flow now submits a second prompt before the first
 unresolved prompt resolves, asserts the rendered `2 queued prompts` warning, and cancels the
-second canonical prompt id. The remaining browser work is generated/per-model smoke and pod-kill
-Failover coverage.
+second canonical prompt id. The per-model browser smoke matrix and
+browser-level frontend pod replacement reconnect coverage have also
+closed; the remaining durable-context blocker is the real KV-cache
+engine verification gate owned by Sprint 7.8.
 
 ## Identity and Authentication
 

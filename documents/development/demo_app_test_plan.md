@@ -166,9 +166,9 @@ Implemented as of May 28, 2026:
 
 Pending integration-layer work:
 
-- **Real KV-cache engine failover.** The current deterministic adapter layer exposes no reusable
-  KV-cache surface, so cache-hit/cache-miss verification under engine failover remains owned by
-  Sprint 7.8.
+- **Real KV-cache engine failover.** The code-side prefix-hash decision helper is unit-tested,
+  but the current deterministic adapter layer exposes no reusable KV-cache surface, so
+  cache-hit/cache-miss verification under engine failover remains owned by Sprint 7.8.
 
 Resolved residual validation:
 

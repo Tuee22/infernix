@@ -1,6 +1,6 @@
 # Phase 7: Demo App Multi-User Durable Context
 
-**Status**: Active (Sprints 7.1–7.7, 7.10–7.13, and 7.17 are `Done`; Sprint 7.8 remains `Active` for real KV-cache engine verification, the wider `Infernix.Runtime.Pulsar` coordinator transport split, and Failover-promotion refinement. Sprints 7.9, 7.14, and 7.15 have their listed non-cohort residual code landed in the current worktree; the residual sweep passed the rebuilt-image `linux-gpu` full gate on 2026-06-03 against image digest `sha256:521a56ac6f79bf1ce5bc9d7dcd9c872e897ce4b4882661d4ada2f62faa108d7b`. Rebuilt-image `linux-cpu` validation also passed on 2026-06-03 against image digest `sha256:dc0c003e7cc2f2e359a474fa5ddb522c8715d271e322534db7798f260e9747fa`: the launcher build, style/Python/unit/web-unit gates, full integration including the LinuxCpu chaos/throughput block, and routed Playwright E2E (7/7) all passed. Sprint 7.16 docs lint passed after this final residual-sweep docs update, but the sprint remains `Active` until the 7.8 blocker is either implemented or explicitly deferred. Code-side work has landed for the full daemon-split, durable-context shell, routed Keycloak / WebSocket / `/api/objects` / browser flows, Sprint 7.17 configuration-doctrine retirement, the artifact-upload submit-race fix, and the per-model browser smoke matrix. Sprint 7.14 Apple `engine.lock` chaos case closed in Wave A.3; Sprint 7.14 Linux-owned chaos/throughput validation closed in [Wave C](cohort-validation-waves.md), covering frontend pod replacement, coordinator pod replacement, engine pod replacement, engine node drain, model-bootstrap deduplication, Linux engine anti-affinity, and compact multi-user durable prompt throughput. The browser-level frontend pod-kill reconnect case closed on 2026-06-03 with mounted-source `linux-gpu` routed E2E and both rebuilt-image full gates; the browser test deleted all `infernix-demo` pods, waited for replacements, reconnected, resubscribed, and submitted another prompt. Apple cohort gates closed in [Wave A](cohort-validation-waves.md), [Wave A.1](cohort-validation-waves.md), [Wave A.2](cohort-validation-waves.md), and [Wave A.3](cohort-validation-waves.md); native `linux-cpu` full-suite validation passed 2026-06-02 in [Wave C](cohort-validation-waves.md), the rebuilt-image `linux-cpu` residual full-suite gate passed 2026-06-03, and `linux-gpu` full-suite validation passed 2026-06-03 in [Wave C](cohort-validation-waves.md).)
+**Status**: Active (Sprints 7.1–7.7, 7.10–7.13, and 7.17 are `Done`; Sprint 7.8 remains `Active` for real KV-cache engine validation and the wider `Infernix.Runtime.Pulsar` coordinator transport split. Its code-side KV-cache decision helper and Failover consumer naming refinement landed on 2026-06-03. Sprints 7.9, 7.14, and 7.15 have their listed non-cohort residual code landed in the current worktree; the residual sweep passed the rebuilt-image `linux-gpu` full gate on 2026-06-03 against image digest `sha256:521a56ac6f79bf1ce5bc9d7dcd9c872e897ce4b4882661d4ada2f62faa108d7b`. Rebuilt-image `linux-cpu` validation also passed on 2026-06-03 against image digest `sha256:dc0c003e7cc2f2e359a474fa5ddb522c8715d271e322534db7798f260e9747fa`: the launcher build, style/Python/unit/web-unit gates, full integration including the LinuxCpu chaos/throughput block, and routed Playwright E2E (7/7) all passed. Sprint 7.16 docs lint passed after this final residual-sweep docs update, but the sprint remains `Active` until the 7.8 blocker is either implemented or explicitly deferred. Code-side work has landed for the full daemon-split, durable-context shell, routed Keycloak / WebSocket / `/api/objects` / browser flows, Sprint 7.17 configuration-doctrine retirement, the artifact-upload submit-race fix, and the per-model browser smoke matrix. Sprint 7.14 Apple `engine.lock` chaos case closed in Wave A.3; Sprint 7.14 Linux-owned chaos/throughput validation closed in [Wave C](cohort-validation-waves.md), covering frontend pod replacement, coordinator pod replacement, engine pod replacement, engine node drain, model-bootstrap deduplication, Linux engine anti-affinity, and compact multi-user durable prompt throughput. The browser-level frontend pod-kill reconnect case closed on 2026-06-03 with mounted-source `linux-gpu` routed E2E and both rebuilt-image full gates; the browser test deleted all `infernix-demo` pods, waited for replacements, reconnected, resubscribed, and submitted another prompt. Apple cohort gates closed in [Wave A](cohort-validation-waves.md), [Wave A.1](cohort-validation-waves.md), [Wave A.2](cohort-validation-waves.md), and [Wave A.3](cohort-validation-waves.md); native `linux-cpu` full-suite validation passed 2026-06-02 in [Wave C](cohort-validation-waves.md), the rebuilt-image `linux-cpu` residual full-suite gate passed 2026-06-03, and `linux-gpu` full-suite validation passed 2026-06-03 in [Wave C](cohort-validation-waves.md).)
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/durable_context_design.md](../documents/architecture/durable_context_design.md), [../documents/architecture/demo_app_design.md](../documents/architecture/demo_app_design.md), [../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Define the multi-user, durable-context shape of the `infernix-demo` workload —
@@ -1370,8 +1370,8 @@ Pending closure:
 
 ## Sprint 7.8: Engine Prefix-Hash Cache Consistency and Result Writeback [Active]
 
-**Status**: Active (remaining work is the post-Phase-7 KV-cache verification gate for real KV-cache engines, the wider `Infernix.Runtime.Pulsar` coordinator transport split, and coordinator Failover-promotion refinement listed below.)
-**Implementation**: `src/Infernix/Runtime/*`, `tools/generated_proto/` (or upstream `.proto`), `src/Infernix/Bridge/Result.hs`
+**Status**: Active (code-side KV-cache prefix decision logic and Failover consumer naming refinement landed on 2026-06-03; remaining work is the post-Phase-7 KV-cache verification gate for real KV-cache engines and the wider `Infernix.Runtime.Pulsar` coordinator transport split listed below.)
+**Implementation**: `src/Infernix/Runtime/*`, `src/Infernix/Runtime/KVCache.hs`, `src/Infernix/Runtime/Pulsar/Failover.hs`, `tools/generated_proto/` (or upstream `.proto`), `src/Infernix/Bridge/Result.hs`
 **Docs to update**: `documents/architecture/durable_context_design.md`, `documents/architecture/demo_app_design.md`, `documents/architecture/daemon_topology.md`, `documents/tools/pulsar.md`, `documents/engineering/implementation_boundaries.md`
 
 ### Objective
@@ -1446,24 +1446,37 @@ real result-bridge runtime loop:
   `user_id` / `context_id` / `user_prompt_message_id` into the result
   envelope so the bridge has the routing fields it needs.
 
+June 3, 2026 code-side follow-on:
+
+- `src/Infernix/Runtime/KVCache.hs` exposes the engine-side
+  `verifyKVCachePrefix` decision helper and
+  `rebuildPrefixHashFromLog`, which rebuilds the request prefix from
+  the same `Conversation.Reducer` + `Conversation.Hash` projection used
+  by the conversation log. `test/unit/Spec.hs.assertKVCacheConsistency`
+  proves matching prefix hashes reuse cache, missing or tampered hashes
+  force rebuild, and the rebuilt hash equals the canonical prefix chain.
+- `src/Infernix/Runtime/Pulsar/Failover.hs` centralizes Failover
+  consumer naming. `runResultBridgeLoop`, `runDispatcherForContext`,
+  `runContextsMetadataConsumer`, and `runModelBootstrapLoop` keep their
+  stable subscription names but use process-qualified consumer names so
+  multiple coordinator replicas do not present identical member names
+  during broker promotion. Unit coverage pins the naming policy.
+- The Haskell style boundary now includes
+  `src/Infernix/Runtime/KVCache.hs` alongside `Runtime.hs`,
+  `Runtime/Cache.hs`, and `Runtime/Worker.hs`, so the engine-side
+  cache consistency helper cannot import demo, coordinator, auth,
+  object-presign, bootstrap, or WebSocket modules.
+
 Pending closure:
 
-- Engine adapter / runtime KV-cache verification via
-  `Conversation.Reducer` + `Conversation.Hash`. The current adapter
-  layer emits deterministic engine-family output and has no KV cache
-  concept; the prefix-hash verification gate lands when a real model
-  with KV cache integration arrives (post-Phase 7).
-- Engine daemon boundary enforcement is partially landed as of May 28,
-  2026: the Haskell style gate now rejects imports of `Infernix.Demo.*`,
-  `Infernix.Objects.Presigned`, `Infernix.Auth.Jwt`,
-  `Infernix.Dispatch.SingleFlight`, `Infernix.Bridge.Result`,
-  `Infernix.Bootstrap.Models`, or `Network.WebSockets` from the
-  concrete engine runtime modules (`src/Infernix/Runtime.hs`,
-  `src/Infernix/Runtime/Cache.hs`, and
-  `src/Infernix/Runtime/Worker.hs`). The wider
-  `Infernix.Runtime.Pulsar` coordinator transport split remains open.
-- Real-cluster validation of the Failover-promotion semantics under
-  coordinator-kill mid-flight (Sprint 7.14 chaos suite).
+- Real adapter/runtime KV-cache validation remains open. The current
+  deterministic adapter layer still has no reusable KV cache, so a real
+  model with KV-cache integration must wire `verifyKVCachePrefix` into
+  the engine execution path and prove cache-hit/cache-miss behavior.
+- The wider `Infernix.Runtime.Pulsar` coordinator transport split
+  remains open. `Runtime.Pulsar` still owns multi-role orchestration
+  even though the pure Failover naming policy now lives in its own
+  module.
 
 ---
 
@@ -2352,9 +2365,11 @@ May 27, 2026 Linux GPU validation landing:
 
 Pending closure:
 
-- Sprint 7.8 still owns the real KV-cache engine verification gate. The current deterministic
-  adapter layer does not expose a reusable KV cache, so Sprint 7.14 cannot honestly prove
-  cache-hit/cache-miss behavior under engine failover until that runtime surface exists.
+- Sprint 7.8 still owns the real KV-cache engine verification gate. The
+  code-side prefix-hash decision helper is landed, but the current
+  deterministic adapter layer does not expose a reusable KV cache, so
+  Sprint 7.14 cannot honestly prove cache-hit/cache-miss behavior under
+  engine failover until a real KV-cache engine path exists.
 
 ---
 

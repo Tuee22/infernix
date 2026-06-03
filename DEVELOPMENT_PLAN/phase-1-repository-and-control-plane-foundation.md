@@ -699,7 +699,7 @@ Wave C.
 ## Sprint 1.12: Native-Only Workflow and Apple Docker Boundary [Active]
 
 **Status**: Active
-**Implementation**: `src/Infernix/HostPrereqs.hs`, `src/Infernix/HostConfig.hs`, `dhall/InfernixHost.dhall`, `test/unit/Spec.hs`, `README.md`, `AGENTS.md`, `CLAUDE.md`
+**Implementation**: `src/Infernix/HostPrereqs.hs`, `src/Infernix/HostConfig.hs`, `src/Infernix/Config.hs`, `dhall/InfernixHost.dhall`, `docker/linux-substrate.Dockerfile`, `test/unit/Spec.hs`, `test/integration/Spec.hs`, `README.md`, `AGENTS.md`, `CLAUDE.md`
 **Docs to update**: `README.md`, `AGENTS.md`, `CLAUDE.md`, `documents/development/assistant_workflow.md`, `documents/development/local_dev.md`, `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/engineering/portability.md`, `documents/engineering/docker_policy.md`, `documents/engineering/host_tools_manifest.md`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/00-overview.md`, `DEVELOPMENT_PLAN/system-components.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 
 ### Objective
@@ -740,11 +740,52 @@ native arm64 daemon. `linux-cpu` validation belongs on native Linux amd64 or nat
 - on Apple Silicon with no usable native arm64 Docker daemon, the Apple bootstrap fails with a
   prerequisite error and does not create a Docker context or Colima VM
 - `infernix lint docs` passes through the active execution context
+- 2026-06-03 Apple local gate: the Colima cleanup grep named above returned no matches;
+  `./bootstrap/apple-silicon.sh doctor` passed;
+  `./bootstrap/apple-silicon.sh build` passed after the `DockerInfo` decoder stopped
+  exposing an unused record selector; `cabal test infernix-unit` passed; explicit
+  `./.build/infernix internal materialize-substrate apple-silicon` plus
+  `./bootstrap/apple-silicon.sh status` reported `runtimeMode: apple-silicon` and
+  `lifecyclePhase: not-yet-reconciled`. That status run exercised the Docker-boundary
+  check against the pre-existing selected Docker context and reported daemon architecture
+  `aarch64`; no context creation or switching was performed, but this is not the full
+  positive native-daemon lifecycle gate and not the negative no-daemon gate.
+- 2026-06-03 Apple positive-lifecycle continuation on the same already selected native
+  arm64 Docker daemon found and fixed two validation blockers:
+  `docker/linux-substrate.Dockerfile` still baked the retired `toolPaths.colima` field and
+  omitted `hostArchitecture`, so the in-image `/opt/infernix/dhall/InfernixHost.dhall`
+  failed to decode during `infernix internal materialize-substrate linux-cpu`; the previous
+  `Config.tryLoadHostManifest` fallback then silently misclassified the Docker build as
+  `HostNative` and rejected `linux-cpu`. The fix removes the stale Dockerfile `colima`
+  field, bakes `hostArchitecture = ${TARGETARCH:-$(dpkg --print-architecture)}`, makes
+  existing invalid host manifests fail fast instead of falling back, and adds unit coverage
+  that the Dockerfile manifest carries `hostArchitecture` and no retired `colima` field.
+  The first full `./bootstrap/apple-silicon.sh test` then passed style, Python quality,
+  Haskell unit, PureScript build, and 71/71 web unit tests, and progressed through Apple
+  integration to the `engine.lock` check before the post-integration edge-port conflict
+  fixture hit `Network.Socket.bind: resource busy (Address already in use)`. The follow-on
+  fix makes the busy-port fixture retry transient binds and clean up partially opened
+  sockets.
+- After those fixes, `./bootstrap/apple-silicon.sh doctor`, `build`, `up`, and `status`
+  passed on 2026-06-03 without creating or switching Docker contexts. `up` completed with
+  `controlPlaneContext: host-native`, `runtimeMode: apple-silicon`, `edgePort: 9091`, and
+  Harbor image digest
+  `sha256:86b3b40ef89001876d213c06b795c5b1c56e58dd5fc6027c57917f012d2a16f3`; `status`
+  reported `clusterPresent: True`, `lifecycleStatus: idle`, and `lifecyclePhase:
+  steady-state`, with Docker context `colima` and daemon architecture `aarch64`. A retry of
+  `./bootstrap/apple-silicon.sh test` again passed style, Python quality, Haskell unit,
+  PureScript build, and 71/71 web unit tests, then was interrupted at the user's request
+  during the Apple integration lifecycle/image-publication section. The interrupt triggered
+  retained-state replay and `cluster down complete`; a final `./bootstrap/apple-silicon.sh
+  status` showed `clusterPresent: False`, `lifecycleStatus: idle`, and `lifecyclePhase:
+  cluster-absent`. The full positive `test` gate and negative no-daemon gate remain
+  outstanding.
 
 ### Remaining Work
 
-- Apple Silicon validation with an already selected native arm64 Docker daemon remains
-  outstanding for this sprint.
+- Apple Silicon positive validation with an already selected native arm64 Docker daemon remains
+  outstanding for the full `test`, `down`, and final `status` sequence. `doctor`, `build`,
+  `up`, and `status` now pass on the native arm64 daemon.
 - Apple Silicon negative validation with no usable native arm64 Docker daemon remains
   outstanding; that run must prove the bootstrap fails without creating or switching Docker
   contexts or creating a Docker VM.
@@ -754,9 +795,12 @@ native arm64 daemon. `linux-cpu` validation belongs on native Linux amd64 or nat
 ## Remaining Work
 
 Sprint 1.12 remains open for the native-only Apple Docker-boundary validation named above.
-The implementation cleanup has landed; positive and negative Apple Silicon bootstrap boundary
-validation still require an Apple Silicon host. Sprints 1.1-1.11 are `Done`; Apple cohort
-validation closed in Wave A and CUDA Linux cohort validation closed in Wave C.
+The implementation cleanup has landed, and the 2026-06-03 Apple continuation fixed the
+in-image host-manifest schema drift plus the transient busy-port fixture. Positive Apple
+validation still needs a full uninterrupted `./bootstrap/apple-silicon.sh test` followed by
+`down` and final `status`; negative no-daemon validation also remains outstanding. Sprints
+1.1-1.11 are `Done`; Apple cohort validation closed in Wave A and CUDA Linux cohort validation
+closed in Wave C.
 
 ## Documentation Requirements
 

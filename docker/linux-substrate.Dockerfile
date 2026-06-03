@@ -147,6 +147,7 @@ RUN mkdir -p /workspace/.build /opt/infernix /opt/infernix/dhall \
 # per-host by editing this file before the binary needs it.
 RUN printf '%s\n' \
     '{ hostExecutionContext = < AppleHostNative | LinuxOuterContainer >.LinuxOuterContainer' \
+    ", hostArchitecture = \"${TARGETARCH:-$(dpkg --print-architecture)}\"" \
     ', toolPaths =' \
     '    { docker = "/usr/bin/docker"' \
     '    , kubectl = "/usr/local/bin/kubectl"' \
@@ -167,7 +168,6 @@ RUN printf '%s\n' \
     '    , curl = "/usr/bin/curl"' \
     '    , aptGet = "/usr/bin/apt-get"' \
     '    , brew = ""' \
-    '    , colima = ""' \
     '    , sudo = "/usr/bin/sudo"' \
     '    , systemctl = "/usr/bin/systemctl"' \
     '    , mkdir = "/usr/bin/mkdir"' \
