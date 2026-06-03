@@ -52,7 +52,9 @@ A phase or sprint can move to `Done` only when all of the following are true:
 
 ## Current Repo Assessment
 
-Phases 0 through 6 close around the implemented worktree. The repository implements the
+Phases 0, 2, 4, 5, and 6 close around the implemented worktree. Phase 1 has reopened for the
+native-only host-prerequisite doctrine cleanup, and Phase 3 has reopened for native arm64
+`linux-cpu` publication support. The repository implements the
 staged-substrate architecture, the baked Linux outer-container launcher,
 the mandatory HA platform services, the Gateway-owned routed edge, the shared Python adapter
 project, the Haskell-owned browser-contract generation path, the substrate-specific validation
@@ -114,10 +116,13 @@ hydrates the MinIO dependency through the supported direct tarball path instead 
 Hub-backed OCI metadata, and detects the known stale Pulsar or ZooKeeper epoch mismatch by
 resetting only the retained Pulsar claim roots and retrying `cluster up` once. The Apple
 clean-host bootstrap verifies the selected ghcup-managed `ghc` and `cabal` executables before
-direct `cabal install`, reconciles Homebrew `protoc`, reconciles Colima to the supported
-`8 CPU / 16 GiB` profile before Docker-backed work, and lets Apple adapter setup or validation
+direct `cabal install`, reconciles Homebrew `protoc`, and lets Apple adapter setup or validation
 paths reconcile the Homebrew-managed `python@3.12` formula and `python3.12` command plus a
-user-local Poetry bootstrap on demand. The Poetry bootstrap may reuse an already available
+user-local Poetry bootstrap on demand. The supported doctrine now requires Docker-backed Apple
+work to use an already selected native arm64 Docker daemon and forbids creating or switching
+Docker contexts, creating Colima VMs, or using cross-architecture emulation; Phase 1 Sprint 1.12
+replaces the previous Colima reconciliation path with selected Docker-context and
+daemon-architecture validation. The Poetry bootstrap may reuse an already available
 compatible Python 3.12+ executable when one passes the implemented version check. Routed Apple
 Playwright validation runs host-native `npm exec` against the published `127.0.0.1` edge port,
 and the in-image
@@ -132,26 +137,10 @@ promotion. The shared lifecycle skips broad pre-Harbor support-image preloads an
 stricter Harbor-first target where Linux lanes may hydrate and stream only the narrow Harbor
 warmup dependency set into Kind before Helm warmup, only Harbor-required services may pull
 upstream before Harbor is responsive, and every remaining image, including the active `infernix`
-runtime image, is loaded into Harbor before final rollout. Phase 6 had previously recorded clean governed bootstrap reruns for `linux-cpu`, `linux-gpu`, and
-the supported Apple lifecycle on the retired hardware, including Apple reruns on
-May 15, 2026 and May 17, 2026 through `./bootstrap/apple-silicon.sh doctor`, `build`, `up`,
-`status`, `test`, `down`, and final `status`, plus the May 19, 2026 post-warning-cleanup
-`linux-gpu` rerun through `./bootstrap/linux-gpu.sh doctor`, forced image refresh, `build`, `up`,
-`status`, `test`, `down`, `purge`, and final `status`. Those historical reruns originally covered
-the split daemon topology, host-batch Pulsar handoff, routed Playwright E2E, repeated
-retained-state cluster bring-up or teardown cycles inside the governed `test` lane, final
-post-teardown status returning `clusterPresent: False`, `lifecycleStatus: idle`, and
-`lifecyclePhase: cluster-absent`, and the Harbor publication closure for repo-owned local images
-where publication pushes the `infernix-linux-cpu:local` payload before third-party chart
-dependencies and re-tags the source image before each bounded push retry so retry recovery does
-not depend on a previously retained target tag. The earlier May 13 lifecycle investigation
-originally served as the proof point that `build-cluster-images` can remain healthy well past
-thirty minutes before Harbor publication begins and that Harbor image pushes are readiness-gated
-with bounded retries across transient registry resets. **All of those Apple Silicon and CUDA
-Linux runs were performed on the retired hardware and no longer count as current proof points;
-the underlying contracts they exercised still describe the supported behavior, and current
+runtime image, is loaded into Harbor before final rollout. Retired validation proof points are
+kept only in [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md); current
 replacement proof points are recorded by the Wave A Apple cohort closure and the Wave C native
-Linux/CUDA cohort closure below.** Sprint 6.26 closes the buildx, npm, GHCup shell-profile,
+Linux/CUDA cohort closure below. Sprint 6.26 closes the buildx, npm, GHCup shell-profile,
 Python packaging, and
 Playwright script warning cleanup with the governed `linux-gpu` lifecycle rerun complete.
 Sprint 6.27 closes the staged-substrate format cleanup: `infernix-substrate.dhall` is now a real
@@ -211,22 +200,23 @@ changes validate locally on CUDA Linux and queue Apple closure. The counterpart 
 closure batch, not a per-sprint machine switch.
 
 Full phase closure requires both relevant hardware cohorts to rerun the complete gates against the
-same phase state. `linux-cpu` remains a portable CPU-only lane that may run from either host, but
-it does not replace the CUDA Linux cohort when GPU behavior, CUDA image construction, `nvkind`, or
-NVIDIA scheduling is in scope.
+same phase state. `linux-cpu` remains a portable CPU-only lane for native Linux amd64 and native
+Linux arm64 hosts, but it does not run through Apple Silicon emulation and does not replace the
+CUDA Linux cohort when GPU behavior, CUDA image construction, `nvkind`, or NVIDIA scheduling is in
+scope.
 
 ## Phase Overview
 
 | Phase | Name | Status | Document |
 |-------|------|--------|----------|
 | 0 | Documentation and Governance | Done (Sprint 0.9 configuration-doctrine closure validated by Apple Wave A and CUDA Linux Wave C) | [phase-0-documentation-and-governance.md](phase-0-documentation-and-governance.md) |
-| 1 | Repository and Control-Plane Foundation | Done (Sprint 1.11 host-manifest materialization validated by Apple Wave A and CUDA Linux Wave C) | [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md) |
+| 1 | Repository and Control-Plane Foundation | Active (Sprint 1.12 native-only workflow doctrine implementation landed; Apple boundary validation remains outstanding before `Done`) | [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md) |
 | 2 | Kind Cluster Storage and Lifecycle | Done (Sprints 2.10–2.13 lifecycle, retained-state, bootstrap-boundary, and host-manifest retirement validated by Apple Wave A and CUDA Linux Wave C) | [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md) |
-| 3 | HA Platform Services and Edge Routing | Done (Sprints 3.10–3.11 Playwright executor, substrate-aware publication, `bitnamilegacy/*` retirement, dynamic Harbor host port, and containerd registry config validated by Apple Wave A/A.2 and CUDA Linux Wave C) | [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md) |
+| 3 | HA Platform Services and Edge Routing | Active (Sprint 3.12 native `linux-cpu` architecture selector landed; native arm64 Linux full-suite validation remains open; Sprints 3.10–3.11 otherwise validated by Apple Wave A/A.2 and CUDA Linux Wave C) | [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md) |
 | 4 | Inference Service and Durable Runtime | Done (Sprint 4.13 mounted `ClusterConfig` / `SecretsConfig` runtime path validated by Apple Wave A and CUDA Linux Wave C) | [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) |
 | 5 | Web UI and Shared Types | Done (Sprint 5.9 demo backend, Python adapter, and web/Node env-retirement path validated by Apple Wave A/A.2 and CUDA Linux Wave C) | [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md) |
 | 6 | Validation, E2E, and HA Hardening | Done (Sprints 6.22–6.28 lint/style/unit/integration/e2e and no-env-var gates validated by Apple Wave A/A.1/A.2/A.3 and CUDA Linux Wave C) | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) |
-| 7 | Demo App Multi-User Durable Context | Active (Apple gates closed in Waves A/A.1/A.2/A.3; CUDA Linux Wave C closed with `linux-cpu` PASS on 2026-06-02 and `linux-gpu` PASS on 2026-06-03; the 2026-06-03 residual sweep passed rebuilt-image `linux-gpu` validation against `sha256:521a56ac6f79bf1ce5bc9d7dcd9c872e897ce4b4882661d4ada2f62faa108d7b`; rebuilt-image `linux-cpu` validation is partially complete against `sha256:dc0c003e7cc2f2e359a474fa5ddb522c8715d271e322534db7798f260e9747fa` through launcher build, style/Python/unit/web-unit gates, and full integration, but the full `test all` gate was paused during browser/e2e cluster bootstrap; Sprint 7.8 real KV-cache/runtime-split work and the remaining CPU browser/e2e residual validation remain) | [phase-7-demo-app-durable-context.md](phase-7-demo-app-durable-context.md) |
+| 7 | Demo App Multi-User Durable Context | Active (Apple gates closed in Waves A/A.1/A.2/A.3; CUDA Linux Wave C closed with `linux-cpu` PASS on 2026-06-02 and `linux-gpu` PASS on 2026-06-03; the 2026-06-03 residual sweep passed rebuilt-image `linux-gpu` validation against `sha256:521a56ac6f79bf1ce5bc9d7dcd9c872e897ce4b4882661d4ada2f62faa108d7b` and rebuilt-image `linux-cpu` validation against `sha256:dc0c003e7cc2f2e359a474fa5ddb522c8715d271e322534db7798f260e9747fa`; Sprint 7.8 real KV-cache/runtime-split work remains) | [phase-7-demo-app-durable-context.md](phase-7-demo-app-durable-context.md) |
 
 > **Note**: Phase statuses describe current repository state. Earlier governed phases may remain
 > `Active` for named follow-ons while later phases can be `Done` when their owned work and
@@ -289,10 +279,9 @@ The supported platform now closes around these rules:
 - on Linux substrates, all supported CLI commands run through
   `docker compose run --rm infernix infernix ...`; there is no supported Linux host-native build or
   CLI surface outside the outer container
-- `linux-cpu` is the only substrate that remains meaningfully portable across unrelated host
-  hardware; native Linux or a Linux VM with real bind mounts is the supported validation path,
-  while the Apple-hosted Colima amd64 lane is build-only until the documented virtiofs data-root
-  blocker is resolved; arm64 Linux is treated as a first-class CPU-only host shape
+- `linux-cpu` is the only substrate that remains meaningfully portable across unrelated native
+  Linux host hardware; native amd64 Linux and native arm64 Linux are the supported validation
+  shapes, while Apple Silicon emulation is not a supported build or validation lane
 - `linux-gpu` assumes an amd64 Linux environment paired with a CUDA-capable device, but the outer
   control-plane container itself does not require the NVIDIA runtime
 - for `linux-gpu`, the outer control-plane image is still built from the CUDA base image, and that

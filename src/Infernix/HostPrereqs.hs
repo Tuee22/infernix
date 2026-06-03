@@ -3,23 +3,22 @@
 
 module Infernix.HostPrereqs
   ( appleHostRequirementIds,
-    colimaProfileSummary,
-    decodeDefaultColimaProfileOutput,
+    appleDockerBoundaryError,
+    decodeDockerInfoArchitecture,
     ensureAppleHostPrerequisites,
   )
 where
 
 import Control.Monad (unless, void, when)
-import Data.Aeson (FromJSON (parseJSON), eitherDecode, withObject, (.!=), (.:), (.:?))
+import Data.Aeson (FromJSON (parseJSON), eitherDecode, withObject, (.:))
 import Data.ByteString.Lazy.Char8 qualified as LazyChar8
-import Data.List (find, intercalate, isInfixOf, nub)
+import Data.Char (toLower)
+import Data.List (nub)
 import Infernix.CommandRegistry (Command (..))
 import Infernix.Config (ControlPlaneContext (HostNative), controlPlaneContext, discoverPaths, resolveRuntimeMode)
-import Infernix.Internal.Util (findFirstM)
 import Infernix.Python (ensurePoetryExecutable)
 import Infernix.Types (RuntimeMode (AppleSilicon))
-import System.Directory (doesFileExist, findExecutable)
-import System.Environment (lookupEnv, setEnv)
+import System.Directory (doesFileExist)
 import System.Exit (ExitCode (ExitSuccess))
 import System.FilePath ((</>))
 import System.Info (os)
@@ -27,7 +26,6 @@ import System.Process (proc, readCreateProcessWithExitCode)
 
 data AppleHostRequirement
   = AppleDockerCli
-  | AppleColima
   | AppleKind
   | AppleKubectl
   | AppleHelm
@@ -36,34 +34,14 @@ data AppleHostRequirement
   | ApplePoetry
   deriving (Eq, Show)
 
-data ColimaProfile = ColimaProfile
-  { colimaName :: String,
-    colimaStatus :: String,
-    colimaCpus :: Int,
-    colimaMemoryBytes :: Integer
+data DockerInfo = DockerInfo
+  { dockerInfoArchitecture :: String
   }
 
-instance FromJSON ColimaProfile where
+instance FromJSON DockerInfo where
   parseJSON =
-    withObject "ColimaProfile" $ \objectValue ->
-      ColimaProfile
-        <$> objectValue .:? "name" .!= "default"
-        <*> objectValue .: "status"
-        <*> objectValue .: "cpus"
-        <*> objectValue .: "memory"
-
-supportedColimaCpuCount :: Int
-supportedColimaCpuCount = 8
-
-supportedColimaMemoryGiB :: Int
-supportedColimaMemoryGiB = 16
-
-gibibyte :: Integer
-gibibyte = 1024 * 1024 * 1024
-
-supportedColimaMemoryBytes :: Integer
-supportedColimaMemoryBytes =
-  fromIntegral supportedColimaMemoryGiB * gibibyte
+    withObject "DockerInfo" $ \objectValue ->
+      DockerInfo <$> objectValue .: "Architecture"
 
 ensureAppleHostPrerequisites :: Maybe RuntimeMode -> Command -> IO ()
 ensureAppleHostPrerequisites maybeRuntimeMode command = do
@@ -72,10 +50,10 @@ ensureAppleHostPrerequisites maybeRuntimeMode command = do
     resolvedRuntimeMode <- runtimeModeForApplePrereqs maybeRuntimeMode command
     let requirements = appleHostRequirements resolvedRuntimeMode command
     unless (null requirements) $ do
-      brewExecutable <- requireBrewExecutable
-      ensureBrewPrefixOnPath brewExecutable
+      let brewExecutable = "/opt/homebrew/bin/brew"
+      requireBrewExecutable brewExecutable
       mapM_ (ensureHomebrewManagedTool brewExecutable) (filter (/= ApplePoetry) requirements)
-      when (requiresDockerDaemon requirements) ensureColimaDockerReady
+      when (requiresDockerDaemon requirements) ensureSelectedDockerDaemonReady
       when (ApplePoetry `elem` requirements) $
         void (ensurePoetryExecutable paths)
 
@@ -119,12 +97,11 @@ clusterToolRequirements = \case
   TestIntegrationCommand -> clusterToolchain
   TestE2ECommand -> clusterToolchain
   TestAllCommand -> clusterToolchain
-  InternalPublishChartImagesCommand _ _ -> [AppleDockerCli, AppleColima]
+  InternalPublishChartImagesCommand _ _ -> [AppleDockerCli]
   _ -> []
   where
     clusterToolchain =
       [ AppleDockerCli,
-        AppleColima,
         AppleKind,
         AppleKubectl,
         AppleHelm
@@ -155,76 +132,43 @@ pythonToolRequirements runtimeMode command
 
 requiresDockerDaemon :: [AppleHostRequirement] -> Bool
 requiresDockerDaemon requirements =
-  any (`elem` requirements) [AppleDockerCli, AppleColima]
+  AppleDockerCli `elem` requirements
 
-requireBrewExecutable :: IO FilePath
-requireBrewExecutable = do
-  maybeExecutable <- findExecutable "brew"
-  case maybeExecutable of
-    Just executablePath -> pure executablePath
-    Nothing -> do
-      let fallbackPaths =
-            [ "/opt/homebrew/bin/brew",
-              "/usr/local/bin/brew"
-            ]
-      maybeFallback <- findFirstM doesFileExist fallbackPaths
-      case maybeFallback of
-        Just executablePath -> pure executablePath
-        Nothing ->
-          ioError
-            ( userError
-                "Apple host-native prerequisite reconciliation requires Homebrew on PATH before running infernix."
-            )
-
-ensureBrewPrefixOnPath :: FilePath -> IO ()
-ensureBrewPrefixOnPath brewExecutable = do
-  (exitCode, stdoutOutput, stderrOutput) <-
-    readCreateProcessWithExitCode (proc brewExecutable ["--prefix"]) ""
-  case exitCode of
-    ExitSuccess -> do
-      let brewPrefix = trimWhitespace stdoutOutput
-          brewBin = brewPrefix </> "bin"
-          brewSbin = brewPrefix </> "sbin"
-      maybePath <- lookupEnv "PATH"
-      let pathEntries = maybe [] splitPathList maybePath
-          updatedEntries = prependIfMissing brewBin (prependIfMissing brewSbin pathEntries)
-      setEnv "PATH" (joinPathList updatedEntries)
-    _ ->
-      ioError
-        ( userError
-            ( "failed to resolve the Homebrew prefix via "
-                <> brewExecutable
-                <> " --prefix\n"
-                <> stderrOutput
-            )
-        )
+requireBrewExecutable :: FilePath -> IO ()
+requireBrewExecutable brewExecutable = do
+  present <- doesFileExist brewExecutable
+  unless present $
+    ioError
+      ( userError
+          ( "Apple host-native prerequisite reconciliation requires native arm64 Homebrew at "
+              <> brewExecutable
+              <> ". Install Homebrew for Apple Silicon and rerun the same command."
+          )
+      )
 
 ensureHomebrewManagedTool :: FilePath -> AppleHostRequirement -> IO ()
 ensureHomebrewManagedTool brewExecutable requirement = do
   let commandName = providedCommand requirement
-  maybeExecutable <- findExecutable commandName
-  case maybeExecutable of
-    Just _ -> pure ()
-    Nothing -> do
+      commandPath = homebrewCommandPath commandName
+  executablePresent <- doesFileExist commandPath
+  unless executablePresent $ do
       let formulaName = homebrewFormula requirement
       putStrLn ("reconciling Apple host prerequisite via Homebrew: " <> formulaName)
       (exitCode, _, stderrOutput) <-
         readCreateProcessWithExitCode (proc brewExecutable ["install", formulaName]) ""
       case exitCode of
         ExitSuccess -> do
-          maybeInstalledExecutable <- findExecutable commandName
-          case maybeInstalledExecutable of
-            Just _ -> pure ()
-            Nothing ->
-              ioError
-                ( userError
-                    ( "Homebrew installed "
-                        <> formulaName
-                        <> " but "
-                        <> commandName
-                        <> " is still not on PATH."
-                    )
-                )
+          installed <- doesFileExist commandPath
+          unless installed $
+            ioError
+              ( userError
+                  ( "Homebrew installed "
+                      <> formulaName
+                      <> " but "
+                      <> commandPath
+                      <> " is still missing."
+                  )
+              )
         _ ->
           ioError
             ( userError
@@ -235,179 +179,95 @@ ensureHomebrewManagedTool brewExecutable requirement = do
                 )
             )
 
-ensureColimaDockerReady :: IO ()
-ensureColimaDockerReady = do
-  profile <- readColimaProfile
-  dockerReady <- commandSucceeds "docker" ["info"]
-  case (colimaProfileRunning profile, colimaProfileSatisfiesMinimums profile, dockerReady) of
-    (True, True, True) -> pure ()
-    (True, True, False) -> do
-      putStrLn "restarting Colima because the Docker daemon is not reachable through the supported Apple host-native environment"
-      stopColima
-      startSupportedColima
-    (True, False, _) -> do
-      putStrLn
-        ( "restarting Colima with the supported Apple profile ("
-            <> supportedColimaProfileSummary
-            <> "); current profile is "
-            <> colimaProfileSummary profile
-        )
-      stopColima
-      startSupportedColima
-    (False, _, _) -> do
-      putStrLn
-        ( "starting Colima for the Apple host-native Docker environment with the supported profile ("
-            <> supportedColimaProfileSummary
-            <> ")"
-        )
-      startSupportedColima
-  dockerReadyAfterStart <- commandSucceeds "docker" ["info"]
-  unless dockerReadyAfterStart $
-    ioError
-      ( userError
-          "Colima is running but `docker info` still failed afterward."
-      )
-  updatedProfile <- readColimaProfile
-  unless (colimaProfileRunning updatedProfile && colimaProfileSatisfiesMinimums updatedProfile) $
-    ioError
-      ( userError
-          ( "Colima did not reach the supported Apple profile after reconciliation. "
-              <> "Expected at least "
-              <> supportedColimaProfileSummary
-              <> " but found "
-              <> colimaProfileSummary updatedProfile
-              <> "."
-          )
-      )
+ensureSelectedDockerDaemonReady :: IO ()
+ensureSelectedDockerDaemonReady = do
+  let dockerExecutable = homebrewCommandPath "docker"
+  contextName <- readDockerContext dockerExecutable
+  architecture <- readDockerDaemonArchitecture dockerExecutable contextName
+  putStrLn
+    ( "Apple Docker context: "
+        <> contextName
+        <> "; daemon architecture: "
+        <> architecture
+    )
+  case appleDockerBoundaryError contextName architecture of
+    Nothing -> pure ()
+    Just message -> ioError (userError message)
 
-readColimaProfile :: IO ColimaProfile
-readColimaProfile = do
+readDockerContext :: FilePath -> IO String
+readDockerContext dockerExecutable = do
   (exitCode, stdoutOutput, stderrOutput) <-
-    readCreateProcessWithExitCode (proc "colima" ["list", "--json"]) ""
+    readCreateProcessWithExitCode (proc dockerExecutable ["context", "show"]) ""
+  case exitCode of
+    ExitSuccess -> pure (trimWhitespace stdoutOutput)
+    _ ->
+      ioError
+        ( userError
+            ( "failed to inspect the selected Docker context with "
+                <> dockerExecutable
+                <> " context show\n"
+                <> stderrOutput
+            )
+        )
+
+readDockerDaemonArchitecture :: FilePath -> String -> IO String
+readDockerDaemonArchitecture dockerExecutable contextName = do
+  (exitCode, stdoutOutput, stderrOutput) <-
+    readCreateProcessWithExitCode
+      (proc dockerExecutable ["info", "--format", "{{json .}}"])
+      ""
   case exitCode of
     ExitSuccess ->
-      case decodeDefaultColimaProfileOutput stdoutOutput of
-        Right profile -> pure profile
+      case decodeDockerInfoArchitecture stdoutOutput of
+        Right architecture -> pure architecture
         Left decodeError ->
           ioError
             ( userError
-                ( "failed to parse `colima list --json`\n"
+                ( "failed to parse Docker daemon architecture for context "
+                    <> contextName
+                    <> "\n"
                     <> decodeError
                 )
             )
     _ ->
       ioError
         ( userError
-            ( "failed to inspect the Colima profile for the Apple host-native Docker environment\n"
+            ( "Docker-backed Apple work requires the currently selected Docker context to point at an already running native arm64 daemon. "
+                <> "The selected context is "
+                <> contextName
+                <> ", but `docker info` failed. Infernix will not create or switch Docker contexts or create a Docker VM.\n"
                 <> stderrOutput
             )
         )
 
-decodeDefaultColimaProfileOutput :: String -> Either String ColimaProfile
-decodeDefaultColimaProfileOutput stdoutOutput =
-  case decodeSingleProfile of
-    Right profile -> Right profile
-    Left singleProfileError ->
-      case decodeProfileArray of
-        Right profiles -> selectDefaultColimaProfile profiles
-        Left profileArrayError ->
-          case decodeProfileLines of
-            Right profiles -> selectDefaultColimaProfile profiles
-            Left profileLinesError ->
-              Left
-                ( "single-profile decode failed: "
-                    <> singleProfileError
-                    <> "\narray decode failed: "
-                    <> profileArrayError
-                    <> "\nnewline-delimited decode failed: "
-                    <> profileLinesError
-                )
-  where
-    outputBytes = LazyChar8.pack stdoutOutput
-    decodeSingleProfile :: Either String ColimaProfile
-    decodeSingleProfile = eitherDecode outputBytes
-    decodeProfileArray :: Either String [ColimaProfile]
-    decodeProfileArray = eitherDecode outputBytes
-    decodeProfileLines =
-      case filter (not . null) (map trimWhitespace (lines stdoutOutput)) of
-        [] -> Left "command returned no JSON output"
-        profileLines -> traverse decodeProfileLine profileLines
-    decodeProfileLine line =
-      case eitherDecode (LazyChar8.pack line) of
-        Right profile -> Right profile
-        Left decodeError -> Left ("line `" <> line <> "` failed to decode: " <> decodeError)
+decodeDockerInfoArchitecture :: String -> Either String String
+decodeDockerInfoArchitecture stdoutOutput = do
+  DockerInfo architecture <- eitherDecode (LazyChar8.pack stdoutOutput)
+  pure architecture
 
-selectDefaultColimaProfile :: [ColimaProfile] -> Either String ColimaProfile
-selectDefaultColimaProfile profiles =
-  case find ((== "default") . colimaName) profiles of
-    Just profile -> Right profile
-    Nothing ->
-      Left
-        ( "Colima did not report the supported `default` profile. Reported profiles: "
-            <> intercalate ", " (map colimaName profiles)
+appleDockerBoundaryError :: String -> String -> Maybe String
+appleDockerBoundaryError contextName architecture
+  | nativeArm64Architecture architecture = Nothing
+  | otherwise =
+      Just
+        ( "Docker-backed Apple work requires the selected Docker context to use a native arm64 daemon. "
+            <> "Current context: "
+            <> contextName
+            <> "; daemon architecture: "
+            <> architecture
+            <> ". Infernix will not create or switch Docker contexts, create a Docker VM, or use cross-architecture emulation."
         )
 
-colimaProfileRunning :: ColimaProfile -> Bool
-colimaProfileRunning profile =
-  colimaStatus profile == "Running"
+nativeArm64Architecture :: String -> Bool
+nativeArm64Architecture architecture =
+  normalizeArchitecture architecture `elem` ["arm64", "aarch64"]
 
-colimaProfileSatisfiesMinimums :: ColimaProfile -> Bool
-colimaProfileSatisfiesMinimums profile =
-  colimaCpus profile >= supportedColimaCpuCount
-    && colimaMemoryBytes profile >= supportedColimaMemoryBytes
-
-colimaProfileSummary :: ColimaProfile -> String
-colimaProfileSummary profile =
-  show (colimaCpus profile)
-    <> " CPU / "
-    <> show (colimaMemoryBytes profile `div` gibibyte)
-    <> " GiB memory"
-
-supportedColimaProfileSummary :: String
-supportedColimaProfileSummary =
-  show supportedColimaCpuCount
-    <> " CPU / "
-    <> show supportedColimaMemoryGiB
-    <> " GiB memory"
-
-stopColima :: IO ()
-stopColima = do
-  (exitCode, _, stderrOutput) <- readCreateProcessWithExitCode (proc "colima" ["stop"]) ""
-  case exitCode of
-    ExitSuccess -> pure ()
-    _ ->
-      ioError
-        ( userError
-            ( "failed to stop Colima for Apple host-native Docker reconciliation\n"
-                <> stderrOutput
-            )
-        )
-
-startSupportedColima :: IO ()
-startSupportedColima = do
-  (exitCode, _, stderrOutput) <-
-    readCreateProcessWithExitCode
-      (proc "colima" ["start", "--cpu", show supportedColimaCpuCount, "--memory", show supportedColimaMemoryGiB])
-      ""
-  case exitCode of
-    ExitSuccess -> pure ()
-    _ ->
-      ioError
-        ( userError
-            ( "failed to start Colima for the Apple host-native Docker environment\n"
-                <> stderrOutput
-            )
-        )
-
-commandSucceeds :: FilePath -> [String] -> IO Bool
-commandSucceeds commandName args = do
-  (exitCode, _, _) <- readCreateProcessWithExitCode (proc commandName args) ""
-  pure (exitCode == ExitSuccess)
+normalizeArchitecture :: String -> String
+normalizeArchitecture = map toLower . trimWhitespace
 
 homebrewFormula :: AppleHostRequirement -> String
 homebrewFormula = \case
   AppleDockerCli -> "docker"
-  AppleColima -> "colima"
   AppleKind -> "kind"
   AppleKubectl -> "kubernetes-cli"
   AppleHelm -> "helm"
@@ -418,7 +278,6 @@ homebrewFormula = \case
 providedCommand :: AppleHostRequirement -> String
 providedCommand = \case
   AppleDockerCli -> "docker"
-  AppleColima -> "colima"
   AppleKind -> "kind"
   AppleKubectl -> "kubectl"
   AppleHelm -> "helm"
@@ -429,7 +288,6 @@ providedCommand = \case
 requirementId :: AppleHostRequirement -> String
 requirementId = \case
   AppleDockerCli -> "docker"
-  AppleColima -> "colima"
   AppleKind -> "kind"
   AppleKubectl -> "kubectl"
   AppleHelm -> "helm"
@@ -441,25 +299,6 @@ trimWhitespace :: String -> String
 trimWhitespace =
   reverse . dropWhile (`elem` [' ', '\n', '\r', '\t']) . reverse
 
-splitPathList :: String -> [String]
-splitPathList value =
-  case break (== ':') value of
-    (entry, ':' : remaining) -> entry : splitPathList remaining
-    (entry, _) -> [entry]
-
-joinPathList :: [String] -> String
-joinPathList = foldr joinSegment ""
-  where
-    joinSegment segment "" = segment
-    joinSegment segment remaining = segment <> ":" <> remaining
-
-prependIfMissing :: String -> [String] -> [String]
-prependIfMissing entry entries
-  | any (matchesPath entry) entries = entries
-  | otherwise = entry : entries
-
-matchesPath :: String -> String -> Bool
-matchesPath expected actual =
-  trimWhitespace actual == trimWhitespace expected
-    || trimWhitespace actual `isInfixOf` trimWhitespace expected
-    || trimWhitespace expected `isInfixOf` trimWhitespace actual
+homebrewCommandPath :: String -> FilePath
+homebrewCommandPath commandName =
+  "/opt/homebrew/bin" </> commandName

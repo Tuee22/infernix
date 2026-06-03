@@ -46,7 +46,6 @@ let ToolPaths =
       , curl : HostTool
       , aptGet : HostTool
       , brew : HostTool
-      , colima : HostTool
       , sudo : HostTool
       , systemctl : HostTool
       , mkdir : HostTool
@@ -83,6 +82,7 @@ let HostExecutionContext =
       >
 
 in    { hostExecutionContext : HostExecutionContext
+      , hostArchitecture : Text
       , toolPaths : ToolPaths
       , filesystem : FilesystemConventions
       , playwrightHost : Text
@@ -91,14 +91,15 @@ in    { hostExecutionContext : HostExecutionContext
 ```
 
 The schema itself lives in `dhall/InfernixHost.dhall`; the materialized operator copy lives in
-`./.build/infernix-host.dhall` (Apple) or in the launcher image at `/opt/infernix/dhall/InfernixHost.dhall`
-(Linux).
+`./.build/infernix-host.dhall` (Apple) or in the launcher image at
+`/opt/infernix/dhall/InfernixHost.dhall` (Linux). `hostArchitecture` stores the normalized native
+host architecture (`amd64` or `arm64`) used by the `linux-cpu` publication selector.
 
 ## Per-tool field mapping
 
 | Tool | Field | Apple default | Linux launcher default |
 |------|-------|---------------|------------------------|
-| docker | `toolPaths.docker` | `/usr/local/bin/docker` (Colima) | `/usr/bin/docker` |
+| docker | `toolPaths.docker` | `/opt/homebrew/bin/docker` (current native arm64 Docker context required) | `/usr/bin/docker` |
 | kubectl | `toolPaths.kubectl` | `/opt/homebrew/bin/kubectl` | `/usr/local/bin/kubectl` (baked into image) |
 | helm | `toolPaths.helm` | `/opt/homebrew/bin/helm` | `/usr/local/bin/helm` |
 | kind | `toolPaths.kind` | `/opt/homebrew/bin/kind` | `/usr/local/bin/kind` |
@@ -117,7 +118,6 @@ The schema itself lives in `dhall/InfernixHost.dhall`; the materialized operator
 | curl | `toolPaths.curl` | `/usr/bin/curl` | `/usr/bin/curl` |
 | apt-get | `toolPaths.aptGet` | n/a (macOS) | `/usr/bin/apt-get` |
 | brew | `toolPaths.brew` | `/opt/homebrew/bin/brew` | n/a |
-| colima | `toolPaths.colima` | `/opt/homebrew/bin/colima` | n/a |
 | sudo | `toolPaths.sudo` | `/usr/bin/sudo` | `/usr/bin/sudo` |
 | systemctl | `toolPaths.systemctl` | n/a | `/usr/bin/systemctl` |
 | crictl | `toolPaths.crictl` | n/a | `/usr/local/bin/crictl` |
@@ -127,10 +127,12 @@ The schema itself lives in `dhall/InfernixHost.dhall`; the materialized operator
 | skopeo | `toolPaths.skopeo` | n/a | `/usr/bin/skopeo` |
 | hostname | `toolPaths.hostname` | `/bin/hostname` | `/usr/bin/hostname` |
 
-The Apple defaults assume Homebrew (`/opt/homebrew/bin`) and ghcup. The Linux launcher defaults
-are baked into the launcher image at build time and updated only by rebuilding the image. Apple
-operators can override individual paths by editing `./.build/infernix-host.dhall`; the resulting
-file is consumed on next `infernix <command>` invocation.
+The Apple defaults assume Homebrew (`/opt/homebrew/bin`) and ghcup. Docker-backed Apple work
+requires the current Docker context to already point at a native arm64 Docker daemon; Infernix must
+not create or switch Docker contexts, create a Colima VM, or use emulation. The Linux launcher
+defaults are baked into the launcher image at build time and updated only by rebuilding the image.
+Apple operators can override individual paths by editing `./.build/infernix-host.dhall`; the
+resulting file is consumed on next `infernix <command>` invocation.
 
 ## Bootstrap shell convention
 
@@ -163,8 +165,8 @@ readonly CABAL="${HOME_DIR}/.ghcup/bin/cabal"
 ```
 
 The pre-binary command set is intentionally tiny: `apt-get`, `sudo`, `docker`, `ghcup`, `cabal`,
-`brew`, `colima`, `bash`, `dirname`, `getent`, `id`, `cut`. Everything else flows through the
-launcher binary, which reads its tool paths from `HostConfig`.
+`brew`, `bash`, `dirname`, `getent`, `id`, `cut`. Everything else flows through the launcher
+binary, which reads its tool paths and native host architecture from `HostConfig`.
 
 ## Adding a new external command
 
@@ -186,7 +188,7 @@ When a sprint introduces a new external CLI:
 - `infernix test lint` — the Haskell-style lint gate rejects any `proc "<bare-name>"` whose name
   matches a `ToolPaths` field. Adding a new command without adding the schema field first fails
   this check.
-- `grep -rEn '\bproc "(docker|kubectl|helm|kind|cabal|ghc|ghcup|npm|node|python3|poetry|protoc|git|tar|curl|apt-get|brew|colima|skopeo|sudo|systemctl)"' src/ test/` returns zero matches.
+- `grep -rEn '\bproc "(docker|kubectl|helm|kind|cabal|ghc|ghcup|npm|node|python3|poetry|protoc|git|tar|curl|apt-get|brew|skopeo|sudo|systemctl)"' src/ test/` returns zero matches.
 
 ## Cross-References
 

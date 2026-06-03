@@ -59,20 +59,10 @@ image, including the active runtime image, into Harbor after Harbor is responsiv
 `infernix-substrate.dhall` writes are atomic so concurrent status readers do not observe truncated
 payloads, and retained-state Apple reruns automatically reinitialize stopped Harbor PostgreSQL
 replicas from the current Patroni leader when timeline drift leaves replicas unready after
-promotion. Phase 6 had previously recorded clean supported `./bootstrap/apple-silicon.sh` lifecycle reruns
-from May 15, 2026 and May 17, 2026 through `doctor`, `build`, `up`, `status`, `test`, `down`, and
-final `status` covering the split daemon topology, host-batch Pulsar handoff, repeated
-retained-state cluster bring-up or teardown cycles inside the governed `test` lane, and final
-post-teardown status returning `clusterPresent: False`, `lifecycleStatus: idle`, and
-`lifecyclePhase: cluster-absent`; the May 17, 2026 rerun additionally exercised the
-shell-to-rebuilt-binary delegation, Harbor publication of the active runtime image before final
-rollout, and the absence of broad pre-Harbor support-image preload; the earlier May 13, 2026
-lifecycle investigation originally served as the proof point that Apple `build-cluster-images`
-can stay healthy well past thirty minutes before Harbor publication begins and that Harbor image
-pushes are readiness-gated with bounded retries across transient registry resets. **Apple
-Silicon validation reset (2026-05-29).** All of those reruns were performed on the retired Apple
-Silicon hardware (no longer available) and no longer count as current proof points. The storage
-doctrine, Helm rollout, Harbor-first image flow, retained-state replay, and lifecycle-progress
+promotion. Retired lifecycle proof points are inventoried in
+[legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) rather than repeated in the
+current phase narrative. The storage doctrine, Helm rollout, Harbor-first image flow,
+retained-state replay, and lifecycle-progress
 contracts are now covered by the current Apple cohort closure in Wave A and native Linux/CUDA
 cohort closure in Wave C.
 

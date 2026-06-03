@@ -1,6 +1,6 @@
 # Phase 7: Demo App Multi-User Durable Context
 
-**Status**: Active (Sprints 7.1–7.7, 7.10–7.13, and 7.17 are `Done`; Sprint 7.8 remains `Active` for real KV-cache engine verification, the wider `Infernix.Runtime.Pulsar` coordinator transport split, and Failover-promotion refinement. Sprints 7.9, 7.14, and 7.15 have their listed non-cohort residual code landed in the current worktree; the residual sweep passed the rebuilt-image `linux-gpu` full gate on 2026-06-03 against image digest `sha256:521a56ac6f79bf1ce5bc9d7dcd9c872e897ce4b4882661d4ada2f62faa108d7b`. Rebuilt-image `linux-cpu` validation is partially complete against image digest `sha256:dc0c003e7cc2f2e359a474fa5ddb522c8715d271e322534db7798f260e9747fa`: the launcher build, style/Python/unit/web-unit gates, and full integration passed, including the LinuxCpu chaos/throughput block, but the full `test all` gate was paused during browser/e2e cluster bootstrap and the cluster was torn down with `./bootstrap/linux-cpu.sh down`. Sprint 7.16 remains `Active` until docs lint passes after the final residual-sweep docs update and the 7.8 blocker is either implemented or explicitly deferred. Code-side work has landed for the full daemon-split, durable-context shell, routed Keycloak / WebSocket / `/api/objects` / browser flows, Sprint 7.17 configuration-doctrine retirement, the artifact-upload submit-race fix, and the per-model browser smoke matrix. Sprint 7.14 Apple `engine.lock` chaos case closed in Wave A.3; Sprint 7.14 Linux-owned chaos/throughput validation closed in [Wave C](cohort-validation-waves.md), covering frontend pod replacement, coordinator pod replacement, engine pod replacement, engine node drain, model-bootstrap deduplication, Linux engine anti-affinity, and compact multi-user durable prompt throughput. The browser-level frontend pod-kill reconnect case closed on 2026-06-03 with mounted-source `linux-gpu` routed E2E and the final rebuilt-image full `linux-gpu` gate; the browser test deleted all `infernix-demo` pods, waited for replacements, reconnected, resubscribed, and submitted another prompt. Apple cohort gates closed in [Wave A](cohort-validation-waves.md), [Wave A.1](cohort-validation-waves.md), [Wave A.2](cohort-validation-waves.md), and [Wave A.3](cohort-validation-waves.md); native `linux-cpu` full-suite validation passed 2026-06-02 in [Wave C](cohort-validation-waves.md), and `linux-gpu` full-suite validation passed 2026-06-03 in [Wave C](cohort-validation-waves.md).)
+**Status**: Active (Sprints 7.1–7.7, 7.10–7.13, and 7.17 are `Done`; Sprint 7.8 remains `Active` for real KV-cache engine verification, the wider `Infernix.Runtime.Pulsar` coordinator transport split, and Failover-promotion refinement. Sprints 7.9, 7.14, and 7.15 have their listed non-cohort residual code landed in the current worktree; the residual sweep passed the rebuilt-image `linux-gpu` full gate on 2026-06-03 against image digest `sha256:521a56ac6f79bf1ce5bc9d7dcd9c872e897ce4b4882661d4ada2f62faa108d7b`. Rebuilt-image `linux-cpu` validation also passed on 2026-06-03 against image digest `sha256:dc0c003e7cc2f2e359a474fa5ddb522c8715d271e322534db7798f260e9747fa`: the launcher build, style/Python/unit/web-unit gates, full integration including the LinuxCpu chaos/throughput block, and routed Playwright E2E (7/7) all passed. Sprint 7.16 docs lint passed after this final residual-sweep docs update, but the sprint remains `Active` until the 7.8 blocker is either implemented or explicitly deferred. Code-side work has landed for the full daemon-split, durable-context shell, routed Keycloak / WebSocket / `/api/objects` / browser flows, Sprint 7.17 configuration-doctrine retirement, the artifact-upload submit-race fix, and the per-model browser smoke matrix. Sprint 7.14 Apple `engine.lock` chaos case closed in Wave A.3; Sprint 7.14 Linux-owned chaos/throughput validation closed in [Wave C](cohort-validation-waves.md), covering frontend pod replacement, coordinator pod replacement, engine pod replacement, engine node drain, model-bootstrap deduplication, Linux engine anti-affinity, and compact multi-user durable prompt throughput. The browser-level frontend pod-kill reconnect case closed on 2026-06-03 with mounted-source `linux-gpu` routed E2E and both rebuilt-image full gates; the browser test deleted all `infernix-demo` pods, waited for replacements, reconnected, resubscribed, and submitted another prompt. Apple cohort gates closed in [Wave A](cohort-validation-waves.md), [Wave A.1](cohort-validation-waves.md), [Wave A.2](cohort-validation-waves.md), and [Wave A.3](cohort-validation-waves.md); native `linux-cpu` full-suite validation passed 2026-06-02 in [Wave C](cohort-validation-waves.md), the rebuilt-image `linux-cpu` residual full-suite gate passed 2026-06-03, and `linux-gpu` full-suite validation passed 2026-06-03 in [Wave C](cohort-validation-waves.md).)
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/durable_context_design.md](../documents/architecture/durable_context_design.md), [../documents/architecture/demo_app_design.md](../documents/architecture/demo_app_design.md), [../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Define the multi-user, durable-context shape of the `infernix-demo` workload —
@@ -33,11 +33,10 @@ The 2026-06-03 residual sweep adds runtime bucket repair, deployed wrong-realm K
 rejection for `/api/objects` and `/ws`, throughput matrix parameterization, and extracted
 Playwright artifact fixtures. Those specific changes passed the rebuilt-image `linux-gpu` full
 gate on 2026-06-03 against image digest
-`sha256:521a56ac6f79bf1ce5bc9d7dcd9c872e897ce4b4882661d4ada2f62faa108d7b`. Rebuilt-image
-`linux-cpu` validation is partially complete against image digest
-`sha256:dc0c003e7cc2f2e359a474fa5ddb522c8715d271e322534db7798f260e9747fa`: the launcher build,
-style/Python/unit/web-unit gates, and full integration passed, but the browser/e2e portion of the
-full `test all` gate remains pending after the run was paused during cluster bootstrap.
+`sha256:521a56ac6f79bf1ce5bc9d7dcd9c872e897ce4b4882661d4ada2f62faa108d7b` and the rebuilt-image
+`linux-cpu` full gate on 2026-06-03 against image digest
+`sha256:dc0c003e7cc2f2e359a474fa5ddb522c8715d271e322534db7798f260e9747fa`. The CPU residual run
+passed style/Python/unit/web-unit gates, full integration, and routed Playwright E2E (7/7).
 
 Validation closure: tracked by [cohort-validation-waves.md](cohort-validation-waves.md).
 Apple cohort closed in [Wave A](cohort-validation-waves.md) (durable-context prompt roundtrip
@@ -48,7 +47,7 @@ PASS + 5/6 e2e PASS), [Wave A.1](cohort-validation-waves.md) (artifact-upload su
 Linux cohort closure closed in [Wave C](cohort-validation-waves.md): the native `linux-cpu`
 full-suite gate passed on 2026-06-02, and the real-hardware `linux-gpu` full-suite gate passed
 on 2026-06-03. Wave C covers the LinuxCpu integration chaos block + the multi-user throughput
-suite.
+suite. The rebuilt-image `linux-cpu` residual full-suite gate passed on 2026-06-03 after Wave D.
 The retired May 2026
 dated proof points originally produced on the prior Apple Silicon and Linux/CUDA hardware
 are inventoried in
@@ -1470,7 +1469,7 @@ Pending closure:
 
 ## Sprint 7.9: Demo MinIO Bucket and Presigned URL Minting [Active]
 
-**Status**: Active (runtime bucket repair code landed on 2026-06-03; rebuilt-image `linux-gpu` validation passed against digest `sha256:521a56ac6f79bf1ce5bc9d7dcd9c872e897ce4b4882661d4ada2f62faa108d7b`; rebuilt-image `linux-cpu` validation is partially complete through build, style/Python/unit/web-unit gates, and full integration against digest `sha256:dc0c003e7cc2f2e359a474fa5ddb522c8715d271e322534db7798f260e9747fa`, with browser/e2e completion still pending)
+**Status**: Active (runtime bucket repair code landed on 2026-06-03; rebuilt-image `linux-gpu` validation passed against digest `sha256:521a56ac6f79bf1ce5bc9d7dcd9c872e897ce4b4882661d4ada2f62faa108d7b`; rebuilt-image `linux-cpu` validation passed through build, style/Python/unit/web-unit gates, full integration, and routed Playwright E2E (7/7) on 2026-06-03 against digest `sha256:dc0c003e7cc2f2e359a474fa5ddb522c8715d271e322534db7798f260e9747fa`)
 **Implementation**: `chart/values.yaml`, `src/Infernix/Objects/Layout.hs`, `src/Infernix/Objects/Presigned.hs`, `src/Infernix/Demo/Api.hs`, `src/Infernix/Demo/Bootstrap.hs`
 **Docs to update**: `documents/architecture/durable_context_design.md`, `documents/architecture/demo_app_design.md`, `documents/tools/minio.md`, `documents/engineering/object_storage.md`, `documents/reference/api_surface.md`
 
@@ -1596,9 +1595,9 @@ The 2026-06-03 residual pass landed runtime-time bucket repair for the demo back
 Pending closure:
 
 - Rebuilt-image `linux-gpu` validation passed the startup repair code in the same container image
-  used for ordinary cluster execution on 2026-06-03. Rebuilt-image `linux-cpu` validation has
-  passed through build, style/Python/unit/web-unit gates, and full integration; the matching
-  browser/e2e segment remains pending after the pause during cluster bootstrap.
+  used for ordinary cluster execution on 2026-06-03. Rebuilt-image `linux-cpu` validation passed
+  the same residual gate on 2026-06-03 through the full `./bootstrap/linux-cpu.sh test` suite,
+  including routed Playwright E2E (7/7).
 - `cluster up` with `demo_ui = false` already shows neither the `/api/objects` route nor the
   `infernix-demo-objects` bucket; keep that absence check in the closure suite.
 
@@ -2033,7 +2032,7 @@ Pending closure:
 
 ## Sprint 7.14: Integration-Layer Validation [Active]
 
-**Status**: Active (code-side closed for WebSocket-to-Pulsar publish plumbing, the coordinator-to-engine handoff contract, real Pulsar Reader roundtrip coverage for conversation/contexts/drafts/bootstrap-ready topic families, broker compacted-reader latest-per-key coverage, real broker producer-dedup validation, the non-chaos dispatcher/result-bridge durable prompt roundtrip, the Apple `engine.lock` chaos case (Wave A.3 in [cohort-validation-waves.md](cohort-validation-waves.md)), and the Linux-owned Sprint 7.14 chaos/throughput block landed on 2026-06-02: frontend pod replacement, coordinator pod replacement around durable prompt dispatch/writeback, engine pod replacement, engine node drain, model-bootstrap request/ready-event deduplication across coordinator replacement, Linux engine anti-affinity, and multi-user durable prompt throughput. The 2026-06-03 residual sweep adds deployed wrong-realm Keycloak token rejection coverage and parameterizes the throughput matrix. Native `linux-cpu` `infernix test all` validation passed on 2026-06-02; `linux-gpu` `infernix test all` validation passed on 2026-06-03 in [Wave C](cohort-validation-waves.md), and the rebuilt-image `linux-gpu` residual gate passed on 2026-06-03 against digest `sha256:521a56ac6f79bf1ce5bc9d7dcd9c872e897ce4b4882661d4ada2f62faa108d7b`. Apple cohort gate closed in [Wave A](cohort-validation-waves.md) via `cabal test infernix-integration` full PASS exercising the durable-context prompt roundtrip. Rebuilt-image `linux-cpu` residual validation is partially complete against digest `sha256:dc0c003e7cc2f2e359a474fa5ddb522c8715d271e322534db7798f260e9747fa`: the throughput-matrix integration path passed, but the deployed wrong-realm browser negatives still need the browser/e2e segment of the full gate. The sprint remains blocked by Sprint 7.8 for real KV-cache engine verification.)
+**Status**: Active (code-side closed for WebSocket-to-Pulsar publish plumbing, the coordinator-to-engine handoff contract, real Pulsar Reader roundtrip coverage for conversation/contexts/drafts/bootstrap-ready topic families, broker compacted-reader latest-per-key coverage, real broker producer-dedup validation, the non-chaos dispatcher/result-bridge durable prompt roundtrip, the Apple `engine.lock` chaos case (Wave A.3 in [cohort-validation-waves.md](cohort-validation-waves.md)), and the Linux-owned Sprint 7.14 chaos/throughput block landed on 2026-06-02: frontend pod replacement, coordinator pod replacement around durable prompt dispatch/writeback, engine pod replacement, engine node drain, model-bootstrap request/ready-event deduplication across coordinator replacement, Linux engine anti-affinity, and multi-user durable prompt throughput. The 2026-06-03 residual sweep adds deployed wrong-realm Keycloak token rejection coverage and parameterizes the throughput matrix. Native `linux-cpu` `infernix test all` validation passed on 2026-06-02; `linux-gpu` `infernix test all` validation passed on 2026-06-03 in [Wave C](cohort-validation-waves.md), the rebuilt-image `linux-gpu` residual gate passed on 2026-06-03 against digest `sha256:521a56ac6f79bf1ce5bc9d7dcd9c872e897ce4b4882661d4ada2f62faa108d7b`, and the rebuilt-image `linux-cpu` residual gate passed on 2026-06-03 against digest `sha256:dc0c003e7cc2f2e359a474fa5ddb522c8715d271e322534db7798f260e9747fa`. Apple cohort gate closed in [Wave A](cohort-validation-waves.md) via `cabal test infernix-integration` full PASS exercising the durable-context prompt roundtrip. The sprint remains blocked by Sprint 7.8 for real KV-cache engine verification.)
 **Blocked by**: 7.8
 **Implementation**: `test/integration/*` (existing `infernix-integration` Cabal stanza), `test/integration/Infernix/Test/Integration/Throughput.hs`
 **Docs to update**: `documents/development/demo_app_test_plan.md`, `documents/development/chaos_testing.md`, `documents/tools/pulsar.md`, `documents/architecture/daemon_topology.md`
@@ -2341,13 +2340,18 @@ May 27, 2026 Linux GPU validation landing:
     p95Seconds=74.05106592178345`. The run was paused at operator request during the following
     browser/e2e cluster bootstrap, before Playwright executed; `./bootstrap/linux-cpu.sh down`
     then removed the partially bootstrapped CPU Kind cluster.
+  - the resumed rebuilt-image `./bootstrap/linux-cpu.sh test` run on 2026-06-03 passed Haskell
+    style, Python checks, Haskell unit, PureScript build, 71/71 web unit tests, full integration,
+    platform recovery checks, and routed Playwright E2E (7/7) against the same launcher image
+    digest. Integration included frontend pod replacement, coordinator replacement,
+    engine replacement, engine node drain, model-bootstrap deduplication, Linux engine
+    anti-affinity, multi-user durable prompt throughput, Harbor recovery, MinIO durability,
+    routed Pulsar recovery, PostgreSQL failover, and PostgreSQL lifecycle rebinding. The compact
+    throughput matrix reported `users=3 contextsPerUser=2 promptsPerContext=2 totalPrompts=12
+    p95Seconds=76.06613969802856`. The Playwright file reported `7 passed (2.1m)`.
 
 Pending closure:
 
-- Rebuilt-image `linux-cpu` validation must resume and complete the browser/e2e segment after the
-  wrong-realm and throughput-matrix residuals. The integration-side throughput residual has
-  passed; the deployed wrong-realm `/api/objects` and `/ws` negatives still need the CPU
-  Playwright gate.
 - Sprint 7.8 still owns the real KV-cache engine verification gate. The current deterministic
   adapter layer does not expose a reusable KV cache, so Sprint 7.14 cannot honestly prove
   cache-hit/cache-miss behavior under engine failover until that runtime surface exists.
@@ -2356,7 +2360,7 @@ Pending closure:
 
 ## Sprint 7.15: E2E-Layer Validation [Active]
 
-**Status**: Active (durable-context browser flow and per-model matrix are validated; browser-suite fixture extraction landed on 2026-06-03 and passed rebuilt-image `linux-gpu` validation against digest `sha256:521a56ac6f79bf1ce5bc9d7dcd9c872e897ce4b4882661d4ada2f62faa108d7b`; rebuilt-image `linux-cpu` validation is partially complete through build, style/Python/unit/web-unit gates, and full integration against digest `sha256:dc0c003e7cc2f2e359a474fa5ddb522c8715d271e322534db7798f260e9747fa`, with the browser/e2e fixture-backed flow still pending)
+**Status**: Active (durable-context browser flow and per-model matrix are validated; browser-suite fixture extraction landed on 2026-06-03 and passed rebuilt-image `linux-gpu` validation against digest `sha256:521a56ac6f79bf1ce5bc9d7dcd9c872e897ce4b4882661d4ada2f62faa108d7b`; rebuilt-image `linux-cpu` validation passed through build, style/Python/unit/web-unit gates, full integration, and routed Playwright E2E (7/7) on 2026-06-03 against digest `sha256:dc0c003e7cc2f2e359a474fa5ddb522c8715d271e322534db7798f260e9747fa`)
 **Blocked by**: 7.14
 **Implementation**: `web/src/Main.purs`, `web/src/index.html`, `web/src/Infernix/Web/ArtifactTransport.purs`, `web/src/Infernix/Web/ArtifactTransport.js`, `web/src/Infernix/Web/Auth.purs`, `web/src/Infernix/Web/Auth.js`, `web/test/Main.purs`, Playwright suites under the repo's Playwright tree, run inside the active Linux substrate image; `web/test/fixtures/`
 **Docs to update**: `documents/development/demo_app_test_plan.md`, `documents/development/testing_strategy.md`
@@ -2532,20 +2536,22 @@ May 27-28, 2026 partial landing:
   fixture-backed artifact flow and the per-model browser matrix in the ordinary full gate. The
   Playwright file reported `7 passed (2.2m)` against launcher image digest
   `sha256:521a56ac6f79bf1ce5bc9d7dcd9c872e897ce4b4882661d4ada2f62faa108d7b`.
+- The resumed rebuilt-image `./bootstrap/linux-cpu.sh test` rerun on 2026-06-03 passed the
+  fixture-backed artifact flow and the per-model browser matrix in the ordinary full CPU gate.
+  The Playwright file reported `7 passed (2.1m)` against launcher image digest
+  `sha256:dc0c003e7cc2f2e359a474fa5ddb522c8715d271e322534db7798f260e9747fa`.
 
 Pending closure:
 
-- Rebuilt-image `linux-cpu` validation must resume at the browser/e2e gate after the fixture
-  extraction. The 2026-06-03 CPU residual run passed build, style/Python/unit/web-unit gates, and
-  full integration before it was paused during browser/e2e cluster bootstrap. The per-model smoke
-  matrix itself is already validated: Apple closed it in Wave A.2, and `linux-gpu` closed it in
-  Wave C plus the residual full gate with all 16 catalog rows passing.
+- Sprint 7.15 no longer has a rebuilt-image `linux-cpu` browser/e2e residual. The per-model smoke
+  matrix is validated on Apple in Wave A.2, on `linux-gpu` in Wave C plus the residual full gate,
+  and on rebuilt-image `linux-cpu` by the 2026-06-03 resumed full gate.
 
 ---
 
 ## Sprint 7.16: Documentation Closure [Active]
 
-**Status**: Active
+**Status**: Active (docs lint passed on 2026-06-03 after the residual-sweep docs update; phase-level blockers remain)
 **Blocked by**: 7.8, 7.9, 7.14, 7.15
 **Implementation**: every doc named in this phase
 **Docs to update**: all docs named in Documentation Requirements below
@@ -2567,6 +2573,9 @@ behavior. `infernix lint docs` is clean.
 ### Validation
 
 - `infernix lint docs` exits zero
+- 2026-06-03 Linux outer-container validation:
+  `docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm infernix infernix lint docs`
+  exits zero after the residual-sweep docs update
 - a fresh contributor can locate the canonical home for every Phase 7 topic via the suite
   index
 
@@ -2626,7 +2635,8 @@ Pending refinement:
 - root README + AGENTS + CLAUDE re-read for orientation language
   drift after final Phase 7 closure.
 
-`infernix lint docs` exits zero against this state.
+`infernix lint docs` exits zero against this state. Sprint 7.16 remains open only because the
+phase-level blockers listed above are still active.
 
 ---
 

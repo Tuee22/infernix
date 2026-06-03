@@ -31,6 +31,9 @@ Read first:
 - do not use host `cabal` builds for Linux or CUDA validation; direct
   `cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes`
   is the Apple Silicon host-native reference path only
+- never use cross-architecture emulation for development or validation. Do not run amd64 Linux
+  through Apple Silicon emulation, and do not create or switch Docker contexts or create a Colima
+  VM on Apple Silicon
 - no Haskell `lookupEnv` / `getEnv` / `setEnv` calls in new code; no `proc "<bare-name>"`
   external invocations; no `env:` blocks in infernix-owned chart templates; no `process.env` or
   `os.environ` reads in web / Python code. The supported configuration substrate is the typed

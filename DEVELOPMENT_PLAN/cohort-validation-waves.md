@@ -30,7 +30,7 @@
 | A.3 | Apple Silicon (new host) | Sprint 7.14 Apple engine.lock chaos case: `test/integration/Spec.hs` adds `validateAppleEngineLockEnforcement` which spawns a second `infernix service` while the harness-owned first daemon holds the flock at `<runtimeRoot>/engine.lock` and asserts the second invocation exits non-zero with the `engine.lock at … is held by PID …` diagnostic on stderr. Closes the Apple-half of the "one-engine-per-node enforcement" case from `documents/development/chaos_testing.md`. The Linux equivalent (`kubectl scale deployment/infernix-engine --replicas=N+1` leaves one `Pending` with the anti-affinity rejection) is Wave C scope. | Closed | 2026-05-31 |
 | B | Apple Silicon (new host) | Apple-side code-side work before the CUDA Linux switch: Sprint 7.14 Linux-owned chaos and throughput cases were intentionally carried into Wave C because they require the real Linux integration lane. | Closed | 2026-05-31 |
 | C | CUDA Linux (real Linux host with CUDA hardware, plus the portable `linux-cpu` lane) | Full-suite cohort closure batch on the counterpart cohort: `./bootstrap/linux-cpu.sh` lifecycle on native Linux (portable CPU lane); `./bootstrap/linux-gpu.sh` lifecycle on real CUDA hardware; `docker compose run --rm infernix infernix test all` outer-container full-suite; routed Playwright in-container; validates every phase 1-7 code-side closure already landed on Apple. The remaining Sprint 7.14 Linux-owned code-side cases landed in `test/integration/Spec.hs` as of 2026-06-02: frontend pod replacement, coordinator pod replacement around durable prompt dispatch/writeback, engine pod replacement, engine node drain, model-bootstrap request/ready-event deduplication across coordinator replacement, Linux engine anti-affinity, and multi-user durable prompt throughput. Native `linux-cpu` full-suite validation passed on 2026-06-02 against image digest `sha256:a9f1f19aa9bb492c5186a0f6df8f864ee4e0c900c8209f0434ef64cf6cc821a7`; `linux-gpu` full-suite validation passed on 2026-06-03 against final rebuilt image digest `sha256:fd951113735f94b613a2fa014088f22e89a4df0b78193cd1ec76d6a44e191689`. | Closed | 2026-06-03 |
-| D | Either | Phase status promotion sweep: Phases 0-6 move back to `Done` because their only remaining residual was the Wave C cohort gate; Phase 7 remains `Active` for the explicit non-cohort KV-cache/runtime-split/failover work and the remaining rebuilt-image `linux-cpu` browser/e2e residual validation. Browser-level frontend pod-kill reconnect coverage closed with mounted-source `linux-gpu` E2E and the final rebuilt-image `linux-gpu` full gate. | Closed | 2026-06-03 |
+| D | Either | Phase status promotion sweep: Phases 0-6 move back to `Done` because their only remaining residual was the Wave C cohort gate; Phase 7 remains `Active` for the explicit non-cohort KV-cache/runtime-split/failover work. Browser-level frontend pod-kill reconnect coverage closed with mounted-source `linux-gpu` E2E and the final rebuilt-image `linux-gpu` full gate; the matching rebuilt-image `linux-cpu` residual full gate passed later on 2026-06-03. | Closed | 2026-06-03 |
 
 ## Wave A — Closed 2026-05-30
 
@@ -105,60 +105,6 @@ Wave A.3 via `validateAppleEngineLockEnforcement`.
   on `runtimeMode == LinuxCpu` so it runs only inside the LinuxCpu
   integration block. Compiled + lint-clean on Apple Silicon 2026-05-31;
   validated during Wave C on the native Linux/CUDA host.
-
-### Wave C Apple-host linux-cpu lane blocker surfaced 2026-05-31, deepened 2026-06-01
-
-The 2026-05-31 Wave C attempt from Apple Silicon (via
-`colima start --profile linux-amd64 --arch x86_64 --cpu 8 --memory 32
---disk 200`) successfully built `infernix-linux-cpu:local` under x86_64
-emulation (~2.5 hour wall-clock build). The cluster lifecycle initially
-failed at `discover-persistent-claims` with `chown … Operation not
-permitted`; a 2026-05-31 follow-on landed a best-effort chown shim
-(`src/Infernix/Cluster.hs.ensureClaimDirectoryReady` now logs a typed
-warning and continues when the filesystem rejects chown). With that
-shim in place the 2026-06-01 retry progressed through claim discovery,
-Kind cluster create, bootstrap image preload, and Helm warmup, but
-failed at `reconcile-storage-and-warmup` with `Harbor PostgreSQL pods
-never became ready: harbor-postgresql-instance1-* [Init:CrashLoopBackOff]`.
-The Patroni `postgres-startup` init container needs `pgdata` to be
-**genuinely owned** by uid 26, not just writable, and virtiofs from
-macOS masks all files as macOS-host-owned regardless of the chown
-calls each layer issues. The same applies to MinIO's volume-permissions
-init container needing uid 1001 ownership. Real Linux hosts succeed
-because the bind mount is a real ext4 bind, not virtiofs. The
-Apple host-native flow does not hit this because it uses direct binary
-execution without Compose or virtiofs.
-
-See [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md)
-for the full blocker entry. **Honest current state: the supported
-Apple-hosted linux-cpu lane needs a Docker-volume-based (or
-VM-internal-tmpfs-based) data-root strategy for
-`/workspace/.data/runtime/...` rather than a virtiofs-bind-mounted
-one** — a governed `compose.yaml` + Phase 2 lifecycle change.
-
-Until that deeper fix lands, the supported Wave C execution path is on
-a native Linux host (a separately reintroduced Linux/CUDA box, or a
-Linux VM that uses real bind mounts rather than virtiofs). The
-Apple-hosted Colima x86_64 path is build-only.
-
-A 2026-06-01 follow-on investigation tried a `compose.yaml` named-volume
-overlay on `/workspace/.data/runtime/` to give the lifecycle a real
-Linux filesystem for chown-sensitive paths. The overlay did fix the
-chown ownership problem at warmup — all 4 MinIO pods reached
-`Running` — but surfaced a deeper docker-in-Kind mount-source
-resolution mismatch: Kind worker hostPath mounts are resolved by the
-outer Docker daemon on the Colima VM, which sees the launcher's bind
-mount source (the macOS virtiofs path) rather than the named volume's
-`/var/lib/docker/volumes/.../...` path. The launcher writes to the
-named volume, but the Kind worker reads from the stale macOS-side
-virtiofs path, so the pgdata directory Patroni's init container
-expects under `/var/infernix-data/...` never materializes
-(`failed to mkdir /var/infernix-data: file exists`). The named volume
-`compose.yaml` change was reverted; see
-[legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md)
-for the full investigation. The chown best-effort shim landed
-2026-05-31 stays because it improves diagnostics on any
-chown-rejecting filesystem.
 
 ## Wave C — Closed 2026-06-03
 
@@ -323,19 +269,23 @@ Phase status promotion sweep performed after Waves A-C closed:
   the cohort-validation residual closed by Wave C.
 - Phase 7 remains `Active` because that phase still lists explicit
   non-cohort residuals: KV-cache verification for real KV-cache engines,
-  the wider coordinator transport split, Failover-promotion refinement, and
-  the remaining rebuilt-image `linux-cpu` browser/e2e validation for the
-  2026-06-03 residual sweep.
+  the wider coordinator transport split, and Failover-promotion refinement.
 - Browser-level frontend pod-kill reconnect coverage closed after the Wave C
   full gates with a mounted-source `linux-gpu` E2E rerun and then the final
   rebuilt-image full `linux-gpu` gate: the browser test deleted all
   `infernix-demo` pods, waited for replacements, reconnected, resubscribed,
   submitted another prompt, and the final full-gate Playwright file reported
   `7 passed (3.5m)`.
+- The matching rebuilt-image `linux-cpu` residual full gate passed later on
+  2026-06-03 against launcher image digest
+  `sha256:dc0c003e7cc2f2e359a474fa5ddb522c8715d271e322534db7798f260e9747fa`.
+  The run passed Haskell style, Python checks, Haskell unit, PureScript build,
+  71/71 web unit tests, full integration, platform recovery checks, and routed
+  Playwright E2E (7/7); the Playwright file reported `7 passed (2.1m)`.
 - `DEVELOPMENT_PLAN/README.md`, phase headers, `00-overview.md`, and
   `system-components.md` now record the closed cohort status.
 
-### 2026-06-03 residual CPU pause checkpoint
+### 2026-06-03 residual CPU checkpoint
 
 After the Wave D promotion sweep, the matching rebuilt-image `linux-cpu`
 launcher build completed against digest
@@ -348,6 +298,16 @@ totalPrompts=12 p95Seconds=74.05106592178345`. The run was paused at operator
 request during the following browser/e2e cluster bootstrap before Playwright
 executed, and `./bootstrap/linux-cpu.sh down` removed the partially bootstrapped
 CPU Kind cluster.
+
+The resumed rebuilt-image `./bootstrap/linux-cpu.sh test` run on 2026-06-03
+passed the same residual against digest
+`sha256:dc0c003e7cc2f2e359a474fa5ddb522c8715d271e322534db7798f260e9747fa`.
+Integration included the LinuxCpu chaos/throughput block plus Harbor recovery,
+MinIO durability, routed Pulsar recovery, PostgreSQL failover, and PostgreSQL
+lifecycle rebinding. The compact throughput matrix reported
+`users=3 contextsPerUser=2 promptsPerContext=2 totalPrompts=12
+p95Seconds=76.06613969802856`, and routed Playwright E2E reported
+`7 passed (2.1m)`.
 
 This waves document remains as the historical record for the 2026-05-29
 host reset and the staged Apple/CUDA closure batches.
@@ -383,7 +343,7 @@ docs may still be `Active` only when they list non-cohort remaining work.
 | 4 | Sprints 4.1–4.13 `Done` | Closed in Wave A (mounted ClusterConfig + SecretsConfig roundtrip via integration suite) | `linux-cpu` passed 2026-06-02; `linux-gpu` passed 2026-06-03 |
 | 5 | Sprints 5.1–5.9 `Done` | Closed in Wave A/A.2 (demo backend + adapter dhall reads via integration suite and routed E2E) | `linux-cpu` passed 2026-06-02; `linux-gpu` passed 2026-06-03 |
 | 6 | Sprints 6.1–6.28 `Done` | Closed in Wave A/A.1/A.2/A.3 (lint, style, unit, integration, routed E2E, and Apple engine-lock chaos) | `linux-cpu` passed 2026-06-02; `linux-gpu` passed 2026-06-03 |
-| 7 | Sprints 7.1–7.7, 7.10–7.13, and 7.17 `Done`; Sprint 7.8 remains `Active` for real KV-cache/runtime-split work, and Sprints 7.9/7.14/7.15/7.16 await the remaining rebuilt-image `linux-cpu` browser/e2e validation/docs closure after the 2026-06-03 residual sweep | Closed in Wave A/A.1/A.2/A.3 for the listed Apple gates | `linux-cpu` passed 2026-06-02; `linux-gpu` passed 2026-06-03; residual rebuilt-image `linux-gpu` gate passed 2026-06-03 against `sha256:521a56ac6f79bf1ce5bc9d7dcd9c872e897ce4b4882661d4ada2f62faa108d7b`; residual rebuilt-image `linux-cpu` gate is partial against `sha256:dc0c003e7cc2f2e359a474fa5ddb522c8715d271e322534db7798f260e9747fa` through full integration, with browser/e2e pending after the pause |
+| 7 | Sprints 7.1–7.7, 7.10–7.13, and 7.17 `Done`; Sprint 7.8 remains `Active` for real KV-cache/runtime-split work, and Sprints 7.9/7.14/7.15/7.16 await only the phase-level 7.8/docs closure rules after the 2026-06-03 residual sweep | Closed in Wave A/A.1/A.2/A.3 for the listed Apple gates | `linux-cpu` passed 2026-06-02; `linux-gpu` passed 2026-06-03; residual rebuilt-image `linux-gpu` gate passed 2026-06-03 against `sha256:521a56ac6f79bf1ce5bc9d7dcd9c872e897ce4b4882661d4ada2f62faa108d7b`; residual rebuilt-image `linux-cpu` gate passed 2026-06-03 against `sha256:dc0c003e7cc2f2e359a474fa5ddb522c8715d271e322534db7798f260e9747fa` |
 
 When a wave closes, this table is the place to update first. Phase
 docs follow.

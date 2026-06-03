@@ -11,6 +11,9 @@
   `linux-gpu`.
 - The execution context is not the same thing as the runtime mode: Apple uses a host-native
   control plane, while Linux uses baked outer-container launchers.
+- Development and validation are native-only. `linux-cpu` supports native Linux amd64 and native
+  Linux arm64; Apple Silicon does not run an emulated amd64 Linux lane and must not create or
+  switch Docker contexts or create a Colima VM.
 - Harbor-first bootstrap, manual storage, operator-managed Patroni PostgreSQL, Gateway API
   routing, generated catalog behavior, and Pulsar-only production inference are platform invariants.
 - Tool bootstrap, build-root paths, Docker setup, launcher build mechanics, and CUDA device access
@@ -23,9 +26,11 @@ The current worktree implements the intended split directly: Apple remains the o
 host-native inference lane, while `linux-cpu` and `linux-gpu` remain the containerized lanes, and
 the repo does not claim substrate parity where the underlying hardware or launcher model differs.
 The Linux bootstrap surfaces treat login-shell and reboot boundaries as explicit rerun
-checkpoints, and the Apple clean-host lane now verifies same-process ghcup-managed tool activation
-before direct host build handoff while still keeping Colima sizing, Docker reachability, and
-Apple-only adapter prerequisites substrate-specific. The Apple routed Playwright lane runs
+checkpoints, and the Apple clean-host lane verifies same-process ghcup-managed tool activation
+before direct host build handoff while keeping Docker reachability and Apple-only adapter
+prerequisites substrate-specific. The supported doctrine forbids cross-architecture development
+or validation, and Apple Docker-backed work validates the already selected native arm64 daemon
+instead of provisioning or reconciling a Docker VM. The Apple routed Playwright lane runs
 host-native `npm exec` against the published host edge on `127.0.0.1`, and retained Apple Kind
 state is replayed between `./.data/kind/apple-silicon/` and the worker instead of being
 bind-mounted. The lifecycle
@@ -53,10 +58,10 @@ operator-facing kubeconfig remains repo-local in the active execution context.
 | Topic | Portable contract | Apple host-native detail | Linux outer-container detail |
 |-------|-------------------|--------------------------|------------------------------|
 | Control-plane launcher | `infernix` owns lifecycle and validation behavior | use `./bootstrap/apple-silicon.sh <command>` as the supported stage-0 entrypoint; the direct reference surface remains `./.build/infernix ...` after host build into `./.build/` | use `./bootstrap/linux-cpu.sh <command>` or `./bootstrap/linux-gpu.sh <command>` as the supported stage-0 entrypoint; the direct reference surface uses `docker compose --project-name infernix-linux-cpu --file compose.yaml ...` for CPU and prefixes the same Compose file with `LAUNCHER_IMAGE=infernix-linux-gpu:local` for GPU |
-| Host prerequisites | keep prerequisites minimal and explicit | Homebrew plus ghcup before build; Colima is the only supported Apple Docker environment | Docker Engine plus Docker buildx and Compose plugins for `linux-cpu`; NVIDIA driver plus container toolkit in addition for `linux-gpu` |
+| Host prerequisites | keep prerequisites minimal and explicit | Homebrew plus ghcup before build; Docker-backed Apple work uses the already selected native arm64 Docker daemon and never creates or switches Docker contexts | Docker Engine plus Docker buildx and Compose plugins on native Linux amd64 or arm64 for `linux-cpu`; NVIDIA driver plus container toolkit in addition for `linux-gpu` |
 | Bootstrap activation boundary | stage-0 bootstrap surfaces continue in the current process only after they can verify the executable they need next, and they stop for explicit rerun when a new shell or reboot is required | the bootstrap verifies the selected ghcup-managed `ghc` and `cabal` executables plus Homebrew `protoc` before direct `cabal install`, so the supported clean-host first run does not depend on a second bootstrap invocation | Linux bootstraps stop for Docker group-membership re-entry and NVIDIA-driver reboot, then continue through the same bootstrap surface on rerun |
 | Tool bootstrap after the binary exists | supported commands may reconcile remaining operator tooling | Homebrew-managed Docker CLI, `kind`, `kubectl`, `helm`, Node.js, the Homebrew-managed `python@3.12` formula and `python3.12` command, and Poetry bootstrap may be installed on demand; Poetry may reuse an already available compatible Python 3.12+ executable | the substrate image already carries the supported toolchain; runtime install is not part of the contract |
-| Apple Docker profile | Docker-backed lifecycle and validation work uses one supported local Docker envelope | Colima is the only supported Apple Docker environment, and Apple lifecycle code reconciles it to at least `8 CPU / 16 GiB` before Kind- or Playwright-backed work proceeds | not applicable |
+| Apple Docker profile | Docker-backed lifecycle and validation work uses the operator-selected native daemon | Apple lifecycle code must not create a VM, create or switch Docker contexts, or use amd64 emulation; it stops if the current Docker daemon is unavailable or non-native | not applicable |
 | Build roots and kubeconfig location | outputs stay repo-local and untracked, while Kind or `nvkind` create or delete uses transient execution-local scratch kubeconfig outside repo mounts | `./.build/`, published `./.build/infernix.kubeconfig`, and binary-owned substrate-file materialization or validation under the Apple build root | image-local outer-container build root and binary-owned substrate-file materialization there, plus published `./.data/runtime/infernix.kubeconfig` for durable outer-container reuse |
 | Python adapter environment | use the shared Poetry project only | `python/.venv/` may materialize on demand after Apple adapter paths reconcile the Homebrew-managed `python@3.12` formula and `python3.12` command plus a user-local Poetry bootstrap, or reuse an already available compatible Python 3.12+ executable for that bootstrap | adapter dependencies are installed in the shared substrate image build |
 | Browser E2E runner | exercise the routed surface for the active generated catalog | host-native `npm exec` runs Playwright against the published localhost edge port using the same typed fixture; Apple evidence is recorded by the Apple cohort validation batch | the outer container runs `npm --prefix web exec -- playwright test` inside the substrate image against the routed cluster on Docker's private `kind` network |
@@ -67,6 +72,9 @@ operator-facing kubeconfig remains repo-local in the active execution context.
 
 - ad hoc repo-owned scripts or wrapper layers beyond the supported `bootstrap/*.sh` stage-0
   entrypoints
+- any cross-architecture development or validation run, including amd64 Linux under Apple Silicon
+  emulation
+- creating or switching Docker contexts, or creating a Colima VM, from the Apple Silicon workflow
 - bootstrap shell code that directly manages Kind clusters, Kubernetes manifests, Helm rollout,
   cluster workload image pulls, Harbor publication, validation internals, or destructive artifact
   cleanup
@@ -75,14 +83,14 @@ operator-facing kubeconfig remains repo-local in the active execution context.
 - pretending Apple host-native inference and Linux outer-container inference are interchangeable
   substrate shapes when the underlying bootstrap and hardware contracts differ
 
-## Apple Silicon Native Architecture
+## Native Architecture Contract
 
-The Apple Silicon substrate runs cluster workloads natively as `linux/arm64`. The supported
-control plane does not depend on Rosetta or any other amd64 → arm64 emulation layer; the
-publication path pulls and pushes arm64-only image variants on Apple Silicon, the chart's
-MinIO sub-chart uses upstream multi-arch images (no `bitnamilegacy/*`), and the Kind nodes
-run the native arm64 `kindest/node` image under Colima's aarch64 VM. Operators do not need
-to enable Rosetta in Colima for the supported lifecycle. The substrate → container-architecture
+The Apple Silicon substrate runs cluster workloads natively as `linux/arm64`. The `linux-cpu`
+substrate runs on native Linux amd64 or native Linux arm64. The supported control plane does not
+depend on Rosetta, QEMU, or any other cross-architecture emulation layer; the publication path
+pulls and pushes native image variants, the chart's MinIO sub-chart uses upstream multi-arch
+images (no `bitnamilegacy/*`), and Kind nodes run native `kindest/node` images for the active
+host architecture. The substrate → container-architecture
 mapping is owned by [../architecture/runtime_modes.md](../architecture/runtime_modes.md) (see
 the "Substrate Architecture" subsection); this document does not duplicate the table.
 

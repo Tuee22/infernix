@@ -21,7 +21,8 @@ status, validation history, and phase-closure evidence.
 This repository serves two aligned purposes:
 
 - provide consistent binary or container build outputs for three supported runtime modes: Apple
-  Silicon or Metal, Ubuntu 24.04 CPU, and Ubuntu 24.04 NVIDIA CUDA containers
+  Silicon or Metal, Ubuntu 24.04 CPU on native amd64 or arm64 Linux, and Ubuntu 24.04 NVIDIA CUDA
+  containers
 - provide a local Kind cluster, running the mandatory HA service topology, as the testing and demo
   ground for the control plane, including Harbor, MinIO, Pulsar, Prometheus, Grafana, and
   per-service Patroni PostgreSQL clusters where durable PostgreSQL state is required; the demo UI
@@ -54,8 +55,8 @@ This repository serves two aligned purposes:
   dedicated Haskell browser-contract ADTs plus active-mode catalog metadata
 - one browser-based PureScript demo SPA covering manual inference for any registered model,
   served by `infernix-demo`
-- three runtime targets: Apple Silicon or Metal, Ubuntu 24.04 CPU, and Ubuntu 24.04 NVIDIA CUDA
-  containers
+- three runtime targets: Apple Silicon or Metal, Ubuntu 24.04 CPU on native amd64 or arm64 Linux,
+  and Ubuntu 24.04 NVIDIA CUDA containers
 - one validation surface spanning repo-owned Haskell `ormolu`/`cabal format`/`hlint`,
   `poetry run check-code` against `python/adapters/`, unit tests, integration tests,
   `purescript-spec` view and contract tests, and Linux Playwright launched from inside the
@@ -102,14 +103,17 @@ the HA testing and demo ground used to validate and demonstrate them.
 | Mode | Build or deployment shape | Role in the repository | Intended engines |
 |------|---------------------------|------------------------|------------------|
 | Apple Silicon / Metal | host-native Apple binary path | direct host execution, local development, and Apple runtime parity behind the shared control-plane contract | `llama.cpp`, `MLX` or `MLX-LM`, `vllm-metal`, `PyTorch` on MPS, `Core ML`, `jax-metal` |
-| Ubuntu 24.04 / CPU | containerized Linux CPU path | CPU-only validation, fallback, and non-GPU workloads under the same manifests, messaging, and runtime contract | `llama.cpp`, `whisper.cpp`, `PyTorch` CPU, `ONNX Runtime` CPU, JVM-hosted tools |
+| Ubuntu 24.04 / CPU | containerized Linux CPU path | Native amd64 or arm64 Linux CPU-only validation, fallback, and non-GPU workloads under the same manifests, messaging, and runtime contract | `llama.cpp`, `whisper.cpp`, `PyTorch` CPU, `ONNX Runtime` CPU, JVM-hosted tools |
 | Ubuntu 24.04 / NVIDIA CUDA Container | pinned CUDA container lane with NVIDIA runtime | high-throughput GPU execution under the same manifests, messaging, and runtime contract | `vLLM`, `PyTorch` CUDA, `Diffusers` or `ComfyUI`, `CTranslate2`, `TensorFlow` CUDA, `JAX/XLA`, `llama.cpp` when GGUF is the right artifact |
 
-Each substrate fixes the Linux container architecture cluster workloads use: Apple Silicon
-runs `linux/arm64` natively (the supported control plane never emulates amd64 on Apple
-Silicon — no Rosetta), and both Linux substrates run `linux/amd64`. The MinIO sub-chart uses
-upstream multi-arch images (`minio/minio`, `minio/mc`, `busybox`) rather than the retired
-amd64-only `bitnamilegacy/*` packaging; see
+Each substrate uses native container architecture only. Apple Silicon runs `linux/arm64`
+natively. `linux-cpu` supports native Linux hosts on both `linux/amd64` and `linux/arm64`;
+`linux-gpu` is the amd64 CUDA lane. Development and validation never use cross-architecture
+emulation: no Rosetta, QEMU, amd64-on-Apple, or other emulated substrate runs. Apple Silicon
+workflows also must not create or switch Docker contexts or create a Colima VM; any Docker-backed
+Apple work uses the operator's already selected native arm64 Docker daemon or stops with a clear
+prerequisite error. The MinIO sub-chart uses upstream multi-arch images (`minio/minio`,
+`minio/mc`, `busybox`) rather than the retired amd64-only `bitnamilegacy/*` packaging; see
 [documents/architecture/runtime_modes.md](documents/architecture/runtime_modes.md) for the
 substrate → architecture mapping and
 [documents/tools/minio.md](documents/tools/minio.md) for the supported MinIO image inventory.
@@ -244,10 +248,12 @@ drive or mirror.
 
 Current status:
 
-- after `./.build/infernix` exists on Apple Silicon, supported host-native commands reconcile
-  the supported Colima `8 CPU / 16 GiB` profile, Docker CLI, `kind`, `kubectl`, `helm`, Node.js,
-  the Homebrew-managed `python@3.12` formula and `python3.12` command, and Poetry through the
-  supported package-manager or user-local bootstrap path when the active flow needs them
+- after `./.build/infernix` exists on Apple Silicon, supported host-native commands may reconcile
+  Homebrew-managed CLI tools such as `kind`, `kubectl`, `helm`, Node.js, the Homebrew-managed
+  `python@3.12` formula and `python3.12` command, and Poetry through the supported
+  package-manager or user-local bootstrap path when the active flow needs them. They must not
+  create a Docker context, switch the active Docker context, create a Colima VM, or use emulation;
+  Docker-backed Apple work requires an already selected native arm64 Docker daemon
 - Apple host-native adapter setup and validation paths materialize `python/.venv/` on demand after
   reconciling the Homebrew-managed `python@3.12` formula and `python3.12` command, or reusing a
   compatible Python 3.12+ executable that is already available, plus a user-local Poetry bootstrap
@@ -299,11 +305,10 @@ Notes:
 
 - Homebrew-managed `ghcup` is the supported bootstrap because the Apple host-native workflow still
   depends on an explicitly selected GHC and Cabal pair
-- Colima is the only supported Docker environment on Apple Silicon; once `./.build/infernix`
-  exists, supported commands install it from Homebrew together with the Docker CLI, `kind`,
-  `kubectl`, `helm`, Node.js, the Homebrew-managed `python@3.12` formula and `python3.12`
-  command, and any other operator-facing tools needed by the active path; Docker-backed Apple
-  flows reconcile Colima to at least `8 CPU / 16 GiB`
+- Apple Silicon workflows do not create or switch Docker contexts and do not create Colima VMs.
+  Docker-backed Apple flows require the operator's current Docker context to point at an already
+  running native arm64 Docker daemon; otherwise the supported behavior is to stop at a
+  prerequisite error instead of provisioning another VM or context
 - Apple adapter setup and validation commands reconcile the Homebrew-managed `python@3.12` formula
   and `python3.12` command plus a user-local Poetry bootstrap when `poetry` is absent; the Poetry
   bootstrap may reuse an already available compatible Python 3.12+ executable, after which all
@@ -319,6 +324,8 @@ Preferred path:
 
 Required on the host:
 
+- native Ubuntu 24.04 on amd64 or arm64; emulated Linux hosts are not supported for development
+  or validation
 - Docker Engine
 - Docker buildx plugin
 - Docker Compose plugin
@@ -498,9 +505,9 @@ tools and Poetry bootstrap before an adapter setup or validation path first need
 ### Linux CPU (outer container)
 
 The `linux-cpu` substrate ships one baked image snapshot, `infernix-linux-cpu:local`, built from
-`docker/linux-substrate.Dockerfile` with `BASE_IMAGE=ubuntu:24.04`. That image acts as the
-Compose-launched control plane, the in-cluster workload image source, and the Linux routed-E2E
-executor.
+`docker/linux-substrate.Dockerfile` with `BASE_IMAGE=ubuntu:24.04` for the native Linux host
+architecture. That image acts as the Compose-launched control plane, the in-cluster workload
+image source, and the Linux routed-E2E executor on native amd64 or native arm64 Linux.
 
 Supported bootstrap path:
 

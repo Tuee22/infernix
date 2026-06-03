@@ -8,17 +8,18 @@
 
 ## Current Status
 
-- Apple clean-host support reduces pre-existing host requirements to Homebrew plus ghcup, exposes
-  `./bootstrap/apple-silicon.sh` as the supported stage-0 entrypoint, treats Colima as the only
-  supported Docker environment, and lets `infernix` reconcile the remaining supported
-  Homebrew-managed tools plus Poetry bootstrap on demand
+- Apple clean-host support reduces pre-existing host requirements to Homebrew plus ghcup and
+  exposes `./bootstrap/apple-silicon.sh` as the supported stage-0 entrypoint. Docker-backed Apple
+  work must use the operator's already selected native arm64 Docker daemon; the repo must not
+  create or switch Docker contexts or create a Colima VM
 - the Apple stage-0 bootstrap now verifies the selected ghcup-managed `ghc` and `cabal`
   executables plus Homebrew `protoc` before direct `cabal install`, so the clean-host first run
   no longer depends on rerunning the same bootstrap command after Cabal is first installed
-- after `./.build/infernix` exists on Apple Silicon, supported host-native commands reconcile
-  the supported Colima `8 CPU / 16 GiB` profile, Docker CLI, `kind`, `kubectl`, `helm`, Node.js,
-  the Homebrew-managed `python@3.12` formula and `python3.12` command, and Poetry through the
-  supported package-manager or user-local bootstrap path when the active flow first needs them
+- after `./.build/infernix` exists on Apple Silicon, supported host-native commands may reconcile
+  Homebrew-managed `kind`, `kubectl`, `helm`, Node.js, the Homebrew-managed `python@3.12` formula
+  and `python3.12` command, and Poetry through the supported package-manager or user-local
+  bootstrap path when the active flow first needs them. They must not use cross-architecture
+  emulation or provision a Docker VM or context
 - `linux-cpu` and `linux-gpu` expose repo-owned `bootstrap/*.sh` entrypoints that keep host
   prerequisites probe-driven and idempotent; the CPU path stops at Docker Engine plus the Docker
   buildx and Compose plugins, and the GPU path adds only the supported NVIDIA driver and
@@ -89,9 +90,9 @@ The supported workflow keeps day-to-day phase work local to one hardware cohort 
 - Linux, CUDA, chart, and outer-container changes use the `linux-gpu` bootstrap and
   `docker compose run --rm infernix infernix ...` reference path for local validation, then queue
   the Apple Silicon cohort for the phase closure batch.
-- `linux-cpu` remains a portable CPU-only lane and may be exercised from either host through the
-  outer-container workflow, but it does not replace the CUDA Linux cohort for GPU-sensitive
-  closure.
+- `linux-cpu` remains a portable CPU-only lane for native Linux amd64 and native Linux arm64
+  hosts, but it is not exercised through Apple Silicon emulation and does not replace the CUDA
+  Linux cohort for GPU-sensitive closure.
 - A phase reaches full cross-hardware closure only after the Apple Silicon and CUDA Linux cohorts
   both run the relevant full-suite gates against the same phase state.
 
@@ -125,9 +126,10 @@ the shared adapter project:
   `python3.12` command plus a user-local `poetry` executable when that path first needs it; the
   Poetry bootstrap may reuse an already available compatible Python 3.12+ executable when one
   passes the implemented version check
-- Colima is the only supported Docker environment on Apple Silicon
-- supported Apple Docker-backed paths reconcile Colima to at least `8 CPU / 16 GiB` before Kind,
-  Harbor, MinIO, Pulsar, or Playwright work begins
+- Apple Silicon workflows must not create or switch Docker contexts and must not create Colima
+  VMs; Docker-backed Apple paths require the current Docker context to already point at a native
+  arm64 Docker daemon
+- cross-architecture emulation is not a supported development or validation path
 - on Linux, routed E2E runs Playwright inside the substrate image on Docker's private `kind`
   network against the Kind control-plane DNS instead of `host.docker.internal`; Apple host-native
   routed E2E uses host `npm exec` with the same typed fixture and is covered by the Apple cohort

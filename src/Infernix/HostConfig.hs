@@ -18,7 +18,9 @@ module Infernix.HostConfig
     renderHostConfig,
     encodeHostConfig,
     hostConfigGeneratedBanner,
+    normalizeHostArchitecture,
     defaultLinuxOuterContainerHostConfig,
+    defaultLinuxOuterContainerHostConfigForArchitecture,
     defaultAppleHostNativeHostConfig,
   )
 where
@@ -30,6 +32,7 @@ import Data.Text (Text)
 import Data.Text qualified as Text
 import Dhall qualified
 import GHC.Generics (Generic)
+import System.Info qualified
 
 -- | Where the supported binary is currently running. Mirrors the
 -- @HostExecutionContext@ union in @dhall/InfernixHost.dhall@.
@@ -64,7 +67,6 @@ data HostToolPaths = HostToolPaths
     hostCurl :: Text,
     hostAptGet :: Text,
     hostBrew :: Text,
-    hostColima :: Text,
     hostSudo :: Text,
     hostSystemctl :: Text,
     hostMkdir :: Text,
@@ -107,6 +109,7 @@ instance Dhall.FromDhall HostFilesystem where
 -- | Full host manifest the binary decodes at startup.
 data HostConfig = HostConfig
   { hostExecutionContext :: HostExecutionContext,
+    hostArchitecture :: Text,
     hostToolPaths :: HostToolPaths,
     hostFilesystem :: HostFilesystem,
     hostPlaywrightHost :: Text,
@@ -130,6 +133,7 @@ hostFieldName rawFieldName =
   case Text.stripPrefix "host" rawFieldName of
     Nothing -> rawFieldName
     Just "ExecutionContext" -> "hostExecutionContext"
+    Just "Architecture" -> "hostArchitecture"
     Just "ToolPaths" -> "toolPaths"
     Just "Filesystem" -> "filesystem"
     Just "PlaywrightHost" -> "playwrightHost"
@@ -183,6 +187,7 @@ renderHostConfig hostConfig =
       showT t = "\"" <> Text.unpack t <> "\""
    in unlines
         [ "{ hostExecutionContext = " <> ctxRender,
+          ", hostArchitecture = " <> showT hostArchitecture,
           ", toolPaths =",
           renderHeadText "docker" hostDocker
             <> renderText "kubectl" hostKubectl
@@ -203,7 +208,6 @@ renderHostConfig hostConfig =
             <> renderText "curl" hostCurl
             <> renderText "aptGet" hostAptGet
             <> renderText "brew" hostBrew
-            <> renderText "colima" hostColima
             <> renderText "sudo" hostSudo
             <> renderText "systemctl" hostSystemctl
             <> renderText "mkdir" hostMkdir
@@ -243,8 +247,13 @@ renderHostConfig hostConfig =
 -- image build, not via env var.
 defaultLinuxOuterContainerHostConfig :: Text -> HostConfig
 defaultLinuxOuterContainerHostConfig homeDir =
+  defaultLinuxOuterContainerHostConfigForArchitecture homeDir (Text.pack System.Info.arch)
+
+defaultLinuxOuterContainerHostConfigForArchitecture :: Text -> Text -> HostConfig
+defaultLinuxOuterContainerHostConfigForArchitecture homeDir architecture =
   HostConfig
     { hostExecutionContext = LinuxOuterContainer,
+      hostArchitecture = normalizeHostArchitecture architecture,
       hostToolPaths =
         HostToolPaths
           { hostDocker = "/usr/bin/docker",
@@ -266,7 +275,6 @@ defaultLinuxOuterContainerHostConfig homeDir =
             hostCurl = "/usr/bin/curl",
             hostAptGet = "/usr/bin/apt-get",
             hostBrew = "",
-            hostColima = "",
             hostSudo = "/usr/bin/sudo",
             hostSystemctl = "/usr/bin/systemctl",
             hostMkdir = "/usr/bin/mkdir",
@@ -308,6 +316,7 @@ defaultAppleHostNativeHostConfig :: Text -> Text -> HostConfig
 defaultAppleHostNativeHostConfig repoRoot homeDir =
   HostConfig
     { hostExecutionContext = AppleHostNative,
+      hostArchitecture = "arm64",
       hostToolPaths =
         HostToolPaths
           { hostDocker = "/opt/homebrew/bin/docker",
@@ -329,7 +338,6 @@ defaultAppleHostNativeHostConfig repoRoot homeDir =
             hostCurl = "/usr/bin/curl",
             hostAptGet = "",
             hostBrew = "/opt/homebrew/bin/brew",
-            hostColima = "/opt/homebrew/bin/colima",
             hostSudo = "/usr/bin/sudo",
             hostSystemctl = "",
             hostMkdir = "/bin/mkdir",
@@ -362,3 +370,12 @@ defaultAppleHostNativeHostConfig repoRoot homeDir =
       hostPlaywrightHost = "host.docker.internal",
       hostControlPlaneContext = "host-native"
     }
+
+normalizeHostArchitecture :: Text -> Text
+normalizeHostArchitecture rawArchitecture =
+  case Text.toLower (Text.strip rawArchitecture) of
+    "x86_64" -> "amd64"
+    "amd64" -> "amd64"
+    "aarch64" -> "arm64"
+    "arm64" -> "arm64"
+    other -> other

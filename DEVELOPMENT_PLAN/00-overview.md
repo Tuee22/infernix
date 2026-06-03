@@ -45,13 +45,17 @@ batch topic. The runtime worker uses explicit Python or native adapter
 harnesses selected from the staged substrate file. Those adapters currently produce deterministic
 engine-family output from durable metadata rather than claiming universal production model-binary
 execution. The Apple clean-host bootstrap
-hardening is present in code: the stage-0 entrypoint verifies same-process ghcup-managed `ghc`
-and `cabal` resolution before direct `cabal install`, reconciles Homebrew `protoc`, reconciles
-Colima to the supported `8 CPU / 16 GiB` profile before Docker-backed work, and lets Apple
-adapter setup or validation paths reconcile the Homebrew-managed `python@3.12` formula and
-`python3.12` command plus a user-local Poetry bootstrap on demand. The Poetry bootstrap may reuse
-an already available compatible Python 3.12+ executable when one passes the implemented version
-check. Routed Apple Playwright validation runs host-native `npm exec` against the published
+hardening is partially present in code: the stage-0 entrypoint verifies same-process
+ghcup-managed `ghc` and `cabal` resolution before direct `cabal install`, reconciles Homebrew
+`protoc`, and lets Apple adapter setup or validation paths reconcile the Homebrew-managed
+`python@3.12` formula and `python3.12` command plus a user-local Poetry bootstrap on demand. The
+native-only workflow doctrine now forbids Apple Docker-context creation or switching, Colima VM
+creation, and cross-architecture emulation; Phase 1 Sprint 1.12 replaces the previous
+Colima reconciliation path with a prerequisite check that reports the selected Docker context and
+daemon architecture, then stops before cluster work if the daemon is absent or non-native. The
+Poetry bootstrap may reuse an already available compatible Python 3.12+ executable
+when one passes the implemented version check. Routed Apple Playwright validation runs
+host-native `npm exec` against the published
 `127.0.0.1` edge port. The shared cluster lifecycle persists explicit phase, child-operation detail, and heartbeat
 data in `cluster status` during monitored Docker build, Harbor publication, Harbor-backed
 final-image preload, and Apple retained-state replay steps; explicit substrate-file
@@ -109,7 +113,7 @@ full-suite gate passed on 2026-06-03.
 | Simulation stance | no simulated cluster, route, or generic inference-success fallback remains in the supported runtime or validation contract, and routed Pulsar checks require the real Gateway-backed upstream | implemented; inference execution goes through typed adapter harnesses, unsupported adapters fail fast, and the remaining repo-local topic spool under `./.data/runtime/pulsar/` is a harness-only path for unit-level or intentionally endpoint-absent daemon checks; Apple cohort gate closed in [Wave A](cohort-validation-waves.md); CUDA Linux cohort gate closed in [Wave C](cohort-validation-waves.md) |
 | Validation scope | integration uses one `.dhall`-driven suite over the README matrix, E2E stays substrate-agnostic at the browser layer, and `test all` runs every supported validation layer for one built substrate at a time | implemented; Apple cohort gate closed in [Wave A/A.2](cohort-validation-waves.md); CUDA Linux cohort gate closed in [Wave C](cohort-validation-waves.md) |
 | Hardware cohort cadence | phase work validates first on the current Apple Silicon or CUDA Linux machine, then batches counterpart full-suite validation at phase closure so contributors do not switch machines after every sprint | implemented in the plan doctrine; operationalized in [cohort-validation-waves.md](cohort-validation-waves.md) |
-| Substrate-matched container architecture | each substrate fixes the Linux container architecture for cluster workloads: Apple Silicon → `linux/arm64` (no Rosetta emulation), `linux-cpu` and `linux-gpu` → `linux/amd64`; the publication path pulls the substrate-matched manifest from each upstream multi-arch image and pushes the single-platform variant into Harbor | implemented in Phase 3 Sprint 3.11 via `clusterWorkloadArchitecture` in `src/Infernix/Cluster.hs` and the substrate-aware publication helpers in `src/Infernix/Cluster/PublishImages.hs`; the chart's MinIO sub-chart uses `minio/minio` + `minio/mc` + `busybox` upstream multi-arch images instead of the retired amd64-only `bitnamilegacy/*` packaging |
+| Native container architecture | Apple Silicon → `linux/arm64`; `linux-cpu` → native Linux host architecture (`linux/amd64` or `linux/arm64`); `linux-gpu` → `linux/amd64`; no development or validation lane uses cross-architecture emulation | implementation landed: `linux-cpu` publication reads the normalized native host architecture from `InfernixHost.dhall`; native arm64 Linux full-suite validation remains the Phase 3 Sprint 3.12 closure gate |
 
 Monitoring is not a supported first-class surface.
 
@@ -196,10 +200,9 @@ the only daemon Deployment present is `infernix-engine`.
 - on Linux substrates, all supported CLI commands run through
   `docker compose run --rm infernix infernix ...`; there is no supported Linux host-native CLI
   story outside the outer container
-- `linux-cpu` remains the only substrate meaningfully portable across unrelated host hardware;
-  native Linux or a Linux VM with real bind mounts is the supported validation path, while the
-  Apple-hosted Colima amd64 lane is build-only until the documented virtiofs data-root blocker is
-  resolved; arm64 Linux is a first-class CPU-only host shape
+- `linux-cpu` remains the only substrate meaningfully portable across unrelated native Linux host
+  hardware; native amd64 Linux and native arm64 Linux are first-class CPU-only host shapes, while
+  Apple Silicon emulation is not a supported build or validation path
 - `linux-gpu` assumes an amd64 Linux environment paired with a CUDA-capable device, but the outer
   control-plane container itself never requires the NVIDIA runtime
 - supported entrypoints no longer use simulated cluster bring-up, direct tool-route compatibility

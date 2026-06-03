@@ -7,8 +7,10 @@
 
 ## TL;DR
 
-- Apple host-native flows use Colima plus the host Docker CLI, but Linux control-plane execution
-  runs through baked substrate images instead of live repo-mounted containers.
+- Apple host-native flows use the operator's already selected native arm64 Docker daemon when
+  Docker-backed work is required, but they must not create or switch Docker contexts or create a
+  Colima VM. Linux control-plane execution runs through baked substrate images instead of live
+  repo-mounted containers.
 - `docker compose --project-name <lane> --file compose.yaml ... run --rm infernix infernix ...`
   is the supported Linux control-plane launcher shape for both `linux-cpu` and `linux-gpu`; the
   GPU lane uses the same single `compose.yaml` with an explicit one-shot `LAUNCHER_IMAGE`
@@ -26,6 +28,8 @@
 - Linux bootstrap scripts install Docker or the CUDA host stack only; they do not call Kind, Helm,
   Kubernetes manifest tooling, cluster workload image-pull orchestration, or image publication
   directly.
+- Cross-architecture emulation is not part of the Docker policy. `linux-cpu` supports native
+  Linux amd64 and native Linux arm64; Apple Silicon does not run an emulated amd64 Linux lane.
 
 ## Current Status
 
@@ -44,11 +48,12 @@ operations have a buildx-capable CLI when needed.
 
 ## Host Prerequisite Boundary
 
-- on Apple Silicon, Colima is the only supported Docker environment
-- on the Apple host-native control-plane path, `./.build/infernix` reconciles Homebrew-managed
-  Colima and the Docker CLI before it attempts real cluster work
+- on Apple Silicon, Docker-backed work requires the current Docker context to already target a
+  native arm64 Docker daemon
+- on the Apple host-native control-plane path, `./.build/infernix` must not create or switch
+  Docker contexts, create a Colima VM, or use emulation before it attempts real cluster work
 - on `linux-cpu`, host prerequisites stop at Docker Engine plus the Docker buildx and Compose
-  plugins
+  plugins on native Linux amd64 or arm64
 - on `linux-gpu`, host prerequisites stop at the `linux-cpu` Docker baseline plus the supported
   NVIDIA driver and container-toolkit setup
 - the supported Linux host Docker baseline includes the Docker buildx plugin because Compose may

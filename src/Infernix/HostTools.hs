@@ -61,7 +61,6 @@ data HostTool
   | HostCurl
   | HostAptGet
   | HostBrew
-  | HostColima
   | HostSudo
   | HostSystemctl
   | HostMkdir
@@ -105,7 +104,6 @@ hostToolName tool = case tool of
   HostCurl -> "curl"
   HostAptGet -> "apt-get"
   HostBrew -> "brew"
-  HostColima -> "colima"
   HostSudo -> "sudo"
   HostSystemctl -> "systemctl"
   HostMkdir -> "mkdir"
@@ -152,7 +150,6 @@ pickToolPath tool paths = case tool of
   HostCurl -> hostCurl paths
   HostAptGet -> hostAptGet paths
   HostBrew -> hostBrew paths
-  HostColima -> hostColima paths
   HostSudo -> hostSudo paths
   HostSystemctl -> hostSystemctl paths
   HostMkdir -> hostMkdir paths

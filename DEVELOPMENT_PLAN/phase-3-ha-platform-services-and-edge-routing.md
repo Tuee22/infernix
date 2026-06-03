@@ -1,6 +1,6 @@
 # Phase 3: HA Platform Services and Edge Routing
 
-**Status**: Done
+**Status**: Active
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Define the mandatory local HA Harbor, MinIO, operator-managed PostgreSQL, and
@@ -11,10 +11,12 @@
 ## Phase Status
 
 Phase 3 closes around the mandatory HA service set, the shared routed edge, and the
-Haskell-owned route registry implemented in this worktree. Sprints 3.1–3.11 are `Done` after
-Apple cohort validation in Waves A/A.2 and CUDA Linux cohort validation in Wave C. The clarified
-Apple daemon-role model is implemented in Phase 6 Sprint 6.25 and separates
-cluster daemon location from host inference executor location in publication metadata.
+Haskell-owned route registry implemented in this worktree. Sprints 3.1-3.11 are `Done` after
+Apple cohort validation in Waves A/A.2 and CUDA Linux cohort validation in Wave C. Sprint 3.12 is
+`Active` for native arm64 `linux-cpu` publication validation after the native architecture
+selector landed. The clarified Apple daemon-role model is
+implemented in Phase 6 Sprint 6.25 and separates cluster daemon location from host inference
+executor location in publication metadata.
 
 ## HA Reconcile Surface
 
@@ -53,6 +55,10 @@ same-binary host daemon, and Linux substrates keep inference inside the cluster 
 with `--demo-ui false`. Direct `infernix-demo` execution is limited to the demo-owned HTTP surface
 when used intentionally outside the routed cluster path, so Harbor, MinIO, and Pulsar probes depend
 on the intended HTTPRoute mapping.
+Sprint 3.12 replaces the previous `LinuxCpu -> "amd64"` publication hardcode with typed
+host-architecture selection from `InfernixHost.dhall`, mapping native Linux amd64 to `amd64` and
+native Linux arm64 to `arm64` while keeping `linux-gpu` amd64-only. Native arm64 Linux full-suite
+validation remains outstanding before this sprint can move to `Done`.
 
 ## Sprint 3.1: HA MinIO Deployment [Done]
 
@@ -478,9 +484,8 @@ Closed validation:
 
 Close the four coupled architectural gaps that blocked Apple Silicon
 `cluster up` on the new host: (a) the publication path forced amd64
-end-to-end, so the substrate's Kind nodes ran amd64 images under Colima
-Rosetta and crashed on the Percona Postgres Operator's `-march=x86-64-v3`
-ISA assumption; (b) the chart's MinIO sub-chart pinned
+end-to-end for Apple, so the substrate's Kind nodes received images that
+could not run on native arm64 workers; (b) the chart's MinIO sub-chart pinned
 `bitnamilegacy/*` images that are frozen amd64-only; (c) Harbor's host-side
 NodePort was hardcoded to `30002` and conflicted with unrelated host
 processes (e.g. an editor's debug worker); (d) the rendered Kind config
@@ -490,15 +495,17 @@ workers dialed `localhost` literally.
 
 ### Deliverables
 
-- **Substrate-aware publication arch.** `clusterWorkloadArchitecture ::
-  RuntimeMode -> String` returns `"arm64"` for `AppleSilicon`, `"amd64"`
-  for `LinuxCpu` / `LinuxGpu`. The publication helpers
+- **Substrate-aware publication arch.** Sprint 3.11 introduced substrate-aware publication
+  architecture selection for Apple arm64 and Linux amd64. Sprint 3.12 supersedes that first
+  selector with `clusterWorkloadArchitectureForHostArchitecture`, which keeps Apple at `arm64`,
+  keeps `linux-gpu` at `amd64`, and selects native `amd64` or `arm64` for `linux-cpu` from
+  `InfernixHost.dhall`. The publication helpers
   (`pinLocalImageToTargetArchitecture`, `pushUpstreamMultiArchViaImagetools`,
   `extractDigestForArchitecture`, `recoverOriginalTag`,
   `contentAddressTagFromManifestPayload`) consume the substrate arch
   through `HarborPublishOptions.harborTargetArchitecture`. The
   `hydrateMissingHostWarmupImage` mirror.gcr.io fallback (formerly
-  hardcoded `linux/amd64`) reads arch from `clusterRuntimeMode state`.
+  hardcoded `linux/amd64`) reads the same resolved architecture.
 - **`bitnamilegacy/*` retirement.** `chart/values.yaml` overrides
   `minio.image.repository → minio/minio`,
   `minio.clientImage.repository → minio/mc`,
@@ -610,10 +617,58 @@ revalidation closed in Wave C.
 
 ---
 
+## Sprint 3.12: Native arm64 Linux CPU Publication [Active]
+
+**Status**: Active
+**Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Cluster/PublishImages.hs`, `src/Infernix/HostConfig.hs`, `bootstrap/linux-cpu.sh`, `docker/linux-substrate.Dockerfile`, `kind/cluster-linux-cpu.yaml`, `test/unit/Spec.hs`
+**Docs to update**: `README.md`, `documents/architecture/runtime_modes.md`, `documents/architecture/overview.md`, `documents/engineering/portability.md`, `documents/engineering/docker_policy.md`, `documents/engineering/testing.md`, `documents/development/local_dev.md`, `documents/operations/cluster_bootstrap_runbook.md`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/00-overview.md`, `DEVELOPMENT_PLAN/system-components.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
+
+### Objective
+
+Make `linux-cpu` a native Linux CPU substrate on both amd64 and arm64 hosts. The supported
+publication path must select the host's native Linux architecture and must not rely on emulation,
+cross-architecture `buildx`, or any non-native compatibility lane.
+
+### Deliverables
+
+- replace the `LinuxCpu -> "amd64"` architecture hardcode with host-native architecture discovery
+  or a typed host-config field that maps native Linux amd64 to `amd64` and native Linux arm64 to
+  `arm64`
+- thread the selected `linux-cpu` architecture through Harbor publication, warmup-image hydration,
+  local-image tagging, and Kind worker preload paths
+- keep `linux-gpu` constrained to native amd64 CUDA hosts unless a future sprint explicitly adds a
+  CUDA arm64 substrate
+- add unit coverage for LinuxCpu architecture selection on amd64 and arm64 fixtures
+- document that native Linux arm64 `linux-cpu` is a first-class substrate and that emulated Apple
+  Linux is unsupported
+
+### Validation
+
+- `cabal test infernix-unit` proves the `LinuxCpu` architecture selector returns `amd64` and
+  `arm64` for native Linux fixtures
+- `./bootstrap/linux-cpu.sh test` passes on a native amd64 Linux host; the 2026-06-03 run passed
+  Haskell style, Python quality, Haskell unit, PureScript build, 71/71 web unit tests, full
+  integration, and routed Playwright E2E (7/7) against launcher image digest
+  `sha256:dc0c003e7cc2f2e359a474fa5ddb522c8715d271e322534db7798f260e9747fa`, while Harbor
+  publication and warmup-image hydration emitted `docker pull --platform linux/amd64` and
+  `skopeo --override-arch=amd64`
+- `./bootstrap/linux-cpu.sh test` passes on a native arm64 Linux host before this sprint can move
+  to `Done`
+- `rg -n '"amd64".*LinuxCpu|LinuxCpu.*"amd64"' src test` has no unsupported hardcode after the
+  selector lands
+- `infernix lint docs` passes through the active execution context
+
+### Remaining Work
+
+- native arm64 Linux validation remains outstanding
+
+---
+
 ## Remaining Work
 
-None. Sprints 3.1–3.11 are `Done`; Apple cohort validation closed in Waves A/A.2 and CUDA
-Linux cohort validation closed in Wave C.
+Sprint 3.12 remains open for native arm64 `linux-cpu` publication and validation. Sprints
+3.1-3.11 are `Done`; Apple cohort validation closed in Waves A/A.2 and CUDA Linux cohort
+validation closed in Wave C.
 
 ---
 
@@ -629,8 +684,11 @@ Linux cohort validation closed in Wave C.
 - `documents/tools/postgresql.md` - Percona operator and Patroni deployment rules
 - `documents/tools/pulsar.md` - Pulsar deployment and routed surfaces
 - `documents/tools/harbor.md` - Harbor deployment, routed portal or API split, and the dynamic Kind hostPort behavior (Sprint 3.11)
-- `documents/architecture/runtime_modes.md` - substrate→architecture mapping (Sprint 3.11)
-- `documents/architecture/overview.md` - substrate-matched container architecture cross-link (Sprint 3.11)
+- `documents/architecture/runtime_modes.md` - substrate-to-architecture mapping, including the
+  native `linux-cpu` architecture selector and remaining native arm64 validation gate tracked by
+  Sprint 3.12
+- `documents/architecture/overview.md` - substrate-matched container architecture cross-link and
+  native Linux CPU architecture support
 - no monitoring engineering doc is created while monitoring remains unsupported; Monitoring is not
   a supported first-class surface.
 

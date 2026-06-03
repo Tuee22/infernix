@@ -70,14 +70,15 @@
   dependency hydrates through the supported direct tarball path, and `cluster up` repairs the
   known stale retained Pulsar or ZooKeeper epoch mismatch by resetting only the Pulsar claim roots
   and retrying once
-- the Apple clean-host bootstrap now verifies same-process ghcup-managed `ghc` and `cabal`
-  resolution before direct `cabal install`, selects the supported `default` profile even when
-  `colima list --json` returns multiple newline-delimited profile objects, reconciles Homebrew
-  `protoc`, reconciles Colima to the supported `8 CPU / 16 GiB` profile before Docker-backed
-  work, and lets Apple adapter setup or validation paths reconcile the Homebrew-managed
-  `python@3.12` formula and `python3.12` command plus a user-local Poetry bootstrap on demand;
-  the Poetry bootstrap may reuse an already available compatible Python 3.12+ executable when one
-  passes the implemented version check
+- the Apple clean-host bootstrap verifies same-process ghcup-managed `ghc` and `cabal`
+  resolution before direct `cabal install`, reconciles Homebrew `protoc`, and lets Apple adapter
+  setup or validation paths reconcile the Homebrew-managed `python@3.12` formula and
+  `python3.12` command plus a user-local Poetry bootstrap on demand. The native-only workflow
+  doctrine now requires Docker-backed Apple work to use the current native arm64 Docker daemon and
+  forbids Docker-context creation or switching, Colima VM creation, and cross-architecture
+  emulation; Phase 1 Sprint 1.12 replaces the previous Colima reconciliation path with selected
+  Docker-context and daemon-architecture validation. The Poetry bootstrap may reuse an already
+  available compatible Python 3.12+ executable when one passes the implemented version check
 - routed Apple Playwright validation runs host-native `npm exec` against the published
   `127.0.0.1` edge port, and retained Kind state is replayed into and out of the worker rather
   than bind-mounted
@@ -97,26 +98,11 @@
   into Kind before Helm warmup, only Harbor-required services may pull upstream before Harbor is
   responsive, and every remaining image, including the active `infernix` runtime image, is loaded
   into Harbor before final rollout
-- Phase 6 had previously recorded clean governed bootstrap reruns for `linux-cpu`, `linux-gpu`,
-  and the supported Apple lifecycle on the retired hardware, including Apple reruns on
-  May 15, 2026 and May 17, 2026 through `doctor`, `build`, `up`, `status`, `test`, `down`, and
-  final `status`; those historical reruns covered the split daemon topology, host-batch Pulsar
-  handoff, routed Playwright E2E, repeated retained-state cluster bring-up or teardown cycles
-  inside the governed `test` lane, final post-teardown status returning `clusterPresent: False`,
-  `lifecycleStatus: idle`, and `lifecyclePhase: cluster-absent`, and the May 19, 2026
-  `linux-gpu` post-warning-cleanup rerun through `doctor`, forced image refresh, `build`, `up`,
-  `status`, `test`, `down`, `purge`, and final `status`, plus the Harbor publication closure
-  where repo-owned local images are pushed before third-party chart dependencies and the source
-  image is re-tagged before each bounded push retry so retry recovery does not depend on a
-  previously retained target tag. **Apple Silicon validation reset
-  (2026-05-29).** The project moved its primary development machine to a new Apple Silicon host
-  on 2026-05-29; the prior Apple Silicon hardware and the prior Linux/CUDA host are both no
-  longer available. The retired dated proof points are inventoried in
+- retired validation proof points are inventoried in
   [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) under "Retired Historical
-  Validation Evidence". Revalidation on the new host is tracked by
-  [cohort-validation-waves.md](cohort-validation-waves.md): [Wave A](cohort-validation-waves.md)
-  (Apple cohort) closed 2026-05-30, and [Wave C](cohort-validation-waves.md) (CUDA Linux
-  cohort) closed 2026-06-03
+  Validation Evidence"; current replacement evidence is tracked by
+  [cohort-validation-waves.md](cohort-validation-waves.md), with the Apple cohort closed in Wave A
+  and the native Linux/CUDA cohort closed in Wave C
 - Monitoring is not a supported first-class surface.
 
 ## Operator and Host Components
@@ -142,7 +128,7 @@
 | Playwright runtime | baked into `docker/linux-substrate.Dockerfile` (Node, the Playwright runtime, and the three browsers) and invoked from inside the outer container via `npm --prefix web exec -- playwright test --config web/playwright.config.js` on Linux substrates; on Apple Silicon the host-native lane invokes `npm --prefix web exec -- playwright test` from the host CLI against the published localhost edge port using the same typed fixture. Apple routed Playwright validation closed in Waves A.1/A.2, and the rebuilt Linux GPU launcher passed 7/7 routed E2E in Wave C on 2026-06-03. | none |
 | Compose launcher | `compose.yaml` | outer-container launcher for supported Linux workflows; the file defines exactly the `infernix` service with two bind mounts (`./.data` and `/var/run/docker.sock`), no `environment:` block, no `build:` block, and a one-shot image selector that defaults to `infernix-linux-cpu:local` while allowing the GPU lane to choose `infernix-linux-gpu:local`. The Phase 3 Sprint 3.10 `playwright` service removal landed on May 24, 2026 — Playwright now runs inside the same substrate image | none |
 | Shared Python adapter project | `python/pyproject.toml`, `python/adapters/` | single dependency boundary and adapter tree for Python-native engines | none in the supported operator contract |
-| Apple host prerequisite bootstrap | governed docs plus Haskell bootstrap logic | minimize Apple pre-existing host installs and let `infernix` reconcile supported Homebrew-managed tools and Poetry bootstrap | none |
+| Apple host prerequisite bootstrap | governed docs plus Haskell bootstrap logic | minimize Apple pre-existing host installs and let `infernix` reconcile supported Homebrew-managed tools and Poetry bootstrap while requiring any Docker-backed work to use the already selected native arm64 Docker daemon; Docker readiness validation reports the current context and daemon architecture without creating or switching contexts or creating a VM | none |
 | Testing doctrine docs | `documents/engineering/testing.md` and `documents/development/testing_strategy.md` | keep one canonical testing doctrine together with one operator-facing detail layer | none |
 | Browser-contract source | `src/Infernix/Web/Contracts.hs`, `web/package.json` | keeps handwritten Haskell contract source out of `Generated/` while preserving generated PureScript output there | none |
 | Helm deployment assets | `chart/Chart.yaml`, `chart/values.yaml`, `chart/templates/` | hold repo-owned workloads, ConfigMaps, Gateway resources, and third-party chart dependencies | none |
@@ -219,7 +205,7 @@
 | Substrate | Canonical substrate id | Supported contract | Current repo gap |
 |-----------|------------------------|--------------------|------------------|
 | Apple Silicon / Metal | `apple-silicon` | host-native control plane, cluster `infernix service` daemons for request-topic consumption and host-batch handoff, same-binary host inference daemons consuming Apple batch topics and publishing results, and clustered support services plus optional routed demo workloads sharing the same substrate file and route contracts | none |
-| Linux / CPU | `linux-cpu` | containerized Linux lane built from the shared substrate Dockerfile and driven entirely through Compose | none |
+| Linux / CPU | `linux-cpu` | containerized Linux lane built from the shared substrate Dockerfile and driven entirely through Compose on native Linux amd64 or native Linux arm64; publication selects the normalized native host architecture from `InfernixHost.dhall` | native arm64 Linux full-suite validation remains outstanding for Phase 3 Sprint 3.12 closure |
 | Linux / NVIDIA GPU | `linux-gpu` | GPU-enabled Kind lane built from the shared substrate Dockerfile and deployed from the same CUDA-based image used by the outer container | none |
 
 ## Serialization Boundaries

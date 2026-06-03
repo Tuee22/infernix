@@ -1,6 +1,6 @@
 # Phase 1: Repository and Control-Plane Foundation
 
-**Status**: Done
+**Status**: Active
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/engineering/host_tools_manifest.md](../documents/engineering/host_tools_manifest.md)
 
 > **Purpose**: Establish the canonical repository scaffold, the two-binary topology
@@ -10,9 +10,15 @@
 
 ## Phase Status
 
-Phase 1 closes Sprints 1.1–1.11 around the current repository scaffold, the two-binary topology,
+Phase 1 closes Sprints 1.1-1.11 around the current repository scaffold, the two-binary topology,
 the staged substrate-file contract, the baked Linux launcher image, the governed
-root-document posture, and the host-manifest materialization implemented in this worktree.
+root-document posture, and the host-manifest materialization implemented in this worktree. Sprint
+1.12 is `Active` for native-only workflow validation: the implementation now removes the
+Colima-oriented Apple prerequisite path and validates the already selected Docker context plus
+daemon architecture before Docker-backed Apple work. The supported Apple path must use an already
+selected native arm64 Docker daemon, must not create or switch Docker contexts, must not create a
+Colima VM, and must not use cross-architecture emulation. The Linux CPU path must support native
+Linux amd64 and native Linux arm64 without any non-native compatibility lane.
 Sprint 1.11 retired
 `INFERNIX_BUILD_ROOT`, `INFERNIX_DATA_ROOT`, the `INFERNIX_COMPOSE_SUBSTRATE` /
 `INFERNIX_COMPOSE_DEMO_UI` runtime fallbacks, `INFERNIX_BOOTSTRAP_YES`, the
@@ -38,7 +44,11 @@ preflight, while explicit helper invocations remain available for direct inspect
 The Linux substrate Dockerfile also materializes a build-arg-selected copy inside the image
 overlay during image build, supported Compose runs keep the Linux build root in the image
 overlay rather than bind-mounting the host `./.build/` tree, and the Helm chart archive cache
-lives in the image overlay at `/opt/infernix/chart/charts/`.
+lives in the image overlay at `/opt/infernix/chart/charts/`. Sprint 1.12 removes the Colima tool
+field from `dhall/InfernixHost.dhall` and the matching Haskell records, removes `AppleColima`
+planning and profile start/stop/restart behavior from `src/Infernix/HostPrereqs.hs`, and adds
+unit-level Docker-boundary coverage for native arm64 versus non-native daemon architectures. Full
+Sprint 1.12 closure still needs the Apple Silicon bootstrap boundary validation named below.
 
 ## Substrate Foundation
 
@@ -686,10 +696,67 @@ Wave C.
 
 ---
 
+## Sprint 1.12: Native-Only Workflow and Apple Docker Boundary [Active]
+
+**Status**: Active
+**Implementation**: `src/Infernix/HostPrereqs.hs`, `src/Infernix/HostConfig.hs`, `dhall/InfernixHost.dhall`, `test/unit/Spec.hs`, `README.md`, `AGENTS.md`, `CLAUDE.md`
+**Docs to update**: `README.md`, `AGENTS.md`, `CLAUDE.md`, `documents/development/assistant_workflow.md`, `documents/development/local_dev.md`, `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/engineering/portability.md`, `documents/engineering/docker_policy.md`, `documents/engineering/host_tools_manifest.md`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/00-overview.md`, `DEVELOPMENT_PLAN/system-components.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
+
+### Objective
+
+Make the native-only development and validation contract executable. Apple Silicon must never
+create or switch Docker contexts, create a Colima VM, or run amd64 Linux through emulation.
+Docker-backed Apple work requires the operator's current Docker context to already target a
+native arm64 daemon. `linux-cpu` validation belongs on native Linux amd64 or native Linux arm64.
+
+### Deliverables
+
+- remove the supported-path dependency on `AppleColima` and the Colima start/stop/restart
+  reconciliation path from Apple prerequisite handling
+- replace Apple Docker bootstrap behavior with a Docker-daemon validation step that reports the
+  current Docker context and daemon architecture, then fails before cluster work if the daemon is
+  absent, non-native, or unavailable in the current process
+- update `dhall/InfernixHost.dhall`, host-tool manifests, and unit fixtures so Colima is not a
+  required supported Apple tool
+- keep Linux bootstrap and validation native-only: `linux-cpu` covers native `linux/amd64` and
+  native `linux/arm64`; `linux-gpu` remains native amd64 CUDA
+- keep root workflow guidance, governed docs, and this plan aligned with the implementation
+
+### Validation
+
+- `rg -n 'AppleColima|ensureColimaDockerReady|startSupportedColima|stopColima|colima start|colima stop' src test dhall`
+  returns no supported-path matches after the cleanup lands
+- `cabal test infernix-unit` covers Apple host prerequisite decoding and Docker-boundary behavior
+- 2026-06-03 native Linux amd64 outer-container regression gate:
+  `./bootstrap/linux-cpu.sh test` passed Haskell style, Python quality, Haskell unit,
+  PureScript build, 71/71 web unit tests, full integration, and routed Playwright E2E (7/7)
+  against launcher image digest
+  `sha256:dc0c003e7cc2f2e359a474fa5ddb522c8715d271e322534db7798f260e9747fa`; this proves the
+  Colima-removal cleanup and host-manifest schema change do not regress the Linux lane, but it is
+  not Apple Docker-boundary evidence
+- on Apple Silicon with an already selected native arm64 Docker daemon,
+  `./bootstrap/apple-silicon.sh doctor`, `build`, `up`, `status`, `test`, `down`, and final
+  `status` run without creating or switching Docker contexts
+- on Apple Silicon with no usable native arm64 Docker daemon, the Apple bootstrap fails with a
+  prerequisite error and does not create a Docker context or Colima VM
+- `infernix lint docs` passes through the active execution context
+
+### Remaining Work
+
+- Apple Silicon validation with an already selected native arm64 Docker daemon remains
+  outstanding for this sprint.
+- Apple Silicon negative validation with no usable native arm64 Docker daemon remains
+  outstanding; that run must prove the bootstrap fails without creating or switching Docker
+  contexts or creating a Docker VM.
+
+---
+
 ## Remaining Work
 
-None. Sprints 1.1–1.11 are `Done`; Apple cohort validation closed in Wave A and CUDA Linux
-cohort validation closed in Wave C.
+Sprint 1.12 remains open for the native-only Apple Docker-boundary validation named above.
+The implementation cleanup has landed; positive and negative Apple Silicon bootstrap boundary
+validation still require an Apple Silicon host. Sprints 1.1-1.11 are `Done`; Apple cohort
+validation closed in Wave A and CUDA Linux cohort validation closed in Wave C.
 
 ## Documentation Requirements
 

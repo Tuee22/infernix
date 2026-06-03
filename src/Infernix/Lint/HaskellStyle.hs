@@ -227,8 +227,7 @@ envFunctionExemptedFiles =
     -- @getEnvironment@ + the supported execution-context helpers is
     -- the same workstream and lands together with the
     -- `Cluster.hs`-side @proc@ retirement.
-    "src/Infernix/CLI.hs",
-    "src/Infernix/HostPrereqs.hs"
+    "src/Infernix/CLI.hs"
   ]
 
 -- | Phase 6 Sprint 6.28 (initial landing — May 25, 2026): reject
@@ -288,10 +287,6 @@ bareNameProcExemptedFiles =
     -- @proc "git" ["ls-files"]@ to enumerate the tracked file set
     -- (genuine bootstrap-time call before HostConfig is available).
     "src/Infernix/Lint/Files.hs",
-    -- Apple validation pass: host prerequisite reconciliation still
-    -- shells out to Homebrew / Colima before the Apple lane is
-    -- finalized.
-    "src/Infernix/HostPrereqs.hs",
     -- Web dependency readiness still probes the host Node executable
     -- before installing the web toolchain.
     "src/Infernix/Workflow.hs"

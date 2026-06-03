@@ -12,28 +12,25 @@
 - the Apple stage-0 bootstrap verifies the selected ghcup-managed `ghc` and `cabal` executables
   plus Homebrew `protoc` before direct `cabal install`, so the supported clean-host first run does
   not depend on rerunning the same bootstrap command after Cabal is first installed
-- Colima is the only supported Docker environment on Apple Silicon
-- after `./.build/infernix` exists, supported commands reconcile Homebrew-managed Colima, Docker
-  CLI, `kind`, `kubectl`, `helm`, and Node.js on demand, reconcile Colima to the supported
-  `8 CPU / 16 GiB` profile before Docker-backed work, select the supported `default` profile even
-  when `colima list --json` reports multiple profiles, and let adapter setup or validation paths
-  reconcile the Homebrew-managed `python@3.12` formula and `python3.12` command plus a user-local
-  Poetry bootstrap when needed; the Poetry bootstrap may reuse an already available compatible
-  Python 3.12+ executable when one passes the implemented version check
+- Docker-backed Apple work uses the operator's already selected native arm64 Docker daemon. The
+  supported workflow must not create or switch Docker contexts, create a Colima VM, or use
+  cross-architecture emulation
+- after `./.build/infernix` exists, supported commands may reconcile Homebrew-managed `kind`,
+  `kubectl`, `helm`, and Node.js on demand, and let adapter setup or validation paths reconcile
+  the Homebrew-managed `python@3.12` formula and `python3.12` command plus a user-local Poetry
+  bootstrap when needed; the Poetry bootstrap may reuse an already available compatible Python
+  3.12+ executable when one passes the implemented version check
 - the Apple bootstrap shell owns only host prerequisite reconciliation through the host binary
-  build and then invokes `./.build/infernix <command>`; the host binary owns Colima, Kind,
-  Kubernetes, container builds, Harbor publication, and any cluster workload image pulls needed
-  after it exists
+  build and then invokes `./.build/infernix <command>`; the host binary owns Kind, Kubernetes,
+  container builds, Harbor publication, and any cluster workload image pulls needed after it exists,
+  but it must not provision Docker virtualization or switch Docker contexts
 - the Apple lifecycle now keeps Kind lock-taking off repo-visible paths by using a host-local
   scratch kubeconfig under the system temp directory during cluster create or delete and then
   publishing the durable repo-local kubeconfig under `./.build/`
-- on May 15, 2026, and again on May 17, 2026, the supported Apple lifecycle reran cleanly through
-  `doctor`, `build`, `up`, `status`, `test`, `down`, and final `status`; the May 17, 2026 rerun
-  also validated the current Colima 0.10.1 multi-profile `colima list --json` output shape.
-  Those reruns validated the split daemon topology, host-batch Pulsar handoff, routed Playwright
-  E2E, repeated retained-state cluster bring-up or teardown cycles inside `test all`, and final
-  post-teardown status reported `clusterPresent: False`, `lifecycleStatus: idle`, and
-  `lifecyclePhase: cluster-absent`
+- current Apple validation evidence is recorded in
+  [../../DEVELOPMENT_PLAN/cohort-validation-waves.md](../../DEVELOPMENT_PLAN/cohort-validation-waves.md).
+  Retired hardware proof points are recorded only in
+  [../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md](../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md)
 - the May 13, 2026 Apple lifecycle investigation remains the proof point that long waits can still
   be healthy while the supported path is replaying retained Kind data, building the shared runtime
   image, publishing it through Harbor, or preloading Harbor-backed images onto the Kind worker;
@@ -51,8 +48,9 @@
   kubeconfig
 - run `./bootstrap/apple-silicon.sh down` when tearing the cluster down
 
-The first supported host-native command that needs Docker, Kubernetes tooling, Node.js, Python, or
-Poetry reconciles those prerequisites automatically.
+The first supported host-native command that needs Kubernetes tooling, Node.js, Python, or Poetry
+may reconcile those prerequisites automatically. Docker is different: the current Docker context
+must already point at a native arm64 daemon before Docker-backed cluster work begins.
 
 Direct reference path:
 
@@ -142,10 +140,11 @@ Direct reference path:
   state on the operator's machine (not a Kubernetes PVC, not durable cluster state) and is
   purgeable. First-use of a model triggers the cluster-side coordinator's bootstrap
   subscription; subsequent uses are local-cache hits
-- the Apple host bootstrap uses Homebrew-managed Colima, Docker CLI, `kind`, `kubectl`, `helm`,
-  Node.js, and related operator tools rather than a broader manual prerequisite list
-- the Apple host bootstrap reconciles Colima to at least `8 CPU / 16 GiB` before Docker-backed
-  lifecycle or validation work proceeds
+- the Apple host bootstrap uses Homebrew-managed `kind`, `kubectl`, `helm`, Node.js, and related
+  operator tools rather than a broader manual prerequisite list
+- Docker-backed lifecycle or validation work on Apple requires an already selected native arm64
+  Docker daemon; the repo must not create a Docker context, switch the active context, create a
+  Colima VM, or use emulation
 - routed Apple E2E uses host `npm exec` with the same typed fixture and awaits the Apple
   validation pass; the Linux lane already targets the Kind control-plane DNS instead of
   `host.docker.internal`
@@ -154,7 +153,7 @@ Direct reference path:
   `down` noticeably slower than Linux
 - `./bootstrap/apple-silicon.sh down` delegates to `./.build/infernix cluster down` and preserves
   `./.build/`, `./.data/`, the host-built `./.build/infernix` binaries, any host-level runtime
-  container image, Colima, Docker, and Homebrew-managed prerequisites
+  container image, Docker state, and Homebrew-managed prerequisites
 - `infernix service` runs `ensureAppleSiliconRuntimeReady` before the daemon loop. That flow
   ensures the shared `python/` project is installed, creates repo-local engine roots under
   `./.data/engines/`, and invokes each `poetry run setup-*` entrypoint for the active mode's
@@ -169,14 +168,14 @@ Direct reference path:
 ## Apple Silicon Native Architecture
 
 The supported Apple Silicon control plane runs cluster workloads natively as `linux/arm64`.
-Colima's aarch64 VM is the only virtualization the supported lifecycle requires; the
-publication path does not depend on Rosetta or any other amd64 → arm64 emulation layer.
+The publication path does not depend on Rosetta, QEMU, or any other cross-architecture emulation
+layer.
 `clusterWorkloadArchitecture AppleSilicon` returns `"arm64"` in `src/Infernix/Cluster.hs`,
 and every Harbor `docker pull --platform linux/<arch>` and `skopeo copy --override-arch=<arch>`
 invocation reads from that mapping. The chart's MinIO sub-chart uses upstream multi-arch
 images (`minio/minio`, `minio/mc`, `busybox`) — not the retired amd64-only `bitnamilegacy/*`
-packaging. Operators do not need to enable Colima's Rosetta-on-Linux setting; the supported
-profile is the default `vz` virtualization framework with `arch: aarch64`.
+packaging. Operators must not enable an emulated Linux lane for Infernix validation, and the Apple
+workflow must not create or switch Docker contexts or create a Colima VM.
 
 The canonical home for the substrate → container architecture mapping is
 [../architecture/runtime_modes.md](../architecture/runtime_modes.md) (see the "Substrate

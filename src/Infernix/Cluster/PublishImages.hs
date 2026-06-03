@@ -74,8 +74,8 @@ data HarborPublishOptions = HarborPublishOptions
     -- container architecture (@\"amd64\"@ or @\"arm64\"@) the
     -- publication path pins on every @docker pull --platform
     -- linux\/<arch>@ and @skopeo copy --override-arch=<arch>@.
-    -- 'Cluster.publishClusterImages' overrides from
-    -- 'clusterWorkloadArchitecture'; the default below stays at
+    -- 'Cluster.publishClusterImages' overrides from the resolved
+    -- host-aware architecture selector; the default below stays at
     -- @\"amd64\"@ for backward compat with callers that have not
     -- yet been updated.
     harborTargetArchitecture :: String

@@ -1,7 +1,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module Infernix.Cluster
-  ( clusterDown,
+  ( clusterWorkloadArchitectureForHostArchitecture,
+    clusterDown,
     clusterStatus,
     clusterUp,
     kindControlPlaneNodeName,
@@ -65,6 +66,7 @@ import Network.Socket qualified as Socket
 import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, findExecutable, getTemporaryDirectory, listDirectory, removeFile, removePathForcibly, renameFile)
 import System.Exit (ExitCode (..))
 import System.FilePath (addTrailingPathSeparator, normalise, takeDirectory, takeFileName, (</>))
+import System.Info qualified
 import System.Process
   ( CreateProcess (cwd, env),
     proc,
@@ -1034,12 +1036,9 @@ ensureClaimDirectoryReady paths runtimeMode persistentClaim = do
     Nothing -> pure ()
     Just owner
       | hostClaimOwnershipAlignmentSupported paths -> do
-          -- Phase 2 Sprint 2.13 follow-on (2026-05-31): the Linux outer-container
-          -- lane runs from macOS hosts via Colima's x86_64 VM with a virtiofs-
-          -- backed `./.data:/workspace/.data` bind mount. virtiofs rejects
-          -- `chown` across the host/guest boundary because the macOS host owns
-          -- the underlying files. The chown alignment is a best-effort source-
-          -- ownership tag; the actual Kind worker pod copies its own
+          -- Phase 2 Sprint 2.13 follow-on (2026-05-31): chown alignment is a
+          -- best-effort source-ownership tag across host/launcher/node
+          -- filesystem boundaries. The actual Kind worker pod copies its own
           -- ownership during `prepareKindNodeRuntimePaths`, so a failure here
           -- is non-fatal as long as the directory is broadly writable (it is,
           -- per the `chmod a+rwX` above). Treat the chown as advisory: log
@@ -1759,6 +1758,7 @@ dockerHubMirrorRef imageRef =
 
 publishClusterImages :: Paths -> ClusterState -> FilePath -> RuntimeMode -> IO FilePath
 publishClusterImages paths state renderedChartPath runtimeMode = do
+  targetArchitecture <- resolveClusterWorkloadArchitecture paths runtimeMode
   let outputPath =
         buildRoot paths
           </> ("harbor-image-overrides-" <> Text.unpack (runtimeModeId runtimeMode) <> ".yaml")
@@ -1770,7 +1770,7 @@ publishClusterImages paths state renderedChartPath runtimeMode = do
         PublishImages.harborApiHost = harborApiHost paths runtimeMode (harborPort state),
         PublishImages.harborDockerCommand = resolveHostToolForCluster paths HostDocker,
         PublishImages.harborSkopeoCommand = resolveHostToolForCluster paths HostSkopeo,
-        PublishImages.harborTargetArchitecture = clusterWorkloadArchitecture runtimeMode
+        PublishImages.harborTargetArchitecture = targetArchitecture
       }
     ( \detail -> do
         detailState <- startLifecyclePhase paths state "cluster-up" "publish-harbor-images" detail
@@ -1867,7 +1867,8 @@ hydrateMissingHostWarmupImage paths state imageRef =
       -- arm64 base images natively. The hardcoded @linux/amd64@ this
       -- replaced was the Docker 29.x mirror fallback added when only
       -- amd64 substrates were supported.
-      let platformFlagValue = "linux/" <> clusterWorkloadArchitecture (clusterRuntimeMode state)
+      targetArchitecture <- resolveClusterWorkloadArchitecture paths (clusterRuntimeMode state)
+      let platformFlagValue = "linux/" <> targetArchitecture
       hydrateResult <-
         ( try
             ( do
@@ -4316,19 +4317,37 @@ clusterWorkloadImageRef :: RuntimeMode -> String
 clusterWorkloadImageRef runtimeMode =
   clusterWorkloadImageRepository runtimeMode <> ":local"
 
--- | Phase 3 Sprint 3.11 (2026-05-29): each supported substrate fixes
--- the Linux container architecture that cluster workloads use.
--- Apple Silicon runs natively as @linux/arm64@ — no host-level
--- Rosetta emulation; both Linux substrates run as @linux/amd64@.
--- This is the source of truth consumed by every publication-path
--- helper that previously hardcoded @amd64@ (`pinLocalImageToArchitecture`,
--- `pushUpstreamMultiArchViaImagetools`, `extractDigestForArchitecture`,
--- `recoverOriginalTag`, the build-base-image fallback in
--- `buildClusterImages`).
-clusterWorkloadArchitecture :: RuntimeMode -> String
-clusterWorkloadArchitecture AppleSilicon = "arm64"
-clusterWorkloadArchitecture LinuxCpu = "amd64"
-clusterWorkloadArchitecture LinuxGpu = "amd64"
+-- | Phase 3 Sprint 3.12: select the native container architecture for
+-- cluster workloads. Apple remains arm64, linux-gpu remains amd64
+-- because CUDA arm64 is not a supported substrate, and linux-cpu uses
+-- the typed host architecture from `InfernixHost.dhall`.
+resolveClusterWorkloadArchitecture :: Paths -> RuntimeMode -> IO String
+resolveClusterWorkloadArchitecture paths runtimeMode =
+  case clusterWorkloadArchitectureForHostArchitecture runtimeMode (hostArchitectureForPaths paths) of
+    Right architecture -> pure architecture
+    Left message -> ioError (userError message)
+
+clusterWorkloadArchitectureForHostArchitecture :: RuntimeMode -> Text.Text -> Either String String
+clusterWorkloadArchitectureForHostArchitecture runtimeMode hostArchitecture =
+  case runtimeMode of
+    AppleSilicon -> Right "arm64"
+    LinuxGpu -> Right "amd64"
+    LinuxCpu ->
+      case Text.unpack (HostConfig.normalizeHostArchitecture hostArchitecture) of
+        "amd64" -> Right "amd64"
+        "arm64" -> Right "arm64"
+        unsupported ->
+          Left
+            ( "Unsupported native host architecture for linux-cpu publication: "
+                <> unsupported
+                <> ". Supported linux-cpu hosts are native linux/amd64 and linux/arm64."
+            )
+
+hostArchitectureForPaths :: Paths -> Text.Text
+hostArchitectureForPaths paths =
+  case pathsHostConfig paths of
+    Just hostConfig -> HostConfig.hostArchitecture hostConfig
+    Nothing -> HostConfig.normalizeHostArchitecture (Text.pack System.Info.arch)
 
 deleteKindCluster :: Paths -> RuntimeMode -> IO ()
 deleteKindCluster paths runtimeMode = go (3 :: Int) ""

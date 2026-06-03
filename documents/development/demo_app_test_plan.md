@@ -80,8 +80,10 @@ startup MinIO bucket repair, real wrong-realm Keycloak token rejection for `/api
 `/ws`, throughput matrix parameterization, and extracted Playwright artifact fixtures under
 `web/test/fixtures/artifactSamples.js`. Those residual changes passed the rebuilt-image
 `linux-gpu` full gate on 2026-06-03 against launcher image digest
-`sha256:521a56ac6f79bf1ce5bc9d7dcd9c872e897ce4b4882661d4ada2f62faa108d7b`; rebuilt-image
-`linux-cpu` validation remains pending.
+`sha256:521a56ac6f79bf1ce5bc9d7dcd9c872e897ce4b4882661d4ada2f62faa108d7b`; the resumed
+rebuilt-image `linux-cpu` full gate passed on 2026-06-03 against launcher image digest
+`sha256:dc0c003e7cc2f2e359a474fa5ddb522c8715d271e322534db7798f260e9747fa` with full
+integration and routed Playwright E2E (7/7).
 
 ## Unit Layer
 
@@ -164,12 +166,18 @@ Implemented as of May 28, 2026:
 
 Pending integration-layer work:
 
-- **Rebuilt-image CPU residual validation.** The wrong-realm Keycloak token negatives and
-  throughput matrix parameterization passed the rebuilt-image `linux-gpu` full gate and still need
-  the matching full `linux-cpu` launcher gate.
 - **Real KV-cache engine failover.** The current deterministic adapter layer exposes no reusable
   KV-cache surface, so cache-hit/cache-miss verification under engine failover remains owned by
   Sprint 7.8.
+
+Resolved residual validation:
+
+- **Rebuilt-image CPU residual validation.** The wrong-realm Keycloak token negatives and
+  throughput matrix parameterization passed both rebuilt-image residual gates: `linux-gpu` on
+  2026-06-03 against digest
+  `sha256:521a56ac6f79bf1ce5bc9d7dcd9c872e897ce4b4882661d4ada2f62faa108d7b`, and `linux-cpu`
+  on 2026-06-03 against digest
+  `sha256:dc0c003e7cc2f2e359a474fa5ddb522c8715d271e322534db7798f260e9747fa`.
 
 ## E2E Layer
 

@@ -389,8 +389,10 @@ toolchain from package managers instead of depending on a broad preinstalled App
 
 - Apple host-native flow reduces pre-existing host requirements to Homebrew plus ghcup before
   building `./.build/infernix`
-- Colima is the only supported Docker environment on Apple Silicon, and the supported Apple path
-  installs or starts Colima through Homebrew-managed tooling
+- the earlier Apple Docker reconciliation behavior from this sprint is superseded by Phase 1
+  Sprint 1.12: Docker-backed Apple work requires an already selected native arm64 Docker daemon
+  and must not create or switch Docker contexts, create a Colima VM, or use cross-architecture
+  emulation
 - after the Apple binary exists, `infernix` can reconcile the remaining supported Homebrew-managed
   operator tools needed by the active path, including the Docker CLI, `kind`, `kubectl`, `helm`,
   and Node.js
@@ -409,8 +411,9 @@ toolchain from package managers instead of depending on a broad preinstalled App
 
 - validation closes when, on a clean Apple Silicon host with only Homebrew plus ghcup present,
   `./bootstrap/apple-silicon.sh up` builds the host binaries, materializes or verifies the active
-  substrate through the binary, and reconciles the remaining supported Apple host prerequisites
-  through the supported package-manager path
+  substrate through the binary, reconciles the remaining non-Docker Apple host prerequisites
+  through the supported package-manager path, and stops at a prerequisite boundary if the current
+  Docker daemon is unavailable or non-native
 - validation closes when Apple host validation proves the supported flow can bootstrap Poetry when
   absent and then run the adapter setup path without manual Poetry installation
 - validation closes when, on a clean Linux CPU host with Docker only,
@@ -1007,12 +1010,11 @@ substrate-mismatched compatibility shims.
   tool installs continue only after the bootstrap verifies command resolution and version, while
   new-shell or reboot requirements stop with a rerun instruction for the same bootstrap command
 - Apple host prerequisite reconciliation can install or verify the Homebrew-managed `python@3.12`
-  formula and `python3.12` command, a user-local Poetry bootstrap, Node.js, and the supported
-  Colima profile on demand when Apple
-  lifecycle or adapter-validation paths need them
-- Apple host prerequisite reconciliation selects the supported `default` Colima profile even when
-  newer `colima list --json` output reports one JSON object per profile, so multi-profile Apple
-  hosts do not fail before Docker-backed work starts
+  formula and `python3.12` command, a user-local Poetry bootstrap, Node.js, and non-Docker
+  operator tools on demand when Apple lifecycle or adapter-validation paths need them
+- the Apple Docker boundary is now governed by Phase 1 Sprint 1.12: the current Docker context
+  must already target a native arm64 daemon, and the supported path must stop rather than creating
+  or switching Docker contexts or creating a VM
 - Apple Kind lifecycle code no longer relies on unsupported host bind-mount ownership assumptions,
   does not perform broad pre-Harbor support-image preloads, preloads only Harbor-backed final
   image refs after Harbor publication, and keeps the routed demo API aligned with the active
@@ -1039,15 +1041,12 @@ substrate-mismatched compatibility shims.
 - on May 11, 2026 (retired hardware), the supported Apple lifecycle had reran cleanly through
   `./bootstrap/apple-silicon.sh doctor`, `build`, `up`, `status`, `test`, and `down`; that
   evidence is no longer current
-- on May 17, 2026 (retired hardware), with Colima 0.10.1 reporting multiple profiles from
-  `colima list --json`, the supported Apple lifecycle had reran cleanly through
-  `./bootstrap/apple-silicon.sh doctor`, `build`, `up`, `status`, `test`, `down`, and final
-  `status`, with the post-teardown `status` surface reporting `clusterPresent: False`,
-  `lifecycleStatus: idle`, and `lifecyclePhase: cluster-absent`; that evidence is no longer
-  current
+- retired Apple Docker-profile compatibility evidence is not part of the current supported
+  workflow contract; native-only Docker-boundary validation is tracked by Phase 1 Sprint 1.12
 - Apple cohort validation closed in Wave A; CUDA Linux validation closed in Wave C.
 - the Apple bootstrap fails fast with actionable messages if the resolved ghcup-managed toolchain,
-  Homebrew `protoc`, or supported Colima profile still cannot be used in the current process
+  Homebrew `protoc`, or current native arm64 Docker daemon still cannot be used in the current
+  process
 - the supported Apple routed Playwright lane passes without timing out on
   `host.docker.internal`, and the later substrate image rebuild does not reintroduce the prior
   `NO_COLOR`/`FORCE_COLOR` warning conflict
@@ -1417,7 +1416,7 @@ CUDA Linux cohort validation closed in Wave C.
 - `documents/operations/apple_silicon_runbook.md` - Apple matrix expectations and cold-start lifecycle timing doctrine
 - `documents/tools/postgresql.md` - PostgreSQL operator readiness and failover rules
 - `documents/tools/pulsar.md` - request, batch, and result topic ownership for cluster and host daemons
-- `documents/engineering/docker_policy.md` - Colima-only Apple Docker guidance, minimal Linux host
+- `documents/engineering/docker_policy.md` - native Apple Docker boundary, minimal Linux host
   prerequisites, and buildx expectations for nested Compose builds
 - `documents/development/purescript_policy.md` - PureScript npm deprecation-warning ownership,
   compiler acquisition constraints, and Spago transitive-dependency constraints

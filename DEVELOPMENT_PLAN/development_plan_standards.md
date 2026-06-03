@@ -243,11 +243,11 @@ Rules:
 - `infernix kubectl ...` is the supported operator wrapper for Kubernetes access and automatically
   targets the repo-local kubeconfig in the current execution context's durable location.
 - On Apple Silicon, the intended minimal pre-existing host prerequisites are Homebrew plus ghcup.
-- Colima is the only supported Docker environment on Apple Silicon and is installed from Homebrew
-  on the supported path.
-- When Apple operators intentionally exercise the `linux-cpu` substrate, they do so through the
-  containerized Linux workflow inside Colima's amd64 VM and accept that the Apple GPU is out of
-  scope for that path.
+- Docker-backed Apple work requires the operator's current Docker context to already point at a
+  native arm64 Docker daemon. Infernix must not create or switch Docker contexts, create a Colima
+  VM, or use cross-architecture emulation.
+- Apple operators do not intentionally exercise `linux-cpu` through Apple Silicon emulation.
+  `linux-cpu` validation belongs on native Linux amd64 or native Linux arm64.
 - On every substrate, `cluster up` deploys the supported three-role daemon model (see
   [../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md)):
   the stateless frontend Deployment (`infernix-demo`, demo-gated), the stateless coordinator
@@ -387,10 +387,10 @@ Rules:
   aggregate `infernix test ...` commands own substrate-file preflight, read the resulting file,
   and fail if it cannot be materialized or validated for the requested deployment path. Focused
   `infernix lint ...` and `infernix docs check` commands remain substrate-file independent.
-- `linux-cpu` is the only substrate that remains meaningfully portable across unrelated host
-  hardware. Apple operators may validate it through the outer-container workflow, and arm64 Linux
-  hosts are first-class citizens for that CPU-only lane so long as the supported containerized
-  workflow is followed.
+- `linux-cpu` is the only substrate that remains meaningfully portable across unrelated native
+  Linux host hardware. Native amd64 Linux and native arm64 Linux hosts are first-class citizens for
+  that CPU-only lane so long as the supported containerized workflow is followed. Apple Silicon
+  emulation is not a supported `linux-cpu` validation path.
 - `linux-gpu` closes only when the Kind-backed cluster path exposes NVIDIA container runtime
   support, advertises `nvidia.com/gpu` resources to Kubernetes, and can schedule CUDA workloads on
   that substrate.
@@ -595,9 +595,10 @@ Definitions:
 - **CUDA Linux cohort:** the CUDA-capable Linux workflow through
   `./bootstrap/linux-gpu.sh ...` or the Compose-launched
   `docker compose run --rm infernix infernix ...` command surface.
-- **Portable CPU lane:** the `linux-cpu` outer-container workflow. It may validate CPU-only
-  behavior from either host, but it does not replace the CUDA Linux cohort when GPU behavior,
-  CUDA image construction, `nvkind`, or NVIDIA scheduling is in scope.
+- **Portable CPU lane:** the `linux-cpu` outer-container workflow on native Linux amd64 or native
+  Linux arm64. It may validate CPU-only behavior on those native Linux hosts, but it does not
+  replace the CUDA Linux cohort when GPU behavior, CUDA image construction, `nvkind`, or NVIDIA
+  scheduling is in scope.
 
 Rules:
 

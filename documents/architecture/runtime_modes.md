@@ -42,21 +42,24 @@ staged substrate metadata and `demo_ui` setting instead of copying the host-role
 
 ## Substrate Architecture
 
-Each supported substrate fixes the Linux container architecture that cluster workloads use.
-Apple Silicon runs natively as `linux/arm64` — no host-level Rosetta emulation. Both Linux
-substrates run as `linux/amd64`.
+Each supported substrate uses native container architecture only. Apple Silicon runs natively as
+`linux/arm64`. `linux-cpu` supports native Linux hosts on both `linux/amd64` and `linux/arm64`.
+`linux-gpu` is the amd64 CUDA lane. Development and validation never use cross-architecture
+emulation; there is no supported Rosetta, QEMU, or amd64-on-Apple validation path.
 
 | Substrate | Linux container architecture | Source of truth |
 |-----------|------------------------------|-----------------|
-| `apple-silicon` | `linux/arm64` | `clusterWorkloadArchitecture` in `src/Infernix/Cluster.hs` |
-| `linux-cpu` | `linux/amd64` | same |
+| `apple-silicon` | `linux/arm64` | `clusterWorkloadArchitectureForHostArchitecture` in `src/Infernix/Cluster.hs` |
+| `linux-cpu` | native host Linux architecture: `linux/amd64` or `linux/arm64` | same |
 | `linux-gpu` | `linux/amd64` | same |
 
 Harbor publication pulls each upstream multi-arch image with the substrate's architecture
 override (`--platform linux/<arch>` for Docker, `--override-arch=<arch>` for the `skopeo copy`
 fallback) and pushes the matching single-platform variant into the cluster's Harbor namespace.
 Kind worker nodes then pull the architecture-matched image from Harbor without any
-cross-architecture translation. The supported MinIO image inventory uses upstream multi-arch
+cross-architecture translation. Apple Silicon workflows must not create or switch Docker contexts
+or create a Colima VM; Docker-backed Apple work uses the operator's already selected native arm64
+Docker daemon or stops at prerequisite validation. The supported MinIO image inventory uses upstream multi-arch
 images (`minio/minio`, `minio/mc`, `busybox`) rather than the retired amd64-only
 `bitnamilegacy/*` packaging; see [../tools/minio.md](../tools/minio.md) for the canonical
 inventory.

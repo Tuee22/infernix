@@ -9,7 +9,7 @@
 ## TL;DR
 
 - Every runtime setting is read from one of three typed `.dhall` files:
-  `dhall/InfernixHost.dhall` (host tool paths + filesystem conventions),
+  `dhall/InfernixHost.dhall` (host tool paths, native host architecture, and filesystem conventions),
   `dhall/InfernixCluster.dhall` (in-cluster wiring),
   `dhall/InfernixSecrets.dhall` (paths to secret files, never values).
 - The `dhall` Haskell library is the only Dhall reader. There is no `dhall-to-json` bridge.
@@ -44,12 +44,14 @@ Typed record describing the operator's host environment:
 
 - **Tool paths** — absolute filesystem paths for every external command the project ever invokes:
   `docker`, `kubectl`, `helm`, `kind`, `cabal`, `ghc`, `ghcup`, `ormolu`, `hlint`, `npm`, `node`,
-  `python3`, `poetry`, `protoc`, `git`, `tar`, `curl`, `apt-get`, `brew`, `colima`, `sudo`,
+  `python3`, `poetry`, `protoc`, `git`, `tar`, `curl`, `apt-get`, `brew`, `sudo`,
   `systemctl`, `mkdir`, `chmod`, `ln`, `install`. See
   [../engineering/host_tools_manifest.md](../engineering/host_tools_manifest.md).
 - **Filesystem conventions** — `repoRoot`, `buildRoot`, `dataRoot`, `runtimeRoot`,
   `kubeconfigPath`, `secretsRoot`, `homeDirectory`.
-- **Host execution context** — `apple-silicon`, `linux-cpu`, `linux-gpu`, `outer-container`.
+- **Host execution context and native architecture** — `apple-silicon`, `linux-cpu`,
+  `linux-gpu`, `outer-container`, plus the normalized native architecture used by the
+  `linux-cpu` publication selector.
 
 The Haskell binary loads this file at startup via the `dhall` library's `Dhall.inputFile` and
 decodes it into a typed `HostConfig` record passed down the call tree.
@@ -104,7 +106,7 @@ Convention:
 4. Every pre-binary command uses a hardcoded absolute-path constant:
    `/usr/bin/apt-get`, `/usr/bin/sudo`, `"${HOME_DIR}/.ghcup/bin/ghcup"`,
    `"${HOME_DIR}/.ghcup/bin/cabal"`, `/opt/homebrew/bin/brew` (macOS),
-   `/opt/homebrew/bin/colima` (macOS), `/usr/bin/docker`.
+   `/usr/bin/docker`.
 5. Once the launcher exists, every operation delegates to the binary:
    - **Apple**: `"${REPO_ROOT}/.build/infernix" <command>`
    - **Linux**: `/usr/bin/docker compose --file "${REPO_ROOT}/compose.yaml" run --rm infernix infernix <command>`

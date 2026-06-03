@@ -37,7 +37,6 @@ let ToolPaths =
       , curl : Text
       , aptGet : Text
       , brew : Text
-      , colima : Text
       , sudo : Text
       , systemctl : Text
       , mkdir : Text
@@ -74,6 +73,7 @@ let HostExecutionContext =
       >
 
 in    { hostExecutionContext : HostExecutionContext
+      , hostArchitecture : Text
       , toolPaths : ToolPaths
       , filesystem : FilesystemConventions
       , playwrightHost : Text

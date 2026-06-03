@@ -13,6 +13,8 @@ mode-specific coverage, matrix behavior, and operator detail behind those canoni
 
 - host-native validation is supported only on the `apple-silicon` lane; `linux-cpu` and
   `linux-gpu` validate through the Linux outer-container control plane
+- development and validation are native-only: `linux-cpu` evidence comes from native Linux amd64
+  or native Linux arm64 hosts, never from cross-architecture emulation
 - the active staged substrate remains the source of truth for validation scope, generated catalog
   selection, and routed demo-surface expectations
 - phase work validates on the current hardware cohort first, then batches the counterpart Apple
@@ -22,8 +24,8 @@ mode-specific coverage, matrix behavior, and operator detail behind those canoni
 
 ## Current Status
 
-- the implemented lane matrix is host-native `apple-silicon`, outer-container `linux-cpu`, and
-  real-cluster `linux-gpu`
+- the implemented lane matrix is host-native `apple-silicon`, outer-container `linux-cpu` on
+  native Linux, and real-cluster `linux-gpu`
 - the routed auxiliary checks below describe current behavior precisely: `/harbor`, `/minio/s3`,
   and `/pulsar/ws` publication is required through the live upstream services only
 - the implemented lifecycle progress surface now persists the active phase, child operation, and
@@ -80,8 +82,9 @@ The validation plan minimizes switching between the Apple Silicon and CUDA-capab
 - Full phase closure requires both cohorts to run the relevant complete gates against the same
   phase state; one cohort passing leaves an explicit residual instead of silently claiming full
   cross-hardware evidence.
-- `linux-cpu` remains a portable check and a fallback substrate, but it is not the CUDA Linux
-  cohort for GPU-sensitive work.
+- `linux-cpu` remains a portable check and a fallback substrate on native Linux amd64 or native
+  Linux arm64, but it is not the CUDA Linux cohort for GPU-sensitive work and is not exercised
+  through Apple Silicon emulation.
 - The active cycle's batched-switch boundaries — which work runs on which machine in which
   validation wave — are tracked in
   [../../DEVELOPMENT_PLAN/cohort-validation-waves.md](../../DEVELOPMENT_PLAN/cohort-validation-waves.md).
@@ -90,16 +93,12 @@ The validation plan minimizes switching between the Apple Silicon and CUDA-capab
 
 ## Lifecycle Interpretation
 
-- on May 15, 2026, and again on May 17, 2026, the supported Apple lifecycle reran cleanly through
-  `doctor`, `build`, `up`, `status`, `test`, `down`, and final `status`; the `test all` lane
-  completed split-daemon Apple inference, routed Playwright E2E, repeated retained-state cluster
-  bring-up or teardown cycles, and final cleanup
-- the May 13, 2026 lifecycle rerun remains the proof point that long waits in `cluster up` and
-  `cluster down` can still be healthy when the lifecycle is building images, publishing them into
-  Harbor, preloading them onto the Kind worker, or replaying retained state; the large Pulsar image
-  publication path completed with readiness-gated bounded Docker-push retries in place, and the
-  May 15, 2026 rerun validates repo-owned local image ordering plus source re-tagging before each
-  bounded push retry
+- retired lifecycle proof points are recorded in
+  [../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md](../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md);
+  current validation evidence is tracked by the active phase files and cohort waves
+- long waits in `cluster up` and `cluster down` can still be healthy when the lifecycle is
+  building images, publishing them into Harbor, preloading Harbor-backed images onto the Kind
+  worker, or replaying retained state
 - the supported operator check during those waits is `infernix cluster status`
 - when that status surface reports `lifecycleStatus: in-progress`, use `lifecyclePhase`,
   `lifecycleDetail`, and `lifecycleHeartbeatAt` to distinguish real progress from a stale wait

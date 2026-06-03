@@ -31,8 +31,10 @@
   frontend-contract generation, and aggregate `infernix test ...` commands, own substrate-file
   preflight for the selected substrate before their suite starts
 - Apple host-native flows expect the built binary plus the minimal Homebrew-plus-ghcup baseline;
-  supported commands may reconcile the remaining host tools on demand
-- `linux-cpu` flows expect Docker Engine plus the Docker buildx and Compose plugins
+  supported commands may reconcile the remaining host tools on demand, but they must not create or
+  switch Docker contexts, create a Colima VM, or use cross-architecture emulation
+- `linux-cpu` flows expect native Linux amd64 or arm64 plus Docker Engine, the Docker buildx
+  plugin, and the Docker Compose plugin
 - `linux-gpu` flows expect the `linux-cpu` Docker baseline plus the supported NVIDIA driver and
   container-toolkit setup
 - real-cluster `linux-gpu` validation also expects enough disk headroom for Kind image preload,
@@ -42,18 +44,17 @@
   relevant full-suite gates against the same phase state
 - `linux-cpu` validation may be used as a portable CPU-only check, but it does not substitute for
   `linux-gpu` when GPU behavior is in scope
+- emulated validation is unsupported; `linux-cpu` evidence must come from native Linux rather than
+  amd64 Linux under Apple Silicon emulation
 
 ## Lifecycle Failure Classification
 
-- on May 15, 2026, and again on May 17, 2026, the supported Apple lifecycle reran cleanly through
-  `doctor`, `build`, `up`, `status`, `test`, `down`, and final `status`; the full `test all` lane
-  completed lint, unit, integration, split-daemon Apple inference, routed browser coverage,
-  repeated retained-state cluster bring-up or teardown cycles, and final cleanup. The May 13
-  lifecycle investigation
-  remains the proof point that long waits in Docker build finalization, Harbor publication,
-  Kind-worker image preload, and retained-state replay are real convergence when heartbeat data is
-moving, not hard product failure. The May 15 and May 17 lifecycle reruns also validate repo-owned local
-  image publication ordering and source re-tagging before each bounded Harbor push retry.
+- retired lifecycle proof points live in
+  [../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md](../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md);
+  current validation evidence lives in the active phase files and cohort waves
+- long waits in Docker build finalization, Harbor publication, Kind-worker image preload, and
+  retained-state replay are treated as real convergence when heartbeat data is moving, not as hard
+  product failure
 - the supported doctrine is inactivity-aware: elapsed wall time alone is not enough to classify
   `cluster up`, `cluster down`, `test integration`, `test e2e`, or `test all` as failed when the
   active path still owns cluster lifecycle
@@ -115,6 +116,8 @@ moving, not hard product failure. The May 15 and May 17 lifecycle reruns also va
 - silently narrowing integration or E2E coverage to one representative model when the generated
   active-mode catalog contains more entries
 - quietly swapping to another runtime mode when required substrate preflights are absent
+- running cross-architecture emulation as validation evidence
+- creating or switching Docker contexts, or creating a Colima VM, from Apple Silicon validation
 - claiming cross-hardware closure from one host cohort, or requiring developers to alternate
   machines for every sprint instead of batching counterpart validation at a phase boundary
 - treating monitoring dashboards, metrics stacks, or scrape configuration as a supported gated

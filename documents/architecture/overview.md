@@ -63,10 +63,11 @@ major roots:
 - `test/` for repository-owned validation
 - `documents/` for governed documentation
 
-Platform images carry the substrate-matched Linux container architecture end to end:
-Apple Silicon publishes and runs `linux/arm64` natively, both Linux substrates publish and
-run `linux/amd64`. See [runtime_modes.md](runtime_modes.md) for the canonical
-substrate → architecture mapping.
+Platform images carry native Linux container architecture end to end: Apple Silicon publishes and
+runs `linux/arm64` natively, `linux-cpu` publishes and runs the native Linux host architecture
+(`linux/amd64` or `linux/arm64`), and `linux-gpu` publishes and runs `linux/amd64`. Development
+and validation do not use cross-architecture emulation. See
+[runtime_modes.md](runtime_modes.md) for the canonical substrate → architecture mapping.
 
 ## Cross-References
 

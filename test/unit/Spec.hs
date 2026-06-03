@@ -22,7 +22,7 @@ import Infernix.Auth.Jwt qualified as Jwt
 import Infernix.Bootstrap.Models qualified as BootstrapModels
 import Infernix.Bridge.Result qualified as ResultBridge
 import Infernix.CLI (writeGeneratedPursContracts)
-import Infernix.Cluster (writeGeneratedKindConfig)
+import Infernix.Cluster (clusterWorkloadArchitectureForHostArchitecture, writeGeneratedKindConfig)
 import Infernix.Cluster.Discover
 import Infernix.Cluster.PublishImages
   ( HarborPublishOptions (..),
@@ -68,7 +68,7 @@ import Infernix.Dispatch.ContextModelMap qualified as ContextModelMap
 import Infernix.Dispatch.SingleFlight qualified as Dispatch
 import Infernix.Engines.AppleSilicon (ensureAppleSiliconRuntimeReady)
 import Infernix.HostConfig qualified as HostConfig
-import Infernix.HostPrereqs (appleHostRequirementIds, colimaProfileSummary, decodeDefaultColimaProfileOutput)
+import Infernix.HostPrereqs (appleDockerBoundaryError, appleHostRequirementIds, decodeDockerInfoArchitecture)
 import Infernix.HostTools qualified as HostTools
 import Infernix.Models
 import Infernix.Objects.Layout qualified as ObjLayout
@@ -202,36 +202,32 @@ main = do
     ("ln -s /opt/infernix/chart/charts /workspace/chart/charts" `isInfixOf` linuxDockerfileContents)
     "Sprint 1.11: Linux launcher preserves Helm's chart/charts dependency lookup through an image-local symlink"
   assert
-    (appleHostRequirementIds AppleSilicon ClusterUpCommand == ["docker", "colima", "kind", "kubectl", "helm", "node", "python", "poetry"])
+    (appleHostRequirementIds AppleSilicon ClusterUpCommand == ["docker", "kind", "kubectl", "helm", "node", "python", "poetry"])
     "apple host prerequisite planning includes the full cluster and adapter toolchain for apple-silicon cluster up"
   assert
-    (appleHostRequirementIds LinuxCpu TestAllCommand == ["docker", "colima", "kind", "kubectl", "helm", "node"])
+    (appleHostRequirementIds LinuxCpu TestAllCommand == ["docker", "kind", "kubectl", "helm", "node"])
     "apple host prerequisite planning skips Poetry when the active runtime mode is linux-cpu"
   assert
     (null (appleHostRequirementIds AppleSilicon DocsCheckCommand))
     "apple host prerequisite planning does not install unrelated tools for docs-only commands"
-  defaultColimaProfile <-
+  dockerArchitecture <-
     expectRight
-      "default Colima profile decode succeeds for newline-delimited multi-profile output"
-      ( decodeDefaultColimaProfileOutput
-          ( unlines
-              [ "{\"name\":\"default\",\"status\":\"Running\",\"arch\":\"aarch64\",\"cpus\":8,\"memory\":25769803776,\"disk\":274877906944,\"runtime\":\"docker\"}",
-                "{\"name\":\"bby-amd64\",\"status\":\"Stopped\",\"arch\":\"aarch64\",\"cpus\":4,\"memory\":17179869184,\"disk\":274877906944}"
-              ]
-          )
+      "Docker info architecture decode succeeds for the native Apple daemon payload"
+      ( decodeDockerInfoArchitecture
+          "{\"ID\":\"daemon\",\"Architecture\":\"aarch64\",\"OSType\":\"linux\"}"
       )
   assert
-    (colimaProfileSummary defaultColimaProfile == "8 CPU / 24 GiB memory")
-    "newline-delimited Colima profile decode keeps the supported default profile details"
-  legacyColimaProfile <-
-    expectRight
-      "legacy single-profile Colima JSON decode remains supported"
-      ( decodeDefaultColimaProfileOutput
-          "{\"status\":\"Running\",\"cpus\":8,\"memory\":17179869184}"
-      )
+    (dockerArchitecture == "aarch64")
+    "Docker info decode keeps the reported daemon architecture"
   assert
-    (colimaProfileSummary legacyColimaProfile == "8 CPU / 16 GiB memory")
-    "single-profile Colima decode remains compatible with the older payload shape"
+    (isNothing (appleDockerBoundaryError "desktop-linux" "aarch64"))
+    "Apple Docker boundary accepts an already selected native aarch64 daemon"
+  assert
+    (isNothing (appleDockerBoundaryError "desktop-linux" "ARM64"))
+    "Apple Docker boundary accepts an already selected native arm64 daemon"
+  assert
+    (isJust (appleDockerBoundaryError "emulated-linux" "x86_64"))
+    "Apple Docker boundary rejects a non-native x86_64 daemon without creating a VM or context"
   assertUniqueModelIds AppleSilicon
   assertUniqueModelIds LinuxCpu
   assertUniqueModelIds LinuxGpu
@@ -752,6 +748,27 @@ main = do
     assert
       (contentAddressTagFromManifestPayload "arm64" sampleDockerManifestList == Right "sha256-arm64")
       "manifest inspect parsing derives a content tag from the linux/arm64 entry on Apple Silicon"
+    linuxCpuAmd64Architecture <-
+      expectRight
+        "linux-cpu architecture selection accepts native amd64 hosts"
+        (clusterWorkloadArchitectureForHostArchitecture LinuxCpu "x86_64")
+    assert
+      (linuxCpuAmd64Architecture == "amd64")
+      "linux-cpu publication selects linux/amd64 on native amd64 Linux"
+    linuxCpuArm64Architecture <-
+      expectRight
+        "linux-cpu architecture selection accepts native arm64 hosts"
+        (clusterWorkloadArchitectureForHostArchitecture LinuxCpu "aarch64")
+    assert
+      (linuxCpuArm64Architecture == "arm64")
+      "linux-cpu publication selects linux/arm64 on native arm64 Linux"
+    linuxGpuArchitecture <-
+      expectRight
+        "linux-gpu architecture selection stays amd64 even when a host fixture says arm64"
+        (clusterWorkloadArchitectureForHostArchitecture LinuxGpu "arm64")
+    assert
+      (linuxGpuArchitecture == "amd64")
+      "linux-gpu publication remains constrained to native amd64 CUDA"
   putStrLn "unit tests passed"
 
 -- | Phase 1 Sprint 1.11 — set up a unit-test sandbox at @root@. The
@@ -2439,12 +2456,19 @@ assertHostConfig :: FilePath -> IO ()
 assertHostConfig testRoot = do
   let appleConfig = HostConfig.defaultAppleHostNativeHostConfig "/Users/operator/infernix" "/Users/operator"
       linuxConfig = HostConfig.defaultLinuxOuterContainerHostConfig "/root"
+      linuxArmConfig = HostConfig.defaultLinuxOuterContainerHostConfigForArchitecture "/root" "aarch64"
   assert
     (HostConfig.hostExecutionContext appleConfig == HostConfig.AppleHostNative)
     "default Apple host config reports the Apple host-native execution context"
   assert
+    (HostConfig.hostArchitecture appleConfig == "arm64")
+    "default Apple host config records the native arm64 architecture"
+  assert
     (HostConfig.hostExecutionContext linuxConfig == HostConfig.LinuxOuterContainer)
     "default Linux host config reports the Linux outer-container execution context"
+  assert
+    (HostConfig.hostArchitecture linuxArmConfig == "arm64")
+    "Linux host config normalizes aarch64 fixtures to the Docker arm64 architecture"
   assert
     (HostTools.hostToolPath linuxConfig HostTools.HostDocker == "/usr/bin/docker")
     "HostTools resolves docker by absolute path on Linux"

@@ -39,6 +39,9 @@ parallel long-form workflow contracts.
   `./bootstrap/linux-gpu.sh`, or
   `docker compose run --rm infernix infernix <command>`; the bootstrap does not manage Kind or
   images directly
+- never use cross-architecture emulation for development or validation. `linux-cpu` validation
+  belongs on native Linux amd64 or native Linux arm64; Apple Silicon must not run an emulated
+  amd64 Linux lane, create or switch Docker contexts, or create a Colima VM
 - preserve the distinction between current implementation state and the target platform contract in
   root docs
 
@@ -61,9 +64,10 @@ parallel long-form workflow contracts.
   when the bound inference engine has no non-Python binding
 - the shared Poetry project lives at `python/pyproject.toml`; all adapter execution goes through
   `poetry run`, and the canonical quality gate is `poetry run check-code`
-- on Apple Silicon, Colima is the only supported Docker environment, the minimal pre-existing host
-  prerequisites are Homebrew plus ghcup, and `infernix` reconciles the remaining Homebrew-managed
-  tools plus Poetry bootstrap when adapter flows need them
+- on Apple Silicon, the minimal pre-existing host prerequisites are Homebrew plus ghcup. Any
+  Docker-backed Apple work must use the already selected native arm64 Docker daemon and must stop
+  if that daemon is not available; assistants must not create or switch Docker contexts or create
+  Colima VMs
 - Apple host paths materialize `python/.venv/` only on demand, after `infernix` bootstraps a
   user-local `poetry` executable after reconciling the Homebrew-managed `python@3.12` formula and
   `python3.12` command when necessary; the Poetry bootstrap may reuse an already available

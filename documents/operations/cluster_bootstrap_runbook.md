@@ -35,23 +35,19 @@
   upstream CLI or pod runtime throws during the repair attempt, `cluster up` logs the failure and
   continues the rollout wait; classify the repair attempt as recoverable unless the owning
   lifecycle command exits non-zero or reports completion with Harbor still unready
-- on the Apple host-native path, the command reconciles Homebrew-managed Colima, Docker CLI,
-  `kind`, `kubectl`, and `helm` before it attempts the real Kind workflow, reconciles Colima to
-  the supported `8 CPU / 16 GiB` profile before Docker-backed work, and verifies the selected
-  ghcup-managed `ghc` and `cabal` executables plus Homebrew `protoc` before direct host build
-  handoff
+- on the Apple host-native path, the command may reconcile Homebrew-managed `kind`, `kubectl`,
+  and `helm` before it attempts the real Kind workflow, and verifies the selected ghcup-managed
+  `ghc` and `cabal` executables plus Homebrew `protoc` before direct host build handoff. Docker
+  is a prerequisite boundary: the current Docker context must already point at a native arm64
+  daemon, and the repo must not create or switch Docker contexts, create a Colima VM, or use
+  cross-architecture emulation
 - on Apple, retained Kind state under `./.data/kind/apple-silicon/` is replayed into and out of
   the worker instead of being bind-mounted, so large retained state can make `cluster up` and
   `cluster down` slower than the Linux lanes even when the supported flow is healthy
-- on May 15, 2026, and again on May 17, 2026, the supported Apple lifecycle reran cleanly through
-  `doctor`, `build`, `up`, `status`, `test`, `down`, and final `status`; those reruns validated
-  the split daemon topology, host-batch Pulsar handoff, routed Playwright E2E, repeated
-  retained-state cluster bring-up or teardown cycles inside `test all`, and final cleanup
-- the May 13, 2026 Apple investigation remains the proof point that long waits in retained-state
-  replay, Docker build finalization, Harbor publication, and Kind-worker image preload are healthy
-  convergence rather than hard failure when the lifecycle status heartbeat continues to refresh;
-  Harbor Docker pushes use readiness-gated bounded retries across transient registry resets during
-  large-image publication
+- current Apple validation evidence is recorded in
+  [../../DEVELOPMENT_PLAN/cohort-validation-waves.md](../../DEVELOPMENT_PLAN/cohort-validation-waves.md);
+  retired hardware proof points are recorded in
+  [../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md](../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md)
 - for `linux-gpu`, confirm the supported NVIDIA host satisfies the documented `nvidia-smi` and
   `docker run --gpus all` preflight contract before cluster creation
 - for `linux-gpu`, also confirm the host filesystem has substantial free space before `cluster up`
