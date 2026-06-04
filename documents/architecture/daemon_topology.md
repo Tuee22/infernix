@@ -65,12 +65,16 @@ coordinator replacement, Linux engine anti-affinity, and compact multi-user
 durable prompt throughput. Full `linux-cpu` `infernix test all` validation
 passed on 2026-06-02, and full `linux-gpu` `infernix test all` validation
 passed on 2026-06-03.
-The June 3, 2026 code-side Sprint 7.8 follow-on adds
-`Infernix.Runtime.KVCache` for reducer/hash-backed prefix verification
-decisions and `Infernix.Runtime.Pulsar.Failover` for process-qualified
-Failover consumer names under stable subscription names. Real KV-cache
-reuse remains validation-bound to a future engine adapter that exposes
-reusable KV state.
+The June 4, 2026 Sprint 7.8 follow-on wires
+`Infernix.Runtime.KVCache` through the engine runtime and native worker
+harness for reducer/hash-backed prefix verification decisions, and moves
+daemon role orchestration into `Infernix.Runtime.Daemon`. Unit coverage
+proves runtime rebuild/reuse decisions; the mounted Linux CPU integration
+suite validates the coordinator/engine durable prompt flow, engine pod
+replacement, engine node drain, exact broker counts, throughput, and
+production-shape deployment against the same worktree. Failover consumer
+names stay process-qualified under stable subscription names via
+`Infernix.Runtime.Pulsar.Failover`.
 
 ## Roles and Responsibilities
 
@@ -170,9 +174,9 @@ the only on-disk state is the ephemeral `emptyDir` model cache.
 The Haskell style gate enforces this import boundary for
 `Infernix.Runtime`, `Infernix.Runtime.Cache`,
 `Infernix.Runtime.KVCache`, and
-`Infernix.Runtime.Worker`. `Infernix.Runtime.Pulsar` remains the
-current multi-role Pulsar transport and daemon-orchestration module
-until the coordinator transport split lands.
+`Infernix.Runtime.Worker`. `Infernix.Runtime.Daemon` owns daemon role
+orchestration and may wire coordinator and engine loops; `Infernix.Runtime.Pulsar`
+owns the shared Pulsar transport helpers and loop implementations.
 
 The style gate also enforces the Phase 7 shared-library boundary for the
 conversation primitives, dispatcher helpers, result bridge helper, and
@@ -324,7 +328,8 @@ this table lists which shared modules each role loads at runtime.
 | `Infernix.Objects.Presigned` | ✓ | — | — |
 | `Infernix.Auth.Jwt` | ✓ | — | — |
 | `Infernix.Runtime`, `.Cache`, `.Worker` | — | — | ✓ |
-| `Infernix.Runtime.Pulsar` transport/orchestration | — | ✓ | ✓ |
+| `Infernix.Runtime.Daemon` role orchestration | — | ✓ | ✓ |
+| `Infernix.Runtime.Pulsar` transport and runtime loops | — | ✓ | ✓ |
 | `<appNamespace>.*` (e.g. `Infernix.Demo.*`) | ✓ | — | — |
 
 ## Batching Ownership

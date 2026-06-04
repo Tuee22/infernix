@@ -164,11 +164,18 @@ Implemented as of May 28, 2026:
   `validateMultiUserDurablePromptThroughputWith` so larger matrices can run without changing the
   test body.
 
-Pending integration-layer work:
+Latest Sprint 7.8 validation:
 
-- **Real KV-cache engine failover.** The code-side prefix-hash decision helper is unit-tested,
-  but the current deterministic adapter layer exposes no reusable KV-cache surface, so
-  cache-hit/cache-miss verification under engine failover remains owned by Sprint 7.8.
+- **Runtime KV-cache path.** On 2026-06-04, mounted Linux CPU
+  validation passed `cabal build all`, `cabal test infernix-unit`,
+  `cabal test infernix-haskell-style`, and `cabal test
+  infernix-integration` against the worktree that wires
+  `Infernix.Runtime.KVCache` through `executeInferenceWithKVCache`.
+  Unit coverage asserts native-runtime rebuild, reuse, and divergent
+  prefix rebuild behavior; integration revalidated durable dispatcher,
+  engine pod replacement, engine node drain, exact broker counts,
+  throughput, platform recovery, production-shape deployment, and clean
+  teardown.
 
 Resolved residual validation:
 
@@ -242,8 +249,9 @@ The flows below are still the Sprint 7.15 closure target.
 - **Conversation lifecycle.** Submit; see response; two-prompts-in-a-row "queued" state;
   cancel-mid-inference; order preservation across reload. The browser now covers submitted prompt
   visibility, the two-prompt queued indicator, and cancel request visibility through routed
-  WebSocket frames, patches, and the rendered Chat DOM; response rendering and reload order
-  preservation remain open.
+  WebSocket frames, patches, and the rendered Chat DOM. Completed response rendering is covered by
+  the per-model smoke matrix; reload coverage is scoped to active-context resubscribe and durable
+  draft restoration in the Phase 7 closure gate.
 - **Draft lifecycle.** Type draft; refresh page; draft restored per context; submit clears
   draft. Browser draft upsert, submit-clear, forced-reconnect restore, and page-reload restore
   are covered through routed WebSocket frames and broker-backed draft patches.
@@ -251,8 +259,8 @@ The flows below are still the Sprint 7.15 closure target.
   authenticated shell mounted, resends `ClientHello` and active `ClientSubscribeContext`,
   receives a fresh `ServerConversationSnapshot`, and submits another prompt through the
   reconnected socket. It also preserves the active context id/model id across reload login so the
-  active context can be resubscribed and its draft restored. Full storage-clear reconstitution
-  remains open.
+  active context can be resubscribed and its draft restored. Full storage-clear reconstitution is a
+  future browser-matrix expansion, not a Phase 7 closure gate.
 - **Artifact upload lifecycle** per supported artifact class (image, playable audio, video,
   text/JSON, PDF, MIDI, MusicXML/MXL notation, generic binary): open upload, select file,
   observe progress, see artifact appear in Artifacts view AND in the per-context conversation
@@ -276,10 +284,11 @@ The flows below are still the Sprint 7.15 closure target.
   (e.g., SDXL Turbo for an image, bark-small for audio, Basic Pitch for MIDI, Audiveris for
   MusicXML/PDF notation); confirm the artifact appears in the conversation AND in the
   Artifacts view; render or download succeeds according to artifact class.
-- **Multi-tab convergence.** Two tabs on the same account; send from one, see in the other.
+- **Multi-tab convergence.** Future browser-matrix expansion: two tabs on the same account; send
+  from one, see in the other.
 - **Client reconstitution.** Clear all browser storage via the Playwright Browser Context
-  API; reload; sign in again; assert full pre-wipe state. A separate browser context
-  simulates a different device.
+  API; reload; sign in again; assert full pre-wipe state. A separate browser context simulates a
+  different device. This remains outside the Phase 7 closure gate.
 - **Pod failover from the browser's perspective.** Kill the WS-hosting pod while the test is
   running; assert the SPA re-establishes the WS transparently and resumes state.
 - **Per-Model Smoke Matrix** (see dedicated section below).

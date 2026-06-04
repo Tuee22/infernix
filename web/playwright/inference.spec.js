@@ -1,16 +1,12 @@
 // Phase 7 follow-on (May 26, 2026): the legacy stateless workbench
 // surface that this spec used to exercise (`POST /api/inference`,
 // the workbench SPA DOM, the `/objects/:objectRef` shape) is retired
-// in favor of the durable-context Chat surface. Per the legacy-
-// tracking ledger, this spec is slated for replacement by a
-// durable-context Chat E2E that exercises Keycloak auth + the
-// `/ws` WebSocket transport + the `/api/objects` presigned MinIO
-// flow. Until that replacement lands, the spec here is a minimal
-// routed-surface smoke test that confirms the operator-facing edge
-// is up and serves the SPA + the published platform-state JSON
-// endpoints. The deeper inference correctness is covered end-to-end
-// by `infernix test integration`'s per-model Pulsar roundtrip
-// against the same cluster.
+// in favor of the durable-context Chat surface. This suite now covers
+// the routed SPA, Keycloak auth, `/ws` WebSocket transport,
+// `/api/objects` presigned MinIO flow, durable Chat behavior, artifact
+// rendering, and per-model browser smoke matrix. The integration suite
+// still covers the deeper per-model Pulsar roundtrip against the same
+// cluster.
 import { Buffer } from "node:buffer";
 import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";

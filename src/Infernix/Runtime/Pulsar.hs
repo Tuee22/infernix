@@ -5,8 +5,13 @@
 module Infernix.Runtime.Pulsar
   ( DemoClientMessagePublication (..),
     DemoClientMessageError (..),
+    PulsarTransport (..),
+    PulsarWebSocketBase (..),
     RawTopicMessage (..),
     compactTopicAndWait,
+    clearServiceReadinessMarker,
+    consumeTopicForever,
+    discoverPulsarTransport,
     planDemoClientMessagePublications,
     publishDemoClientMessage,
     streamDemoContextConversation,
@@ -14,6 +19,10 @@ module Infernix.Runtime.Pulsar
     publishModelBootstrapRequest,
     publishRawTopicPayload,
     validateDemoClientMessageCatalog,
+    ensureRegisteredSchemasWithRetry,
+    ensureSchemaMarkers,
+    reconcileSupportedNamespacesWithRetry,
+    renderPulsarWebSocketBase,
     publishInferenceRequest,
     parseMessageIdToSequenceId,
     readNamespaceCompactionThreshold,
@@ -22,13 +31,14 @@ module Infernix.Runtime.Pulsar
     rawTopicInferenceResultCausalRefs,
     readPublishedInferenceResultMaybe,
     drainTopic,
+    drainTopicWithKVCache,
     runDispatcherLoop,
     runModelBootstrapLoop,
-    runProductionDaemon,
     runResultBridgeLoop,
     schemaMarkerPath,
     serviceReadinessMarkerPath,
     topicDirectoryPath,
+    writeServiceReadinessMarker,
   )
 where
 
@@ -74,14 +84,12 @@ import Infernix.Bootstrap.Models qualified as BootstrapModels
 import Infernix.Bridge.Result qualified as ResultBridge
 import Infernix.ClusterConfig
   ( ClusterConfig (..),
-    CoordinatorWiring (..),
     DemoBackendWiring (..),
-    EngineCommandOverride (..),
-    EngineWiring (..),
     PulsarWiring (..),
   )
 import Infernix.ClusterConfig qualified as Cluster
 import Infernix.Config
+import Infernix.Conversation.Hash (PrefixHash (..))
 import Infernix.Conversation.Reducer
   ( ReducerState,
     StepOutcome (StepAdvanced, StepDropped),
@@ -95,7 +103,8 @@ import Infernix.Dispatch.ContextModelMap qualified as ContextModelMap
 import Infernix.Dispatch.SingleFlight qualified as Dispatch
 import Infernix.HostConfig qualified as HostConfig
 import Infernix.Objects.Presigned qualified as Presigned
-import Infernix.Runtime (executeInference)
+import Infernix.Runtime (executeInferenceWithKVCache)
+import Infernix.Runtime.KVCache qualified as KVCache
 import Infernix.Runtime.Pulsar.Failover qualified as PulsarFailover
 import Infernix.Runtime.Worker (EngineCommandOverrideMap)
 import Infernix.SecretsConfig qualified as Secrets
@@ -205,164 +214,6 @@ instance FromJSON LongRunningProcessStatus where
     LongRunningProcessStatus
       <$> value .: "status"
       <*> value .:? "lastError"
-
--- | Phase 4 Sprint 4.13: env-var override family retired. Wiring
--- values previously read from @INFERNIX_CONTROL_PLANE_CONTEXT@,
--- @INFERNIX_DAEMON_ROLE@, @INFERNIX_DAEMON_LOCATION@,
--- @INFERNIX_CATALOG_SOURCE@, @INFERNIX_DEMO_CONFIG_PATH@ now flow
--- through typed arguments: the 'ClusterConfig' (optional, mounted by
--- the chart into cluster pods at @/opt/infernix/cluster.dhall@)
--- supplies cluster-wiring overrides; the 'DaemonRole' supplied by the
--- caller (typically 'Infernix.Service.runService' after parsing the
--- @--role coordinator|engine@ CLI flag) replaces the role env var;
--- everything else falls back to the substrate dhall + 'Paths'
--- defaults.
-runProductionDaemon :: Paths -> RuntimeMode -> Maybe ClusterConfig -> DaemonRole -> IO ()
-runProductionDaemon paths runtimeMode maybeClusterConfig daemonRole = do
-  maybeTransport <- discoverPulsarTransport paths runtimeMode maybeClusterConfig
-  let controlPlane = case maybeClusterConfig of
-        Just clusterConfig -> resolveClusterControlPlaneContext clusterConfig (controlPlaneContext paths)
-        Nothing -> controlPlaneContext paths
-      catalogSource = case maybeClusterConfig of
-        Just clusterConfig -> Text.unpack (coordinatorCatalogSource (clusterCoordinator clusterConfig))
-        Nothing -> demoConfigCatalogSource
-      selectedDemoConfigPath = case maybeClusterConfig of
-        Just clusterConfig ->
-          let demoPath = Text.unpack (demoConfigFilePath (clusterDemoBackend clusterConfig))
-           in if null demoPath then Infernix.Config.generatedDemoConfigPath paths else demoPath
-        Nothing -> Infernix.Config.generatedDemoConfigPath paths
-      -- Phase 4 Sprint 4.13: engine-command overrides are read once from
-      -- the mounted cluster manifest's @engine.commandOverrides@ field
-      -- and threaded through to the worker. Empty list when no manifest
-      -- is mounted (Apple host daemon, unit tests).
-      engineOverrides = case maybeClusterConfig of
-        Just clusterConfig ->
-          map
-            (\override -> (engineOverrideKey override, engineOverrideValue override))
-            (engineCommandOverrides (clusterEngine clusterConfig))
-        Nothing -> []
-  demoConfig <- decodeDemoConfigFile selectedDemoConfigPath
-  daemonConfig <- requireDaemonConfig daemonRole demoConfig
-  let daemonLocation = case maybeClusterConfig of
-        Just clusterConfig ->
-          let mounted = Text.unpack (coordinatorDaemonLocation (clusterCoordinator clusterConfig))
-           in if null mounted then Text.unpack (daemonConfigLocation daemonConfig) else mounted
-        Nothing -> Text.unpack (daemonConfigLocation daemonConfig)
-  putStrLn ("serviceControlPlaneContext: " <> controlPlaneContextId controlPlane)
-  putStrLn ("serviceDaemonRole: " <> Text.unpack (daemonRoleId daemonRole))
-  putStrLn ("serviceDaemonLocation: " <> daemonLocation)
-  putStrLn ("serviceCatalogSource: " <> catalogSource)
-  putStrLn ("serviceRuntimeMode: " <> Text.unpack (runtimeModeId runtimeMode))
-  putStrLn ("serviceDemoConfigPath: " <> selectedDemoConfigPath)
-  putStrLn ("serviceMountedDemoConfigPath: " <> watchedDemoConfigPath)
-  putStrLn ("serviceRequestTopics: " <> intercalate "," (map Text.unpack (daemonConfigRequestTopics daemonConfig)))
-  putStrLn ("serviceResultTopic: " <> Text.unpack (daemonConfigResultTopic daemonConfig))
-  forM_ (daemonConfigHostBatchTopic daemonConfig) $ \topicValue ->
-    putStrLn ("serviceHostBatchTopic: " <> Text.unpack topicValue)
-  putStrLn ("serviceEngineBindingCount: " <> show (length (engines demoConfig)))
-  putStrLn "serviceHttpListener: disabled"
-  clearServiceReadinessMarker paths
-  case maybeTransport of
-    Nothing -> do
-      ensureSchemaMarkers paths demoConfig
-      writeServiceReadinessMarker paths
-      putStrLn "serviceSubscriptionMode: filesystem-topic-spool"
-      forever $ do
-        forM_ (daemonConfigRequestTopics daemonConfig) (drainTopic paths runtimeMode engineOverrides daemonConfig)
-        threadDelay 500000
-    Just transport -> do
-      ensureSchemaMarkers paths demoConfig
-      reconcileSupportedNamespacesWithRetry transport demoConfig
-      ensureRegisteredSchemasWithRetry paths transport demoConfig
-      writeServiceReadinessMarker paths
-      putStrLn "serviceSubscriptionMode: websocket-pulsar"
-      putStrLn ("servicePulsarWsBaseUrl: " <> renderPulsarWebSocketBase (pulsarWebSocketBase transport))
-      forM_
-        (daemonConfigRequestTopics daemonConfig)
-        (forkIO . consumeTopicForever transport paths runtimeMode engineOverrides daemonConfig)
-      -- Phase 7 Sprint 7.8: when running as Coordinator, also start the
-      -- result-bridge Failover subscription. The bridge consumes
-      -- @inference.result.<mode>@ and writes the matching
-      -- @ConversationInferenceResultEvent@ back to the per-context
-      -- conversation topic. The Engine role does not start this loop;
-      -- it produces results to @inference.result.<mode>@ and the
-      -- bridge owns the writeback.
-      when (daemonRole == Coordinator) $ do
-        putStrLn "serviceResultBridgeMode: failover-subscription"
-        _ <-
-          forkIO
-            ( runResultBridgeLoop
-                transport
-                runtimeMode
-                (daemonConfigResultTopic daemonConfig)
-                ConversationTopic.defaultDemoTopicNamespace
-            )
-        putStrLn "serviceModelBootstrapMode: failover-subscription"
-        _ <-
-          forkIO
-            ( runModelBootstrapLoop
-                transport
-                ConversationTopic.systemTopicNamespace
-            )
-        -- Phase 7 Sprint 7.6: per-context single-flight dispatcher loop.
-        -- Polls @infernix/demo@ for @demo.conversation.<userId>.<contextId>@
-        -- topics, spawns a per-context worker keyed by 'ContextId' that
-        -- subscribes Failover (name @dispatcher-<contextId>@), folds events
-        -- through 'Infernix.Conversation.Reducer', and publishes
-        -- 'Infernix.Dispatch.SingleFlight.InferenceRequestEnvelope' to the
-        -- substrate's request topic with stable producer name and
-        -- 'producerDedupSequenceId'. Engine role does not start this loop.
-        putStrLn "serviceDispatcherMode: per-context-failover"
-        contextModelMap <- ContextModelMap.newContextModelMap
-        _ <-
-          forkIO
-            ( runDispatcherLoop
-                transport
-                runtimeMode
-                (firstOrEmpty (daemonConfigRequestTopics daemonConfig))
-                ConversationTopic.defaultDemoTopicNamespace
-                contextModelMap
-            )
-        pure ()
-      forever (threadDelay 60000000)
-  where
-    firstOrEmpty :: [Text.Text] -> Text.Text
-    firstOrEmpty [] = ""
-    firstOrEmpty (topic : _) = topic
-
--- | Phase 4 Sprint 4.13: resolve the control-plane context from a
--- mounted cluster manifest when available, falling back to the
--- 'Paths'-derived value (the supported host-native default).
-resolveClusterControlPlaneContext :: ClusterConfig -> ControlPlaneContext -> ControlPlaneContext
-resolveClusterControlPlaneContext clusterConfig fallback =
-  let mounted = Text.unpack (coordinatorControlPlaneContext (clusterCoordinator clusterConfig))
-   in fromMaybe fallback (parseControlPlaneContext mounted)
-
--- | Phase 4 Sprint 4.13: the previous helper accepted a
--- @Maybe FilePath@ encoding the now-retired @INFERNIX_DEMO_CONFIG_PATH@
--- env override. The supported flow now always falls through to the
--- staged substrate dhall, so the source identifier is constant. The
--- 'ClusterConfig.coordinator.catalogSource' field provides the
--- in-cluster override.
-demoConfigCatalogSource :: String
-demoConfigCatalogSource = "generated-build-root"
-
-requireDaemonConfig :: DaemonRole -> DemoConfig -> IO DaemonConfig
-requireDaemonConfig daemonRole demoConfig
-  | daemonConfigRole (coordinatorDaemon demoConfig) == daemonRole =
-      pure (coordinatorDaemon demoConfig)
-  | otherwise =
-      case engineDaemon demoConfig of
-        Just daemonConfig
-          | daemonConfigRole daemonConfig == daemonRole ->
-              pure daemonConfig
-        _ ->
-          ioError
-            ( userError
-                ( "generated substrate file does not contain daemon metadata for role "
-                    <> Text.unpack (daemonRoleId daemonRole)
-                )
-            )
 
 publishInferenceRequest :: Paths -> RuntimeMode -> Text.Text -> InferenceRequest -> IO Text.Text
 publishInferenceRequest paths runtimeMode topic requestValue = do
@@ -1223,12 +1074,16 @@ readPublishedInferenceResultMaybe paths runtimeMode topic requestIdValue = do
       readPublishedInferenceResultViaPulsar transport topic requestIdValue
 
 drainTopic :: Paths -> RuntimeMode -> EngineCommandOverrideMap -> DaemonConfig -> Text.Text -> IO ()
-drainTopic paths runtimeMode overrides daemonConfig requestTopicValue =
+drainTopic paths runtimeMode overrides daemonConfig =
+  drainTopicWithKVCache paths runtimeMode overrides daemonConfig Nothing
+
+drainTopicWithKVCache :: Paths -> RuntimeMode -> EngineCommandOverrideMap -> DaemonConfig -> Maybe KVCache.EngineKVCache -> Text.Text -> IO ()
+drainTopicWithKVCache paths runtimeMode overrides daemonConfig maybeEngineKVCache requestTopicValue =
   case daemonConfigHostBatchTopic daemonConfig of
     Just hostBatchTopicValue ->
       forwardTopic paths hostBatchTopicValue requestTopicValue
     _ ->
-      drainInferenceTopic paths runtimeMode overrides (daemonConfigResultTopic daemonConfig) requestTopicValue
+      drainInferenceTopic paths runtimeMode overrides maybeEngineKVCache (daemonConfigResultTopic daemonConfig) requestTopicValue
 
 forwardTopic :: Paths -> Text.Text -> Text.Text -> IO ()
 forwardTopic paths targetTopicValue sourceTopicValue = do
@@ -1245,8 +1100,8 @@ forwardTopic paths targetTopicValue sourceTopicValue = do
     ByteString.writeFile targetPath encodedRequest
     removeFile sourcePath
 
-drainInferenceTopic :: Paths -> RuntimeMode -> EngineCommandOverrideMap -> Text.Text -> Text.Text -> IO ()
-drainInferenceTopic paths runtimeMode overrides resultTopicValue requestTopicValue = do
+drainInferenceTopic :: Paths -> RuntimeMode -> EngineCommandOverrideMap -> Maybe KVCache.EngineKVCache -> Text.Text -> Text.Text -> IO ()
+drainInferenceTopic paths runtimeMode overrides maybeEngineKVCache resultTopicValue requestTopicValue = do
   let requestDirectory = topicDirectoryPath paths requestTopicValue
   requestDirectoryPresent <- doesDirectoryExist requestDirectory
   unless requestDirectoryPresent (createDirectoryIfMissing True requestDirectory)
@@ -1258,7 +1113,7 @@ drainInferenceTopic paths runtimeMode overrides resultTopicValue requestTopicVal
       Left err ->
         ioError (userError ("failed to decode inference request from " <> requestPath <> ": " <> err))
       Right protoRequest -> do
-        publishedResult <- publishedResultFromRequest paths runtimeMode overrides protoRequest
+        publishedResult <- publishedResultFromRequest paths runtimeMode overrides maybeEngineKVCache protoRequest
         createDirectoryIfMissing True (topicDirectoryPath paths resultTopicValue)
         writeInferenceResultFile
           (topicDirectoryPath paths resultTopicValue </> Text.unpack (requestId publishedResult) <.> "pb")
@@ -1961,11 +1816,12 @@ consumeTopicForever ::
   RuntimeMode ->
   EngineCommandOverrideMap ->
   DaemonConfig ->
+  Maybe KVCache.EngineKVCache ->
   Text.Text ->
   IO ()
-consumeTopicForever transport paths runtimeMode overrides daemonConfig requestTopicValue =
+consumeTopicForever transport paths runtimeMode overrides daemonConfig maybeEngineKVCache requestTopicValue =
   forever $ do
-    sessionResult <- try @SomeException (consumeTopicSession transport paths runtimeMode overrides daemonConfig requestTopicValue)
+    sessionResult <- try @SomeException (consumeTopicSession transport paths runtimeMode overrides daemonConfig maybeEngineKVCache requestTopicValue)
     case sessionResult of
       Right _ -> threadDelay 1000000
       Left err -> do
@@ -1984,9 +1840,10 @@ consumeTopicSession ::
   RuntimeMode ->
   EngineCommandOverrideMap ->
   DaemonConfig ->
+  Maybe KVCache.EngineKVCache ->
   Text.Text ->
   IO ()
-consumeTopicSession transport paths runtimeMode overrides daemonConfig requestTopicValue = do
+consumeTopicSession transport paths runtimeMode overrides daemonConfig maybeEngineKVCache requestTopicValue = do
   topicRef <- requireTopicRef requestTopicValue
   let subscriptionName = "infernix-service-" <> sanitizeTopic requestTopicValue
       consumerName = subscriptionName <> "-consumer"
@@ -2053,7 +1910,7 @@ consumeTopicSession transport paths runtimeMode overrides daemonConfig requestTo
           publishedResult <-
             if Text.null modelIdValue
               then pure (emptyModelIdRejectionResult runtimeMode decodedRequest)
-              else publishedResultFromRequest paths runtimeMode overrides decodedRequest
+              else publishedResultFromRequest paths runtimeMode overrides maybeEngineKVCache decodedRequest
           -- Phase 7 Sprint 7.14 follow-on (2026-05-30): one-line trace per
           -- engine-side inference so the host daemon log surfaces the
           -- request id, resolved model id, and final status. Diagnoses
@@ -3238,10 +3095,18 @@ publishedResultFromRequest ::
   Paths ->
   RuntimeMode ->
   EngineCommandOverrideMap ->
+  Maybe KVCache.EngineKVCache ->
   ProtoInference.InferenceRequest ->
   IO InferenceResult
-publishedResultFromRequest paths runtimeMode overrides protoRequest = do
-  domainResult <- executeInference paths runtimeMode overrides (protoRequestToDomain protoRequest)
+publishedResultFromRequest paths runtimeMode overrides maybeEngineKVCache protoRequest = do
+  domainResult <-
+    executeInferenceWithKVCache
+      paths
+      runtimeMode
+      overrides
+      maybeEngineKVCache
+      (kvCacheRequestFromProto protoRequest)
+      (protoRequestToDomain protoRequest)
   now <- getCurrentTime
   let envelopeUserId = view ProtoInferenceFields.userId protoRequest
       envelopeContextId = view ProtoInferenceFields.contextId protoRequest
@@ -3273,6 +3138,21 @@ publishedResultFromRequest paths runtimeMode overrides protoRequest = do
             resultUserId = envelopeUserId,
             resultContextId = envelopeContextId,
             resultCausalRef = envelopeCausalRef
+          }
+
+kvCacheRequestFromProto :: ProtoInference.InferenceRequest -> Maybe KVCache.KVCacheRequest
+kvCacheRequestFromProto protoRequest = do
+  let modelIdValue = view ProtoInferenceFields.requestModelId protoRequest
+      contextIdValue = view ProtoInferenceFields.contextId protoRequest
+      prefixHashValue = view ProtoInferenceFields.prefixHash protoRequest
+  if Text.null modelIdValue || Text.null contextIdValue || Text.null prefixHashValue
+    then Nothing
+    else
+      Just
+        KVCache.KVCacheRequest
+          { KVCache.kvCacheRequestContextId = contextIdValue,
+            KVCache.kvCacheRequestModelId = modelIdValue,
+            KVCache.kvCacheRequestPrefixHash = PrefixHash prefixHashValue
           }
 
 decodeEnvelopePayload :: (Message a) => String -> PulsarEnvelope -> IO a

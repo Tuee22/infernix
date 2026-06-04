@@ -80,6 +80,9 @@ import Infernix.Routes
     renderReadmeRouteSummarySection,
   )
 import Infernix.Runtime
+import Infernix.Runtime.Daemon
+  ( runProductionDaemon,
+  )
 import Infernix.Runtime.KVCache qualified as KVCache
 import Infernix.Runtime.Pulsar
   ( DemoClientMessageError (..),
@@ -87,7 +90,6 @@ import Infernix.Runtime.Pulsar
     drainTopic,
     parseMessageIdToSequenceId,
     planDemoClientMessagePublications,
-    runProductionDaemon,
     topicDirectoryPath,
     validateDemoClientMessageCatalog,
   )
@@ -603,6 +605,8 @@ main = do
           assert
             ("runner=whisper.cpp transcription lane" `isInfixOf` payloadText)
             "native runner execution reports the explicit runner lane description"
+
+      assertRuntimeKVCachePath paths
 
       let overrideModel = maybe (fail "expected the apple-silicon qwen row") pure (findModel AppleSilicon "llm-qwen25-safetensors")
       overrideModelDescriptor <- overrideModel
@@ -1340,6 +1344,61 @@ assertKVCacheConsistency = do
   assert
     (KVCache.verifyKVCachePrefix rebuiltPrefix (Just tamperedPrefix) == KVCache.RebuildKVCache rebuiltPrefix (Just tamperedPrefix))
     "KV-cache verification rebuilds when a cached prefix hash diverges from the request"
+
+assertRuntimeKVCachePath :: Paths -> IO ()
+assertRuntimeKVCachePath paths = do
+  engineKVCache <- KVCache.newEngineKVCache
+  let contextId = "runtime-kv-context"
+      modelIdValue = "speech-whisper-small"
+      request =
+        InferenceRequest
+          { requestModelId = modelIdValue,
+            inputText = "cache-visible native runner"
+          }
+      prefixFor textValue =
+        KVCache.rebuildPrefixHashFromLog
+          (Contracts.ContextId contextId)
+          [ Contracts.ConversationMessage
+              { Contracts.conversationMessageId = Contracts.MessageId ("runtime-kv-" <> textValue),
+                Contracts.conversationMessageEvent =
+                  Contracts.ConversationUserPromptEvent
+                    Contracts.UserPromptPayload
+                      { Contracts.promptText = textValue,
+                        Contracts.promptClientIdempotencyKey = Contracts.ClientIdempotencyKey ("idem-" <> textValue),
+                        Contracts.promptUserUploads = []
+                      }
+              }
+          ]
+      firstPrefix = prefixFor "first"
+      secondPrefix = prefixFor "second"
+      cacheRequest prefixHash =
+        KVCache.KVCacheRequest
+          { KVCache.kvCacheRequestContextId = contextId,
+            KVCache.kvCacheRequestModelId = modelIdValue,
+            KVCache.kvCacheRequestPrefixHash = prefixHash
+          }
+      runWithPrefix prefixHash =
+        executeInferenceWithKVCache
+          paths
+          AppleSilicon
+          []
+          (Just engineKVCache)
+          (Just (cacheRequest prefixHash))
+          request
+  firstResult <- runWithPrefix firstPrefix
+  assertResultPayloadContains paths firstResult "kv-cache=rebuild" "first engine execution rebuilds a missing KV cache"
+  secondResult <- runWithPrefix firstPrefix
+  assertResultPayloadContains paths secondResult "kv-cache=reuse" "second engine execution reuses the matching KV cache"
+  thirdResult <- runWithPrefix secondPrefix
+  assertResultPayloadContains paths thirdResult "kv-cache=rebuild" "tampered or divergent prefix forces a KV-cache rebuild"
+
+assertResultPayloadContains :: Paths -> Either ErrorResponse InferenceResult -> String -> String -> IO ()
+assertResultPayloadContains paths inferenceResult expected label =
+  case inferenceResult of
+    Left err -> fail ("unexpected inference error: " <> show err)
+    Right result -> do
+      payloadText <- renderPayloadText paths (payload result)
+      assert (expected `isInfixOf` payloadText) label
 
 assertCompactedMetadataPatterns :: IO ()
 assertCompactedMetadataPatterns = do

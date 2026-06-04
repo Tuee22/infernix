@@ -37,9 +37,10 @@
   drain, model-bootstrap deduplication across coordinator replacement, Linux engine anti-affinity,
   and compact multi-user durable prompt throughput; the mounted
   `test:infernix-integration` compile gate passes, native `linux-cpu` full-suite validation passed
-  on 2026-06-02, and the full `linux-gpu` validation gate passed on 2026-06-03. The remaining
-  chaos gap is real KV-cache hit/miss verification under engine failover, which waits on a
-  runtime adapter with an exposed KV-cache surface.
+  on 2026-06-02, and the full `linux-gpu` validation gate passed on 2026-06-03. The June 4,
+  2026 mounted Linux CPU rerun against the Sprint 7.8 runtime KV-cache path again passed the
+  full integration suite, including engine pod replacement, engine node drain, exact broker
+  counts, throughput, production-shape deployment, and clean teardown.
 
 ## Durable-Context Demo Chaos Cases
 

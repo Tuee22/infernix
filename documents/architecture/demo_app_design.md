@@ -93,8 +93,9 @@ broker-backed draft stream. The routed flow now submits a second prompt before t
 unresolved prompt resolves, asserts the rendered `2 queued prompts` warning, and cancels the
 second canonical prompt id. The per-model browser smoke matrix and
 browser-level frontend pod replacement reconnect coverage have also
-closed; the remaining durable-context blocker is the real KV-cache
-engine verification gate owned by Sprint 7.8.
+closed. The June 4, 2026 Sprint 7.8 follow-on wires runtime KV-cache
+rebuild/reuse decisions through the engine path and revalidates the
+mounted Linux CPU integration suite against that worktree.
 
 ## Identity and Authentication
 

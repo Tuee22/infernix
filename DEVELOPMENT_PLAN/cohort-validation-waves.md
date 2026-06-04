@@ -30,7 +30,8 @@
 | A.3 | Apple Silicon (new host) | Sprint 7.14 Apple engine.lock chaos case: `test/integration/Spec.hs` adds `validateAppleEngineLockEnforcement` which spawns a second `infernix service` while the harness-owned first daemon holds the flock at `<runtimeRoot>/engine.lock` and asserts the second invocation exits non-zero with the `engine.lock at … is held by PID …` diagnostic on stderr. Closes the Apple-half of the "one-engine-per-node enforcement" case from `documents/development/chaos_testing.md`. The Linux equivalent (`kubectl scale deployment/infernix-engine --replicas=N+1` leaves one `Pending` with the anti-affinity rejection) is Wave C scope. | Closed | 2026-05-31 |
 | B | Apple Silicon (new host) | Apple-side code-side work before the CUDA Linux switch: Sprint 7.14 Linux-owned chaos and throughput cases were intentionally carried into Wave C because they require the real Linux integration lane. | Closed | 2026-05-31 |
 | C | CUDA Linux (real Linux host with CUDA hardware, plus the portable `linux-cpu` lane) | Full-suite cohort closure batch on the counterpart cohort: `./bootstrap/linux-cpu.sh` lifecycle on native Linux (portable CPU lane); `./bootstrap/linux-gpu.sh` lifecycle on real CUDA hardware; `docker compose run --rm infernix infernix test all` outer-container full-suite; routed Playwright in-container; validates every phase 1-7 code-side closure already landed on Apple. The remaining Sprint 7.14 Linux-owned code-side cases landed in `test/integration/Spec.hs` as of 2026-06-02: frontend pod replacement, coordinator pod replacement around durable prompt dispatch/writeback, engine pod replacement, engine node drain, model-bootstrap request/ready-event deduplication across coordinator replacement, Linux engine anti-affinity, and multi-user durable prompt throughput. Native `linux-cpu` full-suite validation passed on 2026-06-02 against image digest `sha256:a9f1f19aa9bb492c5186a0f6df8f864ee4e0c900c8209f0434ef64cf6cc821a7`; `linux-gpu` full-suite validation passed on 2026-06-03 against final rebuilt image digest `sha256:fd951113735f94b613a2fa014088f22e89a4df0b78193cd1ec76d6a44e191689`. | Closed | 2026-06-03 |
-| D | Either | Phase status promotion sweep: Phases 0-6 move back to `Done` because their only remaining residual was the Wave C cohort gate; Phase 7 remains `Active` for the explicit non-cohort KV-cache/runtime-split/failover work. Browser-level frontend pod-kill reconnect coverage closed with mounted-source `linux-gpu` E2E and the final rebuilt-image `linux-gpu` full gate; the matching rebuilt-image `linux-cpu` residual full gate passed later on 2026-06-03. | Closed | 2026-06-03 |
+| D | Either | Phase status promotion sweep: Phases 0-6 move back to `Done` because their only remaining residual was the Wave C cohort gate; Phase 7 remained `Active` for the explicit non-cohort KV-cache/runtime-split/failover work. Browser-level frontend pod-kill reconnect coverage closed with mounted-source `linux-gpu` E2E and the final rebuilt-image `linux-gpu` full gate; the matching rebuilt-image `linux-cpu` residual full gate passed later on 2026-06-03. | Closed | 2026-06-03 |
+| E | Linux CPU mounted worktree | Sprint 7.8 closure: process-local runtime KV-cache path wired through `Infernix.Runtime.KVCache`, `executeInferenceWithKVCache`, native worker output, filesystem-topic drain, and WebSocket Pulsar consumption; daemon role orchestration moved into `Infernix.Runtime.Daemon`. Mounted Linux CPU validation passed `cabal build all`, `cabal test infernix-unit`, `cabal test infernix-haskell-style`, and `cabal test infernix-integration`, including durable dispatcher/result writeback, engine pod replacement, engine node drain, throughput, platform recovery, production-shape deployment, and clean teardown. | Closed | 2026-06-04 |
 
 ## Wave A — Closed 2026-05-30
 
@@ -267,11 +268,10 @@ Phase status promotion sweep performed after Waves A-C closed:
 
 - Phases 0-6 return to `Done`; their remaining `Active` status was only
   the cohort-validation residual closed by Wave C.
-- Phase 7 remains `Active` because that phase still lists explicit
-  non-cohort residuals: real KV-cache validation for real KV-cache engines
-  and the wider coordinator transport split. The code-side KV-cache
-  decision helper and Failover consumer naming refinement landed on
-  2026-06-03 after Wave D.
+- Phase 7 remained `Active` after Wave D because that phase still listed
+  explicit non-cohort residuals: real runtime KV-cache validation and the
+  wider coordinator transport split. Those residuals closed in Wave E on
+  2026-06-04.
 - Browser-level frontend pod-kill reconnect coverage closed after the Wave C
   full gates with a mounted-source `linux-gpu` E2E rerun and then the final
   rebuilt-image full `linux-gpu` gate: the browser test deleted all
@@ -314,6 +314,27 @@ p95Seconds=76.06613969802856`, and routed Playwright E2E reported
 This waves document remains as the historical record for the 2026-05-29
 host reset and the staged Apple/CUDA closure batches.
 
+## Wave E: 2026-06-04 Phase 7 Runtime KV-Cache Closure
+
+Wave E closed Phase 7's non-cohort residuals after the cohort gates had already
+validated the durable-context surface. The follow-on split moved production
+role orchestration into `Infernix.Runtime.Daemon`, kept Pulsar transport and
+runtime loops in `Infernix.Runtime.Pulsar`, and wired a process-local
+`EngineKVCache` through the engine daemon, filesystem spool loop, WebSocket
+consumer loop, runtime boundary, and native worker harness.
+
+Validation ran from the Linux x86_64 execution context against the mounted
+worktree through the Linux CPU outer-container launcher. The passing gates were
+`cabal build all`, `cabal test infernix-unit`, `cabal test
+infernix-haskell-style`, and `cabal test infernix-integration` after
+restaging the generated substrate. Integration covered the coordinator and
+engine runtime loops, KV-cache rebuild/reuse path, per-context persistence,
+frontend pod replacement, coordinator failover, engine pod replacement, engine
+node drain, model bootstrap deduplication, multi-user durable prompt
+throughput, and platform recovery checks. The compact throughput matrix
+reported `users=3 contextsPerUser=2 promptsPerContext=2 totalPrompts=12
+p95Seconds=67.22616362571716`.
+
 ## Cadence Rule
 
 Wave numbering operationalizes Section Q of
@@ -345,7 +366,7 @@ docs may still be `Active` only when they list non-cohort remaining work.
 | 4 | Sprints 4.1–4.13 `Done` | Closed in Wave A (mounted ClusterConfig + SecretsConfig roundtrip via integration suite) | `linux-cpu` passed 2026-06-02; `linux-gpu` passed 2026-06-03 |
 | 5 | Sprints 5.1–5.9 `Done` | Closed in Wave A/A.2 (demo backend + adapter dhall reads via integration suite and routed E2E) | `linux-cpu` passed 2026-06-02; `linux-gpu` passed 2026-06-03 |
 | 6 | Sprints 6.1–6.28 `Done` | Closed in Wave A/A.1/A.2/A.3 (lint, style, unit, integration, routed E2E, and Apple engine-lock chaos) | `linux-cpu` passed 2026-06-02; `linux-gpu` passed 2026-06-03 |
-| 7 | Sprints 7.1–7.7, 7.10–7.13, and 7.17 `Done`; Sprint 7.8 remains `Active` for real KV-cache engine validation and the wider runtime transport split after the 2026-06-03 code-side KV-cache decision and Failover naming follow-on; Sprints 7.9/7.14/7.15/7.16 await only the phase-level 7.8/docs closure rules after the 2026-06-03 residual sweep | Closed in Wave A/A.1/A.2/A.3 for the listed Apple gates | `linux-cpu` passed 2026-06-02; `linux-gpu` passed 2026-06-03; residual rebuilt-image `linux-gpu` gate passed 2026-06-03 against `sha256:521a56ac6f79bf1ce5bc9d7dcd9c872e897ce4b4882661d4ada2f62faa108d7b`; residual rebuilt-image `linux-cpu` gate passed 2026-06-03 against `sha256:dc0c003e7cc2f2e359a474fa5ddb522c8715d271e322534db7798f260e9747fa` |
+| 7 | Sprints 7.1–7.17 `Done`; Sprint 7.8 runtime KV-cache and `Infernix.Runtime.Daemon` split closed in Wave E after the 2026-06-03 code-side KV-cache decision and Failover naming follow-on | Closed in Wave A/A.1/A.2/A.3 for the listed Apple gates | `linux-cpu` passed 2026-06-02; `linux-gpu` passed 2026-06-03; residual rebuilt-image `linux-gpu` gate passed 2026-06-03 against `sha256:521a56ac6f79bf1ce5bc9d7dcd9c872e897ce4b4882661d4ada2f62faa108d7b`; residual rebuilt-image `linux-cpu` gate passed 2026-06-03 against `sha256:dc0c003e7cc2f2e359a474fa5ddb522c8715d271e322534db7798f260e9747fa`; mounted Linux CPU Wave E passed 2026-06-04 |
 
 When a wave closes, this table is the place to update first. Phase
 docs follow.

@@ -17,8 +17,10 @@ import Data.ProtoLens.Field (field)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Infernix.Config (Paths (..))
+import Infernix.Conversation.Hash (PrefixHash (..))
 import Infernix.Models (engineBindingForSelectedEngine)
 import Infernix.Python (ensurePoetryExecutable, ensurePoetryProjectReady)
+import Infernix.Runtime.KVCache qualified as KVCache
 import Infernix.Types
 import Lens.Family2 (set, view)
 import Proto.Infernix.Runtime.Inference qualified as ProtoInference
@@ -60,14 +62,15 @@ runInferenceWorker ::
   EngineCommandOverrideMap ->
   ModelDescriptor ->
   InferenceRequest ->
+  Maybe KVCache.KVCacheObservation ->
   IO (Either ErrorResponse Text)
-runInferenceWorker paths runtimeMode overrides model request =
+runInferenceWorker paths runtimeMode overrides model request cacheObservation =
   case engineBindingAdapterType engineBinding of
     "python-stdio" ->
       ensurePythonEngineSetupReady paths runtimeMode engineBinding
-        >> runPythonWorker paths runtimeMode overrides model engineBinding request
+        >> runPythonWorker paths runtimeMode overrides model engineBinding request cacheObservation
     "native-process-runner" ->
-      runNativeWorker runtimeMode model engineBinding request
+      runNativeWorker runtimeMode model engineBinding request cacheObservation
     adapterType ->
       pure (unsupportedEngineRunner engineBinding adapterType)
   where
@@ -92,8 +95,9 @@ runPythonWorker ::
   ModelDescriptor ->
   EngineBinding ->
   InferenceRequest ->
+  Maybe KVCache.KVCacheObservation ->
   IO (Either ErrorResponse Text)
-runPythonWorker paths runtimeMode overrides model engineBinding request = do
+runPythonWorker paths runtimeMode overrides model engineBinding request _cacheObservation = do
   let maybeOverride = lookupEngineCommandOverride overrides engineBinding
   invocation <- resolvePythonInvocation paths engineBinding maybeOverride
   let workerRequest = encodeMessage (buildWorkerRequest paths runtimeMode model engineBinding request)
@@ -216,8 +220,8 @@ resolvePythonInvocation paths engineBinding maybeOverride = do
               ]
           )
 
-runNativeWorker :: RuntimeMode -> ModelDescriptor -> EngineBinding -> InferenceRequest -> IO (Either ErrorResponse Text)
-runNativeWorker runtimeMode model engineBinding request =
+runNativeWorker :: RuntimeMode -> ModelDescriptor -> EngineBinding -> InferenceRequest -> Maybe KVCache.KVCacheObservation -> IO (Either ErrorResponse Text)
+runNativeWorker runtimeMode model engineBinding request cacheObservation =
   case nativeRunnerLabel (engineBindingAdapterId engineBinding) of
     Just runnerLabel ->
       pure
@@ -228,6 +232,7 @@ runNativeWorker runtimeMode model engineBinding request =
                 request
                 (engineBindingAdapterId engineBinding)
                 runnerLabel
+                cacheObservation
             )
         )
     Nothing ->
@@ -358,17 +363,28 @@ workerOutputFromResponse workerResponse =
         Text.pack
         (trimWhitespace (Text.unpack (view ProtoInferenceFields.errorMessage workerResponse)))
 
-renderNativeRunnerOutput :: RuntimeMode -> ModelDescriptor -> InferenceRequest -> Text -> Text -> Text
-renderNativeRunnerOutput runtimeMode model requestValue adapterId runnerLabel =
+renderNativeRunnerOutput :: RuntimeMode -> ModelDescriptor -> InferenceRequest -> Text -> Text -> Maybe KVCache.KVCacheObservation -> Text
+renderNativeRunnerOutput runtimeMode model requestValue adapterId runnerLabel cacheObservation =
   Text.unlines
-    [ "adapter=" <> adapterId,
-      "runner=" <> runnerLabel,
-      "runtime=" <> runtimeModeId runtimeMode,
-      "model=" <> modelId model,
-      "engine=" <> selectedEngine model,
-      "family=" <> family model,
-      "input=" <> inputText requestValue
-    ]
+    ( [ "adapter=" <> adapterId,
+        "runner=" <> runnerLabel,
+        "runtime=" <> runtimeModeId runtimeMode,
+        "model=" <> modelId model,
+        "engine=" <> selectedEngine model,
+        "family=" <> family model,
+        "input=" <> inputText requestValue
+      ]
+        <> nativeKvCacheLines cacheObservation
+    )
+
+nativeKvCacheLines :: Maybe KVCache.KVCacheObservation -> [Text]
+nativeKvCacheLines Nothing = []
+nativeKvCacheLines (Just observation) =
+  let decision = KVCache.kvCacheObservationDecision observation
+      PrefixHash prefixHash = KVCache.kvCacheRequestPrefixHash (KVCache.kvCacheObservationRequest observation)
+   in [ "kv-cache=" <> KVCache.kvCacheDecisionLabel decision,
+        "kv-prefix-hash=" <> prefixHash
+      ]
 
 shellQuote :: String -> String
 shellQuote rawValue =

@@ -53,13 +53,15 @@ prompt. The browser E2E layer covers active-context WebSocket re-subscribe,
 draft restoration after both reconnect and reload login, and frontend pod
 replacement by deleting all `infernix-demo` pods during the routed flow and
 submitting another prompt after reconnect.
-As of June 3, 2026, the engine-side prefix-hash cache decision helper
-(`Infernix.Runtime.KVCache`) is code-side landed and unit-tested against
-the same reducer/hash projection used by the conversation log. The
-Pulsar Failover transport keeps stable subscription names while
+As of June 4, 2026, the engine-side prefix-hash cache path is wired
+through `Infernix.Runtime.KVCache`, `Infernix.Runtime`, and the native
+worker harness. Unit coverage validates rebuild/reuse decisions through
+the runtime path, and the mounted Linux CPU integration suite validates
+the coordinator/engine durable prompt flow, engine pod replacement,
+engine node drain, and exact broker counts against the same worktree.
+The Pulsar Failover transport keeps stable subscription names while
 process-qualifying consumer names for clearer coordinator promotion
-membership. Real KV-cache reuse validation remains tied to a future
-adapter that exposes reusable KV state.
+membership.
 
 ## Parametricity Surface
 
@@ -106,7 +108,13 @@ this section names the surface so primitives-doc readers can locate it.
   upgrade, HTTP route handlers, WS envelope tagged-sum wire schema,
   first-run bootstrap, application-specific views. May import any shared
   module.
-- **Cluster daemon (`Infernix.Runtime.*`, engine path).** Imports
+- **Daemon orchestration (`Infernix.Runtime.Daemon`).** Owns
+  process startup, role selection, readiness markers, and the
+  process-local engine KV-cache handle. It starts coordinator loops only
+  for the `Coordinator` role and threads the engine cache into the
+  engine request-consumption path.
+- **Engine runtime (`Infernix.Runtime`, `Infernix.Runtime.Cache`,
+  `Infernix.Runtime.KVCache`, `Infernix.Runtime.Worker`).** Imports
   `Infernix.Conversation.Reducer` and `Infernix.Conversation.Hash`
   through `Infernix.Runtime.KVCache` for engine-side KV-cache
   consistency decisions only. Must not import any application namespace,
@@ -114,8 +122,9 @@ this section names the surface so primitives-doc readers can locate it.
   `Infernix.Auth.Jwt`, must not import any WebSocket module.
 
 Dependency arrows are strict: shared library has no upward dependencies;
-application glue and cluster daemon both depend on shared library; they
-never depend on each other.
+application glue, daemon orchestration, and engine runtime all depend on
+shared library; application glue and engine runtime never depend on each
+other.
 
 Adding a second similar app follows the same pattern: a new
 `Infernix.<AppName>.*` namespace reuses every shared module verbatim and

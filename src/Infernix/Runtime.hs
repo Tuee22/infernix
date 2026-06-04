@@ -4,6 +4,7 @@ module Infernix.Runtime
   ( buildPayload,
     evictCache,
     executeInference,
+    executeInferenceWithKVCache,
     listCacheManifests,
     loadInferenceResult,
     persistInferenceResult,
@@ -18,6 +19,7 @@ import Data.Time (defaultTimeLocale, formatTime, getCurrentTime)
 import Infernix.Config (Paths (..))
 import Infernix.Models (findModel)
 import Infernix.Runtime.Cache (evictCache, listCacheManifests, materializeCache, rebuildCache)
+import Infernix.Runtime.KVCache qualified as KVCache
 import Infernix.Runtime.Worker (EngineCommandOverrideMap, runInferenceWorker)
 import Infernix.Storage
   ( readInferenceResultProtoMaybe,
@@ -27,7 +29,18 @@ import Infernix.Types
 import System.FilePath ((</>))
 
 executeInference :: Paths -> RuntimeMode -> EngineCommandOverrideMap -> InferenceRequest -> IO (Either ErrorResponse InferenceResult)
-executeInference paths runtimeMode overrides request = case findModel runtimeMode (requestModelId request) of
+executeInference paths runtimeMode overrides =
+  executeInferenceWithKVCache paths runtimeMode overrides Nothing Nothing
+
+executeInferenceWithKVCache ::
+  Paths ->
+  RuntimeMode ->
+  EngineCommandOverrideMap ->
+  Maybe KVCache.EngineKVCache ->
+  Maybe KVCache.KVCacheRequest ->
+  InferenceRequest ->
+  IO (Either ErrorResponse InferenceResult)
+executeInferenceWithKVCache paths runtimeMode overrides maybeEngineCache maybeCacheRequest request = case findModel runtimeMode (requestModelId request) of
   Nothing ->
     pure $
       Left $
@@ -47,7 +60,11 @@ executeInference paths runtimeMode overrides request = case findModel runtimeMod
         now <- getCurrentTime
         let requestIdValue = Text.pack (formatTime defaultTimeLocale "req-%Y%m%d%H%M%S%q" now)
         materializeCache paths runtimeMode model
-        workerResult <- runInferenceWorker paths runtimeMode overrides model request
+        cacheObservation <-
+          case (maybeEngineCache, maybeCacheRequest) of
+            (Just engineCache, Just cacheRequest) -> Just <$> KVCache.observeKVCachePrefix engineCache cacheRequest
+            _ -> pure Nothing
+        workerResult <- runInferenceWorker paths runtimeMode overrides model request cacheObservation
         case workerResult of
           Left workerError ->
             pure (Left workerError)

@@ -14,7 +14,7 @@ import Infernix.ClusterConfig
 import Infernix.Config
 import Infernix.DemoConfig (decodeDemoConfigFile)
 import Infernix.Engines.AppleSilicon (ensureAppleSiliconRuntimeReady)
-import Infernix.Runtime.Pulsar (runProductionDaemon)
+import Infernix.Runtime.Daemon (runProductionDaemon)
 import Infernix.Types (DaemonRole (Coordinator, Engine), DemoConfig (..), RuntimeMode (AppleSilicon), runtimeModeId)
 import System.Directory (createDirectoryIfMissing, doesFileExist)
 import System.FilePath (takeDirectory, (</>))

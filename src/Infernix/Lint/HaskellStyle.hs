@@ -294,8 +294,9 @@ bareNameProcExemptedFiles =
 
 -- | Phase 7 Sprint 7.8: keep the engine runtime surface from
 -- importing frontend, coordinator, auth, object-presign, or WebSocket
--- modules. `Runtime.Pulsar` still owns role orchestration today, so
--- this gate is scoped to the concrete engine runtime modules.
+-- modules. `Runtime.Daemon` owns role orchestration and may wire both
+-- coordinator and engine loops, so this gate is scoped to the concrete
+-- engine runtime modules.
 engineRuntimeBoundaryViolations :: FilePath -> [(Int, String)] -> [String]
 engineRuntimeBoundaryViolations sourceFile numberedLines
   | sourceFile `notElem` engineRuntimeBoundaryFiles = []

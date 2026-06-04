@@ -113,10 +113,10 @@ Pulsar+MinIO wiring together with Sprint 7.14's chaos validation cycle.
 The Haskell style gate enforces that engine-runtime import boundary for
 `src/Infernix/Runtime.hs`, `src/Infernix/Runtime/Cache.hs`,
 `src/Infernix/Runtime/KVCache.hs`, and
-`src/Infernix/Runtime/Worker.hs`. `src/Infernix/Runtime/Pulsar.hs` is
-still the current multi-role Pulsar transport and daemon-orchestration
-module, so the full coordinator transport split remains separate
-Phase 7 work.
+`src/Infernix/Runtime/Worker.hs`. `src/Infernix/Runtime/Daemon.hs`
+owns role orchestration and may wire coordinator and engine loops;
+`src/Infernix/Runtime/Pulsar.hs` owns shared Pulsar transport helpers
+and runtime loop implementations.
 
 The same style gate also enforces the Phase 7 shared-library boundary for
 the conversation primitives, dispatcher helpers, result bridge helper, and
