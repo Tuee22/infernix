@@ -34,7 +34,7 @@ import Infernix.Cluster.Discover
 import Infernix.Cluster.PublishImages qualified as PublishImages
 import Infernix.Config (ControlPlaneContext (..), Paths (..), controlPlaneContextId)
 import Infernix.Config qualified as Config
-import Infernix.DemoConfig (decodeDemoConfigFile, ensureGeneratedDemoConfigFile, renderGeneratedDemoConfigPayload)
+import Infernix.DemoConfig (decodeDemoConfigFile, ensureGeneratedDemoConfigFile, materializeHostManifestFile, renderGeneratedDemoConfigPayload)
 import Infernix.Engines.AppleSilicon (ensureAppleSiliconRuntimeReady)
 import Infernix.HostConfig qualified as HostConfig
 import Infernix.HostTools (HostTool (..))
@@ -385,9 +385,9 @@ runCommandMonitored paths state maybeWorkingDirectory envOverrides command args 
 
 clusterUp :: Maybe RuntimeMode -> IO ()
 clusterUp maybeRuntimeMode = do
-  paths <- Config.discoverPaths
+  paths <- discoverClusterCommandPaths
   Config.ensureRepoLayout paths
-  runtimeMode <- Config.resolveRuntimeMode maybeRuntimeMode
+  runtimeMode <- resolveClusterRuntimeMode paths maybeRuntimeMode
   Config.ensureSupportedRuntimeModeForExecutionContext paths runtimeMode
   when (runtimeMode == AppleSilicon) (ensureAppleSiliconRuntimeReady paths)
   commandsAvailable <- platformCommandsAvailable
@@ -690,20 +690,26 @@ requireGeneratedDemoConfigFile paths expectedRuntimeMode = do
 
 resolveCommandRuntimeMode :: Paths -> Maybe RuntimeMode -> Maybe ClusterState -> IO RuntimeMode
 resolveCommandRuntimeMode _ (Just runtimeMode) _ = pure runtimeMode
-resolveCommandRuntimeMode paths Nothing _maybeState = do
+resolveCommandRuntimeMode paths Nothing maybeState = do
   let substratePath = Config.generatedDemoConfigPath paths
   substrateExists <- doesFileExist substratePath
   if substrateExists
     then configRuntimeMode <$> decodeDemoConfigFile substratePath
-    else
-      ioError
-        ( userError
-            ( unlines
-                [ "Missing generated substrate file: " <> substratePath,
-                  "Restage it before running cluster operations."
-                ]
-            )
-        )
+    else maybe (Config.targetRuntimeModeForExecutionContext paths) (pure . clusterRuntimeMode) maybeState
+
+resolveClusterRuntimeMode :: Paths -> Maybe RuntimeMode -> IO RuntimeMode
+resolveClusterRuntimeMode _ (Just runtimeMode) = pure runtimeMode
+resolveClusterRuntimeMode paths Nothing = Config.targetRuntimeModeForExecutionContext paths
+
+discoverClusterCommandPaths :: IO Paths
+discoverClusterCommandPaths = do
+  paths <- Config.discoverPaths
+  Config.ensureRepoLayout paths
+  case Config.controlPlaneContext paths of
+    HostNative -> do
+      _ <- materializeHostManifestFile paths
+      Config.discoverPaths
+    OuterContainer -> pure paths
 
 matchingClusterState :: RuntimeMode -> Maybe ClusterState -> Maybe ClusterState
 matchingClusterState runtimeMode maybeState =
@@ -714,7 +720,7 @@ matchingClusterState runtimeMode maybeState =
 
 clusterDown :: Maybe RuntimeMode -> IO ()
 clusterDown maybeRuntimeMode = do
-  paths <- Config.discoverPaths
+  paths <- discoverClusterCommandPaths
   recordedState <- loadClusterState paths
   runtimeMode <- resolveCommandRuntimeMode paths maybeRuntimeMode recordedState
   let maybeState = matchingClusterState runtimeMode recordedState
@@ -850,7 +856,7 @@ loadClusterState paths = do
 
 runKubectlCompat :: [String] -> IO ()
 runKubectlCompat args = do
-  paths <- Config.discoverPaths
+  paths <- discoverClusterCommandPaths
   recordedState <- loadClusterState paths
   runtimeMode <- resolveCommandRuntimeMode paths Nothing recordedState
   let maybeState = matchingClusterState runtimeMode recordedState

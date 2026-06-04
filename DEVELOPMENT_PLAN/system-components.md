@@ -76,9 +76,11 @@
   `python3.12` command plus a user-local Poetry bootstrap on demand. The native-only workflow
   doctrine now requires Docker-backed Apple work to use the current native arm64 Docker daemon and
   forbids Docker-context creation or switching, Colima VM creation, and cross-architecture
-  emulation; Phase 1 Sprint 1.12 replaces the previous Colima reconciliation path with selected
-  Docker-context and daemon-architecture validation. The Poetry bootstrap may reuse an already
-  available compatible Python 3.12+ executable when one passes the implemented version check
+  emulation; Phase 1 Sprint 1.12 replaced the previous Colima reconciliation path with selected
+  Docker-context and daemon-architecture validation and closed on 2026-06-04 with positive
+  lifecycle/full-test evidence plus negative no-daemon boundary evidence. The Poetry bootstrap
+  may reuse an already available compatible Python 3.12+ executable when one passes the
+  implemented version check
 - routed Apple Playwright validation runs host-native `npm exec` against the published
   `127.0.0.1` edge port, and retained Kind state is replayed into and out of the worker rather
   than bind-mounted
@@ -205,7 +207,7 @@
 | Substrate | Canonical substrate id | Supported contract | Current repo gap |
 |-----------|------------------------|--------------------|------------------|
 | Apple Silicon / Metal | `apple-silicon` | host-native control plane, cluster `infernix service` daemons for request-topic consumption and host-batch handoff, same-binary host inference daemons consuming Apple batch topics and publishing results, and clustered support services plus optional routed demo workloads sharing the same substrate file and route contracts | none |
-| Linux / CPU | `linux-cpu` | containerized Linux lane built from the shared substrate Dockerfile and driven entirely through Compose on native Linux amd64 or native Linux arm64; publication selects the normalized native host architecture from `InfernixHost.dhall` | native arm64 Linux full-suite validation remains outstanding for Phase 3 Sprint 3.12 closure |
+| Linux / CPU | `linux-cpu` | containerized Linux lane built from the shared substrate Dockerfile and driven entirely through Compose on native Linux amd64 or native Linux arm64; publication selects the normalized native host architecture from `InfernixHost.dhall` | native arm64 Linux full-suite validation is blocked on a native arm64 Linux host for Phase 3 Sprint 3.12 closure |
 | Linux / NVIDIA GPU | `linux-gpu` | GPU-enabled Kind lane built from the shared substrate Dockerfile and deployed from the same CUDA-based image used by the outer container | none |
 
 ## Serialization Boundaries

@@ -275,11 +275,10 @@ resolveRuntimeMode Nothing = do
 -- targets without consulting any environment variable. The supported
 -- contract is:
 --
--- * Host-native (Apple) → 'AppleSilicon'. Apple lifecycle commands
---   materialize @./.build/infernix-substrate.dhall@ from the bootstrap
---   script before reaching this code path, so callers that need the
---   substrate identity for subsequent work read the staged file
---   directly via 'resolveRuntimeMode'.
+-- * Host-native (Apple) → 'AppleSilicon'. Lifecycle commands can use
+--   this value before @./.build/infernix-substrate.dhall@ exists, then
+--   materialize or validate that file through the binary-owned
+--   substrate preflight.
 -- * Outer-container (Linux) → read the substrate from the staged
 --   @infernix-substrate.dhall@ baked into the launcher image (the image
 --   build runs @infernix internal materialize-substrate@ as part of the

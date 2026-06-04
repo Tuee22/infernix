@@ -44,15 +44,16 @@ reports the cluster daemon location separately from the Apple host inference exe
 batch topic. The runtime worker uses explicit Python or native adapter
 harnesses selected from the staged substrate file. Those adapters currently produce deterministic
 engine-family output from durable metadata rather than claiming universal production model-binary
-execution. The Apple clean-host bootstrap
-hardening is partially present in code: the stage-0 entrypoint verifies same-process
-ghcup-managed `ghc` and `cabal` resolution before direct `cabal install`, reconciles Homebrew
-`protoc`, and lets Apple adapter setup or validation paths reconcile the Homebrew-managed
-`python@3.12` formula and `python3.12` command plus a user-local Poetry bootstrap on demand. The
-native-only workflow doctrine now forbids Apple Docker-context creation or switching, Colima VM
-creation, and cross-architecture emulation; Phase 1 Sprint 1.12 replaces the previous
-Colima reconciliation path with a prerequisite check that reports the selected Docker context and
-daemon architecture, then stops before cluster work if the daemon is absent or non-native. The
+execution. The Apple clean-host bootstrap hardening is implemented and validated: the stage-0
+entrypoint verifies same-process ghcup-managed `ghc` and `cabal` resolution before direct
+`cabal install`, reconciles Homebrew `protoc`, and lets Apple adapter setup or validation paths
+reconcile the Homebrew-managed `python@3.12` formula and `python3.12` command plus a user-local
+Poetry bootstrap on demand. The native-only workflow doctrine now forbids Apple Docker-context
+creation or switching, Colima VM creation, and cross-architecture emulation; Phase 1 Sprint 1.12
+replaced the previous Colima reconciliation path with a prerequisite check that reports the
+selected Docker context and daemon architecture, then stops before cluster work if the daemon is
+absent or non-native. The 2026-06-04 Apple validation closed both the positive lifecycle/full-test
+gate and the negative no-daemon boundary without changing Docker contexts or Colima VM state. The
 Poetry bootstrap may reuse an already available compatible Python 3.12+ executable
 when one passes the implemented version check. Routed Apple Playwright validation runs
 host-native `npm exec` against the published
@@ -113,7 +114,7 @@ full-suite gate passed on 2026-06-03.
 | Simulation stance | no simulated cluster, route, or generic inference-success fallback remains in the supported runtime or validation contract, and routed Pulsar checks require the real Gateway-backed upstream | implemented; inference execution goes through typed adapter harnesses, unsupported adapters fail fast, and the remaining repo-local topic spool under `./.data/runtime/pulsar/` is a harness-only path for unit-level or intentionally endpoint-absent daemon checks; Apple cohort gate closed in [Wave A](cohort-validation-waves.md); CUDA Linux cohort gate closed in [Wave C](cohort-validation-waves.md) |
 | Validation scope | integration uses one `.dhall`-driven suite over the README matrix, E2E stays substrate-agnostic at the browser layer, and `test all` runs every supported validation layer for one built substrate at a time | implemented; Apple cohort gate closed in [Wave A/A.2](cohort-validation-waves.md); CUDA Linux cohort gate closed in [Wave C](cohort-validation-waves.md) |
 | Hardware cohort cadence | phase work validates first on the current Apple Silicon or CUDA Linux machine, then batches counterpart full-suite validation at phase closure so contributors do not switch machines after every sprint | implemented in the plan doctrine; operationalized in [cohort-validation-waves.md](cohort-validation-waves.md) |
-| Native container architecture | Apple Silicon → `linux/arm64`; `linux-cpu` → native Linux host architecture (`linux/amd64` or `linux/arm64`); `linux-gpu` → `linux/amd64`; no development or validation lane uses cross-architecture emulation | implementation landed: `linux-cpu` publication reads the normalized native host architecture from `InfernixHost.dhall`; native arm64 Linux full-suite validation remains the Phase 3 Sprint 3.12 closure gate |
+| Native container architecture | Apple Silicon -> `linux/arm64`; `linux-cpu` -> native Linux host architecture (`linux/amd64` or `linux/arm64`); `linux-gpu` -> `linux/amd64`; no development or validation lane uses cross-architecture emulation | implementation landed: `linux-cpu` publication reads the normalized native host architecture from `InfernixHost.dhall`; native arm64 Linux full-suite validation is blocked on a native arm64 Linux host for Phase 3 Sprint 3.12 closure |
 
 Monitoring is not a supported first-class surface.
 

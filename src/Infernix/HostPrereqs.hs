@@ -15,7 +15,7 @@ import Data.ByteString.Lazy.Char8 qualified as LazyChar8
 import Data.Char (toLower)
 import Data.List (nub)
 import Infernix.CommandRegistry (Command (..))
-import Infernix.Config (ControlPlaneContext (HostNative), controlPlaneContext, discoverPaths, resolveRuntimeMode)
+import Infernix.Config (ControlPlaneContext (HostNative), controlPlaneContext, discoverPaths, targetRuntimeModeForExecutionContext)
 import Infernix.Python (ensurePoetryExecutable)
 import Infernix.Types (RuntimeMode (AppleSilicon))
 import System.Directory (doesFileExist)
@@ -72,7 +72,9 @@ runtimeModeForApplePrereqs maybeRuntimeMode command
   | commandNeedsPythonPrereqs command =
       case maybeRuntimeMode of
         Just runtimeMode -> pure (Just runtimeMode)
-        Nothing -> Just <$> resolveRuntimeMode Nothing
+        Nothing -> do
+          paths <- discoverPaths
+          Just <$> targetRuntimeModeForExecutionContext paths
   | otherwise = pure maybeRuntimeMode
 
 commandNeedsPythonPrereqs :: Command -> Bool

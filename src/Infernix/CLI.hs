@@ -198,13 +198,12 @@ validateCommandExecutionContext command = do
 -- The supported contract has no env-var fallback: on the Linux outer-
 -- container path the launcher image bakes the substrate file at image
 -- build time (the Dockerfile invokes @infernix internal
--- materialize-substrate@ with an explicit substrate argument); on Apple
--- host-native the bootstrap script does the same against
--- @./.build/@. Both cases mean the file is present before any lifecycle
--- or validation command reaches this code path. When it is absent
--- (operator skipped bootstrap, schema drift, etc.), 'configuredRuntimeMode'
--- surfaces a typed diagnostic that names the supported materialization
--- helpers.
+-- materialize-substrate@ with an explicit substrate argument). On Apple
+-- host-native, the execution context itself fixes the active substrate to
+-- @apple-silicon@ so lifecycle commands can materialize the file before
+-- cluster work. When the file is absent on paths that require a staged
+-- payload, 'configuredRuntimeMode' surfaces a typed diagnostic that names
+-- the supported materialization helpers.
 ensureActiveSubstrateFile :: IO RuntimeMode
 ensureActiveSubstrateFile = do
   paths <- discoverPaths

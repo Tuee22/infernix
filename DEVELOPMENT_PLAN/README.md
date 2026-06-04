@@ -52,9 +52,8 @@ A phase or sprint can move to `Done` only when all of the following are true:
 
 ## Current Repo Assessment
 
-Phases 0, 2, 4, 5, and 6 close around the implemented worktree. Phase 1 has reopened for the
-native-only host-prerequisite doctrine cleanup, and Phase 3 has reopened for native arm64
-`linux-cpu` publication support. The repository implements the
+Phases 0, 1, 2, 4, 5, and 6 close around the implemented worktree. Phase 3 is blocked on a
+native arm64 Linux host for `linux-cpu` publication validation. The repository implements the
 staged-substrate architecture, the baked Linux outer-container launcher,
 the mandatory HA platform services, the Gateway-owned routed edge, the shared Python adapter
 project, the Haskell-owned browser-contract generation path, the substrate-specific validation
@@ -121,8 +120,9 @@ paths reconcile the Homebrew-managed `python@3.12` formula and `python3.12` comm
 user-local Poetry bootstrap on demand. The supported doctrine now requires Docker-backed Apple
 work to use an already selected native arm64 Docker daemon and forbids creating or switching
 Docker contexts, creating Colima VMs, or using cross-architecture emulation; Phase 1 Sprint 1.12
-replaces the previous Colima reconciliation path with selected Docker-context and
-daemon-architecture validation. The Poetry bootstrap may reuse an already available
+replaced the previous Colima reconciliation path with selected Docker-context and
+daemon-architecture validation and closed on 2026-06-04 with both the positive Apple lifecycle
+gate and the negative no-daemon boundary gate. The Poetry bootstrap may reuse an already available
 compatible Python 3.12+ executable when one passes the implemented version check. Routed Apple
 Playwright validation runs host-native `npm exec` against the published `127.0.0.1` edge port,
 and the in-image
@@ -210,9 +210,9 @@ scope.
 | Phase | Name | Status | Document |
 |-------|------|--------|----------|
 | 0 | Documentation and Governance | Done (Sprint 0.9 configuration-doctrine closure validated by Apple Wave A and CUDA Linux Wave C) | [phase-0-documentation-and-governance.md](phase-0-documentation-and-governance.md) |
-| 1 | Repository and Control-Plane Foundation | Active (Sprint 1.12 native-only workflow doctrine implementation landed; 2026-06-03 Apple `doctor`/`build`/`up`/`status` passed after fixing in-image host-manifest drift, but the full Apple `test` gate and negative no-daemon boundary validation remain outstanding before `Done`) | [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md) |
+| 1 | Repository and Control-Plane Foundation | Done (Sprint 1.12 native-only workflow doctrine closed on 2026-06-04: Apple `doctor`/`build`/`up`/`status`/full `test`/`down`/final `status` passed on an already selected native arm64 daemon, and the negative no-daemon bootstrap boundary failed before cluster work without changing Docker contexts or Colima VM state) | [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md) |
 | 2 | Kind Cluster Storage and Lifecycle | Done (Sprints 2.10–2.13 lifecycle, retained-state, bootstrap-boundary, and host-manifest retirement validated by Apple Wave A and CUDA Linux Wave C) | [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md) |
-| 3 | HA Platform Services and Edge Routing | Active (Sprint 3.12 native `linux-cpu` architecture selector landed; native arm64 Linux full-suite validation remains open; Sprints 3.10–3.11 otherwise validated by Apple Wave A/A.2 and CUDA Linux Wave C) | [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md) |
+| 3 | HA Platform Services and Edge Routing | Blocked (Sprint 3.12 native `linux-cpu` architecture selector landed; native arm64 Linux full-suite validation remains open and cannot run in the current `Darwin arm64` execution context; Sprints 3.10–3.11 otherwise validated by Apple Wave A/A.2 and CUDA Linux Wave C) | [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md) |
 | 4 | Inference Service and Durable Runtime | Done (Sprint 4.13 mounted `ClusterConfig` / `SecretsConfig` runtime path validated by Apple Wave A and CUDA Linux Wave C) | [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) |
 | 5 | Web UI and Shared Types | Done (Sprint 5.9 demo backend, Python adapter, and web/Node env-retirement path validated by Apple Wave A/A.2 and CUDA Linux Wave C) | [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md) |
 | 6 | Validation, E2E, and HA Hardening | Done (Sprints 6.22–6.28 lint/style/unit/integration/e2e and no-env-var gates validated by Apple Wave A/A.1/A.2/A.3 and CUDA Linux Wave C) | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) |

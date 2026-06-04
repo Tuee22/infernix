@@ -1063,6 +1063,8 @@ async function replaceDemoPods(fixture) {
     "pod",
     "-l",
     "app.kubernetes.io/name=infernix-demo",
+    "--grace-period=0",
+    "--force",
     "--wait=false",
   ]);
   const replacementPods = await waitForReplacementDemoPods(fixture, originalPods);
@@ -1078,8 +1080,10 @@ async function replaceDemoPods(fixture) {
 async function waitForReplacementDemoPods(fixture, originalPods) {
   const deadline = Date.now() + 180000;
   while (Date.now() < deadline) {
-    const replacements = demoPodNames(fixture).filter((podName) => !originalPods.includes(podName));
-    if (replacements.length >= originalPods.length) {
+    const pods = demoPodNames(fixture);
+    const originalsGone = originalPods.every((podName) => !pods.includes(podName));
+    const replacements = pods.filter((podName) => !originalPods.includes(podName));
+    if (originalsGone && replacements.length >= originalPods.length) {
       return replacements.slice(0, originalPods.length);
     }
     await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -1100,6 +1104,7 @@ function demoPodNames(fixture) {
   ])
     .trim()
     .split(/\s+/)
+    .filter((token) => /^infernix-demo-[a-z0-9-]+$/.test(token))
     .filter(Boolean);
 }
 

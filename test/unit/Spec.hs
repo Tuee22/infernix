@@ -55,6 +55,7 @@ import Infernix.CommandRegistry
     renderCliSurfaceFamiliesSection,
   )
 import Infernix.Config
+import Infernix.Config qualified as Config
 import Infernix.Conversation.Event qualified as ConversationEvent
 import Infernix.Conversation.Hash qualified as ConversationHash
 import Infernix.Conversation.Idempotency qualified as ConversationIdempotency
@@ -242,7 +243,18 @@ main = do
   realRepoRoot <- repoRoot <$> discoverPaths
   withTestRoot unitTestRoot $ do
     let hostNativeFixture = hostNativeUnitTestFixture realRepoRoot unitTestRoot
+        freshHostNativeFixture = hostNativeUnitTestFixture unitTestRoot unitTestRoot
     do
+      freshHostNativePaths <- discoverPathsWithHostManifest (Just freshHostNativeFixture)
+      ensureRepoLayout freshHostNativePaths
+      hostNativeSubstrateExists <- doesFileExist (Config.generatedDemoConfigPath freshHostNativePaths)
+      assert
+        (not hostNativeSubstrateExists)
+        "fresh host-native fixtures start without a staged substrate file"
+      hostNativeDefaultRuntime <- targetRuntimeModeForExecutionContext freshHostNativePaths
+      assert
+        (hostNativeDefaultRuntime == AppleSilicon)
+        "fresh host-native lifecycle preflight resolves to apple-silicon before substrate materialization"
       paths <- discoverPathsWithHostManifest (Just hostNativeFixture)
       ensureRepoLayout paths
       assert
@@ -265,6 +277,10 @@ main = do
         assert
           (generatedKubeconfigPath outerPaths == runtimeRoot outerPaths </> "infernix.kubeconfig")
           "outer-container kubeconfig persists under the durable runtime root"
+        outerRuntimeResult <- try (targetRuntimeModeForExecutionContext outerPaths) :: IO (Either IOError RuntimeMode)
+        assert
+          (either (isInfixOf "Missing generated substrate file" . show) (const False) outerRuntimeResult)
+          "outer-container lifecycle preflight still requires the baked staged substrate file"
         ensureSupportedRuntimeModeForExecutionContext outerPaths LinuxCpu
         outerContainerAppleResult <- try (ensureSupportedRuntimeModeForExecutionContext outerPaths AppleSilicon) :: IO (Either IOError ())
         assert

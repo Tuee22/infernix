@@ -1,6 +1,7 @@
 # Phase 3: HA Platform Services and Edge Routing
 
-**Status**: Active
+**Status**: Blocked
+**Blocked by**: native arm64 Linux host for `./bootstrap/linux-cpu.sh test`
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Define the mandatory local HA Harbor, MinIO, operator-managed PostgreSQL, and
@@ -13,8 +14,10 @@
 Phase 3 closes around the mandatory HA service set, the shared routed edge, and the
 Haskell-owned route registry implemented in this worktree. Sprints 3.1-3.11 are `Done` after
 Apple cohort validation in Waves A/A.2 and CUDA Linux cohort validation in Wave C. Sprint 3.12 is
-`Active` for native arm64 `linux-cpu` publication validation after the native architecture
-selector landed. The clarified Apple daemon-role model is
+`Blocked` on a native arm64 Linux host for the remaining `linux-cpu` publication validation after
+the native architecture selector landed. The current execution context is Apple Silicon
+(`Darwin arm64`), and the Linux CPU bootstrap exits before validation because it only supports
+Linux. The clarified Apple daemon-role model is
 implemented in Phase 6 Sprint 6.25 and separates cluster daemon location from host inference
 executor location in publication metadata.
 
@@ -617,9 +620,10 @@ revalidation closed in Wave C.
 
 ---
 
-## Sprint 3.12: Native arm64 Linux CPU Publication [Active]
+## Sprint 3.12: Native arm64 Linux CPU Publication [Blocked]
 
-**Status**: Active
+**Status**: Blocked
+**Blocked by**: native arm64 Linux host for `./bootstrap/linux-cpu.sh test`
 **Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Cluster/PublishImages.hs`, `src/Infernix/HostConfig.hs`, `bootstrap/linux-cpu.sh`, `docker/linux-substrate.Dockerfile`, `kind/cluster-linux-cpu.yaml`, `test/unit/Spec.hs`
 **Docs to update**: `README.md`, `documents/architecture/runtime_modes.md`, `documents/architecture/overview.md`, `documents/engineering/portability.md`, `documents/engineering/docker_policy.md`, `documents/engineering/testing.md`, `documents/development/local_dev.md`, `documents/operations/cluster_bootstrap_runbook.md`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/00-overview.md`, `DEVELOPMENT_PLAN/system-components.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 
@@ -660,18 +664,28 @@ cross-architecture `buildx`, or any non-native compatibility lane.
 - 2026-06-03 Apple local gate: `cabal test infernix-unit` passed the LinuxCpu amd64/arm64
   selector assertions, and `rg -n '"amd64".*LinuxCpu|LinuxCpu.*"amd64"' src test`
   returned no matches. Native arm64 Linux validation is still required for `Done`.
+- 2026-06-04 ordered follow-up from the current Apple Silicon host confirmed that this gate
+  cannot run here: `uname -srm` reported `Darwin 25.5.0 arm64`, and
+  `./bootstrap/linux-cpu.sh test` exited `1` before Docker or package-manager work with
+  `[error] This bootstrap entrypoint only supports Linux.` Native arm64 Linux validation remains
+  the required closure gate; Apple Linux emulation is not a supported substitute.
+- 2026-06-04 Apple local validation passed for the code-side and documentation proof points that
+  can run before the native arm64 Linux closure gate: `cabal test infernix-unit`,
+  `rg -n '"amd64".*LinuxCpu|LinuxCpu.*"amd64"' src test`, and
+  `./.build/infernix lint docs`.
 
 ### Remaining Work
 
-- native arm64 Linux validation remains outstanding
+- run `./bootstrap/linux-cpu.sh test` on a native arm64 Linux host and record the full-suite
+  Harbor publication, warmup hydration, integration, and routed E2E evidence
 
 ---
 
 ## Remaining Work
 
-Sprint 3.12 remains open for native arm64 `linux-cpu` publication and validation. Sprints
-3.1-3.11 are `Done`; Apple cohort validation closed in Waves A/A.2 and CUDA Linux cohort
-validation closed in Wave C.
+Sprint 3.12 is blocked by the missing native arm64 Linux validation host. Sprints 3.1-3.11 are
+`Done`; Apple cohort validation closed in Waves A/A.2 and CUDA Linux cohort validation closed in
+Wave C.
 
 ---
 
