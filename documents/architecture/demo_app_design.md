@@ -39,73 +39,70 @@
 The current `infernix-demo` workload ships the routed PureScript SPA,
 the catalog and cache HTTP API surface, and the clustered demo
 deployment. The durable-context contract is implemented over Phase 7
-([../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md](../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md)),
-which retires the previous single-form manual-inference handlers from the
-supported demo contract; that retirement is tracked in
+([../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md](../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md));
+the legacy single-form manual-inference handlers are tracked in
 [../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md](../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md).
-As of May 28, 2026, Linux GPU integration validates the demo's Pulsar
-contexts and drafts metadata topics as broker-compacted streams keyed by
-`contextId`, and validates duplicate frontend publish collapse through
-Pulsar producer deduplication on conversation and draft topics using mutation-scoped WebSocket
-producers. The same integration layer now submits a real durable-context prompt and observes the
-completed result writeback on the conversation log after `ContextModelMap` resolves the
-context-pinned model id and the dispatcher, engine, and result bridge run. The same-day routed
+The integration suite validates the demo's Pulsar contexts and drafts
+metadata topics as broker-compacted streams keyed by `contextId`,
+validates duplicate frontend publish collapse through Pulsar producer
+deduplication on conversation and draft topics using mutation-scoped
+WebSocket producers, submits a real durable-context prompt and observes
+the completed result writeback on the conversation log after
+`ContextModelMap` resolves the context-pinned model id and the
+dispatcher, engine, and result bridge run, and exercises runtime
+KV-cache rebuild/reuse decisions through the engine path. The routed
 Playwright E2E suite registers a real Keycloak user, exchanges the
-authorization code for an access token, verifies malformed bearer rejection, proves the
-`/api/objects` handlers mint user-scoped upload/download grants from that real JWT, and validates
-same-user routed presigned MinIO PUT/GET byte equality. The same suite opens `/ws` with the real
-token, verifies a malformed token does not open a browser WebSocket, and asserts a tagged
-`ServerError` for a malformed frame on the valid connection. The object-grant flow also validates
-cross-user object-prefix isolation for two real Keycloak users with the same context id and display
-name. The browser artifact flow now completes the app-owned PKCE redirect, creates a context,
-uploads supported browser artifact classes through the rendered Artifacts form, and validates
-bounded text/JSON previews, inline image/audio/video routed media URLs, browser-native PDF URL
-wiring, and MIDI / MusicXML / generic-binary download-only states. The Chat form now sends
-`ClientSubmitPrompt` with the current context's uploaded `ObjectRef`s in `promptUserUploads`;
-the browser sends `ClientHello` to start per-user context/draft streams; the active context sends
-`ClientSubscribeContext`; and Playwright asserts context-list snapshots/patches, draft
-snapshots/upsert/remove patches, the outbound prompt frame, and the inbound
-`ServerConversationPatch` append for that prompt. It also opens and closes the new-context dialog
-without sending `ClientCreateContext` or adding a local context, then selects a supported catalog
-row before context creation and verifies `ClientCreateContext`, the broker-backed context-list
-patch, and the active context rail preserve that model id. The backend also validates
-`ClientCreateContext` model ids against the active generated catalog and returns a typed
-`ServerError` code `unknown-model` when a browser sends an absent id; Playwright probes that
-negative path over the routed authenticated WebSocket. The same browser flow now sends
-`ClientRenameContext` and `ClientSoftDeleteContext`, observes the broker-backed
-`ServerContextListPatch` upserts, and verifies the context rail shows the renamed title plus
-soft-deleted state. The same browser flow asserts upload
-events
-return through inbound `ConversationUserUploadEvent` append patches and render in the active Chat
-conversation with display name plus MIME type. The browser auth layer keeps the Keycloak
-refresh token in memory, clears local auth state on logout, and reconnects the WebSocket after a
-refresh-token grant; Playwright covers logout, same-browser re-login, and refresh-triggered
-`ClientHello` re-auth. The SPA session layer also reconnects after an unexpected WebSocket close
-with a generation guard, resends `ClientHello`, re-subscribes the active context, and keeps the
-authenticated shell mounted; Playwright force-closes the live socket, verifies the
-re-subscription plus snapshot, and submits another prompt after reconnect. The Chat projection
-also treats cancel events as prompt-resolution events; the browser cancel action sends
-`ClientCancelPrompt` for the latest unresolved server-backed prompt id, and Playwright verifies
-the inbound cancel append patch plus rendered cancel entry. The SPA stores only the active
-context id/model id in session storage and uses it to resubscribe after a reload login; Playwright
-now proves draft text is restored after forced WebSocket reconnect and page reload through the
-broker-backed draft stream. The routed flow now submits a second prompt before the first
-unresolved prompt resolves, asserts the rendered `2 queued prompts` warning, and cancels the
-second canonical prompt id. The per-model browser smoke matrix and
-browser-level frontend pod replacement reconnect coverage have also
-closed. The June 4, 2026 Sprint 7.8 follow-on wires runtime KV-cache
-rebuild/reuse decisions through the engine path and revalidates the
-mounted Linux CPU integration suite against that worktree.
+authorization code for an access token, verifies malformed bearer
+rejection, proves the `/api/objects` handlers mint user-scoped
+upload/download grants from that real JWT, and validates same-user
+routed presigned MinIO PUT/GET byte equality plus cross-user
+object-prefix isolation. The same suite opens `/ws` with the real
+token, verifies a malformed token does not open a browser WebSocket,
+and asserts a tagged `ServerError` for a malformed frame on the valid
+connection. The browser artifact flow completes the app-owned PKCE
+redirect, creates a context, uploads supported browser artifact classes
+through the rendered Artifacts form, and validates bounded text/JSON
+previews, inline image/audio/video routed media URLs, browser-native
+PDF URL wiring, and MIDI / MusicXML / generic-binary download-only
+states. The Chat form sends `ClientSubmitPrompt` with the current
+context's uploaded `ObjectRef`s in `promptUserUploads`; the browser
+sends `ClientHello` to start per-user context/draft streams; the active
+context sends `ClientSubscribeContext`; and Playwright asserts
+context-list snapshots/patches, draft snapshots/upsert/remove patches,
+the outbound prompt frame, and the inbound `ServerConversationPatch`
+append for that prompt. The backend validates `ClientCreateContext`
+model ids against the active generated catalog and returns a typed
+`ServerError` code `unknown-model` for absent ids. The browser flow
+also sends `ClientRenameContext` and `ClientSoftDeleteContext`,
+observes the broker-backed `ServerContextListPatch` upserts, and
+verifies the context rail shows the updated title plus soft-deleted
+state. Upload events return through inbound
+`ConversationUserUploadEvent` append patches and render in the active
+Chat conversation with display name plus MIME type. The browser auth
+layer keeps the Keycloak refresh token in memory, clears local auth
+state on logout, and reconnects the WebSocket after a refresh-token
+grant; Playwright covers logout, same-browser re-login, and
+refresh-triggered `ClientHello` re-auth. The SPA session layer
+reconnects after an unexpected WebSocket close with a generation guard,
+resends `ClientHello`, re-subscribes the active context, and keeps the
+authenticated shell mounted. The Chat projection treats cancel events
+as prompt-resolution events; the browser cancel action sends
+`ClientCancelPrompt` for the latest unresolved server-backed prompt id.
+The SPA stores only the active context id/model id in session storage
+and resubscribes after a reload login; draft text is restored after
+forced WebSocket reconnect and page reload through the broker-backed
+draft stream. The per-model browser smoke matrix and browser-level
+frontend pod replacement reconnect coverage are part of the supported
+E2E surface.
 
 ## Identity and Authentication
 
 The demo's IdP binding is a Keycloak release deployed in the HA cluster
 with its own Patroni Postgres cluster managed by the Percona operator.
 The Keycloak realm is pre-seeded by an in-binary reconcile path on
-`cluster up`. The local demo currently runs one Keycloak application pod
-while the backing Patroni cluster stays HA; multi-pod Keycloak serving is
-held for the Sprint 7.14 proxy-affinity or clustered-cache validation
-pass.
+`cluster up`. The local demo runs one Keycloak application pod
+while the backing Patroni cluster stays HA. Multi-pod Keycloak serving
+is gated on routed proxy-affinity or clustered-cache validation.
 
 - Realm configuration: registration enabled (self-signup), email
   verification disabled, username/password authentication only, public
@@ -268,11 +265,11 @@ Download flow:
 4. Browser renders inline (image/audio/video), opens the browser PDF path,
    renders bounded text/JSON, or initiates a download-only flow.
 
-The May 29, 2026 routed Linux GPU E2E flow validates the backend
-`/api/objects/download` disposition matrix for the supported MIME
-classes and the browser upload/download/render path for bounded text/JSON previews, inline
-image/audio/video media URLs, browser-native PDF URL wiring, and MIDI / MusicXML /
-generic-binary download-only states.
+The routed E2E flow validates the backend `/api/objects/download`
+disposition matrix for the supported MIME classes and the browser
+upload/download/render path for bounded text/JSON previews, inline
+image/audio/video media URLs, browser-native PDF URL wiring, and MIDI /
+MusicXML / generic-binary download-only states.
 
 ## Gating
 
@@ -294,33 +291,32 @@ via the existing `inference.request.<mode>` topic only.
 ## Validation
 
 The demo binding's validation surface lives at
-[../development/demo_app_test_plan.md](../development/demo_app_test_plan.md);
-the surface is split across three sprints:
+[../development/demo_app_test_plan.md](../development/demo_app_test_plan.md)
+and covers three layers:
 
-- **Sprint 7.13 (Unit)** — Haskell unit and property tests for the
-  shared primitives (covered in
+- **Unit** — Haskell unit and property tests for the shared primitives
+  (covered in
   [durable_context_design.md § Validation](durable_context_design.md#validation));
   PureScript `purescript-spec` view-model tests scoped to patch
   application and rendering for the demo's three SPA views; WS envelope
   codec roundtrip across the demo's `WsClientMessage` and
   `WsServerMessage` variants.
-- **Sprint 7.14 (Integration)** — real Pulsar / MinIO / Keycloak
-  round-trips against the demo bindings; producer-dedup verification
-  across simulated dispatcher restart; Failover handoff; cross-user
-  presigned URL negative; chaos tests; multi-user throughput / fan-in
-  batching / fan-out test (N users × K contexts × P prompts on one
-  model) asserting per-context ordering, no duplicates or losses,
-  cross-context independence, batching gain, bounded p95 latency, dedup
-  correctness.
-- **Sprint 7.15 (E2E)** — Playwright flows for auth, context,
-  conversation (including two-in-a-row and cancel), draft, artifact
-  upload/download/render per MIME family, generated-artifact lifecycle,
-  multi-tab convergence, client reconstitution via Browser Context
-  storage-clear, pod-failover-from-browser, plus the **per-model smoke
-  matrix** driven by the active substrate's generated `.dhall` catalog
-  (every non-`Not recommended` row gets one passing flow). The
-  Playwright source is identical across `apple-silicon`, `linux-cpu`,
-  and `linux-gpu`.
+- **Integration** — real Pulsar / MinIO / Keycloak round-trips against
+  the demo bindings; producer-dedup verification across simulated
+  dispatcher restart; Failover handoff; cross-user presigned URL
+  negative; chaos tests; multi-user throughput / fan-in batching /
+  fan-out test (N users × K contexts × P prompts on one model)
+  asserting per-context ordering, no duplicates or losses, cross-context
+  independence, batching gain, bounded p95 latency, dedup correctness.
+- **E2E** — Playwright flows for auth, context, conversation (including
+  two-in-a-row and cancel), draft, artifact upload/download/render per
+  MIME family, generated-artifact lifecycle, multi-tab convergence,
+  client reconstitution via Browser Context storage-clear,
+  pod-failover-from-browser, plus the **per-model smoke matrix** driven
+  by the active substrate's generated `.dhall` catalog (every
+  non-`Not recommended` row gets one passing flow). The Playwright
+  source is identical across `apple-silicon`, `linux-cpu`, and
+  `linux-gpu`.
 
 ## Cross-References
 

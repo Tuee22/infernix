@@ -28,13 +28,14 @@
   scratch kubeconfig under the system temp directory during cluster create or delete and then
   publishing the durable repo-local kubeconfig under `./.build/`
 - current Apple validation evidence is recorded in
-  [../../DEVELOPMENT_PLAN/cohort-validation-waves.md](../../DEVELOPMENT_PLAN/cohort-validation-waves.md).
-  Retired hardware proof points are recorded only in
+  [../../DEVELOPMENT_PLAN/cohort-validation-waves.md](../../DEVELOPMENT_PLAN/cohort-validation-waves.md);
+  the legacy-tracking ledger at
   [../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md](../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md)
-- the May 13, 2026 Apple lifecycle investigation remains the proof point that long waits can still
-  be healthy while the supported path is replaying retained Kind data, building the shared runtime
-  image, publishing it through Harbor, or preloading Harbor-backed images onto the Kind worker;
-  Harbor Docker pushes use readiness-gated bounded retries across transient registry resets
+  records obsolete-surface receipts
+- long waits can be healthy while the supported path is replaying retained Kind data, building
+  the shared runtime image, publishing it through Harbor, or preloading Harbor-backed images
+  onto the Kind worker; Harbor Docker pushes use readiness-gated bounded retries across
+  transient registry resets
 - retained-state Apple reruns may also log a targeted Harbor PostgreSQL replica reinitialization
   from the current Patroni leader when stopped replicas need a fresh base backup after timeline
   advancement; treat that as supported retained-state repair rather than an unexpected failure mode
@@ -113,11 +114,9 @@ Direct reference path:
 - the Apple host-native path describes where the Haskell build, control-plane commands,
   cluster-side coordinator orchestration, and on-host engine executor run. The three-role
   daemon model in [../architecture/daemon_topology.md](../architecture/daemon_topology.md) maps
-  to Apple as: cluster-side `infernix-coordinator` Deployment (landed in Phase 7 Sprint 7.7,
-  replacing the retired `infernix-service` Deployment); on-host `Engine`-role daemon (the
-  on-host `infernix service` process, renamed from `HostDaemon` in Sprint 7.7's vocabulary
-  cutover). `cluster up` adds `infernix-demo` when `demo_ui` is enabled and always deploys
-  the cluster `infernix-coordinator` Deployment
+  to Apple as: cluster-side `infernix-coordinator` Deployment plus on-host `Engine`-role daemon
+  (the `infernix service` process). `cluster up` adds `infernix-demo` when `demo_ui` is enabled
+  and always deploys the cluster `infernix-coordinator` Deployment
 - on `apple-silicon`, the clustered demo and coordinator workloads run from the
   `infernix-linux-cpu:local` image family while reading the staged `apple-silicon` substrate file;
   the coordinator role owns request fan-in and batch handoff, not Apple-native inference
@@ -133,7 +132,7 @@ Direct reference path:
   when the bound engine is Python-native. The engine role enforces the supported uniform
   one-per-node policy via an exclusive `flock(2)` on `./.data/runtime/engine.lock`; a second
   `infernix service` invocation on the same host exits non-zero with a diagnostic naming the
-  PID currently holding the lock
+  PID holding the lock
 - model weights for the host engine come from the `infernix-models` MinIO bucket via the
   same lazy bootstrap workflow the in-cluster Linux engine pods use. The host daemon caches
   weights under `./.data/runtime/model-cache/<modelId>/`; this cache is host-local ephemeral
@@ -173,8 +172,8 @@ layer.
 `clusterWorkloadArchitecture AppleSilicon` returns `"arm64"` in `src/Infernix/Cluster.hs`,
 and every Harbor `docker pull --platform linux/<arch>` and `skopeo copy --override-arch=<arch>`
 invocation reads from that mapping. The chart's MinIO sub-chart uses upstream multi-arch
-images (`minio/minio`, `minio/mc`, `busybox`) — not the retired amd64-only `bitnamilegacy/*`
-packaging. Operators must not enable an emulated Linux lane for Infernix validation, and the Apple
+images (`minio/minio`, `minio/mc`, `busybox`) — not single-architecture amd64-only packaging.
+Operators must not enable an emulated Linux lane for Infernix validation, and the Apple
 workflow must not create or switch Docker contexts or create a Colima VM.
 
 The canonical home for the substrate → container architecture mapping is
@@ -200,7 +199,7 @@ internal wiring is unaffected.
 
 See [../tools/harbor.md](../tools/harbor.md) for the supported Harbor surface and
 [../engineering/docker_policy.md](../engineering/docker_policy.md) for the containerd
-registry-hosts patch the same Sprint 3.11 work landed.
+registry-hosts patch.
 
 ## Cohort Validation Cadence
 

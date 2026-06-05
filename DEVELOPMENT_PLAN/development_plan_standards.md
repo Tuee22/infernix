@@ -268,7 +268,7 @@ Rules:
   `requiredDuringSchedulingIgnoredDuringExecution` pod anti-affinity rule; on Apple silicon
   the engine role runs as the on-host `infernix service` daemon, with the same one-per-node
   rule enforced via an exclusive `flock(2)` on `engine.lock` acquired at daemon startup.
-  Sprint 7.7 of Phase 7 split the retired fused `infernix-service` pod
+  Sprint 7.7 of Phase 7 split the legacy fused `infernix-service` pod
   into role-specific Deployments, removed the previous service-data PVC, introduced
   `coordinator.replicaCount` and `engine.replicaCount` knobs (defaults ≥ 2 for the stateless
   demo-on roles; engine replicas operator-set up to the number of engine-capable nodes), and added
@@ -318,7 +318,7 @@ Rules:
 - On Apple Silicon, operators do not use Compose as a user-facing launcher for ordinary CLI work.
   Host-native routed E2E uses host `npm exec` Playwright fed by the same typed fixture against the
   published localhost edge port and is covered by Apple cohort validation batches. Phase 3 Sprint 3.10
-  (May 24, 2026) retired the previous dedicated `infernix-playwright:local` image and the
+  (the recorded validation) legacy the previous dedicated `infernix-playwright:local` image and the
   `docker compose run --rm playwright` invocation; Linux substrates now run Playwright in-container
   inside the substrate image via `npm --prefix web exec -- playwright test ...`.
 - On Linux CPU, host prerequisites stop at Docker Engine plus the Docker buildx and Compose
@@ -371,7 +371,7 @@ Rules:
 - On `linux-cpu` and `linux-gpu`, the stateless `infernix-coordinator` Deployment reads request
   topics and publishes batch work, while the `infernix-engine` Deployment consumes
   `inference.batch.<mode>`, runs inference, and publishes the result. Sprint 7.7 of Phase 7
-  retired the fused `infernix-service` pod in favor of these role-specific Deployments.
+  legacy the fused `infernix-service` pod in favor of these role-specific Deployments.
 - When phase docs describe multi-node or multi-replica topologies, they must distinguish the
   currently generated values from the chart template's explicit replica and anti-affinity
   knobs. The supported target model uses `coordinator.replicaCount` and `engine.replicaCount`

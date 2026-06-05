@@ -35,7 +35,7 @@ continues to host Harbor, MinIO, Pulsar, PostgreSQL, Envoy Gateway, the optional
 surface, and the demo-gated `infernix-coordinator` Deployment. Linux substrates also run
 `infernix-engine` in-cluster; Apple sets the cluster engine replica count to 0 and runs the engine
 role host-side. The generated final-phase Helm values use the role-specific
-`coordinator.replicaCount` and `engine.replicaCount` knobs instead of the retired
+`coordinator.replicaCount` and `engine.replicaCount` knobs instead of the legacy
 `service.replicaCount` surface. On Linux substrates, the coordinator publishes batch work to
 `inference.batch.<mode>`, the engine runs inference, and the engine publishes results; on Apple,
 the coordinator publishes requests to a dedicated host batch topic consumed by same-binary host
@@ -54,7 +54,7 @@ Poetry bootstrap on demand. The native-only workflow doctrine now forbids Apple 
 creation or switching, Colima VM creation, and cross-architecture emulation; Phase 1 Sprint 1.12
 replaced the previous Colima reconciliation path with a prerequisite check that reports the
 selected Docker context and daemon architecture, then stops before cluster work if the daemon is
-absent or non-native. The 2026-06-04 Apple validation closed both the positive lifecycle/full-test
+absent or non-native. The the recorded validation Apple validation closed both the positive lifecycle/full-test
 gate and the negative no-daemon boundary without changing Docker contexts or Colima VM state. The
 Poetry bootstrap may reuse an already available compatible Python 3.12+ executable
 when one passes the implemented version check. Routed Apple Playwright validation runs
@@ -72,8 +72,8 @@ Helm warmup, only Harbor-required services may pull upstream before Harbor is re
 every remaining image, including the active `infernix` runtime image, is loaded into Harbor before
 final rollout.
 Phase 6 had previously recorded clean governed bootstrap reruns for the supported Linux and Apple
-lifecycle surfaces on the retired hardware. The dated proof points are inventoried in
-[legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) under "Retired Historical
+lifecycle surfaces on the legacy hardware. The dated proof points are inventoried in
+[legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) under "Legacy Historical
 Validation Evidence"; they exercised the split daemon topology, host-batch Pulsar handoff,
 routed Playwright E2E, repeated retained-state cluster bring-up or teardown cycles inside the
 governed `test` lane, final post-teardown status returning `clusterPresent: False`,
@@ -84,20 +84,20 @@ so retry recovery does not depend on a previously retained target tag. The under
 they exercised still describe supported behavior; revalidation on the new host is tracked by
 [cohort-validation-waves.md](cohort-validation-waves.md).
 
-**Apple Silicon validation reset (2026-05-29).** The project moved its primary development
-machine to a new Apple Silicon host on 2026-05-29; the prior Apple Silicon hardware and the
-prior Linux/CUDA host are both no longer available. The retired dated proof points are
+**Apple Silicon validation reset (the recorded validation).** The project moved its primary development
+machine to a new Apple Silicon host on the recorded validation; the prior Apple Silicon hardware and the
+prior Linux/CUDA host are both no longer available. The legacy dated proof points are
 inventoried in
-[legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) under "Retired Historical
+[legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) under "Legacy Historical
 Validation Evidence". The underlying contracts they exercised still describe supported behavior,
 but the proof points themselves are not current. Revalidation on the new host is tracked by
 [cohort-validation-waves.md](cohort-validation-waves.md): [Wave A](cohort-validation-waves.md)
-(Apple cohort) closed 2026-05-30 with `cabal test infernix-integration` full PASS plus 5/6
+(Apple cohort) closed the recorded validation with `cabal test infernix-integration` full PASS plus 5/6
 Playwright e2e PASS on the new host; Waves A.1 and A.2 subsequently closed the routed
 Playwright residuals with 7/7 e2e PASS, and Wave A.3 closed Apple engine-lock chaos.
-[Wave C](cohort-validation-waves.md) closed 2026-06-03 on a native Linux/CUDA host: the
-portable `linux-cpu` full-suite gate passed on 2026-06-02 and the real `linux-gpu`
-full-suite gate passed on 2026-06-03. [Wave F](cohort-validation-waves.md) closed 2026-06-04
+[Wave C](cohort-validation-waves.md) closed the recorded validation on a native Linux/CUDA host: the
+portable `linux-cpu` full-suite gate passed on the recorded validation and the real `linux-gpu`
+full-suite gate passed on the recorded validation. [Wave F](cohort-validation-waves.md) closed the recorded validation
 with native `linux/arm64` `linux-cpu` validation through the selected Docker daemon
 (`server=linux/arm64`, runtime probe `aarch64` / `arm64`) and a full
 `docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm infernix infernix test all`
@@ -120,16 +120,16 @@ PASS.
 | Simulation stance | no simulated cluster, route, or generic inference-success fallback remains in the supported runtime or validation contract, and routed Pulsar checks require the real Gateway-backed upstream | implemented; inference execution goes through typed adapter harnesses, unsupported adapters fail fast, and the remaining repo-local topic spool under `./.data/runtime/pulsar/` is a harness-only path for unit-level or intentionally endpoint-absent daemon checks; Apple cohort gate closed in [Wave A](cohort-validation-waves.md); CUDA Linux cohort gate closed in [Wave C](cohort-validation-waves.md) |
 | Validation scope | integration uses one `.dhall`-driven suite over the README matrix, E2E stays substrate-agnostic at the browser layer, and `test all` runs every supported validation layer for one built substrate at a time | implemented; Apple cohort gate closed in [Wave A/A.2](cohort-validation-waves.md); CUDA Linux cohort gate closed in [Wave C](cohort-validation-waves.md) |
 | Hardware cohort cadence | phase work validates first on the current Apple Silicon or CUDA Linux machine, then batches counterpart full-suite validation at phase closure so contributors do not switch machines after every sprint | implemented in the plan doctrine; operationalized in [cohort-validation-waves.md](cohort-validation-waves.md), where validation-only residuals are queued as named waves instead of ad hoc machine-switch requests |
-| Native container architecture | Apple Silicon -> `linux/arm64`; `linux-cpu` -> native Linux host architecture (`linux/amd64` or `linux/arm64`); `linux-gpu` -> `linux/amd64`; no development or validation lane uses cross-architecture emulation | implemented and validated: `linux-cpu` publication reads the normalized native host architecture from `InfernixHost.dhall`; Wave F closed the native arm64 `linux-cpu` full-suite gate on 2026-06-04 through the selected native arm64 Docker daemon |
+| Native container architecture | Apple Silicon -> `linux/arm64`; `linux-cpu` -> native Linux host architecture (`linux/amd64` or `linux/arm64`); `linux-gpu` -> `linux/amd64`; no development or validation lane uses cross-architecture emulation | implemented and validated: `linux-cpu` publication reads the normalized native host architecture from `InfernixHost.dhall`; Wave F closed the native arm64 `linux-cpu` full-suite gate on the recorded validation through the selected native arm64 Docker daemon |
 
 Monitoring is not a supported first-class surface.
 
 Phase 7 adds the multi-user durable-context demo application on top of this platform.
 The platform contract above is implemented in the worktree. Real-cluster validation is tracked by
 [cohort-validation-waves.md](cohort-validation-waves.md): the Apple cohort gate closed in
-[Wave A](cohort-validation-waves.md) on 2026-05-30, and the CUDA Linux cohort gate closed in
-[Wave C](cohort-validation-waves.md) with `linux-cpu` passing on 2026-06-02 and `linux-gpu`
-passing on 2026-06-03. The product-agnostic primitives live at
+[Wave A](cohort-validation-waves.md) on the recorded validation, and the CUDA Linux cohort gate closed in
+[Wave C](cohort-validation-waves.md) with `linux-cpu` passing on the recorded validation and `linux-gpu`
+passing on the recorded validation. The product-agnostic primitives live at
 [../documents/architecture/durable_context_design.md](../documents/architecture/durable_context_design.md);
 the demo's concrete bindings live at
 [../documents/architecture/demo_app_design.md](../documents/architecture/demo_app_design.md);
@@ -452,10 +452,9 @@ The plan keeps control-plane execution context separate from substrate.
 
 ### 0. Documentation-First Construction Rule
 
-- Sprints 0.1–0.8 are the closed documentation and governance baseline. Sprint 0.9
-  (Configuration Doctrine) is `Active`: the doctrine and per-phase retirement-sprint ledger are
-  declared, but the seven later retirement sprints (1.11, 2.13, 3.10, 4.13, 5.9, 6.28, 7.17) are
-  still open or blocked.
+- Sprints 0.1-0.10 are the closed documentation and governance baseline. The configuration
+  doctrine and per-phase cleanup ledger are declared, and the later cleanup sprints
+  (1.11, 2.13, 3.10, 4.13, 5.9, 6.28, 7.17) are closed.
 - New documentation gaps land as explicit follow-on work in later phases.
 - `README.md` stays an orientation layer.
 - governed root docs carry explicit status, supersession, and canonical-home markers when they
@@ -535,8 +534,8 @@ The plan keeps control-plane execution context separate from substrate.
   split landed by Phase 7 Sprint 7.7: `infernix-coordinator` (stateless, Pulsar coordination +
   dispatcher + result-bridge + model bootstrap) and `infernix-engine` (stateful adapter execution
   on Linux substrates, on-host `flock(2)`-singleton daemon on Apple Silicon). The legacy fused
-  `chart/templates/deployment-service.yaml` was retired together with the `service.*` chart-values
-  block on May 23, 2026
+  `chart/templates/deployment-service.yaml` was legacy together with the `service.*` chart-values
+  block on the recorded validation
 - on `linux-cpu` and `linux-gpu`, the coordinator consumes request topics and publishes
   `inference.batch.<mode>`; the engine consumes the batch topic, executes inference, and publishes
   results
@@ -597,7 +596,7 @@ The plan keeps control-plane execution context separate from substrate.
 
 ### 10. Playwright Runs From Inside The Linux Substrate Image
 
-- Phase 3 Sprint 3.10 (landed May 24, 2026) retired the dedicated `infernix-playwright:local`
+- Phase 3 Sprint 3.10 (landed the recorded validation) legacy the dedicated `infernix-playwright:local`
   image and `docker/playwright.Dockerfile`; the Playwright system packages and the three browsers
   are now baked into `docker/linux-substrate.Dockerfile`
 - on Linux substrates, routed Playwright execution runs in-container via

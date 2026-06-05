@@ -26,69 +26,52 @@
 
 The durable-context surface this test plan covers is implemented over
 [../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md](../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md).
-The validation suites described here land in Sprints 7.13 (unit), 7.14 (integration), and
-7.15 (E2E). Sprint 7.14's WebSocket-to-Pulsar publish plumbing is code-complete as of
-May 27, 2026, and the Linux GPU integration suite now validates the real-cluster
-coordinator-to-engine request -> batch -> result handoff through publication JSON,
-`cluster status`, generated demo config, and the active service runtime loop. As of
-May 28, 2026, the same suite also publishes and reads real Pulsar records for the
-conversation, compacted contexts, compacted drafts, and bootstrap-ready topic families,
-including broker message-key assertions for the compacted and bootstrap-ready records. The same
-Linux GPU validation now reads the `infernix/demo` compaction threshold from Pulsar admin,
-explicitly compacts the contexts and drafts topics, and uses a Java Pulsar client compacted
-reader to prove one latest record per `contextId`. The suite also publishes duplicate frontend
-conversation and draft messages with the same mutation-scoped producer name and WebSocket
-`initialSequenceId`-backed sequence id, then proves the broker stores exactly one message for each
-duplicate set. It now also drives a real durable-context prompt through the dispatcher,
-request/batch handoff, engine, result bridge, and conversation-log writeback, proving the normal
-non-chaos path end to end on Linux GPU. As of 2026-06-02, the LinuxCpu integration suite also
-contains the code-side Wave C chaos and throughput block: two-worker CPU Kind topology,
-two engine replicas, frontend/coordinator/engine pod replacement checks, engine node drain,
-model-bootstrap deduplication across coordinator replacement, Linux engine anti-affinity, and a
-compact multi-user durable prompt throughput matrix. The mounted `test:infernix-integration`
-compile gate passes, and the native `linux-cpu` `infernix test all` gate passed on 2026-06-02;
-`linux-gpu` `infernix test all` validation passed on 2026-06-03. Sprint 7.15's
-top-level PureScript shell now
-mounts the durable-context Chat and Artifacts renderers
-instead of the retired Workbench form, and the minimal routed SPA/publication Playwright smoke
-passed on the clean rebuilt Linux GPU launcher May 28, 2026. The routed Keycloak browser
-self-registration smoke now reaches `/auth`, creates a fresh account without email
-verification, and returns to the SPA with an OIDC authorization code on the same clean rebuilt
-Linux GPU launcher. The routed Playwright suite now also exchanges that code for a real access
-token, proves malformed bearer rejection on `/api/objects/upload`, proves the backend accepts
-the real token for scoped `/api/objects` upload/download grant minting, then PUTs and GETs bytes
-through the routed presigned MinIO URLs with exact content equality. The same routed suite now
-opens `/ws` with a real Keycloak access token and verifies a malformed token does not open a
-browser WebSocket; the same valid connection returns a tagged `ServerError` for a malformed frame.
-The same suite also registers a second Keycloak user for the same context id and display name,
-proves the second user's grant points at a distinct `users/<sub>/...` prefix, observes `404`
-before the second user uploads, then verifies each user reads only that user's bytes by default.
-It also validates the routed `/api/objects/download` render-disposition matrix for inline
-image/audio/video, browser-native PDF, bounded JSON/text preview, and download-only MIDI /
-MusicXML / generic-binary grants. The browser artifact flow now starts from the routed SPA login
-button, completes the app-owned PKCE redirect through Keycloak self-registration, creates a
-context, uploads supported browser artifact classes through the rendered Artifacts form, and
-validates bounded text/JSON previews, inline image/audio/video routed media URLs,
-browser-native PDF URL wiring, and MIDI / MusicXML / generic-binary download-only states through
-routed presigned grants.
-The 2026-06-03 `linux-gpu` routed Playwright run passed the per-model smoke matrix across all 16
-active LinuxGpu catalog rows, and the final rebuilt-image full gate completed the matrix in 2.2
-minutes. The same final full gate passed the durable-context browser flow with frontend pod
-replacement: the test deletes all `infernix-demo` pods, waits for replacements, verifies reconnect
-plus active-context resubscribe, and submits another prompt. The 2026-06-03 residual sweep adds
-startup MinIO bucket repair, real wrong-realm Keycloak token rejection for `/api/objects` and
-`/ws`, throughput matrix parameterization, and extracted Playwright artifact fixtures under
-`web/test/fixtures/artifactSamples.js`. Those residual changes passed the rebuilt-image
-`linux-gpu` full gate on 2026-06-03 against launcher image digest
-`sha256:521a56ac6f79bf1ce5bc9d7dcd9c872e897ce4b4882661d4ada2f62faa108d7b`; the resumed
-rebuilt-image `linux-cpu` full gate passed on 2026-06-03 against launcher image digest
-`sha256:dc0c003e7cc2f2e359a474fa5ddb522c8715d271e322534db7798f260e9747fa` with full
-integration and routed Playwright E2E (7/7).
+The integration suite validates the real-cluster coordinator-to-engine request → batch →
+result handoff through publication JSON, `cluster status`, generated demo config, and the
+active service runtime loop; publishes and reads real Pulsar records for the conversation,
+compacted contexts, compacted drafts, and bootstrap-ready topic families, including broker
+message-key assertions for the compacted and bootstrap-ready records; reads the `infernix/demo`
+compaction threshold from Pulsar admin, explicitly compacts the contexts and drafts topics, and
+uses a Java Pulsar client compacted reader to prove one latest record per `contextId`; publishes
+duplicate frontend conversation and draft messages with the same mutation-scoped producer name
+and WebSocket `initialSequenceId`-backed sequence id and proves the broker stores exactly one
+message for each duplicate set; and drives a real durable-context prompt through the
+dispatcher, request/batch handoff, engine, result bridge, and conversation-log writeback. The
+LinuxCpu integration suite carries the chaos and throughput block: two-worker CPU Kind
+topology, two engine replicas, frontend/coordinator/engine pod replacement checks, engine node
+drain, model-bootstrap deduplication across coordinator replacement, Linux engine
+anti-affinity, and a compact multi-user durable prompt throughput matrix. The top-level
+PureScript shell mounts the durable-context Chat and Artifacts renderers. The routed Keycloak
+browser self-registration smoke reaches `/auth`, creates an account without email verification,
+and returns to the SPA with an OIDC authorization code. The routed Playwright suite exchanges
+that code for a real access token, proves malformed bearer rejection on
+`/api/objects/upload`, proves the backend accepts the real token for scoped `/api/objects`
+upload/download grant minting, then PUTs and GETs bytes through the routed presigned MinIO URLs
+with exact content equality. The suite opens `/ws` with a real Keycloak access token and
+verifies a malformed token does not open a browser WebSocket; the valid connection returns a
+tagged `ServerError` for a malformed frame. The suite registers a second Keycloak user for the
+same context id and display name, proves the second user's grant points at a distinct
+`users/<sub>/...` prefix, observes `404` before the second user uploads, then verifies each
+user reads only that user's bytes by default. It also validates the routed
+`/api/objects/download` render-disposition matrix for inline image/audio/video, browser-native
+PDF, bounded JSON/text preview, and download-only MIDI / MusicXML / generic-binary grants. The
+browser artifact flow starts from the routed SPA login button, completes the app-owned PKCE
+redirect through Keycloak self-registration, creates a context, uploads supported browser
+artifact classes through the rendered Artifacts form, and validates bounded text/JSON previews,
+inline image/audio/video routed media URLs, browser-native PDF URL wiring, and MIDI / MusicXML
+/ generic-binary download-only states through routed presigned grants. The routed Playwright
+run passes the per-model smoke matrix across every active catalog row; the full gate also
+covers the durable-context browser flow with frontend pod replacement: the test deletes all
+`infernix-demo` pods, waits for replacements, verifies reconnect plus active-context
+resubscribe, and submits another prompt. The startup MinIO bucket repair, real wrong-realm
+Keycloak token rejection for `/api/objects` and `/ws`, throughput matrix parameterization, and
+extracted Playwright artifact fixtures under `web/test/fixtures/artifactSamples.js` are part of
+the supported surface.
 
 ## Unit Layer
 
-Lands in Sprint 7.13. Additions to the existing `infernix-unit` Cabal stanza and the
-PureScript `purescript-spec` suite under `web/test/`.
+The unit layer runs through the `infernix-unit` Cabal stanza and the PureScript
+`purescript-spec` suite under `web/test/`.
 
 - **Reducer property tests.** Determinism over arbitrary `ConversationEvent` logs; idempotency
   dedup; cancellation semantics; two-prompt-in-a-row ordering; equivalence of state-snapshot
@@ -120,9 +103,9 @@ PureScript `purescript-spec` suite under `web/test/`.
 
 ## Integration Layer
 
-Owned by Sprint 7.14. Additions to the existing `infernix-integration` Cabal stanza.
+The integration layer runs through the `infernix-integration` Cabal stanza.
 
-Implemented as of May 28, 2026:
+Coverage:
 
 - **Linux GPU coordinator-to-engine handoff.** The integration suite asserts routed
   publication JSON reports the active `hostInferenceBatchTopic`, `cluster status` reports
@@ -132,7 +115,7 @@ Implemented as of May 28, 2026:
 - **Linux GPU service-loop round-trip.** The same run exercises cluster up, routed API
   probes, per-model inference, cache lifecycle, service runtime loop, and clean cluster down
   from the rebuilt CUDA launcher image.
-- **Durable Pulsar topic-family round-trip.** The May 28, 2026 Linux GPU integration run
+- **Durable Pulsar topic-family round-trip.** The integration suite
   publishes `ClientCreateContext`, `ClientUpdateDraft`, `ClientCancelPrompt`, and a raw
   `ModelBootstrapReadyEvent`, reads them back with Pulsar Readers, asserts the compacted
   contexts/drafts keys are `contextId`, asserts the bootstrap-ready key is `modelId`, asserts
@@ -151,84 +134,62 @@ Implemented as of May 28, 2026:
   `ConversationInferenceResultEvent` appears on the real conversation log after the coordinator
   contexts consumer hydrates `ContextModelMap` and the dispatcher -> request/batch -> engine ->
   result-bridge path runs.
-- **LinuxCpu durable-context chaos block.** The 2026-06-02 code-side landing renders the
-  `linux-cpu` validation topology with two workers and two engine replicas, then validates
-  frontend pod replacement, coordinator pod replacement, engine pod replacement, engine node
-  drain, model-bootstrap request/ready-event deduplication across coordinator replacement, and
-  engine anti-affinity. Each prompt-oriented case asserts completed conversation writeback plus
-  exactly-one request/batch/result/conversation-result broker counts.
-- **Compact multi-user throughput.** The same code-side landing submits the default
-  `ThroughputMatrix` (3 users x 2 contexts x 2 prompts) through the durable prompt path, asserts
-  exact per-context prompt/result counts with no extras, and reports p95 completion latency for
-  the full-suite smoke gate. The suite also exposes
-  `validateMultiUserDurablePromptThroughputWith` so larger matrices can run without changing the
-  test body.
-
-Latest Sprint 7.8 validation:
-
-- **Runtime KV-cache path.** On 2026-06-04, mounted Linux CPU
-  validation passed `cabal build all`, `cabal test infernix-unit`,
-  `cabal test infernix-haskell-style`, and `cabal test
-  infernix-integration` against the worktree that wires
-  `Infernix.Runtime.KVCache` through `executeInferenceWithKVCache`.
-  Unit coverage asserts native-runtime rebuild, reuse, and divergent
-  prefix rebuild behavior; integration revalidated durable dispatcher,
-  engine pod replacement, engine node drain, exact broker counts,
-  throughput, platform recovery, production-shape deployment, and clean
-  teardown.
-
-Resolved residual validation:
-
-- **Rebuilt-image CPU residual validation.** The wrong-realm Keycloak token negatives and
-  throughput matrix parameterization passed both rebuilt-image residual gates: `linux-gpu` on
-  2026-06-03 against digest
-  `sha256:521a56ac6f79bf1ce5bc9d7dcd9c872e897ce4b4882661d4ada2f62faa108d7b`, and `linux-cpu`
-  on 2026-06-03 against digest
-  `sha256:dc0c003e7cc2f2e359a474fa5ddb522c8715d271e322534db7798f260e9747fa`.
+- **LinuxCpu durable-context chaos block.** The `linux-cpu` validation topology renders with
+  two workers and two engine replicas, and the suite validates frontend pod replacement,
+  coordinator pod replacement, engine pod replacement, engine node drain, model-bootstrap
+  request/ready-event deduplication across coordinator replacement, and engine anti-affinity.
+  Each prompt-oriented case asserts completed conversation writeback plus exactly-one
+  request/batch/result/conversation-result broker counts.
+- **Compact multi-user throughput.** The suite submits the default `ThroughputMatrix`
+  (3 users x 2 contexts x 2 prompts) through the durable prompt path, asserts exact per-context
+  prompt/result counts with no extras, and reports p95 completion latency for the full-suite
+  smoke gate. The suite also exposes `validateMultiUserDurablePromptThroughputWith` so larger
+  matrices can run without changing the test body.
+- **Runtime KV-cache path.** `Infernix.Runtime.KVCache` flows through
+  `executeInferenceWithKVCache`. Unit coverage asserts native-runtime rebuild, reuse, and
+  divergent prefix rebuild behavior; integration covers durable dispatcher, engine pod
+  replacement, engine node drain, exact broker counts, throughput, platform recovery,
+  production-shape deployment, and clean teardown.
 
 ## E2E Layer
 
-Lands in Sprint 7.15. Linux Playwright suites run inside the substrate image with
+Linux Playwright suites run inside the substrate image with
 `npm --prefix web exec -- playwright test`; Apple host-native E2E uses host `npm exec` with the
-same typed fixture and is covered by the Apple cohort validation batch.
+same typed fixture.
 
-Current partial landing: `web/src/Main.purs` and `web/src/index.html` mount the durable-context
-Chat and Artifacts panes. The May 28, 2026 clean rebuilt Linux GPU
-`infernix test e2e` run passed the minimal routed smoke that checks the typed Playwright
-fixture, `/api/publication`, `/api/demo-config`, `/api/models` parity, and the routed SPA
-root heading. A same-day follow-on added a routed Keycloak self-registration smoke that verifies
-the `/auth` browser surface, fresh account creation without email verification, and OIDC
-authorization-code redirect back to the SPA. A later follow-on exchanges that code through the
-routed token endpoint and validates `/api/objects` with both malformed and real bearer tokens,
-proving JWT-backed grant minting and per-user object-key scoping; it then PUTs bytes through the
-minted routed MinIO upload URL, GETs them through the minted download URL, and asserts exact
-content equality. The same suite opens `/ws` with the real token and verifies a malformed token
-does not open a browser WebSocket; it also verifies a token minted from the Keycloak admin realm
-does not open `/ws`, and the same wrong-realm token receives `401` from `/api/objects/upload`. It
-also sends a malformed frame on the valid connection and asserts the tagged `ServerError`. The
-object-grant flow also registers a second user, proves the
-same context/display name maps to that second user's prefix, gets `404` before the second upload,
-then verifies each user's grant reads that user's own bytes. The same object-grant flow validates
-the server-side download-grant render disposition for image, audio, video, PDF, JSON, text, MIDI,
-MusicXML, and generic binary MIME cases. The browser artifact flow covers the app-owned PKCE login
-path, local context creation, bounded text/JSON previews, inline image/audio/video media URL
-wiring, browser-native PDF URL wiring, and MIDI / MusicXML / generic-binary download-only states.
-The canonical browser artifact payloads now live in
-`web/test/fixtures/artifactSamples.js` and are imported by the Playwright suite.
-The same browser flow now asserts the initial `ClientHello`, inbound context-list and draft
-snapshots, context-create `ServerContextListPatch`, draft-upsert `ServerDraftMapPatch`, prompt
-submit `ClientSubmitPrompt.promptUserUploads`, inbound prompt `ServerConversationPatch`, and
-draft-remove `ServerDraftMapPatch` after submit clears the durable draft. It also force-closes
-the live WebSocket, verifies `ClientHello` and active `ClientSubscribeContext` are resent,
-observes a fresh `ServerConversationSnapshot`, and submits another prompt through the reconnected
-socket. The same flow now clicks the browser cancel control for the canonical prompt id from the
-prompt append patch, asserts outbound `ClientCancelPrompt`, observes the inbound
-`ConversationCancelEvent` append patch, and verifies the rendered cancel entry.
-The same browser flow now keeps only the active context id/model id in browser session storage,
-asserts an in-progress draft returns after forced WebSocket reconnect, reloads the page, signs in
-again through Keycloak, observes the restored `ClientSubscribeContext`, and verifies the broker
-draft replay restores the textarea value.
-The flows below are still the Sprint 7.15 closure target.
+`web/src/Main.purs` and `web/src/index.html` mount the durable-context Chat and Artifacts panes.
+`infernix test e2e` runs a routed smoke that checks the typed Playwright fixture,
+`/api/publication`, `/api/demo-config`, `/api/models` parity, and the routed SPA root heading.
+The routed Keycloak self-registration smoke verifies the `/auth` browser surface, account
+creation without email verification, and OIDC authorization-code redirect back to the SPA. The
+suite exchanges that code through the routed token endpoint and validates `/api/objects` with
+both malformed and real bearer tokens, proving JWT-backed grant minting and per-user object-key
+scoping; it PUTs bytes through the minted routed MinIO upload URL, GETs them through the minted
+download URL, and asserts exact content equality. The suite opens `/ws` with the real token and
+verifies a malformed token does not open a browser WebSocket; a token minted from the Keycloak
+admin realm does not open `/ws`, and the same wrong-realm token receives `401` from
+`/api/objects/upload`. A malformed frame on the valid connection yields the tagged `ServerError`.
+The object-grant flow registers a second user, proves the same context/display name maps to that
+second user's prefix, gets `404` before the second upload, then verifies each user's grant reads
+that user's own bytes. The object-grant flow validates the server-side download-grant render
+disposition for image, audio, video, PDF, JSON, text, MIDI, MusicXML, and generic binary MIME
+cases. The browser artifact flow covers the app-owned PKCE login path, local context creation,
+bounded text/JSON previews, inline image/audio/video media URL wiring, browser-native PDF URL
+wiring, and MIDI / MusicXML / generic-binary download-only states. The canonical browser
+artifact payloads live in `web/test/fixtures/artifactSamples.js` and are imported by the
+Playwright suite. The browser flow asserts the initial `ClientHello`, inbound context-list and
+draft snapshots, context-create `ServerContextListPatch`, draft-upsert `ServerDraftMapPatch`,
+prompt submit `ClientSubmitPrompt.promptUserUploads`, inbound prompt `ServerConversationPatch`,
+and draft-remove `ServerDraftMapPatch` after submit clears the durable draft. The flow
+force-closes the live WebSocket, verifies `ClientHello` and active `ClientSubscribeContext` are
+resent, observes a fresh `ServerConversationSnapshot`, and submits another prompt through the
+reconnected socket. The flow clicks the browser cancel control for the canonical prompt id from
+the prompt append patch, asserts outbound `ClientCancelPrompt`, observes the inbound
+`ConversationCancelEvent` append patch, and verifies the rendered cancel entry. The flow keeps
+only the active context id/model id in browser session storage, asserts an in-progress draft
+returns after forced WebSocket reconnect, reloads the page, signs in again through Keycloak,
+observes the restored `ClientSubscribeContext`, and verifies the broker draft replay restores
+the textarea value.
 
 - **Auth lifecycle.** Login; logout; re-login with same credentials; JWT refresh. Signup,
   authorization-code redirect, token exchange, backend `/api/objects` JWT acceptance, and routed
@@ -242,7 +203,7 @@ The flows below are still the Sprint 7.15 closure target.
   the outbound `ClientCreateContext`, observes the context-create patch from the broker-backed
   stream, and verifies the active context rail preserves that model id. It also sends
   `ClientRenameContext` and `ClientSoftDeleteContext`, observes the broker-backed
-  `ServerContextListPatch` upserts, and verifies the active context rail shows the renamed title
+  `ServerContextListPatch` upserts, and verifies the active context rail shows the updated title
   plus soft-deleted state. The backend `ContextModelMap` path is covered by integration, and the
   routed WebSocket test now sends an absent catalog model id and asserts typed `ServerError` code
   `unknown-model`.
@@ -295,7 +256,7 @@ The flows below are still the Sprint 7.15 closure target.
 
 ## Per-Model Smoke Matrix
 
-Lands in Sprint 7.15 as a parameterized Playwright flow.
+The per-model smoke matrix is a parameterized Playwright flow.
 
 - Reads the active substrate's generated `.dhall` catalog — the same source the SPA uses.
 - Iterates every catalog entry whose engine cell for the active substrate is not
@@ -327,9 +288,8 @@ Lands in Sprint 7.15 as a parameterized Playwright flow.
 
 ## Multi-User Throughput / Fan-In Batching / Fan-Out Test
 
-Lands in Sprint 7.14 as `Infernix.Test.Integration.Throughput`. Real-cluster assertion that
-the inference pipeline behaves correctly under concurrent load from multiple users on the
-same model.
+`Infernix.Test.Integration.Throughput` is the real-cluster assertion that the inference
+pipeline behaves correctly under concurrent load from multiple users on the same model.
 
 Ordinary full-suite defaults:
 

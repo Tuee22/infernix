@@ -59,7 +59,7 @@ image, including the active runtime image, into Harbor after Harbor is responsiv
 `infernix-substrate.dhall` writes are atomic so concurrent status readers do not observe truncated
 payloads, and retained-state Apple reruns automatically reinitialize stopped Harbor PostgreSQL
 replicas from the current Patroni leader when timeline drift leaves replicas unready after
-promotion. Retired lifecycle proof points are inventoried in
+promotion. Legacy lifecycle proof points are inventoried in
 [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) rather than repeated in the
 current phase narrative. The storage doctrine, Helm rollout, Harbor-first image flow,
 retained-state replay, and lifecycle-progress
@@ -405,13 +405,13 @@ distinguish real failure from ongoing first-run progress.
 
 - a cold `./bootstrap/apple-silicon.sh up` surfaces the image-build, Harbor-publication, and
   Harbor-backed final-image preload phases explicitly while it is still making forward progress
-- the May 17, 2026 Apple lifecycle output had recorded the broad pre-Harbor support-image preload
+- the the recorded validation Apple lifecycle output had recorded the broad pre-Harbor support-image preload
   phase as skipped and then verified or loaded Harbor-backed final image refs before rollout; that
-  output was produced on the retired Apple Silicon hardware and no longer counts as a current
+  output was produced on the legacy Apple Silicon hardware and no longer counts as a current
   proof point
-- the May 15, 2026 supported Apple lifecycle rerun had exercised the large Pulsar image
+- the the recorded validation supported Apple lifecycle rerun had exercised the large Pulsar image
   publication path through Harbor, retained-state replay, split-daemon inference, and final
-  teardown after the bounded Docker-push retry hardening; that rerun was also on the retired
+  teardown after the bounded Docker-push retry hardening; that rerun was also on the legacy
   Apple Silicon hardware and no longer counts as a current proof point
 - `./bootstrap/apple-silicon.sh down` surfaces the retained-state replay phase before Kind
   deletion when the Apple worker still owns durable cluster data
@@ -506,22 +506,22 @@ Make bootstrap scripts narrow stage-0 launchers and move lifecycle responsibilit
   bootstrap/lib/common.sh` passes for the narrowed launcher scripts
 - `cabal build all` passes with binary-owned substrate preflight, Harbor-first publication, and
   retained-state repair changes
-- on May 17, 2026, `./bootstrap/apple-silicon.sh doctor`, `build`, `up`, `status`, `test`,
-  `down`, and final `status` had passed on the retired Apple Silicon hardware with the shell
+- on the recorded validation, `./bootstrap/apple-silicon.sh doctor`, `build`, `up`, `status`, `test`,
+  `down`, and final `status` had passed on the legacy Apple Silicon hardware with the shell
   script building the host binary and delegating lifecycle commands to `./.build/infernix`;
   that proof point no longer counts as current evidence
-- the May 17, 2026 Apple `up` and `test all` output had shown `preload-bootstrap-images`
+- the the recorded validation Apple `up` and `test all` output had shown `preload-bootstrap-images`
   skipping broad pre-Harbor support-image preload and then publishing and verifying Harbor-backed
-  image refs before final rollout on the retired hardware; this is no longer a current proof
+  image refs before final rollout on the legacy hardware; this is no longer a current proof
   point
-- the May 17, 2026 Apple `test` lane had passed Haskell style, Haskell unit, PureScript unit,
+- the the recorded validation Apple `test` lane had passed Haskell style, Haskell unit, PureScript unit,
   Haskell integration, routed Playwright E2E, split-daemon Apple inference, and repeated internal
-  retained-state cluster `down` or `up` cycles on the retired hardware; this is no longer a
+  retained-state cluster `down` or `up` cycles on the legacy hardware; this is no longer a
   current proof point
-- final May 17, 2026 Apple `status` after explicit bootstrap `down` had reported
+- final the recorded validation Apple `status` after explicit bootstrap `down` had reported
   `clusterPresent: False`, `lifecycleStatus: idle`, and `lifecyclePhase: cluster-absent`, with
   retained `./.build/`, `./.data/`, local images, and the Apple host binary still present, on
-  the retired hardware; this is no longer a current proof point
+  the legacy hardware; this is no longer a current proof point
 - Apple cohort validation closed in Wave A; CUDA Linux validation closed in Wave C with full
   `linux-cpu` and `linux-gpu` gates.
 
@@ -563,40 +563,40 @@ materialized in Phase 1 Sprint 1.11.
 
 - `cabal build all` clean, `infernix test lint` clean.
 - `grep -rEn '\bproc "(docker|kubectl|helm|kind)"' src/Infernix/Cluster.hs src/Infernix/Cluster/` returns zero matches.
-- May 27, 2026 (retired hardware): `env -i /usr/bin/bash ./bootstrap/linux-gpu.sh build` had
+- the recorded validation (legacy hardware): `env -i /usr/bin/bash ./bootstrap/linux-gpu.sh build` had
   passed, then `env -i /usr/bin/bash ./bootstrap/linux-gpu.sh up` had reached
   `cluster up complete`, and `env -i /usr/bin/bash ./bootstrap/linux-gpu.sh status` had reported
-  `lifecyclePhase: steady-state`. That proof point was produced on the retired Linux/CUDA host
+  `lifecyclePhase: steady-state`. That proof point was produced on the legacy Linux/CUDA host
   and no longer counts as current evidence; CUDA Linux cohort rerun closed in Wave C.
-- May 27, 2026 (retired hardware): `src/Infernix/Engines/AppleSilicon.hs` stopped importing
+- the recorded validation (legacy hardware): `src/Infernix/Engines/AppleSilicon.hs` stopped importing
   `System.Environment.getEnvironment`; the setup invocation now passes `--install-root`
   explicitly and uses an empty `env = Just []` process environment. `cabal build all`,
-  `cabal test infernix-unit`, and `cabal test infernix-haskell-style` had passed on the retired
+  `cabal test infernix-unit`, and `cabal test infernix-haskell-style` had passed on the legacy
   Linux host. The Apple host cohort cannot exercise `Engines/AppleSilicon.hs` until Apple cohort
   validation closed in Wave A on the new Apple Silicon host.
 
 ### Remaining Work
 
-Env-side retirement landed (May 25, 2026):
+Env-side retirement landed (the recorded validation):
 
-- **`INFERNIX_HOST_KIND_ROOT` retired in `src/Infernix/Cluster.hs.resolveHostKindRoot`.**
+- **`INFERNIX_HOST_KIND_ROOT` legacy in `src/Infernix/Cluster.hs.resolveHostKindRoot`.**
   The supported `Paths.kindRoot` field is already derived from
   `HostConfig.hostFilesystem.hostKindRoot` in
   `Infernix.Config.discoverPaths`, so `resolveHostKindRoot` now flows
   through `resolveHostRepoPath paths (kindRuntimeRoot paths runtimeMode)`
   without consulting `lookupEnv`.
-- **`INFERNIX_HOST_REPO_ROOT` retired in `Cluster.hs.resolveHostRepoRoot`
+- **`INFERNIX_HOST_REPO_ROOT` legacy in `Cluster.hs.resolveHostRepoRoot`
   and `kindUsesHostBindMounts`.** Both now read
   `HostConfig.hostFilesystem.hostRepoRoot` indirectly via
   `Paths.repoRoot` and the typed `Config.controlPlaneContext paths`
   check; the env-var consultation is deleted.
-- **`HOSTNAME` env retired in `Cluster.hs.currentLauncherContainerName`.**
+- **`HOSTNAME` env legacy in `Cluster.hs.currentLauncherContainerName`.**
   The supported in-container hostname discovery now reads
   `/etc/hostname` directly (Docker writes the container id there at
   startup); the `hostname` binary stays as the fallback path. New
   helper `readEtcHostnameMaybe` provides the typed file-backed
   alternative.
-- **`getEnvironment` whole-env captures retired in
+- **`getEnvironment` whole-env captures legacy in
   `Cluster.hs.runCommandWithInput`, `Cluster.hs.tryCommand`, and
   `ProcessMonitor.hs.tryCommandMonitored`.** Each now derives the
   subprocess `PATH` from the staged host manifest's `toolPaths.*`
@@ -613,7 +613,7 @@ Env-side retirement landed (May 25, 2026):
   prior hardcoded-only PATH constant
   (`/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`)
   was insufficient on Apple Silicon because Homebrew installs at
-  `/opt/homebrew/bin`, and was surfaced by the 2026-05-29 Apple
+  `/opt/homebrew/bin`, and was surfaced by the the recorded validation Apple
   cohort rerun (`kind get clusters` failed with "exec: docker:
   executable file not found in $PATH"). The manifest-derived PATH
   helper fixed it without re-introducing env-var consumption.
@@ -621,7 +621,7 @@ Env-side retirement landed (May 25, 2026):
   `src/Infernix/Cluster.hs`) now passes `-m 30` to `curl`** so the
   bounded 60-attempt × 5s retry loop actually surfaces a typed
   "Harbor registry never became ready" error within ~30 minutes
-  when the host-side NodePort target is unreachable. The 2026-05-29
+  when the host-side NodePort target is unreachable. The the recorded validation
   Apple cohort rerun surfaced an indefinite hang when an unrelated
   host process (a VSCode Helper plugin worker) was squatting on
   `127.0.0.1:30002`, leaving the `cluster up` Harbor publication
@@ -631,7 +631,7 @@ Env-side retirement landed (May 25, 2026):
   port-discovery contract used for the edge port (Section O) is a
   Phase 3 / Phase 7 follow-on so the supported cluster lifecycle
   remains operator-environment-agnostic.
-- **`engineCommandOverridesFromEnvironment` retired.** The Sprint 4.13
+- **`engineCommandOverridesFromEnvironment` legacy.** The Sprint 4.13
   chart no longer renders per-binding `INFERNIX_ENGINE_COMMAND_*` env
   entries, so `Cluster.hs.writeHelmValuesFile` passes an empty
   override list to `renderHelmValues`. Engine command overrides now
@@ -649,7 +649,7 @@ Env-side retirement landed (May 25, 2026):
   `linuxOuterContainerUnitTestFixture` `HostConfig.hostRepoRoot`
   field directly; the assertion compares against the typed fixture's
   `realRepoRoot` instead.
-- **`Engines/AppleSilicon.hs` `getEnvironment` capture retired
+- **`Engines/AppleSilicon.hs` `getEnvironment` capture legacy
   (code-side).** The host setup entrypoint invocation now matches the
   supported Python worker setup path: Poetry virtualenv placement is
   owned by `python/poetry.toml`, the adapter install root is passed as
@@ -692,7 +692,7 @@ honest):
   `docker` and `skopeo` paths through `HarborPublishOptions`, so the
   multi-arch `skopeo copy` fallback is covered by the same manifest
   inventory.
-- **Sprint 2.13 follow-on lifecycle fixes landed 2026-05-29 during the
+- **Sprint 2.13 follow-on lifecycle fixes landed the recorded validation during the
   Apple cohort revalidation.** Cross-listed with Phase 3 Sprint 3.11.
   Five Apple-Silicon-surfaced lifecycle bugs landed in code:
   - `clusterSubprocessBaseEnvFor` and `processMonitorBaseEnvFor` derive
@@ -721,9 +721,9 @@ honest):
     through pipes; previously the GHC default block-buffered stdout
     hid all phase output when the binary was invoked through a tee or
     background-launcher wrapper.
-- **Clean-env `linux-gpu` lifecycle validation passed on retired hardware
-  May 27, 2026; current-host validation closed in Wave C.**
-  On the retired Linux/CUDA host,
+- **Clean-env `linux-gpu` lifecycle validation passed on legacy hardware
+  the recorded validation; current-host validation closed in Wave C.**
+  On the legacy Linux/CUDA host,
   `env -i /usr/bin/bash ./bootstrap/linux-gpu.sh build` rebuilt
   `infernix-linux-gpu:local`, and the follow-on clean-env `up`
   completed after Harbor image publication and final routed workload
@@ -736,7 +736,7 @@ honest):
   causing `docker login localhost:30002` to fail); removing that bind
   mount restored the documented two-bind-mount compose contract and
   the rerun reached steady state. The fix landed in the worktree, but
-  the May 27, 2026 proof point is on the retired hardware and no
+  the the recorded validation proof point is on the legacy hardware and no
   longer counts as current evidence. CUDA Linux cohort rerun closed
   in Wave C on the native Linux/CUDA host.
 
@@ -745,8 +745,8 @@ honest):
 ## Remaining Work
 
 None. Sprints 2.1–2.13 are `Done`. Sprint 2.13 closed the env reads and HostTool routing:
-5 env reads retired in `Cluster.hs`, 1 `getEnvironment` retired in `ProcessMonitor.hs`, the
-Apple setup `getEnvironment` capture retired in `Engines/AppleSilicon.hs`,
+5 env reads legacy in `Cluster.hs`, 1 `getEnvironment` legacy in `ProcessMonitor.hs`, the
+Apple setup `getEnvironment` capture legacy in `Engines/AppleSilicon.hs`,
 `engineCommandOverridesFromEnvironment` deleted, supporting unit-test fixture rewired, shared
 cluster command helpers resolve known tools through the staged host manifest, and
 `Cluster/PublishImages.hs` receives resolved `docker` + `skopeo` commands through

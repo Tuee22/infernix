@@ -15,33 +15,30 @@
 Phase 6 closes around the validation entrypoints, routed coverage, governed-root-document
 metadata closure, structured CLI-registry closure, route-hardening cleanup, supported bootstrap
 lifecycle fixes, false-negative doctrine, Harbor publication retry closure, daemon-role split,
-and real Dhall substrate codec implemented in the current worktree. Sprints 6.1–6.28 are `Done`
+and real Dhall substrate codec implemented in the current worktree. Sprints 6.1-6.30 are `Done`
 after Apple cohort validation in Waves A/A.1/A.2/A.3 and CUDA Linux cohort validation in Wave C.
 The supported test story is substrate-specific in code. Sprint 6.25 closes around the implemented split topology: cluster daemons
 always run, Apple cluster daemons own request-topic consumption and host-batch handoff, Apple
 inference work moves through Pulsar to same-binary host daemons, and publication distinguishes
 cluster daemon location from inference executor location. Sprint 6.26 closes the lifecycle-warning
 cleanup: warning classification is documented, buildx support inside the Linux substrate image is
-implemented, the PureScript compiler now bypasses the deprecated npm installer, Spago's deprecated
-`glob@11` transitive dependency is overridden to `glob@13`, and Poetry installs through an
-image-local virtual environment. The Linux substrate also suppresses npm update notices and leaves
-GHCup shell-profile adjustment disabled; the remaining upstream GHCup no-update message is
-documented as an idempotent installer no-op, and the upstream PATH advice is accepted only because
-the Dockerfile owns `PATH` and the pinned toolchain succeeds. The May 19, 2026 governed
-`linux-gpu` lifecycle rerun and the May 27, 2026 Linux E2E rerun had originally validated the
-cleanup work; both were performed on the retired Linux/CUDA host and no longer count as current
-proof points. Current CUDA Linux validation closed in Wave C on the native Linux/CUDA host.
+implemented, the PureScript compiler bypasses the npm installer, Spago's `glob@11` transitive
+dependency is overridden to `glob@13`, and Poetry installs through an image-local virtual
+environment. The Linux substrate suppresses npm update notices and leaves GHCup shell-profile
+adjustment disabled; the upstream GHCup no-update message is treated as an idempotent installer
+no-op, and the upstream PATH advice is accepted because the Dockerfile owns `PATH` and the
+pinned toolchain succeeds. Current CUDA Linux validation closed in Wave C on the native
+Linux/CUDA host.
 Sprint 6.27 closes the staged-substrate format cleanup: `infernix-substrate.dhall` is a typed
 Dhall record decoded in-process by the `dhall` Haskell library, the schema lives at
 `dhall/InfernixSubstrate.dhall`, generated files no longer carry banner-prefixed JSON, and
-`cabal.project` records the supported wildcard `allow-newer` posture required by the pinned
-GHC 9.14.1 dependency plan.
+`cabal.project` records the supported wildcard `allow-newer` posture against the project
+`ghc-9.12.4` toolchain.
 
-The worktree also carries the
-formatter-toolchain closure that is actually implemented today:
-`src/Infernix/Lint/HaskellStyle.hs` drives `ormolu` and `hlint` through the dedicated compatible
-formatter compiler `ghc-9.12.4`, and the Linux substrate image preinstalls that compiler beside
-the project `ghc-9.14.1` toolchain. The supported Linux outer-container launcher keeps its build
+The worktree carries the formatter-toolchain closure:
+`src/Infernix/Lint/HaskellStyle.hs` installs `ormolu` and `hlint` through `cabal install` against
+the project `ghc-9.12.4` compiler into `./.build/haskell-style-tools/bin/`, and the Linux
+substrate image installs a single `ghc-9.12.4` toolchain. The supported Linux outer-container launcher keeps its build
 root and chart archive cache in the image overlay, hydrates MinIO through the supported direct
 tarball path instead of Docker Hub-backed OCI metadata, and repairs the known stale retained
 Pulsar or ZooKeeper epoch mismatch by resetting only the Pulsar claim roots and retrying once.
@@ -66,16 +63,10 @@ on supported lanes, may hydrate and stream only the narrow Harbor warmup depende
 Kind workers before Helm warmup, and follows the stricter Harbor-first boundary where only
 Harbor-required services may pull upstream before Harbor is responsive.
 
-**Apple Silicon validation reset (2026-05-29).** The repository's primary development machine
-moved to a new Apple Silicon host on 2026-05-29; the prior Apple Silicon and Linux/CUDA hardware
-are no longer available. The retired dated proof points are inventoried in
-[legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) under "Retired Historical
-Validation Evidence"; the underlying contracts they exercised still describe supported behavior.
-Revalidation on the new host is tracked by
-[cohort-validation-waves.md](cohort-validation-waves.md): the Apple cohort gate closed in
-[Wave A](cohort-validation-waves.md) (lint + style + unit + integration full PASS plus 7/7 e2e
-PASS on the new Apple Silicon host across Waves A.1–A.3), and the CUDA Linux cohort gate is
-closed in [Wave C](cohort-validation-waves.md) on the native Linux/CUDA host.
+Validation proof points are tracked by
+[cohort-validation-waves.md](cohort-validation-waves.md), and historical hardware evidence lives
+only in [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md). The Apple cohort gate
+is closed in Wave A/A.1/A.2/A.3, and the CUDA Linux cohort gate is closed in Wave C.
 
 The runtime-topology implementation deploys the `infernix-coordinator` role on Apple and reports
 `daemonLocation: cluster-pod`, `inferenceExecutorLocation: control-plane-host`, and the Apple
@@ -212,7 +203,7 @@ browser surface through the shared edge.
 
 - Playwright suites live under the UI-owned `web/playwright/` surface
 - `infernix test e2e` exercises the routed browser surface; Phase 3 Sprint 3.10 (landed
-  May 24, 2026) retired the dedicated `infernix-playwright:local` image and
+  the recorded validation) legacy the dedicated `infernix-playwright:local` image and
   `docker/playwright.Dockerfile`, baked the Playwright system packages and the three browsers
   into `docker/linux-substrate.Dockerfile`, and moved Linux-substrate routed E2E to in-container
   `npm --prefix web exec -- playwright test ...` against the routed cluster on Docker's private
@@ -220,7 +211,7 @@ browser surface through the shared edge.
   same typed fixture and is covered by Apple cohort validation batches.
 - the previous `INFERNIX_PLAYWRIGHT_NETWORK`, `INFERNIX_EDGE_PORT`, `INFERNIX_PLAYWRIGHT_HOST`,
   `INFERNIX_EXPECT_DAEMON_LOCATION`, `INFERNIX_EXPECT_INFERENCE_DISPATCH_MODE`, and
-  `INFERNIX_EXPECT_API_UPSTREAM_MODE` env vars are retired by Sprint 3.10; the same spec covers
+  `INFERNIX_EXPECT_API_UPSTREAM_MODE` env vars are legacy by Sprint 3.10; the same spec covers
   every substrate by reading typed fixture data from a Dhall-decoded JSON written to the
   repo-relative `.data/runtime/playwright-fixture.json` at test setup (resolving to
   `/workspace/.data/runtime/playwright-fixture.json` inside the Linux launcher; Playwright exposes
@@ -391,7 +382,7 @@ toolchain from package managers instead of depending on a broad preinstalled App
 
 - Apple host-native flow reduces pre-existing host requirements to Homebrew plus ghcup before
   building `./.build/infernix`
-- the earlier Apple Docker reconciliation behavior from this sprint is superseded by Phase 1
+- the earlier Apple Docker reconciliation behavior from this sprint is replaced by Phase 1
   Sprint 1.12: Docker-backed Apple work requires an already selected native arm64 Docker daemon
   and must not create or switch Docker contexts, create a Colima VM, or use cross-architecture
   emulation
@@ -662,7 +653,7 @@ from the supported contract.
 
 - `infernix docs check` fails if the plan, docs index, and unsupported-surface statement diverge
 - `infernix docs check` fails if dormant monitoring configuration returns to `chart/values.yaml`
-- the cleanup ledger records the retired monitoring-stack placeholder
+- the cleanup ledger records the legacy monitoring-stack placeholder
 
 ### Remaining Work
 
@@ -763,12 +754,12 @@ state alive in supported code paths so Phase 6 can close without hidden cleanup 
 ### Deliverables
 
 - `src/Infernix/Runtime.hs` and `src/Infernix/Runtime/Cache.hs` read only the supported
-  protobuf-backed inference-result and cache-manifest files and stop accepting retired
+  protobuf-backed inference-result and cache-manifest files and stop accepting legacy
   `*.state` fallbacks
-- `src/Infernix/CLI.hs` stops deleting the retired `web/src/Infernix/Web/Contracts.purs` path
+- `src/Infernix/CLI.hs` stops deleting the legacy `web/src/Infernix/Web/Contracts.purs` path
   during contract generation, leaving `web/src/Generated/Contracts.purs` as the only supported
   generated frontend-contract output
-- `src/Infernix/Cluster.hs` stops removing the retired `infernix-bootstrap-registry` container and
+- `src/Infernix/Cluster.hs` stops removing the legacy `infernix-bootstrap-registry` container and
   `./.build/kind/registry/localhost:30001` namespace as part of supported Harbor-first bootstrap
 - unit, integration, and docs validation cover the shim-free behavior, and the cleanup ledger
   records those surfaces as fully closed
@@ -776,10 +767,10 @@ state alive in supported code paths so Phase 6 can close without hidden cleanup 
 ### Validation
 
 - `infernix test unit` fails if runtime result IO, cache-manifest reloads, or PureScript
-  contract generation still depends on the retired `*.state`, `default.state`, or
+  contract generation still depends on the legacy `*.state`, `default.state`, or
   `web/src/Infernix/Web/Contracts.purs` compatibility paths
 - `infernix test integration` fails if the supported cluster bootstrap flow still depends on the
-  retired helper-registry cleanup shims
+  legacy helper-registry cleanup shims
 - `infernix docs check` fails if the plan, cleanup ledger, or supporting docs overclaim full
   closure before those compatibility surfaces are removed
 
@@ -913,19 +904,18 @@ None.
 
 ### Objective
 
-Restore the supported Haskell style gate on the governed bootstrap surfaces now that the current
-`ormolu` and `hlint` releases still target `ghc-9.12` while the project build and runtime
-toolchain have moved to `ghc-9.14.1`.
+Restore the supported Haskell style gate on the governed bootstrap surfaces by installing
+`ormolu` and `hlint` through `cabal install` against the project `ghc-9.12.4` toolchain into
+`./.build/haskell-style-tools/bin/`.
 
 ### Deliverables
 
-- `src/Infernix/Lint/HaskellStyle.hs` bootstraps `ormolu` and `hlint` with a dedicated compatible
-  formatter toolchain instead of assuming the project compiler can build those tools
-- the Linux substrate image carries whatever additional formatter-toolchain prerequisite the
-  supported `bootstrap/linux-cpu.sh test` and `bootstrap/linux-gpu.sh test` surfaces need so the
-  governed runtime path does not redownload that compiler on every ephemeral container run
-- the Haskell-style, CLI-reference, testing, and Docker-policy docs describe the final
-  formatter-toolchain rule honestly instead of claiming the style gate uses the project compiler
+- `src/Infernix/Lint/HaskellStyle.hs` installs `ormolu` and `hlint` through `cabal install`
+  against the project compiler into `./.build/haskell-style-tools/bin/`
+- the Linux substrate image bakes the project `ghc-9.12.4` toolchain so the governed runtime
+  path does not redownload it on every ephemeral container run
+- the Haskell-style, CLI-reference, testing, and Docker-policy docs describe the style-gate
+  bootstrap honestly
 - the plan and component inventory stop overclaiming full lifecycle rerun closure before the
   supported `linux-cpu` and `linux-gpu` `test` surfaces pass again
 
@@ -972,7 +962,7 @@ ZooKeeper epoch mismatch without requiring manual lane cleanup.
   path as explicit durability repair rather than cache cleanup
 - the final governed `linux-gpu` bootstrap lifecycle rerun passes without depending on a cached
   Docker Hub OCI allowance for the MinIO chart or manual Pulsar state cleanup. The matching
-  native `linux-cpu` full-suite lifecycle rerun passed on 2026-06-02.
+  native `linux-cpu` full-suite lifecycle rerun passed on the recorded validation.
 
 ### Validation
 
@@ -1040,10 +1030,10 @@ substrate-mismatched compatibility shims.
 - the supported Apple lifecycle rerun closes through
   `./bootstrap/apple-silicon.sh doctor`, `build`, `up`, `status`, `test`, `down`, and final
   `status`
-- on May 11, 2026 (retired hardware), the supported Apple lifecycle had reran cleanly through
+- on the recorded validation (legacy hardware), the supported Apple lifecycle had reran cleanly through
   `./bootstrap/apple-silicon.sh doctor`, `build`, `up`, `status`, `test`, and `down`; that
   evidence is no longer current
-- retired Apple Docker-profile compatibility evidence is not part of the current supported
+- legacy Apple Docker-profile compatibility evidence is not part of the current supported
   workflow contract; native-only Docker-boundary validation is tracked by Phase 1 Sprint 1.12
 - Apple cohort validation closed in Wave A; CUDA Linux validation closed in Wave C.
 - the Apple bootstrap fails fast with actionable messages if the resolved ghcup-managed toolchain,
@@ -1083,9 +1073,9 @@ failure.
   first-run phases that can take minutes without emitting steady log lines
 - CLI reference docs describe the supported status or progress surfaces operators use before
   concluding that a lifecycle action actually failed
-- the plan, runbooks, and testing docs had cited the May 13, 2026 Apple lifecycle investigation
-  plus the May 15, 2026 and May 17, 2026 split-topology reruns as proof points for the supported
-  false-negative doctrine; those reruns were performed on the retired Apple Silicon hardware and
+- the plan, runbooks, and testing docs had cited the the recorded validation Apple lifecycle investigation
+  plus the the recorded validation and the recorded validation split-topology reruns as proof points for the supported
+  false-negative doctrine; those reruns were performed on the legacy Apple Silicon hardware and
   no longer count as current proof points. The doctrine itself, the implemented progress
   surfaces, and the docs that describe them remain accurate, but the Apple cohort re-validation
   on the new host demonstrated the same inactivity-aware behavior in Wave A.
@@ -1130,10 +1120,10 @@ otherwise depend on a transient target tag that no longer exists locally.
   retry can recover even when the prior target tag disappeared locally
 - a failed push still exits successfully when the expected tag is already present or a registry
   pull proves the content became available despite the client-side push failure
-- plan, testing, and runbook docs had recorded the May 13, 2026 Apple lifecycle proof point with
+- plan, testing, and runbook docs had recorded the the recorded validation Apple lifecycle proof point with
   the then-current steady-state pod count and the supported retry interpretation, plus the
-  May 15, 2026 repo-owned-image ordering and re-tagging proof point; both proof points were on
-  the retired Apple Silicon hardware and no longer count as current evidence. The retry logic
+  the recorded validation repo-owned-image ordering and re-tagging proof point; both proof points were on
+  the legacy Apple Silicon hardware and no longer count as current evidence. The retry logic
   itself remains implemented in `src/Infernix/Cluster/PublishImages.hs`, and Apple cohort
   re-validation closed in Wave A.
 
@@ -1141,14 +1131,14 @@ otherwise depend on a transient target tag that no longer exists locally.
 
 - `cabal test infernix-unit` passes on the new Apple Silicon host
 - `./bootstrap/apple-silicon.sh doctor`, `build`, `up`, `status`, `test`, and `down` had passed
-  on May 13, 2026 on the retired hardware after the retry hardening; that proof point is no
+  on the recorded validation on the legacy hardware after the retry hardening; that proof point is no
   longer current
 - the full `./bootstrap/apple-silicon.sh test` lifecycle had exercised the large Pulsar Harbor
   publication path, integration coverage, routed Playwright E2E, retained-state replay, and final
-  cluster teardown successfully on the retired hardware; that proof point is no longer current
-- the May 15, 2026 Apple lifecycle had validated that the repo-owned `infernix-linux-cpu:local`
+  cluster teardown successfully on the legacy hardware; that proof point is no longer current
+- the the recorded validation Apple lifecycle had validated that the repo-owned `infernix-linux-cpu:local`
   image is pushed before third-party images and remains retryable through source re-tagging on
-  the retired hardware; that proof point is no longer current
+  the legacy hardware; that proof point is no longer current
 - final `./bootstrap/apple-silicon.sh status` reports `clusterPresent: False`,
   `lifecycleStatus: idle`, and `lifecyclePhase: cluster-absent`
 - Apple cohort validation closed in Wave A; CUDA Linux validation closed in Wave C.
@@ -1215,12 +1205,12 @@ same-binary host daemon fed by Pulsar batches.
 - `cabal test infernix-unit` passes on the new Apple Silicon host
 - `cabal test infernix-haskell-style` passes on the new Apple Silicon host
 - `./bootstrap/apple-silicon.sh doctor`, `build`, `up`, `status`, `test`, `down`, and final
-  `status` had passed on May 15, 2026 and May 17, 2026 on the retired Apple Silicon hardware
+  `status` had passed on the recorded validation and the recorded validation on the legacy Apple Silicon hardware
   exercising the split topology; that proof point is no longer current
 - the full `./bootstrap/apple-silicon.sh test` lifecycle had exercised the Apple host-batch
   topic, the host daemon, every active generated catalog entry, routed Playwright, repeated
   retained-state cluster teardown and bring-up, and final cluster teardown successfully on the
-  retired hardware; that proof point is no longer current
+  legacy hardware; that proof point is no longer current
 - Apple cohort validation closed in Waves A/A.2; CUDA Linux validation closed in Wave C.
 
 ### Remaining Work
@@ -1275,14 +1265,14 @@ container-build packaging behavior, or normal Kubernetes convergence.
   adjustment messages
 - supported lifecycle reruns still pass after warning cleanup and do not reclassify command failures
   as acceptable warning noise
-- on May 19, 2026 (retired hardware), the supported `linux-gpu` lifecycle had passed through
+- on the recorded validation (legacy hardware), the supported `linux-gpu` lifecycle had passed through
   `./bootstrap/linux-gpu.sh doctor`, forced `docker compose build infernix` image refresh,
   `./bootstrap/linux-gpu.sh build`, `up`, `status`, `test`, `down`, `purge`, and final `status`;
   that proof point is no longer current
 - the final `./bootstrap/linux-gpu.sh test` rerun had passed Haskell style, Python checks,
   Haskell unit, PureScript unit, Haskell integration, routed Playwright E2E, retained-state
   replay, and final teardown after the substrate image copied `web/scripts/` before npm
-  `postinstall`; that proof point was on the retired Linux/CUDA host and is no longer current
+  `postinstall`; that proof point was on the legacy Linux/CUDA host and is no longer current
 - CUDA Linux cohort validation closed in Wave C with a clean `linux-gpu` full-suite lifecycle on
   the native Linux/CUDA host.
 
@@ -1311,7 +1301,7 @@ metadata, and browser/API JSON surfaces derived from the decoded Haskell ADTs.
   `DemoConfig` domain invariants
 - `dhall/InfernixSubstrate.dhall` records the schema for the generated substrate payload
 - `cabal.project` carries the documented wildcard `allow-newer: *:base, *:template-haskell`
-  dependency posture needed for the pinned GHC 9.14.1 toolchain and Dhall's transitive closure
+  dependency posture needed for the project `ghc-9.12.4` toolchain and Dhall's transitive closure
 - unit coverage proves the generated payload has Dhall record syntax and still round-trips through
   the runtime decoder
 
@@ -1345,7 +1335,7 @@ PATH-resolved invocation regressions.
   test code.
 - `src/Infernix/Lint/HaskellStyle.hs` rejects `lookupEnv`, `getEnv`, `getEnvironment`, `setEnv`,
   and `unsetEnv` outside the remaining explicitly named non-test exceptions. After the Sprint 7.17
-  Apple cohort closure (2026-05-29), the `envFunctionExemptedFiles` list narrows to `Setup.hs`,
+  Apple cohort closure (the recorded validation), the `envFunctionExemptedFiles` list narrows to `Setup.hs`,
   the lint module itself, and `src/Infernix/CLI.hs`. The `src/Infernix/Python.hs` row is gone with
   that closure; the remaining CLI `getEnvironment` helper is tracked in
   [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
@@ -1365,7 +1355,7 @@ PATH-resolved invocation regressions.
   `rg -n "lookupEnv|getEnv|getEnvironment|setEnv|unsetEnv|withOptionalEnv|INFERNIX_DATA_ROOT|INFERNIX_PULSAR_ADMIN_URL|INFERNIX_PULSAR_WS_BASE_URL" test` must return zero matches; the
   `rg` invocation against `proc "<bare-tool>"` must return zero matches; the
   Haskell-style gate must no longer exempt the test suites.
-- May 27, 2026 (retired hardware): `cabal build test:infernix-integration` had passed after the
+- the recorded validation (legacy hardware): `cabal build test:infernix-integration` had passed after the
   integration fixture changed from `proc "python3"` to an in-process TCP listener;
   `cabal test infernix-haskell-style` had passed after removing the test exemptions;
   `cabal test infernix-unit` had passed after updating the Compose launcher contract assertion;
@@ -1373,12 +1363,12 @@ PATH-resolved invocation regressions.
   with the docs override gate active;
   `LAUNCHER_IMAGE=infernix-linux-gpu:local docker compose --project-name infernix-linux-gpu --file compose.yaml config`
   and the matching CPU compose config had rendered the expected two-bind launcher from the
-  single Compose file. All of those passes were on the retired hardware and no longer count as
+  single Compose file. All of those passes were on the legacy hardware and no longer count as
   current proof points; the code paths themselves are unchanged and the same commands are
   expected to pass on the new Apple Silicon host.
-- May 26, 2026 (retired hardware): the governed `linux-gpu` `infernix test all` pass had been the
+- the recorded validation (legacy hardware): the governed `linux-gpu` `infernix test all` pass had been the
   real-cluster evidence for the full lint + unit + integration + Playwright E2E stack on the
-  retired Linux/CUDA host; that proof point is no longer current. CUDA Linux cohort
+  legacy Linux/CUDA host; that proof point is no longer current. CUDA Linux cohort
   `infernix test all` re-validation closed in Wave C on the native Linux/CUDA host.
 - Apple cohort validation closed in Wave A; CUDA Linux validation closed in Wave C.
 
@@ -1390,9 +1380,105 @@ validation closed in [Wave C](cohort-validation-waves.md).
 
 ---
 
+## Sprint 6.29: Declarative-State Phase Prose Rewrite [Done]
+
+**Status**: Done
+**Implementation**: `DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md` (prose only)
+**Docs to update**: this file
+
+### Objective
+
+Rewrite Phase 6 prose so dated hardware proof points are replaced with present-tense
+descriptions of the supported gates, and so cross-phase cleanup notes are anchored on the
+canonical architecture documents.
+
+### Deliverables
+
+- Phase 6 Phase Status and Current Repo Assessment use present-tense vocabulary; the validation
+  reset note moves to a single line referencing
+  [cohort-validation-waves.md](cohort-validation-waves.md) and
+  [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
+- Per-sprint Validation sections use cohort closure markers; `Wave A/A.1/A.2/A.3`
+  and `Wave C` references remain as cohort closure markers.
+- Sprint 6.28 `proc "<bare-name>"` and `env:` block lint descriptions stay declarative; references
+  to Sprint 3.10 / 4.13 / 5.9 / 7.17 env-var cleanup work cite those sprints by name without
+  reopening cleanup history inside Phase 6 prose.
+
+### Validation
+
+- the phase-specific lexical guard for dated hardware proof-point prose returns zero matches.
+- `infernix lint docs` exits zero against the rewritten prose.
+
+### Remaining Work
+
+None.
+
+---
+
+## Sprint 6.30: Single-Toolchain GHC 9.12.4 Closure [Done]
+
+**Status**: Done
+**Implementation**: `cabal.project`, `infernix.cabal`, `docker/linux-substrate.Dockerfile`, `src/Infernix/Lint/HaskellStyle.hs`, `bootstrap/apple-silicon.sh`, `README.md`, `documents/engineering/dependency_management.md`, `documents/engineering/docker_policy.md`, `documents/engineering/host_tools_manifest.md`, `documents/engineering/testing.md`, `documents/development/haskell_style.md`, `documents/reference/cli_reference.md`, `DEVELOPMENT_PLAN/system-components.md`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
+**Docs to update**: every file in `Implementation` above
+
+### Objective
+
+Standardize the project, the Linux substrate image, the Apple host bootstrap, the lint formatter
+bootstrap, and every documentation surface on a single GHC 9.12.4 toolchain. The Linux substrate
+image installs exactly one GHC; `ormolu` and `hlint` install through the same compiler the
+project builds against.
+
+### Deliverables
+
+- `cabal.project` pins `with-compiler: ghc-9.12.4` and carries only the `allow-newer:` entries
+  required for the supported dependency set.
+- `infernix.cabal` declares `tested-with: ghc ==9.12.4`.
+- `docker/linux-substrate.Dockerfile`:
+  - `ARG GHC_VERSION=9.12.4` is the single GHC selector.
+  - the image installs and selects only `${GHC_VERSION}` through ghcup.
+  - only `/opt/ghc/${GHC_VERSION}` is symlinked.
+- `bootstrap/apple-silicon.sh` pins `APPLE_GHC_VERSION="9.12.4"`.
+- `src/Infernix/Lint/HaskellStyle.hs`:
+  - `formatterInstallArgs` is rewritten to invoke
+    `cabal install ormolu hlint --installdir=./.build/haskell-style-tools/bin/ --install-method=copy --overwrite-policy=always`
+    against the project compiler.
+  - `installFormatterToolsWithCommand` calls `cabal` directly.
+  - formatter-bootstrap errors describe the single project compiler path.
+- `README.md` uses `9.12.4` in the supported toolchain sections.
+- `documents/engineering/dependency_management.md`, `documents/engineering/host_tools_manifest.md`,
+  `documents/engineering/docker_policy.md`, `documents/engineering/testing.md`,
+  `documents/development/haskell_style.md`, and `documents/reference/cli_reference.md` describe
+  the single-toolchain posture keyed on `cabal.project` and `docker/linux-substrate.Dockerfile`.
+- `DEVELOPMENT_PLAN/system-components.md` names the single `ghc-9.12.4` project toolchain.
+- `DEVELOPMENT_PLAN/README.md` Phase 6 status row records Sprint 6.30 as closed.
+
+### Validation
+
+- `cabal build all` exits zero against GHC 9.12.4.
+- `cabal test infernix-haskell-style`, `cabal test infernix-unit`, and
+  `cabal test infernix-integration` all exit zero.
+- `infernix test lint`, `infernix lint files`, `infernix lint docs`, `infernix lint chart`,
+  `infernix lint proto` all exit zero.
+- the toolchain lexical guard for unsupported compiler pins and formatter-only compiler symbols
+  returns matches only inside `legacy-tracking-for-deletion.md` Completed rows.
+- `docker compose --project-name infernix-linux-cpu --file compose.yaml build infernix` succeeds
+  against the single-GHC substrate image.
+- `docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm infernix infernix test all`
+  exits zero on `linux-cpu`.
+- Apple cohort `./bootstrap/apple-silicon.sh up && ./.build/infernix test all` exits zero against
+  GHC 9.12.4.
+- The Apple cohort and CUDA Linux cohort runs are tracked in `cohort-validation-waves.md` as the
+  Sprint 6.30 closure batch.
+
+### Remaining Work
+
+None. The four toolchain cleanup rows live in `legacy-tracking-for-deletion.md` Completed.
+
+---
+
 ## Remaining Work
 
-None. Sprints 6.1–6.28 are `Done`; Apple cohort validation closed in Waves A/A.1/A.2/A.3 and
+None. Sprints 6.1-6.30 are `Done`; Apple cohort validation closed in Waves A/A.1/A.2/A.3 and
 CUDA Linux cohort validation closed in Wave C.
 
 ## Documentation Requirements

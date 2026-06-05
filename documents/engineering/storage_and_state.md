@@ -16,10 +16,9 @@
 
 ## Current Status
 
-The current repository follows this split. Phase 7 Sprint 7.7 retired
-the local `./.data/object-store/` tree entirely: model weights now
-live in MinIO `infernix-models` (always-on, populated lazily by the
-coordinator's bootstrap subscription), user artifacts live in MinIO
+The repository follows this split. Model weights live in MinIO
+`infernix-models` (always-on, populated lazily by the coordinator's
+bootstrap subscription), user artifacts live in MinIO
 `infernix-demo-objects` (demo-gated), and the runtime model cache is
 ephemeral state under `./.data/runtime/model-cache/` (on the Apple
 host) or the engine pod's `emptyDir` (on Linux substrates). Durable
@@ -39,7 +38,7 @@ repo-local kubeconfig lock files.
 | MinIO `infernix-models` bucket contents | coordinator's bootstrap Failover subscription + every engine pod (read) | MinIO PVCs under `./.data/kind/<runtime-mode>/...` | durable | platform model weights, tokenizers, configs under `<modelId>/<filename>` with a `<modelId>/.ready` sentinel; populated lazily on first use and never disposed except by deliberate operator intent |
 | MinIO `infernix-demo-objects` bucket contents | demo backend (presigned URL minting) + engine adapters (PUT for generated artifacts) + browsers (presigned PUT/GET) | MinIO PVCs under `./.data/kind/<runtime-mode>/...` | durable and user-visible | per-user prefixes `users/<userId>/contexts/<contextId>/{uploads,generated}/`; bucket only exists when `demo_ui = true` |
 | Pulsar ledgers and BookKeeper journals | Pulsar | Pulsar PVCs under `./.data/kind/<runtime-mode>/...` | durable | deletion resets message durability and is therefore explicit operator intent |
-| Inference-result records | Haskell service runtime plus routed reload handlers | `./.data/runtime/results/*.pb` | durable and user-visible | reload only from protobuf-backed result files; retired `*.state` files are not part of the supported contract |
+| Inference-result records | Haskell service runtime plus routed reload handlers | `./.data/runtime/results/*.pb` | durable and user-visible | reload only from protobuf-backed result files |
 | Cache manifests used to inspect model-cache state | Haskell service runtime | `./.data/runtime/model-cache/<runtime-mode>/<model-id>/manifest.pb` | derived | manifests now sit beside the cached weights inside the model-cache root; rebuilding the manifest is part of `infernix cache rebuild` |
 | Publication state and generated ConfigMap mirrors | cluster lifecycle and demo activation | `./.data/runtime/publication.json`, `./.data/runtime/configmaps/infernix-demo-config/` | derived but user-visible | regenerate from `cluster up`, `cluster down`, or the active generated demo config |
 | Repo-local kubeconfig and chosen edge-port record | cluster lifecycle | `./.build/infernix.kubeconfig`, `./.data/runtime/infernix.kubeconfig`, `./.data/runtime/edge-port.json` | derived | recreate from the supported control-plane lifecycle; Kind and `nvkind` create or delete use transient scratch kubeconfig state under system temp and may remove stale repo-local `*.lock` artifacts automatically |
@@ -58,8 +57,7 @@ repo-local kubeconfig lock files.
   control plane may log a targeted reset of the Pulsar claim roots for that runtime lane and retry
   once; treat that path as explicit durability repair that discards prior Pulsar message history
   in that lane
-- Supported inference-result reloads depend on protobuf-backed `*.pb` records only; legacy
-  `*.state` compatibility files are not part of the rebuild or reload contract.
+- Supported inference-result reloads depend on protobuf-backed `*.pb` records only.
 - Publication mirrors, repo-local kubeconfig files, edge-port records, generated demo-config
   staging, transient Kind or `nvkind` scratch kubeconfig files, and repo-local kubeconfig lock
   artifacts are disposable because the supported lifecycle commands recreate or clean them.
@@ -84,8 +82,7 @@ repo-local kubeconfig lock files.
   commands may delete and recreate them while publishing the durable repo-local kubeconfig.
 - Keep generated build output, generated contracts, generated protobuf bindings, and test artifacts
   out of tracked source even when they are present locally.
-- Do not preserve or recreate retired `*.state` compatibility files for runtime results or cache
-  manifests; supported reloads use protobuf-backed `*.pb` state only.
+- Supported reloads use protobuf-backed `*.pb` state only.
 - Prefer rebuilding derived state over preserving stale compatibility copies.
 
 ## Validation
@@ -94,7 +91,7 @@ repo-local kubeconfig lock files.
 - `infernix test integration` verifies publication-state regeneration, deterministic Harbor
   PostgreSQL PV reuse across `cluster down` plus `cluster up`, and the active generated demo-config
   publication path.
-- `infernix cluster status` reports the build or data roots that hold the currently relevant
+- `infernix cluster status` reports the build or data roots that hold the active
   derived state.
 
 ## Cross-References

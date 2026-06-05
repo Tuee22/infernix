@@ -10,20 +10,14 @@
 
 ## Current Status
 
-Phase 7 Sprint 7.7 (May 23, 2026) retired the legacy
-`./.data/object-store/` filesystem-backed object store, the
-`s3://infernix-runtime/...` URI scheme in `src/Infernix/Runtime/Cache.hs`,
-and the chart-reserved `infernix-runtime` / `infernix-results`
-placeholder bucket entries. `Infernix.Config.Paths` no longer carries
-the `objectStoreRoot` field. `src/Infernix/Runtime/Cache.hs` is
-rewritten around `modelCacheRoot/<runtimeMode>/<modelId>/manifest.pb`
-so manifests sit beside the cached weights instead of in a parallel
-durable-state tree, and the durable-source URI shape used by the
-cache-status payload and the `RuntimeManifest` proto is
-`minio://infernix-models/<modelId>/` (engines pull from MinIO; nothing
-on host disk pretends to be S3). The two-bucket target model
-documented below — `infernix-models` always-on, `infernix-demo-objects`
-demo-gated — is the only supported shape today.
+The supported object-storage contract uses two MinIO buckets:
+`infernix-models` always-on and `infernix-demo-objects` demo-gated.
+`src/Infernix/Runtime/Cache.hs` is structured around
+`modelCacheRoot/<runtimeMode>/<modelId>/manifest.pb` so manifests sit
+beside the cached weights, and the durable-source URI shape used by
+the cache-status payload and the `RuntimeManifest` proto is
+`minio://infernix-models/<modelId>/`. Engines pull weights from MinIO;
+no on-host filesystem path pretends to be S3.
 
 ## Bucket Inventory
 
@@ -33,10 +27,6 @@ The supported target shape uses two MinIO buckets and nothing else:
 |---|---|---|---|
 | `infernix-models` | Always-on (not demo-gated) | `<modelId>/<filename>` plus a per-model `<modelId>/.ready` sentinel object | Platform-owned model weights, tokenizers, and configs. Populated lazily by the coordinator's model-bootstrap Failover subscription on first use. Read by every engine pod (Linux substrates) and by the on-host engine daemon (Apple silicon). |
 | `infernix-demo-objects` | Demo-gated (absent when `demo_ui = false`) | `users/<userId>/contexts/<contextId>/uploads/<objectKey>` and `users/<userId>/contexts/<contextId>/generated/<objectKey>` | User uploads (browser → presigned PUT) plus engine-generated artifacts (image PNGs, audio WAVs, video frames, MusicXML) written by the engine adapter on the `generated/` prefix. Read by the browser via presigned GET URLs minted at `/api/objects`. |
-
-The chart-reserved `infernix-runtime` and `infernix-results` placeholder
-buckets are removed by Sprint 7.7; nothing in the supported target
-shape uses them.
 
 ## Bucket Scope Policies
 
@@ -53,10 +43,10 @@ shape uses them.
 ## Engine Model-Weight Loading
 
 Every engine adapter loads model weights through one shared helper:
-`python/adapters/common/model_cache.py` (new in Sprint 7.7), exposing
-the function `get_model_path(model_id) -> filesystem path`. Every
-adapter calls it regardless of underlying engine family; there is no
-bytes-loading branch.
+`python/adapters/common/model_cache.py`, exposing the function
+`get_model_path(model_id) -> filesystem path`. Every adapter calls it
+regardless of underlying engine family; there is no bytes-loading
+branch.
 
 The helper:
 
@@ -84,8 +74,7 @@ large MusicXML), the engine adapter PUTs the bytes directly into
 `infernix-demo-objects` at the appropriate per-user prefix and the
 result payload carries an `ObjectRef` (bucket + key). Text outputs
 ride inline in the protobuf result message and never touch object
-storage; the historical 80-char inline-payload threshold is removed
-in Sprint 7.7.
+storage.
 
 ## Coordinator Model-Bootstrap Workflow
 
@@ -137,11 +126,7 @@ on-host engine daemon, an equivalent host-local cache lives under
 `./.data/runtime/model-cache/`; it is purgeable host state on the
 operator's machine, not durable cluster state.
 
-The previous `./.data/object-store/` filesystem tree, `objectStoreRoot`
-plumbing, `localPathFromUri`, and the `s3://infernix-runtime/...` URI
-scheme were deleted by Sprint 7.7 (May 23, 2026). The
-`/objects/:objectRef` HTTP route in `Demo/Api.hs` is also retired;
-browsers fetch generated artifacts exclusively through `/api/objects`-
+Browsers fetch generated artifacts exclusively through `/api/objects`-
 minted presigned URLs against the `infernix-demo-objects` MinIO
 bucket.
 
@@ -159,12 +144,8 @@ and generic-binary download) lives in
 and [../tools/minio.md](../tools/minio.md); model-weight or runtime
 formats are not upload MIME families.
 
-The May 28, 2026 routed Linux GPU E2E flow validates the server-side
-`/api/objects/download` grant disposition for those MIME classes. The
-remaining open work is the browser click/upload/render lifecycle.
-
-The historical `/objects/:objectRef` route is **retired** in Sprint
-7.7 and is not part of the supported target surface.
+The routed Linux GPU E2E flow validates the server-side
+`/api/objects/download` grant disposition for those MIME classes.
 
 ## Validation
 
@@ -177,14 +158,13 @@ The historical `/objects/:objectRef` route is **retired** in Sprint
 - `infernix test integration` covers the `emptyDir` LRU eviction
   policy in the adapter helper: sustained load does not exhaust
   ephemeral storage and does not restart the engine pod.
-- The May 28, 2026 Linux GPU routed E2E run covers `/api/objects`
-  grant minting from a real Keycloak JWT and same-user routed
-  presigned MinIO PUT/GET byte equality. A same-day follow-on covers
-  cross-user object-prefix isolation for two real Keycloak users with
+- `infernix test e2e` covers `/api/objects` grant minting from a real
+  Keycloak JWT, same-user routed presigned MinIO PUT/GET byte equality,
+  and cross-user object-prefix isolation for two Keycloak users with
   the same context id and display name.
 - Production-shape test (`demo_ui = false`) confirms `infernix-models`
-  is present, `infernix-demo-objects` is absent, no daemon has a PVC,
-  and the `/objects/:objectRef` route is not registered.
+  is present, `infernix-demo-objects` is absent, and no daemon has a
+  PVC.
 
 ## Cross-References
 

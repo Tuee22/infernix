@@ -38,7 +38,7 @@ mode-specific coverage, matrix behavior, and operator detail behind those canoni
 
 - `infernix docs check` validates governed docs, README or plan cross-references, required CLI
   registry coverage in `documents/reference/cli_reference.md`, phase-document documentation
-  sections, and forbidden retired-doctrine phrases
+  sections, and forbidden legacy-doctrine phrases
 - `infernix test lint` validates repository hygiene, required chart or Kind or `.proto` assets, the
   repo-owned Haskell style stack, the Haskell build path, and the shared Python adapter quality
   gate via `poetry run check-code` from the shared `python/` project when adapters are present;
@@ -49,7 +49,7 @@ mode-specific coverage, matrix behavior, and operator detail behind those canoni
   or decode behavior, cache lifecycle, the
   protobuf-over-stdio Python worker path and adapter-command overrides, chart image or claim
   discovery, Harbor overlay emission, and the current PureScript generated-contract and SPA
-  view-model behavior via `spago test` driven by the non-deprecated runner in `web/test/Main.purs`
+  view-model behavior via `spago test` driven by the maintained runner in `web/test/Main.purs`
 - `infernix test integration` validates cluster lifecycle for the active generated substrate,
   generated demo-config publication, routed demo or tool surfaces, routed inference plus cache
   endpoints, service-path request or result publication through the active topic contract,
@@ -57,15 +57,14 @@ mode-specific coverage, matrix behavior, and operator detail behind those canoni
   demo-ui disablement on the `linux-cpu` lane via
   `infernix internal materialize-substrate linux-cpu --demo-ui false`, and edge-port rediscovery
   on the host-native `apple-silicon` lane
-- `infernix test e2e` currently validates the routed browser surface by comparing `/api/models`
-  to the generated demo config, loading the SPA root, checking the `Infernix` heading, and
-  checking the published platform-state JSON endpoints; Sprint 7.15 expands that smoke into the
-  full durable-context Playwright flow
+- `infernix test e2e` validates the routed browser surface through the full durable-context
+  Playwright flow alongside the SPA root, the `Infernix` heading, and the published platform-state
+  JSON endpoints
 - `infernix test all` runs lint, unit, integration, and E2E in sequence as the complete supported
   suite for the active substrate
 - the supported real-cluster `linux-gpu` integration and `test all` lanes also depend on enough
   host disk headroom for Kind image preload, Harbor-backed image publication, and Pulsar
-  BookKeeper durability; low disk headroom can block `infernix-service` readiness after cluster
+  BookKeeper durability; low disk headroom can block `infernix-engine` readiness after cluster
   creation even when the NVIDIA preflight passes
 
 ## Hardware Cohort Cadence
@@ -93,9 +92,10 @@ The validation plan minimizes switching between the Apple Silicon and CUDA-capab
 
 ## Lifecycle Interpretation
 
-- retired lifecycle proof points are recorded in
-  [../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md](../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md);
-  current validation evidence is tracked by the active phase files and cohort waves
+- the legacy-tracking ledger at
+  [../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md](../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md)
+  records obsolete-surface receipts; current validation evidence is tracked by the active phase
+  files and cohort waves
 - long waits in `cluster up` and `cluster down` can still be healthy when the lifecycle is
   building images, publishing them into Harbor, preloading Harbor-backed images onto the Kind
   worker, or replaying retained state
@@ -145,26 +145,23 @@ The validation plan minimizes switching between the Apple Silicon and CUDA-capab
   restarts a Pulsar broker between two routed publish or result checks, deletes the Harbor
   PostgreSQL primary to verify failover, and compares the deterministic Harbor PostgreSQL PV
   inventory plus host-path mapping across `cluster down` plus `cluster up`
-- `infernix test e2e` currently loads the routed SPA root, checks the `Infernix` heading, and
-  validates platform-state JSON parity (`/api/publication`, `/api/demo-config`, `/api/models`)
-  while inference correctness is covered by the integration layer's per-model Pulsar roundtrip.
-  The May 28, 2026 clean rebuilt Linux GPU run passed this routed smoke plus the routed Keycloak
-  self-registration auth-code smoke, routed WebSocket valid/malformed-token handshake validation,
-  expired-token rejection, typed malformed-frame error validation, real-Keycloak-JWT
-  `/api/objects` grant validation, same-user routed presigned MinIO PUT/GET byte equality,
-  cross-user object-prefix isolation, and the routed download-grant MIME disposition matrix. The
-  browser artifact path now covers
-  app-owned PKCE login, local context creation, bounded text/JSON previews, inline
-  image/audio/video media URL wiring, browser-native PDF URL wiring, and MIDI / MusicXML /
-  generic-binary download-only states. The full durable-context browser flow now also asserts
-  each uploaded artifact's `ClientRecordUpload`, inbound `ConversationUserUploadEvent` patch, and
-  rendered Chat upload message, plus new-context dialog close-negative behavior and model-picker
-  selection through `ClientCreateContext` plus the broker-backed context summary, context
-  rename/soft-delete through `ClientRenameContext` / `ClientSoftDeleteContext` and
-  `ServerContextListPatch`, and a routed unknown-model `ClientCreateContext` backend rejection
-  with typed `ServerError`. The 2026-06-03 Linux GPU full gate passed the per-model smoke matrix
-  across all 16 active catalog rows, and the residual sweep extracts the browser artifact payloads
-  into `web/test/fixtures/artifactSamples.js`.
+- `infernix test e2e` loads the routed SPA root, checks the `Infernix` heading, and validates
+  platform-state JSON parity (`/api/publication`, `/api/demo-config`, `/api/models`); inference
+  correctness is covered by the integration layer's per-model Pulsar roundtrip. The routed
+  Playwright suite also covers the Keycloak self-registration auth-code smoke, routed WebSocket
+  valid/malformed-token handshake validation, expired-token rejection, typed malformed-frame
+  error validation, real-Keycloak-JWT `/api/objects` grant validation, same-user routed presigned
+  MinIO PUT/GET byte equality, cross-user object-prefix isolation, and the routed download-grant
+  MIME disposition matrix. The browser artifact path covers app-owned PKCE login, local context
+  creation, bounded text/JSON previews, inline image/audio/video media URL wiring, browser-native
+  PDF URL wiring, MIDI / MusicXML / generic-binary download-only states, and the per-model smoke
+  matrix across every active catalog row. The browser flow asserts each uploaded artifact's
+  `ClientRecordUpload`, inbound `ConversationUserUploadEvent` patch, and rendered Chat upload
+  message, plus new-context dialog close-negative behavior, model-picker selection through
+  `ClientCreateContext` plus the broker-backed context summary, context rename/soft-delete
+  through `ClientRenameContext` / `ClientSoftDeleteContext` and `ServerContextListPatch`, and a
+  routed unknown-model `ClientCreateContext` backend rejection with typed `ServerError`. Browser
+  artifact payloads live in `web/test/fixtures/artifactSamples.js`.
 - the Apple host-native routed E2E lane also fails if the clustered routed surface cannot keep
   `apiUpstream.mode = cluster-demo`, preserve one browser-visible base URL, match the Apple
   publication payload `daemonLocation = cluster-pod`, advertise
@@ -181,51 +178,48 @@ The validation plan minimizes switching between the Apple Silicon and CUDA-capab
 - changing the active staged substrate changes the generated catalog and therefore the exercised entry
   set automatically
 
-## Durable-Context Demo Validation (Phase 7)
+## Durable-Context Demo Validation
 
-The multi-user durable-context demo expands the validation surface across three sprints.
+The multi-user durable-context demo expands the validation surface across three layers.
 The authoritative test contract lives at
 [demo_app_test_plan.md](demo_app_test_plan.md); this section names the layers and their
 relationship to the existing entrypoints.
 
-- **Unit layer** (Sprint 7.13, `infernix test unit`) — reducer property tests, idempotency
-  dedup, `prefixHash` chain, dispatcher pure-fold rule, JWT validation edge cases, presigned
-  URL minting, compacted topic projection, WS envelope codec, plus PureScript view-model tests
+- **Unit layer** (`infernix test unit`) — reducer property tests, idempotency dedup,
+  `prefixHash` chain, dispatcher pure-fold rule, JWT validation edge cases, presigned URL
+  minting, compacted topic projection, WS envelope codec, plus PureScript view-model tests
   scoped to patch application and rendering only. Reducer logic is exercised in Haskell, not
-  in PureScript. The Haskell-side unit gate is landed; PureScript view-model tests follow the
-  SPA view sprints.
-- **Integration layer** (Sprint 7.14, `infernix test integration`) — real Pulsar / MinIO /
-  Keycloak round-trips, producer-dedup verification across simulated dispatcher restart,
-  Pulsar Failover handoff, cross-user presigned URL negative, chaos tests (WS pod kill,
-  dispatcher kill, engine pod kill mid-inference, coordinator kill mid-bootstrap upload,
-  concurrent model-bootstrap requests, one-engine-per-node enforcement), and the
-  **multi-user throughput / fan-in batching / fan-out** test (N users × K contexts × P
-  prompts on one model) asserting per-context ordering, no duplicates or losses,
-  cross-context independence, batching gain, bounded p95 latency, and dedup correctness.
-  The current Linux GPU integration suite covers the coordinator-to-engine
-  request/batch/result service loop plus real Reader roundtrips for conversation, compacted
-  contexts, compacted drafts, and bootstrap-ready topic families. The LinuxCpu integration suite
-  carries the Wave C chaos/throughput block: two-worker CPU Kind topology, frontend/coordinator/
-  engine pod replacement, engine node drain, model-bootstrap deduplication across coordinator
-  replacement, Linux engine anti-affinity, and compact multi-user prompt throughput.
-- **E2E layer** (Sprint 7.15, `infernix test e2e`) — Playwright flows for auth, context,
-  conversation (including two-in-a-row and cancel), drafts, artifact upload/download plus
-  render, preview, document handling, or download-only behavior per supported artifact class,
-  generated-artifact lifecycle, multi-tab convergence, client reconstitution
-  via Browser Context storage-clear, pod-failover-from-browser, plus the **per-model smoke
-  matrix** driven by the active substrate's generated `.dhall` catalog (every non-`Not
-  recommended` row gets one passing flow). The Playwright suite source is identical across
-  `apple-silicon`, `linux-cpu`, and `linux-gpu`; substrate selection lives only in the
-  generated `.dhall`. The current routed suite already covers browser socket-close reconnect by
-  force-closing the live WebSocket and verifying re-hello, active-context re-subscribe, a fresh
-  snapshot, and a post-reconnect prompt submit. It also covers the browser cancel lifecycle by
-  sending `ClientCancelPrompt` for the latest unresolved server-backed prompt id and verifying the
-  inbound cancel append patch. Draft restoration is covered by forcing a WebSocket reconnect and
-  by reloading the page, signing in again, resubscribing the session-stored active context, and
-  verifying broker-backed draft replay restores the textarea. The same routed browser flow now
-  submits a second prompt before the first unresolved prompt resolves and asserts the rendered
-  `2 queued prompts` warning. Storage-clear reconstitution and pod-failover remain closure
-  targets.
+  in PureScript.
+- **Integration layer** (`infernix test integration`) — real Pulsar / MinIO / Keycloak
+  round-trips, producer-dedup verification across simulated dispatcher restart, Pulsar Failover
+  handoff, cross-user presigned URL negative, chaos tests (WS pod kill, dispatcher kill, engine
+  pod kill mid-inference, coordinator kill mid-bootstrap upload, concurrent model-bootstrap
+  requests, one-engine-per-node enforcement), and the **multi-user throughput / fan-in batching
+  / fan-out** test (N users × K contexts × P prompts on one model) asserting per-context
+  ordering, no duplicates or losses, cross-context independence, batching gain, bounded p95
+  latency, and dedup correctness. The Linux GPU integration suite covers the
+  coordinator-to-engine request/batch/result service loop plus real Reader roundtrips for
+  conversation, compacted contexts, compacted drafts, and bootstrap-ready topic families. The
+  LinuxCpu integration suite carries the chaos/throughput block: two-worker CPU Kind topology,
+  frontend/coordinator/engine pod replacement, engine node drain, model-bootstrap deduplication
+  across coordinator replacement, Linux engine anti-affinity, and compact multi-user prompt
+  throughput.
+- **E2E layer** (`infernix test e2e`) — Playwright flows for auth, context, conversation
+  (including two-in-a-row and cancel), drafts, artifact upload/download plus render, preview,
+  document handling, or download-only behavior per supported artifact class, generated-artifact
+  lifecycle, multi-tab convergence, client reconstitution via Browser Context storage-clear,
+  pod-failover-from-browser, plus the **per-model smoke matrix** driven by the active
+  substrate's generated `.dhall` catalog (every non-`Not recommended` row gets one passing
+  flow). The Playwright suite source is identical across `apple-silicon`, `linux-cpu`, and
+  `linux-gpu`; substrate selection lives only in the generated `.dhall`. The routed suite
+  covers browser socket-close reconnect by force-closing the live WebSocket and verifying
+  re-hello, active-context re-subscribe, a fresh snapshot, and a post-reconnect prompt submit.
+  It also covers the browser cancel lifecycle by sending `ClientCancelPrompt` for the latest
+  unresolved server-backed prompt id and verifying the inbound cancel append patch. Draft
+  restoration is covered by forcing a WebSocket reconnect and by reloading the page, signing in
+  again, resubscribing the session-stored active context, and verifying broker-backed draft
+  replay restores the textarea. The routed browser flow submits a second prompt before the
+  first unresolved prompt resolves and asserts the rendered `2 queued prompts` warning.
 
 ## Cross-References
 

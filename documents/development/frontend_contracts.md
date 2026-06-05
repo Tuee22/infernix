@@ -10,8 +10,6 @@
 - dedicated browser-contract ADTs in `src/Infernix/Web/Contracts.hs` own the browser-facing contract
   surface
 - `infernix internal generate-purs-contracts` emits `web/src/Generated/Contracts.purs`
-- the retired `web/src/Infernix/Web/Contracts.purs` path is not a supported generated output and
-  is left untouched by the codegen command
 - `npm --prefix web run build` invokes that codegen entrypoint before `spago build`
 - handwritten PureScript modules under `web/src/*.purs` import generated modules from
   `web/src/Generated/` for shared types; they do not declare their own request or response types
@@ -22,12 +20,11 @@
 - the generated module also appends the active runtime constants, catalog constants, helper
   record-unwrapping functions, and explicit `Simple.JSON` instances consumed by the frontend
 
-## Haskell-First Logic Discipline (Phase 7)
+## Haskell-First Logic Discipline
 
-The durable-context demo's contract-generation pipeline carries every new ADT the demo
-introduces (the Sprint 7.2 type set is landed in `src/Infernix/Web/Contracts.hs` and emitted
-through `infernix internal generate-purs-contracts`), and the discipline that PureScript is
-a thin renderer is a governed contract:
+The durable-context demo's contract-generation pipeline carries every demo ADT (the type set
+in `src/Infernix/Web/Contracts.hs` is emitted through `infernix internal generate-purs-contracts`),
+and the discipline that PureScript is a thin renderer is a governed contract:
 
 - the reducer, idempotency dedup, `prefixHash` chain, dispatcher rule, event construction, and
   all projection logic live only in Haskell, in the shared `infernix` library
@@ -35,9 +32,9 @@ a thin renderer is a governed contract:
   over the WS and applies patches via trivial mechanical helpers; PureScript code never folds
   raw events
 - the reducer is not codegen'd; the browser does not import it
-- new browser-contract ADTs added in
+- browser-contract ADTs defined in
   [../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md](../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md)
-  Sprint 7.2 flow through the same `purescript-bridge` pipeline as today's contracts:
+  flow through the same `purescript-bridge` pipeline as the rest of the contracts:
   - `ConversationEvent` (server-side log entries; emitted to the browser only on opaque
     diagnostic paths, not on the standard render path)
   - `ContextMetadataEvent`, `DraftEvent`
@@ -51,7 +48,7 @@ a thin renderer is a governed contract:
   - newtypes for `UserId`, `ContextId`, `MessageId`, `ClientIdempotencyKey`
 - generated `Simple.JSON` instances stay in lockstep with Haskell `ToJSON`/`FromJSON` instances
   so both sides agree on wire format mechanically
-- the May 24, 2026 generator pass extended this lockstep to every Phase 7 sum and newtype:
+- the generator pipeline extends this lockstep to every Phase 7 sum and newtype:
   string-wrapped newtypes (`UserId`, `ContextId`, `MessageId`, `ClientIdempotencyKey`,
   `ArtifactMimeType`) encode as bare strings on the wire, matching the Haskell side's
   `deriving newtype (ToJSON)`; record-wrapped newtypes unwrap to their inner record;

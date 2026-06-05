@@ -49,9 +49,10 @@
 
 ## Lifecycle Failure Classification
 
-- retired lifecycle proof points live in
-  [../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md](../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md);
-  current validation evidence lives in the active phase files and cohort waves
+- the legacy-tracking ledger at
+  [../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md](../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md)
+  records obsolete-surface receipts; current validation evidence lives in the active phase files
+  and cohort waves
 - long waits in Docker build finalization, Harbor publication, Kind-worker image preload, and
   retained-state replay are treated as real convergence when heartbeat data is moving, not as hard
   product failure
@@ -95,7 +96,7 @@
 - `infernix test lint` proves repo-owned static quality, the Haskell style gate, the Haskell build
   warning policy, and the shared Python adapter quality gate.
 - `infernix test unit` proves the typed control-plane and browser-contract logic that should not
-  require a live cluster, and keeps the Node-based PureScript runner on non-deprecated
+  require a live cluster, and keeps the Node-based PureScript runner on maintained
   `purescript-spec` entrypoints.
 - `infernix test integration` proves the active staged substrate's generated catalog, routed surfaces,
   publication state, cache contract, and the real cluster's HA or lifecycle assertions.
@@ -135,11 +136,11 @@
 
 - validation fails on hard-gate violations; supported workflows do not silently rewrite tracked
   source
-- the Haskell style gate uses the dedicated compatible formatter toolchain `ghc-9.12.4` through
-  `ghcup run` while the project build and runtime toolchain stays on `ghc-9.14.1`
+- the Haskell style gate installs `ormolu` and `hlint` through `cabal install` against the
+  project `ghc-9.12.4` toolchain into `./.build/haskell-style-tools/bin/`
 - runtime-mode-specific tests fail when required platform preflights are absent rather than
   quietly switching to another mode
-- the supported Node-based web validation paths stay warning-free by avoiding deprecated
+- the supported Node-based web validation paths stay warning-free by avoiding legacy
   `runSpec` or `runSpecT` entrypoints and by clearing conflicting `NO_COLOR` or `FORCE_COLOR`
   pairs before Playwright starts
 - `infernix test integration`, `infernix test e2e`, and `infernix test all` run against and report

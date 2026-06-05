@@ -8,16 +8,17 @@
 
 ## Toolchain Pin
 
-The supported Haskell toolchain is `ghc-9.14.1`. The cabal manifest declares it via
-`tested-with: ghc ==9.14.1`, and `cabal.project` pins it via `with-compiler: ghc-9.14.1`. The
-formatter toolchain on `ghc-9.12.4` lives separately under `./.build/haskell-style-tools/bin/`
-and is managed by `src/Infernix/Lint/HaskellStyle.hs`; it does not affect the runtime build.
+The supported Haskell toolchain is `ghc-9.12.4`. The cabal manifest declares it via
+`tested-with: ghc ==9.12.4`, and `cabal.project` pins it via `with-compiler: ghc-9.12.4`. The
+formatter tools `ormolu` and `hlint` install into `./.build/haskell-style-tools/bin/` through
+`cabal install` against the same project compiler; `src/Infernix/Lint/HaskellStyle.hs` manages
+that install.
 
 ## Project-wide `cabal.project`
 
 The repo carries `cabal.project` at the worktree root. It performs three roles:
 
-- pins the supported compiler with `with-compiler: ghc-9.14.1`;
+- pins the supported compiler with `with-compiler: ghc-9.12.4`;
 - enables `allow-newer: *:base, *:template-haskell` so transitive Hackage packages whose declared
   upper bounds lag behind the project's GHC resolve cleanly;
 - retains targeted package-specific `allow-newer` entries for the existing `lens-family`,
@@ -27,11 +28,12 @@ The repo carries `cabal.project` at the worktree root. It performs three roles:
 
 ## Why wildcard `allow-newer`
 
-The `dhall` Haskell library (used to decode `infernix-substrate.dhall` in-process) transitively
-depends on `serialise`, `cborg`, `cborg-json`, and `half`. The released versions of all four cap at
-`base < 4.22`, while the supported toolchain ships `base 4.22`. The bounds are conservative
-declarations rather than real API incompatibilities; relaxing them with the wildcard
-`allow-newer: *:base, *:template-haskell` produces a working build plan.
+The `dhall` Haskell library (used to decode `infernix-substrate.dhall` in-process) and its
+transitive dependency closure (`serialise`, `cborg`, `cborg-json`, `half`) declare conservative
+upper bounds against `base` and `template-haskell` that lag a release or two behind the project
+toolchain. The wildcard `allow-newer: *:base, *:template-haskell` relaxes those declarations
+without broadening the wildcard further; the targeted package-specific rows cover the remaining
+`lens-family`, `proto-lens`, `binary`, and setup-tool closure.
 
 If a future GHC bump uncovers genuine breakage in one of those packages, the supported response is
 to add a targeted `source-repository-package` stanza pointing at a patched fork in `cabal.project`,

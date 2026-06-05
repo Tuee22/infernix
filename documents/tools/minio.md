@@ -12,7 +12,7 @@
 - MinIO runs as a four-node distributed cluster on the supported Kind path
 - on a pristine cluster, MinIO may pull from public container repositories only when it is one of
   Harbor's required backend services before Harbor becomes pull-ready
-- the supported target shape uses **two MinIO buckets** (Phase 7 Sprint 7.7 onward):
+- the supported target shape uses **two MinIO buckets**:
   - `infernix-models` — always-on (not demo-gated); platform model weights, tokenizers, and
     configs at `<modelId>/<filename>` plus a `<modelId>/.ready` sentinel object; populated
     lazily on first use by the coordinator's bootstrap subscription on
@@ -25,11 +25,6 @@
   worker PUTs each weight file first, then PUTs `<modelId>/.ready` last, then publishes
   `model.bootstrap.ready.<modelId>`. Engines treat the presence of `.ready` as the atomic
   signal that the model is loadable; partial uploads are invisible to readers
-- the previously chart-reserved `infernix-runtime` and `infernix-results` placeholder
-  buckets are removed by Sprint 7.7; they were never wired to real MinIO
-- the legacy `./.data/object-store/` filesystem-backed object store is retired by Sprint 7.7
-  along with the `s3://infernix-runtime/...` URI scheme; see
-  [../engineering/object_storage.md](../engineering/object_storage.md)
 - the real-cluster `linux-cpu` integration lane writes a sentinel file through the MinIO data
   volume, replaces one MinIO pod, and asserts the sentinel remains readable afterward
 
@@ -43,8 +38,8 @@
 
 ## Demo Artifact Bucket
 
-Phase 7 Sprint 7.7 landed the `infernix-demo-objects` bucket alongside the always-on
-`infernix-models` bucket. The demo bucket is demo-gated and absent when `demo_ui = false`.
+The `infernix-demo-objects` bucket lives alongside the always-on `infernix-models` bucket and
+is demo-gated; it is absent when `demo_ui = false`.
 
 - bucket name: `infernix-demo-objects`
 - per-user prefix layout inside the bucket:
@@ -63,17 +58,16 @@ Phase 7 Sprint 7.7 landed the `infernix-demo-objects` bucket alongside the alway
   `infernix-demo` backend also runs a startup repair pass from mounted `ClusterConfig` /
   `SecretsConfig` and creates the required buckets with presigned bucket-level PUTs when
   chart-time provisioning was bypassed or raced
-- the May 28, 2026 Linux GPU routed Playwright run validates `/api/objects` grant minting with a
-  real Keycloak access token and verifies malformed bearer rejection plus per-user key scoping in
-  the grant response, then performs a same-user routed presigned PUT/GET byte roundtrip with exact
-  content equality. A same-day follow-on registers a second Keycloak user for the same
-  context/display name, confirms the grant points at the second user's `sub` prefix, observes
-  `404` before the second upload, and verifies each user reads only that user's bytes by default.
-  The routed download-grant MIME disposition matrix is also covered for inline image/audio/video,
-  browser-native PDF, bounded JSON/text preview, and download-only MIDI / MusicXML /
-  generic-binary grants. The browser artifact flow now covers bounded text/JSON previews,
-  inline image/audio/video rendering, browser-native PDF URL wiring, and MIDI / MusicXML /
-  generic-binary download-only states through routed presigned URLs.
+- `infernix test e2e` validates `/api/objects` grant minting with a real Keycloak access token,
+  verifies malformed bearer rejection plus per-user key scoping in the grant response, and
+  performs a same-user routed presigned PUT/GET byte roundtrip with exact content equality. A
+  second Keycloak user registered for the same context/display name confirms the grant points at
+  the second user's `sub` prefix, observes `404` before the second upload, and verifies each
+  user reads only that user's bytes by default. The routed download-grant MIME disposition
+  matrix covers inline image/audio/video, browser-native PDF, bounded JSON/text preview, and
+  download-only MIDI / MusicXML / generic-binary grants. The browser artifact flow covers
+  bounded text/JSON previews, inline image/audio/video rendering, browser-native PDF URL wiring,
+  and MIDI / MusicXML / generic-binary download-only states through routed presigned URLs.
 - supported artifact MIME families on the UI side: `image/*`, playable `audio/*`, `video/*`,
   text/structured-text artifacts (`text/*`, `application/json`), PDF documents
   (`application/pdf`), MIDI variants (`audio/midi`, `audio/x-midi`, `application/x-midi`),

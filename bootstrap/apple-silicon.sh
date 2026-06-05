@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 
 SCRIPT_LABEL="./bootstrap/apple-silicon.sh"
-APPLE_GHC_VERSION="9.14.1"
+APPLE_GHC_VERSION="9.12.4"
 APPLE_CABAL_VERSION="3.16.1.0"
 APPLE_GHC_BIN=""
 APPLE_CABAL_BIN=""

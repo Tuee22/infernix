@@ -29,8 +29,8 @@ The demo UI is served by the `infernix-demo` Haskell binary and gated by the act
 - `spago bundle --module Main --outfile dist/app.js --platform browser --bundle-type app` produces
   the static demo bundle in `web/dist/`
 - `spago test` runs the `purescript-spec` suites under `web/test/*.purs`
-- `web/test/Main.purs` uses the non-deprecated `purescript-spec` runner APIs and preserves
-  non-zero exits explicitly instead of relying on deprecated `runSpec` entrypoints
+- `web/test/Main.purs` uses the maintained `purescript-spec` runner APIs and preserves
+  non-zero exits explicitly instead of relying on legacy `runSpec` entrypoints
 - the npm-managed web toolchain is installed either in `web/node_modules/` on the host path or in the
   active Linux substrate image build, both on Node.js 22.5+
 - supported routed Playwright E2E on Linux stays container-owned inside the substrate image with
@@ -47,10 +47,10 @@ the PureScript unit suite plus routed Playwright coverage.
 
 Current status:
 
-- the deprecated `purescript` npm installer package is not used; `web/scripts/install-purescript.mjs`
+- the legacy `purescript` npm installer package is not used; `web/scripts/install-purescript.mjs`
   installs the official `purs` binary into `web/node_modules/.bin/`
 - Spago is pinned to the maintained 1.x line, and `web/package.json` overrides Spago's transitive
-  `glob` dependency to `glob@13.0.6` so the deprecated `glob@11` warning is not part of the current
+  `glob` dependency to `glob@13.0.6` so the legacy `glob@11` warning is not part of the current
   install
 - direct-tool warnings from packages the repository pins directly, such as Playwright, Spago,
   `esbuild`, or future npm-distributed tooling, are ordinary maintenance work and should be
@@ -135,7 +135,7 @@ Frontend types are generated from Haskell-owned DTO and catalog records.
   handwritten SPA helpers that unwrap record views
 - view-level suites assert catalog order, selection, publication summary rendering, and result
   rendering behavior
-- the Node-based unit-test path stays on non-deprecated runner entrypoints and fails explicitly
+- the Node-based unit-test path stays on maintained runner entrypoints and fails explicitly
   when the `purescript-spec` summary reports a failing suite
 - the existing Playwright DOM selectors are preserved across the PureScript views; if a selector
   cannot be preserved, the Playwright spec is updated in the same change

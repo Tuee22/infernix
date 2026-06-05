@@ -107,7 +107,6 @@ contract.
   engine is Python-native
 - large outputs surface as typed `ObjectRef` results that point into the `infernix-demo-objects`
   MinIO bucket; the browser fetches them via presigned GET URLs minted at `/api/objects`
-  (the legacy `GET /objects/:objectRef` route is retired in Phase 7 Sprint 7.7)
 - switching runtime modes changes the generated catalog and selected engine bindings without
   changing the browser route structure
 

@@ -29,52 +29,33 @@
   decides whether different models load on different devices
   (multi-model serving) or the same model loads on multiple devices
   (throughput scaling).
-- The three-role split applies symmetrically. Apple silicon's
-  existing in-cluster `ClusterDaemon` is the coordinator role; the
-  existing on-host `HostDaemon` is the engine role. Linux substrates
-  run both the coordinator role and the engine role as separate
-  in-cluster Deployments.
+- The three-role split applies symmetrically. Apple silicon runs the
+  `Coordinator` role in cluster and the `Engine` role on host. Linux
+  substrates run both roles as separate in-cluster Deployments.
 - Production deployments (`demo_ui = false`) run only the engine
   Deployment.
 
 ## Current Status
 
-The three-role contract is the supported shape for Phase 7. Sprint 7.7
-landed the Linux daemon split: `chart/templates/deployment-service.yaml`
-is gone, `clusterServiceEnabled` returns `False` on every substrate,
-and `finalPhaseDeployments` waits on
-`deployment/infernix-{coordinator,engine,demo}` instead of the retired
-`deployment/infernix-service`. Apple silicon runs the two roles as the
-in-cluster `Coordinator` and the on-host `Engine` (renamed from
-`ClusterDaemon` / `HostDaemon` in the Sprint 7.7 vocabulary cutover);
-the cluster-daemon-to-host-daemon batch bridge is unchanged. The
-coordinator's runtime Pulsar wiring (per-context dispatcher Failover
-subscription, result-bridge Failover subscription, model-bootstrap
-Failover subscription against `infernix-models`, and WebSocket-originated
-event publication) is implemented. The May 27, 2026 Linux GPU integration
-run validates the real-cluster coordinator-to-engine handoff contract:
-`/api/publication`, `cluster status`, and the generated demo config all
-report the configured Linux batch topic, and the service runtime loop
-round-trips inference through the coordinator and engine roles. A May
-28, 2026 follow-on submits a durable-context prompt through the dispatcher,
-engine, and result bridge and observes the completed conversation-log
-writeback. The 2026-06-02 LinuxCpu code-side landing adds the real-cluster
-chaos and throughput integration checks: frontend/coordinator/engine pod
-replacement, engine node drain, model-bootstrap deduplication across
-coordinator replacement, Linux engine anti-affinity, and compact multi-user
-durable prompt throughput. Full `linux-cpu` `infernix test all` validation
-passed on 2026-06-02, and full `linux-gpu` `infernix test all` validation
-passed on 2026-06-03.
-The June 4, 2026 Sprint 7.8 follow-on wires
-`Infernix.Runtime.KVCache` through the engine runtime and native worker
-harness for reducer/hash-backed prefix verification decisions, and moves
-daemon role orchestration into `Infernix.Runtime.Daemon`. Unit coverage
-proves runtime rebuild/reuse decisions; the mounted Linux CPU integration
-suite validates the coordinator/engine durable prompt flow, engine pod
-replacement, engine node drain, exact broker counts, throughput, and
-production-shape deployment against the same worktree. Failover consumer
-names stay process-qualified under stable subscription names via
-`Infernix.Runtime.Pulsar.Failover`.
+The three-role contract is the supported shape. The chart ships
+`chart/templates/deployment-{coordinator,engine,demo}.yaml`,
+`clusterServiceEnabled` returns `False` on every substrate, and
+`finalPhaseDeployments` waits on
+`deployment/infernix-{coordinator,engine,demo}`. Apple silicon runs the
+two roles as the in-cluster `Coordinator` and the on-host `Engine`; the
+cluster-coordinator-to-host-engine batch bridge handles Apple-native
+inference handoff. The coordinator's runtime Pulsar wiring (per-context
+dispatcher Failover subscription, result-bridge Failover subscription,
+model-bootstrap Failover subscription against `infernix-models`, and
+WebSocket-originated event publication) is implemented. `Infernix.Runtime.KVCache`
+backs the engine runtime and native worker harness with reducer/hash-backed
+prefix verification decisions, and `Infernix.Runtime.Daemon` owns daemon-role
+orchestration. Failover consumer names stay process-qualified under stable
+subscription names via `Infernix.Runtime.Pulsar.Failover`. Unit coverage
+proves runtime rebuild/reuse decisions; the integration suite validates
+the coordinator/engine durable prompt flow, engine pod replacement, engine
+node drain, exact broker counts, throughput, and production-shape
+deployment.
 
 ## Roles and Responsibilities
 
@@ -226,7 +207,7 @@ machine), not a Kubernetes pod. The one-per-node rule is enforced
 symmetrically via an exclusive `flock(2)` on
 `./.data/runtime/engine.lock` acquired at daemon startup; a second
 `infernix service` invocation on the same host exits non-zero with a
-diagnostic naming the PID currently holding the lock. The Linux
+diagnostic naming the PID holding the lock. The Linux
 engine pod acquires the same lock inside its `emptyDir` (no-op in
 practice because pod anti-affinity already guarantees uniqueness,
 but the contract is uniform across substrates).
@@ -243,7 +224,7 @@ state on the operator's machine, not durable cluster state.
 
 | Substrate | `demo_ui` | Frontend pod | Coordinator pod | Engine placement |
 |---|---|---|---|---|
-| `apple-silicon` | `true` | `infernix-demo` in cluster (replicas ≥ 2) | `infernix-coordinator` in cluster (replicas ≥ 2) — the existing `ClusterDaemon` role | on host (existing `HostDaemon` role, one process per host) |
+| `apple-silicon` | `true` | `infernix-demo` in cluster (replicas ≥ 2) | `infernix-coordinator` in cluster (replicas ≥ 2) | `infernix service` engine process on host, one per host machine |
 | `apple-silicon` | `false` | absent | absent | on host only |
 | `linux-cpu` | `true` | `infernix-demo` in cluster (replicas >= 2) | `infernix-coordinator` in cluster (replicas >= 2) | `infernix-engine` in cluster, one per worker node; the supported local HA lane renders two workers and two engines |
 | `linux-cpu` | `false` | absent | absent | `infernix-engine` in cluster, one per worker node |
@@ -372,22 +353,19 @@ three roles share access to:
 
 ## Apple Silicon Mapping
 
-The Apple substrate already runs the supported two-role split; this
-doc names the existing roles in the new vocabulary so the docs suite
-stays consistent.
+The Apple substrate runs the two-role split with the engine on host
+and the coordinator in cluster.
 
-- The existing in-cluster Apple daemon (current `ClusterDaemon` role)
-  becomes `infernix-coordinator` in the supported target shape: it
-  consumes `inference.request.apple-silicon`, runs the dispatch,
-  result-bridge, and model-bootstrap work, and publishes to
+- `infernix-coordinator` in cluster consumes
+  `inference.request.apple-silicon`, runs the dispatch, result-bridge,
+  and model-bootstrap work, and publishes to
   `inference.batch.apple-silicon.host`, the Apple host-native handoff
   topic.
-- The existing on-host Apple daemon (current `HostDaemon` role)
-  becomes the engine role: it consumes `inference.batch.apple-silicon.host`,
-  pulls model weights from `infernix-models` via the shared adapter
-  helper into a host-local cache under
-  `./.data/runtime/model-cache/`, runs the Apple-native adapter, owns
-  the in-memory KV cache, and publishes
+- The on-host `infernix service` engine process consumes
+  `inference.batch.apple-silicon.host`, pulls model weights from
+  `infernix-models` via the shared adapter helper into a host-local
+  cache under `./.data/runtime/model-cache/`, runs the Apple-native
+  adapter, owns the in-memory KV cache, and publishes
   `inference.result.apple-silicon`. The one-per-node rule is enforced
   via an exclusive `flock(2)` on `./.data/runtime/engine.lock`
   acquired at daemon startup — the symmetrical equivalent of the
@@ -428,14 +406,12 @@ The three-role contract is validated by:
 
 - `infernix lint chart` against the role-specific Deployment
   templates and PodDisruptionBudgets
-- the May 28, 2026 Linux GPU integration roundtrip for the normal
-  dispatcher -> engine -> result-bridge writeback path
+- `infernix test integration` for the dispatcher → engine → result-bridge
+  writeback path
 - `infernix test integration` chaos tests for frontend pod replacement,
   coordinator pod replacement, engine pod replacement, engine-node drain,
   bootstrap deduplication, and engine anti-affinity (defined in
-  [../development/chaos_testing.md](../development/chaos_testing.md)); these
-  landed as of 2026-06-02, the native `linux-cpu` full-suite gate passed on
-  2026-06-02, and `linux-gpu` Wave C validation passed on 2026-06-03
+  [../development/chaos_testing.md](../development/chaos_testing.md))
 - a production-shape test that deploys `demo_ui = false` and asserts
   only `infernix-engine` Deployment is present via
   `infernix kubectl -n platform get deployments`
@@ -461,5 +437,5 @@ resolution of this doc.
 - [../development/chaos_testing.md](../development/chaos_testing.md) — per-role chaos cases
 - [../development/demo_app_test_plan.md](../development/demo_app_test_plan.md) — validation surface
 - [../tools/pulsar.md](../tools/pulsar.md) — Pulsar topic contract
-- [../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md](../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md) — Sprint 7.7 delivers the supported pod split
+- [../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md](../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md) — phase plan for the supported three-role pod split
 - [../../DEVELOPMENT_PLAN/system-components.md](../../DEVELOPMENT_PLAN/system-components.md) — authoritative component inventory

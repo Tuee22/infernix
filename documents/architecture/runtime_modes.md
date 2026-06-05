@@ -60,8 +60,8 @@ Kind worker nodes then pull the architecture-matched image from Harbor without a
 cross-architecture translation. Apple Silicon workflows must not create or switch Docker contexts
 or create a Colima VM; Docker-backed Apple work uses the operator's already selected native arm64
 Docker daemon or stops at prerequisite validation. The supported MinIO image inventory uses upstream multi-arch
-images (`minio/minio`, `minio/mc`, `busybox`) rather than the retired amd64-only
-`bitnamilegacy/*` packaging; see [../tools/minio.md](../tools/minio.md) for the canonical
+images (`minio/minio`, `minio/mc`, `busybox`) instead of single-architecture amd64-only
+packaging; see [../tools/minio.md](../tools/minio.md) for the canonical
 inventory.
 
 ## Generated Demo Config Contract
@@ -94,15 +94,14 @@ target shape is the three-role daemon model codified in
   `demo_ui` is enabled, on every supported substrate. The **engine**
   role runs as an in-cluster `infernix-engine` Deployment on Linux
   substrates with a strict one-per-node anti-affinity rule, and as
-  the existing on-host daemon on Apple silicon. The Sprint 7.7
-  daemon split is landed: the chart no longer ships
-  `chart/templates/deployment-service.yaml`, `clusterServiceEnabled`
-  returns `False` on every substrate, and `finalPhaseDeployments`
-  waits on `deployment/infernix-{coordinator,engine}` instead of
-  the retired `deployment/infernix-service`. The Apple lane's
-  cluster-daemon-to-host-daemon batch bridge is unchanged by the
-  split.
-- on `apple-silicon`, the clustered `infernix-demo` path still runs from the
+  the on-host `infernix service` daemon on Apple silicon. The chart
+  ships `chart/templates/deployment-{coordinator,engine,demo}.yaml`,
+  `clusterServiceEnabled` returns `False` on every substrate, and
+  `finalPhaseDeployments` waits on
+  `deployment/infernix-{coordinator,engine}`. The Apple lane's
+  cluster-coordinator-to-host-engine batch bridge carries Apple-native
+  inference handoff.
+- on `apple-silicon`, the clustered `infernix-demo` path runs from the
   `infernix-linux-cpu:local` image family while reading the staged `apple-silicon` substrate file
 - the direct `infernix service` command remains the Apple host engine-role entrypoint and
   consumes the generated engine-role metadata, batch topic, result topic, and engine bindings
@@ -112,7 +111,7 @@ target shape is the three-role daemon model codified in
   reports `inferenceExecutorLocation: control-plane-host` on Apple, and distinguishes the
   inference lane with `inferenceDispatchMode: pulsar-bridge-to-host-daemon` on Apple versus
   `pulsar-bridge-to-cluster-daemon` on Linux (the latter terminates at the in-cluster engine
-  Deployment after the Sprint 7.7 split)
+  Deployment)
 - when Pulsar endpoint env vars are present, the daemon uses the real Pulsar WebSocket or admin
   transport for those topic fields; on Apple host-native runs, the daemon also auto-discovers the
   routed Pulsar edge from the published cluster state when the env vars are absent and the cluster

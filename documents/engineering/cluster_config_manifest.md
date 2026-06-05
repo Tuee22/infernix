@@ -116,11 +116,10 @@ secret file via `readFile (SecretsConfig.<service>.credentialsPath)`.
 
 ## Per-field origin mapping
 
-This table records the typed replacement families for the retired deployment-env inputs. The
-exact retired names live only in the deletion ledger.
+This table records the typed input families read by each consumer.
 
-| Retired source family | New Dhall field family | Read by |
-|-----------------------|------------------------|---------|
+| Input family | Dhall field family | Read by |
+|--------------|--------------------|---------|
 | Pulsar admin, WebSocket, HTTP, service URL, tenant, and namespace inputs | `pulsar.*` | `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Conversation/Topic.hs` |
 | MinIO endpoint, public presign endpoint, region, presign-expiry, and model-bucket inputs | `minio.*` | `src/Infernix/Demo/Api.hs`, `src/Infernix/Runtime/Pulsar.hs`, `python/adapters/model_cache.py` |
 | MinIO access-key and secret-key inputs | `readFile (SecretsConfig.minio.credentialsPath)` -> `accessKey` / `secretKey` | `src/Infernix/Demo/Api.hs`, `src/Infernix/Runtime/Pulsar.hs` |
@@ -146,11 +145,11 @@ when the demo backend mints `/api/objects` grants; on the local Gateway it is
 - `infernix lint chart` rejects any `env:` block in
   `chart/templates/deployment-{coordinator,engine,demo}.yaml`.
 - `infernix lint files` rejects any new project-prefixed env lookup in the Haskell sources.
-- The May 28, 2026 Linux GPU routed E2E run proves the demo pod reads the mounted
-  `keycloak.*` fields correctly by exchanging a real routed Keycloak auth code, rejecting a
-  malformed bearer token, accepting the real access token for `/api/objects` upload/download grant
-  minting, and using `minio.presignPublicEndpoint` for same-user routed presigned PUT/GET byte
-  equality plus cross-user object-prefix isolation.
+- `infernix test e2e` proves the demo pod reads the mounted `keycloak.*` fields correctly by
+  exchanging a real routed Keycloak auth code, rejecting a malformed bearer token, accepting the
+  real access token for `/api/objects` upload/download grant minting, and using
+  `minio.presignPublicEndpoint` for same-user routed presigned PUT/GET byte equality plus
+  cross-user object-prefix isolation.
 
 ## Cross-References
 

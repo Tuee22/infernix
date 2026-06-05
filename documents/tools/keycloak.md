@@ -14,8 +14,8 @@
   operator, in line with [postgresql.md](postgresql.md); Keycloak's chart-embedded database
   path is disabled
 - the local demo runs one Keycloak application pod while the backing Patroni Postgres cluster
-  remains HA; raising the Keycloak application replica count requires the Sprint 7.14
-  proxy-affinity or clustered-cache validation pass
+  remains HA; raising the Keycloak application replica count requires routed proxy-affinity or
+  clustered-cache validation
 - the Keycloak workload image is mirrored into Harbor before deployment and pulled from
   Harbor at runtime; no other registries are used after Harbor is ready
 - the realm definition is pre-seeded by an in-binary reconcile path during `cluster up`; the
@@ -39,9 +39,9 @@
   namespaces and MinIO prefixes from `sub`, not from username
 - when `demo_ui = false`, the Keycloak release, its Patroni cluster, the `/auth` route, and
   the demo MinIO bucket are absent from the cluster
-- the May 28, 2026 clean rebuilt-image Linux GPU production-shape check validated that
-  `demo_ui = false` omits the Keycloak Deployment, Service, realm ConfigMap, admin Secret,
-  and the `keycloak-postgresql` Patroni cluster while keeping `infernix-engine` present
+- the production-shape integration test confirms that `demo_ui = false` omits the Keycloak
+  Deployment, Service, realm ConfigMap, admin Secret, and the `keycloak-postgresql` Patroni
+  cluster while keeping `infernix-engine` present
 
 ## Bootstrap Order
 
@@ -68,16 +68,16 @@ Validation rules: standard OIDC `iss`, `aud`, `exp`, `nbf`, `iat`, signature aga
 `sub` extracted as the canonical user id. Failed validation closes the WS or rejects the HTTP
 request with a typed error.
 
-The May 28, 2026 Linux GPU routed Playwright run validates the public Keycloak path end to end
-for the object-grant API: a fresh user self-registers through `/auth`, the authorization code is
-exchanged for a real access token, `/api/objects/upload` rejects a malformed bearer token with
-`401`, the backend accepts the real token for scoped upload/download grant minting, and the same
-user completes a routed presigned MinIO PUT/GET byte roundtrip. A second fresh user with the same
+The routed Playwright run validates the public Keycloak path end to end for the object-grant
+API: a fresh user self-registers through `/auth`, the authorization code is exchanged for a
+real access token, `/api/objects/upload` rejects a malformed bearer token with `401`, the
+backend accepts the real token for scoped upload/download grant minting, and the same user
+completes a routed presigned MinIO PUT/GET byte roundtrip. A second fresh user with the same
 context/display name receives a different `users/<sub>/...` object prefix and cannot read the
-first user's object by default. The same routed suite opens `/ws` with the real token, verifies a
+first user's object by default. The routed suite opens `/ws` with the real token, verifies a
 malformed token does not open a browser WebSocket, and asserts a typed `ServerError` for a
-malformed frame on a valid connection. The browser artifact flow now also starts from the SPA's
-own sign-in button, lets `web/src/Infernix/Web/Auth.purs` / `.js` generate the PKCE verifier and
+malformed frame on a valid connection. The browser artifact flow starts from the SPA's own
+sign-in button, lets `web/src/Infernix/Web/Auth.purs` / `.js` generate the PKCE verifier and
 complete the authorization-code exchange, then uses the in-memory access token for routed
 artifact upload and preview calls.
 

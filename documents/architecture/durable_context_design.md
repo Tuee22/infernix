@@ -37,28 +37,24 @@
 
 ## Current Status
 
-The durable-context primitives are landing under Phase 7
+The durable-context primitives live in the shared library and are
+exercised by Phase 7
 ([../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md](../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md)).
-Phases 0–6 are `Done`, so the Pulsar, MinIO, Keycloak-capable, and routed
-edge foundations the primitives build on are all in place. The shared
-library modules listed in [§ Module Layout](#module-layout) are the Phase 7
-deliverables that make these primitives reusable by any future application.
-As of May 28, 2026, Linux GPU integration validates the compacted metadata
-broker contract with live Pulsar admin compaction, a Java compacted reader,
-latest-per-`contextId` assertions for context and draft topics, and duplicate
-frontend publish collapse through broker producer deduplication. The same
-integration layer now validates the normal dispatcher -> request/batch -> engine
-  -> result-bridge -> conversation-log writeback path for one durable-context
-prompt. The browser E2E layer covers active-context WebSocket re-subscribe,
-draft restoration after both reconnect and reload login, and frontend pod
-replacement by deleting all `infernix-demo` pods during the routed flow and
-submitting another prompt after reconnect.
-As of June 4, 2026, the engine-side prefix-hash cache path is wired
+The Pulsar, MinIO, Keycloak-capable, and routed edge foundations are in
+place; the shared library modules listed in
+[§ Module Layout](#module-layout) make these primitives reusable by any
+future application. The integration suite validates the compacted
+metadata broker contract with live Pulsar admin compaction, a Java
+compacted reader, latest-per-`contextId` assertions for context and
+draft topics, duplicate frontend publish collapse through broker
+producer deduplication, the normal dispatcher → request/batch → engine
+→ result-bridge → conversation-log writeback path for one
+durable-context prompt, and engine-side prefix-hash cache decisions
 through `Infernix.Runtime.KVCache`, `Infernix.Runtime`, and the native
-worker harness. Unit coverage validates rebuild/reuse decisions through
-the runtime path, and the mounted Linux CPU integration suite validates
-the coordinator/engine durable prompt flow, engine pod replacement,
-engine node drain, and exact broker counts against the same worktree.
+worker harness. The browser E2E layer covers active-context WebSocket
+re-subscribe, draft restoration after both reconnect and reload login,
+and frontend pod replacement by deleting all `infernix-demo` pods
+during the routed flow and submitting another prompt after reconnect.
 The Pulsar Failover transport keeps stable subscription names while
 process-qualifying consumer names for clearer coordinator promotion
 membership.
@@ -292,13 +288,15 @@ Pulsar's monotonic sequence rule inside a producer.
 Conversation events are unkeyed append-log entries; context metadata
 and draft records carry Pulsar message key `contextId` so broker compaction collapses by
 the same key the reducers use. See [../tools/pulsar.md](../tools/pulsar.md) for the
-broker-level contract. The May 28, 2026 Linux GPU integration run validates the live
-`infernix/demo` namespace compaction threshold, explicitly compacts context and draft
-metadata topics, proves the compacted reader returns one latest payload per `contextId`,
-and publishes duplicate frontend conversation/draft messages to prove broker producer dedup stores
-one message for each duplicate mutation-scoped producer/sequence pair. It also submits a real
-durable-context prompt and observes the completed result event on the conversation log after the
-dispatcher, engine, and result bridge run.
+broker-level contract. The integration suite validates the live
+`infernix/demo` namespace compaction threshold, explicitly compacts
+context and draft metadata topics, proves the compacted reader returns
+one latest payload per `contextId`, and publishes duplicate frontend
+conversation/draft messages to prove broker producer dedup stores one
+message for each duplicate mutation-scoped producer/sequence pair. It
+also submits a real durable-context prompt and observes the completed
+result event on the conversation log after the dispatcher, engine, and
+result bridge run.
 
 The demo binding sets `<topicNamespace> = infernix/demo` and reuses the
 existing shared `inference.request.<mode>` and `inference.result.<mode>`

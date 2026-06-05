@@ -39,7 +39,7 @@ The current worktree follows the substrate-image policy directly: the image fami
 the Linux Playwright runtime. `compose.yaml` defines the single `infernix` service for both Linux
 lanes, defaults to the CPU image, and accepts `LAUNCHER_IMAGE=infernix-linux-gpu:local` for the
 GPU Docker Compose invocation. The service bind-mounts only `./.data/` and the Docker socket. The
-Harbor-first bootstrap path no longer depends on any retired helper-registry container cleanup.
+Harbor-first bootstrap path does not depend on any helper-registry container cleanup.
 Kind and `nvkind` cluster create or delete uses launcher-local scratch kubeconfig state under the
 container temp directory, and the durable operator-facing kubeconfig is published afterward to
 `./.data/runtime/infernix.kubeconfig`. The host Linux bootstrap installs `docker-buildx-plugin`,
@@ -104,9 +104,8 @@ operations have a buildx-capable CLI when needed.
 - the Linux substrate images carry the runtime and validation dependencies needed to launch the
   control plane, build the web bundle, run `poetry install`, regenerate protobuf stubs, and execute
   `poetry run check-code`
-- the Linux substrate images preinstall the project `ghc-9.14.1` toolchain together with the
-  dedicated formatter-toolchain compiler `ghc-9.12.4` that the Haskell style gate uses through
-  `ghcup run`
+- the Linux substrate images preinstall the project `ghc-9.12.4` toolchain; `ormolu` and `hlint`
+  install through `cabal install` against that compiler into `./.build/haskell-style-tools/bin/`
 - the Linux substrate image leaves GHCup shell-profile adjustment disabled and owns the toolchain
   `PATH` through Docker `ENV`; `Couldn't figure out login shell!` is therefore a regression if it
   appears in a freshly built image

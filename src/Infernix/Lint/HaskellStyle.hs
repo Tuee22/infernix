@@ -13,7 +13,6 @@ import System.Directory
   ( createDirectoryIfMissing,
     doesDirectoryExist,
     doesFileExist,
-    findExecutable,
     getTemporaryDirectory,
     listDirectory,
     removeFile,
@@ -51,54 +50,25 @@ installFormatterTools paths = do
   ormoluPresent <- doesFileExist ormoluPath
   hlintPresent <- doesFileExist hlintPath
   when (not ormoluPresent || not hlintPresent) $ do
-    ensureFormatterBootstrapAvailable
-    primaryInstallResult <- try (installFormatterToolsWithCommand paths "ghcup" (formatterInstallArgs paths)) :: IO (Either IOException ())
-    case primaryInstallResult of
+    installResult <- try (installFormatterToolsWithCommand paths "cabal" (formatterInstallArgs paths)) :: IO (Either IOException ())
+    case installResult of
       Right () -> pure ()
-      Left primaryErr ->
+      Left installErr ->
         ioError
           ( userError
-              ( "haskell-style-check: formatter bootstrap failed with the dedicated formatter compiler ghc-"
-                  <> formatterCompilerVersion
-                  <> "\n"
-                  <> "error:\n"
-                  <> show primaryErr
+              ( "haskell-style-check: formatter bootstrap failed\nerror:\n"
+                  <> show installErr
               )
           )
-
-ensureFormatterBootstrapAvailable :: IO ()
-ensureFormatterBootstrapAvailable = do
-  maybeGhcup <- findExecutable "ghcup"
-  case maybeGhcup of
-    Just _ -> pure ()
-    Nothing ->
-      ioError
-        ( userError
-            ( "haskell-style-check: ghcup is unavailable, so the dedicated formatter compiler ghc-"
-                <> formatterCompilerVersion
-                <> " cannot be bootstrapped"
-            )
-        )
 
 installFormatterToolsWithCommand :: Paths -> FilePath -> [String] -> IO ()
 installFormatterToolsWithCommand paths =
   runCommand (repoRoot paths)
 
-formatterCompilerVersion :: String
-formatterCompilerVersion = "9.12.4"
-
 formatterInstallArgs :: Paths -> [String]
 formatterInstallArgs paths =
-  [ "run",
-    "--install",
-    "--ghc",
-    formatterCompilerVersion,
-    "--",
-    "cabal",
-    "--ignore-project",
-    "--builddir=" <> formatterToolsBuildRoot paths,
+  [ "--builddir=" <> formatterToolsBuildRoot paths,
     "install",
-    "--with-compiler=ghc-" <> formatterCompilerVersion,
     "--installdir=" <> formatterToolsBinRoot paths,
     "--install-method=copy",
     "--overwrite-policy=always",

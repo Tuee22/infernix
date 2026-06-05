@@ -61,9 +61,9 @@
 
 - `src/Infernix/Lint/HaskellStyle.hs` is the implementation source of truth for the style gate.
 - `runHaskellStyleLint` bootstraps `ormolu` and `hlint` into `./.build/haskell-style-tools/bin/`
-  through `ghcup run --ghc 9.12.4`, which is the dedicated compatible formatter toolchain while
-  the project build and runtime toolchain remains on `ghc-9.14.1`; supported validation fails
-  fast when `ghcup` or that formatter toolchain is unavailable.
+  through `cabal install ormolu hlint --installdir=./.build/haskell-style-tools/bin/` against the
+  project `ghc-9.12.4` toolchain; supported validation fails fast when the project compiler is
+  unavailable.
 - the style gate checks `Setup.hs`, `app/`, `src/`, and `test/` with `ormolu --mode check` and
   `hlint`
 - the style gate checks `infernix.cabal` by formatting a temporary copy with `cabal format` and

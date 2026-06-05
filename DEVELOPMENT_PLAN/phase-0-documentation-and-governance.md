@@ -192,12 +192,12 @@ demo-only HTTP surface, and generated-catalog architecture baseline.
 - the docs suite describes `infernix` and `infernix-demo` as the supported binary topology
 - production inference is documented as Pulsar-only
 - demo HTTP, browser SPA, and generated frontend contracts are documented as demo-only surfaces
-- later implementation phases inherit a coherent docs baseline instead of mixed legacy language
+- later implementation phases inherit a coherent docs baseline instead of mixed prior language
 
 ### Validation
 
-- the listed docs no longer describe the retired single-binary or Python-HTTP product shape
-- documentation validation catches the retired-doctrine vocabulary tracked in the cleanup ledger
+- the listed docs no longer describe the prior single-binary or Python-HTTP product shape
+- documentation validation catches the prior-doctrine vocabulary tracked in the cleanup ledger
 
 ### Remaining Work
 
@@ -252,7 +252,7 @@ implementation follow-ons close against.
   supported selection contract
 - Apple operator docs distinguish Apple host-native control-plane execution from clustered support
   services and use the Phase 6 Sprint 6.25 cluster-daemon plus host-inference-executor wording
-- Apple docs distinguish the retired direct host `infernix-demo serve` story from the supported
+- Apple docs distinguish the prior direct host `infernix-demo serve` story from the supported
   Apple host-inference bridge used when the routed demo surface stays in the cluster
 - Apple docs do not describe Kind, Docker, or other containerized Apple workloads as having
   Metal or unified-memory parity with the host inference daemon
@@ -280,7 +280,7 @@ implementation follow-ons close against.
   generation, first-command auto-generation, file-absent fallback, or runtime-specific in-cluster
   substrate filenames that the code no longer uses
 - `infernix docs check` fails if the governed docs still describe Apple clustered repo workloads
-  as having Apple-native inference parity or describe the retired direct host
+  as having Apple-native inference parity or describe the prior direct host
   `infernix-demo serve` path as the final routed demo contract
 - `infernix docs check` fails if the governed docs still describe browser-side substrate selection,
   separate per-substrate integration suites, or any simulated fallback as part of the supported
@@ -301,11 +301,11 @@ None.
 ### Objective
 
 Declare the no-env-var, absolute-path, three-Dhall-file configuration doctrine as the supported
-contract, and enumerate the per-phase retirement work (Sprints 1.11, 2.13, 3.10, 4.13, 5.9, 6.28,
+contract, and enumerate the per-phase cleanup work (Sprints 1.11, 2.13, 3.10, 4.13, 5.9, 6.28,
 7.17) that operationalizes it. Phase 0 owns the doctrine; the matching code changes land in the
-later-phase retirement sprints. The three configuration Dhall files (`InfernixHost.dhall`,
+later-phase cleanup sprints. The three configuration Dhall files (`InfernixHost.dhall`,
 `InfernixCluster.dhall`, `InfernixSecrets.dhall`) are distinct from the pre-existing
-`dhall/InfernixSubstrate.dhall` substrate schema landed in Phase 6 Sprint 6.27.
+`dhall/InfernixSubstrate.dhall` substrate schema implemented in Phase 6 Sprint 6.27.
 
 ### Deliverables
 
@@ -323,13 +323,12 @@ later-phase retirement sprints. The three configuration Dhall files (`InfernixHo
   no `proc "<bare-name>"`, no `process.env`, no `os.environ`, no `env:` blocks in
   infernix-owned chart templates).
 - `documents/documentation_standards.md` adds a content rule rejecting `$INFERNIX_*` / `$PATH`
-  mentions in governed docs outside the legacy-tracking ledger and the documented Keycloak
+  mentions in governed docs outside the prior-tracking ledger and the documented Keycloak
   third-party exception.
-- `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md` gains seven Pending Removal rows, one per
-  per-phase retirement sprint, naming the specific env vars / PATH-resolved commands /
-  chart-template `env:` blocks each retires.
-- `DEVELOPMENT_PLAN/README.md` Phase Overview table reflects all phases as Active with the named
-  retirement sprint as the open work.
+- `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md` records the cleanup rows for the seven
+  per-phase cleanup sprints, naming the specific env vars / PATH-resolved commands /
+  chart-template `env:` blocks each sprint owns.
+- `DEVELOPMENT_PLAN/README.md` Phase Overview table reflects the closed phase state.
 - `README.md`, `AGENTS.md`, `CLAUDE.md` link to
   `documents/architecture/configuration_doctrine.md` and
   `documents/development/no_env_vars.md` as canonical homes; the no-env-var + absolute-path
@@ -340,20 +339,83 @@ later-phase retirement sprints. The three configuration Dhall files (`InfernixHo
 - `infernix lint docs` exits zero against the new + updated docs.
 - `infernix lint files` and the existing repo-wide checks remain clean (this sprint is purely
   declarative — no code changes).
-- The seven Pending Removal rows in `legacy-tracking-for-deletion.md` each name a specific later
+- The seven cleanup rows in `legacy-tracking-for-deletion.md` each name a specific later
   sprint as the owning sprint (1.11, 2.13, 3.10, 4.13, 5.9, 6.28, 7.17).
 
 ### Remaining Work
 
-None. The seven retirement sprints (1.11, 2.13, 3.10, 4.13, 5.9, 6.28, 7.17)
-landed, the Apple cohort closed in Wave A, and the CUDA Linux cohort closed in Wave C with
-`linux-cpu` passing on 2026-06-02 and `linux-gpu` passing on 2026-06-03.
+None. The seven cleanup sprints (1.11, 2.13, 3.10, 4.13, 5.9, 6.28, 7.17)
+implemented, the Apple cohort closed in Wave A, and the CUDA Linux cohort closed in Wave C with
+`linux-cpu` passing on the recorded cohort validation and `linux-gpu` passing on the recorded cohort validation.
+
+---
+
+## Sprint 0.10: Declarative-State Documentation Reconciliation [Done]
+
+**Status**: Done
+**Implementation**: `README.md`, `documents/**/*.md`, `DEVELOPMENT_PLAN/**/*.md` (prose only)
+**Docs to update**: `README.md`, every file in `documents/` carrying sprint-history attributions, dated validation evidence, or prior-entity name references in body prose, plus `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/00-overview.md`, `DEVELOPMENT_PLAN/system-components.md`, the per-phase Phase 4/5/6/7 editorial sprints (4.14, 5.10, 6.29, 7.18), and `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
+
+### Objective
+
+Make every prose surface in `README.md`, `documents/`, and `DEVELOPMENT_PLAN/` present-tense and
+declarative against the supported shape defined by the canonical architecture documents, and
+seed `legacy-tracking-for-deletion.md` with any still-extant obsolete surfaces surfaced during
+the pass. The supported shape is anchored on
+[../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md)
+(daemon vocabulary: `Coordinator` / `Engine` / `Frontend`; deployments: `infernix-coordinator` /
+`infernix-engine` / `infernix-demo`),
+[../documents/architecture/runtime_modes.md](../documents/architecture/runtime_modes.md)
+(substrates: `apple-silicon`, `linux-cpu`, `linux-gpu`),
+[../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
+(three typed Dhall files, no env vars), and
+[../documents/engineering/object_storage.md](../documents/engineering/object_storage.md)
+(MinIO buckets `infernix-models` and `infernix-demo-objects`).
+
+### Deliverables
+
+- `README.md` prose drops the "updated under Phase 7 Sprint 7.7" parenthetical at lines 190–203
+  and any `still`/`today`/`currently` hedges in the architectural prose blocks, and uses the
+  canonical three-role daemon vocabulary directly.
+- Every `documents/` file carrying sprint-history attributions (e.g. "Sprint 7.7 implemented",
+  "Phase 6 Sprint 6.28 added"), dated validation evidence (e.g. "the recorded cohort validation Linux GPU run"), or
+  prior-entity names used as current (`infernix-service`, `ClusterDaemon`/`HostDaemon`,
+  `./.data/object-store/`, `infernix-runtime`/`infernix-results` buckets, `/objects/:objectRef`,
+  `objectStoreRoot`) is rewritten in present-tense declarative voice.
+- `DEVELOPMENT_PLAN/system-components.md` removes the "current; prior by Phase 7 Sprint 7.7"
+  rows at lines 196, 241, 242, 247 and rewrites the daemon-cell paragraph at line 154 in
+  present-tense voice using the canonical three-role vocabulary.
+- The per-phase editorial sprints (Phase 4 Sprint 4.14, Phase 5 Sprint 5.10, Phase 6 Sprint 6.29,
+  Phase 7 Sprint 7.18) land their scoped rewrites so phase-internal prose carries no cross-phase
+  retirement narrative.
+- `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md` gains a Pending Removal row for any
+  still-extant obsolete surface surfaced during the pass that is not already in the ledger.
+- `DEVELOPMENT_PLAN/README.md` Phase Overview row for Phase 0 is `Done`.
+
+### Validation
+
+- `infernix lint docs` exits zero against the rewritten prose surfaces.
+- The README/doc lexical guard for unsupported historical-state and time-relative terms returns
+  zero matches.
+- `grep -rEn "Sprint [0-9]+\.[0-9]+|[A-Z][a-z]+ [0-9]+, 202[0-9]|202[0-9]-[0-9]{2}-[0-9]{2}" README.md documents/`
+  returns zero matches in body prose.
+- `grep -rEn "infernix-service|ClusterDaemon|HostDaemon|\./.data/object-store|infernix-runtime|infernix-results|/objects/:objectRef|objectStoreRoot" README.md documents/`
+  returns zero matches.
+- The development-plan lexical guard for unsupported historical-state terms returns matches only
+  inside `legacy-tracking-for-deletion.md`.
+- Read-through of `phase-0` → `phase-7` end-to-end: a fresh reader can follow the development
+  narrative without encountering language that retires, renames, or supersedes anything inside
+  `DEVELOPMENT_PLAN/` proper.
+
+### Remaining Work
+
+None.
 
 ---
 
 ## Remaining Work
 
-None. Sprints 0.1–0.9 are `Done`.
+None. Sprints 0.1-0.10 are `Done`.
 
 ## Documentation Requirements
 

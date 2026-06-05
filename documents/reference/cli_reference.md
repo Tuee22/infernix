@@ -106,8 +106,8 @@
   substrate's Python adapter quality gate via `poetry run check-code` when adapters are present;
   `infernix lint files` uses tracked files from `.git` when available and otherwise falls back to
   the baked `/opt/infernix/source-snapshot-files.txt` manifest on git-less Linux image runs; the
-  style gate uses the dedicated compatible formatter toolchain `ghc-9.12.4` through `ghcup run`
-  while the project build and runtime toolchain stays on `ghc-9.14.1`
+  style gate installs `ormolu` and `hlint` through `cabal install` against the project
+  `ghc-9.12.4` toolchain into `./.build/haskell-style-tools/bin/`
 - `infernix test unit` runs the Haskell unit suites and the PureScript frontend unit suites via
   `npm --prefix web run test:unit`
 - `infernix test integration`, `infernix test e2e`, and `infernix test all` run their complete

@@ -13,15 +13,15 @@
 - Generated frontend contracts live only under `web/src/Generated/`, and generated browser bundles
   live under `web/dist/`.
 - Runtime inference results reload only from protobuf-backed `./.data/runtime/results/*.pb`
-  records; retired `*.state` files are not part of the supported artifact contract.
+  records.
 
 ## Current Status
 
-The current worktree follows the supported artifact layout directly: the host path stages
+The worktree follows the supported artifact layout directly: the host path stages
 `./.build/infernix` and `./.build/infernix-demo`, the Linux substrate images own
 `/usr/local/bin/infernix*` and image-local outer-container build state, generated frontend
 contracts stay under `web/src/Generated/`, and runtime result or cache-manifest state uses
-protobuf-backed `*.pb` files instead of legacy text-state fallbacks.
+protobuf-backed `*.pb` files.
 Kind and `nvkind` cluster create or delete uses transient scratch kubeconfig state under the
 execution context's temp directory, and only the published repo-local kubeconfig paths are part
 of the supported artifact contract.
@@ -62,7 +62,6 @@ of the supported artifact contract.
 - inference-result reloads use `./.data/runtime/results/*.pb`
 - cache manifests sit beside the cached weights at
   `./.data/runtime/model-cache/<runtime-mode>/<model-id>/manifest.pb`
-  (Phase 7 Sprint 7.7 retired the `./.data/object-store/` tree)
 - `ensurePoetryProjectReady` regenerates Python protobuf stubs under `tools/generated_proto/` when
   they are missing
 

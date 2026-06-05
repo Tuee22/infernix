@@ -177,7 +177,7 @@ list in `src/Infernix/Lint/Chart.hs`.
 
 ## Lint enforcement
 
-Phase 6 Sprint 6.28 adds these gates:
+The repo-local lint gates are:
 
 - `src/Infernix/Lint/HaskellStyle.hs.disallowedFunctions` — rejects any of
   `lookupEnv`, `getEnv`, `getEnvironment`, `setEnv`, `unsetEnv` in

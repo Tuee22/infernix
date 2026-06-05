@@ -12,7 +12,7 @@
 Phase 5 closes around the PureScript demo UI, the Haskell-owned browser-contract
 source, the generated contract path under `web/src/Generated/`, the clustered demo hosting rule,
 the container-owned routed Playwright executor, and the Phase 5.9 process-environment retirement
-in the demo backend, Python adapter layer, and web/Node helper scripts. Sprints 5.1–5.9 had
+in the demo backend, Python adapter layer, and web/Node helper scripts. Sprints 5.1-5.10 have
 their deliverables closed in the worktree; Apple cohort validation closed in Waves A/A.2, and
 CUDA Linux cohort validation closed in Wave C.
 Phase 7 extends the PureScript demo surface with the durable-context Chat, Artifacts, and Model
@@ -184,8 +184,9 @@ Playwright executor from the active substrate image on Linux.
 
 - the final Linux substrate image includes the built `web/dist/` bundle, the Node toolchain needed
   to regenerate it, and the Playwright runtime used by Linux routed E2E
-- routed Playwright execution runs from the active Linux substrate image; the former dedicated
-  Playwright image and sidecar service are retired by Phase 3 Sprint 3.10
+- routed Playwright execution runs from the active Linux substrate image; the Playwright runtime
+  is baked into `docker/linux-substrate.Dockerfile` rather than carried in a separate image or
+  sidecar service
 - `infernix test e2e` invokes `npm --prefix web exec -- playwright test` inside the Linux
   launcher image; Apple host-native E2E uses host `npm exec` with the same typed fixture and
   is queued for the Apple cohort validation batch
@@ -357,17 +358,10 @@ discovery, setup `--install-root` CLI args, the protobuf `WorkerRequest` envelop
 - `grep -rn 'process\.env' web/scripts/ web/test/ web/playwright/` returns zero matches.
 - `infernix test integration` on `linux-gpu` round-trips through the demo + adapter path
   successfully.
-- May 26, 2026 (retired hardware): `linux-gpu` `infernix test all` PASS had validated the real
-  cluster demo + adapter path on the retired Linux/CUDA host; that proof point is no longer
-  current.
-- May 27, 2026 (retired hardware): `poetry run check-code`,
-  `node --check web/test/run_playwright_matrix.mjs`,
-  `node --check web/scripts/install-purescript.mjs`, and the grep gates above had all PASSED
-  after the last inherited environment reads were removed. The static checks are trivially
-  re-runnable on the new host.
-- May 27, 2026 (retired hardware): `cabal test infernix-unit` and
-  `cabal run infernix -- lint {docs,files,chart,proto}` had all PASSED. The unit and lint gates
-  are trivially re-runnable on the new host.
+- `poetry run check-code`, `node --check web/test/run_playwright_matrix.mjs`,
+  `node --check web/scripts/install-purescript.mjs`, and the grep gates above exit zero.
+- `cabal test infernix-unit` and `cabal run infernix -- lint {docs,files,chart,proto}` exit
+  zero.
 - Apple cohort validation closed in Waves A/A.2; CUDA Linux validation closed in Wave C with
   full `linux-cpu` and `linux-gpu` gates.
 
@@ -378,9 +372,40 @@ cohort validation closed in [Wave C](cohort-validation-waves.md).
 
 ---
 
+## Sprint 5.10: Declarative-State Phase Prose Rewrite [Done]
+
+**Status**: Done
+**Implementation**: `DEVELOPMENT_PLAN/phase-5-web-ui-and-shared-types.md` (prose only)
+**Docs to update**: this file
+
+### Objective
+
+Rewrite Phase 5 prose so cross-phase history notes and dated hardware proof points are replaced
+with present-tense descriptions of the supported shape, anchored on the canonical architecture
+documents. The phase narrative carries the supported PureScript, generated-contract, and routed
+Playwright contract directly.
+
+### Deliverables
+
+- Sprint 5.5 Deliverables describe the Playwright runtime baked into the Linux substrate image
+  directly, without referencing the prior sidecar.
+- Sprint 5.9 Validation prose uses cohort closure markers and keeps `Wave A/A.2`
+  and `Wave C` references for cohort closure.
+
+### Validation
+
+- the phase-specific lexical guard for dated hardware proof-point prose returns zero matches.
+- `infernix lint docs` exits zero against the rewritten prose.
+
+### Remaining Work
+
+None.
+
+---
+
 ## Remaining Work
 
-None. Sprints 5.1–5.9 are `Done`; Apple cohort validation closed in Waves A/A.2 and CUDA Linux
+None. Sprints 5.1-5.10 are `Done`; Apple cohort validation closed in Waves A/A.2 and CUDA Linux
 cohort validation closed in Wave C.
 
 ---

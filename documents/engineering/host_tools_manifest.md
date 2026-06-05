@@ -17,9 +17,8 @@
 - Bootstrap shell scripts use the same paths — either as hardcoded constants written into the
   script (for the small set of commands that run before the launcher binary exists) or by
   delegating to the binary after it does.
-- No code path resolves a command name through the operator's shell search path. The Haskell-style
-  lint gate (Phase 6
-  Sprint 6.28) rejects `proc "<bare-name>"` for every command listed in the manifest.
+- No code path resolves a command name through the operator's shell search path. The
+  Haskell-style lint gate rejects `proc "<bare-name>"` for every command listed in the manifest.
 
 ## Schema
 
@@ -159,7 +158,7 @@ readonly CABAL="${HOME_DIR}/.ghcup/bin/cabal"
 "${DOCKER}" compose --file "${REPO_ROOT}/compose.yaml" run --rm infernix infernix cluster up
 
 # Apple: build host-native binary, then delegate
-"${GHCUP}" install ghc 9.14.1
+"${GHCUP}" install ghc 9.12.4
 "${CABAL}" install
 "${REPO_ROOT}/.build/infernix" cluster up
 ```

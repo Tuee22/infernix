@@ -68,28 +68,23 @@ The active `.dhall` config carries the production inference fields consumed by `
 The three-role daemon model in
 [../architecture/daemon_topology.md](../architecture/daemon_topology.md) maps to Pulsar
 subscriptions as follows. The coordinator role (`infernix-coordinator` Deployment on every
-substrate; today's in-cluster Apple daemon plays this role) consumes `request_topics`, applies
-the dispatch and batching rules, and publishes to the configured batch handoff topic. Linux
-defaults use `inference.batch.<mode>`; Apple host-native handoff uses
-`inference.batch.apple-silicon.host`. The engine role (`infernix-engine` Deployment on Linux;
-on-host daemon on Apple) consumes that topic, executes the engine adapter, and publishes results
-to `result_topic`. The coordinator then writes the result back to the originating per-context
-conversation topic via the result-bridge.
+substrate) consumes `request_topics`, applies the dispatch and batching rules, and publishes to
+the configured batch handoff topic. Linux defaults use `inference.batch.<mode>`; Apple
+host-native handoff uses `inference.batch.apple-silicon.host`. The engine role
+(`infernix-engine` Deployment on Linux; on-host `infernix service` daemon on Apple) consumes
+that topic, executes the engine adapter, and publishes results to `result_topic`. The
+coordinator then writes the result back to the originating per-context conversation topic via
+the result-bridge.
 
-The Sprint 7.7 daemon split is landed:
-`chart/templates/deployment-service.yaml` is gone, the chart ships
-`deployment-{coordinator,engine}.yaml` instead, and the
-`inference.batch.<mode>` topic family is now defined on every substrate
-(see `src/Infernix/Models.hs.canonicalBatchTopicForMode`). Apple silicon
-already ran the supported two-process shape and was renamed cleanly
-under Sprint 7.7's `Coordinator` / `Engine` vocabulary.
+The chart ships `deployment-{coordinator,engine}.yaml` and the
+`inference.batch.<mode>` topic family is defined on every substrate
+(see `src/Infernix/Models.hs.canonicalBatchTopicForMode`).
 
-The May 27, 2026 Linux GPU integration extension validates the batch
-handoff contract on a real cluster: routed publication JSON exposes the
-configured `hostInferenceBatchTopic`, `cluster status` prints
-`publicationHostInferenceBatchTopic`, the generated demo config routes the
-coordinator from `inference.request.linux-gpu` to `inference.batch.linux-gpu`,
-and the engine config consumes that batch topic without forwarding again.
+The integration suite validates the batch handoff contract on a real cluster: routed
+publication JSON exposes the configured `hostInferenceBatchTopic`, `cluster status` prints
+`publicationHostInferenceBatchTopic`, the generated demo config routes the coordinator from
+`inference.request.linux-gpu` to `inference.batch.linux-gpu`, and the engine config consumes
+that batch topic without forwarding again.
 
 ## Demo Conversation and Metadata Topics
 
@@ -134,12 +129,12 @@ Rules:
   consumers use process-qualified names via `Infernix.Runtime.Pulsar.Failover`
   so multiple coordinator replicas do not present identical member names
   during broker promotion
-- the May 28, 2026 Linux GPU integration pass publishes `ClientCreateContext`,
-  `ClientUpdateDraft`, and `ClientCancelPrompt` through the real broker, reads them back with
-  Pulsar Readers, asserts the expected broker keys, decodes the typed JSON payloads, and
-  verifies that duplicate frontend publishes with the same mutation-scoped producer name and
-  WebSocket-sequenced dedup ID store exactly one conversation or draft message
-- the same pass reads the `infernix/demo` namespace compaction threshold through Pulsar admin,
+- the integration suite publishes `ClientCreateContext`, `ClientUpdateDraft`, and
+  `ClientCancelPrompt` through the real broker, reads them back with Pulsar Readers, asserts
+  the expected broker keys, decodes the typed JSON payloads, and verifies that duplicate
+  frontend publishes with the same mutation-scoped producer name and WebSocket-sequenced dedup
+  ID store exactly one conversation or draft message
+- the same suite reads the `infernix/demo` namespace compaction threshold through Pulsar admin,
   asserts the supported 100 MiB policy, explicitly compacts the contexts and drafts topics, and
   verifies with a Java Pulsar `readCompacted(true)` reader that the broker returns exactly one
   latest payload per `contextId`
@@ -150,15 +145,14 @@ Rules:
 
 ## Model-Bootstrap Topic
 
-Phase 7 Sprint 7.7 added a third Failover subscription type in the coordinator pod for
-lazy model-weight population to MinIO with exactly-once semantics. The supported
-`infernix` tenant plus the `infernix/system` and `infernix/demo` namespaces (with
-deduplication enabled) are reconciled on daemon startup by
-`reconcileSupportedNamespaces` (`src/Infernix/Runtime/Pulsar.hs`); the
+A third Failover subscription type in the coordinator pod handles lazy model-weight population
+to MinIO with exactly-once semantics. The supported `infernix` tenant plus the
+`infernix/system` and `infernix/demo` namespaces (with deduplication enabled) are reconciled on
+daemon startup by `reconcileSupportedNamespaces` (`src/Infernix/Runtime/Pulsar.hs`); the
 `persistent://infernix/system/model.bootstrap.request` topic is created during the same
-reconcile pass. The coordinator's bootstrap consumer + downloader + MinIO uploader
-runtime loop is implemented; Sprint 7.14's remaining chaos validation proves failover and
-exactly-once behavior on a real cluster:
+reconcile pass. The coordinator's bootstrap consumer + downloader + MinIO uploader runtime loop
+is exercised by the chaos suite, which proves failover and exactly-once behavior on a real
+cluster:
 
 | Topic | Pattern | Purpose |
 |---|---|---|
@@ -175,7 +169,7 @@ Rules:
 - the coordinator is the only daemon role with outbound-internet egress; the request
   carries no upstream URL itself — the worker reads the URL from the active substrate's
   staged `.dhall` catalog, keyed by `modelId`
-- the May 28, 2026 Linux GPU integration pass publishes a real `ModelBootstrapReadyEvent` to
+- the integration suite publishes a real `ModelBootstrapReadyEvent` to
   `model.bootstrap.ready.<modelId>`, reads it back with a Pulsar Reader, asserts broker key
   `modelId`, and decodes the typed payload
 - the `infernix-models/<modelId>/.ready` sentinel object in MinIO is written **last** so the

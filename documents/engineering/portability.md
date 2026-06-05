@@ -45,9 +45,13 @@ operator-facing kubeconfig remains repo-local in the active execution context.
   PostgreSQL, Gateway API routing, and Pulsar-only production inference do not vary by substrate
 - the generated active-mode catalog, publication contract, route inventory, and browser-visible
   base URL stay stable across supported runtime modes
-- every substrate deploys cluster `infernix-service` daemons; Apple differs only by delegating
-  Apple-native inference execution from the cluster daemon to same-binary host daemons through
-  Pulsar host batches
+- every substrate deploys the stateless `infernix-coordinator` Deployment for Pulsar
+  coordination, single-flight dispatch, result-bridge, and model-bootstrap; substrates differ
+  only in where the `Engine` role runs — `infernix-engine` as a one-per-node Deployment with
+  required anti-affinity on `linux-cpu` and `linux-gpu`, and as the same-binary on-host
+  `infernix service` process under an `flock(2)` singleton on Apple Silicon — with the
+  demo-gated `infernix-demo` frontend deployed in-cluster on every substrate when
+  `demo_ui = true`
 - Python-native adapters always run through the shared `python/` Poetry project
 - supported validation surfaces remain `infernix lint files`, `infernix lint docs`,
   `infernix lint proto`, `infernix lint chart`, `infernix docs check`, `infernix test lint`,

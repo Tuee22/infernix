@@ -13,7 +13,7 @@
 Phase 3 closes around the mandatory HA service set, the shared routed edge, and the
 Haskell-owned route registry implemented in this worktree. Sprints 3.1-3.12 are `Done` after
 Apple cohort validation in Waves A/A.2, CUDA Linux cohort validation in Wave C, and native arm64
-`linux-cpu` validation in Wave F. Sprint 3.12 closed on 2026-06-04 through the already selected
+`linux-cpu` validation in Wave F. Sprint 3.12 closed on the recorded validation through the already selected
 native arm64 Docker daemon on this Apple Silicon machine: Docker reported `server=linux/arm64`,
 the Linux runtime probe reported `aarch64` / `arm64`, and the full Linux CPU outer-container
 validation suite passed without cross-architecture emulation, Docker-context switching, or VM
@@ -61,7 +61,7 @@ on the intended HTTPRoute mapping.
 Sprint 3.12 replaces the previous `LinuxCpu -> "amd64"` publication hardcode with typed
 host-architecture selection from `InfernixHost.dhall`, mapping native Linux amd64 to `amd64` and
 native Linux arm64 to `arm64` while keeping `linux-gpu` amd64-only. Wave F validated the native
-arm64 publication path through the selected native arm64 Docker daemon on 2026-06-04.
+arm64 publication path through the selected native arm64 Docker daemon on the recorded validation.
 
 ## Sprint 3.1: HA MinIO Deployment [Done]
 
@@ -403,10 +403,10 @@ favor of substrate `.dhall` fields plus a Dhall-driven Playwright fixture file.
 - `cabal build all` clean, `infernix test lint` clean.
 - `docker images` shows no `infernix-playwright:local` image after a fresh
   `./bootstrap/linux-gpu.sh build`.
-- May 27, 2026 (retired hardware): clean-env `linux-gpu` compose-run `infernix test e2e` had
-  passed via the in-container Playwright path (`1 passed`). That proof point was on the retired
+- the recorded validation (legacy hardware): clean-env `linux-gpu` compose-run `infernix test e2e` had
+  passed via the in-container Playwright path (`1 passed`). That proof point was on the legacy
   Linux/CUDA host and no longer counts as current evidence.
-- May 27, 2026 (retired hardware): Apple host-native E2E runner code landed; `cabal build all`,
+- the recorded validation (legacy hardware): Apple host-native E2E runner code landed; `cabal build all`,
   `cabal test infernix-unit`, `cabal test infernix-haskell-style`, and `node --check` for
   `web/playwright.config.js` and `web/playwright/inference.spec.js` had passed. Those are
   retried trivially on the new host but the historical pass is no longer cited as current proof.
@@ -415,7 +415,7 @@ favor of substrate `.dhall` fields plus a Dhall-driven Playwright fixture file.
 
 ### Remaining Work
 
-Landed May 24, 2026:
+Landed the recorded validation:
 
 - `docker/playwright.Dockerfile` deleted.
 - `compose.yaml` `playwright` service block deleted; the file now
@@ -430,7 +430,7 @@ Landed May 24, 2026:
   path through the new `runInContainerPlaywright` helper that writes a
   typed JSON fixture (`<runtimeRoot>/playwright-fixture.json`) and
   then runs `npm --prefix web exec -- playwright test playwright/inference.spec.js`
-  inside the launcher container. The retired
+  inside the launcher container. The legacy
   `runPlaywrightImage`/`docker compose run --rm playwright` path is
   gone. The Apple host-native branch now writes the same fixture and
   runs the same Playwright suite via host-native `npm exec` against
@@ -444,7 +444,7 @@ Landed May 24, 2026:
   receives the typed `infernixFixture` Playwright option instead of reading any
   `process.env.INFERNIX_*` field or a hardcoded `/workspace` fixture
   path.
-- The seven retired env vars
+- The seven legacy env vars
   (`INFERNIX_EDGE_PORT`, `INFERNIX_PLAYWRIGHT_HOST`,
   `INFERNIX_PLAYWRIGHT_NETWORK`,
   `INFERNIX_EXPECT_DAEMON_LOCATION`,
@@ -466,12 +466,12 @@ returns only the two retirement doc comments
 
 Closed validation:
 
-- **Linux in-container Playwright E2E proof point May 27, 2026 (retired hardware).** The
+- **Linux in-container Playwright E2E proof point the recorded validation (legacy hardware).** The
   clean-env compose-run command
   `env -i LAUNCHER_IMAGE=infernix-linux-gpu:local /usr/bin/docker compose --project-name infernix-linux-gpu --file compose.yaml run --rm infernix infernix test e2e`
   had reconciled the live `linux-gpu` cluster, ran Playwright inside the
   launcher image, reported `1 passed`, then executed its teardown
-  cleanup on the retired Linux/CUDA host. That proof point is no longer current; CUDA Linux
+  cleanup on the legacy Linux/CUDA host. That proof point is no longer current; CUDA Linux
   cohort rerun closed in Wave C on the native Linux/CUDA host.
 - Apple host-native E2E validation closed in Waves A.1/A.2 using the same typed fixture path.
 
@@ -548,14 +548,14 @@ workers dialed `localhost` literally.
 
 - `cabal build all`, `cabal test infernix-haskell-style`, and
   `cabal test infernix-unit` all exit zero on the new Apple Silicon host
-  (2026-05-29).
+  (the recorded validation).
 - `infernix lint files|chart|docs|proto` all exit zero.
 - `rg -n 'bitnamilegacy' chart/ src/` returns matches only inside the
   retirement comments documenting what was removed; no active code refs.
 - `rg -n '"--platform","linux/amd64"' src/Infernix/Cluster/` returns zero
   matches; all `--platform` flags now read from
   `harborTargetArchitecture` or `clusterWorkloadArchitecture`.
-- 2026-05-29 Apple cohort lifecycle proof point (`./.build/infernix`
+- the recorded validation Apple cohort lifecycle proof point (`./.build/infernix`
   on the new Apple Silicon host):
   - `chooseHarborPort` selected `30003` when an unrelated host process
     held `127.0.0.1:30002` — proof that the bind-test + increment loop
@@ -588,7 +588,7 @@ workers dialed `localhost` literally.
     `clusterPresent: False`, `lifecycleStatus: idle`,
     `lifecyclePhase: cluster-absent`.
 
-- **`infernix test all` Apple cohort residual.** The May 29, 2026
+- **`infernix test all` Apple cohort residual.** The the recorded validation
   Apple `cluster up → status → cluster down → status` cycle above is
   the validated platform proof point. The full `test all` integration
   layer additionally exercises a clean-state cluster down + cluster
@@ -596,7 +596,7 @@ workers dialed `localhost` literally.
   corruption issue (the previous instance's partial `/pgdata/pg18`
   tree, when copied back from the retained host directory into a
   fresh Kind worker, causes `postgres-startup` to crash with an
-  initialization error). The supported fix landed 2026-05-30 in
+  initialization error). The supported fix landed the recorded validation in
   `src/Infernix/Cluster.hs`: `isPatroniManagedClaim` filters operator-
   managed Patroni claims (`harbor-postgresql-*`,
   `keycloak-postgresql-*`) out of `syncClaimDirectoriesFromOwningNodes`
@@ -607,9 +607,9 @@ workers dialed `localhost` literally.
   cohort revalidation closed in Wave A after the integration replay
   scenario exercised the retained-state fix.
 - **GPU cohort full-suite validation closed on the native Linux/CUDA
-  host:** the Apple cohort full-suite rerun passed on 2026-05-30, the
-  native `linux-cpu` full-suite rerun passed on 2026-06-02, and the
-  matching `linux-gpu` full-suite rerun passed on 2026-06-03.
+  host:** the Apple cohort full-suite rerun passed on the recorded validation, the
+  native `linux-cpu` full-suite rerun passed on the recorded validation, and the
+  matching `linux-gpu` full-suite rerun passed on the recorded validation.
 
 ### Remaining Work
 
@@ -649,7 +649,7 @@ cross-architecture `buildx`, or any non-native compatibility lane.
 
 - `cabal test infernix-unit` proves the `LinuxCpu` architecture selector returns `amd64` and
   `arm64` for native Linux fixtures
-- `./bootstrap/linux-cpu.sh test` passes on a native amd64 Linux host; the 2026-06-03 run passed
+- `./bootstrap/linux-cpu.sh test` passes on a native amd64 Linux host; the the recorded validation run passed
   Haskell style, Python quality, Haskell unit, PureScript build, 71/71 web unit tests, full
   integration, and routed Playwright E2E (7/7) against launcher image digest
   `sha256:dc0c003e7cc2f2e359a474fa5ddb522c8715d271e322534db7798f260e9747fa`, while Harbor
@@ -660,22 +660,22 @@ cross-architecture `buildx`, or any non-native compatibility lane.
 - `rg -n '"amd64".*LinuxCpu|LinuxCpu.*"amd64"' src test` has no unsupported hardcode after the
   selector lands
 - `infernix lint docs` passes through the active execution context
-- 2026-06-03 Apple local gate: `cabal test infernix-unit` passed the LinuxCpu amd64/arm64
+- the recorded validation Apple local gate: `cabal test infernix-unit` passed the LinuxCpu amd64/arm64
   selector assertions, and `rg -n '"amd64".*LinuxCpu|LinuxCpu.*"amd64"' src test`
   returned no matches.
-- 2026-06-04 ordered follow-up from a Linux x86_64 host confirmed the amd64
+- the recorded validation ordered follow-up from a Linux x86_64 host confirmed the amd64
   `linux-cpu` lane remained healthy but did not exercise the native arm64 publication path:
   `./bootstrap/linux-cpu.sh doctor` passed, the mounted-source Linux CPU
   `cabal build all`, `cabal test infernix-unit`, `cabal test infernix-haskell-style`, and
   `cabal test infernix-integration` gates passed, and
   `rg -n '"amd64".*LinuxCpu|LinuxCpu.*"amd64"' src test` returned no matches.
-- 2026-06-04 Apple Silicon follow-up on this host confirmed the local selector and documentation
+- the recorded validation Apple Silicon follow-up on this host confirmed the local selector and documentation
   gates remain healthy:
   `./bootstrap/apple-silicon.sh build` produced `./.build/infernix` and
   `./.build/infernix-demo`, `/opt/homebrew/bin/cabal test infernix-unit` passed, and
   `rg -n '"amd64".*LinuxCpu|LinuxCpu.*"amd64"' src test` returned no matches.
   `./.build/infernix lint docs` passed after the documentation-status update.
-- 2026-06-04 Wave F closure validated the native arm64 Linux CPU publication path through the
+- the recorded validation Wave F closure validated the native arm64 Linux CPU publication path through the
   already selected native arm64 Docker daemon on this Apple Silicon machine. Docker reported
   `client=darwin/arm64` and `server=linux/arm64`; a Linux runtime probe reported
   `uname -m = aarch64` and `dpkg --print-architecture = arm64`. The rebuilt

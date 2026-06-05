@@ -13,10 +13,10 @@
 
 Phase 4 closes around the staged-substrate runtime contract, the shared Python
 adapter boundary, the Pulsar-driven request or result contract, the explicit engine-runner
-dispatch, and the mounted `InfernixCluster.dhall` cluster-wiring contract. Sprints 4.1–4.13 had
-their deliverables closed in the worktree; Apple cohort validation closed in Wave A, and CUDA
-Linux cohort validation closed in Wave C. The later clarification that a cluster daemon always exists while Apple
-inference execution moves to a same-binary host daemon is implemented in Phase 6 Sprint 6.25.
+dispatch, and the mounted `InfernixCluster.dhall` cluster-wiring contract. Sprints 4.1-4.14 are
+closed in the worktree; Apple cohort validation closed in Wave A, and CUDA Linux cohort
+validation closed in Wave C. The phase narrative describes the supported MinIO-backed shape
+directly through the runtime, cache, and object storage contracts.
 
 ## Current Repo Assessment
 
@@ -24,11 +24,10 @@ The repository has typed request or response shapes, typed runtime result metada
 README-matrix-backed generated catalog, protobuf-backed manifest and result helpers, explicit
 cache status or eviction or rebuild flows, a shared Python adapter project whose setup entrypoints
 write idempotent bootstrap manifests, explicit substrate-materialization helpers, and daemon
-behavior driven by the staged substrate file. Durable model artifact storage moved to the
-`infernix-models` MinIO bucket under Phase 7 Sprint 7.7; the legacy `./.data/object-store/` tree
-is retired and tracked in [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md). That file is a typed Dhall record at `infernix-substrate.dhall`, decoded
-in-process by the `dhall` Haskell library. The final runtime contract distinguishes daemon role
-from inference executor location:
+behavior driven by the staged substrate file. Durable model artifact storage lives in the
+`infernix-models` MinIO bucket. The staged substrate file is a typed Dhall record at
+`infernix-substrate.dhall`, decoded in-process by the `dhall` Haskell library. The runtime
+contract distinguishes daemon role from inference executor location:
 cluster daemons exist on every substrate and own Pulsar request-topic consumption; Linux cluster
 daemons run inference directly and publish results; Apple cluster daemons publish work to a
 dedicated host batch topic consumed by same-binary host daemons that run Apple-native inference
@@ -97,14 +96,13 @@ derived local cache state become authoritative.
 
 ### Deliverables
 
-- the service runtime stores durable manifests, artifacts, and large outputs under the repo-local
-  object-store root `./.data/object-store/` (retired by Phase 7 Sprint 7.7; durable model artifacts
-  now live in the `infernix-models` MinIO bucket and the per-pod `emptyDir` model cache)
+- durable model artifacts live in the `infernix-models` MinIO bucket; the per-pod `emptyDir`
+  model cache holds the ephemeral on-disk weight copy used by the engine adapter
 - the service runtime consumes inference requests and publishes results through the topic-shaped
   Pulsar contract, using the configured transport on supported cluster paths and the repo-local
   topic spool only in harness-oriented flows that intentionally omit those endpoints
-- durable runtime bundles record engine-adapter identity, authoritative source-artifact metadata,
-  and selected engine-ready artifacts
+- the durable artifact contract records engine-adapter identity, source-artifact metadata, and
+  selected engine-ready artifacts
 - process-isolated runtime workers honor adapter-specific command overrides when configured and
   otherwise use the canonical engine runner contract
 - local materialization remains cache-oriented and idempotent, not authoritative
@@ -146,11 +144,10 @@ host-side, and Linux inference execution and result publication remain cluster-r
   Apple cluster daemon role as well
 - daemon role changes only publication context, generated-config source, batch-topic wiring, and
   optional transport-endpoint wiring, not the request or result or catalog contract
-- the durable object-store contract closed at Sprint 4.3 around repo-local `./.data/object-store/`
-  and was retired by Phase 7 Sprint 7.7 in favor of the `infernix-models` MinIO bucket;
-  real Pulsar transport is enabled either by the documented Pulsar endpoint environment variables
-  or, on the Apple host-native lane, by discovering the routed Pulsar edge from publication state,
-  while the filesystem topic spool remains a harness-oriented fallback when no endpoint is
+- the durable object storage contract uses the `infernix-models` MinIO bucket on every substrate;
+  real Pulsar transport is enabled either through the configured Pulsar endpoint inputs or, on
+  the Apple host-native lane, by discovering the routed Pulsar edge from publication state, while
+  the filesystem topic spool remains a harness-oriented fallback when no endpoint is
   intentionally present
 - the shared abstraction lives at the control plane, publication, config, Pulsar, protobuf, and
   routed API or UI levels rather than a false claim of identical image layout across all lanes
@@ -226,17 +223,16 @@ Make derived runtime state reproducible from durable sources and keep lifecycle 
 - local service cache roots live under `./.data/runtime/`
 - cache directories are keyed by model identity and substrate identifier, with current durable
   payloads still serializing that identifier as `runtimeMode`
-- durable cache manifests under `./.data/object-store/manifests/` acted as rebuild sources at
-  Sprint 4.5 closure; retired by Phase 7 Sprint 7.7 in favor of MinIO-backed weights with cache
-  rebuildability from the Pulsar conversation log via `prefixHash`
+- cache rebuildability comes from MinIO-backed weights and the Pulsar conversation log via
+  `prefixHash`; cache manifests sit beside the cached weights at
+  `./.data/runtime/model-cache/<runtime-mode>/<model-id>/manifest.pb`
 - `cache status`, `cache evict`, and `cache rebuild` are explicit operator flows
 
 ### Validation
 
 - `infernix test unit` proves cache materialization, eviction, and rebuild behavior
 - `infernix test integration` proves the routed cache API can materialize and rebuild cache entries
-- `cluster status` distinguishes cache, object-store, and manifest counts (object-store and
-  on-disk manifest tracking retired by Phase 7 Sprint 7.7)
+- `cluster status` reports model-cache state and MinIO `infernix-models` bucket counts
 
 ### Remaining Work
 
@@ -582,17 +578,12 @@ favor of typed `ClusterConfig` fields.
 - `infernix test integration` on `linux-gpu` round-trips through coordinator + engine pods that
   read from the mounted Dhall ConfigMap (proven by removing the corresponding `env:` entries
   before the test runs).
-- May 26, 2026 (retired hardware): the `linux-gpu` `infernix test all` PASS had validated the
-  mounted `ClusterConfig.engine.commandOverrides` path against the real cluster on the retired
-  Linux/CUDA host. That proof point is no longer current.
-- May 27, 2026 (retired hardware): `cabal test infernix-unit` had PASSED with
-  `assertClusterConfig`, which renders a `ClusterConfig` fixture with a non-empty
-  `engine.commandOverrides` list and decodes it back through `decodeClusterConfigFile`. The
-  unit suite is trivially re-runnable on the new host.
-- May 27, 2026 (retired hardware): `cabal build all`, `cabal test infernix-haskell-style`, and
-  `cabal run infernix -- lint {docs,files,chart,proto}` had all PASSED after the
-  `ClusterConfig` renderer and plan-status updates. The same gates are trivially re-runnable on
-  the new host.
+- `cabal test infernix-unit` PASSES with `assertClusterConfig`, which renders a
+  `ClusterConfig` fixture with a non-empty `engine.commandOverrides` list and decodes it back
+  through `decodeClusterConfigFile`.
+- `cabal build all`, `cabal test infernix-haskell-style`, and
+  `cabal run infernix -- lint {docs,files,chart,proto}` all exit zero against the
+  `ClusterConfig` renderer.
 - Apple cohort validation closed in Wave A; CUDA Linux validation closed in Wave C with full
   `linux-cpu` and `linux-gpu` gates against the mounted `ClusterConfig`.
 
@@ -603,9 +594,50 @@ cohort validation closed in [Wave C](cohort-validation-waves.md).
 
 ---
 
+## Sprint 4.14: Declarative-State Phase Prose Rewrite [Done]
+
+**Status**: Done
+**Implementation**: `DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md` (prose only)
+**Docs to update**: this file
+
+### Objective
+
+Rewrite Phase 4 deliverables and validation prose for Sprints 4.2, 4.3, and 4.5 so the supported
+MinIO-backed object storage contract, the ephemeral `emptyDir` model cache, and the
+`prefixHash`-driven cache rebuildability are described directly, without parenthetical retirement
+notes pointing forward to Phase 7. The phase narrative reads forward into Phase 7 instead of
+being contradicted by it.
+
+### Deliverables
+
+- Sprint 4.2 Deliverables and Validation prose describes the supported MinIO-backed durable
+  artifact contract directly.
+- Sprint 4.3 Deliverables prose describes the supported `infernix-models` MinIO bucket as the
+  object storage substrate, with the Pulsar transport path and the filesystem topic spool
+  retained as the harness-oriented fallback.
+- Sprint 4.5 Deliverables and Validation prose describes the supported cache-rebuild contract
+  in terms of MinIO weights and `prefixHash`.
+- Phase 4 Current Repo Assessment uses present-tense vocabulary anchored on
+  [../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md)
+  and [../documents/engineering/object_storage.md](../documents/engineering/object_storage.md).
+- Phase 4 closing prose for Sprint 4.13 keeps `Wave A` and `Wave C` references without dated
+  hardware proof-point prose.
+
+### Validation
+
+- the phase-specific lexical guard for legacy object storage paths, placeholder buckets, and dated
+  proof-point prose returns zero matches outside the legacy ledger.
+- `infernix lint docs` exits zero against the rewritten prose.
+
+### Remaining Work
+
+None.
+
+---
+
 ## Remaining Work
 
-None. Sprints 4.1–4.13 are `Done`.
+None. Sprints 4.1-4.14 are `Done`.
 
 ---
 
@@ -617,7 +649,7 @@ None. Sprints 4.1–4.13 are `Done`.
 - `documents/engineering/docker_policy.md` - shared Linux substrate image doctrine and snapshot launcher expectations
 - `documents/engineering/build_artifacts.md` - build roots, generated proto handling, and image-owned toolchain contract
 - `documents/engineering/model_lifecycle.md` - durable artifacts, bundle metadata, and cache semantics
-- `documents/engineering/object_storage.md` - repo-local object-store rules plus reserved MinIO path and service-placement access notes
+- `documents/engineering/object_storage.md` - repo-local object storage rules plus reserved MinIO path and service-placement access notes
 - `documents/engineering/storage_and_state.md` - durable-versus-derived state inventory
 - `documents/engineering/implementation_boundaries.md` - Haskell versus Python versus chart ownership
 - `documents/engineering/portability.md` - portable platform rules versus Apple or Linux substrate detail

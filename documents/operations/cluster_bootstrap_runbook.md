@@ -46,8 +46,9 @@
   `cluster down` slower than the Linux lanes even when the supported flow is healthy
 - current Apple validation evidence is recorded in
   [../../DEVELOPMENT_PLAN/cohort-validation-waves.md](../../DEVELOPMENT_PLAN/cohort-validation-waves.md);
-  retired hardware proof points are recorded in
+  the legacy-tracking ledger at
   [../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md](../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md)
+  records obsolete-surface receipts
 - for `linux-gpu`, confirm the supported NVIDIA host satisfies the documented `nvidia-smi` and
   `docker run --gpus all` preflight contract before cluster creation
 - for `linux-gpu`, also confirm the host filesystem has substantial free space before `cluster up`
@@ -94,9 +95,9 @@
 - after Harbor is responsive, confirm that every remaining image is mirrored or published into
   Harbor before its workload rolls out, including the active `infernix` runtime image on every
   substrate
-- the supported Harbor-first bootstrap path no longer depends on the retired
-  `infernix-bootstrap-registry` container or the old `./.build/kind/registry/localhost:30001`
-  helper-registry namespace
+- the supported Harbor-first bootstrap path does not use any helper-registry container or
+  `./.build/kind/registry/localhost:30001` namespace; Harbor itself is the only registry once it
+  becomes ready
 - on the supported outer-container path, confirm that `cluster up` reuses the already-built
   `infernix-linux-<mode>:local` snapshot instead of rebuilding that runtime image inside the
   launcher
@@ -112,8 +113,8 @@
   `infernix-engine` is present
 - confirm `infernix kubectl get pvc -A` returns no daemon PVCs — the `infernix-coordinator`,
   `infernix-engine`, and `infernix-demo` Deployments are PVC-free in the supported target
-  shape (Sprint 7.7 onward). PVCs are still present for Harbor, MinIO, Pulsar, and the
-  operator-managed PostgreSQL clusters
+  shape. PVCs are still present for Harbor, MinIO, Pulsar, and the operator-managed PostgreSQL
+  clusters
 - confirm `infernix kubectl get buckets` (or equivalent MinIO admin check) shows
   `infernix-models` always-on; when `demo_ui = true`, also shows `infernix-demo-objects`.
   Lazy first-use bootstrap means `infernix-models` may be empty immediately after `cluster
@@ -183,7 +184,7 @@ constraints, or normal Kubernetes convergence.
 | GHCup `[ Warn ] No GHCup update available` during `get-ghcup` bootstrap | Upstream bootstrap no-op warning | The upstream installer runs `ghcup upgrade` after downloading the current `ghcup` binary and reports the no-op through its warning channel. Accept only when the pinned `ghc`, pinned `cabal`, and formatter `ghc` installs complete and the image build exits zero. Do not replace the supported `ghcup` path just to hide this upstream no-op. |
 | GHCup advice to adjust `PATH` during Linux substrate image build | Upstream installer guidance in a noninteractive image build | The Dockerfile deliberately prevents shell profile edits and owns `PATH` through Docker `ENV`. Accept the advice text only when subsequent `ghcup`, `ghc`, and `cabal` commands in the same image build succeed and the final image contains `/root/.ghcup/bin` and `/root/.cabal/bin` on `PATH`. |
 | GHCup `Couldn't figure out login shell!` during Linux substrate image build | Substrate image-layout regression | The Linux Dockerfile leaves `BOOTSTRAP_HASKELL_ADJUST_BASHRC` unset and sets the toolchain `PATH` explicitly with Docker `ENV`. If this message returns from a freshly built image, fix the image environment instead of accepting it as bootstrap noise. |
-| npm deprecation warnings from the web or Playwright toolchain | Dependency hygiene regression unless tied to a newly documented upstream constraint | The current web install avoids the deprecated `purescript` npm installer, installs `purs` from the official PureScript release archive, runs Spago 1.x, overrides Spago's transitive `glob` to `glob@13.0.6`, and disables npm's update notifier in supported image builds. New deprecation warnings should be resolved by maintained upgrades or explicitly documented with validation evidence. |
+| npm deprecation warnings from the web or Playwright toolchain | Dependency hygiene regression unless tied to a newly documented upstream constraint | The current web install avoids the legacy `purescript` npm installer, installs `purs` from the official PureScript release archive, runs Spago 1.x, overrides Spago's transitive `glob` to `glob@13.0.6`, and disables npm's update notifier in supported image builds. New deprecation warnings should be resolved by maintained upgrades or explicitly documented with validation evidence. |
 | npm update notices during supported image builds | Substrate image-layout regression | The Linux substrate image sets `NPM_CONFIG_UPDATE_NOTIFIER=false`; npm version changes should come through the supported Node/npm image toolchain update path, not ad hoc notices during lifecycle runs. |
 | Playwright build error `Cannot find module '/workspace/web/scripts/install-purescript.mjs'` | Toolchain-image regression, not accepted warning noise | The Linux substrate Dockerfile must copy `web/scripts/` before npm `postinstall` runs because the web toolchain installs `purs` through `web/scripts/install-purescript.mjs`. Rebuild the Linux substrate image if an old launcher image still carries the stale Dockerfile; fix the Dockerfile if a fresh image reproduces the error. |
 | Python `pip` warning about running as root during Linux substrate image build | Substrate image-layout regression | The Linux substrate image installs Poetry into `/opt/poetry`, a dedicated virtual environment, instead of using system pip as root. If a root-pip warning returns, treat it as image-layout drift; do not treat it as permission to run host adapter setup as root. |
@@ -203,13 +204,10 @@ constraints, or normal Kubernetes convergence.
   still `replay-retained-state` or has advanced to `delete-kind-cluster`
 - expect durable state under `./.data/` to remain intact
 
-## Durable-Context Demo Bring-Up (Phase 7)
+## Durable-Context Demo Bring-Up
 
 When the active substrate's generated `.dhall` carries `demo_ui = true`, `cluster up`
-performs the following additional reconciliation steps (validated end-to-end on `linux-cpu`
-on May 22, 2026 and on `linux-gpu` on May 22, 2026; the routed SPA/publication and Keycloak
-self-registration smokes were revalidated on the clean rebuilt `linux-gpu` launcher on
-May 28, 2026):
+performs the following additional reconciliation steps:
 
 - deploys a Keycloak Helm release together with its dedicated Patroni Postgres cluster managed
   by the Percona operator; expects Harbor to be responsive first, then the Keycloak Patroni

@@ -117,7 +117,7 @@ bindings live at [demo_app_design.md](demo_app_design.md). Topology delta:
   and asserts the backend returns typed `ServerError` code `unknown-model`.
   The full browser flow now also sends `ClientRenameContext` and `ClientSoftDeleteContext`,
   asserts the broker-backed `ServerContextListPatch` upserts, and verifies the left rail renders
-  the renamed title plus soft-deleted state.
+  the updated title plus soft-deleted state.
   Playwright also asserts browser-uploaded artifacts
   return through inbound `ConversationUserUploadEvent` append patches and render in the active
   Chat conversation with display name plus MIME type. Playwright now also asserts context-list
@@ -134,10 +134,9 @@ bindings live at [demo_app_design.md](demo_app_design.md). Topology delta:
   stream. The routed flow also submits a second prompt before the first unresolved prompt
   resolves, asserts the rendered `2 queued prompts` warning, and targets the second canonical
   prompt id in the cancel lifecycle.
-  The remaining Sprint 7.15 browser work is Playwright coverage for the per-model smoke matrix
 - the supported manual-inference dispatch closes through the durable-context Chat surface and
-  WebSocket transport; the previous direct `POST /api/inference` request/poll surface is
-  retired from the supported contract per
+  WebSocket transport; the legacy direct `POST /api/inference` request/poll surface is tracked
+  in
   [../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md](../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md)
 - the routed browser surface terminates at the frontend pod (`infernix-demo`); the coordinator
   and engine pods are not directly addressable from the browser. The supported per-pod

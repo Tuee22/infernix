@@ -139,8 +139,8 @@ startup (because their upstream contract requires it) keep their env entries:
   a mounted Secret where the Keycloak release supports it. See
   [../tools/keycloak.md](../tools/keycloak.md).
 
-The lint gates (added in Phase 6 Sprint 6.28) carry an explicit exception list naming this and
-any future third-party upstream contract.
+The lint gates carry an explicit exception list naming this and any future third-party upstream
+contract.
 
 ## Validation
 

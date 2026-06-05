@@ -62,7 +62,7 @@ This repository serves two aligned purposes:
   `purescript-spec` view and contract tests, and Linux Playwright launched from inside the
   substrate image
 - one shared Linux substrate build definition (`docker/linux-substrate.Dockerfile`) emits
-  `infernix-linux-cpu` and `infernix-linux-gpu`, each with ghcup-pinned GHC 9.14.1 + Cabal
+  `infernix-linux-cpu` and `infernix-linux-gpu`, each with ghcup-pinned GHC 9.12.4 + Cabal
   3.16.1.0, Python 3 + Poetry, node, the demo UI build toolchain, `nvkind`, and the
   Kind/kubectl/Helm/Docker toolbelt baked in. Apple Silicon has no Dockerfile; the operator
   pre-installs ghcup and the host binary reconciles adapter setup through the shared Poetry project
@@ -113,7 +113,7 @@ emulation: no Rosetta, QEMU, amd64-on-Apple, or other emulated substrate runs. A
 workflows also must not create or switch Docker contexts or create a Colima VM; any Docker-backed
 Apple work uses the operator's already selected native arm64 Docker daemon or stops with a clear
 prerequisite error. The MinIO sub-chart uses upstream multi-arch images (`minio/minio`,
-`minio/mc`, `busybox`) rather than the retired amd64-only `bitnamilegacy/*` packaging; see
+`minio/mc`, `busybox`) instead of single-architecture amd64-only packaging; see
 [documents/architecture/runtime_modes.md](documents/architecture/runtime_modes.md) for the
 substrate → architecture mapping and
 [documents/tools/minio.md](documents/tools/minio.md) for the supported MinIO image inventory.
@@ -187,12 +187,12 @@ Pulsar Failover subscription owned by the coordinator with exactly-once semantic
 into the engine pod's ephemeral `emptyDir` model cache with a hard `sizeLimit`; pod restart
 wipes the cache and the next request repopulates from MinIO. User uploads and engine-generated
 artifacts (images, audio, video) live in the demo-gated `infernix-demo-objects` bucket; the
-browser reads and writes them through presigned URLs minted at `/api/objects`. On Apple, `./.build/infernix` still builds and drives the control plane from the
+browser reads and writes them through presigned URLs minted at `/api/objects`. On Apple, `./.build/infernix` builds and drives the control plane from the
 host, `cluster up` keeps Harbor, MinIO, Pulsar, PostgreSQL, Envoy Gateway, `infernix-demo`, and
-`infernix-coordinator` (today's in-cluster Apple `infernix-service` daemon, renamed under
-Phase 7 Sprint 7.7) in Kind, and routed manual inference enters the coordinator before
-Apple-native batches move through Pulsar to the host-side `./.build/infernix service` engine
-executor. On Linux, the same routed demo surface bridges through Pulsar into the coordinator
+the stateless `infernix-coordinator` Deployment in Kind, and routed manual inference enters the
+coordinator before Apple-native batches move through Pulsar to the host-side `./.build/infernix`
+engine daemon (the same binary running as the Apple `Engine`-role process under an `flock(2)`
+singleton on `./.data/runtime/engine.lock`). On Linux, the same routed demo surface bridges through Pulsar into the coordinator
 Deployment, which hands batches off to the engine Deployment. `/api/publication` now keeps
 `apiUpstream.mode: cluster-demo` for the stable browser base URL, reports
 `daemonLocation: cluster-pod` for every substrate, adds `inferenceExecutorLocation`, and keeps
@@ -283,7 +283,7 @@ Preferred path:
 Required before building `./.build/infernix` on the host:
 
 - Homebrew
-- `ghcup` with `ghc 9.14.1` and `cabal 3.16.1.0` active
+- `ghcup` with `ghc 9.12.4` and `cabal 3.16.1.0` active
 
 Supported install path:
 
@@ -295,8 +295,8 @@ Supported install path:
 brew install ghcup
 
 # Haskell toolchain version selection remains ghcup-managed.
-ghcup install ghc 9.14.1
-ghcup set ghc 9.14.1
+ghcup install ghc 9.12.4
+ghcup set ghc 9.12.4
 ghcup install cabal 3.16.1.0
 ghcup set cabal 3.16.1.0
 ```
@@ -452,7 +452,7 @@ edge port plus the published route inventory, and the demo UI is available at
 `http://127.0.0.1:<edge-port>/` whenever the active generated `.dhall` enables `demo_ui`.
 
 `infernix test all` is the canonical aggregate suite on every substrate. It runs every supported
-validation layer for the currently staged substrate; full repository substrate closure is obtained
+validation layer for the staged substrate; full repository substrate closure is obtained
 by restaging and rerunning the same complete suite for each supported substrate.
 
 Development and validation are organized by hardware cohort to avoid needless machine switching.
@@ -643,7 +643,7 @@ around upstream `kubectl`, not a parallel lifecycle surface.
 - every other platform, control-plane, and inference service with metrics syncs with Prometheus;
   Grafana reads from Prometheus and may use its own dedicated PostgreSQL backend under the same
   Patroni and Percona-operator rules
-- services that can self-deploy PostgreSQL still disable that embedded database path and target a
+- services that can self-deploy PostgreSQL disable that embedded database path and target a
   dedicated operator-managed cluster instead
 - repo-owned Helm values suppress hard pod anti-affinity and equivalent hard scheduling constraints
   as needed for local Kind scheduling

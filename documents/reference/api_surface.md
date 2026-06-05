@@ -26,22 +26,21 @@ surface is the `.dhall` topic contract described in [../tools/pulsar.md](../tool
 - `GET /api/cache` returns manifest-backed cache status for the active runtime mode
 - `POST /api/cache/evict` removes derived cache directories while retaining the durable manifest
 - `POST /api/cache/rebuild` rebuilds derived cache directories from the durable manifest set
-- `POST /api/objects/upload` and `POST /api/objects/download` (Phase 7 Sprint 7.9) mint a
-  presigned MinIO URL for the authenticated user and the requested context. The bearer JWT
-  is verified against the cached Keycloak JWKS, `userId` is derived from the `sub` claim,
-  the request body names the target `contextId` plus artifact metadata (kind,
-  MIME/content type, display name, byte count for uploads), the requested object key is
-  scoped against `users/<userId>/contexts/<contextId>/{uploads,generated}/`, and the
-  response carries the presigned URL plus the canonical MinIO object reference and a
-  typed render disposition (`RenderInline`, `BoundedTextPreview`, `BrowserNativePdf`, or
-  `DownloadOnly`). The May 28, 2026 routed Linux GPU E2E flow validates the disposition matrix
-  for image/audio/video, PDF, JSON, text, MIDI, MusicXML, and generic binary MIME cases. The route
-  derives the object path from the authenticated `sub`, so another user with the same
-  context/display name receives a distinct `users/<sub>/...` prefix. Presigned URLs are bearer
-  capabilities until expiry. The browser E2E flow now exercises bounded text/JSON preview,
-  inline image/audio/video media URLs, browser-native PDF URL wiring, and MIDI / MusicXML /
-  generic-binary download-only states through these presigned grants. Demo-gated and absent when
-  `demo_ui = false`. See
+- `POST /api/objects/upload` and `POST /api/objects/download` mint a presigned MinIO URL for
+  the authenticated user and the requested context. The bearer JWT is verified against the
+  cached Keycloak JWKS, `userId` is derived from the `sub` claim, the request body names the
+  target `contextId` plus artifact metadata (kind, MIME/content type, display name, byte count
+  for uploads), the requested object key is scoped against
+  `users/<userId>/contexts/<contextId>/{uploads,generated}/`, and the response carries the
+  presigned URL plus the canonical MinIO object reference and a typed render disposition
+  (`RenderInline`, `BoundedTextPreview`, `BrowserNativePdf`, or `DownloadOnly`). The routed E2E
+  suite validates the disposition matrix for image/audio/video, PDF, JSON, text, MIDI, MusicXML,
+  and generic binary MIME cases. The route derives the object path from the authenticated `sub`,
+  so another user with the same context/display name receives a distinct `users/<sub>/...`
+  prefix. Presigned URLs are bearer capabilities until expiry. The browser E2E flow exercises
+  bounded text/JSON preview, inline image/audio/video media URLs, browser-native PDF URL wiring,
+  and MIDI / MusicXML / generic-binary download-only states through these presigned grants.
+  Demo-gated and absent when `demo_ui = false`. See
   [../tools/minio.md](../tools/minio.md) and
   [../architecture/demo_app_design.md](../architecture/demo_app_design.md).
 
@@ -57,8 +56,7 @@ surface is the `.dhall` topic contract described in [../tools/pulsar.md](../tool
   PUT by the engine adapter directly to the `infernix-demo-objects` MinIO bucket at the
   appropriate per-user prefix; the inference result message carries an `ObjectRef`, and the
   browser fetches the bytes via presigned GET URLs minted at `/api/objects`. Text outputs
-  ride inline in the result message. The legacy `GET /objects/:objectRef` route is retired
-  in Phase 7 Sprint 7.7 (see [../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md](../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md))
+  ride inline in the result message
 - cache-eviction and cache-rebuild flows only affect derived cache state; they do not rewrite the
   generated catalog or publication contract
 - cache status exposes the supported `minio://infernix-models/<modelId>/` durable

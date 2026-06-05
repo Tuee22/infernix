@@ -65,12 +65,12 @@ assets stay under `chart/`, and generated outputs remain untracked.
 ## Application Library Boundary (Phase 7)
 
 The durable-context demo application splits its modules into three groups so the
-durable-context primitives become reusable by any future SPA-like application built on the
-inference platform. The shared library modules listed below are landed and exercised by the
-Phase 7 unit suite; the coordinator daemon's runtime entrypoints
+durable-context primitives are reusable by any future SPA-like application built on the
+inference platform. The shared library modules listed below are present in the worktree and
+exercised by the Phase 7 unit suite; the coordinator daemon's runtime entrypoints
 (`Infernix.Bootstrap.Models` Pulsar subscription, `Infernix.Bridge.Result` Failover
-consumer, `Infernix.Dispatch.SingleFlight` per-context dispatcher) land their real
-Pulsar+MinIO wiring together with Sprint 7.14's chaos validation cycle.
+consumer, `Infernix.Dispatch.SingleFlight` per-context dispatcher) carry their real
+Pulsar+MinIO wiring under the chaos validation suite.
 
 - **Shared library (product-agnostic).** Concept-named modules under the `Infernix.` namespace,
   parameterized in topic namespace, bucket name, and JWT issuer/audience. Free of HTTP/WS

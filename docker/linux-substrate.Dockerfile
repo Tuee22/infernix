@@ -11,8 +11,7 @@ FROM ${BASE_IMAGE}
 ARG BASE_IMAGE
 ARG RUNTIME_MODE=linux-cpu
 ARG DEMO_UI=true
-ARG GHC_VERSION=9.14.1
-ARG FORMATTER_GHC_VERSION=9.12.4
+ARG GHC_VERSION=9.12.4
 ARG CABAL_VERSION=3.16.1.0
 ARG KIND_VERSION=v0.29.0
 ARG KUBECTL_VERSION=v1.34.0
@@ -37,7 +36,6 @@ ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
     GHC_VERSION=${GHC_VERSION} \
-    FORMATTER_GHC_VERSION=${FORMATTER_GHC_VERSION} \
     CABAL_VERSION=${CABAL_VERSION} \
     PATH=/opt/poetry/bin:/root/.local/bin:/root/.ghcup/bin:/root/.cabal/bin:${PATH}
 
@@ -89,11 +87,10 @@ RUN python3 -m venv ${POETRY_HOME} \
     && ln -sfn ${POETRY_HOME}/bin/poetry /usr/local/bin/poetry
 
 RUN curl https://get-ghcup.haskell.org -sSf | sh \
-    && ghcup install ghc ${FORMATTER_GHC_VERSION} \
+    && ghcup install ghc ${GHC_VERSION} \
     && ghcup set ghc ${GHC_VERSION} \
     && ghcup set cabal ${CABAL_VERSION} \
     && mkdir -p /opt/ghc \
-    && ln -sfn /root/.ghcup/ghc/${FORMATTER_GHC_VERSION} /opt/ghc/${FORMATTER_GHC_VERSION} \
     && ln -sfn /root/.ghcup/ghc/${GHC_VERSION} /opt/ghc/${GHC_VERSION}
 
 RUN set -eu; \

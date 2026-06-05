@@ -19,7 +19,7 @@ work. The supported Apple path must use an already selected native arm64 Docker 
 create or switch Docker contexts, must not create a Colima VM, and must not use cross-architecture
 emulation. The Linux CPU path must support native Linux amd64 and native Linux arm64 without any
 non-native compatibility lane.
-Sprint 1.11 retired
+Sprint 1.11 legacy
 `INFERNIX_BUILD_ROOT`, `INFERNIX_DATA_ROOT`, the `INFERNIX_COMPOSE_SUBSTRATE` /
 `INFERNIX_COMPOSE_DEMO_UI` runtime fallbacks, `INFERNIX_BOOTSTRAP_YES`, the
 `bootstrap::prepend_path` helper, and the host-side `.build` / `chart/charts` bind mounts. The
@@ -48,7 +48,7 @@ lives in the image overlay at `/opt/infernix/chart/charts/`. Sprint 1.12 removes
 field from `dhall/InfernixHost.dhall` and the matching Haskell records, removes `AppleColima`
 planning and profile start/stop/restart behavior from `src/Infernix/HostPrereqs.hs`, and adds
 unit-level Docker-boundary coverage for native arm64 versus non-native daemon architectures.
-The 2026-06-04 Apple Silicon validation closed the full positive lifecycle and negative
+The the recorded validation Apple Silicon validation closed the full positive lifecycle and negative
 no-daemon boundary gates named below.
 
 ## Substrate Foundation
@@ -443,7 +443,7 @@ launcher story onto the requested Apple-host-native and Linux-Compose doctrines.
   host-native routed E2E uses host `npm exec` with the same typed fixture and awaits the Apple
   validation pass, while Linux E2E runs Playwright inside the active substrate image
 - the NVIDIA-backed Linux substrate is standardized as `linux-gpu`, with the old `linux-cuda`
-  naming retired as an explicit compatibility cleanup item
+  naming legacy as an explicit compatibility cleanup item
 
 ### Validation
 
@@ -516,24 +516,24 @@ shrinks to `./.data` plus the Docker socket only.
 - `grep -rn 'lookupEnv\|getEnv' src/Infernix/{Config,CLI,DemoCLI}.hs` returns zero matches.
 - `grep -rn 'INFERNIX_BUILD_ROOT\|INFERNIX_DATA_ROOT\|INFERNIX_COMPOSE_SUBSTRATE\|INFERNIX_COMPOSE_DEMO_UI\|INFERNIX_BOOTSTRAP_YES' src/ bootstrap/ compose.yaml docker/` returns zero matches.
 - `./bootstrap/linux-cpu.sh doctor` runs cleanly under `env -i /usr/bin/bash` (empty starting env).
-- May 27, 2026 (retired hardware): `env -i /usr/bin/bash ./bootstrap/linux-cpu.sh doctor` and
+- the recorded validation (legacy hardware): `env -i /usr/bin/bash ./bootstrap/linux-cpu.sh doctor` and
   `env -i /usr/bin/bash ./bootstrap/linux-gpu.sh doctor` had both passed after the Linux
-  stage-zero bootstrap cleanup. That proof point was produced on the retired Linux/CUDA host and
+  stage-zero bootstrap cleanup. That proof point was produced on the legacy Linux/CUDA host and
   no longer counts as current evidence; the same commands need to be rerun during Wave C on the
   native Linux/CUDA host.
-- May 27, 2026 (retired hardware): `env -i /usr/bin/bash ./bootstrap/linux-gpu.sh status` had
+- the recorded validation (legacy hardware): `env -i /usr/bin/bash ./bootstrap/linux-gpu.sh status` had
   entered the single `compose.yaml` launcher with `LAUNCHER_IMAGE=infernix-linux-gpu:local` and
   reported the expected `linux-gpu` `cluster-absent` status without requiring
   `compose.linux-gpu.yaml`. That proof point is no longer current.
-- May 27, 2026 (retired hardware): `env -i /usr/bin/bash ./bootstrap/linux-gpu.sh build` had
+- the recorded validation (legacy hardware): `env -i /usr/bin/bash ./bootstrap/linux-gpu.sh build` had
   produced the `infernix-linux-gpu:local` launcher image, ran the built-in `infernix --help`
   smoke check through the single `compose.yaml` launcher, and a direct `docker run --rm
   infernix-linux-gpu:local ...` inspection had verified `/workspace/chart/charts` links to
   `/opt/infernix/chart/charts` and the expected Helm archives are present without a bind mount.
   That proof point is no longer current.
 - Apple cohort validation closed in Wave A. CUDA Linux cohort validation closed in Wave C:
-  `./bootstrap/linux-cpu.sh test` passed on 2026-06-02 and `./bootstrap/linux-gpu.sh test`
-  passed on 2026-06-03.
+  `./bootstrap/linux-cpu.sh test` passed on the recorded validation and `./bootstrap/linux-gpu.sh test`
+  passed on the recorded validation.
 - `docker inspect <launcher-container> --format '{{json .Mounts}}'` shows exactly two mounts:
   `./.data` and `/var/run/docker.sock`.
 
@@ -563,7 +563,7 @@ Foundational pieces landed:
   `src/Infernix/HostConfig.hs.defaultAppleHostNativeHostConfig` is
   `/opt/homebrew/bin/docker`, matching Apple Silicon Homebrew. The
   earlier `/usr/local/bin/docker` Intel-Mac default was incorrect for
-  the only supported Mac target and was fixed during the 2026-05-29
+  the only supported Mac target and was fixed during the the recorded validation
   Apple cohort rerun on the new host.
 - `test/unit/Spec.hs.assertHostConfig` covers decoder roundtrip +
   tool-path lookup + the absent-tool empty-path convention.
@@ -573,7 +573,7 @@ apple-silicon` writes `./.build/infernix-host.dhall` with the Apple
 defaults. `infernix test lint`, `infernix test unit` (70/70 tests),
 `infernix lint files|chart|docs|proto` all exit zero.
 
-Haskell-side env-var retirement landed (May 24, 2026):
+Haskell-side env-var retirement landed (the recorded validation):
 
 - `src/Infernix/Config.hs` `discoverPaths` now consumes an optional
   `HostConfig` (loaded via the new `tryLoadHostManifest` candidate-list
@@ -610,7 +610,7 @@ Haskell-side env-var retirement landed (May 24, 2026):
   `linuxOuterContainerUnitTestFixture`) that route every test-time
   `Paths` value through `discoverPathsWithHostManifest`.
 
-Infra-side cleanup landed (May 24, 2026; Linux compose-image selection tightened May 27, 2026):
+Infra-side cleanup landed (the recorded validation; Linux compose-image selection tightened the recorded validation):
 
 - `compose.yaml` shrunk: the `infernix` service drops the previous
   `build:` block, the `environment:` block, and the `./.build` /
@@ -666,8 +666,8 @@ selection and host-repo override env names across `bootstrap/`,
 Linux residuals: code landed and was revalidated by Wave C on the native Linux/CUDA host.
 
 - **Move `chart/charts/` cache into the launcher image at
-  `/opt/infernix/chart/charts/` — code landed; CUDA Linux cohort validation on retired hardware
-  May 27, 2026 no longer counts as current evidence.**
+  `/opt/infernix/chart/charts/` — code landed; CUDA Linux cohort validation on legacy hardware
+  the recorded validation no longer counts as current evidence.**
   `docker/linux-substrate.Dockerfile` now fetches Harbor, Percona
   PostgreSQL operator, Percona PostgreSQL database, Pulsar, MinIO, and
   Envoy Gateway archives into `/opt/infernix/chart/charts/` during
@@ -675,7 +675,7 @@ Linux residuals: code landed and was revalidated by Wave C on the native Linux/C
   cache so Helm continues to find dependency archives through the
   chart-standard path without a host bind mount.
 - **In-image host-manifest baking at
-  `/opt/infernix/dhall/InfernixHost.dhall` — landed May 25, 2026.**
+  `/opt/infernix/dhall/InfernixHost.dhall` — landed the recorded validation.**
   `docker/linux-substrate.Dockerfile` now writes the supported Linux
   outer-container `HostConfig` Dhall manifest to that path before the
   `infernix internal materialize-substrate` invocation. The manifest
@@ -689,7 +689,7 @@ Linux residuals: code landed and was revalidated by Wave C on the native Linux/C
   container as `HostNative`, and the `linux-gpu`
   materialize-substrate step is rejected by
   `ensureSupportedRuntimeModeForExecutionContext`. The fix replaces
-  the previously-retired `ENV INFERNIX_BUILD_ROOT=...` directive
+  the previously-legacy `ENV INFERNIX_BUILD_ROOT=...` directive
   with the typed Dhall manifest the doctrine actually demands.
 
 No pending closure remains. The Apple lane closed in Wave A and the CUDA Linux lane closed in
@@ -728,7 +728,7 @@ native arm64 daemon. `linux-cpu` validation belongs on native Linux amd64 or nat
 - `rg -n 'AppleColima|ensureColimaDockerReady|startSupportedColima|stopColima|colima start|colima stop' src test dhall`
   returns no supported-path matches after the cleanup lands
 - `cabal test infernix-unit` covers Apple host prerequisite decoding and Docker-boundary behavior
-- 2026-06-03 native Linux amd64 outer-container regression gate:
+- the recorded validation native Linux amd64 outer-container regression gate:
   `./bootstrap/linux-cpu.sh test` passed Haskell style, Python quality, Haskell unit,
   PureScript build, 71/71 web unit tests, full integration, and routed Playwright E2E (7/7)
   against launcher image digest
@@ -741,7 +741,7 @@ native arm64 daemon. `linux-cpu` validation belongs on native Linux amd64 or nat
 - on Apple Silicon with no usable native arm64 Docker daemon, the Apple bootstrap fails with a
   prerequisite error and does not create a Docker context or Colima VM
 - `infernix lint docs` passes through the active execution context
-- 2026-06-03 Apple local gate: the Colima cleanup grep named above returned no matches;
+- the recorded validation Apple local gate: the Colima cleanup grep named above returned no matches;
   `./bootstrap/apple-silicon.sh doctor` passed;
   `./bootstrap/apple-silicon.sh build` passed after the `DockerInfo` decoder stopped
   exposing an unused record selector; `cabal test infernix-unit` passed; explicit
@@ -751,16 +751,16 @@ native arm64 daemon. `linux-cpu` validation belongs on native Linux amd64 or nat
   check against the pre-existing selected Docker context and reported daemon architecture
   `aarch64`; no context creation or switching was performed, but this is not the full
   positive native-daemon lifecycle gate and not the negative no-daemon gate.
-- 2026-06-03 Apple positive-lifecycle continuation on the same already selected native
+- the recorded validation Apple positive-lifecycle continuation on the same already selected native
   arm64 Docker daemon found and fixed two validation blockers:
-  `docker/linux-substrate.Dockerfile` still baked the retired `toolPaths.colima` field and
+  `docker/linux-substrate.Dockerfile` still baked the legacy `toolPaths.colima` field and
   omitted `hostArchitecture`, so the in-image `/opt/infernix/dhall/InfernixHost.dhall`
   failed to decode during `infernix internal materialize-substrate linux-cpu`; the previous
   `Config.tryLoadHostManifest` fallback then silently misclassified the Docker build as
   `HostNative` and rejected `linux-cpu`. The fix removes the stale Dockerfile `colima`
   field, bakes `hostArchitecture = ${TARGETARCH:-$(dpkg --print-architecture)}`, makes
   existing invalid host manifests fail fast instead of falling back, and adds unit coverage
-  that the Dockerfile manifest carries `hostArchitecture` and no retired `colima` field.
+  that the Dockerfile manifest carries `hostArchitecture` and no legacy `colima` field.
   The first full `./bootstrap/apple-silicon.sh test` then passed style, Python quality,
   Haskell unit, PureScript build, and 71/71 web unit tests, and progressed through Apple
   integration to the `engine.lock` check before the post-integration edge-port conflict
@@ -768,7 +768,7 @@ native arm64 daemon. `linux-cpu` validation belongs on native Linux amd64 or nat
   fix makes the busy-port fixture retry transient binds and clean up partially opened
   sockets.
 - After those fixes, `./bootstrap/apple-silicon.sh doctor`, `build`, `up`, and `status`
-  passed on 2026-06-03 without creating or switching Docker contexts. `up` completed with
+  passed on the recorded validation without creating or switching Docker contexts. `up` completed with
   `controlPlaneContext: host-native`, `runtimeMode: apple-silicon`, `edgePort: 9091`, and
   Harbor image digest
   `sha256:86b3b40ef89001876d213c06b795c5b1c56e58dd5fc6027c57917f012d2a16f3`; `status`
@@ -780,7 +780,7 @@ native arm64 daemon. `linux-cpu` validation belongs on native Linux amd64 or nat
   retained-state replay and `cluster down complete`; a final `./bootstrap/apple-silicon.sh
   status` showed `clusterPresent: False`, `lifecycleStatus: idle`, and `lifecyclePhase:
   cluster-absent`.
-- 2026-06-04 Apple full validation closed Sprint 1.12. The positive native-daemon gate first
+- the recorded validation Apple full validation closed Sprint 1.12. The positive native-daemon gate first
   found and fixed a first-run host-native staging issue: `cluster up`, `cluster down`, and the
   `kubectl` wrapper now materialize or rediscover the Apple host manifest before launching Kind,
   and host-native command runtime selection falls back to `AppleSilicon` when the generated
@@ -791,7 +791,7 @@ native arm64 daemon. `linux-cpu` validation belongs on native Linux amd64 or nat
   force-deletes the stateless demo pods, waits for the original pod names to disappear, and
   filters the `infernix kubectl` Docker-boundary banner out of parsed pod-name output before
   waiting for replacements.
-- The uninterrupted `./bootstrap/apple-silicon.sh test` rerun on 2026-06-04 passed the full
+- The uninterrupted `./bootstrap/apple-silicon.sh test` rerun on the recorded validation passed the full
   active Apple suite: Haskell style, Python quality, Haskell unit, PureScript build, 71/71 web
   unit tests, full integration, and routed Playwright E2E 7/7. The artifact-upload pod-replacement
   regression passed in the browser run, and final teardown completed with `cluster down complete`.
@@ -799,7 +799,7 @@ native arm64 daemon. `linux-cpu` validation belongs on native Linux amd64 or nat
   `./bootstrap/apple-silicon.sh status` reported `clusterPresent: False`,
   `lifecycleStatus: idle`, and `lifecyclePhase: cluster-absent` with Docker context `colima` and
   daemon architecture `aarch64`.
-- 2026-06-04 Apple negative no-daemon boundary validation passed without stopping the real daemon:
+- the recorded validation Apple negative no-daemon boundary validation passed without stopping the real daemon:
   running `DOCKER_HOST=unix:///tmp/infernix-missing-docker.sock ./bootstrap/apple-silicon.sh
   status` exited `1` before cluster work with the prerequisite message that Docker-backed Apple
   work requires the selected context to point at an already running native arm64 daemon and that
@@ -816,7 +816,7 @@ None.
 ## Remaining Work
 
 None. Sprints 1.1-1.12 are `Done`; Apple cohort validation closed in Wave A and CUDA Linux cohort
-validation closed in Wave C, with the 2026-06-04 Sprint 1.12 Apple boundary rerun closing the
+validation closed in Wave C, with the the recorded validation Sprint 1.12 Apple boundary rerun closing the
 native-only positive and negative Docker gates on the current Apple Silicon host.
 
 ## Documentation Requirements

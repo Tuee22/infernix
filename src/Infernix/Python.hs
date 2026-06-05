@@ -80,14 +80,11 @@ ensurePoetryProjectReady paths projectDirectory = do
   if not projectPresent
     then throwIO (PythonProjectMissing projectDirectory)
     else do
-      let projectVenv = projectDirectory </> ".venv"
-      venvPresent <- doesDirectoryExist projectVenv
-      unless venvPresent $
-        runPoetryCommand
-          paths
-          projectDirectory
-          ["install", "--directory", projectDirectory]
-          ("failed to install poetry project " <> projectDirectory)
+      runPoetryCommand
+        paths
+        projectDirectory
+        ["install", "--directory", projectDirectory]
+        ("failed to install poetry project " <> projectDirectory)
       ensureGeneratedPythonProto paths projectDirectory
 
 ensureGeneratedPythonProto :: Paths -> FilePath -> IO ()

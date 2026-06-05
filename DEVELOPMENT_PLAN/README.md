@@ -53,7 +53,7 @@ A phase or sprint can move to `Done` only when all of the following are true:
 ## Current Repo Assessment
 
 All phase implementation work closes around the implemented worktree. Phase 3 Sprint 3.12 and
-[Wave F](cohort-validation-waves.md) closed on 2026-06-04 after native `linux/arm64` validation
+[Wave F](cohort-validation-waves.md) closed on the recorded validation after native `linux/arm64` validation
 through the already selected arm64 Docker daemon on this Apple Silicon machine. The repository implements the
 staged-substrate architecture, the baked Linux outer-container launcher,
 the mandatory HA platform services, the Gateway-owned routed edge, the shared Python adapter
@@ -108,10 +108,10 @@ fast instead of falling through to a generic success path. The worktree omits th
 direct Harbor, MinIO, and Pulsar tool-route compatibility handlers, requires the real routed
 upstream behavior in integration, and persists Linux cluster state before later rollout phases.
 Bootstrap shells no longer restage the active substrate payload before lifecycle commands; that
-preflight belongs to the binary command that needs the file. The formatter-toolchain closure
-remains in place: the Haskell style bootstrap drives `ormolu` and
-`hlint` through the dedicated compatible formatter compiler `ghc-9.12.4`, while the Linux
-substrate image preinstalls that compiler beside the project `ghc-9.14.1` toolchain. The
+preflight belongs to the binary command that needs the file. The Haskell style bootstrap
+installs `ormolu` and `hlint` through `cabal install` against the project `ghc-9.12.4`
+toolchain into `./.build/haskell-style-tools/bin/`; the Linux substrate image installs a single
+`ghc-9.12.4` toolchain. The
 supported Linux outer-container launcher reuses the image-local
 `/opt/infernix/chart/charts/` archive cache,
 hydrates the MinIO dependency through the supported direct tarball path instead of Docker
@@ -124,7 +124,7 @@ user-local Poetry bootstrap on demand. The supported doctrine now requires Docke
 work to use an already selected native arm64 Docker daemon and forbids creating or switching
 Docker contexts, creating Colima VMs, or using cross-architecture emulation; Phase 1 Sprint 1.12
 replaced the previous Colima reconciliation path with selected Docker-context and
-daemon-architecture validation and closed on 2026-06-04 with both the positive Apple lifecycle
+daemon-architecture validation and closed on the recorded validation with both the positive Apple lifecycle
 gate and the negative no-daemon boundary gate. The Poetry bootstrap may reuse an already available
 compatible Python 3.12+ executable when one passes the implemented version check. Routed Apple
 Playwright validation runs host-native `npm exec` against the published `127.0.0.1` edge port,
@@ -140,7 +140,7 @@ promotion. The shared lifecycle skips broad pre-Harbor support-image preloads an
 stricter Harbor-first target where Linux lanes may hydrate and stream only the narrow Harbor
 warmup dependency set into Kind before Helm warmup, only Harbor-required services may pull
 upstream before Harbor is responsive, and every remaining image, including the active `infernix`
-runtime image, is loaded into Harbor before final rollout. Retired validation proof points are
+runtime image, is loaded into Harbor before final rollout. Legacy validation proof points are
 kept only in [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md); current
 replacement proof points are recorded by the Wave A Apple cohort closure and the Wave C native
 Linux/CUDA cohort closure below. Sprint 6.26 closes the buildx, npm, GHCup shell-profile,
@@ -150,21 +150,21 @@ Sprint 6.27 closes the staged-substrate format cleanup: `infernix-substrate.dhal
 typed Dhall record decoded in-process by the `dhall` Haskell library, with the schema documented at
 `dhall/InfernixSubstrate.dhall`.
 
-**Apple Silicon validation reset (2026-05-29).** The repository was previously developed on a
+**Apple Silicon validation reset (the recorded validation).** The repository was previously developed on a
 Linux/CUDA host with a separate Apple Silicon machine used for the Apple cohort proof points. The
 project has now moved to an Apple Silicon host as the primary development machine; the prior Apple
-Silicon hardware and the prior Linux/CUDA host are both no longer available. The retired dated
-proof points (May 13/15/17/19/25/26/27/29, 2026) are inventoried in
-[legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) under "Retired Historical
+Silicon hardware and the prior Linux/CUDA host are both no longer available. The legacy dated
+proof points (the recorded validation) are inventoried in
+[legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) under "Legacy Historical
 Validation Evidence"; the underlying contracts they exercised still describe supported behavior,
 but the proof points themselves are not current. Revalidation on the new host is tracked by
 [cohort-validation-waves.md](cohort-validation-waves.md). [Wave A](cohort-validation-waves.md)
-(Apple cohort) closed 2026-05-30 with `cabal test infernix-integration` full PASS plus 5/6
+(Apple cohort) closed the recorded validation with `cabal test infernix-integration` full PASS plus 5/6
 Playwright e2e PASS on the new host; Waves A.1 and A.2 subsequently closed the routed
 Playwright residuals with 7/7 e2e PASS, and Wave A.3 closed Apple engine-lock chaos.
-[Wave C](cohort-validation-waves.md) closed 2026-06-03 on a native Linux/CUDA host: the
-portable `linux-cpu` full-suite gate passed on 2026-06-02 and the real `linux-gpu`
-full-suite gate passed on 2026-06-03. [Wave F](cohort-validation-waves.md) closed 2026-06-04
+[Wave C](cohort-validation-waves.md) closed the recorded validation on a native Linux/CUDA host: the
+portable `linux-cpu` full-suite gate passed on the recorded validation and the real `linux-gpu`
+full-suite gate passed on the recorded validation. [Wave F](cohort-validation-waves.md) closed the recorded validation
 with native `linux/arm64` `linux-cpu` validation through the selected Docker daemon
 (`server=linux/arm64`, runtime probe `aarch64` / `arm64`) and a full
 `docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm infernix infernix test all`
@@ -217,21 +217,21 @@ scope.
 
 | Phase | Name | Status | Document |
 |-------|------|--------|----------|
-| 0 | Documentation and Governance | Done (Sprint 0.9 configuration-doctrine closure validated by Apple Wave A and CUDA Linux Wave C) | [phase-0-documentation-and-governance.md](phase-0-documentation-and-governance.md) |
-| 1 | Repository and Control-Plane Foundation | Done (Sprint 1.12 native-only workflow doctrine closed on 2026-06-04: Apple `doctor`/`build`/`up`/`status`/full `test`/`down`/final `status` passed on an already selected native arm64 daemon, and the negative no-daemon bootstrap boundary failed before cluster work without changing Docker contexts or Colima VM state) | [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md) |
-| 2 | Kind Cluster Storage and Lifecycle | Done (Sprints 2.10–2.13 lifecycle, retained-state, bootstrap-boundary, and host-manifest retirement validated by Apple Wave A and CUDA Linux Wave C) | [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md) |
-| 3 | HA Platform Services and Edge Routing | Done (Sprint 3.12 native `linux-cpu` architecture selector and native arm64 publication path closed in Wave F on 2026-06-04 through the already selected arm64 Docker daemon; Sprints 3.10–3.11 validated by Apple Wave A/A.2 and CUDA Linux Wave C) | [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md) |
-| 4 | Inference Service and Durable Runtime | Done (Sprint 4.13 mounted `ClusterConfig` / `SecretsConfig` runtime path validated by Apple Wave A and CUDA Linux Wave C) | [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) |
-| 5 | Web UI and Shared Types | Done (Sprint 5.9 demo backend, Python adapter, and web/Node env-retirement path validated by Apple Wave A/A.2 and CUDA Linux Wave C) | [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md) |
-| 6 | Validation, E2E, and HA Hardening | Done (Sprints 6.22–6.28 lint/style/unit/integration/e2e and no-env-var gates validated by Apple Wave A/A.1/A.2/A.3 and CUDA Linux Wave C) | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) |
-| 7 | Demo App Multi-User Durable Context | Done (Apple gates closed in Waves A/A.1/A.2/A.3; CUDA Linux Wave C closed with `linux-cpu` PASS on 2026-06-02 and `linux-gpu` PASS on 2026-06-03; the 2026-06-03 residual sweep passed rebuilt-image `linux-gpu` validation against `sha256:521a56ac6f79bf1ce5bc9d7dcd9c872e897ce4b4882661d4ada2f62faa108d7b` and rebuilt-image `linux-cpu` validation against `sha256:dc0c003e7cc2f2e359a474fa5ddb522c8715d271e322534db7798f260e9747fa`; Sprint 7.8 runtime KV-cache path and `Infernix.Runtime.Daemon` split closed on 2026-06-04 with mounted Linux CPU `cabal build all`, unit, style, and full integration PASS) | [phase-7-demo-app-durable-context.md](phase-7-demo-app-durable-context.md) |
+| 0 | Documentation and Governance | Done (Sprints 0.1-0.10 closed; declarative-state documentation reconciliation complete) | [phase-0-documentation-and-governance.md](phase-0-documentation-and-governance.md) |
+| 1 | Repository and Control-Plane Foundation | Done (Sprint 1.12 native-only workflow doctrine closed on the recorded validation: Apple `doctor`/`build`/`up`/`status`/full `test`/`down`/final `status` passed on an already selected native arm64 daemon, and the negative no-daemon bootstrap boundary failed before cluster work without changing Docker contexts or Colima VM state) | [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md) |
+| 2 | Kind Cluster Storage and Lifecycle | Done (Sprints 2.10-2.13 lifecycle, retained-state, bootstrap-boundary, and host-manifest closure validated by Apple Wave A and CUDA Linux Wave C) | [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md) |
+| 3 | HA Platform Services and Edge Routing | Done (Sprint 3.12 native `linux-cpu` architecture selector and native arm64 publication path closed in Wave F on the recorded validation through the already selected arm64 Docker daemon; Sprints 3.10–3.11 validated by Apple Wave A/A.2 and CUDA Linux Wave C) | [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md) |
+| 4 | Inference Service and Durable Runtime | Done (Sprints 4.1-4.14 closed with mounted `ClusterConfig` / `SecretsConfig` runtime path validated by Apple Wave A and CUDA Linux Wave C) | [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) |
+| 5 | Web UI and Shared Types | Done (Sprints 5.1-5.10 closed with demo backend, Python adapter, and web/Node no-env-var path validated by Apple Wave A/A.2 and CUDA Linux Wave C) | [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md) |
+| 6 | Validation, E2E, and HA Hardening | Done (Sprints 6.1-6.30 closed with lint/style/unit/integration/e2e, no-env-var gates, and single `ghc-9.12.4` toolchain validation) | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) |
+| 7 | Demo App Multi-User Durable Context | Done (Sprints 7.1-7.18 closed with Apple gates in Waves A/A.1/A.2/A.3 and CUDA Linux Wave C; runtime KV-cache path and `Infernix.Runtime.Daemon` split implemented) | [phase-7-demo-app-durable-context.md](phase-7-demo-app-durable-context.md) |
 
 > **Note**: Phase statuses describe current repository state. Earlier governed phases may remain
 > `Active` or `Blocked` for named follow-ons while later phases can be `Done` when their owned work
 > and validation are complete. Validation-only hardware blockers are scheduled through
 > [cohort-validation-waves.md](cohort-validation-waves.md) instead of forcing repeated machine
 > switches during unrelated same-cohort work.
-> Each phase 1-7 gained a retirement sprint that eliminates the env-var fallbacks and
+> Each phase 1-7 gained a cleanup sprint that eliminates the env-var fallbacks and
 > PATH-resolved external commands the phase originally introduced. See
 > [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 > for the doctrine, and the per-phase sprint sections for the specific retirement scope.
@@ -348,7 +348,7 @@ The supported platform now closes around these rules:
 | 4 | 0-3 | closes the runtime, adapter boundary, object-store contract, and Apple host-daemon bridge on top of the HA platform surfaces |
 | 5 | 0-4 | adds the clustered demo UI, generated frontend contracts, and routed browser validation on top of the runtime and publication contract |
 | 6 | 0-5 | validates the whole supported surface end to end and hardens the governed docs, routes, and lifecycle behavior around that implementation |
-| 7 | 0-6 | adds the multi-user durable-context demo application on top of the platform: Keycloak self-signup, WebSocket post-login transport, Pulsar-backed conversation log per context, MinIO-backed artifact upload/download/render-or-download, a Haskell-first logic boundary surfaced to PureScript via `purescript-bridge`, and the supported three-role daemon split (stateless `infernix-demo`, stateless `infernix-coordinator`, one-per-node `infernix-engine`) replacing the retired fused `infernix-service` Deployment. The platform contract Phase 7 builds on is implemented in code; Apple plus native Linux/CUDA real-cluster validation evidence is recorded in Waves A-C, and the Sprint 7.8 runtime KV-cache plus `Infernix.Runtime.Daemon` closure is recorded in Wave E. |
+| 7 | 0-6 | adds the multi-user durable-context demo application on top of the platform: Keycloak self-signup, WebSocket post-login transport, Pulsar-backed conversation log per context, MinIO-backed artifact upload/download/render-or-download, a Haskell-first logic boundary surfaced to PureScript via `purescript-bridge`, and the supported three-role daemon split (stateless `infernix-demo`, stateless `infernix-coordinator`, one-per-node `infernix-engine`). The platform contract Phase 7 builds on is implemented in code; Apple plus native Linux/CUDA real-cluster validation evidence is recorded in Waves A-C, and the Sprint 7.8 runtime KV-cache plus `Infernix.Runtime.Daemon` closure is recorded in Wave E. |
 
 ## Cross-References
 
