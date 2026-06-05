@@ -13,6 +13,9 @@
 The plan reads as one ordered buildout from empty repository to supported local platform.
 
 - Each phase is written after the previous phase in dependency order.
+- Implementation order and hardware-validation scheduling are separate concerns. Phase docs stay
+  execution-ordered for code and architecture, while cohort-only proof points that require a
+  different physical host are batched in [cohort-validation-waves.md](cohort-validation-waves.md).
 - When later implementation lands before an earlier phase's final supported-lane rerun or
   environment-dependent blocker closes, the later phase explicitly names that open dependency in
   its `Phase Status` or `Current Repo Assessment` text instead of pretending the prerequisite is
@@ -45,7 +48,7 @@ Status describes the current repository state, not the intended future state.
 |--------|---------|
 | `Done` | Implemented and validated; no remaining work |
 | `Active` | Partially closed; remaining work is listed explicitly |
-| `Blocked` | Waiting on a named prerequisite |
+| `Blocked` | Waiting on a named prerequisite; validation-only hardware blockers must be named as such and wave-tracked |
 | `Planned` | Ready to start; dependencies are already satisfied |
 
 Rules:
@@ -60,6 +63,10 @@ Rules:
   the earlier open item is a clearly named external dependency or supported-lane validation
   blocker, and the later phase calls that dependency out explicitly in its phase-status or
   current-assessment text.
+- A validation-only hardware blocker must not trigger repeated ad hoc machine switches. Record it
+  in [cohort-validation-waves.md](cohort-validation-waves.md), keep implementing and validating
+  same-cohort work that does not depend on that proof point, and request the switch only at the
+  named wave boundary or when no same-cohort work remains.
 
 ### D. Declarative Current-State Language
 
@@ -79,6 +86,7 @@ DEVELOPMENT_PLAN/
 ├── README.md
 ├── 00-overview.md
 ├── system-components.md
+├── cohort-validation-waves.md
 ├── phase-0-documentation-and-governance.md
 ├── phase-1-repository-and-control-plane-foundation.md
 ├── phase-2-kind-cluster-storage-and-lifecycle.md
@@ -277,10 +285,9 @@ Rules:
   semantics) and `infernix-demo-objects` (demo-gated; user uploads + engine-generated
   artifacts). The previously chart-reserved `infernix-runtime` and `infernix-results`
   placeholder buckets and the `s3://infernix-runtime/` URI scheme are removed by Sprint 7.7.
-- On `apple-silicon`, the in-cluster `infernix-coordinator` Deployment (the coordinator role
-  in the supported model; today's in-cluster Apple `infernix-service` Deployment after the
-  Sprint 7.7 rename) owns cluster-side request-topic consumption and batch handoff via the
-  `inference.batch.apple-silicon` topic. A same-binary on-host engine daemon consumes that
+- On `apple-silicon`, the in-cluster `infernix-coordinator` Deployment owns cluster-side
+  request-topic consumption and batch handoff via the `inference.batch.apple-silicon` topic.
+  A same-binary on-host engine daemon consumes that
   batch topic, runs the Apple-native inference engine, and publishes the completed result so
   the Apple lane can use Metal-capable or unified-memory-aware backends directly. The host
   daemon pulls model weights from `infernix-models` via the same lazy bootstrap workflow
@@ -354,18 +361,17 @@ Rules:
   engine rather than `Not recommended` or an empty cell.
 - `apple-silicon` is an explicit split-executor substrate: the control plane remains
   host-native, Kind still hosts Harbor, MinIO, Pulsar, operator-managed PostgreSQL, Envoy Gateway,
-  the cluster `infernix service` Deployment, and the optional routed demo app, while Apple-native
-  inference execution and result publication run in same-binary host daemons fed by Pulsar batch
-  topics.
+  the cluster `infernix-coordinator` Deployment, and the optional routed demo app, while
+  Apple-native inference execution and result publication run in same-binary host engine daemons
+  fed by Pulsar batch topics.
 - Apple phase docs must not imply that Kind or other containerized Apple workloads have direct
   Metal or unified-memory parity with the host-native Apple daemon. Cluster-resident Apple
   daemons are canonical for request-topic consumption and host-batch handoff, but the host daemon
   is the canonical Apple inference executor and result publisher.
-- On `linux-cpu` and `linux-gpu`, today's fused `infernix-service` cluster daemon reads from
-  Pulsar, runs inference itself, and publishes the result; Sprint 7.7 of Phase 7 splits this
-  pod into a stateless `infernix-coordinator` Deployment (Pulsar coordination, dispatcher,
-  result-bridge, batcher) and a stateful `infernix-engine` Deployment (adapter execution, KV
-  cache, one-per-node anti-affinity).
+- On `linux-cpu` and `linux-gpu`, the stateless `infernix-coordinator` Deployment reads request
+  topics and publishes batch work, while the `infernix-engine` Deployment consumes
+  `inference.batch.<mode>`, runs inference, and publishes the result. Sprint 7.7 of Phase 7
+  retired the fused `infernix-service` pod in favor of these role-specific Deployments.
 - When phase docs describe multi-node or multi-replica topologies, they must distinguish the
   currently generated values from the chart template's explicit replica and anti-affinity
   knobs. The supported target model uses `coordinator.replicaCount` and `engine.replicaCount`
@@ -388,9 +394,11 @@ Rules:
   and fail if it cannot be materialized or validated for the requested deployment path. Focused
   `infernix lint ...` and `infernix docs check` commands remain substrate-file independent.
 - `linux-cpu` is the only substrate that remains meaningfully portable across unrelated native
-  Linux host hardware. Native amd64 Linux and native arm64 Linux hosts are first-class citizens for
-  that CPU-only lane so long as the supported containerized workflow is followed. Apple Silicon
-  emulation is not a supported `linux-cpu` validation path.
+  Linux CPU hardware. Native amd64 Linux hosts and native arm64 Linux execution through an already
+  selected native arm64 Docker daemon are first-class citizens for that CPU-only lane so long as the
+  supported containerized workflow is followed. Cross-architecture emulation is not a supported
+  `linux-cpu` validation path, and Apple work must not create or switch Docker contexts or create a
+  VM to obtain it.
 - `linux-gpu` closes only when the Kind-backed cluster path exposes NVIDIA container runtime
   support, advertises `nvidia.com/gpu` resources to Kubernetes, and can schedule CUDA workloads on
   that substrate.
@@ -607,6 +615,10 @@ Rules:
   sprint.
 - Sprint `Validation` sections distinguish local cohort gates from counterpart cohort closure
   when hardware-specific evidence is required.
+- Validation-only blockers are queue items, not phase-layout interrupts. If the implementation is
+  complete and only a different physical host can provide the final proof point, the affected phase
+  or sprint names the blocker as `validation-only`, references the owning wave, and does not ask
+  the operator to switch machines until that wave is intentionally scheduled.
 - A phase may stay `Active` with an explicit `Apple cohort pending` or
   `CUDA Linux cohort pending` residual after one cohort validates, but it cannot move to `Done`
   until both relevant hardware cohorts have run their full-suite gates against the same phase

@@ -664,11 +664,13 @@ test("browser artifact upload covers preview media PDF and download-only grants"
   const postPodReplacementPrompt = `continue after frontend pod replacement ${randomUUID()}`;
   const postPodReplacementSentStartIndex = wsFrames.sent.length;
   const postPodReplacementReceivedStartIndex = wsFrames.received.length;
-  await page.locator("textarea[name='prompt']").fill(postPodReplacementPrompt);
-  await waitForSentFrameAfter(
+  await fillDraftAndWaitForUpdate(
+    page,
     wsFrames,
     postPodReplacementSentStartIndex,
-    (frame) => frame.tag === "ClientUpdateDraft" && frame.clientUpdateDraftText === postPodReplacementPrompt,
+    subscribeFrame.clientSubscribeContextId,
+    postPodReplacementPrompt,
+    120000,
   );
   await waitForReceivedFrameAfter(
     wsFrames,
@@ -992,6 +994,37 @@ async function waitForReceivedFrame(frames, predicate) {
 
 async function waitForReceivedFrameAfter(frames, startIndex, predicate, timeoutMs) {
   return waitForFrameAfter(frames.received, startIndex, predicate, "inbound", timeoutMs);
+}
+
+async function fillDraftAndWaitForUpdate(page, frames, startIndex, contextId, draftText, timeoutMs = 60000) {
+  const deadline = Date.now() + timeoutMs;
+  let lastError = null;
+  while (Date.now() < deadline) {
+    const remainingMs = Math.max(1000, deadline - Date.now());
+    const activeContext = page.locator(`.chat-context-item.active[data-context-id="${contextId}"]`);
+    const draftInput = page.locator("textarea[name='prompt']");
+    await expect(activeContext).toBeVisible({ timeout: Math.min(5000, remainingMs) });
+    await expect(draftInput).toBeVisible({ timeout: Math.min(5000, remainingMs) });
+    await draftInput.fill(draftText);
+    await expect(draftInput).toHaveValue(draftText, { timeout: Math.min(5000, remainingMs) });
+    try {
+      return await waitForSentFrameAfter(
+        frames,
+        startIndex,
+        (frame) =>
+          frame.tag === "ClientUpdateDraft" &&
+          frame.clientUpdateDraftContextId === contextId &&
+          frame.clientUpdateDraftText === draftText,
+        Math.min(5000, Math.max(1000, deadline - Date.now())),
+      );
+    } catch (error) {
+      lastError = error;
+      await page.waitForTimeout(250);
+    }
+  }
+  throw new Error(
+    `Timed out waiting for outbound draft update for ${contextId} after ${timeoutMs}ms; last error: ${lastError?.message || "none"}`,
+  );
 }
 
 async function waitForCompletedConversationPatchAfter(frames, startIndex, details) {

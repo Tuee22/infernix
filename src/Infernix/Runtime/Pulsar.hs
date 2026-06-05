@@ -2433,15 +2433,13 @@ startContextsMetadataWorkerIfNeeded transport topicNamespace userIdValue managed
           )
         pure (Set.insert userIdText alreadyStarted)
 
--- | The per-user compacted-topic consumer. Subscribes Exclusive (the
--- contexts topic is per-user so no Failover or Shared semantics are
--- needed), reads from the earliest broker offset so the compacted view
--- is replayed on cold coordinator startup, decodes each frame as a
--- 'Contracts.ContextMetadataEvent', and updates the shared map via
--- 'ContextModelMap.recordContextMetadataEvent'. Frames the SPA has not
--- written yet simply don't surface here; the supported flow surfaces a
--- typed engine error result when 'lookupModelId' returns 'Nothing' at
--- dispatch time.
+-- | The per-user compacted-topic reader. Each coordinator replica owns
+-- its own process-local 'ContextModelMap', so every replica must replay
+-- the context metadata stream independently. A shared Failover
+-- subscription would populate only the active consumer's map while a
+-- dispatcher on another replica could still receive conversation
+-- events. The reader starts at the earliest broker offset on every
+-- session so restart/reconnect replay remains idempotent.
 runContextsMetadataConsumer ::
   PulsarTransport ->
   ConversationTopic.TopicNamespace ->
@@ -2451,20 +2449,22 @@ runContextsMetadataConsumer ::
 runContextsMetadataConsumer transport topicNamespace userIdValue contextModelMap = do
   let topicUrl = ConversationTopic.contextsMetadataTopicName topicNamespace userIdValue
       Contracts.UserId userIdText = userIdValue
-      subscriptionName = "infernix-coordinator-context-model-map-" <> userIdText
   topicRef <- requireTopicRef topicUrl
   processLabel <- currentProcessLabel
-  let consumerName = PulsarFailover.failoverConsumerName subscriptionName processLabel
-      consumerPath =
-        buildFailoverConsumerSocketPath
+  let readerName =
+        "infernix-coordinator-context-model-map-"
+          <> sanitizeTopic userIdText
+          <> "-"
+          <> sanitizeTopic processLabel
+      readerPath =
+        buildReaderSocketPath
           (pulsarWebSocketBase transport)
           topicRef
-          (Text.unpack subscriptionName)
-          (Text.unpack consumerName)
+          readerName
   forever $ do
     sessionResult <-
       try @SomeException
-        ( runPulsarWebSocketClient (pulsarWebSocketBase transport) consumerPath $ \connection ->
+        ( runPulsarWebSocketClient (pulsarWebSocketBase transport) readerPath $ \connection ->
             forever (handleContextsMetadataMessage contextModelMap connection)
         )
     case sessionResult of

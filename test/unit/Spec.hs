@@ -702,7 +702,11 @@ main = do
                "harbor.local/library/minio/minio:sha256-minio",
                "harbor.local/library/busybox:sha256-shell",
                "harbor.local/library/minio/mc:sha256-client",
-               "harbor.local/library/apachepulsar/pulsar-all:sha256-pulsar"
+               "harbor.local/library/apachepulsar/pulsar-all:sha256-pulsar",
+               "harbor.local/library/percona/percona-postgresql-operator:sha256-pg-operator",
+               "harbor.local/library/percona/percona-distribution-postgresql:sha256-pg-db",
+               "harbor.local/library/percona/percona-pgbackrest:sha256-pgbackrest",
+               "harbor.local/library/percona/percona-pgbouncer:sha256-pgbouncer"
              ]
       )
       "Harbor overlay discovery returns the routed image refs"
@@ -714,7 +718,11 @@ main = do
                "harbor.local/library/minio/minio:sha256-minio",
                "harbor.local/library/busybox:sha256-shell",
                "harbor.local/library/minio/mc:sha256-client",
-               "harbor.local/library/apachepulsar/pulsar-all:sha256-pulsar"
+               "harbor.local/library/apachepulsar/pulsar-all:sha256-pulsar",
+               "harbor.local/library/percona/percona-postgresql-operator:sha256-pg-operator",
+               "harbor.local/library/percona/percona-distribution-postgresql:sha256-pg-db",
+               "harbor.local/library/percona/percona-pgbackrest:sha256-pgbackrest",
+               "harbor.local/library/percona/percona-pgbouncer:sha256-pgbouncer"
              ]
       )
       "Harbor overlay emission produces the routed image override contract"
@@ -2097,7 +2105,17 @@ sampleHarborOverlay =
       "    pullPolicy: IfNotPresent",
       "pulsar:",
       "  defaultPulsarImageRepository: harbor.local/library/apachepulsar/pulsar-all",
-      "  defaultPulsarImageTag: sha256-pulsar"
+      "  defaultPulsarImageTag: sha256-pulsar",
+      "postgresOperator:",
+      "  image: harbor.local/library/percona/percona-postgresql-operator:sha256-pg-operator",
+      "harborpg:",
+      "  image: harbor.local/library/percona/percona-distribution-postgresql:sha256-pg-db",
+      "  backups:",
+      "    pgbackrest:",
+      "      image: harbor.local/library/percona/percona-pgbackrest:sha256-pgbackrest",
+      "  proxy:",
+      "    pgBouncer:",
+      "      image: harbor.local/library/percona/percona-pgbouncer:sha256-pgbouncer"
     ]
 
 -- type PublishedImage = (String, String)

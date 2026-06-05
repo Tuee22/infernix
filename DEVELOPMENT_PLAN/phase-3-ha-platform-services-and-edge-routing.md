@@ -1,7 +1,6 @@
 # Phase 3: HA Platform Services and Edge Routing
 
-**Status**: Blocked
-**Blocked by**: native arm64 Linux host for `./bootstrap/linux-cpu.sh test`
+**Status**: Done
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Define the mandatory local HA Harbor, MinIO, operator-managed PostgreSQL, and
@@ -12,13 +11,13 @@
 ## Phase Status
 
 Phase 3 closes around the mandatory HA service set, the shared routed edge, and the
-Haskell-owned route registry implemented in this worktree. Sprints 3.1-3.11 are `Done` after
-Apple cohort validation in Waves A/A.2 and CUDA Linux cohort validation in Wave C. Sprint 3.12 is
-`Blocked` on a native arm64 Linux host for the remaining `linux-cpu` publication validation after
-the native architecture selector landed. The current execution context is Linux x86_64; it can
-exercise the amd64 `linux-cpu` lane, but it is not a native arm64 Linux host, and
-cross-architecture emulation is not a supported validation substitute. The clarified Apple
-daemon-role model is
+Haskell-owned route registry implemented in this worktree. Sprints 3.1-3.12 are `Done` after
+Apple cohort validation in Waves A/A.2, CUDA Linux cohort validation in Wave C, and native arm64
+`linux-cpu` validation in Wave F. Sprint 3.12 closed on 2026-06-04 through the already selected
+native arm64 Docker daemon on this Apple Silicon machine: Docker reported `server=linux/arm64`,
+the Linux runtime probe reported `aarch64` / `arm64`, and the full Linux CPU outer-container
+validation suite passed without cross-architecture emulation, Docker-context switching, or VM
+creation. The clarified Apple daemon-role model is
 implemented in Phase 6 Sprint 6.25 and separates cluster daemon location from host inference
 executor location in publication metadata.
 
@@ -61,8 +60,8 @@ when used intentionally outside the routed cluster path, so Harbor, MinIO, and P
 on the intended HTTPRoute mapping.
 Sprint 3.12 replaces the previous `LinuxCpu -> "amd64"` publication hardcode with typed
 host-architecture selection from `InfernixHost.dhall`, mapping native Linux amd64 to `amd64` and
-native Linux arm64 to `arm64` while keeping `linux-gpu` amd64-only. Native arm64 Linux full-suite
-validation remains outstanding before this sprint can move to `Done`.
+native Linux arm64 to `arm64` while keeping `linux-gpu` amd64-only. Wave F validated the native
+arm64 publication path through the selected native arm64 Docker daemon on 2026-06-04.
 
 ## Sprint 3.1: HA MinIO Deployment [Done]
 
@@ -621,10 +620,9 @@ revalidation closed in Wave C.
 
 ---
 
-## Sprint 3.12: Native arm64 Linux CPU Publication [Blocked]
+## Sprint 3.12: Native arm64 Linux CPU Publication [Done]
 
-**Status**: Blocked
-**Blocked by**: native arm64 Linux host for `./bootstrap/linux-cpu.sh test`
+**Status**: Done
 **Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Cluster/PublishImages.hs`, `src/Infernix/HostConfig.hs`, `bootstrap/linux-cpu.sh`, `docker/linux-substrate.Dockerfile`, `kind/cluster-linux-cpu.yaml`, `test/unit/Spec.hs`
 **Docs to update**: `README.md`, `documents/architecture/runtime_modes.md`, `documents/architecture/overview.md`, `documents/engineering/portability.md`, `documents/engineering/docker_policy.md`, `documents/engineering/testing.md`, `documents/development/local_dev.md`, `documents/operations/cluster_bootstrap_runbook.md`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/00-overview.md`, `DEVELOPMENT_PLAN/system-components.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 
@@ -657,35 +655,52 @@ cross-architecture `buildx`, or any non-native compatibility lane.
   `sha256:dc0c003e7cc2f2e359a474fa5ddb522c8715d271e322534db7798f260e9747fa`, while Harbor
   publication and warmup-image hydration emitted `docker pull --platform linux/amd64` and
   `skopeo --override-arch=amd64`
-- `./bootstrap/linux-cpu.sh test` passes on a native arm64 Linux host before this sprint can move
-  to `Done`
+- Wave F native `linux/arm64` `linux-cpu` validation passes through an already selected native
+  arm64 Docker daemon, without cross-architecture emulation or Docker-context changes
 - `rg -n '"amd64".*LinuxCpu|LinuxCpu.*"amd64"' src test` has no unsupported hardcode after the
   selector lands
 - `infernix lint docs` passes through the active execution context
 - 2026-06-03 Apple local gate: `cabal test infernix-unit` passed the LinuxCpu amd64/arm64
   selector assertions, and `rg -n '"amd64".*LinuxCpu|LinuxCpu.*"amd64"' src test`
-  returned no matches. Native arm64 Linux validation is still required for `Done`.
-- 2026-06-04 ordered follow-up from the current Linux x86_64 host confirmed the amd64
-  `linux-cpu` lane remains healthy but cannot satisfy the native arm64 closure gate:
+  returned no matches.
+- 2026-06-04 ordered follow-up from a Linux x86_64 host confirmed the amd64
+  `linux-cpu` lane remained healthy but did not exercise the native arm64 publication path:
   `./bootstrap/linux-cpu.sh doctor` passed, the mounted-source Linux CPU
   `cabal build all`, `cabal test infernix-unit`, `cabal test infernix-haskell-style`, and
   `cabal test infernix-integration` gates passed, and
-  `rg -n '"amd64".*LinuxCpu|LinuxCpu.*"amd64"' src test` returned no matches. Native arm64 Linux
-  validation remains the required closure gate; cross-architecture emulation is not a supported
-  substitute.
+  `rg -n '"amd64".*LinuxCpu|LinuxCpu.*"amd64"' src test` returned no matches.
+- 2026-06-04 Apple Silicon follow-up on this host confirmed the local selector and documentation
+  gates remain healthy:
+  `./bootstrap/apple-silicon.sh build` produced `./.build/infernix` and
+  `./.build/infernix-demo`, `/opt/homebrew/bin/cabal test infernix-unit` passed, and
+  `rg -n '"amd64".*LinuxCpu|LinuxCpu.*"amd64"' src test` returned no matches.
+  `./.build/infernix lint docs` passed after the documentation-status update.
+- 2026-06-04 Wave F closure validated the native arm64 Linux CPU publication path through the
+  already selected native arm64 Docker daemon on this Apple Silicon machine. Docker reported
+  `client=darwin/arm64` and `server=linux/arm64`; a Linux runtime probe reported
+  `uname -m = aarch64` and `dpkg --print-architecture = arm64`. The rebuilt
+  `infernix-linux-cpu:local` image reported `os=linux arch=arm64` and digest
+  `sha256:aae535e31b79b403a3878063371dfc6fd1160baf60a7ce69232c459baebd83e9`.
+  `docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm infernix infernix test all`
+  passed Haskell style, Python quality, Haskell unit/property, PureScript build and 71/71 web unit
+  tests, full `infernix-integration`, and routed Playwright E2E `7 passed (1.7m)`. The run emitted
+  native `docker pull --platform linux/arm64` publication, Harbor-backed final-image preload
+  before final Helm wait, and clean cluster teardown. Integration covered Harbor recovery, MinIO
+  durability, routed Pulsar recovery, PostgreSQL failover and lifecycle rebinding, Linux engine
+  anti-affinity, frontend pod replacement, coordinator failover, engine pod replacement, engine
+  node drain, model-bootstrap failover/deduplication, and multi-user durable prompt throughput
+  (`users=3 contextsPerUser=2 promptsPerContext=2 totalPrompts=12 p95Seconds=71.37436628341675`).
 
 ### Remaining Work
 
-- run `./bootstrap/linux-cpu.sh test` on a native arm64 Linux host and record the full-suite
-  Harbor publication, warmup hydration, integration, and routed E2E evidence
+None.
 
 ---
 
 ## Remaining Work
 
-Sprint 3.12 is blocked by the missing native arm64 Linux validation host. Sprints 3.1-3.11 are
-`Done`; Apple cohort validation closed in Waves A/A.2 and CUDA Linux cohort validation closed in
-Wave C.
+None. Sprints 3.1-3.12 are `Done`; Apple cohort validation closed in Waves A/A.2, CUDA Linux
+cohort validation closed in Wave C, and native arm64 `linux-cpu` validation closed in Wave F.
 
 ---
 
@@ -702,7 +717,7 @@ Wave C.
 - `documents/tools/pulsar.md` - Pulsar deployment and routed surfaces
 - `documents/tools/harbor.md` - Harbor deployment, routed portal or API split, and the dynamic Kind hostPort behavior (Sprint 3.11)
 - `documents/architecture/runtime_modes.md` - substrate-to-architecture mapping, including the
-  native `linux-cpu` architecture selector and remaining native arm64 validation gate tracked by
+  native `linux-cpu` architecture selector and Wave F native arm64 validation closure for
   Sprint 3.12
 - `documents/architecture/overview.md` - substrate-matched container architecture cross-link and
   native Linux CPU architecture support

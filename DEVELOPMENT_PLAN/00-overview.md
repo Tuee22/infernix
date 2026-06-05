@@ -11,8 +11,8 @@
 The repository target closes around the staged-substrate architecture: the two-binary topology,
 mandatory local HA platform services, Harbor-first image flow, manual storage doctrine, Pulsar-only
 production surface, Gateway-owned routing, Haskell-owned frontend contracts, substrate-specific
-validation, and a daemon-role model where cluster `infernix service` daemons always exist while
-Apple-native inference execution can be delegated to same-binary host daemons.
+validation, and a daemon-role model where role-specific `infernix service` daemons own Pulsar
+coordination while Apple-native engine execution runs in same-binary host daemons.
 
 ## Current Repo Assessment
 
@@ -32,16 +32,18 @@ validation commands rely on it. The final Apple product shape described by this 
 implemented:
 `apple-silicon` keeps Apple-native inference execution host-side for performance while Kind
 continues to host Harbor, MinIO, Pulsar, PostgreSQL, Envoy Gateway, the optional routed demo
-surface, and the cluster `infernix service` Deployment. The generated final-phase Helm values run
-one cluster service replica by default; explicit chart values can scale that Deployment through
-`service.replicaCount`. On Linux substrates, cluster daemons read from Pulsar, run inference
-directly, and publish results; on Apple, cluster daemons read from Pulsar and publish requests to a
-dedicated host batch topic consumed by same-binary host daemons, which execute Apple-native
-inference and publish the completed result. The staged `.dhall` tells
-each daemon the substrate, whether it is running in the cluster or on the host, and, for host
-daemons, the Pulsar connection mode plus the batch and result topics it uses. Publication now
-reports the cluster daemon location separately from the Apple host inference executor location and
-batch topic. The runtime worker uses explicit Python or native adapter
+surface, and the demo-gated `infernix-coordinator` Deployment. Linux substrates also run
+`infernix-engine` in-cluster; Apple sets the cluster engine replica count to 0 and runs the engine
+role host-side. The generated final-phase Helm values use the role-specific
+`coordinator.replicaCount` and `engine.replicaCount` knobs instead of the retired
+`service.replicaCount` surface. On Linux substrates, the coordinator publishes batch work to
+`inference.batch.<mode>`, the engine runs inference, and the engine publishes results; on Apple,
+the coordinator publishes requests to a dedicated host batch topic consumed by same-binary host
+daemons, which execute Apple-native inference and publish the completed result. The staged `.dhall`
+tells each daemon the substrate and whether its role is `Coordinator` or `Engine`; host-role Apple
+metadata also includes the Pulsar connection mode plus the batch and result topics it uses.
+Publication now reports the cluster coordinator location separately from the Apple host inference
+executor location and batch topic. The runtime worker uses explicit Python or native adapter
 harnesses selected from the staged substrate file. Those adapters currently produce deterministic
 engine-family output from durable metadata rather than claiming universal production model-binary
 execution. The Apple clean-host bootstrap hardening is implemented and validated: the stage-0
@@ -95,7 +97,11 @@ Playwright e2e PASS on the new host; Waves A.1 and A.2 subsequently closed the r
 Playwright residuals with 7/7 e2e PASS, and Wave A.3 closed Apple engine-lock chaos.
 [Wave C](cohort-validation-waves.md) closed 2026-06-03 on a native Linux/CUDA host: the
 portable `linux-cpu` full-suite gate passed on 2026-06-02 and the real `linux-gpu`
-full-suite gate passed on 2026-06-03.
+full-suite gate passed on 2026-06-03. [Wave F](cohort-validation-waves.md) closed 2026-06-04
+with native `linux/arm64` `linux-cpu` validation through the selected Docker daemon
+(`server=linux/arm64`, runtime probe `aarch64` / `arm64`) and a full
+`docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm infernix infernix test all`
+PASS.
 
 | Area | Supported contract | Current repo state |
 |------|--------------------|--------------------|
@@ -103,7 +109,7 @@ full-suite gate passed on 2026-06-03.
 | CLI ownership | one Haskell command registry owns the supported command surface without any `--runtime-mode` override | implemented |
 | Substrate selection | one staged substrate file beside the active build root is the primary source of truth for substrate identity and generated catalog selection | implemented |
 | Staged substrate-file format | the substrate file and its mirrors use one explicit and consistent file format and filename contract | implemented; the current contract is a shared `infernix-substrate.dhall` filename carrying a typed Dhall record on local and cluster-mounted paths, decoded in-process by the `dhall` Haskell library |
-| Apple split-executor lane | the host-built binary manages Kind, the cluster always runs `infernix service` daemons, and Apple-native inference batches are delegated to same-binary host daemons through Pulsar | implemented |
+| Apple split-executor lane | the host-built binary manages Kind, the cluster runs the coordinator role for Pulsar ingress and host-batch handoff, and Apple-native inference batches are delegated to same-binary host engine daemons through Pulsar | implemented |
 | Apple stage-0 bootstrap determinism | a first-run Apple bootstrap verifies newly installed same-process tool resolution before handing off to direct `cabal` work | implemented; Apple cohort gate closed in [Wave A](cohort-validation-waves.md) |
 | Bootstrap responsibility boundary | shell bootstrap builds or enters the active launcher only, then delegates lifecycle, validation, image preparation, and teardown to `infernix`; Harbor-first image loading includes the active runtime image on every substrate after Harbor is responsive | implemented; Apple cohort gate closed in [Wave A](cohort-validation-waves.md); CUDA Linux cohort gate closed in [Wave C](cohort-validation-waves.md) |
 | Lifecycle false-negative protection | supported lifecycle surfaces report long-running build, publication, preload, and teardown phases clearly enough that operators do not mistake progress for failure | implemented; `cluster status` reports in-progress lifecycle phase, detail, and heartbeat fields during monitored long-running phases; Apple cohort gate closed in [Wave A](cohort-validation-waves.md); CUDA Linux cohort gate closed in [Wave C](cohort-validation-waves.md) |
@@ -113,12 +119,12 @@ full-suite gate passed on 2026-06-03.
 | Demo UI gating | the staged substrate file can disable the clustered demo surface | implemented; the supported materialization path accepts `--demo-ui false` |
 | Simulation stance | no simulated cluster, route, or generic inference-success fallback remains in the supported runtime or validation contract, and routed Pulsar checks require the real Gateway-backed upstream | implemented; inference execution goes through typed adapter harnesses, unsupported adapters fail fast, and the remaining repo-local topic spool under `./.data/runtime/pulsar/` is a harness-only path for unit-level or intentionally endpoint-absent daemon checks; Apple cohort gate closed in [Wave A](cohort-validation-waves.md); CUDA Linux cohort gate closed in [Wave C](cohort-validation-waves.md) |
 | Validation scope | integration uses one `.dhall`-driven suite over the README matrix, E2E stays substrate-agnostic at the browser layer, and `test all` runs every supported validation layer for one built substrate at a time | implemented; Apple cohort gate closed in [Wave A/A.2](cohort-validation-waves.md); CUDA Linux cohort gate closed in [Wave C](cohort-validation-waves.md) |
-| Hardware cohort cadence | phase work validates first on the current Apple Silicon or CUDA Linux machine, then batches counterpart full-suite validation at phase closure so contributors do not switch machines after every sprint | implemented in the plan doctrine; operationalized in [cohort-validation-waves.md](cohort-validation-waves.md) |
-| Native container architecture | Apple Silicon -> `linux/arm64`; `linux-cpu` -> native Linux host architecture (`linux/amd64` or `linux/arm64`); `linux-gpu` -> `linux/amd64`; no development or validation lane uses cross-architecture emulation | implementation landed: `linux-cpu` publication reads the normalized native host architecture from `InfernixHost.dhall`; native arm64 Linux full-suite validation is blocked on a native arm64 Linux host for Phase 3 Sprint 3.12 closure |
+| Hardware cohort cadence | phase work validates first on the current Apple Silicon or CUDA Linux machine, then batches counterpart full-suite validation at phase closure so contributors do not switch machines after every sprint | implemented in the plan doctrine; operationalized in [cohort-validation-waves.md](cohort-validation-waves.md), where validation-only residuals are queued as named waves instead of ad hoc machine-switch requests |
+| Native container architecture | Apple Silicon -> `linux/arm64`; `linux-cpu` -> native Linux host architecture (`linux/amd64` or `linux/arm64`); `linux-gpu` -> `linux/amd64`; no development or validation lane uses cross-architecture emulation | implemented and validated: `linux-cpu` publication reads the normalized native host architecture from `InfernixHost.dhall`; Wave F closed the native arm64 `linux-cpu` full-suite gate on 2026-06-04 through the selected native arm64 Docker daemon |
 
 Monitoring is not a supported first-class surface.
 
-Phase 7 (`Active`) adds the multi-user durable-context demo application on top of this platform.
+Phase 7 adds the multi-user durable-context demo application on top of this platform.
 The platform contract above is implemented in the worktree. Real-cluster validation is tracked by
 [cohort-validation-waves.md](cohort-validation-waves.md): the Apple cohort gate closed in
 [Wave A](cohort-validation-waves.md) on 2026-05-30, and the CUDA Linux cohort gate closed in
@@ -191,8 +197,8 @@ the only daemon Deployment present is `infernix-engine`.
   `dhall/InfernixSubstrate.dhall`
 - Apple Silicon is the only supported host-native build path outside a container
 - on Apple Silicon, the host-built binary manages Kind, deploys the mandatory cluster support
-  services, cluster `infernix service` daemons, and optional routed demo workload, and still owns
-  the host-side same-binary inference daemon lane
+  services, the cluster coordinator daemon, and optional routed demo workload, and still owns the
+  host-side same-binary engine daemon lane
 - on Apple Silicon, cluster daemons are canonical for Pulsar ingress and host-batch handoff; host
   daemons are canonical for Apple-native inference execution and result publication and consume a
   dedicated Pulsar batch topic using their `.dhall` role metadata plus published edge state
@@ -264,7 +270,8 @@ flowchart TB
         gateway["Envoy Gateway controller + Gateway/infernix-edge"]
         routes["HTTPRoute set rendered from Haskell route registry"]
         demo["infernix-demo"]
-        clusterService["infernix service cluster daemon(s)"]
+        coordinator["infernix-coordinator"]
+        engine["infernix-engine (Linux only)"]
         appleBatchTopic["Apple host-inference batch topic"]
         harbor["Harbor"]
         minio["MinIO"]
@@ -282,20 +289,21 @@ flowchart TB
     routes --> harbor
     routes --> minio
     routes --> pulsar
-    demo --> clusterService
-    pulsar --> clusterService
-    clusterService --> appleBatchTopic
+    demo --> coordinator
+    pulsar --> coordinator
+    coordinator --> appleBatchTopic
     appleBatchTopic --> appleHostDaemon
     appleHostDaemon --> pulsar
-    clusterService --> pulsar
+    coordinator --> engine
+    engine --> pulsar
     harbor --> postgres
     pgop --> postgres
     data --> kind
 ```
 
-Current code nuance: the topology above is the implemented supported path. Cluster daemons always
-run, Linux cluster daemons perform inference locally, and Apple cluster daemons hand batches to
-same-binary host inference daemons through Pulsar.
+Current code nuance: the topology above is the implemented supported path. Linux runs both
+coordinator and engine roles in-cluster, while Apple runs the coordinator in-cluster and hands
+batches to same-binary host engine daemons through Pulsar.
 
 ## Canonical Repository Shape
 

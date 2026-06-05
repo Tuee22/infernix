@@ -77,12 +77,14 @@ Revalidation on the new host is tracked by
 PASS on the new Apple Silicon host across Waves A.1–A.3), and the CUDA Linux cohort gate is
 closed in [Wave C](cohort-validation-waves.md) on the native Linux/CUDA host.
 
-The runtime-topology implementation deploys `infernix-service` on Apple and reports
+The runtime-topology implementation deploys the `infernix-coordinator` role on Apple and reports
 `daemonLocation: cluster-pod`, `inferenceExecutorLocation: control-plane-host`, and the Apple
-host batch topic in publication metadata. The supported routed and cluster validation path uses
-real Pulsar transport; the repo-local topic spool under `./.data/runtime/pulsar/` remains only
-for unit-level or intentionally endpoint-absent harness checks and is not accepted as routed
-Pulsar evidence.
+host batch topic in publication metadata. Linux substrates deploy both `infernix-coordinator` and
+`infernix-engine`; Apple sets the cluster engine replica count to 0 because host engine daemons
+own Apple-native inference execution. The supported routed and cluster validation path uses real
+Pulsar transport; the repo-local topic spool under `./.data/runtime/pulsar/` remains only for
+unit-level or intentionally endpoint-absent harness checks and is not accepted as routed Pulsar
+evidence.
 
 ## Validation Surface
 
@@ -1161,46 +1163,46 @@ cohort validation closed in [Wave C](cohort-validation-waves.md).
 ## Sprint 6.25: Cluster-Daemon and Apple Host-Inference Split [Done]
 
 **Status**: Done
-**Implementation**: `src/Infernix/Types.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Service.hs`, `src/Infernix/Models.hs`, `src/Infernix/DemoConfig.hs`, `src/Infernix/Runtime/Pulsar.hs`, `chart/templates/deployment-service.yaml`, `chart/values.yaml`, `infernix.cabal`, `test/unit/Spec.hs`, `test/integration/Spec.hs`, `web/playwright/inference.spec.js`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/00-overview.md`, `DEVELOPMENT_PLAN/system-components.md`, `DEVELOPMENT_PLAN/development_plan_standards.md`, `DEVELOPMENT_PLAN/phase-3-ha-platform-services-and-edge-routing.md`, `DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md`, `DEVELOPMENT_PLAN/phase-5-web-ui-and-shared-types.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
+**Implementation**: `src/Infernix/Types.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Service.hs`, `src/Infernix/Models.hs`, `src/Infernix/DemoConfig.hs`, `src/Infernix/Runtime/Pulsar.hs`, `chart/templates/deployment-coordinator.yaml`, `chart/templates/deployment-engine.yaml`, `chart/values.yaml`, `infernix.cabal`, `test/unit/Spec.hs`, `test/integration/Spec.hs`, `web/playwright/inference.spec.js`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/00-overview.md`, `DEVELOPMENT_PLAN/system-components.md`, `DEVELOPMENT_PLAN/development_plan_standards.md`, `DEVELOPMENT_PLAN/phase-3-ha-platform-services-and-edge-routing.md`, `DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md`, `DEVELOPMENT_PLAN/phase-5-web-ui-and-shared-types.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 **Docs to update**: `README.md`, `documents/architecture/runtime_modes.md`, `documents/architecture/web_ui_architecture.md`, `documents/development/testing_strategy.md`, `documents/engineering/model_lifecycle.md`, `documents/engineering/portability.md`, `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/reference/api_surface.md`, `documents/reference/web_portal_surface.md`, `documents/tools/pulsar.md`
 
 ### Objective
 
-Clarify and implement the final daemon-role contract: a cluster `infernix service` daemon always
-exists, while the substrate decides whether inference runs in that cluster daemon or in a
+Clarify and implement the final daemon-role contract: the cluster coordinator role owns Pulsar
+ingress and dispatch, while the substrate decides whether the engine role runs in-cluster or in a
 same-binary host daemon fed by Pulsar batches.
 
 ### Deliverables
 
-- `cluster up` deploys cluster `infernix service` daemons for `apple-silicon`, `linux-cpu`, and
-  `linux-gpu`
-- the cluster service chart template exposes `service.replicaCount` and preferred anti-affinity,
-  while the generated supported final values currently run one cluster `infernix-service` replica
-- on `linux-cpu` and `linux-gpu`, cluster daemons read from Pulsar, execute inference, and publish
-  results
-- on `apple-silicon`, cluster daemons read from Pulsar and publish inference work to a dedicated
-  host-consumed Pulsar topic
+- `cluster up` deploys the cluster coordinator role for `apple-silicon`, `linux-cpu`, and
+  `linux-gpu`; Linux substrates also deploy the cluster engine role
+- the role-specific chart templates expose `coordinator.replicaCount` and `engine.replicaCount`;
+  Apple sets the cluster engine replica count to 0 and runs the engine role host-native
+- on `linux-cpu` and `linux-gpu`, the coordinator publishes batch work, the in-cluster engine
+  executes inference, and the engine publishes results
+- on `apple-silicon`, the coordinator reads request topics and publishes inference work to a
+  dedicated host-consumed Pulsar topic
 - same-binary host daemons on Apple read host-role `.dhall`, connect to Pulsar through
   auto-discovered published edge state or explicit endpoint environment variables, consume the
   configured batch topic, execute Apple-native inference, and publish results back through the
   configured result path
-- if operators explicitly scale the cluster daemon deployment or run multiple Apple host
+- if operators explicitly scale the coordinator or engine deployments or run multiple Apple host
   executors, Pulsar subscriptions remain the ownership boundary for shared request-topic
-  consumption and host-batch handoff
-- the staged `.dhall` distinguishes substrate, daemon role (`cluster` or `host`), host Pulsar
-  connection mode, result topics, and host batch topics instead of treating Apple host execution
-  as absence of a cluster daemon
+  consumption, batch handoff, and result publication
+- the staged `.dhall` distinguishes substrate, daemon role (`coordinator` or `engine`), host
+  Pulsar connection mode, result topics, and host batch topics instead of treating Apple host
+  execution as absence of a cluster daemon
 - publication and browser-visible metadata distinguish cluster daemon location from inference
   executor location, so `daemonLocation` no longer implies that Apple lacks a cluster daemon
 - Pulsar-owned topics, exclusive subscriptions, acknowledgements, and negative acknowledgements
   form the ownership boundary for clean request handoff, inference, and result publication
-- legacy plan language that says Apple `cluster up` does not deploy `infernix-service` is removed
+- legacy plan language that says Apple `cluster up` lacks a cluster coordinator is removed
 
 ### Validation
 
-- `infernix test unit` proves that `apple-silicon` retains a cluster service claim and renders both
-  cluster-role and host-role daemon metadata
-- `infernix test integration` proves that `apple-silicon` deploys cluster `infernix-service`,
+- `infernix test unit` proves that `apple-silicon` renders both coordinator-role and host-engine
+  daemon metadata
+- `infernix test integration` proves that `apple-silicon` deploys the cluster coordinator,
   starts the host inference daemon when needed, moves batches through the configured Pulsar topic,
   and completes routed inference through the split executor
 - Linux integration still proves that `linux-cpu` and `linux-gpu` complete request consumption,
@@ -1344,12 +1346,14 @@ PATH-resolved invocation regressions.
 - `src/Infernix/Lint/HaskellStyle.hs` rejects `lookupEnv`, `getEnv`, `getEnvironment`, `setEnv`,
   and `unsetEnv` outside the remaining explicitly named non-test exceptions. After the Sprint 7.17
   Apple cohort closure (2026-05-29), the `envFunctionExemptedFiles` list narrows to `Setup.hs`,
-  the lint module itself, `src/Infernix/CLI.hs`, and `src/Infernix/HostPrereqs.hs`. The
-  `src/Infernix/Python.hs` row is gone with that closure.
+  the lint module itself, and `src/Infernix/CLI.hs`. The `src/Infernix/Python.hs` row is gone with
+  that closure; the remaining CLI `getEnvironment` helper is tracked in
+  [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
 - `src/Infernix/Lint/HaskellStyle.hs` rejects any `proc "<bare-name>"` whose name matches a known
-  external tool, with non-test exemptions left only for still-open Apple/bootstrap surfaces
-  (`src/Infernix/Lint/HaskellStyle.hs` self, `src/Infernix/Lint/Files.hs`,
-  `src/Infernix/HostPrereqs.hs`, `src/Infernix/Workflow.hs`).
+  external tool, with non-test exemptions left only for `src/Infernix/Lint/HaskellStyle.hs` self,
+  `src/Infernix/Lint/Files.hs`, and `src/Infernix/Workflow.hs`. The `Lint.Files` and `Workflow`
+  exemptions are tracked in
+  [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
 - `src/Infernix/Lint/Docs.hs` rejects governed root and `documents/` language that reintroduces
   project-prefixed env names or shell path overrides as supported operator configuration.
 - `src/Infernix/Lint/Chart.hs` rejects any `env:` block in

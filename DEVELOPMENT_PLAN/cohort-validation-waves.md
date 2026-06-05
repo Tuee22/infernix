@@ -18,7 +18,8 @@
 > naming the explicit batched-switch boundaries between Apple Silicon
 > and CUDA Linux validation. Phase docs reference the active wave and
 > pending waves instead of restating cohort residual narrative per
-> sprint.
+> sprint. Validation-only proof points that require a different physical host are queued here and
+> do not trigger ad hoc machine switches outside their named wave.
 
 ## Wave Table
 
@@ -32,6 +33,7 @@
 | C | CUDA Linux (real Linux host with CUDA hardware, plus the portable `linux-cpu` lane) | Full-suite cohort closure batch on the counterpart cohort: `./bootstrap/linux-cpu.sh` lifecycle on native Linux (portable CPU lane); `./bootstrap/linux-gpu.sh` lifecycle on real CUDA hardware; `docker compose run --rm infernix infernix test all` outer-container full-suite; routed Playwright in-container; validates every phase 1-7 code-side closure already landed on Apple. The remaining Sprint 7.14 Linux-owned code-side cases landed in `test/integration/Spec.hs` as of 2026-06-02: frontend pod replacement, coordinator pod replacement around durable prompt dispatch/writeback, engine pod replacement, engine node drain, model-bootstrap request/ready-event deduplication across coordinator replacement, Linux engine anti-affinity, and multi-user durable prompt throughput. Native `linux-cpu` full-suite validation passed on 2026-06-02 against image digest `sha256:a9f1f19aa9bb492c5186a0f6df8f864ee4e0c900c8209f0434ef64cf6cc821a7`; `linux-gpu` full-suite validation passed on 2026-06-03 against final rebuilt image digest `sha256:fd951113735f94b613a2fa014088f22e89a4df0b78193cd1ec76d6a44e191689`. | Closed | 2026-06-03 |
 | D | Either | Phase status promotion sweep: Phases 0-6 move back to `Done` because their only remaining residual was the Wave C cohort gate; Phase 7 remained `Active` for the explicit non-cohort KV-cache/runtime-split/failover work. Browser-level frontend pod-kill reconnect coverage closed with mounted-source `linux-gpu` E2E and the final rebuilt-image `linux-gpu` full gate; the matching rebuilt-image `linux-cpu` residual full gate passed later on 2026-06-03. | Closed | 2026-06-03 |
 | E | Linux CPU mounted worktree | Sprint 7.8 closure: process-local runtime KV-cache path wired through `Infernix.Runtime.KVCache`, `executeInferenceWithKVCache`, native worker output, filesystem-topic drain, and WebSocket Pulsar consumption; daemon role orchestration moved into `Infernix.Runtime.Daemon`. Mounted Linux CPU validation passed `cabal build all`, `cabal test infernix-unit`, `cabal test infernix-haskell-style`, and `cabal test infernix-integration`, including durable dispatcher/result writeback, engine pod replacement, engine node drain, throughput, platform recovery, production-shape deployment, and clean teardown. | Closed | 2026-06-04 |
+| F | Native arm64 Linux CPU execution | Validation-only Phase 3 Sprint 3.12 closure: native `linux/arm64` `linux-cpu` validation through the already selected arm64 Docker daemon on this Apple Silicon machine. Proved Harbor publication, warmup hydration, final Harbor-backed preload, integration, and routed E2E on the native ARM publication path without cross-architecture emulation or Docker-context changes. | Closed | 2026-06-04 |
 
 ## Wave A — Closed 2026-05-30
 
@@ -335,6 +337,37 @@ throughput, and platform recovery checks. The compact throughput matrix
 reported `users=3 contextsPerUser=2 promptsPerContext=2 totalPrompts=12
 p95Seconds=67.22616362571716`.
 
+## Wave F: Native arm64 Linux CPU Publication Closure
+
+Wave F closed Phase 3 Sprint 3.12 on 2026-06-04. Validation ran on this Apple Silicon machine
+through the already selected native arm64 Docker daemon, without cross-architecture emulation,
+Docker-context switching, or VM creation. The execution substrate reported `client=darwin/arm64`
+and `server=linux/arm64`; the Linux runtime probe reported `uname -m = aarch64` and
+`dpkg --print-architecture = arm64`.
+
+Validation used the supported Linux outer-container command:
+
+```bash
+docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm infernix infernix test all
+```
+
+The passing run proved native `linux/arm64` Harbor publication, warmup-image hydration,
+authenticated Harbor-backed final-image preload before final Helm wait, full integration, and
+routed Playwright E2E. The rebuilt image was
+`infernix-linux-cpu:local@sha256:aae535e31b79b403a3878063371dfc6fd1160baf60a7ce69232c459baebd83e9`.
+The test run passed Haskell style, Python quality, Haskell unit/property, PureScript build and
+71/71 web unit tests, full `infernix-integration`, and routed Playwright E2E `7 passed (1.7m)`.
+Integration evidence included Harbor recovery, MinIO durability, routed Pulsar recovery,
+PostgreSQL failover and lifecycle rebinding, Linux engine anti-affinity enforcement, frontend pod
+replacement, coordinator failover, engine pod replacement, engine node drain, model-bootstrap
+failover/deduplication, and multi-user durable prompt throughput
+(`users=3 contextsPerUser=2 promptsPerContext=2 totalPrompts=12 p95Seconds=71.37436628341675`).
+
+The closure rule is now explicit: native arm64 `linux-cpu` validation may run from an Apple
+Silicon host only when it uses an already selected native arm64 Docker daemon and the Linux runtime
+itself reports arm64. Cross-architecture emulation, Docker-context creation or switching, and VM
+creation remain unsupported.
+
 ## Cadence Rule
 
 Wave numbering operationalizes Section Q of
@@ -345,7 +378,9 @@ doctrinal rule remains unchanged:
 > after one cohort validates, but it cannot move to `Done` until both
 > relevant hardware cohorts have run their full-suite gates against the
 > same phase state. The paired closure batch is the preferred
-> switching boundary.
+> switching boundary. A validation-only residual is queued as a wave
+> and does not require ad hoc machine switching before that wave is
+> scheduled.
 
 Waves enforce that boundary explicitly. Contributors and assistants
 land code on the locally available cohort during the active wave; the
@@ -362,7 +397,7 @@ docs may still be `Active` only when they list non-cohort remaining work.
 | 0 | Sprints 0.1–0.9 `Done` | Closed in Wave A (lint gates) | `linux-cpu` passed 2026-06-02; `linux-gpu` passed 2026-06-03 |
 | 1 | Sprints 1.1–1.11 `Done` | Closed in Wave A (integration cluster up + lifecycle on Apple host) | `linux-cpu` passed 2026-06-02; `linux-gpu` passed 2026-06-03 |
 | 2 | Sprints 2.1–2.13 `Done` | Closed in Wave A (retained-state replay + Patroni filter + cluster lifecycle) | `linux-cpu` passed 2026-06-02; `linux-gpu` passed 2026-06-03 |
-| 3 | Sprints 3.1–3.11 `Done` | Closed in Wave A/A.2 (substrate-aware publication, Harbor port, containerd, hand-authored MinIO, and Apple host-native E2E) | `linux-cpu` passed 2026-06-02; `linux-gpu` passed 2026-06-03 |
+| 3 | Sprints 3.1–3.12 `Done` | Closed in Wave A/A.2 (substrate-aware publication, Harbor port, containerd, hand-authored MinIO, and Apple host-native E2E) | `linux-cpu` amd64 passed 2026-06-02; `linux-gpu` passed 2026-06-03; native arm64 `linux-cpu` passed in Wave F on 2026-06-04 |
 | 4 | Sprints 4.1–4.13 `Done` | Closed in Wave A (mounted ClusterConfig + SecretsConfig roundtrip via integration suite) | `linux-cpu` passed 2026-06-02; `linux-gpu` passed 2026-06-03 |
 | 5 | Sprints 5.1–5.9 `Done` | Closed in Wave A/A.2 (demo backend + adapter dhall reads via integration suite and routed E2E) | `linux-cpu` passed 2026-06-02; `linux-gpu` passed 2026-06-03 |
 | 6 | Sprints 6.1–6.28 `Done` | Closed in Wave A/A.1/A.2/A.3 (lint, style, unit, integration, routed E2E, and Apple engine-lock chaos) | `linux-cpu` passed 2026-06-02; `linux-gpu` passed 2026-06-03 |

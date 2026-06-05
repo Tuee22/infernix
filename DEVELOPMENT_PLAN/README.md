@@ -52,15 +52,16 @@ A phase or sprint can move to `Done` only when all of the following are true:
 
 ## Current Repo Assessment
 
-Phases 0, 1, 2, 4, 5, 6, and 7 close around the implemented worktree. Phase 3 is blocked on a
-native arm64 Linux host for `linux-cpu` publication validation. The repository implements the
+All phase implementation work closes around the implemented worktree. Phase 3 Sprint 3.12 and
+[Wave F](cohort-validation-waves.md) closed on 2026-06-04 after native `linux/arm64` validation
+through the already selected arm64 Docker daemon on this Apple Silicon machine. The repository implements the
 staged-substrate architecture, the baked Linux outer-container launcher,
 the mandatory HA platform services, the Gateway-owned routed edge, the shared Python adapter
 project, the Haskell-owned browser-contract generation path, the substrate-specific validation
-surface, and the final Apple split-executor topology described below. The Apple lane deploys
-cluster `infernix service` daemons for
-request-topic consumption and host-batch handoff while same-binary host daemons consume the
-configured host batch topic, execute Apple-native inference, and publish completed results.
+surface, and the final Apple split-executor topology described below. The Apple lane deploys the
+cluster `infernix-coordinator` for request-topic consumption and host-batch handoff while
+same-binary host `infernix service` engine daemons consume the configured host batch topic, execute
+Apple-native inference, and publish completed results.
 
 The repository implements the substrate-file doctrine described by this plan. Supported flows
 stage one `infernix-substrate.dhall` beside the active build root through the `infernix` command
@@ -90,15 +91,17 @@ idempotent Docker network membership repair that attaches the fresh launcher con
 private `kind` network for observation. The Apple split-executor contract
 is implemented on `apple-silicon`: `cluster up` keeps Harbor, MinIO, Pulsar,
 PostgreSQL, Envoy Gateway, the optional clustered `infernix-demo` surface, and cluster
-`infernix service` daemons in Kind; those cluster daemons own request-topic consumption and
-host-batch handoff but do not execute Apple-native inference or publish the completed result;
-same-binary host daemons consume the host batch topic, run the Apple-native inference engine, and
-publish the result. On `linux-cpu` and `linux-gpu`, the cluster daemons read from Pulsar, run
-inference directly, and publish results. The generated final-phase Helm values currently run one
-cluster `infernix service` replica; the chart template exposes `service.replicaCount` and preferred
-anti-affinity for explicit multi-replica values. Pulsar-owned topics, exclusive subscriptions, and
-acknowledgement handling are the ordering and ownership boundary for request handoff, inference,
-and result publication if operators deliberately scale that surface. The current adapters emit
+`infernix-coordinator` Deployment in Kind; that coordinator owns request-topic consumption and
+host-batch handoff but does not execute Apple-native inference or publish the completed result.
+Same-binary host engine daemons consume the host batch topic, run the Apple-native inference
+engine, and publish the result. On `linux-cpu` and `linux-gpu`, the cluster coordinator publishes
+batch work to `inference.batch.<mode>`, the cluster engine Deployment runs inference, and the
+engine publishes results. The generated final-phase Helm values use the role-specific
+`coordinator.replicaCount` and `engine.replicaCount` knobs; Apple sets the cluster engine replica
+count to 0 because the engine role is host-native. Pulsar-owned topics, exclusive subscriptions,
+and acknowledgement handling are the ordering and ownership boundary for request handoff,
+inference, and result publication if operators deliberately scale that surface. The current
+adapters emit
 deterministic engine-family output from
 typed durable metadata, while unsupported adapter ids fail
 fast instead of falling through to a generic success path. The worktree omits the
@@ -161,7 +164,11 @@ Playwright e2e PASS on the new host; Waves A.1 and A.2 subsequently closed the r
 Playwright residuals with 7/7 e2e PASS, and Wave A.3 closed Apple engine-lock chaos.
 [Wave C](cohort-validation-waves.md) closed 2026-06-03 on a native Linux/CUDA host: the
 portable `linux-cpu` full-suite gate passed on 2026-06-02 and the real `linux-gpu`
-full-suite gate passed on 2026-06-03.
+full-suite gate passed on 2026-06-03. [Wave F](cohort-validation-waves.md) closed 2026-06-04
+with native `linux/arm64` `linux-cpu` validation through the selected Docker daemon
+(`server=linux/arm64`, runtime probe `aarch64` / `arm64`) and a full
+`docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm infernix infernix test all`
+PASS.
 
 The production and routed validation path uses real Pulsar transport. The repository still keeps
 the repo-local topic spool under `./.data/runtime/pulsar/` as a deliberate harness surface when
@@ -196,8 +203,9 @@ Development and validation are organized around two physical host cohorts:
 
 Phase work should stay on the current cohort until a coherent slice is ready. Apple-owned changes
 validate locally on Apple and queue CUDA Linux closure; Linux, CUDA, chart, and outer-container
-changes validate locally on CUDA Linux and queue Apple closure. The counterpart run is a phase
-closure batch, not a per-sprint machine switch.
+changes validate locally on CUDA Linux and queue Apple closure. Validation-only hardware residuals
+are queued in [cohort-validation-waves.md](cohort-validation-waves.md), and the counterpart run is
+a scheduled closure batch, not a per-sprint machine switch.
 
 Full phase closure requires both relevant hardware cohorts to rerun the complete gates against the
 same phase state. `linux-cpu` remains a portable CPU-only lane for native Linux amd64 and native
@@ -212,15 +220,17 @@ scope.
 | 0 | Documentation and Governance | Done (Sprint 0.9 configuration-doctrine closure validated by Apple Wave A and CUDA Linux Wave C) | [phase-0-documentation-and-governance.md](phase-0-documentation-and-governance.md) |
 | 1 | Repository and Control-Plane Foundation | Done (Sprint 1.12 native-only workflow doctrine closed on 2026-06-04: Apple `doctor`/`build`/`up`/`status`/full `test`/`down`/final `status` passed on an already selected native arm64 daemon, and the negative no-daemon bootstrap boundary failed before cluster work without changing Docker contexts or Colima VM state) | [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md) |
 | 2 | Kind Cluster Storage and Lifecycle | Done (Sprints 2.10–2.13 lifecycle, retained-state, bootstrap-boundary, and host-manifest retirement validated by Apple Wave A and CUDA Linux Wave C) | [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md) |
-| 3 | HA Platform Services and Edge Routing | Blocked (Sprint 3.12 native `linux-cpu` architecture selector landed; native arm64 Linux full-suite validation remains open and cannot run in the current `Linux x86_64` execution context; Sprints 3.10–3.11 otherwise validated by Apple Wave A/A.2 and CUDA Linux Wave C) | [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md) |
+| 3 | HA Platform Services and Edge Routing | Done (Sprint 3.12 native `linux-cpu` architecture selector and native arm64 publication path closed in Wave F on 2026-06-04 through the already selected arm64 Docker daemon; Sprints 3.10–3.11 validated by Apple Wave A/A.2 and CUDA Linux Wave C) | [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md) |
 | 4 | Inference Service and Durable Runtime | Done (Sprint 4.13 mounted `ClusterConfig` / `SecretsConfig` runtime path validated by Apple Wave A and CUDA Linux Wave C) | [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) |
 | 5 | Web UI and Shared Types | Done (Sprint 5.9 demo backend, Python adapter, and web/Node env-retirement path validated by Apple Wave A/A.2 and CUDA Linux Wave C) | [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md) |
 | 6 | Validation, E2E, and HA Hardening | Done (Sprints 6.22–6.28 lint/style/unit/integration/e2e and no-env-var gates validated by Apple Wave A/A.1/A.2/A.3 and CUDA Linux Wave C) | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) |
 | 7 | Demo App Multi-User Durable Context | Done (Apple gates closed in Waves A/A.1/A.2/A.3; CUDA Linux Wave C closed with `linux-cpu` PASS on 2026-06-02 and `linux-gpu` PASS on 2026-06-03; the 2026-06-03 residual sweep passed rebuilt-image `linux-gpu` validation against `sha256:521a56ac6f79bf1ce5bc9d7dcd9c872e897ce4b4882661d4ada2f62faa108d7b` and rebuilt-image `linux-cpu` validation against `sha256:dc0c003e7cc2f2e359a474fa5ddb522c8715d271e322534db7798f260e9747fa`; Sprint 7.8 runtime KV-cache path and `Infernix.Runtime.Daemon` split closed on 2026-06-04 with mounted Linux CPU `cabal build all`, unit, style, and full integration PASS) | [phase-7-demo-app-durable-context.md](phase-7-demo-app-durable-context.md) |
 
 > **Note**: Phase statuses describe current repository state. Earlier governed phases may remain
-> `Active` for named follow-ons while later phases can be `Done` when their owned work and
-> validation are complete.
+> `Active` or `Blocked` for named follow-ons while later phases can be `Done` when their owned work
+> and validation are complete. Validation-only hardware blockers are scheduled through
+> [cohort-validation-waves.md](cohort-validation-waves.md) instead of forcing repeated machine
+> switches during unrelated same-cohort work.
 > Each phase 1-7 gained a retirement sprint that eliminates the env-var fallbacks and
 > PATH-resolved external commands the phase originally introduced. See
 > [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
@@ -263,11 +273,11 @@ The supported platform now closes around these rules:
   at `dhall/InfernixSubstrate.dhall`
 - Apple host-native operation is the only supported host build path outside a container
 - on Apple Silicon, the host-built `./.build/infernix` binary manages Kind, deploys the mandatory
-  cluster support services, the cluster `infernix service` Deployment, and optional routed demo
-  workload, and owns the host-side same-binary inference daemon lane
-- on Apple Silicon, the cluster daemon is canonical for Pulsar ingress and host-batch handoff,
-  while the host daemon is canonical for Apple-native inference execution and result publication;
-  both roles consume `.dhall` role config from the same binary family
+  cluster support services, the cluster coordinator Deployment, and optional routed demo workload,
+  and owns the host-side same-binary engine daemon lane
+- on Apple Silicon, the cluster coordinator is canonical for Pulsar ingress and host-batch
+  handoff, while the host engine daemon is canonical for Apple-native inference execution and
+  result publication; both roles consume `.dhall` role config from the same binary family
 - when the demo UI is enabled on Apple Silicon, the routed demo surface stays cluster-resident and
   manual inference flows through the cluster daemon's batching path before Apple inference batches
   move through Pulsar to host daemons

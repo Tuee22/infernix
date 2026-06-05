@@ -59,10 +59,16 @@ discoverHarborOverlayImageRefsFile overlayPath = do
     concat
       [ maybe [] pure (overlayImageRef overlay ["service", "image"]),
         maybe [] pure (overlayImageRef overlay ["demo", "image"]),
+        maybe [] pure (overlayImageRef overlay ["coordinator", "image"]),
+        maybe [] pure (overlayImageRef overlay ["engine", "image"]),
         maybe [] pure (overlayFlatImageRef overlay ["infernixMinio", "image"]),
         maybe [] pure (overlayFlatImageRef overlay ["infernixMinio", "initImage"]),
         maybe [] pure (overlayFlatImageRef overlay ["infernixMinio", "clientImage"]),
-        maybe [] pure (overlayScalarImageRef overlay ["pulsar", "defaultPulsarImageRepository"] ["pulsar", "defaultPulsarImageTag"])
+        maybe [] pure (overlayScalarImageRef overlay ["pulsar", "defaultPulsarImageRepository"] ["pulsar", "defaultPulsarImageTag"]),
+        maybe [] pure (overlayDirectImageRef overlay ["postgresOperator", "image"]),
+        maybe [] pure (overlayDirectImageRef overlay ["harborpg", "image"]),
+        maybe [] pure (overlayDirectImageRef overlay ["harborpg", "backups", "pgbackrest", "image"]),
+        maybe [] pure (overlayDirectImageRef overlay ["harborpg", "proxy", "pgBouncer", "image"])
       ]
 
 loadYamlDocuments :: FilePath -> IO [Value]
@@ -301,6 +307,10 @@ overlayScalarImageRef overlay repositoryPath tagPath = do
   repository <- lookupTextPath repositoryPath overlay
   tag <- lookupTextPath tagPath overlay
   pure (Text.unpack repository <> ":" <> Text.unpack tag)
+
+overlayDirectImageRef :: Value -> [Text] -> Maybe String
+overlayDirectImageRef overlay pathSegments =
+  Text.unpack <$> lookupTextPath pathSegments overlay
 
 -- | Phase 3 Sprint 3.11 (2026-05-29): read a flat
 -- @{ repository, tag, pullPolicy }@ image overlay (as emitted by the

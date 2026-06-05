@@ -318,7 +318,7 @@ None.
 ## Sprint 4.8: Pulsar-Driven Production Inference Surface [Done]
 
 **Status**: Done
-**Implementation**: `src/Infernix/Service.hs`, `src/Infernix/Config.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Types.hs`, `src/Infernix/Models.hs`, `src/Infernix/DemoConfig.hs`, `chart/templates/deployment-coordinator.yaml`, `chart/templates/deployment-engine.yaml` (Phase 7 Sprint 7.7 split the original `chart/templates/deployment-service.yaml` into role-specific templates), `chart/values.yaml`, `src/Infernix/Runtime.hs`, `src/Infernix/Runtime/Pulsar.hs`, `proto/infernix/runtime/inference.proto`, `test/unit/Spec.hs`, `test/integration/Spec.hs`
+**Implementation**: `src/Infernix/Service.hs`, `src/Infernix/Config.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Types.hs`, `src/Infernix/Models.hs`, `src/Infernix/DemoConfig.hs`, `chart/templates/deployment-coordinator.yaml`, `chart/templates/deployment-engine.yaml`, `chart/values.yaml`, `src/Infernix/Runtime.hs`, `src/Infernix/Runtime/Pulsar.hs`, `proto/infernix/runtime/inference.proto`, `test/unit/Spec.hs`, `test/integration/Spec.hs`
 **Docs to update**: `documents/tools/pulsar.md`, `documents/architecture/runtime_modes.md`, `documents/reference/cli_reference.md`
 
 ### Objective
@@ -335,8 +335,8 @@ non-demo deployment.
   worker or host-batch handoff path, and publishes typed protobuf responses to the configured
   result topic
 - production `infernix service` binds no HTTP port
-- the production chart deploys `infernix-service` without a Kubernetes HTTP Service and without a
-  fake compatibility listener
+- the production chart deploys the role-specific engine daemon without a Kubernetes HTTP Service
+  and without a fake compatibility listener
 
 ### Validation
 
@@ -354,7 +354,7 @@ None.
 ## Sprint 4.9: Shared Linux Substrate Image Build and Snapshot Runtime [Done]
 
 **Status**: Done
-**Implementation**: `docker/linux-substrate.Dockerfile`, `compose.yaml`, `src/Infernix/Cluster.hs`, `src/Infernix/Lint/Files.hs`, `chart/values.yaml`, `chart/templates/deployment-service.yaml`, `.dockerignore`
+**Implementation**: `docker/linux-substrate.Dockerfile`, `compose.yaml`, `src/Infernix/Cluster.hs`, `src/Infernix/Lint/Files.hs`, `chart/values.yaml`, `chart/templates/deployment-coordinator.yaml`, `chart/templates/deployment-engine.yaml`, `.dockerignore`
 **Docs to update**: `documents/engineering/docker_policy.md`, `documents/engineering/build_artifacts.md`, `documents/development/python_policy.md`, `documents/operations/cluster_bootstrap_runbook.md`
 
 ### Objective

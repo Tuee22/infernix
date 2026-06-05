@@ -5,7 +5,7 @@ import Prelude
 import Affjax.ResponseFormat as ResponseFormat
 import Affjax.StatusCode (StatusCode(..))
 import Affjax.Web as AXWeb
-import Data.Array (filter, head, length, snoc)
+import Data.Array (filter, find, head, length, snoc)
 import Data.Either (Either(..))
 import Data.Foldable (traverse_)
 import Data.Maybe (Maybe(..), fromMaybe)
@@ -363,7 +363,7 @@ initialSessionMessages state =
       , ClientSubscribeContext
           { clientSubscribeContextId: contextId
           }
-      ]
+      ] <> reconnectDraftMessages state contextId
     Nothing -> [ clientHelloMessage ]
 
 clientHelloMessage :: WsClientMessage
@@ -371,6 +371,30 @@ clientHelloMessage =
   ClientHello
     { clientHelloUserId: UserId { unUserId: "" }
     }
+
+reconnectDraftMessages :: AppState -> ContextId -> Array WsClientMessage
+reconnectDraftMessages state contextId =
+  case draftTextForContext contextId state.chat of
+    Just draftText | draftText /= "" ->
+      [ ClientUpdateDraft
+          { clientUpdateDraftContextId: contextId
+          , clientUpdateDraftText: draftText
+          }
+      ]
+    _ -> []
+
+draftTextForContext :: ContextId -> ChatViewState -> Maybe String
+draftTextForContext contextId chat =
+  case find (draftMatchesContext contextId) chat.drafts of
+    Just (DraftEntry draft) -> Just draft.draftEntryText
+    Nothing -> Nothing
+
+draftMatchesContext :: ContextId -> DraftEntry -> Boolean
+draftMatchesContext contextId (DraftEntry draft) =
+  contextIdRawValue draft.draftEntryContextId == contextIdRawValue contextId
+
+contextIdRawValue :: ContextId -> String
+contextIdRawValue (ContextId inner) = inner.unContextId
 
 handleSocketClose :: Ref.Ref AppState -> Refs -> Int -> String -> Effect Unit
 handleSocketClose stateRef refs generation _reason = do

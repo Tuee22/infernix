@@ -140,7 +140,7 @@ exerciseRuntimeMode paths runtimeMode = do
       reportStep ("route probes: " <> showRuntimeMode runtimeMode)
       homeResponse <- httpGet (baseUrl <> "/")
       publicationResponse <- httpGet (baseUrl <> "/api/publication")
-      demoConfigResponse <- httpGet (baseUrl <> "/api/demo-config")
+      demoConfigResponse <- waitForRoutedDemoConfig paths state
       routedDemoConfig <- requireJsonDemoConfig demoConfigResponse
       modelsResponse <- httpGet (baseUrl <> "/api/models")
       harborResponse <- httpGet (baseUrl <> "/harbor")
@@ -750,8 +750,7 @@ validateFrontendPodReplacementPreservesDurableState paths state runtimeMode repr
   runKubectl state ["-n", "platform", "delete", "pod", oldPod]
   waitForRollout state "deployment/infernix-demo"
   _ <- waitForPodByPrefix state "platform" "infernix-demo-" (Just oldPod)
-  let baseUrl = routeBaseUrl paths state
-  _ <- httpGet (baseUrl <> "/api/demo-config")
+  _ <- waitForRoutedDemoConfig paths state
   durableDraftMessages <- waitForRawTopicMessages paths runtimeMode draftsTopic 1
   assertTopicHasDecoded durableDraftMessages draftEvent "draft event remains readable after frontend replacement"
   waitForDispatcherDiscovery
@@ -824,6 +823,8 @@ validateEngineNodeDrainDurablePrompt paths state runtimeMode representativeModel
         ]
       waitForDeploymentReadyReplicasAtLeast state "infernix-engine" 1
       waitForDeploymentReadyReplicasAtLeast state "infernix-coordinator" 1
+      waitForDeploymentReadyReplicasAtLeast state "infernix-demo" 1
+      _ <- waitForRoutedDemoConfig paths state
       context <- createDurablePromptContext paths runtimeMode (Text.pack representativeModelId) "engine-drain"
       waitForDispatcherDiscovery
       promptRef <- submitDurablePrompt paths runtimeMode context "engine-node-drain"
@@ -1385,6 +1386,25 @@ captureInfernixOutput args = do
 httpGet :: String -> IO String
 httpGet url =
   readProcessWithTransientCurlRetry ["-fsS", url]
+
+waitForRoutedDemoConfig :: Paths -> ClusterState -> IO String
+waitForRoutedDemoConfig paths state = go (120 :: Int)
+  where
+    url = routeBaseUrl paths state <> "/api/demo-config"
+    go remainingAttempts
+      | remainingAttempts <= 0 =
+          fail ("timed out waiting for routed demo config endpoint " <> url)
+      | otherwise = do
+          result <- try (httpGet url) :: IO (Either SomeException String)
+          case result of
+            Right payload
+              | "\"demo_ui\":true" `isInfixOf` compact payload -> pure payload
+              | otherwise -> retry
+            Left _ -> retry
+      where
+        retry = do
+          threadDelay 1000000
+          go (remainingAttempts - 1)
 
 httpGetWithStatus :: String -> IO (Int, String)
 httpGetWithStatus url = do

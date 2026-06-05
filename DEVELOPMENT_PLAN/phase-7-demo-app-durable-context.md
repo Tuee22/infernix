@@ -73,7 +73,7 @@ are green.
 The current `infernix-demo` workload ships a routed PureScript SPA, the catalog and cache
 HTTP API surface from Phase 4 Sprint 4.4, and the clustered demo deployment described by
 Phase 3. The Helm chart already deploys Pulsar (3-broker HA), MinIO (4-replica HA),
-per-service Patroni Postgres clusters (Harbor's `harborpg` and Grafana's backend), Envoy
+per-service Patroni Postgres clusters (Harbor's `harborpg` and Keycloak's `keycloakpg`), Envoy
 Gateway, and the routed edge described by Phase 3. Production inference dispatch already
 flows through `inference.request.<mode>` and `inference.result.<mode>` topics per Phase 4.
 The legacy direct manual-inference HTTP handlers, the matching CLI helper, the
@@ -118,7 +118,7 @@ follow-on bugs in three iterative cluster-up cycles, then closed the supported
    `reconcileSupportedNamespaces` call sent the Pulsar admin tenant body with
    `allowedClusters: []`, which the broker rejected with `412 Precondition Failed:
    Clusters cannot be empty or blank`. The daemon retried 250+ times, blocking the
-   `infernix-service` rollout. Fix: the reconcile now queries `GET /admin/v2/clusters`
+   then-current `infernix-service` rollout. Fix: the reconcile now queries `GET /admin/v2/clusters`
    and passes the discovered cluster list (the bundled chart's single cluster is
    `infernix-infernix-pulsar`) as the tenant body's `allowedClusters`.
 2. **Sprint 7.1 `pulsar:` top-level key dropped from `chart/values.yaml`.** The
@@ -137,20 +137,17 @@ After the third rebuild, `./bootstrap/linux-cpu.sh build` plus
 `lifecyclePhase: steady-state` with `cluster status` reporting all eleven supported
 HTTPRoutes (`/`, `/api`, `/api/objects`, `/auth`, `/ws`, the operator route family)
 and zero references to the retired `/objects` route. `infernix-keycloak 2/2`,
-`keycloak-postgresql-pgbouncer 3/3`, `infernix-demo 1/1`, `infernix-service 1/1`.
+`keycloak-postgresql-pgbouncer 3/3`, `infernix-demo 1/1`, and, in the then-current fused topology,
+`infernix-service 1/1`.
 `sessionAffinity: None` confirmed on the demo Service. The Pulsar admin reconcile
 created the `infernix` tenant plus `infernix/demo` and `infernix/system` namespaces
 and set the 100 MiB compaction threshold on `infernix/demo`. `cluster down` then
 reconciled cluster absence cleanly: `clusterPresent: False`, `lifecycleStatus: idle`,
 `lifecyclePhase: cluster-absent`.
 
-One small follow-on remains under Sprint 7.7 cluster validation: the explicit
-`persistent://infernix/system/model.bootstrap.request` topic creation via the admin
-PUT returned 2xx in the daemon log but the topic does not appear in
-`pulsar-admin topics list infernix/system`. Pulsar's auto-topic-creation on first
-publish will materialise the topic when the coordinator bootstrap subscription comes
-online; the explicit creation contract closes when Sprint 7.14 chaos validation
-verifies the topic exists before the first publish.
+The earlier Sprint 7.7 model-bootstrap topic residual is closed. Sprint 7.14 and Wave C validated
+model-bootstrap request and ready-event behavior through real Pulsar, including
+coordinator-replacement deduplication before first publish.
 
 The May 22, 2026 `linux-gpu` rerun then re-validated the same Sprint 7.1 + 7.3 + 7.7
 + 7.9 changes against the GPU substrate. `./bootstrap/linux-gpu.sh doctor`, `build`,
@@ -449,8 +446,8 @@ boundary without re-reading the design docs.
   notifications. HTTP (same JWT) for artifact upload/download, with presigned MinIO PUT/GET
   URLs so binary bytes never traverse the demo backend.
 - **Statelessness.** Backend pods hold zero per-user state across requests. No demo-backend
-  Postgres is added; existing per-service Patroni clusters (Harbor, Grafana, and Keycloak's
-  own) are unchanged. The browser holds no durable state — full reconstitution from server-
+  Postgres is added; existing per-service Patroni clusters (Harbor and Keycloak's own) are
+  unchanged. The browser holds no durable state — full reconstitution from server-
   side state alone on every login.
 - **Pulsar topology.** Per-context conversation log topic
   `persistent://infernix/demo/demo.conversation.<userId>.<contextId>` under the supported
@@ -1070,14 +1067,14 @@ Closure notes:
 ## Sprint 7.7: Truly Stateless Daemon Topology and HA Chart [Done]
 
 **Status**: Done
-**Implementation**: `src/Infernix/Runtime/Pulsar.hs` (batch forwarding + bootstrap subscription wiring), `src/Infernix/Models.hs` (`inference.batch.<mode>` for every substrate; `infernix/system/model.bootstrap.request` topic family), `src/Infernix/DemoConfig.hs` (split `cluster` role into `coordinator` + `engine`; add `modelsBucket` and `modelBootstrapTopic` fields), `src/Infernix/Runtime/Cache.hs` (delete `objectStoreRoot`, `localPathFromUri`, `cacheManifestProtoPath`, `durableArtifactPathFor`, `sourceManifestPathFor`, and the `s3://infernix-runtime/` URI scheme; replace with a MinIO-backed model loader and an `emptyDir`-backed LRU eviction manager), `src/Infernix/Runtime.hs` (delete the 80-char `buildPayload` branch; text outputs always inline, binary outputs carry an MinIO `ObjectRef`), `src/Infernix/Demo/Api.hs` (delete `serveObject` and the `/objects/:objectRef` route), `src/Infernix/Routes.hs` (drop the `/objects` route entry), `src/Infernix/Service.hs` (acquire `flock(2)` on `engine.lock` at engine-role startup; fail fast with PID diagnostic on contention — uniform across Linux and Apple), `src/Infernix/Cluster.hs` (Helm rollout for the new Deployments + buckets + `infernix/system` namespace + `model.bootstrap.request` topic), `src/Infernix/Bootstrap/Models.hs` (new — coordinator's bootstrap Failover subscription, download-from-upstream + upload-to-MinIO with `.ready` sentinel), `src/Infernix/Bridge/Result.hs` (new — shared-library result-bridge, replaces the previously planned `Infernix.Demo.ResultBridge`), `python/adapters/common/model_cache.py` (new — shared adapter helper exposing `get_model_path(model_id) -> path`, MinIO client + LRU eviction rooted at `/model-cache`, uniform across every engine), per-adapter integration in `python/adapters/<engine>/` to swap upstream weight fetches for the shared helper, `chart/templates/deployment-service.yaml` (deleted), `chart/templates/persistentvolumeclaim-service-data.yaml` (deleted), `chart/templates/deployment-coordinator.yaml` (new — no PVC), `chart/templates/deployment-engine.yaml` (new — no PVC; single `emptyDir` volume `model-cache` with `sizeLimit: {{ .Values.engine.modelCache.sizeLimit }}`, default `32Gi`), `chart/templates/poddisruptionbudget-{coordinator,engine,demo}.yaml` (new), `chart/values.yaml` (drop `infernix-runtime` and `infernix-results`; add `infernix-models` always-on; keep `infernix-demo-objects` demo-gated; new `coordinator`/`engine`/`demo` HA stanzas; `engine.modelCache.sizeLimit` knob), `dhall/InfernixSubstrate.dhall` (coordinator + engine role schemas; `modelsBucket : Text`; `modelBootstrapTopic : Text`; per-model `downloadUrl : Text`)
+**Implementation**: `src/Infernix/Runtime/Pulsar.hs` (batch forwarding + bootstrap subscription wiring), `src/Infernix/Models.hs` (`inference.batch.<mode>` for every substrate; `infernix/system/model.bootstrap.request` topic family), `src/Infernix/DemoConfig.hs` (split `cluster` role into `coordinator` + `engine`; add `modelsBucket` and `modelBootstrapTopic` fields), `src/Infernix/Runtime/Cache.hs` (retired `objectStoreRoot`, `localPathFromUri`, `cacheManifestProtoPath`, `durableArtifactPathFor`, `sourceManifestPathFor`, and the `s3://infernix-runtime/` URI scheme; replaced by a MinIO-backed model loader and an `emptyDir`-backed LRU eviction manager), `src/Infernix/Runtime.hs` (retired the 80-char `buildPayload` branch; text outputs always inline, binary outputs carry a MinIO `ObjectRef`), `src/Infernix/Demo/Api.hs` (retired `serveObject` and the `/objects/:objectRef` route), `src/Infernix/Routes.hs` (retired the `/objects` route entry), `src/Infernix/Service.hs` (acquire `flock(2)` on `engine.lock` at engine-role startup; fail fast with PID diagnostic on contention — uniform across Linux and Apple), `src/Infernix/Cluster.hs` (Helm rollout for the new Deployments + buckets + `infernix/system` namespace + `model.bootstrap.request` topic), `src/Infernix/Bootstrap/Models.hs` (coordinator's bootstrap Failover subscription, download-from-upstream + upload-to-MinIO with `.ready` sentinel), `src/Infernix/Bridge/Result.hs` (shared-library result-bridge, replaces the previously planned `Infernix.Demo.ResultBridge`), `python/adapters/model_cache.py` (shared adapter helper exposing `get_model_path(model_id) -> path`, MinIO client + LRU eviction rooted at `/model-cache`, uniform across every engine), `python/adapters/common.py`, `python/adapters/diffusers_python.py`, `python/adapters/jax_python.py`, `python/adapters/pytorch_python.py`, `python/adapters/tensorflow_python.py`, `python/adapters/transformers_python.py`, `python/adapters/vllm_python.py` (adapter integration with typed cache/config helpers), `chart/templates/deployment-coordinator.yaml` (no PVC), `chart/templates/deployment-engine.yaml` (no PVC; single `emptyDir` volume `model-cache` with `sizeLimit: {{ .Values.engine.modelCache.sizeLimit }}`, default `32Gi`), `chart/templates/poddisruptionbudget-coordinator.yaml`, `chart/templates/poddisruptionbudget-engine.yaml`, `chart/templates/poddisruptionbudget-demo.yaml`, `chart/values.yaml` (`infernix-models` always-on; `infernix-demo-objects` demo-gated; `coordinator`/`engine`/`demo` HA stanzas; `engine.modelCache.sizeLimit` knob), `dhall/InfernixSubstrate.dhall` (coordinator + engine role schemas; `modelsBucket : Text`; `modelBootstrapTopic : Text`; per-model `downloadUrl : Text`), `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md` (retired fused Deployment, service-data PVC, object-store URI, and placeholder-bucket cleanup ledger)
 **Docs to update**: `documents/architecture/daemon_topology.md`, `documents/architecture/runtime_modes.md`, `documents/architecture/durable_context_design.md`, `documents/engineering/object_storage.md`, `documents/engineering/portability.md`, `documents/engineering/implementation_boundaries.md`, `documents/engineering/k8s_storage.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/operations/apple_silicon_runbook.md`, `documents/development/chaos_testing.md`, `documents/development/demo_app_test_plan.md`, `documents/development/testing_strategy.md`, `documents/tools/minio.md`, `documents/tools/pulsar.md`, `documents/reference/api_surface.md`, `documents/reference/web_portal_surface.md`, `DEVELOPMENT_PLAN/system-components.md`, `DEVELOPMENT_PLAN/development_plan_standards.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`, `README.md`
 
 ### Objective
 
 Land the supported three-role daemon topology — stateless frontend, stateless coordinator,
 stateful engine — with **no PVC on any daemon**, **MinIO + Pulsar as the only durable state**,
-and a **uniform one-engine-per-node policy on every substrate**. Replace today's fused
+and a **uniform one-engine-per-node policy on every substrate**. Retire the fused
 `infernix-service` Deployment with role-specific `infernix-coordinator` and `infernix-engine`
 Deployments; retire `./.data/object-store/`, the `s3://infernix-runtime/` URI scheme, the
 80-char inline-payload threshold, the `/objects/:objectRef` route, and the chart-reserved
@@ -1118,7 +1115,7 @@ for the authoritative target shape.
   `.ready` sentinel; `infernix-demo-objects` is demo-gated and holds user uploads plus
   engine-generated artifacts under `users/<userId>/contexts/<contextId>/{uploads,generated}/`.
   The chart-reserved `infernix-runtime` and `infernix-results` placeholders are removed
-- **Uniform model-cache adapter helper.** `python/adapters/common/model_cache.py` exposes
+- **Uniform model-cache adapter helper.** `python/adapters/model_cache.py` exposes
   `get_model_path(model_id) -> filesystem path`. Every adapter goes through this helper,
   regardless of whether the underlying engine library supports bytes-loading. Helper
   contains the MinIO client and LRU eviction logic; first call populates
@@ -1216,21 +1213,20 @@ The pure-Haskell coordination layer plus the additive chart-side scaffolding are
   `modelBootstrapRequestTopicName` / `modelBootstrapReadyTopicName` cover the new
   `infernix/system` namespace and the `model.bootstrap.request` /
   `model.bootstrap.ready.<modelId>` topic family.
-- `chart/values.yaml` adds the `daemonSplit.enabled` gate plus `coordinator`, `engine`,
+- `chart/values.yaml` carries the `daemonSplit.enabled` gate plus `coordinator`, `engine`,
   and `demoSplit` HA stanzas including the `engine.modelCache.sizeLimit` `emptyDir` knob
-  (default `32Gi`), the new `infernix-models` always-on MinIO bucket, and the
-  demo-gated `infernix-demo-objects` bucket. The legacy `service.*` stanza plus
-  `infernix-runtime` / `infernix-results` placeholder bucket entries stay in place
-  while `daemonSplit.enabled = false` to preserve the existing chart shape during
-  rollout.
+  (default `32Gi`), the `infernix-models` always-on MinIO bucket, and the demo-gated
+  `infernix-demo-objects` bucket. The legacy `infernix-runtime` / `infernix-results` placeholder
+  bucket entries are gone, and the remaining `service.*` stanza is shared backend wiring consumed
+  by the role-specific templates.
 - New chart templates: `chart/templates/deployment-coordinator.yaml`,
   `chart/templates/deployment-engine.yaml`, and the three PodDisruptionBudgets
   (`poddisruptionbudget-{coordinator,engine,demo}.yaml`). The engine template uses
   required pod anti-affinity on its own label keyed on `kubernetes.io/hostname`, mounts
   a single `emptyDir` `/model-cache` volume with the operator-set `sizeLimit`, and
-  carries the existing `linux-gpu` `nvidia.com/gpu` shape. All five new templates are
-  gated on `daemonSplit.enabled` and the per-role `enabled` flag (default `false`) so
-  the chart still renders the existing fused topology until cutover.
+  carries the existing `linux-gpu` `nvidia.com/gpu` shape. The new templates are gated
+  on `daemonSplit.enabled` and the per-role `enabled` flags, with the split topology enabled by
+  default.
 - `infernix lint chart`, `infernix lint files`, `infernix lint docs`,
   `infernix lint proto` exit zero with the new chart templates in place.
 

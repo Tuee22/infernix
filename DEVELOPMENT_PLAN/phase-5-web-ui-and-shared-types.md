@@ -172,7 +172,7 @@ None.
 ## Sprint 5.5: Web Runtime Image and Dedicated Playwright Container [Done]
 
 **Status**: Done
-**Implementation**: `docker/linux-substrate.Dockerfile`, `compose.yaml`, `web/playwright/`, `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `chart/templates/deployment-demo.yaml`, `chart/templates/deployment-service.yaml`
+**Implementation**: `docker/linux-substrate.Dockerfile`, `compose.yaml`, `web/playwright/`, `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `chart/templates/deployment-demo.yaml`, `chart/templates/deployment-coordinator.yaml`, `chart/templates/deployment-engine.yaml`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/architecture/web_ui_architecture.md`
 
 ### Objective

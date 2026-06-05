@@ -36,7 +36,7 @@
   `/opt/build/infernix-substrate.dhall`
 - the implemented Apple product shape is a split-executor lane: `apple-silicon` keeps Apple-native
   inference execution host-side for Apple GPU and unified-memory access while Kind continues to host
-  Harbor, MinIO, Pulsar, PostgreSQL, Envoy Gateway, the cluster `infernix service` daemons, and the
+  Harbor, MinIO, Pulsar, PostgreSQL, Envoy Gateway, the cluster coordinator daemon, and the
   optional routed demo surface
 - the final daemon-role contract is implemented: on every substrate cluster daemons own Pulsar
   request-topic consumption; on Linux they forward to the Linux batch topic consumed by the
@@ -104,7 +104,9 @@
   [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) under "Retired Historical
   Validation Evidence"; current replacement evidence is tracked by
   [cohort-validation-waves.md](cohort-validation-waves.md), with the Apple cohort closed in Wave A
-  and the native Linux/CUDA cohort closed in Wave C
+  and the native Linux/CUDA cohort closed in Wave C; Wave F closed the native arm64 `linux-cpu`
+  publication and full-suite validation path on 2026-06-04 through the selected native arm64 Docker
+  daemon
 - Monitoring is not a supported first-class surface.
 
 ## Operator and Host Components
@@ -141,7 +143,7 @@
 
 | Component | Technology | Deployment | Purpose | Durable state |
 |-----------|------------|------------|---------|---------------|
-| Kind and Helm lifecycle | Haskell control-plane orchestration in `cluster up` | host-native Apple CLI or Linux outer container | create or reuse Kind, reset StorageClasses, reconcile PVs, deploy Harbor first, publish the cluster-role substrate payload, perform Harbor-first image preparation, deploy the final chart including cluster `infernix service` daemon replicas, expose in-progress lifecycle phase, detail, and heartbeat state for status observers, retry once with a targeted Pulsar claim-root reset when retained ZooKeeper state is self-inconsistent, and reinitialize stopped retained Harbor PostgreSQL replicas from the current Patroni leader when timeline drift leaves replicas unready after promotion | `./.data/runtime/cluster-state.state`, `./.data/kind/<runtime-mode>/...` |
+| Kind and Helm lifecycle | Haskell control-plane orchestration in `cluster up` | host-native Apple CLI or Linux outer container | create or reuse Kind, reset StorageClasses, reconcile PVs, deploy Harbor first, publish the cluster-role substrate payload, perform Harbor-first image preparation, deploy the final chart including the role-specific coordinator and engine daemon Deployments, expose in-progress lifecycle phase, detail, and heartbeat state for status observers, retry once with a targeted Pulsar claim-root reset when retained ZooKeeper state is self-inconsistent, and reinitialize stopped retained Harbor PostgreSQL replicas from the current Patroni leader when timeline drift leaves replicas unready after promotion | `./.data/runtime/cluster-state.state`, `./.data/kind/<runtime-mode>/...` |
 | Harbor image preparation | Harbor plus Haskell image publication flow | Kind cluster plus control plane | bootstrap Harbor, allow only Harbor-required support services to pull upstream before Harbor readiness, then mirror every remaining third-party image and publish the active `infernix` runtime image before final rollout; Docker pushes wait for registry readiness before each attempt, re-tag the source image before each bounded retry, and use capped backoff so transient Harbor resets or missing transient target tags during large-image publication do not fail the lifecycle prematurely | Harbor state under `./.data/kind/<runtime-mode>/...` |
 | PostgreSQL substrate | Percona Kubernetes operator plus Patroni PostgreSQL | Kind cluster | only supported in-cluster PostgreSQL contract for Harbor and later services; retained-state reruns may trigger targeted Patroni replica reinitialization from the current leader when stopped replicas need a fresh base backup after timeline advancement | `./.data/kind/<runtime-mode>/...` |
 | Publication state | repo-local JSON plus routed `/api/publication` surface | repo-local state and demo API | reports control-plane context, cluster daemon location, host inference executor presence when the active substrate is Apple, the routed demo API upstream mode, the active inference dispatch mode, the configured host/batch inference handoff topic when present, the active substrate through its current `runtimeMode` field, routes, and upstream health metadata | `./.data/runtime/publication.json` |
@@ -206,8 +208,8 @@
 
 | Substrate | Canonical substrate id | Supported contract | Current repo gap |
 |-----------|------------------------|--------------------|------------------|
-| Apple Silicon / Metal | `apple-silicon` | host-native control plane, cluster `infernix service` daemons for request-topic consumption and host-batch handoff, same-binary host inference daemons consuming Apple batch topics and publishing results, and clustered support services plus optional routed demo workloads sharing the same substrate file and route contracts | none |
-| Linux / CPU | `linux-cpu` | containerized Linux lane built from the shared substrate Dockerfile and driven entirely through Compose on native Linux amd64 or native Linux arm64; publication selects the normalized native host architecture from `InfernixHost.dhall` | native arm64 Linux full-suite validation is blocked on a native arm64 Linux host for Phase 3 Sprint 3.12 closure |
+| Apple Silicon / Metal | `apple-silicon` | host-native control plane, cluster `infernix-coordinator` daemon for request-topic consumption and host-batch handoff, same-binary host engine daemons consuming Apple batch topics and publishing results, and clustered support services plus optional routed demo workloads sharing the same substrate file and route contracts | none |
+| Linux / CPU | `linux-cpu` | containerized Linux lane built from the shared substrate Dockerfile and driven entirely through Compose on native Linux amd64 or native Linux arm64; publication selects the normalized native host architecture from `InfernixHost.dhall`; native arm64 publication and full-suite validation closed in Wave F on 2026-06-04 through the selected native arm64 Docker daemon | none |
 | Linux / NVIDIA GPU | `linux-gpu` | GPU-enabled Kind lane built from the shared substrate Dockerfile and deployed from the same CUDA-based image used by the outer container | none |
 
 ## Serialization Boundaries

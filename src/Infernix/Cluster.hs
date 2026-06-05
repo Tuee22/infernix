@@ -187,6 +187,9 @@ nvidiaCudaContainerImage = "nvidia/cuda:12.4.1-base-ubuntu22.04"
 kindNodeImage :: String
 kindNodeImage = "kindest/node:v1.34.0"
 
+harborBootstrapHelmTimeout :: String
+harborBootstrapHelmTimeout = "5m"
+
 data HelmDeployPhase
   = WarmupPhase
   | BootstrapPhase
@@ -254,6 +257,9 @@ harborPostgresUserName = "harbor"
 
 harborPostgresUserSecretName :: String
 harborPostgresUserSecretName = "infernix-harbor-db-user"
+
+harborPostgresSchemaName :: String
+harborPostgresSchemaName = "harbor"
 
 keycloakRealmName :: String
 keycloakRealmName = "infernix"
@@ -562,10 +568,10 @@ clusterUpWithPlatform paths runtimeMode = do
       "cluster-up"
       "deploy-harbor-final-phase"
       "deploying Harbor-backed platform workloads and waiting for Harbor plus Gateway rollouts"
+  preloadHarborBackedImagesOnKindWorker paths harborFinalState runtimeMode imageOverridesPath
   deployChart paths harborFinalState [harborFinalValuesPath, imageOverridesPath] True
   waitForHarborFinalPhaseRollouts harborFinalState
   waitForGatewayApiCrds harborFinalState
-  preloadHarborBackedImagesOnKindWorker paths harborFinalState runtimeMode imageOverridesPath
   finalDeployState <-
     startLifecyclePhase
       paths
@@ -2013,7 +2019,7 @@ bootstrapHarborWithRepair :: Paths -> ClusterState -> [FilePath] -> IO ()
 bootstrapHarborWithRepair paths state valuesPaths = go (3 :: Int)
   where
     go remainingAttempts = do
-      deployResult <- tryDeployChart paths state valuesPaths False
+      deployResult <- tryDeployChartWithTimeout paths state valuesPaths False harborBootstrapHelmTimeout
       case deployResult of
         Right _ -> do
           outcome <- waitForHarborRegistryOrDirty paths state
@@ -2087,14 +2093,16 @@ harborRegistryMigrationDirty :: ClusterState -> IO Bool
 harborRegistryMigrationDirty state = do
   let detectionCommand =
         unlines
-          [ "set -eu",
-            "dirty_count=$(psql -h 127.0.0.1 -U " <> harborPostgresUserName <> " -d registry -Atqc \"SELECT CASE WHEN EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'schema_migrations') THEN (SELECT COUNT(*)::text FROM schema_migrations WHERE dirty = TRUE) ELSE '0' END\")",
-            "if [ \"$dirty_count\" = \"0\" ]; then",
-            "  echo clean",
-            "else",
-            "  echo dirty",
-            "fi"
-          ]
+          ( [ "set -eu"
+            ]
+              <> harborMigrationDirtyCountShell
+              <> [ "if [ \"$dirty_count\" = \"0\" ]; then",
+                   "  echo clean",
+                   "else",
+                   "  echo dirty",
+                   "fi"
+                 ]
+          )
   result <- runHarborDatabaseCommand state detectionCommand
   case result of
     Right output -> pure ("dirty" `List.isInfixOf` output)
@@ -2105,16 +2113,32 @@ repairHarborDatabaseMigrationState state = do
   waitForHarborDatabaseReadyWithRepair state
   let repairCommand =
         unlines
-          [ "set -eu",
-            "dirty_count=$(psql -h 127.0.0.1 -U " <> harborPostgresUserName <> " -d registry -Atqc \"SELECT CASE WHEN EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'schema_migrations') THEN (SELECT COUNT(*)::text FROM schema_migrations WHERE dirty = TRUE) ELSE '0' END\")",
-            "if [ \"$dirty_count\" != \"0\" ]; then",
-            "  psql -h 127.0.0.1 -U " <> harborPostgresUserName <> " -d registry -v ON_ERROR_STOP=1 -c \"DROP SCHEMA public CASCADE;\"",
-            "  psql -h 127.0.0.1 -U " <> harborPostgresUserName <> " -d registry -v ON_ERROR_STOP=1 -c \"CREATE SCHEMA public AUTHORIZATION " <> harborPostgresUserName <> ";\"",
-            "  psql -h 127.0.0.1 -U " <> harborPostgresUserName <> " -d registry -v ON_ERROR_STOP=1 -c \"GRANT ALL ON SCHEMA public TO " <> harborPostgresUserName <> ";\"",
-            "fi"
-          ]
-  _ <- runHarborDatabaseCommand state repairCommand
-  pure ()
+          ( [ "set -eu"
+            ]
+              <> harborMigrationDirtyCountShell
+              <> [ "if [ \"$dirty_count\" != \"0\" ]; then",
+                   "  psql -h 127.0.0.1 -U " <> harborPostgresUserName <> " -d registry -v ON_ERROR_STOP=1 -c \"DROP SCHEMA IF EXISTS " <> harborPostgresSchemaName <> " CASCADE;\"",
+                   "  psql -h 127.0.0.1 -U " <> harborPostgresUserName <> " -d registry -v ON_ERROR_STOP=1 -c \"CREATE SCHEMA " <> harborPostgresSchemaName <> " AUTHORIZATION " <> harborPostgresUserName <> ";\"",
+                   "  psql -h 127.0.0.1 -U " <> harborPostgresUserName <> " -d registry -v ON_ERROR_STOP=1 -c \"GRANT ALL ON SCHEMA " <> harborPostgresSchemaName <> " TO " <> harborPostgresUserName <> ";\"",
+                   "fi"
+                 ]
+          )
+  repairResult <- runHarborDatabaseCommand state repairCommand
+  case repairResult of
+    Right _ -> pure ()
+    Left err ->
+      ioError
+        (userError ("failed to repair dirty Harbor database migration state:\n" <> err))
+
+harborMigrationDirtyCountShell :: [String]
+harborMigrationDirtyCountShell =
+  [ "migration_table_exists=$(psql -h 127.0.0.1 -U " <> harborPostgresUserName <> " -d registry -v ON_ERROR_STOP=1 -Atqc \"SELECT CASE WHEN EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = '" <> harborPostgresSchemaName <> "' AND table_name = 'schema_migrations') THEN 'yes' ELSE 'no' END\")",
+    "if [ \"$migration_table_exists\" = \"yes\" ]; then",
+    "  dirty_count=$(psql -h 127.0.0.1 -U " <> harborPostgresUserName <> " -d registry -v ON_ERROR_STOP=1 -Atqc \"SELECT COUNT(*)::text FROM " <> harborPostgresSchemaName <> ".schema_migrations WHERE dirty = TRUE\")",
+    "else",
+    "  dirty_count=0",
+    "fi"
+  ]
 
 waitForHarborDatabaseReadyWithRepair :: ClusterState -> IO ()
 waitForHarborDatabaseReadyWithRepair state = do
@@ -2456,7 +2480,11 @@ deployChart paths state valuesPaths waitForRollout = do
         (userError ("command failed: helm upgrade --install infernix chart\n" <> err))
 
 tryDeployChart :: Paths -> ClusterState -> [FilePath] -> Bool -> IO (Either String String)
-tryDeployChart paths state valuesPaths waitForRollout = do
+tryDeployChart paths state valuesPaths waitForRollout =
+  tryDeployChartWithTimeout paths state valuesPaths waitForRollout "30m"
+
+tryDeployChartWithTimeout :: Paths -> ClusterState -> [FilePath] -> Bool -> String -> IO (Either String String)
+tryDeployChartWithTimeout paths state valuesPaths waitForRollout timeoutValue = do
   ensureHelmDependencies paths
   tryCommand
     (Just (repoRoot paths))
@@ -2477,7 +2505,7 @@ tryDeployChart paths state valuesPaths waitForRollout = do
         <> concatMap (\valuesPath -> ["-f", valuesPath]) valuesPaths
     )
   where
-    timeoutArgs = ["--timeout", "30m"]
+    timeoutArgs = ["--timeout", timeoutValue]
     waitArgs
       | waitForRollout = ["--wait"]
       | otherwise = []
