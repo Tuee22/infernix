@@ -43,6 +43,76 @@ same image with `npm --prefix web exec -- playwright test`. On Apple Silicon, ho
 E2E uses host `npm exec` with the same typed fixture and is covered by the Apple cohort
 validation batch.
 
+## Landing Surface
+
+Phase 7 Sprint 7.19 gates the app shell behind a Keycloak JWT. The `body` element carries
+an `auth-unknown` / `auth-signed-out` / `auth-signed-in` class set by
+`Main.purs.renderAuthGate` on every render pass from `state.authenticated`; CSS toggles two
+mutually-exclusive top-level subtrees against that class:
+
+- `.app-landing` — a single centred card with the `Infernix` wordmark, the subtitle
+  `"Durable-context inference console"`, and two CTAs (primary `Sign in`, secondary
+  `Create account`). Rendered when the body class is `auth-signed-out`.
+- `.app-shell` — the existing header (summary grid + Chat / Artifacts tabs) plus the
+  workspace and routes panel. Rendered when the body class is `auth-signed-in`.
+
+The `auth-unknown` boot state hides both subtrees so neither flashes during the bootstrap
+pass that reads the in-memory `TokenStore`. The inline `.app-shell` markup itself is
+preserved so the existing imperative `captureRefs` bootstrap path against hardcoded DOM IDs
+keeps working; the gate is purely a CSS visibility toggle.
+
+## Authentication Entry Points
+
+The landing card surfaces two OIDC Application Initiated Action (AIA) entry points against
+the public client `infernix-spa` on realm `infernix`:
+
+- `Sign in` → `Infernix.Web.Auth.beginLoginRedirect defaultInfernixRealmConfig` — builds
+  the standard PKCE authorization-code redirect (`?response_type=code&code_challenge=...`)
+  and lands the user on Keycloak's login form.
+- `Create account` → `Infernix.Web.Auth.beginRegisterRedirect defaultInfernixRealmConfig` —
+  same PKCE setup, but appends `kc_action=register` so Keycloak lands the user directly on
+  the registration form. The `redirect_uri` is the same for both flows, so the callback
+  handler (`completeRedirectImpl`) does not branch on entry-point.
+
+The PKCE / state / nonce generation is shared between the two redirects through a private
+`beginAuthorizationCodeRedirect(config, kcAction)` helper in `web/src/Infernix/Web/Auth.js`;
+the legacy single-CTA `#login-button` pattern is gone (Sprint 7.19 retired it; see
+[../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md](../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md)).
+
+The Keycloak forms those redirects reach use the chart-owned `infernix` login theme. The stock
+Keycloak image is unchanged; the chart mounts `ConfigMap/infernix-keycloak-theme` under
+`/opt/keycloak/themes/infernix`, the realm import selects `loginTheme = infernix`, and the
+idempotent realm reconcile reapplies that theme on every `cluster up`. Routed Playwright asserts
+the themed login and registration titles so theme fallback is visible in the auth smoke.
+
+## Operator Console Ribbon
+
+The authenticated app shell includes an operator ribbon with links to the always-published
+operator route family:
+
+- `Harbor` -> `/harbor`
+- `Pulsar Admin` -> `/pulsar/admin/admin/v2/clusters`
+- `MinIO S3` -> `/minio/s3`
+
+The ribbon is part of `.app-shell`, so the existing auth gate hides it before login. The browser
+auth module writes the Keycloak access token into the same-origin `infernix_operator_token` cookie
+when login or refresh succeeds and clears it on logout. Envoy Gateway's
+`SecurityPolicy/infernix-operator-routes-jwt` validates that cookie, or an explicit
+`Authorization: Bearer ...` header, before forwarding `/harbor`, `/pulsar/admin`, or `/minio/s3`
+to their upstream services.
+
+## Account Deletion
+
+The signed-in header includes `Delete account`. The browser confirms the command, sends
+`DELETE /api/account` with the current in-memory bearer token, and waits for a successful cleanup
+response before clearing browser auth state and starting Keycloak's `kc_action=delete_account`
+Application Initiated Action.
+
+The backend derives `userId` from the validated Keycloak `sub` claim, lists and deletes the
+caller-owned `infernix-demo-objects/users/<userId>/` S3 prefix, then deletes the caller-owned
+demo Pulsar topics (`demo.user.<userId>.contexts`, `demo.user.<userId>.drafts`, and
+`demo.conversation.<userId>.*`). Shared inference topics are not user-owned and are left intact.
+
 ## PureScript Application
 
 - repo-owned browser application code lives under `web/src/*.purs`
@@ -87,6 +157,8 @@ bindings live at [demo_app_design.md](demo_app_design.md). Topology delta:
 - Keycloak provides identity at `/auth`; demo-gated; see [../tools/keycloak.md](../tools/keycloak.md)
 - HTTP endpoint `/api/objects` mints presigned MinIO PUT/GET URLs for artifact upload and
   download; bytes never traverse the demo backend; demo-gated
+- HTTP endpoint `/api/account` reaps the caller's demo-owned MinIO prefix and Pulsar topics before
+  the browser starts Keycloak account deletion; demo-gated
 - the demo `Service` sets `sessionAffinity: None` so any replica can host any WS connection;
   WS pods use Pulsar `Reader` subscriptions for per-WS fan-out and named `Failover`
   subscriptions for the per-context inference dispatcher

@@ -54,6 +54,60 @@
         grid-template-rows: auto 1fr;
       }
 
+      body.auth-signed-out .app-shell,
+      body.auth-unknown .app-shell {
+        display: none;
+      }
+
+      body.auth-signed-in .app-landing {
+        display: none;
+      }
+
+      body.auth-unknown .app-landing {
+        display: none;
+      }
+
+      .app-landing {
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px 20px;
+      }
+
+      .app-landing-card {
+        width: 100%;
+        max-width: 420px;
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 32px 28px;
+        display: grid;
+        gap: 16px;
+        text-align: center;
+      }
+
+      .app-landing-card h1 {
+        font-size: 1.7rem;
+      }
+
+      .app-landing-subtitle {
+        color: var(--muted);
+        font-size: 0.95rem;
+        margin: 0;
+      }
+
+      .app-landing-actions {
+        display: grid;
+        gap: 8px;
+        margin-top: 8px;
+      }
+
+      .app-landing-actions .app-action-button {
+        justify-content: center;
+        text-align: center;
+      }
+
       .app-header {
         border-bottom: 1px solid var(--line);
         background: var(--surface);
@@ -140,6 +194,32 @@
         align-items: center;
       }
 
+      .operator-ribbon {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 14px;
+      }
+
+      .operator-link {
+        align-items: center;
+        background: #f7f9fb;
+        border: 1px solid var(--line);
+        border-radius: 5px;
+        color: var(--ink);
+        display: inline-flex;
+        font-size: 0.85rem;
+        font-weight: 700;
+        min-height: 34px;
+        padding: 0 12px;
+        text-decoration: none;
+      }
+
+      .operator-link:hover {
+        border-color: var(--accent);
+        color: var(--accent);
+      }
+
       .app-tab {
         display: inline-flex;
         align-items: center;
@@ -172,6 +252,12 @@
         color: #ffffff;
         border-color: var(--accent-strong);
         background: var(--accent);
+      }
+
+      .app-action-button.danger {
+        color: var(--danger);
+        border-color: rgba(164, 59, 59, 0.45);
+        background: #fff7f7;
       }
 
       .app-main {
@@ -559,7 +645,9 @@
 
       @media (max-width: 760px) {
         .app-title-row,
-        .app-tabs {
+        .app-tabs,
+        .app-actions,
+        .operator-ribbon {
           align-items: stretch;
           flex-direction: column;
         }
@@ -575,21 +663,36 @@
       }
     </style>
   </head>
-  <body>
+  <body class="auth-unknown">
+    <div class="app-landing">
+      <div class="app-landing-card">
+        <h1>Infernix</h1>
+        <p class="app-landing-subtitle">Durable-context inference console</p>
+        <div class="app-landing-actions">
+          <button id="login-button" class="app-action-button primary" type="button">Sign in</button>
+          <button id="register-button" class="app-action-button" type="button">Create account</button>
+        </div>
+      </div>
+    </div>
     <div class="app-shell">
       <header class="app-header">
         <div class="app-header-inner">
           <div class="app-title-row">
             <h1>Infernix</h1>
             <div class="app-actions">
-              <button id="login-button" class="app-action-button primary" type="button">Sign in</button>
               <button id="logout-button" class="app-action-button" type="button">Sign out</button>
+              <button id="delete-account-button" class="app-action-button danger" type="button">Delete account</button>
               <div id="app-status" class="app-status">Loading</div>
             </div>
           </div>
           <nav class="app-tabs" aria-label="Workspace">
             <a id="route-chat" class="app-tab active" href="/">Chat</a>
             <a id="route-artifacts" class="app-tab" href="/artifacts">Artifacts</a>
+          </nav>
+          <nav class="operator-ribbon" aria-label="Operator consoles">
+            <a class="operator-link" data-operator-route="/harbor" href="/harbor" target="_blank" rel="noreferrer">Harbor</a>
+            <a class="operator-link" data-operator-route="/pulsar/admin" href="/pulsar/admin/admin/v2/clusters" target="_blank" rel="noreferrer">Pulsar Admin</a>
+            <a class="operator-link" data-operator-route="/minio/s3" href="/minio/s3" target="_blank" rel="noreferrer">MinIO S3</a>
           </nav>
           <div class="summary-grid">
             <div class="summary-item">

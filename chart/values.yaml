@@ -59,6 +59,11 @@ publication:
 
 routes: []
 
+operatorConsole:
+  jwtGating:
+    enabled: true
+    cookieName: infernix_operator_token
+
 # Phase 7 Sprint 7.7: shared backend wiring consumed by the supported
 # three-role daemon split (coordinator + engine + demo). The legacy
 # `service.{enabled,image,replicaCount,command,args,dataPvc}` keys are
@@ -460,6 +465,8 @@ keycloak:
   # a different routing topology should override this to match the
   # routing topology, e.g. @https://infernix.example.com/auth@.
   externalBaseUrl: http://127.0.0.1/auth
+  theme:
+    name: infernix
   realm:
     name: infernix
     displayName: Infernix Demo

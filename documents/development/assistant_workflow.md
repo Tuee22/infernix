@@ -58,8 +58,10 @@ parallel long-form workflow contracts.
 - treat the demo UI (served by `infernix-demo`) as a demo surface on that HA substrate while
   preserving the README-matrix coverage ledger; production deployments leave the demo UI off in
   the active `.dhall` and accept inference work via Pulsar subscription only
-- routing is owned by Gateway API resources and repo-owned HTTPRoute manifests; the demo cluster is
-  local-only and carries no auth filter
+- routing is owned by Gateway API resources and repo-owned HTTPRoute / SecurityPolicy manifests;
+  the demo cluster remains local-only, and when the demo UI is enabled the operator route family
+  (`/harbor`, `/pulsar/admin`, `/minio/s3`) is protected by the Keycloak JWT edge policy while
+  demo routes keep their application-level JWT checks
 - custom platform logic is Haskell; Python is permitted only under `python/adapters/` and only
   when the bound inference engine has no non-Python binding
 - the shared Poetry project lives at `python/pyproject.toml`; all adapter execution goes through

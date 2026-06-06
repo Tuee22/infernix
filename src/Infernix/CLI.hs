@@ -9,7 +9,7 @@ where
 
 import Control.Applicative ((<|>))
 import Control.Concurrent (threadDelay)
-import Control.Exception (IOException, catch, evaluate, finally, throwIO, try)
+import Control.Exception (IOException, bracket, catch, evaluate, finally, throwIO, try)
 import Control.Monad (when)
 import Data.Aeson (Value (..), eitherDecode, encode, object, (.=))
 import Data.Aeson.Key qualified as Key
@@ -46,7 +46,7 @@ import Infernix.Python
     pythonProjectDirectory,
   )
 import Infernix.Runtime (evictCache, listCacheManifests, rebuildCache)
-import Infernix.Runtime.Pulsar (publishInferenceRequest, readPublishedInferenceResultMaybe)
+import Infernix.Runtime.Pulsar (publishInferenceRequest, pulsarAdminForwardUrlPath, readPublishedInferenceResultMaybe)
 import Infernix.Service
 import Infernix.Storage (readEdgePortMaybe)
 import Infernix.Types
@@ -69,6 +69,7 @@ import Language.PureScript.Bridge.Builder (BridgePart, (^==))
 import Language.PureScript.Bridge.CodeGenSwitches (noArgonautCodecs, noLenses)
 import Language.PureScript.Bridge.PSTypes (psArray)
 import Language.PureScript.Bridge.TypeInfo (typeName)
+import Network.Socket qualified as Socket
 import System.Directory
   ( copyFile,
     createDirectoryIfMissing,
@@ -78,8 +79,8 @@ import System.Directory
   )
 import System.Environment (getArgs, getEnvironment, getExecutablePath)
 import System.Exit (ExitCode (ExitSuccess), exitFailure, exitWith)
-import System.FilePath (takeFileName, (</>))
-import System.Process (CreateProcess (cwd, env), createProcess, proc, readProcess, terminateProcess, waitForProcess)
+import System.FilePath (takeDirectory, takeFileName, (</>))
+import System.Process (CreateProcess (cwd, env), ProcessHandle, createProcess, getProcessExitCode, proc, readProcess, terminateProcess, waitForProcess)
 
 main :: IO ()
 main = do
@@ -490,18 +491,126 @@ withRuntimeServiceDaemonIfNeeded paths runtimeMode action =
     _ -> action
 
 withRuntimeServiceDaemon :: Paths -> IO a -> IO a
-withRuntimeServiceDaemon paths action = do
-  infernixExecutable <- getExecutablePath
+withRuntimeServiceDaemon paths action =
+  withPulsarAdminPortForward paths $ do
+    infernixExecutable <- getExecutablePath
+    (_, _, _, processHandle) <-
+      createProcess
+        (proc infernixExecutable ["service"])
+          { cwd = Just (repoRoot paths)
+          }
+    action
+      `finally` do
+        terminateProcess processHandle
+        _ <- waitForProcess processHandle
+        pure ()
+
+withPulsarAdminPortForward :: Paths -> IO a -> IO a
+withPulsarAdminPortForward paths action = do
+  forwardPort <- chooseLoopbackForwardPort 38080
+  let forwardPath = pulsarAdminForwardUrlPath paths
+      adminBaseUrl = "http://127.0.0.1:" <> show forwardPort <> "/admin/v2"
+      kubectlPath = hostToolPathOrName paths HostKubectl
+      kubectlArgs =
+        [ "--kubeconfig",
+          generatedKubeconfigPath paths,
+          "-n",
+          "platform",
+          "port-forward",
+          "service/infernix-infernix-pulsar-proxy",
+          show forwardPort <> ":80",
+          "--address",
+          "127.0.0.1"
+        ]
   (_, _, _, processHandle) <-
     createProcess
-      (proc infernixExecutable ["service"])
+      (proc kubectlPath kubectlArgs)
         { cwd = Just (repoRoot paths)
         }
-  action
-    `finally` do
-      terminateProcess processHandle
-      _ <- waitForProcess processHandle
-      pure ()
+  let cleanup = do
+        removePathForcibly forwardPath `catch` (\(_ :: IOException) -> pure ())
+        terminateProcess processHandle
+        _ <- waitForProcess processHandle
+        pure ()
+  ( do
+      waitForPulsarAdminPortForward forwardPort processHandle
+      createDirectoryIfMissing True (takeDirectory forwardPath)
+      writeFile forwardPath (adminBaseUrl <> "\n")
+      action
+    )
+    `finally` cleanup
+
+chooseLoopbackForwardPort :: Int -> IO Int
+chooseLoopbackForwardPort = go
+  where
+    go candidatePort = do
+      candidateFree <- loopbackPortIsFree candidatePort
+      if candidateFree
+        then pure candidatePort
+        else go (candidatePort + 1)
+
+loopbackPortIsFree :: Int -> IO Bool
+loopbackPortIsFree candidatePort = do
+  bindResult <-
+    try $
+      Socket.withSocketsDo $
+        bracket
+          (Socket.socket Socket.AF_INET Socket.Stream Socket.defaultProtocol)
+          Socket.close
+          ( \socketHandle -> do
+              Socket.setSocketOption socketHandle Socket.ReuseAddr 1
+              Socket.bind
+                socketHandle
+                (Socket.SockAddrInet (fromIntegral candidatePort) (Socket.tupleToHostAddress (127, 0, 0, 1)))
+          ) ::
+      IO (Either IOException ())
+  pure (either (const False) (const True) bindResult)
+
+waitForPulsarAdminPortForward :: Int -> ProcessHandle -> IO ()
+waitForPulsarAdminPortForward forwardPort processHandle =
+  go (80 :: Int)
+  where
+    go remainingAttempts
+      | remainingAttempts <= 0 =
+          ioError
+            ( userError
+                ( "timed out waiting for kubectl port-forward to expose Pulsar admin on 127.0.0.1:"
+                    <> show forwardPort
+                )
+            )
+      | otherwise = do
+          maybeExitCode <- getProcessExitCode processHandle
+          case maybeExitCode of
+            Just exitCode ->
+              ioError
+                ( userError
+                    ( "kubectl port-forward for Pulsar admin exited before becoming ready: "
+                        <> show exitCode
+                    )
+                )
+            Nothing -> do
+              ready <- loopbackPortAcceptsConnections forwardPort
+              if ready
+                then pure ()
+                else do
+                  threadDelay 250000
+                  go (remainingAttempts - 1)
+
+loopbackPortAcceptsConnections :: Int -> IO Bool
+loopbackPortAcceptsConnections forwardPort = do
+  connectResult <-
+    try $
+      Socket.withSocketsDo $
+        bracket
+          (Socket.socket Socket.AF_INET Socket.Stream Socket.defaultProtocol)
+          Socket.close
+          ( \socketHandle ->
+              Socket.connect
+                socketHandle
+                (Socket.SockAddrInet (fromIntegral forwardPort) (Socket.tupleToHostAddress (127, 0, 0, 1)))
+          ) ::
+      IO (Either IOException ())
+  pure (either (const False) (const True) connectResult)
 
 renderPersistentClaimLine :: PersistentClaim -> String
 renderPersistentClaimLine persistentClaim =

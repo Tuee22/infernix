@@ -43,6 +43,12 @@ Always-published operator prefixes:
 On the real Kind path those routes are published by `Gateway/infernix-edge`,
 `EnvoyProxy/infernix-edge`, and the repo-owned HTTPRoute set.
 
+When the demo UI is enabled, direct browser access to `/harbor`, `/pulsar/admin`, and
+`/minio/s3` is additionally protected by
+`SecurityPolicy/infernix-operator-routes-jwt`. The policy validates the same Keycloak JWT the SPA
+uses for `/ws` and `/api/objects`, accepting either the `infernix_operator_token` cookie written by
+the SPA after login / refresh or an `Authorization: Bearer ...` header for direct operator probes.
+
 ## Durable Context Surface
 
 Phase 7 added three routed prefixes to the registry above. They are demo-gated and absent
@@ -68,6 +74,59 @@ addressable from the browser.
 
 See [../architecture/demo_app_design.md](../architecture/demo_app_design.md) for the full
 contract.
+
+## Pre-Auth Landing
+
+Phase 7 Sprint 7.19 gates the durable-context app shell behind a Keycloak JWT. Anonymous
+visitors reaching the published edge port land on a minimal centred card carrying:
+
+- the `Infernix` wordmark,
+- the one-line subtitle "Durable-context inference console", and
+- two explicit CTAs:
+  - `Sign in` (primary) → `Infernix.Web.Auth.beginLoginRedirect` (Keycloak login form), and
+  - `Create account` (secondary) → `Infernix.Web.Auth.beginRegisterRedirect` (Keycloak
+    registration form via the `kc_action=register` Application Initiated Action).
+
+The summary grid (Runtime, Control Plane, Daemon, Dispatch, Edge, Catalog, Connection) and
+the Chat / Artifacts tabs are not rendered for anonymous visitors. The `body` element carries
+an `auth-unknown` / `auth-signed-out` / `auth-signed-in` class set by
+`Main.purs.renderAuthGate` on every render pass; CSS toggles the landing card and the app
+shell against that class so neither flashes during the boot pass that reads the in-memory
+JWT.
+
+After a successful PKCE authorization-code exchange (login or registration), the JWT is
+written into the in-memory `TokenStore` and the app shell renders as it did before Sprint
+7.19; logout / token-clear returns the user to the landing card.
+
+The routed Keycloak forms use the repo-owned `infernix` login theme. The login form title is
+`Sign in to Infernix`, the direct registration form title is `Create your Infernix account`, and
+the theme is mounted from `ConfigMap/infernix-keycloak-theme` rather than baked into a custom
+Keycloak image.
+
+## Operator Console Ribbon
+
+Authenticated users see an operator ribbon in the app shell with direct links to:
+
+- `Harbor` at `/harbor`
+- `Pulsar Admin` at `/pulsar/admin/admin/v2/clusters`
+- `MinIO S3` at `/minio/s3`
+
+The ribbon is inside `.app-shell`, so it is hidden in the anonymous landing state. The SPA writes
+the `infernix_operator_token` cookie whenever it receives or refreshes the Keycloak access token,
+and clears the cookie on logout. That cookie is what lets ordinary browser navigation to the
+operator links pass the edge JWT policy while keeping those same route prefixes closed to
+anonymous traffic.
+
+## Account Deletion
+
+Authenticated users see `Delete account` beside `Sign out`. The SPA confirms the command, sends
+`DELETE /api/account` with the current bearer token, and waits for that request to complete before
+clearing local browser auth state and redirecting to Keycloak with `kc_action=delete_account`.
+
+`DELETE /api/account` validates the same Keycloak JWT as `/ws` and `/api/objects`. The cleanup
+removes the caller's `infernix-demo-objects/users/<userId>/` objects and deletes the caller-owned
+Pulsar topics under `persistent://infernix/demo/`: `demo.user.<userId>.contexts`,
+`demo.user.<userId>.drafts`, and `demo.conversation.<userId>.*`.
 
 ## SPA Behavior
 

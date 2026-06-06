@@ -5,8 +5,10 @@ module Infernix.Conversation.Topic
     defaultDemoTopicNamespace,
     systemTopicNamespace,
     conversationTopicName,
+    conversationTopicPrefix,
     contextsMetadataTopicName,
     draftsMetadataTopicName,
+    topicBelongsToUser,
     inferenceRequestTopicName,
     inferenceResultTopicName,
     inferenceBatchTopicName,
@@ -63,6 +65,10 @@ conversationTopicName ns (UserId userId) (ContextId contextId) =
     ns
     ("demo.conversation." <> userId <> "." <> contextId)
 
+conversationTopicPrefix :: TopicNamespace -> UserId -> Text
+conversationTopicPrefix ns (UserId userId) =
+  qualifiedTopic ns ("demo.conversation." <> userId <> ".")
+
 -- | Per-user compacted contexts-metadata topic
 -- @persistent://infernix/demo/demo.user.<userId>.contexts@. The compacted
 -- reader yields the latest value per @ContextId@ key.
@@ -76,6 +82,12 @@ contextsMetadataTopicName ns (UserId userId) =
 draftsMetadataTopicName :: TopicNamespace -> UserId -> Text
 draftsMetadataTopicName ns (UserId userId) =
   qualifiedTopic ns ("demo.user." <> userId <> ".drafts")
+
+topicBelongsToUser :: TopicNamespace -> UserId -> Text -> Bool
+topicBelongsToUser ns uid topic =
+  topic == contextsMetadataTopicName ns uid
+    || topic == draftsMetadataTopicName ns uid
+    || conversationTopicPrefix ns uid `Text.isPrefixOf` topic
 
 -- | Substrate-scoped inference request topic. Shared with the existing
 -- production dispatch path; the durable-context envelope adds

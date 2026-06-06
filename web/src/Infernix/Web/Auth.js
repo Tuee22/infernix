@@ -1,6 +1,7 @@
 const verifierKey = "infernix.pkce.verifier";
 const stateKey = "infernix.pkce.state";
 const nonceKey = "infernix.pkce.nonce";
+const operatorTokenCookie = "infernix_operator_token";
 const refreshMarginSeconds = 30;
 const minimumRefreshDelayMs = 5000;
 
@@ -153,6 +154,14 @@ function clearRefreshTimer() {
   }
 }
 
+function writeOperatorTokenCookie(token) {
+  document.cookie = `${operatorTokenCookie}=${token}; Path=/; SameSite=Lax`;
+}
+
+function clearOperatorTokenCookie() {
+  document.cookie = `${operatorTokenCookie}=; Path=/; Max-Age=0; SameSite=Lax`;
+}
+
 function refreshDelayMs(expiresIn) {
   const seconds = Number(expiresIn);
   if (!Number.isFinite(seconds) || seconds <= refreshMarginSeconds) {
@@ -169,6 +178,7 @@ function handleTokenPayload(config, onToken, payload) {
     refreshToken = payload.refresh_token;
   }
   window.__infernixAccessToken = payload.access_token;
+  writeOperatorTokenCookie(payload.access_token);
   window.__infernixRefreshAccessToken = () => refreshAccessToken(config, onToken);
   scheduleRefresh(config, onToken, payload.expires_in);
   onToken(payload.access_token)();
@@ -210,28 +220,84 @@ async function refreshAccessToken(config, onToken) {
   return handleTokenPayload(config, onToken, await response.json());
 }
 
-export const beginLoginRedirectImpl = (config) => () => {
-  (async () => {
-    const verifier = randomBase64Url(48);
-    const state = `state-${randomBase64Url(18)}`;
-    const nonce = `nonce-${randomBase64Url(18)}`;
-    const challenge = await sha256Base64Url(verifier);
-    window.sessionStorage.setItem(verifierKey, verifier);
-    window.sessionStorage.setItem(stateKey, state);
-    window.sessionStorage.setItem(nonceKey, nonce);
+async function beginAuthorizationCodeRedirect(config, endpoint, kcAction) {
+  const verifier = randomBase64Url(48);
+  const state = `state-${randomBase64Url(18)}`;
+  const nonce = `nonce-${randomBase64Url(18)}`;
+  const challenge = await sha256Base64Url(verifier);
+  window.sessionStorage.setItem(verifierKey, verifier);
+  window.sessionStorage.setItem(stateKey, state);
+  window.sessionStorage.setItem(nonceKey, nonce);
 
-    const authUrl = new URL(`${absoluteUrl(config.issuerUrl)}/protocol/openid-connect/auth`);
-    authUrl.searchParams.set("client_id", config.clientId);
-    authUrl.searchParams.set("redirect_uri", absoluteUrl(config.redirectUri));
-    authUrl.searchParams.set("response_type", "code");
-    authUrl.searchParams.set("scope", "openid");
-    authUrl.searchParams.set("state", state);
-    authUrl.searchParams.set("nonce", nonce);
-    authUrl.searchParams.set("code_challenge", challenge);
-    authUrl.searchParams.set("code_challenge_method", "S256");
-    window.location.assign(authUrl.toString());
-  })().catch((error) => {
+  const authUrl = new URL(`${absoluteUrl(config.issuerUrl)}/protocol/openid-connect/${endpoint}`);
+  authUrl.searchParams.set("client_id", config.clientId);
+  authUrl.searchParams.set("redirect_uri", absoluteUrl(config.redirectUri));
+  authUrl.searchParams.set("response_type", "code");
+  authUrl.searchParams.set("scope", "openid");
+  authUrl.searchParams.set("state", state);
+  authUrl.searchParams.set("nonce", nonce);
+  authUrl.searchParams.set("code_challenge", challenge);
+  authUrl.searchParams.set("code_challenge_method", "S256");
+  if (kcAction) {
+    authUrl.searchParams.set("kc_action", kcAction);
+  }
+  window.location.assign(authUrl.toString());
+}
+
+export const beginLoginRedirectImpl = (config) => () => {
+  beginAuthorizationCodeRedirect(config, "auth", null).catch((error) => {
     console.error("Unable to begin Keycloak login", error);
+  });
+};
+
+export const beginRegisterRedirectImpl = (config) => () => {
+  beginAuthorizationCodeRedirect(config, "registrations", null).catch((error) => {
+    console.error("Unable to begin Keycloak registration", error);
+  });
+};
+
+async function deleteAccountAndRedirect(config, token) {
+  if (!window.confirm("Delete this account and its demo state?")) {
+    return;
+  }
+
+  await deleteAccountState(token);
+
+  clearBrowserAuthSession();
+  await beginAuthorizationCodeRedirect(config, "auth", "delete_account");
+}
+
+async function deleteAccountState(token) {
+  const deadline = Date.now() + 120000;
+  while (Date.now() < deadline) {
+    const response = await fetch("/api/account", {
+      method: "DELETE",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    if (!response.ok) {
+      throw new Error(`account cleanup failed with HTTP ${response.status}: ${await response.text()}`);
+    }
+
+    const payload = await response.json();
+    if (payload.cleanupComplete !== false) {
+      return;
+    }
+    await delay(750);
+  }
+
+  throw new Error("account cleanup did not complete before the retry deadline");
+}
+
+function delay(milliseconds) {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+}
+
+export const beginDeleteAccountRedirectImpl = (config) => (token) => (onError) => () => {
+  deleteAccountAndRedirect(config, token).catch((error) => {
+    console.error("Unable to delete account", error);
+    onError(error?.message || String(error))();
   });
 };
 
@@ -288,4 +354,5 @@ export const clearBrowserAuthSession = () => {
   refreshToken = null;
   window.__infernixAccessToken = undefined;
   window.__infernixRefreshAccessToken = undefined;
+  clearOperatorTokenCookie();
 };

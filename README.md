@@ -142,7 +142,8 @@ The supported local platform is built around:
 - one Envoy-Gateway-API-owned localhost listener (`Gateway/infernix-edge`, port chosen by
   `cluster up` starting at `9090`) backed by the repo-owned `EnvoyProxy/infernix-edge` service
   shape; the route inventory stays registry-driven, the demo routes are absent when the demo
-  surface is disabled, and the demo cluster runs locally without auth filters
+  surface is disabled, and the local operator route family is protected by the repo-owned
+  Keycloak JWT `SecurityPolicy` when the demo surface is enabled
 - one manual storage class backed by repo-owned PVs under `./.data/`
 - each service that requires durable PostgreSQL storage deploys its own Patroni PostgreSQL cluster
   managed by the Percona Kubernetes operator; chart-embedded PostgreSQL paths stay disabled
@@ -177,6 +178,16 @@ the stateless frontend Deployment (`infernix-demo`), the stateless coordinator D
 model-weight bootstrap workflow), and the stateful engine role (`infernix-engine` Deployment on
 Linux substrates with strict one-per-node anti-affinity; the on-host `./.build/infernix service`
 daemon on Apple silicon, with the same one-per-node rule enforced via an exclusive `flock(2)`).
+Anonymous visitors to the routed demo see only the auth-gated landing card with peer `Sign in`
+and `Create account` actions; the summary grid, Chat tab, Artifacts tab, and manual-inference
+workspace render only after the SPA holds a Keycloak JWT. The routed Keycloak login and
+registration forms use the repo-owned `infernix` theme mounted from the chart, while the stock
+Keycloak image remains unchanged. When the demo surface is enabled, the app shell also exposes an
+operator console ribbon for Harbor, Pulsar Admin, and MinIO S3; Envoy Gateway validates the same
+Keycloak JWT on `/harbor`, `/pulsar/admin`, and `/minio/s3` through a cookie written by the SPA or
+a direct bearer token header. The signed-in shell also offers `Delete account`, which first calls
+`DELETE /api/account` to synchronously remove the caller's `infernix-demo-objects` prefix and
+demo Pulsar topics, then starts Keycloak's `kc_action=delete_account` action.
 The frontend and coordinator Deployments scale horizontally with replicas ≥ 2 under HA defaults;
 the engine role runs at most one pod per node because multiple engines per node would duplicate
 KV cache and model-weight memory with no performance gain. On a Linux node with multiple NVIDIA

@@ -23,6 +23,9 @@
   sub`.
 - Routes: `/auth` for the Keycloak login surface, `/ws` for authenticated
   session traffic, `/api/objects` for presigned MinIO PUT/GET URLs.
+- Anonymous browser visitors see only the pre-auth landing card with
+  peer `Sign in` and `Create account` actions. The durable-context app
+  shell renders only after the SPA has a Keycloak JWT in memory.
 - Topic and bucket bindings: `<topicNamespace> = infernix/demo`;
   `<objectsBucket> = infernix-demo-objects`.
 - SPA views: Chat (left rail, conversation pane, drafts, cancel, queued
@@ -91,9 +94,11 @@ as prompt-resolution events; the browser cancel action sends
 The SPA stores only the active context id/model id in session storage
 and resubscribes after a reload login; draft text is restored after
 forced WebSocket reconnect and page reload through the broker-backed
-draft stream. The per-model browser smoke matrix and browser-level
-frontend pod replacement reconnect coverage are part of the supported
-E2E surface.
+draft stream. Anonymous visitors see only the auth-gated landing with
+`Sign in` and `Create account` actions; the summary grid and Chat /
+Artifacts shell render after the SPA has a Keycloak JWT. The per-model
+browser smoke matrix and browser-level frontend pod replacement
+reconnect coverage are part of the supported E2E surface.
 
 ## Identity and Authentication
 
@@ -124,6 +129,41 @@ is gated on routed proxy-affinity or clustered-cache validation.
   from the cluster when the active substrate's generated `.dhall` carries
   `demo_ui = false`.
 
+### Authentication Entry Points
+
+The SPA root is auth-gated. Before a JWT is present, `web/src/index.html`
+shows a centred landing card with the `Infernix` wordmark, the
+`Durable-context inference console` subtitle, and exactly two actions:
+
+- `Sign in` calls `Infernix.Web.Auth.beginLoginRedirect` and starts the
+  standard PKCE authorization-code redirect to Keycloak's login form.
+- `Create account` calls `Infernix.Web.Auth.beginRegisterRedirect`,
+  using the same PKCE setup plus Keycloak's `kc_action=register`
+  Application Initiated Action so the browser lands directly on the
+  registration form.
+
+`Main.purs.renderAuthGate` owns the `auth-unknown` / `auth-signed-out` /
+`auth-signed-in` body-class state machine. The anonymous state hides the
+header summary grid, Chat tab, Artifacts tab, and workspace; the signed-in
+state hides the landing card and renders the durable-context shell plus the operator console
+ribbon.
+
+The Keycloak forms use the repo-owned `infernix` login theme mounted from
+`ConfigMap/infernix-keycloak-theme`. The chart selects the theme in the
+realm import, and the post-rollout Keycloak admin reconcile preserves
+`loginTheme = infernix` alongside the realm flags and SPA client settings.
+
+The signed-in shell writes the current Keycloak access token to the
+`infernix_operator_token` same-origin cookie. Envoy Gateway validates that cookie (or a direct
+`Authorization: Bearer ...` header) before forwarding browser traffic to `/harbor`,
+`/pulsar/admin`, or `/minio/s3`, so the operator ribbon can link to those route prefixes without
+making them anonymous.
+
+The signed-in shell also exposes `Delete account`. That command confirms in the browser, calls
+`DELETE /api/account` with the in-memory bearer token, and only starts Keycloak's
+`kc_action=delete_account` Application Initiated Action after the backend reports that the
+caller-owned demo state was reaped.
+
 See [../tools/keycloak.md](../tools/keycloak.md) for the deployment
 contract.
 
@@ -141,6 +181,10 @@ to these concrete routes:
   presigned MinIO PUT/GET URLs minted by the demo backend. Binary bytes
   never traverse the demo backend; the browser uploads directly to MinIO
   and downloads directly from MinIO via the presigned URL.
+- **`/api/account` (HTTP DELETE, same JWT).** Account cleanup before IdP deletion. The backend
+  validates the JWT, derives `userId = sub`, removes
+  `infernix-demo-objects/users/<userId>/`, deletes the user's demo Pulsar topics, and returns a
+  cleanup summary before the browser enters Keycloak account deletion.
 - **`/auth`.** The Keycloak login surface. The browser hits `/auth` to
   start the OIDC code flow.
 

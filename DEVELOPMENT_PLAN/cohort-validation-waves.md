@@ -34,6 +34,7 @@
 | D | Either | Phase status promotion sweep: Phases 0-6 returned to `Done` after their Wave C cohort gate; Phase 7 carried the remaining runtime KV-cache/runtime-split/failover work into Wave E. Browser-level frontend pod-kill reconnect coverage closed with mounted-source `linux-gpu` E2E and the final rebuilt-image `linux-gpu` full gate; the matching rebuilt-image `linux-cpu` residual full gate passed later on the recorded validation. | Closed | the recorded validation |
 | E | Linux CPU mounted worktree | Sprint 7.8 closure: process-local runtime KV-cache path wired through `Infernix.Runtime.KVCache`, `executeInferenceWithKVCache`, native worker output, filesystem-topic drain, and WebSocket Pulsar consumption; daemon role orchestration moved into `Infernix.Runtime.Daemon`. Mounted Linux CPU validation passed `cabal build all`, `cabal test infernix-unit`, `cabal test infernix-haskell-style`, and `cabal test infernix-integration`, including durable dispatcher/result writeback, engine pod replacement, engine node drain, throughput, platform recovery, production-shape deployment, and clean teardown. | Closed | the recorded validation |
 | F | Native arm64 Linux CPU execution | Validation-only Phase 3 Sprint 3.12 closure: native `linux/arm64` `linux-cpu` validation through the already selected arm64 Docker daemon on this Apple Silicon machine. Proved Harbor publication, warmup hydration, final Harbor-backed preload, integration, and routed E2E on the native ARM publication path without cross-architecture emulation or Docker-context changes. | Closed | the recorded validation |
+| G | Apple Silicon (current host) | Phase 7 auth-UX quad closure: Sprint 7.19 auth-gated landing with dual Keycloak entry points, Sprint 7.20 themed Keycloak login surface, Sprint 7.21 operator console ribbon with edge JWT gating for `/harbor`, `/pulsar/admin`, and `/minio/s3`, and Sprint 7.22 self-service account deletion with MinIO + Pulsar per-user state reaping before Keycloak account removal. | Closed | the recorded Apple host-native validation |
 
 ## Wave A — Closed the recorded validation
 
@@ -366,6 +367,27 @@ Silicon host only when it uses an already selected native arm64 Docker daemon an
 itself reports arm64. Cross-architecture emulation, Docker-context creation or switching, and VM
 creation remain unsupported.
 
+## Wave G: Phase 7 Auth-UX Quad Closure
+
+Wave G closed the reopened Phase 7 browser-auth surface on the current Apple Silicon host. The
+wave covers Sprint 7.19's auth-gated landing, Sprint 7.20's chart-owned `infernix` Keycloak login
+theme, Sprint 7.21's signed-in operator console ribbon with JWT-gated `/harbor`, `/pulsar/admin`,
+and `/minio/s3`, and Sprint 7.22's account deletion flow. The SPA root remains a single routed
+page, but anonymous visitors see only the landing card with `Sign in` and `Create account`, while
+the summary grid, Chat / Artifacts shell, and operator console ribbon render only after a Keycloak
+JWT is present. The Playwright source adds routed auth-UX smokes that assert the two CTA buttons,
+verify `Sign in` lands on the themed Keycloak login form, verify `Create account` lands directly on
+the themed registration form through Keycloak's `registrations` endpoint, and probe the JWT policy
+on the operator route family.
+
+Wave G closed on the recorded Apple host-native validation. The closure run passed:
+
+- `npm --prefix web run test:unit` (71/71 cases).
+- `cabal test infernix-haskell-style`.
+- `cabal test infernix-unit`.
+- `cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes`.
+- `./.build/infernix test e2e` with 9/9 routed Playwright tests passing.
+
 ## Cadence Rule
 
 Wave numbering operationalizes Section Q of
@@ -398,7 +420,7 @@ This index records the final cohort status after the Wave C, Wave E, and Wave F 
 | 4 | Sprints 4.1-4.14 `Done` | Closed in Wave A (mounted ClusterConfig + SecretsConfig roundtrip via integration suite) | `linux-cpu` passed the recorded validation; `linux-gpu` passed the recorded validation |
 | 5 | Sprints 5.1-5.10 `Done` | Closed in Wave A/A.2 (demo backend + adapter dhall reads via integration suite and routed E2E) | `linux-cpu` passed the recorded validation; `linux-gpu` passed the recorded validation |
 | 6 | Sprints 6.1-6.30 `Done` | Closed in Wave A/A.1/A.2/A.3 (lint, style, unit, integration, routed E2E, and Apple engine-lock chaos) | `linux-cpu` passed the recorded validation; `linux-gpu` passed the recorded validation |
-| 7 | Sprints 7.1-7.18 `Done`; Sprint 7.8 runtime KV-cache and `Infernix.Runtime.Daemon` split closed in Wave E after the code-side KV-cache decision and Failover naming follow-on | Closed in Wave A/A.1/A.2/A.3 for the listed Apple gates | `linux-cpu` passed the recorded validation; `linux-gpu` passed the recorded validation; residual rebuilt-image `linux-gpu` gate passed the recorded validation against `sha256:521a56ac6f79bf1ce5bc9d7dcd9c872e897ce4b4882661d4ada2f62faa108d7b`; residual rebuilt-image `linux-cpu` gate passed the recorded validation against `sha256:dc0c003e7cc2f2e359a474fa5ddb522c8715d271e322534db7798f260e9747fa`; mounted Linux CPU Wave E passed the recorded validation |
+| 7 | Sprints 7.1-7.18 `Done`; Sprint 7.8 runtime KV-cache and `Infernix.Runtime.Daemon` split closed in Wave E after the code-side KV-cache decision and Failover naming follow-on; Sprints 7.19-7.22 auth-UX surface closed in Wave G | Closed in Wave A/A.1/A.2/A.3 for the original durable-context gates; Wave G closed for auth-UX | `linux-cpu` passed the recorded validation; `linux-gpu` passed the recorded validation; residual rebuilt-image `linux-gpu` gate passed the recorded validation against `sha256:521a56ac6f79bf1ce5bc9d7dcd9c872e897ce4b4882661d4ada2f62faa108d7b`; residual rebuilt-image `linux-cpu` gate passed the recorded validation against `sha256:dc0c003e7cc2f2e359a474fa5ddb522c8715d271e322534db7798f260e9747fa`; mounted Linux CPU Wave E passed the recorded validation; Wave G Apple host-native auth-UX validation passed 9/9 routed E2E |
 
 When a wave closes, this table is the place to update first. Phase
 docs follow.

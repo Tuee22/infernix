@@ -38,6 +38,9 @@ spec:
             - --hostname-strict=false
             - --proxy-headers=xforwarded
             - --http-relative-path=/auth
+            - --spi-theme-static-max-age=-1
+            - --spi-theme-cache-themes=false
+            - --spi-theme-cache-templates=false
           env:
             - name: KC_DB
               value: postgres
@@ -108,6 +111,9 @@ spec:
             - name: realm-import
               mountPath: /opt/keycloak/data/import
               readOnly: true
+            - name: login-theme
+              mountPath: /opt/keycloak/themes/{{ .Values.keycloak.theme.name }}
+              readOnly: true
       volumes:
         - name: realm-import
           configMap:
@@ -115,4 +121,14 @@ spec:
             items:
               - key: infernix-realm.json
                 path: infernix-realm.json
+        - name: login-theme
+          configMap:
+            name: infernix-keycloak-theme
+            items:
+              - key: theme.properties
+                path: login/theme.properties
+              - key: messages_en.properties
+                path: login/messages/messages_en.properties
+              - key: infernix.css
+                path: login/resources/css/infernix.css
 {{- end }}

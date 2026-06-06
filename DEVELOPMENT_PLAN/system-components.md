@@ -84,6 +84,23 @@
 - routed Apple Playwright validation runs host-native `npm exec` against the published
   `127.0.0.1` edge port, and retained Kind state is replayed into and out of the worker rather
   than bind-mounted
+- the `infernix-demo` SPA bootstrap now starts in `auth-unknown`, then switches the `body` to
+  `auth-signed-out` or `auth-signed-in` from `Main.purs.renderAuthGate`; anonymous visitors see
+  only the `.app-landing` card with `#login-button` (`Sign in`) and `#register-button`
+  (`Create account`), while the summary grid and Chat / Artifacts shell render only after the
+  in-memory Keycloak JWT is present
+- Keycloak uses the chart-owned `infernix` login theme from
+  `ConfigMap/infernix-keycloak-theme`; the realm import and idempotent admin reconcile both set
+  `loginTheme = infernix`, so the routed login and registration pages carry the Infernix-specific
+  titles without building a custom Keycloak image
+- when the demo UI is enabled, the signed-in SPA shell exposes an operator console ribbon for
+  `/harbor`, `/pulsar/admin`, and `/minio/s3`. `web/src/Infernix/Web/Auth.js` mirrors the active
+  Keycloak access token into the `infernix_operator_token` cookie on login and refresh, clears it
+  on logout, and `SecurityPolicy/infernix-operator-routes-jwt` accepts that cookie or a direct
+  `Authorization: Bearer ...` header before forwarding those operator route prefixes
+- the signed-in SPA shell exposes `Delete account`. The browser waits for `DELETE /api/account` to
+  synchronously remove the caller's `infernix-demo-objects/users/<userId>/` prefix and user-owned
+  demo Pulsar topics before redirecting to Keycloak with `kc_action=delete_account`
 - Linux outer-container lifecycle runs forward the host repo root so generated Kind or `nvkind`
   node configs mount host-resolved `./.data/kind/<runtime-mode>/` and
   `./.build/kind/<runtime-mode>/registry/` directories directly into node containers instead of
@@ -189,7 +206,7 @@
 
 | Route | Upstream | Purpose | Notes |
 |-------|----------|---------|-------|
-| `/` | HTTPRoute -> `infernix-demo` Service | demo browser UI | absent when `demo_ui` is false |
+| `/` | HTTPRoute -> `infernix-demo` Service | demo browser UI; anonymous visitors see only the landing card with `Sign in` and `Create account` CTAs until Keycloak auth completes | absent when `demo_ui` is false |
 | `/api` | HTTPRoute -> `infernix-demo` Service | demo API prefix for models, publication, demo-config, and cache discovery | absent when `demo_ui` is false |
 | `/api/publication` | `GET` endpoint on the `/api` route -> `infernix-demo` Service | routed publication metadata | absent when `demo_ui` is false |
 | `/api/cache` | `GET` and `POST` endpoints on the `/api` route -> `infernix-demo` Service | demo cache lifecycle API | absent when `demo_ui` is false |

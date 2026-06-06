@@ -267,6 +267,9 @@ keycloakRealmName = "infernix"
 keycloakSpaClientId :: String
 keycloakSpaClientId = "infernix-spa"
 
+keycloakLoginThemeName :: String
+keycloakLoginThemeName = "infernix"
+
 keycloakAdminSecretName :: String
 keycloakAdminSecretName = "infernix-keycloak-admin"
 
@@ -2803,6 +2806,7 @@ keycloakRealmReconcilePayload :: Value
 keycloakRealmReconcilePayload =
   object
     [ "realm" .= keycloakRealmName,
+      "loginTheme" .= keycloakLoginThemeName,
       "registrationAllowed" .= True,
       "registrationEmailAsUsername" .= False,
       "verifyEmail" .= False,

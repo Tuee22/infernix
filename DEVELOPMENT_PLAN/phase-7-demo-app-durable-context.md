@@ -1,6 +1,6 @@
 # Phase 7: Demo App Multi-User Durable Context
 
-**Status**: Done (Sprints 7.1-7.18 are `Done`. The process-local runtime KV-cache path is wired through `Infernix.Runtime.KVCache`, `executeInferenceWithKVCache`, the native worker harness, filesystem-topic drain, and WebSocket Pulsar consumption; daemon role orchestration lives in `Infernix.Runtime.Daemon`. The integration suite covers durable dispatcher/result writeback, frontend/coordinator/engine pod replacement, engine node drain, model-bootstrap deduplication, Linux engine anti-affinity, compact multi-user durable prompt throughput, platform recovery, production-shape deployment, and clean teardown. Apple cohort gates closed in [Wave A](cohort-validation-waves.md), [Wave A.1](cohort-validation-waves.md), [Wave A.2](cohort-validation-waves.md), and [Wave A.3](cohort-validation-waves.md); native `linux-cpu` and `linux-gpu` full-suite cohort validation closed in [Wave C](cohort-validation-waves.md).)
+**Status**: Done (Sprints 7.1-7.18 closed in the original durable-context cohort gates; Sprints 7.19-7.22 closed the auth-UX quad — auth-gated landing with dual `Sign in` / `Create account` entry points, themed `infernix` Keycloak login surface, operator console ribbon with edge JWT gating against `/harbor`, `/pulsar/admin`, and `/minio/s3`, and self-service account deletion that reaps per-user MinIO + Pulsar state before Keycloak's `kc_action=delete_account` AIA removes the IdP record. Wave G closed on the recorded Apple host-native validation with the routed Playwright suite passing 9/9. The process-local runtime KV-cache path is wired through `Infernix.Runtime.KVCache`, `executeInferenceWithKVCache`, the native worker harness, filesystem-topic drain, and WebSocket Pulsar consumption; daemon role orchestration lives in `Infernix.Runtime.Daemon`. The integration suite covers durable dispatcher/result writeback, frontend/coordinator/engine pod replacement, engine node drain, model-bootstrap deduplication, Linux engine anti-affinity, compact multi-user durable prompt throughput, platform recovery, production-shape deployment, and clean teardown. Earlier cohort gates closed in [Wave A](cohort-validation-waves.md), [Wave A.1](cohort-validation-waves.md), [Wave A.2](cohort-validation-waves.md), [Wave A.3](cohort-validation-waves.md), and [Wave C](cohort-validation-waves.md).)
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/durable_context_design.md](../documents/architecture/durable_context_design.md), [../documents/architecture/demo_app_design.md](../documents/architecture/demo_app_design.md), [../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Define the multi-user, durable-context shape of the `infernix-demo` workload —
@@ -11,7 +11,8 @@
 
 ## Phase Status
 
-Phase 7 is `Done`.
+Phase 7 is `Done`. Sprints 7.1–7.18 remain closed, and Sprints 7.19–7.22 closed
+the auth-UX quad described in the Status block on the Wave G routed E2E validation.
 
 Code-side closure: Sprints 7.1–7.17 are code-side closed covering the full
 daemon-split topology (stateless `infernix-demo` frontend, two-replica stateless
@@ -60,8 +61,8 @@ Evidence"; the underlying contracts they exercised still describe supported beha
 
 Phase 7 is closed because every sprint below is `Done`, the governed docs named in the sprints
 are aligned with the implemented behavior, `infernix test all` has passed on both Linux
-substrates in the recorded cohort gates, and the per-model smoke matrix plus multi-user
-throughput tests named in
+substrates in the recorded cohort gates, Wave G's Apple host-native routed E2E auth-UX suite
+passed 9/9, and the per-model smoke matrix plus multi-user throughput tests named in
 [../documents/development/demo_app_test_plan.md](../documents/development/demo_app_test_plan.md)
 are green.
 
@@ -2829,3 +2830,284 @@ Linux/CUDA cohort validation closed in Wave C.
   [../documents/architecture/durable_context_design.md](../documents/architecture/durable_context_design.md),
   [../documents/architecture/demo_app_design.md](../documents/architecture/demo_app_design.md), and
   [../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md)
+
+---
+
+## Sprint 7.19: Auth-Gated Landing and Dual Entry Points [Done]
+
+**Status**: Done
+**Implementation**: `web/src/index.html`, `web/src/Main.purs`, `web/src/Infernix/Web/Auth.purs`, `web/src/Infernix/Web/Auth.js`
+**Docs to update**: [../documents/architecture/web_ui_architecture.md](../documents/architecture/web_ui_architecture.md), [../documents/architecture/demo_app_design.md](../documents/architecture/demo_app_design.md), [../documents/development/demo_app_test_plan.md](../documents/development/demo_app_test_plan.md), [../documents/reference/web_portal_surface.md](../documents/reference/web_portal_surface.md), [../README.md](../README.md), [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md), [system-components.md](system-components.md)
+
+### Objective
+
+Move the `infernix-demo` app shell behind authentication. Pre-auth visitors see a minimal
+centred landing card with the `Infernix` wordmark, a one-line subtitle, and two explicit
+CTAs (`Sign in` primary, `Create account` secondary), each deep-linking the matching Keycloak
+form via OIDC Application Initiated Actions (AIA). The summary grid (Runtime, Control Plane,
+Daemon, Dispatch, Edge, Catalog, Connection) and the Chat / Artifacts tabs are no longer
+rendered for anonymous visitors.
+
+### Deliverables
+
+- `web/src/index.html` carries a pre-auth `<div class="app-landing">` containing the
+  landing card and the new `#register-button`; the existing `.app-shell` (header + summary
+  grid + tabs + workspace) stays inline so the existing `captureRefs` bootstrap path is
+  unchanged. A `body` class — `auth-unknown`, `auth-signed-in`, `auth-signed-out` — toggles
+  visibility via CSS: only the landing renders when signed out, only the shell renders when
+  signed in, and the `auth-unknown` boot state hides both until PureScript reads the in-memory
+  JWT.
+- `web/src/Main.purs.renderAuthGate` sets the body class on every `renderAll` pass from
+  `state.authenticated`. The bootstrap captures the body via `HTMLDocument.body` +
+  `HTMLElement.toElement`; when absent (e.g. SSR fixtures) the gate is a no-op.
+- `web/src/Main.purs.bindEvents` wires the new `#register-button` to
+  `beginRegisterRedirect defaultInfernixRealmConfig`.
+- `web/src/Infernix/Web/Auth.purs` exports
+  `beginRegisterRedirect :: RealmConfig -> Effect Unit` alongside `beginLoginRedirect`.
+- `web/src/Infernix/Web/Auth.js` factors the PKCE / state / nonce setup into a shared
+  `beginAuthorizationCodeRedirect(config, endpoint, kcAction)` helper; `beginLoginRedirectImpl`
+  uses the `auth` endpoint and `beginRegisterRedirectImpl` uses the `registrations` endpoint so
+  Keycloak lands the user on the registration form. PKCE verifier, state, nonce, and the callback
+  handler are unchanged — Keycloak returns to the same `redirect_uri` after either flow.
+
+### Validation
+
+- `npm --prefix web run build` exits zero (Haskell + PureScript; bundle written to
+  `web/dist/app.js`).
+- `npm --prefix web run test:unit` exits zero (71/71 cases pass).
+- `./.build/infernix lint docs` exits zero after the doc edits named in `Docs to update`.
+- Manual UX check at the published edge port: pre-auth shows only the landing card with two
+  buttons (no header, no summary grid, no tabs); `Sign in` redirects to Keycloak's login
+  form; `Create account` redirects to Keycloak's registration form; after either flow the app
+  shell renders unchanged.
+- A new Playwright case in `web/playwright/inference.spec.js` asserts the splash renders
+  exactly the two buttons pre-auth and that each redirect lands on the matching Keycloak
+  form. Apple cohort closure recorded in [cohort-validation-waves.md](cohort-validation-waves.md).
+
+### Remaining Work
+
+- None. Wave G routed E2E closed the auth-gated landing and dual-entrypoint coverage.
+
+### Documentation Requirements
+
+**Architecture docs to update:**
+- [../documents/architecture/web_ui_architecture.md](../documents/architecture/web_ui_architecture.md) — `## Landing Surface` (pre-auth splash composition, body-class state machine) and `## Authentication Entry Points` (dual `Sign in` / `Create account` CTAs with their AIA mapping).
+- [../documents/architecture/demo_app_design.md](../documents/architecture/demo_app_design.md) — extend the identity/auth section with the dual entry points; note that the app shell is gated on JWT presence.
+
+**Reference docs to update:**
+- [../documents/reference/web_portal_surface.md](../documents/reference/web_portal_surface.md) — `## Pre-Auth Landing` section listing the landing card + two CTAs.
+
+**Development docs to update:**
+- [../documents/development/demo_app_test_plan.md](../documents/development/demo_app_test_plan.md) — new test row: "pre-auth splash renders exactly two CTAs and routes each to the matching Keycloak form."
+
+**Root docs to update:**
+- [../README.md](../README.md) — extend the demo-UI paragraph with the dual-CTA landing.
+
+**Plan docs to update:**
+- [system-components.md](system-components.md) — record the new `#register-button` plus the body-class state machine as part of the `infernix-demo` SPA bootstrap surface.
+- [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) — Pending Removal entries listed under Remaining Work above.
+- [cohort-validation-waves.md](cohort-validation-waves.md) — wave row for the auth-UX quad closure.
+
+---
+
+## Sprint 7.20: Themed Keycloak Login Surface [Done]
+
+**Status**: Done
+**Implementation**: `chart/templates/keycloak/configmap-theme.yaml`, `chart/templates/keycloak/deployment.yaml`, `chart/templates/keycloak/configmap-realm-import.yaml`, `chart/values.yaml`, `src/Infernix/Cluster.hs`, `src/Infernix/Lint/Chart.hs`, `web/playwright/inference.spec.js`
+**Docs to update**: [../documents/tools/keycloak.md](../documents/tools/keycloak.md), [../documents/architecture/web_ui_architecture.md](../documents/architecture/web_ui_architecture.md), [../documents/architecture/demo_app_design.md](../documents/architecture/demo_app_design.md), [../documents/development/demo_app_test_plan.md](../documents/development/demo_app_test_plan.md), [../documents/reference/web_portal_surface.md](../documents/reference/web_portal_surface.md), [../README.md](../README.md), [system-components.md](system-components.md)
+
+### Objective
+
+Make the routed Keycloak login and registration pages visually part of the Infernix demo without
+forking or rebuilding the upstream Keycloak image. The stock Keycloak container stays in the image
+inventory; the theme is a chart-owned ConfigMap selected by the realm import and preserved by the
+idempotent admin reconcile.
+
+### Deliverables
+
+- `chart/templates/keycloak/configmap-theme.yaml` renders `ConfigMap/infernix-keycloak-theme`
+  with `login/theme.properties`, `login/messages/messages_en.properties`, and
+  `login/resources/css/infernix.css`.
+- `chart/templates/keycloak/deployment.yaml` mounts the theme at
+  `/opt/keycloak/themes/{{ .Values.keycloak.theme.name }}` and keeps the stock Keycloak image.
+- `chart/templates/keycloak/configmap-realm-import.yaml` sets
+  `loginTheme = {{ .Values.keycloak.theme.name }}`.
+- `src/Infernix/Cluster.hs.keycloakRealmReconcilePayload` reapplies `loginTheme = infernix`
+  during the post-rollout Keycloak admin reconcile so repeat `cluster up` runs do not drift back
+  to the upstream default theme.
+- `src/Infernix/Lint/Chart.hs` requires the theme ConfigMap and checks the key theme phrases.
+- `web/playwright/inference.spec.js` asserts the themed login and registration titles in the
+  routed pre-auth smoke.
+
+### Validation
+
+- `cabal test infernix-haskell-style` exits zero.
+- `./.build/infernix lint chart` exits zero.
+- `./.build/infernix lint docs` exits zero.
+- `npm --prefix web run test:unit` exits zero.
+- Wave G routed E2E verifies the Keycloak pages show `Sign in to Infernix` and
+  `Create your Infernix account`.
+
+### Remaining Work
+
+- None. Wave G routed E2E closed the themed Keycloak login and registration coverage.
+
+### Documentation Requirements
+
+**Tools docs to update:**
+- [../documents/tools/keycloak.md](../documents/tools/keycloak.md) — mounted theme ConfigMap,
+  realm import, admin reconcile, and Playwright theme assertions.
+
+**Architecture and reference docs to update:**
+- [../documents/architecture/web_ui_architecture.md](../documents/architecture/web_ui_architecture.md) — theme selection on the redirected Keycloak forms.
+- [../documents/architecture/demo_app_design.md](../documents/architecture/demo_app_design.md) — identity/auth section includes the themed forms.
+- [../documents/reference/web_portal_surface.md](../documents/reference/web_portal_surface.md) — user-visible `/auth` title text.
+
+**Development docs to update:**
+- [../documents/development/demo_app_test_plan.md](../documents/development/demo_app_test_plan.md) — Playwright assertion for the theme.
+
+**Root and plan docs to update:**
+- [../README.md](../README.md) — demo paragraph includes the chart-owned Keycloak theme.
+- [system-components.md](system-components.md) — component inventory records the theme ConfigMap.
+
+---
+
+## Sprint 7.21: Operator Console Ribbon and Edge JWT Gating [Done]
+
+**Status**: Done
+**Implementation**: `web/src/index.html`, `web/src/Infernix/Web/Auth.js`, `web/playwright/inference.spec.js`, `chart/templates/securitypolicy-operator-routes.yaml`, `chart/values.yaml`, `src/Infernix/Lint/Chart.hs`
+**Docs to update**: [../documents/engineering/edge_routing.md](../documents/engineering/edge_routing.md), [../documents/reference/web_portal_surface.md](../documents/reference/web_portal_surface.md), [../documents/architecture/web_ui_architecture.md](../documents/architecture/web_ui_architecture.md), [../documents/architecture/demo_app_design.md](../documents/architecture/demo_app_design.md), [../documents/development/demo_app_test_plan.md](../documents/development/demo_app_test_plan.md), [../README.md](../README.md), [system-components.md](system-components.md)
+
+### Objective
+
+Expose the platform's local operator consoles from the authenticated demo shell and close those
+published prefixes behind the same Keycloak JWT trust boundary as the demo API / WebSocket
+surface.
+
+### Deliverables
+
+- The signed-in app shell renders an operator console ribbon linking to `/harbor`,
+  `/pulsar/admin/admin/v2/clusters`, and `/minio/s3`; the ribbon stays hidden with the app shell
+  before authentication.
+- `web/src/Infernix/Web/Auth.js` writes the current Keycloak access token to the
+  `infernix_operator_token` cookie on token receipt / refresh and clears the cookie on logout.
+- `chart/templates/securitypolicy-operator-routes.yaml` renders
+  `SecurityPolicy/infernix-operator-routes-jwt`, targeting the Harbor portal, Pulsar Admin, and
+  MinIO S3 HTTPRoutes. The policy accepts either the SPA-written cookie or a direct
+  `Authorization: Bearer ...` header and validates against the configured Keycloak JWKS endpoint.
+- `src/Infernix/Lint/Chart.hs` requires the new SecurityPolicy template and the chart values that
+  configure operator-route JWT gating.
+- The routed Playwright source asserts the ribbon links, the cookie login / refresh / logout
+  lifecycle, unauthenticated operator-route rejection, and authenticated operator-route access.
+
+### Validation
+
+- `cabal test infernix-haskell-style` exits zero.
+- `cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes`
+  refreshes the Apple host-native `./.build/infernix` lint binary after the chart-lint change.
+- `./.build/infernix lint chart` exits zero.
+- `./.build/infernix lint docs` exits zero.
+- `helm template infernix chart` exits zero.
+- `npm --prefix web run test:unit` exits zero.
+- Wave G routed E2E verifies the operator route family rejects requests without a JWT and accepts
+  the real Keycloak token through the supported cookie or bearer-header paths.
+
+### Remaining Work
+
+- None. Wave G routed E2E closed the operator-console ribbon and JWT-gated operator-route
+  coverage.
+
+### Documentation Requirements
+
+**Engineering and reference docs to update:**
+- [../documents/engineering/edge_routing.md](../documents/engineering/edge_routing.md) — operator-route SecurityPolicy ownership and JWT validation contract.
+- [../documents/reference/web_portal_surface.md](../documents/reference/web_portal_surface.md) — operator console ribbon, route links, and cookie/header auth paths.
+
+**Architecture and development docs to update:**
+- [../documents/architecture/web_ui_architecture.md](../documents/architecture/web_ui_architecture.md) — signed-in ribbon and token-cookie lifecycle.
+- [../documents/architecture/demo_app_design.md](../documents/architecture/demo_app_design.md) — demo identity boundary includes operator-console links.
+- [../documents/development/demo_app_test_plan.md](../documents/development/demo_app_test_plan.md) — Playwright assertions for ribbon visibility, cookie lifecycle, and JWT-gated operator routes.
+
+**Root and plan docs to update:**
+- [../README.md](../README.md) — demo paragraph includes the ribbon and edge JWT policy.
+- [system-components.md](system-components.md) — component inventory records the SPA cookie bridge and SecurityPolicy.
+
+---
+
+## Sprint 7.22: Self-Service Account Deletion and State Reaping [Done]
+
+**Status**: Done
+**Implementation**: `src/Infernix/Demo/Api.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Conversation/Topic.hs`, `src/Infernix/Objects/Presigned.hs`, `web/src/Infernix/Web/Auth.js`, `web/src/Infernix/Web/Auth.purs`, `web/src/Main.purs`, `web/src/index.html`, `web/playwright/inference.spec.js`, `test/unit/Spec.hs`
+**Docs to update**: [../documents/tools/keycloak.md](../documents/tools/keycloak.md), [../documents/tools/minio.md](../documents/tools/minio.md), [../documents/tools/pulsar.md](../documents/tools/pulsar.md), [../documents/architecture/web_ui_architecture.md](../documents/architecture/web_ui_architecture.md), [../documents/architecture/demo_app_design.md](../documents/architecture/demo_app_design.md), [../documents/development/demo_app_test_plan.md](../documents/development/demo_app_test_plan.md), [../documents/reference/web_portal_surface.md](../documents/reference/web_portal_surface.md), [../README.md](../README.md), [system-components.md](system-components.md)
+
+### Objective
+
+Let a signed-in demo user delete their account without leaving demo-owned durable state behind.
+The browser must not enter Keycloak's account-deletion action until the backend has removed the
+caller's MinIO prefix and user-owned Pulsar durable-context topics.
+
+### Deliverables
+
+- `DELETE /api/account` validates the current Keycloak JWT, derives `UserId` from `sub`, deletes
+  every object returned by S3 ListObjectsV2 under
+  `infernix-demo-objects/users/<userId>/`, deletes user-owned demo Pulsar topics in bounded
+  routed-safe cleanup slices, and returns a cleanup summary with `cleanupComplete` plus any
+  remaining topic names.
+- `Infernix.Objects.Presigned` can sign S3 ListObjectsV2 bucket queries and DELETE Object
+  requests without adding an SDK dependency or changing existing PUT/GET grant behavior.
+- `Infernix.Conversation.Topic.topicBelongsToUser` identifies the exact caller-owned topic set:
+  `demo.user.<userId>.contexts`, `demo.user.<userId>.drafts`, and
+  `demo.conversation.<userId>.*`; shared inference request/batch/result topics stay intact.
+- `Infernix.Runtime.Pulsar.deleteDemoUserTopics` discovers the supported Pulsar transport,
+  lists `persistent://infernix/demo`, filters by the user-topic predicate, and deletes matching
+  topics with the Pulsar admin API. `deleteDemoUserTopicsWithAttemptBudget` lets the routed API
+  return `202` while cleanup is still draining instead of letting Envoy time out the request.
+- Browser-facing Pulsar reader retry loops let async exceptions terminate the child threads, so a
+  WebSocket close during account deletion does not respawn stale per-user readers and recreate the
+  deleted topics.
+- The signed-in SPA shell renders `Delete account`; `web/src/Infernix/Web/Auth.js` confirms the
+  command, retries `DELETE /api/account` while the backend reports `cleanupComplete = false`,
+  clears local browser auth state after completion, then starts Keycloak with
+  `kc_action=delete_account`.
+- The routed Playwright source creates real per-user state, clicks `Delete account`, verifies the
+  cleanup response, verifies the previously readable MinIO object returns `404`, verifies the
+  user's topics disappear from Pulsar admin, and verifies the Keycloak request carries
+  `kc_action=delete_account`.
+
+### Validation
+
+- `cabal test infernix-unit` exits zero, including the new pure topic-predicate and presigner
+  query/DELETE assertions.
+- `cabal test infernix-haskell-style` exits zero.
+- `npm --prefix web run test:unit` exits zero (71/71 cases pass).
+- `cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes`
+  refreshes the Apple host-native `./.build/infernix` and `./.build/infernix-demo` binaries.
+- `./.build/infernix test e2e` exits zero on the supported Apple host-native lane with 9/9 routed
+  Playwright tests passing, including account deletion in 2.9 seconds on the final run.
+- Wave G routed E2E verifies the complete browser account-deletion flow against real Keycloak,
+  MinIO, Pulsar, and Envoy Gateway.
+
+### Remaining Work
+
+- None. Wave G routed E2E closed the auth-UX quad.
+
+### Documentation Requirements
+
+**Tools docs to update:**
+- [../documents/tools/keycloak.md](../documents/tools/keycloak.md) — `kc_action=delete_account`
+  sequencing after backend cleanup.
+- [../documents/tools/minio.md](../documents/tools/minio.md) — user-prefix deletion through S3
+  ListObjectsV2 and DELETE Object.
+- [../documents/tools/pulsar.md](../documents/tools/pulsar.md) — user-owned topic deletion and
+  shared-topic boundary.
+
+**Architecture, reference, and development docs to update:**
+- [../documents/architecture/web_ui_architecture.md](../documents/architecture/web_ui_architecture.md) — delete button, backend cleanup, and redirect sequencing.
+- [../documents/architecture/demo_app_design.md](../documents/architecture/demo_app_design.md) — `/api/account` transport and state-reaping semantics.
+- [../documents/reference/web_portal_surface.md](../documents/reference/web_portal_surface.md) — visible `Delete account` command and endpoint contract.
+- [../documents/development/demo_app_test_plan.md](../documents/development/demo_app_test_plan.md) — routed account-deletion smoke.
+
+**Root and plan docs to update:**
+- [../README.md](../README.md) — demo paragraph includes account deletion.
+- [system-components.md](system-components.md) — component inventory records the backend state reap
+  and Keycloak action sequencing.

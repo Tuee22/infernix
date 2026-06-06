@@ -47,7 +47,9 @@ import Infernix.Web.Artifacts
   )
 import Infernix.Web.Auth
   ( TokenStore
+  , beginDeleteAccountRedirect
   , beginLoginRedirect
+  , beginRegisterRedirect
   , clearBrowserAuthSession
   , clearToken
   , completeRedirect
@@ -90,6 +92,7 @@ import Web.Event.EventTarget as EventTarget
 import Web.HTML (window)
 import Web.HTML.Event.EventTypes as EventTypes
 import Web.HTML.HTMLDocument as HTMLDocument
+import Web.HTML.HTMLElement as HTMLElement
 import Web.HTML.Window as Window
 
 type Publication =
@@ -129,9 +132,12 @@ type AppState =
 
 type Refs =
   { document :: Document.Document
+  , body :: Maybe Element.Element
   , appStatus :: Element.Element
   , loginButton :: Element.Element
+  , registerButton :: Element.Element
   , logoutButton :: Element.Element
+  , deleteAccountButton :: Element.Element
   , routeChat :: Element.Element
   , routeArtifacts :: Element.Element
   , runtimeModeValue :: Element.Element
@@ -213,9 +219,13 @@ decodeStoredActiveContext raw =
 captureRefs :: HTMLDocument.HTMLDocument -> Effect Refs
 captureRefs htmlDocument = do
   let document = HTMLDocument.toDocument htmlDocument
+  maybeBody <- HTMLDocument.body htmlDocument
+  let body = HTMLElement.toElement <$> maybeBody
   appStatus <- requireElement htmlDocument "app-status"
   loginButton <- requireElement htmlDocument "login-button"
+  registerButton <- requireElement htmlDocument "register-button"
   logoutButton <- requireElement htmlDocument "logout-button"
+  deleteAccountButton <- requireElement htmlDocument "delete-account-button"
   routeChat <- requireElement htmlDocument "route-chat"
   routeArtifacts <- requireElement htmlDocument "route-artifacts"
   runtimeModeValue <- requireElement htmlDocument "runtime-mode"
@@ -230,9 +240,12 @@ captureRefs htmlDocument = do
   artifactsRoot <- requireElement htmlDocument "artifacts-root"
   pure
     { document
+    , body
     , appStatus
     , loginButton
+    , registerButton
     , logoutButton
+    , deleteAccountButton
     , routeChat
     , routeArtifacts
     , runtimeModeValue
@@ -254,6 +267,12 @@ bindEvents tokenStore stateRef refs = do
       Event.preventDefault event
       beginLoginRedirect defaultInfernixRealmConfig
   EventTarget.addEventListener EventTypes.click loginListener false (Element.toEventTarget refs.loginButton)
+
+  registerListener <-
+    EventTarget.eventListener \event -> do
+      Event.preventDefault event
+      beginRegisterRedirect defaultInfernixRealmConfig
+  EventTarget.addEventListener EventTypes.click registerListener false (Element.toEventTarget refs.registerButton)
 
   logoutListener <-
     EventTarget.eventListener \event -> do
@@ -279,6 +298,33 @@ bindEvents tokenStore stateRef refs = do
       clearStoredActiveContext
       renderAll stateRef refs
   EventTarget.addEventListener EventTypes.click logoutListener false (Element.toEventTarget refs.logoutButton)
+
+  deleteAccountListener <-
+    EventTarget.eventListener \event -> do
+      Event.preventDefault event
+      state <- Ref.read stateRef
+      case state.token of
+        Nothing ->
+          setStatus refs.appStatus "app-status error" "Sign in before deleting account"
+        Just token -> do
+          Ref.modify_
+            ( \current ->
+                current
+                  { wsConnection = Nothing
+                  , wsGeneration = current.wsGeneration + 1
+                  , reconnectAttempts = 0
+                  }
+            )
+            stateRef
+          case state.wsConnection of
+            Just connection -> close connection
+            Nothing -> pure unit
+          setStatus refs.appStatus "app-status" "Deleting account"
+          beginDeleteAccountRedirect
+            defaultInfernixRealmConfig
+            token
+            \message -> setStatus refs.appStatus "app-status error" message
+  EventTarget.addEventListener EventTypes.click deleteAccountListener false (Element.toEventTarget refs.deleteAccountButton)
 
   chatListener <-
     EventTarget.eventListener \event -> do
@@ -845,11 +891,21 @@ updateCatalog modelsValue state =
 renderAll :: Ref.Ref AppState -> Refs -> Effect Unit
 renderAll stateRef refs = do
   state <- Ref.read stateRef
+  renderAuthGate refs state
   renderSummary refs state
   renderRoutes refs.document refs.routeList state.publication
   renderRouteChrome refs state.route
   renderChatSection refs state
   renderArtifactsSection refs state
+
+renderAuthGate :: Refs -> AppState -> Effect Unit
+renderAuthGate refs state =
+  case refs.body of
+    Just bodyElement ->
+      Element.setClassName
+        (if state.authenticated then "auth-signed-in" else "auth-signed-out")
+        bodyElement
+    Nothing -> pure unit
 
 renderServerMessage :: WsServerMessage -> Ref.Ref AppState -> Refs -> Effect Unit
 renderServerMessage message stateRef refs = do

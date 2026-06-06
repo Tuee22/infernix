@@ -199,7 +199,8 @@ that fronts every published surface.
 - the Helm chart pulls the Envoy Gateway controller as a dependency
 - one `GatewayClass/infernix-gateway` and one `Gateway/infernix-edge` own the shared listener
 - `cluster up` records the chosen port under `./.data/runtime/edge-port.json`
-- the demo cluster remains local-only and publishes plain HTTP with no auth filter
+- the initial Sprint 3.5 demo route set remained local-only and published plain HTTP; later
+  Phase 7 auth-UX work added repo-owned JWT policy for selected operator routes
 
 ### Validation
 

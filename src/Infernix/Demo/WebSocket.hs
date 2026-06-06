@@ -34,10 +34,10 @@ module Infernix.Demo.WebSocket
   )
 where
 
-import Control.Concurrent (forkIO)
+import Control.Concurrent (ThreadId, forkIO, killThread)
 import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar)
-import Control.Exception (SomeException, displayException, try)
-import Control.Monad (forever, unless, void)
+import Control.Exception (SomeException, displayException, finally, try)
+import Control.Monad (forM_, unless, void)
 import Data.Aeson (eitherDecodeStrict', encode)
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
@@ -196,14 +196,30 @@ runSession :: WebSocketOptions -> WS.Connection -> UserId -> IO ()
 runSession options connection userId = do
   sendLock <- newMVar ()
   userStreamsStarted <- newIORef False
-  forever $ do
-    incomingResult <- try @SomeException (WS.receiveData connection)
-    case incomingResult of
-      Left _ -> WS.sendClose connection ("connection closed" :: Text)
-      Right frame -> handleFrame options sendLock userStreamsStarted connection userId frame
+  childThreads <- newMVar []
+  receiveLoop sendLock userStreamsStarted childThreads
+    `finally` killSessionChildThreads childThreads
+  where
+    receiveLoop sendLock userStreamsStarted childThreads = do
+      incomingResult <- try @SomeException (WS.receiveData connection)
+      case incomingResult of
+        Left _ -> pure ()
+        Right frame -> do
+          handleFrame options sendLock userStreamsStarted childThreads connection userId frame
+          receiveLoop sendLock userStreamsStarted childThreads
 
-handleFrame :: WebSocketOptions -> MVar () -> IORef Bool -> WS.Connection -> UserId -> Lazy.ByteString -> IO ()
-handleFrame options sendLock userStreamsStarted connection userId frame =
+killSessionChildThreads :: MVar [ThreadId] -> IO ()
+killSessionChildThreads childThreads =
+  modifyMVar_ childThreads $ \threads -> do
+    forM_ threads killThread
+    pure []
+
+registerSessionChildThread :: MVar [ThreadId] -> ThreadId -> IO ()
+registerSessionChildThread childThreads threadId =
+  modifyMVar_ childThreads $ \threads -> pure (threadId : threads)
+
+handleFrame :: WebSocketOptions -> MVar () -> IORef Bool -> MVar [ThreadId] -> WS.Connection -> UserId -> Lazy.ByteString -> IO ()
+handleFrame options sendLock userStreamsStarted childThreads connection userId frame =
   case eitherDecodeStrict' (Lazy.toStrict frame) of
     Left decodeError ->
       sendServerMessage
@@ -217,21 +233,42 @@ handleFrame options sendLock userStreamsStarted connection userId frame =
     Right clientMessage ->
       case classifyClientMessage userId clientMessage of
         AcknowledgePending ->
-          dispatchClientMessage options sendLock userStreamsStarted connection userId clientMessage
+          dispatchClientMessage options sendLock userStreamsStarted childThreads connection userId clientMessage
 
-dispatchClientMessage :: WebSocketOptions -> MVar () -> IORef Bool -> WS.Connection -> UserId -> WsClientMessage -> IO ()
-dispatchClientMessage options sendLock userStreamsStarted connection userId clientMessage =
+dispatchClientMessage :: WebSocketOptions -> MVar () -> IORef Bool -> MVar [ThreadId] -> WS.Connection -> UserId -> WsClientMessage -> IO ()
+dispatchClientMessage options sendLock userStreamsStarted childThreads connection userId clientMessage =
   case clientMessage of
     ClientHello {} -> do
       alreadyStarted <-
         atomicModifyIORef' userStreamsStarted $ \started ->
           if started then (started, True) else (True, False)
       unless alreadyStarted $
-        void $
-          forkIO $ do
+        forkIO
+          ( do
+              streamResult <-
+                try @SomeException
+                  (wsStartUserStreams options userId (sendServerMessage sendLock connection))
+              case streamResult of
+                Right () -> pure ()
+                Left streamError ->
+                  void $
+                    try @SomeException $
+                      sendServerMessage
+                        sendLock
+                        connection
+                        ( ServerError
+                            { serverErrorErrorCode = "ws_user_stream_failed",
+                              serverErrorMessage = Text.pack (displayException streamError)
+                            }
+                        )
+          )
+          >>= registerSessionChildThread childThreads
+    ClientSubscribeContext contextId ->
+      forkIO
+        ( do
             streamResult <-
               try @SomeException
-                (wsStartUserStreams options userId (sendServerMessage sendLock connection))
+                (wsStartContextStream options userId contextId (sendServerMessage sendLock connection))
             case streamResult of
               Right () -> pure ()
               Left streamError ->
@@ -241,29 +278,12 @@ dispatchClientMessage options sendLock userStreamsStarted connection userId clie
                       sendLock
                       connection
                       ( ServerError
-                          { serverErrorErrorCode = "ws_user_stream_failed",
+                          { serverErrorErrorCode = "ws_context_stream_failed",
                             serverErrorMessage = Text.pack (displayException streamError)
                           }
                       )
-    ClientSubscribeContext contextId -> do
-      void $
-        forkIO $ do
-          streamResult <-
-            try @SomeException
-              (wsStartContextStream options userId contextId (sendServerMessage sendLock connection))
-          case streamResult of
-            Right () -> pure ()
-            Left streamError ->
-              void $
-                try @SomeException $
-                  sendServerMessage
-                    sendLock
-                    connection
-                    ( ServerError
-                        { serverErrorErrorCode = "ws_context_stream_failed",
-                          serverErrorMessage = Text.pack (displayException streamError)
-                        }
-                    )
+        )
+        >>= registerSessionChildThread childThreads
     _ -> do
       dispatchResult <- wsDispatchClientMessage options userId clientMessage
       case dispatchResult of

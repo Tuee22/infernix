@@ -119,6 +119,9 @@ Rules:
 - the compacted metadata topics are read by the demo backend with the compacted-reader API to
   drive the SPA's left-rail context list and draft restore; namespace-level compaction policy
   is reconciled on `cluster up`
+- `DELETE /api/account` lists `persistent://infernix/demo` and deletes only topics owned by the
+  caller's `sub`: `demo.user.<userId>.contexts`, `demo.user.<userId>.drafts`, and
+  `demo.conversation.<userId>.*`. Shared inference request/batch/result topics remain intact.
 - the frontend pod's per-WS Pulsar **Reader** subscriptions on conversation and metadata
   topics give pod-failover-safe fan-out without sticky sessions; the per-context inference
   dispatcher in the coordinator pod uses a named **Failover** subscription so exactly one

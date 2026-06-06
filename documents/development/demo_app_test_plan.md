@@ -15,8 +15,9 @@
   application and rendering.
 - Integration covers real Pulsar / MinIO / Keycloak round-trips, producer-dedup verification,
   Failover handoff, chaos kills, and a multi-user throughput test.
-- E2E covers Playwright flows through the routed demo surface for every primary lifecycle plus
-  a per-model smoke matrix driven by the active substrate's generated demo catalog.
+- E2E covers Playwright flows through the routed demo surface for every primary lifecycle, the
+  pre-auth landing entry points, and a per-model smoke matrix driven by the active substrate's
+  generated demo catalog.
 - The reducer lives only in Haskell; PureScript tests cover patch application and rendering,
   not reducer logic.
 - The Playwright source is identical across `apple-silicon`, `linux-cpu`, and `linux-gpu`;
@@ -60,7 +61,15 @@ redirect through Keycloak self-registration, creates a context, uploads supporte
 artifact classes through the rendered Artifacts form, and validates bounded text/JSON previews,
 inline image/audio/video routed media URLs, browser-native PDF URL wiring, and MIDI / MusicXML
 / generic-binary download-only states through routed presigned grants. The routed Playwright
-run passes the per-model smoke matrix across every active catalog row; the full gate also
+suite also asserts the pre-auth landing shows exactly two CTAs (`Sign in` and `Create account`),
+hides the app shell, routes each CTA to the matching Keycloak login or registration form, and
+asserts the themed Keycloak titles (`Sign in to Infernix` and
+`Create your Infernix account`).
+The auth lifecycle test also asserts the signed-in operator ribbon links and the
+`infernix_operator_token` cookie lifecycle, while the routed WebSocket/JWT test checks that
+anonymous requests to `/harbor`, `/pulsar/admin`, and `/minio/s3` receive the edge JWT rejection
+and the same routes progress to their upstreams when the request carries the real Keycloak token.
+The routed Playwright run passes the per-model smoke matrix across every active catalog row; the full gate also
 covers the durable-context browser flow with frontend pod replacement: the test deletes all
 `infernix-demo` pods, waits for replacements, verifies reconnect plus active-context
 resubscribe, and submits another prompt. The startup MinIO bucket repair, real wrong-realm
@@ -160,6 +169,21 @@ same typed fixture.
 `web/src/Main.purs` and `web/src/index.html` mount the durable-context Chat and Artifacts panes.
 `infernix test e2e` runs a routed smoke that checks the typed Playwright fixture,
 `/api/publication`, `/api/demo-config`, `/api/models` parity, and the routed SPA root heading.
+The same Playwright file verifies the anonymous landing card exposes exactly the `Sign in` and
+`Create account` buttons, keeps the summary grid and Chat / Artifacts shell hidden before auth,
+routes `Sign in` to the Keycloak login form, and routes `Create account` directly to the
+Keycloak registration form through `kc_action=register`. The same assertions check that the
+repo-owned Keycloak theme is active by looking for the Infernix-specific login and registration
+titles.
+After login, the auth lifecycle smoke checks the operator ribbon links to `/harbor`,
+`/pulsar/admin/admin/v2/clusters`, and `/minio/s3`; it also verifies the same access token is
+written to the `infernix_operator_token` cookie on login/refresh and cleared on logout. The routed
+JWT smoke probes the three gated operator route prefixes without a token and with the real bearer
+token.
+The account-deletion smoke creates a real user, writes a draft and a MinIO object, verifies the
+user's demo Pulsar topics are present, clicks `Delete account`, accepts the browser confirmation,
+and asserts `DELETE /api/account` reports deleted MinIO objects and Pulsar topics before the next
+Keycloak request carries `kc_action=delete_account`.
 The routed Keycloak self-registration smoke verifies the `/auth` browser surface, account
 creation without email verification, and OIDC authorization-code redirect back to the SPA. The
 suite exchanges that code through the routed token endpoint and validates `/api/objects` with
@@ -196,7 +220,12 @@ the textarea value.
   WebSocket valid/malformed-token handshake plus expired-token rejection and typed malformed-frame
   error behavior are covered by the current routed smoke. The browser app now also covers local
   logout, same-browser re-login, and refresh-token WebSocket re-auth through a new `ClientHello`
-  after the refresh grant.
+  after the refresh grant. The pre-auth landing smoke asserts the anonymous shell exposes exactly
+  the two supported CTA entry points, that each lands on the matching Keycloak form, and that the
+  mounted `infernix` Keycloak theme is active. The same auth lifecycle checks cover the operator
+  ribbon and the cookie that Envoy Gateway's JWT policy reads for `/harbor`, `/pulsar/admin`, and
+  `/minio/s3`. Account deletion coverage verifies the backend state reap happens before the
+  Keycloak `delete_account` action begins.
 - **Context lifecycle.** New-context dialog open/close without backend state; create; rename;
   soft-delete; select context. The browser now opens and closes the new-context dialog without
   sending `ClientCreateContext` or adding a local context, then selects a supported model, asserts

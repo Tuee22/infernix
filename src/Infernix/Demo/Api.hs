@@ -11,7 +11,7 @@ where
 
 import Control.Concurrent (threadDelay)
 import Control.Exception (SomeException, fromException, try)
-import Control.Monad (unless, when)
+import Control.Monad (forM, unless, when)
 import Data.Aeson
   ( FromJSON (parseJSON),
     ToJSON,
@@ -28,6 +28,7 @@ import Data.ByteString qualified as ByteString
 import Data.ByteString.Char8 qualified as ByteStringChar8
 import Data.ByteString.Lazy qualified as LazyByteString
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
+import Data.Maybe (listToMaybe)
 import Data.String (fromString)
 import Data.Text (Text)
 import Data.Text qualified as Text
@@ -53,8 +54,12 @@ import Infernix.Demo.WebSocket qualified as DemoWebSocket
 import Infernix.DemoConfig (decodeDemoConfigFile)
 import Infernix.Models (engineBindingForSelectedEngine)
 import Infernix.Objects.Layout
-  ( pathBelongsToUser,
+  ( DemoObjectsBucket (..),
+    UserPrefix (..),
+    defaultDemoObjectsBucket,
+    pathBelongsToUser,
     uploadObjectKey,
+    userPrefix,
   )
 import Infernix.Objects.Presigned
   ( HttpMethod (..),
@@ -64,6 +69,7 @@ import Infernix.Objects.Presigned
     PresignedUrlConfig (..),
     isoExpiryFor,
     presignedBucketUrl,
+    presignedBucketUrlWithQuery,
     presignedUrlForRequest,
   )
 import Infernix.Runtime
@@ -100,10 +106,12 @@ import Network.HTTP.Types
   ( Status,
     hAuthorization,
     hContentType,
+    methodDelete,
     methodGet,
     methodPost,
     methodPut,
     status200,
+    status202,
     status400,
     status401,
     status403,
@@ -331,6 +339,9 @@ application options jwksCache realmConfig maybeClusterConfig request respond = d
     ["api", "cache", "rebuild"]
       | requestMethod request == methodPost && demoEnabled ->
           handleCacheMutation options request RebuildCache respond
+    ["api", "account"]
+      | requestMethod request == methodDelete && demoEnabled ->
+          handleAccountDeletion options jwksCache realmConfig maybeClusterConfig request respond
     ["api", "objects", "upload"]
       | requestMethod request == methodPost && demoEnabled ->
           handleObjectsGrant jwksCache realmConfig request ObjectsUpload respond
@@ -414,6 +425,34 @@ mapDispatchError action = do
 -- @users/<userId>/contexts/<contextId>/{uploads,generated}/@, and mint a
 -- presigned PUT or GET URL the browser uses to talk to MinIO directly.
 -- The demo backend never proxies the binary bytes.
+data AuthFailure = AuthFailure Status String
+
+authenticateBearerUser ::
+  JwksCache ->
+  KeycloakRealmConfig ->
+  Request ->
+  IO (Either AuthFailure UserId)
+authenticateBearerUser jwksCache realmConfig request =
+  case extractBearerToken request of
+    Nothing -> pure (Left (AuthFailure status401 "missing bearer token"))
+    Just token -> do
+      jwksResult <- loadJwksCached jwksCache realmConfig
+      case jwksResult of
+        Left jwksError ->
+          pure (Left (AuthFailure status503 ("JWKS fetch failed: " <> jwksError)))
+        Right jwks -> do
+          now <- getCurrentTime
+          pure $
+            case verifyAndParseJwt (realmValidationConfig realmConfig) now jwks token of
+              Left jwtError ->
+                Left (AuthFailure status401 ("invalid JWT: " <> renderJwtError jwtError))
+              Right claims ->
+                Right (UserId (Jwt.jwtClaimSubject claims))
+
+respondAuthFailure :: AuthFailure -> (Response -> IO responseReceived) -> IO responseReceived
+respondAuthFailure (AuthFailure responseStatus message) respond =
+  respond (textResponse responseStatus message)
+
 data ObjectsAction = ObjectsUpload | ObjectsDownload
 
 handleObjectsGrant ::
@@ -424,37 +463,28 @@ handleObjectsGrant ::
   (Response -> IO responseReceived) ->
   IO responseReceived
 handleObjectsGrant jwksCache realmConfig request action respond = do
-  case extractBearerToken request of
-    Nothing -> respond (textResponse status401 "missing bearer token")
-    Just token -> do
-      jwksResult <- loadJwksCached jwksCache realmConfig
-      case jwksResult of
-        Left jwksError ->
-          respond (textResponse status503 ("JWKS fetch failed: " <> jwksError))
-        Right jwks -> do
-          now <- getCurrentTime
-          case verifyAndParseJwt (realmValidationConfig realmConfig) now jwks token of
-            Left jwtError ->
-              respond (textResponse status401 ("invalid JWT: " <> renderJwtError jwtError))
-            Right claims -> do
-              bodyBytes <- strictRequestBody request
-              case eitherDecode bodyBytes of
-                Left decodeError ->
-                  respond (textResponse status400 ("invalid request body: " <> decodeError))
-                Right uploadRequest -> do
-                  presignedResult <- loadPresignedConfig
-                  case presignedResult of
-                    Left configError ->
-                      respond (textResponse status503 ("presigned URL config missing: " <> configError))
-                    Right presigned -> do
-                      let userId = UserId (Jwt.jwtClaimSubject claims)
-                          contextId = artifactUploadRequestContextId uploadRequest
-                          displayName = artifactUploadRequestDisplayName uploadRequest
-                          mimeType = artifactUploadRequestMimeType uploadRequest
-                          objectReference = uploadObjectKey userId contextId displayName
-                      if not (pathBelongsToUser userId (objectKey objectReference))
-                        then respond (textResponse status403 "object key is outside the caller's scope")
-                        else mintAndRespond action presigned objectReference mimeType now respond
+  authResult <- authenticateBearerUser jwksCache realmConfig request
+  case authResult of
+    Left authFailure -> respondAuthFailure authFailure respond
+    Right userId -> do
+      now <- getCurrentTime
+      bodyBytes <- strictRequestBody request
+      case eitherDecode bodyBytes of
+        Left decodeError ->
+          respond (textResponse status400 ("invalid request body: " <> decodeError))
+        Right uploadRequest -> do
+          presignedResult <- loadPresignedConfig
+          case presignedResult of
+            Left configError ->
+              respond (textResponse status503 ("presigned URL config missing: " <> configError))
+            Right presigned -> do
+              let contextId = artifactUploadRequestContextId uploadRequest
+                  displayName = artifactUploadRequestDisplayName uploadRequest
+                  mimeType = artifactUploadRequestMimeType uploadRequest
+                  objectReference = uploadObjectKey userId contextId displayName
+              if not (pathBelongsToUser userId (objectKey objectReference))
+                then respond (textResponse status403 "object key is outside the caller's scope")
+                else mintAndRespond action presigned objectReference mimeType now respond
 
 -- | Mint a presigned URL for the requested action and respond with the
 -- matching upload-or-download grant JSON.
@@ -502,6 +532,197 @@ mintAndRespond action presigned objectReference mimeType now respond =
                 artifactDownloadGrantExpiresAtIso8601 = isoExpiryFor presigned now
               }
        in respond (jsonResponse status200 grant)
+
+handleAccountDeletion ::
+  DemoApiOptions ->
+  JwksCache ->
+  KeycloakRealmConfig ->
+  Maybe ClusterConfig.ClusterConfig ->
+  Request ->
+  (Response -> IO responseReceived) ->
+  IO responseReceived
+handleAccountDeletion options jwksCache realmConfig maybeClusterConfig request respond = do
+  authResult <- authenticateBearerUser jwksCache realmConfig request
+  case authResult of
+    Left authFailure -> respondAuthFailure authFailure respond
+    Right userId -> do
+      presignedResult <- loadInternalMinioPresignedConfig
+      case presignedResult of
+        Left configError ->
+          respond (textResponse status503 ("account cleanup config missing: " <> configError))
+        Right presigned -> do
+          cleanupResult <- try @SomeException $ do
+            minioDeleted <- deleteMinioUserObjects presigned userId
+            pulsarDeleted <-
+              RuntimePulsar.deleteDemoUserTopicsWithAttemptBudget
+                (demoPaths options)
+                (demoRuntimeMode options)
+                maybeClusterConfig
+                userId
+                accountPulsarCleanupAttemptBudget
+            pure (minioDeleted, pulsarDeleted)
+          case cleanupResult of
+            Left err ->
+              respond (textResponse status500 ("account cleanup failed: " <> show err))
+            Right (minioDeleted, pulsarDeleted) -> do
+              let remainingTopics = RuntimePulsar.demoUserTopicDeletionRemaining pulsarDeleted
+                  cleanupComplete = null remainingTopics
+                  responseStatus = if cleanupComplete then status200 else status202
+              hPutStrLn
+                stderr
+                ( "account cleanup for "
+                    <> Text.unpack (unUserId userId)
+                    <> ": minioObjectsDeleted="
+                    <> show minioDeleted
+                    <> " pulsarTopicsDeleted="
+                    <> show (RuntimePulsar.demoUserTopicDeletionDeleted pulsarDeleted)
+                    <> " cleanupComplete="
+                    <> show cleanupComplete
+                    <> " remainingTopics="
+                    <> show (length remainingTopics)
+                )
+              respond
+                ( jsonResponse
+                    responseStatus
+                    ( object
+                        [ "userId" .= userId,
+                          "cleanupComplete" .= cleanupComplete,
+                          "minioObjectsDeleted" .= minioDeleted,
+                          "pulsarTopicsDeleted" .= RuntimePulsar.demoUserTopicDeletionDeleted pulsarDeleted,
+                          "pulsarTopicsRemaining" .= remainingTopics
+                        ]
+                    )
+                )
+
+accountPulsarCleanupAttemptBudget :: Int
+accountPulsarCleanupAttemptBudget = 32
+
+deleteMinioUserObjects :: PresignedUrlConfig -> UserId -> IO Int
+deleteMinioUserObjects config userId = do
+  objectKeys <- listMinioUserObjectKeys config userId
+  deleted <- forM objectKeys (deleteMinioObject config)
+  pure (length (filter id deleted))
+
+listMinioUserObjectKeys :: PresignedUrlConfig -> UserId -> IO [Text]
+listMinioUserObjectKeys config userId = do
+  manager <- newManager defaultManagerSettings
+  go manager Nothing []
+  where
+    DemoObjectsBucket bucket = defaultDemoObjectsBucket
+    UserPrefix prefix = userPrefix userId
+
+    go manager maybeContinuation acc = do
+      now <- getCurrentTime
+      let signed =
+            presignedBucketUrlWithQuery
+              config
+              PresignedBucketRequest
+                { presignedBucketRequestMethod = HttpGet,
+                  presignedBucketRequestBucket = bucket,
+                  presignedBucketRequestNow = now
+                }
+              ( listObjectsQuery prefix
+                  <> maybe [] (\token -> [("continuation-token", token)]) maybeContinuation
+              )
+      requestValue <- parseRequest (Text.unpack (unPresignedUrl signed))
+      response <-
+        httpLbs
+          (requestValue {responseTimeout = responseTimeoutMicro 5000000})
+          manager
+      case statusCode (responseStatus response) of
+        200 -> do
+          let bodyText = TextEncoding.decodeUtf8 (LazyByteString.toStrict (responseBody response))
+              keys = extractXmlTagValues "Key" bodyText
+              isTruncated = listToMaybe (extractXmlTagValues "IsTruncated" bodyText) == Just "true"
+              nextContinuation = listToMaybe (extractXmlTagValues "NextContinuationToken" bodyText)
+          case nextContinuation of
+            Just _ | isTruncated -> go manager nextContinuation (acc <> keys)
+            _ -> pure (acc <> keys)
+        404 -> pure acc
+        code ->
+          ioError
+            ( userError
+                ( "MinIO ListObjectsV2 for account prefix returned HTTP "
+                    <> show code
+                    <> ":\n"
+                    <> lazyBodyToString (responseBody response)
+                )
+            )
+
+listObjectsQuery :: Text -> [(Text, Text)]
+listObjectsQuery prefix =
+  [ ("list-type", "2"),
+    ("prefix", prefix)
+  ]
+
+deleteMinioObject :: PresignedUrlConfig -> Text -> IO Bool
+deleteMinioObject config objectKeyValue = do
+  now <- getCurrentTime
+  let DemoObjectsBucket bucket = defaultDemoObjectsBucket
+      objectReference =
+        ObjectRef
+          { objectBucket = bucket,
+            objectKey = objectKeyValue
+          }
+      signed =
+        presignedUrlForRequest
+          config
+          PresignedRequest
+            { presignedRequestMethod = HttpDelete,
+              presignedRequestObject = objectReference,
+              presignedRequestNow = now
+            }
+  manager <- newManager defaultManagerSettings
+  requestValue <- parseRequest (Text.unpack (unPresignedUrl signed))
+  response <-
+    httpLbs
+      ( requestValue
+          { method = methodDelete,
+            responseTimeout = responseTimeoutMicro 5000000
+          }
+      )
+      manager
+  let code = statusCode (responseStatus response)
+  if code `elem` [200, 202, 204]
+    then pure True
+    else
+      if code == 404
+        then pure False
+        else
+          ioError
+            ( userError
+                ( "MinIO DELETE for account object returned HTTP "
+                    <> show code
+                    <> ":\n"
+                    <> lazyBodyToString (responseBody response)
+                )
+            )
+
+extractXmlTagValues :: Text -> Text -> [Text]
+extractXmlTagValues tagName = go
+  where
+    openTag = "<" <> tagName <> ">"
+    closeTag = "</" <> tagName <> ">"
+    go remaining =
+      let (_, afterOpenWithTag) = Text.breakOn openTag remaining
+       in if Text.null afterOpenWithTag
+            then []
+            else
+              let afterOpen = Text.drop (Text.length openTag) afterOpenWithTag
+                  (rawValue, afterCloseWithTag) = Text.breakOn closeTag afterOpen
+               in if Text.null afterCloseWithTag
+                    then []
+                    else
+                      decodeXmlEntities rawValue
+                        : go (Text.drop (Text.length closeTag) afterCloseWithTag)
+
+decodeXmlEntities :: Text -> Text
+decodeXmlEntities =
+  Text.replace "&amp;" "&"
+    . Text.replace "&apos;" "'"
+    . Text.replace "&quot;" "\""
+    . Text.replace "&gt;" ">"
+    . Text.replace "&lt;" "<"
 
 -- | Pull the bearer token out of the @Authorization@ header. Returns
 -- 'Nothing' if the header is absent, malformed, or carries a non-@Bearer@
@@ -555,7 +776,25 @@ loadJwksFromKeycloak realmConfig = do
 -- ConfigMaps + Secret at the supported paths, and the function
 -- surfaces a typed diagnostic when either is absent.
 loadPresignedConfig :: IO (Either String PresignedUrlConfig)
-loadPresignedConfig = do
+loadPresignedConfig =
+  loadPresignedConfigWithEndpoint
+    ClusterConfig.minioPresignPublicEndpoint
+    splitMinioPublicEndpoint
+
+loadInternalMinioPresignedConfig :: IO (Either String PresignedUrlConfig)
+loadInternalMinioPresignedConfig =
+  loadPresignedConfigWithEndpoint
+    ClusterConfig.minioEndpoint
+    ( \raw ->
+        let (scheme, hostPort) = splitMinioEndpoint raw
+         in (scheme, hostPort, "")
+    )
+
+loadPresignedConfigWithEndpoint ::
+  (ClusterConfig.MinioWiring -> Text) ->
+  (Text -> (Text, Text, Text)) ->
+  IO (Either String PresignedUrlConfig)
+loadPresignedConfigWithEndpoint endpointSelector splitEndpoint = do
   clusterExists <- doesFileExist ClusterConfig.defaultClusterConfigMountPath
   secretsExists <- doesFileExist SecretsConfig.defaultClusterSecretsMountPath
   if not (clusterExists && secretsExists)
@@ -574,7 +813,7 @@ loadPresignedConfig = do
       secretsConfig <- SecretsConfig.decodeSecretsConfigFile SecretsConfig.defaultClusterSecretsMountPath
       minioCreds <- SecretsConfig.readMinioCredentials (SecretsConfig.secretsMinio secretsConfig)
       let minio = ClusterConfig.clusterMinio clusterConfig
-          (scheme, hostPort, pathPrefix) = splitMinioPublicEndpoint (ClusterConfig.minioPresignPublicEndpoint minio)
+          (scheme, hostPort, pathPrefix) = splitEndpoint (endpointSelector minio)
       pure
         ( Right
             PresignedUrlConfig
@@ -769,6 +1008,9 @@ contentTypeForPath relativePath =
     ".map" -> TextEncoding.encodeUtf8 "application/json; charset=utf-8"
     ".svg" -> TextEncoding.encodeUtf8 "image/svg+xml"
     _ -> TextEncoding.encodeUtf8 "text/plain; charset=utf-8"
+
+lazyBodyToString :: LazyByteString.ByteString -> String
+lazyBodyToString = ByteStringChar8.unpack . LazyByteString.toStrict
 
 jsonResponse :: (ToJSON a) => Status -> a -> Response
 jsonResponse responseStatus payload =

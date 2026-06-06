@@ -11,9 +11,13 @@ module Infernix.Runtime.Pulsar
     compactTopicAndWait,
     clearServiceReadinessMarker,
     consumeTopicForever,
+    DemoUserTopicDeletion (..),
+    deleteDemoUserTopics,
+    deleteDemoUserTopicsWithAttemptBudget,
     discoverPulsarTransport,
     planDemoClientMessagePublications,
     publishDemoClientMessage,
+    pulsarAdminForwardUrlPath,
     streamDemoContextConversation,
     streamDemoUserMetadata,
     publishModelBootstrapRequest,
@@ -43,9 +47,9 @@ module Infernix.Runtime.Pulsar
 where
 
 import Control.Applicative ((<|>))
-import Control.Concurrent (forkIO, threadDelay)
+import Control.Concurrent (forkIO, killThread, threadDelay)
 import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar)
-import Control.Exception (Exception, SomeAsyncException, SomeException, displayException, fromException, throwIO, try)
+import Control.Exception (Exception, SomeAsyncException, SomeException, displayException, finally, fromException, throwIO, try)
 import Control.Monad (forM_, forever, unless, void, when)
 import Crypto.Hash.SHA256 qualified as SHA256
 import Crypto.Random (getRandomBytes)
@@ -72,7 +76,7 @@ import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.List (intercalate, sort)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
-import Data.Maybe (fromMaybe, listToMaybe)
+import Data.Maybe (fromMaybe, isJust, listToMaybe)
 import Data.ProtoLens (Message, decodeMessage, defMessage, encodeMessage)
 import Data.ProtoLens.Field (field)
 import Data.Set (Set)
@@ -176,6 +180,12 @@ data RawTopicMessage = RawTopicMessage
   { rawTopicMessageId :: Text.Text,
     rawTopicMessageKey :: Maybe Text.Text,
     rawTopicMessagePayload :: ByteString.ByteString
+  }
+  deriving (Eq, Show)
+
+data DemoUserTopicDeletion = DemoUserTopicDeletion
+  { demoUserTopicDeletionDeleted :: Int,
+    demoUserTopicDeletionRemaining :: [Text.Text]
   }
   deriving (Eq, Show)
 
@@ -336,13 +346,129 @@ streamUserMetadataViaPulsar ::
 streamUserMetadataViaPulsar transport namespace userIdValue sendMessage = do
   sendMessage (Contracts.ServerContextListSnapshot (contextListStateFromMap Map.empty))
   sendMessage (Contracts.ServerDraftMapSnapshot (draftMapStateFromMap Map.empty))
-  void $
+  contextThread <-
     forkIO
       (streamUserContextListViaPulsar transport namespace userIdValue sendMessage)
-  void $
+  draftThread <-
     forkIO
       (streamUserDraftMapViaPulsar transport namespace userIdValue sendMessage)
   forever (threadDelay 60_000_000)
+    `finally` do
+      killThread contextThread
+      killThread draftThread
+
+retryBrowserStream :: Text.Text -> IO () -> IO ()
+retryBrowserStream label action = go
+  where
+    go = do
+      sessionResult <- try @SomeException action
+      case sessionResult of
+        Right _ -> do
+          threadDelay 1_000_000
+          go
+        Left err
+          | isAsyncException err -> throwIO err
+          | isWebSocketConnectionClosed err -> pure ()
+          | otherwise -> do
+              hPutStrLn
+                stderr
+                ( Text.unpack label
+                    <> " failed:\n"
+                    <> displayException err
+                )
+              threadDelay 1_000_000
+              go
+
+isWebSocketConnectionClosed :: SomeException -> Bool
+isWebSocketConnectionClosed err =
+  case fromException err of
+    Just WebSockets.ConnectionClosed -> True
+    _ -> False
+
+isAsyncException :: SomeException -> Bool
+isAsyncException err =
+  isJust (fromException err :: Maybe SomeAsyncException)
+
+retryCoordinatorStream :: PulsarTransport -> Text.Text -> Text.Text -> IO () -> IO ()
+retryCoordinatorStream transport topicValue label action = go
+  where
+    go = do
+      sessionResult <- try @SomeException action
+      case sessionResult of
+        Right _ -> do
+          threadDelay 1_000_000
+          go
+        Left err
+          | isAsyncException err -> throwIO err
+          | isTopicDeletionClose err -> do
+              hPutStrLn
+                stderr
+                ( Text.unpack label
+                    <> " stopped after topic close:\n"
+                    <> displayException err
+                )
+          | isIdleTimeoutClose err -> do
+              stillExists <- topicExistsAfterClose transport topicValue
+              if stillExists
+                then do
+                  hPutStrLn
+                    stderr
+                    ( Text.unpack label
+                        <> " failed:\n"
+                        <> displayException err
+                    )
+                  threadDelay 1_000_000
+                  go
+                else
+                  hPutStrLn
+                    stderr
+                    ( Text.unpack label
+                        <> " stopped after deleted topic idle close:\n"
+                        <> displayException err
+                    )
+          | otherwise -> do
+              hPutStrLn
+                stderr
+                ( Text.unpack label
+                    <> " failed:\n"
+                    <> displayException err
+                )
+              threadDelay 1_000_000
+              go
+
+isTopicDeletionClose :: SomeException -> Bool
+isTopicDeletionClose err =
+  case fromException err of
+    Just WebSockets.ConnectionClosed -> True
+    Just (WebSockets.CloseRequest _ reason) ->
+      not ("Idle timeout expired" `Text.isInfixOf` TextEncoding.decodeUtf8 (Lazy.toStrict reason))
+    _ -> False
+
+isIdleTimeoutClose :: SomeException -> Bool
+isIdleTimeoutClose err =
+  case fromException err of
+    Just (WebSockets.CloseRequest _ reason) ->
+      "Idle timeout expired" `Text.isInfixOf` TextEncoding.decodeUtf8 (Lazy.toStrict reason)
+    _ -> False
+
+topicExistsAfterClose :: PulsarTransport -> Text.Text -> IO Bool
+topicExistsAfterClose transport topicValue = do
+  result <- try @SomeException $ do
+    adminBaseUrl <- requirePulsarAdminBaseUrl transport
+    topicRef <- requireTopicRef topicValue
+    manager <- newManager defaultManagerSettings
+    topics <-
+      listNamespaceTopics
+        manager
+        adminBaseUrl
+        ( ConversationTopic.TopicNamespace
+            (topicTenant topicRef)
+            (topicNamespace topicRef)
+        )
+    pure (topicValue `elem` topics)
+  case result of
+    Right exists -> pure exists
+    Left _ -> pure True
 
 streamUserContextListViaPulsar ::
   PulsarTransport ->
@@ -359,24 +485,10 @@ streamUserContextListViaPulsar transport namespace userIdValue sendMessage = do
   stateRef <- newIORef Map.empty
   topicRef <- requireTopicRef contextsTopic
   let readerPath = buildReaderSocketPath (pulsarWebSocketBase transport) topicRef readerName
-  forever $ do
-    sessionResult <-
-      try @SomeException
-        ( runPulsarWebSocketClient (pulsarWebSocketBase transport) readerPath $ \connection ->
-            forever
-              (handleContextMetadataStreamMessage stateRef sendMessage connection)
-        )
-    case sessionResult of
-      Right _ -> threadDelay 1_000_000
-      Left err -> do
-        hPutStrLn
-          stderr
-          ( "browser context-list stream for "
-              <> Text.unpack contextsTopic
-              <> " failed:\n"
-              <> displayException err
-          )
-        threadDelay 1_000_000
+  retryBrowserStream ("browser context-list stream for " <> contextsTopic) $
+    runPulsarWebSocketClient (pulsarWebSocketBase transport) readerPath $ \connection ->
+      forever
+        (handleContextMetadataStreamMessage stateRef sendMessage connection)
 
 handleContextMetadataStreamMessage ::
   IORef (Map Contracts.ContextId Contracts.ContextSummary) ->
@@ -479,24 +591,10 @@ streamUserDraftMapViaPulsar transport namespace userIdValue sendMessage = do
   stateRef <- newIORef Map.empty
   topicRef <- requireTopicRef draftsTopic
   let readerPath = buildReaderSocketPath (pulsarWebSocketBase transport) topicRef readerName
-  forever $ do
-    sessionResult <-
-      try @SomeException
-        ( runPulsarWebSocketClient (pulsarWebSocketBase transport) readerPath $ \connection ->
-            forever
-              (handleDraftMetadataStreamMessage stateRef sendMessage connection)
-        )
-    case sessionResult of
-      Right _ -> threadDelay 1_000_000
-      Left err -> do
-        hPutStrLn
-          stderr
-          ( "browser draft-map stream for "
-              <> Text.unpack draftsTopic
-              <> " failed:\n"
-              <> displayException err
-          )
-        threadDelay 1_000_000
+  retryBrowserStream ("browser draft-map stream for " <> draftsTopic) $
+    runPulsarWebSocketClient (pulsarWebSocketBase transport) readerPath $ \connection ->
+      forever
+        (handleDraftMetadataStreamMessage stateRef sendMessage connection)
 
 handleDraftMetadataStreamMessage ::
   IORef (Map Text.Text Text.Text) ->
@@ -605,30 +703,16 @@ streamContextConversationViaPulsar transport namespace userIdValue contextIdValu
   seenMessageIdsRef <- newIORef Set.empty
   topicRef <- requireTopicRef conversationTopic
   let readerPath = buildReaderSocketPath (pulsarWebSocketBase transport) topicRef readerName
-  forever $ do
-    sessionResult <-
-      try @SomeException
-        ( runPulsarWebSocketClient (pulsarWebSocketBase transport) readerPath $ \connection ->
-            forever
-              ( handleConversationStreamMessage
-                  contextIdValue
-                  reducerStateRef
-                  seenMessageIdsRef
-                  sendMessage
-                  connection
-              )
+  retryBrowserStream ("browser context stream for " <> conversationTopic) $
+    runPulsarWebSocketClient (pulsarWebSocketBase transport) readerPath $ \connection ->
+      forever
+        ( handleConversationStreamMessage
+            contextIdValue
+            reducerStateRef
+            seenMessageIdsRef
+            sendMessage
+            connection
         )
-    case sessionResult of
-      Right _ -> threadDelay 1_000_000
-      Left err -> do
-        hPutStrLn
-          stderr
-          ( "browser context stream for "
-              <> Text.unpack conversationTopic
-              <> " failed:\n"
-              <> displayException err
-          )
-        threadDelay 1_000_000
 
 handleConversationStreamMessage ::
   Contracts.ContextId ->
@@ -1003,6 +1087,98 @@ compactTopicAndWait paths runtimeMode maybeClusterConfig topic = do
       triggerTopicCompactionViaPulsar transport topic
       waitForTopicCompactionCompleteViaPulsar transport topic
 
+deleteDemoUserTopics ::
+  Paths ->
+  RuntimeMode ->
+  Maybe ClusterConfig ->
+  Contracts.UserId ->
+  IO Int
+deleteDemoUserTopics paths runtimeMode maybeClusterConfig userIdValue = do
+  result <- deleteDemoUserTopicsWithAttemptBudget paths runtimeMode maybeClusterConfig userIdValue 240
+  case demoUserTopicDeletionRemaining result of
+    [] -> pure (demoUserTopicDeletionDeleted result)
+    remainingTopics ->
+      let Contracts.UserId userIdText = userIdValue
+       in ioError
+            ( userError
+                ( "failed to delete Pulsar demo topics for user "
+                    <> Text.unpack userIdText
+                    <> "; topics still present after retries: "
+                    <> Text.unpack (Text.intercalate ", " remainingTopics)
+                )
+            )
+
+deleteDemoUserTopicsWithAttemptBudget ::
+  Paths ->
+  RuntimeMode ->
+  Maybe ClusterConfig ->
+  Contracts.UserId ->
+  Int ->
+  IO DemoUserTopicDeletion
+deleteDemoUserTopicsWithAttemptBudget paths runtimeMode maybeClusterConfig userIdValue maxAttempts = do
+  maybeTransport <- discoverPulsarTransport paths runtimeMode maybeClusterConfig
+  case maybeTransport of
+    Nothing ->
+      ioError
+        ( userError
+            ( "Pulsar account cleanup is unavailable for "
+                <> Text.unpack (runtimeModeId runtimeMode)
+                <> "; no Pulsar transport could be discovered"
+            )
+        )
+    Just transport ->
+      deleteDemoUserTopicsViaPulsarWithAttemptBudget
+        transport
+        ConversationTopic.defaultDemoTopicNamespace
+        userIdValue
+        maxAttempts
+
+deleteDemoUserTopicsViaPulsarWithAttemptBudget ::
+  PulsarTransport ->
+  ConversationTopic.TopicNamespace ->
+  Contracts.UserId ->
+  Int ->
+  IO DemoUserTopicDeletion
+deleteDemoUserTopicsViaPulsarWithAttemptBudget transport namespaceValue userIdValue maxAttempts = do
+  adminBaseUrl <- requirePulsarAdminBaseUrl transport
+  manager <- newManager defaultManagerSettings
+  verifyDeleted manager adminBaseUrl 1 0 Set.empty
+  where
+    requiredEmptyChecks = 5 :: Int
+    retryDelayMicros = 250_000
+
+    verifyDeleted manager adminBaseUrl attempt emptyChecks deletedTopics = do
+      topics <- listNamespaceTopics manager adminBaseUrl namespaceValue
+      let userTopics =
+            filter
+              (ConversationTopic.topicBelongsToUser namespaceValue userIdValue)
+              topics
+      if null userTopics
+        then
+          if emptyChecks + 1 >= requiredEmptyChecks
+            then
+              pure
+                DemoUserTopicDeletion
+                  { demoUserTopicDeletionDeleted = Set.size deletedTopics,
+                    demoUserTopicDeletionRemaining = []
+                  }
+            else do
+              threadDelay retryDelayMicros
+              verifyDeleted manager adminBaseUrl (attempt + 1) (emptyChecks + 1) deletedTopics
+        else do
+          forM_ userTopics (deleteTopicViaPulsar manager adminBaseUrl)
+          let nextDeletedTopics = deletedTopics <> Set.fromList userTopics
+          if attempt >= maxAttempts
+            then
+              pure
+                DemoUserTopicDeletion
+                  { demoUserTopicDeletionDeleted = Set.size nextDeletedTopics,
+                    demoUserTopicDeletionRemaining = userTopics
+                  }
+            else do
+              threadDelay retryDelayMicros
+              verifyDeleted manager adminBaseUrl (attempt + 1) 0 nextDeletedTopics
+
 readRawTopicPayloadsViaPulsar :: PulsarTransport -> Text.Text -> Int -> IO [RawTopicMessage]
 readRawTopicPayloadsViaPulsar transport topic maxMessages = do
   topicRef <- requireTopicRef topic
@@ -1151,6 +1327,10 @@ writeServiceReadinessMarker paths = do
 schemaMarkerPath :: Paths -> Text.Text -> FilePath
 schemaMarkerPath paths topicValue =
   runtimeRoot paths </> "pulsar" </> "schemas" </> sanitizeTopic topicValue <.> "schema"
+
+pulsarAdminForwardUrlPath :: Paths -> FilePath
+pulsarAdminForwardUrlPath paths =
+  runtimeRoot paths </> "pulsar" </> "admin-forward-url"
 
 topicDirectoryPath :: Paths -> Text.Text -> FilePath
 topicDirectoryPath paths topicValue =
@@ -1302,14 +1482,31 @@ discoverAppleHostPulsarTransport paths = do
                     <> err
                 )
             )
-        Right websocketBase ->
+        Right websocketBase -> do
+          maybeForwardAdminBase <- readAppleHostPulsarAdminForwardUrl paths
           pure
             ( Just
                 PulsarTransport
-                  { pulsarAdminBaseUrl = Just ("http://127.0.0.1:" <> show edgePortValue <> "/pulsar/admin/admin/v2"),
+                  { pulsarAdminBaseUrl =
+                      Just
+                        ( fromMaybe
+                            ("http://127.0.0.1:" <> show edgePortValue <> "/pulsar/admin/admin/v2")
+                            maybeForwardAdminBase
+                        ),
                     pulsarWebSocketBase = websocketBase
                   }
             )
+
+readAppleHostPulsarAdminForwardUrl :: Paths -> IO (Maybe String)
+readAppleHostPulsarAdminForwardUrl paths = do
+  let forwardPath = pulsarAdminForwardUrlPath paths
+  forwardPresent <- doesFileExist forwardPath
+  if forwardPresent
+    then do
+      rawValue <- readFile forwardPath
+      let trimmedValue = trimWhitespacePulsar rawValue
+      pure (if null trimmedValue then Nothing else Just trimmedValue)
+    else pure Nothing
 
 ensureRegisteredSchemas :: Paths -> PulsarTransport -> DemoConfig -> IO ()
 ensureRegisteredSchemas paths transport demoConfig = do
@@ -1685,6 +1882,17 @@ topicCompactionUrl adminBaseUrl topicRef =
     <> Text.unpack (topicName topicRef)
     <> "/compaction"
 
+topicDeleteUrl :: String -> TopicRef -> String
+topicDeleteUrl adminBaseUrl topicRef =
+  trimTrailingSlash adminBaseUrl
+    <> "/persistent/"
+    <> Text.unpack (topicTenant topicRef)
+    <> "/"
+    <> Text.unpack (topicNamespace topicRef)
+    <> "/"
+    <> Text.unpack (topicName topicRef)
+    <> "?force=true"
+
 -- | Enable broker-side message deduplication on a namespace via the
 -- admin API. With this policy on, the broker tracks
 -- @(producerName, sequenceId)@ pairs and rejects duplicates. The
@@ -1740,6 +1948,24 @@ ensureNonPartitionedTopic manager adminBaseUrl topicValue = do
     ioError
       ( userError
           ( "failed to reconcile Pulsar topic "
+              <> Text.unpack topicValue
+              <> " (status "
+              <> show code
+              <> "):\n"
+              <> lazyBodyToString (responseBody response)
+          )
+      )
+
+deleteTopicViaPulsar :: Manager -> String -> Text.Text -> IO ()
+deleteTopicViaPulsar manager adminBaseUrl topicValue = do
+  topicRef <- requireTopicRef topicValue
+  deleteRequest <- parseRequest (topicDeleteUrl adminBaseUrl topicRef)
+  response <- httpLbs (deleteRequest {method = "DELETE"}) manager
+  let code = statusCode (responseStatus response)
+  unless (code `elem` [200, 204, 404]) $
+    ioError
+      ( userError
+          ( "failed to delete Pulsar topic "
               <> Text.unpack topicValue
               <> " (status "
               <> show code
@@ -2401,6 +2627,9 @@ startDispatcherWorkerIfNeeded transport runtimeMode requestTopic conversationTop
                   userIdValue
                   contextIdValue
                   contextModelMap
+                  `finally` modifyMVar_
+                    managedContexts
+                    (pure . Set.delete contextIdText)
               )
           )
         pure (Set.insert contextIdText alreadyStarted)
@@ -2429,6 +2658,9 @@ startContextsMetadataWorkerIfNeeded transport topicNamespace userIdValue managed
                   topicNamespace
                   userIdValue
                   contextModelMap
+                  `finally` modifyMVar_
+                    managedUsers
+                    (pure . Set.delete userIdText)
               )
           )
         pure (Set.insert userIdText alreadyStarted)
@@ -2461,23 +2693,9 @@ runContextsMetadataConsumer transport topicNamespace userIdValue contextModelMap
           (pulsarWebSocketBase transport)
           topicRef
           readerName
-  forever $ do
-    sessionResult <-
-      try @SomeException
-        ( runPulsarWebSocketClient (pulsarWebSocketBase transport) readerPath $ \connection ->
-            forever (handleContextsMetadataMessage contextModelMap connection)
-        )
-    case sessionResult of
-      Right _ -> threadDelay 1_000_000
-      Left err -> do
-        hPutStrLn
-          stderr
-          ( "contexts metadata session for "
-              <> Text.unpack topicUrl
-              <> " failed:\n"
-              <> displayException err
-          )
-        threadDelay 1_000_000
+  retryCoordinatorStream transport topicUrl ("contexts metadata session for " <> topicUrl) $
+    runPulsarWebSocketClient (pulsarWebSocketBase transport) readerPath $ \connection ->
+      forever (handleContextsMetadataMessage contextModelMap connection)
 
 handleContextsMetadataMessage ::
   ContextModelMap ->
@@ -2538,33 +2756,19 @@ runDispatcherForContext transport runtimeMode requestTopic conversationTopic use
           topicRef
           (Text.unpack subscriptionName)
           (Text.unpack consumerName)
-  forever $ do
-    sessionResult <-
-      try @SomeException
-        ( runPulsarWebSocketClient (pulsarWebSocketBase transport) consumerPath $ \connection ->
-            forever
-              ( handleDispatcherMessage
-                  transport
-                  runtimeMode
-                  requestTopic
-                  userIdValue
-                  contextIdValue
-                  reducerStateRef
-                  contextModelMap
-                  connection
-              )
+  retryCoordinatorStream transport conversationTopic ("dispatcher session for " <> conversationTopic) $
+    runPulsarWebSocketClient (pulsarWebSocketBase transport) consumerPath $ \connection ->
+      forever
+        ( handleDispatcherMessage
+            transport
+            runtimeMode
+            requestTopic
+            userIdValue
+            contextIdValue
+            reducerStateRef
+            contextModelMap
+            connection
         )
-    case sessionResult of
-      Right _ -> threadDelay 1_000_000
-      Left err -> do
-        hPutStrLn
-          stderr
-          ( "dispatcher session for "
-              <> Text.unpack conversationTopic
-              <> " failed:\n"
-              <> displayException err
-          )
-        threadDelay 1_000_000
 
 handleDispatcherMessage ::
   PulsarTransport ->

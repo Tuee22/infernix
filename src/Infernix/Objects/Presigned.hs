@@ -8,7 +8,9 @@ module Infernix.Objects.Presigned
     HttpMethod (..),
     PresignedUrl (..),
     presignedUrlForRequest,
+    presignedUrlForRequestWithQuery,
     presignedBucketUrl,
+    presignedBucketUrlWithQuery,
     presignedPutUrl,
     presignedGetUrl,
     isoExpiryFor,
@@ -50,11 +52,12 @@ data PresignedUrlConfig = PresignedUrlConfig
   }
   deriving (Eq, Show)
 
-data HttpMethod = HttpGet | HttpPut deriving (Eq, Show)
+data HttpMethod = HttpGet | HttpPut | HttpDelete deriving (Eq, Show)
 
 httpMethodText :: HttpMethod -> Text
 httpMethodText HttpGet = "GET"
 httpMethodText HttpPut = "PUT"
+httpMethodText HttpDelete = "DELETE"
 
 -- | A presigned URL request scoped to a single @ObjectRef@.
 data PresignedRequest = PresignedRequest
@@ -88,15 +91,23 @@ newtype PresignedUrl = PresignedUrl {unPresignedUrl :: Text}
 -- appended as the @X-Amz-Signature@ query parameter.
 presignedUrlForRequest :: PresignedUrlConfig -> PresignedRequest -> PresignedUrl
 presignedUrlForRequest config request =
+  presignedUrlForRequestWithQuery config request []
+
+presignedUrlForRequestWithQuery :: PresignedUrlConfig -> PresignedRequest -> [(Text, Text)] -> PresignedUrl
+presignedUrlForRequestWithQuery config request extraQuery =
   let method = httpMethodText (presignedRequestMethod request)
       object = presignedRequestObject request
       bucket = objectBucket object
       key = objectKey object
       canonicalPath = "/" <> bucket <> "/" <> key
-   in presignedS3Url config method canonicalPath (presignedRequestNow request)
+   in presignedS3Url config method canonicalPath (presignedRequestNow request) extraQuery
 
 presignedBucketUrl :: PresignedUrlConfig -> PresignedBucketRequest -> PresignedUrl
 presignedBucketUrl config request =
+  presignedBucketUrlWithQuery config request []
+
+presignedBucketUrlWithQuery :: PresignedUrlConfig -> PresignedBucketRequest -> [(Text, Text)] -> PresignedUrl
+presignedBucketUrlWithQuery config request =
   presignedS3Url
     config
     (httpMethodText (presignedBucketRequestMethod request))
@@ -132,8 +143,8 @@ isoExpiryFor config now =
       expiresAt = addUTCTime (realToFrac expiry) now
    in Text.pack (formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%SZ" expiresAt)
 
-presignedS3Url :: PresignedUrlConfig -> Text -> Text -> UTCTime -> PresignedUrl
-presignedS3Url config method canonicalPath now =
+presignedS3Url :: PresignedUrlConfig -> Text -> Text -> UTCTime -> [(Text, Text)] -> PresignedUrl
+presignedS3Url config method canonicalPath now extraQuery =
   let host = presignedEndpoint config
       region = presignedRegion config
       service = "s3" :: Text
@@ -147,13 +158,15 @@ presignedS3Url config method canonicalPath now =
       signedHeaders = "host" :: Text
       queryParams =
         sort
-          [ ("X-Amz-Algorithm", "AWS4-HMAC-SHA256"),
-            ("X-Amz-Credential", credential),
-            ("X-Amz-Date", amzDate),
-            ("X-Amz-Expires", Text.pack (show expiry)),
-            ("X-Amz-SignedHeaders", signedHeaders)
-          ]
-      canonicalQuery = Text.intercalate "&" [k <> "=" <> uriEncode v | (k, v) <- queryParams]
+          ( extraQuery
+              <> [ ("X-Amz-Algorithm", "AWS4-HMAC-SHA256"),
+                   ("X-Amz-Credential", credential),
+                   ("X-Amz-Date", amzDate),
+                   ("X-Amz-Expires", Text.pack (show expiry)),
+                   ("X-Amz-SignedHeaders", signedHeaders)
+                 ]
+          )
+      canonicalQuery = Text.intercalate "&" [uriEncode k <> "=" <> uriEncode v | (k, v) <- queryParams]
       canonicalRequest =
         Text.intercalate
           "\n"

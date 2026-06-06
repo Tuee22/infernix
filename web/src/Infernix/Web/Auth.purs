@@ -28,6 +28,8 @@ module Infernix.Web.Auth
   , writeToken
   , clearToken
   , beginLoginRedirect
+  , beginRegisterRedirect
+  , beginDeleteAccountRedirect
   , completeRedirect
   , clearBrowserAuthSession
   ) where
@@ -74,6 +76,17 @@ clearToken (TokenStore ref) = Ref.write Nothing ref
 beginLoginRedirect :: RealmConfig -> Effect Unit
 beginLoginRedirect = beginLoginRedirectImpl
 
+-- | Like 'beginLoginRedirect', but starts at Keycloak's OIDC
+-- | registration endpoint so the user lands directly on the
+-- | registration form instead of the login form.
+beginRegisterRedirect :: RealmConfig -> Effect Unit
+beginRegisterRedirect = beginRegisterRedirectImpl
+
+-- | Reap demo-owned account state through the backend before starting
+-- | Keycloak's account-deletion Application Initiated Action.
+beginDeleteAccountRedirect :: RealmConfig -> String -> (String -> Effect Unit) -> Effect Unit
+beginDeleteAccountRedirect = beginDeleteAccountRedirectImpl
+
 -- | Inspect the current page URL for an authorization-code redirect
 -- | parameter and, when present, exchange it for an access token. The
 -- | exchange is browser-async, so the caller supplies a callback that
@@ -85,6 +98,14 @@ completeRedirect store config onToken =
     onToken token
 
 foreign import beginLoginRedirectImpl :: RealmConfig -> Effect Unit
+
+foreign import beginRegisterRedirectImpl :: RealmConfig -> Effect Unit
+
+foreign import beginDeleteAccountRedirectImpl
+  :: RealmConfig
+  -> String
+  -> (String -> Effect Unit)
+  -> Effect Unit
 
 foreign import completeRedirectImpl
   :: RealmConfig

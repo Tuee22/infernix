@@ -1158,11 +1158,29 @@ assertConversationPrimitives = do
     (ConversationTopic.conversationTopicName ns userId contextId == "persistent://infernix/demo/demo.conversation.u-1.c-1")
     "conversation topic naming follows persistent://infernix/demo/demo.conversation.<userId>.<contextId>"
   assert
+    (ConversationTopic.conversationTopicPrefix ns userId == "persistent://infernix/demo/demo.conversation.u-1.")
+    "conversation topic prefix is scoped to one user id plus a delimiter"
+  assert
     (ConversationTopic.contextsMetadataTopicName ns userId == "persistent://infernix/demo/demo.user.u-1.contexts")
     "compacted contexts metadata topic follows the supported tenant/namespace layout"
   assert
     (ConversationTopic.draftsMetadataTopicName ns userId == "persistent://infernix/demo/demo.user.u-1.drafts")
     "compacted drafts metadata topic follows the supported tenant/namespace layout"
+  assert
+    (ConversationTopic.topicBelongsToUser ns userId (ConversationTopic.contextsMetadataTopicName ns userId))
+    "user topic predicate admits the caller's contexts metadata topic"
+  assert
+    (ConversationTopic.topicBelongsToUser ns userId (ConversationTopic.draftsMetadataTopicName ns userId))
+    "user topic predicate admits the caller's drafts metadata topic"
+  assert
+    (ConversationTopic.topicBelongsToUser ns userId (ConversationTopic.conversationTopicName ns userId contextId))
+    "user topic predicate admits the caller's conversation topic"
+  assert
+    (not (ConversationTopic.topicBelongsToUser ns userId (ConversationTopic.conversationTopicName ns (Contracts.UserId "u-10") contextId)))
+    "user topic predicate does not treat u-10 as belonging to u-1"
+  assert
+    (not (ConversationTopic.topicBelongsToUser ns userId (ConversationTopic.inferenceRequestTopicName ns "linux-cpu")))
+    "user topic predicate rejects shared inference topics"
   assert
     (ConversationTopic.inferenceRequestTopicName ns "linux-cpu" == "persistent://infernix/demo/inference.request.linux-cpu")
     "inference request topic naming uses the supported demo namespace"
@@ -1761,12 +1779,40 @@ assertObjectsLayoutAndPresigning = do
   assert
     ("X-Amz-Signature=" `Text.isInfixOf` ObjPresigned.unPresignedUrl bucketUrl)
     "bucket-level presigned URL carries the X-Amz-Signature query parameter"
+  let listUrl =
+        ObjPresigned.presignedBucketUrlWithQuery
+          cfg
+          ObjPresigned.PresignedBucketRequest
+            { ObjPresigned.presignedBucketRequestMethod = ObjPresigned.HttpGet,
+              ObjPresigned.presignedBucketRequestBucket = "infernix-demo-objects",
+              ObjPresigned.presignedBucketRequestNow = fixedNow
+            }
+          [ ("list-type", "2"),
+            ("prefix", "users/alice/")
+          ]
+  assert
+    ("list-type=2" `Text.isInfixOf` ObjPresigned.unPresignedUrl listUrl)
+    "bucket-level presigned URL can sign the S3 ListObjectsV2 query"
+  assert
+    ("prefix=users%2Falice%2F" `Text.isInfixOf` ObjPresigned.unPresignedUrl listUrl)
+    "bucket-level presigned URL URI-encodes signed query values"
 
   -- Different method -> different signature
   let getUrl = ObjPresigned.presignedGetUrl cfg fixedNow upload
+      deleteUrl =
+        ObjPresigned.presignedUrlForRequest
+          cfg
+          ObjPresigned.PresignedRequest
+            { ObjPresigned.presignedRequestMethod = ObjPresigned.HttpDelete,
+              ObjPresigned.presignedRequestObject = upload,
+              ObjPresigned.presignedRequestNow = fixedNow
+            }
   assert
     (ObjPresigned.unPresignedUrl url1 /= ObjPresigned.unPresignedUrl getUrl)
     "presigned URL for PUT differs from presigned URL for GET on the same object"
+  assert
+    (ObjPresigned.unPresignedUrl deleteUrl /= ObjPresigned.unPresignedUrl getUrl)
+    "presigned URL for DELETE differs from presigned URL for GET on the same object"
 
   -- Different object -> different signature
   let otherObject = ObjLayout.uploadObjectKey alice ctx "different.png"

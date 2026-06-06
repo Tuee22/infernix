@@ -224,7 +224,7 @@ scope.
 | 4 | Inference Service and Durable Runtime | Done (Sprints 4.1-4.14 closed with mounted `ClusterConfig` / `SecretsConfig` runtime path validated by Apple Wave A and CUDA Linux Wave C) | [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) |
 | 5 | Web UI and Shared Types | Done (Sprints 5.1-5.10 closed with demo backend, Python adapter, and web/Node no-env-var path validated by Apple Wave A/A.2 and CUDA Linux Wave C) | [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md) |
 | 6 | Validation, E2E, and HA Hardening | Done (Sprints 6.1-6.30 closed with lint/style/unit/integration/e2e, no-env-var gates, and single `ghc-9.12.4` toolchain validation) | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) |
-| 7 | Demo App Multi-User Durable Context | Done (Sprints 7.1-7.18 closed with Apple gates in Waves A/A.1/A.2/A.3 and CUDA Linux Wave C; runtime KV-cache path and `Infernix.Runtime.Daemon` split implemented) | [phase-7-demo-app-durable-context.md](phase-7-demo-app-durable-context.md) |
+| 7 | Demo App Multi-User Durable Context | Done (Sprints 7.1-7.18 closed with Apple gates in Waves A/A.1/A.2/A.3 and CUDA Linux Wave C; Sprints 7.19-7.22 auth-UX closure passed Wave G on the Apple host-native routed E2E lane) | [phase-7-demo-app-durable-context.md](phase-7-demo-app-durable-context.md) |
 
 > **Note**: Phase statuses describe current repository state. Earlier governed phases may remain
 > `Active` or `Blocked` for named follow-ons while later phases can be `Done` when their owned work

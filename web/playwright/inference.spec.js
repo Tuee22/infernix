@@ -49,7 +49,7 @@ test("routed edge surfaces the SPA + the published platform state", async ({ pag
   expect(routedModels).toEqual(demoConfig.models);
 
   await page.goto(baseUrl);
-  await expect(page.locator("h1")).toHaveText("Infernix");
+  await expect(page.locator(".app-landing h1, .app-header h1").first()).toHaveText("Infernix");
 });
 
 test("routed keycloak auth supports self-registration without email verification", async ({ page, infernixFixture }) => {
@@ -64,6 +64,37 @@ test("routed keycloak auth supports self-registration without email verification
   expect(registration.code).toBeTruthy();
 });
 
+test("pre-auth landing exposes sign-in and create-account entry points", async ({ page, infernixFixture }) => {
+  test.setTimeout(90000);
+  const fixture = infernixFixture;
+  expect(fixture?.host).toBeTruthy();
+  expect(fixture?.edgePort).toBeTruthy();
+  const baseUrl = `http://${fixture.host}:${fixture.edgePort}`;
+
+  await page.goto(baseUrl);
+  await expect(page.locator("body")).toHaveClass("auth-signed-out");
+  await expect(page.locator(".app-landing")).toBeVisible();
+  await expect(page.locator(".app-shell")).toBeHidden();
+  await expect(page.locator(".operator-ribbon")).toBeHidden();
+  await expect(page.locator(".app-landing h1")).toHaveText("Infernix");
+  await expect(page.locator(".app-landing-actions button")).toHaveCount(2);
+  await expect(page.locator("#login-button")).toHaveText("Sign in");
+  await expect(page.locator("#register-button")).toHaveText("Create account");
+
+  await page.locator("#login-button").click();
+  await expect(page.locator("#username, input[name='username']").first()).toBeVisible({ timeout: 60000 });
+  await expect(page.getByText("Sign in to Infernix")).toBeVisible();
+  await expect(page.locator("#kc-registration a")).toBeVisible();
+  await expect(page.locator("#kc-register-form, form[action*='registration']")).toHaveCount(0);
+
+  await page.goto(baseUrl);
+  await expect(page.locator("body")).toHaveClass("auth-signed-out");
+  await page.locator("#register-button").click();
+  await expect(page.locator("#kc-register-form, form[action*='registration'], form[action*='registrations']")).toBeVisible({ timeout: 60000 });
+  await expect(page.getByText("Create your Infernix account")).toBeVisible();
+  expect(page.url()).toContain("/auth/realms/infernix/");
+});
+
 test("browser auth lifecycle covers logout re-login and token refresh", async ({ page, infernixFixture }) => {
   test.setTimeout(120000);
   const fixture = infernixFixture;
@@ -76,14 +107,17 @@ test("browser auth lifecycle covers logout re-login and token refresh", async ({
   await page.locator("#login-button").click();
   const credentials = await submitFreshRegistrationForm(page, baseUrl);
   await expect(page.locator("#connection-state")).toHaveText("Authenticated", { timeout: 60000 });
+  await expectOperatorRibbon(page);
   await waitForSentFrame(wsFrames, (frame) => frame.tag === "ClientHello");
   await waitForReceivedFrame(wsFrames, (frame) => frame.tag === "ServerContextListSnapshot");
   const firstToken = await browserAccessToken(page);
   expect(firstToken).toBeTruthy();
+  expect(await browserCookieValue(page, baseUrl, "infernix_operator_token")).toBe(firstToken);
 
   await page.locator("#logout-button").click();
   await expect(page.locator("#connection-state")).toHaveText("Signed out");
   expect(await browserAccessToken(page)).toBe("");
+  expect(await browserCookieValue(page, baseUrl, "infernix_operator_token")).toBe("");
 
   const reloginStartIndex = wsFrames.sent.length;
   await page.locator("#login-button").click();
@@ -92,6 +126,7 @@ test("browser auth lifecycle covers logout re-login and token refresh", async ({
   await waitForSentFrameAfter(wsFrames, reloginStartIndex, (frame) => frame.tag === "ClientHello");
   const reloginToken = await browserAccessToken(page);
   expect(reloginToken).toBeTruthy();
+  expect(await browserCookieValue(page, baseUrl, "infernix_operator_token")).toBe(reloginToken);
 
   const refreshSentStartIndex = wsFrames.sent.length;
   const refreshReceivedStartIndex = wsFrames.received.length;
@@ -103,6 +138,7 @@ test("browser auth lifecycle covers logout re-login and token refresh", async ({
   });
   expect(refreshedToken).toBeTruthy();
   await expect.poll(() => browserAccessToken(page), { timeout: 60000 }).toBe(refreshedToken);
+  await expect.poll(() => browserCookieValue(page, baseUrl, "infernix_operator_token"), { timeout: 60000 }).toBe(refreshedToken);
   await waitForSentFrameAfter(wsFrames, refreshSentStartIndex, (frame) => frame.tag === "ClientHello");
   await waitForReceivedFrameAfter(wsFrames, refreshReceivedStartIndex, (frame) => frame.tag === "ServerDraftMapSnapshot");
 });
@@ -117,6 +153,10 @@ test("routed WebSocket validates JWTs and reports malformed frames", async ({ pa
   const tokenPayload = await exchangeRegistrationCodeForToken(request, baseUrl, registration);
   const accessToken = tokenPayload.access_token;
   expect(accessToken).toBeTruthy();
+
+  await expectJwtGatedOperatorRoute(request, `${baseUrl}/harbor`, accessToken);
+  await expectJwtGatedOperatorRoute(request, `${baseUrl}/pulsar/admin/admin/v2/clusters`, accessToken);
+  await expectJwtGatedOperatorRoute(request, `${baseUrl}/minio/s3`, accessToken);
 
   const validResult = await probeWebSocket(page, websocketUrl(baseUrl, accessToken));
   expect(validResult.opened).toBe(true);
@@ -196,7 +236,10 @@ test("routed object grants isolate users by Keycloak subject", async ({ page, br
 
   const objectBody = `hello from ${contextId}\n`;
   const putObjectResponse = await request.put(uploadGrant.artifactUploadGrantPresignedUrl, {
-    headers: { "Content-Type": "text/plain" },
+    headers: {
+      "Content-Type": "text/plain",
+      Cookie: operatorTokenCookieHeader(accessToken),
+    },
     data: objectBody,
   });
   expect(putObjectResponse.ok()).toBeTruthy();
@@ -212,7 +255,9 @@ test("routed object grants isolate users by Keycloak subject", async ({ page, br
   expect(renderDispositionTag(downloadGrant)).toBe("BoundedTextPreview");
   expect(downloadGrant.artifactDownloadGrantPresignedUrl).toContain("/minio/s3/infernix-demo-objects/");
 
-  const getObjectResponse = await request.get(downloadGrant.artifactDownloadGrantPresignedUrl);
+  const getObjectResponse = await request.get(downloadGrant.artifactDownloadGrantPresignedUrl, {
+    headers: { Cookie: operatorTokenCookieHeader(accessToken) },
+  });
   expect(getObjectResponse.ok()).toBeTruthy();
   expect(await getObjectResponse.text()).toBe(objectBody);
 
@@ -266,7 +311,9 @@ test("routed object grants isolate users by Keycloak subject", async ({ page, br
     expect(secondDownloadGrant.artifactDownloadGrantObjectRef.objectKey).toBe(`users/${secondClaims.sub}/contexts/${contextId}/uploads/${displayName}`);
     expect(secondDownloadGrant.artifactDownloadGrantObjectRef.objectKey).not.toBe(uploadGrant.artifactUploadGrantObjectRef.objectKey);
 
-    const secondMissingObjectResponse = await request.get(secondDownloadGrant.artifactDownloadGrantPresignedUrl);
+    const secondMissingObjectResponse = await request.get(secondDownloadGrant.artifactDownloadGrantPresignedUrl, {
+      headers: { Cookie: operatorTokenCookieHeader(secondAccessToken) },
+    });
     expect(secondMissingObjectResponse.status()).toBe(404);
 
     const secondUploadGrantResponse = await request.post(`${baseUrl}/api/objects/upload`, {
@@ -279,21 +326,151 @@ test("routed object grants isolate users by Keycloak subject", async ({ page, br
 
     const secondObjectBody = `hello from ${contextId} as ${secondClaims.sub}\n`;
     const secondPutObjectResponse = await request.put(secondUploadGrant.artifactUploadGrantPresignedUrl, {
-      headers: { "Content-Type": "text/plain" },
+      headers: {
+        "Content-Type": "text/plain",
+        Cookie: operatorTokenCookieHeader(secondAccessToken),
+      },
       data: secondObjectBody,
     });
     expect(secondPutObjectResponse.ok()).toBeTruthy();
 
-    const secondReadableObjectResponse = await request.get(secondDownloadGrant.artifactDownloadGrantPresignedUrl);
+    const secondReadableObjectResponse = await request.get(secondDownloadGrant.artifactDownloadGrantPresignedUrl, {
+      headers: { Cookie: operatorTokenCookieHeader(secondAccessToken) },
+    });
     expect(secondReadableObjectResponse.ok()).toBeTruthy();
     expect(await secondReadableObjectResponse.text()).toBe(secondObjectBody);
 
-    const firstObjectStillReadableResponse = await request.get(downloadGrant.artifactDownloadGrantPresignedUrl);
+    const firstObjectStillReadableResponse = await request.get(downloadGrant.artifactDownloadGrantPresignedUrl, {
+      headers: { Cookie: operatorTokenCookieHeader(accessToken) },
+    });
     expect(firstObjectStillReadableResponse.ok()).toBeTruthy();
     expect(await firstObjectStillReadableResponse.text()).toBe(objectBody);
   } finally {
     await secondContext.close();
   }
+});
+
+test("self-service account deletion reaps demo state before Keycloak account action", async ({ page, request, infernixFixture }) => {
+  test.setTimeout(180000);
+  const fixture = infernixFixture;
+  expect(fixture?.host).toBeTruthy();
+  expect(fixture?.edgePort).toBeTruthy();
+  const baseUrl = `http://${fixture.host}:${fixture.edgePort}`;
+  const wsFrames = collectWebSocketFrames(page);
+
+  const unauthenticatedDelete = await request.delete(`${baseUrl}/api/account`);
+  expect(unauthenticatedDelete.status()).toBe(401);
+
+  page.on("dialog", async (dialog) => {
+    expect(dialog.message()).toContain("Delete this account");
+    await dialog.accept();
+  });
+
+  await page.goto(baseUrl);
+  await page.locator("#login-button").click();
+  await submitFreshRegistrationForm(page, baseUrl);
+  await expect(page.locator("#connection-state")).toHaveText("Authenticated", { timeout: 60000 });
+  await expect(page.locator("#delete-account-button")).toBeVisible();
+  await waitForSentFrame(wsFrames, (frame) => frame.tag === "ClientHello");
+  await waitForReceivedFrame(wsFrames, (frame) => frame.tag === "ServerContextListSnapshot");
+  await waitForReceivedFrame(wsFrames, (frame) => frame.tag === "ServerDraftMapSnapshot");
+  await expect(page.locator("#catalog-count")).not.toHaveText("0", { timeout: 60000 });
+
+  const accessToken = await browserAccessToken(page);
+  expect(accessToken).toBeTruthy();
+  const claims = decodeJwtPayload(accessToken);
+  expect(claims.sub).toBeTruthy();
+
+  await page.locator("[data-role='open-new-context']").click();
+  await expect(page.locator("[data-role='new-context-dialog']")).toBeVisible();
+  await selectFirstSupportedModel(page);
+  const createContextSentStartIndex = wsFrames.sent.length;
+  await page.locator("[data-role='create-context']").click();
+  const createContextFrame = await waitForSentFrameAfter(
+    wsFrames,
+    createContextSentStartIndex,
+    (frame) => frame.tag === "ClientCreateContext",
+  );
+  const contextId = createContextFrame.clientCreateContextId;
+  await waitForReceivedFrame(
+    wsFrames,
+    (frame) => frame.tag === "ServerContextListPatch" && JSON.stringify(frame).includes(contextId),
+  );
+
+  const draftReceivedStartIndex = wsFrames.received.length;
+  const draftText = `account deletion draft ${randomUUID()}`;
+  await fillDraftAndWaitForUpdate(page, wsFrames, wsFrames.sent.length, contextId, draftText);
+  await waitForReceivedFrameAfter(
+    wsFrames,
+    draftReceivedStartIndex,
+    (frame) => frame.tag === "ServerDraftMapPatch" && JSON.stringify(frame).includes(draftText),
+  );
+
+  const displayName = `account-delete-${randomUUID()}.txt`;
+  const grantRequest = {
+    artifactUploadRequestContextId: contextId,
+    artifactUploadRequestMimeType: "text/plain",
+    artifactUploadRequestDisplayName: displayName,
+  };
+  const uploadGrantResponse = await request.post(`${baseUrl}/api/objects/upload`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+    data: grantRequest,
+  });
+  expect(uploadGrantResponse.ok()).toBeTruthy();
+  const uploadGrant = await uploadGrantResponse.json();
+  const objectBody = `delete me ${randomUUID()}\n`;
+  const putObjectResponse = await request.put(uploadGrant.artifactUploadGrantPresignedUrl, {
+    headers: {
+      "Content-Type": "text/plain",
+      Cookie: operatorTokenCookieHeader(accessToken),
+    },
+    data: objectBody,
+  });
+  expect(putObjectResponse.ok()).toBeTruthy();
+  const downloadGrantResponse = await request.post(`${baseUrl}/api/objects/download`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+    data: grantRequest,
+  });
+  expect(downloadGrantResponse.ok()).toBeTruthy();
+  const downloadGrant = await downloadGrantResponse.json();
+  const readableBeforeDelete = await request.get(downloadGrant.artifactDownloadGrantPresignedUrl, {
+    headers: { Cookie: operatorTokenCookieHeader(accessToken) },
+  });
+  expect(readableBeforeDelete.ok()).toBeTruthy();
+  expect(await readableBeforeDelete.text()).toBe(objectBody);
+
+  await expect
+    .poll(async () => {
+      const topics = await listDemoTopics(request, baseUrl, accessToken);
+      return topics.filter((topic) => topic.includes(claims.sub)).length;
+    }, { timeout: 60000 })
+    .toBeGreaterThan(0);
+
+  const deleteResponsePromise = page.waitForResponse(
+    (response) => response.url() === `${baseUrl}/api/account` && response.request().method() === "DELETE",
+  );
+  const deleteActionRequestPromise = page.waitForRequest(
+    (requestValue) =>
+      requestValue.url().includes("/protocol/openid-connect/auth") &&
+      requestValue.url().includes("kc_action=delete_account"),
+  );
+  await page.locator("#delete-account-button").click();
+  const deleteResponse = await deleteResponsePromise;
+  expect(deleteResponse.ok()).toBeTruthy();
+  const deleteActionRequest = await deleteActionRequestPromise;
+  expect(new URL(deleteActionRequest.url()).searchParams.get("kc_action")).toBe("delete_account");
+
+  const missingAfterDelete = await request.get(downloadGrant.artifactDownloadGrantPresignedUrl, {
+    headers: { Cookie: operatorTokenCookieHeader(accessToken) },
+  });
+  expect(missingAfterDelete.status()).toBe(404);
+
+  await expect
+    .poll(async () => {
+      const topics = await listDemoTopics(request, baseUrl, accessToken);
+      return topics.filter((topic) => topic.includes(claims.sub)).length;
+    }, { timeout: 60000 })
+    .toBe(0);
 });
 
 test("browser artifact upload covers preview media PDF and download-only grants", async ({ page, infernixFixture }) => {
@@ -630,12 +807,20 @@ test("browser artifact upload covers preview media PDF and download-only grants"
 
   const postReconnectPrompt = `continue after websocket reconnect ${randomUUID()}`;
   const postReconnectSentStartIndex = wsFrames.sent.length;
-  const postReconnectReceivedStartIndex = wsFrames.received.length;
-  await page.locator("textarea[name='prompt']").fill(postReconnectPrompt);
-  await page.locator("form[data-role='chat-draft-editor']").evaluate((form) => form.requestSubmit());
-  await waitForSentFrameAfter(
+  await fillDraftAndWaitForUpdate(
+    page,
     wsFrames,
     postReconnectSentStartIndex,
+    subscribeFrame.clientSubscribeContextId,
+    postReconnectPrompt,
+    60000,
+  );
+  const postReconnectSubmitStartIndex = wsFrames.sent.length;
+  const postReconnectReceivedStartIndex = wsFrames.received.length;
+  await page.locator("form[data-role='chat-draft-editor'] button[type='submit']").click();
+  await waitForSentFrameAfter(
+    wsFrames,
+    postReconnectSubmitStartIndex,
     (frame) => frame.tag === "ClientSubmitPrompt" && frame.clientSubmitPromptPayload?.promptText === postReconnectPrompt,
   );
   await waitForReceivedFrameAfter(
@@ -1162,8 +1347,43 @@ async function completeLoginPromptIfPresent(page, credentials) {
   }
 }
 
+async function expectOperatorRibbon(page) {
+  const ribbon = page.locator(".operator-ribbon");
+  await expect(ribbon).toBeVisible();
+  await expect(ribbon.locator("[data-operator-route='/harbor']")).toHaveAttribute("href", "/harbor");
+  await expect(ribbon.locator("[data-operator-route='/pulsar/admin']")).toHaveAttribute("href", "/pulsar/admin/admin/v2/clusters");
+  await expect(ribbon.locator("[data-operator-route='/minio/s3']")).toHaveAttribute("href", "/minio/s3");
+}
+
 async function browserAccessToken(page) {
   return page.evaluate(() => window.__infernixAccessToken || "");
+}
+
+async function browserCookieValue(page, baseUrl, name) {
+  const cookies = await page.context().cookies(baseUrl);
+  return cookies.find((cookie) => cookie.name === name)?.value || "";
+}
+
+function operatorTokenCookieHeader(accessToken) {
+  return `infernix_operator_token=${accessToken}`;
+}
+
+async function expectJwtGatedOperatorRoute(request, url, accessToken) {
+  const unauthenticated = await request.get(url);
+  expect(unauthenticated.status()).toBe(401);
+
+  const authenticated = await request.get(url, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  expect(authenticated.status()).not.toBe(401);
+}
+
+async function listDemoTopics(request, baseUrl, accessToken) {
+  const response = await request.get(`${baseUrl}/pulsar/admin/admin/v2/persistent/infernix/demo`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  expect(response.ok()).toBeTruthy();
+  return response.json();
 }
 
 async function exchangeRegistrationCodeForToken(request, baseUrl, registration) {

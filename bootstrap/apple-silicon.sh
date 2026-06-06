@@ -21,20 +21,23 @@ Usage:
   ${SCRIPT_LABEL} doctor
   ${SCRIPT_LABEL} build
   ${SCRIPT_LABEL} up
+  ${SCRIPT_LABEL} run-daemon
   ${SCRIPT_LABEL} status
   ${SCRIPT_LABEL} test
   ${SCRIPT_LABEL} down
   ${SCRIPT_LABEL} purge
 
 Commands:
-  help    Show this help text.
-  doctor  Ensure Homebrew, ghcup, GHC ${APPLE_GHC_VERSION}, Cabal ${APPLE_CABAL_VERSION}, and \`protoc\`.
-  build   Ensure prerequisites and build both host binaries under ./.build/.
-  up      Ensure prerequisites, build the host binary, and run \`cluster up\`.
-  status  Show \`cluster status\`.
-  test    Run \`./.build/infernix test all\`.
-  down    Run \`cluster down\` while preserving durable repo-local state under ./.data/.
-  purge   Compatibility alias for \`down\`; preserves build output, data, images, and prerequisites.
+  help        Show this help text.
+  doctor      Ensure Homebrew, ghcup, GHC ${APPLE_GHC_VERSION}, Cabal ${APPLE_CABAL_VERSION}, and \`protoc\`.
+  build       Ensure prerequisites and build both host binaries under ./.build/.
+  up          Ensure prerequisites, build the host binary, and run \`cluster up\`.
+  run-daemon  Run the on-host \`infernix service\` engine daemon in the foreground; required for
+              inference on Apple Silicon after \`up\` and not spawned by \`up\` itself.
+  status      Show \`cluster status\`.
+  test        Run \`./.build/infernix test all\`.
+  down        Run \`cluster down\` while preserving durable repo-local state under ./.data/.
+  purge       Compatibility alias for \`down\`; preserves build output, data, images, and prerequisites.
 
 This script is safe to re-run. It prefers the supported Apple Silicon path:
 Homebrew + ghcup + direct host-native \`./.build/infernix\`, while reconciling build-time
@@ -49,6 +52,7 @@ Available Apple Silicon commands:
   ${SCRIPT_LABEL} doctor
   ${SCRIPT_LABEL} build
   ${SCRIPT_LABEL} up
+  ${SCRIPT_LABEL} run-daemon
   ${SCRIPT_LABEL} status
   ${SCRIPT_LABEL} test
   ${SCRIPT_LABEL} down
@@ -57,6 +61,7 @@ Available Apple Silicon commands:
 Direct reference commands:
   cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes
   ./.build/infernix cluster up
+  ./.build/infernix service
   ./.build/infernix cluster status
   ./.build/infernix test all
   ./.build/infernix cluster down
@@ -163,6 +168,11 @@ command_up() {
   bootstrap::run ./.build/infernix cluster up
 }
 
+command_run_daemon() {
+  ensure_launcher_ready
+  bootstrap::run ./.build/infernix service
+}
+
 command_status() {
   ensure_launcher_ready
   bootstrap::run ./.build/infernix cluster status
@@ -191,6 +201,7 @@ main() {
     doctor) command_doctor ;;
     build) command_build ;;
     up) command_up ;;
+    run-daemon) command_run_daemon ;;
     status) command_status ;;
     test) command_test ;;
     down) command_down ;;

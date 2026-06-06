@@ -22,7 +22,9 @@ requiredFiles =
     "chart/templates/gateway.yaml",
     "chart/templates/gatewayclass.yaml",
     "chart/templates/httproutes.yaml",
+    "chart/templates/keycloak/configmap-theme.yaml",
     "chart/templates/runtimeclass-nvidia.yaml",
+    "chart/templates/securitypolicy-operator-routes.yaml",
     "chart/templates/service-demo.yaml",
     -- Phase 3 Sprint 3.11 (2026-05-29): hand-authored MinIO
     -- templates replacing the retired bitnami sub-chart.
@@ -51,6 +53,9 @@ requiredPhrases =
         "gateway:",
         "repoGateway:",
         "routes:",
+        "operatorConsole:",
+        "keycloak:",
+        "theme:",
         "demo:",
         "enabled:",
         "catalogPayload:",
@@ -188,7 +193,38 @@ requiredPhrases =
     ( "chart/templates/runtimeclass-nvidia.yaml",
       ["RuntimeClass", "name: nvidia", "handler: nvidia", ".Values.runtimeMode", "linux-gpu"]
     ),
-    ("chart/templates/service-demo.yaml", [".Values.demo.enabled", "name: infernix-demo", "targetPort: {{ .Values.demo.port }}"])
+    ("chart/templates/service-demo.yaml", [".Values.demo.enabled", "name: infernix-demo", "targetPort: {{ .Values.demo.port }}"]),
+    ( "chart/templates/keycloak/configmap-theme.yaml",
+      [ "name: infernix-keycloak-theme",
+        "theme.properties:",
+        "parent=keycloak.v2",
+        "messages_en.properties:",
+        "loginAccountTitle=Sign in to Infernix",
+        "infernix.css:"
+      ]
+    ),
+    ( "chart/templates/keycloak/deployment.yaml",
+      [ "name: infernix-keycloak",
+        "--import-realm",
+        "--http-relative-path=/auth",
+        "name: login-theme",
+        "mountPath: /opt/keycloak/themes/{{ .Values.keycloak.theme.name }}",
+        "name: infernix-keycloak-theme"
+      ]
+    ),
+    ( "chart/templates/securitypolicy-operator-routes.yaml",
+      [ "kind: SecurityPolicy",
+        "name: infernix-operator-routes-jwt",
+        "name: infernix-harbor-portal",
+        "name: infernix-pulsar-admin",
+        "name: infernix-minio-s3",
+        "jwt:",
+        "cookies:",
+        ".Values.operatorConsole.jwtGating.cookieName",
+        "remoteJWKS:",
+        ".Values.clusterConfig.keycloak.jwksUrl"
+      ]
+    )
   ]
 
 data GeneratedSectionRule = GeneratedSectionRule

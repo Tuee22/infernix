@@ -1,0 +1,118 @@
+{{- if and .Values.demo.enabled .Values.keycloak.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: infernix-keycloak-theme
+  namespace: platform
+data:
+  theme.properties: |
+    parent=keycloak.v2
+    locales=en
+    styles=css/login.css css/infernix.css
+  messages_en.properties: |
+    loginAccountTitle=Sign in to Infernix
+    registerTitle=Create your Infernix account
+    doLogIn=Sign in
+    doRegister=Create account
+    backToLogin=Back to sign in
+  infernix.css: |
+    :root {
+      --infernix-ink: #17202a;
+      --infernix-muted: #5c6672;
+      --infernix-line: #d6dde6;
+      --infernix-accent: #1f7a68;
+      --infernix-accent-strong: #135f50;
+      --infernix-warm: #f2b84b;
+    }
+
+    .login-pf body {
+      background:
+        linear-gradient(135deg, rgba(31, 122, 104, 0.18), rgba(242, 184, 75, 0.12)),
+        #f6f8fb;
+      color: var(--infernix-ink);
+      font-family:
+        Inter,
+        ui-sans-serif,
+        system-ui,
+        -apple-system,
+        BlinkMacSystemFont,
+        "Segoe UI",
+        sans-serif;
+    }
+
+    .login-pf-page {
+      min-height: 100vh;
+      display: grid;
+      align-items: center;
+    }
+
+    #kc-header-wrapper {
+      color: var(--infernix-ink);
+      font-size: 0;
+      letter-spacing: 0;
+      text-transform: none;
+    }
+
+    #kc-header-wrapper::before {
+      content: "Infernix";
+      display: block;
+      font-size: 2rem;
+      font-weight: 700;
+      letter-spacing: 0;
+    }
+
+    #kc-header-wrapper::after {
+      content: "Durable-context inference console";
+      display: block;
+      margin-top: 0.35rem;
+      color: var(--infernix-muted);
+      font-size: 0.95rem;
+      font-weight: 500;
+      letter-spacing: 0;
+    }
+
+    .card-pf {
+      border: 1px solid var(--infernix-line);
+      border-radius: 6px;
+      box-shadow: 0 18px 45px rgba(23, 32, 42, 0.12);
+    }
+
+    #kc-page-title {
+      color: var(--infernix-ink);
+      font-size: 1.35rem;
+      letter-spacing: 0;
+    }
+
+    .pf-v5-c-button.pf-m-primary,
+    .pf-c-button.pf-m-primary,
+    #kc-form-buttons input[type="submit"] {
+      background: var(--infernix-accent);
+      border-color: var(--infernix-accent);
+      border-radius: 5px;
+      color: #ffffff;
+      font-weight: 700;
+    }
+
+    .pf-v5-c-button.pf-m-primary:hover,
+    .pf-c-button.pf-m-primary:hover,
+    #kc-form-buttons input[type="submit"]:hover {
+      background: var(--infernix-accent-strong);
+      border-color: var(--infernix-accent-strong);
+    }
+
+    #kc-registration a,
+    #kc-form-options a,
+    .login-pf a {
+      color: var(--infernix-accent-strong);
+      font-weight: 650;
+    }
+
+    .pf-v5-c-form-control,
+    .pf-c-form-control,
+    input[type="text"],
+    input[type="password"],
+    input[type="email"] {
+      border-color: var(--infernix-line);
+      border-radius: 5px;
+    }
+{{- end }}

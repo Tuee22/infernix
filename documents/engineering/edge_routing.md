@@ -11,6 +11,10 @@
   route-aware docs, and route validation expectations.
 - The routed surface always publishes Harbor, MinIO, and Pulsar, and publishes the demo routes
   only when the active generated config enables the demo UI.
+- When the demo UI is enabled, `SecurityPolicy/infernix-operator-routes-jwt` requires the
+  Keycloak JWT for direct browser access to `/harbor`, `/pulsar/admin`, and `/minio/s3`.
+  The policy accepts the SPA's `infernix_operator_token` cookie and direct
+  `Authorization: Bearer ...` headers.
 - Gateway owns the supported routed surface, and direct `infernix-demo` execution intentionally
   exposes only the demo-owned HTTP surface outside the intended HTTPRoute mapping.
 
@@ -22,6 +26,9 @@ publish the same routed surface, and the Harbor-first bootstrap path no longer c
 helper-registry route or namespace. Integration now requires the real Harbor, MinIO, and Pulsar
 upstream responses on the tool-route probes rather than any direct `infernix-demo`
 compatibility payload.
+The auth-UX surface adds an Envoy Gateway `SecurityPolicy` for the operator console route family
+when Keycloak is present. The routes remain in the always-published inventory, but browser access
+to `/harbor`, `/pulsar/admin`, and `/minio/s3` is JWT-gated whenever the demo surface is enabled.
 
 ## Route Inventory
 
@@ -53,6 +60,10 @@ compatibility payload.
   as the browser baseline
 - `/api/publication` reports daemon location, `inferenceDispatchMode`, and routed-upstream health
   plus backing-state details
+- when the demo surface is enabled, the operator route family keeps its existing HTTPRoute
+  backends but is protected by `SecurityPolicy/infernix-operator-routes-jwt`; the SPA writes the
+  `infernix_operator_token` cookie after login and refresh so normal browser navigation to the
+  operator links passes the edge JWT check
 
 ## Gateway Ownership
 
@@ -80,7 +91,7 @@ compatibility payload.
   demo routes and requires the real Harbor, MinIO, and Pulsar upstream responses on the
   tool-route probes.
 - `infernix test e2e` verifies the routed demo surface through the shared edge port when the demo
-  UI is enabled for the selected runtime mode.
+  UI is enabled for the selected runtime mode, including the JWT-gated operator route checks.
 
 ## Cross-References
 

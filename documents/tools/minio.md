@@ -54,6 +54,9 @@ is demo-gated; it is absent when `demo_ui = false`.
   be shared outside the authenticated session.
 - artifact bytes never traverse the demo backend; the browser performs multipart upload
   directly to MinIO using the presigned URL and downloads directly using the presigned GET
+- `DELETE /api/account` lists `infernix-demo-objects` with an S3 ListObjectsV2 query scoped to
+  `users/<userId>/` and deletes each returned object before the browser starts Keycloak account
+  deletion
 - bucket creation happens idempotently during `cluster up` when `demo_ui = true`; the
   `infernix-demo` backend also runs a startup repair pass from mounted `ClusterConfig` /
   `SecretsConfig` and creates the required buckets with presigned bucket-level PUTs when
@@ -67,7 +70,9 @@ is demo-gated; it is absent when `demo_ui = false`.
   matrix covers inline image/audio/video, browser-native PDF, bounded JSON/text preview, and
   download-only MIDI / MusicXML / generic-binary grants. The browser artifact flow covers
   bounded text/JSON previews, inline image/audio/video rendering, browser-native PDF URL wiring,
-  and MIDI / MusicXML / generic-binary download-only states through routed presigned URLs.
+  and MIDI / MusicXML / generic-binary download-only states through routed presigned URLs. The
+  account-deletion smoke verifies the previously readable presigned GET returns `404` after the
+  backend cleanup succeeds.
 - supported artifact MIME families on the UI side: `image/*`, playable `audio/*`, `video/*`,
   text/structured-text artifacts (`text/*`, `application/json`), PDF documents
   (`application/pdf`), MIDI variants (`audio/midi`, `audio/x-midi`, `application/x-midi`),

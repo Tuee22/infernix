@@ -24,6 +24,9 @@
 - the realm includes a public OIDC client for the SPA at the demo SPA route; `cluster up`
   reconciles browser redirect URIs and web origins for the operator-facing edge URL before the
   routed publication probe declares the cluster ready
+- the login and registration pages use the repo-owned `infernix` Keycloak login theme mounted from
+  `ConfigMap/infernix-keycloak-theme`; the stock Keycloak image remains unchanged, and the
+  idempotent realm reconcile keeps `loginTheme = infernix`
 - the routed `/auth` prefix forwards to the Keycloak service; this route is added to the
   Haskell-owned route registry source so README, the web portal surface doc, and
   publication JSON all carry it via the auto-rendered route registry markers
@@ -53,8 +56,25 @@ cluster reports readiness. Order:
 2. Operator-managed Patroni Postgres for Keycloak is created and reports ready
 3. Keycloak Deployment is created from a Harbor-mirrored image
 4. Realm pre-seed runs idempotently; subsequent `cluster up` runs reconcile the realm flags,
-   public SPA client, redirect URIs, web origins, and PKCE setting through the Keycloak admin API
+   `infernix` login theme, public SPA client, redirect URIs, web origins, and PKCE setting
+   through the Keycloak admin API
 5. `/auth` HTTPRoute is created; route registry rendering picks it up
+
+## Login Theme
+
+The supported Keycloak UI surface is a chart-owned theme, not a forked Keycloak image. The chart
+renders `chart/templates/keycloak/configmap-theme.yaml` as `ConfigMap/infernix-keycloak-theme` and
+mounts it read-only at `/opt/keycloak/themes/infernix` in the Keycloak pod. The ConfigMap provides:
+
+- `login/theme.properties` with `parent=keycloak.v2` and `styles=css/login.css css/infernix.css`
+- `login/messages/messages_en.properties` with Infernix-specific login and registration titles
+- `login/resources/css/infernix.css` for the local visual treatment
+
+The realm import declares `loginTheme = infernix`, and
+`src/Infernix/Cluster.hs.keycloakRealmReconcilePayload` reapplies the same value during every
+post-rollout reconcile. The routed Playwright auth smoke asserts the themed login title
+(`Sign in to Infernix`) and registration title (`Create your Infernix account`) so the test fails
+if Keycloak falls back to the upstream default theme.
 
 ## JWT Validation Surface
 
@@ -79,15 +99,20 @@ malformed token does not open a browser WebSocket, and asserts a typed `ServerEr
 malformed frame on a valid connection. The browser artifact flow starts from the SPA's own
 sign-in button, lets `web/src/Infernix/Web/Auth.purs` / `.js` generate the PKCE verifier and
 complete the authorization-code exchange, then uses the in-memory access token for routed
-artifact upload and preview calls.
+artifact upload and preview calls. The account-deletion smoke clicks the SPA's `Delete account`
+command, verifies `DELETE /api/account` removes the user's demo-owned MinIO and Pulsar state, and
+then observes the browser enter Keycloak's `kc_action=delete_account` Application Initiated
+Action.
 
 ## Reconstitution Contract
 
 Because `sub` is stable, a user can clear all browser storage, sign in again on a different
 device, change their password, or be issued a fresh JWT, and the demo backend's Pulsar topic
 namespaces and MinIO prefixes resolve to the same locations. The browser holds no durable
-state. See [../architecture/demo_app_design.md](../architecture/demo_app_design.md) for the
-full reconstitution sequence.
+state. Account deletion is the explicit exception: the browser asks the backend to reap the
+`sub`-scoped MinIO prefix and user-owned Pulsar topics before Keycloak removes the IdP account.
+See [../architecture/demo_app_design.md](../architecture/demo_app_design.md) for the full
+reconstitution sequence.
 
 ## Cross-References
 

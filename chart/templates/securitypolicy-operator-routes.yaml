@@ -1,0 +1,35 @@
+{{- if and .Values.demo.enabled .Values.keycloak.enabled .Values.operatorConsole.jwtGating.enabled }}
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: SecurityPolicy
+metadata:
+  name: infernix-operator-routes-jwt
+  namespace: platform
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: infernix-harbor-portal
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: infernix-pulsar-admin
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: infernix-minio-s3
+  jwt:
+    providers:
+      - name: infernix-keycloak
+        issuer: "{{ .Values.clusterConfig.keycloak.baseUrl }}/realms/{{ .Values.clusterConfig.keycloak.realmName }}"
+        audiences:
+          - {{ .Values.clusterConfig.keycloak.clientId | quote }}
+        extractFrom:
+          headers:
+            - name: Authorization
+              valuePrefix: "Bearer "
+          cookies:
+            - {{ .Values.operatorConsole.jwtGating.cookieName | quote }}
+        remoteJWKS:
+          uri: {{ .Values.clusterConfig.keycloak.jwksUrl | quote }}
+          backendRefs:
+            - name: infernix-keycloak
+              port: {{ .Values.keycloak.service.port }}
+{{- end }}
