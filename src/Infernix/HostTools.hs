@@ -12,6 +12,7 @@ module Infernix.HostTools
   ( HostTool (..),
     hostToolName,
     hostToolPath,
+    hostToolFallbackCandidates,
     runHostTool,
     runHostToolWithCwd,
     readHostTool,
@@ -128,6 +129,49 @@ hostToolName tool = case tool of
 -- typed diagnostic in that case rather than fall back to @\$PATH@.
 hostToolPath :: HostConfig -> HostTool -> Text
 hostToolPath config tool = pickToolPath tool (hostToolPaths config)
+
+-- | Narrow absolute fallback candidates for bootstrap-adjacent paths
+-- that can run before a host manifest has been staged. Normal command
+-- execution uses the manifest value; these candidates avoid consulting
+-- the caller's PATH when the manifest is genuinely absent.
+hostToolFallbackCandidates :: HostTool -> [FilePath]
+hostToolFallbackCandidates tool = case tool of
+  HostDocker -> ["/opt/homebrew/bin/docker", "/usr/bin/docker"]
+  HostKubectl -> ["/opt/homebrew/bin/kubectl", "/usr/local/bin/kubectl", "/usr/bin/kubectl"]
+  HostHelm -> ["/opt/homebrew/bin/helm", "/usr/local/bin/helm", "/usr/bin/helm"]
+  HostKind -> ["/opt/homebrew/bin/kind", "/usr/local/bin/kind", "/usr/bin/kind"]
+  HostCabal -> ["/usr/local/bin/cabal", "/usr/bin/cabal"]
+  HostGhc -> ["/usr/local/bin/ghc", "/usr/bin/ghc"]
+  HostGhcup -> ["/usr/local/bin/ghcup", "/usr/bin/ghcup"]
+  HostOrmolu -> []
+  HostHlint -> []
+  HostNpm -> ["/opt/homebrew/bin/npm", "/usr/local/bin/npm", "/usr/bin/npm"]
+  HostNode -> ["/opt/homebrew/bin/node", "/usr/local/bin/node", "/usr/bin/node"]
+  HostPython3 -> ["/opt/homebrew/bin/python3.12", "/opt/homebrew/bin/python3", "/usr/bin/python3"]
+  HostPoetry -> []
+  HostProtoc -> ["/opt/homebrew/bin/protoc", "/usr/local/bin/protoc", "/usr/bin/protoc"]
+  HostGit -> ["/opt/homebrew/bin/git", "/usr/bin/git"]
+  HostTar -> ["/usr/bin/tar"]
+  HostCurl -> ["/usr/bin/curl"]
+  HostAptGet -> ["/usr/bin/apt-get"]
+  HostBrew -> ["/opt/homebrew/bin/brew"]
+  HostSudo -> ["/usr/bin/sudo"]
+  HostSystemctl -> ["/usr/bin/systemctl"]
+  HostMkdir -> ["/bin/mkdir", "/usr/bin/mkdir"]
+  HostChmod -> ["/bin/chmod", "/usr/bin/chmod"]
+  HostLn -> ["/bin/ln", "/usr/bin/ln"]
+  HostInstall -> ["/usr/bin/install"]
+  HostId -> ["/usr/bin/id"]
+  HostGetent -> ["/usr/bin/getent"]
+  HostCut -> ["/usr/bin/cut"]
+  HostDirname -> ["/usr/bin/dirname"]
+  HostBash -> ["/bin/bash", "/usr/bin/bash"]
+  HostCrictl -> ["/usr/local/bin/crictl", "/usr/bin/crictl"]
+  HostChown -> ["/usr/sbin/chown", "/usr/bin/chown"]
+  HostNvidiaSmi -> ["/usr/bin/nvidia-smi"]
+  HostNvkind -> ["/usr/local/bin/nvkind", "/usr/bin/nvkind"]
+  HostSkopeo -> ["/opt/homebrew/bin/skopeo", "/usr/bin/skopeo"]
+  HostHostname -> ["/bin/hostname", "/usr/bin/hostname"]
 
 pickToolPath :: HostTool -> HostToolPaths -> Text
 pickToolPath tool paths = case tool of

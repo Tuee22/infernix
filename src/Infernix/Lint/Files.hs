@@ -5,11 +5,16 @@ where
 
 import Control.Monad (forM, unless)
 import Data.List (isInfixOf, isPrefixOf, isSuffixOf)
+import Data.List qualified as List
+import Data.Text qualified as Text
 import Infernix.Config (Paths (..), discoverPaths)
+import Infernix.HostConfig qualified as HostConfig
+import Infernix.HostTools (HostTool (..))
+import Infernix.HostTools qualified as HostTools
 import System.Directory (doesDirectoryExist, doesFileExist, listDirectory)
 import System.Exit (ExitCode (ExitSuccess))
-import System.FilePath ((</>))
-import System.Process (CreateProcess (cwd), proc, readCreateProcessWithExitCode)
+import System.FilePath (takeDirectory, (</>))
+import System.Process (CreateProcess (cwd, env), proc, readCreateProcessWithExitCode)
 
 checkSuffixes :: [String]
 checkSuffixes = [".cabal", ".hs", ".js", ".json", ".md", ".mjs", ".proto", ".purs", ".py", ".sh", ".yaml", ".yml"]
@@ -107,8 +112,15 @@ listTrackedGeneratedFailures paths = do
 
 listTrackedGeneratedFailuresFromGit :: FilePath -> IO [String]
 listTrackedGeneratedFailuresFromGit root = do
+  paths <- discoverPaths
+  gitCommand <- requireFilesLintHostTool paths HostGit
   (exitCode, stdoutOutput, stderrOutput) <-
-    readCreateProcessWithExitCode ((proc "git" ["ls-files"]) {cwd = Just root}) ""
+    readCreateProcessWithExitCode
+      (proc gitCommand ["ls-files"])
+        { cwd = Just root,
+          env = Just (filesLintSubprocessBaseEnvFor paths)
+        }
+      ""
   case exitCode of
     ExitSuccess ->
       pure
@@ -164,4 +176,69 @@ isTrackedGeneratedPath relativePath =
       "/.mypy_cache" `isSuffixOf` relativePath,
       "/.ruff_cache/" `isInfixOf` relativePath,
       "/.ruff_cache" `isSuffixOf` relativePath
+    ]
+
+requireFilesLintHostTool :: Paths -> HostTool -> IO FilePath
+requireFilesLintHostTool paths tool = do
+  maybePath <- filesLintHostToolPath paths tool
+  case maybePath of
+    Just path -> pure path
+    Nothing ->
+      ioError
+        ( userError
+            ( "required host tool is unavailable during file lint: "
+                <> Text.unpack (HostTools.hostToolName tool)
+            )
+        )
+
+filesLintHostToolPath :: Paths -> HostTool -> IO (Maybe FilePath)
+filesLintHostToolPath paths tool =
+  case pathsHostConfig paths of
+    Just hostConfig ->
+      let configured = HostTools.hostToolPath hostConfig tool
+       in pure $
+            if Text.null configured
+              then Nothing
+              else Just (Text.unpack configured)
+    Nothing -> firstExistingPath (HostTools.hostToolFallbackCandidates tool)
+
+firstExistingPath :: [FilePath] -> IO (Maybe FilePath)
+firstExistingPath [] = pure Nothing
+firstExistingPath (candidate : rest) = do
+  present <- doesFileExist candidate
+  if present
+    then pure (Just candidate)
+    else firstExistingPath rest
+
+filesLintSubprocessBaseEnvFor :: Paths -> [(String, String)]
+filesLintSubprocessBaseEnvFor paths =
+  maybe [] hostHomeEnv (pathsHostConfig paths)
+    <> [ ("PATH", filesLintSearchPath paths),
+         ("LANG", "C.UTF-8"),
+         ("LC_ALL", "C.UTF-8")
+       ]
+
+hostHomeEnv :: HostConfig.HostConfig -> [(String, String)]
+hostHomeEnv hostConfig =
+  let home = Text.unpack (HostConfig.hostHomeDirectory (HostConfig.hostFilesystem hostConfig))
+   in [("HOME", home) | not (null home)]
+
+filesLintSearchPath :: Paths -> String
+filesLintSearchPath paths =
+  let fallback =
+        [ "/opt/homebrew/bin",
+          "/usr/bin",
+          "/bin"
+        ]
+      manifestDirs =
+        maybe [] hostToolParentDirs (pathsHostConfig paths)
+   in List.intercalate ":" (List.nub (manifestDirs <> fallback))
+
+hostToolParentDirs :: HostConfig.HostConfig -> [FilePath]
+hostToolParentDirs hostConfig =
+  List.nub
+    [ takeDirectory path
+    | tool <- [HostGit],
+      let path = Text.unpack (HostTools.hostToolPath hostConfig tool),
+      not (null path)
     ]

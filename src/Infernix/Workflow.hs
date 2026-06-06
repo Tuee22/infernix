@@ -8,13 +8,18 @@ module Infernix.Workflow
 where
 
 import Data.Char (isDigit)
+import Data.List qualified as List
 import Data.Maybe (isJust)
-import Infernix.Config (Paths (repoRoot), discoverPaths)
+import Data.Text qualified as Text
+import Infernix.Config (Paths (pathsHostConfig, repoRoot), discoverPaths)
+import Infernix.HostConfig qualified as HostConfig
+import Infernix.HostTools (HostTool (..))
+import Infernix.HostTools qualified as HostTools
 import Infernix.Substrate (demoConfigGeneratedBanner, demoConfigGeneratedBannerLine)
-import System.Directory (doesDirectoryExist, doesFileExist, findExecutable)
+import System.Directory (doesDirectoryExist, doesFileExist)
 import System.Exit (ExitCode (ExitSuccess))
-import System.FilePath ((</>))
-import System.Process (CreateProcess (cwd), proc, readCreateProcessWithExitCode)
+import System.FilePath (takeDirectory, (</>))
+import System.Process (CreateProcess (cwd, env), proc, readCreateProcessWithExitCode)
 
 ensureWebDependencies :: IO ()
 ensureWebDependencies = do
@@ -22,18 +27,20 @@ ensureWebDependencies = do
   let webRoot = repoRoot paths </> "web"
   depsDirectoryPresent <- doesDirectoryExist (webRoot </> "node_modules")
   toolchainPresent <- webToolchainPresent webRoot
-  hostNodeReady <- hostNodeSupportsWebToolchain
+  hostNodeReady <- hostNodeSupportsWebToolchain paths
   if depsDirectoryPresent && toolchainPresent && hostNodeReady
     then pure ()
     else do
       (command, args) <-
-        resolveWebNpmInvocation ["--prefix", "web", "install", "--no-audit", "--no-fund"]
-      runWorkflowCommand (repoRoot paths) command args
+        resolveWebNpmInvocationWithPaths paths ["--prefix", "web", "install", "--no-audit", "--no-fund"]
+      runWorkflowCommand paths (repoRoot paths) command args
 
 platformCommandsAvailable :: IO Bool
 platformCommandsAvailable = do
-  availableCommands <- mapM findExecutable ["docker", "helm", "kind", "kubectl"]
-  pure (all isJust availableCommands)
+  paths <- discoverPaths
+  allM
+    (hostToolExecutablePresent paths)
+    [HostDocker, HostHelm, HostKind, HostKubectl]
 
 webToolchainPresent :: FilePath -> IO Bool
 webToolchainPresent webRoot =
@@ -48,12 +55,18 @@ webToolchainPresent webRoot =
 
 resolveWebNpmInvocation :: [String] -> IO (FilePath, [String])
 resolveWebNpmInvocation npmArgs = do
-  supported <- hostNodeSupportsWebToolchain
+  paths <- discoverPaths
+  resolveWebNpmInvocationWithPaths paths npmArgs
+
+resolveWebNpmInvocationWithPaths :: Paths -> [String] -> IO (FilePath, [String])
+resolveWebNpmInvocationWithPaths paths npmArgs = do
+  supported <- hostNodeSupportsWebToolchain paths
+  npmCommand <- requireWorkflowHostTool paths HostNpm
   pure $
     if supported
-      then ("npm", npmArgs)
+      then (npmCommand, npmArgs)
       else
-        ( "npm",
+        ( npmCommand,
           [ "exec",
             "--package=node@22",
             "--package=npm@10",
@@ -64,13 +77,18 @@ resolveWebNpmInvocation npmArgs = do
           ]
         )
 
-hostNodeSupportsWebToolchain :: IO Bool
-hostNodeSupportsWebToolchain = do
-  maybeNode <- findExecutable "node"
-  maybeNpm <- findExecutable "npm"
+hostNodeSupportsWebToolchain :: Paths -> IO Bool
+hostNodeSupportsWebToolchain paths = do
+  maybeNode <- hostToolExecutablePath paths HostNode
+  maybeNpm <- hostToolExecutablePath paths HostNpm
   case (maybeNode, maybeNpm) of
-    (Just _, Just _) -> do
-      (exitCode, stdoutOutput, _) <- readCreateProcessWithExitCode (proc "node" ["--version"]) ""
+    (Just nodeCommand, Just _) -> do
+      (exitCode, stdoutOutput, _) <-
+        readCreateProcessWithExitCode
+          (proc nodeCommand ["--version"])
+            { env = Just (workflowSubprocessBaseEnvFor paths)
+            }
+          ""
       pure $
         case exitCode of
           ExitSuccess -> nodeVersionSatisfiesMinimum stdoutOutput
@@ -112,10 +130,90 @@ shellQuote rawValue =
     escapeCharacter '\'' = "'\\''"
     escapeCharacter character = [character]
 
-runWorkflowCommand :: FilePath -> FilePath -> [String] -> IO ()
-runWorkflowCommand workingDirectory command args = do
+runWorkflowCommand :: Paths -> FilePath -> FilePath -> [String] -> IO ()
+runWorkflowCommand paths workingDirectory command args = do
   (exitCode, _, stderrOutput) <-
-    readCreateProcessWithExitCode ((proc command args) {cwd = Just workingDirectory}) ""
+    readCreateProcessWithExitCode
+      (proc command args)
+        { cwd = Just workingDirectory,
+          env = Just (workflowSubprocessBaseEnvFor paths)
+        }
+      ""
   case exitCode of
     ExitSuccess -> pure ()
     _ -> ioError (userError ("workflow command failed: " <> command <> " " <> unwords args <> "\n" <> stderrOutput))
+
+hostToolExecutablePresent :: Paths -> HostTool -> IO Bool
+hostToolExecutablePresent paths tool = do
+  maybePath <- hostToolExecutablePath paths tool
+  pure (isJust maybePath)
+
+hostToolExecutablePath :: Paths -> HostTool -> IO (Maybe FilePath)
+hostToolExecutablePath paths tool =
+  case pathsHostConfig paths of
+    Just hostConfig -> do
+      let configured = HostTools.hostToolPath hostConfig tool
+      if Text.null configured
+        then pure Nothing
+        else do
+          present <- doesFileExist (Text.unpack configured)
+          pure (if present then Just (Text.unpack configured) else Nothing)
+    Nothing -> firstExistingPath (HostTools.hostToolFallbackCandidates tool)
+
+requireWorkflowHostTool :: Paths -> HostTool -> IO FilePath
+requireWorkflowHostTool paths tool = do
+  maybePath <- hostToolExecutablePath paths tool
+  case maybePath of
+    Just path -> pure path
+    Nothing ->
+      ioError
+        ( userError
+            ( "required host tool is unavailable: "
+                <> Text.unpack (HostTools.hostToolName tool)
+            )
+        )
+
+firstExistingPath :: [FilePath] -> IO (Maybe FilePath)
+firstExistingPath [] = pure Nothing
+firstExistingPath (candidate : rest) = do
+  present <- doesFileExist candidate
+  if present
+    then pure (Just candidate)
+    else firstExistingPath rest
+
+workflowSubprocessBaseEnvFor :: Paths -> [(String, String)]
+workflowSubprocessBaseEnvFor paths =
+  maybe [] hostHomeEnv (pathsHostConfig paths)
+    <> [ ("PATH", workflowSearchPath paths),
+         ("LANG", "C.UTF-8"),
+         ("LC_ALL", "C.UTF-8")
+       ]
+
+hostHomeEnv :: HostConfig.HostConfig -> [(String, String)]
+hostHomeEnv hostConfig =
+  let home = Text.unpack (HostConfig.hostHomeDirectory (HostConfig.hostFilesystem hostConfig))
+   in [("HOME", home) | not (null home)]
+
+workflowSearchPath :: Paths -> String
+workflowSearchPath paths =
+  let fallback =
+        [ "/opt/homebrew/bin",
+          "/usr/local/bin",
+          "/usr/bin",
+          "/bin"
+        ]
+      manifestDirs =
+        maybe [] hostToolParentDirs (pathsHostConfig paths)
+   in List.intercalate ":" (List.nub (manifestDirs <> fallback))
+
+hostToolParentDirs :: HostConfig.HostConfig -> [FilePath]
+hostToolParentDirs hostConfig =
+  List.nub
+    [ takeDirectory path
+    | tool <- [HostNpm, HostNode],
+      let path = Text.unpack (HostTools.hostToolPath hostConfig tool),
+      not (null path)
+    ]
+
+allM :: (a -> IO Bool) -> [a] -> IO Bool
+allM predicate values = and <$> mapM predicate values

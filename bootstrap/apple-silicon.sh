@@ -1,13 +1,26 @@
 #!/usr/bin/env bash
+PATH=/usr/bin:/bin
+export PATH
 set -euo pipefail
 
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+BOOTSTRAP_BASH=/bin/bash
+BOOTSTRAP_CURL=/usr/bin/curl
+BOOTSTRAP_DIRNAME=/usr/bin/dirname
+BOOTSTRAP_DSCL=/usr/bin/dscl
+BOOTSTRAP_ENV=/usr/bin/env
+BOOTSTRAP_ID=/usr/bin/id
+BOOTSTRAP_SUDO=/usr/bin/sudo
+BOOTSTRAP_UNAME=/usr/bin/uname
+
+SCRIPT_DIR="$(cd -- "$("${BOOTSTRAP_DIRNAME}" -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=bootstrap/common.sh
 source "${SCRIPT_DIR}/common.sh"
 
 SCRIPT_LABEL="./bootstrap/apple-silicon.sh"
 APPLE_GHC_VERSION="9.12.4"
 APPLE_CABAL_VERSION="3.16.1.0"
+APPLE_BREW_BIN=/opt/homebrew/bin/brew
+APPLE_GHCUP_BIN=/opt/homebrew/bin/ghcup
 APPLE_GHC_BIN=""
 APPLE_CABAL_BIN=""
 APPLE_PROTOC_BIN=""
@@ -73,55 +86,57 @@ EOF
 }
 
 ensure_homebrew() {
-  local brew_bin
-  if bootstrap::have brew; then
-    brew_bin="$(command -v brew)"
-  elif [[ -x /opt/homebrew/bin/brew ]]; then
-    brew_bin="/opt/homebrew/bin/brew"
-  else
+  if [[ ! -x "${APPLE_BREW_BIN}" ]]; then
     bootstrap::info "Installing Homebrew into the supported /opt/homebrew prefix."
-    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-    if [[ -x /opt/homebrew/bin/brew ]]; then
-      brew_bin="/opt/homebrew/bin/brew"
-    else
+    "${BOOTSTRAP_BASH}" -c "$("${BOOTSTRAP_CURL}" -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    if [[ ! -x "${APPLE_BREW_BIN}" ]]; then
       bootstrap::pending "Homebrew installation is still pending. Finish any macOS or Command Line Tools prompts, then rerun ${SCRIPT_LABEL}."
     fi
   fi
-  # shellcheck disable=SC2046
-  eval "$("${brew_bin}" shellenv)"
 }
 
 ensure_brew_formula() {
   local formula="$1"
-  if brew list --formula "${formula}" >/dev/null 2>&1; then
+  if "${APPLE_BREW_BIN}" list --formula "${formula}" >/dev/null 2>&1; then
     return 0
   fi
-  bootstrap::run brew install "${formula}"
+  bootstrap::run "${APPLE_BREW_BIN}" install "${formula}"
 }
 
 ensure_ghcup_toolchain() {
+  local home_dir
+  local ghc_path
+  local ghc_version_path
+  local cabal_path
+  local cabal_version_path
+
   ensure_brew_formula ghcup
-  bootstrap::prepend_path "${HOME}/.ghcup/bin"
-  bootstrap::prepend_path "${HOME}/.cabal/bin"
+  [[ -x "${APPLE_GHCUP_BIN}" ]] || bootstrap::die "Homebrew installed ghcup but ${APPLE_GHCUP_BIN} is missing."
 
-  if [[ ! -x "${HOME}/.ghcup/bin/ghc-${APPLE_GHC_VERSION}" ]]; then
-    bootstrap::run ghcup install ghc "${APPLE_GHC_VERSION}"
+  home_dir="$(bootstrap::effective_home)"
+  ghc_path="${home_dir}/.ghcup/bin/ghc"
+  ghc_version_path="${home_dir}/.ghcup/bin/ghc-${APPLE_GHC_VERSION}"
+  cabal_path="${home_dir}/.ghcup/bin/cabal"
+  cabal_version_path="${home_dir}/.ghcup/bin/cabal-${APPLE_CABAL_VERSION}"
+
+  if [[ ! -x "${ghc_version_path}" ]]; then
+    bootstrap::run "${BOOTSTRAP_ENV}" "HOME=${home_dir}" "${APPLE_GHCUP_BIN}" install ghc "${APPLE_GHC_VERSION}"
   fi
-  bootstrap::run ghcup set ghc "${APPLE_GHC_VERSION}"
+  bootstrap::run "${BOOTSTRAP_ENV}" "HOME=${home_dir}" "${APPLE_GHCUP_BIN}" set ghc "${APPLE_GHC_VERSION}"
 
-  if [[ ! -x "${HOME}/.ghcup/bin/cabal-${APPLE_CABAL_VERSION}" ]]; then
-    bootstrap::run ghcup install cabal "${APPLE_CABAL_VERSION}"
+  if [[ ! -x "${cabal_version_path}" ]]; then
+    bootstrap::run "${BOOTSTRAP_ENV}" "HOME=${home_dir}" "${APPLE_GHCUP_BIN}" install cabal "${APPLE_CABAL_VERSION}"
   fi
-  bootstrap::run ghcup set cabal "${APPLE_CABAL_VERSION}"
+  bootstrap::run "${BOOTSTRAP_ENV}" "HOME=${home_dir}" "${APPLE_GHCUP_BIN}" set cabal "${APPLE_CABAL_VERSION}"
 
-  APPLE_GHC_BIN="$(bootstrap::require_command_version ghc "${HOME}/.ghcup/bin/ghc" "${APPLE_GHC_VERSION}" --numeric-version)"
-  APPLE_CABAL_BIN="$(bootstrap::require_command_version cabal "${HOME}/.ghcup/bin/cabal" "${APPLE_CABAL_VERSION}" --numeric-version)"
+  APPLE_GHC_BIN="$(bootstrap::require_command_version ghc "${ghc_path}" "${APPLE_GHC_VERSION}" --numeric-version)"
+  APPLE_CABAL_BIN="$(bootstrap::require_command_version cabal "${cabal_path}" "${APPLE_CABAL_VERSION}" --numeric-version)"
 }
 
 ensure_protobuf_compiler() {
   local protobuf_prefix
   ensure_brew_formula protobuf
-  protobuf_prefix="$(brew --prefix protobuf)"
+  protobuf_prefix="$("${APPLE_BREW_BIN}" --prefix protobuf)"
   APPLE_PROTOC_BIN="$(bootstrap::require_command protoc "${protobuf_prefix}/bin/protoc" "Protocol Buffers compiler" --version)"
 }
 
@@ -145,8 +160,10 @@ ensure_build_prerequisites() {
 }
 
 build_launcher() {
+  local home_dir
   ensure_build_prerequisites
-  bootstrap::run "${APPLE_CABAL_BIN}" install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes
+  home_dir="$(bootstrap::effective_home)"
+  bootstrap::run "${BOOTSTRAP_ENV}" "HOME=${home_dir}" "${APPLE_CABAL_BIN}" install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes
 }
 
 ensure_launcher_ready() {

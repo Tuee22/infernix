@@ -85,7 +85,6 @@ web/
 │   ├── Infernix/Web/Router.purs
 │   ├── Infernix/Web/WebSocket.purs
 │   ├── Infernix/Web/WebSocket.js
-│   ├── Infernix/Web/Workbench.purs  (legacy helper, not mounted by Main.purs)
 │   └── Generated/        (build-time generated contracts, not tracked)
 ├── test/
 │   └── Main.purs
@@ -104,8 +103,7 @@ Rules:
 - durable-context handwritten view modules under `web/src/Infernix/Web/` follow the same
   import-from-`Generated/` rule and the same `purescript-spec` test framework. They are renderers
   plus input handlers and apply server-sent state patches via trivial mechanical helpers; they do
-  not reimplement business rules. `Main.purs` mounts the durable-context shell; the legacy
-  `Workbench.purs` helper is not the supported top-level page. See
+  not reimplement business rules. `Main.purs` mounts the durable-context shell. See
   [frontend_contracts.md](frontend_contracts.md) for the Haskell-first logic discipline.
 - source-level browser `.js` files under `web/src/Infernix/Web/` must be FFI shims for adjacent
   PureScript modules. They may wrap browser-native surfaces such as PKCE crypto, delegated DOM

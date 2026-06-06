@@ -190,14 +190,7 @@ envFunctionExemptedFiles =
     -- This lint module defines the forbidden tokens as string
     -- literals; it must exempt itself or the check trips on its own
     -- token list.
-    "src/Infernix/Lint/HaskellStyle.hs",
-    -- Phase 2 Sprint 2.13 retired the @getEnvironment@ captures in
-    -- `Cluster.hs` + `ProcessMonitor.hs`; the matching cleanup of
-    -- @Infernix.CLI.runCommandWithCwdAndEnvRemoving@'s remaining
-    -- @getEnvironment@ + the supported execution-context helpers is
-    -- the same workstream and lands together with the
-    -- `Cluster.hs`-side @proc@ retirement.
-    "src/Infernix/CLI.hs"
+    "src/Infernix/Lint/HaskellStyle.hs"
   ]
 
 -- | Phase 6 Sprint 6.28 (initial landing — May 25, 2026): reject
@@ -247,19 +240,7 @@ forbiddenBareProcCommands =
 bareNameProcExemptedFiles :: [FilePath]
 bareNameProcExemptedFiles =
   [ -- This lint module lists forbidden tokens as literals; exempt it.
-    "src/Infernix/Lint/HaskellStyle.hs",
-    -- Phase 2 Sprint 2.13: the cluster family's external invocations
-    -- now route the literal @\"docker\"@/@\"kubectl\"@/@\"kind\"@/
-    -- @\"helm\"@ tool names through a typed 'HostTool' wrapper layer
-    -- before reaching 'System.Process.proc'. The bare-name @proc
-    -- "<lit>"@ pattern this gate looks for is therefore absent from
-    -- these modules. 'Infernix.Lint.Files.runFilesLint' still uses
-    -- @proc "git" ["ls-files"]@ to enumerate the tracked file set
-    -- (genuine bootstrap-time call before HostConfig is available).
-    "src/Infernix/Lint/Files.hs",
-    -- Web dependency readiness still probes the host Node executable
-    -- before installing the web toolchain.
-    "src/Infernix/Workflow.hs"
+    "src/Infernix/Lint/HaskellStyle.hs"
   ]
 
 -- | Phase 7 Sprint 7.8: keep the engine runtime surface from

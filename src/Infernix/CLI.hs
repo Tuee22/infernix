@@ -16,6 +16,7 @@ import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.ByteString.Lazy.Char8 qualified as LazyChar8
 import Data.List (intercalate, isInfixOf, isPrefixOf)
+import Data.List qualified as List
 import Data.Text qualified as Text
 import GHC.IO.Encoding (setLocaleEncoding, utf8)
 import Infernix.Cluster
@@ -31,6 +32,7 @@ import Infernix.DemoConfig
     validateDemoConfigFile,
   )
 import Infernix.Error (InfernixError (EdgePortNotPublished))
+import Infernix.HostConfig qualified as HostConfig
 import Infernix.HostPrereqs (ensureAppleHostPrerequisites)
 import Infernix.HostTools (HostTool (..))
 import Infernix.HostTools qualified as HostTools
@@ -73,14 +75,15 @@ import Network.Socket qualified as Socket
 import System.Directory
   ( copyFile,
     createDirectoryIfMissing,
+    doesFileExist,
     getPermissions,
     removePathForcibly,
     setPermissions,
   )
-import System.Environment (getArgs, getEnvironment, getExecutablePath)
+import System.Environment (getArgs, getExecutablePath)
 import System.Exit (ExitCode (ExitSuccess), exitFailure, exitWith)
 import System.FilePath (takeDirectory, takeFileName, (</>))
-import System.Process (CreateProcess (cwd, env), ProcessHandle, createProcess, getProcessExitCode, proc, readProcess, terminateProcess, waitForProcess)
+import System.Process (CreateProcess (cwd, env), ProcessHandle, createProcess, getProcessExitCode, proc, readCreateProcessWithExitCode, terminateProcess, waitForProcess)
 
 main :: IO ()
 main = do
@@ -388,7 +391,7 @@ runPlaywrightWithFixture ::
   String ->
   IO ()
 runPlaywrightWithFixture paths runtimeMode playwrightHost playwrightPort expectedDaemonLocation expectedInferenceExecutorLocation expectedInferenceDispatchMode expectedApiUpstreamMode = do
-  waitForPlaywrightSurface playwrightHost playwrightPort expectedDaemonLocation expectedInferenceExecutorLocation expectedInferenceDispatchMode expectedApiUpstreamMode
+  waitForPlaywrightSurface paths playwrightHost playwrightPort expectedDaemonLocation expectedInferenceExecutorLocation expectedInferenceDispatchMode expectedApiUpstreamMode
   infernixExecutable <- getExecutablePath
   let fixturePath = runtimeRoot paths </> "playwright-fixture.json"
       fixturePayload =
@@ -408,8 +411,8 @@ runPlaywrightWithFixture paths runtimeMode playwrightHost playwrightPort expecte
   LazyChar8.writeFile fixturePath fixturePayload
   runWebNpmCommand (Just runtimeMode) ["--prefix", "web", "exec", "--", "playwright", "test", "--config", "web/playwright.config.js"]
 
-waitForPlaywrightSurface :: String -> Int -> String -> String -> String -> String -> IO ()
-waitForPlaywrightSurface host edgePort expectedDaemonLocation expectedInferenceExecutorLocation expectedInferenceDispatchMode expectedApiUpstreamMode = go (60 :: Int)
+waitForPlaywrightSurface :: Paths -> String -> Int -> String -> String -> String -> String -> IO ()
+waitForPlaywrightSurface paths host edgePort expectedDaemonLocation expectedInferenceExecutorLocation expectedInferenceDispatchMode expectedApiUpstreamMode = go (60 :: Int)
   where
     go remainingAttempts
       | remainingAttempts <= 0 =
@@ -431,9 +434,9 @@ waitForPlaywrightSurface host edgePort expectedDaemonLocation expectedInferenceE
               go (remainingAttempts - 1)
     surfaceReady = do
       let baseUrl = "http://" <> host <> ":" <> show edgePort
-      maybePublication <- loadJsonUrl (baseUrl <> "/api/publication")
-      maybeDemoConfig <- loadJsonUrl (baseUrl <> "/api/demo-config")
-      maybeHome <- loadTextUrl (baseUrl <> "/")
+      maybePublication <- loadJsonUrl paths (baseUrl <> "/api/publication")
+      maybeDemoConfig <- loadJsonUrl paths (baseUrl <> "/api/demo-config")
+      maybeHome <- loadTextUrl paths (baseUrl <> "/")
       case (maybePublication, maybeDemoConfig, maybeHome) of
         (Just publicationPayload, Just _demoConfigPayload, Just homeBody) ->
           pure
@@ -680,25 +683,24 @@ normalizeGeneratedPursContracts runtimeMode sourceFile outputFile = do
 
 runCommand :: Maybe RuntimeMode -> FilePath -> [String] -> IO ()
 runCommand maybeRuntimeMode command args = do
-  paths <- discoverPaths
-  runCommandWithCwd maybeRuntimeMode command args (repoRoot paths)
-
-runCommandWithCwd :: Maybe RuntimeMode -> FilePath -> [String] -> FilePath -> IO ()
-runCommandWithCwd maybeRuntimeMode =
-  runCommandWithCwdAndEnv maybeRuntimeMode []
+  paths <- discoverCliCommandPaths
+  runCommandWithCwdAndEnvRemovingWithPaths paths maybeRuntimeMode [] [] command args (repoRoot paths)
 
 runCommandWithCwdAndEnv :: Maybe RuntimeMode -> [(String, String)] -> FilePath -> [String] -> FilePath -> IO ()
-runCommandWithCwdAndEnv maybeRuntimeMode =
-  runCommandWithCwdAndEnvRemoving maybeRuntimeMode []
+runCommandWithCwdAndEnv maybeRuntimeMode extraEnvironment command args workingDirectory = do
+  paths <- discoverCliCommandPaths
+  runCommandWithCwdAndEnvRemovingWithPaths paths maybeRuntimeMode [] extraEnvironment command args workingDirectory
 
-runCommandWithCwdAndEnvRemoving :: Maybe RuntimeMode -> [String] -> [(String, String)] -> FilePath -> [String] -> FilePath -> IO ()
-runCommandWithCwdAndEnvRemoving _maybeRuntimeMode removedEnvironmentNames extraEnvironment command args workingDirectory = do
-  environment <- getEnvironment
+runCommandWithCwdAndEnvRemovingWithPaths :: Paths -> Maybe RuntimeMode -> [String] -> [(String, String)] -> FilePath -> [String] -> FilePath -> IO ()
+runCommandWithCwdAndEnvRemovingWithPaths paths _maybeRuntimeMode removedEnvironmentNames extraEnvironment command args workingDirectory = do
+  resolvedCommand <- resolveCliCommandWithPaths paths command
   let augmentedEnvironment =
-        mergeEnvironment [] (mergeEnvironment extraEnvironment (removeEnvironmentVariables removedEnvironmentNames environment))
+        mergeEnvironment
+          extraEnvironment
+          (removeEnvironmentVariables removedEnvironmentNames (cliSubprocessBaseEnvFor paths))
   (_, _, _, processHandle) <-
     createProcess
-      (proc command args)
+      (proc resolvedCommand args)
         { env = Just augmentedEnvironment,
           cwd = Just workingDirectory
         }
@@ -717,19 +719,137 @@ removeEnvironmentVariables :: [String] -> [(String, String)] -> [(String, String
 removeEnvironmentVariables names =
   filter (\(name, _) -> name `notElem` names)
 
-loadJsonUrl :: String -> IO (Maybe Value)
-loadJsonUrl url = do
-  response <- try (readProcess "curl" ["-fsS", url] "") :: IO (Either IOException String)
+discoverCliCommandPaths :: IO Paths
+discoverCliCommandPaths = do
+  paths <- discoverPaths
+  case (pathsHostConfig paths, controlPlaneContext paths) of
+    (Nothing, HostNative) -> do
+      _ <- materializeHostManifestFile paths
+      discoverPaths
+    _ -> pure paths
+
+resolveCliCommandWithPaths :: Paths -> FilePath -> IO FilePath
+resolveCliCommandWithPaths paths command =
+  case hostToolForCliCommand command of
+    Just tool -> resolveCliHostTool paths tool
+    Nothing -> pure command
+
+hostToolForCliCommand :: FilePath -> Maybe HostTool
+hostToolForCliCommand command =
+  case command of
+    "cabal" -> Just HostCabal
+    "npm" -> Just HostNpm
+    "node" -> Just HostNode
+    "curl" -> Just HostCurl
+    "poetry" -> Just HostPoetry
+    "python3" -> Just HostPython3
+    "git" -> Just HostGit
+    "protoc" -> Just HostProtoc
+    _ -> Nothing
+
+resolveCliHostTool :: Paths -> HostTool -> IO FilePath
+resolveCliHostTool paths tool =
+  case pathsHostConfig paths of
+    Just hostConfig -> do
+      let configured = HostTools.hostToolPath hostConfig tool
+      if Text.null configured
+        then fallbackOrFail
+        else pure (Text.unpack configured)
+    Nothing -> fallbackOrFail
+  where
+    fallbackOrFail = do
+      maybeFallback <- firstExistingPath (HostTools.hostToolFallbackCandidates tool)
+      case maybeFallback of
+        Just path -> pure path
+        Nothing ->
+          ioError
+            ( userError
+                ( "required host tool is unavailable: "
+                    <> Text.unpack (HostTools.hostToolName tool)
+                )
+            )
+
+captureCliHostTool :: Paths -> HostTool -> [String] -> IO String
+captureCliHostTool paths tool args = do
+  command <- resolveCliHostTool paths tool
+  (exitCode, stdoutOutput, stderrOutput) <-
+    readCreateProcessWithExitCode
+      (proc command args)
+        { env = Just (cliSubprocessBaseEnvFor paths)
+        }
+      ""
+  case exitCode of
+    ExitSuccess -> pure stdoutOutput
+    _ -> ioError (userError stderrOutput)
+
+cliSubprocessBaseEnvFor :: Paths -> [(String, String)]
+cliSubprocessBaseEnvFor paths =
+  maybe [] hostHomeEnv (pathsHostConfig paths)
+    <> [ ("PATH", cliSubprocessSearchPath paths),
+         ("LANG", "C.UTF-8"),
+         ("LC_ALL", "C.UTF-8")
+       ]
+
+hostHomeEnv :: HostConfig.HostConfig -> [(String, String)]
+hostHomeEnv hostConfig =
+  let home = Text.unpack (HostConfig.hostHomeDirectory (HostConfig.hostFilesystem hostConfig))
+   in [("HOME", home) | not (null home)]
+
+cliSubprocessSearchPath :: Paths -> String
+cliSubprocessSearchPath paths =
+  let fallback =
+        [ "/opt/homebrew/bin",
+          "/usr/local/bin",
+          "/usr/bin",
+          "/bin"
+        ]
+      manifestDirs =
+        maybe [] cliHostToolParentDirs (pathsHostConfig paths)
+   in List.intercalate ":" (List.nub (manifestDirs <> fallback))
+
+cliHostToolParentDirs :: HostConfig.HostConfig -> [FilePath]
+cliHostToolParentDirs hostConfig =
+  List.nub
+    [ takeDirectory path
+    | tool <-
+        [ HostCabal,
+          HostGhc,
+          HostGhcup,
+          HostNpm,
+          HostNode,
+          HostCurl,
+          HostPython3,
+          HostPoetry,
+          HostGit,
+          HostProtoc,
+          HostOrmolu,
+          HostHlint
+        ],
+      let path = Text.unpack (HostTools.hostToolPath hostConfig tool),
+      not (null path)
+    ]
+
+firstExistingPath :: [FilePath] -> IO (Maybe FilePath)
+firstExistingPath [] = pure Nothing
+firstExistingPath (candidate : rest) = do
+  present <- doesFileExist candidate
+  if present
+    then pure (Just candidate)
+    else firstExistingPath rest
+
+loadJsonUrl :: Paths -> String -> IO (Maybe Value)
+loadJsonUrl paths url = do
+  response <- loadTextUrl paths url
   case response of
-    Left _ -> pure Nothing
-    Right payload ->
+    Nothing -> pure Nothing
+    Just payload ->
       case eitherDecode (LazyChar8.pack payload) of
         Left _ -> pure Nothing
         Right decodedValue -> pure (Just decodedValue)
 
-loadTextUrl :: String -> IO (Maybe String)
-loadTextUrl url = do
-  response <- try (readProcess "curl" ["-fsS", url] "") :: IO (Either IOException String)
+loadTextUrl :: Paths -> String -> IO (Maybe String)
+loadTextUrl paths url = do
+  response <- try (captureCliHostTool paths HostCurl ["-fsS", url]) :: IO (Either IOException String)
   case response of
     Left _ -> pure Nothing
     Right payload -> pure (Just payload)

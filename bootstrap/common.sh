@@ -2,6 +2,7 @@
 set -euo pipefail
 
 BOOTSTRAP_DIRNAME="${BOOTSTRAP_DIRNAME:-/usr/bin/dirname}"
+BOOTSTRAP_DSCL="${BOOTSTRAP_DSCL:-/usr/bin/dscl}"
 BOOTSTRAP_GETENT="${BOOTSTRAP_GETENT:-/usr/bin/getent}"
 BOOTSTRAP_ID="${BOOTSTRAP_ID:-/usr/bin/id}"
 BOOTSTRAP_SUDO="${BOOTSTRAP_SUDO:-/usr/bin/sudo}"
@@ -24,15 +25,6 @@ bootstrap::repo_root() {
 
 bootstrap::cd_repo_root() {
   cd -- "${BOOTSTRAP_REPO_ROOT}"
-}
-
-bootstrap::have() {
-  local command_name="$1"
-  local candidate
-  for candidate in "/usr/bin/${command_name}" "/bin/${command_name}" "/usr/sbin/${command_name}" "/sbin/${command_name}"; do
-    [[ -x "${candidate}" ]] && return 0
-  done
-  command -v "${command_name}" >/dev/null 2>&1
 }
 
 bootstrap::info() {
@@ -91,17 +83,31 @@ bootstrap::ensure_sudo_session() {
 bootstrap::load_effective_user() {
   local uid
   local passwd_entry
+  local os_name
+  local home_line
 
   [[ -n "${BOOTSTRAP_EFFECTIVE_USER}" ]] && return 0
-  uid="$("${BOOTSTRAP_ID}" -u)"
-  passwd_entry="$("${BOOTSTRAP_GETENT}" passwd "${uid}" 2>/dev/null || true)"
-  [[ -n "${passwd_entry}" ]] || bootstrap::die "Unable to resolve current user from /etc/passwd."
-  BOOTSTRAP_EFFECTIVE_USER="${passwd_entry%%:*}"
-  passwd_entry="${passwd_entry#*:}"
-  passwd_entry="${passwd_entry#*:}"
-  passwd_entry="${passwd_entry#*:}"
-  passwd_entry="${passwd_entry#*:}"
-  BOOTSTRAP_EFFECTIVE_HOME="${passwd_entry%%:*}"
+  os_name="$("${BOOTSTRAP_UNAME}" -s)"
+  case "${os_name}" in
+    Darwin)
+      BOOTSTRAP_EFFECTIVE_USER="$("${BOOTSTRAP_ID}" -un)"
+      home_line="$("${BOOTSTRAP_DSCL}" . -read "/Users/${BOOTSTRAP_EFFECTIVE_USER}" NFSHomeDirectory 2>/dev/null || true)"
+      BOOTSTRAP_EFFECTIVE_HOME="${home_line#NFSHomeDirectory: }"
+      [[ -n "${BOOTSTRAP_EFFECTIVE_HOME}" && "${BOOTSTRAP_EFFECTIVE_HOME}" != "${home_line}" ]] \
+        || bootstrap::die "Unable to resolve current user's home directory through dscl."
+      ;;
+    *)
+      uid="$("${BOOTSTRAP_ID}" -u)"
+      passwd_entry="$("${BOOTSTRAP_GETENT}" passwd "${uid}" 2>/dev/null || true)"
+      [[ -n "${passwd_entry}" ]] || bootstrap::die "Unable to resolve current user from /etc/passwd."
+      BOOTSTRAP_EFFECTIVE_USER="${passwd_entry%%:*}"
+      passwd_entry="${passwd_entry#*:}"
+      passwd_entry="${passwd_entry#*:}"
+      passwd_entry="${passwd_entry#*:}"
+      passwd_entry="${passwd_entry#*:}"
+      BOOTSTRAP_EFFECTIVE_HOME="${passwd_entry%%:*}"
+      ;;
+  esac
 }
 
 bootstrap::effective_user() {
@@ -114,41 +120,19 @@ bootstrap::effective_home() {
   printf '%s\n' "${BOOTSTRAP_EFFECTIVE_HOME}"
 }
 
-bootstrap::prepend_path() {
-  local entry="$1"
-  [[ -n "${entry}" ]] || return 0
-  case ":${PATH}:" in
-    *":${entry}:"*) ;;
-    *) export PATH="${entry}:${PATH}" ;;
-  esac
-  bootstrap::refresh_command_cache
-}
-
-bootstrap::refresh_command_cache() {
-  hash -r 2>/dev/null || true
-}
-
-bootstrap::resolve_command() {
-  command -v "$1" 2>/dev/null || return 1
-}
-
 bootstrap::require_command() {
   local command_name="$1"
   local expected_path="$2"
   local description="$3"
   shift 3
   local verify_args=("$@")
-  local resolved
 
-  bootstrap::prepend_path "$(dirname "${expected_path}")"
   [[ -x "${expected_path}" ]] || bootstrap::die "${description} is expected at ${expected_path} after bootstrap setup."
-  resolved="$(bootstrap::resolve_command "${command_name}")" \
-    || bootstrap::die "${description} is not visible on PATH after bootstrap setup. PATH=${PATH}"
   if [[ "${#verify_args[@]}" -gt 0 ]]; then
-    "${resolved}" "${verify_args[@]}" >/dev/null 2>&1 \
-      || bootstrap::die "${description} at ${resolved} failed verification via \`${command_name} ${verify_args[*]}\`."
+    "${expected_path}" "${verify_args[@]}" >/dev/null 2>&1 \
+      || bootstrap::die "${description} at ${expected_path} failed verification via \`${command_name} ${verify_args[*]}\`."
   fi
-  printf '%s\n' "${resolved}"
+  printf '%s\n' "${expected_path}"
 }
 
 bootstrap::require_command_version() {
