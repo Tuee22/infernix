@@ -415,7 +415,7 @@ infernix/
 │   ├── cluster-linux-cpu.yaml
 │   └── cluster-linux-gpu.yaml
 ├── docker/
-│   └── linux-substrate.Dockerfile
+│   └── Dockerfile
 ├── tools/
 │   └── generated_proto/
 ├── test/
@@ -598,7 +598,7 @@ The plan keeps control-plane execution context separate from substrate.
 
 - Phase 3 Sprint 3.10 (landed the recorded validation) legacy the dedicated `infernix-playwright:local`
   image and `docker/playwright.Dockerfile`; the Playwright system packages and the three browsers
-  are now baked into `docker/linux-substrate.Dockerfile`
+  are now baked into `docker/Dockerfile`
 - on Linux substrates, routed Playwright execution runs in-container via
   `npm --prefix web exec -- playwright test ...` against the routed cluster on Docker's private
   `kind` network

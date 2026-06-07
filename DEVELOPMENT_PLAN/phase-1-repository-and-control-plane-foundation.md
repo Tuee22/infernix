@@ -363,7 +363,7 @@ None.
 ## Sprint 1.9: Outer-Container Snapshot Launcher and Playwright Invocation Cleanup [Done]
 
 **Status**: Done
-**Implementation**: `compose.yaml`, `docker/linux-substrate.Dockerfile`, `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Config.hs`, `web/package.json`, `documents/engineering/docker_policy.md`, `documents/development/local_dev.md`
+**Implementation**: `compose.yaml`, `docker/Dockerfile`, `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Config.hs`, `web/package.json`, `documents/engineering/docker_policy.md`, `documents/development/local_dev.md`
 **Docs to update**: `documents/engineering/docker_policy.md`, `documents/development/local_dev.md`, `documents/development/testing_strategy.md`, `README.md`
 
 ### Objective
@@ -413,7 +413,7 @@ None.
 ## Sprint 1.10: Explicit Substrate Staging, Flag Removal, and Launcher Reset [Done]
 
 **Status**: Done
-**Implementation**: `src/Infernix/Config.hs`, `src/Infernix/DemoConfig.hs`, `src/Infernix/CLI.hs`, `docker/linux-substrate.Dockerfile`, `compose.yaml`
+**Implementation**: `src/Infernix/Config.hs`, `src/Infernix/DemoConfig.hs`, `src/Infernix/CLI.hs`, `docker/Dockerfile`, `compose.yaml`
 **Docs to update**: `README.md`, `documents/development/local_dev.md`, `documents/engineering/docker_policy.md`, `documents/engineering/build_artifacts.md`, `documents/reference/cli_reference.md`, `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`
 
 ### Objective
@@ -464,7 +464,7 @@ None.
 ## Sprint 1.11: Host Manifest Materialization [Done]
 
 **Status**: Done
-**Implementation**: `dhall/InfernixHost.dhall` (new), `src/Infernix/Substrate.hs` (extended), `src/Infernix/HostConfig.hs` (new), `src/Infernix/HostTools.hs` (new helper module), `src/Infernix/CLI.hs`, `src/Infernix/Config.hs`, `src/Infernix/DemoCLI.hs`, every `bootstrap/*.sh`, `compose.yaml`, `docker/linux-substrate.Dockerfile`
+**Implementation**: `dhall/InfernixHost.dhall` (new), `src/Infernix/Substrate.hs` (extended), `src/Infernix/HostConfig.hs` (new), `src/Infernix/HostTools.hs` (new helper module), `src/Infernix/CLI.hs`, `src/Infernix/Config.hs`, `src/Infernix/DemoCLI.hs`, every `bootstrap/*.sh`, `compose.yaml`, `docker/Dockerfile`
 **Docs to update**: `documents/architecture/configuration_doctrine.md`, `documents/engineering/host_tools_manifest.md`, `documents/development/local_dev.md`, `documents/engineering/portability.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 
 ### Objective
@@ -502,7 +502,7 @@ shrinks to `./.data` plus the Docker socket only.
 - `compose.yaml` shrinks to one `infernix` service with two bind mounts (`./.data` and the
   Docker socket). The `INFERNIX_BUILD_ROOT` and `INFERNIX_HOST_REPO_ROOT` `environment:` entries
   are removed. The `./.build` and `./chart/charts` bind mounts are removed.
-- `docker/linux-substrate.Dockerfile` bakes the Helm dependency archive cache into the image at
+- `docker/Dockerfile` bakes the Helm dependency archive cache into the image at
   `/opt/infernix/chart/charts/` (replacing the previous bind-mount surface). The `ENV
   INFERNIX_BUILD_ROOT=…` directive is removed; the binary discovers its build root via
   `getExecutablePath`.
@@ -622,7 +622,7 @@ Infra-side cleanup landed (the recorded validation; Linux compose-image selectio
   Ubuntu-based snapshot without adding a second Compose file. Sprint
   3.10 deleted the old Playwright sidecar service together with its
   Dockerfile and the matching `runEndToEnd` refactor.
-- `docker/linux-substrate.Dockerfile`: removed the
+- `docker/Dockerfile`: removed the
   `ENV INFERNIX_BUILD_ROOT=/workspace/.build/outer-container/build`
   directive. The supported in-image build root is now the convention
   default `/workspace/.build`, discovered by `discoverPaths` via the
@@ -668,7 +668,7 @@ Linux residuals: code landed and was revalidated by Wave C on the native Linux/C
 - **Move `chart/charts/` cache into the launcher image at
   `/opt/infernix/chart/charts/` — code landed; CUDA Linux cohort validation on legacy hardware
   the recorded validation no longer counts as current evidence.**
-  `docker/linux-substrate.Dockerfile` now fetches Harbor, Percona
+  `docker/Dockerfile` now fetches Harbor, Percona
   PostgreSQL operator, Percona PostgreSQL database, Pulsar, MinIO, and
   Envoy Gateway archives into `/opt/infernix/chart/charts/` during
   image build, then links `/workspace/chart/charts` to that image-local
@@ -676,7 +676,7 @@ Linux residuals: code landed and was revalidated by Wave C on the native Linux/C
   chart-standard path without a host bind mount.
 - **In-image host-manifest baking at
   `/opt/infernix/dhall/InfernixHost.dhall` — landed the recorded validation.**
-  `docker/linux-substrate.Dockerfile` now writes the supported Linux
+  `docker/Dockerfile` now writes the supported Linux
   outer-container `HostConfig` Dhall manifest to that path before the
   `infernix internal materialize-substrate` invocation. The manifest
   declares `controlPlaneContext = outer-container`, the absolute path
@@ -700,7 +700,7 @@ Wave C.
 ## Sprint 1.12: Native-Only Workflow and Apple Docker Boundary [Done]
 
 **Status**: Done
-**Implementation**: `src/Infernix/HostPrereqs.hs`, `src/Infernix/HostConfig.hs`, `src/Infernix/Config.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/CLI.hs`, `dhall/InfernixHost.dhall`, `docker/linux-substrate.Dockerfile`, `test/unit/Spec.hs`, `test/integration/Spec.hs`, `web/playwright/inference.spec.js`, `README.md`, `AGENTS.md`, `CLAUDE.md`
+**Implementation**: `src/Infernix/HostPrereqs.hs`, `src/Infernix/HostConfig.hs`, `src/Infernix/Config.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/CLI.hs`, `dhall/InfernixHost.dhall`, `docker/Dockerfile`, `test/unit/Spec.hs`, `test/integration/Spec.hs`, `web/playwright/inference.spec.js`, `README.md`, `AGENTS.md`, `CLAUDE.md`
 **Docs to update**: `README.md`, `AGENTS.md`, `CLAUDE.md`, `documents/development/assistant_workflow.md`, `documents/development/local_dev.md`, `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/engineering/portability.md`, `documents/engineering/docker_policy.md`, `documents/engineering/host_tools_manifest.md`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/00-overview.md`, `DEVELOPMENT_PLAN/system-components.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 
 ### Objective
@@ -753,7 +753,7 @@ native arm64 daemon. `linux-cpu` validation belongs on native Linux amd64 or nat
   positive native-daemon lifecycle gate and not the negative no-daemon gate.
 - the recorded validation Apple positive-lifecycle continuation on the same already selected native
   arm64 Docker daemon found and fixed two validation blockers:
-  `docker/linux-substrate.Dockerfile` still baked the legacy `toolPaths.colima` field and
+  `docker/Dockerfile` still baked the legacy `toolPaths.colima` field and
   omitted `hostArchitecture`, so the in-image `/opt/infernix/dhall/InfernixHost.dhall`
   failed to decode during `infernix internal materialize-substrate linux-cpu`; the previous
   `Config.tryLoadHostManifest` fallback then silently misclassified the Docker build as

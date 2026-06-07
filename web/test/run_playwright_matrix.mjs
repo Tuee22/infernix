@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 // `INFERNIX_BUILD_ROOT` env reads retired. The supported binary
 // location is typed: the Linux launcher image installs the
 // `infernix` binary at `/usr/local/bin/infernix` (per
-// `docker/linux-substrate.Dockerfile`), and the Apple host build
+// `docker/Dockerfile`), and the Apple host build
 // places it at `<repoRoot>/.build/infernix`. This script picks
 // whichever exists rather than consulting any env var or `$PATH`.
 const webRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");

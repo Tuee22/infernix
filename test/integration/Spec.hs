@@ -143,7 +143,7 @@ exerciseRuntimeMode paths runtimeMode = do
       demoConfigResponse <- waitForRoutedDemoConfig paths state
       routedDemoConfig <- requireJsonDemoConfig demoConfigResponse
       modelsResponse <- httpGet (baseUrl <> "/api/models")
-      harborResponse <- httpGet (baseUrl <> "/harbor")
+      (harborPortalStatus, _) <- httpGetWithStatus (baseUrl <> "/harbor")
       (harborApiStatus, harborApiResponse) <- httpGetWithStatus (baseUrl <> "/harbor/api/v2.0/projects")
       -- Phase 3 Sprint 3.11 (2026-05-30): the standalone MinIO Console
       -- Deployment was retired together with the bitnami sub-chart;
@@ -151,7 +151,7 @@ exerciseRuntimeMode paths runtimeMode = do
       -- artifacts through presigned MinIO URLs minted by the demo
       -- backend instead.
       (minioS3Status, minioS3Response) <- httpGetWithStatus (baseUrl <> "/minio/s3/models/demo.bin")
-      pulsarAdminResponse <- httpGet (baseUrl <> "/pulsar/admin/admin/v2/clusters")
+      (pulsarAdminStatus, _) <- httpGetWithStatus (baseUrl <> "/pulsar/admin/admin/v2/clusters")
       (pulsarHttpStatus, _) <- httpGetWithStatus (baseUrl <> "/pulsar/ws/v2/producer/public/default/demo")
       assert ("Infernix" `isInfixOf` homeResponse) "demo root serves the browser entrypoint"
       assert (("\"runtimeMode\": \"" <> showRuntimeMode runtimeMode <> "\"") `isInfixOf` publicationResponse) "publication reports the active runtime mode"
@@ -186,7 +186,9 @@ exerciseRuntimeMode paths runtimeMode = do
       assert
         (all (\modelIdValue -> ("\"modelId\":\"" <> modelIdValue <> "\"") `isInfixOf` compact modelsResponse) activeModelIds)
         "model listing returns every generated active-mode catalog entry"
-      assert ("Harbor" `isInfixOf` harborResponse) "harbor route is published"
+      assert
+        (harborPortalStatus `elem` [401, 403])
+        "harbor portal route is gated by the operator Keycloak JWT edge policy when demo_ui is enabled (401 unauthenticated)"
       assert
         (harborApiStatus == 200 && "\"name\":\"library\"" `isInfixOf` compact harborApiResponse)
         "harbor API routes strip the /harbor prefix and reach the live Harbor project API on the cluster path"
@@ -194,8 +196,8 @@ exerciseRuntimeMode paths runtimeMode = do
         (minioS3Status `elem` [200, 401, 403, 404] && "\"rewrittenPath\"" `notElemString` compact minioS3Response)
         "minio S3 route stays published and reaches the live MinIO S3 upstream on the cluster path"
       assert
-        ("[\"infernix-infernix-pulsar\"]" `isInfixOf` compact pulsarAdminResponse)
-        "pulsar admin routes preserve the upstream admin/v2 context root"
+        (pulsarAdminStatus `elem` [401, 403])
+        "pulsar admin route is gated by the operator Keycloak JWT edge policy when demo_ui is enabled (401 unauthenticated)"
       assert
         (pulsarHttpStatus == 405)
         "pulsar HTTP routes preserve the websocket context root and reach the real servlet on the cluster path"

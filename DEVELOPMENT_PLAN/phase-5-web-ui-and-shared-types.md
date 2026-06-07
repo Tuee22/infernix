@@ -172,7 +172,7 @@ None.
 ## Sprint 5.5: Web Runtime Image and Dedicated Playwright Container [Done]
 
 **Status**: Done
-**Implementation**: `docker/linux-substrate.Dockerfile`, `compose.yaml`, `web/playwright/`, `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `chart/templates/deployment-demo.yaml`, `chart/templates/deployment-coordinator.yaml`, `chart/templates/deployment-engine.yaml`
+**Implementation**: `docker/Dockerfile`, `compose.yaml`, `web/playwright/`, `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `chart/templates/deployment-demo.yaml`, `chart/templates/deployment-coordinator.yaml`, `chart/templates/deployment-engine.yaml`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/architecture/web_ui_architecture.md`
 
 ### Objective
@@ -185,7 +185,7 @@ Playwright executor from the active substrate image on Linux.
 - the final Linux substrate image includes the built `web/dist/` bundle, the Node toolchain needed
   to regenerate it, and the Playwright runtime used by Linux routed E2E
 - routed Playwright execution runs from the active Linux substrate image; the Playwright runtime
-  is baked into `docker/linux-substrate.Dockerfile` rather than carried in a separate image or
+  is baked into `docker/Dockerfile` rather than carried in a separate image or
   sidecar service
 - `infernix test e2e` invokes `npm --prefix web exec -- playwright test` inside the Linux
   launcher image; Apple host-native E2E uses host `npm exec` with the same typed fixture and

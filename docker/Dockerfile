@@ -150,13 +150,13 @@ RUN printf '%s\n' \
     '    , kubectl = "/usr/local/bin/kubectl"' \
     '    , helm = "/usr/local/bin/helm"' \
     '    , kind = "/usr/local/bin/kind"' \
-    '    , cabal = "/usr/local/bin/cabal"' \
-    '    , ghc = "/usr/local/bin/ghc"' \
+    '    , cabal = "/root/.ghcup/bin/cabal"' \
+    '    , ghc = "/root/.ghcup/bin/ghc"' \
     '    , ghcup = ""' \
     '    , ormolu = "/workspace/.build/haskell-style-tools/bin/ormolu"' \
     '    , hlint = "/workspace/.build/haskell-style-tools/bin/hlint"' \
-    '    , npm = "/usr/local/bin/npm"' \
-    '    , node = "/usr/local/bin/node"' \
+    '    , npm = "/usr/bin/npm"' \
+    '    , node = "/usr/bin/node"' \
     '    , python3 = "/usr/bin/python3"' \
     '    , poetry = "/opt/poetry/bin/poetry"' \
     '    , protoc = "/usr/bin/protoc"' \

@@ -35,7 +35,7 @@
 
 The current worktree follows the substrate-image policy directly: the image family
 (`infernix-linux-cpu:local` and `infernix-linux-gpu:local`) comes from
-`docker/linux-substrate.Dockerfile` and owns the control plane, the baked `web/dist/` bundle, and
+`docker/Dockerfile` and owns the control plane, the baked `web/dist/` bundle, and
 the Linux Playwright runtime. `compose.yaml` defines the single `infernix` service for both Linux
 lanes, defaults to the CPU image, and accepts `LAUNCHER_IMAGE=infernix-linux-gpu:local` for the
 GPU Docker Compose invocation. The service bind-mounts only `./.data/` and the Docker socket. The
@@ -63,7 +63,7 @@ operations have a buildx-capable CLI when needed.
 
 ## Supported Usage
 
-- `docker build -f docker/linux-substrate.Dockerfile ...` is the manual image refresh surface;
+- `docker build -f docker/Dockerfile ...` is the manual image refresh surface;
   bootstrap scripts call that build before entering the launcher.
 - `docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm infernix
   infernix ...` is the direct Linux CPU outer control-plane entrypoint.
@@ -114,7 +114,7 @@ operations have a buildx-capable CLI when needed.
 
 ## Image Set
 
-- `docker/linux-substrate.Dockerfile` is the shared Linux substrate image definition; it produces
+- `docker/Dockerfile` is the shared Linux substrate image definition; it produces
   the control-plane and cluster-resident daemon images, bakes the demo bundle, and carries the
   Linux Playwright runtime
 - `RUNTIME_MODE=linux-cpu` with `BASE_IMAGE=ubuntu:24.04` produces `infernix-linux-cpu:local`
@@ -161,7 +161,7 @@ contract; the binary owns it (operators do not hand-author Kind config).
 
 - `infernix docs check` fails if this governed Docker-policy document loses its required structure
   or metadata contract.
-- direct `docker build -f docker/linux-substrate.Dockerfile ...` commands produce the selected
+- direct `docker build -f docker/Dockerfile ...` commands produce the selected
   Linux substrate image.
 - `docker volume ls` lists no `infernix-build` or `infernix-cabal-home` named volumes after a
   supported `compose down -v` sequence; outer-container build state stays in the launcher image

@@ -199,7 +199,7 @@ main = do
   assert
     (not ("build:" `isInfixOf` composeLauncherContents))
     "Sprint 1.11: compose launcher file does not carry build blocks"
-  linuxDockerfileContents <- readFile "docker/linux-substrate.Dockerfile"
+  linuxDockerfileContents <- readFile "docker/Dockerfile"
   assert
     ("/opt/infernix/chart/charts" `isInfixOf` linuxDockerfileContents)
     "Sprint 1.11: Linux launcher image bakes the Helm archive cache under /opt/infernix/chart/charts"

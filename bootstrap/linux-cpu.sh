@@ -97,7 +97,7 @@ compose_run() {
 # the resulting image is referenced from compose.yaml by name only.
 build_launcher_image() {
   bootstrap::run "${BOOTSTRAP_DOCKER}" build \
-    --file docker/linux-substrate.Dockerfile \
+    --file docker/Dockerfile \
     --tag "${COMPOSE_IMAGE}" \
     --build-arg "RUNTIME_MODE=${COMPOSE_SUBSTRATE}" \
     --build-arg "BASE_IMAGE=${COMPOSE_BASE_IMAGE}" \

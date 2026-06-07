@@ -1692,7 +1692,7 @@ buildClusterImages paths state runtimeMode = do
       dockerBuildArgs targetImageRef =
         [ "build",
           "-f",
-          "docker/linux-substrate.Dockerfile",
+          "docker/Dockerfile",
           "--build-arg",
           "GO_IMAGE=" <> goImage,
           "--build-arg",

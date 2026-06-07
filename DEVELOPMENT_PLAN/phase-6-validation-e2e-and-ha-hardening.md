@@ -205,7 +205,7 @@ browser surface through the shared edge.
 - `infernix test e2e` exercises the routed browser surface; Phase 3 Sprint 3.10 (landed
   the recorded validation) legacy the dedicated `infernix-playwright:local` image and
   `docker/playwright.Dockerfile`, baked the Playwright system packages and the three browsers
-  into `docker/linux-substrate.Dockerfile`, and moved Linux-substrate routed E2E to in-container
+  into `docker/Dockerfile`, and moved Linux-substrate routed E2E to in-container
   `npm --prefix web exec -- playwright test ...` against the routed cluster on Docker's private
   `kind` network. The Apple host-native routed-E2E executor now uses host `npm exec` with the
   same typed fixture and is covered by Apple cohort validation batches.
@@ -826,7 +826,7 @@ None.
 ## Sprint 6.19: Single-Substrate Validation Closure and Simulation Removal [Done]
 
 **Status**: Done
-**Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Config.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Demo/Api.hs`, `src/Infernix/Runtime.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Worker.hs`, `bootstrap/linux-cpu.sh`, `bootstrap/linux-gpu.sh`, `web/test/run_playwright_matrix.mjs`, `docker/linux-substrate.Dockerfile`, `test/integration/Spec.hs`, `test/unit/Spec.hs`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/00-overview.md`, `DEVELOPMENT_PLAN/system-components.md`, `DEVELOPMENT_PLAN/phase-3-ha-platform-services-and-edge-routing.md`, `DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md`, `DEVELOPMENT_PLAN/phase-5-web-ui-and-shared-types.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
+**Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Config.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Demo/Api.hs`, `src/Infernix/Runtime.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Worker.hs`, `bootstrap/linux-cpu.sh`, `bootstrap/linux-gpu.sh`, `web/test/run_playwright_matrix.mjs`, `docker/Dockerfile`, `test/integration/Spec.hs`, `test/unit/Spec.hs`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/00-overview.md`, `DEVELOPMENT_PLAN/system-components.md`, `DEVELOPMENT_PLAN/phase-3-ha-platform-services-and-edge-routing.md`, `DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md`, `DEVELOPMENT_PLAN/phase-5-web-ui-and-shared-types.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 **Docs to update**: `README.md`, `documents/development/local_dev.md`, `documents/development/testing_strategy.md`, `documents/development/chaos_testing.md`, `documents/engineering/testing.md`, `documents/engineering/portability.md`, `documents/engineering/edge_routing.md`, `documents/reference/cli_reference.md`, `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/tools/minio.md`, `documents/tools/pulsar.md`
 
 ### Objective
@@ -899,7 +899,7 @@ None.
 ## Sprint 6.20: Haskell Style Toolchain Compatibility Closure [Done]
 
 **Status**: Done
-**Implementation**: `src/Infernix/Lint/HaskellStyle.hs`, `docker/linux-substrate.Dockerfile`, `documents/development/haskell_style.md`, `documents/reference/cli_reference.md`, `documents/engineering/testing.md`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/system-components.md`
+**Implementation**: `src/Infernix/Lint/HaskellStyle.hs`, `docker/Dockerfile`, `documents/development/haskell_style.md`, `documents/reference/cli_reference.md`, `documents/engineering/testing.md`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/system-components.md`
 **Docs to update**: `documents/development/haskell_style.md`, `documents/reference/cli_reference.md`, `documents/engineering/testing.md`, `documents/engineering/docker_policy.md`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/system-components.md`
 
 ### Objective
@@ -983,7 +983,7 @@ None.
 ## Sprint 6.22: Apple Bootstrap Lifecycle Closure [Done]
 
 **Status**: Done
-**Implementation**: `bootstrap/apple-silicon.sh`, `bootstrap/common.sh`, `src/Infernix/CLI.hs`, `src/Infernix/HostPrereqs.hs`, `src/Infernix/Python.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Workflow.hs`, `src/Infernix/Demo/Api.hs`, `src/Infernix/Runtime/Pulsar.hs`, `docker/linux-substrate.Dockerfile`, `test/unit/Spec.hs`
+**Implementation**: `bootstrap/apple-silicon.sh`, `bootstrap/common.sh`, `src/Infernix/CLI.hs`, `src/Infernix/HostPrereqs.hs`, `src/Infernix/Python.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Workflow.hs`, `src/Infernix/Demo/Api.hs`, `src/Infernix/Runtime/Pulsar.hs`, `docker/Dockerfile`, `test/unit/Spec.hs`
 **Docs to update**: `README.md`, `AGENTS.md`, `CLAUDE.md`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/00-overview.md`, `DEVELOPMENT_PLAN/system-components.md`, `documents/development/assistant_workflow.md`, `documents/development/local_dev.md`, `documents/development/python_policy.md`, `documents/development/testing_strategy.md`, `documents/engineering/docker_policy.md`, `documents/engineering/portability.md`, `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`
 
 ### Objective
@@ -1223,7 +1223,7 @@ and CUDA Linux cohort validation closed in [Wave C](cohort-validation-waves.md).
 ## Sprint 6.26: Lifecycle Warning Classification and Toolchain Noise Closure [Done]
 
 **Status**: Done
-**Implementation**: `docker/linux-substrate.Dockerfile`, `web/package.json`, `web/scripts/install-purescript.mjs`, `src/Infernix/Workflow.hs`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/engineering/docker_policy.md`, `documents/development/purescript_policy.md`, `documents/development/python_policy.md`, `documents/engineering/build_artifacts.md`, `README.md`, `DEVELOPMENT_PLAN/README.md`
+**Implementation**: `docker/Dockerfile`, `web/package.json`, `web/scripts/install-purescript.mjs`, `src/Infernix/Workflow.hs`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/engineering/docker_policy.md`, `documents/development/purescript_policy.md`, `documents/development/python_policy.md`, `documents/engineering/build_artifacts.md`, `README.md`, `DEVELOPMENT_PLAN/README.md`
 **Docs to update**: `README.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/engineering/docker_policy.md`, `documents/development/purescript_policy.md`, `documents/development/python_policy.md`, `documents/engineering/build_artifacts.md`, `DEVELOPMENT_PLAN/README.md`
 
 ### Objective
@@ -1418,7 +1418,7 @@ None.
 ## Sprint 6.30: Single-Toolchain GHC 9.12.4 Closure [Done]
 
 **Status**: Done
-**Implementation**: `cabal.project`, `infernix.cabal`, `docker/linux-substrate.Dockerfile`, `src/Infernix/Lint/HaskellStyle.hs`, `bootstrap/apple-silicon.sh`, `README.md`, `documents/engineering/dependency_management.md`, `documents/engineering/docker_policy.md`, `documents/engineering/host_tools_manifest.md`, `documents/engineering/testing.md`, `documents/development/haskell_style.md`, `documents/reference/cli_reference.md`, `DEVELOPMENT_PLAN/system-components.md`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
+**Implementation**: `cabal.project`, `infernix.cabal`, `docker/Dockerfile`, `src/Infernix/Lint/HaskellStyle.hs`, `bootstrap/apple-silicon.sh`, `README.md`, `documents/engineering/dependency_management.md`, `documents/engineering/docker_policy.md`, `documents/engineering/host_tools_manifest.md`, `documents/engineering/testing.md`, `documents/development/haskell_style.md`, `documents/reference/cli_reference.md`, `DEVELOPMENT_PLAN/system-components.md`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 **Docs to update**: every file in `Implementation` above
 
 ### Objective
@@ -1433,7 +1433,7 @@ project builds against.
 - `cabal.project` pins `with-compiler: ghc-9.12.4` and carries only the `allow-newer:` entries
   required for the supported dependency set.
 - `infernix.cabal` declares `tested-with: ghc ==9.12.4`.
-- `docker/linux-substrate.Dockerfile`:
+- `docker/Dockerfile`:
   - `ARG GHC_VERSION=9.12.4` is the single GHC selector.
   - the image installs and selects only `${GHC_VERSION}` through ghcup.
   - only `/opt/ghc/${GHC_VERSION}` is symlinked.
@@ -1448,7 +1448,7 @@ project builds against.
 - `documents/engineering/dependency_management.md`, `documents/engineering/host_tools_manifest.md`,
   `documents/engineering/docker_policy.md`, `documents/engineering/testing.md`,
   `documents/development/haskell_style.md`, and `documents/reference/cli_reference.md` describe
-  the single-toolchain posture keyed on `cabal.project` and `docker/linux-substrate.Dockerfile`.
+  the single-toolchain posture keyed on `cabal.project` and `docker/Dockerfile`.
 - `DEVELOPMENT_PLAN/system-components.md` names the single `ghc-9.12.4` project toolchain.
 - `DEVELOPMENT_PLAN/README.md` Phase 6 status row records Sprint 6.30 as closed.
 

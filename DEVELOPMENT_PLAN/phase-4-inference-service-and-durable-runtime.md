@@ -350,7 +350,7 @@ None.
 ## Sprint 4.9: Shared Linux Substrate Image Build and Snapshot Runtime [Done]
 
 **Status**: Done
-**Implementation**: `docker/linux-substrate.Dockerfile`, `compose.yaml`, `src/Infernix/Cluster.hs`, `src/Infernix/Lint/Files.hs`, `chart/values.yaml`, `chart/templates/deployment-coordinator.yaml`, `chart/templates/deployment-engine.yaml`, `.dockerignore`
+**Implementation**: `docker/Dockerfile`, `compose.yaml`, `src/Infernix/Cluster.hs`, `src/Infernix/Lint/Files.hs`, `chart/values.yaml`, `chart/templates/deployment-coordinator.yaml`, `chart/templates/deployment-engine.yaml`, `.dockerignore`
 **Docs to update**: `documents/engineering/docker_policy.md`, `documents/engineering/build_artifacts.md`, `documents/development/python_policy.md`, `documents/operations/cluster_bootstrap_runbook.md`
 
 ### Objective
@@ -360,7 +360,7 @@ produces the two real Linux runtime images and supports the image-snapshot launc
 
 ### Deliverables
 
-- one shared `docker/linux-substrate.Dockerfile` builds `infernix-linux-cpu` and
+- one shared `docker/Dockerfile` builds `infernix-linux-cpu` and
   `infernix-linux-gpu`
 - build arguments cover at least the base image and the substrate-selecting `RUNTIME_MODE` value;
   shared build stages own the common toolchain, and `compose.yaml` selects the already-built
@@ -386,10 +386,10 @@ produces the two real Linux runtime images and supports the image-snapshot launc
 
 ### Validation
 
-- `docker build -f docker/linux-substrate.Dockerfile -t infernix-linux-cpu:local --build-arg
+- `docker build -f docker/Dockerfile -t infernix-linux-cpu:local --build-arg
   RUNTIME_MODE=linux-cpu --build-arg BASE_IMAGE=ubuntu:24.04 --build-arg DEMO_UI=true .`
   succeeds on supported Linux CPU hosts and produces the default snapshot
-- `docker build -f docker/linux-substrate.Dockerfile -t infernix-linux-gpu:local --build-arg
+- `docker build -f docker/Dockerfile -t infernix-linux-gpu:local --build-arg
   RUNTIME_MODE=linux-gpu --build-arg BASE_IMAGE=nvidia/cuda:13.2.1-cudnn-runtime-ubuntu24.04
   --build-arg DEMO_UI=true .` succeeds on supported Linux GPU hosts and produces the CUDA snapshot
 - smoke probes from the built images confirm the expected `infernix`, `ghc`, `cabal`, `python`,
@@ -481,7 +481,7 @@ None.
 ## Sprint 4.12: Substrate-Owned Daemon Role, Startup Selection, and Fallback Removal [Done]
 
 **Status**: Done
-**Implementation**: `src/Infernix/Config.hs`, `src/Infernix/DemoConfig.hs`, `src/Infernix/Service.hs`, `src/Infernix/DemoCLI.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Models.hs`, `src/Infernix/Runtime.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Worker.hs`, `docker/linux-substrate.Dockerfile`, `web/test/run_playwright_matrix.mjs`, `test/integration/Spec.hs`, `test/unit/Spec.hs`
+**Implementation**: `src/Infernix/Config.hs`, `src/Infernix/DemoConfig.hs`, `src/Infernix/Service.hs`, `src/Infernix/DemoCLI.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Models.hs`, `src/Infernix/Runtime.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Worker.hs`, `docker/Dockerfile`, `web/test/run_playwright_matrix.mjs`, `test/integration/Spec.hs`, `test/unit/Spec.hs`
 **Docs to update**: `README.md`, `documents/architecture/runtime_modes.md`, `documents/engineering/model_lifecycle.md`, `documents/engineering/object_storage.md`, `documents/engineering/portability.md`, `documents/engineering/testing.md`, `documents/operations/apple_silicon_runbook.md`
 
 ### Objective

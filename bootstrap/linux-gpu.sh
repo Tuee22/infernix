@@ -80,7 +80,7 @@ Available Linux GPU commands:
   ${SCRIPT_LABEL} purge
 
 Direct reference commands:
-  docker build -f docker/linux-substrate.Dockerfile -t ${COMPOSE_IMAGE} --build-arg RUNTIME_MODE=${COMPOSE_SUBSTRATE} --build-arg BASE_IMAGE=${COMPOSE_BASE_IMAGE} --build-arg DEMO_UI=true .
+  docker build -f docker/Dockerfile -t ${COMPOSE_IMAGE} --build-arg RUNTIME_MODE=${COMPOSE_SUBSTRATE} --build-arg BASE_IMAGE=${COMPOSE_BASE_IMAGE} --build-arg DEMO_UI=true .
   LAUNCHER_IMAGE=${COMPOSE_IMAGE} docker compose --project-name ${COMPOSE_PROJECT} --file compose.yaml run --rm infernix infernix cluster up
   LAUNCHER_IMAGE=${COMPOSE_IMAGE} docker compose --project-name ${COMPOSE_PROJECT} --file compose.yaml run --rm infernix infernix cluster status
   LAUNCHER_IMAGE=${COMPOSE_IMAGE} docker compose --project-name ${COMPOSE_PROJECT} --file compose.yaml run --rm infernix infernix test all
@@ -105,7 +105,7 @@ compose_run() {
 # the resulting image is referenced from compose.yaml by name only.
 build_launcher_image() {
   bootstrap::run "${BOOTSTRAP_DOCKER}" build \
-    --file docker/linux-substrate.Dockerfile \
+    --file docker/Dockerfile \
     --tag "${COMPOSE_IMAGE}" \
     --build-arg "RUNTIME_MODE=${COMPOSE_SUBSTRATE}" \
     --build-arg "BASE_IMAGE=${COMPOSE_BASE_IMAGE}" \

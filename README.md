@@ -61,7 +61,7 @@ This repository serves two aligned purposes:
   `poetry run check-code` against `python/adapters/`, unit tests, integration tests,
   `purescript-spec` view and contract tests, and Linux Playwright launched from inside the
   substrate image
-- one shared Linux substrate build definition (`docker/linux-substrate.Dockerfile`) emits
+- one shared Linux substrate build definition (`docker/Dockerfile`) emits
   `infernix-linux-cpu` and `infernix-linux-gpu`, each with ghcup-pinned GHC 9.12.4 + Cabal
   3.16.1.0, Python 3 + Poetry, node, the demo UI build toolchain, `nvkind`, and the
   Kind/kubectl/Helm/Docker toolbelt baked in. Apple Silicon has no Dockerfile; the operator
@@ -516,7 +516,7 @@ tools and Poetry bootstrap before an adapter setup or validation path first need
 ### Linux CPU (outer container)
 
 The `linux-cpu` substrate ships one baked image snapshot, `infernix-linux-cpu:local`, built from
-`docker/linux-substrate.Dockerfile` with `BASE_IMAGE=ubuntu:24.04` for the native Linux host
+`docker/Dockerfile` with `BASE_IMAGE=ubuntu:24.04` for the native Linux host
 architecture. That image acts as the Compose-launched control plane, the in-cluster workload
 image source, and the Linux routed-E2E executor on native amd64 or native arm64 Linux.
 
@@ -552,7 +552,7 @@ afterward to
 ### Linux GPU (outer container)
 
 The `linux-gpu` substrate ships one baked image snapshot, `infernix-linux-gpu:local`, built
-from `docker/linux-substrate.Dockerfile` with a CUDA base image. The same single
+from `docker/Dockerfile` with a CUDA base image. The same single
 `compose.yaml` service used on Linux CPU selects that image through an explicit one-shot
 Compose image selector while keeping the outer control-plane container itself off the NVIDIA
 runtime path. CPU hosts keep using `infernix-linux-cpu:local`, so they do not carry CUDA baggage.

@@ -364,14 +364,14 @@ None.
 ## Sprint 3.10: Playwright Container Retirement and Edge Manifest Retirement [Done]
 
 **Status**: Done
-**Implementation**: `docker/playwright.Dockerfile` (deleted), `docker/linux-substrate.Dockerfile` (gains Playwright runtime), `compose.yaml` (drop `playwright` service), `src/Infernix/CLI.hs` (runEndToEnd refactor), `web/playwright/inference.spec.js`, `web/playwright.config.js` (new fixture-driven config)
+**Implementation**: `docker/playwright.Dockerfile` (deleted), `docker/Dockerfile` (gains Playwright runtime), `compose.yaml` (drop `playwright` service), `src/Infernix/CLI.hs` (runEndToEnd refactor), `web/playwright/inference.spec.js`, `web/playwright.config.js` (new fixture-driven config)
 **Docs to update**: `documents/engineering/host_tools_manifest.md`, `documents/development/testing_strategy.md`, `documents/development/demo_app_test_plan.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 
 ### Objective
 
 Eliminate the dedicated `infernix-playwright:local` image and the separate `playwright` compose
 service. Playwright runtime (Chromium/Firefox/WebKit dependencies, fonts, gstreamer plugins, xvfb)
-moves into `docker/linux-substrate.Dockerfile`. `infernix test e2e` invokes Playwright via the
+moves into `docker/Dockerfile`. `infernix test e2e` invokes Playwright via the
 in-container `npm exec --prefix web -- playwright test …` against the routed cluster on Docker's
 private `kind` network. Apple host-native E2E invokes the same fixture-driven Playwright suite via
 host `npm exec` against the published localhost edge port. Retire `INFERNIX_EDGE_PORT`,
@@ -382,7 +382,7 @@ favor of substrate `.dhall` fields plus a Dhall-driven Playwright fixture file.
 
 - `docker/playwright.Dockerfile` deleted.
 - `compose.yaml` `playwright` service block deleted; only the `infernix` service remains.
-- `docker/linux-substrate.Dockerfile` gains the Playwright system packages and runs
+- `docker/Dockerfile` gains the Playwright system packages and runs
   `npm exec --prefix web -- playwright install --with-deps chromium firefox webkit` at image
   build time.
 - `src/Infernix/CLI.hs` `runEndToEnd` invokes the fixture-driven Playwright path inside the
@@ -422,7 +422,7 @@ Landed the recorded validation:
 - `compose.yaml` `playwright` service block deleted; the file now
   declares only the `infernix` service with its two supported bind
   mounts.
-- `docker/linux-substrate.Dockerfile` gains a dedicated `RUN` step that
+- `docker/Dockerfile` gains a dedicated `RUN` step that
   invokes
   `apt-get update && npm --prefix web exec -- playwright install --with-deps chromium firefox webkit && rm -rf /var/lib/apt/lists/*`
   so the launcher image carries Chromium / Firefox / WebKit plus their
@@ -624,7 +624,7 @@ revalidation closed in Wave C.
 ## Sprint 3.12: Native arm64 Linux CPU Publication [Done]
 
 **Status**: Done
-**Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Cluster/PublishImages.hs`, `src/Infernix/HostConfig.hs`, `bootstrap/linux-cpu.sh`, `docker/linux-substrate.Dockerfile`, `kind/cluster-linux-cpu.yaml`, `test/unit/Spec.hs`
+**Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Cluster/PublishImages.hs`, `src/Infernix/HostConfig.hs`, `bootstrap/linux-cpu.sh`, `docker/Dockerfile`, `kind/cluster-linux-cpu.yaml`, `test/unit/Spec.hs`
 **Docs to update**: `README.md`, `documents/architecture/runtime_modes.md`, `documents/architecture/overview.md`, `documents/engineering/portability.md`, `documents/engineering/docker_policy.md`, `documents/engineering/testing.md`, `documents/development/local_dev.md`, `documents/operations/cluster_bootstrap_runbook.md`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/00-overview.md`, `DEVELOPMENT_PLAN/system-components.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 
 ### Objective
