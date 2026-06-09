@@ -32,6 +32,20 @@ COMPOSE_BASE_IMAGE="ubuntu:24.04"
 COMPOSE_PROJECT="infernix-linux-cpu"
 COMPOSE_FILES=(--file compose.yaml)
 
+# Apple Silicon hosts run this CPU lane through the operator's already-running
+# native arm64 Docker daemon (the colima Linux VM). Docker schedules the
+# launcher container on the VM's native linux/arm64 kernel — real Linux, not
+# emulation. On macOS the Docker CLI lives under the Homebrew prefix instead of
+# /usr/bin, and the apt/systemctl/usermod host-engine reconciliation does not
+# apply, so the macOS branch only verifies the already-selected daemon and never
+# installs an engine, creates or switches a Docker context, or provisions a VM.
+BOOTSTRAP_HOST_OS="$("${BOOTSTRAP_UNAME}" -s)"
+if [[ "${BOOTSTRAP_HOST_OS}" == "Darwin" ]]; then
+  BOOTSTRAP_DOCKER=/opt/homebrew/bin/docker
+  PATH="/opt/homebrew/bin:${PATH}"
+  export PATH
+fi
+
 show_help() {
   cat <<EOF
 ${SCRIPT_LABEL} - idempotent Ubuntu 24.04 CPU bootstrap for Infernix
@@ -143,6 +157,10 @@ write_docker_sources_file() {
 ensure_docker_engine() {
   if docker_ready && docker_compose_ready; then
     return 0
+  fi
+
+  if [[ "${BOOTSTRAP_HOST_OS}" == "Darwin" ]]; then
+    bootstrap::die "Docker is not reachable at ${BOOTSTRAP_DOCKER}. On Apple Silicon this lane runs through the operator's already-running native arm64 Docker daemon (the colima Linux VM); start it and rerun ${SCRIPT_LABEL}. This entrypoint does not install an engine, create or switch a Docker context, or provision a VM on macOS."
   fi
 
   bootstrap::require_linux

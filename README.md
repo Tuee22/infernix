@@ -112,7 +112,17 @@ natively. `linux-cpu` supports native Linux hosts on both `linux/amd64` and `lin
 emulation: no Rosetta, QEMU, amd64-on-Apple, or other emulated substrate runs. Apple Silicon
 workflows also must not create or switch Docker contexts or create a Colima VM; any Docker-backed
 Apple work uses the operator's already selected native arm64 Docker daemon or stops with a clear
-prerequisite error. The MinIO sub-chart uses upstream multi-arch images (`minio/minio`,
+prerequisite error. That already-selected daemon is the Colima Linux VM, so the `linux-cpu` and
+`linux-gpu` outer-container lanes can be exercised from an Apple Silicon host by running the
+launcher image and the documented `docker compose` reference commands normally against it: Docker
+schedules the container on the Colima VM's native `linux/arm64` kernel, which is real Linux, not
+emulation. The `bootstrap/linux-cpu.sh` entrypoint runs directly on Apple Silicon too: on macOS it
+resolves the Homebrew Docker CLI and drives the lane through the existing Colima daemon, without
+installing an engine, creating or switching a context, or provisioning a VM. The
+`bootstrap/linux-gpu.sh` entrypoint still targets native Ubuntu 24.04 Linux hosts (NVIDIA driver
+prerequisites); from an Apple host, exercise the GPU container lane through the `docker compose`
+reference path against the existing Colima daemon. The MinIO sub-chart uses upstream multi-arch
+images (`minio/minio`,
 `minio/mc`, `busybox`) instead of single-architecture amd64-only packaging; see
 [documents/architecture/runtime_modes.md](documents/architecture/runtime_modes.md) for the
 substrate → architecture mapping and

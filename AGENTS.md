@@ -34,6 +34,17 @@ Read first:
 - never use cross-architecture emulation for development or validation. Do not run amd64 Linux
   through Apple Silicon emulation, and do not create or switch Docker contexts or create a Colima
   VM on Apple Silicon
+- on Apple Silicon, the `linux-cpu` and `linux-gpu` outer-container lanes run normally through the
+  operator's already-running native arm64 Docker daemon — the Colima Linux VM. Docker schedules the
+  launcher container on the Colima VM's native `linux/arm64` kernel (real Linux, not emulation), so
+  exercising those lanes from an Apple host via the launcher image and the documented `docker compose`
+  reference commands is supported. Keep using the existing daemon: do not create or switch contexts
+  or provision a new VM. The `bootstrap/linux-cpu.sh` entrypoint runs directly on Apple Silicon — on
+  macOS it resolves the Homebrew Docker CLI and drives the lane through the existing Colima daemon,
+  without installing an engine, creating or switching a context, or provisioning a VM. The
+  `bootstrap/linux-gpu.sh` entrypoint still targets native Ubuntu 24.04 Linux hosts (NVIDIA driver
+  prerequisites); from an Apple host, exercise the GPU container lane through the `docker compose`
+  reference path against the existing Colima daemon
 - no Haskell `lookupEnv` / `getEnv` / `setEnv` calls in new code; no `proc "<bare-name>"`
   external invocations; no `env:` blocks in infernix-owned chart templates; no `process.env` or
   `os.environ` reads in web / Python code. The supported configuration substrate is the typed
