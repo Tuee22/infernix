@@ -19,8 +19,9 @@ source "${SCRIPT_DIR}/common.sh"
 SCRIPT_LABEL="./bootstrap/apple-silicon.sh"
 APPLE_GHC_VERSION="9.12.4"
 APPLE_CABAL_VERSION="3.16.1.0"
-APPLE_BREW_BIN=/opt/homebrew/bin/brew
-APPLE_GHCUP_BIN=/opt/homebrew/bin/ghcup
+APPLE_HOMEBREW_BIN=/opt/homebrew/bin
+APPLE_BREW_BIN="${APPLE_HOMEBREW_BIN}/brew"
+APPLE_GHCUP_BIN="${APPLE_HOMEBREW_BIN}/ghcup"
 APPLE_GHC_BIN=""
 APPLE_CABAL_BIN=""
 APPLE_PROTOC_BIN=""
@@ -159,11 +160,30 @@ ensure_build_prerequisites() {
   ensure_skopeo
 }
 
+# The hermetic PATH=/usr/bin:/bin set at the top of this script keeps the
+# bootstrap itself from depending on the operator's inherited PATH, but two
+# downstream consumers still resolve tools by bare name on the process
+# PATH: (1) the direct cabal build, where the proto-lens Custom Setup spawns
+# `protoc` and bootstraps `proto-lens-protoc` via a nested `cabal`, and
+# needs the ghcup-managed `ghc`/`cabal`; and (2) the `infernix` binary
+# itself, which resolves most host tools from its typed host manifest but
+# still probes a few via `findExecutable` against the process PATH (for
+# example the Poetry probe in `ensurePoetryExecutable`). Prepend the ghcup
+# toolchain bin and the Homebrew prefix so both resolve the operator's
+# already-installed tools without re-deriving each absolute path here.
+apple_launcher_path() {
+  printf '%s\n' "$(bootstrap::effective_home)/.ghcup/bin:${APPLE_HOMEBREW_BIN}:${PATH}"
+}
+
+run_launcher() {
+  bootstrap::run "${BOOTSTRAP_ENV}" "PATH=$(apple_launcher_path)" ./.build/infernix "$@"
+}
+
 build_launcher() {
   local home_dir
   ensure_build_prerequisites
   home_dir="$(bootstrap::effective_home)"
-  bootstrap::run "${BOOTSTRAP_ENV}" "HOME=${home_dir}" "${APPLE_CABAL_BIN}" install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes
+  bootstrap::run "${BOOTSTRAP_ENV}" "HOME=${home_dir}" "PATH=$(apple_launcher_path)" "${APPLE_CABAL_BIN}" install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes
 }
 
 ensure_launcher_ready() {
@@ -182,27 +202,27 @@ command_build() {
 
 command_up() {
   build_launcher
-  bootstrap::run ./.build/infernix cluster up
+  run_launcher cluster up
 }
 
 command_run_daemon() {
   ensure_launcher_ready
-  bootstrap::run ./.build/infernix service
+  run_launcher service
 }
 
 command_status() {
   ensure_launcher_ready
-  bootstrap::run ./.build/infernix cluster status
+  run_launcher cluster status
 }
 
 command_test() {
   build_launcher
-  bootstrap::run ./.build/infernix test all
+  run_launcher test all
 }
 
 command_down() {
   ensure_launcher_ready
-  bootstrap::run ./.build/infernix cluster down
+  run_launcher cluster down
 }
 
 command_purge() {

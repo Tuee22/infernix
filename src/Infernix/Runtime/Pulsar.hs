@@ -17,7 +17,6 @@ module Infernix.Runtime.Pulsar
     discoverPulsarTransport,
     planDemoClientMessagePublications,
     publishDemoClientMessage,
-    pulsarAdminForwardUrlPath,
     streamDemoContextConversation,
     streamDemoUserMetadata,
     publishModelBootstrapRequest,
@@ -112,7 +111,7 @@ import Infernix.Runtime.KVCache qualified as KVCache
 import Infernix.Runtime.Pulsar.Failover qualified as PulsarFailover
 import Infernix.Runtime.Worker (EngineCommandOverrideMap)
 import Infernix.SecretsConfig qualified as Secrets
-import Infernix.Storage (readEdgePortMaybe)
+import Infernix.Storage (readPulsarHttpPortMaybe)
 import Infernix.Types
 import Infernix.Web.Contracts qualified as Contracts
 import Lens.Family2 (set, view)
@@ -195,9 +194,8 @@ data LongRunningProcessStatus = LongRunningProcessStatus
   }
   deriving (Eq, Show)
 
-data HostDiscoveredPublication = HostDiscoveredPublication
-  { hostPublicationClusterPresent :: Bool,
-    hostPublicationEdgePort :: Maybe Int
+newtype HostDiscoveredPublication = HostDiscoveredPublication
+  { hostPublicationClusterPresent :: Bool
   }
 
 instance FromJSON ProducerResponse where
@@ -217,7 +215,6 @@ instance FromJSON HostDiscoveredPublication where
   parseJSON = withObject "HostDiscoveredPublication" $ \value ->
     HostDiscoveredPublication
       <$> value .: "clusterPresent"
-      <*> value .:? "edgePort"
 
 instance FromJSON LongRunningProcessStatus where
   parseJSON = withObject "LongRunningProcessStatus" $ \value ->
@@ -1328,10 +1325,6 @@ schemaMarkerPath :: Paths -> Text.Text -> FilePath
 schemaMarkerPath paths topicValue =
   runtimeRoot paths </> "pulsar" </> "schemas" </> sanitizeTopic topicValue <.> "schema"
 
-pulsarAdminForwardUrlPath :: Paths -> FilePath
-pulsarAdminForwardUrlPath paths =
-  runtimeRoot paths </> "pulsar" </> "admin-forward-url"
-
 topicDirectoryPath :: Paths -> Text.Text -> FilePath
 topicDirectoryPath paths topicValue =
   runtimeRoot paths </> "pulsar" </> "topics" </> sanitizeTopic topicValue
@@ -1452,6 +1445,19 @@ parseClusterPulsarTransport adminBase rawWebSocketBase =
               }
         )
 
+-- | Baseline Kind NodePort host port for the in-cluster Pulsar proxy HTTP
+-- surface (the Pulsar admin v2 API and the websocket endpoint). The trusted
+-- Apple host-native service daemon reaches Pulsar directly through this
+-- loopback NodePort rather than the Keycloak-JWT-gated @/pulsar/admin@ and
+-- @/pulsar/ws@ Envoy edge routes, so its namespace reconcile never traverses
+-- the operator-route SecurityPolicy. The in-cluster Kubernetes NodePort
+-- stays @30080@, but the operator-host port is chosen dynamically at cluster
+-- up (see @choosePulsarHttpPort@ in 'Infernix.Cluster') and persisted to
+-- 'pulsarHttpPortPath'; this baseline is only the fallback used when that
+-- file is absent.
+defaultPulsarProxyHttpLoopbackHostPort :: Int
+defaultPulsarProxyHttpLoopbackHostPort = 30080
+
 discoverAppleHostPulsarTransport :: Paths -> IO (Maybe PulsarTransport)
 discoverAppleHostPulsarTransport paths = do
   let publicationPath = publicationStatePath paths
@@ -1466,47 +1472,26 @@ discoverAppleHostPulsarTransport paths = do
           if not (hostPublicationClusterPresent (publication :: HostDiscoveredPublication))
             then pure Nothing
             else do
-              maybeEdgePort <- readEdgePortMaybe paths
-              let selectedPort = maybeEdgePort <|> hostPublicationEdgePort publication
-              case selectedPort of
-                Nothing -> pure Nothing
-                Just edgePortValue ->
-                  buildLoopbackTransport edgePortValue
+              pulsarHttpPort <- fromMaybe defaultPulsarProxyHttpLoopbackHostPort <$> readPulsarHttpPortMaybe paths
+              buildLoopbackNodePortTransport pulsarHttpPort
   where
-    buildLoopbackTransport edgePortValue =
-      case parsePulsarWebSocketBase ("ws://127.0.0.1:" <> show edgePortValue <> "/pulsar/ws/v2") of
+    buildLoopbackNodePortTransport pulsarHttpPort =
+      case parsePulsarWebSocketBase ("ws://127.0.0.1:" <> show pulsarHttpPort <> "/ws/v2") of
         Left err ->
           ioError
             ( userError
-                ( "failed to construct the Apple host-native Pulsar websocket endpoint from the published edge port:\n"
+                ( "failed to construct the Apple host-native Pulsar websocket endpoint from the proxy NodePort:\n"
                     <> err
                 )
             )
-        Right websocketBase -> do
-          maybeForwardAdminBase <- readAppleHostPulsarAdminForwardUrl paths
+        Right websocketBase ->
           pure
             ( Just
                 PulsarTransport
-                  { pulsarAdminBaseUrl =
-                      Just
-                        ( fromMaybe
-                            ("http://127.0.0.1:" <> show edgePortValue <> "/pulsar/admin/admin/v2")
-                            maybeForwardAdminBase
-                        ),
+                  { pulsarAdminBaseUrl = Just ("http://127.0.0.1:" <> show pulsarHttpPort <> "/admin/v2"),
                     pulsarWebSocketBase = websocketBase
                   }
             )
-
-readAppleHostPulsarAdminForwardUrl :: Paths -> IO (Maybe String)
-readAppleHostPulsarAdminForwardUrl paths = do
-  let forwardPath = pulsarAdminForwardUrlPath paths
-  forwardPresent <- doesFileExist forwardPath
-  if forwardPresent
-    then do
-      rawValue <- readFile forwardPath
-      let trimmedValue = trimWhitespacePulsar rawValue
-      pure (if null trimmedValue then Nothing else Just trimmedValue)
-    else pure Nothing
 
 ensureRegisteredSchemas :: Paths -> PulsarTransport -> DemoConfig -> IO ()
 ensureRegisteredSchemas paths transport demoConfig = do

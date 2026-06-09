@@ -5,10 +5,12 @@
 module Infernix.Storage
   ( edgePortPath,
     harborPortPath,
+    pulsarHttpPortPath,
     readCacheManifestProtoMaybe,
     readEdgePortMaybe,
     readHarborPortMaybe,
     readInferenceResultProtoMaybe,
+    readPulsarHttpPortMaybe,
     readStateFileMaybe,
     writeCacheManifestProto,
     writeInferenceResultProto,
@@ -60,6 +62,20 @@ harborPortPath paths = runtimeRoot paths </> "harbor-port.json"
 
 readHarborPortMaybe :: Paths -> IO (Maybe Int)
 readHarborPortMaybe paths = readPortFileMaybe (harborPortPath paths)
+
+-- | The Pulsar proxy HTTP NodePort's Kind hostPort mapping is selected
+-- dynamically at @cluster up@ time from the @30080@ baseline using the same
+-- bind-test / increment loop as the edge and Harbor ports, and persisted
+-- here so the Apple host-native service daemon's loopback Pulsar transport
+-- targets whatever host port is actually free on the operator's machine
+-- (the in-cluster Kubernetes NodePort number stays @30080@; only the Kind
+-- hostPort mapping shifts when another process such as a VSCode
+-- auto-forwarded port already holds the baseline).
+pulsarHttpPortPath :: Paths -> FilePath
+pulsarHttpPortPath paths = runtimeRoot paths </> "pulsar-http-port.json"
+
+readPulsarHttpPortMaybe :: Paths -> IO (Maybe Int)
+readPulsarHttpPortMaybe paths = readPortFileMaybe (pulsarHttpPortPath paths)
 
 readPortFileMaybe :: FilePath -> IO (Maybe Int)
 readPortFileMaybe filePath = do
