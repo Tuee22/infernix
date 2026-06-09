@@ -270,7 +270,7 @@ The application's topics sit under `persistent://<topicNamespace>/`.
 
 | Topic | Pattern | Partition | Retention | Compaction |
 |---|---|---|---|---|
-| Conversation log | `persistent://<topicNamespace>/conversation.<userId>.<contextId>` | 1 | full retention with tiered storage offload to MinIO | off |
+| Conversation log | `persistent://<topicNamespace>/conversation.<userId>.<contextId>` | 1 | full retention | off |
 | Context metadata | `persistent://<topicNamespace>/user.<userId>.contexts` | 1 | full | on (key: `contextId`) |
 | Drafts | `persistent://<topicNamespace>/user.<userId>.drafts` | 1 | full | on (key: `contextId`) |
 | Inference request | `persistent://<topicNamespace>/inference.request.<runtimeMode>` | 1 | full | off |

@@ -93,7 +93,7 @@ demo-gated and absent when `demo_ui = false`.
 
 | Topic family | Pattern | Partition | Retention | Compaction |
 |---|---|---|---|---|
-| Per-context conversation log | `persistent://infernix/demo/demo.conversation.<userId>.<contextId>` | 1 | full retention with tiered storage offload to MinIO | off |
+| Per-context conversation log | `persistent://infernix/demo/demo.conversation.<userId>.<contextId>` | 1 | full retention | off |
 | Per-user context metadata | `persistent://infernix/demo/demo.user.<userId>.contexts` | 1 | full | on (key: `contextId`) |
 | Per-user drafts | `persistent://infernix/demo/demo.user.<userId>.drafts` | 1 | full | on (key: `contextId`) |
 
@@ -180,8 +180,8 @@ Rules:
 - failure mode: if the worker dies mid-upload, the surviving replica re-checks MinIO; if
   the `.ready` sentinel is already present (idempotent guard), the worker simply publishes
   the ready event; otherwise the download restarts from scratch
-- conversation topics opt into Pulsar's tiered storage so cold ledgers offload to MinIO; hot
-  read paths stay broker-resident
+- conversation topics retain full ledger history on BookKeeper-backed local PVs; tiered MinIO
+  offload is not configured today
 - inference dispatch reuses the existing shared `inference.request.<mode>` and
   `inference.result.<mode>` topics described above; the demo envelope carries
   `(userId, contextId, causalRef, conversationLogOffset, prefixHash)` so engines can verify

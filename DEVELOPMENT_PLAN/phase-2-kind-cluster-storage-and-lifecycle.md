@@ -405,11 +405,11 @@ distinguish real failure from ongoing first-run progress.
 
 - a cold `./bootstrap/apple-silicon.sh up` surfaces the image-build, Harbor-publication, and
   Harbor-backed final-image preload phases explicitly while it is still making forward progress
-- the the recorded validation Apple lifecycle output had recorded the broad pre-Harbor support-image preload
+- the recorded validation Apple lifecycle output had recorded the broad pre-Harbor support-image preload
   phase as skipped and then verified or loaded Harbor-backed final image refs before rollout; that
   output was produced on the legacy Apple Silicon hardware and no longer counts as a current
   proof point
-- the the recorded validation supported Apple lifecycle rerun had exercised the large Pulsar image
+- the recorded validation supported Apple lifecycle rerun had exercised the large Pulsar image
   publication path through Harbor, retained-state replay, split-daemon inference, and final
   teardown after the bounded Docker-push retry hardening; that rerun was also on the legacy
   Apple Silicon hardware and no longer counts as a current proof point
@@ -503,18 +503,18 @@ Make bootstrap scripts narrow stage-0 launchers and move lifecycle responsibilit
 ### Validation
 
 - `bash -n bootstrap/apple-silicon.sh bootstrap/linux-cpu.sh bootstrap/linux-gpu.sh
-  bootstrap/lib/common.sh` passes for the narrowed launcher scripts
+  bootstrap/common.sh` passes for the narrowed launcher scripts
 - `cabal build all` passes with binary-owned substrate preflight, Harbor-first publication, and
   retained-state repair changes
 - on the recorded validation, `./bootstrap/apple-silicon.sh doctor`, `build`, `up`, `status`, `test`,
   `down`, and final `status` had passed on the legacy Apple Silicon hardware with the shell
   script building the host binary and delegating lifecycle commands to `./.build/infernix`;
   that proof point no longer counts as current evidence
-- the the recorded validation Apple `up` and `test all` output had shown `preload-bootstrap-images`
+- the recorded validation Apple `up` and `test all` output had shown `preload-bootstrap-images`
   skipping broad pre-Harbor support-image preload and then publishing and verifying Harbor-backed
   image refs before final rollout on the legacy hardware; this is no longer a current proof
   point
-- the the recorded validation Apple `test` lane had passed Haskell style, Haskell unit, PureScript unit,
+- the recorded validation Apple `test` lane had passed Haskell style, Haskell unit, PureScript unit,
   Haskell integration, routed Playwright E2E, split-daemon Apple inference, and repeated internal
   retained-state cluster `down` or `up` cycles on the legacy hardware; this is no longer a
   current proof point
@@ -613,7 +613,7 @@ Env-side retirement landed (the recorded validation):
   prior hardcoded-only PATH constant
   (`/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`)
   was insufficient on Apple Silicon because Homebrew installs at
-  `/opt/homebrew/bin`, and was surfaced by the the recorded validation Apple
+  `/opt/homebrew/bin`, and was surfaced by the recorded validation Apple
   cohort rerun (`kind get clusters` failed with "exec: docker:
   executable file not found in $PATH"). The manifest-derived PATH
   helper fixed it without re-introducing env-var consumption.
@@ -626,11 +626,18 @@ Env-side retirement landed (the recorded validation):
   host process (a VSCode Helper plugin worker) was squatting on
   `127.0.0.1:30002`, leaving the `cluster up` Harbor publication
   step waiting forever on an `ESTABLISHED` TCP connection that
-  never returned an HTTP response. The Kind hostPort mapping is
-  hardcoded at `30002` today; replacing it with the same dynamic
-  port-discovery contract used for the edge port (Section O) is a
-  Phase 3 / Phase 7 follow-on so the supported cluster lifecycle
-  remains operator-environment-agnostic.
+  never returned an HTTP response. The Kind host-side Harbor port is
+  chosen dynamically by `chooseHarborPort`
+  (`src/Infernix/Cluster.hs`), which mirrors `chooseEdgePort` by
+  attempting `30002` first and incrementing until a free host TCP
+  port is found; the chosen value is recorded under
+  `./.data/runtime/harbor-port.json` and rendered into the Kind
+  config's `hostPort` mapping for `containerPort: 30002`. The
+  in-cluster Kubernetes NodePort stays `30002`, so the chart's Harbor
+  sub-chart still resolves to `<node>:30002` in-cluster while the host
+  probe and containerd registry-hosts namespace honor whatever host
+  port is free. This keeps the supported cluster lifecycle
+  operator-environment-agnostic.
 - **`engineCommandOverridesFromEnvironment` legacy.** The Sprint 4.13
   chart no longer renders per-binding `INFERNIX_ENGINE_COMMAND_*` env
   entries, so `Cluster.hs.writeHelmValuesFile` passes an empty
@@ -663,82 +670,6 @@ The Phase 2 forbidden-env grep gate
 (`grep -rEn 'lookupEnv|getEnv |getEnvironment|setEnv|unsetEnv' src/Infernix/Cluster.hs src/Infernix/ProcessMonitor.hs src/Infernix/Engines/AppleSilicon.hs`)
 returns only documented-retirement comment references — no live
 reads remain.
-
-Pending closure (queued and named so the sprint status stays
-honest):
-
-- **Bare-name `proc "<command>"` retirement across `Cluster.hs`,
-  `Cluster/PublishImages.hs`, `Cluster/Discover.hs` — Linux path
-  landed.** `Infernix.Config.Paths` now carries
-  `pathsHostConfig :: Maybe HostConfig`; the host manifest decoded
-  during `discoverPaths` flows into every helper that already has
-  `Paths` in scope. `Cluster.hs` ships four new HostTool-routed
-  wrapper helpers — `runHostToolCmd`, `tryHostToolCmd`,
-  `captureHostToolCmd`, plus `resolveHostToolForCluster` for path
-  resolution — that look up absolute paths from
-  `HostConfig.toolPaths.*` and fall through to the bare tool name
-  when the manifest is absent (first-run bootstrap, unit tests
-  without an explicit fixture). The HostTool enum + Dhall schema +
-  Linux/Apple defaults now include `chown`, `nvidiaSmi`, `nvkind`,
-  `skopeo`, and `hostname` in addition to the original tool set.
-  The remaining `ClusterState`-only helper layer now flows through
-  the shared `resolveClusterCommand` / `resolveClusterCommandWithPaths`
-  helpers, which map known tool names (`docker`, `kubectl`, `helm`,
-  `kind`, `curl`, `tar`, `chown`, `hostname`, `nvidia-smi`, `nvkind`,
-  `skopeo`) to HostTool paths before spawning. This avoids widening
-  the persisted `ClusterState` record while removing the helper-layer
-  PATH dependency when a host manifest is present.
-  `src/Infernix/Cluster/PublishImages.hs` now receives the resolved
-  `docker` and `skopeo` paths through `HarborPublishOptions`, so the
-  multi-arch `skopeo copy` fallback is covered by the same manifest
-  inventory.
-- **Sprint 2.13 follow-on lifecycle fixes landed the recorded validation during the
-  Apple cohort revalidation.** Cross-listed with Phase 3 Sprint 3.11.
-  Five Apple-Silicon-surfaced lifecycle bugs landed in code:
-  - `clusterSubprocessBaseEnvFor` and `processMonitorBaseEnvFor` derive
-    the subprocess PATH from `HostConfig.toolPaths.*` parent directories
-    (the previous hardcoded minimal POSIX PATH
-    `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin` did
-    not include `/opt/homebrew/bin`, so `kind` could not find `docker`
-    when invoked from the binary on Apple Silicon).
-  - `defaultAppleHostNativeHostConfig.hostDocker` corrected from the
-    Intel-Mac path `/usr/local/bin/docker` to the Apple Silicon
-    Homebrew path `/opt/homebrew/bin/docker`.
-  - `materializeHostManifestFile` resolves the operator home directory
-    through `System.Posix.User.getEffectiveUserID` +
-    `getUserEntryForID` (which read the libc user database, no env)
-    instead of passing an empty placeholder. This unblocked the
-    `hostCabal` / `hostGhcup` / `hostPoetry` / `hostHomeDirectory`
-    defaults that depend on `homeDir`.
-  - `waitForHarborRegistryResult` now passes `-m 30` to `curl` so the
-    bounded 60-attempt × 5s retry envelope surfaces a typed "Harbor
-    registry never became ready" error within ~30 minutes when the
-    host-side NodePort target is unreachable. The previous indefinite
-    hang was surfaced by an unrelated host process squatting on
-    `127.0.0.1:30002`.
-  - `app/Main.hs` calls `hSetBuffering LineBuffering` on `stdout` and
-    `stderr` so long-running lifecycle phases stream observably
-    through pipes; previously the GHC default block-buffered stdout
-    hid all phase output when the binary was invoked through a tee or
-    background-launcher wrapper.
-- **Clean-env `linux-gpu` lifecycle validation passed on legacy hardware
-  the recorded validation; current-host validation closed in Wave C.**
-  On the legacy Linux/CUDA host,
-  `env -i /usr/bin/bash ./bootstrap/linux-gpu.sh build` rebuilt
-  `infernix-linux-gpu:local`, and the follow-on clean-env `up`
-  completed after Harbor image publication and final routed workload
-  rollout. That run had exposed a launcher
-  regression from the temporary
-  `${HOME}/.docker/config.json:/root/.docker/config.json:ro` bind
-  mount in `compose.yaml` (with an empty starting environment,
-  Compose expanded `${HOME}` to blank and created
-  `/root/.docker/config.json` as a directory inside the launcher,
-  causing `docker login localhost:30002` to fail); removing that bind
-  mount restored the documented two-bind-mount compose contract and
-  the rerun reached steady state. The fix landed in the worktree, but
-  the the recorded validation proof point is on the legacy hardware and no
-  longer counts as current evidence. CUDA Linux cohort rerun closed
-  in Wave C on the native Linux/CUDA host.
 
 ---
 

@@ -19,7 +19,7 @@ work. The supported Apple path must use an already selected native arm64 Docker 
 create or switch Docker contexts, must not create a Colima VM, and must not use cross-architecture
 emulation. The Linux CPU path must support native Linux amd64 and native Linux arm64 without any
 non-native compatibility lane.
-Sprint 1.11 legacy
+Sprint 1.11 removes
 `INFERNIX_BUILD_ROOT`, `INFERNIX_DATA_ROOT`, the `INFERNIX_COMPOSE_SUBSTRATE` /
 `INFERNIX_COMPOSE_DEMO_UI` runtime fallbacks, `INFERNIX_BOOTSTRAP_YES`, the
 `bootstrap::prepend_path` helper, and the host-side `.build` / `chart/charts` bind mounts. The
@@ -48,7 +48,7 @@ lives in the image overlay at `/opt/infernix/chart/charts/`. Sprint 1.12 removes
 field from `dhall/InfernixHost.dhall` and the matching Haskell records, removes `AppleColima`
 planning and profile start/stop/restart behavior from `src/Infernix/HostPrereqs.hs`, and adds
 unit-level Docker-boundary coverage for native arm64 versus non-native daemon architectures.
-The the recorded validation Apple Silicon validation closed the full positive lifecycle and negative
+The recorded Apple Silicon validation closed the full positive lifecycle and negative
 no-daemon boundary gates named below.
 
 ## Substrate Foundation
@@ -443,7 +443,7 @@ launcher story onto the requested Apple-host-native and Linux-Compose doctrines.
   host-native routed E2E uses host `npm exec` with the same typed fixture and awaits the Apple
   validation pass, while Linux E2E runs Playwright inside the active substrate image
 - the NVIDIA-backed Linux substrate is standardized as `linux-gpu`, with the old `linux-cuda`
-  naming legacy as an explicit compatibility cleanup item
+  naming retired as an explicit compatibility cleanup item
 
 ### Validation
 
@@ -490,9 +490,14 @@ shrinks to `./.data` plus the Docker socket only.
   `src/Infernix/HostTools.hs`. Every Haskell external-command invocation in this phase's scope
   (`src/Infernix/Config.hs`, `src/Infernix/CLI.hs`, `src/Infernix/DemoCLI.hs`) routes through
   this helper.
-- Materialization helper extended in `src/Infernix/CLI.hs` so `infernix internal materialize-substrate`
-  also writes `./.build/infernix-host.dhall` (Apple) or `/opt/infernix/dhall/InfernixHost.dhall`
-  (Linux launcher).
+- the materialization helper (`src/Infernix/DemoConfig.hs` `materializeHostManifestFile`, wired
+  into `infernix internal materialize-substrate` in `src/Infernix/CLI.hs`) also stages a host
+  manifest beside the active build root — on Apple host-native this writes
+  `./.build/infernix-host.dhall`; on the Linux launcher the binary's effective build root is
+  `/workspace/.build/outer-container/build` so the CLI writes
+  `/workspace/.build/outer-container/build/infernix-host.dhall`, while the canonical in-image host
+  manifest at `/opt/infernix/dhall/InfernixHost.dhall` is baked separately by `docker/Dockerfile`
+  at image-build time and read by `discoverPaths`.
 - Bootstrap scripts (`bootstrap/common.sh`, `bootstrap/linux-cpu.sh`,
   `bootstrap/linux-gpu.sh`, `bootstrap/apple-silicon.sh`) refactored to the stage-zero convention:
   first line `PATH=/usr/bin:/bin`, repo root from `BASH_SOURCE`, home dir from `/etc/passwd`, every
@@ -563,7 +568,7 @@ Foundational pieces landed:
   `src/Infernix/HostConfig.hs.defaultAppleHostNativeHostConfig` is
   `/opt/homebrew/bin/docker`, matching Apple Silicon Homebrew. The
   earlier `/usr/local/bin/docker` Intel-Mac default was incorrect for
-  the only supported Mac target and was fixed during the the recorded validation
+  the only supported Mac target and was fixed during the recorded validation
   Apple cohort rerun on the new host.
 - `test/unit/Spec.hs.assertHostConfig` covers decoder roundtrip +
   tool-path lookup + the absent-tool empty-path convention.
@@ -624,11 +629,12 @@ Infra-side cleanup landed (the recorded validation; Linux compose-image selectio
   Dockerfile and the matching `runEndToEnd` refactor.
 - `docker/Dockerfile`: removed the
   `ENV INFERNIX_BUILD_ROOT=/workspace/.build/outer-container/build`
-  directive. The supported in-image build root is now the convention
-  default `/workspace/.build`, discovered by `discoverPaths` via the
-  cwd-walk plus the optional host-manifest lookup. The `mkdir -p`
-  before the materialize-substrate step targets `/workspace/.build`
-  directly.
+  directive. The image bakes `/opt/infernix/dhall/InfernixHost.dhall`
+  whose `filesystem.buildRoot` is `/workspace/.build/outer-container/build`,
+  and `discoverPaths` reads it via `tryLoadHostManifest`, so the
+  supported in-image build root resolves to
+  `/workspace/.build/outer-container/build` (the convention default
+  `repoRoot/.build` only applies when no manifest exists).
 - `bootstrap/common.sh`: replaced `INFERNIX_BOOTSTRAP_YES` env
   consumption with a typed `BOOTSTRAP_ASSUME_YES` script-local flag,
   set via the new `bootstrap::parse_yes_flag` helper that pops a
@@ -816,7 +822,7 @@ None.
 ## Remaining Work
 
 None. Sprints 1.1-1.12 are `Done`; Apple cohort validation closed in Wave A and CUDA Linux cohort
-validation closed in Wave C, with the the recorded validation Sprint 1.12 Apple boundary rerun closing the
+validation closed in Wave C, with the recorded Sprint 1.12 Apple boundary rerun closing the
 native-only positive and negative Docker gates on the current Apple Silicon host.
 
 ## Documentation Requirements

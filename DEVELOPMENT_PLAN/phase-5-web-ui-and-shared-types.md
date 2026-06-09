@@ -27,9 +27,13 @@ the frontend unit suite, `src/Infernix/Web/Contracts.hs` owns the handwritten br
 and `npm --prefix web run build` regenerates generated contracts and bundles the app into
 `web/dist/app.js`. The generated browser contracts and SPA state still expose the active
 substrate through `runtimeMode` fields. The code can honor `demo_ui = false`, and the supported
-materialization path now emits that shape with `--demo-ui false`. The browser SPA and routed
-Playwright suite now also expose `daemonLocation`, `inferenceExecutorLocation`, and
-`inferenceDispatchMode`, and the clustered demo app closes around Apple host inference execution
+materialization path now emits that shape with `--demo-ui false`. The browser SPA now also exposes
+`daemonLocation` and `inferenceDispatchMode` (`web/src/Main.purs`) alongside `runtimeMode`; the
+published platform state serialized by the Haskell publication path (`src/Infernix/Models.hs`)
+additionally carries `inferenceExecutorLocation`, which the integration suite asserts
+(`test/integration/Spec.hs`). The routed Playwright suite (`web/playwright/inference.spec.js`)
+currently asserts only `publication.runtimeMode` on the `/api/publication` payload, and the
+clustered demo app closes around Apple host inference execution
 without claiming cluster-resident Apple inference parity. Phase 6 Sprint 6.25 distinguishes the
 always-present cluster daemon from the Apple host inference executor.
 
@@ -47,7 +51,7 @@ always-present cluster daemon from the Apple host inference executor.
 ## Sprint 5.1: Demo Web Application Host (PureScript) [Done]
 
 **Status**: Done
-**Implementation**: `web/src/Main.purs`, `web/src/Infernix/Web/Workbench.purs`, `web/package.json`, `web/spago.yaml`, `chart/templates/deployment-demo.yaml`, `chart/templates/service-demo.yaml`, `src/Infernix/Demo/Api.hs`
+**Implementation**: `web/src/Main.purs`, `web/src/Infernix/Web/`, `web/package.json`, `web/spago.yaml`, `chart/templates/deployment-demo.yaml`, `chart/templates/service-demo.yaml`, `src/Infernix/Demo/Api.hs`
 **Docs to update**: `documents/architecture/web_ui_architecture.md`, `documents/reference/web_portal_surface.md`
 
 ### Objective
@@ -79,7 +83,7 @@ None.
 ## Sprint 5.2: Haskell-Owned Frontend Contract Foundation [Done]
 
 **Status**: Done
-**Implementation**: `src/Infernix/Web/Contracts.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Models.hs`, `src/Infernix/Types.hs`, `web/src/Main.purs`, `web/src/Infernix/Web/Workbench.purs`, `web/test/Main.purs`, `infernix.cabal`, `web/package.json`
+**Implementation**: `src/Infernix/Web/Contracts.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Models.hs`, `src/Infernix/Types.hs`, `web/src/Main.purs`, `web/src/Infernix/Web/`, `web/test/Main.purs`, `infernix.cabal`, `web/package.json`
 **Docs to update**: `documents/architecture/web_ui_architecture.md`, `documents/development/frontend_contracts.md`
 
 ### Objective
@@ -109,7 +113,7 @@ None.
 ## Sprint 5.3: Frontend Contract and View-Level Coverage via `purescript-spec` [Done]
 
 **Status**: Done
-**Implementation**: `web/test/Main.purs`, `web/src/Infernix/Web/Workbench.purs`, `web/package.json`, `src/Infernix/CLI.hs`
+**Implementation**: `web/test/Main.purs`, `web/src/Infernix/Web/`, `web/package.json`, `src/Infernix/CLI.hs`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/development/frontend_contracts.md`
 
 ### Objective
@@ -169,7 +173,7 @@ None.
 
 ---
 
-## Sprint 5.5: Web Runtime Image and Dedicated Playwright Container [Done]
+## Sprint 5.5: Web Runtime Image and In-Substrate Playwright Executor [Done]
 
 **Status**: Done
 **Implementation**: `docker/Dockerfile`, `compose.yaml`, `web/playwright/`, `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `chart/templates/deployment-demo.yaml`, `chart/templates/deployment-coordinator.yaml`, `chart/templates/deployment-engine.yaml`
@@ -270,7 +274,7 @@ None.
 ## Sprint 5.8: Clustered Demo Surface on Apple and Container-Owned Playwright Closure [Done]
 
 **Status**: Done
-**Implementation**: `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Demo/Api.hs`, `web/playwright/inference.spec.js`, `web/src/Infernix/Web/Workbench.purs`, `web/src/Main.purs`, `web/src/index.html`, `web/test/Main.purs`, `web/test/run_playwright_matrix.mjs`
+**Implementation**: `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Demo/Api.hs`, `web/playwright/inference.spec.js`, `web/src/Infernix/Web/`, `web/src/Main.purs`, `web/src/index.html`, `web/test/Main.purs`, `web/test/run_playwright_matrix.mjs`
 **Docs to update**: `README.md`, `documents/architecture/web_ui_architecture.md`, `documents/reference/web_portal_surface.md`, `documents/development/local_dev.md`, `documents/development/testing_strategy.md`
 
 ### Objective

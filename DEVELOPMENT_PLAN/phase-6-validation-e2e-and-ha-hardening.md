@@ -191,7 +191,7 @@ None.
 ## Sprint 6.3: Routed Playwright E2E Coverage [Done]
 
 **Status**: Done
-**Implementation**: `src/Infernix/CLI.hs`, `web/playwright/inference.spec.js`, `web/src/Infernix/Web/Workbench.purs`, `web/src/Main.purs`, `web/src/index.html`, `web/test/Main.purs`, `web/test/run_playwright_matrix.mjs`, `web/package.json`
+**Implementation**: `src/Infernix/CLI.hs`, `web/playwright/inference.spec.js`, `web/src/Infernix/Web/Chat.purs`, `web/src/Infernix/Web/Router.purs`, `web/src/Main.purs`, `web/src/index.html`, `web/test/Main.purs`, `web/test/run_playwright_matrix.mjs`, `web/package.json`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/reference/web_portal_surface.md`
 
 ### Objective
@@ -223,7 +223,14 @@ browser surface through the shared edge.
 
 - `infernix test e2e` hits the routed path rather than bypassing the edge
 - the routed Playwright suite fails if any active-substrate catalog entry is skipped
-- Apple and Linux routed E2E both pass through the same compose-driven Playwright service
+- Linux routed E2E runs entirely inside the active `infernix-linux-<mode>:local` launcher image
+  via `docker compose run --rm infernix infernix test e2e`, which invokes
+  `npm --prefix web exec -- playwright test ...` against the routed cluster on Docker's private
+  `kind` network (no dedicated Playwright sidecar service; `docker/playwright.Dockerfile` and the
+  `infernix-playwright:local` image are removed)
+- Apple host-native routed E2E runs host `npm exec` Playwright fed by the same typed
+  `.data/runtime/playwright-fixture.json` against the published localhost edge port, and is covered
+  by Apple cohort validation batches
 
 ### Remaining Work
 
@@ -875,8 +882,9 @@ integration and E2E ownership in the final `.dhall`-driven terms.
 ### Validation
 
 - Apple host-native `test all` runs the full supported suite for `apple-silicon`, validates the
-  cluster daemon, starts the host inference daemon as needed, and delegates Playwright execution to
-  the compose-driven `playwright` service without changing the reported substrate
+  cluster daemon, starts the host inference daemon as needed, and runs the host-native `npm exec`
+  Playwright executor against the published localhost edge port without changing the reported
+  substrate
 - Linux `test all` runs the full supported suite for the built Linux substrate and runs entirely
   through the outer container launcher
 - for any given built substrate, integration validation fails if a README row or reference whose
@@ -1073,8 +1081,8 @@ failure.
   first-run phases that can take minutes without emitting steady log lines
 - CLI reference docs describe the supported status or progress surfaces operators use before
   concluding that a lifecycle action actually failed
-- the plan, runbooks, and testing docs had cited the the recorded validation Apple lifecycle investigation
-  plus the the recorded validation and the recorded validation split-topology reruns as proof points for the supported
+- the plan, runbooks, and testing docs had cited the recorded validation Apple lifecycle investigation
+  plus the recorded-validation split-topology reruns as proof points for the supported
   false-negative doctrine; those reruns were performed on the legacy Apple Silicon hardware and
   no longer count as current proof points. The doctrine itself, the implemented progress
   surfaces, and the docs that describe them remain accurate, but the Apple cohort re-validation
@@ -1120,7 +1128,7 @@ otherwise depend on a transient target tag that no longer exists locally.
   retry can recover even when the prior target tag disappeared locally
 - a failed push still exits successfully when the expected tag is already present or a registry
   pull proves the content became available despite the client-side push failure
-- plan, testing, and runbook docs had recorded the the recorded validation Apple lifecycle proof point with
+- plan, testing, and runbook docs had recorded the recorded validation Apple lifecycle proof point with
   the then-current steady-state pod count and the supported retry interpretation, plus the
   the recorded validation repo-owned-image ordering and re-tagging proof point; both proof points were on
   the legacy Apple Silicon hardware and no longer count as current evidence. The retry logic
@@ -1136,7 +1144,7 @@ otherwise depend on a transient target tag that no longer exists locally.
 - the full `./bootstrap/apple-silicon.sh test` lifecycle had exercised the large Pulsar Harbor
   publication path, integration coverage, routed Playwright E2E, retained-state replay, and final
   cluster teardown successfully on the legacy hardware; that proof point is no longer current
-- the the recorded validation Apple lifecycle had validated that the repo-owned `infernix-linux-cpu:local`
+- the recorded validation Apple lifecycle had validated that the repo-owned `infernix-linux-cpu:local`
   image is pushed before third-party images and remains retryable through source re-tagging on
   the legacy hardware; that proof point is no longer current
 - final `./bootstrap/apple-silicon.sh status` reports `clusterPresent: False`,
@@ -1205,7 +1213,7 @@ same-binary host daemon fed by Pulsar batches.
 - `cabal test infernix-unit` passes on the new Apple Silicon host
 - `cabal test infernix-haskell-style` passes on the new Apple Silicon host
 - `./bootstrap/apple-silicon.sh doctor`, `build`, `up`, `status`, `test`, `down`, and final
-  `status` had passed on the recorded validation and the recorded validation on the legacy Apple Silicon hardware
+  `status` had passed on the recorded validation on the legacy Apple Silicon hardware
   exercising the split topology; that proof point is no longer current
 - the full `./bootstrap/apple-silicon.sh test` lifecycle had exercised the Apple host-batch
   topic, the host daemon, every active generated catalog entry, routed Playwright, repeated
@@ -1334,16 +1342,17 @@ PATH-resolved invocation regressions.
   typed fixtures or in-process fixtures. Every `getEnvironment` whole-env capture is removed from
   test code.
 - `src/Infernix/Lint/HaskellStyle.hs` rejects `lookupEnv`, `getEnv`, `getEnvironment`, `setEnv`,
-  and `unsetEnv` outside the remaining explicitly named non-test exceptions. After the Sprint 7.17
-  Apple cohort closure (the recorded validation), the `envFunctionExemptedFiles` list narrows to `Setup.hs`,
-  the lint module itself, and `src/Infernix/CLI.hs`. The `src/Infernix/Python.hs` row is gone with
-  that closure; the remaining CLI `getEnvironment` helper is tracked in
+  and `unsetEnv` outside the remaining explicitly named non-test exceptions. After the 2026-06-06
+  CLI/Files/Workflow no-env cleanup, the `envFunctionExemptedFiles` list contains only `Setup.hs`
+  and the lint module itself (`src/Infernix/Lint/HaskellStyle.hs`); the `src/Infernix/Python.hs`
+  and `src/Infernix/CLI.hs` rows are both gone (CLI.hs no longer performs env IO), and the closed
+  CLI/Files/Workflow exemptions are recorded as Removed (2026-06-06) in
   [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
-- `src/Infernix/Lint/HaskellStyle.hs` rejects any `proc "<bare-name>"` whose name matches a known
-  external tool, with non-test exemptions left only for `src/Infernix/Lint/HaskellStyle.hs` self,
-  `src/Infernix/Lint/Files.hs`, and `src/Infernix/Workflow.hs`. The `Lint.Files` and `Workflow`
-  exemptions are tracked in
-  [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
+- `src/Infernix/Lint/HaskellStyle.hs` rejects any `proc "<bare-name>"` matching a known external
+  tool; the non-test exemption list (`bareNameProcExemptedFiles`) now contains only
+  `src/Infernix/Lint/HaskellStyle.hs` itself, and the earlier `src/Infernix/Lint/Files.hs` and
+  `src/Infernix/Workflow.hs` exemptions were removed (recorded in the Completed rows of
+  [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md)).
 - `src/Infernix/Lint/Docs.hs` rejects governed root and `documents/` language that reintroduces
   project-prefixed env names or shell path overrides as supported operator configuration.
 - `src/Infernix/Lint/Chart.hs` rejects any `env:` block in

@@ -37,8 +37,8 @@ executor location in publication metadata.
 ## Substrate-Stable Route Contract
 
 - substrate changes do not fork the browser entrypoint
-- when the demo UI is enabled, `/`, `/api`, `/objects`, `/harbor/api`, `/harbor`,
-  `/minio/console`, `/minio/s3`, `/pulsar/admin`, and `/pulsar/ws` remain the published route
+- when the demo UI is enabled, `/`, `/api`, `/api/objects`, `/auth`, `/ws`, `/harbor/api`,
+  `/harbor`, `/minio/s3`, `/pulsar/admin`, and `/pulsar/ws` remain the published route
   inventory
 - `/api/publication` and `/api/cache` remain stable routed demo endpoints under the `/api` prefix
 - the final Apple split-executor path keeps the same browser base URL while routed cluster
@@ -80,8 +80,10 @@ reserved cluster object-store path.
 - repo-owned values suppress hard pod anti-affinity that would block local Kind scheduling
 - MinIO console and S3 API are both exposed through the shared edge
 - the chart reserves MinIO as the Kind-backed object-store target for Harbor and cluster-routed
-  object-store access, while the current validated runtime keeps durable object-store state under
-  `./.data/object-store/`
+  object-store access, while durable object-store state lives only in the MinIO buckets
+  `infernix-models` (always-on platform model weights) and `infernix-demo-objects` (demo-gated
+  user uploads and engine-generated artifacts), the on-disk `./.data/object-store/` tree having
+  been retired by Phase 7 Sprint 7.7
 
 ### Validation
 
@@ -462,8 +464,10 @@ pass, `node --check web/playwright.config.js`,
 `infernix lint {files,chart,docs,proto}` exit zero after the May 27
 documentation refresh. The Sprint 3.10 grep gate
 (`grep -rEn 'INFERNIX_EDGE_PORT|INFERNIX_PLAYWRIGHT_*|INFERNIX_EXPECT_*' src/ compose.yaml docker/ web/`)
-returns only the two retirement doc comments
-(`src/Infernix/CLI.hs:344`, `web/playwright.config.js:4`).
+returns only retirement doc-comments (in `src/Infernix/CLI.hs`,
+`web/playwright.config.js`, and the Phase 5 Sprint 5.9 binary-resolution note in
+`web/test/run_playwright_matrix.mjs`); no live INFERNIX_EDGE_PORT /
+INFERNIX_PLAYWRIGHT_* / INFERNIX_EXPECT_* reads remain.
 
 Closed validation:
 
@@ -650,7 +654,7 @@ cross-architecture `buildx`, or any non-native compatibility lane.
 
 - `cabal test infernix-unit` proves the `LinuxCpu` architecture selector returns `amd64` and
   `arm64` for native Linux fixtures
-- `./bootstrap/linux-cpu.sh test` passes on a native amd64 Linux host; the the recorded validation run passed
+- `./bootstrap/linux-cpu.sh test` passes on a native amd64 Linux host; the recorded validation run passed
   Haskell style, Python quality, Haskell unit, PureScript build, 71/71 web unit tests, full
   integration, and routed Playwright E2E (7/7) against launcher image digest
   `sha256:dc0c003e7cc2f2e359a474fa5ddb522c8715d271e322534db7798f260e9747fa`, while Harbor

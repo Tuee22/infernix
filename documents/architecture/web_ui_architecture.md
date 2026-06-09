@@ -45,7 +45,7 @@ validation batch.
 
 ## Landing Surface
 
-Phase 7 Sprint 7.19 gates the app shell behind a Keycloak JWT. The `body` element carries
+The app shell is gated behind a Keycloak JWT. The `body` element carries
 an `auth-unknown` / `auth-signed-out` / `auth-signed-in` class set by
 `Main.purs.renderAuthGate` on every render pass from `state.authenticated`; CSS toggles two
 mutually-exclusive top-level subtrees against that class:
@@ -76,7 +76,7 @@ the public client `infernix-spa` on realm `infernix`:
 
 The PKCE / state / nonce generation is shared between the two redirects through a private
 `beginAuthorizationCodeRedirect(config, kcAction)` helper in `web/src/Infernix/Web/Auth.js`;
-the legacy single-CTA `#login-button` pattern is gone (Sprint 7.19 retired it; see
+there is no single-CTA `#login-button` pattern (its removal is tracked in
 [../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md](../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md)).
 
 The Keycloak forms those redirects reach use the chart-owned `infernix` login theme. The stock

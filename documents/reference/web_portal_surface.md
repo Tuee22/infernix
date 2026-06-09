@@ -77,7 +77,7 @@ contract.
 
 ## Pre-Auth Landing
 
-Phase 7 Sprint 7.19 gates the durable-context app shell behind a Keycloak JWT. Anonymous
+The durable-context app shell is gated behind a Keycloak JWT. Anonymous
 visitors reaching the published edge port land on a minimal centred card carrying:
 
 - the `Infernix` wordmark,

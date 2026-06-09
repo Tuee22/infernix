@@ -132,7 +132,7 @@ follow-on bugs in three iterative cluster-up cycles, then closed the supported
 
 After the third rebuild, `./bootstrap/linux-cpu.sh build` plus
 `docker compose run --rm infernix infernix cluster up` reached
-`lifecyclePhase: steady-state` with `cluster status` reporting all eleven supported
+`lifecyclePhase: steady-state` with `cluster status` reporting all ten supported
 HTTPRoutes (`/`, `/api`, `/api/objects`, `/auth`, `/ws`, the operator route family)
 and zero references to the prior `/objects` route. `infernix-keycloak 2/2`,
 `keycloak-postgresql-pgbouncer 3/3`, `infernix-demo 1/1`, and, in the fused topology at that point,
@@ -155,7 +155,7 @@ two Kubernetes nodes (`infernix-linux-gpu-control-plane` + `infernix-linux-gpu-w
 the `nvidia` RuntimeClass present, the worker node advertising
 `nvidia.com/gpu: 1` (RTX 5090), `infernix-keycloak 2/2`, both Patroni clusters
 running, the Pulsar admin reconcile creating the `infernix` tenant + `infernix/demo`
-+ `infernix/system` namespaces, and the same 11-route registry as the `linux-cpu`
++ `infernix/system` namespaces, and the same 10-route registry as the `linux-cpu`
 lane (with `/objects` correctly absent). `cluster down` returned the lifecycle to
 `clusterPresent: False`, `lifecycleStatus: idle`, `lifecyclePhase: cluster-absent`.
 The Sprint 7.1 + 7.3 + 7.7 + 7.9 code changes are now real-cluster validated on
@@ -174,7 +174,7 @@ because the same file's `_download_minio_object` signature exceeded
 black's line-folding boundary. Both were fixed at source. The third
 image build completed clean and `cluster up` reached
 `lifecyclePhase: steady-state` with `runtimeMode: linux-gpu`,
-`edgePort: 9090`, 80 pods on 2 nodes, all eleven supported HTTPRoutes
+`edgePort: 9090`, 80 pods on 2 nodes, all ten supported HTTPRoutes
 registered (including the Sprint-7-introduced `/auth`, `/ws`,
 `/api/objects`), `infernix-coordinator 2/2`, `infernix-engine 1/1`,
 `infernix-demo 1/1`, `infernix-keycloak 2/2`, both Patroni Postgres
@@ -207,7 +207,7 @@ The recorded validation `linux-cpu` portability rerun then re-validated the
 same surface on the CPU substrate: image build, `cluster up` →
 `lifecyclePhase: steady-state` with 79 pods on 2 nodes,
 `infernix-coordinator 2/2`, `infernix-engine 1/1`,
-`infernix-demo 1/1`, `infernix-keycloak 2/2`, all eleven supported
+`infernix-demo 1/1`, `infernix-keycloak 2/2`, all ten supported
 HTTPRoutes registered, no `infernix-*` daemon PVCs. The coordinator
 log on `linux-cpu` confirms the namespace fix: `result-bridge
 session for persistent://public/default/inference.result.linux-cpu`
@@ -275,7 +275,7 @@ topology — and validated them end-to-end on `linux-cpu`. The closure surfaces:
 `infernix-coordinator 2/2`, `infernix-engine 1/1`, `infernix-demo 1/1`,
 `infernix-keycloak 2/2`, the Pulsar admin reconcile creating
 `infernix/demo` + `infernix/system` namespaces, no `infernix-service`
-PVC, all eleven supported HTTPRoutes registered (with `/objects`
+PVC, all ten supported HTTPRoutes registered (with `/objects`
 correctly absent). `cluster down` returned the lifecycle to
 `clusterPresent: False`, `lifecycleStatus: idle`,
 `lifecyclePhase: cluster-absent`.
@@ -621,7 +621,7 @@ on `linux-gpu` with:
   by the existing warmup reconcile)
 - `infernix-coordinator 2/2`, `infernix-engine 1/1`, `infernix-demo 1/1`,
   `infernix-minio 4/4`, Pulsar 3-broker + 3-bookie + 3-zookeeper +
-  3-recovery + 3-proxy all Running, Envoy Gateway 1/1, all eleven
+  3-recovery + 3-proxy all Running, Envoy Gateway 1/1, all ten
   supported HTTPRoutes registered
 - the Pulsar admin reconcile created the `infernix` tenant +
   `infernix/demo` + `infernix/system` namespaces + the
@@ -1112,12 +1112,23 @@ for the authoritative target shape.
   `.ready` sentinel; `infernix-demo-objects` is demo-gated and holds user uploads plus
   engine-generated artifacts under `users/<userId>/contexts/<contextId>/{uploads,generated}/`.
   The chart-reserved `infernix-runtime` and `infernix-results` placeholders are removed
-- **Uniform model-cache adapter helper.** `python/adapters/model_cache.py` exposes
-  `get_model_path(model_id) -> filesystem path`. Every adapter goes through this helper,
-  regardless of whether the underlying engine library supports bytes-loading. Helper
-  contains the MinIO client and LRU eviction logic; first call populates
-  `/model-cache/<modelId>/` from `infernix-models`, subsequent calls reuse the local copy.
-  Eviction runs when the directory tree approaches `sizeLimit`
+- **Uniform model-cache adapter helper.** `python/adapters/model_cache.py` defines
+  `get_model_path(model_id) -> filesystem path`, the boto3 MinIO download client, and the
+  LRU eviction logic. The contract is that every adapter routes through this helper,
+  regardless of whether the underlying engine library supports bytes-loading; the first
+  call populates `/model-cache/<modelId>/` from `infernix-models`, subsequent calls reuse
+  the local copy, and eviction runs when the directory tree approaches `sizeLimit`.
+  **Current status:** `model_cache.py` contains the boto3 MinIO download client + LRU
+  logic and the `get_model_path(model_id) -> path` contract, but no adapter yet imports or
+  calls it; the adapter layer (transformers/diffusers/jax/pytorch/tensorflow/vllm)
+  currently emits deterministic harness output via `common.render_engine_output` rather
+  than invoking a production model binary. The size-limited `/model-cache` `emptyDir` is
+  mounted by `chart/templates/deployment-engine.yaml` but the daemon does not yet write
+  there: the active cache uses the unbounded `engine-data` `emptyDir`
+  (`Paths.modelCacheRoot = runtimeRoot/model-cache`), so the cache is not under a
+  kubelet-enforced quota today (`ClusterConfig.engineModelCacheRoot` has no runtime
+  consumer). Wiring every adapter through `get_model_path` / the size-limited mount is
+  tracked remaining work
 - **Result-payload topology simplified.** Delete the 80-char threshold branch in
   `Runtime.hs:75-91`; text outputs always ride inline in the protobuf result message; binary
   outputs are written by the adapter directly to `infernix-demo-objects` at the
@@ -1183,8 +1194,10 @@ for the authoritative target shape.
   `infernix-models` bucket is present; `infernix-demo-objects` bucket is absent;
   `/objects/:objectRef` route is not registered
 - Per-engine smoke matrix: for every non-`Not recommended` row in the README matrix,
-  confirm the model can be loaded from `infernix-models` on the appropriate substrate and
-  produces a valid inference result (text or binary `ObjectRef`)
+  confirm each adapter produces a valid deterministic harness result (text or binary
+  `ObjectRef`) on the appropriate substrate. This does not assert weights load from
+  `infernix-models` today; the `get_model_path` weight-loading path is pending adapter
+  wiring
 - `infernix lint chart`, `infernix lint docs`, `infernix lint files`,
   `infernix docs check` all exit zero
 
@@ -1254,9 +1267,11 @@ validated through `infernix lint *` plus `infernix test unit`:
 - `src/Infernix/Service.hs` engine-role startup acquires an exclusive write lock on
   `./.data/runtime/engine.lock` via `fcntl(2)`-style `setLock` (BSD-equivalent
   semantics) before `runProductionDaemon`. On contention the helper reads the
-  existing holder's PID and surfaces a fail-fast diagnostic. Gated on `HostDaemon`
-  today; the Linux engine pod will gate uniformly on `engine` once the daemon-role
-  rename lands.
+  existing holder's PID and surfaces a fail-fast diagnostic. The lock is acquired
+  uniformly for the Engine daemon role (acquireEngineLockIfEngineRole in
+  src/Infernix/Service.hs), so Apple silicon's on-host infernix service daemon and
+  the Linux in-cluster infernix-engine pod both pass through the same branch; the
+  Coordinator role never holds the engine lock.
 - `src/Infernix/Runtime/Pulsar.hs` reconciles the supported `infernix` tenant plus
   `infernix/system` and `infernix/demo` namespaces via the Pulsar admin REST API,
   sets the compaction threshold on `infernix/demo`, and creates the
@@ -1302,7 +1317,9 @@ Closure notes:
   quota, models bucket, MinIO endpoint, credentials, and region into
   the typed `ModelCacheConfig` passed through `configure()` instead of
   Python environment reads. `python/pyproject.toml` declares the new
-  `boto3 ^1.35.0` dependency.
+  `boto3 ^1.35.0` dependency. This helper is not yet invoked by any
+  adapter; the adapter layer still emits deterministic harness output
+  via `common.render_engine_output` rather than calling `get_model_path`.
 - Code-level retirement of `./.data/object-store/`, `objectStoreRoot`,
   and `localPathFromUri` is implemented. `src/Infernix/Runtime/Cache.hs` is
   rewritten to operate on `modelCacheRoot/<runtimeMode>/<modelId>/`
@@ -2048,7 +2065,7 @@ Closure notes:
 ## Sprint 7.14: Integration-Layer Validation [Done]
 
 **Status**: Done (code-side closed for WebSocket-to-Pulsar publish plumbing, the coordinator-to-engine handoff contract, real Pulsar Reader roundtrip coverage for conversation/contexts/drafts/bootstrap-ready topic families, broker compacted-reader latest-per-key coverage, real broker producer-dedup validation, the non-chaos dispatcher/result-bridge durable prompt roundtrip, the Apple `engine.lock` chaos case (Wave A.3 in [cohort-validation-waves.md](cohort-validation-waves.md)), and the Linux-owned Sprint 7.14 chaos/throughput block implemented on the recorded cohort validation: frontend pod replacement, coordinator pod replacement around durable prompt dispatch/writeback, engine pod replacement, engine node drain, model-bootstrap request/ready-event deduplication across coordinator replacement, Linux engine anti-affinity, and multi-user durable prompt throughput. Native `linux-cpu` `infernix test all` validation passed on the recorded cohort validation; `linux-gpu` `infernix test all` validation passed on the recorded cohort validation in [Wave C](cohort-validation-waves.md). The mounted Linux CPU `cabal test infernix-integration` rerun on the recorded cohort validation passed against the Sprint 7.8 runtime KV-cache and daemon-orchestration split worktree.)
-**Implementation**: `test/integration/*` (existing `infernix-integration` Cabal stanza), `test/integration/Infernix/Test/Integration/Throughput.hs`
+**Implementation**: `test/integration/*` (existing `infernix-integration` Cabal stanza), `test/integration/Spec.hs (multi-user throughput logic — ThroughputMatrix, validateMultiUserDurablePromptThroughput/...With — lives inline in this module Main)`
 **Docs to update**: `documents/development/demo_app_test_plan.md`, `documents/development/chaos_testing.md`, `documents/tools/pulsar.md`, `documents/architecture/daemon_topology.md`
 
 ### Objective
@@ -2110,7 +2127,7 @@ and the multi-user throughput / fan-in batching / fan-out test.
 - **Multi-User Throughput / Fan-In Batching / Fan-Out** test: N users × K contexts × P
   prompts on one model, asserting per-context ordering, no duplicates or losses,
   cross-context independence, batching gain, bounded p95 latency, dedup correctness;
-  module: `Infernix.Test.Integration.Throughput`; defaults N = 10, K = 3, P = 5
+  implemented inline in `test/integration/Spec.hs` (module Main) via `validateMultiUserDurablePromptThroughput`; defaults N = 10, K = 3, P = 5
 
 ### Validation
 
@@ -2394,8 +2411,11 @@ at the browser layer. Includes per-model smoke matrix.
   `Not recommended`, creates a fresh context pinned to that model, submits a
   family-appropriate canonical input from `web/test/fixtures/`, asserts Completed
   `InferenceResult`, asserts artifact appearance and rendering
-- `web/test/fixtures/` checked-in canonical inputs: `audio/short-speech.wav`,
-  `audio/short-mix.wav`, `audio/short-pitch.wav`, `image/score-page.png`, `prompts/*.txt`
+- `web/test/fixtures/artifactSamples.js` checked-in canonical sample payloads (inline
+  text, JSON, PNG, WAV, MP4, PDF, MIDI, MusicXML, and generic-binary buffers via
+  `textPreviewBody`, `jsonPreviewBody`, `tinyPngBuffer`, `tinyWavBuffer`, `tinyMp4Buffer`,
+  `tinyPdfBuffer`, `tinyMidiBuffer`, `musicXmlBuffer`, `binaryArtifactBuffer`), imported by
+  `web/playwright/inference.spec.js`
 
 ### Validation
 

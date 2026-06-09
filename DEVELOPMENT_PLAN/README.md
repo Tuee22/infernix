@@ -162,6 +162,10 @@ but the proof points themselves are not current. Revalidation on the new host is
 (Apple cohort) closed the recorded validation with `cabal test infernix-integration` full PASS plus 5/6
 Playwright e2e PASS on the new host; Waves A.1 and A.2 subsequently closed the routed
 Playwright residuals with 7/7 e2e PASS, and Wave A.3 closed Apple engine-lock chaos.
+[Wave H](cohort-validation-waves.md) then re-confirmed the full Apple cohort lifecycle on the
+current host on 2026-06-09 from a clean build root: the build, lint/style/unit gates, the
+explicit `cluster up` → `cluster status` → `cluster down` lifecycle with retained-state replay,
+`infernix test integration`, `infernix test e2e` 9/9, and aggregate `infernix test all`.
 [Wave C](cohort-validation-waves.md) closed the recorded validation on a native Linux/CUDA host: the
 portable `linux-cpu` full-suite gate passed on the recorded validation and the real `linux-gpu`
 full-suite gate passed on the recorded validation. [Wave F](cohort-validation-waves.md) closed the recorded validation

@@ -35,6 +35,7 @@
 | E | Linux CPU mounted worktree | Sprint 7.8 closure: process-local runtime KV-cache path wired through `Infernix.Runtime.KVCache`, `executeInferenceWithKVCache`, native worker output, filesystem-topic drain, and WebSocket Pulsar consumption; daemon role orchestration moved into `Infernix.Runtime.Daemon`. Mounted Linux CPU validation passed `cabal build all`, `cabal test infernix-unit`, `cabal test infernix-haskell-style`, and `cabal test infernix-integration`, including durable dispatcher/result writeback, engine pod replacement, engine node drain, throughput, platform recovery, production-shape deployment, and clean teardown. | Closed | the recorded validation |
 | F | Native arm64 Linux CPU execution | Validation-only Phase 3 Sprint 3.12 closure: native `linux/arm64` `linux-cpu` validation through the already selected arm64 Docker daemon on this Apple Silicon machine. Proved Harbor publication, warmup hydration, final Harbor-backed preload, integration, and routed E2E on the native ARM publication path without cross-architecture emulation or Docker-context changes. | Closed | the recorded validation |
 | G | Apple Silicon (current host) | Phase 7 auth-UX quad closure: Sprint 7.19 auth-gated landing with dual Keycloak entry points, Sprint 7.20 themed Keycloak login surface, Sprint 7.21 operator console ribbon with edge JWT gating for `/harbor`, `/pulsar/admin`, and `/minio/s3`, and Sprint 7.22 self-service account deletion with MinIO + Pulsar per-user state reaping before Keycloak account removal. | Closed | the recorded Apple host-native validation |
+| H | Apple Silicon (current host) | Full current-host Apple lifecycle revalidation from a clean build root (no prior `./.build` artifacts): `cabal install all:exes`; `infernix lint files/docs/chart/proto` plus `infernix docs check`; `infernix test lint` (haskell-style) and `infernix test unit` (`infernix-unit` plus web 71/71); explicit `infernix cluster up` → `cluster status` (77 pods across 2 nodes, `infernix-manual` storage, full Envoy Gateway route set, `pulsar-bridge-to-host-daemon` dispatch) → `cluster down` (retained-state replay, `./.data` preserved) → post-teardown `cluster status` (`clusterPresent: False`, `lifecyclePhase: cluster-absent`); `infernix test integration` PASS; `infernix test e2e` 9/9; aggregate `infernix test all`. The dynamic `choosePulsarHttpPort` chooser shifted the Pulsar host port 30080→30081 around a VS Code-held `127.0.0.1:30080`. Native arm64 throughout (colima `aarch64`, no emulation or Docker-context changes). Published cluster image `infernix-linux-cpu@sha256:7f341cb1629c1d0af9b72db0fef7b89cc1f13d2bd02afe9be1daeed5e7f18454`. | Closed | 2026-06-09 |
 
 ## Wave A — Closed the recorded validation
 
@@ -388,6 +389,69 @@ Wave G closed on the recorded Apple host-native validation. The closure run pass
 - `cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes`.
 - `./.build/infernix test e2e` with 9/9 routed Playwright tests passing.
 
+## Wave H: 2026-06-09 Current-Host Full Apple Lifecycle Revalidation
+
+Wave H is the current-host full Apple-cohort revalidation. The Apple Silicon machine
+described by the validation reset had no built artifacts under `./.build`, so every gate
+below was exercised from a clean build root on the current host. Docker was the already
+selected native arm64 colima daemon (`server=linux/arm64`, runtime probe `aarch64`); no
+cross-architecture emulation, Docker-context creation or switching, or VM creation was used.
+
+Static and build gates (host-native, run directly against the freshly built
+`./.build/infernix`):
+
+- `cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes` — both binaries built clean.
+- `infernix lint files`, `infernix lint docs`, `infernix lint chart`, `infernix lint proto`, and `infernix docs check` — all exit zero.
+- `infernix test lint` — `infernix-haskell-style` PASS (the `ormolu` + `hlint` style tools were rebuilt into `./.build/haskell-style-tools/bin/` on first run).
+- `infernix test unit` — `infernix-unit` PASS plus the web unit suite at 71/71.
+- `infernix internal materialize-substrate apple-silicon` staged the demo-enabled
+  `./.build/infernix-substrate.dhall` (16-model catalog, `daemonRole = engine`,
+  `demo_ui = True`); aggregate `infernix test ...` entrypoints require this staged file,
+  while `infernix lint ...` and `infernix docs check` remained substrate-file independent.
+
+Cluster lifecycle gate (Phases 2-3), exercised as an explicit standalone cycle:
+
+- `infernix cluster up` completed with `edgePort: 9090`, `harborPort: 30002`, and Pulsar
+  host port `30081`. The dynamic `choosePulsarHttpPort` chooser incremented past a
+  VS Code-held `127.0.0.1:30080` to 30081 (the in-cluster pulsar-proxy NodePort stays
+  30080; only the operator-host hostPort shifts), confirming the dynamic host-port doctrine
+  on this host. All nine platform images published to Harbor as native `linux/arm64`; the
+  cluster image carried digest
+  `infernix-linux-cpu@sha256:7f341cb1629c1d0af9b72db0fef7b89cc1f13d2bd02afe9be1daeed5e7f18454`.
+- `infernix cluster status` while up reported `clusterPresent: True`,
+  `lifecyclePhase: steady-state`, 77 pods across 2 nodes, `storageClass: infernix-manual`,
+  `storageHealth: 26 chart-owned claim roots prepared`,
+  `publicationInferenceDispatchMode: pulsar-bridge-to-host-daemon`, and the full Envoy
+  Gateway route set (`/`, `/api`, `/api/objects`, `/auth`, `/harbor`, `/harbor/api`,
+  `/minio/s3`, `/pulsar/admin`, `/pulsar/ws`, `/ws`).
+- `infernix cluster down` ran the retained-state replay (MinIO, Harbor jobservice, Pulsar
+  bookie journal/ledger, and ZooKeeper claims copied from the worker back to the host) and
+  preserved durable state under `./.data`, then deleted the Kind cluster. Post-teardown
+  `infernix cluster status` reported `clusterPresent: False`, `lifecycleStatus: idle`, and
+  `lifecyclePhase: cluster-absent` with zero nodes and pods and no leftover containers.
+
+Routed validation gates (Phases 4-7), each managing its own cluster lifecycle and spawning
+the on-host engine daemon automatically:
+
+- `infernix test integration` — PASS (`infernix-integration: PASS`, 1 of 1 test cases).
+  Apple-lane scenarios: per-model inference over the 16-row catalog, durable Pulsar topic
+  families, route probes, service runtime loop, cache lifecycle, cluster-state reload, and
+  the `apple engine.lock` host-singleton enforcement case. The multi-user throughput and
+  pod-replacement/node-drain chaos block remains `runtimeMode == LinuxCpu`-gated and is the
+  CUDA Linux cohort's scope.
+- `infernix test e2e` — 9/9 routed Playwright specs PASS (1.8m): routed edge/SPA, Keycloak
+  self-registration, pre-auth landing entry points, auth lifecycle (logout/re-login/token
+  refresh), routed WebSocket JWT validation, cross-user object-grant isolation, self-service
+  account deletion reaping demo state before the Keycloak account action, artifact upload
+  with preview/media/PDF/download-only grants, and the per-model browser smoke matrix across
+  every catalog model.
+- `infernix test all` — the aggregate gate ran lint, `infernix-unit` plus web 71/71,
+  `infernix-integration`, and routed Playwright e2e end to end on the same worktree.
+
+The CUDA Linux cohort hardware named by the validation reset remains unavailable, so the
+`linux-cpu` and `linux-gpu` gates are not part of Wave H and retain their prior recorded
+closure. Wave H re-confirms the Apple cohort on the current host only.
+
 ## Cadence Rule
 
 Wave numbering operationalizes Section Q of
@@ -409,12 +473,12 @@ follow-on wave.
 
 ## Phase Cohort Status Index
 
-This index records the final cohort status after the Wave C, Wave E, and Wave F closures.
+This index records the final cohort status after the Wave C, Wave E, Wave F, Wave G, and Wave H closures.
 
 | Phase | Code-side closure | Apple cohort gate | CUDA Linux cohort gate |
 |-------|-------------------|-------------------|------------------------|
 | 0 | Sprints 0.1-0.10 `Done` | Closed in Wave A (lint gates) | `linux-cpu` passed the recorded validation; `linux-gpu` passed the recorded validation |
-| 1 | Sprints 1.1–1.11 `Done` | Closed in Wave A (integration cluster up + lifecycle on Apple host) | `linux-cpu` passed the recorded validation; `linux-gpu` passed the recorded validation |
+| 1 | Sprints 1.1–1.12 `Done` | Closed in Wave A (integration cluster up + lifecycle on Apple host) | `linux-cpu` passed the recorded validation; `linux-gpu` passed the recorded validation |
 | 2 | Sprints 2.1–2.13 `Done` | Closed in Wave A (retained-state replay + Patroni filter + cluster lifecycle) | `linux-cpu` passed the recorded validation; `linux-gpu` passed the recorded validation |
 | 3 | Sprints 3.1–3.12 `Done` | Closed in Wave A/A.2 (substrate-aware publication, Harbor port, containerd, hand-authored MinIO, and Apple host-native E2E) | `linux-cpu` amd64 passed the recorded validation; `linux-gpu` passed the recorded validation; native arm64 `linux-cpu` passed in Wave F on the recorded validation |
 | 4 | Sprints 4.1-4.14 `Done` | Closed in Wave A (mounted ClusterConfig + SecretsConfig roundtrip via integration suite) | `linux-cpu` passed the recorded validation; `linux-gpu` passed the recorded validation |
@@ -422,12 +486,20 @@ This index records the final cohort status after the Wave C, Wave E, and Wave F 
 | 6 | Sprints 6.1-6.30 `Done` | Closed in Wave A/A.1/A.2/A.3 (lint, style, unit, integration, routed E2E, and Apple engine-lock chaos) | `linux-cpu` passed the recorded validation; `linux-gpu` passed the recorded validation |
 | 7 | Sprints 7.1-7.18 `Done`; Sprint 7.8 runtime KV-cache and `Infernix.Runtime.Daemon` split closed in Wave E after the code-side KV-cache decision and Failover naming follow-on; Sprints 7.19-7.22 auth-UX surface closed in Wave G | Closed in Wave A/A.1/A.2/A.3 for the original durable-context gates; Wave G closed for auth-UX | `linux-cpu` passed the recorded validation; `linux-gpu` passed the recorded validation; residual rebuilt-image `linux-gpu` gate passed the recorded validation against `sha256:521a56ac6f79bf1ce5bc9d7dcd9c872e897ce4b4882661d4ada2f62faa108d7b`; residual rebuilt-image `linux-cpu` gate passed the recorded validation against `sha256:dc0c003e7cc2f2e359a474fa5ddb522c8715d271e322534db7798f260e9747fa`; mounted Linux CPU Wave E passed the recorded validation; Wave G Apple host-native auth-UX validation passed 9/9 routed E2E |
 
+Every Apple cohort gate above was additionally re-confirmed end to end on the current host by
+Wave H (2026-06-09) from a clean build root: `cabal install all:exes`, the lint/style/unit
+gates, the explicit `infernix cluster up` → `cluster status` → `cluster down` lifecycle with
+retained-state replay, `infernix test integration` PASS, `infernix test e2e` 9/9, and the
+aggregate `infernix test all`. The CUDA Linux cohort hardware remains unavailable, so the
+`linux-cpu` and `linux-gpu` columns retain their prior recorded closure and are out of Wave H
+scope.
+
 When a wave closes, this table is the place to update first. Phase
 docs follow.
 
 ## Historical Evidence
 
-The Apple Silicon validation reset (see [../README.md](../README.md) and
+The Apple Silicon validation reset (see [README.md](README.md) and
 [00-overview.md](00-overview.md)) moves dated proof points for earlier hardware into
-[legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) under "Historical Validation
+[legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) under "Retired Historical Validation
 Evidence". Phase docs reference that table instead of inlining dated proof points per Section I.
