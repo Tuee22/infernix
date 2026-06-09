@@ -127,8 +127,10 @@ Direct reference path:
   publishes `inferenceDispatchMode: pulsar-bridge-to-host-daemon` so the routed demo surface can
   advertise the coordinator-plus-host-engine split explicitly
 - the direct `infernix service` host run carries the engine daemon role: it consumes the
-  generated engine-role metadata and batch topic, auto-discovers the routed Pulsar edge from
-  published cluster state when needed, and forks Python adapters from `python/adapters/` only
+  generated engine-role metadata and batch topic, auto-discovers Pulsar's direct un-gated proxy
+  NodePort transport (the `/admin/v2` and `/ws/v2` surfaces, not the JWT-gated `/pulsar/admin`
+  edge) from published cluster state when needed, and forks Python adapters from `python/adapters/`
+  only
   when the bound engine is Python-native. The engine role enforces the supported uniform
   one-per-node policy via an exclusive `flock(2)` on `./.data/runtime/engine.lock`; a second
   `infernix service` invocation on the same host exits non-zero with a diagnostic naming the

@@ -112,11 +112,14 @@ target shape is the three-role daemon model codified in
   inference lane with `inferenceDispatchMode: pulsar-bridge-to-host-daemon` on Apple versus
   `pulsar-bridge-to-cluster-daemon` on Linux (the latter terminates at the in-cluster engine
   Deployment)
-- when Pulsar endpoint env vars are present, the daemon uses the real Pulsar WebSocket or admin
-  transport for those topic fields; on Apple host-native runs, the daemon also auto-discovers the
-  routed Pulsar edge from the published cluster state when the env vars are absent and the cluster
-  is present; unit-level harnesses can still exercise the repo-local topic spool under
-  `./.data/runtime/pulsar/` when those endpoints are intentionally absent
+- cluster-resident daemons read the Pulsar WebSocket and admin transport from the mounted
+  `ClusterConfig`; host-side tooling that runs outside a pod auto-discovers Pulsar's direct,
+  un-gated proxy NodePort transport (the real `/admin/v2` and `/ws/v2` surfaces, not the
+  Keycloak-JWT-gated `/pulsar/admin` Envoy edge) when no mounted manifest is present and the cluster
+  exists — Apple host-native runs resolve it from the published cluster state on the loopback
+  NodePort, and the Linux outer-container flows reach the same proxy NodePort on the control-plane
+  node IPv4 over the joined `kind` network; unit-level harnesses can still exercise the repo-local
+  topic spool under `./.data/runtime/pulsar/` when those endpoints are intentionally absent
 - direct host runs and cluster-resident placements both launch the same process-isolated
   engine-worker contract and honor the same adapter-specific command overrides
 - switching runtime modes changes generated catalog content and engine bindings, not the service

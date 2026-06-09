@@ -22,6 +22,14 @@
 - the production daemon reads `ClusterConfig.pulsar.wsBaseUrl` and
   `ClusterConfig.pulsar.adminUrl` from the mounted cluster manifest, then uses Pulsar's WebSocket
   producer or consumer endpoints plus the admin schema API for the configured topics
+- trusted tooling that runs outside a cluster pod — the Apple host-native daemon and the Linux
+  outer-container `cluster up` / `infernix test` flows — reaches Pulsar's real `/admin/v2` and
+  `/ws/v2` surfaces directly on the un-gated Pulsar-proxy HTTP NodePort (in-cluster `30080`), not
+  through the Keycloak-JWT-gated `/pulsar/admin` Envoy edge route on the gateway NodePort (`30090`).
+  The operator-routes `SecurityPolicy` gates browser/operator access to `/pulsar/admin` only, so
+  routing trusted launcher admin-v2 reconcile or topic-compaction calls through the edge fails closed
+  with `401 Jwt is missing`; the launcher joins the private `kind` Docker network and so reaches the
+  proxy NodePort on the control-plane node IPv4 exactly as it reaches the gateway NodePort
 - when those endpoints are intentionally absent in unit-level harnesses, the daemon can exercise
   the repo-local topic spool rooted at `./.data/runtime/pulsar/`: request topics and the result
   topic become directories, and schema registration is mirrored as marker files under

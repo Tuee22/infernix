@@ -22,7 +22,7 @@ import Infernix.Auth.Jwt qualified as Jwt
 import Infernix.Bootstrap.Models qualified as BootstrapModels
 import Infernix.Bridge.Result qualified as ResultBridge
 import Infernix.CLI (writeGeneratedPursContracts)
-import Infernix.Cluster (clusterWorkloadArchitectureForHostArchitecture, writeGeneratedKindConfig)
+import Infernix.Cluster (clusterWorkloadArchitectureForHostArchitecture, linuxGpuNvkindConfigMapBug, writeGeneratedKindConfig)
 import Infernix.Cluster.Discover
 import Infernix.Cluster.PublishImages
   ( HarborPublishOptions (..),
@@ -806,6 +806,32 @@ main = do
     assert
       (linuxGpuArchitecture == "amd64")
       "linux-gpu publication remains constrained to native amd64 CUDA"
+    -- nvkind configmap-persistence bug detector: matches only the upstream
+    -- failure signature (the @%!w(<nil>)@ wrapped-nil marker together with
+    -- the config/configmap write phrase), and ignores unrelated failures so
+    -- the repo-owned GPU node recovery path is not taken for the wrong error.
+    assert
+      ( linuxGpuNvkindConfigMapBug
+          "failed adding config to cluster \"infernix-linux-gpu\": %!w(<nil>)"
+      )
+      "nvkind detector matches the 'adding config to cluster' + %!w(<nil>) signature"
+    assert
+      ( linuxGpuNvkindConfigMapBug
+          "error writing configmap: %!w(<nil>)"
+      )
+      "nvkind detector matches the 'writing configmap' + %!w(<nil>) signature"
+    assert
+      (not (linuxGpuNvkindConfigMapBug "address already in use"))
+      "nvkind detector ignores the port-rebind retry signature"
+    assert
+      (not (linuxGpuNvkindConfigMapBug "writing configmap: connection refused"))
+      "nvkind detector ignores a configmap-write error without the %!w(<nil>) marker"
+    assert
+      (not (linuxGpuNvkindConfigMapBug "boom %!w(<nil>) during node image pull"))
+      "nvkind detector ignores the %!w(<nil>) marker without a config/configmap write phrase"
+    assert
+      (not (linuxGpuNvkindConfigMapBug ""))
+      "nvkind detector ignores an empty error"
   putStrLn "unit tests passed"
 
 -- | Phase 1 Sprint 1.11 — set up a unit-test sandbox at @root@. The

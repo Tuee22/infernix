@@ -1361,16 +1361,27 @@ discoverPulsarTransport paths runtimeMode maybeClusterConfig =
       _ -> pure Nothing
 
 -- | Phase 6 Sprint 6.28 follow-on (May 26, 2026): outer-container
--- Pulsar transport discovery via the kind control-plane's IPv4 +
--- NodePort 30090. The launcher cannot use @127.0.0.1:9090@ from
--- inside its own network namespace, and Kind's docker-DNS entry for
--- @<cluster>-control-plane@ returns an IPv6 ULA address first
--- (@fc00:f853:ccd:e793::/64@) that Haskell's getAddrInfo+connect
--- doesn't route on the kind bridge. The supported flow asks Docker
--- for the kind control-plane container's IPv4 on the @kind@ network
--- directly, then connects to that explicit IPv4 on the supported
--- NodePort 30090 — which the launcher reaches over the attached
--- @kind@ bridge via @ensureOuterContainerKindNetworkAccess@.
+-- Pulsar transport discovery via the kind control-plane's IPv4. The
+-- launcher cannot use @127.0.0.1:9090@ from inside its own network
+-- namespace, and Kind's docker-DNS entry for @<cluster>-control-plane@
+-- returns an IPv6 ULA address first (@fc00:f853:ccd:e793::/64@) that
+-- Haskell's getAddrInfo+connect doesn't route on the kind bridge. The
+-- supported flow asks Docker for the kind control-plane container's
+-- IPv4 on the @kind@ network directly, then connects to that explicit
+-- IPv4 — which the launcher reaches over the attached @kind@ bridge via
+-- @ensureOuterContainerKindNetworkAccess@.
+--
+-- The launcher is a trusted local component (it created the cluster), so
+-- like the Apple host-native path (@discoverAppleHostPulsarTransport@) it
+-- talks to Pulsar's @/admin/v2@ and @/ws/v2@ surfaces through the
+-- un-gated Pulsar-proxy HTTP NodePort (@pulsarProxyHttpNodePort@, 30080)
+-- rather than the Keycloak-JWT-gated @/pulsar/admin@ Envoy edge route on
+-- the gateway NodePort (30090). The operator-routes 'SecurityPolicy'
+-- gates browser access to @/pulsar/admin@ only; routing trusted admin-v2
+-- reconcile/compaction calls through the edge would (and did) fail with
+-- @401 Jwt is missing@, while @/pulsar/ws@ — never in that policy —
+-- happened to work. Reaching the proxy NodePort directly keeps both
+-- halves un-gated and consistent with the Apple lane.
 discoverOuterContainerPulsarTransport :: HostConfig.HostConfig -> RuntimeMode -> IO (Maybe PulsarTransport)
 discoverOuterContainerPulsarTransport hostConfig runtimeMode = do
   let containerName =
@@ -1400,11 +1411,11 @@ buildOuterContainerTransportFromIpv4 :: String -> Maybe PulsarTransport
 buildOuterContainerTransportFromIpv4 ipv4 =
   fmap (transportFromBase adminUrl) (eitherToMaybe (parsePulsarWebSocketBase wsUrl))
   where
-    outerContainerPort = 30090 :: Int
+    outerContainerPort = pulsarProxyHttpNodePort
     wsUrl =
-      "ws://" <> ipv4 <> ":" <> show outerContainerPort <> "/pulsar/ws/v2"
+      "ws://" <> ipv4 <> ":" <> show outerContainerPort <> "/ws/v2"
     adminUrl =
-      "http://" <> ipv4 <> ":" <> show outerContainerPort <> "/pulsar/admin/admin/v2"
+      "http://" <> ipv4 <> ":" <> show outerContainerPort <> "/admin/v2"
 
 transportFromBase :: String -> PulsarWebSocketBase -> PulsarTransport
 transportFromBase adminUrl parsedWebSocketBase =
@@ -1456,7 +1467,19 @@ parseClusterPulsarTransport adminBase rawWebSocketBase =
 -- 'pulsarHttpPortPath'; this baseline is only the fallback used when that
 -- file is absent.
 defaultPulsarProxyHttpLoopbackHostPort :: Int
-defaultPulsarProxyHttpLoopbackHostPort = 30080
+defaultPulsarProxyHttpLoopbackHostPort = pulsarProxyHttpNodePort
+
+-- | In-cluster Kubernetes NodePort for the Pulsar-proxy HTTP surface
+-- (the @/admin/v2@ admin API and the @/ws/v2@ websocket endpoint). This
+-- is the un-gated proxy surface: kube-proxy binds it on every Kind node
+-- interface, so the Linux outer-container launcher reaches it at
+-- @<control-plane-ipv4>:30080@ once it has joined the @kind@ bridge (see
+-- @ensureOuterContainerKindNetworkAccess@), exactly as it already reaches
+-- the gateway NodePort. The Keycloak-JWT-gated @/pulsar/admin@ Envoy edge
+-- route lives on the gateway NodePort (@gateway.publishedNodePort@, 30090)
+-- instead and is reserved for browser/operator access.
+pulsarProxyHttpNodePort :: Int
+pulsarProxyHttpNodePort = 30080
 
 discoverAppleHostPulsarTransport :: Paths -> IO (Maybe PulsarTransport)
 discoverAppleHostPulsarTransport paths = do

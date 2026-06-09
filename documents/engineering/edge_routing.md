@@ -15,6 +15,11 @@
   Keycloak JWT for direct browser access to `/harbor`, `/pulsar/admin`, and `/minio/s3`.
   The policy accepts the SPA's `infernix_operator_token` cookie and direct
   `Authorization: Bearer ...` headers.
+- That JWT gate governs browser/operator access through the Envoy edge only. Trusted in-cluster
+  daemons and host-side launcher tooling reach Pulsar's admin surface through the proxy Service
+  (`ClusterConfig.pulsar.adminUrl`) or its un-gated NodePort directly, not through the gated
+  `/pulsar/admin` edge route — see [../tools/pulsar.md](../tools/pulsar.md). Note `/pulsar/ws` is
+  intentionally absent from the policy, so the websocket surface is never JWT-gated at the edge.
 - Gateway owns the supported routed surface, and direct `infernix-demo` execution intentionally
   exposes only the demo-owned HTTP surface outside the intended HTTPRoute mapping.
 

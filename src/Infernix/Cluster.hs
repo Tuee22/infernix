@@ -6,6 +6,7 @@ module Infernix.Cluster
     clusterStatus,
     clusterUp,
     kindControlPlaneNodeName,
+    linuxGpuNvkindConfigMapBug,
     linuxGpuSupportedOnHost,
     loadClusterState,
     runKubectlCompat,
@@ -1192,12 +1193,32 @@ createLinuxGpuCluster paths = go
               clusterCreated <- kindClusterExists paths LinuxGpu
               if clusterCreated
                 then do
-                  putStrLn "nvkind hit its known configmap persistence bug; continuing with repo-owned linux-gpu node setup"
-                  completeLinuxGpuNodeBootstrap paths
-                  pure (candidatePort, harborPortCandidate, pulsarHttpPortCandidate)
+                  putStrLn
+                    ( "nvkind hit its known configmap persistence bug (nvkind reported: "
+                        <> firstNonEmptyLine err
+                        <> "); kind cluster was created — continuing with repo-owned linux-gpu node setup"
+                    )
+                  bootstrapResult <- try (completeLinuxGpuNodeBootstrap paths) :: IO (Either SomeException ())
+                  case bootstrapResult of
+                    Right () -> pure (candidatePort, harborPortCandidate, pulsarHttpPortCandidate)
+                    Left bootstrapErr ->
+                      ioError
+                        ( userError
+                            ( "repo-owned linux-gpu node bootstrap failed after working around the nvkind configmap persistence bug for "
+                                <> kindClusterName paths LinuxGpu
+                                <> ":\n"
+                                <> displayException bootstrapErr
+                            )
+                        )
                 else
                   ioError
-                    (userError ("nvkind cluster create failed for " <> kindClusterName paths LinuxGpu <> ":\n" <> err))
+                    ( userError
+                        ( "nvkind cluster create hit its known configmap persistence bug but the kind cluster was not created for "
+                            <> kindClusterName paths LinuxGpu
+                            <> "; treat as fatal. nvkind reported:\n"
+                            <> err
+                        )
+                    )
           | otherwise ->
               ioError
                 (userError ("nvkind cluster create failed for " <> kindClusterName paths LinuxGpu <> ":\n" <> err))
@@ -1208,6 +1229,15 @@ linuxGpuNvkindConfigMapBug err =
     && ( "adding config to cluster" `List.isInfixOf` err
            || "writing configmap" `List.isInfixOf` err
        )
+
+-- | First non-blank line of a captured error, trimmed, for single-line
+-- diagnostics (e.g. the nvkind configmap-bug recovery log). Falls back to
+-- the trimmed whole string when every line is blank.
+firstNonEmptyLine :: String -> String
+firstNonEmptyLine err =
+  case dropWhile (all isSpace) (lines err) of
+    (line : _) -> trim line
+    [] -> trim err
 
 completeLinuxGpuNodeBootstrap :: Paths -> IO ()
 completeLinuxGpuNodeBootstrap paths = do

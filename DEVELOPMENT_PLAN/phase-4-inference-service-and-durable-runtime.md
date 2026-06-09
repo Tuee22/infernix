@@ -146,8 +146,10 @@ host-side, and Linux inference execution and result publication remain cluster-r
   optional transport-endpoint wiring, not the request or result or catalog contract
 - the durable object storage contract uses the `infernix-models` MinIO bucket on every substrate;
   real Pulsar transport is enabled either through the configured Pulsar endpoint inputs or, on
-  the Apple host-native lane, by discovering the routed Pulsar edge from publication state, while
-  the filesystem topic spool remains a harness-oriented fallback when no endpoint is
+  the host-side lanes (Apple host-native and the Linux outer-container launcher), by discovering
+  Pulsar's direct un-gated proxy NodePort transport — the real `/admin/v2` and `/ws/v2` surfaces,
+  not the JWT-gated `/pulsar/admin` edge — from publication state or the control-plane node IPv4,
+  while the filesystem topic spool remains a harness-oriented fallback when no endpoint is
   intentionally present
 - the shared abstraction lives at the control plane, publication, config, Pulsar, protobuf, and
   routed API or UI levels rather than a false claim of identical image layout across all lanes
@@ -336,8 +338,9 @@ non-demo deployment.
 
 ### Validation
 
-- the routed `infernix internal pulsar-roundtrip` helper publishes a request through the final
-  `/pulsar/admin` and `/pulsar/ws/v2` surfaces and observes the result end to end
+- the `infernix internal pulsar-roundtrip` helper publishes a request through Pulsar's real
+  `/admin/v2` and `/ws/v2` surfaces — reached on the un-gated Pulsar-proxy NodePort from the
+  host-side launcher, not the JWT-gated `/pulsar/admin` edge — and observes the result end to end
 - production pods bind no Infernix-owned HTTP listener
 - repeat `cluster up` runs preserve the production inference surface
 
