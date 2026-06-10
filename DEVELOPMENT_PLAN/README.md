@@ -100,10 +100,14 @@ engine publishes results. The generated final-phase Helm values use the role-spe
 `coordinator.replicaCount` and `engine.replicaCount` knobs; Apple sets the cluster engine replica
 count to 0 because the engine role is host-native. Pulsar-owned topics, exclusive subscriptions,
 and acknowledgement handling are the ordering and ownership boundary for request handoff,
-inference, and result publication if operators deliberately scale that surface. The current
-adapters emit
-deterministic engine-family output from
-typed durable metadata, while unsupported adapter ids fail
+inference, and result publication if operators deliberately scale that surface. The worker
+invokes the real engine for the selected binding — the Python adapter `transform` over a prebuilt
+host wheel for `python-stdio` bindings, or the real native runner binary resolved from a typed
+`HostConfig` absolute path for `native-process-runner` bindings — fetches model weights lazily from
+the `infernix-models` MinIO bucket, and publishes a per-family real result (inline text for the LLM
+and speech families; a typed `infernix-demo-objects` object reference for the source-separation,
+audio-to-MIDI, music-transcription, image, video, audio-generation, and OMR artifact families),
+while unsupported adapter ids fail
 fast instead of falling through to a generic success path. The worktree omits the
 direct Harbor, MinIO, and Pulsar tool-route compatibility handlers, requires the real routed
 upstream behavior in integration, and persists Linux cluster state before later rollout phases.
@@ -125,7 +129,14 @@ work to use an already selected native arm64 Docker daemon and forbids creating 
 Docker contexts, creating Colima VMs, or using cross-architecture emulation; Phase 1 Sprint 1.12
 replaced the previous Colima reconciliation path with selected Docker-context and
 daemon-architecture validation and closed on the recorded validation with both the positive Apple lifecycle
-gate and the negative no-daemon boundary gate. The Poetry bootstrap may reuse an already available
+gate and the negative no-daemon boundary gate. Phase 1 Sprint 1.13 adds the Apple tart
+Metal-engine build lane: the `infernix` and `infernix-demo` Haskell binaries keep building
+host-native through ghcup/cabal and running on the host against Metal, while the Metal and Core ML
+native engine artifacts that would otherwise require Xcode are built inside a headless `tart` macOS
+VM (reconciled through `brew install tart` and recorded as `hostTart` in `dhall/InfernixHost.dhall`)
+and copied to `./.data/engines/<adapterId>/` before running; `tart` is native arm64 macOS
+virtualization, distinct from Docker and Colima, and creates or switches no Docker context. The
+Poetry bootstrap may reuse an already available
 compatible Python 3.12+ executable when one passes the implemented version check. Routed Apple
 Playwright validation runs host-native `npm exec` against the published `127.0.0.1` edge port,
 and the in-image
@@ -222,12 +233,12 @@ scope.
 | Phase | Name | Status | Document |
 |-------|------|--------|----------|
 | 0 | Documentation and Governance | Done (Sprints 0.1-0.10 closed; declarative-state documentation reconciliation complete) | [phase-0-documentation-and-governance.md](phase-0-documentation-and-governance.md) |
-| 1 | Repository and Control-Plane Foundation | Done (Sprint 1.12 native-only workflow doctrine closed on the recorded validation: Apple `doctor`/`build`/`up`/`status`/full `test`/`down`/final `status` passed on an already selected native arm64 daemon, and the negative no-daemon bootstrap boundary failed before cluster work without changing Docker contexts or Colima VM state) | [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md) |
+| 1 | Repository and Control-Plane Foundation | Active (Sprint 1.13 Apple tart Metal-engine build lane is `Planned` and re-validated in [Wave I](cohort-validation-waves.md); the prior Sprint 1.12 native-only workflow doctrine closed on the recorded validation: Apple `doctor`/`build`/`up`/`status`/full `test`/`down`/final `status` passed on an already selected native arm64 daemon, and the negative no-daemon bootstrap boundary failed before cluster work without changing Docker contexts or Colima VM state) | [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md) |
 | 2 | Kind Cluster Storage and Lifecycle | Done (Sprints 2.10-2.13 lifecycle, retained-state, bootstrap-boundary, and host-manifest closure validated by Apple Wave A and CUDA Linux Wave C) | [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md) |
 | 3 | HA Platform Services and Edge Routing | Done (Sprint 3.12 native `linux-cpu` architecture selector and native arm64 publication path closed in Wave F on the recorded validation through the already selected arm64 Docker daemon; Sprints 3.10–3.11 validated by Apple Wave A/A.2 and CUDA Linux Wave C) | [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md) |
-| 4 | Inference Service and Durable Runtime | Done (Sprints 4.1-4.14 closed with mounted `ClusterConfig` / `SecretsConfig` runtime path validated by Apple Wave A and CUDA Linux Wave C) | [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) |
+| 4 | Inference Service and Durable Runtime | Active (real per-family inference reopened across Sprints 4.1/4.2/4.3/4.7/4.8/4.10/4.11/4.12/4.14 plus new Sprint 4.15, re-validated in [Wave I](cohort-validation-waves.md); the prior Sprints 4.1-4.14 closed with mounted `ClusterConfig` / `SecretsConfig` runtime path validated by Apple Wave A and CUDA Linux Wave C) | [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) |
 | 5 | Web UI and Shared Types | Done (Sprints 5.1-5.10 closed with demo backend, Python adapter, and web/Node no-env-var path validated by Apple Wave A/A.2 and CUDA Linux Wave C) | [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md) |
-| 6 | Validation, E2E, and HA Hardening | Done (Sprints 6.1-6.30 closed with lint/style/unit/integration/e2e, no-env-var gates, and single `ghc-9.12.4` toolchain validation) | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) |
+| 6 | Validation, E2E, and HA Hardening | Active (per-family real-output coverage reopened across Sprints 6.2/6.3/6.6, re-validated in [Wave I](cohort-validation-waves.md); the prior Sprints 6.1-6.30 closed with lint/style/unit/integration/e2e, no-env-var gates, and single `ghc-9.12.4` toolchain validation) | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) |
 | 7 | Demo App Multi-User Durable Context | Done (Sprints 7.1-7.18 closed with Apple gates in Waves A/A.1/A.2/A.3 and CUDA Linux Wave C; Sprints 7.19-7.22 auth-UX closure passed Wave G on the Apple host-native routed E2E lane) | [phase-7-demo-app-durable-context.md](phase-7-demo-app-durable-context.md) |
 
 > **Note**: Phase statuses describe current repository state. Earlier governed phases may remain

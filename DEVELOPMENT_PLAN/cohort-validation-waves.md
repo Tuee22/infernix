@@ -36,6 +36,7 @@
 | F | Native arm64 Linux CPU execution | Validation-only Phase 3 Sprint 3.12 closure: native `linux/arm64` `linux-cpu` validation through the already selected arm64 Docker daemon on this Apple Silicon machine. Proved Harbor publication, warmup hydration, final Harbor-backed preload, integration, and routed E2E on the native ARM publication path without cross-architecture emulation or Docker-context changes. | Closed | the recorded validation |
 | G | Apple Silicon (current host) | Phase 7 auth-UX quad closure: Sprint 7.19 auth-gated landing with dual Keycloak entry points, Sprint 7.20 themed Keycloak login surface, Sprint 7.21 operator console ribbon with edge JWT gating for `/harbor`, `/pulsar/admin`, and `/minio/s3`, and Sprint 7.22 self-service account deletion with MinIO + Pulsar per-user state reaping before Keycloak account removal. | Closed | the recorded Apple host-native validation |
 | H | Apple Silicon (current host) | Full current-host Apple lifecycle revalidation from a clean build root (no prior `./.build` artifacts): `cabal install all:exes`; `infernix lint files/docs/chart/proto` plus `infernix docs check`; `infernix test lint` (haskell-style) and `infernix test unit` (`infernix-unit` plus web 71/71); explicit `infernix cluster up` → `cluster status` (77 pods across 2 nodes, `infernix-manual` storage, full Envoy Gateway route set, `pulsar-bridge-to-host-daemon` dispatch) → `cluster down` (retained-state replay, `./.data` preserved) → post-teardown `cluster status` (`clusterPresent: False`, `lifecyclePhase: cluster-absent`); `infernix test integration` PASS; `infernix test e2e` 9/9; aggregate `infernix test all`. The dynamic `choosePulsarHttpPort` chooser shifted the Pulsar host port 30080→30081 around a VS Code-held `127.0.0.1:30080`. Native arm64 throughout (colima `aarch64`, no emulation or Docker-context changes). Published cluster image `infernix-linux-cpu@sha256:7f341cb1629c1d0af9b72db0fef7b89cc1f13d2bd02afe9be1daeed5e7f18454`. | Closed | 2026-06-09 |
+| I | Apple Silicon (current host) + paired CUDA Linux | Real per-family inference and the Apple tart Metal-engine build lane re-validation. Apple cohort: reconcile `tart`, run `infernix internal materialize-metal-engines` to build and copy an allowlisted Metal/Core ML artifact, then run `infernix test integration`/`e2e`/`all` asserting the per-family real-output result contract for the `apple-silicon` catalog column. CUDA Linux cohort: re-validate the `linux-cpu` and `linux-gpu` catalog columns' per-family real inference minus the Apple-Core-ML-only rows. Re-opens Phase 1 (Sprint 1.13), Phase 4 (Sprints 4.1/4.2/4.3/4.7/4.8/4.10/4.11/4.12/4.14 plus new 4.15), and Phase 6 (Sprints 6.2/6.3/6.6); they return to `Done` only after both cohorts pass their full-suite gates against the same state. | Planned | pending |
 
 ## Wave A — Closed the recorded validation
 
@@ -452,6 +453,29 @@ The CUDA Linux cohort hardware named by the validation reset remains unavailable
 `linux-cpu` and `linux-gpu` gates are not part of Wave H and retain their prior recorded
 closure. Wave H re-confirms the Apple cohort on the current host only.
 
+## Wave I: Real Per-Family Inference and Apple Tart Metal-Engine Build (Planned)
+
+Wave I is the next paired closure batch. It re-validates the real per-family inference contract and
+the Apple tart Metal-engine build lane that reopen Phases 1, 4, and 6.
+
+**Apple cohort.** Reconcile `tart` through Homebrew; run
+`infernix internal materialize-metal-engines` so the headless tart macOS VM builds an allowlisted
+Metal/Core ML artifact (for example the `llama.cpp` Metal build or the Core ML basic-pitch model),
+copies it to `./.data/engines/<adapterId>/`, and the host engine loads it against Metal; then run
+`infernix test integration`, `infernix test e2e`, and `infernix test all` asserting the per-family
+real-output result contract for every row in the `apple-silicon` catalog column (LLM continuation,
+whisper.cpp Metal transcript, PyTorch-MPS source-separation stems, basic-pitch Core ML/ONNX MIDI,
+MT3 `jax-metal` and Omnizart Core ML transcription, SDXL/Wan2.1 MPS artifacts where MPS is viable,
+bark MPS audio, and Audiveris MusicXML).
+
+**CUDA Linux cohort.** Re-validate the `linux-cpu` and `linux-gpu` catalog columns' per-family real
+inference (vLLM, `llama.cpp`, CTranslate2, PyTorch CPU/CUDA, TensorFlow, ONNX Runtime, JAX,
+Diffusers, Audiveris) minus the Apple-Core-ML-only rows, through
+`docker compose run --rm infernix infernix test all`.
+
+Phases 1, 4, and 6 stay `Active` with Wave I as their cohort-pending residual and cannot return to
+`Done` until both cohorts pass their full-suite gates against the same state.
+
 ## Cadence Rule
 
 Wave numbering operationalizes Section Q of
@@ -473,17 +497,19 @@ follow-on wave.
 
 ## Phase Cohort Status Index
 
-This index records the final cohort status after the Wave C, Wave E, Wave F, Wave G, and Wave H closures.
+This index records the final cohort status after the Wave C, Wave E, Wave F, Wave G, and Wave H
+closures. Wave I (Planned) reopens Phases 1, 4, and 6 for the real per-family inference and Apple
+tart Metal-engine build coverage upgrade; those rows carry a pending Wave I residual.
 
 | Phase | Code-side closure | Apple cohort gate | CUDA Linux cohort gate |
 |-------|-------------------|-------------------|------------------------|
 | 0 | Sprints 0.1-0.10 `Done` | Closed in Wave A (lint gates) | `linux-cpu` passed the recorded validation; `linux-gpu` passed the recorded validation |
-| 1 | Sprints 1.1–1.12 `Done` | Closed in Wave A (integration cluster up + lifecycle on Apple host) | `linux-cpu` passed the recorded validation; `linux-gpu` passed the recorded validation |
+| 1 | Sprints 1.1–1.12 `Done`; Sprint 1.13 Apple tart Metal-engine build lane `Planned` (phase `Active`) | Closed in Wave A for 1.1-1.12; Sprint 1.13 pending Wave I | `linux-cpu` passed the recorded validation; `linux-gpu` passed the recorded validation; Sprint 1.13 is Apple-only |
 | 2 | Sprints 2.1–2.13 `Done` | Closed in Wave A (retained-state replay + Patroni filter + cluster lifecycle) | `linux-cpu` passed the recorded validation; `linux-gpu` passed the recorded validation |
 | 3 | Sprints 3.1–3.12 `Done` | Closed in Wave A/A.2 (substrate-aware publication, Harbor port, containerd, hand-authored MinIO, and Apple host-native E2E) | `linux-cpu` amd64 passed the recorded validation; `linux-gpu` passed the recorded validation; native arm64 `linux-cpu` passed in Wave F on the recorded validation |
-| 4 | Sprints 4.1-4.14 `Done` | Closed in Wave A (mounted ClusterConfig + SecretsConfig roundtrip via integration suite) | `linux-cpu` passed the recorded validation; `linux-gpu` passed the recorded validation |
+| 4 | Sprints 4.1-4.14 closed for the runtime/catalog/transport contract; real per-family inference reopened across 4.1/4.2/4.3/4.7/4.8/4.10/4.11/4.12/4.14 plus new 4.15 (phase `Active`) | Original contract closed in Wave A; real per-family inference pending Wave I | `linux-cpu` and `linux-gpu` original contract passed the recorded validation; real per-family inference pending Wave I |
 | 5 | Sprints 5.1-5.10 `Done` | Closed in Wave A/A.2 (demo backend + adapter dhall reads via integration suite and routed E2E) | `linux-cpu` passed the recorded validation; `linux-gpu` passed the recorded validation |
-| 6 | Sprints 6.1-6.30 `Done` | Closed in Wave A/A.1/A.2/A.3 (lint, style, unit, integration, routed E2E, and Apple engine-lock chaos) | `linux-cpu` passed the recorded validation; `linux-gpu` passed the recorded validation |
+| 6 | Sprints 6.1, 6.4, 6.5, 6.7-6.30 `Done`; per-family real-output coverage reopened across 6.2/6.3/6.6 (phase `Active`) | Original coverage closed in Wave A/A.1/A.2/A.3 (lint, style, unit, integration, routed E2E, and Apple engine-lock chaos); per-family coverage pending Wave I | `linux-cpu` and `linux-gpu` original coverage passed the recorded validation; per-family coverage pending Wave I |
 | 7 | Sprints 7.1-7.18 `Done`; Sprint 7.8 runtime KV-cache and `Infernix.Runtime.Daemon` split closed in Wave E after the code-side KV-cache decision and Failover naming follow-on; Sprints 7.19-7.22 auth-UX surface closed in Wave G | Closed in Wave A/A.1/A.2/A.3 for the original durable-context gates; Wave G closed for auth-UX | `linux-cpu` passed the recorded validation; `linux-gpu` passed the recorded validation; residual rebuilt-image `linux-gpu` gate passed the recorded validation against `sha256:521a56ac6f79bf1ce5bc9d7dcd9c872e897ce4b4882661d4ada2f62faa108d7b`; residual rebuilt-image `linux-cpu` gate passed the recorded validation against `sha256:dc0c003e7cc2f2e359a474fa5ddb522c8715d271e322534db7798f260e9747fa`; mounted Linux CPU Wave E passed the recorded validation; Wave G Apple host-native auth-UX validation passed 9/9 routed E2E |
 
 Every Apple cohort gate above was additionally re-confirmed end to end on the current host by

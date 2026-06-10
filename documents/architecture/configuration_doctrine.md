@@ -56,6 +56,33 @@ Typed record describing the operator's host environment:
 The Haskell binary loads this file at startup via the `dhall` library's `Dhall.inputFile` and
 decodes it into a typed `HostConfig` record passed down the call tree.
 
+The host tool inventory includes `hostTart`, the absolute `tart` path on Apple Silicon
+(`/opt/homebrew/bin/tart`), which drives the headless `tart` macOS VM that builds the Metal and
+Core ML native engine artifacts. See
+[../engineering/host_tools_manifest.md](../engineering/host_tools_manifest.md) for the full field
+inventory.
+
+#### Typed engine-build sub-record and the hermetic tart-guest rule
+
+The Apple Silicon Metal-engine build lane (the headless `tart` macOS VM that compiles the
+Xcode-only llama.cpp and whisper.cpp Metal builds and the Core ML compiled models) is configured
+entirely through the typed substrate — never through inherited host process state.
+
+A typed engine-build sub-record carries the values the build needs:
+
+- the build toolchain and source identifiers handed to the guest,
+- the allowlisted Metal/Core ML adapter ids to materialize,
+- the engine-install root the built artifacts are copied to (`./.data/engines/<adapterId>/`).
+
+The hermetic tart-guest rule: the `tart` guest receives its toolchain and source through the typed
+engine-build sub-record and `tart` file mounts, **never** through inherited host `PATH`,
+environment variables, or SSH-with-env. The `hostTart` path itself is read from `HostConfig`, so
+the helper that launches the guest resolves `tart` by absolute path rather than through the
+operator's shell search path. This keeps the Metal-engine lane inside the same no-env-var,
+typed-Dhall discipline as every other Infernix codepath: the three Dhall files remain the only
+configuration substrate, and the engine-build sub-record lives within the host record's typed
+schema, not in any env-var or ambient-shell surface.
+
 ### `dhall/InfernixCluster.dhall`
 
 Typed record describing in-cluster wiring values that previously lived in pod-spec `env:` blocks:

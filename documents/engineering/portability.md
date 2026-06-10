@@ -19,6 +19,9 @@
 - Tool bootstrap, build-root paths, Docker setup, launcher build mechanics, and CUDA device access
   are substrate detail; Kind, Kubernetes manifests, image preparation, validation, and teardown
   remain binary-owned.
+- The Apple tart Metal/Core ML native engine build lane is Apple substrate detail, not part of the
+  portable contract: only Apple's Xcode-dependent engines are built inside a headless tart macOS
+  VM, while Python wheel engines need no tart on any substrate.
 
 ## Current Status
 
@@ -65,6 +68,7 @@ operator-facing kubeconfig remains repo-local in the active execution context.
 | Host prerequisites | keep prerequisites minimal and explicit | Homebrew plus ghcup before build; Docker-backed Apple work uses the already selected native arm64 Docker daemon and never creates or switches Docker contexts | Docker Engine plus Docker buildx and Compose plugins on native Linux amd64 or arm64 for `linux-cpu`; NVIDIA driver plus container toolkit in addition for `linux-gpu` |
 | Bootstrap activation boundary | stage-0 bootstrap surfaces continue in the current process only after they can verify the executable they need next, and they stop for explicit rerun when a new shell or reboot is required | the bootstrap verifies the selected ghcup-managed `ghc` and `cabal` executables plus Homebrew `protoc` before direct `cabal install`, so the supported clean-host first run does not depend on a second bootstrap invocation | Linux bootstraps stop for Docker group-membership re-entry and NVIDIA-driver reboot, then continue through the same bootstrap surface on rerun |
 | Tool bootstrap after the binary exists | supported commands may reconcile remaining operator tooling | Homebrew-managed Docker CLI, `kind`, `kubectl`, `helm`, Node.js, the Homebrew-managed `python@3.12` formula and `python3.12` command, and Poetry bootstrap may be installed on demand; Poetry may reuse an already available compatible Python 3.12+ executable | the substrate image already carries the supported toolchain; runtime install is not part of the contract |
+| Native engine artifact build | engine adapters resolve from prebuilt host wheels/binaries or substrate-built native artifacts; the portable contract does not depend on any tart lane | Xcode-dependent Metal/Core ML engines (llama.cpp and whisper.cpp Metal builds; Core ML basic-pitch, Apple Stable Diffusion Core ML, Omnizart Core ML export) build inside a headless `hostTart` macOS VM and copy out to `./.data/engines/<adapterId>/`; MLX, jax-metal, and ONNX Runtime wheels plus the Audiveris JVM app run from prebuilt host wheels or binaries with no tart. See [../operations/apple_silicon_runbook.md](../operations/apple_silicon_runbook.md) and [host_tools_manifest.md](host_tools_manifest.md) | Python wheel engines need no tart; native engines come from the substrate image build |
 | Apple Docker profile | Docker-backed lifecycle and validation work uses the operator-selected native daemon | Apple lifecycle code must not create a VM, create or switch Docker contexts, or use amd64 emulation; it stops if the current Docker daemon is unavailable or non-native | not applicable |
 | Build roots and kubeconfig location | outputs stay repo-local and untracked, while Kind or `nvkind` create or delete uses transient execution-local scratch kubeconfig outside repo mounts | `./.build/`, published `./.build/infernix.kubeconfig`, and binary-owned substrate-file materialization or validation under the Apple build root | image-local outer-container build root and binary-owned substrate-file materialization there, plus published `./.data/runtime/infernix.kubeconfig` for durable outer-container reuse |
 | Python adapter environment | use the shared Poetry project only | `python/.venv/` may materialize on demand after Apple adapter paths reconcile the Homebrew-managed `python@3.12` formula and `python3.12` command plus a user-local Poetry bootstrap, or reuse an already available compatible Python 3.12+ executable for that bootstrap | adapter dependencies are installed in the shared substrate image build |
@@ -101,6 +105,7 @@ the "Substrate Architecture" subsection); this document does not duplicate the t
 ## Cross-References
 
 - [docker_policy.md](docker_policy.md)
+- [host_tools_manifest.md](host_tools_manifest.md)
 - [implementation_boundaries.md](implementation_boundaries.md)
 - [../architecture/runtime_modes.md](../architecture/runtime_modes.md)
 - [../architecture/daemon_topology.md](../architecture/daemon_topology.md)

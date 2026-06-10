@@ -1118,11 +1118,13 @@ for the authoritative target shape.
   regardless of whether the underlying engine library supports bytes-loading; the first
   call populates `/model-cache/<modelId>/` from `infernix-models`, subsequent calls reuse
   the local copy, and eviction runs when the directory tree approaches `sizeLimit`.
-  **Current status:** `model_cache.py` contains the boto3 MinIO download client + LRU
-  logic and the `get_model_path(model_id) -> path` contract, but no adapter yet imports or
-  calls it; the adapter layer (transformers/diffusers/jax/pytorch/tensorflow/vllm)
-  currently emits deterministic harness output via `common.render_engine_output` rather
-  than invoking a production model binary. The size-limited `/model-cache` `emptyDir` is
+  **Status:** `model_cache.py` contains the boto3 MinIO download client + LRU
+  logic and the `get_model_path(model_id) -> path` contract. Wiring the adapter layer
+  (transformers/diffusers/jax/pytorch/tensorflow/vllm) to call `get_model_path` and invoke the
+  real engine — replacing the `common.render_engine_output` harness stub tracked in
+  [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) — is owned by
+  [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md)
+  Sprints 4.7 and 4.15. The size-limited `/model-cache` `emptyDir` is
   mounted by `chart/templates/deployment-engine.yaml` but the daemon does not yet write
   there: the active cache uses the unbounded `engine-data` `emptyDir`
   (`Paths.modelCacheRoot = runtimeRoot/model-cache`), so the cache is not under a
@@ -1317,9 +1319,11 @@ Closure notes:
   quota, models bucket, MinIO endpoint, credentials, and region into
   the typed `ModelCacheConfig` passed through `configure()` instead of
   Python environment reads. `python/pyproject.toml` declares the new
-  `boto3 ^1.35.0` dependency. This helper is not yet invoked by any
-  adapter; the adapter layer still emits deterministic harness output
-  via `common.render_engine_output` rather than calling `get_model_path`.
+  `boto3 ^1.35.0` dependency. Wiring this helper into the adapter
+  layer in place of the `common.render_engine_output` harness stub (tracked in
+  [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md)) is owned by
+  [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md)
+  Sprint 4.7.
 - Code-level retirement of `./.data/object-store/`, `objectStoreRoot`,
   and `localPathFromUri` is implemented. `src/Infernix/Runtime/Cache.hs` is
   rewritten to operate on `modelCacheRoot/<runtimeMode>/<modelId>/`

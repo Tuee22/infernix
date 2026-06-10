@@ -44,9 +44,18 @@ tells each daemon the substrate and whether its role is `Coordinator` or `Engine
 metadata also includes the Pulsar connection mode plus the batch and result topics it uses.
 Publication now reports the cluster coordinator location separately from the Apple host inference
 executor location and batch topic. The runtime worker uses explicit Python or native adapter
-harnesses selected from the staged substrate file. Those adapters currently produce deterministic
-engine-family output from durable metadata rather than claiming universal production model-binary
-execution. The Apple clean-host bootstrap hardening is implemented and validated: the stage-0
+harnesses selected from the staged substrate file. Each harness invokes the real engine — the
+Python adapter `transform` over a prebuilt host wheel for `python-stdio` bindings, or the real
+native runner binary resolved from a typed `HostConfig` absolute path for `native-process-runner`
+bindings — fetches model weights lazily from the `infernix-models` MinIO bucket, and publishes a
+per-family real result: inline text for the LLM and speech families, and a typed
+`infernix-demo-objects` object reference for the source-separation, audio-to-MIDI,
+music-transcription, image, video, audio-generation, and OMR artifact families. On Apple Silicon
+the Haskell binaries build host-native and run on the host against Metal, while the Metal and Core
+ML native engine artifacts that would otherwise require Xcode are built inside a headless `tart`
+macOS VM (recorded as `hostTart` in `dhall/InfernixHost.dhall`, reconciled through `brew install
+tart`) and copied to `./.data/engines/<adapterId>/` before running; `tart` is native arm64 macOS
+virtualization, not emulation and not a Docker or Colima lane. The Apple clean-host bootstrap hardening is implemented and validated: the stage-0
 entrypoint verifies same-process ghcup-managed `ghc` and `cabal` resolution before direct
 `cabal install`, reconciles Homebrew `protoc`, and lets Apple adapter setup or validation paths
 reconcile the Homebrew-managed `python@3.12` formula and `python3.12` command plus a user-local
@@ -693,7 +702,9 @@ The supported operator surface is:
 - `infernix test all`
 - `infernix docs check`
 
-Internal helper commands may exist in the implementation, but the supported command contract closes
+Internal helper commands may exist in the implementation — for example
+`infernix internal materialize-substrate ...` and the Apple `infernix internal
+materialize-metal-engines` tart build helper — but the supported command contract closes
 through the registry-backed surface above.
 
 ## Completion Rules

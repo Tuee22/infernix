@@ -31,6 +31,13 @@ Read first:
 - do not use host `cabal` builds for Linux or CUDA validation; direct
   `cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes`
   is the Apple Silicon host-native reference path only
+- do not install Xcode on the Apple host; the Metal and Core ML native engine artifacts that would
+  otherwise require Xcode are built inside a headless `tart` macOS VM (reconciled via
+  `brew install tart`, recorded as `hostTart` in `dhall/InfernixHost.dhall`) through
+  `infernix internal materialize-metal-engines`, then copied to `./.data/engines/<adapterId>/`
+  before running against Metal. `tart` is native arm64 macOS virtualization, distinct from Docker
+  and Colima; it creates or switches no Docker context and provisions no Colima VM. The `infernix`
+  and `infernix-demo` Haskell binaries still build host-native and run on the host
 - never use cross-architecture emulation for development or validation. Do not run amd64 Linux
   through Apple Silicon emulation, and do not create or switch Docker contexts or create a Colima
   VM on Apple Silicon

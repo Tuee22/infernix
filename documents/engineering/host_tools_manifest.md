@@ -62,6 +62,7 @@ let ToolPaths =
       , nvkind : HostTool
       , skopeo : HostTool
       , hostname : HostTool
+      , hostTart : HostTool
       }
 
 let FilesystemConventions =
@@ -125,6 +126,20 @@ host architecture (`amd64` or `arm64`) used by the `linux-cpu` publication selec
 | nvkind | `toolPaths.nvkind` | n/a | `/usr/local/bin/nvkind` |
 | skopeo | `toolPaths.skopeo` | n/a | `/usr/bin/skopeo` |
 | hostname | `toolPaths.hostname` | `/bin/hostname` | `/usr/bin/hostname` |
+| tart | `toolPaths.hostTart` | `/opt/homebrew/bin/tart` | n/a |
+
+`hostTart` is the absolute path to `tart` on Apple Silicon — `/opt/homebrew/bin/tart`. Its purpose
+is to drive the headless `tart` macOS VM that builds the Metal and Core ML native engine artifacts.
+The field is added per the field-first rule: `tart` is recorded in `dhall/InfernixHost.dhall`
+before any invocation site reads it, so the lint gate recognizes the name and rejects any
+`proc "tart"` bare-name call. tart is native arm64 macOS virtualization, reconciled through
+Homebrew (`brew install tart`); it is not a Docker or Colima lane and provisions no Docker context
+or Colima VM. The headless `tart` guest runs Xcode-only Metal and Core ML engine builds and copies
+the resulting artifacts to `./.data/engines/<adapterId>/`; the host then runs them against Metal.
+See the "Tart Metal-Engine Build Lane" section of
+[../operations/apple_silicon_runbook.md](../operations/apple_silicon_runbook.md) and the
+engine-build sub-record in
+[../architecture/configuration_doctrine.md](../architecture/configuration_doctrine.md).
 
 The Apple defaults assume Homebrew (`/opt/homebrew/bin`) and ghcup. Docker-backed Apple work
 requires the current Docker context to already point at a native arm64 Docker daemon; Infernix must

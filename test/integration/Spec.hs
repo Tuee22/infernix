@@ -144,7 +144,7 @@ exerciseRuntimeMode paths runtimeMode = do
       routedDemoConfig <- requireJsonDemoConfig demoConfigResponse
       modelsResponse <- httpGet (baseUrl <> "/api/models")
       (harborPortalStatus, _) <- httpGetWithStatus (baseUrl <> "/harbor")
-      (harborApiStatus, harborApiResponse) <- httpGetWithStatus (baseUrl <> "/harbor/api/v2.0/projects")
+      (harborApiStatus, harborApiResponse) <- waitForRoutedHarborProjectsApi paths state
       -- Phase 3 Sprint 3.11 (2026-05-30): the standalone MinIO Console
       -- Deployment was retired together with the bitnami sub-chart;
       -- the `/minio/console` route is gone and operators reach
@@ -1401,6 +1401,34 @@ waitForRoutedDemoConfig paths state = go (120 :: Int)
           case result of
             Right payload
               | "\"demo_ui\":true" `isInfixOf` compact payload -> pure payload
+              | otherwise -> retry
+            Left _ -> retry
+      where
+        retry = do
+          threadDelay 1000000
+          go (remainingAttempts - 1)
+
+-- The Harbor project API is routed through the gateway and can return a
+-- warming-up status (for example 503) for a short window after
+-- `wait-for-routed-publication` reports the edge ready, because the Harbor
+-- core Deployment finishes serving its API slightly later than the route
+-- becomes reachable. `httpGetWithStatus` only retries transient curl
+-- connection failures, not HTTP error statuses, so a single probe raced the
+-- backend warm-up and flaked. Poll until the API serves the live project
+-- listing, mirroring `waitForRoutedDemoConfig`, and surface the final
+-- outcome so the downstream assertion still reports the real status on a
+-- genuine failure.
+waitForRoutedHarborProjectsApi :: Paths -> ClusterState -> IO (Int, String)
+waitForRoutedHarborProjectsApi paths state = go (120 :: Int)
+  where
+    url = routeBaseUrl paths state <> "/harbor/api/v2.0/projects"
+    go remainingAttempts
+      | remainingAttempts <= 1 = httpGetWithStatus url
+      | otherwise = do
+          result <- try (httpGetWithStatus url) :: IO (Either SomeException (Int, String))
+          case result of
+            Right outcome@(statusCodeValue, body)
+              | statusCodeValue == 200 && "\"name\":\"library\"" `isInfixOf` compact body -> pure outcome
               | otherwise -> retry
             Left _ -> retry
       where

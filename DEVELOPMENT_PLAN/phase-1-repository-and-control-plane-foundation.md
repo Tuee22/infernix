@@ -1,6 +1,6 @@
 # Phase 1: Repository and Control-Plane Foundation
 
-**Status**: Done
+**Status**: Active
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/engineering/host_tools_manifest.md](../documents/engineering/host_tools_manifest.md)
 
 > **Purpose**: Establish the canonical repository scaffold, the two-binary topology
@@ -33,6 +33,19 @@ the Helm dependency archive cache at `/opt/infernix/chart/charts/` with
 validation closed in Wave A, and the CUDA Linux cohort closed in Wave C with full `linux-cpu` and
 `linux-gpu` gates.
 
+The phase is `Active` for the Apple build lane: on Apple Silicon the `infernix` and `infernix-demo`
+Haskell binaries build host-native through the ghcup/cabal toolchain and run on the host against
+Metal, exactly as today. The Metal and Core ML native engine artifacts that would otherwise require
+Xcode — the `llama.cpp` and `whisper.cpp` Metal builds and the Core ML compiled models — are built
+inside a headless `tart` macOS VM (Xcode lives only in that VM, never on the host, because Xcode
+needs UI interaction that breaks the headless workflow) and copied out to `./.data/engines/<adapterId>/`
+before running, since Metal and the GPU are unreachable from inside tart. `tart` is native arm64
+macOS virtualization, not cross-architecture emulation and not a Docker or Colima lane, so it
+creates and switches no Docker context and provisions no Colima VM. Python engine wheels are
+installed on the host and need no tart. That build lane is owned by the new Sprint 1.13 and is
+re-validated on both cohorts in [Wave I](cohort-validation-waves.md); the phase returns to `Done`
+only after that wave closes.
+
 ## Current Repo Assessment
 
 The repo matches the supported Phase 1 ownership contract: the control plane has a
@@ -49,7 +62,12 @@ field from `dhall/InfernixHost.dhall` and the matching Haskell records, removes 
 planning and profile start/stop/restart behavior from `src/Infernix/HostPrereqs.hs`, and adds
 unit-level Docker-boundary coverage for native arm64 versus non-native daemon architectures.
 The recorded Apple Silicon validation closed the full positive lifecycle and negative
-no-daemon boundary gates named below.
+no-daemon boundary gates named below. The supported Apple build contract keeps the host free of
+Xcode: the Haskell binaries build host-native, while the Metal and Core ML native engine artifacts
+are produced inside a headless `tart` macOS VM and copied to the host engine roots under
+`./.data/engines/<adapterId>/` for Metal-GPU execution (Sprint 1.13). `tart` is reconciled through
+Homebrew (`brew install tart`) and recorded as the `hostTart` absolute-path field in
+`dhall/InfernixHost.dhall`.
 
 ## Substrate Foundation
 
@@ -819,19 +837,79 @@ None.
 
 ---
 
+## Sprint 1.13: Apple Tart Metal-Engine Build Lane [Planned]
+
+**Status**: Planned
+**Implementation**: `dhall/InfernixHost.dhall`, `src/Infernix/HostConfig.hs`, `src/Infernix/HostPrereqs.hs`, `src/Infernix/CommandRegistry.hs`, `src/Infernix/Engines/AppleSilicon.hs`, `bootstrap/apple-silicon.sh`, `test/unit/Spec.hs`
+**Docs to update**: `documents/engineering/host_tools_manifest.md`, `documents/operations/apple_silicon_runbook.md`, `documents/engineering/build_artifacts.md`, `documents/architecture/configuration_doctrine.md`, `documents/engineering/docker_policy.md`
+
+### Objective
+
+Keep the Apple host free of Xcode while still producing the Metal and Core ML native engine
+artifacts that Apple-native inference needs. Full Xcode requires UI interaction that breaks the
+headless workflow, so the artifacts that need `xcrun metal`/`metallib` or `coremlc`/`coremltools`
+are built inside a headless `tart` macOS VM (Xcode installed only in that VM image) and copied to
+the host before running, because Metal and the GPU are unreachable from inside tart.
+
+### Deliverables
+
+- `dhall/InfernixHost.dhall` gains a `hostTart` absolute-path field (added first, per the host-tool
+  manifest rule), populated by `defaultAppleHostNativeHostConfig` with `/opt/homebrew/bin/tart` and
+  documented in [../documents/engineering/host_tools_manifest.md](../documents/engineering/host_tools_manifest.md)
+- `src/Infernix/HostPrereqs.hs` reconciles tart as an `AppleTart` requirement through the existing
+  `ensureHomebrewManagedTool` path (`brew install tart`); it creates and switches no Docker context
+  and provisions no Colima VM
+- the tart VM build lane is owned by `src/Infernix/Engines/AppleSilicon.hs`: provision an ephemeral
+  macOS guest with Xcode, build the allowlisted Metal/Core ML artifacts (`llama.cpp` and
+  `whisper.cpp` Metal, the Core ML basic-pitch model, the Apple Stable Diffusion Core ML model, and
+  the Omnizart Core ML export), copy them to `./.data/engines/<adapterId>/`, then destroy the VM;
+  the host runs them against the real Metal GPU
+- the engines that do not need Xcode are excluded from the tart lane: MLX and `jax-metal` are
+  prebuilt host wheels, ONNX Runtime is a prebuilt wheel or binary, and Audiveris is a JVM
+  application
+- the build lane is invoked through a new `infernix internal materialize-metal-engines` helper
+  (registered under the existing `internal` command family, mirroring
+  `infernix internal materialize-substrate`); it adds no new top-level command, and the canonical
+  CLI surface is unchanged
+- the guest build is hermetic: toolchain and source reach the VM through the typed engine-build
+  sub-record and tart file mounts, never through inherited host `PATH` or environment variables
+  (see [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md))
+
+### Validation
+
+- `infernix test unit` covers the `hostTart` host-manifest field and the `AppleTart` requirement
+  reconciliation
+- on Apple Silicon, `infernix internal materialize-metal-engines` builds an allowlisted Metal/Core
+  ML artifact inside the tart VM, copies it to `./.data/engines/<adapterId>/`, and the host engine
+  loads it against Metal
+- the no-env/no-PATH grep gate returns no matches for the tart lane, and `infernix lint docs`
+  passes through the active execution context
+- re-validated on both cohorts in [Wave I](cohort-validation-waves.md)
+
+### Remaining Work
+
+Implement and validate on [Wave I](cohort-validation-waves.md).
+
+---
+
 ## Remaining Work
 
-None. Sprints 1.1-1.12 are `Done`; Apple cohort validation closed in Wave A and CUDA Linux cohort
-validation closed in Wave C, with the recorded Sprint 1.12 Apple boundary rerun closing the
-native-only positive and negative Docker gates on the current Apple Silicon host.
+Phase 1 is `Active` for the new Sprint 1.13 (Apple tart Metal-engine build lane). Sprints 1.1-1.12
+remain `Done`; Apple cohort validation closed in Wave A and CUDA Linux cohort validation closed in
+Wave C, and the recorded Sprint 1.12 Apple boundary rerun closed the native-only positive and
+negative Docker gates on the current Apple Silicon host. Sprint 1.13 is re-validated in
+[Wave I](cohort-validation-waves.md); the phase returns to `Done` only after that wave closes.
 
 ## Documentation Requirements
 
 **Engineering docs to create/update:**
-- `documents/engineering/build_artifacts.md` - build roots, generated-artifact doctrine, and snapshot launcher expectations
-- `documents/engineering/docker_policy.md` - host versus outer-container rules and image-snapshot launcher contract
+- `documents/engineering/build_artifacts.md` - build roots, generated-artifact doctrine, snapshot launcher expectations, and the tart-built native engine artifacts under `./.data/engines/<adapterId>/`
+- `documents/engineering/docker_policy.md` - host versus outer-container rules, image-snapshot launcher contract, and the clarification that the tart macOS VM is distinct from Docker/Colima
+- `documents/engineering/host_tools_manifest.md` - the `hostTart` absolute-path field in the `InfernixHost.dhall` schema
 - `documents/engineering/implementation_boundaries.md` - ownership boundaries across Haskell, Python, chart assets, and generated outputs
-- `documents/engineering/portability.md` - portable platform rules versus substrate-specific behavior
+- `documents/engineering/portability.md` - portable platform rules versus substrate-specific behavior, including the Apple tart build lane
+- `documents/architecture/configuration_doctrine.md` - the typed engine-build sub-record and the hermetic tart-guest (no-env) rule
+- `documents/operations/apple_silicon_runbook.md` - the tart VM lifecycle (brew install, build-in-VM, copy-out, run-on-Metal; no host Xcode)
 - `documents/development/haskell_style.md` - formatter, linter, hard-gate, and review-guidance doctrine
 - `documents/development/local_dev.md` - canonical local operator workflows
 

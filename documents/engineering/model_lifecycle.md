@@ -39,6 +39,21 @@
   `WorkerRequest` envelope; the adapter calls
   `python/adapters/model_cache.get_model_path(model_id)` to obtain the on-disk path to the
   weights pulled lazily from MinIO `infernix-models`.
+- the runtime worker invokes the real engine for the selected binding — the Python adapter
+  transform over a prebuilt host wheel for python-stdio bindings, or the real native runner binary
+  resolved from a typed HostConfig absolute path for native-process-runner bindings — and runs real
+  per-family inference, never a synthetic echo. Each family resolves to its own real lifecycle: the
+  LLM and speech families return inline text; the source-separation, audio-to-MIDI,
+  music-transcription, image, video, audio-generation, and OMR artifact families write generated
+  bytes to the `infernix-demo-objects` bucket and return a typed object reference. Non-text inputs
+  (audio, image) are carried as object references on the request rather than inline.
+- real weight bootstrap is lazy and per-model: each catalog row's `downloadUrl` is fetched into the
+  always-on `infernix-models` MinIO bucket under `<modelId>/`, with the `<modelId>/.ready` sentinel
+  written last to mark the upload atomically visible, and the engine consumes the weights lazily
+  through `adapters.model_cache.get_model_path`. The `model_cache` consumption side is implemented;
+  the coordinator-side upstream download that populates the bucket from `downloadUrl` is the named
+  Phase 4 deliverable. See [object_storage.md](object_storage.md) for the bucket contract and the
+  coordinator bootstrap workflow.
 - per-adapter bootstrap state lives under `./.data/engines/<adapter-id>/bootstrap.json`; the
   Apple host path and the cluster or worker path both treat that bootstrap manifest as the
   idempotent setup-ready marker
@@ -46,9 +61,10 @@
 - the demo `/api/cache` surface operates on the manifest-backed contract exposed by the Haskell
   worker; the manifest reads the supported `minio://infernix-models/<modelId>/` durable source
   URI and the engine-runner metadata derived from the staged substrate `.dhall`
-- engine adapters write binary outputs directly into MinIO
-  `infernix-demo-objects` at the per-user prefix and the result message carries an
-  `ObjectRef` (bucket + key); text outputs always ride inline in the protobuf result message
+- engine adapters write real per-family artifact outputs (stems, MIDI/MusicXML, image, video,
+  audio) directly into MinIO `infernix-demo-objects` at the per-user prefix and the result message
+  carries an `ObjectRef` (bucket + key); text outputs from the LLM and speech families always ride
+  inline in the protobuf result message (see [object_storage.md](object_storage.md))
 
 ## Cross-References
 

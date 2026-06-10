@@ -1,6 +1,6 @@
 # Phase 4: Inference Service and Durable Runtime
 
-**Status**: Done
+**Status**: Active
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/engineering/cluster_config_manifest.md](../documents/engineering/cluster_config_manifest.md)
 
 > **Purpose**: Define the Haskell service runtime, the shared Python engine-adapter contract, the
@@ -13,10 +13,18 @@
 
 Phase 4 closes around the staged-substrate runtime contract, the shared Python
 adapter boundary, the Pulsar-driven request or result contract, the explicit engine-runner
-dispatch, and the mounted `InfernixCluster.dhall` cluster-wiring contract. Sprints 4.1-4.14 are
-closed in the worktree; Apple cohort validation closed in Wave A, and CUDA Linux cohort
-validation closed in Wave C. The phase narrative describes the supported MinIO-backed shape
-directly through the runtime, cache, and object storage contracts.
+dispatch, and the mounted `InfernixCluster.dhall` cluster-wiring contract. The runtime,
+catalog, cache, object-storage, daemon-role, and substrate-file contracts are closed in the
+worktree and were validated in Wave A (Apple) and Wave C (CUDA Linux). The phase is `Active`
+because the inference contract itself is being completed: the worker resolves the real engine
+for every supported matrix row and publishes a real per-family result. The reopened sprints
+(4.1, 4.2, 4.3, 4.7, 4.8, 4.10, 4.11, 4.12, 4.14) and the new Sprint 4.15 carry that remaining
+work; Apple-native real inference also depends on the tart Metal-engine artifacts built by
+[Phase 1](phase-1-repository-and-control-plane-foundation.md) Sprint 1.13. The real per-family
+inference contract is re-validated on both cohorts in
+[Wave I](cohort-validation-waves.md), and the phase cannot return to `Done` until that wave
+closes. The phase narrative describes the supported MinIO-backed shape directly through the
+runtime, cache, and object storage contracts.
 
 ## Current Repo Assessment
 
@@ -32,10 +40,16 @@ cluster daemons exist on every substrate and own Pulsar request-topic consumptio
 daemons run inference directly and publish results; Apple cluster daemons publish work to a
 dedicated host batch topic consumed by same-binary host daemons that run Apple-native inference
 and publish the completed results. The
-runtime worker dispatches supported Python-native and native
-adapters through explicit harness branches; the current adapters emit deterministic engine-family
-output from durable metadata, and unsupported adapter ids fail fast with typed errors instead of
-returning a generic success payload. The staged file, runtime result metadata, publication surface,
+runtime worker dispatches supported Python-native and native adapters through explicit harness
+branches and invokes the real engine for the selected binding: the Python adapter `transform`
+over a prebuilt host wheel for `python-stdio` bindings, or the real native runner binary resolved
+from a typed `HostConfig` absolute path for `native-process-runner` bindings. The worker fetches
+model weights lazily from the `infernix-models` MinIO bucket (`adapters.model_cache.get_model_path`
+on the Python side; the coordinator model-bootstrap path on the native side) and publishes a
+per-family real result: inline text for the LLM and speech families, and a typed
+`infernix-demo-objects` object reference for the source-separation, audio-to-MIDI,
+music-transcription, image, video, audio-generation, and OMR artifact families. Unsupported adapter
+ids fail fast with typed errors instead of returning a generic success payload. The staged file, runtime result metadata, publication surface,
 and browser contracts still expose the active substrate through `RuntimeMode` or `runtimeMode`
 identifiers, while the final publication contract also distinguishes cluster daemon location from
 host inference executor location.
@@ -51,9 +65,9 @@ This phase owns the conversion from the README-scale matrix to runtime-consumabl
 - `infernix-demo` and the integration suite both choose the active engine binding for a README row
   from that same substrate file
 
-## Sprint 4.1: Typed Configuration, Model Catalog, and Runtime Contracts [Done]
+## Sprint 4.1: Typed Configuration, Model Catalog, and Runtime Contracts [Active]
 
-**Status**: Done
+**Status**: Active
 **Implementation**: `src/Infernix/Types.hs`, `src/Infernix/Models.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Storage.hs`, `proto/infernix/manifest/runtime_manifest.proto`, `proto/infernix/runtime/inference.proto`, `test/unit/Spec.hs`
 **Docs to update**: `documents/architecture/runtime_modes.md`, `documents/architecture/model_catalog.md`
 
@@ -79,13 +93,16 @@ Make the service runtime strongly typed before transport and UI surfaces accumul
 
 ### Remaining Work
 
-None.
+Add the closed `ResultFamily` sum type and `resultFamilyForDescriptor` (derived from `family` +
+`artifactType` + `matrixRowId`), export `allMatrixRowIds`, and schedule the non-text input
+object-ref field on `InferenceRequest`/`WorkerRequest`; the output `ResultPayload.object_ref`
+already exists on the wire. Tracked for [Wave I](cohort-validation-waves.md).
 
 ---
 
-## Sprint 4.2: Inference Request Pipeline Over the Durable Object Store and Pulsar Contract [Done]
+## Sprint 4.2: Inference Request Pipeline Over the Durable Object Store and Pulsar Contract [Active]
 
-**Status**: Done
+**Status**: Active
 **Implementation**: `src/Infernix/Runtime.hs`, `src/Infernix/Runtime/Cache.hs`, `src/Infernix/Runtime/Worker.hs`, `src/Infernix/Storage.hs`, `src/Infernix/Demo/Api.hs`, `python/adapters/`, `infernix.cabal`, `test/integration/Spec.hs`, `test/unit/Spec.hs`
 **Docs to update**: `documents/architecture/runtime_modes.md`, `documents/engineering/model_lifecycle.md`, `documents/engineering/object_storage.md`
 
@@ -117,13 +134,17 @@ derived local cache state become authoritative.
 
 ### Remaining Work
 
-None.
+Replace the `src/Infernix/Runtime/Worker.hs` stub returns with real engine output:
+`runInferenceWorker` carries the real `WorkerResponse` for `python-stdio` bindings, and the
+`native-process-runner` branch invokes the real engine binary resolved from a typed `HostConfig`
+absolute path instead of `renderNativeRunnerOutput`. Tracked for
+[Wave I](cohort-validation-waves.md).
 
 ---
 
-## Sprint 4.3: Honest Apple Host-Native and Linux Container Runtime Parity [Done]
+## Sprint 4.3: Honest Apple Host-Native and Linux Container Runtime Parity [Active]
 
-**Status**: Done
+**Status**: Active
 **Implementation**: `src/Infernix/Service.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Demo/Api.hs`, `src/Infernix/Models.hs`, `src/Infernix/Runtime.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Worker.hs`, `test/integration/Spec.hs`, `test/unit/Spec.hs`
 **Docs to update**: `documents/architecture/runtime_modes.md`, `documents/engineering/object_storage.md`, `documents/operations/apple_silicon_runbook.md`, `documents/engineering/portability.md`
 
@@ -170,7 +191,10 @@ host-side, and Linux inference execution and result publication remain cluster-r
 
 ### Remaining Work
 
-None.
+Apple host-native `infernix service` runs the real Apple-native Metal engine using the tart-built
+artifacts under `./.data/engines/<adapterId>/` (built by
+[Phase 1](phase-1-repository-and-control-plane-foundation.md) Sprint 1.13) and publishes the real
+per-family result. Tracked for [Wave I](cohort-validation-waves.md).
 
 ---
 
@@ -276,9 +300,9 @@ None.
 
 ---
 
-## Sprint 4.7: Shared Python Adapter Project and Poetry-Driven Quality Gate [Done]
+## Sprint 4.7: Shared Python Adapter Project and Poetry-Driven Quality Gate [Active]
 
-**Status**: Done
+**Status**: Active
 **Implementation**: `python/pyproject.toml`, `python/adapters/`, `src/Infernix/Runtime/Worker.hs`, `src/Infernix/Models.hs`, `proto/infernix/runtime/inference.proto`, `test/unit/Spec.hs`
 **Docs to update**: `documents/development/python_policy.md`, `documents/engineering/model_lifecycle.md`, `documents/development/testing_strategy.md`, `documents/engineering/implementation_boundaries.md`
 
@@ -309,13 +333,17 @@ keeping `poetry run` as the only supported execution path.
 
 ### Remaining Work
 
-None.
+Replace `common.render_engine_output` and the six trivial adapter `transform` bodies with real
+framework calls over prebuilt host wheels, loading weights through
+`adapters.model_cache.get_model_path`, and add the artifact-adapter seam that returns an object
+reference; the `run_context_adapter` protobuf-over-stdio boundary is unchanged. Tracked for
+[Wave I](cohort-validation-waves.md).
 
 ---
 
-## Sprint 4.8: Pulsar-Driven Production Inference Surface [Done]
+## Sprint 4.8: Pulsar-Driven Production Inference Surface [Active]
 
-**Status**: Done
+**Status**: Active
 **Implementation**: `src/Infernix/Service.hs`, `src/Infernix/Config.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Types.hs`, `src/Infernix/Models.hs`, `src/Infernix/DemoConfig.hs`, `chart/templates/deployment-coordinator.yaml`, `chart/templates/deployment-engine.yaml`, `chart/values.yaml`, `src/Infernix/Runtime.hs`, `src/Infernix/Runtime/Pulsar.hs`, `proto/infernix/runtime/inference.proto`, `test/unit/Spec.hs`, `test/integration/Spec.hs`
 **Docs to update**: `documents/tools/pulsar.md`, `documents/architecture/runtime_modes.md`, `documents/reference/cli_reference.md`
 
@@ -346,7 +374,9 @@ non-demo deployment.
 
 ### Remaining Work
 
-None.
+Publish the real per-family inference result over the production Pulsar surface — inline text for
+the LLM and speech families, an `infernix-demo-objects` object reference for the artifact families
+— and emit no generic-success payload. Tracked for [Wave I](cohort-validation-waves.md).
 
 ---
 
@@ -409,9 +439,9 @@ None.
 
 ---
 
-## Sprint 4.10: Apple Silicon Daemon-Driven Engine Bootstrap [Done]
+## Sprint 4.10: Apple Silicon Daemon-Driven Engine Bootstrap [Active]
 
-**Status**: Done
+**Status**: Active
 **Implementation**: `src/Infernix/Engines/AppleSilicon.hs`, `src/Infernix/Service.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/CLI.hs`, `python/pyproject.toml`, `test/unit/Spec.hs`, `test/integration/Spec.hs`
 **Docs to update**: `documents/operations/apple_silicon_runbook.md`, `documents/development/local_dev.md`, `documents/development/python_policy.md`, `documents/engineering/portability.md`
 
@@ -444,13 +474,15 @@ without inventing fake container parity.
 
 ### Remaining Work
 
-None.
+The Apple daemon-driven engine bootstrap consumes the tart-built Metal-engine artifacts copied to
+`./.data/engines/<adapterId>/` ([Phase 1](phase-1-repository-and-control-plane-foundation.md)
+Sprint 1.13) before the host engine runs. Tracked for [Wave I](cohort-validation-waves.md).
 
 ---
 
-## Sprint 4.11: Per-Substrate Engine Selection in the Catalog [Done]
+## Sprint 4.11: Per-Substrate Engine Selection in the Catalog [Active]
 
-**Status**: Done
+**Status**: Active
 **Implementation**: `src/Infernix/Models.hs`, `src/Infernix/Types.hs`, `src/Infernix/DemoConfig.hs`, `src/Infernix/Web/Contracts.hs`, `src/Infernix/Runtime/Worker.hs`, `test/unit/Spec.hs`, `test/integration/Spec.hs`
 **Docs to update**: `documents/architecture/model_catalog.md`, `documents/architecture/runtime_modes.md`, `documents/development/testing_strategy.md`
 
@@ -479,11 +511,13 @@ generation.
 
 ### Remaining Work
 
-None.
+Per-substrate engine selection resolves each row to its real adapter (Python wheel or native
+binary) and fails fast on missing model metadata rather than dispatching a placeholder. Tracked for
+[Wave I](cohort-validation-waves.md).
 
-## Sprint 4.12: Substrate-Owned Daemon Role, Startup Selection, and Fallback Removal [Done]
+## Sprint 4.12: Substrate-Owned Daemon Role, Startup Selection, and Fallback Removal [Active]
 
-**Status**: Done
+**Status**: Active
 **Implementation**: `src/Infernix/Config.hs`, `src/Infernix/DemoConfig.hs`, `src/Infernix/Service.hs`, `src/Infernix/DemoCLI.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Models.hs`, `src/Infernix/Runtime.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Worker.hs`, `docker/Dockerfile`, `web/test/run_playwright_matrix.mjs`, `test/integration/Spec.hs`, `test/unit/Spec.hs`
 **Docs to update**: `README.md`, `documents/architecture/runtime_modes.md`, `documents/engineering/model_lifecycle.md`, `documents/engineering/object_storage.md`, `documents/engineering/portability.md`, `documents/engineering/testing.md`, `documents/operations/apple_silicon_runbook.md`
 
@@ -536,7 +570,9 @@ extends this startup contract with explicit cluster and host daemon roles.
 
 ### Remaining Work
 
-None.
+Remove the `src/Infernix/Runtime/Worker.hs` `renderNativeRunnerOutput` / `nativeRunnerLabel`
+debug-metadata native fallback once real native dispatch lands, preserving the
+fail-fast-on-unsupported-adapter contract. Tracked for [Wave I](cohort-validation-waves.md).
 
 ---
 
@@ -597,9 +633,9 @@ cohort validation closed in [Wave C](cohort-validation-waves.md).
 
 ---
 
-## Sprint 4.14: Declarative-State Phase Prose Rewrite [Done]
+## Sprint 4.14: Declarative-State Phase Prose Rewrite [Active]
 
-**Status**: Done
+**Status**: Active
 **Implementation**: `DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md` (prose only)
 **Docs to update**: this file
 
@@ -634,13 +670,66 @@ being contradicted by it.
 
 ### Remaining Work
 
-None.
+Revise the closing declarative prose so real per-family engine dispatch (not deterministic metadata
+output) is the always-intended steady state read forward into Phases 5-7. Tracked for
+[Wave I](cohort-validation-waves.md).
+
+---
+
+## Sprint 4.15: Per-Family Real-Output Result Contract and Object-Ref Artifact Families [Planned]
+
+**Status**: Planned
+**Implementation**: `proto/infernix/runtime/inference.proto`, `src/Infernix/Types.hs`, `src/Infernix/Models.hs`, `src/Infernix/Runtime.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Storage.hs`, `python/adapters/`, `test/integration/Spec.hs`, `test/unit/Spec.hs`
+**Blocked by**: 4.1, 4.7
+**Docs to update**: `documents/architecture/model_catalog.md`, `documents/engineering/object_storage.md`, `documents/development/testing_strategy.md`, `documents/reference/web_portal_surface.md`
+
+### Objective
+
+Give every README matrix row a typed per-family result contract so the runtime publishes a real,
+family-appropriate output and the validation suite can assert it. Text families return inline text;
+artifact families return a typed MinIO object reference.
+
+### Deliverables
+
+- a closed `ResultFamily` sum type (LLM, speech transcription, source separation, audio-to-MIDI,
+  music transcription, image generation, video generation, audio generation, OMR) resolved from
+  each descriptor by `resultFamilyForDescriptor`, shared by the runtime and the test suite
+- `ResultPayload.object_ref` (already present on the wire) is populated for the artifact families;
+  `src/Infernix/Runtime.hs` `buildPayload` no longer hardcodes `objectRef = Nothing`
+- `WorkerResponse` gains an object-ref output field so an artifact adapter can return a reference,
+  and `InferenceRequest`/`WorkerRequest` gain a non-text input object-ref field for the audio and
+  image input families; the existing `input_text` field stays for the text families
+- artifact results are written to the always-on `infernix-demo-objects` MinIO bucket through the
+  existing presigned PUT/GET helpers, never the retired `infernix-runtime` or `infernix-results`
+  buckets (see [phase-7-demo-app-durable-context.md](phase-7-demo-app-durable-context.md) and
+  [../documents/engineering/object_storage.md](../documents/engineering/object_storage.md))
+- the 19-row to `ResultFamily` and inline-versus-object-ref mapping is published in
+  [../documents/architecture/model_catalog.md](../documents/architecture/model_catalog.md)
+
+### Validation
+
+- `infernix test unit` proves `resultFamilyForDescriptor` resolves every catalog row and that
+  `buildPayload` routes text to `inline_output` and artifacts to `object_ref`
+- `infernix test integration` and `infernix test e2e` assert the per-family result contract per
+  active-substrate row (see
+  [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md))
+- re-validated on both cohorts in [Wave I](cohort-validation-waves.md)
+
+### Remaining Work
+
+Implement and validate; depends on the Sprint 4.1 type and proto-field work and the Sprint 4.7
+adapter seam.
 
 ---
 
 ## Remaining Work
 
-None. Sprints 4.1-4.14 are `Done`.
+Phase 4 is `Active`. The real per-family inference contract is in progress across the reopened
+Sprints 4.1, 4.2, 4.3, 4.7, 4.8, 4.10, 4.11, 4.12, 4.14 and the new Sprint 4.15. Apple-native real
+inference also depends on [Phase 1](phase-1-repository-and-control-plane-foundation.md) Sprint 1.13
+(tart-built Metal engine artifacts). The phase returns to `Done` only after
+[Wave I](cohort-validation-waves.md) reruns the full Apple and CUDA Linux gates against real
+inference.
 
 ---
 
@@ -668,3 +757,12 @@ None. Sprints 4.1-4.14 are `Done`.
 - keep [00-overview.md](00-overview.md), [system-components.md](system-components.md), and
   [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md) aligned when the API,
   model catalog, or generated demo-config contract changes
+- the per-family result contract (the 19-row to `ResultFamily` and inline-versus-object-ref
+  mapping) is owned by [../documents/architecture/model_catalog.md](../documents/architecture/model_catalog.md)
+  and [../documents/development/testing_strategy.md](../documents/development/testing_strategy.md);
+  artifact object references land in the `infernix-demo-objects` bucket described in
+  [../documents/engineering/object_storage.md](../documents/engineering/object_storage.md)
+- Apple-native real inference depends on the tart-built Metal engine artifacts owned by
+  [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md)
+  Sprint 1.13 and the [../documents/operations/apple_silicon_runbook.md](../documents/operations/apple_silicon_runbook.md)
+  tart build lane

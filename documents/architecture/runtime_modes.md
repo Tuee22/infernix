@@ -64,6 +64,22 @@ images (`minio/minio`, `minio/mc`, `busybox`) instead of single-architecture amd
 packaging; see [../tools/minio.md](../tools/minio.md) for the canonical
 inventory.
 
+## Apple-Native Inference
+
+On the `apple-silicon` substrate the worker runs real Apple-native inference, not a placeholder.
+The runtime worker invokes the real engine for the selected binding — the Python adapter transform
+over a prebuilt host wheel for python-stdio bindings, or the real native runner binary resolved
+from a typed `HostConfig` absolute path for native-process-runner bindings — fetches model weights
+lazily from the infernix-models MinIO bucket via `adapters.model_cache.get_model_path`, and
+publishes a per-family real result: inline text for the LLM and speech families, and a typed object
+reference into the infernix-demo-objects MinIO bucket for the source-separation, audio-to-MIDI,
+music-transcription, image, video, audio-generation, and OMR artifact families. The native
+Metal/Core ML engine artifacts the Apple worker runs are built host-side through the tart macOS VM
+lane and resolved from `./.data/engines/<adapterId>/`; the canonical homes for that lane and the
+typed host paths are [../operations/apple_silicon_runbook.md](../operations/apple_silicon_runbook.md),
+[../engineering/host_tools_manifest.md](../engineering/host_tools_manifest.md), and
+[configuration_doctrine.md](configuration_doctrine.md).
+
 ## Generated Demo Config Contract
 
 The generated demo catalog is the source of truth for the active runtime mode.

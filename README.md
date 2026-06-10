@@ -2,7 +2,7 @@
 
 **Status**: Governed orientation document
 **Supersedes**: older root-level workflow duplication; canonical contracts live under `documents/` and `DEVELOPMENT_PLAN/`
-**Canonical homes**: [documents/README.md](documents/README.md), [documents/reference/cli_reference.md](documents/reference/cli_reference.md), [documents/development/local_dev.md](documents/development/local_dev.md), [DEVELOPMENT_PLAN/README.md](DEVELOPMENT_PLAN/README.md)
+**Canonical homes**: [documents/README.md](documents/README.md), [documents/reference/cli_reference.md](documents/reference/cli_reference.md), [documents/development/local_dev.md](documents/development/local_dev.md), [documents/development/testing_strategy.md](documents/development/testing_strategy.md), [documents/operations/apple_silicon_runbook.md](documents/operations/apple_silicon_runbook.md), [DEVELOPMENT_PLAN/README.md](DEVELOPMENT_PLAN/README.md)
 
 > **Purpose**: Orient operators and contributors to the supported product shape, quick-start flows,
 > and canonical repository guidance.
@@ -89,6 +89,10 @@ in-process by the `dhall` Haskell library; the schema is defined at `dhall/Infer
 - launches and supervises engine workers in Haskell; for Python-native engines (PyTorch, JAX,
   vLLM, transformers, etc.), the worker forks a Python adapter from `python/adapters/*.py`
   through `poetry run <adapter-entrypoint>` and speaks protobuf-over-stdio to it
+- invokes the real engine for the selected binding and publishes a per-family real result — inline
+  text for the LLM and speech families, and a typed `infernix-demo-objects` object reference for the
+  source-separation, audio-to-MIDI, music-transcription, image, video, audio-generation, and OMR
+  artifact families
 - routes requests into per-engine, per-model, per-device lanes while leaving batching and runtime
   memory policy to the child engine
 - stores large outputs in MinIO and returns references when appropriate
@@ -334,6 +338,13 @@ Notes:
   and `python3.12` command plus a user-local Poetry bootstrap when `poetry` is absent; the Poetry
   bootstrap may reuse an already available compatible Python 3.12+ executable, after which all
   host-side Python configuration continues through the repo-local `python/.venv/`
+- the Apple Metal and Core ML native engine artifacts are built in a headless `tart` macOS VM rather
+  than on the host, so the host needs no Xcode: `infernix` reconciles `tart` through Homebrew
+  (`brew install tart`) on demand, builds the artifacts inside the VM via
+  `infernix internal materialize-metal-engines`, and copies them to `./.data/engines/<adapterId>/`
+  before running them against Metal. `tart` is native arm64 macOS virtualization, distinct from
+  Docker and Colima, and creates or switches no Docker context. The Haskell binaries themselves keep
+  building host-native through ghcup/cabal, and the Python engines run from prebuilt host wheels
 
 ### Linux CPU host prerequisites
 
@@ -776,6 +787,12 @@ contracts.
 - the demo UI, demo API surface, generated PureScript contracts, and validation suites must expand
   until every supported model, format, and engine combination has a browser-visible and testable
   path under the demo surface
+- validation asserts a per-family result contract for every active-substrate catalog row (LLM and
+  speech inline text; source-separation, audio-to-MIDI, music-transcription, image, video,
+  audio-generation, and OMR object-reference artifacts), proving the real engine ran rather than a
+  placeholder; one DRY substrate-aware integration suite traverses the README matrix and the union
+  across the `apple-silicon`, `linux-cpu`, and `linux-gpu` catalogs covers every matrix row. See
+  [documents/development/testing_strategy.md](documents/development/testing_strategy.md)
 - when the demo UI is enabled, the supported product shape is a multi-user durable-context chat
   application: Keycloak self-signup (no email verification), WebSocket post-login transport,
   per-context durable conversation history backed by Pulsar conversation topics, MinIO-backed
@@ -836,6 +853,12 @@ ground and demo webapp provide the shared operator and demo substrate for this m
   handling where needed
 - the validation surface must cover every supported matrix row through the appropriate mix of unit,
   integration, and Playwright or browser-driven checks
+- each matrix row carries a per-family result contract — its `ResultFamily` and whether it returns
+  inline text or an `infernix-demo-objects` object reference, owned by
+  [documents/architecture/model_catalog.md](documents/architecture/model_catalog.md) — and the
+  integration and Playwright suites assert that real per-family output rather than a placeholder;
+  "every row is covered by at least one substrate" is a mechanically checked invariant under
+  `infernix lint docs`
 - Apple, CPU, and CUDA runtime lanes must be validated as first-class targets rather than narrowing
   the matrix to only the local Kind demo-ground launcher paths
 

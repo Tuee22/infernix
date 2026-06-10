@@ -178,6 +178,72 @@ The validation plan minimizes switching between the Apple Silicon and CUDA-capab
 - changing the active staged substrate changes the generated catalog and therefore the exercised entry
   set automatically
 
+## Per-Family Result Contract
+
+The per-family result contract is the canonical substrate-aware integration plus
+substrate-agnostic browser layer that proves the real engine ran for every demo-visible row. The
+model-to-`ResultFamily` and inline-vs-object-ref mapping lives at
+[../architecture/model_catalog.md](../architecture/model_catalog.md); this section is the canonical
+home for the test contract itself.
+
+The runtime worker invokes the real engine for the selected binding — the Python adapter transform
+over a prebuilt host wheel for python-stdio bindings, or the real native runner binary resolved
+from a typed `HostConfig` absolute path for native-process-runner bindings — fetches model weights
+lazily from the infernix-models MinIO bucket via `adapters.model_cache.get_model_path`, and
+publishes a per-family real result: inline text for the LLM and speech families, and a typed object
+reference into the infernix-demo-objects MinIO bucket for the source-separation, audio-to-MIDI,
+music-transcription, image, video, audio-generation, and OMR artifact families.
+
+### One DRY substrate-aware suite
+
+There is exactly one DRY substrate-aware integration suite — never per-substrate suites. It reads
+the active substrate `.dhall`, traverses the README matrix rows that substrate selects, and asserts
+a per-family result contract proving the real engine ran by **shape and type, never golden
+strings**. A closed `ResultFamily` sum type is resolved from `family` + `artifactType` +
+`matrixRowId`; the coarse `family` field collapses source-separation, audio-to-MIDI, and
+audio-generation under `audio`, so `ResultFamily` is the authoritative discriminator. One
+substrate-agnostic Playwright suite asserts the rendered side of the same contract.
+
+### Per-family ResultFamily dispatch table
+
+The integration suite dispatches each row to its `ResultFamily` assertion:
+
+- **LLM** (qwen2.5 safetensors/AWQ, tinyllama GPTQ/GGUF, qwen1.5 MLX): text prompt -> non-empty
+  continuation; `inline_output`.
+- **Speech transcription** (whisper.cpp, faster-whisper CT2): audio input -> transcript text;
+  `inline_output`.
+- **Source separation** (Demucs, Open-Unmix): audio -> `>= 2` stem object refs; `object_ref`.
+- **Audio-to-MIDI** (basic-pitch TensorFlow/Core ML/ONNX): audio -> valid MIDI bytes; `object_ref`.
+- **Music transcription** (MT3 JAX, Omnizart): audio -> MIDI or MusicXML; `object_ref`.
+- **Image generation** (SDXL-Turbo, Apple SD Core ML): text -> valid image (magic + dims);
+  `object_ref`.
+- **Video generation** (Wan2.1): text -> valid video container; `object_ref`.
+- **Audio generation / TTS** (bark): text -> valid audio; `object_ref`.
+- **OMR tool** (Audiveris): image/PDF -> MusicXML; `object_ref`.
+
+`ResultPayload` already carries `oneof {inline_output, object_ref}` on the wire — a population gap,
+not a schema gap, since `buildPayload` currently hardcodes `objectRef = Nothing`. The new proto
+fields are a non-text **input** object-ref on `InferenceRequest` / `WorkerRequest` and an object-ref
+**output** on `WorkerResponse` for artifact adapters. Artifact results always use the always-on
+infernix-demo-objects bucket, never the retired infernix-runtime / infernix-results buckets.
+
+### Substrate-agnostic Playwright layer
+
+The Playwright suite source is identical across `apple-silicon`, `linux-cpu`, and `linux-gpu`. The
+infernix-demo app chooses the engine binding from the active `.dhall`; the browser does not branch
+on substrate or engine. The browser layer asserts the per-family rendered result for every
+demo-visible row — inline text for LLM and speech, an audio player for audio-generation and
+playable-stem output, an image for image generation, a video for video generation, and a
+MIDI/MusicXML download for the transcription and OMR families.
+
+### Union-coverage invariant
+
+The active substrate's catalog is traversed with `Not recommended` rows omitted, so the per-substrate
+counts are apple 15, cpu 12, and gpu 16. The UNION across the three substrate catalogs covers every
+README matrix row. This is enforced as a mechanical invariant: `allMatrixRowIds` is exported from
+`Models.hs`, the union of `catalogForMode` over the three substrates equals 19 rows, and a
+README-to-matrix cross-check runs under `infernix lint docs`.
+
 ## Durable-Context Demo Validation
 
 The multi-user durable-context demo expands the validation surface across three layers.
@@ -234,6 +300,7 @@ relationship to the existing entrypoints.
 - [../reference/cli_surface.md](../reference/cli_surface.md)
 - [demo_app_test_plan.md](demo_app_test_plan.md)
 - [chaos_testing.md](chaos_testing.md)
+- [../architecture/model_catalog.md](../architecture/model_catalog.md)
 - [../architecture/demo_app_design.md](../architecture/demo_app_design.md)
 - [../architecture/durable_context_design.md](../architecture/durable_context_design.md)
 - [../architecture/daemon_topology.md](../architecture/daemon_topology.md)

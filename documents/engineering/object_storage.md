@@ -26,7 +26,7 @@ The supported target shape uses two MinIO buckets and nothing else:
 | Bucket | Gating | Key layout | Purpose |
 |---|---|---|---|
 | `infernix-models` | Always-on (not demo-gated) | `<modelId>/<filename>` plus a per-model `<modelId>/.ready` sentinel object | Platform-owned model weights, tokenizers, and configs. Populated lazily by the coordinator's model-bootstrap Failover subscription on first use. Read by every engine pod (Linux substrates) and by the on-host engine daemon (Apple silicon). |
-| `infernix-demo-objects` | Demo-gated (absent when `demo_ui = false`) | `users/<userId>/contexts/<contextId>/uploads/<objectKey>` and `users/<userId>/contexts/<contextId>/generated/<objectKey>` | User uploads (browser → presigned PUT) plus engine-generated artifacts (image PNGs, audio WAVs, video frames, MusicXML) written by the engine adapter on the `generated/` prefix. Read by the browser via presigned GET URLs minted at `/api/objects`. |
+| `infernix-demo-objects` | Demo-gated (absent when `demo_ui = false`) | `users/<userId>/contexts/<contextId>/uploads/<objectKey>` and `users/<userId>/contexts/<contextId>/generated/<objectKey>` | User uploads and non-text INPUTS — audio and image references (browser → presigned PUT) on the `uploads/` prefix — plus real per-family engine-generated ARTIFACT results (source-separation stems, audio-to-MIDI / music-transcription MIDI and MusicXML, generated images, video, and audio) written by the engine adapter through the presigned PUT helper on the `generated/` prefix. Read by the browser via presigned GET URLs minted at `/api/objects`. This is the only artifact bucket; the retired `infernix-runtime` and `infernix-results` buckets are not part of the supported contract. |
 
 ## Bucket Scope Policies
 
@@ -69,12 +69,28 @@ the next load repopulates from MinIO. Aggressive eviction is by
 design — the user explicitly accepted repeated MinIO pulls as the
 price of true daemon statelessness.
 
-For binary inference outputs (image PNGs, audio WAVs, video frames,
-large MusicXML), the engine adapter PUTs the bytes directly into
-`infernix-demo-objects` at the appropriate per-user prefix and the
-result payload carries an `ObjectRef` (bucket + key). Text outputs
+For real per-family artifact inference outputs (source-separation
+stems, audio-to-MIDI and music-transcription MIDI / MusicXML,
+generated images, video, and audio), the engine adapter writes the
+bytes into the always-on `infernix-demo-objects` bucket at the
+appropriate per-user prefix through the existing presigned PUT helper,
+and the result payload carries an `ObjectRef` (bucket + key) resolved
+on read through the existing presigned GET helper. These artifacts are
+always written to `infernix-demo-objects` — never to the retired
+`infernix-runtime` or `infernix-results` buckets, which are not part of
+the supported contract. Text outputs from the LLM and speech families
 ride inline in the protobuf result message and never touch object
 storage.
+
+Non-text INPUTS are carried the same way: an audio or image input is
+staged into `infernix-demo-objects` under the per-user `uploads/`
+prefix and referenced on the request as a typed object reference,
+rather than inlined. `ResultPayload` already carries the
+`oneof {inline_output, object_ref}` discriminant on the wire (a
+population gap, not a schema gap); the genuinely new proto fields are a
+non-text INPUT object reference on `InferenceRequest` / `WorkerRequest`
+and an object-reference OUTPUT on `WorkerResponse` for the artifact
+adapters.
 
 ## Coordinator Model-Bootstrap Workflow
 

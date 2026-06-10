@@ -25,9 +25,19 @@
 
 ## Pending Removal
 
+The rows below are the stub-era inference placeholders and the superseded Apple host-build
+assumption that the real per-family inference and Apple tart Metal-engine build work supersedes.
+They are recorded here (per the development-plan standards) before that implementation starts; each
+row's owning sprint removes the placeholder when real inference and the tart build lane land.
+
 | Location | Why it is slated for removal | Owning phase or sprint |
 |----------|------------------------------|------------------------|
-| _None._ | All tracked legacy cleanup and validation residuals are closed as of 2026-06-06 on the current Apple Silicon host. New pending cleanup work must add a concrete row here before implementation starts. | _n/a_ |
+| `python/adapters/common.py::render_engine_output` and the six trivial `transform` bodies in `python/adapters/{transformers,vllm,diffusers,pytorch,tensorflow,jax}_python.py` (word/char/digest statistics). | They fabricate a `adapter\|readiness\|model_id\|stat\|input` metadata-echo string instead of running the real framework. Superseded by real per-family inference over prebuilt host wheels, loading weights through `adapters.model_cache.get_model_path`; the `run_context_adapter` stdio boundary and `model_cache` are retained. | Phase 4 Sprint 4.7 |
+| `src/Infernix/Runtime/Worker.hs::renderNativeRunnerOutput` and the `runNativeWorker` debug-metadata return for the seven `nativeRunnerLabel` adapter ids (`whisper-cpp-cli`, `llama-cpp-cli`, `onnx-runtime-native`, `coreml-native`, `ctranslate2-native`, `mlx-native`, `jvm-native`). | The `native-process-runner` branch returns debug metadata text instead of invoking the real engine binary resolved from a typed `HostConfig` absolute path. | Phase 4 Sprint 4.2 |
+| `src/Infernix/Runtime/Worker.hs::nativeRunnerLabel` debug label map. | Exists only to render the debug-metadata output above; real runners are selected by adapter id plus the `HostConfig` engine path, so the label map is removed when the debug return is. | Phase 4 Sprint 4.12 |
+| `src/Infernix/Runtime.hs::buildPayload` `objectRef = Nothing` population stub (the worker never PUTs an artifact). | The `ResultPayload.object_ref` field already exists on the wire but is never populated; the artifact families (source separation, audio-to-MIDI, music transcription, image, video, audio generation, OMR) need typed MinIO object-ref results written to the `infernix-demo-objects` bucket. This is a population gap, not a schema gap. | Phase 4 Sprint 4.15 |
+| `test/integration/Spec.hs::validateCatalogModelInference` model-id + runtime-mode-only assertion. | It proves only that request metadata is echoed back, not that a real engine ran; superseded by the per-family real-output result-contract assertions of the single DRY substrate-aware suite. | Phase 6 Sprint 6.2 |
+| The superseded "host builds the Metal engines" / "host requires Xcode" assumption wherever Apple build prose implies the host compiles the `llama.cpp`/`whisper.cpp` Metal builds or the Core ML / Apple Stable Diffusion Core ML artifacts. | The supported contract builds those Metal and Core ML artifacts inside a headless `tart` macOS VM (Xcode lives only in that VM, never on the host) and copies them to `./.data/engines/<adapterId>/` before running them against the host GPU. | Phase 1 Sprint 1.13 |
 
 ## Completed
 

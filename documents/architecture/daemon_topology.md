@@ -121,6 +121,14 @@ broker-side ownership boundary.
 
 The product-agnostic inference executor. Owns:
 
+- Running the **real per-family engine** for the selected binding —
+  the Python adapter transform over a prebuilt host wheel, or a real
+  native runner binary resolved from a typed `HostConfig` absolute
+  path — and publishing a per-family real result: inline text for the
+  LLM and speech families, and a typed `infernix-demo-objects` object
+  reference for each artifact result family (source separation,
+  audio-to-MIDI, music transcription, image, video, audio generation,
+  and OMR)
 - Consumer subscription on `inference.batch.<mode>` (post-batcher) or
   `inference.request.<mode>` (no batcher)
 - Engine adapter process management (Python or native) per

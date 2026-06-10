@@ -183,6 +183,41 @@ The canonical home for the substrate → container architecture mapping is
 Architecture" subsection); the MinIO image inventory is at
 [../tools/minio.md](../tools/minio.md).
 
+## Tart Metal-Engine Build Lane
+
+On Apple Silicon the `infernix` and `infernix-demo` Haskell binaries build host-native through the
+ghcup/cabal toolchain and run on the host against Metal. The Metal and Core ML native engine
+artifacts that would otherwise require Xcode — the llama.cpp and whisper.cpp Metal builds and the
+Core ML compiled models (Core ML basic-pitch, Apple Stable Diffusion Core ML, the Omnizart Core ML
+export) — are built inside a headless `tart` macOS VM (Xcode lives only in that VM, because Xcode
+needs UI interaction that breaks the headless workflow) and copied out to
+`./.data/engines/<adapterId>/` before running, since Metal and the GPU are unreachable from inside
+`tart`. `tart` is reconciled through Homebrew (`brew install tart`), recorded as the `hostTart`
+absolute-path field in `dhall/InfernixHost.dhall`, and is native arm64 macOS virtualization — not
+cross-architecture emulation and not a Docker or Colima lane, so it creates and switches no Docker
+context and provisions no Colima VM. The engines that do not need Xcode (MLX and jax-metal and ONNX
+Runtime as prebuilt wheels; Audiveris as a JVM application) are not built in `tart` and run from
+prebuilt host wheels or binaries.
+
+Operator workflow:
+
+- `brew install tart` is reconciled by `infernix`; the host needs no Xcode of its own.
+- the build is invoked through `infernix internal materialize-metal-engines`, registered under the
+  existing "internal" command family (mirroring `infernix internal materialize-substrate`). It adds
+  no new top-level command; the canonical top-level CLI surface is unchanged.
+- `infernix internal materialize-metal-engines` builds the allowlisted Metal/Core ML artifacts in
+  the headless VM and copies them to **[ARTIFACT BUILD LOCATION]** `./.data/engines/<adapterId>/`
+  (the existing engine-install root, never `./.build/`).
+- the host then runs those artifacts against Metal directly; no Xcode is installed on the host.
+
+The `hostTart` path is read from `HostConfig`; the helper never resolves `tart` through the
+operator's shell search path. The `tart` guest receives its toolchain and source through the typed
+engine-build sub-record and `tart` file mounts — never through inherited host `PATH`, environment
+variables, or SSH-with-env. See the engine-build sub-record and hermetic tart-guest rule in
+[../architecture/configuration_doctrine.md](../architecture/configuration_doctrine.md), and the
+`hostTart` field row in
+[../engineering/host_tools_manifest.md](../engineering/host_tools_manifest.md).
+
 ## Harbor Host-Port Conflicts
 
 `cluster up` selects Harbor's host-side Kind hostPort dynamically. The chooser
@@ -220,5 +255,7 @@ batches into the counterpart CUDA Linux pass.
 - [../tools/minio.md](../tools/minio.md)
 - [../engineering/portability.md](../engineering/portability.md)
 - [../engineering/docker_policy.md](../engineering/docker_policy.md)
+- [../engineering/host_tools_manifest.md](../engineering/host_tools_manifest.md)
+- [../architecture/configuration_doctrine.md](../architecture/configuration_doctrine.md)
 - [../../DEVELOPMENT_PLAN/cohort-validation-waves.md](../../DEVELOPMENT_PLAN/cohort-validation-waves.md)
 - [../reference/cli_reference.md](../reference/cli_reference.md)

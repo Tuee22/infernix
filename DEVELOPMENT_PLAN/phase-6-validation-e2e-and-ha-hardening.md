@@ -1,6 +1,6 @@
 # Phase 6: Validation, E2E, and HA Hardening
 
-**Status**: Done
+**Status**: Active
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/development/no_env_vars.md](../documents/development/no_env_vars.md)
 
 > **Purpose**: Define the supported static-quality and single-substrate validation contract for the
@@ -15,8 +15,15 @@
 Phase 6 closes around the validation entrypoints, routed coverage, governed-root-document
 metadata closure, structured CLI-registry closure, route-hardening cleanup, supported bootstrap
 lifecycle fixes, false-negative doctrine, Harbor publication retry closure, daemon-role split,
-and real Dhall substrate codec implemented in the current worktree. Sprints 6.1-6.30 are `Done`
-after Apple cohort validation in Waves A/A.1/A.2/A.3 and CUDA Linux cohort validation in Wave C.
+and real Dhall substrate codec implemented in the current worktree. The validation entrypoints,
+routed coverage, HA hardening, governed-doc closure, and CLI-registry closure are `Done` after
+Apple cohort validation in Waves A/A.1/A.2/A.3 and CUDA Linux cohort validation in Wave C. The
+phase is `Active` because the inference-coverage sprints are being upgraded from the metadata-echo
+assertion to the per-family real-output result contract: the reopened Sprints 6.2, 6.3, and 6.6
+assert that a real engine ran for every active-substrate row, and the union across the three
+substrate catalogs covers every README matrix row as a mechanically checked invariant. That
+coverage upgrade is re-validated on both cohorts in [Wave I](cohort-validation-waves.md); the phase
+returns to `Done` only after that wave closes.
 The supported test story is substrate-specific in code. Sprint 6.25 closes around the implemented split topology: cluster daemons
 always run, Apple cluster daemons own request-topic consumption and host-batch handoff, Apple
 inference work moves through Pulsar to same-binary host daemons, and publication distinguishes
@@ -154,9 +161,9 @@ None.
 
 ---
 
-## Sprint 6.2: Extensive Integration Suites [Done]
+## Sprint 6.2: Extensive Integration Suites [Active]
 
-**Status**: Done
+**Status**: Active
 **Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Demo/Api.hs`, `src/Infernix/Runtime.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Worker.hs`, `test/integration/Spec.hs`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/operations/cluster_bootstrap_runbook.md`
 
@@ -184,13 +191,20 @@ MinIO, Pulsar, and operator-managed PostgreSQL substrate.
 
 ### Remaining Work
 
-None.
+Upgrade the single DRY `validateCatalogModelInference` (`test/integration/Spec.hs`) from the
+model-id + runtime-mode-only assertion to a per-family real-output result contract dispatched on
+`ResultFamily`: LLM non-empty continuation, speech transcript text, source-separation two-or-more
+stem object refs, audio-to-MIDI MIDI bytes, music MIDI or MusicXML, image and video a valid
+artifact of the expected type and dimensions, audio-generation a valid audio artifact, and OMR
+MusicXML — shape and type, never golden strings. Keep one substrate-aware suite that reads the
+active substrate's `.dhall` and traverses the README rows; add no per-substrate suites. Tracked for
+[Wave I](cohort-validation-waves.md).
 
 ---
 
-## Sprint 6.3: Routed Playwright E2E Coverage [Done]
+## Sprint 6.3: Routed Playwright E2E Coverage [Active]
 
-**Status**: Done
+**Status**: Active
 **Implementation**: `src/Infernix/CLI.hs`, `web/playwright/inference.spec.js`, `web/src/Infernix/Web/Chat.purs`, `web/src/Infernix/Web/Router.purs`, `web/src/Main.purs`, `web/src/index.html`, `web/test/Main.purs`, `web/test/run_playwright_matrix.mjs`, `web/package.json`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/reference/web_portal_surface.md`
 
@@ -234,7 +248,11 @@ browser surface through the shared edge.
 
 ### Remaining Work
 
-None.
+Make the routed Playwright suite assert the per-family rendered result for every demo-visible row
+(inline text, audio player, image, video, MIDI or MusicXML download) while staying
+substrate-agnostic: `infernix-demo` chooses the engine binding from the active `.dhall` and the
+browser does not branch on substrate id or engine family. Tracked for
+[Wave I](cohort-validation-waves.md).
 
 ---
 
@@ -308,9 +326,9 @@ None.
 
 ---
 
-## Sprint 6.6: Generated-Catalog Exhaustive Integration and E2E Coverage Baseline [Done]
+## Sprint 6.6: Generated-Catalog Exhaustive Integration and E2E Coverage Baseline [Active]
 
-**Status**: Done
+**Status**: Active
 **Implementation**: `src/Infernix/CLI.hs`, `src/Infernix/Lint/Files.hs`, `test/unit/Spec.hs`, `test/integration/Spec.hs`, `web/playwright/inference.spec.js`, `web/test/Main.purs`, `web/test/run_playwright_matrix.mjs`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/reference/web_portal_surface.md`, `documents/reference/cli_reference.md`, `documents/engineering/testing.md`
 
@@ -339,7 +357,11 @@ hard-coded lane lists.
 
 ### Remaining Work
 
-None.
+Require a per-family assertion for every active-substrate catalog entry, and add the
+mechanically-checked coverage invariant: export `allMatrixRowIds` from `src/Infernix/Models.hs` and
+assert that the union of `catalogForMode` across `apple-silicon`, `linux-cpu`, and `linux-gpu`
+equals the full set of README matrix rows, backed by a README-to-matrix check under
+`infernix lint docs`. Tracked for [Wave I](cohort-validation-waves.md).
 
 ---
 
@@ -1487,8 +1509,13 @@ None. The four toolchain cleanup rows live in `legacy-tracking-for-deletion.md` 
 
 ## Remaining Work
 
-None. Sprints 6.1-6.30 are `Done`; Apple cohort validation closed in Waves A/A.1/A.2/A.3 and
-CUDA Linux cohort validation closed in Wave C.
+Phase 6 is `Active` for the inference-coverage upgrade. The reopened Sprints 6.2, 6.3, and 6.6
+replace the metadata-echo assertion with the per-family real-output result contract and add the
+mechanically-checked "every README row is covered by at least one substrate" invariant. The other
+Sprints (6.1, 6.4, 6.5, 6.7-6.30) remain `Done`; Apple cohort validation closed in Waves
+A/A.1/A.2/A.3 and CUDA Linux cohort validation closed in Wave C. The coverage upgrade is
+re-validated on both cohorts in [Wave I](cohort-validation-waves.md); the phase returns to `Done`
+only after that wave closes.
 
 ## Documentation Requirements
 

@@ -17,7 +17,10 @@
   Failover handoff, chaos kills, and a multi-user throughput test.
 - E2E covers Playwright flows through the routed demo surface for every primary lifecycle, the
   pre-auth landing entry points, and a per-model smoke matrix driven by the active substrate's
-  generated demo catalog.
+  generated demo catalog. The browser layer asserts the per-family rendered result for every
+  demo-visible row — inline text, audio player, image, video, or MIDI/MusicXML download — and
+  stays substrate-agnostic, with the demo app selecting the engine binding from the active
+  `.dhall`. The `ResultFamily` and inline-vs-object-ref mapping lives in the model catalog.
 - The reducer lives only in Haskell; PureScript tests cover patch application and rendering,
   not reducer logic.
 - The Playwright source is identical across `apple-silicon`, `linux-cpu`, and `linux-gpu`;
@@ -302,11 +305,15 @@ The per-model smoke matrix is a parameterized Playwright flow.
     - audio generation / TTS → canonical text prompt
     - OMR / notation extraction → upload `image/score-page.png`; submit
   - Waits for `InferenceResult` with `status = Completed`.
-  - Asserts the generated artifact (if any) appears in the conversation thread AND in the
-    Artifacts view, and that the expected handler succeeds: inline rendering for
-    image/playable-audio/video, bounded preview for text/JSON, browser-native handling for
-    PDF, and download-only handling for MIDI, MusicXML/MXL, unknown, or generic binary
-    artifacts.
+  - Asserts the per-family rendered result. Inline-text families (LLM, speech transcription)
+    render the `inline_output` continuation or transcript directly in the Chat thread; artifact
+    families render or download from the typed `object_ref` into infernix-demo-objects. The
+    generated artifact (if any) appears in the conversation thread AND in the Artifacts view, and
+    the expected handler succeeds: inline rendering for image/playable-audio/video, bounded
+    preview for text/JSON, browser-native handling for PDF, and download-only handling for MIDI,
+    MusicXML/MXL, unknown, or generic binary artifacts. The browser asserts the rendered shape,
+    never a golden string, and the demo app — not the browser — selects the engine binding from
+    the active `.dhall`.
 - **Closure rule.** Across the active substrate's catalog, every non-`Not recommended` row in
   the README "Comprehensive Model / Format / Engine Matrix" has one passing smoke flow.
   Failure on any row fails the suite. Test reports name the substrate and the catalog entry
@@ -359,6 +366,30 @@ driver iterates the catalog rows from that file and skips any row whose engine c
 active substrate is `Not recommended`. No substrate-specific branching lives in browser test
 code.
 
+The infernix-demo app — not the browser — chooses the engine binding from the active `.dhall`.
+The browser asserts only the per-family **rendered** result and never inspects the substrate or
+engine. The `ResultFamily` mapping and inline-vs-object-ref result surface for each row live at
+[../architecture/model_catalog.md](../architecture/model_catalog.md); the canonical per-family
+test contract lives at [testing_strategy.md](testing_strategy.md). For every demo-visible row the
+e2e/browser layer asserts the family-appropriate rendered surface:
+
+- **LLM** (qwen2.5 safetensors/AWQ, tinyllama GPTQ/GGUF, qwen1.5 MLX) — rendered inline text
+  continuation in the Chat thread.
+- **Speech transcription** (whisper.cpp, faster-whisper CT2) — rendered inline transcript text.
+- **Source separation** (Demucs, Open-Unmix) — playable audio players for the stem object refs.
+- **Audio-to-MIDI** (basic-pitch TensorFlow/Core ML/ONNX) — a MIDI download-only artifact.
+- **Music transcription** (MT3 JAX, Omnizart) — a MIDI or MusicXML download-only artifact.
+- **Image generation** (SDXL-Turbo, Apple SD Core ML) — an inline `<img>` render.
+- **Video generation** (Wan2.1) — an inline `<video>` render.
+- **Audio generation / TTS** (bark) — an inline `<audio>` player.
+- **OMR tool** (Audiveris) — a MusicXML download-only artifact.
+
+The browser proves the real engine ran by the rendered shape (inline text, audio player, image,
+video, MIDI/MusicXML download) and never by golden strings. Inline-text rows render directly from
+`inline_output`; artifact rows render or download from a typed `object_ref` into the always-on
+infernix-demo-objects bucket. The union across the three substrate catalogs covers every README
+matrix row even though no single substrate carries all 19 rows (apple 15, cpu 12, gpu 16).
+
 ## Validation
 
 - `infernix test unit` includes every unit-layer suite named here.
@@ -373,6 +404,7 @@ code.
 
 - [testing_strategy.md](testing_strategy.md)
 - [chaos_testing.md](chaos_testing.md)
+- [../architecture/model_catalog.md](../architecture/model_catalog.md)
 - [../architecture/demo_app_design.md](../architecture/demo_app_design.md)
 - [../architecture/durable_context_design.md](../architecture/durable_context_design.md)
 - [../architecture/daemon_topology.md](../architecture/daemon_topology.md)

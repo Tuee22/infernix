@@ -10,6 +10,9 @@
 - Host-native builds write repo-local outputs under `./.build/`; supported outer-container flows
   keep build artifacts inside the launcher image overlay and write durable repo-local state under
   `./.data/`.
+- Tart-built native engine artifacts and engine install roots live under
+  `./.data/engines/<adapterId>/`, never `./.build/`; the Haskell binaries still build host-native
+  to `./.build/`.
 - Generated frontend contracts live only under `web/src/Generated/`, and generated browser bundles
   live under `web/dist/`.
 - Runtime inference results reload only from protobuf-backed `./.data/runtime/results/*.pb`
@@ -64,6 +67,26 @@ of the supported artifact contract.
   `./.data/runtime/model-cache/<runtime-mode>/<model-id>/manifest.pb`
 - `ensurePoetryProjectReady` regenerates Python protobuf stubs under `tools/generated_proto/` when
   they are missing
+
+## Tart-Built Native Engine Artifacts
+
+On the `apple-silicon` substrate, the native engine artifacts that require Xcode — the
+llama.cpp and whisper.cpp Metal builds and the Core ML compiled models (Core ML basic-pitch,
+Apple Stable Diffusion Core ML, the Omnizart Core ML export) — are built inside a headless tart
+macOS VM and copied out to `./.data/engines/<adapterId>/` before running, since Metal and the GPU
+are unreachable from inside tart. Tart-built native engine artifacts and engine install roots
+always live under `./.data/engines/<adapterId>/` (the existing engine-install root), never
+`./.build/`. The `infernix` and `infernix-demo` Haskell binaries still build host-native to
+`./.build/` and run on the host against Metal; only the Metal/Core ML engine payloads come from the
+tart build lane. Engines that do not need Xcode (MLX, jax-metal, and ONNX Runtime as prebuilt
+wheels; Audiveris as a JVM application) are not built in tart and run from prebuilt host wheels or
+binaries. The tart build is invoked through the internal helper
+`infernix internal materialize-metal-engines` (registered under the existing `internal` command
+family, mirroring `infernix internal materialize-substrate`); it adds no new top-level command.
+Tart is reconciled through Homebrew and recorded as the `hostTart` absolute-path field in
+`dhall/InfernixHost.dhall`. See the canonical homes
+[../operations/apple_silicon_runbook.md](../operations/apple_silicon_runbook.md) and
+[host_tools_manifest.md](host_tools_manifest.md).
 
 ## Generated Demo Config Publication
 

@@ -168,6 +168,17 @@ spec:
           readOnly: true
 ```
 
+## Apple tart Metal-engine build guest
+
+The headless Apple `tart` macOS VM that builds the Metal and Core ML native engine artifacts is
+hermetic: it receives its toolchain and source through the typed engine-build sub-record and
+`tart` file mounts, never through inherited host `PATH`/env or an `ssh`-with-env handoff. The
+guest derives every input — source tree, toolchain roots, output drop path — from the typed
+fields threaded into the build, exactly as host code derives settings from `HostConfig`. No
+host environment variable crosses the VM boundary, and the guest runs no `lookupEnv`/`getEnv`
+to discover its toolchain. The canonical home for this configuration substrate is
+[../architecture/configuration_doctrine.md](../architecture/configuration_doctrine.md).
+
 ## Third-party-upstream exceptions
 
 Keycloak's upstream image consumes `KC_DB_*` env vars; the Keycloak pod spec retains those
