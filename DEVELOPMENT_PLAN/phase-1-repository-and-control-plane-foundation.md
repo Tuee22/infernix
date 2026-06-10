@@ -840,6 +840,8 @@ None.
 ## Sprint 1.13: Apple Tart Metal-Engine Build Lane [Planned]
 
 **Status**: Planned
+**Code-side closure**: Not started — the `hostTart` manifest field, `AppleTart` reconciliation, the `materialize-metal-engines` registration, and their `infernix-unit` coverage are machine-independent and can land in natural order on the local machine now; the in-VM tart Metal/Core ML build, artifact copy-out, and host Metal load are Apple-hardware-bound and run only inside the Apple cohort batch
+**Cohort gate**: Pending [Wave I](cohort-validation-waves.md) — **Apple cohort only** (CUDA Linux has no Metal/tart surface; no CUDA residual)
 **Implementation**: `dhall/InfernixHost.dhall`, `src/Infernix/HostConfig.hs`, `src/Infernix/HostPrereqs.hs`, `src/Infernix/CommandRegistry.hs`, `src/Infernix/Engines/AppleSilicon.hs`, `bootstrap/apple-silicon.sh`, `test/unit/Spec.hs`
 **Docs to update**: `documents/engineering/host_tools_manifest.md`, `documents/operations/apple_silicon_runbook.md`, `documents/engineering/build_artifacts.md`, `documents/architecture/configuration_doctrine.md`, `documents/engineering/docker_policy.md`
 
@@ -888,7 +890,18 @@ the host before running, because Metal and the GPU are unreachable from inside t
 
 ### Remaining Work
 
-Implement and validate on [Wave I](cohort-validation-waves.md).
+- **Code (machine-independent — validate now with `cabal test infernix-unit`, `infernix test lint`,
+  `infernix lint docs`):** add the `hostTart` field to `dhall/InfernixHost.dhall` and
+  `defaultAppleHostNativeHostConfig`, reconcile `AppleTart` through `ensureHomebrewManagedTool` in
+  `src/Infernix/HostPrereqs.hs`, register `infernix internal materialize-metal-engines` in
+  `src/Infernix/CommandRegistry.hs` with the tart build lane in
+  `src/Infernix/Engines/AppleSilicon.hs`, and cover the `hostTart` field plus the `AppleTart`
+  requirement in `test/unit/Spec.hs`. This lands in natural order on whichever single machine is
+  present.
+- **Cohort gate ([Wave I](cohort-validation-waves.md), Stage 2 — Apple cohort only):** on Apple
+  Silicon, `infernix internal materialize-metal-engines` builds an allowlisted Metal/Core ML
+  artifact inside the tart VM, copies it to `./.data/engines/<adapterId>/`, and the host engine
+  loads it against Metal. CUDA Linux has no Metal/tart surface, so there is no CUDA residual.
 
 ---
 
@@ -897,8 +910,15 @@ Implement and validate on [Wave I](cohort-validation-waves.md).
 Phase 1 is `Active` for the new Sprint 1.13 (Apple tart Metal-engine build lane). Sprints 1.1-1.12
 remain `Done`; Apple cohort validation closed in Wave A and CUDA Linux cohort validation closed in
 Wave C, and the recorded Sprint 1.12 Apple boundary rerun closed the native-only positive and
-negative Docker gates on the current Apple Silicon host. Sprint 1.13 is re-validated in
-[Wave I](cohort-validation-waves.md); the phase returns to `Done` only after that wave closes.
+negative Docker gates on the current Apple Silicon host. Sprint 1.13's code-side closure — the
+machine-independent `hostTart` manifest field, `AppleTart` reconciliation, the
+`materialize-metal-engines` registration, and their unit coverage — lands in natural order on
+whichever single machine is present and is proven by the machine-independent gate set. Its
+substantive deliverable, the in-VM tart Metal/Core ML build, is Apple-hardware-bound and is the
+Stage 2 Apple cohort gate in [Wave I](cohort-validation-waves.md); there is no CUDA Linux residual
+because Metal/tart has no CUDA surface. The phase returns to `Done` only after that Apple cohort
+gate closes. See the two-axis execution rule in
+[development_plan_standards.md](development_plan_standards.md) Section Q.
 
 ## Documentation Requirements
 

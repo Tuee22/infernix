@@ -54,9 +54,12 @@
 - Linux operator workflows close around Compose-driven outer containers, validation reports the
   active built substrate for the complete selected-substrate suite, and the supported
   materialization path can emit `demo_ui = false`
-- validation evidence is recorded by hardware cohort: Apple Silicon and CUDA-capable Linux each
-  run local full-suite validation for the substrate they own, and phase closure batches the
-  counterpart cohort run instead of requiring host switching after every sprint
+- validation evidence is two-axis: code-side closure (implementation plus the machine-independent
+  gate set) is completed in natural phase order on whichever single machine is present and gates the
+  next phase's implementation, while the cross-architecture cohort full-suite is a batched wave —
+  the only supported machine switch — that gates `Done`; Apple Silicon and CUDA-capable Linux each
+  run local validation for the substrate they own without host switching per sprint (see
+  [development_plan_standards.md](development_plan_standards.md) Section Q)
 - direct `infernix-demo` execution no longer doubles as a compatibility target for Harbor, MinIO,
   or Pulsar tool-route probes; those checks now require the real Gateway-backed upstream behavior
 - real cluster and routed validation paths use Pulsar's WebSocket and admin surfaces, while the
@@ -206,7 +209,7 @@
 | Unit validation | `infernix test unit` | validate the active staged substrate at command entry, then run Haskell runtime behavior checks plus PureScript unit suites without claiming cluster matrix coverage |
 | Integration validation | `infernix test integration` | validate the built substrate's published catalog contract through one substrate-aware integration suite that traverses the README matrix rows, selects the active engine from the generated `.dhall`, covers every generated active-substrate catalog entry, and carries the supported real-cluster HA or lifecycle assertions |
 | Routed E2E validation | `infernix test e2e` | exercise the real routed browser surface for the built substrate through a substrate-agnostic Playwright suite that relies on `infernix-demo` to read the generated `.dhall` and dispatch the correct engine |
-| Cross-hardware phase closure | Apple Silicon full-suite run plus CUDA Linux `linux-gpu` full-suite run | record paired cohort evidence for a coherent phase state while allowing day-to-day development to stay on one machine until the closure batch |
+| Cross-hardware phase closure | Apple Silicon full-suite run plus CUDA Linux `linux-gpu` full-suite run | record paired cohort evidence (Stage 2) for a coherent frozen phase state; code-side closure and its machine-independent gates stay on one machine in natural order, and the paired cohort full-suite is the only supported machine switch |
 | Style toolchain bootstrap | `src/Infernix/Lint/HaskellStyle.hs` | install `ormolu` and `hlint` through `cabal install` against the project `ghc-9.12.4` compiler into `./.build/haskell-style-tools/bin/` and run `ormolu`, `hlint`, and `cabal format` checks |
 
 ## Browser and API Surface

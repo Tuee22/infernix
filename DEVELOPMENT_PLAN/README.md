@@ -50,6 +50,14 @@ A phase or sprint can move to `Done` only when all of the following are true:
 5. Cleanup promised by the sprint is reflected in
    [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
 
+`Done` is the cohort sign-off gate (item 2's dual-cohort evidence). It is distinct from *code-side
+closure* — the implementation plus the machine-independent gate set — which is completed in natural
+phase order on a single machine and is the gate to begin the *next* phase's implementation. A phase
+whose code-side closure is complete but whose cross-architecture full-suite is still pending stays
+`Active` with a named `Cohort gate` residual; that residual does not block the next phase's
+implementation. See the two-axis execution rule in
+[development_plan_standards.md](development_plan_standards.md) Section Q.
+
 ## Current Repo Assessment
 
 All phase implementation work closes around the implemented worktree. Phase 3 Sprint 3.12 and
@@ -216,6 +224,23 @@ Development and validation are organized around two physical host cohorts:
 - **CUDA Linux cohort:** `./bootstrap/linux-gpu.sh ...` and the Compose-launched
   `docker compose run --rm infernix infernix ...` command surface.
 
+> **Implement in natural phase order on whichever single machine is present. The cohort gate is a
+> batched wave — the only supported machine switch — not a per-sprint or per-phase trigger.** Every
+> open phase and sprint has two independent axes. *Code-side closure* (Axis 1) is the implementation
+> plus the machine-independent gate set — `cabal build all`, `cabal test infernix-unit`,
+> `cabal test infernix-haskell-style`, `infernix lint files/docs/chart/proto`, `infernix docs
+> check`, the web unit suite, and `poetry run check-code`; completed in natural order on one
+> machine, it is the gate to begin the *next* phase's implementation. *Cohort sign-off* (Axis 2) is
+> the hardware-specific full-suite — Apple Metal including the tart Metal-engine build, and CUDA GPU
+> runs — batched once per closure cycle against frozen code and tracked in
+> `cohort-validation-waves.md`; it is the gate for `Done` and never the gate for moving on. **The
+> next action for any open phase is always its remaining code-side closure on the machine you
+> already have; do not switch machines to "validate the open phase." The machine switch happens only
+> at a scheduled wave boundary, once per cohort.** A deliverable that is intrinsically
+> hardware-bound — for example the Apple-only tart Metal build of Phase 1 Sprint 1.13 — is named as
+> such in its `Code-side closure` field and is exercised inside its cohort's wave, never pre-claimed
+> as machine-independent.
+
 Phase work should stay on the current cohort until a coherent slice is ready. Apple-owned changes
 validate locally on Apple and queue CUDA Linux closure; Linux, CUDA, chart, and outer-container
 changes validate locally on CUDA Linux and queue Apple closure. Validation-only hardware residuals
@@ -233,12 +258,12 @@ scope.
 | Phase | Name | Status | Document |
 |-------|------|--------|----------|
 | 0 | Documentation and Governance | Done (Sprints 0.1-0.10 closed; declarative-state documentation reconciliation complete) | [phase-0-documentation-and-governance.md](phase-0-documentation-and-governance.md) |
-| 1 | Repository and Control-Plane Foundation | Active (Sprint 1.13 Apple tart Metal-engine build lane is `Planned` and re-validated in [Wave I](cohort-validation-waves.md); the prior Sprint 1.12 native-only workflow doctrine closed on the recorded validation: Apple `doctor`/`build`/`up`/`status`/full `test`/`down`/final `status` passed on an already selected native arm64 daemon, and the negative no-daemon bootstrap boundary failed before cluster work without changing Docker contexts or Colima VM state) | [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md) |
+| 1 | Repository and Control-Plane Foundation | Active (Sprint 1.13 Apple tart Metal-engine build lane is `Planned`; its machine-independent code-side closure lands in natural order on the local machine, while the in-VM tart Metal build is the **Apple-only** Stage 2 cohort gate in [Wave I](cohort-validation-waves.md) — no CUDA residual; the prior Sprint 1.12 native-only workflow doctrine closed on the recorded validation: Apple `doctor`/`build`/`up`/`status`/full `test`/`down`/final `status` passed on an already selected native arm64 daemon, and the negative no-daemon bootstrap boundary failed before cluster work without changing Docker contexts or Colima VM state) | [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md) |
 | 2 | Kind Cluster Storage and Lifecycle | Done (Sprints 2.10-2.13 lifecycle, retained-state, bootstrap-boundary, and host-manifest closure validated by Apple Wave A and CUDA Linux Wave C) | [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md) |
 | 3 | HA Platform Services and Edge Routing | Done (Sprint 3.12 native `linux-cpu` architecture selector and native arm64 publication path closed in Wave F on the recorded validation through the already selected arm64 Docker daemon; Sprints 3.10–3.11 validated by Apple Wave A/A.2 and CUDA Linux Wave C) | [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md) |
-| 4 | Inference Service and Durable Runtime | Active (real per-family inference reopened across Sprints 4.1/4.2/4.3/4.7/4.8/4.10/4.11/4.12/4.14 plus new Sprint 4.15, re-validated in [Wave I](cohort-validation-waves.md); the prior Sprints 4.1-4.14 closed with mounted `ClusterConfig` / `SecretsConfig` runtime path validated by Apple Wave A and CUDA Linux Wave C) | [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) |
+| 4 | Inference Service and Durable Runtime | Active (real per-family inference reopened across Sprints 4.1/4.2/4.3/4.7/4.8/4.10/4.11/4.12/4.14 plus new Sprint 4.15; code-side closure lands in natural order on the local machine (Stage 1), and real-engine output is the Stage 2 cohort batch in [Wave I](cohort-validation-waves.md); the prior Sprints 4.1-4.14 closed with mounted `ClusterConfig` / `SecretsConfig` runtime path validated by Apple Wave A and CUDA Linux Wave C) | [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) |
 | 5 | Web UI and Shared Types | Done (Sprints 5.1-5.10 closed with demo backend, Python adapter, and web/Node no-env-var path validated by Apple Wave A/A.2 and CUDA Linux Wave C) | [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md) |
-| 6 | Validation, E2E, and HA Hardening | Active (per-family real-output coverage reopened across Sprints 6.2/6.3/6.6, re-validated in [Wave I](cohort-validation-waves.md); the prior Sprints 6.1-6.30 closed with lint/style/unit/integration/e2e, no-env-var gates, and single `ghc-9.12.4` toolchain validation) | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) |
+| 6 | Validation, E2E, and HA Hardening | Active (per-family real-output coverage reopened across Sprints 6.2/6.3/6.6; the assertion and harness code-side closure lands in natural order on the local machine (Stage 1), and the real-engine integration/E2E assertions are the Stage 2 cohort batch in [Wave I](cohort-validation-waves.md); the prior Sprints 6.1-6.30 closed with lint/style/unit/integration/e2e, no-env-var gates, and single `ghc-9.12.4` toolchain validation) | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) |
 | 7 | Demo App Multi-User Durable Context | Done (Sprints 7.1-7.18 closed with Apple gates in Waves A/A.1/A.2/A.3 and CUDA Linux Wave C; Sprints 7.19-7.22 auth-UX closure passed Wave G on the Apple host-native routed E2E lane) | [phase-7-demo-app-durable-context.md](phase-7-demo-app-durable-context.md) |
 
 > **Note**: Phase statuses describe current repository state. Earlier governed phases may remain

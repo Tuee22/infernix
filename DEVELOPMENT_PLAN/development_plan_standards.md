@@ -67,6 +67,11 @@ Rules:
   in [cohort-validation-waves.md](cohort-validation-waves.md), keep implementing and validating
   same-cohort work that does not depend on that proof point, and request the switch only at the
   named wave boundary or when no same-cohort work remains.
+- A phase or sprint whose code-side closure is complete and locally validated (the
+  machine-independent gate set) but whose cross-architecture cohort full-suite is still pending
+  stays `Active` with a named `Cohort gate` residual. Code-side closure in natural phase order is
+  the gate to begin the next phase's implementation; the dual-cohort full-suite remains the gate
+  for `Done`. See the two-axis execution rule in Section Q.
 
 ### D. Declarative Current-State Language
 
@@ -133,6 +138,11 @@ Each phase document must contain sprint-level sections in this format:
 
 Additional sections such as `Architecture`, `Execution Contexts`, `Substrate Contract`,
 `Storage Doctrine`, or `Route Map` are encouraged when they clarify closure criteria.
+
+A cohort-gated sprint may also carry two optional header fields directly after `**Status**`:
+`**Code-side closure**:` (the machine-independent implementation state and the gates that prove it)
+and `**Cohort gate**:` (the pending cross-architecture full-suite and its owning wave). These make
+the two-axis execution state from Section Q explicit at the top of the sprint.
 
 ### H. Documentation Requirements Section
 
@@ -633,6 +643,25 @@ Rules:
   lives in [cohort-validation-waves.md](cohort-validation-waves.md). Phase doc Status headers and
   `Remaining Work` blocks reference the active wave instead of restating per-sprint cohort
   residuals.
+
+**Two-axis execution rule (single-machine implementation, batched cohort sign-off).**
+
+> **Implement in natural phase order on whichever single machine is present. The cohort gate is a
+> batched wave — the only supported machine switch — not a per-sprint or per-phase trigger.** Every
+> open phase and sprint has two independent axes. *Code-side closure* (Axis 1) is the implementation
+> plus the machine-independent gate set — `cabal build all`, `cabal test infernix-unit`,
+> `cabal test infernix-haskell-style`, `infernix lint files/docs/chart/proto`, `infernix docs
+> check`, the web unit suite, and `poetry run check-code`; completed in natural order on one
+> machine, it is the gate to begin the *next* phase's implementation. *Cohort sign-off* (Axis 2) is
+> the hardware-specific full-suite — Apple Metal including the tart Metal-engine build, and CUDA GPU
+> runs — batched once per closure cycle against frozen code and tracked in
+> `cohort-validation-waves.md`; it is the gate for `Done` and never the gate for moving on. **The
+> next action for any open phase is always its remaining code-side closure on the machine you
+> already have; do not switch machines to "validate the open phase." The machine switch happens only
+> at a scheduled wave boundary, once per cohort.** A deliverable that is intrinsically
+> hardware-bound — for example the Apple-only tart Metal build of Phase 1 Sprint 1.13 — is named as
+> such in its `Code-side closure` field and is exercised inside its cohort's wave, never pre-claimed
+> as machine-independent.
 
 ### R. Haskell Quality Gate Contract
 

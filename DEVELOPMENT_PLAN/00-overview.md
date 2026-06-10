@@ -132,7 +132,7 @@ PASS.
 | Demo UI gating | the staged substrate file can disable the clustered demo surface | implemented; the supported materialization path accepts `--demo-ui false` |
 | Simulation stance | no simulated cluster, route, or generic inference-success fallback remains in the supported runtime or validation contract, and routed Pulsar checks require the real Gateway-backed upstream | implemented; inference execution goes through typed adapter harnesses, unsupported adapters fail fast, and the remaining repo-local topic spool under `./.data/runtime/pulsar/` is a harness-only path for unit-level or intentionally endpoint-absent daemon checks; Apple cohort gate closed in [Wave A](cohort-validation-waves.md); CUDA Linux cohort gate closed in [Wave C](cohort-validation-waves.md) |
 | Validation scope | integration uses one `.dhall`-driven suite over the README matrix, E2E stays substrate-agnostic at the browser layer, and `test all` runs every supported validation layer for one built substrate at a time | implemented; Apple cohort gate closed in [Wave A/A.2](cohort-validation-waves.md); CUDA Linux cohort gate closed in [Wave C](cohort-validation-waves.md) |
-| Hardware cohort cadence | phase work validates first on the current Apple Silicon or CUDA Linux machine, then batches counterpart full-suite validation at phase closure so contributors do not switch machines after every sprint | implemented in the plan doctrine; operationalized in [cohort-validation-waves.md](cohort-validation-waves.md), where validation-only residuals are queued as named waves instead of ad hoc machine-switch requests |
+| Hardware cohort cadence | code-side closure (implementation plus the machine-independent gate set) is completed in natural phase order on whichever single machine is present and gates the next phase's implementation; the cross-architecture cohort full-suite is a batched wave — the only supported machine switch — and gates `Done`, so contributors do not switch machines per sprint | implemented in the plan doctrine; operationalized in [cohort-validation-waves.md](cohort-validation-waves.md), where validation-only residuals are queued as named waves instead of ad hoc machine-switch requests |
 | Native container architecture | Apple Silicon -> `linux/arm64`; `linux-cpu` -> native Linux host architecture (`linux/amd64` or `linux/arm64`); `linux-gpu` -> `linux/amd64`; no development or validation lane uses cross-architecture emulation | implemented and validated: `linux-cpu` publication reads the normalized native host architecture from `InfernixHost.dhall`; Wave F closed the native arm64 `linux-cpu` full-suite gate on the recorded validation through the selected native arm64 Docker daemon |
 
 Monitoring is not a supported first-class surface.
@@ -245,10 +245,13 @@ the only daemon Deployment present is `infernix-engine`.
   mandatory doctrine
 - supported validation is substrate-specific: integration, E2E, and `test all` run the complete
   supported suites against the built and deployed substrate and report that substrate explicitly
-- phase validation is hardware-cohort based: Apple Silicon and CUDA Linux can each carry local
-  development plus active-substrate validation without alternating hosts for every sprint, and
-  `Done` phase closure batches the counterpart host run so both machines validate the same phase
-  state
+- phase validation is two-axis: code-side closure (implementation plus the machine-independent gate
+  set) is completed in natural phase order on whichever single machine is present and gates the next
+  phase's implementation, while the cross-architecture cohort full-suite is a batched wave — the
+  only supported machine switch — and gates `Done`; Apple Silicon and CUDA Linux each carry local
+  development without alternating hosts per sprint, and `Done` batches the counterpart host run so
+  both machines validate the same frozen phase state (see
+  [development_plan_standards.md](development_plan_standards.md) Section Q)
 - the supported control plane keeps one Haskell command registry,
   imperative cluster or host prerequisite orchestration, the current `ormolu` plus `hlint` plus
   `cabal format` style stack,

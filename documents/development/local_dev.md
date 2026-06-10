@@ -85,6 +85,23 @@ operator to reboot before rerunning the same command.
 
 The supported workflow keeps day-to-day phase work local to one hardware cohort whenever possible.
 
+> **Implement in natural phase order on whichever single machine is present. The cohort gate is a
+> batched wave — the only supported machine switch — not a per-sprint or per-phase trigger.** Every
+> open phase and sprint has two independent axes. *Code-side closure* (Axis 1) is the implementation
+> plus the machine-independent gate set — `cabal build all`, `cabal test infernix-unit`,
+> `cabal test infernix-haskell-style`, `infernix lint files/docs/chart/proto`, `infernix docs
+> check`, the web unit suite, and `poetry run check-code`; completed in natural order on one
+> machine, it is the gate to begin the *next* phase's implementation. *Cohort sign-off* (Axis 2) is
+> the hardware-specific full-suite — Apple Metal including the tart Metal-engine build, and CUDA GPU
+> runs — batched once per closure cycle against frozen code and tracked in
+> `cohort-validation-waves.md`; it is the gate for `Done` and never the gate for moving on. **The
+> next action for any open phase is always its remaining code-side closure on the machine you
+> already have; do not switch machines to "validate the open phase." The machine switch happens only
+> at a scheduled wave boundary, once per cohort.** A deliverable that is intrinsically
+> hardware-bound — for example the Apple-only tart Metal build of Phase 1 Sprint 1.13 — is named as
+> such in its `Code-side closure` field and is exercised inside its cohort's wave, never pre-claimed
+> as machine-independent.
+
 - Apple-owned changes use the Apple host-native bootstrap and direct `./.build/infernix` commands
   for local validation, then queue the CUDA Linux cohort for the phase closure batch.
 - Linux, CUDA, chart, and outer-container changes use the `linux-gpu` bootstrap and

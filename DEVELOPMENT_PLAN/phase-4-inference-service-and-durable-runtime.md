@@ -23,8 +23,14 @@ work; Apple-native real inference also depends on the tart Metal-engine artifact
 [Phase 1](phase-1-repository-and-control-plane-foundation.md) Sprint 1.13. The real per-family
 inference contract is re-validated on both cohorts in
 [Wave I](cohort-validation-waves.md), and the phase cannot return to `Done` until that wave
-closes. The phase narrative describes the supported MinIO-backed shape directly through the
-runtime, cache, and object storage contracts.
+closes. Code-side closure for the reopened sprints — the typed contracts, payload routing, proto
+fields, adapter and worker dispatch, and their unit coverage — lands in natural order on whichever
+single machine is present and is proven by the machine-independent gate set; producing and
+asserting real per-family output is the Stage 2 cohort gate (Apple Metal incl. tart, and CUDA GPU
+runs), never a per-sprint machine switch (see
+[development_plan_standards.md](development_plan_standards.md) Section Q). The phase narrative
+describes the supported MinIO-backed shape directly through the runtime, cache, and object storage
+contracts.
 
 ## Current Repo Assessment
 
@@ -68,6 +74,8 @@ This phase owns the conversion from the README-scale matrix to runtime-consumabl
 ## Sprint 4.1: Typed Configuration, Model Catalog, and Runtime Contracts [Active]
 
 **Status**: Active
+**Code-side closure**: In progress — the closed `ResultFamily` sum type, `resultFamilyForDescriptor`, the exported `allMatrixRowIds`, and the non-text input object-ref request field are machine-independent (validate with `cabal test infernix-unit` and `infernix lint proto`)
+**Cohort gate**: Pending [Wave I](cohort-validation-waves.md) — both cohorts assert the per-family result contract these types drive (Apple Metal incl. tart; CUDA `linux-cpu`/`linux-gpu`)
 **Implementation**: `src/Infernix/Types.hs`, `src/Infernix/Models.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Storage.hs`, `proto/infernix/manifest/runtime_manifest.proto`, `proto/infernix/runtime/inference.proto`, `test/unit/Spec.hs`
 **Docs to update**: `documents/architecture/runtime_modes.md`, `documents/architecture/model_catalog.md`
 
@@ -93,16 +101,22 @@ Make the service runtime strongly typed before transport and UI surfaces accumul
 
 ### Remaining Work
 
-Add the closed `ResultFamily` sum type and `resultFamilyForDescriptor` (derived from `family` +
-`artifactType` + `matrixRowId`), export `allMatrixRowIds`, and schedule the non-text input
-object-ref field on `InferenceRequest`/`WorkerRequest`; the output `ResultPayload.object_ref`
-already exists on the wire. Tracked for [Wave I](cohort-validation-waves.md).
+- **Code (machine-independent — validate now with `cabal test infernix-unit`, `infernix lint
+  proto`):** add the closed `ResultFamily` sum type and `resultFamilyForDescriptor` (derived from
+  `family` + `artifactType` + `matrixRowId`), export `allMatrixRowIds`, and add the non-text input
+  object-ref field on `InferenceRequest`/`WorkerRequest`; the output `ResultPayload.object_ref`
+  already exists on the wire. Lands in natural order on the local machine.
+- **Cohort gate ([Wave I](cohort-validation-waves.md), Stage 2):** the per-family result contract
+  these types drive is asserted on cohort hardware (Apple Metal incl. tart; CUDA
+  `linux-cpu`/`linux-gpu`).
 
 ---
 
 ## Sprint 4.2: Inference Request Pipeline Over the Durable Object Store and Pulsar Contract [Active]
 
 **Status**: Active
+**Code-side closure**: In progress — the `runInferenceWorker` dispatch wiring and the `native-process-runner` invocation path (absolute `HostConfig` binary) are machine-independent code (validate with `cabal build all`, `cabal test infernix-unit`); the real engine *output* requires real weights and engines on cohort hardware
+**Cohort gate**: Pending [Wave I](cohort-validation-waves.md) — both cohorts run the real engines and assert real per-family output
 **Implementation**: `src/Infernix/Runtime.hs`, `src/Infernix/Runtime/Cache.hs`, `src/Infernix/Runtime/Worker.hs`, `src/Infernix/Storage.hs`, `src/Infernix/Demo/Api.hs`, `python/adapters/`, `infernix.cabal`, `test/integration/Spec.hs`, `test/unit/Spec.hs`
 **Docs to update**: `documents/architecture/runtime_modes.md`, `documents/engineering/model_lifecycle.md`, `documents/engineering/object_storage.md`
 
@@ -134,17 +148,22 @@ derived local cache state become authoritative.
 
 ### Remaining Work
 
-Replace the `src/Infernix/Runtime/Worker.hs` stub returns with real engine output:
-`runInferenceWorker` carries the real `WorkerResponse` for `python-stdio` bindings, and the
-`native-process-runner` branch invokes the real engine binary resolved from a typed `HostConfig`
-absolute path instead of `renderNativeRunnerOutput`. Tracked for
-[Wave I](cohort-validation-waves.md).
+- **Code (machine-independent — validate now with `cabal build all`, `cabal test infernix-unit`):**
+  replace the `src/Infernix/Runtime/Worker.hs` stub returns so `runInferenceWorker` carries the real
+  `WorkerResponse` for `python-stdio` bindings and the `native-process-runner` branch invokes the
+  real engine binary resolved from a typed `HostConfig` absolute path instead of
+  `renderNativeRunnerOutput`. The dispatch wiring lands in natural order on the local machine.
+- **Cohort gate ([Wave I](cohort-validation-waves.md), Stage 2):** real engine output requires real
+  weights and engines; both cohorts run them and assert real per-family output (Apple Metal incl.
+  tart; CUDA `linux-cpu`/`linux-gpu`).
 
 ---
 
 ## Sprint 4.3: Honest Apple Host-Native and Linux Container Runtime Parity [Active]
 
 **Status**: Active
+**Code-side closure**: In progress — the host-side service wiring is machine-independent code (validate with `cabal build all`, `cabal test infernix-unit`); the real Apple-native Metal engine path depends on the Sprint 1.13 tart-built artifacts and runs only on Apple
+**Cohort gate**: Pending [Wave I](cohort-validation-waves.md) — **Apple cohort only**, gated on Sprint 1.13's Apple-only tart Metal build (CUDA inference is covered by the Linux cohort under 4.2/4.8/4.11)
 **Implementation**: `src/Infernix/Service.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Demo/Api.hs`, `src/Infernix/Models.hs`, `src/Infernix/Runtime.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Worker.hs`, `test/integration/Spec.hs`, `test/unit/Spec.hs`
 **Docs to update**: `documents/architecture/runtime_modes.md`, `documents/engineering/object_storage.md`, `documents/operations/apple_silicon_runbook.md`, `documents/engineering/portability.md`
 
@@ -191,10 +210,15 @@ host-side, and Linux inference execution and result publication remain cluster-r
 
 ### Remaining Work
 
-Apple host-native `infernix service` runs the real Apple-native Metal engine using the tart-built
-artifacts under `./.data/engines/<adapterId>/` (built by
-[Phase 1](phase-1-repository-and-control-plane-foundation.md) Sprint 1.13) and publishes the real
-per-family result. Tracked for [Wave I](cohort-validation-waves.md).
+- **Code (machine-independent — validate now with `cabal build all`, `cabal test infernix-unit`):**
+  the host-side `infernix service` engine wiring that loads engine artifacts from
+  `./.data/engines/<adapterId>/` and publishes the per-family result compiles and unit-checks on the
+  local machine.
+- **Cohort gate ([Wave I](cohort-validation-waves.md), Stage 2 — Apple cohort only):** Apple
+  host-native `infernix service` runs the real Apple-native Metal engine using the tart-built
+  artifacts built by [Phase 1](phase-1-repository-and-control-plane-foundation.md) Sprint 1.13 and
+  publishes the real per-family result. This path is gated on Sprint 1.13's Apple-only tart build,
+  not merely on the wave.
 
 ---
 
@@ -303,6 +327,8 @@ None.
 ## Sprint 4.7: Shared Python Adapter Project and Poetry-Driven Quality Gate [Active]
 
 **Status**: Active
+**Code-side closure**: In progress — the adapter module structure, the artifact-adapter seam, and `poetry run check-code` (mypy/black/ruff) are machine-independent; the real framework calls need real weights/engines on cohort hardware to produce real output
+**Cohort gate**: Pending [Wave I](cohort-validation-waves.md) — both cohorts run the real adapters and assert real per-family output
 **Implementation**: `python/pyproject.toml`, `python/adapters/`, `src/Infernix/Runtime/Worker.hs`, `src/Infernix/Models.hs`, `proto/infernix/runtime/inference.proto`, `test/unit/Spec.hs`
 **Docs to update**: `documents/development/python_policy.md`, `documents/engineering/model_lifecycle.md`, `documents/development/testing_strategy.md`, `documents/engineering/implementation_boundaries.md`
 
@@ -333,17 +359,23 @@ keeping `poetry run` as the only supported execution path.
 
 ### Remaining Work
 
-Replace `common.render_engine_output` and the six trivial adapter `transform` bodies with real
-framework calls over prebuilt host wheels, loading weights through
-`adapters.model_cache.get_model_path`, and add the artifact-adapter seam that returns an object
-reference; the `run_context_adapter` protobuf-over-stdio boundary is unchanged. Tracked for
-[Wave I](cohort-validation-waves.md).
+- **Code (machine-independent — validate now with `poetry run check-code`, `cabal test
+  infernix-unit`):** replace `common.render_engine_output` and the six trivial adapter `transform`
+  bodies with real framework calls over prebuilt host wheels that load weights through
+  `adapters.model_cache.get_model_path`, and add the artifact-adapter seam that returns an object
+  reference; the `run_context_adapter` protobuf-over-stdio boundary is unchanged. The adapter code
+  and its `check-code` gate land in natural order on the local machine.
+- **Cohort gate ([Wave I](cohort-validation-waves.md), Stage 2):** producing real per-family output
+  requires real weights and engines; both cohorts run the adapters and assert it (Apple Metal incl.
+  tart; CUDA `linux-cpu`/`linux-gpu`).
 
 ---
 
 ## Sprint 4.8: Pulsar-Driven Production Inference Surface [Active]
 
 **Status**: Active
+**Code-side closure**: In progress — the per-family result publication wiring (inline text vs object-ref over the production Pulsar surface) is machine-independent code (validate with `cabal build all`, `cabal test infernix-unit`)
+**Cohort gate**: Pending [Wave I](cohort-validation-waves.md) — both cohorts publish and observe real per-family results end to end
 **Implementation**: `src/Infernix/Service.hs`, `src/Infernix/Config.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Types.hs`, `src/Infernix/Models.hs`, `src/Infernix/DemoConfig.hs`, `chart/templates/deployment-coordinator.yaml`, `chart/templates/deployment-engine.yaml`, `chart/values.yaml`, `src/Infernix/Runtime.hs`, `src/Infernix/Runtime/Pulsar.hs`, `proto/infernix/runtime/inference.proto`, `test/unit/Spec.hs`, `test/integration/Spec.hs`
 **Docs to update**: `documents/tools/pulsar.md`, `documents/architecture/runtime_modes.md`, `documents/reference/cli_reference.md`
 
@@ -374,9 +406,13 @@ non-demo deployment.
 
 ### Remaining Work
 
-Publish the real per-family inference result over the production Pulsar surface — inline text for
-the LLM and speech families, an `infernix-demo-objects` object reference for the artifact families
-— and emit no generic-success payload. Tracked for [Wave I](cohort-validation-waves.md).
+- **Code (machine-independent — validate now with `cabal build all`, `cabal test infernix-unit`):**
+  wire the per-family result publication over the production Pulsar surface — inline text for the
+  LLM and speech families, an `infernix-demo-objects` object reference for the artifact families —
+  emitting no generic-success payload. The publication path lands in natural order on the local
+  machine.
+- **Cohort gate ([Wave I](cohort-validation-waves.md), Stage 2):** both cohorts publish and observe
+  real per-family results end to end (Apple Metal incl. tart; CUDA `linux-cpu`/`linux-gpu`).
 
 ---
 
@@ -442,6 +478,8 @@ None.
 ## Sprint 4.10: Apple Silicon Daemon-Driven Engine Bootstrap [Active]
 
 **Status**: Active
+**Code-side closure**: In progress — the host daemon bootstrap wiring that consumes engine artifacts from `./.data/engines/<adapterId>/` is machine-independent code (validate with `cabal build all`, `cabal test infernix-unit`); the artifacts themselves are Sprint 1.13's Apple-only tart build
+**Cohort gate**: Pending [Wave I](cohort-validation-waves.md) — **Apple cohort only**, gated on Sprint 1.13's Apple-only tart Metal build
 **Implementation**: `src/Infernix/Engines/AppleSilicon.hs`, `src/Infernix/Service.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/CLI.hs`, `python/pyproject.toml`, `test/unit/Spec.hs`, `test/integration/Spec.hs`
 **Docs to update**: `documents/operations/apple_silicon_runbook.md`, `documents/development/local_dev.md`, `documents/development/python_policy.md`, `documents/engineering/portability.md`
 
@@ -474,15 +512,21 @@ without inventing fake container parity.
 
 ### Remaining Work
 
-The Apple daemon-driven engine bootstrap consumes the tart-built Metal-engine artifacts copied to
-`./.data/engines/<adapterId>/` ([Phase 1](phase-1-repository-and-control-plane-foundation.md)
-Sprint 1.13) before the host engine runs. Tracked for [Wave I](cohort-validation-waves.md).
+- **Code (machine-independent — validate now with `cabal build all`, `cabal test infernix-unit`):**
+  the host daemon bootstrap that consumes Metal-engine artifacts from
+  `./.data/engines/<adapterId>/` before the host engine runs compiles and unit-checks on the local
+  machine.
+- **Cohort gate ([Wave I](cohort-validation-waves.md), Stage 2 — Apple cohort only):** the consumed
+  artifacts are built by [Phase 1](phase-1-repository-and-control-plane-foundation.md) Sprint 1.13's
+  Apple-only tart lane; the bootstrap is exercised on Apple, gated on that build.
 
 ---
 
 ## Sprint 4.11: Per-Substrate Engine Selection in the Catalog [Active]
 
 **Status**: Active
+**Code-side closure**: In progress — per-substrate engine-binding resolution and fail-fast-on-missing-metadata are machine-independent code (validate with `cabal test infernix-unit`)
+**Cohort gate**: Pending [Wave I](cohort-validation-waves.md) — both cohorts dispatch the resolved real adapters and assert real output
 **Implementation**: `src/Infernix/Models.hs`, `src/Infernix/Types.hs`, `src/Infernix/DemoConfig.hs`, `src/Infernix/Web/Contracts.hs`, `src/Infernix/Runtime/Worker.hs`, `test/unit/Spec.hs`, `test/integration/Spec.hs`
 **Docs to update**: `documents/architecture/model_catalog.md`, `documents/architecture/runtime_modes.md`, `documents/development/testing_strategy.md`
 
@@ -511,13 +555,19 @@ generation.
 
 ### Remaining Work
 
-Per-substrate engine selection resolves each row to its real adapter (Python wheel or native
-binary) and fails fast on missing model metadata rather than dispatching a placeholder. Tracked for
-[Wave I](cohort-validation-waves.md).
+- **Code (machine-independent — validate now with `cabal test infernix-unit`):** per-substrate
+  engine selection resolves each row to its real adapter (Python wheel or native binary) and fails
+  fast on missing model metadata rather than dispatching a placeholder. The resolution logic lands
+  in natural order on the local machine.
+- **Cohort gate ([Wave I](cohort-validation-waves.md), Stage 2):** both cohorts dispatch the
+  resolved real adapters and assert real output (Apple Metal incl. tart; CUDA
+  `linux-cpu`/`linux-gpu`).
 
 ## Sprint 4.12: Substrate-Owned Daemon Role, Startup Selection, and Fallback Removal [Active]
 
 **Status**: Active
+**Code-side closure**: In progress — removing the `renderNativeRunnerOutput` / `nativeRunnerLabel` native fallback (preserving fail-fast-on-unsupported-adapter) is machine-independent code (validate with `cabal build all`, `cabal test infernix-unit`); it lands once real native dispatch (Sprint 4.2) is in place
+**Cohort gate**: Pending [Wave I](cohort-validation-waves.md) — both cohorts confirm no fallback path remains under real dispatch
 **Implementation**: `src/Infernix/Config.hs`, `src/Infernix/DemoConfig.hs`, `src/Infernix/Service.hs`, `src/Infernix/DemoCLI.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Models.hs`, `src/Infernix/Runtime.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Worker.hs`, `docker/Dockerfile`, `web/test/run_playwright_matrix.mjs`, `test/integration/Spec.hs`, `test/unit/Spec.hs`
 **Docs to update**: `README.md`, `documents/architecture/runtime_modes.md`, `documents/engineering/model_lifecycle.md`, `documents/engineering/object_storage.md`, `documents/engineering/portability.md`, `documents/engineering/testing.md`, `documents/operations/apple_silicon_runbook.md`
 
@@ -570,9 +620,12 @@ extends this startup contract with explicit cluster and host daemon roles.
 
 ### Remaining Work
 
-Remove the `src/Infernix/Runtime/Worker.hs` `renderNativeRunnerOutput` / `nativeRunnerLabel`
-debug-metadata native fallback once real native dispatch lands, preserving the
-fail-fast-on-unsupported-adapter contract. Tracked for [Wave I](cohort-validation-waves.md).
+- **Code (machine-independent — validate now with `cabal build all`, `cabal test infernix-unit`):**
+  remove the `src/Infernix/Runtime/Worker.hs` `renderNativeRunnerOutput` / `nativeRunnerLabel`
+  debug-metadata native fallback once real native dispatch (Sprint 4.2) lands, preserving the
+  fail-fast-on-unsupported-adapter contract. Lands in natural order on the local machine.
+- **Cohort gate ([Wave I](cohort-validation-waves.md), Stage 2):** both cohorts confirm no
+  generic-success or debug-metadata fallback path remains under real dispatch.
 
 ---
 
@@ -636,6 +689,8 @@ cohort validation closed in [Wave C](cohort-validation-waves.md).
 ## Sprint 4.14: Declarative-State Phase Prose Rewrite [Active]
 
 **Status**: Active
+**Code-side closure**: In progress — pure prose rewrite, validated by `infernix lint docs`; fully machine-independent
+**Cohort gate**: None — documentation only; no cross-architecture full-suite. It rides the Wave I cycle because it describes the real-inference steady state
 **Implementation**: `DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md` (prose only)
 **Docs to update**: this file
 
@@ -670,15 +725,20 @@ being contradicted by it.
 
 ### Remaining Work
 
-Revise the closing declarative prose so real per-family engine dispatch (not deterministic metadata
-output) is the always-intended steady state read forward into Phases 5-7. Tracked for
-[Wave I](cohort-validation-waves.md).
+- **Code (machine-independent — validate now with `infernix lint docs`):** revise the closing
+  declarative prose so real per-family engine dispatch (not deterministic metadata output) is the
+  always-intended steady state read forward into Phases 5-7. Documentation only; lands in natural
+  order on the local machine.
+- **Cohort gate:** none — this sprint carries no cross-architecture full-suite; it rides the Wave I
+  cycle only because it describes the real-inference steady state.
 
 ---
 
 ## Sprint 4.15: Per-Family Real-Output Result Contract and Object-Ref Artifact Families [Planned]
 
 **Status**: Planned
+**Code-side closure**: Not started — the `ResultFamily` mapping, `buildPayload` text→inline / artifact→object_ref routing, the `WorkerResponse` object-ref output field, and the 19-row→`ResultFamily` mapping doc are machine-independent (validate with `cabal test infernix-unit`); depends on Sprint 4.1 types and the Sprint 4.7 adapter seam
+**Cohort gate**: Pending [Wave I](cohort-validation-waves.md) — both cohorts assert the per-family result contract per active-substrate row (exercised by Phase 6)
 **Implementation**: `proto/infernix/runtime/inference.proto`, `src/Infernix/Types.hs`, `src/Infernix/Models.hs`, `src/Infernix/Runtime.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Storage.hs`, `python/adapters/`, `test/integration/Spec.hs`, `test/unit/Spec.hs`
 **Blocked by**: 4.1, 4.7
 **Docs to update**: `documents/architecture/model_catalog.md`, `documents/engineering/object_storage.md`, `documents/development/testing_strategy.md`, `documents/reference/web_portal_surface.md`
@@ -717,19 +777,30 @@ artifact families return a typed MinIO object reference.
 
 ### Remaining Work
 
-Implement and validate; depends on the Sprint 4.1 type and proto-field work and the Sprint 4.7
-adapter seam.
+- **Code (machine-independent — validate now with `cabal test infernix-unit`):** implement the
+  `ResultFamily` mapping, `buildPayload` text→inline / artifact→object_ref routing, the
+  `WorkerResponse` object-ref output field, and the 19-row→`ResultFamily` mapping doc; depends on
+  the Sprint 4.1 type and proto-field work and the Sprint 4.7 adapter seam. Lands in natural order
+  on the local machine.
+- **Cohort gate ([Wave I](cohort-validation-waves.md), Stage 2):** both cohorts assert the
+  per-family result contract per active-substrate row (exercised by Phase 6).
 
 ---
 
 ## Remaining Work
 
 Phase 4 is `Active`. The real per-family inference contract is in progress across the reopened
-Sprints 4.1, 4.2, 4.3, 4.7, 4.8, 4.10, 4.11, 4.12, 4.14 and the new Sprint 4.15. Apple-native real
-inference also depends on [Phase 1](phase-1-repository-and-control-plane-foundation.md) Sprint 1.13
-(tart-built Metal engine artifacts). The phase returns to `Done` only after
-[Wave I](cohort-validation-waves.md) reruns the full Apple and CUDA Linux gates against real
-inference.
+Sprints 4.1, 4.2, 4.3, 4.7, 4.8, 4.10, 4.11, 4.12, 4.14 and the new Sprint 4.15. Code-side closure
+for these sprints — the typed contracts, payload routing, proto fields, adapter and worker dispatch,
+the native-fallback removal, and the prose rewrite — lands in natural order on whichever single
+machine is present and is proven by the machine-independent gate set (`cabal build all`,
+`cabal test infernix-unit`, `infernix lint proto/docs`, `poetry run check-code`). Producing and
+asserting real per-family output is the Stage 2 cohort gate: both cohorts run the real engines
+([Wave I](cohort-validation-waves.md)), and Apple-native real inference additionally depends on
+[Phase 1](phase-1-repository-and-control-plane-foundation.md) Sprint 1.13's Apple-only tart-built
+Metal artifacts. The phase returns to `Done` only after Wave I reruns the full Apple and CUDA Linux
+gates against real inference. See the two-axis execution rule in
+[development_plan_standards.md](development_plan_standards.md) Section Q.
 
 ---
 
