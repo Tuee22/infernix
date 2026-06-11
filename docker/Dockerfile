@@ -182,6 +182,7 @@ RUN printf '%s\n' \
     '    , nvkind = "/usr/local/bin/nvkind"' \
     '    , skopeo = "/usr/bin/skopeo"' \
     '    , hostname = "/usr/bin/hostname"' \
+    '    , tart = ""' \
     '    }' \
     ', filesystem =' \
     '    { repoRoot = "/workspace"' \
@@ -217,6 +218,16 @@ RUN mkdir -p /workspace/tools/generated_proto \
     && infernix internal materialize-substrate ${RUNTIME_MODE} --demo-ui ${DEMO_UI} \
     && npm --prefix web run build \
     && poetry --directory python run check-code
+
+# Phase 4 Sprint 4.17 — this is the slim control-plane / coordinator image: it
+# carries the `infernix` binaries, the framework-free `python/` project (so the
+# coordinator's `check-code` and adapter dispatch resolve), and the cluster
+# toolbelt, but NO ML framework venvs. Each framework engine's CUDA venv lives in
+# its own per-engine image built from `docker/engine.Dockerfile` (CUDA-runtime
+# base + this image's binary/python + only that engine's `--with cuda` venv), so
+# an engine pod pulls only its own framework instead of a ~121 GB monolith. The
+# Sprint 4.16 per-engine venv mechanism is unchanged; only where it is installed
+# moved (per-engine image, not this one).
 
 # Phase 3 Sprint 3.10 — Playwright system dependencies + browser
 # install live in the launcher image. The previous dedicated

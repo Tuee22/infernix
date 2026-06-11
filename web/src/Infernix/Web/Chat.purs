@@ -31,7 +31,8 @@ import Prelude
 
 import Data.Array (filter, find, last, length, snoc)
 import Data.Foldable (foldl, traverse_)
-import Data.Maybe (Maybe(..), fromMaybe)
+import Data.Maybe (Maybe(..), fromMaybe, isJust)
+import Data.String (Pattern(..), stripSuffix)
 import Effect (Effect)
 import Generated.Contracts
   ( ClientIdempotencyKey(..)
@@ -52,6 +53,7 @@ import Generated.Contracts
   , DraftMapState(..)
   , MessageId(..)
   , ModelDescriptor
+  , ObjectRef(..)
   , UserPromptPayload(..)
   , WsServerMessage(..)
   , modelDescriptorRecord
@@ -540,7 +542,69 @@ appendConversationMessage document container message = do
   body <- textElement document "p" "chat-message-body" summary.body
   appendElement article label
   appendElement article body
+  -- Phase 6 Sprint 6.3: render the per-family inference-result artifact
+  -- (image / audio / video / MIDI-or-MusicXML download). Substrate-agnostic:
+  -- the rendering keys on the artifact's object-key extension (its artifact
+  -- type), never on the substrate id or engine family; `infernix-demo` chose
+  -- the engine binding upstream from the active `.dhall`.
+  traverse_ (appendResultArtifact document article) (messageResultArtifacts message)
   appendElement container article
+
+-- | The inference-result artifact object references carried by a result
+-- message (empty for prompt / upload / cancel messages and for the inline
+-- text families).
+messageResultArtifacts :: ConversationMessage -> Array ObjectRef
+messageResultArtifacts (ConversationMessage message) =
+  case message.conversationMessageEvent of
+    ConversationInferenceResultEvent (ConversationInferenceResultPayload result) ->
+      result.inferenceResultArtifacts
+    _ -> []
+
+-- | Per-family render disposition for a result artifact, derived from the
+-- object-key extension only.
+data ArtifactRenderKind
+  = ImageArtifact
+  | AudioArtifact
+  | VideoArtifact
+  | DownloadArtifact
+
+derive instance eqArtifactRenderKind :: Eq ArtifactRenderKind
+
+artifactRenderKind :: String -> ArtifactRenderKind
+artifactRenderKind key
+  | anySuffix [ ".png", ".jpg", ".jpeg", ".gif", ".webp" ] key = ImageArtifact
+  | anySuffix [ ".wav", ".mp3", ".ogg", ".flac" ] key = AudioArtifact
+  | anySuffix [ ".mp4", ".webm", ".mov" ] key = VideoArtifact
+  | otherwise = DownloadArtifact
+
+artifactRenderTag :: ArtifactRenderKind -> String
+artifactRenderTag kind = case kind of
+  ImageArtifact -> "img"
+  AudioArtifact -> "audio"
+  VideoArtifact -> "video"
+  DownloadArtifact -> "a"
+
+artifactRenderKindLabel :: ArtifactRenderKind -> String
+artifactRenderKindLabel kind = case kind of
+  ImageArtifact -> "image"
+  AudioArtifact -> "audio"
+  VideoArtifact -> "video"
+  DownloadArtifact -> "download"
+
+appendResultArtifact :: Document.Document -> Element.Element -> ObjectRef -> Effect Unit
+appendResultArtifact document article (ObjectRef ref) = do
+  let kind = artifactRenderKind ref.objectKey
+  element <- createElement document (artifactRenderTag kind) ("chat-result-artifact chat-result-" <> artifactRenderKindLabel kind)
+  Element.setAttribute "data-object-bucket" ref.objectBucket element
+  Element.setAttribute "data-object-key" ref.objectKey element
+  Element.setAttribute "data-result-artifact-kind" (artifactRenderKindLabel kind) element
+  when (kind == DownloadArtifact) do
+    Element.setAttribute "download" "" element
+    setText element ("Download " <> ref.objectKey)
+  appendElement article element
+
+anySuffix :: Array String -> String -> Boolean
+anySuffix suffixes value = isJust (find (\suffix -> isJust (stripSuffix (Pattern suffix) value)) suffixes)
 
 renderDraftEditor
   :: Document.Document

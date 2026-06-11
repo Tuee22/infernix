@@ -1,0 +1,31 @@
+[tool.poetry]
+# Phase 4 Sprint 4.16 — isolated vLLM engine venv (LLM family on linux-gpu).
+# vLLM pins its own (cu128, Blackwell-capable in recent releases) torch, so we
+# declare no separate torch source here and let vLLM resolve its stack. The
+# optional `cuda` group keeps the default install framework-free so the shared
+# quality gate stays machine-independent. See
+# documents/development/python_policy.md "Per-Engine Framework Venvs".
+name = "infernix-engine-vllm"
+version = "0.1.0"
+description = "Isolated vLLM engine venv for infernix"
+authors = ["Infernix <noreply@example.com>"]
+package-mode = false
+
+[tool.poetry.dependencies]
+python = "^3.12"
+infernix-adapters = { path = "../..", develop = true }
+
+[tool.poetry.group.cuda]
+optional = true
+
+[tool.poetry.group.cuda.dependencies]
+# Pinned (not ">=") because a floating resolve picked vllm 0.15.1, whose
+# artifact poetry could not fetch in the image build ("Package vllm (0.15.1)
+# not found"). 0.11.0 is a mature Blackwell-capable release; the exact pin is
+# confirmed at the linux-gpu image build (Sprint 4.17 cohort step), not by the
+# machine-independent gates.
+vllm = "0.11.0"
+
+[build-system]
+requires = ["poetry-core>=1.9.0"]
+build-backend = "poetry.core.masonry.api"

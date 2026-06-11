@@ -62,7 +62,7 @@ let ToolPaths =
       , nvkind : HostTool
       , skopeo : HostTool
       , hostname : HostTool
-      , hostTart : HostTool
+      , tart : HostTool
       }
 
 let FilesystemConventions =
@@ -126,9 +126,9 @@ host architecture (`amd64` or `arm64`) used by the `linux-cpu` publication selec
 | nvkind | `toolPaths.nvkind` | n/a | `/usr/local/bin/nvkind` |
 | skopeo | `toolPaths.skopeo` | n/a | `/usr/bin/skopeo` |
 | hostname | `toolPaths.hostname` | `/bin/hostname` | `/usr/bin/hostname` |
-| tart | `toolPaths.hostTart` | `/opt/homebrew/bin/tart` | n/a |
+| tart | `toolPaths.tart` | `/opt/homebrew/bin/tart` | n/a |
 
-`hostTart` is the absolute path to `tart` on Apple Silicon — `/opt/homebrew/bin/tart`. Its purpose
+The `tart` field (Haskell record selector `hostTart`) is the absolute path to `tart` on Apple Silicon — `/opt/homebrew/bin/tart`. Its purpose
 is to drive the headless `tart` macOS VM that builds the Metal and Core ML native engine artifacts.
 The field is added per the field-first rule: `tart` is recorded in `dhall/InfernixHost.dhall`
 before any invocation site reads it, so the lint gate recognizes the name and rejects any

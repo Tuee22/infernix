@@ -1,0 +1,42 @@
+[tool.poetry]
+# Phase 4 Sprint 4.16 — per-engine isolated framework venv. Real ML
+# frameworks have mutually conflicting pins (vLLM pins exact torch; TF and
+# JAX ship their own CUDA stacks), so each engine installs into its own
+# in-project venv (python/engines/<engine>/.venv) layered on the shared
+# framework-free `infernix-adapters` package. The shared `python/` project
+# stays framework-free so `poetry run check-code` remains machine-independent.
+#
+# The framework wheels live in an OPTIONAL `cuda` group, so the default
+# `poetry install` here pulls no framework (machine-independent); the
+# linux-gpu image build opts in with `poetry install --with cuda`. The
+# linux-cpu and apple-silicon framework groups (different torch index /
+# MLX + jax-metal) are a follow-on — a single project cannot co-resolve
+# torch from two indices, so per-substrate framework selection is its own
+# step. See documents/development/python_policy.md "Per-Engine Framework Venvs".
+name = "infernix-engine-transformers"
+version = "0.1.0"
+description = "Isolated Transformers + PyTorch (CUDA) engine venv for infernix"
+authors = ["Infernix <noreply@example.com>"]
+package-mode = false
+
+[tool.poetry.dependencies]
+python = "^3.12"
+infernix-adapters = { path = "../..", develop = true }
+
+[tool.poetry.group.cuda]
+optional = true
+
+[tool.poetry.group.cuda.dependencies]
+torch = { version = ">=2.7", source = "pytorch-cu128" }
+transformers = ">=4.46"
+accelerate = ">=1.0"
+safetensors = ">=0.4"
+
+[[tool.poetry.source]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+priority = "explicit"
+
+[build-system]
+requires = ["poetry-core>=1.9.0"]
+build-backend = "poetry.core.masonry.api"

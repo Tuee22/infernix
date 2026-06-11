@@ -1,9 +1,15 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module Infernix.Models
-  ( canonicalBatchTopicForMode,
+  ( allMatrixRowIds,
+    canonicalBatchTopicForMode,
     catalogForMode,
     clusterDemoApiUpstream,
+    engineNameForAdapterId,
+    engineNameForSelectedEngine,
+    frameworkEngineNamesForMode,
+    perEngineBatchTopicForMode,
+    perEngineImageName,
     engineBindingForSelectedEngine,
     engineBindingsForMode,
     encodeDemoConfig,
@@ -17,14 +23,15 @@ module Infernix.Models
     renderPublicationState,
     renderPublicationStateWithApiUpstream,
     renderConfigMapManifest,
+    resultFamilyForDescriptor,
     resultTopicForMode,
     routeInventory,
   )
 where
 
 import Data.ByteString.Lazy.Char8 qualified as LazyChar8
-import Data.List (find, intercalate)
-import Data.Maybe (mapMaybe)
+import Data.List (find, intercalate, nub)
+import Data.Maybe (fromMaybe, mapMaybe)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Infernix.Config (ControlPlaneContext, controlPlaneContextId)
@@ -55,6 +62,37 @@ data MatrixRow = MatrixRow
 
 catalogForMode :: RuntimeMode -> [ModelDescriptor]
 catalogForMode runtimeMode = mapMaybe (descriptorForMode runtimeMode) matrixRows
+
+-- | Phase 6 Sprint 6.6 — every README matrix row id, independent of
+-- substrate. The coverage invariant proven by the unit suite is that the
+-- union of 'catalogForMode' over every 'RuntimeMode' equals this set: no
+-- README row is missing from all generated catalogs.
+allMatrixRowIds :: [Text]
+allMatrixRowIds = map rowId matrixRows
+
+-- | Phase 4 Sprint 4.15 — resolve a catalog row to its per-family result
+-- contract from @family@ + @artifactType@ + @matrixRowId@. Text families
+-- (LLM, speech transcription) produce inline output; every other family
+-- produces an @infernix-demo-objects@ artifact reference. Total over the
+-- README matrix.
+resultFamilyForDescriptor :: ModelDescriptor -> ResultFamily
+resultFamilyForDescriptor model =
+  case family model of
+    "llm" -> LlmText
+    "speech" -> SpeechTranscription
+    "music" -> MusicTranscription
+    "image" -> ImageGeneration
+    "video" -> VideoGeneration
+    "tool" -> OpticalMusicRecognition
+    "audio" -> audioResultFamily (matrixRowId model)
+    _ -> audioResultFamily (matrixRowId model)
+  where
+    audioResultFamily rowIdValue
+      | "demucs" `Text.isInfixOf` rowIdValue = SourceSeparation
+      | "unmix" `Text.isInfixOf` rowIdValue = SourceSeparation
+      | "basic-pitch" `Text.isInfixOf` rowIdValue = AudioToMidi
+      | "bark" `Text.isInfixOf` rowIdValue = AudioGeneration
+      | otherwise = AudioGeneration
 
 engineBindingsForMode :: RuntimeMode -> [EngineBinding]
 engineBindingsForMode runtimeMode =
@@ -98,6 +136,47 @@ hostBatchTopicForMode runtimeMode =
 canonicalBatchTopicForMode :: RuntimeMode -> Text
 canonicalBatchTopicForMode runtimeMode =
   defaultPulsarTopicPrefix <> "inference.batch." <> runtimeModeId runtimeMode
+
+-- | Phase 4 Sprint 4.17 — the per-engine engine name derived from an adapter
+-- id. The python-stdio framework adapters carry a @-python@ suffix
+-- (@transformers-python@ -> @transformers@); native-process-runner adapter ids
+-- have no suffix and map to themselves.
+engineNameForAdapterId :: Text -> Text
+engineNameForAdapterId adapterId =
+  fromMaybe adapterId (Text.stripSuffix "-python" adapterId)
+
+-- | The per-engine engine name a selected engine resolves to, via its adapter
+-- binding. Used by the coordinator to route batch work to the matching
+-- per-engine engine Deployment.
+engineNameForSelectedEngine :: RuntimeMode -> Text -> Text
+engineNameForSelectedEngine runtimeMode selectedEngineValue =
+  engineNameForAdapterId
+    (engineBindingAdapterId (engineBindingForSelectedEngine runtimeMode selectedEngineValue))
+
+-- | The distinct framework (python-native) engine names present in a
+-- substrate's catalog. These are the per-engine engine Deployments the chart
+-- renders and the per-engine images the lifecycle builds. Native-process-runner
+-- engines are handled by the separate native-binary lane (Sprint 4.17 follow-on).
+frameworkEngineNamesForMode :: RuntimeMode -> [Text]
+frameworkEngineNamesForMode runtimeMode =
+  nub
+    [ engineNameForAdapterId (engineBindingAdapterId engineBinding)
+    | engineBinding <- engineBindingsForMode runtimeMode,
+      engineBindingPythonNative engineBinding
+    ]
+
+-- | Per-engine batch topic: @inference.batch.<mode>.<engine>@. The coordinator
+-- publishes a request's batch work here keyed on the model's selected engine;
+-- the matching per-engine engine Deployment subscribes exclusively to it.
+perEngineBatchTopicForMode :: RuntimeMode -> Text -> Text
+perEngineBatchTopicForMode runtimeMode engineName =
+  canonicalBatchTopicForMode runtimeMode <> "." <> engineName
+
+-- | Per-engine image name: @infernix-engine-<engine>-<mode>:local@, built from
+-- @docker/engine.Dockerfile@.
+perEngineImageName :: RuntimeMode -> Text -> Text
+perEngineImageName runtimeMode engineName =
+  "infernix-engine-" <> engineName <> "-" <> runtimeModeId runtimeMode <> ":local"
 
 engineBindingForSelectedEngine :: RuntimeMode -> Text -> EngineBinding
 engineBindingForSelectedEngine _runtimeMode selectedEngineValue =

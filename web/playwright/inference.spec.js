@@ -1062,8 +1062,47 @@ test("browser per-model smoke matrix exercises every catalog model", async ({ pa
       },
     );
     expect(JSON.stringify(completedFrame)).toContain("ConversationStateAppendMessage");
+
+    // Phase 6 Sprint 6.3: assert the per-family rendered result. The browser
+    // is substrate-agnostic — it renders from the result payload's family
+    // (inline text vs. an image/audio/video/download artifact) and never
+    // branches on substrate id or engine binding. `infernix-demo` selected
+    // the engine binding upstream from the active `.dhall`.
+    const model = demoConfig.models.find((entry) => entry.modelId === modelId);
+    expect(model).toBeTruthy();
+    const expectedKind = expectedResultRenderKind(model);
+    const resultMessage = page.locator(".chat-message.result").last();
+    await expect(resultMessage).toBeVisible({ timeout: 60000 });
+    if (expectedKind === "text") {
+      await expect(resultMessage.locator(".chat-message-body")).not.toHaveText("", {
+        timeout: 30000,
+      });
+      await expect(resultMessage.locator(".chat-result-artifact")).toHaveCount(0);
+    } else {
+      const artifact = resultMessage.locator(`.chat-result-${expectedKind}`).first();
+      await expect(artifact).toBeVisible({ timeout: 30000 });
+      await expect(artifact).toHaveAttribute("data-result-artifact-kind", expectedKind);
+    }
   }
 });
+
+// Phase 6 Sprint 6.3: map a catalog model to its expected per-family result
+// rendering, derived from the model's family + matrix-row metadata only
+// (mirrors `Infernix.Models.resultFamilyForDescriptor`). Substrate-agnostic:
+// no branch on substrate id or engine binding.
+function expectedResultRenderKind(model) {
+  const family = model?.family || "";
+  const rowId = model?.matrixRowId || "";
+  if (family === "llm" || family === "speech") return "text";
+  if (family === "image") return "image";
+  if (family === "video") return "video";
+  if (family === "music" || family === "tool") return "download";
+  if (family === "audio") {
+    if (rowId.includes("bark")) return "audio";
+    return "download";
+  }
+  return "text";
+}
 
 function renderDispositionTag(downloadGrant) {
   const disposition = downloadGrant.artifactDownloadGrantRenderDisposition;

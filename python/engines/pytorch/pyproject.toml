@@ -1,0 +1,36 @@
+[tool.poetry]
+# Phase 4 Sprint 4.16 — isolated PyTorch engine venv (source-separation:
+# Demucs / Open-Unmix, and audio-generation: Bark, on linux-gpu). cu128 torch
+# for Blackwell. Optional `cuda` group keeps the default install
+# framework-free. See documents/development/python_policy.md "Per-Engine
+# Framework Venvs".
+name = "infernix-engine-pytorch"
+version = "0.1.0"
+description = "Isolated PyTorch (CUDA) engine venv for infernix"
+authors = ["Infernix <noreply@example.com>"]
+package-mode = false
+
+[tool.poetry.dependencies]
+python = "^3.12"
+infernix-adapters = { path = "../..", develop = true }
+
+[tool.poetry.group.cuda]
+optional = true
+
+[tool.poetry.group.cuda.dependencies]
+torch = { version = ">=2.7", source = "pytorch-cu128" }
+torchaudio = { version = ">=2.7", source = "pytorch-cu128" }
+transformers = ">=4.46"
+demucs = ">=4.0"
+scipy = ">=1.13"
+soundfile = ">=0.12"
+numpy = ">=1.26"
+
+[[tool.poetry.source]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+priority = "explicit"
+
+[build-system]
+requires = ["poetry-core>=1.9.0"]
+build-backend = "poetry.core.masonry.api"

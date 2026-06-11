@@ -65,6 +65,65 @@ Rules:
 - adapter modules carry inline type annotations on every function and class; `# type: ignore`
   pragmas require an explanatory comment
 
+## Machine-Independent Gate Invariant
+
+`poetry run check-code` is part of the machine-independent gate set (development plan standards
+Section Q): it must pass on whichever single host is present, regardless of which substrate-specific
+inference wheels that host can install. The product targets both Apple Silicon (MLX, `jax-metal`,
+Core ML, Metal `llama.cpp`/`whisper.cpp`) and CUDA Linux (vLLM, CUDA PyTorch, TensorFlow), and no
+single host installs every wheel. The gate stays machine-independent through one hard rule:
+
+- Inference frameworks — `torch`, `transformers`, `vllm`, `tensorflow`, `jax`/`jax-metal`, `mlx`,
+  `diffusers`, `coremltools`, `basic-pitch`, `demucs`, `omnizart`, and any future engine wheel —
+  are **never** declared in `python/pyproject.toml` and **never** imported at module top level.
+- Each adapter lazy-imports its framework **inside the transform body**, behind
+  `try/except ImportError` that raises a typed runtime error when the wheel is absent. The
+  framework modules are listed in a `[[tool.mypy.overrides]]` block in `python/pyproject.toml` with
+  `ignore_missing_imports = true`, so `mypy --strict` type-checks the adapter on any host without
+  the wheels present (and without per-line `# type: ignore` churn that breaks when a wheel is
+  present-but-untyped on cohort hardware).
+- This mirrors the established `adapters/model_cache.py` boto3 precedent: the import only fires at
+  real-inference time, so `mypy --strict`/`black`/`ruff` over the adapter tree pass on any host
+  without the wheels installed.
+- Installing the real wheels and producing real per-family output is the **cohort gate** (Wave I),
+  exercised on substrate hardware — it is never a precondition for `poetry run check-code`. A
+  top-level framework import or a framework entry in `pyproject.toml` silently re-couples the gate
+  to one host and is rejected on review.
+
+## Per-Engine Framework Venvs
+
+Phase 4 Sprint 4.16 supersedes the earlier single-shared-venv assumption. Real per-family
+inference needs vLLM, PyTorch (CUDA), TensorFlow, JAX (CUDA), and Diffusers, whose pins are
+mutually incompatible (vLLM pins an exact torch; TF and JAX ship their own CUDA stacks; one Poetry
+lock cannot resolve `torch` from two indices). Each framework engine therefore installs into its
+own isolated in-project venv:
+
+- The shared `python/` project stays **framework-free** — it owns the `adapters` package, the
+  `check-code` gate, and the protobuf stubs. Its venv (`python/.venv/`) carries no ML framework, so
+  `poetry run check-code` is the machine-independent gate (see "Machine-Independent Gate Invariant").
+- Each engine has its own Poetry project at `python/engines/<engine>/` (`package-mode = false`,
+  in-project venv `python/engines/<engine>/.venv/`) that depends on the shared `infernix-adapters`
+  package via an editable path dependency and declares its framework wheels in an **optional**
+  substrate group. The default `poetry install` there pulls no framework; the substrate build opts
+  in with `poetry install --directory python/engines/<engine> --with cuda` (linux-gpu, cu128 torch
+  for Blackwell). The linux-cpu and apple-silicon framework groups are a follow-on, because a single
+  project cannot co-resolve `torch` from two indices.
+- The Haskell worker (`src/Infernix/Runtime/Worker.hs`) resolves the per-engine venv at dispatch:
+  when `python/engines/<engine>/.venv/bin/python` exists it runs `python -m adapters.<module>` in
+  that venv (the in-project venv installs console scripts with a relative shebang, so the worker
+  invokes the absolute venv interpreter with `-m` rather than the script). When the per-engine venv
+  is absent (the machine-independent unit environment), the worker falls back to the shared
+  framework-free project so an absent framework fails fast.
+- The linux-gpu image build (`docker/Dockerfile`) bakes each engine's `--with cuda` venv as a
+  separate layer; a failed engine install removes its partial venv so the runtime falls back to the
+  fail-fast path (a named cohort residual) rather than a broken venv. Omnizart (TF1-era) and MT3
+  (unmaintained JAX) do not resolve on the supported Python 3.12 / CUDA 12.8 substrate and are named
+  cohort residuals (see [../../DEVELOPMENT_PLAN/cohort-validation-waves.md](../../DEVELOPMENT_PLAN/cohort-validation-waves.md)).
+
+`find python -name '*.py' -type f` still returns only files under `python/adapters/`; the
+`python/engines/<engine>/` projects carry only `pyproject.toml` + `poetry.toml`, and their `.venv/`
+trees are gitignored build artifacts.
+
 ## Packaging Warnings
 
 Python packaging warnings are handled by execution context:

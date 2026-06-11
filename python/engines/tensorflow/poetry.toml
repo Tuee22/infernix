@@ -1,0 +1,4 @@
+# Phase 4 Sprint 4.16: in-project venv (python/engines/tensorflow/.venv), typed
+# Poetry config (no env-var inheritance), matching the shared project.
+[virtualenvs]
+in-project = true

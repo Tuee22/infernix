@@ -51,6 +51,7 @@ Chart.lock
 **/__pycache__/
 **/poetry.lock
 python/.venv/
+python/engines/*/.venv/
 tools/generated_proto/
 
 # Logs and temporary files

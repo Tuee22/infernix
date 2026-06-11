@@ -82,7 +82,7 @@ every remaining image, including the active `infernix` runtime image, is loaded 
 final rollout.
 Phase 6 had previously recorded clean governed bootstrap reruns for the supported Linux and Apple
 lifecycle surfaces on the legacy hardware. The dated proof points are inventoried in
-[legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) under "Legacy Historical
+[legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) under "Retired Historical
 Validation Evidence"; they exercised the split daemon topology, host-batch Pulsar handoff,
 routed Playwright E2E, repeated retained-state cluster bring-up or teardown cycles inside the
 governed `test` lane, final post-teardown status returning `clusterPresent: False`,
@@ -93,19 +93,23 @@ so retry recovery does not depend on a previously retained target tag. The under
 they exercised still describe supported behavior; revalidation on the new host is tracked by
 [cohort-validation-waves.md](cohort-validation-waves.md).
 
-**Apple Silicon validation reset (the recorded validation).** The project moved its primary development
-machine to a new Apple Silicon host on the recorded validation; the prior Apple Silicon hardware and the
-prior Linux/CUDA host are both no longer available. The legacy dated proof points are
+**Cohort validation status (present development host = native CUDA Linux).** Consistent with the
+two-axis doctrine — implement and run code-side closure on whichever single machine is present — the
+present development host is a native CUDA Linux host (x86_64 + NVIDIA RTX 5090). Code-side closure
+for every open phase proceeds here with no machine switch, and the CUDA Linux cohort full-suite
+(`linux-cpu` and `linux-gpu`) is producible on this host directly; the single remaining cohort
+switch is to an Apple Silicon machine for the Apple cohort wave (Metal, including the tart
+Metal-engine build and the `apple-silicon` catalog rows). The legacy dated proof points are
 inventoried in
-[legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) under "Legacy Historical
+[legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) under "Retired Historical
 Validation Evidence". The underlying contracts they exercised still describe supported behavior,
-but the proof points themselves are not current. Revalidation on the new host is tracked by
+but the proof points themselves are not current. Revalidation is tracked by
 [cohort-validation-waves.md](cohort-validation-waves.md): [Wave A](cohort-validation-waves.md)
 (Apple cohort) closed the recorded validation with `cabal test infernix-integration` full PASS plus 5/6
-Playwright e2e PASS on the new host; Waves A.1 and A.2 subsequently closed the routed
+Playwright e2e PASS; Waves A.1 and A.2 subsequently closed the routed
 Playwright residuals with 7/7 e2e PASS, and Wave A.3 closed Apple engine-lock chaos.
 [Wave H](cohort-validation-waves.md) then re-confirmed the full Apple cohort lifecycle on the
-current host on 2026-06-09 from a clean build root: the build, lint/style/unit gates, the
+Apple cohort host on 2026-06-09 from a clean build root: the build, lint/style/unit gates, the
 explicit `cluster up` → `cluster status` → `cluster down` lifecycle with retained-state replay,
 `infernix test integration`, `infernix test e2e` 9/9, and aggregate `infernix test all`.
 [Wave C](cohort-validation-waves.md) closed the recorded validation on a native Linux/CUDA host: the

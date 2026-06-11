@@ -12,12 +12,12 @@ where
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Char8 qualified as ByteString8
 import Data.List (dropWhileEnd, find)
+import Data.Maybe (fromMaybe)
 import Data.ProtoLens (decodeMessage, defMessage, encodeMessage)
 import Data.ProtoLens.Field (field)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Infernix.Config (Paths (..))
-import Infernix.Conversation.Hash (PrefixHash (..))
 import Infernix.Models (engineBindingForSelectedEngine)
 import Infernix.Python (ensurePoetryExecutable, ensurePoetryProjectReady)
 import Infernix.Runtime.KVCache qualified as KVCache
@@ -34,6 +34,7 @@ import System.Process
     StdStream (CreatePipe),
     createProcess,
     proc,
+    readCreateProcessWithExitCode,
     shell,
     waitForProcess,
   )
@@ -70,7 +71,7 @@ runInferenceWorker paths runtimeMode overrides model request cacheObservation =
       ensurePythonEngineSetupReady paths runtimeMode engineBinding
         >> runPythonWorker paths runtimeMode overrides model engineBinding request cacheObservation
     "native-process-runner" ->
-      runNativeWorker runtimeMode model engineBinding request cacheObservation
+      runNativeWorker paths runtimeMode model engineBinding request cacheObservation
     adapterType ->
       pure (unsupportedEngineRunner engineBinding adapterType)
   where
@@ -188,8 +189,25 @@ runSetupInvocation paths poetryExecutable projectDirectory installRoot _runtimeM
 resolvePythonInvocation :: Paths -> EngineBinding -> Maybe String -> IO WorkerInvocation
 resolvePythonInvocation paths engineBinding maybeOverride = do
   let projectDirectory = repoRoot paths </> engineBindingProjectDirectory engineBinding
-  case trimWhitespace =<< maybeOverride of
-    Just overrideCommand ->
+  maybePerEngineVenvPython <- perEngineVenvPython paths engineBinding
+  case (trimWhitespace =<< maybeOverride, maybePerEngineVenvPython) of
+    (Nothing, Just venvPython) ->
+      -- Phase 4 Sprint 4.16: a per-engine isolated framework venv exists
+      -- (baked by the image build's `poetry install --directory
+      -- python/engines/<engine> --with <substrate>`). Invoke its venv python
+      -- with `-m adapters.<module>` rather than the console script, because
+      -- in-project venvs install console scripts with a relative shebang that
+      -- only resolves from the project directory; the venv python is an
+      -- absolute interpreter symlink that runs from any cwd. No shared-project
+      -- install and no Poetry at runtime — the venv already carries the
+      -- framework plus the shared `adapters` package via the path dependency.
+      pure
+        ( DirectWorkerInvocation
+            venvPython
+            (repoRoot paths)
+            ["-m", perEngineAdapterModule engineBinding]
+        )
+    (Just overrideCommand, _) ->
       do
         poetryExecutable <- ensurePoetryExecutable paths
         ensurePoetryProjectReady paths projectDirectory
@@ -205,7 +223,7 @@ resolvePythonInvocation paths engineBinding maybeOverride = do
                   <> shellQuote (Text.unpack (engineBindingAdapterEntrypoint engineBinding))
               )
           )
-    Nothing ->
+    (Nothing, Nothing) ->
       do
         poetryExecutable <- ensurePoetryExecutable paths
         ensurePoetryProjectReady paths projectDirectory
@@ -220,21 +238,46 @@ resolvePythonInvocation paths engineBinding maybeOverride = do
               ]
           )
 
-runNativeWorker :: RuntimeMode -> ModelDescriptor -> EngineBinding -> InferenceRequest -> Maybe KVCache.KVCacheObservation -> IO (Either ErrorResponse Text)
-runNativeWorker runtimeMode model engineBinding request cacheObservation =
-  case nativeRunnerLabel (engineBindingAdapterId engineBinding) of
-    Just runnerLabel ->
-      pure
-        ( Right
-            ( renderNativeRunnerOutput
-                runtimeMode
-                model
-                request
-                (engineBindingAdapterId engineBinding)
-                runnerLabel
-                cacheObservation
-            )
-        )
+-- | Phase 4 Sprint 4.16 — resolve the per-engine isolated framework venv's
+-- python interpreter, when present. The image build populates
+-- @python/engines/<engine>/.venv@ with the substrate's framework wheels plus
+-- the shared @adapters@ package (editable path dependency). When the
+-- per-engine venv is absent (e.g. the machine-independent unit environment),
+-- the worker falls back to the shared framework-free project so
+-- unsupported/absent frameworks fail fast.
+perEngineVenvPython :: Paths -> EngineBinding -> IO (Maybe FilePath)
+perEngineVenvPython paths engineBinding = do
+  let engineName = Text.unpack (Text.replace "-python" "" (engineBindingAdapterId engineBinding))
+      pythonPath =
+        repoRoot paths
+          </> "python"
+          </> "engines"
+          </> engineName
+          </> ".venv"
+          </> "bin"
+          </> "python"
+  present <- doesFileExist pythonPath
+  pure (if present then Just pythonPath else Nothing)
+
+-- | The @adapters.<module>@ import path for an engine's adapter (run via
+-- @python -m@ in the per-engine venv). @transformers-python@ -> @adapters.transformers_python@.
+perEngineAdapterModule :: EngineBinding -> String
+perEngineAdapterModule engineBinding =
+  "adapters." <> Text.unpack (Text.replace "-" "_" (engineBindingAdapterId engineBinding))
+
+-- | Phase 4 Sprints 4.2/4.12 — invoke the real native engine binary
+-- resolved from its repo-local engine install root (under @HostConfig@'s
+-- @dataRoot@) by absolute path, instead of rendering a debug-metadata
+-- string. The binary's stdout is the worker output: the transcript or
+-- generation text for the text engines, or the @infernix-demo-objects@
+-- object reference the engine wrote for the artifact engines. Unsupported
+-- adapter ids fail fast (no generic-success fallback). The real engine
+-- output is exercised on cohort hardware (Wave I Stage 2); here the
+-- dispatch wiring and the binary-by-absolute-path contract compile and
+-- unit-check.
+runNativeWorker :: Paths -> RuntimeMode -> ModelDescriptor -> EngineBinding -> InferenceRequest -> Maybe KVCache.KVCacheObservation -> IO (Either ErrorResponse Text)
+runNativeWorker paths _runtimeMode model engineBinding request _cacheObservation =
+  case nativeRunnerBinaryRelPath (engineBindingAdapterId engineBinding) of
     Nothing ->
       pure
         ( Left
@@ -246,18 +289,90 @@ runNativeWorker runtimeMode model engineBinding request cacheObservation =
                     <> "."
               }
         )
+    Just binaryRelPath -> do
+      let installRoot = engineInstallRootPath paths engineBinding
+          binaryPath = installRoot </> binaryRelPath
+      binaryPresent <- doesFileExist binaryPath
+      if not binaryPresent
+        then
+          pure
+            ( Left
+                ErrorResponse
+                  { errorCode = "engine_binary_missing",
+                    message =
+                      "native engine binary is not present at "
+                        <> Text.pack binaryPath
+                        <> "; build it for "
+                        <> engineBindingAdapterId engineBinding
+                        <> " (Apple: infernix internal materialize-metal-engines) before running."
+                  }
+            )
+        else do
+          processEnvironment <- workerProcessEnvironment paths []
+          (exitCode, stdoutOutput, stderrOutput) <-
+            readCreateProcessWithExitCode
+              ( (proc binaryPath (nativeRunnerArgs model request installRoot))
+                  { cwd = Just installRoot,
+                    env = Just processEnvironment
+                  }
+              )
+              ""
+          pure (nativeRunnerResult engineBinding binaryPath exitCode stdoutOutput stderrOutput)
 
-nativeRunnerLabel :: Text -> Maybe Text
-nativeRunnerLabel adapterId =
+-- | Resolve the native engine binary's path relative to its engine
+-- install root. The adapter id is the closed set of native-process-runner
+-- bindings; an unknown id returns 'Nothing' and the caller fails fast.
+nativeRunnerBinaryRelPath :: Text -> Maybe FilePath
+nativeRunnerBinaryRelPath adapterId =
   case adapterId of
-    "whisper-cpp-cli" -> Just "whisper.cpp transcription lane"
-    "llama-cpp-cli" -> Just "llama.cpp generation lane"
-    "onnx-runtime-native" -> Just "onnx-runtime execution lane"
-    "coreml-native" -> Just "coreml execution lane"
-    "ctranslate2-native" -> Just "ctranslate2 decoding lane"
-    "mlx-native" -> Just "mlx execution lane"
-    "jvm-native" -> Just "jvm workflow lane"
+    "whisper-cpp-cli" -> Just "bin/whisper-cli"
+    "llama-cpp-cli" -> Just "bin/llama-cli"
+    "onnx-runtime-native" -> Just "bin/onnx-runner"
+    "coreml-native" -> Just "bin/coreml-runner"
+    "ctranslate2-native" -> Just "bin/ct2-runner"
+    "mlx-native" -> Just "bin/mlx-runner"
+    "jvm-native" -> Just "bin/audiveris"
     _ -> Nothing
+
+-- | Pure argument vector for a native engine binary (unit-tested). Text
+-- families pass @--input-text@; the audio and image input families pass
+-- the @--input-object-ref@ that points into @infernix-demo-objects@.
+nativeRunnerArgs :: ModelDescriptor -> InferenceRequest -> FilePath -> [String]
+nativeRunnerArgs model request installRoot =
+  [ "--model",
+    Text.unpack (modelId model),
+    "--engine",
+    Text.unpack (selectedEngine model),
+    "--family",
+    Text.unpack (family model),
+    "--install-root",
+    installRoot
+  ]
+    <> case inputObjectRef request of
+      Just ref -> ["--input-object-ref", Text.unpack ref]
+      Nothing -> ["--input-text", Text.unpack (inputText request)]
+
+nativeRunnerResult :: EngineBinding -> FilePath -> ExitCode -> String -> String -> Either ErrorResponse Text
+nativeRunnerResult engineBinding binaryPath exitCode stdoutOutput stderrOutput =
+  case exitCode of
+    ExitSuccess ->
+      case trimWhitespace stdoutOutput of
+        Just trimmed -> Right (Text.pack trimmed)
+        Nothing ->
+          Left
+            ErrorResponse
+              { errorCode = "worker_empty_output",
+                message = "native engine " <> engineBindingAdapterId engineBinding <> " returned no output."
+              }
+    _ ->
+      Left
+        ErrorResponse
+          { errorCode = "worker_failed",
+            message =
+              "native engine worker failed: "
+                <> Text.pack binaryPath
+                <> Text.pack (stderrSuffix (ByteString8.pack stderrOutput))
+          }
 
 runWorkerInvocation :: Paths -> WorkerInvocation -> ByteString.ByteString -> IO (Either String ByteString.ByteString)
 runWorkerInvocation paths invocation inputPayload = do
@@ -335,8 +450,14 @@ buildWorkerRequest paths runtimeMode model engineBinding request =
               set (field @"family") (family model) $
                 set (field @"artifactType") (artifactType model) $
                   set (field @"runtimeLane") (runtimeLaneId (runtimeLane model)) $
-                    set (field @"engineInstallRoot") (Text.pack (engineInstallRootPath paths engineBinding)) defMessage
+                    set (field @"inputObjectRef") (fromMaybe "" (inputObjectRef request)) $
+                      set (field @"engineInstallRoot") (Text.pack (engineInstallRootPath paths engineBinding)) defMessage
 
+-- | Decode the worker output from a 'WorkerResponse'. Phase 4 Sprint 4.15:
+-- artifact adapters return an @infernix-demo-objects@ object reference in
+-- @object_ref@; text adapters return @output_text@. The non-empty
+-- @object_ref@ takes precedence; 'Infernix.Runtime.buildPayload' then
+-- routes the value to 'inlineOutput' or 'objectRef' by the model's family.
 workerOutputFromResponse :: ProtoInference.WorkerResponse -> Either ErrorResponse Text
 workerOutputFromResponse workerResponse =
   case trimWhitespace (Text.unpack (view ProtoInferenceFields.errorCode workerResponse)) of
@@ -346,45 +467,23 @@ workerOutputFromResponse workerResponse =
           { errorCode = Text.pack errorCodeValue,
             message = responseMessage
           }
-    Nothing ->
-      if Text.null outputText
-        then
+    Nothing
+      | not (Text.null objectRefValue) -> Right objectRefValue
+      | not (Text.null outputText) -> Right outputText
+      | otherwise ->
           Left
             ErrorResponse
               { errorCode = "worker_empty_output",
                 message = "Python adapter returned an empty worker response."
               }
-        else Right outputText
   where
+    objectRefValue = view ProtoInferenceFields.objectRef workerResponse
     outputText = view ProtoInferenceFields.outputText workerResponse
     responseMessage =
       maybe
         "Python adapter returned an error."
         Text.pack
         (trimWhitespace (Text.unpack (view ProtoInferenceFields.errorMessage workerResponse)))
-
-renderNativeRunnerOutput :: RuntimeMode -> ModelDescriptor -> InferenceRequest -> Text -> Text -> Maybe KVCache.KVCacheObservation -> Text
-renderNativeRunnerOutput runtimeMode model requestValue adapterId runnerLabel cacheObservation =
-  Text.unlines
-    ( [ "adapter=" <> adapterId,
-        "runner=" <> runnerLabel,
-        "runtime=" <> runtimeModeId runtimeMode,
-        "model=" <> modelId model,
-        "engine=" <> selectedEngine model,
-        "family=" <> family model,
-        "input=" <> inputText requestValue
-      ]
-        <> nativeKvCacheLines cacheObservation
-    )
-
-nativeKvCacheLines :: Maybe KVCache.KVCacheObservation -> [Text]
-nativeKvCacheLines Nothing = []
-nativeKvCacheLines (Just observation) =
-  let decision = KVCache.kvCacheObservationDecision observation
-      PrefixHash prefixHash = KVCache.kvCacheRequestPrefixHash (KVCache.kvCacheObservationRequest observation)
-   in [ "kv-cache=" <> KVCache.kvCacheDecisionLabel decision,
-        "kv-prefix-hash=" <> prefixHash
-      ]
 
 shellQuote :: String -> String
 shellQuote rawValue =

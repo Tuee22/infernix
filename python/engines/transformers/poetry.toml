@@ -1,0 +1,4 @@
+# Phase 4 Sprint 4.16: in-project venv (python/engines/transformers/.venv),
+# matching the shared project's typed Poetry config (no env-var inheritance).
+[virtualenvs]
+in-project = true

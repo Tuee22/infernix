@@ -43,6 +43,7 @@ data Command
   | InternalDiscoverHarborOverlayCommand FilePath
   | InternalPublishChartImagesCommand FilePath FilePath
   | InternalMaterializeSubstrateCommand RuntimeMode Bool
+  | InternalMaterializeMetalEnginesCommand
   | InternalDemoConfigLoadCommand FilePath
   | InternalDemoConfigValidateCommand FilePath
   | InternalGeneratePursContractsCommand FilePath
@@ -283,6 +284,10 @@ internalCommandFamily =
             InternalPublishChartImagesCommand
             ["internal", "publish-chart-images"],
           materializeSubstrateCommand,
+          simpleCommand
+            "internal materialize-metal-engines"
+            "builds the allowlisted Apple Metal/Core ML engine artifacts inside the headless tart macOS VM and copies them to `./.data/engines/<adapterId>/` (Apple-only; mirrors `internal materialize-substrate`)"
+            InternalMaterializeMetalEnginesCommand,
           singlePathCommand
             "internal demo-config load PATH"
             "loads one generated demo config and prints the rendered model listing"

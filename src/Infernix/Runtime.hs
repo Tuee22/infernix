@@ -17,7 +17,7 @@ import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Time (defaultTimeLocale, formatTime, getCurrentTime)
 import Infernix.Config (Paths (..))
-import Infernix.Models (findModel)
+import Infernix.Models (findModel, resultFamilyForDescriptor)
 import Infernix.Runtime.Cache (evictCache, listCacheManifests, materializeCache, rebuildCache)
 import Infernix.Runtime.KVCache qualified as KVCache
 import Infernix.Runtime.Worker (EngineCommandOverrideMap, runInferenceWorker)
@@ -77,7 +77,7 @@ executeInferenceWithKVCache paths runtimeMode overrides maybeEngineCache maybeCa
                       resultRuntimeMode = runtimeMode,
                       resultSelectedEngine = selectedEngine model,
                       status = "completed",
-                      payload = buildPayload outputText,
+                      payload = buildPayload (resultFamilyForDescriptor model) outputText,
                       createdAt = now,
                       -- Legacy / Phase 4 manual-inference path: no durable
                       -- context routing, so the bridge fields stay empty.
@@ -95,18 +95,26 @@ loadInferenceResult :: Paths -> Text -> IO (Maybe InferenceResult)
 loadInferenceResult paths requestIdValue =
   readInferenceResultProtoMaybe (inferenceResultPath paths requestIdValue)
 
--- | Build a result payload. Text outputs always ride inline in the Pulsar
--- result message; binary outputs are written directly to the demo MinIO
--- bucket by the engine adapter and carry an 'objectRef' (bucket + key) in
--- the result envelope. Phase 7 Sprint 7.7 retired the 80-character inline
--- threshold and the @./.data/object-store/results/@ overflow path that
--- preceded this contract.
-buildPayload :: Text -> ResultPayload
-buildPayload outputText =
-  ResultPayload
-    { inlineOutput = Just outputText,
-      objectRef = Nothing
-    }
+-- | Build a result payload, routing on the model's 'ResultFamily'
+-- (Phase 4 Sprint 4.15). Text families (LLM, speech transcription) ride
+-- inline in the Pulsar result message; every artifact family's worker
+-- output is the @infernix-demo-objects@ object reference (bucket/key) the
+-- engine adapter wrote, carried as an 'objectRef'. Phase 7 Sprint 7.7
+-- retired the 80-character inline threshold and the
+-- @./.data/object-store/results/@ overflow path that preceded this
+-- contract.
+buildPayload :: ResultFamily -> Text -> ResultPayload
+buildPayload resultFamily workerOutput
+  | resultFamilyIsArtifact resultFamily =
+      ResultPayload
+        { inlineOutput = Nothing,
+          objectRef = Just workerOutput
+        }
+  | otherwise =
+      ResultPayload
+        { inlineOutput = Just workerOutput,
+          objectRef = Nothing
+        }
 
 persistInferenceResult :: Paths -> InferenceResult -> IO ()
 persistInferenceResult paths resultValue =

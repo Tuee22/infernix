@@ -1,0 +1,28 @@
+[tool.poetry]
+# Phase 4 Sprint 4.16 — isolated TensorFlow engine venv (audio-to-MIDI:
+# Basic Pitch, on linux-gpu). Optional `cuda` group keeps the default install
+# framework-free. NOTE: the Omnizart music-transcription row that also maps to
+# this engine pins a TF1-era / Python<=3.8 stack and is incompatible with the
+# supported Python 3.12 / CUDA 12.8 substrate — it is a named cohort residual
+# (tracked in cohort-validation-waves.md), not installed here. See
+# documents/development/python_policy.md "Per-Engine Framework Venvs".
+name = "infernix-engine-tensorflow"
+version = "0.1.0"
+description = "Isolated TensorFlow engine venv for infernix"
+authors = ["Infernix <noreply@example.com>"]
+package-mode = false
+
+[tool.poetry.dependencies]
+python = "^3.12"
+infernix-adapters = { path = "../..", develop = true }
+
+[tool.poetry.group.cuda]
+optional = true
+
+[tool.poetry.group.cuda.dependencies]
+tensorflow = { version = ">=2.16", extras = ["and-cuda"] }
+basic-pitch = ">=0.4"
+
+[build-system]
+requires = ["poetry-core>=1.9.0"]
+build-backend = "poetry.core.masonry.api"

@@ -663,6 +663,13 @@ Rules:
 > such in its `Code-side closure` field and is exercised inside its cohort's wave, never pre-claimed
 > as machine-independent.
 
+`poetry run check-code` stays in the machine-independent gate set only because adapters never
+declare or top-level-import substrate-specific inference wheels; the lazy-import invariant that
+preserves this is governed by
+[../documents/development/python_policy.md](../documents/development/python_policy.md) ("Machine-Independent
+Gate Invariant"). A top-level framework import or a `pyproject.toml` framework dependency re-couples
+the gate to one host and breaks the single-machine code-side-closure guarantee.
+
 ### R. Haskell Quality Gate Contract
 
 Static quality and compiler hygiene are first-class repository requirements.

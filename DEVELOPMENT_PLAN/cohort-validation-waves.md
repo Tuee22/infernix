@@ -39,7 +39,7 @@
 | F | Native arm64 Linux CPU execution | Validation-only Phase 3 Sprint 3.12 closure: native `linux/arm64` `linux-cpu` validation through the already selected arm64 Docker daemon on this Apple Silicon machine. Proved Harbor publication, warmup hydration, final Harbor-backed preload, integration, and routed E2E on the native ARM publication path without cross-architecture emulation or Docker-context changes. | Closed | the recorded validation |
 | G | Apple Silicon (current host) | Phase 7 auth-UX quad closure: Sprint 7.19 auth-gated landing with dual Keycloak entry points, Sprint 7.20 themed Keycloak login surface, Sprint 7.21 operator console ribbon with edge JWT gating for `/harbor`, `/pulsar/admin`, and `/minio/s3`, and Sprint 7.22 self-service account deletion with MinIO + Pulsar per-user state reaping before Keycloak account removal. | Closed | the recorded Apple host-native validation |
 | H | Apple Silicon (current host) | Full current-host Apple lifecycle revalidation from a clean build root (no prior `./.build` artifacts): `cabal install all:exes`; `infernix lint files/docs/chart/proto` plus `infernix docs check`; `infernix test lint` (haskell-style) and `infernix test unit` (`infernix-unit` plus web 71/71); explicit `infernix cluster up` → `cluster status` (77 pods across 2 nodes, `infernix-manual` storage, full Envoy Gateway route set, `pulsar-bridge-to-host-daemon` dispatch) → `cluster down` (retained-state replay, `./.data` preserved) → post-teardown `cluster status` (`clusterPresent: False`, `lifecyclePhase: cluster-absent`); `infernix test integration` PASS; `infernix test e2e` 9/9; aggregate `infernix test all`. The dynamic `choosePulsarHttpPort` chooser shifted the Pulsar host port 30080→30081 around a VS Code-held `127.0.0.1:30080`. Native arm64 throughout (colima `aarch64`, no emulation or Docker-context changes). Published cluster image `infernix-linux-cpu@sha256:7f341cb1629c1d0af9b72db0fef7b89cc1f13d2bd02afe9be1daeed5e7f18454`. | Closed | 2026-06-09 |
-| I | Apple Silicon (current host) + paired CUDA Linux | Real per-family inference and the Apple tart Metal-engine build lane re-validation. Apple cohort: reconcile `tart`, run `infernix internal materialize-metal-engines` to build and copy an allowlisted Metal/Core ML artifact, then run `infernix test integration`/`e2e`/`all` asserting the per-family real-output result contract for the `apple-silicon` catalog column. CUDA Linux cohort: re-validate the `linux-cpu` and `linux-gpu` catalog columns' per-family real inference minus the Apple-Core-ML-only rows. Re-opens Phase 1 (Sprint 1.13), Phase 4 (Sprints 4.1/4.2/4.3/4.7/4.8/4.10/4.11/4.12/4.14 plus new 4.15), and Phase 6 (Sprints 6.2/6.3/6.6); they return to `Done` only after both cohorts pass their full-suite gates against the same state. **Stage 1 (code-side, single machine, natural order 1→4→6, no machine switch):** land the machine-independent implementation plus the machine-independent gates. **Stage 2 (paired cohort batch — the only machine switch):** Apple full-suite once (incl. the tart Metal build and the `apple-silicon` rows), then CUDA full-suite once (`linux-cpu`/`linux-gpu` rows), against frozen code. | Planned | pending |
+| I | CUDA Linux (present host) + paired Apple Silicon | Real per-family inference and the Apple tart Metal-engine build lane re-validation. Apple cohort: reconcile `tart`, run `infernix internal materialize-metal-engines` to build and copy an allowlisted Metal/Core ML artifact, then run `infernix test integration`/`e2e`/`all` asserting the per-family real-output result contract for the `apple-silicon` catalog column. CUDA Linux cohort: re-validate the `linux-cpu` and `linux-gpu` catalog columns' per-family real inference minus the Apple-Core-ML-only rows. Re-opens Phase 1 (Sprint 1.13), Phase 4 (Sprints 4.1/4.2/4.3/4.7/4.8/4.10/4.11/4.12/4.14 plus new 4.15/4.16/4.17), and Phase 6 (Sprints 6.2/6.3/6.6); they return to `Done` only after both cohorts pass their full-suite gates against the same state. **Stage 1 (code-side, single machine, natural order 1→4→6, no machine switch):** land the machine-independent implementation plus the machine-independent gates. **Stage 2 (paired cohort batch — the only machine switch):** Apple full-suite once (incl. the tart Metal build and the `apple-silicon` rows), then CUDA full-suite once (`linux-cpu`/`linux-gpu` rows), against frozen code. | Planned | pending |
 
 ## Wave A — Closed the recorded validation
 
@@ -452,9 +452,11 @@ the on-host engine daemon automatically:
 - `infernix test all` — the aggregate gate ran lint, `infernix-unit` plus web 71/71,
   `infernix-integration`, and routed Playwright e2e end to end on the same worktree.
 
-The CUDA Linux cohort hardware named by the validation reset remains unavailable, so the
-`linux-cpu` and `linux-gpu` gates are not part of Wave H and retain their prior recorded
-closure. Wave H re-confirms the Apple cohort on the current host only.
+At the time of Wave H the CUDA Linux cohort hardware was unavailable, so the
+`linux-cpu` and `linux-gpu` gates were not part of Wave H and retain their prior recorded
+closure; Wave H re-confirmed the Apple cohort only. The present development host is now a native
+CUDA Linux host (x86_64 + NVIDIA RTX 5090), so the CUDA Linux cohort is available again for Wave I
+without a machine switch — see the present-host note under [Wave I](#wave-i-real-per-family-inference-and-apple-tart-metal-engine-build-planned).
 
 ## Wave I: Real Per-Family Inference and Apple Tart Metal-Engine Build (Planned)
 
@@ -463,6 +465,18 @@ the Apple tart Metal-engine build lane that reopen Phases 1, 4, and 6. It runs i
 machine-independent code-side closure first, then a single paired cohort sign-off.
 
 ### Stage 1 — Code-side closure (single machine, natural order, no machine switch)
+
+> **Stage 1 status: complete on the present CUDA Linux host.** The reopened sprints' code-side
+> closure (Phase 1 Sprint 1.13's `tart`/`AppleTart`/`materialize-metal-engines` lane; Phase 4's
+> `ResultFamily` + object-ref plumbing, real native-binary + Python-adapter dispatch, `buildPayload`
+> family routing, and fail-fast-on-unsupported; Phase 6's `ResultFamily`-dispatched integration
+> assertions, substrate-agnostic per-family Playwright + Chat artifact rendering, and the
+> `allMatrixRowIds` union invariant + README-to-matrix `lint docs` check) has landed and passed the
+> machine-independent gate set on this host (`cabal build all`, `cabal test infernix-unit`,
+> `cabal test infernix-haskell-style`, `infernix lint files/docs/proto/chart`, `infernix docs check`,
+> `poetry run check-code`). Sprint 6.3's spago web-unit suite requires Node 22 and runs in the
+> Linux container lane on this host (host Node 18 / spago segfault); the PureScript + Playwright code
+> is in place and `infernix lint files` passes. Only Stage 2 (the paired cohort sign-off) remains.
 
 Land the machine-independent implementation for the reopened sprints in natural phase order
 (Phase 1 → Phase 4 → Phase 6) on whichever single machine is present, validating each with the
@@ -480,6 +494,12 @@ machine-independent.
 After Stage 1 is complete and the code is frozen, run the cross-architecture full-suites once per
 cohort against the same state.
 
+> **Present-host note.** The present development host is a native CUDA Linux host (x86_64 + NVIDIA
+> RTX 5090), so the **CUDA Linux cohort** half of Stage 2 is producible on this same host with no
+> machine switch — Stage 1 plus the CUDA Linux full-suite both close here. The **only** remaining
+> machine switch for Wave I is to an Apple Silicon machine for the Apple cohort half (the tart Metal
+> build and the `apple-silicon` rows), which is deferred until that wave is intentionally scheduled.
+
 **Apple cohort.** Reconcile `tart` through Homebrew; run
 `infernix internal materialize-metal-engines` so the headless tart macOS VM builds an allowlisted
 Metal/Core ML artifact (for example the `llama.cpp` Metal build or the Core ML basic-pitch model),
@@ -494,6 +514,46 @@ bark MPS audio, and Audiveris MusicXML).
 inference (vLLM, `llama.cpp`, CTranslate2, PyTorch CPU/CUDA, TensorFlow, ONNX Runtime, JAX,
 Diffusers, Audiveris) minus the Apple-Core-ML-only rows, through
 `docker compose run --rm infernix infernix test all`.
+
+> **CUDA Linux cohort — in-progress findings (present host, RTX 5090 / driver 570 / CUDA 12.8).**
+> The bleeding-edge linchpin is **proven**: `torch 2.7.1+cu128` reports `cuda available: True` on the
+> Blackwell GPU (capability `(12,0)` / sm_120), and a real Qwen2.5-1.5B generation runs on the GPU
+> through the transformers adapter's exact `AutoModelForCausalLM` + `generate` path. The Sprint 4.16
+> per-engine isolated framework-venv mechanism is built and validated (transformers engine: real
+> `--with cuda` install + worker resolution + machine-independent gate set green). Enabling work
+still required before the full `infernix test all` per-family run closes on this host: (1) bake
+> every engine's `--with cuda` venv into the linux-gpu image (large, multi-hour); (2) the **Linux
+> native-engine binary lane** — llama.cpp / whisper.cpp / ONNX Runtime / CTranslate2 binaries under
+> `./.data/engines/<id>/bin/` (the Sprint 1.13 tart lane is Apple-only); (3) real model-weight
+> provisioning into `infernix-models`; (4) the cluster bring-up and per-family assertions.
+>
+> **Image-build result (`infernix-linux-gpu:local`, 121 GB).** The build succeeded with **5 of 6**
+> framework engine venvs resolving their CUDA stacks on Blackwell: `transformers`, `vllm`, `pytorch`,
+> `jax`, `diffusers` all OK; `tensorflow` (Basic Pitch audio-to-MIDI + Omnizart music) **FAILED** to
+> resolve — a named cohort residual. A per-engine venv inside the built image reports
+> `torch.cuda.is_available() == True` on the RTX 5090 with `--gpus all`, so the deployable image's
+> engines reach the GPU. **Practicality finding:** baking 5 multi-GB CUDA framework venvs into one
+> image yields a 121 GB monolith that is impractical to push through Harbor and load into Kind for
+> the routed cluster cohort run; the cluster path likely needs a per-engine-image (or shared-base +
+> framework-layer) redesign before `infernix test all` is feasible on the cluster. Direct
+> `docker run --gpus all` per-family inference works against the image today.
+> **Named cohort residuals (incompatible with the Python 3.12 / CUDA 12.8 substrate):** the Omnizart
+> (TF1-era) music row and the MT3 (unmaintained JAX/T5X) music row do not resolve and need
+> maintained equivalents before their per-family assertions can pass. The base image was aligned to
+> `nvidia/cuda:12.8.1-cudnn-runtime-ubuntu24.04` to match the 570 driver (a CUDA-13 base needs driver
+> >= 580).
+>
+> **Sprint 4.17 per-engine-image split — foundation validated.** The monolith was split: the
+> control-plane / coordinator image (`infernix-linux-gpu:local`, `docker/Dockerfile`) is now **22.4 GB**
+> (down from 121 GB — no framework venvs), and per-engine images build from `docker/engine.Dockerfile`
+> (CUDA-runtime base + the control-plane binary/python + one engine's `--with cuda` venv). The
+> `transformers` per-engine image builds and, with `--gpus all`, reports `torch 2.7.1+cu128`,
+> `cuda available: True`, and imports `adapters.transformers_python` — so an engine pod pulls only its
+> own framework. `vllm` needs a pinned installable version (a fresh resolve picked an uninstallable
+> `0.15.1`); that pin is the next per-engine-image step. Remaining for the routed cluster run: chart
+> per-engine engine Deployments, coordinator→`inference.batch.<mode>.<engine>` routing, the lifecycle
+> per-engine image build/push/load set, the native-engine binary lane, and the weights + per-family GPU
+> run.
 
 Phases 1, 4, and 6 stay `Active` with Wave I as their cohort-pending residual and cannot return to
 `Done` until both cohorts pass their full-suite gates against the same state.
@@ -546,21 +606,23 @@ tart Metal-engine build coverage upgrade; those rows carry a pending Wave I resi
 | Phase | Code-side closure | Apple cohort gate | CUDA Linux cohort gate |
 |-------|-------------------|-------------------|------------------------|
 | 0 | Sprints 0.1-0.10 `Done` | Closed in Wave A (lint gates) | `linux-cpu` passed the recorded validation; `linux-gpu` passed the recorded validation |
-| 1 | Sprints 1.1–1.12 `Done`; Sprint 1.13 code-side closure (the `hostTart` manifest field, `AppleTart` reconcile, `materialize-metal-engines` registration, and their unit coverage) lands in natural order on the local machine (Stage 1); the in-VM tart Metal build is Apple-hardware-bound (phase `Active`) | Closed in Wave A for 1.1-1.12; Sprint 1.13 Stage 2 is **Apple cohort only** (the tart Metal build), pending Wave I | `linux-cpu` passed the recorded validation; `linux-gpu` passed the recorded validation; Sprint 1.13 has no CUDA Linux surface (Metal/tart is Apple-only) |
+| 1 | Sprints 1.1–1.12 `Done`; Sprint 1.13 code-side closure (the `tart` manifest field / `hostTart` selector, `AppleTart` reconcile, `materialize-metal-engines` registration, the allowlisted tart build lane, and their unit coverage) is **complete** on the present CUDA Linux host (Stage 1); the in-VM tart Metal build is Apple-hardware-bound (phase `Active`) | Closed in Wave A for 1.1-1.12; Sprint 1.13 Stage 2 is **Apple cohort only** (the tart Metal build), pending Wave I | `linux-cpu` passed the recorded validation; `linux-gpu` passed the recorded validation; Sprint 1.13 has no CUDA Linux surface (Metal/tart is Apple-only) |
 | 2 | Sprints 2.1–2.13 `Done` | Closed in Wave A (retained-state replay + Patroni filter + cluster lifecycle) | `linux-cpu` passed the recorded validation; `linux-gpu` passed the recorded validation |
 | 3 | Sprints 3.1–3.12 `Done` | Closed in Wave A/A.2 (substrate-aware publication, Harbor port, containerd, hand-authored MinIO, and Apple host-native E2E) | `linux-cpu` amd64 passed the recorded validation; `linux-gpu` passed the recorded validation; native arm64 `linux-cpu` passed in Wave F on the recorded validation |
-| 4 | Sprints 4.1-4.14 closed for the runtime/catalog/transport contract; real per-family inference reopened across 4.1/4.2/4.3/4.7/4.8/4.10/4.11/4.12/4.14 plus new 4.15; code-side closure lands in natural order on the local machine (Stage 1), with real-engine output and the Apple Metal path deferred to Stage 2 (phase `Active`) | Original contract closed in Wave A; per-family real-output Stage 2 (Apple Metal incl. tart) pending Wave I | `linux-cpu`/`linux-gpu` original contract passed the recorded validation; per-family real-output Stage 2 pending Wave I |
+| 4 | Sprints 4.1-4.14 closed for the runtime/catalog/transport contract; real per-family inference code-side closure **complete** across 4.1/4.2/4.3/4.7/4.8/4.10/4.11/4.12/4.14/4.15/4.16/4.17 on the present CUDA Linux host (Stage 1: build/unit/style/lint-proto/lint-files/lint-docs + `poetry run check-code`), with Sprint 4.17's cluster-side batch routing/chart/lifecycle deferred to the Wave I live-iteration and real-engine output and the Apple Metal path deferred to Stage 2 (phase `Active`) | Original contract closed in Wave A; per-family real-output Stage 2 (Apple Metal incl. tart) pending Wave I | `linux-cpu`/`linux-gpu` original contract passed the recorded validation; per-family real-output Stage 2 pending Wave I |
 | 5 | Sprints 5.1-5.10 `Done` | Closed in Wave A/A.2 (demo backend + adapter dhall reads via integration suite and routed E2E) | `linux-cpu` passed the recorded validation; `linux-gpu` passed the recorded validation |
-| 6 | Sprints 6.1, 6.4, 6.5, 6.7-6.30 `Done`; per-family real-output coverage reopened across 6.2/6.3/6.6; the assertion and harness code lands in natural order on the local machine (Stage 1), with the real-engine integration and E2E assertions deferred to Stage 2 (phase `Active`) | Original coverage closed in Wave A/A.1/A.2/A.3 (lint, style, unit, integration, routed E2E, and Apple engine-lock chaos); per-family real-output Stage 2 pending Wave I | `linux-cpu` and `linux-gpu` original coverage passed the recorded validation; per-family real-output Stage 2 pending Wave I |
+| 6 | Sprints 6.1, 6.4, 6.5, 6.7-6.30 `Done`; per-family real-output coverage code-side closure **complete** across 6.2/6.3/6.6 on the present CUDA Linux host (Stage 1: `infernix-unit`, `cabal build test:infernix-integration`, `infernix lint docs/files`; 6.3's spago web-unit suite runs in the container/Node-22 lane), with the real-engine integration and E2E assertions deferred to Stage 2 (phase `Active`) | Original coverage closed in Wave A/A.1/A.2/A.3 (lint, style, unit, integration, routed E2E, and Apple engine-lock chaos); per-family real-output Stage 2 pending Wave I | `linux-cpu` and `linux-gpu` original coverage passed the recorded validation; per-family real-output Stage 2 pending Wave I |
 | 7 | Sprints 7.1-7.18 `Done`; Sprint 7.8 runtime KV-cache and `Infernix.Runtime.Daemon` split closed in Wave E after the code-side KV-cache decision and Failover naming follow-on; Sprints 7.19-7.22 auth-UX surface closed in Wave G | Closed in Wave A/A.1/A.2/A.3 for the original durable-context gates; Wave G closed for auth-UX | `linux-cpu` passed the recorded validation; `linux-gpu` passed the recorded validation; residual rebuilt-image `linux-gpu` gate passed the recorded validation against `sha256:521a56ac6f79bf1ce5bc9d7dcd9c872e897ce4b4882661d4ada2f62faa108d7b`; residual rebuilt-image `linux-cpu` gate passed the recorded validation against `sha256:dc0c003e7cc2f2e359a474fa5ddb522c8715d271e322534db7798f260e9747fa`; mounted Linux CPU Wave E passed the recorded validation; Wave G Apple host-native auth-UX validation passed 9/9 routed E2E |
 
-Every Apple cohort gate above was additionally re-confirmed end to end on the current host by
+Every Apple cohort gate above was additionally re-confirmed end to end on the Apple cohort host by
 Wave H (2026-06-09) from a clean build root: `cabal install all:exes`, the lint/style/unit
 gates, the explicit `infernix cluster up` → `cluster status` → `cluster down` lifecycle with
 retained-state replay, `infernix test integration` PASS, `infernix test e2e` 9/9, and the
-aggregate `infernix test all`. The CUDA Linux cohort hardware remains unavailable, so the
-`linux-cpu` and `linux-gpu` columns retain their prior recorded closure and are out of Wave H
-scope.
+aggregate `infernix test all`. The CUDA Linux cohort hardware was unavailable at Wave H, so the
+`linux-cpu` and `linux-gpu` columns retain their prior recorded closure and were out of Wave H
+scope. The present development host is now a native CUDA Linux host (x86_64 + NVIDIA RTX 5090), so
+the CUDA Linux cohort half of Wave I is producible here without a machine switch; only the Apple
+cohort half remains a switch.
 
 When a wave closes, this table is the place to update first. Phase
 docs follow.

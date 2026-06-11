@@ -234,7 +234,8 @@ publishInferenceRequest paths runtimeMode topic requestValue = do
         set (field @"requestId") requestIdValue $
           set (field @"requestModelId") (requestModelId requestValue) $
             set (field @"inputText") (inputText requestValue) $
-              set (field @"runtimeMode") (runtimeModeId runtimeMode) defMessage
+              set (field @"inputObjectRef") (fromMaybe "" (inputObjectRef requestValue)) $
+                set (field @"runtimeMode") (runtimeModeId runtimeMode) defMessage
   case maybeTransport of
     Nothing -> do
       createDirectoryIfMissing True (topicDirectoryPath paths topic)
@@ -3625,8 +3626,16 @@ protoRequestToDomain :: ProtoInference.InferenceRequest -> InferenceRequest
 protoRequestToDomain protoRequest =
   InferenceRequest
     { requestModelId = view ProtoInferenceFields.requestModelId protoRequest,
-      inputText = view ProtoInferenceFields.inputText protoRequest
+      inputText = view ProtoInferenceFields.inputText protoRequest,
+      -- Phase 4 Sprint 4.15: an empty wire field means the text families'
+      -- "no input object reference"; non-text input families carry the ref.
+      inputObjectRef = nonEmptyText (view ProtoInferenceFields.inputObjectRef protoRequest)
     }
+
+nonEmptyText :: Text.Text -> Maybe Text.Text
+nonEmptyText value
+  | Text.null value = Nothing
+  | otherwise = Just value
 
 rawTopicInferenceRequestPromptIds :: [RawTopicMessage] -> [Text.Text]
 rawTopicInferenceRequestPromptIds messages =

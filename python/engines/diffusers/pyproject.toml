@@ -1,0 +1,34 @@
+[tool.poetry]
+# Phase 4 Sprint 4.16 — isolated Diffusers engine venv (image + video
+# generation families on linux-gpu: SDXL Turbo, Wan2.1 T2V). cu128 torch for
+# Blackwell. Optional `cuda` group keeps the default install framework-free.
+# See documents/development/python_policy.md "Per-Engine Framework Venvs".
+name = "infernix-engine-diffusers"
+version = "0.1.0"
+description = "Isolated Diffusers + PyTorch (CUDA) engine venv for infernix"
+authors = ["Infernix <noreply@example.com>"]
+package-mode = false
+
+[tool.poetry.dependencies]
+python = "^3.12"
+infernix-adapters = { path = "../..", develop = true }
+
+[tool.poetry.group.cuda]
+optional = true
+
+[tool.poetry.group.cuda.dependencies]
+torch = { version = ">=2.7", source = "pytorch-cu128" }
+diffusers = ">=0.31"
+transformers = ">=4.46"
+accelerate = ">=1.0"
+safetensors = ">=0.4"
+imageio = { version = ">=2.34", extras = ["ffmpeg"] }
+
+[[tool.poetry.source]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+priority = "explicit"
+
+[build-system]
+requires = ["poetry-core>=1.9.0"]
+build-backend = "poetry.core.masonry.api"

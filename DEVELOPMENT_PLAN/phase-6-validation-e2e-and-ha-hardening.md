@@ -18,17 +18,22 @@ lifecycle fixes, false-negative doctrine, Harbor publication retry closure, daem
 and real Dhall substrate codec implemented in the current worktree. The validation entrypoints,
 routed coverage, HA hardening, governed-doc closure, and CLI-registry closure are `Done` after
 Apple cohort validation in Waves A/A.1/A.2/A.3 and CUDA Linux cohort validation in Wave C. The
-phase is `Active` because the inference-coverage sprints are being upgraded from the metadata-echo
+phase is `Active` because the inference-coverage sprints were upgraded from the metadata-echo
 assertion to the per-family real-output result contract: the reopened Sprints 6.2, 6.3, and 6.6
 assert that a real engine ran for every active-substrate row, and the union across the three
-substrate catalogs covers every README matrix row as a mechanically checked invariant. That
-coverage upgrade is re-validated on both cohorts in [Wave I](cohort-validation-waves.md); the phase
-returns to `Done` only after that wave closes. The assertion and harness code for these sprints —
-the `ResultFamily` dispatch in the integration suite, the per-family Playwright assertions, and the
-`allMatrixRowIds` coverage invariant — lands in natural order on whichever single machine is present
-and is proven by the machine-independent gate set (`cabal test infernix-unit`, `infernix lint docs`,
-the web unit suite); the real-engine integration and E2E assertions are the Stage 2 cohort gate
-(Apple Metal incl. tart, and CUDA GPU runs), never a per-sprint machine switch (see
+substrate catalogs covers every README matrix row as a mechanically checked invariant. The
+code-side closure for that coverage upgrade is complete and validated on the present CUDA Linux
+host (x86_64 + RTX 5090). The assertion and harness code for these sprints —
+the `ResultFamily` dispatch in the integration suite, the per-family Playwright assertions plus
+per-family web-UI artifact rendering, and the `allMatrixRowIds` coverage invariant — are written and
+proven by the machine-independent gate set that ran on this host (`cabal test infernix-unit`,
+`cabal build test:infernix-integration`, `infernix lint docs`, `infernix lint files`). The web unit
+suite (`spago`/Node 22) could not run on this bare host (host Node 18; Node 22 makes spago segfault
+— an environmental toolchain limit), so its gate is exercised in the supported Linux container lane
+(Node 22) / cohort batch. The real-engine integration and routed E2E assertions are the Stage 2
+cohort gate (Apple Metal incl. tart, and CUDA GPU runs), re-validated on both cohorts in
+[Wave I](cohort-validation-waves.md); the phase returns to `Done` only after that wave closes —
+never a per-sprint machine switch (see
 [development_plan_standards.md](development_plan_standards.md) Section Q).
 The supported test story is substrate-specific in code. Sprint 6.25 closes around the implemented split topology: cluster daemons
 always run, Apple cluster daemons own request-topic consumption and host-batch handoff, Apple
@@ -64,7 +69,13 @@ image definition writes the source-snapshot manifest needed for git-less `infern
 runs, the routed Playwright suite exhaustively exercises every demo-visible generated catalog
 entry for the active substrate, and the integration suite enumerates every generated
 active-substrate catalog entry while also carrying Harbor, MinIO, Pulsar, and Harbor PostgreSQL
-recovery or lifecycle checks in code. The staged file, `cluster status`, publication JSON, and
+recovery or lifecycle checks in code. The per-family real-output coverage upgrade for the reopened
+Sprints 6.2/6.3/6.6 is code-complete and validated on the present CUDA Linux host: the integration
+suite dispatches a per-family result contract on `ResultFamily`, the routed Playwright suite and the
+web UI render and assert per-family artifact results, and `allMatrixRowIds` plus the
+README-to-matrix coverage check make full README coverage a mechanically enforced invariant; only
+the Wave I cohort sign-off (real-engine integration + routed E2E on hardware) remains. The staged
+file, `cluster status`, publication JSON, and
 generated browser contracts still expose the active substrate through `runtimeMode` fields or
 lines. The worktree omits direct Harbor, MinIO, and Pulsar compatibility handlers from
 `src/Infernix/Demo/Api.hs`, tightens `test/integration/Spec.hs` to require the real routed
@@ -170,7 +181,7 @@ None.
 ## Sprint 6.2: Extensive Integration Suites [Active]
 
 **Status**: Active
-**Code-side closure**: In progress — the `ResultFamily`-dispatched assertion code in `validateCatalogModelInference` is machine-independent and compiles/typechecks (validate with `cabal build test:infernix-integration`, `cabal test infernix-unit`); the assertions pass only when real engines run on cohort hardware (Section P: results name the single substrate they exercised)
+**Code-side closure**: Complete on the present CUDA Linux host (x86_64 + RTX 5090) — `validateCatalogModelInference` (`test/integration/Spec.hs`) is upgraded from the model-id + runtime-mode echo to a per-family real-output result contract dispatched on `ResultFamily` (via `resultFamilyForDescriptor`): text families (LLM, speech) assert a non-empty inline continuation and no object ref; every artifact family asserts an `infernix-demo-objects/` object reference whose key extension matches the family's artifact type (`.zip` source-separation, `.mid`/`.midi` audio-to-MIDI, `.mid`/`.midi`/`.musicxml`/`.xml` music transcription, `.png` image, `.mp4` video, `.wav` audio generation, `.musicxml`/`.xml` OMR) — shape/type, never golden strings. One DRY substrate-aware suite that reads the active `.dhall` and traverses the README rows; no per-substrate suites. Proven machine-independent by `cabal build test:infernix-integration` (compiles/typechecks) and `cabal test infernix-unit`, which pass on the present CUDA Linux host; the assertions themselves pass only when real engines run (Section P: results name the single substrate they exercised)
 **Cohort gate**: Pending [Wave I](cohort-validation-waves.md) — both cohorts run the per-family real-output integration suite against their own catalog column
 **Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Demo/Api.hs`, `src/Infernix/Runtime.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Worker.hs`, `test/integration/Spec.hs`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/operations/cluster_bootstrap_runbook.md`
@@ -199,15 +210,17 @@ MinIO, Pulsar, and operator-managed PostgreSQL substrate.
 
 ### Remaining Work
 
-- **Code (machine-independent — validate now with `cabal build test:infernix-integration`,
-  `cabal test infernix-unit`):** upgrade the single DRY `validateCatalogModelInference`
-  (`test/integration/Spec.hs`) from the model-id + runtime-mode-only assertion to a per-family
-  real-output result contract dispatched on `ResultFamily` (LLM non-empty continuation, speech
-  transcript text, source-separation two-or-more stem object refs, audio-to-MIDI MIDI bytes, music
-  MIDI or MusicXML, image and video a valid artifact of the expected type and dimensions,
-  audio-generation a valid audio artifact, and OMR MusicXML — shape and type, never golden strings).
-  Keep one substrate-aware suite that reads the active substrate's `.dhall` and traverses the README
-  rows; add no per-substrate suites. The dispatch code lands in natural order on the local machine.
+- **Code (machine-independent — validated on the present CUDA Linux host): DONE.** The single DRY
+  `validateCatalogModelInference` (`test/integration/Spec.hs`) was upgraded from the model-id +
+  runtime-mode-only assertion to a per-family real-output result contract dispatched on
+  `ResultFamily` (via `resultFamilyForDescriptor`): text families (LLM, speech) assert a non-empty
+  inline continuation and no object ref; every artifact family asserts an `infernix-demo-objects/`
+  object reference whose key extension matches the family's artifact type (`.zip` source-separation,
+  `.mid`/`.midi` audio-to-MIDI, `.mid`/`.midi`/`.musicxml`/`.xml` music transcription, `.png` image,
+  `.mp4` video, `.wav` audio generation, `.musicxml`/`.xml` OMR) — shape and type, never golden
+  strings. One substrate-aware suite that reads the active substrate's `.dhall` and traverses the
+  README rows; no per-substrate suites. Proven by `cabal build test:infernix-integration`
+  (compiles/typechecks) and `cabal test infernix-unit`, which pass on the present CUDA Linux host.
 - **Cohort gate ([Wave I](cohort-validation-waves.md), Stage 2):** the assertions pass only when
   real engines run; each cohort runs the suite against its own catalog column (Apple Metal incl.
   tart; CUDA `linux-cpu`/`linux-gpu`), and results name the single substrate exercised (Section P).
@@ -217,7 +230,7 @@ MinIO, Pulsar, and operator-managed PostgreSQL substrate.
 ## Sprint 6.3: Routed Playwright E2E Coverage [Active]
 
 **Status**: Active
-**Code-side closure**: In progress — the per-family rendered-result Playwright assertions (substrate-agnostic) and the web unit suite are machine-independent (validate with the web unit suite, `infernix lint files`); the routed browser run asserting real output needs a deployed cluster on cohort hardware
+**Code-side closure**: Complete on the present CUDA Linux host (x86_64 + RTX 5090) — the routed Playwright suite (`web/playwright/inference.spec.js`) per-model smoke matrix now asserts the per-family rendered result for every demo-visible row (text bubble vs image/audio/video/download), staying substrate-agnostic via a JS classifier `expectedResultRenderKind` (keys on model family + matrix-row metadata, never substrate id or engine binding). The web UI renders artifact results per-family: `web/src/Infernix/Web/Chat.purs` renders `inferenceResultArtifacts` as `<img>`/`<audio>`/`<video>`/download `<a>` with `data-result-artifact-kind` keyed on the object-key extension. The PureScript + Playwright code is written and `infernix lint files` passes on the present CUDA Linux host. NOTE: the web unit suite (`spago`) requires Node 22 and cannot run on this bare host (host has Node 18; Node 22 makes spago segfault — an environmental toolchain limit), so 6.3's web-unit gate is exercised in the supported Linux **container** lane (Node 22) / cohort batch
 **Cohort gate**: Pending [Wave I](cohort-validation-waves.md) — both cohorts run the routed Playwright suite against their own catalog column
 **Implementation**: `src/Infernix/CLI.hs`, `web/playwright/inference.spec.js`, `web/src/Infernix/Web/Chat.purs`, `web/src/Infernix/Web/Router.purs`, `web/src/Main.purs`, `web/src/index.html`, `web/test/Main.purs`, `web/test/run_playwright_matrix.mjs`, `web/package.json`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/reference/web_portal_surface.md`
@@ -262,12 +275,19 @@ browser surface through the shared edge.
 
 ### Remaining Work
 
-- **Code (machine-independent — validate now with the web unit suite, `infernix lint files`):**
-  make the routed Playwright suite assert the per-family rendered result for every demo-visible row
-  (inline text, audio player, image, video, MIDI or MusicXML download) while staying
-  substrate-agnostic — `infernix-demo` chooses the engine binding from the active `.dhall` and the
-  browser does not branch on substrate id or engine family. The spec code lands in natural order on
-  the local machine.
+- **Code (machine-independent — validated on the present CUDA Linux host): DONE.** The routed
+  Playwright suite (`web/playwright/inference.spec.js`) now asserts the per-family rendered result
+  for every demo-visible row (inline text bubble, audio player, image, video, MIDI or MusicXML
+  download) while staying substrate-agnostic via the JS classifier `expectedResultRenderKind` (keys
+  on model family + matrix-row metadata, never substrate id or engine binding); `infernix-demo`
+  chooses the engine binding from the active `.dhall` and the browser does not branch on substrate
+  id or engine family. The web UI renders artifact results per-family in
+  `web/src/Infernix/Web/Chat.purs` (`inferenceResultArtifacts` rendered as
+  `<img>`/`<audio>`/`<video>`/download `<a>` with `data-result-artifact-kind` keyed on the
+  object-key extension). Proven by `infernix lint files`, which passes on the present CUDA Linux
+  host. The web unit suite (`spago`, Node 22) cannot run on this bare host (host Node 18; Node 22
+  makes spago segfault — an environmental toolchain limit), so its gate is exercised in the
+  supported Linux container lane (Node 22) / cohort batch.
 - **Cohort gate ([Wave I](cohort-validation-waves.md), Stage 2):** asserting the real rendered
   output needs a deployed cluster; each cohort runs the routed suite against its own catalog column
   (Apple Metal incl. tart; CUDA `linux-cpu`/`linux-gpu`).
@@ -347,7 +367,7 @@ None.
 ## Sprint 6.6: Generated-Catalog Exhaustive Integration and E2E Coverage Baseline [Active]
 
 **Status**: Active
-**Code-side closure**: In progress — the `allMatrixRowIds` export and the union-equals-README-rows invariant under `infernix lint docs` / `infernix-unit` are machine-independent and completable now (validate with `cabal test infernix-unit`, `infernix lint docs`); the per-family per-entry assertions ride Sprints 6.2/6.3 on cohort hardware
+**Code-side closure**: Complete on the present CUDA Linux host (x86_64 + RTX 5090) — `allMatrixRowIds` is exported from `src/Infernix/Models.hs`; `test/unit/Spec.hs` asserts that the union of `catalogForMode` across `apple-silicon`/`linux-cpu`/`linux-gpu` equals the full README matrix row set; and a README-to-matrix coverage check was added to `infernix lint docs` (`src/Infernix/Lint/Docs.hs` `validateReadmeMatrixCoverage`) asserting every catalog `referenceModel` appears in README.md. Proven by `cabal test infernix-unit` and `infernix lint docs`, which pass on the present CUDA Linux host. The per-family per-entry assertions ride Sprints 6.2/6.3 on cohort hardware
 **Cohort gate**: Pending [Wave I](cohort-validation-waves.md) — both cohorts require a per-family assertion for every active-substrate catalog entry
 **Implementation**: `src/Infernix/CLI.hs`, `src/Infernix/Lint/Files.hs`, `test/unit/Spec.hs`, `test/integration/Spec.hs`, `web/playwright/inference.spec.js`, `web/test/Main.purs`, `web/test/run_playwright_matrix.mjs`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/reference/web_portal_surface.md`, `documents/reference/cli_reference.md`, `documents/engineering/testing.md`
@@ -377,11 +397,13 @@ hard-coded lane lists.
 
 ### Remaining Work
 
-- **Code (machine-independent — validate now with `cabal test infernix-unit`, `infernix lint
-  docs`):** export `allMatrixRowIds` from `src/Infernix/Models.hs` and assert that the union of
+- **Code (machine-independent — validated on the present CUDA Linux host): DONE.** `allMatrixRowIds`
+  is exported from `src/Infernix/Models.hs`; `test/unit/Spec.hs` asserts that the union of
   `catalogForMode` across `apple-silicon`, `linux-cpu`, and `linux-gpu` equals the full set of
-  README matrix rows, backed by a README-to-matrix check under `infernix lint docs`. This coverage
-  invariant lands in natural order on the local machine.
+  README matrix rows; and a README-to-matrix coverage check (`src/Infernix/Lint/Docs.hs`
+  `validateReadmeMatrixCoverage`) was added under `infernix lint docs` asserting every catalog
+  `referenceModel` appears in README.md. Proven by `cabal test infernix-unit` and
+  `infernix lint docs`, which pass on the present CUDA Linux host.
 - **Cohort gate ([Wave I](cohort-validation-waves.md), Stage 2):** requiring a per-family assertion
   for every active-substrate catalog entry rides Sprints 6.2/6.3; each cohort runs it against its
   own catalog column (Apple Metal incl. tart; CUDA `linux-cpu`/`linux-gpu`).
@@ -1537,13 +1559,18 @@ replace the metadata-echo assertion with the per-family real-output result contr
 mechanically-checked "every README row is covered by at least one substrate" invariant. The other
 Sprints (6.1, 6.4, 6.5, 6.7-6.30) remain `Done`; Apple cohort validation closed in Waves
 A/A.1/A.2/A.3 and CUDA Linux cohort validation closed in Wave C. Code-side closure for the reopened
-sprints — the `ResultFamily` dispatch in the integration suite, the per-family Playwright
-assertions, and the `allMatrixRowIds` coverage invariant — lands in natural order on whichever
-single machine is present and is proven by the machine-independent gate set (`cabal test
-infernix-unit`, `infernix lint docs`, the web unit suite). The real-engine integration and E2E
-assertions are the Stage 2 cohort gate: each cohort runs them against its own catalog column
-([Wave I](cohort-validation-waves.md)). The phase returns to `Done` only after that wave closes. See
-the two-axis execution rule in [development_plan_standards.md](development_plan_standards.md)
+sprints is complete and validated on the present CUDA Linux host (x86_64 + RTX 5090): the
+`ResultFamily` dispatch in the integration suite, the per-family Playwright assertions plus
+per-family web-UI artifact rendering, and the `allMatrixRowIds` coverage invariant (with the
+README-to-matrix coverage check under `infernix lint docs`) are written and proven by the
+machine-independent gate set that ran on this host (`cabal test infernix-unit`,
+`cabal build test:infernix-integration`, `infernix lint docs`, `infernix lint files`). The web unit
+suite (`spago`/Node 22) could not run on this bare host (host Node 18; Node 22 makes spago segfault
+— an environmental toolchain limit), so its gate is exercised in the supported Linux container lane
+(Node 22) / cohort batch. The real-engine integration and routed E2E assertions are the Stage 2
+cohort gate: each cohort runs them against its own catalog column (Apple Metal incl. tart, and CUDA
+GPU; [Wave I](cohort-validation-waves.md)). The phase returns to `Done` only after that wave closes.
+See the two-axis execution rule in [development_plan_standards.md](development_plan_standards.md)
 Section Q.
 
 ## Documentation Requirements

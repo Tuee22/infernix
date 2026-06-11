@@ -33,8 +33,12 @@ source "${SCRIPT_DIR}/common.sh"
 SCRIPT_LABEL="./bootstrap/linux-gpu.sh"
 COMPOSE_IMAGE="infernix-linux-gpu:local"
 COMPOSE_SUBSTRATE="linux-gpu"
-COMPOSE_BASE_IMAGE="nvidia/cuda:13.2.1-cudnn-runtime-ubuntu24.04"
-NVIDIA_PROBE_IMAGE="nvidia/cuda:12.4.1-base-ubuntu22.04"
+# Pinned to CUDA 12.8 to match the supported NVIDIA driver branch (570.x,
+# `nvidia-smi` reports CUDA 12.8). A CUDA 13.x runtime needs driver >= 580,
+# so the cuDNN runtime base and the engine's cu128 PyTorch/vLLM wheels are
+# aligned on 12.8; bump both together only when the host driver moves to 580+.
+COMPOSE_BASE_IMAGE="nvidia/cuda:12.8.1-cudnn-runtime-ubuntu24.04"
+NVIDIA_PROBE_IMAGE="nvidia/cuda:12.8.1-base-ubuntu24.04"
 COMPOSE_PROJECT="infernix-linux-gpu"
 COMPOSE_FILES=(--file compose.yaml)
 

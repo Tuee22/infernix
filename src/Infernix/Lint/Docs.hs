@@ -4,12 +4,15 @@ module Infernix.Lint.Docs
 where
 
 import Control.Monad (forM_, unless, when)
-import Data.List (intercalate, isInfixOf, isPrefixOf)
+import Data.Char (toLower)
+import Data.List (intercalate, isInfixOf, isPrefixOf, nub)
+import Data.Text qualified as Text
 import Infernix.CommandRegistry
   ( renderCliReferenceCommandsSection,
     renderCliSurfaceFamiliesSection,
   )
 import Infernix.Config (Paths (..), discoverPaths)
+import Infernix.Models (catalogForMode)
 import Infernix.Routes
   ( renderClusterBootstrapRouteChecksSection,
     renderEdgeRoutingInventorySection,
@@ -19,6 +22,7 @@ import Infernix.Routes
     renderReadmeRouteSummarySection,
     renderWebPortalRoutesSection,
   )
+import Infernix.Types (allRuntimeModes, referenceModel)
 import System.Directory (doesFileExist, doesPathExist)
 import System.FilePath (dropDrive, normalise, takeDirectory, (</>))
 
@@ -339,6 +343,7 @@ runDocsLint = do
   unless ("documents/" `isInfixOf` readmeContents && "DEVELOPMENT_PLAN/" `isInfixOf` readmeContents) $
     ioError (userError "README.md must reference documents/ and DEVELOPMENT_PLAN/")
   validateReadmeRuntimeModeContract readmeContents
+  validateReadmeMatrixCoverage readmeContents
   forM_ requiredDocs $ \relativePath -> do
     contents <- readFile (repoRoot paths </> relativePath)
     validateGovernedDocumentMetadata relativePath contents
@@ -497,6 +502,32 @@ validateReadmeRuntimeModeContract contents = do
   unless
     ("| Ubuntu 24.04 / CPU | containerized Linux CPU path |" `isInfixOf` contents)
     (ioError (userError "README.md must describe linux-cpu as the containerized Linux CPU path"))
+
+-- | Phase 6 Sprint 6.6 — the README-to-matrix coverage check. Every model
+-- in the generated catalog (the union of 'catalogForMode' across every
+-- substrate, which equals 'Infernix.Models.allMatrixRowIds') must be named
+-- by the README's comprehensive model/format/engine matrix. The
+-- @referenceModel@ is the stable identifier shared by the catalog row and
+-- the README matrix entry; the union-equals-README-rows invariant itself is
+-- asserted by `infernix test unit`.
+validateReadmeMatrixCoverage :: String -> IO ()
+validateReadmeMatrixCoverage contents = do
+  let lowerReadme = map toLower contents
+      catalogModels = concatMap catalogForMode allRuntimeModes
+      missing =
+        nub
+          [ referenceModelName
+          | model <- catalogModels,
+            let referenceModelName = Text.unpack (referenceModel model),
+            not (map toLower referenceModelName `isInfixOf` lowerReadme)
+          ]
+  unless (null missing) $
+    ioError
+      ( userError
+          ( "README.md model matrix is missing generated-catalog reference models: "
+              <> intercalate ", " missing
+          )
+      )
 
 validateTestingDocOwnership :: Paths -> IO ()
 validateTestingDocOwnership paths = do

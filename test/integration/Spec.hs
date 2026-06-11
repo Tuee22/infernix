@@ -26,8 +26,10 @@ import Infernix.DemoConfig (decodeDemoConfigFile)
 import Infernix.Models
   ( expectedDaemonLocationForRuntime,
     expectedInferenceExecutorLocationForRuntime,
+    findModel,
     hostBatchTopicForMode,
     requestTopicsForMode,
+    resultFamilyForDescriptor,
     resultTopicForMode,
   )
 import Infernix.Runtime.Pulsar
@@ -294,6 +296,11 @@ validateCatalogModelInference paths runtimeMode modelIdValue = do
       topic : _ -> pure topic
       [] -> fail ("no request topics configured for " <> showRuntimeMode runtimeMode)
   let resultTopic = resultTopicForMode runtimeMode
+  model <-
+    case findModel runtimeMode (Text.pack modelIdValue) of
+      Just descriptor -> pure descriptor
+      Nothing ->
+        fail ("model " <> modelIdValue <> " is not in the " <> showRuntimeMode runtimeMode <> " catalog")
   requestIdValue <-
     publishInferenceRequest
       paths
@@ -301,7 +308,8 @@ validateCatalogModelInference paths runtimeMode modelIdValue = do
       requestTopic
       InferenceRequest
         { requestModelId = Text.pack modelIdValue,
-          inputText = Text.pack ("integration coverage for " <> modelIdValue)
+          inputText = Text.pack ("integration coverage for " <> modelIdValue),
+          inputObjectRef = Nothing
         }
   maybeResult <- waitForPublishedResult paths runtimeMode resultTopic requestIdValue
   case maybeResult of
@@ -313,6 +321,58 @@ validateCatalogModelInference paths runtimeMode modelIdValue = do
       assert
         (resultRuntimeMode resultValue == runtimeMode)
         ("service daemon preserves the runtime mode in published results for " <> modelIdValue)
+      -- Phase 6 Sprint 6.2: assert the per-family real-output result contract,
+      -- dispatched on ResultFamily (shape + type, never golden strings). One
+      -- DRY suite reads the active substrate's catalog and traverses the
+      -- README rows; the assertions pass only when a real engine ran on cohort
+      -- hardware (Section P: results name the single substrate exercised).
+      assertResultFamilyContract (resultFamilyForDescriptor model) modelIdValue (payload resultValue)
+
+-- | Phase 6 Sprint 6.2 — per-family result-shape contract. Text families
+-- (LLM, speech transcription) carry a non-empty inline continuation; every
+-- artifact family carries an @infernix-demo-objects@ object reference whose
+-- key extension matches the family's artifact type. The deeper byte/dimension
+-- checks (>= 2 separation stems, valid MIDI/MusicXML, image dimensions, audio
+-- sample rate) run against the fetched artifact on cohort hardware.
+assertResultFamilyContract :: ResultFamily -> String -> ResultPayload -> IO ()
+assertResultFamilyContract resultFamily modelIdValue payloadValue
+  | resultFamilyIsArtifact resultFamily =
+      case objectRef payloadValue of
+        Just ref -> do
+          assert
+            (isNothing (inlineOutput payloadValue))
+            ("artifact family " <> familyLabel <> " does not return inline output for " <> modelIdValue)
+          assert
+            ("infernix-demo-objects/" `Text.isPrefixOf` ref)
+            ("artifact family " <> familyLabel <> " writes to the infernix-demo-objects bucket for " <> modelIdValue)
+          assert
+            (any (`Text.isSuffixOf` ref) (expectedArtifactSuffixes resultFamily))
+            ("artifact family " <> familyLabel <> " returns the expected artifact type for " <> modelIdValue)
+        Nothing ->
+          fail ("artifact family " <> familyLabel <> " must return an object reference for " <> modelIdValue)
+  | otherwise =
+      case inlineOutput payloadValue of
+        Just text ->
+          assert
+            (not (Text.null (Text.strip text)) && isNothing (objectRef payloadValue))
+            ("text family " <> familyLabel <> " returns a non-empty inline continuation for " <> modelIdValue)
+        Nothing ->
+          fail ("text family " <> familyLabel <> " must return inline output for " <> modelIdValue)
+  where
+    familyLabel = Text.unpack (resultFamilyId resultFamily)
+
+expectedArtifactSuffixes :: ResultFamily -> [Text.Text]
+expectedArtifactSuffixes resultFamily =
+  case resultFamily of
+    SourceSeparation -> [".zip"]
+    AudioToMidi -> [".mid", ".midi"]
+    MusicTranscription -> [".mid", ".midi", ".musicxml", ".xml"]
+    ImageGeneration -> [".png"]
+    VideoGeneration -> [".mp4"]
+    AudioGeneration -> [".wav"]
+    OpticalMusicRecognition -> [".musicxml", ".xml"]
+    LlmText -> []
+    SpeechTranscription -> []
 
 assertHostBatchPublication :: RuntimeMode -> String -> IO ()
 assertHostBatchPublication runtimeMode publicationResponse =
@@ -405,7 +465,8 @@ validateServiceRuntimeLoop paths runtimeMode representativeModelId = do
       requestTopic
       InferenceRequest
         { requestModelId = Text.pack representativeModelId,
-          inputText = "service daemon request path"
+          inputText = "service daemon request path",
+          inputObjectRef = Nothing
         }
   maybeResult <- waitForPublishedResult paths runtimeMode resultTopic requestIdValue
   case maybeResult of
@@ -1630,7 +1691,8 @@ publishAndRequireResult paths runtimeMode modelIdValue inputValue = do
       requestTopic
       InferenceRequest
         { requestModelId = Text.pack modelIdValue,
-          inputText = Text.pack inputValue
+          inputText = Text.pack inputValue,
+          inputObjectRef = Nothing
         }
   maybeResult <- waitForPublishedResult paths runtimeMode resultTopic requestIdValue
   case maybeResult of

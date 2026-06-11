@@ -79,6 +79,7 @@ data HostTool
   | HostNvkind
   | HostSkopeo
   | HostHostname
+  | HostTart
   deriving (Eq, Show)
 
 -- | The supported short name for a tool, used in lint messages and
@@ -122,6 +123,7 @@ hostToolName tool = case tool of
   HostNvkind -> "nvkind"
   HostSkopeo -> "skopeo"
   HostHostname -> "hostname"
+  HostTart -> "tart"
 
 -- | Look up the absolute path for a tool. An empty path means the
 -- active execution context does not provide the tool (e.g. @apt-get@
@@ -172,6 +174,7 @@ hostToolFallbackCandidates tool = case tool of
   HostNvkind -> ["/usr/local/bin/nvkind", "/usr/bin/nvkind"]
   HostSkopeo -> ["/opt/homebrew/bin/skopeo", "/usr/bin/skopeo"]
   HostHostname -> ["/bin/hostname", "/usr/bin/hostname"]
+  HostTart -> ["/opt/homebrew/bin/tart"]
 
 pickToolPath :: HostTool -> HostToolPaths -> Text
 pickToolPath tool paths = case tool of
@@ -211,6 +214,7 @@ pickToolPath tool paths = case tool of
   HostNvkind -> hostNvkind paths
   HostSkopeo -> hostSkopeo paths
   HostHostname -> hostHostname paths
+  HostTart -> hostTart paths
 
 -- | Build a 'CreateProcess' for a tool invocation. The returned value
 -- can be customized further by callers that need stdin/stdout/stderr

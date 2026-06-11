@@ -31,6 +31,7 @@ import Infernix.DemoConfig
     renderModelListing,
     validateDemoConfigFile,
   )
+import Infernix.Engines.AppleSilicon (materializeMetalEngines, metalEngineArtifactAdapterIds)
 import Infernix.Error (InfernixError (EdgePortNotPublished))
 import Infernix.HostConfig qualified as HostConfig
 import Infernix.HostPrereqs (ensureAppleHostPrerequisites)
@@ -152,6 +153,11 @@ dispatch command =
       putStrLn ("demoUiEnabled: " <> show demoUiEnabledValue)
       putStrLn ("generatedDemoConfigPath: " <> materializedPath)
       putStrLn ("hostManifestPath: " <> hostManifestPath)
+    InternalMaterializeMetalEnginesCommand -> do
+      paths <- discoverPaths
+      ensureRepoLayout paths
+      materializeMetalEngines paths
+      mapM_ (putStrLn . ("metalEngineArtifact: " <>) . Text.unpack) metalEngineArtifactAdapterIds
     InternalDemoConfigLoadCommand demoConfigPath -> do
       demoConfig <- decodeDemoConfigFile demoConfigPath
       putStr (renderModelListing demoConfig)
@@ -307,7 +313,8 @@ runInternalPulsarRoundTrip runtimeMode demoConfigPath modelIdValue inputTextValu
   let requestValue =
         InferenceRequest
           { requestModelId = Text.pack modelIdValue,
-            inputText = Text.pack inputTextValue
+            inputText = Text.pack inputTextValue,
+            inputObjectRef = Nothing
           }
   requestIdValue <- publishInferenceRequest paths runtimeMode requestTopicValue requestValue
   maybeResult <- waitForInternalPulsarResult paths runtimeMode (resultTopic demoConfig) requestIdValue

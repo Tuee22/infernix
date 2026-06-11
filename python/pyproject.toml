@@ -50,6 +50,39 @@ module = ["infernix.*"]
 follow_imports = "skip"
 ignore_missing_imports = true
 
+# Phase 4 Sprint 4.7: the per-engine inference frameworks are prebuilt host
+# wheels installed only in the engine venv on cohort hardware, never declared
+# as adapter dependencies (see documents/development/python_policy.md
+# "Machine-Independent Gate Invariant"). The adapters lazy-import them inside
+# the transform body; this override lets `poetry run check-code` type-check on
+# any host without the wheels present, keeping the gate machine-independent.
+[[tool.mypy.overrides]]
+module = [
+  "boto3",
+  "boto3.*",
+  "botocore",
+  "botocore.*",
+  "torch",
+  "torch.*",
+  "torchaudio",
+  "transformers",
+  "transformers.*",
+  "vllm",
+  "vllm.*",
+  "diffusers",
+  "diffusers.*",
+  "scipy",
+  "scipy.*",
+  "demucs",
+  "demucs.*",
+  "basic_pitch",
+  "basic_pitch.*",
+  "omnizart",
+  "omnizart.*",
+  "mt3_inference",
+]
+ignore_missing_imports = true
+
 [tool.ruff]
 line-length = 88
 target-version = "py312"

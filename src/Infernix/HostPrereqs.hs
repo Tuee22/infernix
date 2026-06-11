@@ -32,6 +32,7 @@ data AppleHostRequirement
   | AppleNode
   | ApplePython
   | ApplePoetry
+  | AppleTart
   deriving (Eq, Show)
 
 newtype DockerInfo = DockerInfo String
@@ -65,7 +66,18 @@ appleHostRequirements maybeRuntimeMode command =
     ( clusterToolRequirements command
         <> webToolRequirements command
         <> maybe [] (`pythonToolRequirements` command) maybeRuntimeMode
+        <> metalEngineToolRequirements command
     )
+
+-- | Phase 1 Sprint 1.13 — the Apple Metal-engine build lane
+-- (@infernix internal materialize-metal-engines@) reconciles @tart@
+-- through Homebrew before provisioning the headless macOS build VM.
+-- This is the only command that needs @tart@, and it is Apple-only;
+-- the requirement is independent of the active runtime mode.
+metalEngineToolRequirements :: Command -> [AppleHostRequirement]
+metalEngineToolRequirements = \case
+  InternalMaterializeMetalEnginesCommand -> [AppleTart]
+  _ -> []
 
 runtimeModeForApplePrereqs :: Maybe RuntimeMode -> Command -> IO (Maybe RuntimeMode)
 runtimeModeForApplePrereqs maybeRuntimeMode command
@@ -273,6 +285,7 @@ homebrewFormula = \case
   AppleHelm -> "helm"
   AppleNode -> "node"
   ApplePython -> "python@3.12"
+  AppleTart -> "tart"
   ApplePoetry -> error "Poetry is not installed through Homebrew on the supported Apple path"
 
 providedCommand :: AppleHostRequirement -> String
@@ -283,6 +296,7 @@ providedCommand = \case
   AppleHelm -> "helm"
   AppleNode -> "node"
   ApplePython -> "python3.12"
+  AppleTart -> "tart"
   ApplePoetry -> "poetry"
 
 requirementId :: AppleHostRequirement -> String
@@ -293,6 +307,7 @@ requirementId = \case
   AppleHelm -> "helm"
   AppleNode -> "node"
   ApplePython -> "python"
+  AppleTart -> "tart"
   ApplePoetry -> "poetry"
 
 trimWhitespace :: String -> String

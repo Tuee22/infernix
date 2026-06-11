@@ -55,6 +55,7 @@
 - `infernix internal discover harbor-overlay OVERLAY` - prints the Harbor-backed image references discovered in a rendered override payload
 - `infernix internal publish-chart-images RENDERED_CHART OUTPUT` - publishes the chart image inventory into a Harbor override file
 - `infernix internal materialize-substrate RUNTIME_MODE [--demo-ui true|false]` - writes the generated substrate file for one explicit substrate id into the active build root
+- `infernix internal materialize-metal-engines` - builds the allowlisted Apple Metal/Core ML engine artifacts inside the headless tart macOS VM and copies them to `./.data/engines/<adapterId>/` (Apple-only; mirrors `internal materialize-substrate`)
 - `infernix internal demo-config load PATH` - loads one generated demo config and prints the rendered model listing
 - `infernix internal demo-config validate PATH` - validates one generated demo config file
 - `infernix internal pulsar-roundtrip DEMO_CONFIG_PATH MODEL_ID INPUT_TEXT` - publishes one inference request through Pulsar and waits for the matching result

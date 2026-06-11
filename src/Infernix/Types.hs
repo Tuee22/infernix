@@ -19,6 +19,7 @@ module Infernix.Types
     PulsarConnectionMode (..),
     RequestField (..),
     RequestFieldType (..),
+    ResultFamily (..),
     ResultPayload (..),
     RouteInfo (..),
     RuntimeLane (..),
@@ -36,6 +37,8 @@ module Infernix.Types
     parseRuntimeMode,
     pulsarConnectionModeId,
     requestFieldTypeId,
+    resultFamilyId,
+    resultFamilyIsArtifact,
     runtimeLaneId,
     runtimeModeId,
   )
@@ -482,9 +485,53 @@ instance FromJSON ModelDescriptor where
       <*> value .: "requiresGpu"
       <*> value .: "notes"
 
+-- | Phase 4 Sprint 4.15 — the closed set of per-family result contracts.
+-- Each README matrix row resolves to exactly one 'ResultFamily' (via
+-- 'Infernix.Models.resultFamilyForDescriptor'), which decides whether the
+-- engine result rides inline in the Pulsar message ('inlineOutput') or as
+-- an @infernix-demo-objects@ object reference ('objectRef'). The text
+-- families ('LlmText', 'SpeechTranscription') are inline; every artifact
+-- family carries an object reference.
+data ResultFamily
+  = LlmText
+  | SpeechTranscription
+  | SourceSeparation
+  | AudioToMidi
+  | MusicTranscription
+  | ImageGeneration
+  | VideoGeneration
+  | AudioGeneration
+  | OpticalMusicRecognition
+  deriving (Eq, Ord, Read, Show, Enum, Bounded)
+
+resultFamilyId :: ResultFamily -> Text
+resultFamilyId resultFamily = case resultFamily of
+  LlmText -> "llm-text"
+  SpeechTranscription -> "speech-transcription"
+  SourceSeparation -> "source-separation"
+  AudioToMidi -> "audio-to-midi"
+  MusicTranscription -> "music-transcription"
+  ImageGeneration -> "image-generation"
+  VideoGeneration -> "video-generation"
+  AudioGeneration -> "audio-generation"
+  OpticalMusicRecognition -> "optical-music-recognition"
+
+-- | Whether a family's result is a binary artifact (written to
+-- @infernix-demo-objects@ and carried as an 'objectRef') rather than
+-- inline text. Only the two text families are inline.
+resultFamilyIsArtifact :: ResultFamily -> Bool
+resultFamilyIsArtifact resultFamily = case resultFamily of
+  LlmText -> False
+  SpeechTranscription -> False
+  _ -> True
+
 data InferenceRequest = InferenceRequest
   { requestModelId :: Text,
-    inputText :: Text
+    inputText :: Text,
+    -- | Phase 4 Sprint 4.15 — non-text input for the audio and image
+    -- input families, carried as an @infernix-demo-objects@ object
+    -- reference. 'Nothing' for the text families, which use 'inputText'.
+    inputObjectRef :: Maybe Text
   }
   deriving (Eq, Read, Show)
 
@@ -493,12 +540,14 @@ instance FromJSON InferenceRequest where
     InferenceRequest
       <$> value .: "requestModelId"
       <*> value .: "inputText"
+      <*> value .:? "inputObjectRef"
 
 instance ToJSON InferenceRequest where
   toJSON requestValue =
     object
       [ "requestModelId" .= requestModelId requestValue,
-        "inputText" .= inputText requestValue
+        "inputText" .= inputText requestValue,
+        "inputObjectRef" .= inputObjectRef requestValue
       ]
 
 data ResultPayload = ResultPayload
