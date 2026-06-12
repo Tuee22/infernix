@@ -121,6 +121,7 @@ def normalized_input_text(value: str) -> str:
 def run_context_adapter(transform: Callable[[AdapterContext], str]) -> int:
     request = _decode_request()
     try:
+        _configure_model_cache_from_request(request)
         output_text = transform(load_adapter_context(request))
     except Exception as exc:  # pragma: no cover - surfaced through worker tests
         error_response = inference_pb2.WorkerResponse(
@@ -158,6 +159,7 @@ def run_artifact_adapter(transform: Callable[[AdapterContext], ArtifactResult]) 
     """
     request = _decode_request()
     try:
+        _configure_model_cache_from_request(request)
         context = load_adapter_context(request)
         artifact = transform(context)
         object_ref = _upload_demo_object(context, artifact)
@@ -237,6 +239,7 @@ def _upload_demo_object(context: AdapterContext, artifact: ArtifactResult) -> st
         f"{context.family}/{context.model_id}/"
         f"{short_digest(context.input_text + context.model_id)}{artifact.suffix}"
     )
+    artifact_bucket = config.demo_artifacts_bucket or DEMO_OBJECTS_BUCKET
     client = boto3.client(
         "s3",
         endpoint_url=config.minio_endpoint,
@@ -246,12 +249,63 @@ def _upload_demo_object(context: AdapterContext, artifact: ArtifactResult) -> st
         config=Config(signature_version="s3v4"),
     )
     client.put_object(
-        Bucket=DEMO_OBJECTS_BUCKET,
+        Bucket=artifact_bucket,
         Key=object_key,
         Body=artifact.data,
         ContentType=artifact.content_type,
     )
-    return f"{DEMO_OBJECTS_BUCKET}/{object_key}"
+    return f"{artifact_bucket}/{object_key}"
+
+
+def _configure_model_cache_from_request(request: inference_pb2.WorkerRequest) -> None:
+    # Phase 4 real-engine follow-on: the private Haskell->adapter protobuf
+    # request carries cluster-decoded cache + MinIO wiring, replacing the
+    # doc-promised but previously missing call to adapters.model_cache.configure().
+    from adapters import model_cache
+
+    if not _worker_request_has_model_cache_config(request):
+        return
+
+    defaults = model_cache.ModelCacheConfig()
+    model_cache.configure(
+        model_cache.ModelCacheConfig(
+            cache_root=(
+                Path(cast(str, request.model_cache_root))
+                if cast(str, request.model_cache_root)
+                else defaults.cache_root
+            ),
+            quota_bytes=(
+                int(cast(int, request.model_cache_quota_bytes))
+                if cast(int, request.model_cache_quota_bytes)
+                else defaults.quota_bytes
+            ),
+            models_bucket=cast(str, request.minio_models_bucket)
+            or defaults.models_bucket,
+            demo_artifacts_bucket=cast(str, request.minio_demo_artifacts_bucket)
+            or defaults.demo_artifacts_bucket,
+            minio_endpoint=cast(str, request.minio_endpoint),
+            minio_access_key=cast(str, request.minio_access_key),
+            minio_secret_key=cast(str, request.minio_secret_key),
+            minio_region=cast(str, request.minio_region) or defaults.minio_region,
+        )
+    )
+
+
+def _worker_request_has_model_cache_config(
+    request: inference_pb2.WorkerRequest,
+) -> bool:
+    return any(
+        [
+            bool(cast(str, request.model_cache_root)),
+            bool(cast(int, request.model_cache_quota_bytes)),
+            bool(cast(str, request.minio_endpoint)),
+            bool(cast(str, request.minio_models_bucket)),
+            bool(cast(str, request.minio_demo_artifacts_bucket)),
+            bool(cast(str, request.minio_region)),
+            bool(cast(str, request.minio_access_key)),
+            bool(cast(str, request.minio_secret_key)),
+        ]
+    )
 
 
 def run_setup_bootstrap(adapter_id: str, install_root: Path | None = None) -> int:

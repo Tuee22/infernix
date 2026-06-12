@@ -204,9 +204,12 @@ a direct bearer token header. The signed-in shell also offers `Delete account`, 
 demo Pulsar topics, then starts Keycloak's `kc_action=delete_account` action.
 The frontend and coordinator Deployments scale horizontally with replicas ≥ 2 under HA defaults;
 the engine role runs at most one pod per node because multiple engines per node would duplicate
-KV cache and model-weight memory with no performance gain. On a Linux node with multiple NVIDIA
-devices, the single engine pod owns all local devices and the active `.dhall` decides per-device
-model assignment. **No daemon has a PVC** — durable state lives only in MinIO and Pulsar. Model
+KV cache and model-weight memory with no performance gain. On `linux-gpu`, the base engine handles
+canonical native-fallback batches and per-engine framework images run as
+`infernix-engine-<engine>` Deployments selected by `inference.batch.linux-gpu.<engine>` topics;
+repo-owned single-GPU validation starts those per-engine deployments at zero replicas and scales
+one at a time.
+**No daemon has a PVC** — durable state lives only in MinIO and Pulsar. Model
 weights are pulled from the `infernix-models` MinIO bucket on first use (lazy bootstrap via a
 Pulsar Failover subscription owned by the coordinator with exactly-once semantics) and staged
 into the engine pod's ephemeral `emptyDir` model cache with a hard `sizeLimit`; pod restart
@@ -218,12 +221,12 @@ the stateless `infernix-coordinator` Deployment in Kind, and routed manual infer
 coordinator before Apple-native batches move through Pulsar to the host-side `./.build/infernix`
 engine daemon (the same binary running as the Apple `Engine`-role process under an `flock(2)`
 singleton on `./.data/runtime/engine.lock`). On Linux, the same routed demo surface bridges through Pulsar into the coordinator
-Deployment, which hands batches off to the engine Deployment. `/api/publication` now keeps
+Deployment, which hands batches off to the engine-role Deployment set. `/api/publication` now keeps
 `apiUpstream.mode: cluster-demo` for the stable browser base URL, reports
 `daemonLocation: cluster-pod` for every substrate, adds `inferenceExecutorLocation`, and keeps
 `inferenceDispatchMode` so Apple can advertise `pulsar-bridge-to-host-daemon` while Linux
 advertises `pulsar-bridge-to-cluster-daemon`. Production deployments leave the demo flag off,
-accept inference work via Pulsar subscription only, and run only the engine Deployment. The
+accept inference work via Pulsar subscription only, and run only the engine-role Deployment set. The
 local Kind and HA substrate is the validation and operator baseline for Apple, CPU, and CUDA
 runtime targets.
 
@@ -713,9 +716,10 @@ rebuildable.
 ## Configuration and Runtime Contract
 
 - a `.dhall` configuration defines the runtime contract for supported service flows; the active
-  `.dhall` names `daemonRole`, `clusterDaemon`, optional `hostDaemon`, `request_topics : List Text`,
-  `result_topic : Text`, `engines : List EngineBinding`, and the optional `demo_ui : Bool` flag
-  that gates the `infernix-demo` workload
+  `.dhall` names `daemonRole`, `coordinator`, legacy-compatible `engine`,
+  `engineDaemons : List DaemonConfig`, `request_topics : List Text`, `result_topic : Text`,
+  `engines : List EngineBinding`, and the optional `demo_ui : Bool` flag that gates the
+  `infernix-demo` workload
 - Apple host lifecycle and validation commands materialize or verify that file under `./.build/`;
   `./.build/infernix internal materialize-substrate apple-silicon` remains the direct helper for
   explicit restaging or inspection
@@ -732,13 +736,18 @@ rebuildable.
 - each daemon reads the staged substrate file at startup; hot reload, admin HTTP, and route or
   device remapping are outside the supported service contract
 - the production inference surface is Pulsar subscription only and runs only the engine role
-  (`infernix-engine` Deployment on Linux substrates; on-host `infernix service` daemon on Apple
-  silicon); when the demo UI is enabled, the stateless coordinator role
-  (`infernix-coordinator` Deployment) joins the cluster to own per-context dispatch, batching,
-  and result writeback. On every substrate the coordinator consumes protobuf requests from the
-  configured request topics and forwards batches to `inference.batch.<mode>`; the engine role
-  consumes those batches, executes inference, and publishes results to
-  `inference.result.<mode>`; no HTTP listener is bound on either role
+  (`infernix-engine` plus any Linux GPU `infernix-engine-<engine>` Deployments on Linux
+  substrates; on-host `infernix service` daemon on Apple silicon). Repo-owned `linux-gpu`
+  lifecycle values keep per-engine deployments at zero replicas on the single-GPU lane and
+  validation scales one at a time; when the demo UI is enabled,
+  the stateless coordinator role (`infernix-coordinator` Deployment) joins the cluster to own
+  per-context dispatch, batching, and result writeback. On every substrate the coordinator consumes protobuf requests from the
+  configured request topics and forwards batches to the configured handoff topic: Linux CPU and
+  native-fallback Linux GPU work use `inference.batch.<mode>`, Linux GPU Python-native work can
+  use `inference.batch.<mode>.<engine>`, and Apple host-native work uses
+  `inference.batch.apple-silicon.host`. The engine role consumes those batches, executes
+  inference, and publishes results to `inference.result.<mode>`; no HTTP listener is bound on
+  either role
 - local cache state is never authoritative; it is reconstructed from durable metadata and durable
   artifacts
 
@@ -748,7 +757,8 @@ rebuildable.
   daemon role metadata, and the optional batch handoff topic carried in the active `.dhall`; the
   generated defaults are one `inference.request.<runtime-mode>` topic family, one
   `inference.result.<runtime-mode>` topic family, `inference.batch.linux-cpu` /
-  `inference.batch.linux-gpu` for Linux coordinator-to-engine handoff, and
+  `inference.batch.linux-gpu` for canonical Linux coordinator-to-engine handoff,
+  `inference.batch.linux-gpu.<engine>` for Linux GPU per-engine Python-native handoff, and
   `inference.batch.apple-silicon.host` for Apple host-native handoff
 - request routing is lane-oriented: one engine, one model, one device class or allocation, one
   runtime-owned execution stream
@@ -829,7 +839,7 @@ ground and demo webapp provide the shared operator and demo substrate for this m
 | Speech transcription | CTranslate2 | faster-whisper-small | https://huggingface.co/Systran/faster-whisper-small | CTranslate2 | CTranslate2 | Not recommended | Best throughput-oriented Whisper path on CUDA |
 | Source separation | PyTorch checkpoint | htdemucs | https://github.com/facebookresearch/demucs | PyTorch CPU | PyTorch CUDA | PyTorch MPS | Canonical Demucs execution path |
 | Source separation | PyTorch checkpoint | Open-Unmix | https://github.com/sigsep/open-unmix-pytorch | PyTorch CPU | PyTorch CUDA | PyTorch MPS | Alternate separation path |
-| Audio-to-MIDI / pitch transcription | TensorFlow model family | basic-pitch | https://github.com/spotify/basic-pitch | TensorFlow CPU or default package runtime | TensorFlow CUDA | Not recommended | TensorFlow is the preferred production lane when used on CUDA |
+| Audio-to-MIDI / pitch transcription | TensorFlow model family | basic-pitch | https://github.com/spotify/basic-pitch | Named residual on Python 3.12 | Named residual on CUDA 12.8 | Not recommended | Published package pins TensorFlow `<2.15.1`; use the ONNX or Core ML lane until a maintained TensorFlow package is adopted |
 | Audio-to-MIDI / pitch transcription | Core ML | basic-pitch | https://github.com/spotify/basic-pitch | Not recommended | Not recommended | Core ML | Preferred Apple production lane for Basic Pitch |
 | Audio-to-MIDI / pitch transcription | ONNX | basic-pitch release artifacts | https://github.com/spotify/basic-pitch/releases | ONNX Runtime CPU | ONNX Runtime CUDA | ONNX Runtime | Useful portable fallback artifact |
 | Multi-instrument music transcription | JAX checkpoint / codebase | MT3 | https://github.com/magenta/mt3 | JAX CPU | JAX/XLA on NVIDIA | jax-metal | JAX is the canonical execution model |

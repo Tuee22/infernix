@@ -42,11 +42,13 @@ The supported target shape uses two MinIO buckets and nothing else:
 
 ## Engine Model-Weight Loading
 
-Every engine adapter loads model weights through one shared helper:
-`python/adapters/common/model_cache.py`, exposing the function
-`get_model_path(model_id) -> filesystem path`. Every adapter calls it
-regardless of underlying engine family; there is no bytes-loading
-branch.
+Every Python engine adapter loads model weights through one shared helper:
+`python/adapters/model_cache.py`, exposing the function
+`get_model_path(model_id) -> filesystem path`. The Haskell worker passes
+model-cache and MinIO wiring on the private worker request, and the Python
+stdio harness configures the helper before invoking adapter logic. Every
+Python adapter calls it regardless of underlying engine family; there is no
+bytes-loading branch.
 
 The helper:
 

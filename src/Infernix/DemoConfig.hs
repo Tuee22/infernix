@@ -23,7 +23,17 @@ import Data.Text qualified as Text
 import Infernix.Config (Paths)
 import Infernix.Config qualified as Config
 import Infernix.HostConfig qualified as HostConfig
-import Infernix.Models (catalogForMode, encodeDemoConfig, engineBindingsForMode, hostBatchTopicForMode, requestTopicsForMode, resultTopicForMode)
+import Infernix.Models
+  ( canonicalBatchTopicForMode,
+    catalogForMode,
+    encodeDemoConfig,
+    engineBindingsForMode,
+    frameworkEngineNamesForMode,
+    hostBatchTopicForMode,
+    perEngineBatchTopicForMode,
+    requestTopicsForMode,
+    resultTopicForMode,
+  )
 import Infernix.Substrate (decodeSubstrateConfigFile, demoConfigGeneratedBannerLine)
 import Infernix.Types
 import System.Directory (createDirectoryIfMissing, doesFileExist, removeFile, renameFile)
@@ -162,7 +172,7 @@ renderGeneratedDemoConfigPayload paths runtimeMode demoUiEnabledValue daemonRole
             demoUiEnabled = demoUiEnabledValue,
             activeDaemonRole = daemonRole,
             coordinatorDaemon = coordinatorDaemonConfig runtimeMode,
-            engineDaemon = engineDaemonConfig runtimeMode,
+            engineDaemons = engineDaemonConfigs runtimeMode,
             requestTopics = requestTopicsForMode runtimeMode,
             resultTopic = resultTopicForMode runtimeMode,
             modelsBucket = defaultModelsBucket,
@@ -196,8 +206,8 @@ coordinatorDaemonConfig runtimeMode =
 -- @infernix-engine@ Deployment (location @cluster-pod@, Pulsar transport
 -- configured directly via env vars). In every case the engine consumes
 -- the inference-batch topic the coordinator hands off to.
-engineDaemonConfig :: RuntimeMode -> Maybe DaemonConfig
-engineDaemonConfig runtimeMode =
+engineDaemonConfigs :: RuntimeMode -> [DaemonConfig]
+engineDaemonConfigs runtimeMode =
   -- Phase 7 Sprint 7.7: the engine consumes its substrate's
   -- @inference.batch.<mode>@ topic, executes the worker, and publishes
   -- the result to @inference.result.<mode>@. The host_batch_topic
@@ -208,25 +218,50 @@ engineDaemonConfig runtimeMode =
   -- is the only daemon that forwards from request -> batch.
   case runtimeMode of
     AppleSilicon ->
-      Just
-        DaemonConfig
-          { daemonConfigRole = Engine,
-            daemonConfigLocation = "control-plane-host",
-            daemonConfigRequestTopics = maybe [] pure (hostBatchTopicForMode runtimeMode),
-            daemonConfigResultTopic = resultTopicForMode runtimeMode,
-            daemonConfigHostBatchTopic = Nothing,
-            daemonConfigPulsarConnectionMode = PublicationEdgeAutoDiscovery
-          }
+      [ hostEngineDaemon runtimeMode
+      ]
     _ ->
-      Just
-        DaemonConfig
-          { daemonConfigRole = Engine,
-            daemonConfigLocation = "cluster-pod",
-            daemonConfigRequestTopics = maybe [] pure (hostBatchTopicForMode runtimeMode),
-            daemonConfigResultTopic = resultTopicForMode runtimeMode,
-            daemonConfigHostBatchTopic = Nothing,
-            daemonConfigPulsarConnectionMode = ConfiguredTransport
-          }
+      genericLinuxEngineDaemon runtimeMode : perFrameworkEngineDaemons runtimeMode
+
+hostEngineDaemon :: RuntimeMode -> DaemonConfig
+hostEngineDaemon runtimeMode =
+  DaemonConfig
+    { daemonConfigRole = Engine,
+      daemonConfigLocation = "control-plane-host",
+      daemonConfigRequestTopics = maybe [] pure (hostBatchTopicForMode runtimeMode),
+      daemonConfigResultTopic = resultTopicForMode runtimeMode,
+      daemonConfigHostBatchTopic = Nothing,
+      daemonConfigPulsarConnectionMode = PublicationEdgeAutoDiscovery
+    }
+
+genericLinuxEngineDaemon :: RuntimeMode -> DaemonConfig
+genericLinuxEngineDaemon runtimeMode =
+  DaemonConfig
+    { daemonConfigRole = Engine,
+      daemonConfigLocation = "cluster-pod",
+      daemonConfigRequestTopics = [canonicalBatchTopicForMode runtimeMode],
+      daemonConfigResultTopic = resultTopicForMode runtimeMode,
+      daemonConfigHostBatchTopic = Nothing,
+      daemonConfigPulsarConnectionMode = ConfiguredTransport
+    }
+
+perFrameworkEngineDaemons :: RuntimeMode -> [DaemonConfig]
+perFrameworkEngineDaemons runtimeMode =
+  case runtimeMode of
+    LinuxGpu ->
+      map (perFrameworkEngineDaemon runtimeMode) (frameworkEngineNamesForMode runtimeMode)
+    _ -> []
+
+perFrameworkEngineDaemon :: RuntimeMode -> Text.Text -> DaemonConfig
+perFrameworkEngineDaemon runtimeMode engineName =
+  DaemonConfig
+    { daemonConfigRole = Engine,
+      daemonConfigLocation = "cluster-pod",
+      daemonConfigRequestTopics = [perEngineBatchTopicForMode runtimeMode engineName],
+      daemonConfigResultTopic = resultTopicForMode runtimeMode,
+      daemonConfigHostBatchTopic = Nothing,
+      daemonConfigPulsarConnectionMode = ConfiguredTransport
+    }
 
 renderModelListing :: DemoConfig -> String
 renderModelListing demoConfig =
@@ -270,13 +305,15 @@ validateDemoConfig demoConfig
       Left "active daemon role must match either the coordinator or engine metadata"
   | invalidDaemonConfig (coordinatorDaemon demoConfig) =
       Left "coordinator metadata must declare role, location, request topics, and result topic"
-  | maybe False invalidDaemonConfig (engineDaemon demoConfig) =
-      Left "engine metadata must declare role, location, request topics, and result topic"
-  | configRuntimeMode demoConfig == AppleSilicon && isNothing (engineDaemon demoConfig) =
+  | null (engineDaemons demoConfig) =
+      Left "engine metadata must not be empty"
+  | any invalidDaemonConfig (engineDaemons demoConfig) =
+      Left "every engine metadata entry must declare role, location, request topics, and result topic"
+  | configRuntimeMode demoConfig == AppleSilicon && isNothing primaryEngineDaemon =
       Left "apple-silicon configs must include engine metadata"
   | configRuntimeMode demoConfig == AppleSilicon && isNothing (daemonConfigHostBatchTopic (coordinatorDaemon demoConfig)) =
       Left "apple-silicon coordinator metadata must declare a host batch topic"
-  | configRuntimeMode demoConfig == AppleSilicon && maybe True (null . daemonConfigRequestTopics) (engineDaemon demoConfig) =
+  | configRuntimeMode demoConfig == AppleSilicon && maybe True (null . daemonConfigRequestTopics) primaryEngineDaemon =
       Left "apple-silicon engine metadata must consume the host batch topic"
   | any runtimeMismatch (models demoConfig) =
       Left "every model runtimeMode must match the demo config runtimeMode"
@@ -309,12 +346,16 @@ validateDemoConfig demoConfig
     invalidActiveDaemonRole =
       activeDaemonRole demoConfig
         /= daemonConfigRole (coordinatorDaemon demoConfig)
-        && maybe True ((/= activeDaemonRole demoConfig) . daemonConfigRole) (engineDaemon demoConfig)
+        && all ((/= activeDaemonRole demoConfig) . daemonConfigRole) (engineDaemons demoConfig)
     invalidDaemonConfig daemonConfig =
       Text.null (Text.strip (daemonConfigLocation daemonConfig))
         || null (daemonConfigRequestTopics daemonConfig)
         || any (Text.null . Text.strip) (daemonConfigRequestTopics daemonConfig)
         || Text.null (Text.strip (daemonConfigResultTopic daemonConfig))
+    primaryEngineDaemon =
+      case engineDaemons demoConfig of
+        firstEngineDaemon : _ -> Just firstEngineDaemon
+        [] -> Nothing
     runtimeMismatch model = runtimeMode model /= configRuntimeMode demoConfig
     missingEngineBindings =
       [ Text.unpack engineName

@@ -50,6 +50,7 @@ in  { runtimeMode : Text
     , daemonRole : Text
     , coordinator : DaemonConfig
     , engine : Optional DaemonConfig
+    , engineDaemons : List DaemonConfig
     , request_topics : List Text
     , result_topic : Text
     , models_bucket : Text

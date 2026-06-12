@@ -79,6 +79,11 @@ DEFAULT_QUOTA_BYTES = 32 * 1024 * 1024 * 1024
 # ``ModelCacheConfig.models_bucket`` for tenant isolation or test fixtures.
 DEFAULT_MODELS_BUCKET = "infernix-models"
 
+# Default demo artifact bucket. Haskell passes the mounted ClusterConfig value
+# through WorkerRequest; this fallback keeps direct adapter tests aligned with
+# the chart default.
+DEFAULT_DEMO_ARTIFACTS_BUCKET = "infernix-demo-objects"
+
 
 class ModelCacheNotPopulated(RuntimeError):
     """Raised when ``get_model_path`` cannot return a populated cache.
@@ -109,6 +114,7 @@ class ModelCacheConfig:
     cache_root: Path = Path(DEFAULT_MODEL_CACHE_ROOT)
     quota_bytes: int = DEFAULT_QUOTA_BYTES
     models_bucket: str = DEFAULT_MODELS_BUCKET
+    demo_artifacts_bucket: str = DEFAULT_DEMO_ARTIFACTS_BUCKET
     minio_endpoint: str = ""
     minio_access_key: str = ""
     minio_secret_key: str = ""

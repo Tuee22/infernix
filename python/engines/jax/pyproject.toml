@@ -14,7 +14,7 @@ authors = ["Infernix <noreply@example.com>"]
 package-mode = false
 
 [tool.poetry.dependencies]
-python = "^3.12"
+python = ">=3.12,<3.14"
 infernix-adapters = { path = "../..", develop = true }
 
 [tool.poetry.group.cuda]

@@ -15,6 +15,7 @@ import Control.Exception (SomeException, displayException, try)
 import Data.ByteString.Lazy.Char8 qualified as LazyChar8
 import Data.Char (toLower)
 import Data.List (intercalate)
+import Data.Maybe (listToMaybe, maybeToList)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Dhall qualified
@@ -36,9 +37,19 @@ decodeSubstrateConfigFile :: FilePath -> IO DemoConfig
 decodeSubstrateConfigFile filePath = do
   decodedValue <- try (Dhall.inputFile Dhall.auto filePath :: IO DhallDemoConfig)
   case decodedValue of
-    Left err ->
-      ioError
-        (userError ("invalid generated substrate Dhall: " <> displayException (err :: SomeException)))
+    Left err -> do
+      legacyDecodedValue <-
+        ( try (Dhall.inputFile Dhall.auto filePath :: IO LegacyDhallDemoConfig) ::
+            IO (Either SomeException LegacyDhallDemoConfig)
+        )
+      case legacyDecodedValue of
+        Left _ ->
+          ioError
+            (userError ("invalid generated substrate Dhall: " <> displayException (err :: SomeException)))
+        Right legacyRawConfig ->
+          case legacyDemoConfigFromDhall legacyRawConfig of
+            Left message -> ioError (userError ("invalid generated substrate Dhall: " <> message))
+            Right demoConfig -> pure demoConfig
     Right rawConfig ->
       case demoConfigFromDhall rawConfig of
         Left message -> ioError (userError ("invalid generated substrate Dhall: " <> message))
@@ -65,6 +76,7 @@ data DhallDemoConfig = DhallDemoConfig
     -- key on the dhall wire side.
     dhallCoordinator :: DhallDaemonConfig,
     dhallEngineDaemon :: Maybe DhallDaemonConfig,
+    dhallEngineDaemons :: [DhallDaemonConfig],
     dhallConfigRequestTopics :: [Text],
     dhallConfigResultTopic :: Text,
     dhallModelsBucket :: Text,
@@ -75,6 +87,28 @@ data DhallDemoConfig = DhallDemoConfig
   deriving (Generic)
 
 instance Dhall.FromDhall DhallDemoConfig where
+  autoWith _ = Dhall.genericAutoWith dhallInterpretOptions
+
+data LegacyDhallDemoConfig = LegacyDhallDemoConfig
+  { legacyDhallConfigRuntimeMode :: Text,
+    legacyDhallEdgePort :: Int,
+    legacyDhallConfigMapName :: Text,
+    legacyDhallGeneratedPath :: Text,
+    legacyDhallMountedPath :: Text,
+    legacyDhallDemoUi :: Bool,
+    legacyDhallDaemonRole :: Text,
+    legacyDhallCoordinator :: DhallDaemonConfig,
+    legacyDhallEngineDaemon :: Maybe DhallDaemonConfig,
+    legacyDhallConfigRequestTopics :: [Text],
+    legacyDhallConfigResultTopic :: Text,
+    legacyDhallModelsBucket :: Text,
+    legacyDhallModelBootstrapTopic :: Text,
+    legacyDhallEngines :: [DhallEngineBinding],
+    legacyDhallModels :: [DhallModelDescriptor]
+  }
+  deriving (Generic)
+
+instance Dhall.FromDhall LegacyDhallDemoConfig where
   autoWith _ = Dhall.genericAutoWith dhallInterpretOptions
 
 data DhallDaemonConfig = DhallDaemonConfig
@@ -143,21 +177,31 @@ dhallInterpretOptions =
 dhallFieldName :: Text -> Text
 dhallFieldName rawFieldName =
   case Text.stripPrefix "dhall" rawFieldName of
-    Nothing -> rawFieldName
-    Just "ConfigRuntimeMode" -> "runtimeMode"
-    Just "ConfigRequestTopics" -> "request_topics"
-    Just "ConfigResultTopic" -> "result_topic"
-    Just "DaemonRequestTopics" -> "request_topics"
-    Just "DaemonResultTopic" -> "result_topic"
-    Just "ModelRuntimeMode" -> "runtimeMode"
-    Just "DemoUi" -> "demo_ui"
-    Just "RequestTopics" -> "request_topics"
-    Just "ResultTopic" -> "result_topic"
-    Just "HostBatchTopic" -> "host_batch_topic"
-    Just "ModelsBucket" -> "models_bucket"
-    Just "ModelBootstrapTopic" -> "model_bootstrap_topic"
-    Just "EngineDaemon" -> "engine"
-    Just suffix -> lowerInitial suffix
+    Just suffix -> dhallFieldSuffixName suffix
+    Nothing ->
+      maybe
+        rawFieldName
+        dhallFieldSuffixName
+        (Text.stripPrefix "legacyDhall" rawFieldName)
+
+dhallFieldSuffixName :: Text -> Text
+dhallFieldSuffixName suffix =
+  case suffix of
+    "ConfigRuntimeMode" -> "runtimeMode"
+    "ConfigRequestTopics" -> "request_topics"
+    "ConfigResultTopic" -> "result_topic"
+    "DaemonRequestTopics" -> "request_topics"
+    "DaemonResultTopic" -> "result_topic"
+    "ModelRuntimeMode" -> "runtimeMode"
+    "DemoUi" -> "demo_ui"
+    "RequestTopics" -> "request_topics"
+    "ResultTopic" -> "result_topic"
+    "HostBatchTopic" -> "host_batch_topic"
+    "ModelsBucket" -> "models_bucket"
+    "ModelBootstrapTopic" -> "model_bootstrap_topic"
+    "EngineDaemon" -> "engine"
+    "EngineDaemons" -> "engineDaemons"
+    other -> lowerInitial other
 
 lowerInitial :: Text -> Text
 lowerInitial value =
@@ -170,7 +214,8 @@ demoConfigFromDhall rawConfig = do
   runtimeModeValue <- parseEnum "runtimeMode" parseRuntimeMode (dhallConfigRuntimeMode rawConfig)
   activeDaemonRoleValue <- parseEnum "daemonRole" parseDaemonRole (dhallDaemonRole rawConfig)
   coordinatorDaemonValue <- daemonConfigFromDhall (dhallCoordinator rawConfig)
-  engineDaemonValue <- traverse daemonConfigFromDhall (dhallEngineDaemon rawConfig)
+  legacyEngineDaemonValue <- traverse daemonConfigFromDhall (dhallEngineDaemon rawConfig)
+  engineDaemonValues <- traverse daemonConfigFromDhall (dhallEngineDaemons rawConfig)
   engineValues <- traverse engineBindingFromDhall (dhallEngines rawConfig)
   modelValues <- traverse modelDescriptorFromDhall (dhallModels rawConfig)
   pure
@@ -183,11 +228,41 @@ demoConfigFromDhall rawConfig = do
         demoUiEnabled = dhallDemoUi rawConfig,
         activeDaemonRole = activeDaemonRoleValue,
         coordinatorDaemon = coordinatorDaemonValue,
-        engineDaemon = engineDaemonValue,
+        engineDaemons =
+          if null engineDaemonValues
+            then maybeToList legacyEngineDaemonValue
+            else engineDaemonValues,
         requestTopics = dhallConfigRequestTopics rawConfig,
         resultTopic = dhallConfigResultTopic rawConfig,
         modelsBucket = dhallModelsBucket rawConfig,
         modelBootstrapTopic = dhallModelBootstrapTopic rawConfig,
+        engines = engineValues,
+        models = modelValues
+      }
+
+legacyDemoConfigFromDhall :: LegacyDhallDemoConfig -> Either String DemoConfig
+legacyDemoConfigFromDhall rawConfig = do
+  runtimeModeValue <- parseEnum "runtimeMode" parseRuntimeMode (legacyDhallConfigRuntimeMode rawConfig)
+  activeDaemonRoleValue <- parseEnum "daemonRole" parseDaemonRole (legacyDhallDaemonRole rawConfig)
+  coordinatorDaemonValue <- daemonConfigFromDhall (legacyDhallCoordinator rawConfig)
+  engineDaemonValue <- traverse daemonConfigFromDhall (legacyDhallEngineDaemon rawConfig)
+  engineValues <- traverse engineBindingFromDhall (legacyDhallEngines rawConfig)
+  modelValues <- traverse modelDescriptorFromDhall (legacyDhallModels rawConfig)
+  pure
+    DemoConfig
+      { configRuntimeMode = runtimeModeValue,
+        configEdgePort = legacyDhallEdgePort rawConfig,
+        configMapName = legacyDhallConfigMapName rawConfig,
+        generatedPath = Text.unpack (legacyDhallGeneratedPath rawConfig),
+        mountedPath = Text.unpack (legacyDhallMountedPath rawConfig),
+        demoUiEnabled = legacyDhallDemoUi rawConfig,
+        activeDaemonRole = activeDaemonRoleValue,
+        coordinatorDaemon = coordinatorDaemonValue,
+        engineDaemons = maybeToList engineDaemonValue,
+        requestTopics = legacyDhallConfigRequestTopics rawConfig,
+        resultTopic = legacyDhallConfigResultTopic rawConfig,
+        modelsBucket = legacyDhallModelsBucket rawConfig,
+        modelBootstrapTopic = legacyDhallModelBootstrapTopic rawConfig,
         engines = engineValues,
         models = modelValues
       }
@@ -270,7 +345,8 @@ renderSubstrateConfig demoConfig =
       ", demo_ui = " <> dhallBool (demoUiEnabled demoConfig),
       ", daemonRole = " <> dhallText (daemonRoleId (activeDaemonRole demoConfig)),
       ", coordinator = " <> renderDaemonConfig (coordinatorDaemon demoConfig),
-      ", engine = " <> dhallOptional daemonConfigType renderDaemonConfig (engineDaemon demoConfig),
+      ", engine = " <> dhallOptional daemonConfigType renderDaemonConfig (listToMaybe (engineDaemons demoConfig)),
+      ", engineDaemons = " <> dhallList daemonConfigType renderDaemonConfig (engineDaemons demoConfig),
       ", request_topics = " <> dhallList "Text" dhallText (requestTopics demoConfig),
       ", result_topic = " <> dhallText (resultTopic demoConfig),
       ", models_bucket = " <> dhallText (modelsBucket demoConfig),

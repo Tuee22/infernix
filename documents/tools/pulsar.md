@@ -77,22 +77,29 @@ The three-role daemon model in
 [../architecture/daemon_topology.md](../architecture/daemon_topology.md) maps to Pulsar
 subscriptions as follows. The coordinator role (`infernix-coordinator` Deployment on every
 substrate) consumes `request_topics`, applies the dispatch and batching rules, and publishes to
-the configured batch handoff topic. Linux defaults use `inference.batch.<mode>`; Apple
-host-native handoff uses `inference.batch.apple-silicon.host`. The engine role
-(`infernix-engine` Deployment on Linux; on-host `infernix service` daemon on Apple) consumes
-that topic, executes the engine adapter, and publishes results to `result_topic`. The
-coordinator then writes the result back to the originating per-context conversation topic via
-the result-bridge.
+the configured batch handoff topic. Linux CPU and native-fallback Linux GPU work use
+`inference.batch.<mode>`; Linux GPU Python-native work can route to
+`inference.batch.<mode>.<engine>` when the generated substrate file declares a matching
+per-engine daemon. Apple host-native handoff uses `inference.batch.apple-silicon.host`. The
+engine role (`infernix-engine` Deployment on Linux; per-engine Linux GPU Deployments named
+`infernix-engine-<engine>`; on-host `infernix service` daemon on Apple) consumes its configured
+topic, executes the engine adapter, and publishes results to `result_topic`. The coordinator
+then writes the result back to the originating per-context conversation topic via the
+result-bridge.
 
-The chart ships `deployment-{coordinator,engine}.yaml` and the
-`inference.batch.<mode>` topic family is defined on every substrate
-(see `src/Infernix/Models.hs.canonicalBatchTopicForMode`).
+The chart ships `deployment-{coordinator,engine}.yaml`; the engine template renders the base
+engine Deployment plus Linux GPU per-engine engine Deployments when `engine.perEngine.enabled`
+is true. Repo-owned `linux-gpu` lifecycle values set the per-engine replica count to zero on the
+single-GPU lane, and validation scales one matching per-engine deployment before submitting work
+for that engine. The `inference.batch.<mode>` topic family is defined on every substrate, and
+`inference.batch.<mode>.<engine>` is derived for each per-engine Linux GPU daemon (see
+`src/Infernix/Models.hs.canonicalBatchTopicForMode` and `perEngineBatchTopicForMode`).
 
 The integration suite validates the batch handoff contract on a real cluster: routed
 publication JSON exposes the configured `hostInferenceBatchTopic`, `cluster status` prints
 `publicationHostInferenceBatchTopic`, the generated demo config routes the coordinator from
-`inference.request.linux-gpu` to `inference.batch.linux-gpu`, and the engine config consumes
-that batch topic without forwarding again.
+`inference.request.linux-gpu` to `inference.batch.linux-gpu`, and the generated engine daemon
+list includes Linux GPU per-engine batch topics without forwarding again.
 
 ## Demo Conversation and Metadata Topics
 

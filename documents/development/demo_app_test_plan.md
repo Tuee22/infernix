@@ -122,8 +122,10 @@ Coverage:
 - **Linux GPU coordinator-to-engine handoff.** The integration suite asserts routed
   publication JSON reports the active `hostInferenceBatchTopic`, `cluster status` reports
   the matching `publicationHostInferenceBatchTopic`, and the generated demo config routes
-  the coordinator from `inference.request.linux-gpu` to `inference.batch.linux-gpu` while
-  the engine consumes the batch topic without forwarding again.
+  the coordinator from `inference.request.linux-gpu` to the canonical
+  `inference.batch.linux-gpu` fallback plus per-engine
+  `inference.batch.linux-gpu.<engine>` topics while engine daemons consume their batch topics
+  without forwarding again.
 - **Linux GPU service-loop round-trip.** The same run exercises cluster up, routed API
   probes, per-model inference, cache lifecycle, service runtime loop, and clean cluster down
   from the rebuilt CUDA launcher image.

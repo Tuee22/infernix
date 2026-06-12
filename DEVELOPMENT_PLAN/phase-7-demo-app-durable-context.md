@@ -224,7 +224,7 @@ topology — and validated them end-to-end on `linux-cpu`. The closure surfaces:
 
 - `Types.hs.DaemonRole` constructors updated to `Coordinator` / `Engine`;
   `DemoConfig` record fields updated to `coordinatorDaemon` /
-  `engineDaemon`; `parseDaemonRole` accepts prior `cluster` / `host`
+  `engineDaemons`; `parseDaemonRole` accepts prior `cluster` / `host`
   strings during transition. Dhall schema field names and the JSON wire
   keys flipped to the new vocabulary. `infernix service` reports
   `serviceDaemonRole: coordinator` in steady state.
@@ -245,9 +245,9 @@ topology — and validated them end-to-end on `linux-cpu`. The closure surfaces:
   `SecretsConfig`.
 - `src/Infernix/Models.hs.hostBatchTopicForMode` now returns the
   canonical `inference.batch.<mode>` topic on every substrate (not just
-  Apple), and `Infernix.DemoConfig.engineDaemonConfig` returns `Just`
-  on every substrate so the in-cluster `infernix-engine` Deployment has
-  daemon metadata to start with.
+  Apple), and `Infernix.DemoConfig.engineDaemonConfigs` returns at least
+  one engine daemon on every substrate so the in-cluster `infernix-engine`
+  Deployment has daemon metadata to start with.
 - `src/Infernix/Cluster.hs.finalPhaseDeployments` waits on
   `deployment/infernix-engine` in every final deployment and adds the
   demo-gated `deployment/infernix-{coordinator,demo,keycloak}` only
@@ -1147,7 +1147,7 @@ for the authoritative target shape.
   on Linux substrates; 0 on `apple-silicon`; required anti-affinity; GPU resource shape on
   `linux-gpu`), `infernix-demo` (replicas ≥ 2 default; preferred anti-affinity; demo-gated).
   PodDisruptionBudgets `maxUnavailable: 1` on each
-- **Production (`demo_ui = false`) deploys only the engine Deployment.** Frontend and
+- **Production (`demo_ui = false`) deploys only the engine-role Deployment set.** Frontend and
   coordinator are demo-gated; production bootstrap semantics for lazy model population remain
   pending and must not reintroduce the demo coordinator deployment
 - **Readiness probes** match the role: coordinator probes Pulsar subscription readiness;
@@ -1192,7 +1192,7 @@ for the authoritative target shape.
   launching a second `infernix service` on the same host while one is running exits
   non-zero with the `engine.lock held by PID …` diagnostic
 - Production-shape test: deploy with `demo_ui = false`;
-  `infernix kubectl -n platform get deployments` returns only `infernix-engine`;
+  `infernix kubectl -n platform get deployments` returns only the engine-role Deployment set;
   `infernix-models` bucket is present; `infernix-demo-objects` bucket is absent;
   `/objects/:objectRef` route is not registered
 - Per-engine smoke matrix: for every non-`Not recommended` row in the README matrix,
@@ -2125,7 +2125,7 @@ and the multi-user throughput / fan-in batching / fan-out test.
   exists; assert the adapter helper evicts LRU entries; assert the engine pod is not
   restarted by kubelet for ephemeral-storage exhaustion
 - production-shape test: deploy `demo_ui = false` and assert
-  `infernix kubectl -n platform get deployments` returns only `infernix-engine`;
+  `infernix kubectl -n platform get deployments` returns only the engine-role Deployment set;
   `infernix-models` bucket is present; `infernix-demo-objects` bucket is absent;
   `infernix kubectl get pvc -A` returns empty
 - **Multi-User Throughput / Fan-In Batching / Fan-Out** test: N users × K contexts × P

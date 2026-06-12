@@ -473,13 +473,14 @@ test("self-service account deletion reaps demo state before Keycloak account act
     .toBe(0);
 });
 
-test("browser artifact upload covers preview media PDF and download-only grants", async ({ page, infernixFixture }) => {
-  test.setTimeout(300000);
+test("browser artifact upload covers preview media PDF and download-only grants", async ({ page, request, infernixFixture }) => {
+  test.setTimeout(900000);
   const fixture = infernixFixture;
   expect(fixture?.host).toBeTruthy();
   expect(fixture?.edgePort).toBeTruthy();
   const baseUrl = `http://${fixture.host}:${fixture.edgePort}`;
   const wsFrames = collectWebSocketFrames(page);
+  const demoConfig = await fetchDemoConfig(request, baseUrl);
 
   await page.goto(baseUrl);
   await page.locator("#login-button").click();
@@ -668,6 +669,7 @@ test("browser artifact upload covers preview media PDF and download-only grants"
     await expectConversationUploadVisible(page, wsFrames, artifact, subscribeFrame.clientSubscribeContextId);
   }
 
+  prepareEngineDeploymentForModelId(fixture, demoConfig, selectedModelId);
   const promptText = `summarize uploaded artifacts ${randomUUID()}`;
   await page.locator("textarea[name='prompt']").fill(promptText);
   const draftFrame = await waitForSentFrame(
@@ -924,7 +926,7 @@ test("browser artifact upload covers preview media PDF and download-only grants"
 // just the representative model the durable-context prompt roundtrip
 // spec exercises.
 test("browser per-model smoke matrix exercises every catalog model", async ({ page, request, infernixFixture }) => {
-  test.setTimeout(900000);
+  test.setTimeout(1800000);
   const fixture = infernixFixture;
   expect(fixture?.host).toBeTruthy();
   expect(fixture?.edgePort).toBeTruthy();
@@ -1006,6 +1008,9 @@ test("browser per-model smoke matrix exercises every catalog model", async ({ pa
 
   for (let index = 0; index < modelPickerOptions.length; index += 1) {
     const { value: modelId } = modelPickerOptions[index];
+    const model = demoConfig.models.find((entry) => entry.modelId === modelId);
+    expect(model).toBeTruthy();
+    prepareEngineDeploymentForModelId(fixture, demoConfig, modelId);
     const contextId = contextByModel.get(modelId);
     expect(contextId).toBeTruthy();
     const submitSentStart = wsFrames.sent.length;
@@ -1068,8 +1073,6 @@ test("browser per-model smoke matrix exercises every catalog model", async ({ pa
     // (inline text vs. an image/audio/video/download artifact) and never
     // branches on substrate id or engine binding. `infernix-demo` selected
     // the engine binding upstream from the active `.dhall`.
-    const model = demoConfig.models.find((entry) => entry.modelId === modelId);
-    expect(model).toBeTruthy();
     const expectedKind = expectedResultRenderKind(model);
     const resultMessage = page.locator(".chat-message.result").last();
     await expect(resultMessage).toBeVisible({ timeout: 60000 });
@@ -1359,6 +1362,72 @@ function demoPodNames(fixture) {
     .split(/\s+/)
     .filter((token) => /^infernix-demo-[a-z0-9-]+$/.test(token))
     .filter(Boolean);
+}
+
+async function fetchDemoConfig(request, baseUrl) {
+  const demoConfigResponse = await request.get(`${baseUrl}/api/demo-config`);
+  expect(demoConfigResponse.ok()).toBeTruthy();
+  return demoConfigResponse.json();
+}
+
+function prepareEngineDeploymentForModelId(fixture, demoConfig, modelId) {
+  if (demoConfig?.runtimeMode !== "linux-gpu") {
+    return;
+  }
+  const models = Array.isArray(demoConfig.models) ? demoConfig.models : [];
+  const engineBindings = Array.isArray(demoConfig.engines) ? demoConfig.engines : [];
+  const model = models.find((entry) => entry.modelId === modelId);
+  if (!model) {
+    throw new Error(`linux-gpu model ${modelId} is absent from the routed demo config`);
+  }
+  const binding = engineBindings.find((entry) => entry.engine === model.selectedEngine);
+  if (!binding) {
+    throw new Error(`linux-gpu model ${modelId} has no engine binding for ${model.selectedEngine}`);
+  }
+  const perEngineNames = Array.from(
+    new Set(
+      engineBindings
+        .filter((entry) => entry.pythonNative)
+        .map((entry) => perEngineNameFromAdapterId(entry.adapterId))
+        .filter(Boolean),
+    ),
+  ).sort();
+  const activeEngineName = binding.pythonNative ? perEngineNameFromAdapterId(binding.adapterId) : null;
+
+  if (activeEngineName) {
+    runInfernixKubectl(fixture, ["-n", "platform", "scale", "deployment/infernix-engine", "--replicas=0"]);
+  }
+  for (const engineName of perEngineNames) {
+    const replicas = engineName === activeEngineName ? "1" : "0";
+    runInfernixKubectl(fixture, [
+      "-n",
+      "platform",
+      "scale",
+      `deployment/infernix-engine-${engineName}`,
+      `--replicas=${replicas}`,
+    ]);
+  }
+  if (activeEngineName) {
+    runInfernixKubectl(
+      fixture,
+      ["-n", "platform", "rollout", "status", `deployment/infernix-engine-${activeEngineName}`, "--timeout=900s"],
+      900000,
+    );
+  } else {
+    runInfernixKubectl(fixture, ["-n", "platform", "scale", "deployment/infernix-engine", "--replicas=1"]);
+    runInfernixKubectl(
+      fixture,
+      ["-n", "platform", "rollout", "status", "deployment/infernix-engine", "--timeout=900s"],
+      900000,
+    );
+  }
+}
+
+function perEngineNameFromAdapterId(adapterId) {
+  if (typeof adapterId === "string" && adapterId.endsWith("-python")) {
+    return adapterId.slice(0, -"-python".length);
+  }
+  return adapterId;
 }
 
 function runInfernixKubectl(fixture, args, timeoutMs = 120000) {

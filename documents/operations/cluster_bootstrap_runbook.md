@@ -35,6 +35,13 @@
   upstream CLI or pod runtime throws during the repair attempt, `cluster up` logs the failure and
   continues the rollout wait; classify the repair attempt as recoverable unless the owning
   lifecycle command exits non-zero or reports completion with Harbor still unready
+- Harbor and Keycloak Patroni PostgreSQL claim roots are non-retained: the lifecycle scrubs those
+  directories before recreating claim directories and after retained-state sync, including Linux
+  outer-container runs where Kind bind-mounts `./.data/runtime/kind/<mode>` into the worker node
+- Harbor's MinIO-backed `harbor-registry` bucket is also non-retained publication cache, not
+  product data. The lifecycle may remove that bucket, its MinIO bucket metadata, and stale
+  multipart/tmp upload working sets before startup or during `cluster down`; the durable
+  `infernix-models` and `infernix-demo-objects` buckets stay retained.
 - on the Apple host-native path, the command may reconcile Homebrew-managed `kind`, `kubectl`,
   and `helm` before it attempts the real Kind workflow, and verifies the selected ghcup-managed
   `ghc` and `cabal` executables plus Homebrew `protoc` before direct host build handoff. Docker
@@ -106,13 +113,16 @@
 - confirm that `infernix kubectl get pods -n platform` shows the Envoy Gateway data plane,
   the Harbor application-plane workloads, the MinIO statefulset, the Pulsar statefulsets,
   the PostgreSQL operator-managed members, and the infernix-owned daemon set for the active
-  shape: `infernix-coordinator` plus `infernix-engine` when `demo_ui = true`, and only
-  `infernix-engine` when `demo_ui = false`
+  shape: `infernix-coordinator` plus the engine-role Deployment set when `demo_ui = true`, and
+  only the engine-role Deployment set when `demo_ui = false`. On `linux-gpu`, that set includes
+  the base `infernix-engine` Deployment plus zero-replica `infernix-engine-<engine>` per-engine
+  Deployments for Python-native framework images; routed validation scales one per-engine
+  deployment at a time on the single-GPU lane.
 - confirm `infernix kubectl get deployments -n platform` returns `infernix-coordinator` and
-  `infernix-engine` (and `infernix-demo` when `demo_ui = true`); under `demo_ui = false` only
-  `infernix-engine` is present
+  the engine-role Deployment set (and `infernix-demo` when `demo_ui = true`); under
+  `demo_ui = false` only the engine-role Deployment set is present
 - confirm `infernix kubectl get pvc -A` returns no daemon PVCs — the `infernix-coordinator`,
-  `infernix-engine`, and `infernix-demo` Deployments are PVC-free in the supported target
+  engine-role, and `infernix-demo` Deployments are PVC-free in the supported target
   shape. PVCs are still present for Harbor, MinIO, Pulsar, and the operator-managed PostgreSQL
   clusters
 - confirm `infernix kubectl get buckets` (or equivalent MinIO admin check) shows

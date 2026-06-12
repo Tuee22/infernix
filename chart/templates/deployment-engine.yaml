@@ -10,9 +10,9 @@ not restart the pod for ephemeral-storage exhaustion.
 The pod anti-affinity rule is `required` (not `preferred`) because two
 engine pods on the same node give zero performance gain — they would
 contend for the same GPU and double-cache the same weights. On a
-multi-GPU node the single scheduled engine claims every device via
-`nvidia.com/gpu` and the active substrate `.dhall` decides per-device
-model assignment.
+multi-GPU node each scheduled engine claims one device via
+`nvidia.com/gpu`; per-device model assignment is owned by the active
+substrate `.dhall` and operator-supplied replica values.
 */}}
 {{- if and .Values.daemonSplit.enabled .Values.engine.enabled }}
 apiVersion: apps/v1
@@ -132,4 +132,110 @@ spec:
         - name: model-cache
           emptyDir:
             sizeLimit: {{ .Values.engine.modelCache.sizeLimit }}
+{{- end }}
+{{- $root := . }}
+{{- if and .Values.daemonSplit.enabled .Values.engine.enabled .Values.engine.perEngine.enabled }}
+{{- range $engineName := .Values.engine.perEngine.names }}
+{{- $image := index $root.Values.engine.perEngine.images $engineName }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: infernix-engine-{{ $engineName }}
+  namespace: platform
+  labels:
+    app.kubernetes.io/name: infernix-engine-{{ $engineName }}
+    app.kubernetes.io/component: engine
+    infernix.io/engine: {{ $engineName | quote }}
+spec:
+  replicas: {{ $root.Values.engine.perEngine.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: infernix-engine-{{ $engineName }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: infernix-engine-{{ $engineName }}
+        app.kubernetes.io/component: engine
+        infernix.io/engine: {{ $engineName | quote }}
+    spec:
+{{- if eq $root.Values.runtimeMode "linux-gpu" }}
+      runtimeClassName: nvidia
+      nodeSelector:
+        infernix.runtime/gpu: "true"
+{{- end }}
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: infernix-engine-{{ $engineName }}
+              topologyKey: kubernetes.io/hostname
+      containers:
+        - name: infernix-engine
+          image: "{{ $image.repository }}:{{ $image.tag }}"
+          imagePullPolicy: {{ $image.pullPolicy }}
+          command:
+{{ toYaml $root.Values.engine.command | nindent 12 }}
+          args:
+            - service
+            - --role
+            - engine
+            - --engine-name
+            - {{ $engineName | quote }}
+{{- if eq $root.Values.runtimeMode "linux-gpu" }}
+          resources:
+            limits:
+              nvidia.com/gpu: "1"
+            requests:
+              nvidia.com/gpu: "1"
+{{- end }}
+          volumeMounts:
+            - name: cluster-config
+              mountPath: /opt/infernix/cluster.dhall
+              subPath: cluster.dhall
+              readOnly: true
+            - name: cluster-secrets
+              mountPath: /etc/infernix/secrets
+              readOnly: true
+            - name: demo-config
+              mountPath: "{{ $root.Values.demoConfig.mountPath }}/{{ $root.Values.demoConfig.fileName }}"
+              subPath: {{ $root.Values.demoConfig.fileName }}
+              readOnly: true
+            - name: publication-state
+              mountPath: "{{ $root.Values.demoConfig.mountPath }}/{{ $root.Values.publication.fileName }}"
+              subPath: {{ $root.Values.publication.fileName }}
+              readOnly: true
+            - name: engine-data
+              mountPath: /workspace/.data
+            - name: model-cache
+              mountPath: /model-cache
+          readinessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -lc
+                - test -f /workspace/.data/runtime/service/subscription.ready
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 120
+      volumes:
+        - name: cluster-config
+          configMap:
+            name: {{ $root.Values.clusterConfig.name }}
+        - name: cluster-secrets
+          secret:
+            secretName: infernix-cluster-secrets
+        - name: demo-config
+          configMap:
+            name: {{ $root.Values.demoConfig.name }}
+        - name: publication-state
+          configMap:
+            name: {{ $root.Values.publication.name }}
+        - name: engine-data
+          emptyDir: {}
+        - name: model-cache
+          emptyDir:
+            sizeLimit: {{ $root.Values.engine.modelCache.sizeLimit }}
+{{- end }}
 {{- end }}

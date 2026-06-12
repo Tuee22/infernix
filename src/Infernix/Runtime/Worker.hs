@@ -4,23 +4,30 @@
 
 module Infernix.Runtime.Worker
   ( EngineCommandOverrideMap,
+    WorkerModelCacheConfig (..),
+    buildWorkerRequest,
     lookupEngineCommandOverride,
+    nativeEngineInstallRootCandidates,
     runInferenceWorker,
+    workerRequestModelCacheConfig,
   )
 where
 
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Char8 qualified as ByteString8
 import Data.List (dropWhileEnd, find)
-import Data.Maybe (fromMaybe)
+import Data.Maybe (catMaybes, fromMaybe, listToMaybe)
 import Data.ProtoLens (decodeMessage, defMessage, encodeMessage)
 import Data.ProtoLens.Field (field)
 import Data.Text (Text)
 import Data.Text qualified as Text
+import Data.Word (Word64)
+import Infernix.ClusterConfig qualified as Cluster
 import Infernix.Config (Paths (..))
 import Infernix.Models (engineBindingForSelectedEngine)
 import Infernix.Python (ensurePoetryExecutable, ensurePoetryProjectReady)
 import Infernix.Runtime.KVCache qualified as KVCache
+import Infernix.SecretsConfig qualified as Secrets
 import Infernix.Types
 import Lens.Family2 (set, view)
 import Proto.Infernix.Runtime.Inference qualified as ProtoInference
@@ -56,6 +63,18 @@ lookupEngineCommandOverride overrides engineBinding =
 data WorkerInvocation
   = DirectWorkerInvocation FilePath FilePath [String]
   | ShellWorkerInvocation FilePath String
+
+data WorkerModelCacheConfig = WorkerModelCacheConfig
+  { workerModelCacheRoot :: Text,
+    workerModelCacheQuotaBytes :: Word64,
+    workerMinioEndpoint :: Text,
+    workerMinioModelsBucket :: Text,
+    workerMinioDemoArtifactsBucket :: Text,
+    workerMinioRegion :: Text,
+    workerMinioAccessKey :: Text,
+    workerMinioSecretKey :: Text
+  }
+  deriving (Eq, Show)
 
 runInferenceWorker ::
   Paths ->
@@ -101,7 +120,8 @@ runPythonWorker ::
 runPythonWorker paths runtimeMode overrides model engineBinding request _cacheObservation = do
   let maybeOverride = lookupEngineCommandOverride overrides engineBinding
   invocation <- resolvePythonInvocation paths engineBinding maybeOverride
-  let workerRequest = encodeMessage (buildWorkerRequest paths runtimeMode model engineBinding request)
+  maybeModelCacheConfig <- loadWorkerModelCacheConfig
+  let workerRequest = encodeMessage (buildWorkerRequest paths runtimeMode maybeModelCacheConfig model engineBinding request)
   workerResult <- runWorkerInvocation paths invocation workerRequest
   pure (workerResultToOutput workerResult)
 
@@ -290,24 +310,26 @@ runNativeWorker paths _runtimeMode model engineBinding request _cacheObservation
               }
         )
     Just binaryRelPath -> do
-      let installRoot = engineInstallRootPath paths engineBinding
-          binaryPath = installRoot </> binaryRelPath
-      binaryPresent <- doesFileExist binaryPath
-      if not binaryPresent
-        then
-          pure
-            ( Left
-                ErrorResponse
-                  { errorCode = "engine_binary_missing",
-                    message =
-                      "native engine binary is not present at "
-                        <> Text.pack binaryPath
-                        <> "; build it for "
-                        <> engineBindingAdapterId engineBinding
-                        <> " (Apple: infernix internal materialize-metal-engines) before running."
-                  }
-            )
-        else do
+      maybeNativeRunner <- firstPresentNativeRunner paths engineBinding binaryRelPath
+      case maybeNativeRunner of
+        Nothing ->
+          let checkedPaths =
+                map
+                  (Text.pack . (</> binaryRelPath))
+                  (nativeEngineInstallRootCandidates paths engineBinding)
+           in pure
+                ( Left
+                    ErrorResponse
+                      { errorCode = "engine_binary_missing",
+                        message =
+                          "native engine binary is not present in any supported install root for "
+                            <> engineBindingAdapterId engineBinding
+                            <> ": "
+                            <> Text.intercalate ", " checkedPaths
+                            <> "; build it for the active substrate (Apple: infernix internal materialize-metal-engines; Linux: bake the native runner into the substrate image under /opt/infernix/engines) before running."
+                      }
+                )
+        Just (installRoot, binaryPath) -> do
           processEnvironment <- workerProcessEnvironment paths []
           (exitCode, stdoutOutput, stderrOutput) <-
             readCreateProcessWithExitCode
@@ -318,6 +340,25 @@ runNativeWorker paths _runtimeMode model engineBinding request _cacheObservation
               )
               ""
           pure (nativeRunnerResult engineBinding binaryPath exitCode stdoutOutput stderrOutput)
+
+firstPresentNativeRunner :: Paths -> EngineBinding -> FilePath -> IO (Maybe (FilePath, FilePath))
+firstPresentNativeRunner paths engineBinding binaryRelPath = do
+  candidates <-
+    mapM
+      candidateIfPresent
+      (nativeEngineInstallRootCandidates paths engineBinding)
+  pure (listToMaybe (catMaybes candidates))
+  where
+    candidateIfPresent installRoot = do
+      let binaryPath = installRoot </> binaryRelPath
+      binaryPresent <- doesFileExist binaryPath
+      pure (if binaryPresent then Just (installRoot, binaryPath) else Nothing)
+
+nativeEngineInstallRootCandidates :: Paths -> EngineBinding -> [FilePath]
+nativeEngineInstallRootCandidates paths engineBinding =
+  [ engineInstallRootPath paths engineBinding,
+    "/opt/infernix/engines" </> Text.unpack (engineBindingAdapterId engineBinding)
+  ]
 
 -- | Resolve the native engine binary's path relative to its engine
 -- install root. The adapter id is the closed set of native-process-runner
@@ -439,8 +480,8 @@ stderrSuffix stderrOutput =
     Just message -> "\n" <> message
     Nothing -> ""
 
-buildWorkerRequest :: Paths -> RuntimeMode -> ModelDescriptor -> EngineBinding -> InferenceRequest -> ProtoInference.WorkerRequest
-buildWorkerRequest paths runtimeMode model engineBinding request =
+buildWorkerRequest :: Paths -> RuntimeMode -> Maybe WorkerModelCacheConfig -> ModelDescriptor -> EngineBinding -> InferenceRequest -> ProtoInference.WorkerRequest
+buildWorkerRequest paths runtimeMode maybeModelCacheConfig model engineBinding request =
   set (field @"requestModelId") (requestModelId request) $
     set (field @"inputText") (inputText request) $
       set (field @"runtimeMode") (runtimeModeId runtimeMode) $
@@ -451,7 +492,85 @@ buildWorkerRequest paths runtimeMode model engineBinding request =
                 set (field @"artifactType") (artifactType model) $
                   set (field @"runtimeLane") (runtimeLaneId (runtimeLane model)) $
                     set (field @"inputObjectRef") (fromMaybe "" (inputObjectRef request)) $
-                      set (field @"engineInstallRoot") (Text.pack (engineInstallRootPath paths engineBinding)) defMessage
+                      set (field @"engineInstallRoot") (Text.pack (engineInstallRootPath paths engineBinding)) $
+                        setWorkerModelCacheFields maybeModelCacheConfig defMessage
+
+setWorkerModelCacheFields :: Maybe WorkerModelCacheConfig -> ProtoInference.WorkerRequest -> ProtoInference.WorkerRequest
+setWorkerModelCacheFields maybeModelCacheConfig workerRequest =
+  case maybeModelCacheConfig of
+    Nothing -> workerRequest
+    Just modelCacheConfig ->
+      set (field @"modelCacheRoot") (workerModelCacheRoot modelCacheConfig) $
+        set (field @"modelCacheQuotaBytes") (workerModelCacheQuotaBytes modelCacheConfig) $
+          set (field @"minioEndpoint") (workerMinioEndpoint modelCacheConfig) $
+            set (field @"minioModelsBucket") (workerMinioModelsBucket modelCacheConfig) $
+              set (field @"minioDemoArtifactsBucket") (workerMinioDemoArtifactsBucket modelCacheConfig) $
+                set (field @"minioRegion") (workerMinioRegion modelCacheConfig) $
+                  set (field @"minioAccessKey") (workerMinioAccessKey modelCacheConfig) $
+                    set (field @"minioSecretKey") (workerMinioSecretKey modelCacheConfig) workerRequest
+
+workerRequestModelCacheConfig :: ProtoInference.WorkerRequest -> Maybe WorkerModelCacheConfig
+workerRequestModelCacheConfig workerRequest =
+  if emptyModelCacheConfig
+    then Nothing
+    else
+      Just
+        WorkerModelCacheConfig
+          { workerModelCacheRoot = view ProtoInferenceFields.modelCacheRoot workerRequest,
+            workerModelCacheQuotaBytes = view ProtoInferenceFields.modelCacheQuotaBytes workerRequest,
+            workerMinioEndpoint = view ProtoInferenceFields.minioEndpoint workerRequest,
+            workerMinioModelsBucket = view ProtoInferenceFields.minioModelsBucket workerRequest,
+            workerMinioDemoArtifactsBucket = view ProtoInferenceFields.minioDemoArtifactsBucket workerRequest,
+            workerMinioRegion = view ProtoInferenceFields.minioRegion workerRequest,
+            workerMinioAccessKey = view ProtoInferenceFields.minioAccessKey workerRequest,
+            workerMinioSecretKey = view ProtoInferenceFields.minioSecretKey workerRequest
+          }
+  where
+    emptyModelCacheConfig =
+      Text.null (view ProtoInferenceFields.modelCacheRoot workerRequest)
+        && view ProtoInferenceFields.modelCacheQuotaBytes workerRequest == 0
+        && Text.null (view ProtoInferenceFields.minioEndpoint workerRequest)
+        && Text.null (view ProtoInferenceFields.minioModelsBucket workerRequest)
+        && Text.null (view ProtoInferenceFields.minioDemoArtifactsBucket workerRequest)
+        && Text.null (view ProtoInferenceFields.minioRegion workerRequest)
+        && Text.null (view ProtoInferenceFields.minioAccessKey workerRequest)
+        && Text.null (view ProtoInferenceFields.minioSecretKey workerRequest)
+
+loadWorkerModelCacheConfig :: IO (Maybe WorkerModelCacheConfig)
+loadWorkerModelCacheConfig = do
+  clusterExists <- doesFileExist Cluster.defaultClusterConfigMountPath
+  secretsExists <- doesFileExist Secrets.defaultClusterSecretsMountPath
+  case (clusterExists, secretsExists) of
+    (False, False) -> pure Nothing
+    (True, True) -> do
+      clusterConfig <- Cluster.decodeClusterConfigFile Cluster.defaultClusterConfigMountPath
+      secretsConfig <- Secrets.decodeSecretsConfigFile Secrets.defaultClusterSecretsMountPath
+      minioCreds <- Secrets.readMinioCredentials (Secrets.secretsMinio secretsConfig)
+      let engineConfig = Cluster.clusterEngine clusterConfig
+          minioConfig = Cluster.clusterMinio clusterConfig
+      pure
+        ( Just
+            WorkerModelCacheConfig
+              { workerModelCacheRoot = Cluster.engineModelCacheRoot engineConfig,
+                workerModelCacheQuotaBytes = fromIntegral (Cluster.engineModelCacheQuotaBytes engineConfig),
+                workerMinioEndpoint = Cluster.minioEndpoint minioConfig,
+                workerMinioModelsBucket = Cluster.minioModelsBucket minioConfig,
+                workerMinioDemoArtifactsBucket = Cluster.minioDemoArtifactsBucket minioConfig,
+                workerMinioRegion = Cluster.minioRegion minioConfig,
+                workerMinioAccessKey = Secrets.minioAccessKey minioCreds,
+                workerMinioSecretKey = Secrets.minioSecretKey minioCreds
+              }
+        )
+    _ ->
+      ioError
+        ( userError
+            ( "worker model-cache wiring requires both "
+                <> Cluster.defaultClusterConfigMountPath
+                <> " and "
+                <> Secrets.defaultClusterSecretsMountPath
+                <> " when either cluster-side manifest is present"
+            )
+        )
 
 -- | Decode the worker output from a 'WorkerResponse'. Phase 4 Sprint 4.15:
 -- artifact adapters return an @infernix-demo-objects@ object reference in

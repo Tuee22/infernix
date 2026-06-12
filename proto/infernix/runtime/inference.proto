@@ -93,6 +93,19 @@ message WorkerRequest {
   // adapter for the audio and image input families. Empty for text
   // families, which use input_text.
   string input_object_ref = 11;
+  // Phase 7 Sprint 7.7 / Phase 4 real-engine follow-on: typed cache
+  // and MinIO wiring decoded by the Haskell engine daemon from the
+  // mounted ClusterConfig + SecretsConfig and passed over the private
+  // worker stdin boundary. Python adapters call adapters.model_cache.configure()
+  // from these fields before get_model_path() or object upload/download.
+  string model_cache_root = 12;
+  uint64 model_cache_quota_bytes = 13;
+  string minio_endpoint = 14;
+  string minio_models_bucket = 15;
+  string minio_demo_artifacts_bucket = 16;
+  string minio_region = 17;
+  string minio_access_key = 18;
+  string minio_secret_key = 19;
 }
 
 message WorkerResponse {

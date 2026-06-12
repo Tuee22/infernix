@@ -108,7 +108,8 @@ Pulsar+MinIO wiring under the chaos validation suite.
   has no PVC; its only on-disk state is an ephemeral `emptyDir`
   model-weight cache populated lazily from the `infernix-models`
   MinIO bucket through the shared adapter helper
-  `python/adapters/common/model_cache.py`.
+  `python/adapters/model_cache.py`, which the worker configures from
+  request-carried model-cache and MinIO settings before adapter execution.
 
 The Haskell style gate enforces that engine-runtime import boundary for
 `src/Infernix/Runtime.hs`, `src/Infernix/Runtime/Cache.hs`,

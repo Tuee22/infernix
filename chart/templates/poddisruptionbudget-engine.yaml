@@ -10,3 +10,19 @@ spec:
     matchLabels:
       app.kubernetes.io/name: infernix-engine
 {{- end }}
+{{- $root := . }}
+{{- if and .Values.daemonSplit.enabled .Values.engine.enabled .Values.engine.perEngine.enabled }}
+{{- range $engineName := .Values.engine.perEngine.names }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: infernix-engine-{{ $engineName }}
+  namespace: platform
+spec:
+  maxUnavailable: {{ $root.Values.engine.podDisruptionBudget.maxUnavailable }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: infernix-engine-{{ $engineName }}
+{{- end }}
+{{- end }}

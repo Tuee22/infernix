@@ -104,6 +104,12 @@ import Infernix.Runtime.Pulsar
     validateDemoClientMessageCatalog,
   )
 import Infernix.Runtime.Pulsar.Failover qualified as PulsarFailover
+import Infernix.Runtime.Worker
+  ( WorkerModelCacheConfig (..),
+    buildWorkerRequest,
+    nativeEngineInstallRootCandidates,
+    workerRequestModelCacheConfig,
+  )
 import Infernix.Topic.Drafts qualified as TopicDrafts
 import Infernix.Topic.Metadata qualified as TopicMetadata
 import Infernix.Types
@@ -470,7 +476,16 @@ main = do
                       daemonConfigHostBatchTopic = Nothing,
                       daemonConfigPulsarConnectionMode = ConfiguredTransport
                     },
-                engineDaemon = Nothing,
+                engineDaemons =
+                  [ DaemonConfig
+                      { daemonConfigRole = Engine,
+                        daemonConfigLocation = "cluster-pod",
+                        daemonConfigRequestTopics = maybe [] pure (hostBatchTopicForMode LinuxCpu),
+                        daemonConfigResultTopic = resultTopicForMode LinuxCpu,
+                        daemonConfigHostBatchTopic = Nothing,
+                        daemonConfigPulsarConnectionMode = ConfiguredTransport
+                      }
+                  ],
                 requestTopics = requestTopicsForMode LinuxCpu,
                 resultTopic = resultTopicForMode LinuxCpu,
                 modelsBucket = defaultModelsBucket,
@@ -493,7 +508,7 @@ main = do
       assert (demoUiEnabled decodedConfig) "demo-config decode preserves the demo UI flag"
       assert (activeDaemonRole decodedConfig == Coordinator) "demo-config decode preserves the active daemon role"
       assert (daemonConfigLocation (coordinatorDaemon decodedConfig) == "cluster-pod") "demo-config decode preserves cluster daemon metadata"
-      assert (isNothing (engineDaemon decodedConfig)) "linux demo-config decode omits host daemon metadata"
+      assert (not (null (engineDaemons decodedConfig))) "linux demo-config decode preserves engine daemon metadata"
       assert (requestTopics decodedConfig == requestTopicsForMode LinuxCpu) "demo-config decode preserves request topics"
       assert (resultTopic decodedConfig == resultTopicForMode LinuxCpu) "demo-config decode preserves the result topic"
       assert (engines decodedConfig == engineBindingsForMode LinuxCpu) "demo-config decode preserves engine bindings"
@@ -517,16 +532,16 @@ main = do
                       daemonConfigHostBatchTopic = hostBatchTopicForMode AppleSilicon,
                       daemonConfigPulsarConnectionMode = ConfiguredTransport
                     },
-                engineDaemon =
-                  Just
-                    DaemonConfig
+                engineDaemons =
+                  [ DaemonConfig
                       { daemonConfigRole = Engine,
                         daemonConfigLocation = "control-plane-host",
                         daemonConfigRequestTopics = maybe [] pure (hostBatchTopicForMode AppleSilicon),
                         daemonConfigResultTopic = resultTopicForMode AppleSilicon,
                         daemonConfigHostBatchTopic = Nothing,
                         daemonConfigPulsarConnectionMode = PublicationEdgeAutoDiscovery
-                      },
+                      }
+                  ],
                 requestTopics = requestTopicsForMode AppleSilicon,
                 resultTopic = resultTopicForMode AppleSilicon,
                 modelsBucket = defaultModelsBucket,
@@ -539,8 +554,8 @@ main = do
       decodedAppleConfig <- decodeDemoConfigFile appleConfigPath
       assert (activeDaemonRole decodedAppleConfig == Engine) "apple host demo-config keeps host as the active local daemon role"
       assert (daemonConfigHostBatchTopic (coordinatorDaemon decodedAppleConfig) == hostBatchTopicForMode AppleSilicon) "apple cluster daemon metadata publishes the host batch topic"
-      assert (fmap daemonConfigRequestTopics (engineDaemon decodedAppleConfig) == Just (maybe [] pure (hostBatchTopicForMode AppleSilicon))) "apple host daemon metadata consumes the host batch topic"
-      assert (fmap daemonConfigHostBatchTopic (engineDaemon decodedAppleConfig) == Just Nothing) "apple host daemon metadata does not forward its own engine batch topic"
+      assert (map daemonConfigRequestTopics (engineDaemons decodedAppleConfig) == [maybe [] pure (hostBatchTopicForMode AppleSilicon)]) "apple host daemon metadata consumes the host batch topic"
+      assert (map daemonConfigHostBatchTopic (engineDaemons decodedAppleConfig) == [Nothing]) "apple host daemon metadata does not forward its own engine batch topic"
       let readinessMarkerPath = runtimeRoot paths </> "service" </> "subscription.ready"
       -- Phase 4 Sprint 4.13: the previous test injected the Pulsar
       -- endpoint + demo-config path via @INFERNIX_PULSAR_*@ +
@@ -548,7 +563,7 @@ main = do
       -- The test builds a typed `ClusterConfig` fixture with the same
       -- values and passes it directly to 'runProductionDaemon'.
       let clusterConfigFixture = unitTestClusterConfigFixture demoConfigPath
-      _ <- timeout 2000000 (runProductionDaemon paths LinuxCpu (Just clusterConfigFixture) Coordinator)
+      _ <- timeout 2000000 (runProductionDaemon paths LinuxCpu (Just clusterConfigFixture) Coordinator Nothing)
       readinessMarkerPresent <- doesFileExist readinessMarkerPath
       assert
         (not readinessMarkerPresent)
@@ -694,6 +709,66 @@ main = do
           assert
             ("engine_binary_missing" `isInfixOf` show err)
             "native dispatch resolves the engine binary by absolute path and fails fast when it is absent"
+
+      linuxNativeModel <-
+        maybe
+          (fail "expected the linux-gpu GGUF row")
+          pure
+          (findModel LinuxGpu "llm-tinyllama-gguf")
+      let linuxNativeBinding = engineBindingForSelectedEngine LinuxGpu (selectedEngine linuxNativeModel)
+          nativeInstallRoots = nativeEngineInstallRootCandidates paths linuxNativeBinding
+      assert
+        ( nativeInstallRoots
+            == [ dataRoot paths </> "engines" </> "llama-cpp-cli",
+                 "/opt/infernix/engines/llama-cpp-cli"
+               ]
+        )
+        "native runner lookup checks the repo data root before the image-owned Linux engine root"
+
+      pythonModel <-
+        maybe
+          (fail "expected the linux-gpu vLLM row")
+          pure
+          (findModel LinuxGpu "llm-qwen25-safetensors")
+      let pythonBinding = engineBindingForSelectedEngine LinuxGpu (selectedEngine pythonModel)
+          workerRequest =
+            buildWorkerRequest
+              paths
+              LinuxGpu
+              ( Just
+                  WorkerModelCacheConfig
+                    { workerModelCacheRoot = "/model-cache",
+                      workerModelCacheQuotaBytes = 123456,
+                      workerMinioEndpoint = "http://infernix-minio.platform.svc.cluster.local:9000",
+                      workerMinioModelsBucket = "infernix-models",
+                      workerMinioDemoArtifactsBucket = "infernix-demo-objects",
+                      workerMinioRegion = "us-east-1",
+                      workerMinioAccessKey = "minioadmin",
+                      workerMinioSecretKey = "minioadmin123"
+                    }
+              )
+              pythonModel
+              pythonBinding
+              InferenceRequest
+                { requestModelId = "llm-qwen25-safetensors",
+                  inputText = "worker request cache wiring",
+                  inputObjectRef = Nothing
+                }
+      assert
+        ( workerRequestModelCacheConfig workerRequest
+            == Just
+              WorkerModelCacheConfig
+                { workerModelCacheRoot = "/model-cache",
+                  workerModelCacheQuotaBytes = 123456,
+                  workerMinioEndpoint = "http://infernix-minio.platform.svc.cluster.local:9000",
+                  workerMinioModelsBucket = "infernix-models",
+                  workerMinioDemoArtifactsBucket = "infernix-demo-objects",
+                  workerMinioRegion = "us-east-1",
+                  workerMinioAccessKey = "minioadmin",
+                  workerMinioSecretKey = "minioadmin123"
+                }
+        )
+        "worker protobuf requests carry typed model-cache and MinIO wiring to Python adapters"
 
       assertRuntimeKVCachePath paths
 

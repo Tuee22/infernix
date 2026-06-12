@@ -7,7 +7,7 @@ where
 
 import Control.Concurrent (forkIO, threadDelay)
 import Control.Monad (forM_, forever, when)
-import Data.List (intercalate)
+import Data.List (find, intercalate)
 import Data.Maybe (fromMaybe)
 import Data.Text qualified as Text
 import Infernix.ClusterConfig
@@ -29,6 +29,7 @@ import Infernix.Config
 import Infernix.Conversation.Topic qualified as ConversationTopic
 import Infernix.DemoConfig (decodeDemoConfigFile)
 import Infernix.Dispatch.ContextModelMap qualified as ContextModelMap
+import Infernix.Models (perEngineBatchTopicForMode)
 import Infernix.Runtime.KVCache qualified as KVCache
 import Infernix.Runtime.Pulsar
   ( PulsarTransport,
@@ -53,8 +54,8 @@ import Infernix.Types hiding (generatedDemoConfigPath)
 -- Pulsar transport module. The daemon layer decides which role starts
 -- coordinator loops, which role owns engine execution, and which
 -- process-local engine KV cache is threaded into request handling.
-runProductionDaemon :: Paths -> RuntimeMode -> Maybe ClusterConfig -> DaemonRole -> IO ()
-runProductionDaemon paths runtimeMode maybeClusterConfig daemonRole = do
+runProductionDaemon :: Paths -> RuntimeMode -> Maybe ClusterConfig -> DaemonRole -> Maybe Text.Text -> IO ()
+runProductionDaemon paths runtimeMode maybeClusterConfig daemonRole maybeEngineName = do
   maybeTransport <- discoverPulsarTransport paths runtimeMode maybeClusterConfig
   engineKVCache <- KVCache.newEngineKVCache
   let controlPlane = case maybeClusterConfig of
@@ -70,7 +71,7 @@ runProductionDaemon paths runtimeMode maybeClusterConfig daemonRole = do
         Nothing -> generatedDemoConfigPath paths
       engineOverrides = engineOverridesFromClusterConfig maybeClusterConfig
   demoConfig <- decodeDemoConfigFile selectedDemoConfigPath
-  daemonConfig <- requireDaemonConfig daemonRole demoConfig
+  daemonConfig <- requireDaemonConfig runtimeMode daemonRole maybeEngineName demoConfig
   let daemonLocation = case maybeClusterConfig of
         Just clusterConfig ->
           let mounted = Text.unpack (coordinatorDaemonLocation (clusterCoordinator clusterConfig))
@@ -78,6 +79,8 @@ runProductionDaemon paths runtimeMode maybeClusterConfig daemonRole = do
         Nothing -> Text.unpack (daemonConfigLocation daemonConfig)
   putStrLn ("serviceControlPlaneContext: " <> controlPlaneContextId controlPlane)
   putStrLn ("serviceDaemonRole: " <> Text.unpack (daemonRoleId daemonRole))
+  forM_ maybeEngineName $ \engineName ->
+    putStrLn ("serviceEngineName: " <> Text.unpack engineName)
   putStrLn ("serviceDaemonLocation: " <> daemonLocation)
   putStrLn ("serviceCatalogSource: " <> catalogSource)
   putStrLn ("serviceRuntimeMode: " <> Text.unpack (runtimeModeId runtimeMode))
@@ -142,7 +145,7 @@ runWebSocketPulsarDaemon paths runtimeMode engineOverrides daemonConfig demoConf
   putStrLn ("servicePulsarWsBaseUrl: " <> renderPulsarWebSocketBase (pulsarWebSocketBase transport))
   forM_
     (daemonConfigRequestTopics daemonConfig)
-    (forkIO . consumeTopicForever transport paths runtimeMode engineOverrides daemonConfig (Just engineKVCache))
+    (forkIO . consumeTopicForever transport paths runtimeMode engineOverrides daemonConfig demoConfig (Just engineKVCache))
   when (daemonRole == Coordinator) $
     startCoordinatorLoops transport runtimeMode daemonConfig
   forever (threadDelay 60000000)
@@ -194,19 +197,30 @@ resolveClusterControlPlaneContext clusterConfig fallback =
 demoConfigCatalogSource :: String
 demoConfigCatalogSource = "generated-build-root"
 
-requireDaemonConfig :: DaemonRole -> DemoConfig -> IO DaemonConfig
-requireDaemonConfig daemonRole demoConfig
+requireDaemonConfig :: RuntimeMode -> DaemonRole -> Maybe Text.Text -> DemoConfig -> IO DaemonConfig
+requireDaemonConfig runtimeMode daemonRole maybeEngineName demoConfig
   | daemonConfigRole (coordinatorDaemon demoConfig) == daemonRole =
       pure (coordinatorDaemon demoConfig)
-  | otherwise =
-      case engineDaemon demoConfig of
-        Just daemonConfig
-          | daemonConfigRole daemonConfig == daemonRole ->
-              pure daemonConfig
-        _ ->
-          ioError
-            ( userError
-                ( "generated substrate file does not contain daemon metadata for role "
-                    <> Text.unpack (daemonRoleId daemonRole)
-                )
+  | daemonRole == Engine =
+      maybe missingDaemonConfig pure selectEngineDaemon
+  | otherwise = missingDaemonConfig
+  where
+    selectEngineDaemon =
+      maybe firstEngineDaemon engineDaemonForName maybeEngineName
+    firstEngineDaemon =
+      find ((== Engine) . daemonConfigRole) (engineDaemons demoConfig)
+    engineDaemonForName engineName =
+      find (engineDaemonConsumes expectedTopic) (engineDaemons demoConfig)
+      where
+        expectedTopic = perEngineBatchTopicForMode runtimeMode engineName
+    engineDaemonConsumes expectedTopic daemonConfig =
+      daemonConfigRole daemonConfig == Engine
+        && expectedTopic `elem` daemonConfigRequestTopics daemonConfig
+    missingDaemonConfig =
+      ioError
+        ( userError
+            ( "generated substrate file does not contain daemon metadata for role "
+                <> Text.unpack (daemonRoleId daemonRole)
+                <> maybe "" ((" and engine " <>) . Text.unpack) maybeEngineName
             )
+        )

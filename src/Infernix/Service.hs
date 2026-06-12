@@ -6,6 +6,7 @@ module Infernix.Service
 where
 
 import Control.Exception (IOException, bracketOnError, catch)
+import Data.Text qualified as Text
 import Infernix.ClusterConfig
   ( ClusterConfig,
     decodeClusterConfigFile,
@@ -40,8 +41,8 @@ import System.Posix.Process (getProcessID)
 -- engine Deployments pass @--role coordinator@ and @--role engine@
 -- through @args@; host-native flows omit the flag and fall back to
 -- the active substrate dhall's @daemonRole@ field.
-runService :: Maybe RuntimeMode -> Maybe DaemonRole -> IO ()
-runService maybeRuntimeMode maybeDaemonRole = do
+runService :: Maybe RuntimeMode -> Maybe DaemonRole -> Maybe Text.Text -> IO ()
+runService maybeRuntimeMode maybeDaemonRole maybeEngineName = do
   paths <- discoverPaths
   ensureRepoLayout paths
   maybeClusterConfig <- tryLoadClusterConfig
@@ -57,7 +58,7 @@ runService maybeRuntimeMode maybeDaemonRole = do
   -- Deployment (a Linux engine-role process inside that pod also acquires
   -- this lock as a no-op uniformity guarantee).
   acquireEngineLockIfEngineRole paths daemonRole
-  runProductionDaemon paths runtimeMode maybeClusterConfig daemonRole
+  runProductionDaemon paths runtimeMode maybeClusterConfig daemonRole maybeEngineName
 
 -- | Phase 4 Sprint 4.13: best-effort load of the cluster manifest
 -- mounted at the supported path. Cluster-resident pods have this

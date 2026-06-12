@@ -537,23 +537,78 @@ still required before the full `infernix test all` per-family run closes on this
 > the routed cluster cohort run; the cluster path likely needs a per-engine-image (or shared-base +
 > framework-layer) redesign before `infernix test all` is feasible on the cluster. Direct
 > `docker run --gpus all` per-family inference works against the image today.
-> **Named cohort residuals (incompatible with the Python 3.12 / CUDA 12.8 substrate):** the Omnizart
-> (TF1-era) music row and the MT3 (unmaintained JAX/T5X) music row do not resolve and need
-> maintained equivalents before their per-family assertions can pass. The base image was aligned to
+> **Named cohort residuals (incompatible with the Python 3.12 / CUDA 12.8 substrate):** the Basic
+> Pitch TensorFlow row (published package pins TensorFlow `<2.15.1`), the Omnizart (TF1-era) music
+> row, and the MT3 (unmaintained JAX/T5X) music row do not resolve and need maintained equivalents
+> or the ONNX/Core ML fallback lanes before their per-family assertions can pass. The base image was aligned to
 > `nvidia/cuda:12.8.1-cudnn-runtime-ubuntu24.04` to match the 570 driver (a CUDA-13 base needs driver
 > >= 580).
 >
-> **Sprint 4.17 per-engine-image split — foundation validated.** The monolith was split: the
-> control-plane / coordinator image (`infernix-linux-gpu:local`, `docker/Dockerfile`) is now **22.4 GB**
-> (down from 121 GB — no framework venvs), and per-engine images build from `docker/engine.Dockerfile`
-> (CUDA-runtime base + the control-plane binary/python + one engine's `--with cuda` venv). The
-> `transformers` per-engine image builds and, with `--gpus all`, reports `torch 2.7.1+cu128`,
-> `cuda available: True`, and imports `adapters.transformers_python` — so an engine pod pulls only its
-> own framework. `vllm` needs a pinned installable version (a fresh resolve picked an uninstallable
-> `0.15.1`); that pin is the next per-engine-image step. Remaining for the routed cluster run: chart
-> per-engine engine Deployments, coordinator→`inference.batch.<mode>.<engine>` routing, the lifecycle
-> per-engine image build/push/load set, the native-engine binary lane, and the weights + per-family GPU
-> run.
+> **Sprint 4.17 per-engine-image split — code-side implementation complete.** The monolith was
+> split: the control-plane / coordinator image (`infernix-linux-gpu:local`, `docker/Dockerfile`) is now
+> **22.4 GB** (down from 121 GB — no framework venvs), and per-engine images build from
+> `docker/engine.Dockerfile` (CUDA-runtime base + the control-plane binary/python + one engine's
+> `--with cuda` venv). The `transformers` per-engine image builds and, with `--gpus all`, reports
+> `torch 2.7.1+cu128`, `cuda available: True`, and imports `adapters.transformers_python`; `vllm` is
+> pinned to `0.11.0`. A June 11, 2026 routed-cluster validation run built the `vllm` and `pytorch`
+> per-engine images and then exposed the TensorFlow/Basic Pitch dependency conflict, so the
+> TensorFlow engine image now owns only the maintained TensorFlow CUDA stack while Basic Pitch
+> TensorFlow is tracked as a named residual. A follow-up June 11, 2026 `./bootstrap/linux-gpu.sh test`
+> run passed Haskell style, Haskell unit, and web unit gates before failing in `bootstrap-harbor`
+> because Linux outer-container bind-mounted Kind paths skipped the Patroni claim-root scrub and
+> replayed stale Harbor PostgreSQL data against a regenerated `infernix-harbor-db-user` secret. The
+> lifecycle now scrubs non-retained Patroni roots before claim directory creation and after
+> retained-state sync on all lanes. The next routed-cluster run built, published, and verified the
+> `diffusers`, `jax`, `pytorch`, `tensorflow`, and `vllm` per-engine images plus the slim control-plane
+> image, then exposed the single-GPU scheduling gap: the generated final chart tried to run the base
+> engine and every per-engine Deployment concurrently, so the extra pods were rejected with
+> `Insufficient nvidia.com/gpu`. The lifecycle values now keep per-engine replicas at zero on the
+> repo-owned `linux-gpu` lane, and integration/Playwright scale exactly one per-engine deployment
+> during per-model validation. The code-side wiring now includes `engineDaemons`, per-engine batch
+> topics, `infernix service --engine-name`, per-engine chart Deployments/PDBs, lifecycle per-engine
+> image builds, and Harbor per-engine overlays. The first governed rerun after the single-GPU fix
+> passed Haskell style, Haskell unit, and web unit gates, then failed during Harbor publication of
+> `infernix-engine-diffusers-linux-gpu` with a registry `blob ... not found` error after the Harbor
+> PostgreSQL scrub succeeded; this points at retained `harbor-registry` MinIO bucket contents getting
+> out of sync with the fresh Harbor database. The lifecycle then reset only the Harbor registry
+> bucket mirror before cluster startup, preserving `infernix-models` and `infernix-demo-objects`.
+> The next governed rerun again passed Haskell style, Haskell unit, and web unit gates, then failed
+> during the same image publication with `blob sha256:05ec76e31584... not found`. The remaining
+> issue was stale MinIO `.minio.sys/multipart` registry-upload metadata plus the Linux host-bind
+> teardown path skipping the non-retained scrub. Lifecycle cleanup now covers the Harbor registry
+> bucket, registry bucket metadata, MinIO multipart/tmp working sets, and non-retained Patroni roots
+> on startup and `cluster down`. The following governed rerun again passed style/unit/web gates and
+> proved teardown leaves no stale registry/multipart/tmp directories, but the first diffusers image
+> push still failed with `blob sha256:4614b301... not found`. Investigation found the reused
+> repo-owned images were Docker 29 / BuildKit OCI indexes with attestation metadata; bootstrap and
+> lifecycle builds now pass `--provenance=false`, and lifecycle reuse rejects local image-index
+> descriptors. The next governed rerun rebuilt all five per-engine images as plain Docker manifests
+> and again passed style/unit/web gates, but Harbor publication still failed on
+> `infernix-engine-diffusers-linux-gpu` after 8 retries with
+> `blob sha256:05ec76e31584... not found`. Investigation then found stale Harbor Redis
+> repository blob-cache keys for those missing digests; lifecycle cleanup now removes the Harbor
+> Redis claim root with the rebuildable registry bucket/cache state. The next governed
+> `./bootstrap/linux-gpu.sh test` rerun passed Haskell style, Haskell unit, and web unit gates,
+> push/pull-verified all five per-engine images plus the slim control-plane image through Harbor,
+> push/pull-verified the chart upstream image set, deployed the final chart, and completed
+> `cluster up`. That run then failed in per-model inference at `audio-basic-pitch-onnx`: the
+> `AudioToMidi` result-family assertion required an `infernix-demo-objects/*.mid` object reference,
+> but the native ONNX Runtime lane produced a failed/inline result. Follow-up code-side validation
+> compiles the integration target and passes Haskell style after adding canonical uploaded input
+> objects for audio/image input rows and asserting `status = completed` before result-family shape.
+> The governed `./bootstrap/linux-gpu.sh build` after that follow-up passes and produces the plain
+> Docker manifest launcher image
+> `sha256:2d6cfd42ca59ee7fbd9669a8c32738ed0ba44ef09706b469d12c8803b520e030`. The latest full
+> governed rerun again passed style/unit/web gates, push/pull-verified all five per-engine images
+> plus the control-plane and chart upstream images through Harbor, completed final chart rollout and
+> route probes, then failed at `llm-tinyllama-gguf`: the Linux base engine pod had no
+> `/workspace/.data/engines/llama-cpp-cli/bin/llama-cli`. The first remaining CUDA Linux blocker is
+> the Linux native-engine binary/materialization lane before the audio-to-MIDI native rows can be
+> retried. Current-source mounted linux-gpu validation after that run passes `cabal test
+> infernix-unit`, `cabal test infernix-haskell-style`, `cabal build test:infernix-integration`,
+> `poetry --directory python run check-code`, `cabal run exe:infernix -- lint docs`, `docs check`,
+> `lint files`, `lint proto`, and `lint chart` with the worker's model-cache/MinIO protobuf wiring
+> and image-owned native-runner root fallback in place.
 
 Phases 1, 4, and 6 stay `Active` with Wave I as their cohort-pending residual and cannot return to
 `Done` until both cohorts pass their full-suite gates against the same state.
@@ -609,9 +664,9 @@ tart Metal-engine build coverage upgrade; those rows carry a pending Wave I resi
 | 1 | Sprints 1.1–1.12 `Done`; Sprint 1.13 code-side closure (the `tart` manifest field / `hostTart` selector, `AppleTart` reconcile, `materialize-metal-engines` registration, the allowlisted tart build lane, and their unit coverage) is **complete** on the present CUDA Linux host (Stage 1); the in-VM tart Metal build is Apple-hardware-bound (phase `Active`) | Closed in Wave A for 1.1-1.12; Sprint 1.13 Stage 2 is **Apple cohort only** (the tart Metal build), pending Wave I | `linux-cpu` passed the recorded validation; `linux-gpu` passed the recorded validation; Sprint 1.13 has no CUDA Linux surface (Metal/tart is Apple-only) |
 | 2 | Sprints 2.1–2.13 `Done` | Closed in Wave A (retained-state replay + Patroni filter + cluster lifecycle) | `linux-cpu` passed the recorded validation; `linux-gpu` passed the recorded validation |
 | 3 | Sprints 3.1–3.12 `Done` | Closed in Wave A/A.2 (substrate-aware publication, Harbor port, containerd, hand-authored MinIO, and Apple host-native E2E) | `linux-cpu` amd64 passed the recorded validation; `linux-gpu` passed the recorded validation; native arm64 `linux-cpu` passed in Wave F on the recorded validation |
-| 4 | Sprints 4.1-4.14 closed for the runtime/catalog/transport contract; real per-family inference code-side closure **complete** across 4.1/4.2/4.3/4.7/4.8/4.10/4.11/4.12/4.14/4.15/4.16/4.17 on the present CUDA Linux host (Stage 1: build/unit/style/lint-proto/lint-files/lint-docs + `poetry run check-code`), with Sprint 4.17's cluster-side batch routing/chart/lifecycle deferred to the Wave I live-iteration and real-engine output and the Apple Metal path deferred to Stage 2 (phase `Active`) | Original contract closed in Wave A; per-family real-output Stage 2 (Apple Metal incl. tart) pending Wave I | `linux-cpu`/`linux-gpu` original contract passed the recorded validation; per-family real-output Stage 2 pending Wave I |
+| 4 | Sprints 4.1-4.14 closed for the runtime/catalog/transport contract; real per-family inference code-side closure **complete** across 4.1/4.2/4.3/4.7/4.8/4.10/4.11/4.12/4.14/4.15/4.16 on the present CUDA Linux host. Sprint 4.17 code-side implementation now includes `engineDaemons`, per-engine batch routing, chart Deployments/PDBs, lifecycle image builds, Harbor overlays, single-GPU serialized per-engine validation, model-cache/MinIO fields on the worker protobuf request, and image-owned native-root fallback under `/opt/infernix/engines/<adapterId>/`. June 11, 2026 evidence has temp-copy Linux GPU launcher build/unit/style passing plus current-source docs/chart/files/proto lint and linux-gpu substrate materialize/validate passing; current-source mounted validation after the latest full run passes `cabal test infernix-unit`, `cabal test infernix-haskell-style`, `cabal build test:infernix-integration`, `poetry --directory python run check-code`, `cabal run exe:infernix -- lint docs`, `docs check`, `lint files`, `lint proto`, and `lint chart`. The latest governed rerun push/pull-verified all per-engine, control-plane, and chart upstream images through Harbor, completed final rollout and route probes, then failed at `llm-tinyllama-gguf` because the Linux base engine pod had no `/workspace/.data/engines/llama-cpp-cli/bin/llama-cli`. The post-harness-fix governed launcher rebuild passed as plain manifest `sha256:2d6cfd42ca59ee7fbd9669a8c32738ed0ba44ef09706b469d12c8803b520e030`; real-engine output, routed linux-gpu per-engine cluster evidence, the Linux native-engine materialization lane, and the Apple Metal path remain Stage 2 (phase `Active`) | Original contract closed in Wave A; per-family real-output Stage 2 (Apple Metal incl. tart) pending Wave I | `linux-cpu`/`linux-gpu` original contract passed the recorded validation; per-family real-output and routed per-engine linux-gpu Stage 2 pending Wave I, currently blocked first on missing Linux native engine binaries in the base engine pod |
 | 5 | Sprints 5.1-5.10 `Done` | Closed in Wave A/A.2 (demo backend + adapter dhall reads via integration suite and routed E2E) | `linux-cpu` passed the recorded validation; `linux-gpu` passed the recorded validation |
-| 6 | Sprints 6.1, 6.4, 6.5, 6.7-6.30 `Done`; per-family real-output coverage code-side closure **complete** across 6.2/6.3/6.6 on the present CUDA Linux host (Stage 1: `infernix-unit`, `cabal build test:infernix-integration`, `infernix lint docs/files`; 6.3's spago web-unit suite runs in the container/Node-22 lane), with the real-engine integration and E2E assertions deferred to Stage 2 (phase `Active`) | Original coverage closed in Wave A/A.1/A.2/A.3 (lint, style, unit, integration, routed E2E, and Apple engine-lock chaos); per-family real-output Stage 2 pending Wave I | `linux-cpu` and `linux-gpu` original coverage passed the recorded validation; per-family real-output Stage 2 pending Wave I |
+| 6 | Sprints 6.1, 6.4, 6.5, 6.7-6.30 `Done`; per-family real-output coverage code-side closure **complete** across 6.2/6.3/6.6 on the present CUDA Linux host (Stage 1: `infernix-unit`, `cabal build test:infernix-integration`, `infernix lint docs/files`; 6.3's spago web-unit suite runs in the container/Node-22 lane), with the real-engine integration and E2E assertions deferred to Stage 2 (phase `Active`). The June 11 linux-gpu live run exposed that integration requests did not provide canonical input objects for audio/image input rows and did not fail early on `status = failed`; the harness now uploads sample input objects through the MinIO presigned route, asserts `status = completed`, passes mounted linux-gpu `cabal test infernix-unit`, `cabal test infernix-haskell-style`, `cabal build test:infernix-integration`, `poetry --directory python run check-code`, `cabal run exe:infernix -- lint docs`, `docs check`, `lint files`, `lint proto`, and `lint chart`, and is baked into plain-manifest launcher `sha256:2d6cfd42ca59ee7fbd9669a8c32738ed0ba44ef09706b469d12c8803b520e030`. The latest full governed rerun proved style/unit/web plus Harbor/final-rollout/route-probe gates and now fails first on missing Linux native engine binaries at `llm-tinyllama-gguf` | Original coverage closed in Wave A/A.1/A.2/A.3 (lint, style, unit, integration, routed E2E, and Apple engine-lock chaos); per-family real-output Stage 2 pending Wave I | `linux-cpu` and `linux-gpu` original coverage passed the recorded validation; per-family real-output Stage 2 pending Wave I, with the next linux-gpu rerun expected to surface native-runner/materialization and weight-bootstrap failures in order |
 | 7 | Sprints 7.1-7.18 `Done`; Sprint 7.8 runtime KV-cache and `Infernix.Runtime.Daemon` split closed in Wave E after the code-side KV-cache decision and Failover naming follow-on; Sprints 7.19-7.22 auth-UX surface closed in Wave G | Closed in Wave A/A.1/A.2/A.3 for the original durable-context gates; Wave G closed for auth-UX | `linux-cpu` passed the recorded validation; `linux-gpu` passed the recorded validation; residual rebuilt-image `linux-gpu` gate passed the recorded validation against `sha256:521a56ac6f79bf1ce5bc9d7dcd9c872e897ce4b4882661d4ada2f62faa108d7b`; residual rebuilt-image `linux-cpu` gate passed the recorded validation against `sha256:dc0c003e7cc2f2e359a474fa5ddb522c8715d271e322534db7798f260e9747fa`; mounted Linux CPU Wave E passed the recorded validation; Wave G Apple host-native auth-UX validation passed 9/9 routed E2E |
 
 Every Apple cohort gate above was additionally re-confirmed end to end on the Apple cohort host by

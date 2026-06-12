@@ -446,6 +446,8 @@ status reads remain reliable and retained Harbor PostgreSQL replicas recover wit
   `cluster status` readers from seeing truncated Dhall while lifecycle work is in flight
 - retained-state `cluster up` detects a ready Harbor PostgreSQL leader with stopped unready
   replicas and reinitializes those replicas from the leader through Patroni
+- all supported lanes scrub non-retained Harbor and Keycloak Patroni claim roots before recreating
+  claim directories and after retained-state sync, including Linux outer-container Kind bind mounts
 - supported Apple reruns no longer require manual Harbor PostgreSQL replica surgery when timeline
   drift leaves retained replicas stopped after promotion
 
@@ -455,6 +457,8 @@ status reads remain reliable and retained Harbor PostgreSQL replicas recover wit
   to read the staged substrate file successfully while lifecycle progress is in flight
 - a retained-state `./bootstrap/apple-silicon.sh up` can log the targeted Harbor PostgreSQL
   replica repair and reach ready Harbor PostgreSQL members
+- a retained-state Linux outer-container rerun no longer replays stale Harbor Patroni data against a
+  freshly generated `infernix-harbor-db-user` secret during `bootstrap-harbor`
 - the supported Apple lifecycle reruns cleanly through `./bootstrap/apple-silicon.sh doctor`,
   `build`, `up`, `status`, `test`, and `down`
 - Apple cohort validation closed in Wave A; CUDA Linux validation closed in Wave C with full

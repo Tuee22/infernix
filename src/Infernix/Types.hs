@@ -57,7 +57,7 @@ import Data.Aeson
     (.=),
   )
 import Data.Aeson.Types (Parser)
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, listToMaybe, maybeToList)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Time (UTCTime)
@@ -272,12 +272,12 @@ data DemoConfig = DemoConfig
     -- Sprint 7.7 renamed this field from @clusterDaemon@ to track the
     -- new daemon-role vocabulary.
     coordinatorDaemon :: DaemonConfig,
-    -- | Engine role metadata. On Apple silicon this is present and
-    -- describes the on-host engine daemon; on Linux substrates the
-    -- engine role is bound to the in-cluster @infernix-engine@
-    -- Deployment and this field stays 'Nothing'. Sprint 7.7 renamed
-    -- this from @hostDaemon@.
-    engineDaemon :: Maybe DaemonConfig,
+    -- | Engine role metadata. The first entry is the generic engine
+    -- daemon (Apple host engine, or the Linux native-runner fallback
+    -- topic). Linux GPU framework engines add one entry per isolated
+    -- per-engine image, selected by @infernix service --role engine
+    -- --engine-name <name>@.
+    engineDaemons :: [DaemonConfig],
     requestTopics :: [Text],
     resultTopic :: Text,
     -- | Always-on MinIO bucket the coordinator's bootstrap subscription
@@ -649,7 +649,8 @@ instance ToJSON DemoConfig where
         "demo_ui" .= demoUiEnabled demoConfig,
         "daemonRole" .= activeDaemonRole demoConfig,
         "coordinator" .= coordinatorDaemon demoConfig,
-        "engine" .= engineDaemon demoConfig,
+        "engine" .= listToMaybe (engineDaemons demoConfig),
+        "engineDaemons" .= engineDaemons demoConfig,
         "request_topics" .= requestTopics demoConfig,
         "result_topic" .= resultTopic demoConfig,
         "models_bucket" .= modelsBucket demoConfig,
@@ -683,7 +684,7 @@ instance FromJSON DemoConfig where
                       requestTopicValues
                       resultTopicValue
                   )
-    engineDaemonValue <-
+    legacyEngineDaemonValue <-
       do
         engineMaybe <- value .:? "engine"
         case engineMaybe of
@@ -693,6 +694,12 @@ instance FromJSON DemoConfig where
             case hostMaybe of
               Just legacyHost -> pure legacyHost
               Nothing -> pure (defaultEngineDaemonConfig runtimeModeValue resultTopicValue)
+    engineDaemonValues <-
+      do
+        engineDaemonsMaybe <- value .:? "engineDaemons"
+        case engineDaemonsMaybe of
+          Just configuredDaemons -> pure configuredDaemons
+          Nothing -> pure (maybeToList legacyEngineDaemonValue)
     modelsBucketValue <- value .:? "models_bucket" .!= defaultModelsBucket
     modelBootstrapTopicValue <-
       value .:? "model_bootstrap_topic" .!= defaultModelBootstrapTopic
@@ -703,7 +710,7 @@ instance FromJSON DemoConfig where
       <*> value .: "demo_ui"
       <*> pure daemonRoleValue
       <*> pure coordinatorDaemonValue
-      <*> pure engineDaemonValue
+      <*> pure engineDaemonValues
       <*> pure requestTopicValues
       <*> pure resultTopicValue
       <*> pure modelsBucketValue

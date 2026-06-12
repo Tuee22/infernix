@@ -9,6 +9,7 @@ module Infernix.Models
     engineNameForSelectedEngine,
     frameworkEngineNamesForMode,
     perEngineBatchTopicForMode,
+    perEngineImageRepository,
     perEngineImageName,
     engineBindingForSelectedEngine,
     engineBindingsForMode,
@@ -176,7 +177,11 @@ perEngineBatchTopicForMode runtimeMode engineName =
 -- @docker/engine.Dockerfile@.
 perEngineImageName :: RuntimeMode -> Text -> Text
 perEngineImageName runtimeMode engineName =
-  "infernix-engine-" <> engineName <> "-" <> runtimeModeId runtimeMode <> ":local"
+  perEngineImageRepository runtimeMode engineName <> ":local"
+
+perEngineImageRepository :: RuntimeMode -> Text -> Text
+perEngineImageRepository runtimeMode engineName =
+  "infernix-engine-" <> engineName <> "-" <> runtimeModeId runtimeMode
 
 engineBindingForSelectedEngine :: RuntimeMode -> Text -> EngineBinding
 engineBindingForSelectedEngine _runtimeMode selectedEngineValue =

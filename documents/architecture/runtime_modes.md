@@ -109,12 +109,18 @@ target shape is the three-role daemon model codified in
   and the **coordinator** Deployment (`infernix-coordinator`) whenever
   `demo_ui` is enabled, on every supported substrate. The **engine**
   role runs as an in-cluster `infernix-engine` Deployment on Linux
-  substrates with a strict one-per-node anti-affinity rule, and as
-  the on-host `infernix service` daemon on Apple silicon. The chart
+  substrates with a strict one-per-node anti-affinity rule; on `linux-gpu`,
+  Python-native framework work can use additional
+  `infernix-engine-<engine>` per-engine Deployments selected by
+  `inference.batch.linux-gpu.<engine>` topics. Repo-owned `linux-gpu`
+  lifecycle values keep those per-engine deployments at zero replicas on
+  the single-GPU lane and validation scales one at a time. Apple silicon runs
+  the engine role as the on-host `infernix service` daemon. The chart
   ships `chart/templates/deployment-{coordinator,engine,demo}.yaml`,
   `clusterServiceEnabled` returns `False` on every substrate, and
   `finalPhaseDeployments` waits on
-  `deployment/infernix-{coordinator,engine}`. The Apple lane's
+  `deployment/infernix-{coordinator,engine}` plus the Linux GPU
+  per-engine Deployment set when rendered. The Apple lane's
   cluster-coordinator-to-host-engine batch bridge carries Apple-native
   inference handoff.
 - on `apple-silicon`, the clustered `infernix-demo` path runs from the

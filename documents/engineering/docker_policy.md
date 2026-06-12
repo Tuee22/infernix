@@ -74,8 +74,9 @@ operations have a buildx-capable CLI when needed.
 
 ## Supported Usage
 
-- `docker build -f docker/Dockerfile ...` is the manual image refresh surface;
-  bootstrap scripts call that build before entering the launcher.
+- `docker build -f docker/Dockerfile --provenance=false ...` is the manual image refresh surface;
+  bootstrap scripts call that build before entering the launcher. Disabling BuildKit provenance
+  keeps repo-owned local images as plain single-platform images for Harbor publication.
 - `docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm infernix
   infernix ...` is the direct Linux CPU outer control-plane entrypoint.
 - `LAUNCHER_IMAGE=infernix-linux-gpu:local docker compose --project-name infernix-linux-gpu
@@ -97,6 +98,9 @@ operations have a buildx-capable CLI when needed.
 - the shared substrate images bake `/opt/infernix/source-snapshot-files.txt` before later
   generated outputs are created so git-less image runs of `infernix lint files` validate the
   source snapshot rather than the mutated runtime tree; the manifest stays in the image overlay
+- mounted-source outer-container runs execute `git ls-files` with a scoped
+  `safe.directory=/workspace` override so `infernix lint files` works against the operator's
+  bind-mounted checkout without requiring global Git configuration inside the launcher
 - on the supported outer-container path, `cluster up` reuses the already-built
   `infernix-linux-<mode>:local` snapshot selected by the launcher and publishes that image into
   Harbor before final rollout instead of asking the shell bootstrap to build or push images
@@ -172,8 +176,8 @@ contract; the binary owns it (operators do not hand-author Kind config).
 
 - `infernix docs check` fails if this governed Docker-policy document loses its required structure
   or metadata contract.
-- direct `docker build -f docker/Dockerfile ...` commands produce the selected
-  Linux substrate image.
+- direct `docker build -f docker/Dockerfile --provenance=false ...` commands produce the selected
+  Linux substrate image without attestation-index metadata.
 - `docker volume ls` lists no `infernix-build` or `infernix-cabal-home` named volumes after a
   supported `compose down -v` sequence; outer-container build state stays in the launcher image
   overlay instead.

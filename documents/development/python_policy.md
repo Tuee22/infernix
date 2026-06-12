@@ -116,9 +116,10 @@ own isolated in-project venv:
   framework-free project so an absent framework fails fast.
 - The linux-gpu image build (`docker/Dockerfile`) bakes each engine's `--with cuda` venv as a
   separate layer; a failed engine install removes its partial venv so the runtime falls back to the
-  fail-fast path (a named cohort residual) rather than a broken venv. Omnizart (TF1-era) and MT3
-  (unmaintained JAX) do not resolve on the supported Python 3.12 / CUDA 12.8 substrate and are named
-  cohort residuals (see [../../DEVELOPMENT_PLAN/cohort-validation-waves.md](../../DEVELOPMENT_PLAN/cohort-validation-waves.md)).
+  fail-fast path (a named cohort residual) rather than a broken venv. Basic Pitch TensorFlow
+  (published wheel pins TensorFlow `<2.15.1`), Omnizart (TF1-era), and MT3 (unmaintained JAX) do
+  not resolve on the supported Python 3.12 / CUDA 12.8 substrate and are named cohort residuals
+  (see [../../DEVELOPMENT_PLAN/cohort-validation-waves.md](../../DEVELOPMENT_PLAN/cohort-validation-waves.md)).
 
 `find python -name '*.py' -type f` still returns only files under `python/adapters/`; the
 `python/engines/<engine>/` projects carry only `pyproject.toml` + `poetry.toml`, and their `.venv/`
@@ -153,23 +154,26 @@ Current state:
 - the worker request and response payloads are typed protobuf messages from
   `proto/infernix/runtime/inference.proto`, consumed on the Python side through
   `tools/generated_proto/`
-- the worker request includes repo-local durable metadata paths for the selected model's artifact
-  bundle, source-artifact manifest, cache manifest, and engine install root
+- the worker request includes selected-model metadata, the engine install root, non-text input
+  object references, and model-cache/MinIO wiring decoded by the Haskell worker from mounted
+  `ClusterConfig` plus secret-file-backed `SecretsConfig` values
 - the shared project exposes one Poetry console script per adapter together with matching
   `setup-*` entrypoints
 - each `setup-*` entrypoint writes an idempotent repo-local bootstrap manifest at
   `./.data/engines/<adapter-id>/bootstrap.json`
-- adapter modules load durable runtime context from those bundle or manifest paths, load model
-  weights through `adapters.model_cache.get_model_path`, and perform real inference over a prebuilt
-  host wheel. The runtime worker invokes the real engine for the selected binding — the Python
-  adapter transform over a prebuilt host wheel for python-stdio bindings, or the real native runner
-  binary resolved from a typed HostConfig absolute path for native-process-runner bindings — fetches
-  model weights lazily from the infernix-models MinIO bucket via `adapters.model_cache.get_model_path`,
-  and publishes a per-family real result: inline text for the LLM and speech families, and a typed
-  object reference into the infernix-demo-objects MinIO bucket for the source-separation,
-  audio-to-MIDI, music-transcription, image, video, audio-generation, and OMR artifact families.
-  The shared `run_context_adapter` boundary is unchanged; an artifact-adapter seam returns an object
-  reference for the non-text families rather than acting as a raw stdin echo path.
+- adapter modules load durable runtime context from the protobuf request, configure
+  `adapters.model_cache` from that same request before calling `get_model_path`, load model weights,
+  and perform real inference over a prebuilt host wheel. The runtime worker invokes the real engine
+  for the selected binding — the Python adapter transform over a prebuilt host wheel for
+  python-stdio bindings, or the real native runner binary resolved from a typed HostConfig data root
+  or Linux image-owned `/opt/infernix/engines/<adapterId>/` root for native-process-runner bindings —
+  fetches model weights lazily from the infernix-models MinIO bucket via
+  `adapters.model_cache.get_model_path`, and publishes a per-family real result: inline text for the
+  LLM and speech families, and a typed object reference into the infernix-demo-objects MinIO bucket
+  for the source-separation, audio-to-MIDI, music-transcription, image, video, audio-generation, and
+  OMR artifact families. The shared `run_context_adapter` boundary is unchanged; an artifact-adapter
+  seam returns an object reference for the non-text families rather than acting as a raw stdin echo
+  path.
 
 Adapters do not open network sockets and do not subscribe to the topic transport themselves; the
 Haskell worker owns those boundaries and treats the adapter as a pure request-to-response process.

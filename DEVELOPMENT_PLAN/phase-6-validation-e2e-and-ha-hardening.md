@@ -152,7 +152,10 @@ contracts, and generated-catalog logic, and put the validation doctrine in canon
 ### Deliverables
 
 - `infernix test lint` is the canonical static-quality entrypoint
-- the repo-owned lint layer enforces whitespace, newline, tab, docs, chart, proto, and tracked-file policy
+- the repo-owned lint layer enforces whitespace, newline, tab, docs, chart, proto, and tracked-file
+  policy; mounted-source Linux container runs invoke Git with a scoped
+  `safe.directory=/workspace` setting so file lint validates the bind-mounted repo without global
+  Git state
 - the Haskell style guide clearly separates:
   - hard gates enforced mechanically
   - review guidance that remains human doctrine
@@ -182,7 +185,7 @@ None.
 
 **Status**: Active
 **Code-side closure**: Complete on the present CUDA Linux host (x86_64 + RTX 5090) — `validateCatalogModelInference` (`test/integration/Spec.hs`) is upgraded from the model-id + runtime-mode echo to a per-family real-output result contract dispatched on `ResultFamily` (via `resultFamilyForDescriptor`): text families (LLM, speech) assert a non-empty inline continuation and no object ref; every artifact family asserts an `infernix-demo-objects/` object reference whose key extension matches the family's artifact type (`.zip` source-separation, `.mid`/`.midi` audio-to-MIDI, `.mid`/`.midi`/`.musicxml`/`.xml` music transcription, `.png` image, `.mp4` video, `.wav` audio generation, `.musicxml`/`.xml` OMR) — shape/type, never golden strings. One DRY substrate-aware suite that reads the active `.dhall` and traverses the README rows; no per-substrate suites. Proven machine-independent by `cabal build test:infernix-integration` (compiles/typechecks) and `cabal test infernix-unit`, which pass on the present CUDA Linux host; the assertions themselves pass only when real engines run (Section P: results name the single substrate they exercised)
-**Cohort gate**: Pending [Wave I](cohort-validation-waves.md) — both cohorts run the per-family real-output integration suite against their own catalog column
+**Cohort gate**: Pending [Wave I](cohort-validation-waves.md) — both cohorts run the per-family real-output integration suite against their own catalog column. The June 11, 2026 linux-gpu run reached the assertion phase after Harbor publication and `cluster up`, then failed because `audio-basic-pitch-onnx` did not return the required `AudioToMidi` object reference. Follow-up code uploads canonical sample input objects for audio/image input rows through the MinIO presigned route and asserts `status = completed` before result-family shape. The governed `./bootstrap/linux-gpu.sh build` after that follow-up passed and produced plain-manifest launcher image `sha256:2d6cfd42ca59ee7fbd9669a8c32738ed0ba44ef09706b469d12c8803b520e030`. The latest governed `./bootstrap/linux-gpu.sh test` rerun again passed style/unit/web, Harbor publication, final chart rollout, and route probes, then failed at `llm-tinyllama-gguf` because the Linux base engine pod lacks `/workspace/.data/engines/llama-cpp-cli/bin/llama-cli`; native-engine materialization is now the first live assertion blocker. Current-source mounted linux-gpu validation after that run passes `cabal test infernix-unit`, `cabal test infernix-haskell-style`, `cabal build test:infernix-integration`, `poetry --directory python run check-code`, `cabal run exe:infernix -- lint docs`, `docs check`, `lint files`, `lint proto`, and `lint chart` with the worker's model-cache/MinIO protobuf wiring in place.
 **Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Demo/Api.hs`, `src/Infernix/Runtime.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Worker.hs`, `test/integration/Spec.hs`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/operations/cluster_bootstrap_runbook.md`
 
@@ -224,6 +227,18 @@ MinIO, Pulsar, and operator-managed PostgreSQL substrate.
 - **Cohort gate ([Wave I](cohort-validation-waves.md), Stage 2):** the assertions pass only when
   real engines run; each cohort runs the suite against its own catalog column (Apple Metal incl.
   tart; CUDA `linux-cpu`/`linux-gpu`), and results name the single substrate exercised (Section P).
+  The latest linux-gpu attempts reached this gate after successful Harbor publication and final
+  `cluster up`. The harness now provides canonical uploaded input objects for audio/image input
+  rows and fails early on `status = failed`; the governed launcher rebuild passes with
+  plain-manifest image `sha256:2d6cfd42ca59ee7fbd9669a8c32738ed0ba44ef09706b469d12c8803b520e030`.
+  The latest full governed rerun then passed style/unit/web, Harbor publication, final chart
+  rollout, and route probes, but failed at `llm-tinyllama-gguf` because the Linux base engine pod
+  lacks `/workspace/.data/engines/llama-cpp-cli/bin/llama-cli`; native-engine materialization is
+  now the first live assertion blocker. Current-source mounted linux-gpu validation after that run
+  passes `cabal test infernix-unit`, `cabal test infernix-haskell-style`, `cabal build
+  test:infernix-integration`, `poetry --directory python run check-code`, `cabal run
+  exe:infernix -- lint docs`, `docs check`, `lint files`, `lint proto`, and `lint chart`; the ONNX
+  Runtime audio-to-MIDI row remains queued behind the native-binary/materialization lane.
 
 ---
 

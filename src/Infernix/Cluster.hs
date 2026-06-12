@@ -146,6 +146,7 @@ finalPhaseDeployments state =
     baseDeployments =
       [ "deployment/infernix-engine"
       ]
+        <> map (("deployment/infernix-engine-" <>) . Text.unpack) (perEngineDeploymentNames (clusterRuntimeMode state))
         <> [deployment | clusterServiceEnabled (clusterRuntimeMode state), deployment <- ["deployment/infernix-service"]]
     demoDeployments =
       [ "deployment/infernix-coordinator",
@@ -475,6 +476,7 @@ clusterUpWithPlatform paths runtimeMode = do
   claimDiscoveryRenderedChartPath <- renderHelmChart paths runtimeMode [claimDiscoveryValuesPath]
   discoveredClaims <- discoverPersistentClaims paths claimDiscoveryRenderedChartPath
   discoveredRoutes <- discoverChartRoutesFile claimDiscoveryRenderedChartPath
+  scrubNonRetainedClusterDirectories paths runtimeMode
   mapM_ (ensureClaimDirectoryReady paths runtimeMode) discoveredClaims
   clusterPrepareState <-
     startLifecyclePhase
@@ -766,6 +768,7 @@ clusterDown maybeRuntimeMode = do
             "deleting the Kind cluster after retained runtime data handling is complete"
         deleteKindCluster paths (clusterRuntimeMode deleteState)
       Nothing -> deleteKindCluster paths runtimeMode
+  scrubNonRetainedClusterDirectories paths runtimeMode
   case maybeState of
     Nothing -> putStrLn "cluster already absent"
     Just state
@@ -1738,12 +1741,14 @@ buildClusterImages paths state runtimeMode = do
       goImage = "golang:1.24"
       baseImage =
         case clusterWorkloadRuntimeMode runtimeMode of
-          LinuxGpu -> "nvidia/cuda:13.2.1-cudnn-runtime-ubuntu24.04"
+          LinuxGpu -> "nvidia/cuda:12.8.1-cudnn-runtime-ubuntu24.04"
           _ -> "ubuntu:24.04"
+      engineBaseImage = "nvidia/cuda:12.8.1-cudnn-runtime-ubuntu24.04"
       dockerBuildArgs targetImageRef =
         [ "build",
           "-f",
           "docker/Dockerfile",
+          "--provenance=false",
           "--build-arg",
           "GO_IMAGE=" <> goImage,
           "--build-arg",
@@ -1754,8 +1759,8 @@ buildClusterImages paths state runtimeMode = do
           targetImageRef,
           "."
         ]
-  imagePresent <- maybeCommand ["docker", "image", "inspect", imageRef]
-  if Config.controlPlaneContext paths == OuterContainer && imagePresent
+  imageReusable <- dockerImageReusableForHarborPush imageRef
+  if Config.controlPlaneContext paths == OuterContainer && imageReusable
     then putStrLn ("reusing baked cluster image for " <> runtimeModeName <> ": " <> imageRef)
     else do
       putStrLn ("building cluster images for " <> runtimeModeName)
@@ -1768,6 +1773,57 @@ buildClusterImages paths state runtimeMode = do
         []
         "docker"
         (dockerBuildArgs imageRef)
+  buildPerEngineImages imageRef baseImage engineBaseImage
+  where
+    buildPerEngineImages controlPlaneImageRef controlPlaneBaseImage engineBaseImage =
+      case runtimeMode of
+        LinuxGpu ->
+          forM_ (perEngineDeploymentNames runtimeMode) $ \engineName -> do
+            let engineImageRef = Text.unpack (perEngineImageName runtimeMode engineName)
+            engineImageReusable <- dockerImageReusableForHarborPush engineImageRef
+            if Config.controlPlaneContext paths == OuterContainer && engineImageReusable
+              then putStrLn ("reusing per-engine image for " <> Text.unpack engineName <> ": " <> engineImageRef)
+              else do
+                ensureDockerBuildBaseImage paths state controlPlaneBaseImage
+                ensureDockerBuildBaseImage paths state engineBaseImage
+                runCommandMonitored
+                  paths
+                  state
+                  (Just (repoRoot paths))
+                  []
+                  "docker"
+                  [ "build",
+                    "-f",
+                    "docker/engine.Dockerfile",
+                    "--provenance=false",
+                    "--build-arg",
+                    "ENGINE=" <> Text.unpack engineName,
+                    "--build-arg",
+                    "CONTROL_PLANE_IMAGE=" <> controlPlaneImageRef,
+                    "--build-arg",
+                    "BASE_IMAGE=" <> engineBaseImage,
+                    "-t",
+                    engineImageRef,
+                    "."
+                  ]
+        _ -> pure ()
+
+-- Docker 29 + BuildKit may leave local repo-owned images as OCI indexes
+-- with provenance attestations. Harbor publication is still Docker-push
+-- based for repo-owned images, and those indexed local images have produced
+-- intermittent "blob ... not found" failures against the MinIO-backed Harbor
+-- registry. Images rebuilt with --provenance=false inspect as plain image
+-- manifests; older Docker releases may omit Descriptor and are accepted after
+-- the normal inspect succeeds.
+dockerImageReusableForHarborPush :: String -> IO Bool
+dockerImageReusableForHarborPush imageRef = do
+  inspectResult <- tryCommand Nothing [] "docker" ["image", "inspect", imageRef, "--format", "{{.Descriptor.mediaType}}"]
+  case inspectResult of
+    Left _ -> pure False
+    Right descriptor
+      | "image.index" `List.isInfixOf` descriptor -> pure False
+      | "manifest.list" `List.isInfixOf` descriptor -> pure False
+      | otherwise -> pure True
 
 ensureDockerBuildBaseImage :: Paths -> ClusterState -> String -> IO ()
 ensureDockerBuildBaseImage paths state imageRef = do
@@ -2025,11 +2081,6 @@ preloadHarborImageOnNode paths state nodeContainer imageRef = go (12 :: Int) ""
     chooseError current previous
       | null current = previous
       | otherwise = current
-
-maybeCommand :: [String] -> IO Bool
-maybeCommand [] = pure False
-maybeCommand (command : arguments) =
-  maybeRun command arguments
 
 maybeRun :: String -> [String] -> IO Bool
 maybeRun command arguments = do
@@ -3735,15 +3786,12 @@ prepareKindNodeRuntimePaths paths state runtimeMode = do
   let localKindRoot = kindRuntimeRoot paths runtimeMode
       controlPlaneNodeName = kindControlPlaneNodeName paths runtimeMode
   createDirectoryIfMissing True localKindRoot
-  -- Phase 2 Sprint 2.13 follow-on (2026-05-29): scrub any stale
-  -- operator-managed Patroni Postgres directories from the local
-  -- kind root before the bulk copy. Older binaries retained these
-  -- trees on `cluster down`; the new retention contract excludes
-  -- them, but operators upgrading from an older binary may still
-  -- have pre-existing trees on the host that would otherwise be
-  -- replayed into the new cluster and crash the @postgres-startup@
-  -- init container on partial-init state.
-  scrubStalePatroniDirectories paths runtimeMode
+  -- Phase 2 Sprint 2.13 follow-on (2026-05-29): scrub known
+  -- non-retained service state from the local kind root before the
+  -- bulk copy. Older binaries retained these trees on `cluster down`;
+  -- the current retention contract excludes them so fresh service
+  -- control planes are not replayed with stale backing data.
+  scrubNonRetainedClusterDirectories paths runtimeMode
   nodeNames <- kindNodeNames paths runtimeMode
   mapM_
     ( primeNode
@@ -3808,6 +3856,46 @@ scrubStalePatroniDirectories paths runtimeMode =
       directoryPresent <- doesDirectoryExist absolutePath
       when directoryPresent (removePathForcibly absolutePath)
 
+scrubNonRetainedClusterDirectories :: Paths -> RuntimeMode -> IO ()
+scrubNonRetainedClusterDirectories paths runtimeMode = do
+  scrubStalePatroniDirectories paths runtimeMode
+  scrubRetainedHarborRegistryCache paths runtimeMode
+  scrubRetainedHarborRegistryStorage paths runtimeMode
+
+-- Harbor's registry Redis claim is rebuildable cache state. Retaining it
+-- while the registry bucket and Harbor database are reset can leave blob
+-- existence keys for content that no longer exists in MinIO, causing
+-- later `docker push` attempts to skip uploads and fail the final
+-- manifest write with "blob ... not found".
+scrubRetainedHarborRegistryCache :: Paths -> RuntimeMode -> IO ()
+scrubRetainedHarborRegistryCache paths runtimeMode = do
+  let redisRoot = kindRuntimeRoot paths runtimeMode </> "platform" </> "infernix" </> "harbor-redis"
+  directoryPresent <- doesDirectoryExist redisRoot
+  when directoryPresent (removePathForcibly redisRoot)
+
+-- Harbor's registry bucket is a rebuildable publication cache. The
+-- model and demo object buckets stay durable, but the Harbor database
+-- and Redis cache are recreated with the non-retained state above;
+-- carrying old registry blobs or incomplete multipart upload metadata
+-- across that reset can leave the fresh registry pointing at incomplete
+-- or missing blobs during `docker push`.
+scrubRetainedHarborRegistryStorage :: Paths -> RuntimeMode -> IO ()
+scrubRetainedHarborRegistryStorage paths runtimeMode = do
+  let minioRoot = kindRuntimeRoot paths runtimeMode </> "platform" </> "infernix" </> "minio"
+  minioPresent <- doesDirectoryExist minioRoot
+  when minioPresent $ do
+    ordinalNames <- listDirectory minioRoot
+    forM_ ordinalNames $ \ordinalName -> do
+      let dataRoot = minioRoot </> ordinalName </> "data"
+      scrubDirectory (dataRoot </> "harbor-registry")
+      scrubDirectory (dataRoot </> ".minio.sys" </> "buckets" </> "harbor-registry")
+      scrubDirectory (dataRoot </> ".minio.sys" </> "multipart")
+      scrubDirectory (dataRoot </> ".minio.sys" </> "tmp")
+  where
+    scrubDirectory absolutePath = do
+      directoryPresent <- doesDirectoryExist absolutePath
+      when directoryPresent (removePathForcibly absolutePath)
+
 prepareKindNodeClaimDirectories :: Paths -> ClusterState -> RuntimeMode -> [PersistentClaim] -> IO ()
 prepareKindNodeClaimDirectories paths _state runtimeMode persistentClaims = do
   nodeNames <- kindNodeNames paths runtimeMode
@@ -3846,6 +3934,7 @@ syncKindNodeRuntimePathsToHost paths runtimeMode maybeState = do
           copyDirectoryContentsFromContainer paths maybeCopyState nodeName nodeMountedKindRoot localKindRoot
       )
       nodeNames
+  scrubNonRetainedClusterDirectories paths runtimeMode
 
 syncClaimDirectoriesWhenAvailable :: Paths -> Maybe ClusterState -> IO Bool
 syncClaimDirectoriesWhenAvailable paths maybeState =
@@ -4151,8 +4240,15 @@ renderHelmValues paths controlPlane state demoConfigPayload deployPhase engineCo
         "  image:",
         "    repository: " <> clusterWorkloadImageRepository (clusterRuntimeMode state),
         "    tag: local",
-        "    pullPolicy: IfNotPresent"
+        "    pullPolicy: IfNotPresent",
+        "  perEngine:",
+        "    enabled: " <> yamlBool (not (null perEngineNames)),
+        "    replicaCount: " <> show (repoPerEngineReplicaCount deployPhase),
+        "    names:",
+        renderYamlStringList 6 (map Text.unpack perEngineNames),
+        "    images:"
       ]
+        <> perEngineImageValueLines
         <> routeHelmValues demoUiEnabledValue
         <> unsupportedMonitoringOverrides
         <> serviceEngineAdapterOverrides
@@ -4161,6 +4257,17 @@ renderHelmValues paths controlPlane state demoConfigPayload deployPhase engineCo
     )
   where
     demoUiEnabledValue = clusterStateHasDemoUi state
+    perEngineNames = perEngineDeploymentNames (clusterRuntimeMode state)
+    perEngineImageValueLines =
+      if null perEngineNames
+        then ["      {}"]
+        else concatMap perEngineImageLines perEngineNames
+    perEngineImageLines engineName =
+      [ "      " <> Text.unpack engineName <> ":",
+        "        repository: " <> Text.unpack (perEngineImageRepository (clusterRuntimeMode state) engineName),
+        "        tag: local",
+        "        pullPolicy: IfNotPresent"
+      ]
 
     repoWorkloadReplicaCount :: HelmDeployPhase -> Int
     repoWorkloadReplicaCount phaseValue = case phaseValue of
@@ -4194,6 +4301,26 @@ renderHelmValues paths controlPlane state demoConfigPayload deployPhase engineCo
       (FinalPhase, AppleSilicon) -> 0
       (FinalPhase, LinuxCpu) -> 2
       (FinalPhase, _) -> 1
+    -- Phase 4 Sprint 4.17 follow-on (2026-06-11): the repo-owned
+    -- linux-gpu lifecycle targets the documented single-worker,
+    -- single-GPU Kind lane. The static chart still supports explicit
+    -- per-engine replicas for operator-provided multi-GPU values, but the
+    -- generated lifecycle values keep those deployments at zero replicas
+    -- so the normal final-phase Helm wait does not require every framework
+    -- image to hold the one GPU concurrently. Integration and Playwright
+    -- validation scale one per-engine deployment at a time when proving the
+    -- routed per-engine topics.
+    repoPerEngineReplicaCount :: HelmDeployPhase -> Int
+    repoPerEngineReplicaCount phaseValue = case (phaseValue, clusterRuntimeMode state) of
+      (WarmupPhase, _) -> 0
+      (BootstrapPhase, _) -> 0
+      (HarborFinalPhase, _) -> 0
+      (FinalPhase, LinuxGpu) -> 0
+      (FinalPhase, _) -> 1
+    renderYamlStringList indent values =
+      case values of
+        [] -> replicate indent ' ' <> "[]"
+        _ -> unlines (map (\value -> replicate indent ' ' <> "- " <> value) values)
     yamlBool value
       | value = "true"
       | otherwise = "false"
@@ -4408,6 +4535,12 @@ clusterWorkloadImageRepository runtimeMode =
 clusterWorkloadImageRef :: RuntimeMode -> String
 clusterWorkloadImageRef runtimeMode =
   clusterWorkloadImageRepository runtimeMode <> ":local"
+
+perEngineDeploymentNames :: RuntimeMode -> [Text.Text]
+perEngineDeploymentNames runtimeMode =
+  case runtimeMode of
+    LinuxGpu -> frameworkEngineNamesForMode runtimeMode
+    _ -> []
 
 -- | Phase 3 Sprint 3.12: select the native container architecture for
 -- cluster workloads. Apple remains arm64, linux-gpu remains amd64

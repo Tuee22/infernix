@@ -143,10 +143,8 @@ coordinator:
     pullPolicy: IfNotPresent
   command:
     - infernix
-  # The supported `infernix service` entrypoint reads its role from the
-  # `INFERNIX_DAEMON_ROLE` env var injected by the Deployment template.
-  # Passing a `--role=coordinator` CLI flag would print help and exit
-  # since the binary's command surface does not register that flag.
+  # The Deployment template passes the typed `--role coordinator` CLI flag.
+  # The retired `INFERNIX_DAEMON_ROLE` env path must not reappear.
   args:
     - service
   podDisruptionBudget:
@@ -163,6 +161,11 @@ engine:
     repository: infernix-linux-cpu
     tag: local
     pullPolicy: IfNotPresent
+  perEngine:
+    enabled: false
+    replicaCount: 0
+    names: []
+    images: {}
   command:
     - infernix
   args:

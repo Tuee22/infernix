@@ -84,7 +84,7 @@ Available Linux GPU commands:
   ${SCRIPT_LABEL} purge
 
 Direct reference commands:
-  docker build -f docker/Dockerfile -t ${COMPOSE_IMAGE} --build-arg RUNTIME_MODE=${COMPOSE_SUBSTRATE} --build-arg BASE_IMAGE=${COMPOSE_BASE_IMAGE} --build-arg DEMO_UI=true .
+  docker build -f docker/Dockerfile --provenance=false -t ${COMPOSE_IMAGE} --build-arg RUNTIME_MODE=${COMPOSE_SUBSTRATE} --build-arg BASE_IMAGE=${COMPOSE_BASE_IMAGE} --build-arg DEMO_UI=true .
   LAUNCHER_IMAGE=${COMPOSE_IMAGE} docker compose --project-name ${COMPOSE_PROJECT} --file compose.yaml run --rm infernix infernix cluster up
   LAUNCHER_IMAGE=${COMPOSE_IMAGE} docker compose --project-name ${COMPOSE_PROJECT} --file compose.yaml run --rm infernix infernix cluster status
   LAUNCHER_IMAGE=${COMPOSE_IMAGE} docker compose --project-name ${COMPOSE_PROJECT} --file compose.yaml run --rm infernix infernix test all
@@ -107,9 +107,12 @@ compose_run() {
 # compose.yaml @build: args:@ block (forbidden by the
 # configuration-doctrine standards). Build args feed the Dockerfile;
 # the resulting image is referenced from compose.yaml by name only.
+# BuildKit provenance is disabled so Harbor publication sees a plain
+# single-platform image rather than an OCI index with attestation metadata.
 build_launcher_image() {
   bootstrap::run "${BOOTSTRAP_DOCKER}" build \
     --file docker/Dockerfile \
+    --provenance=false \
     --tag "${COMPOSE_IMAGE}" \
     --build-arg "RUNTIME_MODE=${COMPOSE_SUBSTRATE}" \
     --build-arg "BASE_IMAGE=${COMPOSE_BASE_IMAGE}" \

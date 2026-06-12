@@ -88,9 +88,12 @@ subscription types:
   with a Pulsar named `Failover` subscription per per-context
   conversation topic; folds the log to apply the dispatch rule;
   publishes typed inference requests
-- **Optional batcher** that groups requests into
-  `inference.batch.<mode>`; policy lives in coordinator config
-  (latency budget, max batch size)
+- **Optional batcher** that groups requests into the configured
+  batch topic. Linux CPU and native-fallback Linux GPU work use
+  `inference.batch.<mode>`; Linux GPU Python-native work can route to
+  `inference.batch.<mode>.<engine>` when the generated substrate file
+  declares a matching per-engine daemon. Policy lives in coordinator
+  config (latency budget, max batch size)
 - **Result-bridge** via `Infernix.Bridge.Result` with a Pulsar named
   `Failover` subscription on `inference.result.<mode>`; writes
   `InferenceResult` events back to the originating per-context
@@ -117,26 +120,33 @@ ownership key and uses a process-qualified consumer name for the member
 identity, so replica promotion is observable without changing the
 broker-side ownership boundary.
 
-### Engine (`infernix-engine`)
+### Engine (`infernix-engine`, plus Linux GPU per-engine Deployments)
 
 The product-agnostic inference executor. Owns:
 
 - Running the **real per-family engine** for the selected binding —
   the Python adapter transform over a prebuilt host wheel, or a real
-  native runner binary resolved from a typed `HostConfig` absolute
-  path — and publishing a per-family real result: inline text for the
-  LLM and speech families, and a typed `infernix-demo-objects` object
-  reference for each artifact result family (source separation,
+  native runner binary resolved from `./.data/engines/<adapterId>/`
+  with a Linux image-owned `/opt/infernix/engines/<adapterId>/`
+  fallback — and publishing a per-family real result: inline text for
+  the LLM and speech families, and a typed `infernix-demo-objects`
+  object reference for each artifact result family (source separation,
   audio-to-MIDI, music transcription, image, video, audio generation,
   and OMR)
-- Consumer subscription on `inference.batch.<mode>` (post-batcher) or
-  `inference.request.<mode>` (no batcher)
+- Consumer subscription on `inference.batch.<mode>` (post-batcher),
+  `inference.batch.<mode>.<engine>` for Linux GPU per-engine image
+  pods, or `inference.request.<mode>` (no batcher)
 - Engine adapter process management (Python or native) per
-  `python/adapters/` contract
+  `python/adapters/` contract. Python worker requests carry the
+  selected model metadata plus model-cache/MinIO wiring decoded from
+  mounted `ClusterConfig` and secret-file-backed `SecretsConfig`
+  values so the shared adapter entrypoints call
+  `adapters.model_cache.configure()` before loading weights or
+  reading/writing object storage.
 - **Model weight cache** under `/model-cache/<modelId>/` (ephemeral
   `emptyDir` mount with hard `sizeLimit`); populated from the
   `infernix-models` MinIO bucket via the shared adapter helper
-  (`python/adapters/common/model_cache.py`) on first use. Every
+  (`python/adapters/model_cache.py`) on first use. Every
   engine, every model, goes through the same helper — no per-engine
   bytes-loading code. LRU eviction inside the cache keeps usage under
   `sizeLimit`.
@@ -178,7 +188,7 @@ object-presign, or WebSocket modules.
 |---|---|---|---|---|---|---|
 | Frontend | `Deployment` | ≥ 2 | `preferredDuringSchedulingIgnoredDuringExecution` on its own label, `topologyKey: kubernetes.io/hostname` | `maxUnavailable: 1` | no special resources | **no PVC** |
 | Coordinator | `Deployment` | ≥ 2 | `preferredDuringSchedulingIgnoredDuringExecution` on its own label, `topologyKey: kubernetes.io/hostname` | `maxUnavailable: 1` | no GPU | **no PVC** (Pulsar subscription cursors are broker-side durable) |
-| Engine | `Deployment` | ≤ number of engine-capable nodes | **`requiredDuringSchedulingIgnoredDuringExecution`** on its own label, `topologyKey: kubernetes.io/hostname` | `maxUnavailable: 1` | linux-gpu: `nvidia.com/gpu = engine.gpu.devicesPerNode`, `runtimeClassName: nvidia`, `nodeSelector: infernix.runtime/gpu: "true"`; linux-cpu: full node CPU up to pod limits; apple-silicon: no in-cluster pod | **no PVC**; single `emptyDir` volume `model-cache` mounted at `/model-cache` with `sizeLimit: {{ .Values.engine.modelCache.sizeLimit }}` (default `32Gi`), used as ephemeral staging for weights pulled from `infernix-models` |
+| Engine | `Deployment` | ≤ number of engine-capable nodes per deployment | **`requiredDuringSchedulingIgnoredDuringExecution`** on its own label, `topologyKey: kubernetes.io/hostname` | `maxUnavailable: 1` | linux-gpu: base `infernix-engine` plus `infernix-engine-<engine>` per-engine Deployments request `nvidia.com/gpu: 1`, use `runtimeClassName: nvidia`, and select `infernix.runtime/gpu: "true"` nodes; repo-owned single-GPU values start per-engine deployments at zero replicas and validation scales one at a time; linux-cpu: full node CPU up to pod limits; apple-silicon: no in-cluster pod | **no PVC**; single `emptyDir` volume `model-cache` mounted at `/model-cache` with `sizeLimit: {{ .Values.engine.modelCache.sizeLimit }}` (default `32Gi`), used as ephemeral staging for weights pulled from `infernix-models` |
 
 **Engine one-per-node rule.** Two engines on the same node would
 mean:
@@ -195,19 +205,17 @@ requested replica count exceeds available engine-capable nodes, the
 excess pods remain `Pending` until new nodes appear or the count is
 lowered.
 
-**Multi-device nodes.** On a Linux node with multiple NVIDIA devices,
-the single engine pod requests
-`nvidia.com/gpu = engine.gpu.devicesPerNode` and the engine adapter
-inside that pod owns every local device. The active substrate's
-`.dhall` decides per-device model assignment:
-
-- one engine, N devices, M ≤ N models loaded on M distinct devices
-  (multi-model serving on the node)
-- one engine, N devices, one model loaded on N devices (throughput
-  scaling for one model on the node)
-
-Both are configured at the engine adapter layer, not by deploying
-more engine pods.
+**Linux GPU per-engine images.** The base `infernix-engine`
+Deployment consumes the canonical `inference.batch.linux-gpu` topic for
+native-runner fallback work. Python-native framework work can route to
+`inference.batch.linux-gpu.<engine>` and is consumed by the matching
+`infernix-engine-<engine>` Deployment, whose image contains exactly one
+isolated framework venv. The per-engine split is an image and
+dependency-isolation boundary, not a throughput-replica policy; Wave I
+owns the routed single-GPU scheduling evidence for that shape. The
+repo-owned `linux-gpu` lifecycle keeps per-engine replicas at zero by
+default and the validation harness scales one framework deployment at a
+time before submitting prompts for its models.
 
 **Apple silicon symmetry.** On Apple substrates the engine role is
 the on-host `infernix service` daemon (one process per host
@@ -236,8 +244,8 @@ state on the operator's machine, not durable cluster state.
 | `apple-silicon` | `false` | absent | absent | on host only |
 | `linux-cpu` | `true` | `infernix-demo` in cluster (replicas >= 2) | `infernix-coordinator` in cluster (replicas >= 2) | `infernix-engine` in cluster, one per worker node; the supported local HA lane renders two workers and two engines |
 | `linux-cpu` | `false` | absent | absent | `infernix-engine` in cluster, one per worker node |
-| `linux-gpu` | `true` | `infernix-demo` in cluster | `infernix-coordinator` in cluster | `infernix-engine` in cluster, one per GPU-capable node, all local NVIDIA devices |
-| `linux-gpu` | `false` | absent | absent | `infernix-engine` in cluster, one per GPU-capable node |
+| `linux-gpu` | `true` | `infernix-demo` in cluster | `infernix-coordinator` in cluster | base `infernix-engine` plus zero-replica `infernix-engine-<engine>` per-engine Deployments in cluster, each selected by its configured batch topic and activated serially by validation |
+| `linux-gpu` | `false` | absent | absent | base `infernix-engine` plus zero-replica `infernix-engine-<engine>` per-engine Deployments in cluster, with coordinator/demo absent |
 
 ## Topic Flow
 
@@ -252,8 +260,9 @@ Coordinator pod (Failover sub per conversation topic)
   └─[publish, dedup by userPromptMessageId]──> inference.request.<mode>
   └─(optional) batcher subscription
   └─[publish, dedup by batchId]──> inference.batch.<mode>
+                                      or inference.batch.<mode>.<engine>
 
-Engine pod or host daemon (consumer sub on inference.batch.<mode>)
+Engine pod or host daemon (consumer sub on configured batch topic)
   └─[check MinIO infernix-models/<modelId>/.ready]
        ├─ present: load weights from /model-cache (populating from
        │           MinIO if not yet cached); run adapter
@@ -323,12 +332,13 @@ this table lists which shared modules each role loads at runtime.
 
 ## Batching Ownership
 
-Batching policy lives in the coordinator, behind
-`inference.batch.<mode>`. The coordinator reads from
-`inference.request.<mode>`, groups by routing key (model id and any
+Batching policy lives in the coordinator, behind the configured batch
+topic family. The coordinator reads from `inference.request.<mode>`,
+groups by routing key (model id, selected engine, and any
 batching-compatible request shape constraints), publishes batches to
-`inference.batch.<mode>` with producer dedup keyed by `batchId`, and
-the engine consumes batches one at a time.
+`inference.batch.<mode>` or `inference.batch.<mode>.<engine>` with
+producer dedup keyed by `batchId`, and the matching engine consumes
+batches one at a time.
 
 The engine adapter's intra-engine continuous batching (e.g. vLLM,
 TensorRT-LLM) is unchanged by this contract — it operates inside the
@@ -421,7 +431,7 @@ The three-role contract is validated by:
   bootstrap deduplication, and engine anti-affinity (defined in
   [../development/chaos_testing.md](../development/chaos_testing.md))
 - a production-shape test that deploys `demo_ui = false` and asserts
-  only `infernix-engine` Deployment is present via
+  the engine-role Deployment set for the active substrate is present via
   `infernix kubectl -n platform get deployments`
 - a scheduling negative-test that demonstrates k8s rejects a second
   engine pod on the same node when the required anti-affinity rule

@@ -105,6 +105,12 @@ import Infernix.Dispatch.ContextModelMap (ContextModelMap)
 import Infernix.Dispatch.ContextModelMap qualified as ContextModelMap
 import Infernix.Dispatch.SingleFlight qualified as Dispatch
 import Infernix.HostConfig qualified as HostConfig
+import Infernix.Models
+  ( engineBindingForSelectedEngine,
+    engineNameForAdapterId,
+    findModel,
+    perEngineBatchTopicForMode,
+  )
 import Infernix.Objects.Presigned qualified as Presigned
 import Infernix.Runtime (executeInferenceWithKVCache)
 import Infernix.Runtime.KVCache qualified as KVCache
@@ -1535,9 +1541,9 @@ requestLikeSchemaTopics demoConfig =
   uniqueTexts
     ( requestTopics demoConfig
         <> daemonConfigRequestTopics (coordinatorDaemon demoConfig)
-        <> maybe [] daemonConfigRequestTopics (engineDaemon demoConfig)
+        <> concatMap daemonConfigRequestTopics (engineDaemons demoConfig)
         <> maybe [] pure (daemonConfigHostBatchTopic (coordinatorDaemon demoConfig))
-        <> maybe [] (maybe [] pure . daemonConfigHostBatchTopic) (engineDaemon demoConfig)
+        <> concatMap (maybe [] pure . daemonConfigHostBatchTopic) (engineDaemons demoConfig)
     )
 
 uniqueTexts :: [Text.Text] -> [Text.Text]
@@ -2051,12 +2057,13 @@ consumeTopicForever ::
   RuntimeMode ->
   EngineCommandOverrideMap ->
   DaemonConfig ->
+  DemoConfig ->
   Maybe KVCache.EngineKVCache ->
   Text.Text ->
   IO ()
-consumeTopicForever transport paths runtimeMode overrides daemonConfig maybeEngineKVCache requestTopicValue =
+consumeTopicForever transport paths runtimeMode overrides daemonConfig demoConfig maybeEngineKVCache requestTopicValue =
   forever $ do
-    sessionResult <- try @SomeException (consumeTopicSession transport paths runtimeMode overrides daemonConfig maybeEngineKVCache requestTopicValue)
+    sessionResult <- try @SomeException (consumeTopicSession transport paths runtimeMode overrides daemonConfig demoConfig maybeEngineKVCache requestTopicValue)
     case sessionResult of
       Right _ -> threadDelay 1000000
       Left err -> do
@@ -2075,10 +2082,11 @@ consumeTopicSession ::
   RuntimeMode ->
   EngineCommandOverrideMap ->
   DaemonConfig ->
+  DemoConfig ->
   Maybe KVCache.EngineKVCache ->
   Text.Text ->
   IO ()
-consumeTopicSession transport paths runtimeMode overrides daemonConfig maybeEngineKVCache requestTopicValue = do
+consumeTopicSession transport paths runtimeMode overrides daemonConfig demoConfig maybeEngineKVCache requestTopicValue = do
   topicRef <- requireTopicRef requestTopicValue
   let subscriptionName = "infernix-service-" <> sanitizeTopic requestTopicValue
       consumerName = subscriptionName <> "-consumer"
@@ -2115,6 +2123,8 @@ consumeTopicSession transport paths runtimeMode overrides daemonConfig maybeEngi
       -- daemon executes inference inline and publishes the result itself.
       case daemonConfigHostBatchTopic daemonConfig of
         Just hostBatchTopicValue -> do
+          let selectedBatchTopicValue =
+                batchTopicForRequest runtimeMode demoConfig hostBatchTopicValue decodedRequest
           -- Coordinator-role hand-off to the engine-batch topic. The
           -- producer name is stable per coordinator role so the broker
           -- dedups concurrent coordinator replicas. Sequence-id
@@ -2135,7 +2145,7 @@ consumeTopicSession transport paths runtimeMode overrides daemonConfig maybeEngi
                   }
           publishTopicPayload
             transport
-            hostBatchTopicValue
+            selectedBatchTopicValue
             batchOptions
             (view ProtoInferenceFields.requestId decodedRequest)
             (encodeMessage decodedRequest)
@@ -2175,6 +2185,28 @@ consumeTopicSession transport paths runtimeMode overrides daemonConfig maybeEngi
             (requestId publishedResult)
             (encodeMessage (domainResultToProto publishedResult))
       sendAck connection (envelopeMessageId envelope)
+
+batchTopicForRequest :: RuntimeMode -> DemoConfig -> Text.Text -> ProtoInference.InferenceRequest -> Text.Text
+batchTopicForRequest runtimeMode demoConfig fallbackTopic requestValue =
+  case runtimeMode of
+    AppleSilicon -> fallbackTopic
+    _ ->
+      case findModel runtimeMode (view ProtoInferenceFields.requestModelId requestValue) of
+        Nothing -> fallbackTopic
+        Just modelDescriptor ->
+          let engineBinding =
+                engineBindingForSelectedEngine runtimeMode (selectedEngine modelDescriptor)
+              engineName =
+                engineNameForAdapterId (engineBindingAdapterId engineBinding)
+              perEngineTopic =
+                perEngineBatchTopicForMode runtimeMode engineName
+           in if engineBindingPythonNative engineBinding
+                && perEngineTopic `elem` configuredEngineTopics
+                then perEngineTopic
+                else fallbackTopic
+  where
+    configuredEngineTopics =
+      concatMap daemonConfigRequestTopics (engineDaemons demoConfig)
 
 -- | Phase 7 Sprint 7.7 producer-side dedup wiring. Each publish carries
 -- a stable @producerName@ in the URL query. For the WebSocket API, the

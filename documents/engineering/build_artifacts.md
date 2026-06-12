@@ -88,6 +88,14 @@ Tart is reconciled through Homebrew and recorded as the `hostTart` absolute-path
 [../operations/apple_silicon_runbook.md](../operations/apple_silicon_runbook.md) and
 [host_tools_manifest.md](host_tools_manifest.md).
 
+## Linux Native Engine Artifacts
+
+On `linux-cpu` and `linux-gpu`, native-process-runner artifacts are image-owned. The worker checks
+the repo data root first for parity with host-native execution and then resolves Linux-baked
+artifacts under `/opt/infernix/engines/<adapterId>/bin/`. The mounted `/workspace/.data` tree remains
+durable operator state and may be an `emptyDir` inside engine pods, so Linux native runners must not
+depend on image content under `/workspace/.data/engines` surviving a pod mount.
+
 ## Generated Demo Config Publication
 
 The substrate file is a typed Dhall record at `infernix-substrate.dhall`; the schema is defined at

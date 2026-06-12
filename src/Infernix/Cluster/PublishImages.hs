@@ -32,6 +32,7 @@ import Data.Aeson
     (.:?),
     (.=),
   )
+import Data.Aeson.Key qualified as Key
 import Data.ByteString.Base64 qualified as Base64
 import Data.ByteString.Char8 qualified as ByteString8
 import Data.ByteString.Lazy.Char8 qualified as LazyChar8
@@ -477,7 +478,7 @@ pushImageWithRetries manager options commandMonitorFactory maybeSourceDigest fal
 prioritizePublishableImages :: [String] -> [String]
 prioritizePublishableImages imageRefs =
   let repoOwnedImages = concat requiredRenderedChartImageAlternatives
-      isRepoOwned imageRef = imageRef `elem` repoOwnedImages
+      isRepoOwned imageRef = imageRef `elem` repoOwnedImages || "infernix-engine-" `List.isPrefixOf` imageRef
       (localImages, otherImages) = partition isRepoOwned imageRefs
    in localImages <> otherImages
 
@@ -934,8 +935,25 @@ isUpstreamMultiArchImage :: String -> Bool
 isUpstreamMultiArchImage imageRef =
   not (any (`hasPrefix` imageRef) localImagePrefixes)
   where
-    localImagePrefixes = ["infernix-linux-cpu:", "infernix-linux-gpu:"]
+    localImagePrefixes = ["infernix-linux-cpu:", "infernix-linux-gpu:", "infernix-engine-"]
     hasPrefix prefixValue value = take (length prefixValue) value == prefixValue
+
+parsePerEngineImageName :: String -> Maybe String
+parsePerEngineImageName imageRef = do
+  withoutPrefix <- List.stripPrefix "infernix-engine-" imageRef
+  withoutModeSuffix <-
+    stripSuffix "-linux-gpu:local" withoutPrefix
+      <|> stripSuffix "-linux-cpu:local" withoutPrefix
+  if null withoutModeSuffix
+    then Nothing
+    else Just withoutModeSuffix
+  where
+    stripSuffix suffix value =
+      let suffixLength = length suffix
+          valueLength = length value
+       in if suffix `isSuffixOf` value
+            then Just (take (valueLength - suffixLength) value)
+            else Nothing
 
 normalizeRepositoryPath :: String -> String
 normalizeRepositoryPath rawImage =
@@ -986,7 +1004,7 @@ buildHarborOverridesValue publishedImages = do
             -- the bare `infernix-linux-{cpu,gpu}:local` ref which is not
             -- present on Kind worker nodes.
             "coordinator" .= workloadImageOverlay runtimeImage,
-            "engine" .= workloadImageOverlay runtimeImage,
+            "engine" .= engineImageOverlay runtimeImage,
             "infernixMinio"
               .= infernixMinioOverlay minioImage minioClientImage minioInitImage,
             "pulsar"
@@ -1000,12 +1018,29 @@ buildHarborOverridesValue publishedImages = do
   where
     workloadImageOverlay imageValue =
       object ["image" .= renderRepoOwnedImage imageValue]
+    engineImageOverlay imageValue =
+      object
+        [ "image" .= renderRepoOwnedImage imageValue,
+          "perEngine"
+            .= object
+              [ "images"
+                  .= object
+                    [ Key.fromString engineName .= renderRepoOwnedImage publishedImage
+                    | (engineName, publishedImage) <- perEnginePublishedImages publishedImages
+                    ]
+              ]
+        ]
     renderRepoOwnedImage (repository, tagValue) =
       object
         [ "repository" .= repository,
           "tag" .= tagValue,
           "pullPolicy" .= ("IfNotPresent" :: String)
         ]
+    perEnginePublishedImages imagesMap =
+      [ (engineName, publishedImage)
+      | (sourceImage, publishedImage) <- Map.toList imagesMap,
+        Just engineName <- [parsePerEngineImageName sourceImage]
+      ]
     pulsarImageOverlay (repository, tagValue) =
       object
         [ "defaultPulsarImageRepository" .= repository,

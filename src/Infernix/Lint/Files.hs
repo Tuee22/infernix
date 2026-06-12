@@ -116,7 +116,7 @@ listTrackedGeneratedFailuresFromGit root = do
   gitCommand <- requireFilesLintHostTool paths HostGit
   (exitCode, stdoutOutput, stderrOutput) <-
     readCreateProcessWithExitCode
-      (proc gitCommand ["ls-files"])
+      (proc gitCommand ["-c", "safe.directory=" <> root, "ls-files"])
         { cwd = Just root,
           env = Just (filesLintSubprocessBaseEnvFor paths)
         }

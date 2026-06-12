@@ -20,7 +20,7 @@ import Infernix.Types (DaemonRole, RuntimeMode, parseDaemonRole, parseRuntimeMod
 data Command
   = ShowRootHelp
   | ShowTopicHelp String
-  | ServiceCommand (Maybe DaemonRole)
+  | ServiceCommand (Maybe DaemonRole) (Maybe String)
   | ClusterUpCommand
   | ClusterDownCommand
   | ClusterStatusCommand
@@ -150,22 +150,28 @@ serviceCommandFamily =
         ]
     }
 
--- | `infernix service [--role coordinator|engine]`. The optional
+-- | `infernix service [--role coordinator|engine] [--engine-name NAME]`. The optional
 -- `--role` arg replaces the retired `INFERNIX_DAEMON_ROLE` env var
 -- (Phase 4 Sprint 4.13): coordinator + engine pods each pass the
 -- matching role via chart-supplied `args`, while host-native flows
 -- omit the flag and fall back to the active substrate dhall's
--- `daemonRole` field.
+-- `daemonRole` field. Linux GPU per-engine pods pass `--engine-name`
+-- so the service selects the matching per-engine batch-topic metadata
+-- from the mounted substrate file without env vars.
 serviceCommandSpec :: CommandSpec
 serviceCommandSpec =
   CommandSpec
-    { commandUsageSuffix = "service [--role coordinator|engine]",
+    { commandUsageSuffix = "service [--role coordinator|engine] [--engine-name NAME]",
       commandDescription =
-        "starts the long-running production daemon; it binds no HTTP port and consumes the active `.dhall` request and result topics. The optional `--role` arg overrides the substrate dhall's `daemonRole` field for split coordinator/engine Deployments.",
+        "starts the long-running production daemon; it binds no HTTP port and consumes the active `.dhall` request and result topics. The optional `--role` arg overrides the substrate dhall's `daemonRole` field for split coordinator/engine Deployments, and `--engine-name` selects a per-engine Linux engine daemon config.",
       commandParse = \case
-        ["service"] -> Just (ServiceCommand Nothing)
+        ["service"] -> Just (ServiceCommand Nothing Nothing)
         ["service", "--role", rawRole] ->
-          ServiceCommand . Just <$> parseDaemonRole (Text.pack rawRole)
+          (\role -> ServiceCommand (Just role) Nothing) <$> parseDaemonRole (Text.pack rawRole)
+        ["service", "--role", rawRole, "--engine-name", engineName] ->
+          (\role -> ServiceCommand (Just role) (Just engineName)) <$> parseDaemonRole (Text.pack rawRole)
+        ["service", "--engine-name", engineName] ->
+          Just (ServiceCommand Nothing (Just engineName))
         _ -> Nothing
     }
 

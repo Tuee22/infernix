@@ -11,11 +11,12 @@ import Data.ByteString.Char8 qualified as ByteString8
 import Data.ByteString.Lazy qualified as LazyByteString
 import Data.ByteString.Lazy.Char8 qualified as LazyByteStringChar8
 import Data.Char (isAsciiUpper)
-import Data.List (find, isInfixOf, isPrefixOf, sort)
+import Data.List (find, isInfixOf, isPrefixOf, nub, partition, sort)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (isJust, isNothing, mapMaybe, maybeToList)
 import Data.Set qualified as Set
 import Data.Text qualified as Text
+import Data.Time.Clock (getCurrentTime)
 import Data.Time.Clock.POSIX (getPOSIXTime)
 import Infernix.Bootstrap.Models qualified as BootstrapModels
 import Infernix.Cluster
@@ -24,7 +25,9 @@ import Infernix.Config qualified as Config
 import Infernix.Conversation.Topic qualified as ConversationTopic
 import Infernix.DemoConfig (decodeDemoConfigFile)
 import Infernix.Models
-  ( expectedDaemonLocationForRuntime,
+  ( engineBindingForSelectedEngine,
+    engineNameForSelectedEngine,
+    expectedDaemonLocationForRuntime,
     expectedInferenceExecutorLocationForRuntime,
     findModel,
     hostBatchTopicForMode,
@@ -32,6 +35,7 @@ import Infernix.Models
     resultFamilyForDescriptor,
     resultTopicForMode,
   )
+import Infernix.Objects.Presigned qualified as Presigned
 import Infernix.Runtime.Pulsar
   ( RawTopicMessage,
     compactTopicAndWait,
@@ -204,7 +208,7 @@ exerciseRuntimeMode paths runtimeMode = do
         (pulsarHttpStatus == 405)
         "pulsar HTTP routes preserve the websocket context root and reach the real servlet on the cluster path"
       reportStep ("per-model inference: " <> showRuntimeMode runtimeMode)
-      forM_ activeModelIds (validateCatalogModelInference paths runtimeMode)
+      validateCatalogModelInferenceForRuntime paths state runtimeMode activeModels
       reportStep ("cache lifecycle: " <> showRuntimeMode runtimeMode)
       -- Phase 7 Sprint 7.7 follow-on (May 26, 2026): the legacy
       -- single-binary cache assertions assumed @/api/cache@ on the
@@ -289,8 +293,8 @@ exerciseRuntimeMode paths runtimeMode = do
   assert ("clusterPresent: False" `isInfixOf` downStatusOutput) "cluster status reports cluster absence after down"
   assert ("lifecyclePhase: cluster-absent" `isInfixOf` downStatusOutput) "cluster status reports the idle absent lifecycle phase after down"
 
-validateCatalogModelInference :: Paths -> RuntimeMode -> String -> IO ()
-validateCatalogModelInference paths runtimeMode modelIdValue = do
+validateCatalogModelInference :: Paths -> ClusterState -> RuntimeMode -> String -> IO ()
+validateCatalogModelInference paths state runtimeMode modelIdValue = do
   requestTopic <-
     case requestTopicsForMode runtimeMode of
       topic : _ -> pure topic
@@ -301,6 +305,7 @@ validateCatalogModelInference paths runtimeMode modelIdValue = do
       Just descriptor -> pure descriptor
       Nothing ->
         fail ("model " <> modelIdValue <> " is not in the " <> showRuntimeMode runtimeMode <> " catalog")
+  maybeInputObjectRef <- ensureCatalogInputObject paths state runtimeMode model
   requestIdValue <-
     publishInferenceRequest
       paths
@@ -309,7 +314,7 @@ validateCatalogModelInference paths runtimeMode modelIdValue = do
       InferenceRequest
         { requestModelId = Text.pack modelIdValue,
           inputText = Text.pack ("integration coverage for " <> modelIdValue),
-          inputObjectRef = Nothing
+          inputObjectRef = maybeInputObjectRef
         }
   maybeResult <- waitForPublishedResult paths runtimeMode resultTopic requestIdValue
   case maybeResult of
@@ -321,12 +326,281 @@ validateCatalogModelInference paths runtimeMode modelIdValue = do
       assert
         (resultRuntimeMode resultValue == runtimeMode)
         ("service daemon preserves the runtime mode in published results for " <> modelIdValue)
+      assert
+        (status resultValue == "completed")
+        ( "inference completes for "
+            <> modelIdValue
+            <> failurePayloadSuffix (payload resultValue)
+        )
       -- Phase 6 Sprint 6.2: assert the per-family real-output result contract,
       -- dispatched on ResultFamily (shape + type, never golden strings). One
       -- DRY suite reads the active substrate's catalog and traverses the
       -- README rows; the assertions pass only when a real engine ran on cohort
       -- hardware (Section P: results name the single substrate exercised).
       assertResultFamilyContract (resultFamilyForDescriptor model) modelIdValue (payload resultValue)
+
+validateCatalogModelInferenceForRuntime :: Paths -> ClusterState -> RuntimeMode -> [ModelDescriptor] -> IO ()
+validateCatalogModelInferenceForRuntime paths state runtimeMode activeModels =
+  case runtimeMode of
+    LinuxGpu -> validateLinuxGpuCatalogModelInferenceSerially paths state activeModels
+    _ -> forM_ (map (Text.unpack . modelId) activeModels) (validateCatalogModelInference paths state runtimeMode)
+
+validateLinuxGpuCatalogModelInferenceSerially :: Paths -> ClusterState -> [ModelDescriptor] -> IO ()
+validateLinuxGpuCatalogModelInferenceSerially paths state activeModels = do
+  let (pythonNativeModels, nativeModels) = partition linuxGpuModelUsesPythonNativeEngine activeModels
+      perEngineNames =
+        sort
+          . nub
+          $ map linuxGpuPerEngineDeploymentName pythonNativeModels
+  prepareLinuxGpuEngineDeployment state perEngineNames Nothing
+  forM_ (map (Text.unpack . modelId) nativeModels) (validateCatalogModelInference paths state LinuxGpu)
+  forM_ perEngineNames $ \engineName -> do
+    reportStep ("linux-gpu per-engine deployment: " <> Text.unpack engineName)
+    prepareLinuxGpuEngineDeployment state perEngineNames (Just engineName)
+    forM_
+      [ Text.unpack (modelId model)
+      | model <- pythonNativeModels,
+        linuxGpuPerEngineDeploymentName model == engineName
+      ]
+      (validateCatalogModelInference paths state LinuxGpu)
+  prepareLinuxGpuEngineDeployment state perEngineNames Nothing
+
+ensureCatalogInputObject :: Paths -> ClusterState -> RuntimeMode -> ModelDescriptor -> IO (Maybe Text.Text)
+ensureCatalogInputObject paths state runtimeMode model =
+  case sampleInputForModel model of
+    Nothing -> pure Nothing
+    Just (suffix, payloadBytes) -> do
+      let objectReference =
+            Contracts.ObjectRef
+              { Contracts.objectBucket = "infernix-demo-objects",
+                Contracts.objectKey =
+                  Text.concat
+                    [ "integration-inputs/",
+                      runtimeModeId runtimeMode,
+                      "/",
+                      modelId model,
+                      suffix
+                    ]
+              }
+      uploadIntegrationInputObject paths state objectReference payloadBytes
+      pure (Just (objectRefText objectReference))
+
+sampleInputForModel :: ModelDescriptor -> Maybe (Text.Text, ByteString.ByteString)
+sampleInputForModel model =
+  case resultFamilyForDescriptor model of
+    SpeechTranscription -> Just (".wav", sampleWavBytes)
+    SourceSeparation -> Just (".wav", sampleWavBytes)
+    AudioToMidi -> Just (".wav", sampleWavBytes)
+    MusicTranscription -> Just (".wav", sampleWavBytes)
+    OpticalMusicRecognition -> Just (".png", samplePngBytes)
+    LlmText -> Nothing
+    ImageGeneration -> Nothing
+    VideoGeneration -> Nothing
+    AudioGeneration -> Nothing
+
+uploadIntegrationInputObject :: Paths -> ClusterState -> Contracts.ObjectRef -> ByteString.ByteString -> IO ()
+uploadIntegrationInputObject paths state objectReference payloadBytes = do
+  now <- getCurrentTime
+  let presigned =
+        Presigned.PresignedUrlConfig
+          { Presigned.presignedScheme = "http",
+            Presigned.presignedEndpoint = Text.pack ("127.0.0.1:" <> show (edgePort state)),
+            Presigned.presignedPathPrefix = "/minio/s3",
+            Presigned.presignedRegion = "us-east-1",
+            Presigned.presignedAccessKeyId = "minioadmin",
+            Presigned.presignedSecretAccessKey = "minioadmin123",
+            Presigned.presignedExpirySeconds = 900
+          }
+      signedUrl =
+        Text.unpack
+          (Presigned.unPresignedUrl (Presigned.presignedPutUrl presigned now objectReference))
+      samplePath =
+        buildRoot paths
+          </> "integration-input-"
+            <> sanitizeFileToken (Text.unpack (Contracts.objectKey objectReference))
+  ByteString.writeFile samplePath payloadBytes
+  (exitCode, _stdout, stderrOutput) <-
+    readProcessWithExitCode
+      "curl"
+      ["-fsS", "-X", "PUT", "--data-binary", "@" <> samplePath, signedUrl]
+      ""
+  case exitCode of
+    ExitSuccess -> pure ()
+    _ ->
+      fail
+        ( "failed to upload integration input object "
+            <> Text.unpack (objectRefText objectReference)
+            <> ": "
+            <> stderrOutput
+        )
+
+objectRefText :: Contracts.ObjectRef -> Text.Text
+objectRefText objectReference =
+  Contracts.objectBucket objectReference <> "/" <> Contracts.objectKey objectReference
+
+failurePayloadSuffix :: ResultPayload -> String
+failurePayloadSuffix payloadValue =
+  case inlineOutput payloadValue of
+    Just text -> "; payload: " <> Text.unpack text
+    Nothing -> ""
+
+sanitizeFileToken :: String -> String
+sanitizeFileToken =
+  map sanitize
+  where
+    sanitize character
+      | character `elem` (['A' .. 'Z'] <> ['a' .. 'z'] <> ['0' .. '9'] <> ".-_") = character
+      | otherwise = '-'
+
+sampleWavBytes :: ByteString.ByteString
+sampleWavBytes =
+  ByteString.concat
+    [ ByteString8.pack "RIFF",
+      littleEndian32 (36 + payloadLength),
+      ByteString8.pack "WAVEfmt ",
+      littleEndian32 16,
+      littleEndian16 1,
+      littleEndian16 1,
+      littleEndian32 sampleRate,
+      littleEndian32 (sampleRate * 2),
+      littleEndian16 2,
+      littleEndian16 16,
+      ByteString8.pack "data",
+      littleEndian32 payloadLength,
+      ByteString.replicate payloadLength 0
+    ]
+  where
+    sampleRate = 8000
+    payloadLength = sampleRate `div` 5 * 2
+
+samplePngBytes :: ByteString.ByteString
+samplePngBytes =
+  ByteString.pack
+    [ 137,
+      80,
+      78,
+      71,
+      13,
+      10,
+      26,
+      10,
+      0,
+      0,
+      0,
+      13,
+      73,
+      72,
+      68,
+      82,
+      0,
+      0,
+      0,
+      1,
+      0,
+      0,
+      0,
+      1,
+      8,
+      4,
+      0,
+      0,
+      0,
+      181,
+      28,
+      12,
+      2,
+      0,
+      0,
+      0,
+      11,
+      73,
+      68,
+      65,
+      84,
+      120,
+      218,
+      99,
+      252,
+      255,
+      31,
+      0,
+      3,
+      3,
+      2,
+      0,
+      239,
+      191,
+      167,
+      219,
+      0,
+      0,
+      0,
+      0,
+      73,
+      69,
+      78,
+      68,
+      174,
+      66,
+      96,
+      130
+    ]
+
+littleEndian16 :: Int -> ByteString.ByteString
+littleEndian16 value =
+  ByteString.pack [fromIntegral value, fromIntegral (value `div` 256)]
+
+littleEndian32 :: Int -> ByteString.ByteString
+littleEndian32 value =
+  ByteString.pack
+    [ fromIntegral value,
+      fromIntegral (value `div` 256),
+      fromIntegral (value `div` 65536),
+      fromIntegral (value `div` 16777216)
+    ]
+
+linuxGpuModelUsesPythonNativeEngine :: ModelDescriptor -> Bool
+linuxGpuModelUsesPythonNativeEngine model =
+  engineBindingPythonNative (engineBindingForSelectedEngine LinuxGpu (selectedEngine model))
+
+linuxGpuPerEngineDeploymentName :: ModelDescriptor -> Text.Text
+linuxGpuPerEngineDeploymentName model =
+  engineNameForSelectedEngine LinuxGpu (selectedEngine model)
+
+prepareLinuxGpuEngineDeployment :: ClusterState -> [Text.Text] -> Maybe Text.Text -> IO ()
+prepareLinuxGpuEngineDeployment state perEngineNames maybeEngineName = do
+  case maybeEngineName of
+    Just _ ->
+      runKubectl state ["-n", "platform", "scale", "deployment/infernix-engine", "--replicas=0"]
+    Nothing ->
+      pure ()
+  forM_ perEngineNames $ \engineName -> do
+    let replicas =
+          case maybeEngineName of
+            Just activeEngineName | activeEngineName == engineName -> "1"
+            _ -> "0"
+    runKubectl
+      state
+      [ "-n",
+        "platform",
+        "scale",
+        "deployment/infernix-engine-" <> Text.unpack engineName,
+        "--replicas=" <> replicas
+      ]
+  case maybeEngineName of
+    Nothing -> do
+      runKubectl state ["-n", "platform", "scale", "deployment/infernix-engine", "--replicas=1"]
+      runKubectl state ["-n", "platform", "rollout", "status", "deployment/infernix-engine", "--timeout=900s"]
+    Just activeEngineName ->
+      runKubectl
+        state
+        [ "-n",
+          "platform",
+          "rollout",
+          "status",
+          "deployment/infernix-engine-" <> Text.unpack activeEngineName,
+          "--timeout=900s"
+        ]
 
 -- | Phase 6 Sprint 6.2 — per-family result-shape contract. Text families
 -- (LLM, speech transcription) carry a non-empty inline continuation; every
@@ -406,19 +680,21 @@ assertRoutedDaemonSplit runtimeMode routedDemoConfig = do
   assert
     (daemonConfigHostBatchTopic (coordinatorDaemon routedDemoConfig) == hostBatchTopicForMode runtimeMode)
     "coordinator publishes the configured inference batch handoff topic"
-  maybe
-    (fail ("demo config omits engine metadata for " <> showRuntimeMode runtimeMode))
-    assertEngineConfig
-    (engineDaemon routedDemoConfig)
+  assert
+    (not (null (engineDaemons routedDemoConfig)))
+    ("demo config omits engine metadata for " <> showRuntimeMode runtimeMode)
+  mapM_ assertEngineConfig (engineDaemons routedDemoConfig)
+  assert
+    (maybeToList (hostBatchTopicForMode runtimeMode) `allTopicsPresentIn` concatMap daemonConfigRequestTopics (engineDaemons routedDemoConfig))
+    "engine metadata includes the configured inference batch handoff topic"
   where
     assertEngineConfig engineConfig = do
       assert (daemonConfigRole engineConfig == Engine) "demo config reports engine metadata"
       assert
-        (daemonConfigRequestTopics engineConfig == maybeToList (hostBatchTopicForMode runtimeMode))
-        "engine consumes the configured inference batch handoff topic"
-      assert
         (isNothing (daemonConfigHostBatchTopic engineConfig))
         "engine does not forward its own inference batch topic"
+    allTopicsPresentIn expectedTopics actualTopics =
+      all (`elem` actualTopics) expectedTopics
 
 assertClusterServiceDeployment :: ClusterState -> IO ()
 assertClusterServiceDeployment state = do

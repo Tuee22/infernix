@@ -36,10 +36,13 @@ surface, and the demo-gated `infernix-coordinator` Deployment. Linux substrates 
 `infernix-engine` in-cluster; Apple sets the cluster engine replica count to 0 and runs the engine
 role host-side. The generated final-phase Helm values use the role-specific
 `coordinator.replicaCount` and `engine.replicaCount` knobs instead of the legacy
-`service.replicaCount` surface. On Linux substrates, the coordinator publishes batch work to
-`inference.batch.<mode>`, the engine runs inference, and the engine publishes results; on Apple,
-the coordinator publishes requests to a dedicated host batch topic consumed by same-binary host
-daemons, which execute Apple-native inference and publish the completed result. The staged `.dhall`
+`service.replicaCount` surface. On Linux CPU, the coordinator publishes batch work to
+`inference.batch.linux-cpu`; on Linux GPU, native-fallback work uses
+`inference.batch.linux-gpu` and Python-native framework work can route to
+`inference.batch.linux-gpu.<engine>` per-engine topics consumed by
+`infernix-engine-<engine>` Deployments. On Apple, the coordinator publishes requests to a
+dedicated host batch topic consumed by same-binary host daemons, which execute Apple-native
+inference and publish the completed result. The staged `.dhall`
 tells each daemon the substrate and whether its role is `Coordinator` or `Engine`; host-role Apple
 metadata also includes the Pulsar connection mode plus the batch and result topics it uses.
 Publication now reports the cluster coordinator location separately from the Apple host inference
@@ -72,9 +75,10 @@ host-native `npm exec` against the published
 data in `cluster status` during monitored Docker build, Harbor publication, Harbor-backed
 final-image preload, and Apple retained-state replay steps; explicit substrate-file
 materialization is atomic so concurrent readers do not observe truncated payloads; and
-retained-state Apple reruns
-automatically reinitialize stopped Harbor PostgreSQL replicas from the current Patroni leader when
-timeline drift leaves replicas unready after promotion. The shared lifecycle skips broad
+retained-state Apple reruns automatically reinitialize stopped Harbor PostgreSQL replicas from the
+current Patroni leader when timeline drift leaves replicas unready after promotion; all lanes scrub
+non-retained Harbor and Keycloak Patroni claim roots before recreating claim directories and after
+retained-state sync. The shared lifecycle skips broad
 pre-Harbor support-image preloads and performs binary-owned Harbor-first image preparation, where
 Linux lanes may hydrate and stream only the narrow Harbor warmup dependency set into Kind before
 Helm warmup, only Harbor-required services may pull upstream before Harbor is responsive, and
@@ -166,7 +170,7 @@ of the `infernix-demo` browser surface. Phase 7 supersedes the previous single-f
 inference path: routed manual inference closes through the durable-context Chat surface and
 WebSocket-delivered `ConversationStatePatch` deltas rather than a direct HTTP request/poll
 cycle. Production deployments leave `demo_ui = false`, the Phase 7 surface is absent, and
-the only daemon Deployment present is `infernix-engine`.
+only the engine-role Deployment set is present.
 
 ## Supported Outcome
 
@@ -560,13 +564,16 @@ The plan keeps control-plane execution context separate from substrate.
 - when `demo_ui` is true, the demo app is cluster-resident across substrates
 - every substrate deploys cluster `infernix` daemon Deployments under the supported three-role
   split landed by Phase 7 Sprint 7.7: `infernix-coordinator` (stateless, Pulsar coordination +
-  dispatcher + result-bridge + model bootstrap) and `infernix-engine` (stateful adapter execution
-  on Linux substrates, on-host `flock(2)`-singleton daemon on Apple Silicon). The legacy fused
+  dispatcher + result-bridge + model bootstrap) and the engine role (`infernix-engine` on Linux
+  substrates, plus Linux GPU `infernix-engine-<engine>` per-engine framework Deployments when
+  rendered; on-host `flock(2)`-singleton daemon on Apple Silicon). The legacy fused
   `chart/templates/deployment-service.yaml` was legacy together with the `service.*` chart-values
   block on the recorded validation
-- on `linux-cpu` and `linux-gpu`, the coordinator consumes request topics and publishes
-  `inference.batch.<mode>`; the engine consumes the batch topic, executes inference, and publishes
-  results
+- on `linux-cpu`, the coordinator consumes request topics and publishes
+  `inference.batch.linux-cpu`; on `linux-gpu`, native-fallback work uses
+  `inference.batch.linux-gpu` and Python-native framework work can route to
+  `inference.batch.linux-gpu.<engine>` topics; engine daemons consume their configured batch topic,
+  execute inference, and publish results
 - on `apple-silicon`, the coordinator role consumes request topics and publishes inference work to
   `inference.batch.apple-silicon`; the same-binary on-host engine daemon consumes that batch topic,
   executes Apple-native inference, and publishes results
@@ -575,8 +582,9 @@ The plan keeps control-plane execution context separate from substrate.
   topics it uses
 - the supported HA defaults: coordinator `replicaCount >= 2` with soft anti-affinity, engine
   required pod anti-affinity keyed on its own label with `topologyKey: kubernetes.io/hostname` so
-  two engine pods cannot share a node; per-role `coordinator.replicaCount` and
-  `engine.replicaCount` knobs in `chart/values.yaml`. Pulsar-owned topics, `Shared` subscriptions
+  two replicas of the same engine Deployment cannot share a node; per-role
+  `coordinator.replicaCount` and `engine.replicaCount` knobs in `chart/values.yaml`.
+  Pulsar-owned topics, `Shared` subscriptions
   on the request and batch topics, and per-context `Failover` subscriptions on the result topic
   keep request handoff, inference, and result-publication ownership unambiguous
 

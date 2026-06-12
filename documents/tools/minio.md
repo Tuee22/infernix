@@ -12,7 +12,7 @@
 - MinIO runs as a four-node distributed cluster on the supported Kind path
 - on a pristine cluster, MinIO may pull from public container repositories only when it is one of
   Harbor's required backend services before Harbor becomes pull-ready
-- the supported target shape uses **two MinIO buckets**:
+- the supported durable target shape uses **two MinIO buckets**:
   - `infernix-models` — always-on (not demo-gated); platform model weights, tokenizers, and
     configs at `<modelId>/<filename>` plus a `<modelId>/.ready` sentinel object; populated
     lazily on first use by the coordinator's bootstrap subscription on
@@ -21,6 +21,13 @@
   - `infernix-demo-objects` — demo-gated; user uploads and engine-generated artifacts at
     `users/<userId>/contexts/<contextId>/{uploads,generated}/<objectKey>`; absent when
     `demo_ui = false`
+- Harbor also uses a MinIO bucket named `harbor-registry` as its rebuildable registry backing
+  store. That bucket is not product-durable state: lifecycle cleanup may remove the bucket
+  contents, the matching MinIO bucket metadata, and stale multipart/tmp working sets before
+  startup or during `cluster down`; the matching Harbor Redis registry-cache claim is also
+  rebuildable and is scrubbed with the registry bucket so fresh Harbor database state never points
+  at stale image upload fragments or cached blob-existence keys. The durable model and demo-object
+  buckets remain retained.
 - the **`.ready` sentinel pattern** on `infernix-models`: the coordinator's bootstrap
   worker PUTs each weight file first, then PUTs `<modelId>/.ready` last, then publishes
   `model.bootstrap.ready.<modelId>`. Engines treat the presence of `.ready` as the atomic

@@ -275,9 +275,14 @@ Rules:
   chart values knob `engine.modelCache.sizeLimit`) for staging weights pulled from MinIO,
   and the adapter runs LRU eviction inside that quota. On Linux substrates the engine role
   runs as an in-cluster `infernix-engine` Deployment under a strict one-per-node
-  `requiredDuringSchedulingIgnoredDuringExecution` pod anti-affinity rule; on Apple silicon
-  the engine role runs as the on-host `infernix service` daemon, with the same one-per-node
-  rule enforced via an exclusive `flock(2)` on `engine.lock` acquired at daemon startup.
+  `requiredDuringSchedulingIgnoredDuringExecution` pod anti-affinity rule. On `linux-gpu`, the
+  base engine handles canonical native-fallback batch work and Python-native framework work can
+  use `infernix-engine-<engine>` per-engine Deployments selected by
+  `inference.batch.linux-gpu.<engine>` topics. Repo-owned `linux-gpu` lifecycle values keep those
+  per-engine deployments at zero replicas on the single-GPU lane, and validation scales one at a
+  time. On Apple silicon the engine role runs as the on-host `infernix service` daemon, with the
+  same one-per-node rule enforced via an exclusive `flock(2)` on `engine.lock` acquired at daemon
+  startup.
   Sprint 7.7 of Phase 7 split the legacy fused `infernix-service` pod
   into role-specific Deployments, removed the previous service-data PVC, introduced
   `coordinator.replicaCount` and `engine.replicaCount` knobs (defaults ≥ 2 for the stateless
@@ -379,18 +384,20 @@ Rules:
   daemons are canonical for request-topic consumption and host-batch handoff, but the host daemon
   is the canonical Apple inference executor and result publisher.
 - On `linux-cpu` and `linux-gpu`, the stateless `infernix-coordinator` Deployment reads request
-  topics and publishes batch work, while the `infernix-engine` Deployment consumes
-  `inference.batch.<mode>`, runs inference, and publishes the result. Sprint 7.7 of Phase 7
-  legacy the fused `infernix-service` pod in favor of these role-specific Deployments.
+  topics and publishes batch work, while engine-role Deployments consume
+  `inference.batch.<mode>` or `inference.batch.linux-gpu.<engine>`, run inference, and publish the
+  result. Sprint 7.7 of Phase 7 replaced the fused `infernix-service` pod with role-specific
+  Deployments.
 - When phase docs describe multi-node or multi-replica topologies, they must distinguish the
   currently generated values from the chart template's explicit replica and anti-affinity
   knobs. The supported target model uses `coordinator.replicaCount` and `engine.replicaCount`
   in `chart/values.yaml`: stateless roles default to replicas ≥ 2 with preferred anti-affinity
   for spread; the engine role uses **required** pod anti-affinity keyed on its own label with
-  `topologyKey: kubernetes.io/hostname` so two engine pods cannot share a node (redundant KV
-  caches and model weights yield zero performance gain). On a Linux node with multiple NVIDIA
-  devices, the single engine pod claims all local devices via `nvidia.com/gpu` and the active
-  substrate's `.dhall` decides per-device model assignment. The request, batch, and result
+  `topologyKey: kubernetes.io/hostname` so two replicas of the same engine Deployment cannot share
+  a node (redundant KV caches and model weights yield zero performance gain). On `linux-gpu`,
+  per-engine framework Deployments are dependency-isolation units selected by batch topic, not
+  throughput replicas; the single-GPU validation path activates one per-engine deployment at a
+  time. The request, batch, and result
   contract must remain Pulsar-owned so exclusive topic subscriptions, acknowledgements, and
   negative acknowledgements keep request handoff, inference, and result-publication ownership
   unambiguous; PodDisruptionBudgets with `maxUnavailable: 1` on each daemon Deployment make

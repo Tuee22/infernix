@@ -28,8 +28,11 @@ def _audio_to_midi_basic_pitch(context: AdapterContext) -> ArtifactResult:
         from basic_pitch.inference import predict
     except ImportError as exc:
         raise RuntimeError(
-            "basic-pitch/tensorflow are not installed in this engine venv; "
-            "install the prebuilt host wheels for the Basic Pitch engine."
+            "basic-pitch is not installed in this TensorFlow engine venv; "
+            "the published package requires TensorFlow <2.15.1 and is a "
+            "named residual on the Python 3.12 / CUDA 12.8 substrate. Use "
+            "the Core ML or ONNX Basic Pitch lane until a maintained "
+            "TensorFlow package is adopted."
         ) from exc
     weights_dir = get_model_path(context.model_id)
     input_audio = download_demo_object(context.input_object_ref)
@@ -47,8 +50,9 @@ def _transcribe_omnizart(context: AdapterContext) -> ArtifactResult:
         from omnizart.music import app as music_app
     except ImportError as exc:
         raise RuntimeError(
-            "omnizart/tensorflow are not installed in this engine venv; "
-            "install the prebuilt host wheels for the Omnizart engine."
+            "omnizart is not installed in this TensorFlow engine venv; "
+            "the upstream TF1-era stack is a named residual on the Python "
+            "3.12 / CUDA 12.8 substrate."
         ) from exc
     _ = get_model_path(context.model_id)
     input_audio = download_demo_object(context.input_object_ref)
