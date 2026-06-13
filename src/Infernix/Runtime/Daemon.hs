@@ -143,12 +143,19 @@ runWebSocketPulsarDaemon paths runtimeMode engineOverrides daemonConfig demoConf
   writeServiceReadinessMarker paths
   putStrLn "serviceSubscriptionMode: websocket-pulsar"
   putStrLn ("servicePulsarWsBaseUrl: " <> renderPulsarWebSocketBase (pulsarWebSocketBase transport))
-  forM_
-    (daemonConfigRequestTopics daemonConfig)
-    (forkIO . consumeTopicForever transport paths runtimeMode engineOverrides daemonConfig demoConfig (Just engineKVCache))
-  when (daemonRole == Coordinator) $
-    startCoordinatorLoops transport runtimeMode daemonConfig
-  forever (threadDelay 60000000)
+  case (runtimeMode, daemonRole, daemonConfigRequestTopics daemonConfig) of
+    (AppleSilicon, Engine, primaryTopic : extraTopics) -> do
+      forM_
+        extraTopics
+        (forkIO . consumeTopicForever transport paths runtimeMode engineOverrides daemonConfig demoConfig (Just engineKVCache))
+      consumeTopicForever transport paths runtimeMode engineOverrides daemonConfig demoConfig (Just engineKVCache) primaryTopic
+    _ -> do
+      forM_
+        (daemonConfigRequestTopics daemonConfig)
+        (forkIO . consumeTopicForever transport paths runtimeMode engineOverrides daemonConfig demoConfig (Just engineKVCache))
+      when (daemonRole == Coordinator) $
+        startCoordinatorLoops transport runtimeMode daemonConfig
+      forever (threadDelay 60000000)
 
 startCoordinatorLoops ::
   PulsarTransport ->

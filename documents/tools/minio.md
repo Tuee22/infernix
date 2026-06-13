@@ -12,12 +12,15 @@
 - MinIO runs as a four-node distributed cluster on the supported Kind path
 - on a pristine cluster, MinIO may pull from public container repositories only when it is one of
   Harbor's required backend services before Harbor becomes pull-ready
-- the supported durable target shape uses **two MinIO buckets**:
+- the supported durable target shape uses **three MinIO buckets**:
   - `infernix-models` — always-on (not demo-gated); platform model weights, tokenizers, and
     configs at `<modelId>/<filename>` plus a `<modelId>/.ready` sentinel object; populated
     lazily on first use by the coordinator's bootstrap subscription on
     `infernix/system/model.bootstrap.request`; read by every engine pod (Linux) and the
     on-host engine daemon (Apple)
+  - `infernix-engine-artifacts` — always-on (not demo-gated); immutable content-addressed engine
+    software payloads such as wheelhouses, native binaries, Core ML compiled models, JVM tools,
+    and reusable Apple or Linux materialization payloads; model weights never live here
   - `infernix-demo-objects` — demo-gated; user uploads and engine-generated artifacts at
     `users/<userId>/contexts/<contextId>/{uploads,generated}/<objectKey>`; absent when
     `demo_ui = false`
@@ -45,8 +48,8 @@
 
 ## Demo Artifact Bucket
 
-The `infernix-demo-objects` bucket lives alongside the always-on `infernix-models` bucket and
-is demo-gated; it is absent when `demo_ui = false`.
+The `infernix-demo-objects` bucket lives alongside the always-on `infernix-models` and
+`infernix-engine-artifacts` buckets and is demo-gated; it is absent when `demo_ui = false`.
 
 - bucket name: `infernix-demo-objects`
 - per-user prefix layout inside the bucket:

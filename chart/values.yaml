@@ -222,6 +222,10 @@ infernixMinio:
     # entries here on first use of a model and writes the `.ready` sentinel
     # last; engines read from this bucket via the per-adapter model cache.
     - infernix-models
+    # Phase 4 Sprint 4.18: always-on immutable engine software payload
+    # bucket. Stores content-addressed wheelhouses, native binaries, Core ML
+    # compiled models, JVM tools, and reusable materialization payloads.
+    - infernix-engine-artifacts
     # Phase 7 Sprint 7.7: demo-gated user-artifact bucket. Hosts per-user
     # prefixes `users/<userId>/contexts/<contextId>/{uploads,generated}/`
     # for the durable-context surface; presigned PUT/GET URLs minted at

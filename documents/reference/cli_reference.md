@@ -55,7 +55,8 @@
 - `infernix internal discover harbor-overlay OVERLAY` - prints the Harbor-backed image references discovered in a rendered override payload
 - `infernix internal publish-chart-images RENDERED_CHART OUTPUT` - publishes the chart image inventory into a Harbor override file
 - `infernix internal materialize-substrate RUNTIME_MODE [--demo-ui true|false]` - writes the generated substrate file for one explicit substrate id into the active build root
-- `infernix internal materialize-metal-engines` - builds the allowlisted Apple Metal/Core ML engine artifacts inside the headless tart macOS VM and copies them to `./.data/engines/<adapterId>/` (Apple-only; mirrors `internal materialize-substrate`)
+- `infernix internal materialize-metal-engines` - materializes the allowlisted Apple Metal/Core ML engine manifests under `./.data/engines/<adapterId>/` through the Tart-free headless host lane (Apple-only; mirrors `internal materialize-substrate`)
+- `infernix internal materialize-linux-native-engines` - materializes the allowlisted Linux native runner roots under `/opt/infernix/engines/<adapterId>/` for substrate images
 - `infernix internal demo-config load PATH` - loads one generated demo config and prints the rendered model listing
 - `infernix internal demo-config validate PATH` - validates one generated demo config file
 - `infernix internal pulsar-roundtrip DEMO_CONFIG_PATH MODEL_ID INPUT_TEXT` - publishes one inference request through Pulsar and waits for the matching result
@@ -70,6 +71,11 @@
 - the `infernix` command inventory above is rendered from the command metadata exposed by the
   Haskell command registry in `src/Infernix/CommandRegistry.hs`; `infernix docs check` fails if this
   generated section drifts
+- `infernix internal materialize-metal-engines` remains in the generated inventory as the explicit
+  Apple materialization helper. Its implementation is Tart-free and writes typed engine-artifact
+  manifests under `./.data/engines/<adapterId>/`; the Apple hardware cohort still owns the host
+  Metal runtime bridge smoke and native artifact load evidence named in
+  [../engineering/apple_silicon_metal_headless_builds.md](../engineering/apple_silicon_metal_headless_builds.md)
 - `cluster up`, `cluster down`, `cluster status`, `cache ...`, `lint ...`, `test ...`,
   `docs check`, and `internal ...` are declarative CLI entrypoints; `infernix service` and
   `infernix-demo serve` are the only long-running daemon entrypoints

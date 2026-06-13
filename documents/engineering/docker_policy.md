@@ -30,9 +30,8 @@
   directly.
 - Cross-architecture emulation is not part of the Docker policy. `linux-cpu` supports native
   Linux amd64 and native Linux arm64; Apple Silicon does not run an emulated amd64 Linux lane.
-- The Apple tart macOS VM is a separate native arm64 macOS virtualization tool, distinct from
-  Docker and Colima: it creates and switches no Docker context and provisions no Colima VM,
-  consistent with the native-Apple-Docker boundary rule below.
+- Apple Metal/Core ML materialization is not a Docker or Colima lane. The target path avoids Tart
+  and uses a host Metal runtime bridge plus typed engine-artifact manifests.
 
 ## Current Status
 
@@ -55,14 +54,11 @@ operations have a buildx-capable CLI when needed.
   native arm64 Docker daemon
 - on the Apple host-native control-plane path, `./.build/infernix` must not create or switch
   Docker contexts, create a Colima VM, or use emulation before it attempts real cluster work
-- the tart macOS VM used to build the Metal and Core ML native engine artifacts is a separate
-  native arm64 macOS virtualization tool, not a Docker or Colima lane: it is native arm64 macOS
-  virtualization (not cross-architecture emulation), it creates and switches no Docker context,
-  and it provisions no Colima VM, so it falls fully within the native-Apple-Docker boundary rule.
-  Tart is reconciled through Homebrew and recorded as the `hostTart` field in
-  `dhall/InfernixHost.dhall`; see the canonical homes
-  [../operations/apple_silicon_runbook.md](../operations/apple_silicon_runbook.md) and
-  [host_tools_manifest.md](host_tools_manifest.md)
+- Apple Metal/Core ML materialization is outside the Docker policy. The supported target uses the
+  host Metal runtime bridge and typed engine-artifact manifests described in
+  [apple_silicon_metal_headless_builds.md](apple_silicon_metal_headless_builds.md). The old
+  `hostTart` / `AppleTart` helper path has been removed and must not return as a Docker, Colima,
+  or VM prerequisite surface.
 - on `linux-cpu`, host prerequisites stop at Docker Engine plus the Docker buildx and Compose
   plugins on native Linux amd64 or arm64
 - on `linux-gpu`, host prerequisites stop at the `linux-cpu` Docker baseline plus the supported

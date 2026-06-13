@@ -73,12 +73,20 @@ from a typed `HostConfig` absolute path for native-process-runner bindings — f
 lazily from the infernix-models MinIO bucket via `adapters.model_cache.get_model_path`, and
 publishes a per-family real result: inline text for the LLM and speech families, and a typed object
 reference into the infernix-demo-objects MinIO bucket for the source-separation, audio-to-MIDI,
-music-transcription, image, video, audio-generation, and OMR artifact families. The native
-Metal/Core ML engine artifacts the Apple worker runs are built host-side through the tart macOS VM
-lane and resolved from `./.data/engines/<adapterId>/`; the canonical homes for that lane and the
-typed host paths are [../operations/apple_silicon_runbook.md](../operations/apple_silicon_runbook.md),
-[../engineering/host_tools_manifest.md](../engineering/host_tools_manifest.md), and
-[configuration_doctrine.md](configuration_doctrine.md).
+music-transcription, image, video, audio-generation, and OMR artifact families. Apple native
+engine artifacts resolve from `./.data/engines/<adapterId>/` and the supported materialization
+target is Tart-free: a fixed host Metal bridge for runtime Metal source compilation plus typed
+engine-artifact manifests for Core ML and native runner payloads. The former Tart helper path has
+been removed; the retained command name now writes typed manifests without a VM dependency. The
+canonical homes are
+[../engineering/apple_silicon_metal_headless_builds.md](../engineering/apple_silicon_metal_headless_builds.md),
+[../operations/apple_silicon_runbook.md](../operations/apple_silicon_runbook.md), and
+[../engineering/host_tools_manifest.md](../engineering/host_tools_manifest.md).
+
+On Linux substrates, `infernix internal materialize-linux-native-engines` bakes image-owned
+`/opt/infernix/engines/<adapterId>/` roots with typed manifests and smoke-validated runner
+entrypoints. Those roots are currently smoke wrappers; Wave I replaces them with real native
+payloads before real-output sign-off.
 
 ## Generated Demo Config Contract
 

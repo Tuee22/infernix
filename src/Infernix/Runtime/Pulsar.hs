@@ -35,10 +35,12 @@ module Infernix.Runtime.Pulsar
     readPublishedInferenceResultMaybe,
     drainTopic,
     drainTopicWithKVCache,
+    buildServiceConsumerSocketPath,
     runDispatcherLoop,
     runModelBootstrapLoop,
     runResultBridgeLoop,
     schemaMarkerPath,
+    serviceConsumerSubscriptionType,
     serviceReadinessMarkerPath,
     topicDirectoryPath,
     writeServiceReadinessMarker,
@@ -2062,19 +2064,58 @@ consumeTopicForever ::
   Text.Text ->
   IO ()
 consumeTopicForever transport paths runtimeMode overrides daemonConfig demoConfig maybeEngineKVCache requestTopicValue =
-  forever $ do
-    sessionResult <- try @SomeException (consumeTopicSession transport paths runtimeMode overrides daemonConfig demoConfig maybeEngineKVCache requestTopicValue)
-    case sessionResult of
-      Right _ -> threadDelay 1000000
-      Left err -> do
-        hPutStrLn
-          stderr
-          ( "pulsar consumer loop failed for "
-              <> Text.unpack requestTopicValue
-              <> ":\n"
-              <> displayException err
-          )
-        threadDelay 1000000
+  case serviceConsumerSubscriptionType runtimeMode daemonConfig of
+    Left err -> ioError (userError err)
+    Right subscriptionType ->
+      forever $ do
+        sessionResult <- try @SomeException (consumeTopicSession transport paths runtimeMode overrides daemonConfig demoConfig maybeEngineKVCache requestTopicValue subscriptionType)
+        case sessionResult of
+          Right _ -> threadDelay 1000000
+          Left err
+            | isFatalServiceConsumerError subscriptionType err -> do
+                hPutStrLn
+                  stderr
+                  ( "pulsar consumer subscription rejected for "
+                      <> Text.unpack requestTopicValue
+                      <> " with "
+                      <> Text.unpack (consumerSubscriptionTypeId subscriptionType)
+                      <> " ownership:\n"
+                      <> displayException err
+                  )
+                throwIO err
+            | otherwise -> do
+                hPutStrLn
+                  stderr
+                  ( "pulsar consumer loop failed for "
+                      <> Text.unpack requestTopicValue
+                      <> ":\n"
+                      <> displayException err
+                  )
+                threadDelay 1000000
+
+isFatalServiceConsumerError :: ConsumerSubscriptionType -> SomeException -> Bool
+isFatalServiceConsumerError subscriptionType err =
+  subscriptionType == ConsumerExclusive
+    && any (`Text.isInfixOf` errorText) ["409", "conflict", "exclusive", "consumer busy"]
+  where
+    errorText = Text.toLower (Text.pack (displayException err))
+
+serviceConsumerSubscriptionType :: RuntimeMode -> DaemonConfig -> Either String ConsumerSubscriptionType
+serviceConsumerSubscriptionType runtimeMode daemonConfig
+  | appleHostEngine && selectedType == ConsumerShared =
+      Left "apple-silicon host engine consumers must use Exclusive or Failover; Shared is not supported for local engine execution or materialization state"
+  | not appleHostEngine && selectedType /= ConsumerShared =
+      Left "only the apple-silicon host engine consumer may select Exclusive or Failover; coordinator and Linux engine consumers use Shared"
+  | otherwise = Right selectedType
+  where
+    appleHostEngine =
+      runtimeMode == AppleSilicon
+        && daemonConfigRole daemonConfig == Engine
+        && daemonConfigLocation daemonConfig == "control-plane-host"
+    selectedType =
+      fromMaybe
+        (if appleHostEngine then ConsumerExclusive else ConsumerShared)
+        (daemonConfigConsumerSubscriptionType daemonConfig)
 
 consumeTopicSession ::
   PulsarTransport ->
@@ -2085,17 +2126,20 @@ consumeTopicSession ::
   DemoConfig ->
   Maybe KVCache.EngineKVCache ->
   Text.Text ->
+  ConsumerSubscriptionType ->
   IO ()
-consumeTopicSession transport paths runtimeMode overrides daemonConfig demoConfig maybeEngineKVCache requestTopicValue = do
+consumeTopicSession transport paths runtimeMode overrides daemonConfig demoConfig maybeEngineKVCache requestTopicValue subscriptionType = do
+  processLabel <- currentProcessLabel
   topicRef <- requireTopicRef requestTopicValue
   let subscriptionName = "infernix-service-" <> sanitizeTopic requestTopicValue
-      consumerName = subscriptionName <> "-consumer"
+      consumerName = serviceConsumerName subscriptionName subscriptionType processLabel
       consumerPath =
-        buildConsumerSocketPath
+        buildServiceConsumerSocketPath
           (pulsarWebSocketBase transport)
           topicRef
           subscriptionName
           consumerName
+          subscriptionType
   runPulsarWebSocketClient (pulsarWebSocketBase transport) consumerPath $ \connection ->
     forever $ do
       rawEnvelope <- receiveJsonFrame "Pulsar consumer message" connection
@@ -2185,6 +2229,13 @@ consumeTopicSession transport paths runtimeMode overrides daemonConfig demoConfi
             (requestId publishedResult)
             (encodeMessage (domainResultToProto publishedResult))
       sendAck connection (envelopeMessageId envelope)
+
+serviceConsumerName :: String -> ConsumerSubscriptionType -> Text.Text -> String
+serviceConsumerName subscriptionName subscriptionType processLabel =
+  case subscriptionType of
+    ConsumerFailover ->
+      Text.unpack (PulsarFailover.failoverConsumerName (Text.pack subscriptionName) processLabel)
+    _ -> subscriptionName <> "-consumer"
 
 batchTopicForRequest :: RuntimeMode -> DemoConfig -> Text.Text -> ProtoInference.InferenceRequest -> Text.Text
 batchTopicForRequest runtimeMode demoConfig fallbackTopic requestValue =
@@ -3484,22 +3535,27 @@ buildProducerSocketPath websocketBase topicRef producerName maybeSequenceId =
           maybeSequenceId
     )
 
-buildConsumerSocketPath :: PulsarWebSocketBase -> TopicRef -> String -> String -> String
-buildConsumerSocketPath websocketBase topicRef subscriptionName consumerName =
+buildServiceConsumerSocketPath :: PulsarWebSocketBase -> TopicRef -> String -> String -> ConsumerSubscriptionType -> String
+buildServiceConsumerSocketPath websocketBase topicRef subscriptionName consumerName subscriptionType =
   buildSocketPath
     websocketBase
     ("consumer/" <> renderTopicPath topicRef <> "/" <> subscriptionName)
-    -- Phase 7 Sprint 7.7: @Shared@ subscription so the supported
-    -- multi-replica coordinator + engine daemons can split the
-    -- request and batch topics without contending on an exclusive
-    -- subscription. Per-context exclusive ownership lives on the
-    -- per-conversation Failover subscriptions the dispatcher creates
-    -- (Sprint 7.6), not on the global request/batch topics.
-    [ ("subscriptionType", "Shared"),
+    -- Phase 7 Sprint 7.23: service consumers now choose subscription
+    -- ownership from typed daemon metadata. Shared remains the supported
+    -- coordinator/Linux engine mode; Apple host engines use Exclusive by
+    -- default or intentional Failover for standby host designs.
+    [ ("subscriptionType", pulsarConsumerSubscriptionTypeQueryValue subscriptionType),
       ("subscriptionInitialPosition", "Earliest"),
       ("receiverQueueSize", "1"),
       ("consumerName", consumerName)
     ]
+
+pulsarConsumerSubscriptionTypeQueryValue :: ConsumerSubscriptionType -> String
+pulsarConsumerSubscriptionTypeQueryValue subscriptionType =
+  case subscriptionType of
+    ConsumerShared -> "Shared"
+    ConsumerExclusive -> "Exclusive"
+    ConsumerFailover -> "Failover"
 
 buildReaderSocketPath :: PulsarWebSocketBase -> TopicRef -> String -> String
 buildReaderSocketPath websocketBase topicRef readerName =

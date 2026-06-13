@@ -55,6 +55,7 @@ library
         Infernix.DemoCLI
         Infernix.DemoConfig
         Infernix.Engines.AppleSilicon
+        Infernix.Engines.LinuxNative
         Infernix.Error
         Infernix.HostConfig
         Infernix.HostPrereqs

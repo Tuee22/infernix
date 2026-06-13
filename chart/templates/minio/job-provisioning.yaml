@@ -8,6 +8,7 @@ exists (idempotent via `--ignore-existing`):
 
 - `harbor-registry` — Harbor's S3 storage backend
 - `infernix-models` — platform model-weights bucket (lazy bootstrap)
+- `infernix-engine-artifacts` — immutable engine software payload bucket
 - `infernix-demo-objects` — demo user-artifact bucket (Phase 7)
 
 The chart's Helm post-install hook semantics turn this into a

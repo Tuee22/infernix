@@ -3,6 +3,8 @@
 module Infernix.Objects.Layout
   ( ModelsBucket (..),
     defaultModelsBucket,
+    EngineArtifactsBucket (..),
+    defaultEngineArtifactsBucket,
     DemoObjectsBucket (..),
     defaultDemoObjectsBucket,
     UserPrefix (..),
@@ -13,6 +15,7 @@ module Infernix.Objects.Layout
     generatedObjectKey,
     modelObjectKey,
     modelReadySentinelKey,
+    engineArtifactObjectKey,
     pathBelongsToUser,
   )
 where
@@ -33,6 +36,14 @@ newtype ModelsBucket = ModelsBucket {unModelsBucket :: Text}
 
 defaultModelsBucket :: ModelsBucket
 defaultModelsBucket = ModelsBucket "infernix-models"
+
+-- | The MinIO bucket holding immutable engine software payloads. Model
+-- weights and user-visible generated artifacts never live here.
+newtype EngineArtifactsBucket = EngineArtifactsBucket {unEngineArtifactsBucket :: Text}
+  deriving (Eq, Show)
+
+defaultEngineArtifactsBucket :: EngineArtifactsBucket
+defaultEngineArtifactsBucket = EngineArtifactsBucket "infernix-engine-artifacts"
 
 -- | The demo-gated MinIO bucket holding user uploads and engine-generated
 -- artifacts. The supported per-user prefix is
@@ -102,6 +113,21 @@ modelObjectKey modelId filename =
 -- loading.
 modelReadySentinelKey :: Text -> ObjectRef
 modelReadySentinelKey modelId = modelObjectKey modelId ".ready"
+
+-- | Build an @ObjectRef@ for an immutable engine software payload.
+-- Digests may be supplied as @sha256:<hex>@ or just @<hex>@; the
+-- content-addressed object key always uses @sha256/<hex>@.
+engineArtifactObjectKey :: Text -> ObjectRef
+engineArtifactObjectKey digest =
+  let EngineArtifactsBucket bucket = defaultEngineArtifactsBucket
+      digestSuffix = Text.dropWhile (== ':') (Text.dropWhile (/= ':') digest)
+      digestHex
+        | Text.isPrefixOf "sha256:" digest = digestSuffix
+        | otherwise = digest
+   in ObjectRef
+        { objectBucket = bucket,
+          objectKey = "sha256/" <> digestHex
+        }
 
 -- | Per-user scope enforcement helper. Returns 'True' iff the supplied
 -- object key prefix is owned by the named user. The demo backend uses this

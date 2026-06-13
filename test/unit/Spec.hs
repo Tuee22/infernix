@@ -13,7 +13,7 @@ import Data.ByteString.Lazy qualified as Lazy
 import Data.List (find, isInfixOf, nub)
 import Data.Map.Strict qualified as Map
 import Data.Map.Strict qualified as MapStrict
-import Data.Maybe (isJust, isNothing)
+import Data.Maybe (isJust, isNothing, listToMaybe)
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
 import Data.Time (getCurrentTime)
@@ -68,15 +68,28 @@ import Infernix.DemoConfig (decodeDemoConfigFile)
 import Infernix.Dispatch.ContextModelMap qualified as ContextModelMap
 import Infernix.Dispatch.SingleFlight qualified as Dispatch
 import Infernix.Engines.AppleSilicon
-  ( MetalEngineArtifact (..),
+  ( EngineArtifactManifest (..),
+    MetalEngineArtifact (..),
+    engineArtifactDigest,
+    engineArtifactManifestPath,
+    engineArtifactPreviousRoot,
+    engineArtifactTempRoot,
     ensureAppleSiliconRuntimeReady,
+    manifestForEngineArtifact,
+    materializeMetalEngineArtifact,
     metalEngineArtifactAdapterIds,
     metalEngineBuildPlan,
-    metalEngineVmBaseImage,
-    metalEngineVmName,
-    tartCloneArgs,
-    tartDeleteArgs,
-    tartRunBuildArgs,
+    metalEngineInstallRoot,
+    renderEngineArtifactManifest,
+  )
+import Infernix.Engines.LinuxNative
+  ( linuxNativeEngineAdapterId,
+    linuxNativeEngineArtifactAdapterIds,
+    linuxNativeEngineBuildPlan,
+    linuxNativeEngineInstallRoot,
+    linuxNativeRunnerScript,
+    manifestForLinuxNativeEngineArtifact,
+    materializeLinuxNativeEnginesAt,
   )
 import Infernix.HostConfig qualified as HostConfig
 import Infernix.HostPrereqs (appleDockerBoundaryError, appleHostRequirementIds, decodeDockerInfoArchitecture)
@@ -100,6 +113,7 @@ import Infernix.Runtime.Pulsar
     drainTopic,
     parseMessageIdToSequenceId,
     planDemoClientMessagePublications,
+    serviceConsumerSubscriptionType,
     topicDirectoryPath,
     validateDemoClientMessageCatalog,
   )
@@ -135,9 +149,9 @@ import Test.QuickCheck
 main :: IO ()
 main = do
   unitTestRoot <- testRootPath "unit"
-  assert (length (catalogForMode AppleSilicon) == 15) "apple-silicon catalog count matches the matrix"
-  assert (length (catalogForMode LinuxCpu) == 12) "linux-cpu catalog count matches the matrix"
-  assert (length (catalogForMode LinuxGpu) == 16) "linux-gpu catalog count matches the matrix"
+  assert (length (catalogForMode AppleSilicon) == 13) "apple-silicon runnable catalog count matches the revised matrix"
+  assert (length (catalogForMode LinuxCpu) == 9) "linux-cpu runnable catalog count matches the revised matrix"
+  assert (length (catalogForMode LinuxGpu) == 13) "linux-gpu runnable catalog count matches the revised matrix"
   assert
     (expectedDaemonLocationForRuntime AppleSilicon == "cluster-pod")
     "apple-silicon publication reports the cluster service daemon location"
@@ -180,6 +194,9 @@ main = do
         == Right (InternalMaterializeSubstrateCommand LinuxCpu False)
     )
     "the structured command registry parses explicit substrate materialization commands"
+  assert
+    (parseCommand ["internal", "materialize-linux-native-engines"] == Right InternalMaterializeLinuxNativeEnginesCommand)
+    "the structured command registry parses Linux native engine materialization"
   assert
     ("### `cluster`" `isInfixOf` renderCliReferenceCommandsSection)
     "the generated CLI reference includes the cluster family heading"
@@ -238,11 +255,11 @@ main = do
     (null (appleHostRequirementIds AppleSilicon DocsCheckCommand))
     "apple host prerequisite planning does not install unrelated tools for docs-only commands"
   assert
-    (appleHostRequirementIds AppleSilicon InternalMaterializeMetalEnginesCommand == ["tart"])
-    "Sprint 1.13: the Apple Metal-engine build lane reconciles tart through the Apple host prerequisite path"
+    (null (appleHostRequirementIds AppleSilicon InternalMaterializeMetalEnginesCommand))
+    "Sprint 1.14: Apple Metal/Core ML materialization does not reconcile Tart as a host prerequisite"
   assert
-    (appleHostRequirementIds LinuxCpu InternalMaterializeMetalEnginesCommand == ["tart"])
-    "Sprint 1.13: the tart requirement is independent of the active runtime mode"
+    (null (appleHostRequirementIds LinuxCpu InternalMaterializeMetalEnginesCommand))
+    "Sprint 1.14: the Tart-free materialization command has no cross-runtime Homebrew prerequisite"
   dockerArchitecture <-
     expectRight
       "Docker info architecture decode succeeds for the native Apple daemon payload"
@@ -474,7 +491,8 @@ main = do
                       daemonConfigRequestTopics = requestTopicsForMode LinuxCpu,
                       daemonConfigResultTopic = resultTopicForMode LinuxCpu,
                       daemonConfigHostBatchTopic = Nothing,
-                      daemonConfigPulsarConnectionMode = ConfiguredTransport
+                      daemonConfigPulsarConnectionMode = ConfiguredTransport,
+                      daemonConfigConsumerSubscriptionType = Just ConsumerShared
                     },
                 engineDaemons =
                   [ DaemonConfig
@@ -483,7 +501,8 @@ main = do
                         daemonConfigRequestTopics = maybe [] pure (hostBatchTopicForMode LinuxCpu),
                         daemonConfigResultTopic = resultTopicForMode LinuxCpu,
                         daemonConfigHostBatchTopic = Nothing,
-                        daemonConfigPulsarConnectionMode = ConfiguredTransport
+                        daemonConfigPulsarConnectionMode = ConfiguredTransport,
+                        daemonConfigConsumerSubscriptionType = Just ConsumerShared
                       }
                   ],
                 requestTopics = requestTopicsForMode LinuxCpu,
@@ -509,6 +528,12 @@ main = do
       assert (activeDaemonRole decodedConfig == Coordinator) "demo-config decode preserves the active daemon role"
       assert (daemonConfigLocation (coordinatorDaemon decodedConfig) == "cluster-pod") "demo-config decode preserves cluster daemon metadata"
       assert (not (null (engineDaemons decodedConfig))) "linux demo-config decode preserves engine daemon metadata"
+      assert
+        (daemonConfigConsumerSubscriptionType (coordinatorDaemon decodedConfig) == Just ConsumerShared)
+        "linux coordinator metadata uses Shared service subscription ownership"
+      assert
+        (all ((== Just ConsumerShared) . daemonConfigConsumerSubscriptionType) (engineDaemons decodedConfig))
+        "linux engine metadata uses Shared service subscription ownership"
       assert (requestTopics decodedConfig == requestTopicsForMode LinuxCpu) "demo-config decode preserves request topics"
       assert (resultTopic decodedConfig == resultTopicForMode LinuxCpu) "demo-config decode preserves the result topic"
       assert (engines decodedConfig == engineBindingsForMode LinuxCpu) "demo-config decode preserves engine bindings"
@@ -530,7 +555,8 @@ main = do
                       daemonConfigRequestTopics = requestTopicsForMode AppleSilicon,
                       daemonConfigResultTopic = resultTopicForMode AppleSilicon,
                       daemonConfigHostBatchTopic = hostBatchTopicForMode AppleSilicon,
-                      daemonConfigPulsarConnectionMode = ConfiguredTransport
+                      daemonConfigPulsarConnectionMode = ConfiguredTransport,
+                      daemonConfigConsumerSubscriptionType = Just ConsumerShared
                     },
                 engineDaemons =
                   [ DaemonConfig
@@ -539,7 +565,8 @@ main = do
                         daemonConfigRequestTopics = maybe [] pure (hostBatchTopicForMode AppleSilicon),
                         daemonConfigResultTopic = resultTopicForMode AppleSilicon,
                         daemonConfigHostBatchTopic = Nothing,
-                        daemonConfigPulsarConnectionMode = PublicationEdgeAutoDiscovery
+                        daemonConfigPulsarConnectionMode = PublicationEdgeAutoDiscovery,
+                        daemonConfigConsumerSubscriptionType = Just ConsumerExclusive
                       }
                   ],
                 requestTopics = requestTopicsForMode AppleSilicon,
@@ -556,6 +583,29 @@ main = do
       assert (daemonConfigHostBatchTopic (coordinatorDaemon decodedAppleConfig) == hostBatchTopicForMode AppleSilicon) "apple cluster daemon metadata publishes the host batch topic"
       assert (map daemonConfigRequestTopics (engineDaemons decodedAppleConfig) == [maybe [] pure (hostBatchTopicForMode AppleSilicon)]) "apple host daemon metadata consumes the host batch topic"
       assert (map daemonConfigHostBatchTopic (engineDaemons decodedAppleConfig) == [Nothing]) "apple host daemon metadata does not forward its own engine batch topic"
+      assert
+        (map daemonConfigConsumerSubscriptionType (engineDaemons decodedAppleConfig) == [Just ConsumerExclusive])
+        "Sprint 7.23: apple host engine metadata defaults to Exclusive service subscription ownership"
+      case engineDaemons decodedAppleConfig of
+        [appleEngineDaemon] -> do
+          let appleFailoverDaemon =
+                appleEngineDaemon
+                  { daemonConfigConsumerSubscriptionType = Just ConsumerFailover
+                  }
+              appleSharedDaemon =
+                appleEngineDaemon
+                  { daemonConfigConsumerSubscriptionType = Just ConsumerShared
+                  }
+          assert
+            (serviceConsumerSubscriptionType AppleSilicon appleEngineDaemon == Right ConsumerExclusive)
+            "Sprint 7.23: apple host engine consumers select Exclusive by default"
+          assert
+            (serviceConsumerSubscriptionType AppleSilicon appleFailoverDaemon == Right ConsumerFailover)
+            "Sprint 7.23: apple host engine consumers allow intentional Failover"
+          assert
+            (either (isInfixOf "Shared") (const False) (serviceConsumerSubscriptionType AppleSilicon appleSharedDaemon))
+            "Sprint 7.23: apple host engine consumers reject Shared"
+        _ -> fail "apple host demo-config must decode exactly one engine daemon"
       let readinessMarkerPath = runtimeRoot paths </> "service" </> "subscription.ready"
       -- Phase 4 Sprint 4.13: the previous test injected the Pulsar
       -- endpoint + demo-config path via @INFERNIX_PULSAR_*@ +
@@ -642,24 +692,41 @@ main = do
         ((resultFamilyForDescriptor <$> findModel AppleSilicon "audio-demucs-htdemucs") == Just SourceSeparation)
         "Sprint 4.15: the demucs row resolves to the source-separation family"
       assert
-        ((resultFamilyForDescriptor <$> findModel LinuxCpu "audio-basic-pitch-tensorflow") == Just AudioToMidi)
-        "Sprint 4.15: the basic-pitch row resolves to the audio-to-MIDI family"
+        ((resultFamilyForDescriptor <$> findModel LinuxCpu "audio-basic-pitch-onnx") == Just AudioToMidi)
+        "Sprint 4.15: the basic-pitch ONNX row resolves to the audio-to-MIDI family"
       assert
         ((resultFamilyForDescriptor <$> findModel LinuxCpu "tool-audiveris") == Just OpticalMusicRecognition)
         "Sprint 4.15: the audiveris row resolves to the OMR family"
-      -- Phase 6 Sprint 6.6: the union of every substrate catalog equals the
-      -- full README matrix row set (no README row is missing from all
-      -- generated catalogs). Backed by the README-to-matrix check in
-      -- `infernix lint docs`.
+      -- Phase 4 Sprint 4.18 / Phase 6 Sprint 6.31: the union of every
+      -- runnable substrate catalog plus the explicit residual rows equals the
+      -- full README matrix row set. Residual cells are not runtime bindings.
       let catalogRowUnion = nub (concatMap (map matrixRowId . catalogForMode) allRuntimeModes)
+          residualRowUnion = nub (concatMap residualMatrixRowIdsForMode allRuntimeModes)
+          coveredRows = nub (catalogRowUnion <> residualRowUnion)
+          readmeKeyRowIds = [rowIdValue | (rowIdValue, _artifactTypeValue, _referenceModelValue) <- matrixRowReadmeKeys]
+          residualsAreNotRunnableInSameMode mode =
+            all (`notElem` map matrixRowId (catalogForMode mode)) (residualMatrixRowIdsForMode mode)
       assert
         (not (null allMatrixRowIds))
         "Sprint 6.6: allMatrixRowIds enumerates the README matrix rows"
       assert
-        ( all (`elem` catalogRowUnion) allMatrixRowIds
-            && all (`elem` allMatrixRowIds) catalogRowUnion
+        ( nub readmeKeyRowIds == readmeKeyRowIds
+            && all (`elem` allMatrixRowIds) readmeKeyRowIds
+            && all (`elem` readmeKeyRowIds) allMatrixRowIds
         )
-        "Sprint 6.6: the union of catalogForMode across all substrates equals the full README matrix row set"
+        "Sprint 6.31: README matrix lint keys are unique and cover every matrix row id"
+      assert
+        ( all (`elem` coveredRows) allMatrixRowIds
+            && all (`elem` allMatrixRowIds) coveredRows
+            && all residualsAreNotRunnableInSameMode allRuntimeModes
+        )
+        "Sprint 4.18: runnable catalogs plus residual rows cover the full README matrix without promoting residuals"
+      assert
+        ( (selectedEngine <$> findModel AppleSilicon "speech-faster-whisper-ct2") == Just "CTranslate2 (CPU)"
+            && isNothing (findModel LinuxGpu "audio-basic-pitch-tensorflow")
+            && isNothing (findModel AppleSilicon "video-wan21-t2v")
+        )
+        "Sprint 4.18: researched matrix corrections are reflected in runnable catalog bindings"
       -- Phase 4 Sprint 4.17: per-engine engine name / batch-topic / image mapping.
       assert
         (engineNameForSelectedEngine LinuxGpu "vLLM" == "vllm")
@@ -1903,6 +1970,13 @@ assertObjectsLayoutAndPresigning = do
   assert
     (Contracts.objectKey modelReady == "qwen2.5-7b/.ready")
     "model ready sentinel key is <modelId>/.ready"
+  let engineArtifact = ObjLayout.engineArtifactObjectKey "sha256:abcdef1234"
+  assert
+    (Contracts.objectBucket engineArtifact == "infernix-engine-artifacts")
+    "engine artifact object keys target the infernix-engine-artifacts bucket"
+  assert
+    (Contracts.objectKey engineArtifact == "sha256/abcdef1234")
+    "engine artifact object keys are content-addressed under sha256/<digest>"
 
   -- Per-user scope enforcement
   assert
@@ -2011,17 +2085,17 @@ assertObjectsLayoutAndPresigning = do
 assertDemoBucketBootstrap :: IO ()
 assertDemoBucketBootstrap = do
   assert
-    (DemoBootstrap.requiredDemoBuckets == ["infernix-models", "infernix-demo-objects"])
-    "demo bucket bootstrap targets infernix-models + infernix-demo-objects"
+    (DemoBootstrap.requiredDemoBuckets == ["infernix-models", "infernix-engine-artifacts", "infernix-demo-objects"])
+    "demo bucket bootstrap targets model, engine-artifact, and demo-object buckets"
   let fromEmpty = DemoBootstrap.planDemoBucketBootstrap []
   assert
-    (DemoBootstrap.planMissingBuckets fromEmpty == ["infernix-models", "infernix-demo-objects"])
+    (DemoBootstrap.planMissingBuckets fromEmpty == ["infernix-models", "infernix-engine-artifacts", "infernix-demo-objects"])
     "all required buckets are missing from an empty MinIO"
   let halfPresent = DemoBootstrap.planDemoBucketBootstrap ["infernix-models", "harbor-registry"]
   assert
-    (DemoBootstrap.planMissingBuckets halfPresent == ["infernix-demo-objects"])
+    (DemoBootstrap.planMissingBuckets halfPresent == ["infernix-engine-artifacts", "infernix-demo-objects"])
     "only the absent buckets land in the missing-list"
-  let fullyPresent = DemoBootstrap.planDemoBucketBootstrap ["infernix-models", "infernix-demo-objects", "harbor-registry"]
+  let fullyPresent = DemoBootstrap.planDemoBucketBootstrap ["infernix-models", "infernix-engine-artifacts", "infernix-demo-objects", "harbor-registry"]
   assert
     (null (DemoBootstrap.planMissingBuckets fullyPresent))
     "no work needed when every required bucket is already present"
@@ -2170,7 +2244,8 @@ assertLinuxHostBatchForwarding paths = do
             daemonConfigRequestTopics = [requestTopic],
             daemonConfigResultTopic = resultTopic,
             daemonConfigHostBatchTopic = Just batchTopic,
-            daemonConfigPulsarConnectionMode = ConfiguredTransport
+            daemonConfigPulsarConnectionMode = ConfiguredTransport,
+            daemonConfigConsumerSubscriptionType = Just ConsumerShared
           }
   mapM_ removeIfPresent [requestDirectory, batchDirectory, resultDirectory]
   createDirectoryIfMissing True requestDirectory
@@ -2861,43 +2936,88 @@ assertHostConfig testRoot = do
   assert
     (HostTools.hostToolPath appleConfig HostTools.HostAptGet == "")
     "HostTools returns empty path for tools unavailable in the active context"
-  -- Phase 1 Sprint 1.13 — the hostTart manifest field is populated on
-  -- Apple (the tart Metal-engine build lane) and empty on Linux.
-  assert
-    (HostTools.hostToolPath appleConfig HostTools.HostTart == "/opt/homebrew/bin/tart")
-    "Sprint 1.13: the Apple host manifest records the absolute path to tart"
-  assert
-    (HostTools.hostToolPath linuxConfig HostTools.HostTart == "")
-    "Sprint 1.13: the Linux outer-container host manifest leaves tart empty (Apple-only)"
-  assert
-    (HostTools.hostToolName HostTools.HostTart == "tart")
-    "Sprint 1.13: HostTools reports the tart short name"
-  -- Phase 1 Sprint 1.13 — the allowlisted Metal/Core ML build plan and
-  -- the pure tart arg builders.
+  -- Phase 1 Sprint 1.14 — the allowlisted Apple headless artifact
+  -- plan uses runtime adapter ids and typed manifests, not a Tart VM.
   assert
     ( metalEngineArtifactAdapterIds
-        == [ "llama-cpp-cli",
+        == [ "apple-metal-runtime-bridge",
+             "llama-cpp-cli",
              "whisper-cpp-cli",
-             "coreml-basic-pitch",
-             "coreml-stable-diffusion",
-             "coreml-omnizart"
+             "coreml-native",
+             "ctranslate2-native",
+             "mlx-native",
+             "onnx-runtime-native",
+             "jvm-native"
            ]
     )
-    "Sprint 1.13: the tart lane builds exactly the allowlisted Metal/Core ML artifacts"
+    "Sprint 1.14: the Apple materialization plan uses runtime adapter ids"
   assert
-    (all (\artifact -> metalEngineAdapterId artifact `notElem` ["mlx-native", "jax-metal", "onnx-runtime-native", "jvm-native"]) metalEngineBuildPlan)
-    "Sprint 1.13: the tart lane excludes the prebuilt-wheel and JVM engines (MLX, jax-metal, ONNX, Audiveris)"
+    (all (\artifact -> "tart" `notElem` Text.words (Text.toLower (metalEngineSourceRef artifact))) metalEngineBuildPlan)
+    "Sprint 1.14: the Apple materialization plan carries no Tart source reference"
+  case listToMaybe metalEngineBuildPlan of
+    Nothing ->
+      assert False "Sprint 1.14: the Apple materialization plan is non-empty"
+    Just sampleArtifact -> do
+      let sampleInstallRoot = testRoot </> ".data" </> "engines" </> Text.unpack (metalEngineAdapterId sampleArtifact)
+          sampleManifest = manifestForEngineArtifact sampleInstallRoot sampleArtifact
+          sampleManifestJson = renderEngineArtifactManifest sampleManifest
+          sampleManifestText = TextEncoding.decodeUtf8 (Lazy.toStrict sampleManifestJson)
+      assert
+        (manifestAdapterId sampleManifest == metalEngineAdapterId sampleArtifact)
+        "Sprint 1.14: manifest rendering preserves the adapter id"
+      assert
+        (manifestDigest sampleManifest == engineArtifactDigest sampleArtifact)
+        "Sprint 1.14: manifest digest is derived from the artifact spec"
+      assert
+        ("\"artifactKind\"" `isInfixOf` Text.unpack sampleManifestText)
+        "Sprint 1.14: manifest JSON records artifactKind"
+      assert
+        ("\"smokeCommand\"" `isInfixOf` Text.unpack sampleManifestText)
+        "Sprint 1.14: manifest JSON records smokeCommand"
+      assert
+        ("\"minioObjectKey\"" `isInfixOf` Text.unpack sampleManifestText)
+        "Sprint 1.14: manifest JSON records the content-addressed MinIO key"
+      assert
+        (either (const False) (const True) (decodeLazy sampleManifestJson :: Either String Aeson.Value))
+        "Sprint 1.14: manifest JSON decodes as valid Aeson"
   assert
-    (tartCloneArgs metalEngineVmBaseImage metalEngineVmName == ["clone", "infernix-metal-builder", "infernix-metal-build"])
-    "Sprint 1.13: tartCloneArgs clones the Xcode-bearing base image into the ephemeral guest"
-  assert
-    (tartDeleteArgs metalEngineVmName == ["delete", "infernix-metal-build"])
-    "Sprint 1.13: tartDeleteArgs destroys the ephemeral guest after copy-out"
-  assert
-    ( tartRunBuildArgs metalEngineVmName "/data/engines/llama-cpp-cli"
-        == ["run", "--no-graphics", "--dir", "engine-out:/data/engines/llama-cpp-cli", "infernix-metal-build"]
+    ( linuxNativeEngineArtifactAdapterIds
+        == [ "llama-cpp-cli",
+             "whisper-cpp-cli",
+             "onnx-runtime-native",
+             "ctranslate2-native",
+             "jvm-native"
+           ]
     )
-    "Sprint 1.13: tartRunBuildArgs mounts the install root as engine-out for the hermetic in-VM build"
+    "Sprint 4.18: the Linux native materialization plan covers the runnable Linux native adapter ids"
+  case listToMaybe linuxNativeEngineBuildPlan of
+    Nothing ->
+      assert False "Sprint 4.18: the Linux native materialization plan is non-empty"
+    Just sampleLinuxArtifact -> do
+      let sampleLinuxInstallRoot = testRoot </> "linux-native-engines" </> Text.unpack (linuxNativeEngineAdapterId sampleLinuxArtifact)
+          sampleLinuxManifest = manifestForLinuxNativeEngineArtifact sampleLinuxInstallRoot sampleLinuxArtifact
+          sampleLinuxManifestJson = renderEngineArtifactManifest sampleLinuxManifest
+          sampleLinuxScript = linuxNativeRunnerScript sampleLinuxArtifact
+      assert
+        (manifestSubstrate sampleLinuxManifest == "linux-native")
+        "Sprint 4.18: Linux native manifests record the linux-native substrate"
+      assert
+        ("engine-artifacts/linux/" `Text.isInfixOf` manifestMinioObjectKey sampleLinuxManifest)
+        "Sprint 4.18: Linux native manifests use the engine-artifacts Linux key namespace"
+      assert
+        ("--smoke|--help" `isInfixOf` sampleLinuxScript)
+        "Sprint 4.18: Linux native smoke wrappers support the smoke command"
+      assert
+        (either (const False) (const True) (decodeLazy sampleLinuxManifestJson :: Either String Aeson.Value))
+        "Sprint 4.18: Linux native manifest JSON decodes as valid Aeson"
+  materializeLinuxNativeEnginesAt (testRoot </> "linux-native-engines")
+  let llamaInstallRoot = linuxNativeEngineInstallRoot (testRoot </> "linux-native-engines") "llama-cpp-cli"
+      llamaRunnerPath = llamaInstallRoot </> "bin" </> "llama-cli"
+  linuxRunnerPresent <- doesFileExist llamaRunnerPath
+  linuxManifestPresent <- doesFileExist (engineArtifactManifestPath llamaInstallRoot)
+  assert
+    (linuxRunnerPresent && linuxManifestPresent)
+    "Sprint 4.18: Linux native materialization writes an executable root plus manifest"
   assert
     (HostTools.hostToolName HostTools.HostKubectl == "kubectl")
     "HostTools reports the supported short name for each tool"
@@ -2911,6 +3031,32 @@ assertHostConfig testRoot = do
   assert
     (decoded == linuxConfig)
     "HostConfig round-trip through renderHostConfig + decodeHostConfigFile preserves every field"
+  paths <- discoverPathsWithHostManifest (Just (hostNativeUnitTestFixture testRoot testRoot))
+  case listToMaybe metalEngineBuildPlan of
+    Nothing ->
+      assert False "Sprint 1.14: the Apple materialization plan is non-empty for artifact writes"
+    Just materializedArtifact -> do
+      let materializedRoot = metalEngineInstallRoot paths (metalEngineAdapterId materializedArtifact)
+          staleTempRoot = engineArtifactTempRoot materializedRoot
+          previousRoot = engineArtifactPreviousRoot materializedRoot
+      createDirectoryIfMissing True staleTempRoot
+      writeFile (staleTempRoot </> "stale") "stale temp should be removed"
+      installedRoot <- materializeMetalEngineArtifact paths materializedArtifact
+      manifestExists <- doesFileExist (engineArtifactManifestPath installedRoot)
+      staleTempExists <- doesDirectoryExist staleTempRoot
+      previousRootExists <- doesDirectoryExist previousRoot
+      assert
+        (installedRoot == materializedRoot)
+        "Sprint 1.14: materialization returns the final adapter install root"
+      assert
+        manifestExists
+        "Sprint 1.14: materialization writes engine-artifact.json under the final root"
+      assert
+        (not staleTempExists)
+        "Sprint 1.14: materialization removes stale temp roots before writing"
+      assert
+        (not previousRootExists)
+        "Sprint 1.14: successful materialization leaves no previous-root cleanup residue"
 
 -- Phase 4 Sprint 4.13 — ClusterConfig renderer + decoder roundtrip.
 assertClusterConfig :: FilePath -> FilePath -> IO ()

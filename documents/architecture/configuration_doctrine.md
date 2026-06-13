@@ -56,32 +56,28 @@ Typed record describing the operator's host environment:
 The Haskell binary loads this file at startup via the `dhall` library's `Dhall.inputFile` and
 decodes it into a typed `HostConfig` record passed down the call tree.
 
-The host tool inventory includes `hostTart`, the absolute `tart` path on Apple Silicon
-(`/opt/homebrew/bin/tart`), which drives the headless `tart` macOS VM that builds the Metal and
-Core ML native engine artifacts. See
-[../engineering/host_tools_manifest.md](../engineering/host_tools_manifest.md) for the full field
-inventory.
+Current implementation note: the host tool inventory no longer includes `hostTart` or an absolute
+`tart` path. Phase 1 Sprint 1.14 removed the legacy Sprint 1.13 Tart prerequisite and helper path;
+the retained Apple materialization command is configured through typed engine-artifact records.
+See [../engineering/host_tools_manifest.md](../engineering/host_tools_manifest.md) for the current
+schema field inventory.
 
-#### Typed engine-build sub-record and the hermetic tart-guest rule
+#### Typed engine-artifact materialization record
 
-The Apple Silicon Metal-engine build lane (the headless `tart` macOS VM that compiles the
-Xcode-only llama.cpp and whisper.cpp Metal builds and the Core ML compiled models) is configured
-entirely through the typed substrate — never through inherited host process state.
+The supported Apple Silicon Metal/Core ML materialization target is configured entirely through
+typed records, never through inherited host process state. The target record carries:
 
-A typed engine-build sub-record carries the values the build needs:
+- the adapter id and artifact kind to materialize,
+- source references and versions for engine software or converted model payloads,
+- the target architecture and runtime fingerprint,
+- the local engine-install root (`./.data/engines/<adapterId>/`),
+- an optional content-addressed MinIO key for reusable payloads,
+- the entrypoint and smoke command that prove the artifact can load.
 
-- the build toolchain and source identifiers handed to the guest,
-- the allowlisted Metal/Core ML adapter ids to materialize,
-- the engine-install root the built artifacts are copied to (`./.data/engines/<adapterId>/`).
-
-The hermetic tart-guest rule: the `tart` guest receives its toolchain and source through the typed
-engine-build sub-record and `tart` file mounts, **never** through inherited host `PATH`,
-environment variables, or SSH-with-env. The `hostTart` path itself is read from `HostConfig`, so
-the helper that launches the guest resolves `tart` by absolute path rather than through the
-operator's shell search path. This keeps the Metal-engine lane inside the same no-env-var,
-typed-Dhall discipline as every other Infernix codepath: the three Dhall files remain the only
-configuration substrate, and the engine-build sub-record lives within the host record's typed
-schema, not in any env-var or ambient-shell surface.
+This keeps the Apple materialization lane inside the same no-env-var, typed-Dhall discipline as
+every other Infernix codepath. The replacement lane also avoids Tart, user keychain state, Xcode UI
+flows, and request-time toolchain work; its canonical engineering design is
+[../engineering/apple_silicon_metal_headless_builds.md](../engineering/apple_silicon_metal_headless_builds.md).
 
 ### `dhall/InfernixCluster.dhall`
 

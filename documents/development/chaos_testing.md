@@ -76,9 +76,11 @@ redelivery, Pulsar producer-side deduplication, and projection-layer idempotency
   and proceed.
 - **One-engine-per-node enforcement.** On Linux,
   `kubectl scale deployment/infernix-engine --replicas=N+1` (where N = engine-capable nodes)
-  leaves one replica `Pending` with the anti-affinity rejection message; on Apple,
-  launching a second `infernix service` on the same host while one is already running exits
-  non-zero with the `engine.lock held by PID …` diagnostic.
+  leaves one replica `Pending` with the anti-affinity rejection message. On Apple, the chaos case
+  proves host batch ownership through Pulsar `Exclusive` or intentional `Failover` subscription
+  semantics and rejects `Shared` for local engine execution or materialization. A duplicate
+  `infernix service` host-engine process must fail at the broker-owned `Exclusive` subscription
+  boundary instead of becoming another local engine consumer.
 
 The `linux-cpu` integration lane implements these cases as pod replacement, node-drain, and
 deduplicated bootstrap replay checks against the real Kind cluster. They run alongside the

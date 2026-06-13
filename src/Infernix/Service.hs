@@ -51,13 +51,11 @@ runService maybeRuntimeMode maybeDaemonRole maybeEngineName = do
   let daemonRole = resolveServiceDaemonRole maybeDaemonRole demoConfig
   ensureServiceRuntimeSupported paths runtimeMode daemonRole
   whenAppleRuntimeReady paths runtimeMode daemonRole
-  -- Phase 7 Sprint 7.7: engine-role startup acquires an exclusive lock on
-  -- @engine.lock@ to enforce one-per-node. On Apple silicon, the on-host
-  -- engine daemon is the engine role today; on Linux substrates the same
-  -- guarantee is provided by required pod anti-affinity on the engine
-  -- Deployment (a Linux engine-role process inside that pod also acquires
-  -- this lock as a no-op uniformity guarantee).
-  acquireEngineLockIfEngineRole paths daemonRole
+  -- Phase 7 Sprint 7.23: Apple host engine singleton ownership is broker
+  -- owned through the Pulsar batch-topic subscription. The local lock remains
+  -- only as a non-Apple engine-role safety check while Kubernetes
+  -- anti-affinity owns the Linux distributed placement rule.
+  acquireEngineLockIfEngineRole paths runtimeMode daemonRole
   runProductionDaemon paths runtimeMode maybeClusterConfig daemonRole maybeEngineName
 
 -- | Phase 4 Sprint 4.13: best-effort load of the cluster manifest
@@ -121,15 +119,12 @@ whenAppleRuntimeReady paths runtimeMode daemonRole =
 engineLockPath :: Paths -> FilePath
 engineLockPath paths = runtimeRoot paths </> "engine.lock"
 
-acquireEngineLockIfEngineRole :: Paths -> DaemonRole -> IO ()
-acquireEngineLockIfEngineRole paths daemonRole =
-  case daemonRole of
-    -- Phase 7 Sprint 7.7: the engine role now uniformly gates the lock
-    -- acquisition; Apple silicon's on-host daemon and the Linux in-cluster
-    -- @infernix-engine@ pod both pass through this branch. The coordinator
-    -- role never holds the engine lock.
-    Engine -> acquireEngineLock (engineLockPath paths)
-    Coordinator -> pure ()
+acquireEngineLockIfEngineRole :: Paths -> RuntimeMode -> DaemonRole -> IO ()
+acquireEngineLockIfEngineRole paths runtimeMode daemonRole =
+  case (runtimeMode, daemonRole) of
+    (AppleSilicon, Engine) -> pure ()
+    (_, Engine) -> acquireEngineLock (engineLockPath paths)
+    (_, Coordinator) -> pure ()
 
 -- | Acquire an exclusive write lock on the supplied lock-file path. On
 -- contention the helper reads the existing holder's PID (written into the

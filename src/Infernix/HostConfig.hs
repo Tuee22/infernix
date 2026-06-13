@@ -83,12 +83,7 @@ data HostToolPaths = HostToolPaths
     hostNvidiaSmi :: Text,
     hostNvkind :: Text,
     hostSkopeo :: Text,
-    hostHostname :: Text,
-    -- | Phase 1 Sprint 1.13 — absolute path to @tart@, the native arm64
-    -- macOS virtualization CLI used by the Apple Metal-engine build lane
-    -- (@infernix internal materialize-metal-engines@). Apple-only; the
-    -- Linux outer-container default leaves it empty.
-    hostTart :: Text
+    hostHostname :: Text
   }
   deriving (Eq, Show, Generic)
 
@@ -230,7 +225,6 @@ renderHostConfig hostConfig =
             <> renderText "nvkind" hostNvkind
             <> renderText "skopeo" hostSkopeo
             <> renderText "hostname" hostHostname
-            <> renderText "tart" hostTart
             <> "  }",
           ", filesystem =",
           renderHeadText "repoRoot" hostRepoRoot
@@ -297,8 +291,7 @@ defaultLinuxOuterContainerHostConfigForArchitecture homeDir architecture =
             hostNvidiaSmi = "/usr/bin/nvidia-smi",
             hostNvkind = "/usr/local/bin/nvkind",
             hostSkopeo = "/usr/bin/skopeo",
-            hostHostname = "/usr/bin/hostname",
-            hostTart = ""
+            hostHostname = "/usr/bin/hostname"
           },
       hostFilesystem =
         HostFilesystem
@@ -361,8 +354,7 @@ defaultAppleHostNativeHostConfig repoRoot homeDir =
             hostNvidiaSmi = "",
             hostNvkind = "",
             hostSkopeo = "/opt/homebrew/bin/skopeo",
-            hostHostname = "/bin/hostname",
-            hostTart = "/opt/homebrew/bin/tart"
+            hostHostname = "/bin/hostname"
           },
       hostFilesystem =
         HostFilesystem

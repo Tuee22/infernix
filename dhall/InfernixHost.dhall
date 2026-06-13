@@ -54,7 +54,6 @@ let ToolPaths =
       , nvkind : Text
       , skopeo : Text
       , hostname : Text
-      , tart : Text
       }
 
 let FilesystemConventions =

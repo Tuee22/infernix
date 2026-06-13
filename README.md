@@ -191,7 +191,8 @@ the stateless frontend Deployment (`infernix-demo`), the stateless coordinator D
 (`infernix-coordinator`, owning Pulsar dispatch, batching, result writeback, and the lazy
 model-weight bootstrap workflow), and the stateful engine role (`infernix-engine` Deployment on
 Linux substrates with strict one-per-node anti-affinity; the on-host `./.build/infernix service`
-daemon on Apple silicon, with the same one-per-node rule enforced via an exclusive `flock(2)`).
+daemon on Apple silicon, where Pulsar `Exclusive` or intentional `Failover` subscription ownership
+is the one-per-node rule).
 Anonymous visitors to the routed demo see only the auth-gated landing card with peer `Sign in`
 and `Create account` actions; the summary grid, Chat tab, Artifacts tab, and manual-inference
 workspace render only after the SPA holds a Keycloak JWT. The routed Keycloak login and
@@ -219,8 +220,8 @@ browser reads and writes them through presigned URLs minted at `/api/objects`. O
 host, `cluster up` keeps Harbor, MinIO, Pulsar, PostgreSQL, Envoy Gateway, `infernix-demo`, and
 the stateless `infernix-coordinator` Deployment in Kind, and routed manual inference enters the
 coordinator before Apple-native batches move through Pulsar to the host-side `./.build/infernix`
-engine daemon (the same binary running as the Apple `Engine`-role process under an `flock(2)`
-singleton on `./.data/runtime/engine.lock`). On Linux, the same routed demo surface bridges through Pulsar into the coordinator
+engine daemon. Apple host singleton ownership is Pulsar-owned through `Exclusive` or intentional
+`Failover` subscriptions; `Shared` is rejected for local engine execution. On Linux, the same routed demo surface bridges through Pulsar into the coordinator
 Deployment, which hands batches off to the engine-role Deployment set. `/api/publication` now keeps
 `apiUpstream.mode: cluster-demo` for the stable browser base URL, reports
 `daemonLocation: cluster-pod` for every substrate, adds `inferenceExecutorLocation`, and keeps
@@ -341,13 +342,15 @@ Notes:
   and `python3.12` command plus a user-local Poetry bootstrap when `poetry` is absent; the Poetry
   bootstrap may reuse an already available compatible Python 3.12+ executable, after which all
   host-side Python configuration continues through the repo-local `python/.venv/`
-- the Apple Metal and Core ML native engine artifacts are built in a headless `tart` macOS VM rather
-  than on the host, so the host needs no Xcode: `infernix` reconciles `tart` through Homebrew
-  (`brew install tart`) on demand, builds the artifacts inside the VM via
-  `infernix internal materialize-metal-engines`, and copies them to `./.data/engines/<adapterId>/`
-  before running them against Metal. `tart` is native arm64 macOS virtualization, distinct from
-  Docker and Colima, and creates or switches no Docker context. The Haskell binaries themselves keep
-  building host-native through ghcup/cabal, and the Python engines run from prebuilt host wheels
+- the Apple Metal and Core ML native engine materialization target is fully headless without Tart,
+  user keychain state, or host Xcode UI flows: Metal source compilation goes through a fixed host
+  bridge that calls the OS Metal runtime compiler, Core ML and native runners materialize through
+  typed engine-artifact manifests under `./.data/engines/<adapterId>/`, and request-time inference
+  never starts virtualization or installs toolchains. The legacy `tart` / `hostTart` /
+  `AppleTart` implementation has been removed; the retained `materialize-metal-engines` helper is
+  the Tart-free manifest materialization surface, with Apple hardware smoke evidence still tracked
+  in the reopened plan. See
+  [documents/engineering/apple_silicon_metal_headless_builds.md](documents/engineering/apple_silicon_metal_headless_builds.md)
 
 ### Linux CPU host prerequisites
 
@@ -634,6 +637,8 @@ The canonical supported CLI surfaces are split between the two binaries.
 - `infernix internal discover {images,claims,harbor-overlay}`
 - `infernix internal publish-chart-images`
 - `infernix internal materialize-substrate <runtime-mode> [--demo-ui true|false]`
+- `infernix internal materialize-metal-engines`
+- `infernix internal materialize-linux-native-engines`
 - `infernix internal demo-config {load,validate}`
 - `infernix internal pulsar-roundtrip DEMO_CONFIG_PATH MODEL_ID INPUT_TEXT`
 
@@ -658,6 +663,9 @@ around upstream `kubectl`, not a parallel lifecycle surface.
 - `infernix internal materialize-substrate <runtime-mode> [--demo-ui true|false]` stages the
   active demo `.dhall` file that defines the demo catalog and the engine binding for each
   demo-visible model on that substrate
+- `infernix internal materialize-linux-native-engines` bakes image-owned Linux native runner roots
+  under `/opt/infernix/engines/<adapterId>/`; the current machine-independent roots are smoke
+  wrappers pending Wave I real-engine payload replacement
 - `cluster up` bootstraps Harbor first through Helm and allows Harbor plus only the storage or
   support services Harbor needs during bootstrap, including MinIO and PostgreSQL, to pull from
   public container repositories
@@ -836,17 +844,17 @@ ground and demo webapp provide the shared operator and demo substrate for this m
 | LLM (local / edge) | GGUF | TinyLlama-1.1B-Chat-v1.0-GGUF | https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF | llama.cpp | llama.cpp | llama.cpp (Metal) | Best cross-platform local runtime path |
 | LLM (Apple-native) | MLX | Qwen1.5-1.8B-Chat-4bit (MLX) | https://huggingface.co/mlx-community/Qwen1.5-1.8B-Chat-4bit | Not recommended | Not recommended | MLX / MLX-LM | Apple-native converted artifact family |
 | Speech transcription | whisper.cpp model set / GGML-style | whisper-small | https://github.com/ggml-org/whisper.cpp/tree/master/models | whisper.cpp | whisper.cpp | whisper.cpp (Metal) | Best compact or native path |
-| Speech transcription | CTranslate2 | faster-whisper-small | https://huggingface.co/Systran/faster-whisper-small | CTranslate2 | CTranslate2 | Not recommended | Best throughput-oriented Whisper path on CUDA |
+| Speech transcription | CTranslate2 | faster-whisper-small | https://huggingface.co/Systran/faster-whisper-small | CTranslate2 | CTranslate2 | CTranslate2 (CPU) | Viable Apple CPU path; CUDA remains the throughput-oriented lane |
 | Source separation | PyTorch checkpoint | htdemucs | https://github.com/facebookresearch/demucs | PyTorch CPU | PyTorch CUDA | PyTorch MPS | Canonical Demucs execution path |
 | Source separation | PyTorch checkpoint | Open-Unmix | https://github.com/sigsep/open-unmix-pytorch | PyTorch CPU | PyTorch CUDA | PyTorch MPS | Alternate separation path |
 | Audio-to-MIDI / pitch transcription | TensorFlow model family | basic-pitch | https://github.com/spotify/basic-pitch | Named residual on Python 3.12 | Named residual on CUDA 12.8 | Not recommended | Published package pins TensorFlow `<2.15.1`; use the ONNX or Core ML lane until a maintained TensorFlow package is adopted |
 | Audio-to-MIDI / pitch transcription | Core ML | basic-pitch | https://github.com/spotify/basic-pitch | Not recommended | Not recommended | Core ML | Preferred Apple production lane for Basic Pitch |
 | Audio-to-MIDI / pitch transcription | ONNX | basic-pitch release artifacts | https://github.com/spotify/basic-pitch/releases | ONNX Runtime CPU | ONNX Runtime CUDA | ONNX Runtime | Useful portable fallback artifact |
-| Multi-instrument music transcription | JAX checkpoint / codebase | MT3 | https://github.com/magenta/mt3 | JAX CPU | JAX/XLA on NVIDIA | jax-metal | JAX is the canonical execution model |
-| Music transcription / MIR family | TensorFlow model family | Omnizart | https://github.com/Music-and-Culture-Technology-Lab/omnizart | TensorFlow CPU | TensorFlow CUDA | Core ML (exported path owned by deployment) | Apple support likely requires an owned export path |
+| Multi-instrument music transcription | JAX checkpoint / codebase | MT3 | https://github.com/magenta/mt3 | Named residual: JAX compatibility spike | Named residual: JAX/XLA compatibility spike | Named residual: jax-metal compatibility spike | JAX is canonical, but the MT3 stack must be re-proven before promotion |
+| Music transcription / MIR family | TensorFlow model family | Omnizart | https://github.com/Music-and-Culture-Technology-Lab/omnizart | Named residual: TensorFlow compatibility spike | Named residual: TensorFlow CUDA compatibility spike | Named residual: owned Core ML export | Current Omnizart compatibility is unproven on the supported Python and Apple lanes |
 | Image generation | Diffusers / safetensors pipeline | SDXL Turbo | https://huggingface.co/stabilityai/sdxl-turbo | Not recommended | Diffusers or ComfyUI | Diffusers on MPS | Standard open image-generation stack |
 | Image generation | Core ML | Apple Stable Diffusion conversion toolchain | https://github.com/apple/ml-stable-diffusion | Not recommended | Not recommended | Core ML | Best Apple-native exported path when available |
-| Video generation | Diffusers / safetensors pipeline | Wan2.1-T2V-1.3B | https://huggingface.co/Wan-AI/Wan2.1-T2V-1.3B | Not recommended | Diffusers or ComfyUI | Diffusers on MPS (if viable) | Small reference text-to-video model |
+| Video generation | Diffusers / safetensors pipeline | Wan2.1-T2V-1.3B | https://huggingface.co/Wan-AI/Wan2.1-T2V-1.3B | Not recommended | Diffusers or ComfyUI | Named residual: Diffusers on MPS viability spike | Small reference text-to-video model; Apple MPS video diffusion is not promoted until validated |
 | Audio generation / TTS-style | PyTorch / HF | bark-small | https://huggingface.co/suno/bark-small | PyTorch CPU | PyTorch CUDA | PyTorch MPS | Representative audio-generation family |
 | OMR / notation extraction tool | JVM application | Audiveris | https://github.com/Audiveris/audiveris | JVM | JVM | JVM | Treat as tool runtime, not a separately managed ANN kernel family |
 

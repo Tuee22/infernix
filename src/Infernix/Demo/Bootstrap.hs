@@ -14,6 +14,7 @@ import Infernix.Objects.Layout qualified as Layout
 requiredDemoBuckets :: [Text]
 requiredDemoBuckets =
   [ Layout.unModelsBucket Layout.defaultModelsBucket,
+    Layout.unEngineArtifactsBucket Layout.defaultEngineArtifactsBucket,
     Layout.unDemoObjectsBucket Layout.defaultDemoObjectsBucket
   ]
 

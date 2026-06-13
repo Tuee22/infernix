@@ -5,6 +5,20 @@
 
 > **Purpose**: Define the authoritative model catalog contract that the service and UI both consume.
 
+## Current Status
+
+The README matrix has been corrected with the latest research recommendations: Apple CTranslate2
+is a viable CPU path, MT3/JAX and Omnizart remain named compatibility residuals on all substrates,
+Wan on Apple MPS is a residual rather than promoted support, and Basic Pitch TensorFlow remains a
+residual behind ONNX/Core ML. The generated Haskell catalog now keeps runtime catalogs
+executable-only and records named residual rows separately through
+`residualMatrixRowIdsForMode`: Apple CTranslate2 is runnable as a CPU path, Basic Pitch TensorFlow
+is not runnable on the supported Python lanes, MT3/JAX and Omnizart are residual on every
+substrate, and Wan Apple MPS is residual until validated. `infernix lint docs` now mechanically
+checks the README matrix cells against the generated runnable catalogs, named residual rows, and
+`Not recommended` states so documentation cannot silently re-promote a residual or hide a runnable
+binding. Wave I still owns the hardware smoke for the runnable rows.
+
 ## Contract
 
 The model catalog is Haskell-owned typed configuration derived from the README matrix.
@@ -28,6 +42,7 @@ Each generated entry includes:
 - artifact or format type
 - reference model metadata and download URL
 - selected engine for the active runtime mode
+- named residual status when a researched matrix cell is intentionally not runnable
 - request shape metadata used by the API, UI, and tests
 - runtime-lane metadata such as GPU requirement and lane identifier
 
@@ -35,6 +50,10 @@ Each generated entry includes:
 
 - the generated catalog, not a hidden UI-only allowlist, is the source of truth for the browser-visible catalog
 - the generated catalog records the selected engine exactly as chosen from the README matrix
+- docs lint fails when a README matrix cell no longer matches the generated catalog or the explicit
+  residual set
+- named residual cells are excluded from the runtime catalog and tracked explicitly as residual
+  row ids; they are planning and validation obligations, not executable model descriptors
 - runtime-local caches derive from generated catalog and durable artifact metadata
 - switching runtime modes changes the generated catalog and selected engine bindings without changing route structure
 
@@ -63,10 +82,10 @@ and tests share.
 
 ### Proto facts
 
-`ResultPayload` already carries `oneof {inline_output, object_ref}` on the wire. This is a
-population gap, not a schema gap: `buildPayload` currently hardcodes `objectRef = Nothing`. The
-genuinely new proto fields are a non-text **input** object-ref on `InferenceRequest` /
-`WorkerRequest` and an object-ref **output** on `WorkerResponse` for the artifact adapters.
+`ResultPayload` carries `oneof {inline_output, object_ref}` on the wire. `buildPayload` now routes
+LLM and speech results to inline text and artifact families to object references. The newer proto
+fields are a non-text **input** object-ref on `InferenceRequest` / `WorkerRequest` and an
+object-ref **output** on `WorkerResponse` for the artifact adapters.
 Artifact results always use the always-on `infernix-demo-objects` bucket, never the retired
 `infernix-runtime` / `infernix-results` buckets.
 
@@ -106,13 +125,11 @@ return `inline_output`; the seven artifact families return an `object_ref` into
 
 ### Substrate selection and union coverage
 
-The active generated substrate's catalog records the selected engine per row exactly as chosen from
-the README matrix. Rows whose engine cell for the active substrate is `Not recommended` are omitted
-from that substrate's catalog, so the per-substrate catalog counts are apple 15, cpu 12, and gpu
-16. No single substrate carries all 19 rows. The UNION across the three substrate catalogs covers
-every README matrix row, enforced as a mechanical invariant: `allMatrixRowIds` is exported from
-`Models.hs`, the union of `catalogForMode` over the three substrates equals 19 rows, and a
-README-to-matrix cross-check runs under `infernix lint docs`.
+The generated substrate catalog records the selected runnable engine exactly as chosen from the
+README matrix. Rows whose engine cell for the active substrate is `Not recommended` are omitted
+from that substrate's runnable catalog. Rows whose engine cell is a named residual are omitted from
+the runtime catalog and listed by `residualMatrixRowIdsForMode` so tests and planning can prove
+they are deliberate unresolved support instead of accidental catalog drift.
 
 ## Cross-References
 

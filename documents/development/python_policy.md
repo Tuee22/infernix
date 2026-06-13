@@ -174,6 +174,9 @@ Current state:
   OMR artifact families. The shared `run_context_adapter` boundary is unchanged; an artifact-adapter
   seam returns an object reference for the non-text families rather than acting as a raw stdin echo
   path.
+- Current Linux native roots are smoke wrappers produced by `infernix internal
+  materialize-linux-native-engines`; Wave I replaces them with real native payloads before the
+  real-output cohort gate.
 
 Adapters do not open network sockets and do not subscribe to the topic transport themselves; the
 Haskell worker owns those boundaries and treats the adapter as a pure request-to-response process.

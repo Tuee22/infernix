@@ -3874,8 +3874,9 @@ scrubRetainedHarborRegistryCache paths runtimeMode = do
   when directoryPresent (removePathForcibly redisRoot)
 
 -- Harbor's registry bucket is a rebuildable publication cache. The
--- model and demo object buckets stay durable, but the Harbor database
--- and Redis cache are recreated with the non-retained state above;
+-- model, engine-artifact, and demo object buckets stay durable, but
+-- the Harbor database and Redis cache are recreated with the
+-- non-retained state above;
 -- carrying old registry blobs or incomplete multipart upload metadata
 -- across that reset can leave the fresh registry pointing at incomplete
 -- or missing blobs during `docker push`.

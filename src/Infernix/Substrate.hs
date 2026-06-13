@@ -213,9 +213,9 @@ demoConfigFromDhall :: DhallDemoConfig -> Either String DemoConfig
 demoConfigFromDhall rawConfig = do
   runtimeModeValue <- parseEnum "runtimeMode" parseRuntimeMode (dhallConfigRuntimeMode rawConfig)
   activeDaemonRoleValue <- parseEnum "daemonRole" parseDaemonRole (dhallDaemonRole rawConfig)
-  coordinatorDaemonValue <- daemonConfigFromDhall (dhallCoordinator rawConfig)
-  legacyEngineDaemonValue <- traverse daemonConfigFromDhall (dhallEngineDaemon rawConfig)
-  engineDaemonValues <- traverse daemonConfigFromDhall (dhallEngineDaemons rawConfig)
+  coordinatorDaemonValue <- withDefaultConsumerSubscriptionType runtimeModeValue <$> daemonConfigFromDhall (dhallCoordinator rawConfig)
+  legacyEngineDaemonValue <- traverse (fmap (withDefaultConsumerSubscriptionType runtimeModeValue) . daemonConfigFromDhall) (dhallEngineDaemon rawConfig)
+  engineDaemonValues <- traverse (fmap (withDefaultConsumerSubscriptionType runtimeModeValue) . daemonConfigFromDhall) (dhallEngineDaemons rawConfig)
   engineValues <- traverse engineBindingFromDhall (dhallEngines rawConfig)
   modelValues <- traverse modelDescriptorFromDhall (dhallModels rawConfig)
   pure
@@ -244,8 +244,8 @@ legacyDemoConfigFromDhall :: LegacyDhallDemoConfig -> Either String DemoConfig
 legacyDemoConfigFromDhall rawConfig = do
   runtimeModeValue <- parseEnum "runtimeMode" parseRuntimeMode (legacyDhallConfigRuntimeMode rawConfig)
   activeDaemonRoleValue <- parseEnum "daemonRole" parseDaemonRole (legacyDhallDaemonRole rawConfig)
-  coordinatorDaemonValue <- daemonConfigFromDhall (legacyDhallCoordinator rawConfig)
-  engineDaemonValue <- traverse daemonConfigFromDhall (legacyDhallEngineDaemon rawConfig)
+  coordinatorDaemonValue <- withDefaultConsumerSubscriptionType runtimeModeValue <$> daemonConfigFromDhall (legacyDhallCoordinator rawConfig)
+  engineDaemonValue <- traverse (fmap (withDefaultConsumerSubscriptionType runtimeModeValue) . daemonConfigFromDhall) (legacyDhallEngineDaemon rawConfig)
   engineValues <- traverse engineBindingFromDhall (legacyDhallEngines rawConfig)
   modelValues <- traverse modelDescriptorFromDhall (legacyDhallModels rawConfig)
   pure
@@ -278,8 +278,26 @@ daemonConfigFromDhall rawConfig = do
         daemonConfigRequestTopics = dhallDaemonRequestTopics rawConfig,
         daemonConfigResultTopic = dhallDaemonResultTopic rawConfig,
         daemonConfigHostBatchTopic = dhallHostBatchTopic rawConfig,
-        daemonConfigPulsarConnectionMode = connectionModeValue
+        daemonConfigPulsarConnectionMode = connectionModeValue,
+        daemonConfigConsumerSubscriptionType = Nothing
       }
+
+withDefaultConsumerSubscriptionType :: RuntimeMode -> DaemonConfig -> DaemonConfig
+withDefaultConsumerSubscriptionType runtimeMode daemonConfig =
+  daemonConfig
+    { daemonConfigConsumerSubscriptionType =
+        case daemonConfigConsumerSubscriptionType daemonConfig of
+          Just subscriptionType -> Just subscriptionType
+          Nothing -> Just (defaultConsumerSubscriptionType runtimeMode daemonConfig)
+    }
+
+defaultConsumerSubscriptionType :: RuntimeMode -> DaemonConfig -> ConsumerSubscriptionType
+defaultConsumerSubscriptionType runtimeMode daemonConfig
+  | runtimeMode == AppleSilicon
+      && daemonConfigRole daemonConfig == Engine
+      && daemonConfigLocation daemonConfig == "control-plane-host" =
+      ConsumerExclusive
+  | otherwise = ConsumerShared
 
 engineBindingFromDhall :: DhallEngineBinding -> Either String EngineBinding
 engineBindingFromDhall rawBinding =

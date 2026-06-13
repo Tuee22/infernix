@@ -4,15 +4,16 @@ module Infernix.Lint.Docs
 where
 
 import Control.Monad (forM_, unless, when)
-import Data.Char (toLower)
-import Data.List (intercalate, isInfixOf, isPrefixOf, nub)
+import Data.Char (isSpace, toLower)
+import Data.List (dropWhileEnd, find, intercalate, isInfixOf, isPrefixOf, nub)
+import Data.Maybe (isNothing)
 import Data.Text qualified as Text
 import Infernix.CommandRegistry
   ( renderCliReferenceCommandsSection,
     renderCliSurfaceFamiliesSection,
   )
 import Infernix.Config (Paths (..), discoverPaths)
-import Infernix.Models (catalogForMode)
+import Infernix.Models (catalogForMode, matrixRowReadmeKeys, residualMatrixRowIdsForMode)
 import Infernix.Routes
   ( renderClusterBootstrapRouteChecksSection,
     renderEdgeRoutingInventorySection,
@@ -22,7 +23,7 @@ import Infernix.Routes
     renderReadmeRouteSummarySection,
     renderWebPortalRoutesSection,
   )
-import Infernix.Types (allRuntimeModes, referenceModel)
+import Infernix.Types (RuntimeMode (..), allRuntimeModes, matrixRowId, referenceModel, runtimeModeId, selectedEngine)
 import System.Directory (doesFileExist, doesPathExist)
 import System.FilePath (dropDrive, normalise, takeDirectory, (</>))
 
@@ -344,6 +345,7 @@ runDocsLint = do
     ioError (userError "README.md must reference documents/ and DEVELOPMENT_PLAN/")
   validateReadmeRuntimeModeContract readmeContents
   validateReadmeMatrixCoverage readmeContents
+  validateReadmeMatrixCellDrift readmeContents
   forM_ requiredDocs $ \relativePath -> do
     contents <- readFile (repoRoot paths </> relativePath)
     validateGovernedDocumentMetadata relativePath contents
@@ -529,6 +531,141 @@ validateReadmeMatrixCoverage contents = do
           )
       )
 
+validateReadmeMatrixCellDrift :: String -> IO ()
+validateReadmeMatrixCellDrift contents = do
+  let readmeRows = parseReadmeMatrixRows contents
+      missingRows =
+        [ Text.unpack rowIdValue
+        | (rowIdValue, artifactTypeValue, referenceModelValue) <- matrixRowReadmeKeys,
+          isNothing (lookupReadmeMatrixRow artifactTypeValue referenceModelValue readmeRows)
+        ]
+      drift =
+        concat
+          [ readmeMatrixCellDriftForRow readmeRows rowKey
+          | rowKey <- matrixRowReadmeKeys
+          ]
+  unless (null missingRows) $
+    ioError
+      ( userError
+          ( "README.md model matrix is missing generated-catalog row keys: "
+              <> intercalate ", " missingRows
+          )
+      )
+  unless (null drift) $
+    ioError
+      ( userError
+          ( "README.md model matrix cells have drifted from generated catalog/residual state:\n"
+              <> intercalate "\n" drift
+          )
+      )
+
+data ReadmeMatrixRow = ReadmeMatrixRow
+  { readmeArtifactType :: Text.Text,
+    readmeReferenceModel :: Text.Text,
+    readmeLinuxCpuEngine :: String,
+    readmeLinuxGpuEngine :: String,
+    readmeAppleEngine :: String
+  }
+
+parseReadmeMatrixRows :: String -> [ReadmeMatrixRow]
+parseReadmeMatrixRows contents =
+  [ ReadmeMatrixRow
+      { readmeArtifactType = Text.pack artifactTypeCell,
+        readmeReferenceModel = Text.pack referenceModelCell,
+        readmeLinuxCpuEngine = linuxCpuCell,
+        readmeLinuxGpuEngine = linuxGpuCell,
+        readmeAppleEngine = appleCell
+      }
+  | lineValue <- lines contents,
+    cells@(workloadCell : _) <- [tableCells lineValue],
+    length cells >= 7,
+    workloadCell /= "Model / workload type",
+    not (all (`elem` ['-', ' ']) workloadCell),
+    let artifactTypeCell = cells !! 1,
+    let referenceModelCell = cells !! 2,
+    let linuxCpuCell = cells !! 4,
+    let linuxGpuCell = cells !! 5,
+    let appleCell = cells !! 6
+  ]
+
+tableCells :: String -> [String]
+tableCells lineValue =
+  case splitOn "|" lineValue of
+    "" : rest -> map trimWhitespaceString (dropTrailingEmpty rest)
+    _ -> []
+
+dropTrailingEmpty :: [String] -> [String]
+dropTrailingEmpty values =
+  case reverse values of
+    "" : rest -> reverse rest
+    _ -> values
+
+lookupReadmeMatrixRow :: Text.Text -> Text.Text -> [ReadmeMatrixRow] -> Maybe ReadmeMatrixRow
+lookupReadmeMatrixRow artifactTypeValue referenceModelValue =
+  find
+    ( \row ->
+        readmeArtifactType row == artifactTypeValue
+          && readmeReferenceModel row == referenceModelValue
+    )
+
+readmeMatrixCellDriftForRow :: [ReadmeMatrixRow] -> (Text.Text, Text.Text, Text.Text) -> [String]
+readmeMatrixCellDriftForRow readmeRows (rowIdValue, artifactTypeValue, referenceModelValue) =
+  case lookupReadmeMatrixRow artifactTypeValue referenceModelValue readmeRows of
+    Nothing -> []
+    Just row ->
+      [ "  "
+          <> Text.unpack rowIdValue
+          <> " "
+          <> Text.unpack (runtimeModeId runtimeMode)
+          <> ": expected "
+          <> expectedCellDescription expectedCell
+          <> ", found "
+          <> show actualCell
+      | runtimeMode <- allRuntimeModes,
+        let expectedCell = expectedMatrixCell runtimeMode rowIdValue,
+        let actualCell = readmeCellForMode runtimeMode row,
+        not (readmeCellMatches expectedCell actualCell)
+      ]
+
+data ExpectedMatrixCell
+  = ExpectedRunnable Text.Text
+  | ExpectedResidual
+  | ExpectedNotRecommended
+
+expectedMatrixCell :: RuntimeMode -> Text.Text -> ExpectedMatrixCell
+expectedMatrixCell runtimeMode rowIdValue =
+  case lookup rowIdValue catalogEngines of
+    Just engineValue -> ExpectedRunnable engineValue
+    Nothing
+      | rowIdValue `elem` residualMatrixRowIdsForMode runtimeMode -> ExpectedResidual
+      | otherwise -> ExpectedNotRecommended
+  where
+    catalogEngines =
+      [ (matrixRowId model, selectedEngine model)
+      | model <- catalogForMode runtimeMode
+      ]
+
+readmeCellForMode :: RuntimeMode -> ReadmeMatrixRow -> String
+readmeCellForMode runtimeMode row =
+  case runtimeMode of
+    AppleSilicon -> readmeAppleEngine row
+    LinuxCpu -> readmeLinuxCpuEngine row
+    LinuxGpu -> readmeLinuxGpuEngine row
+
+readmeCellMatches :: ExpectedMatrixCell -> String -> Bool
+readmeCellMatches expectedCell actualCell =
+  case expectedCell of
+    ExpectedRunnable engineValue -> actualCell == Text.unpack engineValue
+    ExpectedResidual -> "Named residual" `isPrefixOf` actualCell
+    ExpectedNotRecommended -> actualCell == "Not recommended"
+
+expectedCellDescription :: ExpectedMatrixCell -> String
+expectedCellDescription expectedCell =
+  case expectedCell of
+    ExpectedRunnable engineValue -> show (Text.unpack engineValue)
+    ExpectedResidual -> "a Named residual cell"
+    ExpectedNotRecommended -> show "Not recommended"
+
 validateTestingDocOwnership :: Paths -> IO ()
 validateTestingDocOwnership paths = do
   doctrineContents <- readFile (repoRoot paths </> "documents/engineering/testing.md")
@@ -690,6 +827,10 @@ trimLinkAnchor target =
 trimTrailingNewlines :: String -> String
 trimTrailingNewlines =
   reverse . dropWhile (`elem` ['\n', '\r']) . reverse
+
+trimWhitespaceString :: String -> String
+trimWhitespaceString =
+  dropWhileEnd isSpace . dropWhile isSpace
 
 splitOn :: String -> String -> [String]
 splitOn needle haystack

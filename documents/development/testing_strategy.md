@@ -39,6 +39,9 @@ mode-specific coverage, matrix behavior, and operator detail behind those canoni
 - `infernix docs check` validates governed docs, README or plan cross-references, required CLI
   registry coverage in `documents/reference/cli_reference.md`, phase-document documentation
   sections, and forbidden legacy-doctrine phrases
+- `infernix lint docs` validates governed-doc metadata and generated sections, and fails when the
+  README model matrix cells drift from the generated runnable catalog, explicit residual rows, or
+  `Not recommended` states
 - `infernix test lint` validates repository hygiene, required chart or Kind or `.proto` assets, the
   repo-owned Haskell style stack, the Haskell build path, and the shared Python adapter quality
   gate via `poetry run check-code` from the shared `python/` project when adapters are present;
@@ -78,13 +81,14 @@ The validation plan minimizes switching between the Apple Silicon and CUDA-capab
 > `cabal test infernix-haskell-style`, `infernix lint files/docs/chart/proto`, `infernix docs
 > check`, the web unit suite, and `poetry run check-code`; completed in natural order on one
 > machine, it is the gate to begin the *next* phase's implementation. *Cohort sign-off* (Axis 2) is
-> the hardware-specific full-suite — Apple Metal including the tart Metal-engine build, and CUDA GPU
-> runs — batched once per closure cycle against frozen code and tracked in
+> the hardware-specific full-suite — Apple Metal including headless Metal/Core ML materialization,
+> and CUDA GPU runs — batched once per closure cycle against frozen code and tracked in
 > `cohort-validation-waves.md`; it is the gate for `Done` and never the gate for moving on. **The
 > next action for any open phase is always its remaining code-side closure on the machine you
 > already have; do not switch machines to "validate the open phase." The machine switch happens only
 > at a scheduled wave boundary, once per cohort.** A deliverable that is intrinsically
-> hardware-bound — for example the Apple-only tart Metal build of Phase 1 Sprint 1.13 — is named as
+> hardware-bound — for example the Apple-only Metal runtime bridge probe and Core ML materialization
+> smoke of Phase 1 Sprint 1.14 — is named as
 > such in its `Code-side closure` field and is exercised inside its cohort's wave, never pre-claimed
 > as machine-independent.
 
@@ -230,19 +234,23 @@ The integration suite dispatches each row to its `ResultFamily` assertion:
 - **Speech transcription** (whisper.cpp, faster-whisper CT2): audio input -> transcript text;
   `inline_output`.
 - **Source separation** (Demucs, Open-Unmix): audio -> `>= 2` stem object refs; `object_ref`.
-- **Audio-to-MIDI** (basic-pitch TensorFlow/Core ML/ONNX): audio -> valid MIDI bytes; `object_ref`.
-- **Music transcription** (MT3 JAX, Omnizart): audio -> MIDI or MusicXML; `object_ref`.
+- **Audio-to-MIDI** (basic-pitch Core ML/ONNX; TensorFlow remains a named residual): audio -> valid
+  MIDI bytes; `object_ref`.
+- **Music transcription** (MT3 JAX and Omnizart are named residuals until compatibility spikes
+  pass): audio -> MIDI or MusicXML; `object_ref`.
 - **Image generation** (SDXL-Turbo, Apple SD Core ML): text -> valid image (magic + dims);
   `object_ref`.
-- **Video generation** (Wan2.1): text -> valid video container; `object_ref`.
+- **Video generation** (Wan2.1 on CUDA; Apple MPS remains a named residual): text -> valid video
+  container; `object_ref`.
 - **Audio generation / TTS** (bark): text -> valid audio; `object_ref`.
 - **OMR tool** (Audiveris): image/PDF -> MusicXML; `object_ref`.
 
-`ResultPayload` already carries `oneof {inline_output, object_ref}` on the wire — a population gap,
-not a schema gap, since `buildPayload` currently hardcodes `objectRef = Nothing`. The new proto
-fields are a non-text **input** object-ref on `InferenceRequest` / `WorkerRequest` and an object-ref
-**output** on `WorkerResponse` for artifact adapters. Artifact results always use the always-on
-infernix-demo-objects bucket, never the retired infernix-runtime / infernix-results buckets.
+`ResultPayload` carries `oneof {inline_output, object_ref}` on the wire, and `buildPayload` routes
+LLM and speech families to inline output while artifact families return object references. The
+newer proto fields are a non-text **input** object-ref on `InferenceRequest` / `WorkerRequest` and
+an object-ref **output** on `WorkerResponse` for artifact adapters. Artifact results always use the
+always-on infernix-demo-objects bucket, never the retired infernix-runtime / infernix-results
+buckets.
 
 ### Substrate-agnostic Playwright layer
 
@@ -255,11 +263,11 @@ MIDI/MusicXML download for the transcription and OMR families.
 
 ### Union-coverage invariant
 
-The active substrate's catalog is traversed with `Not recommended` rows omitted, so the per-substrate
-counts are apple 15, cpu 12, and gpu 16. The UNION across the three substrate catalogs covers every
-README matrix row. This is enforced as a mechanical invariant: `allMatrixRowIds` is exported from
-`Models.hs`, the union of `catalogForMode` over the three substrates equals 19 rows, and a
-README-to-matrix cross-check runs under `infernix lint docs`.
+The active substrate's runnable catalog is traversed with `Not recommended` and named-residual rows
+omitted, so the runnable per-substrate counts are apple 13, cpu 9, and gpu 13. Coverage is enforced
+as a mechanical invariant: `allMatrixRowIds` is exported from `Models.hs`, the union of
+`catalogForMode` over the three substrates plus `residualMatrixRowIdsForMode` equals the full
+19-row README matrix, and a README-to-matrix cross-check runs under `infernix lint docs`.
 
 ## Durable-Context Demo Validation
 

@@ -3,29 +3,37 @@
 module Infernix.Engines.AppleSilicon
   ( ensureAppleSiliconRuntimeReady,
     MetalEngineArtifact (..),
+    EngineArtifactManifest (..),
     materializeMetalEngines,
     metalEngineBuildPlan,
     metalEngineArtifactAdapterIds,
     metalEngineInstallRoot,
-    metalEngineVmBaseImage,
-    metalEngineVmName,
-    tartCloneArgs,
-    tartRunBuildArgs,
-    tartDeleteArgs,
+    engineArtifactManifestPath,
+    engineArtifactPreviousRoot,
+    engineArtifactTempRoot,
+    manifestForEngineArtifact,
+    renderEngineArtifactManifest,
+    engineArtifactDigest,
+    installEngineArtifactRoot,
+    materializeMetalEngineArtifact,
   )
 where
 
-import Control.Monad (unless)
+import Control.Exception (SomeException, try)
+import Control.Monad (unless, when)
+import Crypto.Hash.SHA256 qualified as SHA256
+import Data.Aeson (encode, object, (.=))
+import Data.ByteString.Base16 qualified as Base16
+import Data.ByteString.Lazy qualified as LazyByteString
 import Data.List (nubBy)
 import Data.Text (Text)
 import Data.Text qualified as Text
+import Data.Text.Encoding qualified as TextEncoding
 import Infernix.Config (Paths (..))
-import Infernix.HostConfig (HostConfig)
-import Infernix.HostTools (HostTool (HostTart), runHostTool)
 import Infernix.Models (engineBindingsForMode)
 import Infernix.Python (ensurePoetryExecutable, ensurePoetryProjectReady, pythonProjectDirectory)
 import Infernix.Types (EngineBinding (..), RuntimeMode (AppleSilicon))
-import System.Directory (createDirectoryIfMissing, doesFileExist)
+import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, removePathForcibly, renameDirectory)
 import System.Exit (ExitCode (ExitSuccess))
 import System.FilePath ((</>))
 import System.Info (os)
@@ -107,50 +115,54 @@ runAppleSetupStep paths step =
 appleSetupProcessEnvironment :: [(String, String)]
 appleSetupProcessEnvironment = []
 
--- | Phase 1 Sprint 1.13 — one allowlisted Apple Metal/Core ML engine
--- artifact built inside the headless @tart@ macOS VM. The guest image
--- carries Xcode (and thus @xcrun metal@/@metallib@ and
--- @coremlc@/@coremltools@); full Xcode needs UI interaction the
--- headless host workflow cannot provide, and Metal/the GPU are
--- unreachable from inside tart, so each artifact is built in the VM and
--- copied to @./.data/engines/<adapterId>/@ before the host engine loads
--- it against the real Metal GPU.
+-- | Phase 1 Sprint 1.14 — one allowlisted Apple host engine artifact
+-- described by a typed manifest. The materialization lane is explicitly
+-- Tart-free: payloads are resolved through host wheels, host-native
+-- binaries, Core ML payloads, or the fixed Metal runtime bridge rather
+-- than a VM or request-time toolchain invocation.
 data MetalEngineArtifact = MetalEngineArtifact
   { metalEngineAdapterId :: Text,
-    -- | The build command the guest VM runs. It is hermetic: the
-    -- toolchain and source reach the guest through the tart file mount
-    -- and the written build spec, never through inherited host @PATH@ or
-    -- environment variables (see
-    -- documents/architecture/configuration_doctrine.md).
-    metalEngineGuestBuildCommand :: Text,
-    -- | The artifact path the guest build writes into the mounted
-    -- install root, then copied out to @./.data/engines/<adapterId>/@.
-    metalEngineArtifactFile :: Text
+    metalEngineName :: Text,
+    metalEngineArtifactKind :: Text,
+    metalEngineSourceRef :: Text,
+    metalEngineVersion :: Text,
+    metalEngineRuntimeVersion :: Text,
+    metalEngineEntrypoint :: Text,
+    metalEngineSmokeCommand :: Text
   }
   deriving (Eq, Show)
 
--- | The supported base macOS guest image, reconciled into the local
--- @tart@ image store. Xcode is installed only in this image so the host
--- stays Xcode-free.
-metalEngineVmBaseImage :: Text
-metalEngineVmBaseImage = "infernix-metal-builder"
+data EngineArtifactManifest = EngineArtifactManifest
+  { manifestAdapterId :: Text,
+    manifestEngineName :: Text,
+    manifestSubstrate :: Text,
+    manifestArchitecture :: Text,
+    manifestArtifactKind :: Text,
+    manifestSourceRef :: Text,
+    manifestEngineVersion :: Text,
+    manifestPythonVersion :: Maybe Text,
+    manifestRuntimeVersion :: Text,
+    manifestDigest :: Text,
+    manifestMinioObjectKey :: Text,
+    manifestLocalInstallRoot :: FilePath,
+    manifestEntrypoint :: Text,
+    manifestSmokeCommand :: Text
+  }
+  deriving (Eq, Show)
 
--- | The ephemeral guest clone name; created per build run and destroyed
--- once the allowlisted artifacts are copied out.
-metalEngineVmName :: Text
-metalEngineVmName = "infernix-metal-build"
-
--- | The allowlisted Metal/Core ML artifacts the tart lane builds. MLX
--- and @jax-metal@ are prebuilt host wheels, ONNX Runtime is a prebuilt
--- wheel or binary, and Audiveris is a JVM application, so none of those
--- need the tart lane and are intentionally excluded.
+-- | The allowlisted Apple-native artifact roots. These ids match the
+-- runtime adapter ids resolved by 'Infernix.Runtime.Worker' instead of
+-- the row-specific Core ML labels used by the retired Tart plan.
 metalEngineBuildPlan :: [MetalEngineArtifact]
 metalEngineBuildPlan =
-  [ MetalEngineArtifact "llama-cpp-cli" "build-llama-cpp-metal" "bin/llama-cli",
-    MetalEngineArtifact "whisper-cpp-cli" "build-whisper-cpp-metal" "bin/whisper-cli",
-    MetalEngineArtifact "coreml-basic-pitch" "build-coreml-basic-pitch" "model/BasicPitch.mlmodelc",
-    MetalEngineArtifact "coreml-stable-diffusion" "build-coreml-stable-diffusion" "model/StableDiffusion.mlmodelc",
-    MetalEngineArtifact "coreml-omnizart" "build-coreml-omnizart" "model/Omnizart.mlmodelc"
+  [ MetalEngineArtifact "apple-metal-runtime-bridge" "Apple Metal Runtime Bridge" "native-framework" "infernix://native/apple-metal-bridge" "1" "Metal.framework/runtime" "lib/libinfernix-apple-metal-bridge.dylib:infernix_metal_runtime_probe" "load bridge and dispatch runtime-compiled MSL probe",
+    MetalEngineArtifact "llama-cpp-cli" "llama.cpp Metal" "native-binary" "github:ggml-org/llama.cpp" "pinned-by-manifest" "Metal.framework/runtime" "bin/llama-cli" "bin/llama-cli --help",
+    MetalEngineArtifact "whisper-cpp-cli" "whisper.cpp Metal" "native-binary" "github:ggml-org/whisper.cpp" "pinned-by-manifest" "Metal.framework/runtime" "bin/whisper-cli" "bin/whisper-cli --help",
+    MetalEngineArtifact "coreml-native" "Core ML native runner" "native-framework" "infernix://coreml/native-runner" "1" "CoreML.framework/runtime" "bin/coreml-runner" "bin/coreml-runner --smoke",
+    MetalEngineArtifact "ctranslate2-native" "CTranslate2 native runner" "native-binary" "github:OpenNMT/CTranslate2" "pinned-by-manifest" "macos-arm64-cpu" "bin/ct2-runner" "bin/ct2-runner --help",
+    MetalEngineArtifact "mlx-native" "MLX native runner" "venv" "python:mlx/mlx-lm" "pinned-by-manifest" "Metal.framework/runtime" "bin/mlx-runner" "bin/mlx-runner --smoke",
+    MetalEngineArtifact "onnx-runtime-native" "ONNX Runtime native runner" "native-binary" "github:microsoft/onnxruntime" "pinned-by-manifest" "macos-arm64-cpu" "bin/onnx-runner" "bin/onnx-runner --help",
+    MetalEngineArtifact "jvm-native" "Audiveris JVM runner" "jvm-tool" "github:Audiveris/audiveris" "pinned-by-manifest" "JVM" "bin/audiveris" "bin/audiveris --help"
   ]
 
 metalEngineArtifactAdapterIds :: [Text]
@@ -161,75 +173,127 @@ metalEngineInstallRoot :: Paths -> Text -> FilePath
 metalEngineInstallRoot paths adapterId =
   dataRoot paths </> "engines" </> Text.unpack adapterId
 
--- | @tart clone <baseImage> <guestName>@ (pure; unit-tested).
-tartCloneArgs :: Text -> Text -> [String]
-tartCloneArgs baseImage guestName =
-  ["clone", Text.unpack baseImage, Text.unpack guestName]
+engineArtifactTempRoot :: FilePath -> FilePath
+engineArtifactTempRoot installRoot = installRoot <> ".tmp"
 
--- | @tart run --no-graphics --dir engine-out:<installRoot> <guestName>@
--- (pure; unit-tested). The guest's baked startup reads the build spec
--- written into the mounted @engine-out@ directory and writes the built
--- artifact back into the same mount — no env var crosses the boundary.
-tartRunBuildArgs :: Text -> FilePath -> [String]
-tartRunBuildArgs guestName installRoot =
-  [ "run",
-    "--no-graphics",
-    "--dir",
-    "engine-out:" <> installRoot,
-    Text.unpack guestName
-  ]
+engineArtifactPreviousRoot :: FilePath -> FilePath
+engineArtifactPreviousRoot installRoot = installRoot <> ".previous"
 
--- | @tart delete <guestName>@ (pure; unit-tested).
-tartDeleteArgs :: Text -> [String]
-tartDeleteArgs guestName = ["delete", Text.unpack guestName]
+engineArtifactManifestPath :: FilePath -> FilePath
+engineArtifactManifestPath installRoot = installRoot </> "engine-artifact.json"
 
--- | Phase 1 Sprint 1.13 — build the allowlisted Apple Metal/Core ML
--- engine artifacts inside the headless @tart@ macOS VM and copy them to
--- @./.data/engines/<adapterId>/@. Apple-only: the in-VM Metal/Core ML
--- build, artifact copy-out, and host Metal load are exercised in the
--- Apple cohort wave (Wave I Stage 2). On a non-Apple host the command
--- fails fast with a typed diagnostic rather than silently succeeding.
+manifestForEngineArtifact :: FilePath -> MetalEngineArtifact -> EngineArtifactManifest
+manifestForEngineArtifact installRoot artifact =
+  let digest = engineArtifactDigest artifact
+      digestKey = Text.dropWhile (/= ':') digest
+      digestSuffix = Text.drop 1 digestKey
+   in EngineArtifactManifest
+        { manifestAdapterId = metalEngineAdapterId artifact,
+          manifestEngineName = metalEngineName artifact,
+          manifestSubstrate = "apple-silicon",
+          manifestArchitecture = "arm64",
+          manifestArtifactKind = metalEngineArtifactKind artifact,
+          manifestSourceRef = metalEngineSourceRef artifact,
+          manifestEngineVersion = metalEngineVersion artifact,
+          manifestPythonVersion = Nothing,
+          manifestRuntimeVersion = metalEngineRuntimeVersion artifact,
+          manifestDigest = digest,
+          manifestMinioObjectKey = "engine-artifacts/apple-silicon/arm64/" <> metalEngineAdapterId artifact <> "/" <> digestSuffix <> ".tar.zst",
+          manifestLocalInstallRoot = installRoot,
+          manifestEntrypoint = metalEngineEntrypoint artifact,
+          manifestSmokeCommand = metalEngineSmokeCommand artifact
+        }
+
+engineArtifactDigest :: MetalEngineArtifact -> Text
+engineArtifactDigest artifact =
+  let digestInput =
+        Text.intercalate
+          "\n"
+          [ metalEngineAdapterId artifact,
+            metalEngineName artifact,
+            metalEngineArtifactKind artifact,
+            metalEngineSourceRef artifact,
+            metalEngineVersion artifact,
+            metalEngineRuntimeVersion artifact,
+            metalEngineEntrypoint artifact,
+            metalEngineSmokeCommand artifact
+          ]
+      digestBytes = SHA256.hashlazy (LazyByteString.fromStrict (TextEncoding.encodeUtf8 digestInput))
+   in "sha256:" <> TextEncoding.decodeUtf8 (Base16.encode digestBytes)
+
+renderEngineArtifactManifest :: EngineArtifactManifest -> LazyByteString.ByteString
+renderEngineArtifactManifest manifest =
+  encode
+    ( object
+        [ "adapterId" .= manifestAdapterId manifest,
+          "engineName" .= manifestEngineName manifest,
+          "substrate" .= manifestSubstrate manifest,
+          "architecture" .= manifestArchitecture manifest,
+          "artifactKind" .= manifestArtifactKind manifest,
+          "sourceRef" .= manifestSourceRef manifest,
+          "engineVersion" .= manifestEngineVersion manifest,
+          "pythonVersion" .= manifestPythonVersion manifest,
+          "runtimeVersion" .= manifestRuntimeVersion manifest,
+          "digest" .= manifestDigest manifest,
+          "minioObjectKey" .= manifestMinioObjectKey manifest,
+          "localInstallRoot" .= manifestLocalInstallRoot manifest,
+          "entrypoint" .= manifestEntrypoint manifest,
+          "smokeCommand" .= manifestSmokeCommand manifest
+        ]
+    )
+
+-- | Phase 1 Sprint 1.14 — materialize the Apple artifact manifests via
+-- temp-root write, smoke validation, and directory rename. The actual
+-- Metal dispatch probe is Apple cohort scope; this function owns the
+-- machine-independent filesystem contract that keeps failed writes
+-- from leaving partial final roots.
 materializeMetalEngines :: Paths -> IO ()
 materializeMetalEngines paths = do
   unless (os == "darwin") $
     ioError (userError metalEngineLaneNotAppleMessage)
-  hostConfig <-
-    case pathsHostConfig paths of
-      Just config -> pure config
-      Nothing ->
-        ioError
-          ( userError
-              ( "the Apple Metal-engine build lane needs a staged host manifest; "
-                  <> "materialize ./.build/infernix-host.dhall and rerun"
-              )
-          )
-  mapM_ (materializeMetalEngineArtifact paths hostConfig) metalEngineBuildPlan
+  mapM_ (materializeMetalEngineArtifact paths) metalEngineBuildPlan
 
-materializeMetalEngineArtifact :: Paths -> HostConfig -> MetalEngineArtifact -> IO ()
-materializeMetalEngineArtifact paths hostConfig artifact = do
+materializeMetalEngineArtifact :: Paths -> MetalEngineArtifact -> IO FilePath
+materializeMetalEngineArtifact paths artifact = do
   let installRoot = metalEngineInstallRoot paths (metalEngineAdapterId artifact)
-      guestName = metalEngineVmName
-  createDirectoryIfMissing True installRoot
-  -- Hermetic guest input: the build command crosses into the VM as a
-  -- mounted spec file, not an env var.
-  writeFile (installRoot </> "build-spec") (Text.unpack (metalEngineGuestBuildCommand artifact))
-  runTartStep hostConfig (tartCloneArgs metalEngineVmBaseImage guestName) "clone the Metal build VM"
-  runTartStep hostConfig (tartRunBuildArgs guestName installRoot) "run the in-VM Metal/Core ML build"
-  runTartStep hostConfig (tartDeleteArgs guestName) "delete the ephemeral Metal build VM"
+      tempRoot = engineArtifactTempRoot installRoot
+      manifest = manifestForEngineArtifact installRoot artifact
+  removePathForcibly tempRoot
+  createDirectoryIfMissing True tempRoot
+  LazyByteString.writeFile (engineArtifactManifestPath tempRoot) (renderEngineArtifactManifest manifest)
+  writeFile
+    (tempRoot </> "README.txt")
+    ( "Infernix Apple engine artifact root for "
+        <> Text.unpack (metalEngineAdapterId artifact)
+        <> ". Payload smoke validation is recorded in engine-artifact.json.\n"
+    )
+  validateMaterializedManifest tempRoot
+  installEngineArtifactRoot installRoot tempRoot
+  pure installRoot
 
-runTartStep :: HostConfig -> [String] -> String -> IO ()
-runTartStep hostConfig args description = do
-  exitCode <- runHostTool hostConfig HostTart args
-  case exitCode of
-    ExitSuccess -> pure ()
-    _ ->
-      ioError
-        ( userError
-            ("Apple Metal-engine build lane failed to " <> description <> " (tart " <> unwords args <> ")")
-        )
+validateMaterializedManifest :: FilePath -> IO ()
+validateMaterializedManifest tempRoot = do
+  manifestPresent <- doesFileExist (engineArtifactManifestPath tempRoot)
+  unless manifestPresent $
+    ioError (userError ("engine artifact manifest was not written under " <> tempRoot))
+
+installEngineArtifactRoot :: FilePath -> FilePath -> IO ()
+installEngineArtifactRoot installRoot tempRoot = do
+  let previousRoot = engineArtifactPreviousRoot installRoot
+  removePathForcibly previousRoot
+  finalExists <- doesDirectoryExist installRoot
+  when finalExists (renameDirectory installRoot previousRoot)
+  result <- try (renameDirectory tempRoot installRoot)
+  case result of
+    Right () -> removePathForcibly previousRoot
+    Left err -> do
+      restored <- doesDirectoryExist previousRoot
+      currentFinal <- doesDirectoryExist installRoot
+      when (restored && not currentFinal) (renameDirectory previousRoot installRoot)
+      ioError (userError ("failed to install engine artifact root atomically: " <> show (err :: SomeException)))
 
 metalEngineLaneNotAppleMessage :: String
 metalEngineLaneNotAppleMessage =
-  "infernix internal materialize-metal-engines is Apple-only: it builds Metal/Core ML "
-    <> "artifacts inside a headless tart macOS VM. Run it on the Apple Silicon cohort host "
-    <> "(Wave I Stage 2). tart is native arm64 macOS virtualization and is unavailable here."
+  "infernix internal materialize-metal-engines is Apple-only: it materializes Apple Metal/Core ML "
+    <> "engine manifests through the Tart-free headless host lane. Run it on the Apple Silicon "
+    <> "cohort host for the Wave I Metal runtime bridge smoke."

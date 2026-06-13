@@ -10,9 +10,10 @@
 - Host-native builds write repo-local outputs under `./.build/`; supported outer-container flows
   keep build artifacts inside the launcher image overlay and write durable repo-local state under
   `./.data/`.
-- Tart-built native engine artifacts and engine install roots live under
-  `./.data/engines/<adapterId>/`, never `./.build/`; the Haskell binaries still build host-native
-  to `./.build/`.
+- Native engine artifacts and engine install roots live under `./.data/engines/<adapterId>/`,
+  never `./.build/`; the Haskell binaries still build host-native to `./.build/`.
+- Apple Metal/Core ML engine materialization uses a Tart-free headless host lane and typed
+  engine-artifact manifests; the old `hostTart` / `AppleTart` helper path is removed.
 - Generated frontend contracts live only under `web/src/Generated/`, and generated browser bundles
   live under `web/dist/`.
 - Runtime inference results reload only from protobuf-backed `./.data/runtime/results/*.pb`
@@ -68,25 +69,31 @@ of the supported artifact contract.
 - `ensurePoetryProjectReady` regenerates Python protobuf stubs under `tools/generated_proto/` when
   they are missing
 
-## Tart-Built Native Engine Artifacts
+## Native Engine Artifacts
 
-On the `apple-silicon` substrate, the native engine artifacts that require Xcode — the
-llama.cpp and whisper.cpp Metal builds and the Core ML compiled models (Core ML basic-pitch,
-Apple Stable Diffusion Core ML, the Omnizart Core ML export) — are built inside a headless tart
-macOS VM and copied out to `./.data/engines/<adapterId>/` before running, since Metal and the GPU
-are unreachable from inside tart. Tart-built native engine artifacts and engine install roots
-always live under `./.data/engines/<adapterId>/` (the existing engine-install root), never
-`./.build/`. The `infernix` and `infernix-demo` Haskell binaries still build host-native to
-`./.build/` and run on the host against Metal; only the Metal/Core ML engine payloads come from the
-tart build lane. Engines that do not need Xcode (MLX, jax-metal, and ONNX Runtime as prebuilt
-wheels; Audiveris as a JVM application) are not built in tart and run from prebuilt host wheels or
-binaries. The tart build is invoked through the internal helper
-`infernix internal materialize-metal-engines` (registered under the existing `internal` command
-family, mirroring `infernix internal materialize-substrate`); it adds no new top-level command.
-Tart is reconciled through Homebrew and recorded as the `hostTart` absolute-path field in
-`dhall/InfernixHost.dhall`. See the canonical homes
-[../operations/apple_silicon_runbook.md](../operations/apple_silicon_runbook.md) and
-[host_tools_manifest.md](host_tools_manifest.md).
+Native engine artifacts and install roots live under `./.data/engines/<adapterId>/` (the existing
+engine-install root), never `./.build/`. The `infernix` and `infernix-demo` Haskell binaries still
+build host-native to `./.build/`; engine payloads are separate runtime artifacts.
+
+On `apple-silicon`, the supported target is the Tart-free headless materialization model in
+[apple_silicon_metal_headless_builds.md](apple_silicon_metal_headless_builds.md): Metal source
+compilation goes through a fixed host bridge that calls the OS Metal runtime compiler, Core ML and
+native runners materialize into typed engine roots, and request-time inference never starts a VM,
+unlocks a keychain, invokes Xcode UI flows, or installs toolchains. MLX, ONNX Runtime,
+CTranslate2, PyTorch MPS paths, and Audiveris continue to prefer prebuilt host wheels or binaries
+when available.
+
+Current implementation note: Phase 1 Sprint 1.14 removed the Sprint 1.13 `hostTart` host-manifest
+field, the `AppleTart` prerequisite, and the Tart VM argument builders. The retained
+`infernix internal materialize-metal-engines` helper writes a typed `engine-artifact.json` manifest
+for each allowlisted Apple adapter into its final engine root. The Apple-only cohort residual is
+the fixed Metal runtime bridge smoke and native/Core ML artifact load evidence recorded in
+[../../DEVELOPMENT_PLAN/cohort-validation-waves.md](../../DEVELOPMENT_PLAN/cohort-validation-waves.md).
+
+Every materialized engine root should carry a typed manifest recording `adapterId`, `engineName`,
+`substrate`, `architecture`, `artifactKind`, `sourceRef`, versions, digest, optional MinIO object
+key, local install root, entrypoint, and smoke command. Materialization writes to a temporary
+directory, validates the smoke command, then atomically renames into the final install root.
 
 ## Linux Native Engine Artifacts
 
@@ -95,6 +102,13 @@ the repo data root first for parity with host-native execution and then resolves
 artifacts under `/opt/infernix/engines/<adapterId>/bin/`. The mounted `/workspace/.data` tree remains
 durable operator state and may be an `emptyDir` inside engine pods, so Linux native runners must not
 depend on image content under `/workspace/.data/engines` surviving a pod mount.
+
+`infernix internal materialize-linux-native-engines` is the image-build helper for these roots. It
+writes typed `engine-artifact.json` manifests, creates the allowlisted runner entrypoints, executes
+each runner's `--smoke` command, and atomically installs the result under
+`/opt/infernix/engines/<adapterId>/`. The current machine-independent payloads are smoke wrappers;
+Wave I replaces them with the real `llama.cpp`, `whisper.cpp`, ONNX Runtime, CTranslate2, and JVM
+tool payloads before real-output sign-off.
 
 ## Generated Demo Config Publication
 

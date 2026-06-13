@@ -280,9 +280,10 @@ Rules:
   use `infernix-engine-<engine>` per-engine Deployments selected by
   `inference.batch.linux-gpu.<engine>` topics. Repo-owned `linux-gpu` lifecycle values keep those
   per-engine deployments at zero replicas on the single-GPU lane, and validation scales one at a
-  time. On Apple silicon the engine role runs as the on-host `infernix service` daemon, with the
-  same one-per-node rule enforced via an exclusive `flock(2)` on `engine.lock` acquired at daemon
-  startup.
+  time. On Apple silicon the engine role runs as the on-host `infernix service` daemon; the target
+  one-per-node rule is Pulsar subscription ownership (`Exclusive` by default, intentional
+  `Failover` only for standby designs), while the current `engine.lock` / `flock(2)` guard remains
+  legacy current code until Phase 7 Sprint 7.23 removes or demotes it.
   Sprint 7.7 of Phase 7 split the legacy fused `infernix-service` pod
   into role-specific Deployments, removed the previous service-data PVC, introduced
   `coordinator.replicaCount` and `engine.replicaCount` knobs (defaults ≥ 2 for the stateless
@@ -660,13 +661,14 @@ Rules:
 > `cabal test infernix-haskell-style`, `infernix lint files/docs/chart/proto`, `infernix docs
 > check`, the web unit suite, and `poetry run check-code`; completed in natural order on one
 > machine, it is the gate to begin the *next* phase's implementation. *Cohort sign-off* (Axis 2) is
-> the hardware-specific full-suite — Apple Metal including the tart Metal-engine build, and CUDA GPU
-> runs — batched once per closure cycle against frozen code and tracked in
+> the hardware-specific full-suite — Apple Metal including headless Metal/Core ML materialization,
+> and CUDA GPU runs — batched once per closure cycle against frozen code and tracked in
 > `cohort-validation-waves.md`; it is the gate for `Done` and never the gate for moving on. **The
 > next action for any open phase is always its remaining code-side closure on the machine you
 > already have; do not switch machines to "validate the open phase." The machine switch happens only
 > at a scheduled wave boundary, once per cohort.** A deliverable that is intrinsically
-> hardware-bound — for example the Apple-only tart Metal build of Phase 1 Sprint 1.13 — is named as
+> hardware-bound — for example the Apple-only Metal runtime bridge probe and Core ML materialization
+> smoke of Phase 1 Sprint 1.14 — is named as
 > such in its `Code-side closure` field and is exercised inside its cohort's wave, never pre-claimed
 > as machine-independent.
 

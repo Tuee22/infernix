@@ -182,7 +182,6 @@ RUN printf '%s\n' \
     '    , nvkind = "/usr/local/bin/nvkind"' \
     '    , skopeo = "/usr/bin/skopeo"' \
     '    , hostname = "/usr/bin/hostname"' \
-    '    , tart = ""' \
     '    }' \
     ', filesystem =' \
     '    { repoRoot = "/workspace"' \
@@ -216,6 +215,7 @@ RUN mkdir -p /workspace/tools/generated_proto \
          exe:infernix \
          exe:infernix-demo \
     && infernix internal materialize-substrate ${RUNTIME_MODE} --demo-ui ${DEMO_UI} \
+    && infernix internal materialize-linux-native-engines \
     && npm --prefix web run build \
     && poetry --directory python run check-code
 

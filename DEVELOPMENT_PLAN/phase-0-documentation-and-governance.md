@@ -370,7 +370,7 @@ the pass. The supported shape is anchored on
 [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 (three typed Dhall files, no env vars), and
 [../documents/engineering/object_storage.md](../documents/engineering/object_storage.md)
-(MinIO buckets `infernix-models` and `infernix-demo-objects`).
+(MinIO buckets `infernix-models`, `infernix-engine-artifacts`, and `infernix-demo-objects`).
 
 ### Deliverables
 

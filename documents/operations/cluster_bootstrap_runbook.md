@@ -41,7 +41,8 @@
 - Harbor's MinIO-backed `harbor-registry` bucket is also non-retained publication cache, not
   product data. The lifecycle may remove that bucket, its MinIO bucket metadata, and stale
   multipart/tmp upload working sets before startup or during `cluster down`; the durable
-  `infernix-models` and `infernix-demo-objects` buckets stay retained.
+  `infernix-models`, `infernix-engine-artifacts`, and `infernix-demo-objects` buckets stay
+  retained.
 - on the Apple host-native path, the command may reconcile Homebrew-managed `kind`, `kubectl`,
   and `helm` before it attempts the real Kind workflow, and verifies the selected ghcup-managed
   `ghc` and `cabal` executables plus Homebrew `protoc` before direct host build handoff. Docker
@@ -126,7 +127,8 @@
   shape. PVCs are still present for Harbor, MinIO, Pulsar, and the operator-managed PostgreSQL
   clusters
 - confirm `infernix kubectl get buckets` (or equivalent MinIO admin check) shows
-  `infernix-models` always-on; when `demo_ui = true`, also shows `infernix-demo-objects`.
+  `infernix-models` and `infernix-engine-artifacts` always-on; when `demo_ui = true`, also shows
+  `infernix-demo-objects`.
   Lazy first-use bootstrap means `infernix-models` may be empty immediately after `cluster
   up`; the first inference request for a given model triggers the coordinator's bootstrap
   workflow and the model's files plus `.ready` sentinel appear under `infernix-models/<modelId>/`

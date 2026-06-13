@@ -53,6 +53,9 @@
   integration, and E2E validation surface for the multi-user durable-context demo, including the
   per-model smoke matrix and the multi-user throughput / fan-in batching / fan-out test
 - [engineering/build_artifacts.md](engineering/build_artifacts.md) defines build-output isolation
+- [engineering/apple_silicon_metal_headless_builds.md](engineering/apple_silicon_metal_headless_builds.md)
+  defines the Tart-free Apple Metal/Core ML materialization target and engine-artifact manifest
+  contract
 - [engineering/dependency_management.md](engineering/dependency_management.md) defines the
   supported Cabal dependency posture for the pinned Haskell toolchain
 - [engineering/docker_policy.md](engineering/docker_policy.md) defines the supported

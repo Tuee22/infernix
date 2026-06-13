@@ -32,6 +32,7 @@ import Infernix.DemoConfig
     validateDemoConfigFile,
   )
 import Infernix.Engines.AppleSilicon (materializeMetalEngines, metalEngineArtifactAdapterIds)
+import Infernix.Engines.LinuxNative (linuxNativeEngineArtifactAdapterIds, materializeLinuxNativeEngines)
 import Infernix.Error (InfernixError (EdgePortNotPublished))
 import Infernix.HostConfig qualified as HostConfig
 import Infernix.HostPrereqs (ensureAppleHostPrerequisites)
@@ -158,6 +159,9 @@ dispatch command =
       ensureRepoLayout paths
       materializeMetalEngines paths
       mapM_ (putStrLn . ("metalEngineArtifact: " <>) . Text.unpack) metalEngineArtifactAdapterIds
+    InternalMaterializeLinuxNativeEnginesCommand -> do
+      materializeLinuxNativeEngines
+      mapM_ (putStrLn . ("linuxNativeEngineArtifact: " <>) . Text.unpack) linuxNativeEngineArtifactAdapterIds
     InternalDemoConfigLoadCommand demoConfigPath -> do
       demoConfig <- decodeDemoConfigFile demoConfigPath
       putStr (renderModelListing demoConfig)

@@ -32,6 +32,10 @@
 - The three-role split applies symmetrically. Apple silicon runs the
   `Coordinator` role in cluster and the `Engine` role on host. Linux
   substrates run both roles as separate in-cluster Deployments.
+- Apple host engine singleton behavior is owned by Pulsar subscription semantics:
+  use `Exclusive` when duplicate host workers are a configuration error, and
+  use intentional `Failover` only when standby workers are part of the design.
+  `Shared` is rejected for Apple local engine execution and materialization.
 - Production deployments (`demo_ui = false`) run only the engine
   Deployment.
 
@@ -55,7 +59,10 @@ subscription names via `Infernix.Runtime.Pulsar.Failover`. Unit coverage
 proves runtime rebuild/reuse decisions; the integration suite validates
 the coordinator/engine durable prompt flow, engine pod replacement, engine
 node drain, exact broker counts, throughput, and production-shape
-deployment.
+deployment. Apple host engine consumers default to `Exclusive`, allow explicit
+`Failover` for standby designs, reject `Shared`, and run in the daemon's main
+thread so a duplicate `Exclusive` subscription conflict exits the second host
+engine process instead of leaving a failed consumer thread behind a live daemon.
 
 ## Roles and Responsibilities
 
@@ -219,14 +226,13 @@ time before submitting prompts for its models.
 
 **Apple silicon symmetry.** On Apple substrates the engine role is
 the on-host `infernix service` daemon (one process per host
-machine), not a Kubernetes pod. The one-per-node rule is enforced
-symmetrically via an exclusive `flock(2)` on
-`./.data/runtime/engine.lock` acquired at daemon startup; a second
-`infernix service` invocation on the same host exits non-zero with a
-diagnostic naming the PID holding the lock. The Linux
-engine pod acquires the same lock inside its `emptyDir` (no-op in
-practice because pod anti-affinity already guarantees uniqueness,
-but the contract is uniform across substrates).
+machine), not a Kubernetes pod. The one-per-node rule is
+expressed by the batch-topic subscription:
+`Exclusive` means a duplicate host worker is a configuration error,
+while intentional `Failover` means a standby host worker may take over
+after the active consumer dies. `Shared` is not supported for Apple
+host engine execution or local engine-artifact materialization because
+those paths assume single-writer local state.
 
 **No daemon has a PVC on any substrate.** The engine pod's
 `emptyDir` model cache is ephemeral per-pod storage capped by
@@ -296,6 +302,12 @@ Subscription primitives used at each hop:
 - **Failover** (coordinator): exactly one active subscriber per topic
   at a time; Pulsar promotes a surviving replica on crash and
   redelivers unacked messages.
+- **Exclusive or intentional Failover** (Apple host engine): one
+  active host engine consumer owns the Apple batch topic. `Exclusive`
+  rejects accidental duplicates; `Failover` is used only when standby
+  host workers are an explicit operator choice. Messages are
+  acknowledged only after materialization, inference, and result
+  publication succeed.
 - **Producer-side dedup** with broker-level
   `brokerDeduplicationEnabled = true` plus namespace dedup policies on
   the conversation, context, draft, inference-request,
@@ -384,10 +396,11 @@ and the coordinator in cluster.
   `infernix-models` via the shared adapter helper into a host-local
   cache under `./.data/runtime/model-cache/`, runs the Apple-native
   adapter, owns the in-memory KV cache, and publishes
-  `inference.result.apple-silicon`. The one-per-node rule is enforced
-  via an exclusive `flock(2)` on `./.data/runtime/engine.lock`
-  acquired at daemon startup — the symmetrical equivalent of the
-  Linux pod anti-affinity rule.
+  `inference.result.apple-silicon`. The one-per-node rule is
+  enforced by the host batch subscription (`Exclusive` by default,
+  intentional `Failover` only for standby designs), with
+  ack-after-success semantics for engine materialization, inference, and
+  result publication.
 - The chart never deploys an in-cluster `infernix-engine` pod on
   apple-silicon. The one-per-node rule applies trivially to the host
   daemon — there is one host.

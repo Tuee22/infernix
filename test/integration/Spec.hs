@@ -85,6 +85,7 @@ import System.Process
     terminateProcess,
     waitForProcess,
   )
+import System.Timeout (timeout)
 
 data CompactedTopicMessage = CompactedTopicMessage
   { compactedTopicMessageKey :: Maybe Text.Text,
@@ -230,17 +231,13 @@ exerciseRuntimeMode paths runtimeMode = do
       reportStep ("durable Pulsar topic families: " <> showRuntimeMode runtimeMode)
       validateDurableTopicFamilyRoundTrips paths runtimeMode representativeModelId
 
-      -- Phase 7 Sprint 7.14 (2026-05-31): Apple engine.lock enforcement
-      -- chaos case. The chart-driven Linux engine pods rely on required
-      -- pod anti-affinity to prove one-engine-per-node; the Apple
-      -- host-native engine relies on the @engine.lock@ flock contract in
-      -- `Infernix.Service.acquireEngineLock`. The first host daemon is
-      -- already spawned by `withRuntimeServiceDaemonIfNeeded` above and
-      -- holds the lock; this case validates that a second spawn exits
-      -- non-zero with the named diagnostic.
+      -- Phase 7 Sprint 7.23: Apple host-engine singleton ownership is
+      -- broker-owned. The first host daemon is already subscribed to the host
+      -- batch topic; this case validates that a second spawn exits non-zero
+      -- when the broker rejects a duplicate Exclusive consumer.
       when (requiresHostServiceHarness paths runtimeMode) $ do
-        reportStep ("apple engine.lock enforcement: " <> showRuntimeMode runtimeMode)
-        validateAppleEngineLockEnforcement paths
+        reportStep ("apple host engine exclusive subscription enforcement: " <> showRuntimeMode runtimeMode)
+        validateAppleHostEngineExclusiveSubscriptionEnforcement paths
 
       when (runtimeMode == LinuxCpu) $ do
         reportStep "frontend pod replacement preserves durable state"
@@ -272,8 +269,8 @@ exerciseRuntimeMode paths runtimeMode = do
         -- past the available engine-capable node count must leave the
         -- extra replica `Pending` with the anti-affinity rejection
         -- message in its scheduler events. The Apple-host equivalent
-        -- (the `engine.lock` flock) is covered by
-        -- `validateAppleEngineLockEnforcement` above.
+        -- is covered by the duplicate Exclusive host-batch subscription
+        -- check above.
         reportStep "linux engine anti-affinity enforcement"
         validateLinuxEngineAntiAffinityEnforcement state
 
@@ -2099,28 +2096,33 @@ waitForPendingEnginePod state = go (60 :: Int)
               threadDelay 1000000
               go (remainingAttempts - 1)
 
--- | Phase 7 Sprint 7.14 (2026-05-31): Apple engine.lock enforcement chaos case.
--- Spawn a second @infernix service@ while the harness-owned first daemon is
--- alive. The second invocation must exit non-zero because
--- `Infernix.Service.acquireEngineLock` cannot acquire the flock; the stderr
--- must surface the supported diagnostic naming the holding PID so operators
--- can find the existing daemon.
-validateAppleEngineLockEnforcement :: Paths -> IO ()
-validateAppleEngineLockEnforcement paths = do
+-- | Phase 7 Sprint 7.23: Apple host-engine singleton chaos case. Spawn a
+-- second @infernix service@ while the harness-owned first daemon is subscribed
+-- to the host batch topic. The second invocation must exit non-zero because
+-- the broker rejects the duplicate Exclusive consumer.
+validateAppleHostEngineExclusiveSubscriptionEnforcement :: Paths -> IO ()
+validateAppleHostEngineExclusiveSubscriptionEnforcement paths = do
   infernixExecutable <- resolveInfernixExecutable
+  maybeResult <-
+    timeout
+      (30 * 1000000)
+      ( readCreateProcessWithExitCode
+          (proc infernixExecutable ["service"]) {cwd = Just (repoRoot paths)}
+          ""
+      )
   (exitCode, _stdoutOutput, stderrOutput) <-
-    readCreateProcessWithExitCode
-      (proc infernixExecutable ["service"]) {cwd = Just (repoRoot paths)}
-      ""
+    case maybeResult of
+      Just result -> pure result
+      Nothing -> fail "a duplicate apple host engine service did not fail within 30 seconds"
   assert
     (exitCode /= ExitSuccess)
-    "a second `infernix service` invocation exits non-zero when the engine.lock is already held"
+    "a second `infernix service` invocation exits non-zero when the Exclusive host-batch subscription is already owned"
   assert
-    ("engine.lock" `isInfixOf` stderrOutput)
-    "the second `infernix service` invocation surfaces the engine.lock diagnostic on stderr"
+    ("subscription rejected" `isInfixOf` stderrOutput || "Exclusive" `isInfixOf` stderrOutput || "exclusive" `isInfixOf` stderrOutput)
+    "the second `infernix service` invocation surfaces the Exclusive subscription diagnostic on stderr"
   assert
-    ("is held by PID" `isInfixOf` stderrOutput)
-    "the engine.lock diagnostic names the holder PID for operator triage"
+    ("Shared" `notElem` words stderrOutput)
+    "the duplicate Apple host engine diagnostic does not fall back to Shared subscription ownership"
 
 withRuntimeServiceDaemon :: Paths -> IO a -> IO a
 withRuntimeServiceDaemon paths action = do

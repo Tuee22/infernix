@@ -44,6 +44,7 @@ data Command
   | InternalPublishChartImagesCommand FilePath FilePath
   | InternalMaterializeSubstrateCommand RuntimeMode Bool
   | InternalMaterializeMetalEnginesCommand
+  | InternalMaterializeLinuxNativeEnginesCommand
   | InternalDemoConfigLoadCommand FilePath
   | InternalDemoConfigValidateCommand FilePath
   | InternalGeneratePursContractsCommand FilePath
@@ -292,8 +293,12 @@ internalCommandFamily =
           materializeSubstrateCommand,
           simpleCommand
             "internal materialize-metal-engines"
-            "builds the allowlisted Apple Metal/Core ML engine artifacts inside the headless tart macOS VM and copies them to `./.data/engines/<adapterId>/` (Apple-only; mirrors `internal materialize-substrate`)"
+            "materializes the allowlisted Apple Metal/Core ML engine manifests under `./.data/engines/<adapterId>/` through the Tart-free headless host lane (Apple-only; mirrors `internal materialize-substrate`)"
             InternalMaterializeMetalEnginesCommand,
+          simpleCommand
+            "internal materialize-linux-native-engines"
+            "materializes the allowlisted Linux native runner roots under `/opt/infernix/engines/<adapterId>/` for substrate images"
+            InternalMaterializeLinuxNativeEnginesCommand,
           singlePathCommand
             "internal demo-config load PATH"
             "loads one generated demo config and prints the rendered model listing"

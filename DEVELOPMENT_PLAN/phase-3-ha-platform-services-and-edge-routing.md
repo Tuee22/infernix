@@ -81,9 +81,10 @@ reserved cluster object-store path.
 - MinIO console and S3 API are both exposed through the shared edge
 - the chart reserves MinIO as the Kind-backed object-store target for Harbor and cluster-routed
   object-store access, while durable object-store state lives only in the MinIO buckets
-  `infernix-models` (always-on platform model weights) and `infernix-demo-objects` (demo-gated
-  user uploads and engine-generated artifacts), the on-disk `./.data/object-store/` tree having
-  been retired by Phase 7 Sprint 7.7
+  `infernix-models` (always-on platform model weights),
+  `infernix-engine-artifacts` (always-on engine software payloads), and
+  `infernix-demo-objects` (demo-gated user uploads and engine-generated artifacts), the on-disk
+  `./.data/object-store/` tree having been retired by Phase 7 Sprint 7.7
 
 ### Validation
 
@@ -581,7 +582,7 @@ workers dialed `localhost` literally.
   - The hand-authored MinIO StatefulSet (`chart/templates/minio/`)
     reached `Running 4/4` and the `infernix-minio-provisioning` Job
     completed (`mc mb --ignore-existing local/harbor-registry
-    local/infernix-models local/infernix-demo-objects`) without
+    local/infernix-models local/infernix-engine-artifacts local/infernix-demo-objects`) without
     bitnami chart wrapper interference.
   - Containerd `config_path = "/etc/containerd/certs.d"` patch
     honored — Kind workers resolved `localhost:30003/library/*` via

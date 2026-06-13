@@ -19,9 +19,10 @@
 - Tool bootstrap, build-root paths, Docker setup, launcher build mechanics, and CUDA device access
   are substrate detail; Kind, Kubernetes manifests, image preparation, validation, and teardown
   remain binary-owned.
-- The Apple tart Metal/Core ML native engine build lane is Apple substrate detail, not part of the
-  portable contract: only Apple's Xcode-dependent engines are built inside a headless tart macOS
-  VM, while Python wheel engines need no tart on any substrate.
+- The Apple Metal/Core ML native engine materialization lane is Apple substrate detail, not part
+  of the portable contract: the target path uses a host Metal runtime bridge plus typed
+  engine-artifact manifests, and the old Tart helper path is removed from the current host-tool
+  schema and prerequisite contract.
 
 ## Current Status
 
@@ -31,7 +32,9 @@ the repo does not claim substrate parity where the underlying hardware or launch
 The Linux bootstrap surfaces treat login-shell and reboot boundaries as explicit rerun
 checkpoints, and the Apple clean-host lane verifies same-process ghcup-managed tool activation
 before direct host build handoff while keeping Docker reachability and Apple-only adapter
-prerequisites substrate-specific. The supported doctrine forbids cross-architecture development
+prerequisites substrate-specific. Apple Metal/Core ML materialization doctrine now avoids Tart,
+user keychain state, and Xcode UI flows; Phase 1 Sprint 1.14 has removed the old `hostTart` /
+`AppleTart` helper path, while Apple hardware smoke evidence remains in Wave I. The supported doctrine forbids cross-architecture development
 or validation, and Apple Docker-backed work validates the already selected native arm64 daemon
 instead of provisioning or reconciling a Docker VM. The Apple routed Playwright lane runs
 host-native `npm exec` against the published host edge on `127.0.0.1`, and retained Apple Kind
@@ -52,9 +55,9 @@ operator-facing kubeconfig remains repo-local in the active execution context.
   coordination, single-flight dispatch, result-bridge, and model-bootstrap; substrates differ
   only in where the `Engine` role runs — `infernix-engine` as a one-per-node Deployment with
   required anti-affinity on `linux-cpu` and `linux-gpu`, and as the same-binary on-host
-  `infernix service` process under an `flock(2)` singleton on Apple Silicon — with the
-  demo-gated `infernix-demo` frontend deployed in-cluster on every substrate when
-  `demo_ui = true`
+  `infernix service` process on Apple Silicon, where Pulsar `Exclusive` or intentional `Failover`
+  subscription ownership is the target singleton boundary — with the demo-gated `infernix-demo`
+  frontend deployed in-cluster on every substrate when `demo_ui = true`
 - Python-native adapters always run through the shared `python/` Poetry project
 - supported validation surfaces remain `infernix lint files`, `infernix lint docs`,
   `infernix lint proto`, `infernix lint chart`, `infernix docs check`, `infernix test lint`,
@@ -68,12 +71,12 @@ operator-facing kubeconfig remains repo-local in the active execution context.
 | Host prerequisites | keep prerequisites minimal and explicit | Homebrew plus ghcup before build; Docker-backed Apple work uses the already selected native arm64 Docker daemon and never creates or switches Docker contexts | Docker Engine plus Docker buildx and Compose plugins on native Linux amd64 or arm64 for `linux-cpu`; NVIDIA driver plus container toolkit in addition for `linux-gpu` |
 | Bootstrap activation boundary | stage-0 bootstrap surfaces continue in the current process only after they can verify the executable they need next, and they stop for explicit rerun when a new shell or reboot is required | the bootstrap verifies the selected ghcup-managed `ghc` and `cabal` executables plus Homebrew `protoc` before direct `cabal install`, so the supported clean-host first run does not depend on a second bootstrap invocation | Linux bootstraps stop for Docker group-membership re-entry and NVIDIA-driver reboot, then continue through the same bootstrap surface on rerun |
 | Tool bootstrap after the binary exists | supported commands may reconcile remaining operator tooling | Homebrew-managed Docker CLI, `kind`, `kubectl`, `helm`, Node.js, the Homebrew-managed `python@3.12` formula and `python3.12` command, and Poetry bootstrap may be installed on demand; Poetry may reuse an already available compatible Python 3.12+ executable | the substrate image already carries the supported toolchain; runtime install is not part of the contract |
-| Native engine artifact build | engine adapters resolve from prebuilt host wheels/binaries or substrate-built native artifacts; the portable contract does not depend on any tart lane | Xcode-dependent Metal/Core ML engines (llama.cpp and whisper.cpp Metal builds; Core ML basic-pitch, Apple Stable Diffusion Core ML, Omnizart Core ML export) build inside a headless `hostTart` macOS VM and copy out to `./.data/engines/<adapterId>/`; MLX, jax-metal, and ONNX Runtime wheels plus the Audiveris JVM app run from prebuilt host wheels or binaries with no tart. See [../operations/apple_silicon_runbook.md](../operations/apple_silicon_runbook.md) and [host_tools_manifest.md](host_tools_manifest.md) | Python wheel engines need no tart; native engines come from the substrate image build under `/opt/infernix/engines/<adapterId>/`, while the worker still checks the repo data root first for parity with host-native execution |
+| Native engine artifact build | engine adapters resolve from prebuilt host wheels/binaries, content-addressed engine payloads, or substrate-built native artifacts; the portable contract does not depend on any Tart lane | Apple Metal/Core ML artifacts materialize under `./.data/engines/<adapterId>/` through the headless host Metal runtime bridge and typed engine-artifact manifests described in [apple_silicon_metal_headless_builds.md](apple_silicon_metal_headless_builds.md); MLX, CTranslate2, ONNX Runtime, PyTorch MPS paths, and Audiveris prefer prebuilt host wheels or binaries. The old `hostTart` helper path is removed. | Python wheel engines need no tart; native roots come from the substrate image build under `/opt/infernix/engines/<adapterId>/`, while the worker still checks the repo data root first for parity with host-native execution. Current Linux roots are smoke wrappers pending Wave I real payload replacement |
 | Apple Docker profile | Docker-backed lifecycle and validation work uses the operator-selected native daemon | Apple lifecycle code must not create a VM, create or switch Docker contexts, or use amd64 emulation; it stops if the current Docker daemon is unavailable or non-native | not applicable |
 | Build roots and kubeconfig location | outputs stay repo-local and untracked, while Kind or `nvkind` create or delete uses transient execution-local scratch kubeconfig outside repo mounts | `./.build/`, published `./.build/infernix.kubeconfig`, and binary-owned substrate-file materialization or validation under the Apple build root | image-local outer-container build root and binary-owned substrate-file materialization there, plus published `./.data/runtime/infernix.kubeconfig` for durable outer-container reuse |
 | Python adapter environment | use the shared Poetry project only | `python/.venv/` may materialize on demand after Apple adapter paths reconcile the Homebrew-managed `python@3.12` formula and `python3.12` command plus a user-local Poetry bootstrap, or reuse an already available compatible Python 3.12+ executable for that bootstrap | adapter dependencies are installed in the shared substrate image build |
 | Browser E2E runner | exercise the routed surface for the active generated catalog | host-native `npm exec` runs Playwright against the published localhost edge port using the same typed fixture; Apple evidence is recorded by the Apple cohort validation batch | the outer container runs `npm --prefix web exec -- playwright test` inside the substrate image against the routed cluster on Docker's private `kind` network |
-| Inference executor placement | the supported three-role daemon model splits Pulsar coordination (`infernix-coordinator`) from engine execution (`infernix-engine`, plus Linux GPU `infernix-engine-<engine>` Deployments for per-engine framework images); coordinator daemons own request fan-in, batching, result publication, and the lazy model-weight bootstrap workflow; engine daemons own adapter execution and the node's in-memory KV cache under a strict one-per-node policy per engine Deployment. No daemon has a PVC; engine pods use ephemeral `emptyDir` for the model-weight cache only. See [../architecture/daemon_topology.md](../architecture/daemon_topology.md) and [object_storage.md](object_storage.md). | the cluster-side `infernix-coordinator` Deployment runs the coordinator role and hands batches to the on-host engine daemon over Pulsar; the host daemon enforces one-per-node via `flock(2)` on `engine.lock`, pulls weights from MinIO `infernix-models`, runs Apple-native engines, and publishes results | the cluster-side `infernix-coordinator` Deployment runs the coordinator role, and separate cluster-side engine Deployments run the engine role with required one-per-node anti-affinity; on `linux-gpu`, the base engine consumes the canonical batch topic while per-engine pods consume `inference.batch.linux-gpu.<engine>` topics from isolated framework images; all daemon pods are PVC-free |
+| Inference executor placement | the supported three-role daemon model splits Pulsar coordination (`infernix-coordinator`) from engine execution (`infernix-engine`, plus Linux GPU `infernix-engine-<engine>` Deployments for per-engine framework images); coordinator daemons own request fan-in, batching, result publication, and the lazy model-weight bootstrap workflow; engine daemons own adapter execution and the node's in-memory KV cache under a strict one-per-node policy per engine Deployment. No daemon has a PVC; engine pods use ephemeral `emptyDir` for the model-weight cache only. See [../architecture/daemon_topology.md](../architecture/daemon_topology.md) and [object_storage.md](object_storage.md). | the cluster-side `infernix-coordinator` Deployment runs the coordinator role and hands batches to the on-host engine daemon over Pulsar; the host singleton is owned by Pulsar `Exclusive` or intentional `Failover` subscription semantics, and `Shared` is rejected for Apple local engine execution; the host engine pulls weights from MinIO `infernix-models`, runs Apple-native engines, and publishes results | the cluster-side `infernix-coordinator` Deployment runs the coordinator role, and separate cluster-side engine Deployments run the engine role with required one-per-node anti-affinity; on `linux-gpu`, the base engine consumes the canonical batch topic while per-engine pods consume `inference.batch.linux-gpu.<engine>` topics from isolated framework images; all daemon pods are PVC-free |
 | CUDA path | supported only when the host actually satisfies the NVIDIA contract | not applicable | `linux-gpu` requires the launcher-selected baked CUDA image, forwarded Docker socket, GPU visibility, and in-image `nvkind` |
 
 ## Unsupported Shortcuts
@@ -106,6 +109,7 @@ the "Substrate Architecture" subsection); this document does not duplicate the t
 
 - [docker_policy.md](docker_policy.md)
 - [host_tools_manifest.md](host_tools_manifest.md)
+- [apple_silicon_metal_headless_builds.md](apple_silicon_metal_headless_builds.md)
 - [implementation_boundaries.md](implementation_boundaries.md)
 - [../architecture/runtime_modes.md](../architecture/runtime_modes.md)
 - [../architecture/daemon_topology.md](../architecture/daemon_topology.md)

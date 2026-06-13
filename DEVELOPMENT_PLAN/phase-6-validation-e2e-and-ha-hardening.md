@@ -31,7 +31,8 @@ proven by the machine-independent gate set that ran on this host (`cabal test in
 suite (`spago`/Node 22) could not run on this bare host (host Node 18; Node 22 makes spago segfault
 — an environmental toolchain limit), so its gate is exercised in the supported Linux container lane
 (Node 22) / cohort batch. The real-engine integration and routed E2E assertions are the Stage 2
-cohort gate (Apple Metal incl. tart, and CUDA GPU runs), re-validated on both cohorts in
+cohort gate (Apple Metal with headless Metal/Core ML materialization, and CUDA GPU runs),
+re-validated on both cohorts in
 [Wave I](cohort-validation-waves.md); the phase returns to `Done` only after that wave closes —
 never a per-sprint machine switch (see
 [development_plan_standards.md](development_plan_standards.md) Section Q).
@@ -185,7 +186,7 @@ None.
 
 **Status**: Active
 **Code-side closure**: Complete on the present CUDA Linux host (x86_64 + RTX 5090) — `validateCatalogModelInference` (`test/integration/Spec.hs`) is upgraded from the model-id + runtime-mode echo to a per-family real-output result contract dispatched on `ResultFamily` (via `resultFamilyForDescriptor`): text families (LLM, speech) assert a non-empty inline continuation and no object ref; every artifact family asserts an `infernix-demo-objects/` object reference whose key extension matches the family's artifact type (`.zip` source-separation, `.mid`/`.midi` audio-to-MIDI, `.mid`/`.midi`/`.musicxml`/`.xml` music transcription, `.png` image, `.mp4` video, `.wav` audio generation, `.musicxml`/`.xml` OMR) — shape/type, never golden strings. One DRY substrate-aware suite that reads the active `.dhall` and traverses the README rows; no per-substrate suites. Proven machine-independent by `cabal build test:infernix-integration` (compiles/typechecks) and `cabal test infernix-unit`, which pass on the present CUDA Linux host; the assertions themselves pass only when real engines run (Section P: results name the single substrate they exercised)
-**Cohort gate**: Pending [Wave I](cohort-validation-waves.md) — both cohorts run the per-family real-output integration suite against their own catalog column. The June 11, 2026 linux-gpu run reached the assertion phase after Harbor publication and `cluster up`, then failed because `audio-basic-pitch-onnx` did not return the required `AudioToMidi` object reference. Follow-up code uploads canonical sample input objects for audio/image input rows through the MinIO presigned route and asserts `status = completed` before result-family shape. The governed `./bootstrap/linux-gpu.sh build` after that follow-up passed and produced plain-manifest launcher image `sha256:2d6cfd42ca59ee7fbd9669a8c32738ed0ba44ef09706b469d12c8803b520e030`. The latest governed `./bootstrap/linux-gpu.sh test` rerun again passed style/unit/web, Harbor publication, final chart rollout, and route probes, then failed at `llm-tinyllama-gguf` because the Linux base engine pod lacks `/workspace/.data/engines/llama-cpp-cli/bin/llama-cli`; native-engine materialization is now the first live assertion blocker. Current-source mounted linux-gpu validation after that run passes `cabal test infernix-unit`, `cabal test infernix-haskell-style`, `cabal build test:infernix-integration`, `poetry --directory python run check-code`, `cabal run exe:infernix -- lint docs`, `docs check`, `lint files`, `lint proto`, and `lint chart` with the worker's model-cache/MinIO protobuf wiring in place.
+**Cohort gate**: Pending [Wave I](cohort-validation-waves.md) — both cohorts run the per-family real-output integration suite against their own catalog column. The June 11, 2026 linux-gpu run reached the assertion phase after Harbor publication and `cluster up`, then failed because `audio-basic-pitch-onnx` did not return the required `AudioToMidi` object reference. Follow-up code uploads canonical sample input objects for audio/image input rows through the MinIO presigned route and asserts `status = completed` before result-family shape. The governed `./bootstrap/linux-gpu.sh build` after that follow-up passed and produced plain-manifest launcher image `sha256:2d6cfd42ca59ee7fbd9669a8c32738ed0ba44ef09706b469d12c8803b520e030`. The latest governed `./bootstrap/linux-gpu.sh test` rerun again passed style/unit/web, Harbor publication, final chart rollout, and route probes, then failed at `llm-tinyllama-gguf` because the Linux base engine pod lacked `/workspace/.data/engines/llama-cpp-cli/bin/llama-cli`. Phase 4 Sprint 4.18 now closes that missing-root surface by baking smoke-validated `/opt/infernix/engines/<adapterId>/bin/...` roots; the remaining live assertion blocker is replacing those smoke wrappers with real native payloads before the per-family real-output rerun. Current-source mounted linux-gpu validation after that run passes `cabal test infernix-unit`, `cabal test infernix-haskell-style`, `cabal build test:infernix-integration`, `poetry --directory python run check-code`, `cabal run exe:infernix -- lint docs`, `docs check`, `lint files`, `lint proto`, and `lint chart` with the worker's model-cache/MinIO protobuf wiring in place.
 **Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Demo/Api.hs`, `src/Infernix/Runtime.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Worker.hs`, `test/integration/Spec.hs`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/operations/cluster_bootstrap_runbook.md`
 
@@ -225,20 +226,23 @@ MinIO, Pulsar, and operator-managed PostgreSQL substrate.
   README rows; no per-substrate suites. Proven by `cabal build test:infernix-integration`
   (compiles/typechecks) and `cabal test infernix-unit`, which pass on the present CUDA Linux host.
 - **Cohort gate ([Wave I](cohort-validation-waves.md), Stage 2):** the assertions pass only when
-  real engines run; each cohort runs the suite against its own catalog column (Apple Metal incl.
-  tart; CUDA `linux-cpu`/`linux-gpu`), and results name the single substrate exercised (Section P).
+  real engines run; each cohort runs the suite against its own catalog column (Apple Metal with
+  headless materialization; CUDA `linux-cpu`/`linux-gpu`), and results name the single substrate
+  exercised (Section P).
   The latest linux-gpu attempts reached this gate after successful Harbor publication and final
   `cluster up`. The harness now provides canonical uploaded input objects for audio/image input
   rows and fails early on `status = failed`; the governed launcher rebuild passes with
   plain-manifest image `sha256:2d6cfd42ca59ee7fbd9669a8c32738ed0ba44ef09706b469d12c8803b520e030`.
   The latest full governed rerun then passed style/unit/web, Harbor publication, final chart
   rollout, and route probes, but failed at `llm-tinyllama-gguf` because the Linux base engine pod
-  lacks `/workspace/.data/engines/llama-cpp-cli/bin/llama-cli`; native-engine materialization is
-  now the first live assertion blocker. Current-source mounted linux-gpu validation after that run
-  passes `cabal test infernix-unit`, `cabal test infernix-haskell-style`, `cabal build
-  test:infernix-integration`, `poetry --directory python run check-code`, `cabal run
-  exe:infernix -- lint docs`, `docs check`, `lint files`, `lint proto`, and `lint chart`; the ONNX
-  Runtime audio-to-MIDI row remains queued behind the native-binary/materialization lane.
+  lacked `/workspace/.data/engines/llama-cpp-cli/bin/llama-cli`. Phase 4 Sprint 4.18 now bakes
+  smoke-validated `/opt/infernix/engines/<adapterId>/bin/...` roots; replacement with real native
+  payloads is now the first live assertion blocker. Current-source mounted linux-gpu validation
+  after that run passes `cabal test infernix-unit`, `cabal test infernix-haskell-style`,
+  `cabal build test:infernix-integration`, `poetry --directory python run check-code`,
+  `cabal run exe:infernix -- lint docs`, `docs check`, `lint files`, `lint proto`, and
+  `lint chart`; the ONNX Runtime audio-to-MIDI row remains queued behind the real native payload
+  lane.
 
 ---
 
@@ -305,7 +309,7 @@ browser surface through the shared edge.
   supported Linux container lane (Node 22) / cohort batch.
 - **Cohort gate ([Wave I](cohort-validation-waves.md), Stage 2):** asserting the real rendered
   output needs a deployed cluster; each cohort runs the routed suite against its own catalog column
-  (Apple Metal incl. tart; CUDA `linux-cpu`/`linux-gpu`).
+  (Apple Metal with headless materialization; CUDA `linux-cpu`/`linux-gpu`).
 
 ---
 
@@ -421,7 +425,7 @@ hard-coded lane lists.
   `infernix lint docs`, which pass on the present CUDA Linux host.
 - **Cohort gate ([Wave I](cohort-validation-waves.md), Stage 2):** requiring a per-family assertion
   for every active-substrate catalog entry rides Sprints 6.2/6.3; each cohort runs it against its
-  own catalog column (Apple Metal incl. tart; CUDA `linux-cpu`/`linux-gpu`).
+  own catalog column (Apple Metal with headless materialization; CUDA `linux-cpu`/`linux-gpu`).
 
 ---
 
@@ -1567,6 +1571,52 @@ None. The four toolchain cleanup rows live in `legacy-tracking-for-deletion.md` 
 
 ---
 
+## Sprint 6.31: Matrix Drift and Headless Apple Validation Gates [Active]
+
+**Status**: Active
+**Code-side closure**: Complete on the present Linux outer-container lane - `src/Infernix/Models.hs` exports `matrixRowReadmeKeys`, `src/Infernix/Lint/Docs.hs` now parses the README model matrix and fails `infernix lint docs` when a cell drifts from the generated runnable catalog, explicit residual list, or `Not recommended` state, and `test/unit/Spec.hs` proves the README lint keys are unique and cover every matrix row id. Proven by `docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm ... infernix cabal run exe:infernix -- lint docs` and `docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm ... infernix cabal run exe:infernix -- test unit` with live source/docs mounts.
+**Cohort gate**: Wave I still owns the Apple-only Metal bridge/Core ML or native artifact smoke and the CUDA Linux real native-payload/per-family full-suite rerun.
+**Implementation**: `src/Infernix/Models.hs`, `src/Infernix/Lint/Docs.hs`, `test/unit/Spec.hs`, `test/integration/Spec.hs`, `web/playwright/inference.spec.js`, `README.md`, `documents/engineering/apple_silicon_metal_headless_builds.md`, `DEVELOPMENT_PLAN/cohort-validation-waves.md`
+**Docs to update**: `README.md`, `documents/development/testing_strategy.md`, `documents/engineering/apple_silicon_metal_headless_builds.md`, `documents/architecture/model_catalog.md`, `DEVELOPMENT_PLAN/cohort-validation-waves.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
+
+### Objective
+
+Make the research corrections enforceable. The docs and generated catalog must not drift on engine
+recommendations, and Apple validation must prove the headless Metal/Core ML materialization lane
+instead of the legacy Tart helper.
+
+### Deliverables
+
+- extend docs/catalog lint so README matrix cells and generated catalog cells agree on promoted,
+  residual, and `Not recommended` states
+- add validation that Apple headless materialization does not invoke Tart, require an unlocked
+  login keychain, require `xcrun -find metal`, or install a toolchain during inference
+- add integration assertions that materialization failures leave no partial final engine root and
+  are redelivered or negatively acknowledged when asynchronous
+- update per-family integration and routed E2E fixtures for promoted/residual cells: Apple
+  CTranslate2 viability, MT3/JAX residual, Omnizart residual, Wan Apple MPS residual, and Basic
+  Pitch TensorFlow residual
+
+### Validation
+
+- `infernix lint docs` fails on README/generated-catalog engine-cell drift
+- `infernix test unit` proves the exported README matrix lint keys are unique and cover every
+  Haskell-owned matrix row id
+- Apple cohort run records the host Metal bridge probe and one Core ML/native artifact smoke under
+  the headless materialization path
+- CUDA Linux cohort reruns the native engine materialization lane and per-family real-output suite
+- legacy Tart references remain only in the deletion ledger or explicit historical notes; the
+  generated CLI reference describes the retained Tart-free manifest materialization command
+
+### Remaining Work
+
+- Record the Wave I Apple cohort evidence for the headless Metal bridge and Core ML/native artifact
+  smoke.
+- Record the Wave I CUDA Linux cohort evidence after real Linux native payloads replace the current
+  smoke wrappers and the per-family full-suite reruns.
+
+---
+
 ## Remaining Work
 
 Phase 6 is `Active` for the inference-coverage upgrade. The reopened Sprints 6.2, 6.3, and 6.6
@@ -1576,15 +1626,18 @@ Sprints (6.1, 6.4, 6.5, 6.7-6.30) remain `Done`; Apple cohort validation closed 
 A/A.1/A.2/A.3 and CUDA Linux cohort validation closed in Wave C. Code-side closure for the reopened
 sprints is complete and validated on the present CUDA Linux host (x86_64 + RTX 5090): the
 `ResultFamily` dispatch in the integration suite, the per-family Playwright assertions plus
-per-family web-UI artifact rendering, and the `allMatrixRowIds` coverage invariant (with the
-README-to-matrix coverage check under `infernix lint docs`) are written and proven by the
+per-family web-UI artifact rendering, the `allMatrixRowIds` coverage invariant, and the README
+matrix cell-drift lint gate (runnable, residual, and `Not recommended` states) are written and proven by the
 machine-independent gate set that ran on this host (`cabal test infernix-unit`,
 `cabal build test:infernix-integration`, `infernix lint docs`, `infernix lint files`). The web unit
 suite (`spago`/Node 22) could not run on this bare host (host Node 18; Node 22 makes spago segfault
 — an environmental toolchain limit), so its gate is exercised in the supported Linux container lane
 (Node 22) / cohort batch. The real-engine integration and routed E2E assertions are the Stage 2
-cohort gate: each cohort runs them against its own catalog column (Apple Metal incl. tart, and CUDA
-GPU; [Wave I](cohort-validation-waves.md)). The phase returns to `Done` only after that wave closes.
+cohort gate: each cohort runs them against its own catalog column (Apple Metal with headless
+materialization, and CUDA GPU; [Wave I](cohort-validation-waves.md)). Sprint 6.31's
+machine-independent matrix-drift lint and unit coverage are code-side closed; its remaining work is
+the Wave I cohort evidence for headless Apple materialization and CUDA Linux real native payloads.
+The phase returns to `Done` only after that wave closes.
 See the two-axis execution rule in [development_plan_standards.md](development_plan_standards.md)
 Section Q.
 
@@ -1593,6 +1646,7 @@ Section Q.
 **Engineering docs to create/update:**
 - `documents/documentation_standards.md` - root-document metadata contract and canonical-home markers
 - `documents/engineering/build_artifacts.md` - generated-artifact locations, build-root rules, and derived-output validation expectations
+- `documents/engineering/apple_silicon_metal_headless_builds.md` - validation gates for the Tart-free Apple materialization lane
 - `documents/engineering/dependency_management.md` - Cabal dependency posture for the pinned
   Haskell toolchain and the Dhall dependency closure
 - `documents/engineering/edge_routing.md` - route-registry ownership, generated route summaries, and route-aware validation expectations

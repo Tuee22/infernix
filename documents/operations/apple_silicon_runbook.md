@@ -39,6 +39,10 @@
 - retained-state Apple reruns may also log a targeted Harbor PostgreSQL replica reinitialization
   from the current Patroni leader when stopped replicas need a fresh base backup after timeline
   advancement; treat that as supported retained-state repair rather than an unexpected failure mode
+- Apple Metal/Core ML engine materialization uses a Tart-free headless host lane. The retained
+  `materialize-metal-engines` helper name now writes typed engine-artifact manifests; the Apple
+  cohort still owns the host Metal runtime bridge smoke and native artifact load evidence named in
+  [../engineering/apple_silicon_metal_headless_builds.md](../engineering/apple_silicon_metal_headless_builds.md).
 
 ## Supported Flow
 
@@ -130,11 +134,10 @@ Direct reference path:
   generated engine-role metadata and batch topic, auto-discovers Pulsar's direct un-gated proxy
   NodePort transport (the `/admin/v2` and `/ws/v2` surfaces, not the JWT-gated `/pulsar/admin`
   edge) from published cluster state when needed, and forks Python adapters from `python/adapters/`
-  only
-  when the bound engine is Python-native. The engine role enforces the supported uniform
-  one-per-node policy via an exclusive `flock(2)` on `./.data/runtime/engine.lock`; a second
-  `infernix service` invocation on the same host exits non-zero with a diagnostic naming the
-  PID holding the lock
+  only when the bound engine is Python-native. The one-per-node policy is Pulsar
+  subscription ownership: `Exclusive` by default, intentional `Failover` only for standby host
+  designs, and no `Shared` subscription for Apple local execution or materialization. A duplicate
+  `Exclusive` host worker fails at the broker-owned subscription boundary.
 - model weights for the host engine come from the `infernix-models` MinIO bucket via the
   same lazy bootstrap workflow the in-cluster Linux engine pods use. The host daemon caches
   weights under `./.data/runtime/model-cache/<modelId>/`; this cache is host-local ephemeral
@@ -183,40 +186,28 @@ The canonical home for the substrate → container architecture mapping is
 Architecture" subsection); the MinIO image inventory is at
 [../tools/minio.md](../tools/minio.md).
 
-## Tart Metal-Engine Build Lane
+## Apple Metal/Core ML Materialization
 
 On Apple Silicon the `infernix` and `infernix-demo` Haskell binaries build host-native through the
-ghcup/cabal toolchain and run on the host against Metal. The Metal and Core ML native engine
-artifacts that would otherwise require Xcode — the llama.cpp and whisper.cpp Metal builds and the
-Core ML compiled models (Core ML basic-pitch, Apple Stable Diffusion Core ML, the Omnizart Core ML
-export) — are built inside a headless `tart` macOS VM (Xcode lives only in that VM, because Xcode
-needs UI interaction that breaks the headless workflow) and copied out to
-`./.data/engines/<adapterId>/` before running, since Metal and the GPU are unreachable from inside
-`tart`. `tart` is reconciled through Homebrew (`brew install tart`), recorded as the `hostTart`
-absolute-path field in `dhall/InfernixHost.dhall`, and is native arm64 macOS virtualization — not
-cross-architecture emulation and not a Docker or Colima lane, so it creates and switches no Docker
-context and provisions no Colima VM. The engines that do not need Xcode (MLX and jax-metal and ONNX
-Runtime as prebuilt wheels; Audiveris as a JVM application) are not built in `tart` and run from
-prebuilt host wheels or binaries.
+ghcup/cabal toolchain and run on the host against Metal. The supported engine materialization
+target avoids Tart, user keychain state, Xcode UI flows, and request-time toolchain work:
 
-Operator workflow:
+- Metal source compilation uses a fixed host bridge that calls the OS Metal runtime compiler.
+- Core ML models and native runner payloads materialize under `./.data/engines/<adapterId>/` with
+  typed engine-artifact manifests.
+- Prebuilt host wheels or binaries remain preferred for MLX / MLX-LM, ONNX Runtime, CTranslate2,
+  PyTorch MPS paths, and Audiveris.
+- Runtime inference consumes already materialized artifacts; it must not start virtualization,
+  unlock a keychain, accept an Xcode license, invoke SwiftPM for generated glue, or install
+  frameworks on a request path.
 
-- `brew install tart` is reconciled by `infernix`; the host needs no Xcode of its own.
-- the build is invoked through `infernix internal materialize-metal-engines`, registered under the
-  existing "internal" command family (mirroring `infernix internal materialize-substrate`). It adds
-  no new top-level command; the canonical top-level CLI surface is unchanged.
-- `infernix internal materialize-metal-engines` builds the allowlisted Metal/Core ML artifacts in
-  the headless VM and copies them to **[ARTIFACT BUILD LOCATION]** `./.data/engines/<adapterId>/`
-  (the existing engine-install root, never `./.build/`).
-- the host then runs those artifacts against Metal directly; no Xcode is installed on the host.
-
-The `hostTart` path is read from `HostConfig`; the helper never resolves `tart` through the
-operator's shell search path. The `tart` guest receives its toolchain and source through the typed
-engine-build sub-record and `tart` file mounts — never through inherited host `PATH`, environment
-variables, or SSH-with-env. See the engine-build sub-record and hermetic tart-guest rule in
-[../architecture/configuration_doctrine.md](../architecture/configuration_doctrine.md), and the
-`hostTart` field row in
-[../engineering/host_tools_manifest.md](../engineering/host_tools_manifest.md).
+The legacy `tart` / `hostTart` / `AppleTart` implementation has been removed from the current
+host-tool schema and prerequisite path. The retained
+`infernix internal materialize-metal-engines` helper is the Tart-free manifest materialization
+surface; the Apple hardware cohort still has to prove the fixed Metal runtime bridge and a native
+artifact load before the sprint can be marked `Done`.
+The authoritative replacement design is
+[../engineering/apple_silicon_metal_headless_builds.md](../engineering/apple_silicon_metal_headless_builds.md).
 
 ## Harbor Host-Port Conflicts
 

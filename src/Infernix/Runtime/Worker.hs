@@ -326,7 +326,7 @@ runNativeWorker paths _runtimeMode model engineBinding request _cacheObservation
                             <> engineBindingAdapterId engineBinding
                             <> ": "
                             <> Text.intercalate ", " checkedPaths
-                            <> "; build it for the active substrate (Apple: infernix internal materialize-metal-engines; Linux: bake the native runner into the substrate image under /opt/infernix/engines) before running."
+                            <> "; materialize it for the active substrate (Apple: infernix internal materialize-metal-engines; Linux: bake the native runner into the substrate image under /opt/infernix/engines) before running."
                       }
                 )
         Just (installRoot, binaryPath) -> do

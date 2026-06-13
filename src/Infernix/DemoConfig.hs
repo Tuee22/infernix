@@ -196,7 +196,8 @@ coordinatorDaemonConfig runtimeMode =
       daemonConfigRequestTopics = requestTopicsForMode runtimeMode,
       daemonConfigResultTopic = resultTopicForMode runtimeMode,
       daemonConfigHostBatchTopic = hostBatchTopicForMode runtimeMode,
-      daemonConfigPulsarConnectionMode = ConfiguredTransport
+      daemonConfigPulsarConnectionMode = ConfiguredTransport,
+      daemonConfigConsumerSubscriptionType = Just ConsumerShared
     }
 
 -- | Phase 7 Sprint 7.7: the engine role is deployed on every supported
@@ -231,7 +232,8 @@ hostEngineDaemon runtimeMode =
       daemonConfigRequestTopics = maybe [] pure (hostBatchTopicForMode runtimeMode),
       daemonConfigResultTopic = resultTopicForMode runtimeMode,
       daemonConfigHostBatchTopic = Nothing,
-      daemonConfigPulsarConnectionMode = PublicationEdgeAutoDiscovery
+      daemonConfigPulsarConnectionMode = PublicationEdgeAutoDiscovery,
+      daemonConfigConsumerSubscriptionType = Just ConsumerExclusive
     }
 
 genericLinuxEngineDaemon :: RuntimeMode -> DaemonConfig
@@ -242,7 +244,8 @@ genericLinuxEngineDaemon runtimeMode =
       daemonConfigRequestTopics = [canonicalBatchTopicForMode runtimeMode],
       daemonConfigResultTopic = resultTopicForMode runtimeMode,
       daemonConfigHostBatchTopic = Nothing,
-      daemonConfigPulsarConnectionMode = ConfiguredTransport
+      daemonConfigPulsarConnectionMode = ConfiguredTransport,
+      daemonConfigConsumerSubscriptionType = Just ConsumerShared
     }
 
 perFrameworkEngineDaemons :: RuntimeMode -> [DaemonConfig]
@@ -260,7 +263,8 @@ perFrameworkEngineDaemon runtimeMode engineName =
       daemonConfigRequestTopics = [perEngineBatchTopicForMode runtimeMode engineName],
       daemonConfigResultTopic = resultTopicForMode runtimeMode,
       daemonConfigHostBatchTopic = Nothing,
-      daemonConfigPulsarConnectionMode = ConfiguredTransport
+      daemonConfigPulsarConnectionMode = ConfiguredTransport,
+      daemonConfigConsumerSubscriptionType = Just ConsumerShared
     }
 
 renderModelListing :: DemoConfig -> String

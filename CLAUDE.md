@@ -31,13 +31,14 @@ Read first:
 - do not use host `cabal` builds for Linux or CUDA validation; direct
   `cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes`
   is the Apple Silicon host-native reference path only
-- do not install Xcode on the Apple host; the Metal and Core ML native engine artifacts that would
-  otherwise require Xcode are built inside a headless `tart` macOS VM (reconciled via
-  `brew install tart`, recorded as `hostTart` in `dhall/InfernixHost.dhall`) through
-  `infernix internal materialize-metal-engines`, then copied to `./.data/engines/<adapterId>/`
-  before running against Metal. `tart` is native arm64 macOS virtualization, distinct from Docker
-  and Colima; it creates or switches no Docker context and provisions no Colima VM. The `infernix`
-  and `infernix-demo` Haskell binaries still build host-native and run on the host
+- do not install Xcode on the Apple host and do not rely on Tart for new Apple engine work. The
+  target Apple Metal/Core ML materialization path is headless without VM startup, user keychain
+  state, or Xcode UI flows: use the host Metal runtime bridge and typed engine-artifact manifests
+  described in
+  [documents/engineering/apple_silicon_metal_headless_builds.md](documents/engineering/apple_silicon_metal_headless_builds.md).
+  The legacy `tart` / `hostTart` / `AppleTart` implementation has been removed; the retained
+  `materialize-metal-engines` helper is the Tart-free manifest materialization surface, with Apple
+  hardware smoke evidence still tracked under Phase 1 Sprint 1.14
 - never use cross-architecture emulation for development or validation. Do not run amd64 Linux
   through Apple Silicon emulation, and do not create or switch Docker contexts or create a Colima
   VM on Apple Silicon

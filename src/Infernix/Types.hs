@@ -5,6 +5,7 @@ module Infernix.Types
     ApiUpstreamMode (..),
     CacheManifest (..),
     ClusterState (..),
+    ConsumerSubscriptionType (..),
     DaemonConfig (..),
     DaemonRole (..),
     DemoConfig (..),
@@ -30,11 +31,13 @@ module Infernix.Types
     defaultModelBootstrapTopic,
     defaultModelsBucket,
     parseApiUpstreamMode,
+    parseConsumerSubscriptionType,
     parseDaemonRole,
     parsePulsarConnectionMode,
     parseRequestFieldType,
     parseRuntimeLane,
     parseRuntimeMode,
+    consumerSubscriptionTypeId,
     pulsarConnectionModeId,
     requestFieldTypeId,
     resultFamilyId,
@@ -319,13 +322,44 @@ instance FromJSON PulsarConnectionMode where
       Just connectionMode -> pure connectionMode
       Nothing -> fail ("Unsupported pulsar connection mode: " <> Text.unpack rawValue)
 
+data ConsumerSubscriptionType
+  = ConsumerShared
+  | ConsumerExclusive
+  | ConsumerFailover
+  deriving (Eq, Ord, Read, Show)
+
+consumerSubscriptionTypeId :: ConsumerSubscriptionType -> Text
+consumerSubscriptionTypeId subscriptionType =
+  case subscriptionType of
+    ConsumerShared -> "shared"
+    ConsumerExclusive -> "exclusive"
+    ConsumerFailover -> "failover"
+
+parseConsumerSubscriptionType :: Text -> Maybe ConsumerSubscriptionType
+parseConsumerSubscriptionType rawValue =
+  case Text.toLower rawValue of
+    "shared" -> Just ConsumerShared
+    "exclusive" -> Just ConsumerExclusive
+    "failover" -> Just ConsumerFailover
+    _ -> Nothing
+
+instance ToJSON ConsumerSubscriptionType where
+  toJSON = String . consumerSubscriptionTypeId
+
+instance FromJSON ConsumerSubscriptionType where
+  parseJSON = withText "ConsumerSubscriptionType" $ \rawValue ->
+    case parseConsumerSubscriptionType rawValue of
+      Just subscriptionType -> pure subscriptionType
+      Nothing -> fail ("Unsupported consumer subscription type: " <> Text.unpack rawValue)
+
 data DaemonConfig = DaemonConfig
   { daemonConfigRole :: DaemonRole,
     daemonConfigLocation :: Text,
     daemonConfigRequestTopics :: [Text],
     daemonConfigResultTopic :: Text,
     daemonConfigHostBatchTopic :: Maybe Text,
-    daemonConfigPulsarConnectionMode :: PulsarConnectionMode
+    daemonConfigPulsarConnectionMode :: PulsarConnectionMode,
+    daemonConfigConsumerSubscriptionType :: Maybe ConsumerSubscriptionType
   }
   deriving (Eq, Read, Show)
 
@@ -337,7 +371,8 @@ instance ToJSON DaemonConfig where
         "request_topics" .= daemonConfigRequestTopics daemonConfig,
         "result_topic" .= daemonConfigResultTopic daemonConfig,
         "host_batch_topic" .= daemonConfigHostBatchTopic daemonConfig,
-        "pulsarConnectionMode" .= daemonConfigPulsarConnectionMode daemonConfig
+        "pulsarConnectionMode" .= daemonConfigPulsarConnectionMode daemonConfig,
+        "consumerSubscriptionType" .= daemonConfigConsumerSubscriptionType daemonConfig
       ]
 
 instance FromJSON DaemonConfig where
@@ -349,6 +384,7 @@ instance FromJSON DaemonConfig where
       <*> value .: "result_topic"
       <*> value .:? "host_batch_topic"
       <*> value .:? "pulsarConnectionMode" .!= ConfiguredTransport
+      <*> value .:? "consumerSubscriptionType"
 
 data EngineBinding = EngineBinding
   { engineBindingName :: Text,
@@ -746,7 +782,8 @@ defaultCoordinatorDaemonConfig runtimeMode requestTopicValues resultTopicValue =
       daemonConfigRequestTopics = requestTopicValues,
       daemonConfigResultTopic = resultTopicValue,
       daemonConfigHostBatchTopic = defaultHostBatchTopic runtimeMode,
-      daemonConfigPulsarConnectionMode = ConfiguredTransport
+      daemonConfigPulsarConnectionMode = ConfiguredTransport,
+      daemonConfigConsumerSubscriptionType = Just ConsumerShared
     }
 
 defaultEngineDaemonConfig :: RuntimeMode -> Text -> Maybe DaemonConfig
@@ -760,7 +797,8 @@ defaultEngineDaemonConfig runtimeMode resultTopicValue =
             daemonConfigRequestTopics = maybe [] pure (defaultHostBatchTopic runtimeMode),
             daemonConfigResultTopic = resultTopicValue,
             daemonConfigHostBatchTopic = Nothing,
-            daemonConfigPulsarConnectionMode = PublicationEdgeAutoDiscovery
+            daemonConfigPulsarConnectionMode = PublicationEdgeAutoDiscovery,
+            daemonConfigConsumerSubscriptionType = Just ConsumerExclusive
           }
     _ -> Nothing
 

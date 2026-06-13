@@ -25,7 +25,9 @@ module Infernix.Models
     renderPublicationStateWithApiUpstream,
     renderConfigMapManifest,
     resultFamilyForDescriptor,
+    matrixRowReadmeKeys,
     resultTopicForMode,
+    residualMatrixRowIdsForMode,
     routeInventory,
   )
 where
@@ -70,6 +72,35 @@ catalogForMode runtimeMode = mapMaybe (descriptorForMode runtimeMode) matrixRows
 -- README row is missing from all generated catalogs.
 allMatrixRowIds :: [Text]
 allMatrixRowIds = map rowId matrixRows
+
+matrixRowReadmeKeys :: [(Text, Text, Text)]
+matrixRowReadmeKeys =
+  [ (rowId row, rowArtifactType row, rowReferenceModel row)
+  | row <- matrixRows
+  ]
+
+-- | Phase 4 Sprint 4.18 — named research residuals are tracked explicitly
+-- instead of being surfaced as runnable model descriptors. The runtime catalog
+-- remains executable-only; this list lets lint and unit coverage distinguish a
+-- deliberate residual from an accidentally missing README matrix row.
+residualMatrixRowIdsForMode :: RuntimeMode -> [Text]
+residualMatrixRowIdsForMode runtimeMode =
+  case runtimeMode of
+    AppleSilicon ->
+      [ "music-mt3-jax",
+        "music-omnizart-tensorflow",
+        "video-wan21-diffusers"
+      ]
+    LinuxCpu ->
+      [ "audio-basic-pitch-tensorflow",
+        "music-mt3-jax",
+        "music-omnizart-tensorflow"
+      ]
+    LinuxGpu ->
+      [ "audio-basic-pitch-tensorflow",
+        "music-mt3-jax",
+        "music-omnizart-tensorflow"
+      ]
 
 -- | Phase 4 Sprint 4.15 — resolve a catalog row to its per-family result
 -- contract from @family@ + @artifactType@ + @matrixRowId@. Text families
@@ -597,7 +628,7 @@ matrixRows =
       "https://huggingface.co/Systran/faster-whisper-small"
       "Best throughput-oriented Whisper path on CUDA."
       "Audio Input"
-      Nothing
+      (Just (ModeBinding "CTranslate2 (CPU)" False))
       (Just (ModeBinding "CTranslate2" False))
       (Just (ModeBinding "CTranslate2" True)),
     mkRow
@@ -637,11 +668,11 @@ matrixRows =
       "TensorFlow model family"
       "basic-pitch"
       "https://github.com/spotify/basic-pitch"
-      "TensorFlow is the preferred production lane when used on CUDA."
+      "Published package pins TensorFlow <2.15.1; use the ONNX or Core ML lane until a maintained TensorFlow package is adopted."
       "Audio Input"
       Nothing
-      (Just (ModeBinding "TensorFlow CPU or default package runtime" False))
-      (Just (ModeBinding "TensorFlow CUDA" True)),
+      Nothing
+      Nothing,
     mkRow
       "audio-basic-pitch-coreml"
       "audio-basic-pitch-coreml"
@@ -679,11 +710,11 @@ matrixRows =
       "JAX checkpoint / codebase"
       "MT3"
       "https://github.com/magenta/mt3"
-      "JAX is the canonical execution model."
+      "JAX is canonical upstream, but this stack remains a compatibility residual until reproven."
       "Audio Input"
-      (Just (ModeBinding "jax-metal" False))
-      (Just (ModeBinding "JAX CPU" False))
-      (Just (ModeBinding "JAX/XLA on NVIDIA" True)),
+      Nothing
+      Nothing
+      Nothing,
     mkRow
       "music-omnizart-tensorflow"
       "music-omnizart"
@@ -693,11 +724,11 @@ matrixRows =
       "TensorFlow model family"
       "Omnizart"
       "https://github.com/Music-and-Culture-Technology-Lab/omnizart"
-      "Apple support likely requires an owned export path."
+      "Compatibility is unproven on the supported Python and Apple lanes."
       "Audio Input"
-      (Just (ModeBinding "Core ML (exported path owned by deployment)" False))
-      (Just (ModeBinding "TensorFlow CPU" False))
-      (Just (ModeBinding "TensorFlow CUDA" True)),
+      Nothing
+      Nothing
+      Nothing,
     mkRow
       "image-sdxl-turbo"
       "image-sdxl-turbo"
@@ -735,9 +766,9 @@ matrixRows =
       "Diffusers / safetensors pipeline"
       "Wan2.1-T2V-1.3B"
       "https://huggingface.co/Wan-AI/Wan2.1-T2V-1.3B"
-      "Small reference text-to-video model."
+      "Small reference text-to-video model; Apple MPS remains residual until validated."
       "Prompt"
-      (Just (ModeBinding "Diffusers on MPS (if viable)" False))
+      Nothing
       Nothing
       (Just (ModeBinding "Diffusers or ComfyUI" True)),
     mkRow

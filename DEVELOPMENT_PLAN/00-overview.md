@@ -54,11 +54,12 @@ bindings — fetches model weights lazily from the `infernix-models` MinIO bucke
 per-family real result: inline text for the LLM and speech families, and a typed
 `infernix-demo-objects` object reference for the source-separation, audio-to-MIDI,
 music-transcription, image, video, audio-generation, and OMR artifact families. On Apple Silicon
-the Haskell binaries build host-native and run on the host against Metal, while the Metal and Core
-ML native engine artifacts that would otherwise require Xcode are built inside a headless `tart`
-macOS VM (recorded as `hostTart` in `dhall/InfernixHost.dhall`, reconciled through `brew install
-tart`) and copied to `./.data/engines/<adapterId>/` before running; `tart` is native arm64 macOS
-virtualization, not emulation and not a Docker or Colima lane. The Apple clean-host bootstrap hardening is implemented and validated: the stage-0
+the Haskell binaries build host-native and run on the host against Metal. Sprint 1.14 removes the
+legacy Sprint 1.13 `tart` / `hostTart` / `AppleTart` implementation from the current host-tool
+schema and retargets the retained `materialize-metal-engines` command to typed engine-artifact
+manifests. The remaining headless Metal/Core ML target uses a fixed host Metal runtime bridge, no
+Tart VM, no user keychain dependency, no host Xcode UI flow, and no request-time toolchain
+installation. The Apple clean-host bootstrap hardening is implemented and validated: the stage-0
 entrypoint verifies same-process ghcup-managed `ghc` and `cabal` resolution before direct
 `cabal install`, reconciles Homebrew `protoc`, and lets Apple adapter setup or validation paths
 reconcile the Homebrew-managed `python@3.12` formula and `python3.12` command plus a user-local
@@ -102,8 +103,8 @@ two-axis doctrine — implement and run code-side closure on whichever single ma
 present development host is a native CUDA Linux host (x86_64 + NVIDIA RTX 5090). Code-side closure
 for every open phase proceeds here with no machine switch, and the CUDA Linux cohort full-suite
 (`linux-cpu` and `linux-gpu`) is producible on this host directly; the single remaining cohort
-switch is to an Apple Silicon machine for the Apple cohort wave (Metal, including the tart
-Metal-engine build and the `apple-silicon` catalog rows). The legacy dated proof points are
+switch is to an Apple Silicon machine for the Apple cohort wave (Metal, including headless
+Metal/Core ML materialization and the `apple-silicon` catalog rows). The legacy dated proof points are
 inventoried in
 [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) under "Retired Historical
 Validation Evidence". The underlying contracts they exercised still describe supported behavior,
@@ -566,7 +567,8 @@ The plan keeps control-plane execution context separate from substrate.
   split landed by Phase 7 Sprint 7.7: `infernix-coordinator` (stateless, Pulsar coordination +
   dispatcher + result-bridge + model bootstrap) and the engine role (`infernix-engine` on Linux
   substrates, plus Linux GPU `infernix-engine-<engine>` per-engine framework Deployments when
-  rendered; on-host `flock(2)`-singleton daemon on Apple Silicon). The legacy fused
+  rendered; on-host Apple daemon owned by Pulsar `Exclusive` or intentional `Failover`
+  subscriptions in the target design). The legacy fused
   `chart/templates/deployment-service.yaml` was legacy together with the `service.*` chart-values
   block on the recorded validation
 - on `linux-cpu`, the coordinator consumes request topics and publishes
@@ -718,9 +720,9 @@ The supported operator surface is:
 - `infernix docs check`
 
 Internal helper commands may exist in the implementation — for example
-`infernix internal materialize-substrate ...` and the Apple `infernix internal
-materialize-metal-engines` tart build helper — but the supported command contract closes
-through the registry-backed surface above.
+`infernix internal materialize-substrate ...` and legacy or replacement Apple engine
+materialization helpers — but the supported command contract closes through the registry-backed
+surface above.
 
 ## Completion Rules
 

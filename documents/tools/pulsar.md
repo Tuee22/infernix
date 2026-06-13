@@ -83,9 +83,11 @@ the configured batch handoff topic. Linux CPU and native-fallback Linux GPU work
 per-engine daemon. Apple host-native handoff uses `inference.batch.apple-silicon.host`. The
 engine role (`infernix-engine` Deployment on Linux; per-engine Linux GPU Deployments named
 `infernix-engine-<engine>`; on-host `infernix service` daemon on Apple) consumes its configured
-topic, executes the engine adapter, and publishes results to `result_topic`. The coordinator
-then writes the result back to the originating per-context conversation topic via the
-result-bridge.
+topic, executes the engine adapter, and publishes results to `result_topic`. Apple host-native
+engine consumption uses a single-owner subscription: `Exclusive` when duplicate host workers are a
+configuration error, or intentional `Failover` when standby host workers are explicitly supported.
+It never uses `Shared` for local engine execution or materialization state. The coordinator then
+writes the result back to the originating per-context conversation topic via the result-bridge.
 
 The chart ships `deployment-{coordinator,engine}.yaml`; the engine template renders the base
 engine Deployment plus Linux GPU per-engine engine Deployments when `engine.perEngine.enabled`
@@ -143,6 +145,10 @@ Rules:
   coordinator replica is the active dispatcher per context at a time; the result-bridge in
   the coordinator pod uses a named **Failover** subscription on `inference.result.<mode>`
   with the same semantics
+- the Apple host engine consumes its batch topic through **Exclusive** by default or
+  intentionally configured **Failover** for standby hosts; a message is acknowledged only after
+  engine materialization, inference, and durable result publication succeed, while failed
+  materialization leaves the message unacked or negatively acknowledged for redelivery
 - Failover ownership uses stable subscription names; individual
   consumers use process-qualified names via `Infernix.Runtime.Pulsar.Failover`
   so multiple coordinator replicas do not present identical member names

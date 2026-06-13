@@ -24,10 +24,11 @@ coverage — is **Complete** and was proven by the machine-independent gate set 
 `cabal test infernix-unit`, `cabal test infernix-haskell-style`, `infernix lint files/docs/proto/chart`,
 `infernix docs check`, `poetry run check-code`) on the present CUDA Linux host (x86_64 + RTX 5090).
 The phase remains `Active` because producing and asserting real per-family output is the Stage 2
-cohort gate (Apple Metal incl. tart, and CUDA GPU runs), never a per-sprint machine switch (see
+cohort gate (Apple Metal with headless Metal/Core ML materialization, and CUDA GPU runs), never a
+per-sprint machine switch (see
 [development_plan_standards.md](development_plan_standards.md) Section Q); Apple-native real
-inference also depends on the tart Metal-engine artifacts built by
-[Phase 1](phase-1-repository-and-control-plane-foundation.md) Sprint 1.13. The real per-family
+inference also depends on the replacement materialization lane owned by
+[Phase 1](phase-1-repository-and-control-plane-foundation.md) Sprint 1.14. The real per-family
 inference contract is re-validated on both cohorts in [Wave I](cohort-validation-waves.md), and the
 phase cannot return to `Done` until that wave closes. The phase narrative
 describes the supported MinIO-backed shape directly through the runtime, cache, and object storage
@@ -80,7 +81,7 @@ This phase owns the conversion from the README-scale matrix to runtime-consumabl
 
 **Status**: Active
 **Code-side closure**: Complete — the closed `ResultFamily` sum type (with `resultFamilyId`/`resultFamilyIsArtifact`) and `resultFamilyForDescriptor` landed in `src/Infernix/Types.hs`/`src/Infernix/Models.hs`, `allMatrixRowIds` is exported, and the non-text input object-ref field was added on `InferenceRequest`/`WorkerRequest` (Haskell and `proto/infernix/runtime/inference.proto`) with `WorkerResponse.object_ref` added; proven by the machine-independent gate set (`cabal build all`, `cabal test infernix-unit`, `infernix lint proto`) on the present CUDA Linux host
-**Cohort gate**: Pending [Wave I](cohort-validation-waves.md) — both cohorts assert the per-family result contract these types drive (Apple Metal incl. tart; CUDA `linux-cpu`/`linux-gpu`)
+**Cohort gate**: Pending [Wave I](cohort-validation-waves.md) — both cohorts assert the per-family result contract these types drive (Apple Metal with headless materialization; CUDA `linux-cpu`/`linux-gpu`)
 **Implementation**: `src/Infernix/Types.hs`, `src/Infernix/Models.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Storage.hs`, `proto/infernix/manifest/runtime_manifest.proto`, `proto/infernix/runtime/inference.proto`, `test/unit/Spec.hs`
 **Docs to update**: `documents/architecture/runtime_modes.md`, `documents/architecture/model_catalog.md`
 
@@ -113,8 +114,8 @@ Make the service runtime strongly typed before transport and UI surfaces accumul
   `WorkerResponse.object_ref` was added). Proven by `cabal test infernix-unit` and `infernix lint
   proto` on the present CUDA Linux host.
 - **Cohort gate ([Wave I](cohort-validation-waves.md), Stage 2):** the per-family result contract
-  these types drive is asserted on cohort hardware (Apple Metal incl. tart; CUDA
-  `linux-cpu`/`linux-gpu`).
+  these types drive is asserted on cohort hardware (Apple Metal with headless materialization;
+  CUDA `linux-cpu`/`linux-gpu`).
 
 ---
 
@@ -161,16 +162,16 @@ derived local cache state become authoritative.
   Proven by `cabal build all` and `cabal test infernix-unit` on the present CUDA Linux host, with
   the fallback covered by the current mounted linux-gpu unit run.
 - **Cohort gate ([Wave I](cohort-validation-waves.md), Stage 2):** real engine output requires real
-  weights and engines; both cohorts run them and assert real per-family output (Apple Metal incl.
-  tart; CUDA `linux-cpu`/`linux-gpu`).
+  weights and engines; both cohorts run them and assert real per-family output (Apple Metal with
+  headless materialization; CUDA `linux-cpu`/`linux-gpu`).
 
 ---
 
 ## Sprint 4.3: Honest Apple Host-Native and Linux Container Runtime Parity [Active]
 
 **Status**: Active
-**Code-side closure**: Complete — the host-side service wiring that loads engine artifacts from `./.data/engines/<adapterId>/` and publishes the per-family result is in place; proven by the machine-independent gate set (`cabal build all`, `cabal test infernix-unit`) on the present CUDA Linux host. The real Apple-native Metal engine path depends on the Sprint 1.13 tart-built artifacts and runs only on Apple
-**Cohort gate**: Pending [Wave I](cohort-validation-waves.md) — **Apple cohort only**, gated on Sprint 1.13's Apple-only tart Metal build (CUDA inference is covered by the Linux cohort under 4.2/4.8/4.11)
+**Code-side closure**: Complete — the host-side service wiring that loads engine artifacts from `./.data/engines/<adapterId>/` and publishes the per-family result is in place; proven by the machine-independent gate set (`cabal build all`, `cabal test infernix-unit`) on the present CUDA Linux host. The real Apple-native Metal engine path depends on Sprint 1.14's headless Metal/Core ML materialization and runs only on Apple
+**Cohort gate**: Pending [Wave I](cohort-validation-waves.md) — **Apple cohort only**, gated on Sprint 1.14's headless Apple Metal/Core ML materialization (CUDA inference is covered by the Linux cohort under 4.2/4.8/4.11)
 **Implementation**: `src/Infernix/Service.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Demo/Api.hs`, `src/Infernix/Models.hs`, `src/Infernix/Runtime.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Worker.hs`, `test/integration/Spec.hs`, `test/unit/Spec.hs`
 **Docs to update**: `documents/architecture/runtime_modes.md`, `documents/engineering/object_storage.md`, `documents/operations/apple_silicon_runbook.md`, `documents/engineering/portability.md`
 
@@ -222,10 +223,10 @@ host-side, and Linux inference execution and result publication remain cluster-r
   and unit-checks. Proven by `cabal build all` and `cabal test infernix-unit` on the present CUDA
   Linux host.
 - **Cohort gate ([Wave I](cohort-validation-waves.md), Stage 2 — Apple cohort only):** Apple
-  host-native `infernix service` runs the real Apple-native Metal engine using the tart-built
-  artifacts built by [Phase 1](phase-1-repository-and-control-plane-foundation.md) Sprint 1.13 and
-  publishes the real per-family result. This path is gated on Sprint 1.13's Apple-only tart build,
-  not merely on the wave.
+  host-native `infernix service` runs the real Apple-native Metal engine using artifacts
+  materialized by [Phase 1](phase-1-repository-and-control-plane-foundation.md) Sprint 1.14 and
+  publishes the real per-family result. This path is gated on the Apple-only headless
+  materialization lane, not merely on the wave.
 
 ---
 
@@ -377,8 +378,8 @@ keeping `poetry run` as the only supported execution path.
   `cabal test infernix-haskell-style`, and `cabal build test:infernix-integration` on the present
   CUDA Linux host.
 - **Cohort gate ([Wave I](cohort-validation-waves.md), Stage 2):** producing real per-family output
-  requires real weights and engines; both cohorts run the adapters and assert it (Apple Metal incl.
-  tart; CUDA `linux-cpu`/`linux-gpu`).
+  requires real weights and engines; both cohorts run the adapters and assert it (Apple Metal with
+  headless materialization; CUDA `linux-cpu`/`linux-gpu`).
 
 ---
 
@@ -423,7 +424,8 @@ non-demo deployment.
   generic-success payload. Proven by `cabal build all` and `cabal test infernix-unit` on the present
   CUDA Linux host.
 - **Cohort gate ([Wave I](cohort-validation-waves.md), Stage 2):** both cohorts publish and observe
-  real per-family results end to end (Apple Metal incl. tart; CUDA `linux-cpu`/`linux-gpu`).
+  real per-family results end to end (Apple Metal with headless materialization; CUDA
+  `linux-cpu`/`linux-gpu`).
 
 ---
 
@@ -489,8 +491,8 @@ None.
 ## Sprint 4.10: Apple Silicon Daemon-Driven Engine Bootstrap [Active]
 
 **Status**: Active
-**Code-side closure**: Complete — the host daemon native worker consumes engine artifacts from `./.data/engines/<adapterId>/` and fails fast with `engine_binary_missing` when absent; proven by the machine-independent gate set (`cabal build all`, `cabal test infernix-unit`) on the present CUDA Linux host. The real Apple Metal artifacts themselves remain Sprint 1.13's Apple-only tart build
-**Cohort gate**: Pending [Wave I](cohort-validation-waves.md) — **Apple cohort only**, gated on Sprint 1.13's Apple-only tart Metal build
+**Code-side closure**: Complete — the host daemon native worker consumes engine artifacts from `./.data/engines/<adapterId>/` and fails fast with `engine_binary_missing` when absent; proven by the machine-independent gate set (`cabal build all`, `cabal test infernix-unit`) on the present CUDA Linux host. The real Apple Metal artifacts themselves depend on Sprint 1.14's headless Apple materialization lane
+**Cohort gate**: Pending [Wave I](cohort-validation-waves.md) — **Apple cohort only**, gated on Sprint 1.14's headless Apple Metal/Core ML materialization
 **Implementation**: `src/Infernix/Engines/AppleSilicon.hs`, `src/Infernix/Service.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/CLI.hs`, `python/pyproject.toml`, `test/unit/Spec.hs`, `test/integration/Spec.hs`
 **Docs to update**: `documents/operations/apple_silicon_runbook.md`, `documents/development/local_dev.md`, `documents/development/python_policy.md`, `documents/engineering/portability.md`
 
@@ -528,8 +530,9 @@ without inventing fake container parity.
   `engine_binary_missing` when absent) compiles and unit-checks. Proven by `cabal build all` and
   `cabal test infernix-unit` on the present CUDA Linux host.
 - **Cohort gate ([Wave I](cohort-validation-waves.md), Stage 2 — Apple cohort only):** the consumed
-  artifacts are built by [Phase 1](phase-1-repository-and-control-plane-foundation.md) Sprint 1.13's
-  Apple-only tart lane; the bootstrap is exercised on Apple, gated on that build.
+  artifacts are materialized by [Phase 1](phase-1-repository-and-control-plane-foundation.md)
+  Sprint 1.14's Apple-only headless lane; the bootstrap is exercised on Apple, gated on that
+  materialization.
 
 ---
 
@@ -571,7 +574,7 @@ generation.
   on unsupported adapter types or missing model metadata rather than dispatching a placeholder.
   Proven by `cabal test infernix-unit` on the present CUDA Linux host.
 - **Cohort gate ([Wave I](cohort-validation-waves.md), Stage 2):** both cohorts dispatch the
-  resolved real adapters and assert real output (Apple Metal incl. tart; CUDA
+  resolved real adapters and assert real output (Apple Metal with headless materialization; CUDA
   `linux-cpu`/`linux-gpu`).
 
 ## Sprint 4.12: Substrate-Owned Daemon Role, Startup Selection, and Fallback Removal [Active]
@@ -855,17 +858,17 @@ resolve `torch` from two indices.
 - **Code (machine-independent) — DONE:** per-engine projects, worker resolution, Dockerfile bake,
   gitignore, base-image alignment; validated by the gate set above on the present CUDA Linux host.
 - **Cohort gate ([Wave I](cohort-validation-waves.md), Stage 2):** the full linux-gpu image bake of
-  all engine venvs, the Linux native-engine binary lane (llama.cpp / whisper.cpp / ONNX /
-  CTranslate2), real model-weight provisioning, and real per-family output for every active-substrate
-  row, on both cohorts; Basic Pitch TensorFlow, Omnizart, and MT3 are named residuals pending
-  maintained equivalents or fallback-lane proof.
+  all engine venvs, replacement of the Linux native smoke wrappers with real native payloads
+  (llama.cpp / whisper.cpp / ONNX / CTranslate2), real model-weight provisioning, and real
+  per-family output for every active-substrate row, on both cohorts; Basic Pitch TensorFlow,
+  Omnizart, and MT3 are named residuals pending maintained equivalents or fallback-lane proof.
 
 ---
 
 ## Sprint 4.17: Per-Engine Engine Images and Batch Routing [Active]
 
 **Status**: Active
-**Code-side closure**: Implemented and under validation on the present CUDA Linux host. The foundation
+**Code-side closure**: Complete for the machine-independent scope on the present Linux outer-container lane. The foundation
 is still present — `docker/Dockerfile` is the slim control-plane/coordinator image (**22.4 GB**, down
 from 121 GB, no framework venvs), `docker/engine.Dockerfile` builds per-engine images (CUDA-runtime
 base + binary + one engine's `--with cuda` venv), the `transformers` per-engine image is
@@ -920,15 +923,22 @@ The latest governed `./bootstrap/linux-gpu.sh test` rerun again passed Haskell s
 and web unit gates, push/pull-verified all five per-engine images plus the control-plane and chart
 upstream images through Harbor, completed final chart rollout and route probes, then failed at the
 first native-process-runner row, `llm-tinyllama-gguf`, because the base engine pod had no
-`/workspace/.data/engines/llama-cpp-cli/bin/llama-cli`. The remaining CUDA Linux blocker is now the
-Linux native-engine binary/materialization lane (`llama.cpp`, `whisper.cpp`, ONNX Runtime,
-CTranslate2, JVM/native tools) before rerunning serialized per-engine validation. The current
-source now also lets native runners resolve image-baked Linux artifacts from
-`/opt/infernix/engines/<adapterId>/bin/...` after checking the repo data root, and passes typed
-model-cache/MinIO fields to Python adapters; mounted linux-gpu validation passes
-`cabal test infernix-unit`, `cabal test infernix-haskell-style`, `cabal build
-test:infernix-integration`, `poetry --directory python run check-code`, `cabal run
-exe:infernix -- lint docs`, `docs check`, `lint files`, `lint proto`, and `lint chart`.
+`/workspace/.data/engines/llama-cpp-cli/bin/llama-cli`. Current source closes that missing-root
+surface: native runners resolve image-baked Linux artifacts from
+`/opt/infernix/engines/<adapterId>/bin/...` after checking the repo data root,
+`infernix internal materialize-linux-native-engines` writes typed manifests and smoke-validated
+entrypoints for the runnable Linux native adapter ids, and `docker/Dockerfile` bakes those roots
+into the substrate image. The remaining CUDA Linux blocker is replacing the smoke wrappers with
+real `llama.cpp`, `whisper.cpp`, ONNX Runtime, CTranslate2, and JVM payloads before rerunning
+serialized per-engine validation. Current source also passes typed model-cache/MinIO fields to
+Python adapters; mounted linux-gpu validation passes `cabal test infernix-unit`, `cabal test
+infernix-haskell-style`, `cabal build test:infernix-integration`,
+`poetry --directory python run check-code`, `cabal run exe:infernix -- lint docs`, `docs check`,
+`lint files`, `lint proto`, and `lint chart`; current validation also passes
+`cabal run exe:infernix -- internal materialize-linux-native-engines`,
+`cabal run exe:infernix -- lint docs`, `cabal run exe:infernix -- docs check`,
+`cabal run exe:infernix -- test unit`, and `cabal run exe:infernix -- test lint` with mounted live
+source after adding the Linux native smoke-root materializer.
 **Cohort gate**: Pending [Wave I](cohort-validation-waves.md), Stage 2 (CUDA Linux).
 **Implementation**: `docker/Dockerfile`, `src/Infernix/Models.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Runtime/Pulsar.hs`, `chart/templates/deployment-engine.yaml`, `chart/values.yaml`, `bootstrap/linux-gpu.sh`
 **Docs to update**: `DEVELOPMENT_PLAN/system-components.md`, `documents/architecture/daemon_topology.md`, `DEVELOPMENT_PLAN/cohort-validation-waves.md`
@@ -957,11 +967,14 @@ own framework, making the cluster image flow practical.
   engine→image/topic mapping.
 - **Lifecycle**: `infernix cluster up` builds/pushes/loads each per-engine image through the same
   Harbor-first flow (`src/Infernix/Cluster.hs` `clusterWorkloadImageRef` becomes a per-engine set).
-- **Linux native-engine binary lane** (folds in former Task 9): a `builder`-stage native sub-build
-  produces llama.cpp / whisper.cpp / ONNX Runtime / CTranslate2 / JVM runner binaries into
-  image-owned `/opt/infernix/engines/<id>/bin/` roots for the native-process-runner rows (speech,
-  gguf-LLM, audio-to-MIDI, CTranslate2 transcription, OMR); the worker checks the repo data root
-  first and then this Linux image root. The Apple equivalent remains Sprint 1.13's tart lane.
+- **Linux native-engine materialization lane** (folds in former Task 9):
+  `src/Infernix/Engines/LinuxNative.hs` owns the allowlisted Linux native adapter ids and
+  `infernix internal materialize-linux-native-engines` writes typed manifests plus smoke-validated
+  entrypoints into image-owned `/opt/infernix/engines/<id>/bin/` roots for the
+  native-process-runner rows (speech, gguf-LLM, audio-to-MIDI, CTranslate2 transcription, OMR);
+  the worker checks the repo data root first and then this Linux image root. The current
+  machine-independent payloads are smoke wrappers; Wave I replaces them with real native payloads.
+  The Apple equivalent is the Sprint 1.14 headless Metal/Core ML materialization lane.
 
 ### Validation
 
@@ -974,25 +987,83 @@ own framework, making the cluster image flow practical.
 
 ### Remaining Work
 
-- **Code (machine-independent) — implemented, validation in progress:** the Dockerfile split (slim
+- **Code (machine-independent) — DONE:** the Dockerfile split (slim
   22.4 GB control-plane + `engine.Dockerfile` per-engine images, transformers GPU-validated), the
   Models engine→name/topic/image mapping, the `engineDaemons` substrate schema, coordinator
   per-engine routing, per-engine service selection, chart Deployments/PDBs, lifecycle image builds, and
   Harbor per-engine image overlays. The temp-copy Linux GPU launcher has passed `cabal build all`,
   `cabal test infernix-unit`, and `cabal test infernix-haskell-style`; current-source lint/docs/chart
-  gates also exit 0.
+  gates also exit 0, and the Linux native smoke-root materializer now passes command-level smoke
+  validation plus `infernix test unit` and `infernix test lint` through the mounted Linux
+  outer-container lane.
 - **Live cluster cohort validation:** build all per-engine images, bring up the routed linux-gpu
   cluster, assert the per-engine pods subscribe to their topics, and run the per-family integration +
   routed E2E evidence. On the repo-owned single-GPU lane, generated Helm values keep per-engine
   replicas at zero and the validation harness scales one per-engine deployment at a time so the
   run proves every routed topic without requiring concurrent framework pods on one GPU. This
   remains a Wave I Stage 2 gate, not a claim of `Done`; the latest rerun has proven Harbor
-  publication and final `cluster up`, and the current first blocker is missing Linux native engine
-  binaries in the base engine pod (`llm-tinyllama-gguf` missing `llama-cli`). The ONNX Runtime
-  audio-to-MIDI row remains queued behind that native-binary/materialization lane.
+  publication and final `cluster up`, and current source closes the missing Linux native root by
+  baking smoke-validated `/opt/infernix/engines/<adapterId>/bin/...` roots. The current first
+  blocker is replacing those smoke wrappers with real native payloads; the ONNX Runtime
+  audio-to-MIDI row remains queued behind that real-payload lane.
 - **Cohort gate ([Wave I](cohort-validation-waves.md), Stage 2):** build all per-engine images,
   bring up the cluster, route + run the per-family integration + routed E2E on the GPU, with the
   native lane for the native rows; Basic Pitch TensorFlow, Omnizart, and MT3 remain named residuals.
+
+---
+
+## Sprint 4.18: Engine Artifact Manifests and Matrix Reconciliation [Active]
+
+**Status**: Active
+**Code-side closure**: Complete for the machine-independent scope — `src/Infernix/Models.hs` now reflects the researched runnable/residual matrix (Apple CTranslate2 runnable as CPU, Basic Pitch TensorFlow / MT3 / Omnizart residual rather than runnable, Wan Apple MPS residual), `residualMatrixRowIdsForMode` records named residual rows without promoting them into runtime catalogs, `infernix-engine-artifacts` is an explicit bucket in object layout, demo bucket repair, and chart MinIO provisioning, and the Apple manifest materializer from Sprint 1.14 supplies typed engine-artifact manifests. `src/Infernix/Engines/LinuxNative.hs` now adds the Linux image-owned materialization surface: typed manifests, smoke-validated runner roots for `llama-cpp-cli`, `whisper-cpp-cli`, `onnx-runtime-native`, `ctranslate2-native`, and `jvm-native`, a generated CLI command, and a `docker/Dockerfile` bake step. Validated through the Linux outer-container lane with mounted live source by `cabal run exe:infernix -- internal materialize-linux-native-engines`, `cabal run exe:infernix -- test unit` (Haskell unit plus PureScript 71/71), `cabal run exe:infernix -- lint docs`, `cabal run exe:infernix -- docs check`, and `cabal run exe:infernix -- test lint`.
+**Cohort gate**: Pending [Wave I](cohort-validation-waves.md), Stage 2 — replace Linux native smoke wrappers with real llama.cpp, whisper.cpp, ONNX Runtime, CTranslate2, and JVM/native payloads plus real-output smoke; Apple native/Core ML artifact load remains gated on Phase 1 Sprint 1.14.
+**Implementation**: `README.md`, `docker/Dockerfile`, `src/Infernix/Engines/LinuxNative.hs`, `src/Infernix/Models.hs`, `src/Infernix/Objects/Layout.hs`, `src/Infernix/Demo/Bootstrap.hs`, `chart/values.yaml`, `chart/templates/minio/job-provisioning.yaml`, `src/Infernix/Runtime/Worker.hs`, `src/Infernix/Bootstrap/Models.hs`, `proto/infernix/manifest/runtime_manifest.proto`, `documents/engineering/apple_silicon_metal_headless_builds.md`, `documents/engineering/object_storage.md`, `documents/engineering/model_lifecycle.md`
+**Docs to update**: `README.md`, `documents/architecture/model_catalog.md`, `documents/architecture/runtime_modes.md`, `documents/engineering/object_storage.md`, `documents/engineering/model_lifecycle.md`, `documents/engineering/build_artifacts.md`, `documents/engineering/apple_silicon_metal_headless_builds.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
+
+### Objective
+
+Apply the model/engine research findings to the runtime catalog and artifact lifecycle. Engine
+software, model weights, and user-visible generated artifacts must be three distinct artifact
+classes, and the README matrix must stop promoting residual or unproven engine cells.
+
+### Deliverables
+
+- add a typed engine-artifact manifest model with adapter id, engine name, substrate, architecture,
+  artifact kind, source reference, versions, digest, optional MinIO key, install root, entrypoint,
+  and smoke command
+- add the `infernix-engine-artifacts` MinIO bucket contract for immutable content-addressed engine
+  payloads, separate from `infernix-models` weights and `infernix-demo-objects` user/demo artifacts
+- materialize engine payloads atomically into `./.data/engines/<adapterId>/` on Apple or
+  image-owned `/opt/infernix/engines/<adapterId>/` on Linux; the current Linux payloads are
+  machine-independent smoke wrappers pending Wave I real-engine replacement
+- update `src/Infernix/Models.hs` and generated catalog docs to match the researched matrix:
+  Apple CTranslate2 is viable CPU, vLLM CPU is not a portable `linux-cpu` default, MT3/JAX and
+  Omnizart remain residual until compatibility spikes pass, Wan Apple MPS remains residual, and
+  Basic Pitch TensorFlow stays residual behind ONNX/Core ML fallback lanes
+- keep CUDA framework stacks image-owned or pre-materialized; they are never installed on a user
+  request path
+
+### Validation
+
+- unit coverage for manifest key derivation, digest handling, install-root selection, and missing
+  native runner diagnostics
+- `infernix lint docs` proves README matrix and model catalog docs agree with the generated model
+  catalog
+- materialization smoke coverage for the Linux native smoke roots is unit-covered locally; real
+  native payload smoke plus one Apple native artifact under the headless lane remains the Wave I
+  cohort gate
+- failed materialization leaves no partial final root and redelivers or negatively acknowledges
+  work when asynchronous
+
+### Remaining Work
+
+- Replace the Linux native smoke wrappers with real llama.cpp, whisper.cpp, ONNX Runtime,
+  CTranslate2, and JVM/native payloads under image-owned `/opt/infernix/engines/<adapterId>/`
+  roots.
+- Add real native-runner smoke validation for those Linux payloads and the Apple native/Core ML
+  artifact load once the Phase 1 headless Apple bridge is available.
+- Keep Basic Pitch TensorFlow, MT3/JAX, Omnizart, and Wan Apple MPS as residual rows until
+  compatibility spikes prove maintained runnable lanes.
 
 ---
 
@@ -1012,11 +1083,17 @@ through the temp-copy Linux GPU launcher by `cabal build all`, `cabal test infer
 current-source linux-gpu substrate materialize/validate check that renders `engineDaemons` with
 canonical and per-engine batch topics. The **Wave I cohort sign-off** still remains:
 producing and asserting real per-family output on hardware is the Stage 2 cohort gate — both cohorts
-run the real engines (Apple Metal incl. tart, and CUDA GPU real inference) under
+run the real engines (Apple Metal with headless materialization, and CUDA GPU real inference) under
 [Wave I](cohort-validation-waves.md), and Apple-native real inference additionally depends on
-[Phase 1](phase-1-repository-and-control-plane-foundation.md) Sprint 1.13's Apple-only tart-built
-Metal artifacts. The phase stays `Active` and returns to `Done` only after Wave I lands the
-full Apple and CUDA Linux gates against real inference and the per-engine routed cluster path.
+[Phase 1](phase-1-repository-and-control-plane-foundation.md) Sprint 1.14's headless
+Metal/Core ML materialization lane. Sprint 4.18 has closed the local matrix/bucket/docs portion:
+the generated runtime catalogs omit named residual rows, record them through
+`residualMatrixRowIdsForMode`, and provision the `infernix-engine-artifacts` bucket alongside
+`infernix-models` and `infernix-demo-objects`. Current source also closes the local missing-root
+surface for Linux native adapters by baking typed, smoke-validated
+`/opt/infernix/engines/<adapterId>/` roots. The remaining Phase 4 residual is real engine payload
+replacement and real-output validation: the phase returns to `Done` only after Wave I lands the full
+Apple and CUDA Linux gates against real inference and the per-engine routed cluster path.
 See the two-axis execution rule in
 [development_plan_standards.md](development_plan_standards.md) Section Q.
 
@@ -1029,8 +1106,9 @@ See the two-axis execution rule in
 - `documents/architecture/model_catalog.md` - per-substrate engine binding and generated catalog contract
 - `documents/engineering/docker_policy.md` - shared Linux substrate image doctrine and snapshot launcher expectations
 - `documents/engineering/build_artifacts.md` - build roots, generated proto handling, and image-owned toolchain contract
+- `documents/engineering/apple_silicon_metal_headless_builds.md` - Apple headless Metal/Core ML materialization and engine manifest rules
 - `documents/engineering/model_lifecycle.md` - durable artifacts, bundle metadata, and cache semantics
-- `documents/engineering/object_storage.md` - repo-local object storage rules plus reserved MinIO path and service-placement access notes
+- `documents/engineering/object_storage.md` - MinIO model, engine-artifact, and demo-object bucket rules plus service-placement access notes
 - `documents/engineering/storage_and_state.md` - durable-versus-derived state inventory
 - `documents/engineering/implementation_boundaries.md` - Haskell versus Python versus chart ownership
 - `documents/engineering/portability.md` - portable platform rules versus Apple or Linux substrate detail
@@ -1051,7 +1129,7 @@ See the two-axis execution rule in
   and [../documents/development/testing_strategy.md](../documents/development/testing_strategy.md);
   artifact object references land in the `infernix-demo-objects` bucket described in
   [../documents/engineering/object_storage.md](../documents/engineering/object_storage.md)
-- Apple-native real inference depends on the tart-built Metal engine artifacts owned by
-  [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md)
-  Sprint 1.13 and the [../documents/operations/apple_silicon_runbook.md](../documents/operations/apple_silicon_runbook.md)
-  tart build lane
+- Apple-native real inference depends on the headless Apple Metal/Core ML materialization lane
+  owned by [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md)
+  Sprint 1.14 and documented in
+  [../documents/engineering/apple_silicon_metal_headless_builds.md](../documents/engineering/apple_silicon_metal_headless_builds.md)

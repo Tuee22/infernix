@@ -6,12 +6,16 @@
 > **Purpose**: Define the supported object-storage contract: which MinIO
 > buckets exist, what they hold, who reads and writes them, and how the
 > coordinator's lazy model-bootstrap workflow populates platform model
-> weights with exactly-once semantics.
+> weights with exactly-once semantics while engine software artifacts stay
+> separate from model weights.
 
 ## Current Status
 
-The supported object-storage contract uses two MinIO buckets:
-`infernix-models` always-on and `infernix-demo-objects` demo-gated.
+The implemented object-storage contract uses three MinIO buckets:
+`infernix-models` for platform model weights, `infernix-engine-artifacts` for immutable
+content-addressed engine software payloads, and `infernix-demo-objects` for user uploads and
+engine-generated demo artifacts. Engine software payloads are distinct from model weights and
+from user-visible generated artifacts.
 `src/Infernix/Runtime/Cache.hs` is structured around
 `modelCacheRoot/<runtimeMode>/<modelId>/manifest.pb` so manifests sit
 beside the cached weights, and the durable-source URI shape used by
@@ -21,12 +25,13 @@ no on-host filesystem path pretends to be S3.
 
 ## Bucket Inventory
 
-The supported target shape uses two MinIO buckets and nothing else:
+The supported shape uses three MinIO buckets and nothing else:
 
 | Bucket | Gating | Key layout | Purpose |
 |---|---|---|---|
 | `infernix-models` | Always-on (not demo-gated) | `<modelId>/<filename>` plus a per-model `<modelId>/.ready` sentinel object | Platform-owned model weights, tokenizers, and configs. Populated lazily by the coordinator's model-bootstrap Failover subscription on first use. Read by every engine pod (Linux substrates) and by the on-host engine daemon (Apple silicon). |
-| `infernix-demo-objects` | Demo-gated (absent when `demo_ui = false`) | `users/<userId>/contexts/<contextId>/uploads/<objectKey>` and `users/<userId>/contexts/<contextId>/generated/<objectKey>` | User uploads and non-text INPUTS — audio and image references (browser → presigned PUT) on the `uploads/` prefix — plus real per-family engine-generated ARTIFACT results (source-separation stems, audio-to-MIDI / music-transcription MIDI and MusicXML, generated images, video, and audio) written by the engine adapter through the presigned PUT helper on the `generated/` prefix. Read by the browser via presigned GET URLs minted at `/api/objects`. This is the only artifact bucket; the retired `infernix-runtime` and `infernix-results` buckets are not part of the supported contract. |
+| `infernix-engine-artifacts` | Always-on (not demo-gated) | `sha256/<digest>` plus optional adapter pointers such as `<substrate>/<adapterId>/<version>/manifest.pb` | Immutable engine software payloads: wheelhouses, native binaries, Core ML compiled models, JVM tools, and reusable Apple or Linux materialization payloads. Model weights never live here. |
+| `infernix-demo-objects` | Demo-gated (absent when `demo_ui = false`) | `users/<userId>/contexts/<contextId>/uploads/<objectKey>` and `users/<userId>/contexts/<contextId>/generated/<objectKey>` | User uploads and non-text INPUTS — audio and image references (browser → presigned PUT) on the `uploads/` prefix — plus real per-family engine-generated ARTIFACT results (source-separation stems, audio-to-MIDI / music-transcription MIDI and MusicXML, generated images, video, and audio) written by the engine adapter through the presigned PUT helper on the `generated/` prefix. Read by the browser via presigned GET URLs minted at `/api/objects`. This is the only demo/user artifact bucket; the retired `infernix-runtime` and `infernix-results` buckets are not part of the supported contract. |
 
 ## Bucket Scope Policies
 
@@ -34,11 +39,40 @@ The supported target shape uses two MinIO buckets and nothing else:
   bootstrap worker; only the coordinator's service account has PUT
   permission. The bucket is not browser-addressable directly; weights
   never leave the cluster.
+- `infernix-engine-artifacts` is read by controlled materialization
+  commands and engine pods that need reusable software payloads. Writes
+  are content-addressed and immutable; mutable adapter pointers, when
+  present, are compare-and-swap style publication records rather than
+  payload overwrites.
 - `infernix-demo-objects` uses per-user grant-minting scope checks that restrict
   the default object path to the authenticated user's prefix. Presigned URLs are bearer
   capabilities until expiry, so callers must treat them as session-confidential. See
   [../tools/minio.md](../tools/minio.md) for the policy details.
 - Cross-bucket access is not part of the supported contract.
+
+## Engine Software Artifacts
+
+Engine software artifacts are not model weights. They use their own
+content-addressed contract so the platform can cache expensive engine payloads
+without confusing them with Hugging Face checkpoints, GitHub release model
+files, or user-visible generated artifacts.
+
+The materialization flow is:
+
+1. Resolve a typed engine-artifact manifest for `(substrate, adapterId,
+   artifactKind, version, architecture)`.
+2. If the manifest names a MinIO object key, fetch the immutable payload from
+   `infernix-engine-artifacts`.
+3. Materialize into a temporary local directory under the active engine-install
+   root.
+4. Run the manifest's smoke command.
+5. Rename atomically into `./.data/engines/<adapterId>/` on Apple or into the
+   image-owned `/opt/infernix/engines/<adapterId>/` root on Linux.
+6. Ack the materialization work only after the local root is complete.
+
+Failed materialization leaves no partial final root and is retryable. Pulsar
+redelivery or negative acknowledgement owns retry semantics for asynchronous
+materialization work.
 
 ## Engine Model-Weight Loading
 
@@ -87,12 +121,12 @@ storage.
 Non-text INPUTS are carried the same way: an audio or image input is
 staged into `infernix-demo-objects` under the per-user `uploads/`
 prefix and referenced on the request as a typed object reference,
-rather than inlined. `ResultPayload` already carries the
-`oneof {inline_output, object_ref}` discriminant on the wire (a
-population gap, not a schema gap); the genuinely new proto fields are a
-non-text INPUT object reference on `InferenceRequest` / `WorkerRequest`
-and an object-reference OUTPUT on `WorkerResponse` for the artifact
-adapters.
+rather than inlined. `ResultPayload` carries the
+`oneof {inline_output, object_ref}` discriminant on the wire, and
+`buildPayload` routes text families to inline output and artifact
+families to object references. The newer proto fields are a non-text
+INPUT object reference on `InferenceRequest` / `WorkerRequest` and an
+object-reference OUTPUT on `WorkerResponse` for the artifact adapters.
 
 ## Coordinator Model-Bootstrap Workflow
 
@@ -181,8 +215,8 @@ The routed Linux GPU E2E flow validates the server-side
   and cross-user object-prefix isolation for two Keycloak users with
   the same context id and display name.
 - Production-shape test (`demo_ui = false`) confirms `infernix-models`
-  is present, `infernix-demo-objects` is absent, and no daemon has a
-  PVC.
+  and `infernix-engine-artifacts` are present, `infernix-demo-objects`
+  is absent, and no daemon has a PVC.
 
 ## Cross-References
 
