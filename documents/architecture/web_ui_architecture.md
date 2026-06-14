@@ -19,11 +19,11 @@ When the flag is on:
   routed edge port; all of them are served by `infernix-demo`
 - manual inference always enters through that clustered `infernix-demo` surface, but the daemon
   lane behind it is substrate-specific: the coordinator consumes request topics and forwards to
-  the configured batch topic; Linux CPU engines consume in-cluster `inference.batch.linux-cpu`,
-  Linux GPU per-engine framework pods can consume `inference.batch.linux-gpu.<engine>`, and
-  Apple host-native engines consume `inference.batch.apple-silicon.host`
+  derived engine-pool topics; Linux engines consume through Kubernetes pool workloads, and Apple
+  host-native engines consume through host-daemon pool membership
 - `/api/publication` exposes that distinction through `daemonLocation`,
-  `hostInferenceBatchTopic`, and `inferenceDispatchMode`
+  `inferenceExecutorLocation`, `inferenceDispatchMode`, and engine-pool routing metadata rather
+  than a single host batch topic
 - the visible catalog comes from the generated active-mode demo catalog rather than a
   hand-maintained UI allowlist
 
@@ -35,7 +35,7 @@ selects which executable runs where that executable is deployed.
 
 On Apple Silicon, the cluster deploys `infernix-demo`, `infernix-coordinator`, and the
 support-service stack, while the canonical Apple inference executor remains a host-native
-`infernix service` process that consumes host batches. On Linux substrates, the demo workload,
+`infernix service` process that consumes assigned pool/model topics. On Linux substrates, the demo workload,
 coordinator, and engine run from the cluster-resident substrate image.
 
 On Linux, the substrate image owns the web build prerequisites, the baked `web/dist/` bundle,

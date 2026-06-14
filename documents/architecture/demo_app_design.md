@@ -205,9 +205,10 @@ The demo binds the three-role daemon model in
   single-flight dispatcher and the result-bridge on the demo's
   conversation and result topics. Stateless, replicas ≥ 2 by default;
   Pulsar `Failover` provides leader election.
-- **Engine.** The `infernix-engine` Deployment (Linux) or the
-  existing on-host daemon (Apple) runs the inference engine. Strict
-  one-per-node policy on every substrate.
+- **Engine.** Linux engine pool workloads or on-host Apple daemon
+  members run the inference engine. Linux placement is managed by
+  Kubernetes rules; Apple placement is managed by stable host ids and
+  pool assignments.
 
 The demo binary owns only the frontend role; the coordinator and
 engine pods are platform infrastructure shared with any other

@@ -130,14 +130,13 @@ Direct reference path:
   `daemonLocation: cluster-pod`, reports `inferenceExecutorLocation: control-plane-host`, and
   publishes `inferenceDispatchMode: pulsar-bridge-to-host-daemon` so the routed demo surface can
   advertise the coordinator-plus-host-engine split explicitly
-- the direct `infernix service` host run carries the engine daemon role: it consumes the
-  generated engine-role metadata and batch topic, auto-discovers Pulsar's direct un-gated proxy
+- the direct `infernix service` host run carries the engine daemon role: it consumes the generated
+  engine-pool membership for its Apple host id, auto-discovers Pulsar's direct un-gated proxy
   NodePort transport (the `/admin/v2` and `/ws/v2` surfaces, not the JWT-gated `/pulsar/admin`
   edge) from published cluster state when needed, and forks Python adapters from `python/adapters/`
-  only when the bound engine is Python-native. The one-per-node policy is Pulsar
-  subscription ownership: `Exclusive` by default, intentional `Failover` only for standby host
-  designs, and no `Shared` subscription for Apple local execution or materialization. A duplicate
-  `Exclusive` host worker fails at the broker-owned subscription boundary.
+  only when the bound engine is Python-native. Normal Apple pools use Pulsar `Shared`
+  subscriptions across distinct host ids so broker-native backpressure assigns work to available
+  hosts; exact-host routes use derived per-host topics with `Exclusive`.
 - model weights for the host engine come from the `infernix-models` MinIO bucket via the
   same lazy bootstrap workflow the in-cluster Linux engine pods use. The host daemon caches
   weights under `./.data/runtime/model-cache/<modelId>/`; this cache is host-local ephemeral

@@ -1,7 +1,7 @@
 # Pulsar
 
 **Status**: Authoritative source
-**Referenced by**: [../engineering/edge_routing.md](../engineering/edge_routing.md), [../architecture/daemon_topology.md](../architecture/daemon_topology.md), [../../DEVELOPMENT_PLAN/phase-3-ha-platform-services-and-edge-routing.md](../../DEVELOPMENT_PLAN/phase-3-ha-platform-services-and-edge-routing.md)
+**Referenced by**: [../engineering/edge_routing.md](../engineering/edge_routing.md), [../architecture/daemon_topology.md](../architecture/daemon_topology.md), [../architecture/engine_pool_routing.md](../architecture/engine_pool_routing.md), [../../DEVELOPMENT_PLAN/phase-3-ha-platform-services-and-edge-routing.md](../../DEVELOPMENT_PLAN/phase-3-ha-platform-services-and-edge-routing.md)
 
 > **Purpose**: Record the supported production topic contract and the current daemon
 > implementation.
@@ -13,9 +13,8 @@
   staged `.dhall` value overrides it, and `cluster up` reconciles that tenant and namespace
   before topics are produced or subscribed
 - Pulsar is the durable event-transport shape for the production inference surface: the active
-  `.dhall` names the daemon role, request topics, result topic, and any configured batch handoff
-  topic that the production daemons own, and `infernix service` keeps those daemons on a no-HTTP
-  surface
+  `.dhall` names the daemon role, request topics, result topic, and the validated engine-pool graph
+  that production daemons own, and `infernix service` keeps those daemons on a no-HTTP surface
 - repo-owned `.proto` schemas define the payload contract for request and result topics; the same
   schemas feed both `proto-lens`-generated Haskell bindings and auto-generated Python protobuf
   modules consumed by the active substrate adapter package
@@ -61,9 +60,10 @@
 The active `.dhall` config carries the production inference fields consumed by `infernix service`:
 
 - `daemonRole : Text` - the role selected by the colocated file for the daemon process
-- `coordinator` - coordinator-role metadata, including request topics, result topic, location,
-  and the configured batch handoff topic when the coordinator forwards requests to an engine
-- `engine` - engine-role metadata, including the batch topic to consume, result topic, and
+- `coordinator` - coordinator-role metadata, including request topics, result topic, and location
+- `enginePools` - validated pool metadata used to derive legal publish topics and legal engine
+  subscriptions
+- `engine` or `engineMembers` - engine-role metadata, including pool membership, result topic, and
   publication-edge auto-discovery mode for Apple host daemons
 - `request_topics : List Text` - topic names the cluster daemon watches for inbound inference
   requests
@@ -74,34 +74,35 @@ The active `.dhall` config carries the production inference fields consumed by `
   leave it off)
 
 The three-role daemon model in
-[../architecture/daemon_topology.md](../architecture/daemon_topology.md) maps to Pulsar
+[../architecture/daemon_topology.md](../architecture/daemon_topology.md) and
+[../architecture/engine_pool_routing.md](../architecture/engine_pool_routing.md) maps to Pulsar
 subscriptions as follows. The coordinator role (`infernix-coordinator` Deployment on every
-substrate) consumes `request_topics`, applies the dispatch and batching rules, and publishes to
-the configured batch handoff topic. Linux CPU and native-fallback Linux GPU work use
-`inference.batch.<mode>`; Linux GPU Python-native work can route to
-`inference.batch.<mode>.<engine>` when the generated substrate file declares a matching
-per-engine daemon. Apple host-native handoff uses `inference.batch.apple-silicon.host`. The
-engine role (`infernix-engine` Deployment on Linux; per-engine Linux GPU Deployments named
-`infernix-engine-<engine>`; on-host `infernix service` daemon on Apple) consumes its configured
-topic, executes the engine adapter, and publishes results to `result_topic`. Apple host-native
-engine consumption uses a single-owner subscription: `Exclusive` when duplicate host workers are a
-configuration error, or intentional `Failover` when standby host workers are explicitly supported.
-It never uses `Shared` for local engine execution or materialization state. The coordinator then
-writes the result back to the originating per-context conversation topic via the result-bridge.
+substrate) consumes `request_topics`, applies dispatch, batching, and pool-routing rules, and
+publishes to a derived pool/model topic. Engine members consume their assigned derived topics,
+execute the engine adapter, and publish results to `result_topic`. Normal scalable pools use
+`Shared` subscriptions so Pulsar's permits and receiver backlog provide broker-native
+backpressure. Pinned routes use derived per-member topics with `Exclusive` subscriptions. `Failover`
+remains a coordinator leadership primitive for dispatcher, result-bridge, and model-bootstrap work;
+it is not the Apple work-fanout model.
 
-The chart ships `deployment-{coordinator,engine}.yaml`; the engine template renders the base
-engine Deployment plus Linux GPU per-engine engine Deployments when `engine.perEngine.enabled`
-is true. Repo-owned `linux-gpu` lifecycle values set the per-engine replica count to zero on the
-single-GPU lane, and validation scales one matching per-engine deployment before submitting work
-for that engine. The `inference.batch.<mode>` topic family is defined on every substrate, and
-`inference.batch.<mode>.<engine>` is derived for each per-engine Linux GPU daemon (see
-`src/Infernix/Models.hs.canonicalBatchTopicForMode` and `perEngineBatchTopicForMode`).
+The target topic family is derived from the validated pool graph:
 
-The integration suite validates the batch handoff contract on a real cluster: routed
-publication JSON exposes the configured `hostInferenceBatchTopic`, `cluster status` prints
-`publicationHostInferenceBatchTopic`, the generated demo config routes the coordinator from
-`inference.request.linux-gpu` to `inference.batch.linux-gpu`, and the generated engine daemon
-list includes Linux GPU per-engine batch topics without forwarding again.
+```text
+persistent://infernix/demo/inference.batch.<mode>.pool.<poolId>.model.<modelId>
+persistent://infernix/demo/inference.batch.<mode>.member.<memberId>.model.<modelId>
+```
+
+The first form is the scalable pool path; the second form is the pinned-member path. The current
+implementation derives coordinator pool handoff from this graph. The earlier
+`inference.batch.<mode>`, `inference.batch.<mode>.<engine>`, and
+`inference.batch.apple-silicon.host` helpers remain only as legacy compatibility surfaces while the
+deletion-ledger cleanup retires old chart and daemon-selection assumptions.
+
+The unit suite already validates invalid graph rejection and derived topic selection. The Wave J
+integration suite validates the pool handoff contract on a real cluster: generated configuration
+rejects a routable model with no eligible pool member, the coordinator publishes only to derived
+topics, pool consumers use `Shared` with bounded permits, pinned consumers use `Exclusive`, and
+`demo_ui = false` keeps the production coordinator while omitting demo-only workloads.
 
 ## Demo Conversation and Metadata Topics
 
@@ -145,10 +146,9 @@ Rules:
   coordinator replica is the active dispatcher per context at a time; the result-bridge in
   the coordinator pod uses a named **Failover** subscription on `inference.result.<mode>`
   with the same semantics
-- the Apple host engine consumes its batch topic through **Exclusive** by default or
-  intentionally configured **Failover** for standby hosts; a message is acknowledged only after
-  engine materialization, inference, and durable result publication succeed, while failed
-  materialization leaves the message unacked or negatively acknowledged for redelivery
+- engine-pool messages are acknowledged only after engine materialization, inference, and durable
+  result publication succeed, while failed materialization leaves the message unacked or negatively
+  acknowledged for redelivery
 - Failover ownership uses stable subscription names; individual
   consumers use process-qualified names via `Infernix.Runtime.Pulsar.Failover`
   so multiple coordinator replicas do not present identical member names

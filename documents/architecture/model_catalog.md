@@ -67,13 +67,12 @@ result contract in
 [../development/testing_strategy.md](../development/testing_strategy.md) and the demo validation
 surface in [../development/demo_app_test_plan.md](../development/demo_app_test_plan.md).
 
-The runtime worker invokes the real engine for the selected binding — the Python adapter transform
-over a prebuilt host wheel for python-stdio bindings, or the real native runner binary resolved
-from a typed `HostConfig` absolute path for native-process-runner bindings — fetches model weights
-lazily from the infernix-models MinIO bucket via `adapters.model_cache.get_model_path`, and
-publishes a per-family real result: inline text for the LLM and speech families, and a typed object
-reference into the infernix-demo-objects MinIO bucket for the source-separation, audio-to-MIDI,
-music-transcription, image, video, audio-generation, and OMR artifact families.
+The runtime worker dispatches through the selected engine binding — the Python adapter transform
+over a prebuilt host wheel for python-stdio bindings, or the native runner binary resolved from a
+typed `HostConfig` absolute path for native-process-runner bindings — fetches model weights lazily
+from the `infernix-models` MinIO bucket via `adapters.model_cache.get_model_path`, and publishes the
+typed per-family result surface. Hardware proof that every runnable row produces real output remains
+a cohort gate tracked in `DEVELOPMENT_PLAN/`.
 
 `ResultFamily` is resolved from `family` + `artifactType` + `matrixRowId`. The coarse `family`
 field collapses source-separation, audio-to-MIDI, and audio-generation under a single `audio`

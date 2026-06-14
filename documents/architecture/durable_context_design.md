@@ -135,13 +135,15 @@ shared library minus engine-specific paths loads in the stateless
 **coordinator** Deployment (which additionally runs the model-bootstrap
 worker that lazily populates the `infernix-models` MinIO bucket from
 upstream); the engine-side surface plus `Infernix.Runtime.*` loads in
-the **engine** Deployment, which is constrained to one pod per node
-on every substrate. **No daemon has a PVC** — the only durable state
+assigned **engine** pool members. Linux engine Deployments use
+Kubernetes placement rules; Apple engine members are host daemons with
+stable host ids. **No daemon has a PVC** — the only durable state
 is in MinIO (binary blobs) and Pulsar (event streams). The engine
 pod uses an ephemeral `emptyDir` mount with hard `sizeLimit` for
 model-weight staging only. The supported per-pod placement, replica
-policy, one-per-node engine rule, and no-PVC posture are codified in
-[daemon_topology.md](daemon_topology.md).
+policy, pool ownership, and no-PVC posture are codified in
+[daemon_topology.md](daemon_topology.md) and
+[engine_pool_routing.md](engine_pool_routing.md).
 
 ## Stateless Transport Coordination
 

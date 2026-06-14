@@ -10,6 +10,8 @@ module Infernix.Types
     DaemonRole (..),
     DemoConfig (..),
     EngineBinding (..),
+    EngineMember (..),
+    EnginePool (..),
     ErrorResponse (..),
     InferenceRequest (..),
     InferenceResult (..),
@@ -105,9 +107,9 @@ instance FromJSON RuntimeMode where
 --    substrates it runs as the in-cluster @infernix-coordinator@
 --    Deployment; on Apple silicon it runs in-cluster too.
 --  * 'Engine' = stateful inference role. On Linux it runs as the
---    in-cluster @infernix-engine@ Deployment under required pod
---    anti-affinity; on Apple silicon it runs as the on-host
---    @infernix service@ daemon under exclusive @engine.lock@.
+--    in-cluster @infernix-engine@ Deployment or a pool-specific
+--    workload; on Apple silicon it runs as an on-host
+--    @infernix service@ daemon selected by stable engine member id.
 data DaemonRole
   = Coordinator
   | Engine
@@ -281,6 +283,8 @@ data DemoConfig = DemoConfig
     -- per-engine image, selected by @infernix service --role engine
     -- --engine-name <name>@.
     engineDaemons :: [DaemonConfig],
+    enginePools :: [EnginePool],
+    engineMembers :: [EngineMember],
     requestTopics :: [Text],
     resultTopic :: Text,
     -- | Always-on MinIO bucket the coordinator's bootstrap subscription
@@ -355,6 +359,7 @@ instance FromJSON ConsumerSubscriptionType where
 data DaemonConfig = DaemonConfig
   { daemonConfigRole :: DaemonRole,
     daemonConfigLocation :: Text,
+    daemonConfigMemberId :: Maybe Text,
     daemonConfigRequestTopics :: [Text],
     daemonConfigResultTopic :: Text,
     daemonConfigHostBatchTopic :: Maybe Text,
@@ -368,6 +373,7 @@ instance ToJSON DaemonConfig where
     object
       [ "role" .= daemonConfigRole daemonConfig,
         "location" .= daemonConfigLocation daemonConfig,
+        "memberId" .= daemonConfigMemberId daemonConfig,
         "request_topics" .= daemonConfigRequestTopics daemonConfig,
         "result_topic" .= daemonConfigResultTopic daemonConfig,
         "host_batch_topic" .= daemonConfigHostBatchTopic daemonConfig,
@@ -380,11 +386,68 @@ instance FromJSON DaemonConfig where
     DaemonConfig
       <$> value .: "role"
       <*> value .: "location"
+      <*> value .:? "memberId"
       <*> value .: "request_topics"
       <*> value .: "result_topic"
       <*> value .:? "host_batch_topic"
       <*> value .:? "pulsarConnectionMode" .!= ConfiguredTransport
       <*> value .:? "consumerSubscriptionType"
+
+data EnginePool = EnginePool
+  { enginePoolId :: Text,
+    enginePoolRuntimeMode :: RuntimeMode,
+    enginePoolModelIds :: [Text],
+    enginePoolMemberIds :: [Text],
+    enginePoolSubscriptionType :: ConsumerSubscriptionType,
+    enginePoolMaxInflightPerMember :: Int
+  }
+  deriving (Eq, Read, Show)
+
+instance ToJSON EnginePool where
+  toJSON pool =
+    object
+      [ "id" .= enginePoolId pool,
+        "runtimeMode" .= enginePoolRuntimeMode pool,
+        "models" .= enginePoolModelIds pool,
+        "members" .= enginePoolMemberIds pool,
+        "subscription" .= enginePoolSubscriptionType pool,
+        "maxInflightPerMember" .= enginePoolMaxInflightPerMember pool
+      ]
+
+instance FromJSON EnginePool where
+  parseJSON = withObject "EnginePool" $ \value ->
+    EnginePool
+      <$> value .: "id"
+      <*> value .: "runtimeMode"
+      <*> value .: "models"
+      <*> value .: "members"
+      <*> value .: "subscription"
+      <*> value .: "maxInflightPerMember"
+
+data EngineMember = EngineMember
+  { engineMemberId :: Text,
+    engineMemberRuntimeMode :: RuntimeMode,
+    engineMemberLocation :: Text,
+    engineMemberPoolIds :: [Text]
+  }
+  deriving (Eq, Read, Show)
+
+instance ToJSON EngineMember where
+  toJSON member =
+    object
+      [ "id" .= engineMemberId member,
+        "runtimeMode" .= engineMemberRuntimeMode member,
+        "location" .= engineMemberLocation member,
+        "pools" .= engineMemberPoolIds member
+      ]
+
+instance FromJSON EngineMember where
+  parseJSON = withObject "EngineMember" $ \value ->
+    EngineMember
+      <$> value .: "id"
+      <*> value .: "runtimeMode"
+      <*> value .: "location"
+      <*> value .: "pools"
 
 data EngineBinding = EngineBinding
   { engineBindingName :: Text,
@@ -687,6 +750,8 @@ instance ToJSON DemoConfig where
         "coordinator" .= coordinatorDaemon demoConfig,
         "engine" .= listToMaybe (engineDaemons demoConfig),
         "engineDaemons" .= engineDaemons demoConfig,
+        "enginePools" .= enginePools demoConfig,
+        "engineMembers" .= engineMembers demoConfig,
         "request_topics" .= requestTopics demoConfig,
         "result_topic" .= resultTopic demoConfig,
         "models_bucket" .= modelsBucket demoConfig,
@@ -736,6 +801,8 @@ instance FromJSON DemoConfig where
         case engineDaemonsMaybe of
           Just configuredDaemons -> pure configuredDaemons
           Nothing -> pure (maybeToList legacyEngineDaemonValue)
+    enginePoolValues <- value .:? "enginePools" .!= []
+    engineMemberValues <- value .:? "engineMembers" .!= []
     modelsBucketValue <- value .:? "models_bucket" .!= defaultModelsBucket
     modelBootstrapTopicValue <-
       value .:? "model_bootstrap_topic" .!= defaultModelBootstrapTopic
@@ -747,6 +814,8 @@ instance FromJSON DemoConfig where
       <*> pure daemonRoleValue
       <*> pure coordinatorDaemonValue
       <*> pure engineDaemonValues
+      <*> pure enginePoolValues
+      <*> pure engineMemberValues
       <*> pure requestTopicValues
       <*> pure resultTopicValue
       <*> pure modelsBucketValue
@@ -779,6 +848,7 @@ defaultCoordinatorDaemonConfig runtimeMode requestTopicValues resultTopicValue =
   DaemonConfig
     { daemonConfigRole = Coordinator,
       daemonConfigLocation = "cluster-pod",
+      daemonConfigMemberId = Nothing,
       daemonConfigRequestTopics = requestTopicValues,
       daemonConfigResultTopic = resultTopicValue,
       daemonConfigHostBatchTopic = defaultHostBatchTopic runtimeMode,
@@ -794,11 +864,12 @@ defaultEngineDaemonConfig runtimeMode resultTopicValue =
         DaemonConfig
           { daemonConfigRole = Engine,
             daemonConfigLocation = "control-plane-host",
+            daemonConfigMemberId = Just "apple-host-default",
             daemonConfigRequestTopics = maybe [] pure (defaultHostBatchTopic runtimeMode),
             daemonConfigResultTopic = resultTopicValue,
             daemonConfigHostBatchTopic = Nothing,
             daemonConfigPulsarConnectionMode = PublicationEdgeAutoDiscovery,
-            daemonConfigConsumerSubscriptionType = Just ConsumerExclusive
+            daemonConfigConsumerSubscriptionType = Just ConsumerShared
           }
     _ -> Nothing
 

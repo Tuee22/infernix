@@ -14,6 +14,12 @@ module Infernix.Models
     engineBindingForSelectedEngine,
     engineBindingsForMode,
     encodeDemoConfig,
+    engineMemberPinnedTopicForMode,
+    engineMemberRequestTopics,
+    engineMembersForMode,
+    enginePoolForModel,
+    enginePoolTopicForMode,
+    enginePoolsForMode,
     expectedDaemonLocationForRuntime,
     expectedInferenceExecutorLocationForRuntime,
     expectedInferenceDispatchModeForRuntime,
@@ -33,6 +39,7 @@ module Infernix.Models
 where
 
 import Data.ByteString.Lazy.Char8 qualified as LazyChar8
+import Data.Char (isAlphaNum)
 import Data.List (find, intercalate, nub)
 import Data.Maybe (fromMaybe, mapMaybe)
 import Data.Text (Text)
@@ -203,6 +210,140 @@ frameworkEngineNamesForMode runtimeMode =
 perEngineBatchTopicForMode :: RuntimeMode -> Text -> Text
 perEngineBatchTopicForMode runtimeMode engineName =
   canonicalBatchTopicForMode runtimeMode <> "." <> engineName
+
+-- | Derived normal-pool topic. Operators declare pools and members, never
+-- raw topic strings; every legal batch topic is rendered from this helper.
+enginePoolTopicForMode :: RuntimeMode -> Text -> Text -> Text
+enginePoolTopicForMode runtimeMode poolId modelIdValue =
+  defaultPulsarTopicPrefix
+    <> "inference.batch."
+    <> runtimeModeId runtimeMode
+    <> ".pool."
+    <> topicSegment poolId
+    <> ".model."
+    <> topicSegment modelIdValue
+
+-- | Derived pinned-member topic for exact-member routes. The first pool
+-- implementation does not route normal traffic here, but the helper fixes the
+-- only supported topic shape for pinned routes.
+engineMemberPinnedTopicForMode :: RuntimeMode -> Text -> Text -> Text
+engineMemberPinnedTopicForMode runtimeMode memberId modelIdValue =
+  defaultPulsarTopicPrefix
+    <> "inference.batch."
+    <> runtimeModeId runtimeMode
+    <> ".member."
+    <> topicSegment memberId
+    <> ".model."
+    <> topicSegment modelIdValue
+
+enginePoolForModel :: DemoConfig -> Text -> Maybe EnginePool
+enginePoolForModel demoConfig modelIdValue =
+  find ((modelIdValue `elem`) . enginePoolModelIds) (enginePools demoConfig)
+
+engineMemberRequestTopics :: RuntimeMode -> [EnginePool] -> EngineMember -> [Text]
+engineMemberRequestTopics runtimeMode pools member =
+  [ enginePoolTopicForMode runtimeMode (enginePoolId pool) modelIdValue
+  | pool <- pools,
+    enginePoolId pool `elem` engineMemberPoolIds member,
+    modelIdValue <- enginePoolModelIds pool
+  ]
+
+enginePoolsForMode :: RuntimeMode -> [EnginePool]
+enginePoolsForMode runtimeMode =
+  [ EnginePool
+      { enginePoolId = poolId,
+        enginePoolRuntimeMode = runtimeMode,
+        enginePoolModelIds = map modelId groupedModels,
+        enginePoolMemberIds = memberIdsForPool runtimeMode poolId isPythonPool,
+        enginePoolSubscriptionType = ConsumerShared,
+        enginePoolMaxInflightPerMember = 1
+      }
+  | (poolId, isPythonPool, groupedModels) <- groupedModelsByEngine runtimeMode
+  ]
+
+engineMembersForMode :: RuntimeMode -> [EngineMember]
+engineMembersForMode runtimeMode =
+  case runtimeMode of
+    AppleSilicon ->
+      [ EngineMember
+          { engineMemberId = "apple-host-default",
+            engineMemberRuntimeMode = runtimeMode,
+            engineMemberLocation = "control-plane-host",
+            engineMemberPoolIds = map enginePoolId pools
+          }
+      ]
+    LinuxCpu ->
+      [ EngineMember
+          { engineMemberId = "linux-cpu-engine",
+            engineMemberRuntimeMode = runtimeMode,
+            engineMemberLocation = "cluster-pod",
+            engineMemberPoolIds = map enginePoolId pools
+          }
+      ]
+    LinuxGpu ->
+      nativeMember <> frameworkMembers
+  where
+    pools = enginePoolsForMode runtimeMode
+    nativePoolIds =
+      [ poolId
+      | (poolId, isPythonPool, _) <- groupedModelsByEngine runtimeMode,
+        not isPythonPool
+      ]
+    nativeMember =
+      [ EngineMember
+          { engineMemberId = "native",
+            engineMemberRuntimeMode = runtimeMode,
+            engineMemberLocation = "cluster-pod",
+            engineMemberPoolIds = nativePoolIds
+          }
+      | not (null nativePoolIds)
+      ]
+    frameworkMembers =
+      [ EngineMember
+          { engineMemberId = poolId,
+            engineMemberRuntimeMode = runtimeMode,
+            engineMemberLocation = "cluster-pod",
+            engineMemberPoolIds = [poolId]
+          }
+      | (poolId, isPythonPool, _) <- groupedModelsByEngine runtimeMode,
+        isPythonPool
+      ]
+
+memberIdsForPool :: RuntimeMode -> Text -> Bool -> [Text]
+memberIdsForPool runtimeMode poolId isPythonPool =
+  case runtimeMode of
+    AppleSilicon -> ["apple-host-default"]
+    LinuxCpu -> ["linux-cpu-engine"]
+    LinuxGpu
+      | isPythonPool -> [poolId]
+      | otherwise -> ["native"]
+
+groupedModelsByEngine :: RuntimeMode -> [(Text, Bool, [ModelDescriptor])]
+groupedModelsByEngine runtimeMode =
+  [ (engineName, pythonNative, modelsForEngine engineName)
+  | engineName <- nub (map modelEngineName activeCatalog),
+    let binding = bindingForEngineName engineName,
+    let pythonNative = engineBindingPythonNative binding
+  ]
+  where
+    activeCatalog = catalogForMode runtimeMode
+    modelEngineName model = engineNameForSelectedEngine runtimeMode (selectedEngine model)
+    modelsForEngine engineName = filter ((== engineName) . modelEngineName) activeCatalog
+    bindingForEngineName engineName =
+      case find ((== engineName) . modelEngineName) activeCatalog of
+        Just model ->
+          engineBindingForSelectedEngine runtimeMode (selectedEngine model)
+        Nothing ->
+          engineBindingForSelectedEngine runtimeMode engineName
+
+topicSegment :: Text -> Text
+topicSegment =
+  Text.map
+    ( \character ->
+        if isAlphaNum character || character `elem` ("._-" :: String)
+          then character
+          else '-'
+    )
 
 -- | Per-engine image name: @infernix-engine-<engine>-<mode>:local@, built from
 -- @docker/engine.Dockerfile@.

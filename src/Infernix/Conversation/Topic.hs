@@ -102,10 +102,10 @@ inferenceResultTopicName :: TopicNamespace -> Text -> Text
 inferenceResultTopicName ns substrateId =
   qualifiedTopic ns ("inference.result." <> substrateId)
 
--- | Apple host-batch handoff topic
--- @persistent://infernix/demo/inference.batch.<substrate>@. Sprint 7.7
--- generalises this to every substrate; the helper is namespace-aware now so
--- callers don't need to know the future cluster role split.
+-- | Legacy substrate-scoped batch handoff topic
+-- @persistent://infernix/demo/inference.batch.<substrate>@. Normal routing now
+-- derives pool/model topics from the validated engine-pool graph; this helper
+-- remains namespace-aware for compatibility surfaces.
 inferenceBatchTopicName :: TopicNamespace -> Text -> Text
 inferenceBatchTopicName ns substrateId =
   qualifiedTopic ns ("inference.batch." <> substrateId)

@@ -74,13 +74,10 @@ redelivery, Pulsar producer-side deduplication, and projection-layer idempotency
   simultaneously; assert producer dedup + Pulsar Failover guarantees exactly one upstream
   download, the `.ready` sentinel appears exactly once, and all N engine pods observe it
   and proceed.
-- **One-engine-per-node enforcement.** On Linux,
-  `kubectl scale deployment/infernix-engine --replicas=N+1` (where N = engine-capable nodes)
-  leaves one replica `Pending` with the anti-affinity rejection message. On Apple, the chaos case
-  proves host batch ownership through Pulsar `Exclusive` or intentional `Failover` subscription
-  semantics and rejects `Shared` for local engine execution or materialization. A duplicate
-  `infernix service` host-engine process must fail at the broker-owned `Exclusive` subscription
-  boundary instead of becoming another local engine consumer.
+- **Engine placement and pool ownership.** On Linux, scaling a pool beyond its legal placement leaves
+  the extra replica unschedulable with the expected Kubernetes placement diagnostic. On Apple,
+  multiple distinct host ids may subscribe to a shared model pool and broker backpressure distributes
+  work to members with capacity; pinned host routes use `Exclusive` and reject duplicate consumers.
 
 The `linux-cpu` integration lane implements these cases as pod replacement, node-drain, and
 deduplicated bootstrap replay checks against the real Kind cluster. They run alongside the

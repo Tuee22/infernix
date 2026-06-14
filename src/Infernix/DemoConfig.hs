@@ -24,13 +24,13 @@ import Infernix.Config (Paths)
 import Infernix.Config qualified as Config
 import Infernix.HostConfig qualified as HostConfig
 import Infernix.Models
-  ( canonicalBatchTopicForMode,
-    catalogForMode,
+  ( catalogForMode,
     encodeDemoConfig,
     engineBindingsForMode,
-    frameworkEngineNamesForMode,
+    engineMemberRequestTopics,
+    engineMembersForMode,
+    enginePoolsForMode,
     hostBatchTopicForMode,
-    perEngineBatchTopicForMode,
     requestTopicsForMode,
     resultTopicForMode,
   )
@@ -173,6 +173,8 @@ renderGeneratedDemoConfigPayload paths runtimeMode demoUiEnabledValue daemonRole
             activeDaemonRole = daemonRole,
             coordinatorDaemon = coordinatorDaemonConfig runtimeMode,
             engineDaemons = engineDaemonConfigs runtimeMode,
+            enginePools = enginePoolsForMode runtimeMode,
+            engineMembers = engineMembersForMode runtimeMode,
             requestTopics = requestTopicsForMode runtimeMode,
             resultTopic = resultTopicForMode runtimeMode,
             modelsBucket = defaultModelsBucket,
@@ -193,6 +195,7 @@ coordinatorDaemonConfig runtimeMode =
   DaemonConfig
     { daemonConfigRole = Coordinator,
       daemonConfigLocation = "cluster-pod",
+      daemonConfigMemberId = Nothing,
       daemonConfigRequestTopics = requestTopicsForMode runtimeMode,
       daemonConfigResultTopic = resultTopicForMode runtimeMode,
       daemonConfigHostBatchTopic = hostBatchTopicForMode runtimeMode,
@@ -205,65 +208,28 @@ coordinatorDaemonConfig runtimeMode =
 -- @control-plane-host@, Pulsar transport discovered through the
 -- publication edge). On Linux substrates it runs as the in-cluster
 -- @infernix-engine@ Deployment (location @cluster-pod@, Pulsar transport
--- configured directly via env vars). In every case the engine consumes
--- the inference-batch topic the coordinator hands off to.
+-- from the mounted cluster config). In every case the engine consumes
+-- the derived pool/model topics assigned to its stable member id.
 engineDaemonConfigs :: RuntimeMode -> [DaemonConfig]
 engineDaemonConfigs runtimeMode =
-  -- Phase 7 Sprint 7.7: the engine consumes its substrate's
-  -- @inference.batch.<mode>@ topic, executes the worker, and publishes
-  -- the result to @inference.result.<mode>@. The host_batch_topic
-  -- field stays @Nothing@ for the engine role so the consumer loop
-  -- falls into the "execute inline" branch; setting it to the same
-  -- topic the engine consumes from would create an infinite
-  -- forward loop in @handleConsumerEnvelope@. The coordinator role
-  -- is the only daemon that forwards from request -> batch.
-  case runtimeMode of
-    AppleSilicon ->
-      [ hostEngineDaemon runtimeMode
-      ]
-    _ ->
-      genericLinuxEngineDaemon runtimeMode : perFrameworkEngineDaemons runtimeMode
+  map (engineDaemonConfigForMember runtimeMode pools) members
+  where
+    pools = enginePoolsForMode runtimeMode
+    members = engineMembersForMode runtimeMode
 
-hostEngineDaemon :: RuntimeMode -> DaemonConfig
-hostEngineDaemon runtimeMode =
+engineDaemonConfigForMember :: RuntimeMode -> [EnginePool] -> EngineMember -> DaemonConfig
+engineDaemonConfigForMember runtimeMode pools member =
   DaemonConfig
     { daemonConfigRole = Engine,
-      daemonConfigLocation = "control-plane-host",
-      daemonConfigRequestTopics = maybe [] pure (hostBatchTopicForMode runtimeMode),
+      daemonConfigLocation = engineMemberLocation member,
+      daemonConfigMemberId = Just (engineMemberId member),
+      daemonConfigRequestTopics = engineMemberRequestTopics runtimeMode pools member,
       daemonConfigResultTopic = resultTopicForMode runtimeMode,
       daemonConfigHostBatchTopic = Nothing,
-      daemonConfigPulsarConnectionMode = PublicationEdgeAutoDiscovery,
-      daemonConfigConsumerSubscriptionType = Just ConsumerExclusive
-    }
-
-genericLinuxEngineDaemon :: RuntimeMode -> DaemonConfig
-genericLinuxEngineDaemon runtimeMode =
-  DaemonConfig
-    { daemonConfigRole = Engine,
-      daemonConfigLocation = "cluster-pod",
-      daemonConfigRequestTopics = [canonicalBatchTopicForMode runtimeMode],
-      daemonConfigResultTopic = resultTopicForMode runtimeMode,
-      daemonConfigHostBatchTopic = Nothing,
-      daemonConfigPulsarConnectionMode = ConfiguredTransport,
-      daemonConfigConsumerSubscriptionType = Just ConsumerShared
-    }
-
-perFrameworkEngineDaemons :: RuntimeMode -> [DaemonConfig]
-perFrameworkEngineDaemons runtimeMode =
-  case runtimeMode of
-    LinuxGpu ->
-      map (perFrameworkEngineDaemon runtimeMode) (frameworkEngineNamesForMode runtimeMode)
-    _ -> []
-
-perFrameworkEngineDaemon :: RuntimeMode -> Text.Text -> DaemonConfig
-perFrameworkEngineDaemon runtimeMode engineName =
-  DaemonConfig
-    { daemonConfigRole = Engine,
-      daemonConfigLocation = "cluster-pod",
-      daemonConfigRequestTopics = [perEngineBatchTopicForMode runtimeMode engineName],
-      daemonConfigResultTopic = resultTopicForMode runtimeMode,
-      daemonConfigHostBatchTopic = Nothing,
-      daemonConfigPulsarConnectionMode = ConfiguredTransport,
+      daemonConfigPulsarConnectionMode =
+        if runtimeMode == AppleSilicon
+          then PublicationEdgeAutoDiscovery
+          else ConfiguredTransport,
       daemonConfigConsumerSubscriptionType = Just ConsumerShared
     }
 
@@ -313,12 +279,54 @@ validateDemoConfig demoConfig
       Left "engine metadata must not be empty"
   | any invalidDaemonConfig (engineDaemons demoConfig) =
       Left "every engine metadata entry must declare role, location, request topics, and result topic"
+  | null (enginePools demoConfig) =
+      Left "enginePools must not be empty"
+  | null (engineMembers demoConfig) =
+      Left "engineMembers must not be empty"
+  | duplicatePoolIds /= [] =
+      Left ("duplicate engine pool ids detected: " <> intercalate ", " duplicatePoolIds)
+  | duplicateMemberIds /= [] =
+      Left ("duplicate engine member ids detected: " <> intercalate ", " duplicateMemberIds)
+  | invalidPoolIds /= [] =
+      Left ("invalid engine pool ids detected: " <> intercalate ", " invalidPoolIds)
+  | invalidMemberIds /= [] =
+      Left ("invalid engine member ids detected: " <> intercalate ", " invalidMemberIds)
+  | emptyPoolModelIds /= [] =
+      Left ("engine pools must declare at least one model id: " <> intercalate ", " emptyPoolModelIds)
+  | emptyPoolMemberIds /= [] =
+      Left ("engine pools must declare at least one member id: " <> intercalate ", " emptyPoolMemberIds)
+  | emptyMemberPoolIds /= [] =
+      Left ("engine members must declare at least one pool id: " <> intercalate ", " emptyMemberPoolIds)
+  | wrongRuntimePoolIds /= [] =
+      Left ("engine pools use the wrong runtimeMode: " <> intercalate ", " wrongRuntimePoolIds)
+  | wrongRuntimeMemberIds /= [] =
+      Left ("engine members use the wrong runtimeMode: " <> intercalate ", " wrongRuntimeMemberIds)
+  | ambiguousPoolModelIds /= [] =
+      Left ("engine pool model ownership is ambiguous: " <> intercalate ", " ambiguousPoolModelIds)
+  | unknownPoolModelIds /= [] =
+      Left ("engine pools reference unknown model ids: " <> intercalate ", " unknownPoolModelIds)
+  | unknownPoolMemberIds /= [] =
+      Left ("engine pools reference unknown member ids: " <> intercalate ", " unknownPoolMemberIds)
+  | unknownMemberPoolIds /= [] =
+      Left ("engine members reference unknown pool ids: " <> intercalate ", " unknownMemberPoolIds)
+  | poolMemberLinksMissingFromMembers /= [] =
+      Left ("engine pool member links must be bidirectional: " <> intercalate ", " poolMemberLinksMissingFromMembers)
+  | memberPoolLinksMissingFromPools /= [] =
+      Left ("engine member pool links must be bidirectional: " <> intercalate ", " memberPoolLinksMissingFromPools)
+  | failoverPoolIds /= [] =
+      Left ("engine pools must not use Failover subscriptions: " <> intercalate ", " failoverPoolIds)
+  | invalidInflightPoolIds /= [] =
+      Left ("engine pools must set maxInflightPerMember greater than zero: " <> intercalate ", " invalidInflightPoolIds)
+  | unroutableModelIds /= [] =
+      Left ("models without eligible engine members: " <> intercalate ", " unroutableModelIds)
+  | engineDaemonsWithoutMembers /= [] =
+      Left ("engine daemons reference unknown member ids: " <> intercalate ", " engineDaemonsWithoutMembers)
   | configRuntimeMode demoConfig == AppleSilicon && isNothing primaryEngineDaemon =
       Left "apple-silicon configs must include engine metadata"
   | configRuntimeMode demoConfig == AppleSilicon && isNothing (daemonConfigHostBatchTopic (coordinatorDaemon demoConfig)) =
-      Left "apple-silicon coordinator metadata must declare a host batch topic"
+      Left "apple-silicon coordinator metadata must declare a legacy handoff topic fallback"
   | configRuntimeMode demoConfig == AppleSilicon && maybe True (null . daemonConfigRequestTopics) primaryEngineDaemon =
-      Left "apple-silicon engine metadata must consume the host batch topic"
+      Left "apple-silicon engine metadata must consume assigned pool topics"
   | any runtimeMismatch (models demoConfig) =
       Left "every model runtimeMode must match the demo config runtimeMode"
   | missingEngineBindings /= [] =
@@ -369,6 +377,139 @@ validateDemoConfig demoConfig
     duplicateModelIds = duplicates (map (Text.unpack . modelId) (models demoConfig))
     duplicateMatrixRows = duplicates (map (Text.unpack . matrixRowId) (models demoConfig))
     duplicateEngineNames = duplicates (map (Text.unpack . engineBindingName) (engines demoConfig))
+    duplicatePoolIds = duplicates (map (Text.unpack . enginePoolId) (enginePools demoConfig))
+    duplicateMemberIds = duplicates (map (Text.unpack . engineMemberId) (engineMembers demoConfig))
+    knownModelIds = map modelId (models demoConfig)
+    knownPoolIds = map enginePoolId (enginePools demoConfig)
+    knownMemberIds = map engineMemberId (engineMembers demoConfig)
+    invalidPoolIds =
+      [ Text.unpack (enginePoolId pool)
+      | pool <- enginePools demoConfig,
+        invalidRoutingId (enginePoolId pool)
+      ]
+    invalidMemberIds =
+      [ Text.unpack (engineMemberId member)
+      | member <- engineMembers demoConfig,
+        invalidRoutingId (engineMemberId member)
+      ]
+    emptyPoolModelIds =
+      [ Text.unpack (enginePoolId pool)
+      | pool <- enginePools demoConfig,
+        null (enginePoolModelIds pool)
+      ]
+    emptyPoolMemberIds =
+      [ Text.unpack (enginePoolId pool)
+      | pool <- enginePools demoConfig,
+        null (enginePoolMemberIds pool)
+      ]
+    emptyMemberPoolIds =
+      [ Text.unpack (engineMemberId member)
+      | member <- engineMembers demoConfig,
+        null (engineMemberPoolIds member)
+      ]
+    wrongRuntimePoolIds =
+      [ Text.unpack (enginePoolId pool)
+      | pool <- enginePools demoConfig,
+        enginePoolRuntimeMode pool /= configRuntimeMode demoConfig
+      ]
+    wrongRuntimeMemberIds =
+      [ Text.unpack (engineMemberId member)
+      | member <- engineMembers demoConfig,
+        engineMemberRuntimeMode member /= configRuntimeMode demoConfig
+      ]
+    ambiguousPoolModelIds =
+      duplicates
+        [ Text.unpack modelIdValue
+        | pool <- enginePools demoConfig,
+          modelIdValue <- enginePoolModelIds pool
+        ]
+    unknownPoolModelIds =
+      nub
+        [ Text.unpack modelIdValue
+        | pool <- enginePools demoConfig,
+          modelIdValue <- enginePoolModelIds pool,
+          modelIdValue `notElem` knownModelIds
+        ]
+    unknownPoolMemberIds =
+      nub
+        [ Text.unpack memberId
+        | pool <- enginePools demoConfig,
+          memberId <- enginePoolMemberIds pool,
+          memberId `notElem` knownMemberIds
+        ]
+    unknownMemberPoolIds =
+      nub
+        [ Text.unpack poolId
+        | member <- engineMembers demoConfig,
+          poolId <- engineMemberPoolIds member,
+          poolId `notElem` knownPoolIds
+        ]
+    poolMemberLinksMissingFromMembers =
+      [ Text.unpack (enginePoolId pool) <> "/" <> Text.unpack memberId
+      | pool <- enginePools demoConfig,
+        memberId <- enginePoolMemberIds pool,
+        memberId `elem` knownMemberIds,
+        not (memberDeclaresPool memberId (enginePoolId pool))
+      ]
+    memberPoolLinksMissingFromPools =
+      [ Text.unpack (engineMemberId member) <> "/" <> Text.unpack poolId
+      | member <- engineMembers demoConfig,
+        poolId <- engineMemberPoolIds member,
+        poolId `elem` knownPoolIds,
+        not (poolDeclaresMember poolId (engineMemberId member))
+      ]
+    failoverPoolIds =
+      [ Text.unpack (enginePoolId pool)
+      | pool <- enginePools demoConfig,
+        enginePoolSubscriptionType pool == ConsumerFailover
+      ]
+    invalidInflightPoolIds =
+      [ Text.unpack (enginePoolId pool)
+      | pool <- enginePools demoConfig,
+        enginePoolMaxInflightPerMember pool <= 0
+      ]
+    unroutableModelIds =
+      [ Text.unpack modelIdValue
+      | modelIdValue <- knownModelIds,
+        not (modelHasEligibleMember modelIdValue)
+      ]
+    engineDaemonsWithoutMembers =
+      nub
+        [ Text.unpack memberId
+        | daemonConfig <- engineDaemons demoConfig,
+          Just memberId <- [daemonConfigMemberId daemonConfig],
+          memberId `notElem` knownMemberIds
+        ]
+    modelHasEligibleMember modelIdValue =
+      any (poolHasEligibleMember modelIdValue) (enginePools demoConfig)
+    poolHasEligibleMember modelIdValue pool =
+      modelIdValue `elem` enginePoolModelIds pool
+        && any (memberParticipatesInPool pool) (engineMembers demoConfig)
+    memberParticipatesInPool pool member =
+      engineMemberId member `elem` enginePoolMemberIds pool
+        && enginePoolId pool `elem` engineMemberPoolIds member
+    memberDeclaresPool memberId poolId =
+      any
+        ( \member ->
+            engineMemberId member == memberId
+              && poolId `elem` engineMemberPoolIds member
+        )
+        (engineMembers demoConfig)
+    poolDeclaresMember poolId memberId =
+      any
+        ( \pool ->
+            enginePoolId pool == poolId
+              && memberId `elem` enginePoolMemberIds pool
+        )
+        (enginePools demoConfig)
+    invalidRoutingId value =
+      Text.null stripped
+        || "persistent://" `Text.isInfixOf` stripped
+        || "/" `Text.isInfixOf` stripped
+        || ":" `Text.isInfixOf` stripped
+        || Text.any (== ' ') stripped
+      where
+        stripped = Text.strip value
 
 duplicates :: (Ord a) => [a] -> [a]
 duplicates values =

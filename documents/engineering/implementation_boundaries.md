@@ -96,20 +96,22 @@ Pulsar+MinIO wiring under the chaos validation suite.
   broker-side durable. It is the only daemon role with
   outbound-internet egress (used solely for upstream model downloads
   in the bootstrap workflow).
-- **Engine daemon (stateful adapter execution, one per node).** The
-  `infernix-engine` Deployment on Linux substrates, and the on-host
-  daemon on Apple silicon, load `Infernix.Conversation.Reducer` and
-  `Infernix.Conversation.Hash` for engine-side KV-cache consistency
-  plus the engine runtime modules for adapter management. They must not
+- **Engine daemon (stateful adapter execution, pool member).** Linux
+  engine workloads and on-host Apple silicon daemon members load
+  `Infernix.Conversation.Reducer` and `Infernix.Conversation.Hash` for
+  engine-side KV-cache consistency plus the engine runtime modules for
+  adapter management. They subscribe only to assigned derived
+  pool/model topics, use `Shared` for normal pool membership, and use
+  `Exclusive` only for explicit pinned member routes. They must not
   import `Infernix.Demo.*` (or any other `<appNamespace>.*`),
   `Infernix.Objects.Presigned`, `Infernix.Auth.Jwt`,
   `Infernix.Dispatch.SingleFlight`, `Infernix.Bridge.Result`,
   `Infernix.Bootstrap.Models`, or any WebSocket module. The engine
-  has no PVC; its only on-disk state is an ephemeral `emptyDir`
-  model-weight cache populated lazily from the `infernix-models`
-  MinIO bucket through the shared adapter helper
-  `python/adapters/model_cache.py`, which the worker configures from
-  request-carried model-cache and MinIO settings before adapter execution.
+  has no PVC; its only on-disk state is a derived model-weight cache
+  populated lazily from the `infernix-models` MinIO bucket through the
+  shared adapter helper `python/adapters/model_cache.py`, which the
+  worker configures from request-carried model-cache and MinIO settings
+  before adapter execution.
 
 The Haskell style gate enforces that engine-runtime import boundary for
 `src/Infernix/Runtime.hs`, `src/Infernix/Runtime/Cache.hs`,
@@ -127,9 +129,10 @@ runtime orchestration, auth, object-presign, or WebSocket modules.
 The dependency arrows are strict: shared library has no upward
 dependencies; the demo binary, the coordinator daemon, and the engine
 daemon all depend on shared library; none of the three daemons depend
-on each other. Per-pod placement, replica policy, and the
-one-per-node engine rule are documented in
-[../architecture/daemon_topology.md](../architecture/daemon_topology.md).
+on each other. Per-substrate placement, replica policy, pool ownership,
+and pinned-member routing are documented in
+[../architecture/daemon_topology.md](../architecture/daemon_topology.md) and
+[../architecture/engine_pool_routing.md](../architecture/engine_pool_routing.md).
 
 Adding a second similar app (e.g., a hypothetical `infernix-notebook`) follows the same
 pattern: a new `Infernix.<AppName>.*` namespace reuses every shared module verbatim and the

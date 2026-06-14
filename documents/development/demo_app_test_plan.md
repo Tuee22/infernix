@@ -119,13 +119,12 @@ The integration layer runs through the `infernix-integration` Cabal stanza.
 
 Coverage:
 
-- **Linux GPU coordinator-to-engine handoff.** The integration suite asserts routed
-  publication JSON reports the active `hostInferenceBatchTopic`, `cluster status` reports
-  the matching `publicationHostInferenceBatchTopic`, and the generated demo config routes
-  the coordinator from `inference.request.linux-gpu` to the canonical
-  `inference.batch.linux-gpu` fallback plus per-engine
-  `inference.batch.linux-gpu.<engine>` topics while engine daemons consume their batch topics
-  without forwarding again.
+- **Coordinator-to-engine-pool handoff.** The integration suite should assert routed publication
+  and `cluster status` report the validated engine-pool routing graph, and the generated substrate
+  config routes the coordinator from request topics to derived pool/model topics while engine
+  members consume only assigned topics without forwarding again. Current Linux GPU per-engine and
+  Apple host-topic metadata remains legacy compatibility coverage until the deletion-ledger cleanup
+  removes it.
 - **Linux GPU service-loop round-trip.** The same run exercises cluster up, routed API
   probes, per-model inference, cache lifecycle, service runtime loop, and clean cluster down
   from the rebuilt CUDA launcher image.
@@ -386,11 +385,12 @@ e2e/browser layer asserts the family-appropriate rendered surface:
 - **Audio generation / TTS** (bark) — an inline `<audio>` player.
 - **OMR tool** (Audiveris) — a MusicXML download-only artifact.
 
-The browser proves the real engine ran by the rendered shape (inline text, audio player, image,
-video, MIDI/MusicXML download) and never by golden strings. Inline-text rows render directly from
+The browser asserts the result surface by rendered shape (inline text, audio player, image, video,
+MIDI/MusicXML download) and never by golden strings. Inline-text rows render directly from
 `inline_output`; artifact rows render or download from a typed `object_ref` into the always-on
-infernix-demo-objects bucket. The union across the three substrate catalogs covers every README
-matrix row even though no single substrate carries all 19 rows (apple 15, cpu 12, gpu 16).
+infernix-demo-objects bucket. Hardware proof that those paths exercise real engines remains a cohort
+gate. The union across the three substrate catalogs covers every README matrix row even though no
+single substrate carries all 19 rows (apple 15, cpu 12, gpu 16).
 
 ## Validation
 

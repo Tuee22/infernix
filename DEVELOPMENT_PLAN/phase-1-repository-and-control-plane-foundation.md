@@ -39,8 +39,8 @@ schema and retargets the retained `infernix internal materialize-metal-engines` 
 engine-artifact manifest materialization. The supported Apple Metal/Core ML materialization target
 uses a fixed host Metal runtime bridge, typed engine-artifact manifests, and no Tart VM, user
 keychain dependency, Xcode UI flow, or request-time toolchain install. The code-side cleanup is
-partially closed; the remaining Phase 1 gate is the Apple-only bridge/native-artifact smoke in
-[Wave I](cohort-validation-waves.md).
+closed for the machine-independent bridge source, manifest, and install-root contract; the remaining
+Phase 1 gate is the Apple-only bridge/native-artifact smoke in [Wave I](cohort-validation-waves.md).
 
 ## Current Repo Assessment
 
@@ -880,7 +880,7 @@ None. The Tart-specific implementation is removed by Sprint 1.14 and recorded in
 ## Sprint 1.14: Apple Headless Metal/Core ML Materialization Reset [Active]
 
 **Status**: Active
-**Code-side closure**: Partial — the `hostTart` host-manifest field, `HostTool.HostTart`, `AppleTart` prerequisite, and Tart argument builders are removed; the retained `infernix internal materialize-metal-engines` command writes typed engine-artifact manifests under `./.data/engines/<adapterId>/` through temp-root write, smoke-manifest validation, and atomic rename. Machine-independent validation has passed `./bootstrap/linux-cpu.sh build`, `infernix test unit`, `infernix lint files`, `infernix lint docs`, `infernix docs check`, `infernix lint proto`, `infernix lint chart`, and `infernix test lint` through the Linux outer-container lane. The fixed host Metal runtime bridge and Apple native/Core ML artifact smoke remain open.
+**Code-side closure**: Complete for the machine-independent scope — the `hostTart` host-manifest field, `HostTool.HostTart`, `AppleTart` prerequisite, and Tart argument builders are removed; the retained `infernix internal materialize-metal-engines` command writes typed engine-artifact manifests under `./.data/engines/<adapterId>/` through temp-root write, smoke-manifest validation, and atomic rename; and the `apple-metal-runtime-bridge` artifact now materializes the fixed Objective-C/C bridge source plus `bin/infernix-apple-metal-bridge-smoke`, which compiles the bridge with `/usr/bin/clang`, links Metal/Foundation at materialization-smoke time, calls `MTLCreateSystemDefaultDevice`, compiles MSL through `newLibraryWithSource`, dispatches a tiny kernel, and returns a typed diagnostic. Proven by `./bootstrap/linux-cpu.sh build`, rebuilt-image `infernix test unit`, and mounted live-source `cabal test infernix-unit`, `cabal test infernix-haskell-style`, `cabal run exe:infernix -- lint docs`, and `cabal run exe:infernix -- docs check` through the Linux outer-container lane; Apple runtime dispatch remains cohort-only.
 **Cohort gate**: Pending [Wave I](cohort-validation-waves.md) — Apple host bridge dispatch, Tart-absent materialization, native/Core ML artifact load, and host engine smoke on Apple Silicon.
 **Implementation**: `documents/engineering/apple_silicon_metal_headless_builds.md`, `src/Infernix/Engines/AppleSilicon.hs`, `src/Infernix/HostPrereqs.hs`, `src/Infernix/HostConfig.hs`, `dhall/InfernixHost.dhall`, `test/unit/Spec.hs`
 **Docs to update**: `README.md`, `AGENTS.md`, `CLAUDE.md`, `documents/engineering/apple_silicon_metal_headless_builds.md`, `documents/engineering/build_artifacts.md`, `documents/operations/apple_silicon_runbook.md`, `documents/architecture/configuration_doctrine.md`, `documents/engineering/host_tools_manifest.md`, `documents/engineering/portability.md`, `documents/engineering/docker_policy.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
@@ -918,7 +918,7 @@ The replacement path must not require Tart, user keychain state, host Xcode UI f
 
 ### Remaining Work
 
-- Implement and validate the host Metal runtime bridge on Apple Silicon.
+- Run the materialized host Metal bridge smoke on Apple Silicon.
 - Materialize and smoke at least one native/Core ML artifact on Apple Silicon, then prove the host
   engine loads it from `./.data/engines/<adapterId>/`.
 - Close the headless bridge/materialization cohort gate in

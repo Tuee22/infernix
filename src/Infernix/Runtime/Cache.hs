@@ -34,7 +34,7 @@ import System.IO.Error (catchIOError, isDoesNotExistError)
 -- tree, the @s3://infernix-runtime/@ URI scheme, and the synthetic
 -- artifact-bundle / source-manifest JSON files are retired.
 --
--- In the supported target topology, model weights live in MinIO
+-- In the supported topology, model weights live in MinIO
 -- @infernix-models@; engine pods pull on demand into the @/model-cache@
 -- @emptyDir@ mount, and @adapters/model_cache.get_model_path@ owns the
 -- lazy population + LRU eviction loop. The local cache CLI commands

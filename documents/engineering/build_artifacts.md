@@ -86,14 +86,17 @@ when available.
 Current implementation note: Phase 1 Sprint 1.14 removed the Sprint 1.13 `hostTart` host-manifest
 field, the `AppleTart` prerequisite, and the Tart VM argument builders. The retained
 `infernix internal materialize-metal-engines` helper writes a typed `engine-artifact.json` manifest
-for each allowlisted Apple adapter into its final engine root. The Apple-only cohort residual is
-the fixed Metal runtime bridge smoke and native/Core ML artifact load evidence recorded in
+for each allowlisted Apple adapter into its final engine root. The `apple-metal-runtime-bridge`
+root also carries the fixed bridge source and smoke command; the Apple-only cohort residual is
+executing that Metal runtime smoke and native/Core ML artifact load evidence recorded in
 [../../DEVELOPMENT_PLAN/cohort-validation-waves.md](../../DEVELOPMENT_PLAN/cohort-validation-waves.md).
 
 Every materialized engine root should carry a typed manifest recording `adapterId`, `engineName`,
 `substrate`, `architecture`, `artifactKind`, `sourceRef`, versions, digest, optional MinIO object
-key, local install root, entrypoint, and smoke command. Materialization writes to a temporary
-directory, validates the smoke command, then atomically renames into the final install root.
+key, local install root, entrypoint, and smoke command. Current Apple materialization validates the
+manifest contract before atomic rename; the target lane adds real smoke/load validation before
+rename as a Wave I Apple cohort gate. Linux native roots already exercise smoke-wrapper command
+validation, and Wave I replaces those wrappers with real payloads.
 
 ## Linux Native Engine Artifacts
 

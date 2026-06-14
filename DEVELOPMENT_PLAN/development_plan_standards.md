@@ -269,30 +269,26 @@ Rules:
 - On every substrate, `cluster up` deploys the supported three-role daemon model (see
   [../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md)):
   the stateless frontend Deployment (`infernix-demo`, demo-gated), the stateless coordinator
-  Deployment (`infernix-coordinator`, demo-gated), and the stateful engine role. **No daemon
-  has a PVC**: the coordinator and demo Deployments are PVC-free; the engine Deployment uses
-  a single `emptyDir` volume at `/model-cache` with a hard `sizeLimit` (default `32Gi`,
-  chart values knob `engine.modelCache.sizeLimit`) for staging weights pulled from MinIO,
-  and the adapter runs LRU eviction inside that quota. On Linux substrates the engine role
-  runs as an in-cluster `infernix-engine` Deployment under a strict one-per-node
-  `requiredDuringSchedulingIgnoredDuringExecution` pod anti-affinity rule. On `linux-gpu`, the
-  base engine handles canonical native-fallback batch work and Python-native framework work can
-  use `infernix-engine-<engine>` per-engine Deployments selected by
-  `inference.batch.linux-gpu.<engine>` topics. Repo-owned `linux-gpu` lifecycle values keep those
-  per-engine deployments at zero replicas on the single-GPU lane, and validation scales one at a
-  time. On Apple silicon the engine role runs as the on-host `infernix service` daemon; the target
-  one-per-node rule is Pulsar subscription ownership (`Exclusive` by default, intentional
-  `Failover` only for standby designs), while the current `engine.lock` / `flock(2)` guard remains
-  legacy current code until Phase 7 Sprint 7.23 removes or demotes it.
+  Deployment (`infernix-coordinator`, always production infrastructure), and stateful engine pools.
+  **No daemon has a PVC**: the coordinator and demo Deployments are PVC-free; Linux engine pods use
+  a single `emptyDir` volume at `/model-cache` with a hard `sizeLimit` (default `32Gi`, chart values
+  knob `engine.modelCache.sizeLimit`) for staging weights pulled from MinIO, and the adapter runs
+  LRU eviction inside that quota. Engine routing is substrate-neutral and pool-based: the coordinator
+  publishes to topics derived from `(runtimeMode, pool id, model id, optional member id)`, normal
+  pools use Pulsar `Shared` subscriptions and broker-native backpressure, and exact pinned routes use
+  derived per-member topics with `Exclusive`. On Linux substrates engine members are Kubernetes
+  workloads governed by placement rules. On Apple silicon engine members are on-host
+  `infernix service` daemons with stable host ids. Kubernetes pod names are observational only and
+  must not become durable routing identities.
   Sprint 7.7 of Phase 7 split the legacy fused `infernix-service` pod
   into role-specific Deployments, removed the previous service-data PVC, introduced
   `coordinator.replicaCount` and `engine.replicaCount` knobs (defaults ≥ 2 for the stateless
   demo-on roles; engine replicas operator-set up to the number of engine-capable nodes), and added
   the lazy model-weight bootstrap workflow described in
   [../documents/engineering/object_storage.md](../documents/engineering/object_storage.md).
-  Production deployments (`demo_ui = false`) run only the engine role. The substrate decides
-  where engine execution and result publication happen, not whether the coordinator and app
-  glue exist.
+  Production deployments (`demo_ui = false`) keep the coordinator and engine pools and omit only the
+  demo frontend, browser API, identity surface, and demo-only routes. The substrate decides where
+  engine execution and result publication happen, not whether the coordinator exists.
 - **Durable state lives only in MinIO and Pulsar.** Pulsar carries every typed event
   stream (conversation log, contexts metadata, drafts, inference request/batch/result, the
   `infernix/system/model.bootstrap.request` topic family). MinIO holds binary blobs in two
@@ -302,16 +298,16 @@ Rules:
   artifacts). The previously chart-reserved `infernix-runtime` and `infernix-results`
   placeholder buckets and the `s3://infernix-runtime/` URI scheme are removed by Sprint 7.7.
 - On `apple-silicon`, the in-cluster `infernix-coordinator` Deployment owns cluster-side
-  request-topic consumption and batch handoff via the `inference.batch.apple-silicon` topic.
-  A same-binary on-host engine daemon consumes that
-  batch topic, runs the Apple-native inference engine, and publishes the completed result so
+  request-topic consumption and batch handoff via derived engine-pool topics. Same-binary on-host
+  engine daemons consume their assigned pool/member topics, run the Apple-native inference engine,
+  and publish the completed result so
   the Apple lane can use Metal-capable or unified-memory-aware backends directly. The host
   daemon pulls model weights from `infernix-models` via the same lazy bootstrap workflow
   that the in-cluster engine pods use on Linux substrates; cache lifecycle is host-local
   ephemeral state under `./.data/runtime/model-cache/`, not a cluster PVC.
 - Phase docs must not describe Kind, Docker, or other containerized Apple workloads as equivalent
   Apple GPU execution environments. They may describe cluster-resident Apple daemons only as
-  cluster-side request consumers or host-batch handoff participants unless the implementation and
+  cluster-side request consumers or pool-topic handoff participants unless the implementation and
   validation change together.
 - After the binary exists, the Apple host workflow is allowed to let `infernix` reconcile the
   remaining Homebrew-managed operator tools needed by the active path and bootstrap Poetry through
@@ -379,15 +375,15 @@ Rules:
   host-native, Kind still hosts Harbor, MinIO, Pulsar, operator-managed PostgreSQL, Envoy Gateway,
   the cluster `infernix-coordinator` Deployment, and the optional routed demo app, while
   Apple-native inference execution and result publication run in same-binary host engine daemons
-  fed by Pulsar batch topics.
+  fed by derived Pulsar pool topics.
 - Apple phase docs must not imply that Kind or other containerized Apple workloads have direct
   Metal or unified-memory parity with the host-native Apple daemon. Cluster-resident Apple
-  daemons are canonical for request-topic consumption and host-batch handoff, but the host daemon
+  daemons are canonical for request-topic consumption and pool-topic handoff, but the host daemon
   is the canonical Apple inference executor and result publisher.
 - On `linux-cpu` and `linux-gpu`, the stateless `infernix-coordinator` Deployment reads request
-  topics and publishes batch work, while engine-role Deployments consume
-  `inference.batch.<mode>` or `inference.batch.linux-gpu.<engine>`, run inference, and publish the
-  result. Sprint 7.7 of Phase 7 replaced the fused `infernix-service` pod with role-specific
+  topics and publishes batch work to derived pool/model topics, while engine-role Deployments
+  consume assigned pool topics, run inference, and publish the result. Sprint 7.7 of Phase 7
+  replaced the fused `infernix-service` pod with role-specific
   Deployments.
 - When phase docs describe multi-node or multi-replica topologies, they must distinguish the
   currently generated values from the chart template's explicit replica and anti-affinity
@@ -458,10 +454,11 @@ Rules:
   or workload supported by that substrate together with the matrix row identity, artifact or format
   family, selected engine, request or result contract identifiers, and any substrate-specific
   runtime metadata needed by the service, web UI, or tests.
-- The generated file also records the daemon role for the process that reads it: cluster or host.
-  Host-role Apple daemon configs include the Pulsar connection mode, result topic, and host batch
-  topic the host daemon consumes. Cluster-role configs include the substrate, request and result
-  topics, and, for Apple, the host-inference batch topic used to hand requests to host daemons.
+- The generated file also records the daemon role for the process that reads it: coordinator or
+  engine. Host-role Apple engine configs include the Pulsar connection mode, result topic, stable
+  member id, and pool/member assignment the host daemon consumes. Cluster-role configs include the
+  substrate, request and result topics, and the validated engine-pool graph used to derive legal
+  handoff topics.
 - The supported materialization path accepts `--demo-ui true|false`, and phase docs must keep the
   chosen default versus explicit override behavior honest.
 - `cluster up` creates or updates `ConfigMap/infernix-demo-config` from a cluster-role payload

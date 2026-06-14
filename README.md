@@ -37,8 +37,8 @@ This repository serves two aligned purposes:
   Helm-installed Envoy Gateway controller plus repo-owned HTTPRoute manifests; `infernix` itself
   is no longer a routing process
 - production deployments accept inference work by Pulsar subscription only; the production
-  `infernix service` binds no HTTP listener and the cluster has no `infernix-demo` workload when
-  the demo UI is off
+  `infernix service` binds no HTTP listener, the coordinator remains the production request router,
+  and the cluster has no `infernix-demo` workload when the demo UI is off
 - Python is restricted to the shared Poetry project at `python/pyproject.toml` and the shared
   adapter tree under `python/adapters/`; the canonical quality entrypoint is
   `poetry run check-code`, which runs mypy strict, black check, and ruff strict in sequence
@@ -89,12 +89,13 @@ in-process by the `dhall` Haskell library; the schema is defined at `dhall/Infer
 - launches and supervises engine workers in Haskell; for Python-native engines (PyTorch, JAX,
   vLLM, transformers, etc.), the worker forks a Python adapter from `python/adapters/*.py`
   through `poetry run <adapter-entrypoint>` and speaks protobuf-over-stdio to it
-- invokes the real engine for the selected binding and publishes a per-family real result — inline
-  text for the LLM and speech families, and a typed `infernix-demo-objects` object reference for the
-  source-separation, audio-to-MIDI, music-transcription, image, video, audio-generation, and OMR
-  artifact families
-- routes requests into per-engine, per-model, per-device lanes while leaving batching and runtime
-  memory policy to the child engine
+- dispatches to the real engine entrypoint selected by the active binding and publishes the typed
+  per-family result surface — inline text for the LLM and speech families, and a typed
+  `infernix-demo-objects` object reference for the source-separation, audio-to-MIDI,
+  music-transcription, image, video, audio-generation, and OMR artifact families; hardware proof for
+  real output is tracked in the development-plan cohort gates
+- routes requests into validated engine-pool lanes while leaving engine-local batching and runtime
+  memory policy to the selected engine member
 - stores large outputs in MinIO and returns references when appropriate
 - exposes a demo web UI (PureScript, served by `infernix-demo`) for manually running inference
   against any registered model when the demo flag is on
@@ -149,9 +150,9 @@ The supported local platform is built around:
 
 - one Kind cluster used as the HA testing and demo ground for Harbor, MinIO, Pulsar, the Envoy
   Gateway controller, Prometheus, Grafana, per-service operator-managed PostgreSQL clusters, the
-  production `infernix-engine` workload (stateful, one-per-node), and (when the demo UI is
-  enabled) the stateless `infernix-coordinator` Deployment plus the optional `infernix-demo`
-  workload per the supported three-role daemon model in
+  production `infernix-coordinator` workload, substrate-specific engine pool workloads, and (when
+  the demo UI is enabled) the optional `infernix-demo` workload per the supported three-role daemon
+  model in
   [documents/architecture/daemon_topology.md](documents/architecture/daemon_topology.md)
 - one Envoy-Gateway-API-owned localhost listener (`Gateway/infernix-edge`, port chosen by
   `cluster up` starting at `9090`) backed by the repo-owned `EnvoyProxy/infernix-edge` service
@@ -185,14 +186,15 @@ The supported local platform is built around:
 <!-- infernix:route-registry:readme:end -->
 
 The optional demo UI runs in the cluster as the `infernix-demo` workload when the active `.dhall`
-`demo_ui` flag is on. The supported deployment shape splits inference work across three daemon
-roles (see [documents/architecture/daemon_topology.md](documents/architecture/daemon_topology.md)):
-the stateless frontend Deployment (`infernix-demo`), the stateless coordinator Deployment
-(`infernix-coordinator`, owning Pulsar dispatch, batching, result writeback, and the lazy
-model-weight bootstrap workflow), and the stateful engine role (`infernix-engine` Deployment on
-Linux substrates with strict one-per-node anti-affinity; the on-host `./.build/infernix service`
-daemon on Apple silicon, where Pulsar `Exclusive` or intentional `Failover` subscription ownership
-is the one-per-node rule).
+`demo_ui` flag is on. The supported deployment shape splits inference work across three daemon roles
+(see [documents/architecture/daemon_topology.md](documents/architecture/daemon_topology.md) and
+[documents/architecture/engine_pool_routing.md](documents/architecture/engine_pool_routing.md)): the
+stateless frontend Deployment (`infernix-demo`), the stateless coordinator Deployment
+(`infernix-coordinator`, owning Pulsar dispatch, batching, result writeback, model-to-pool routing,
+and the lazy model-weight bootstrap workflow), and substrate-specific engine pools. Linux pools are
+Kubernetes workloads; Apple pools are host-native `./.build/infernix service` daemons with stable
+host ids. Normal pools use Pulsar `Shared` subscriptions so broker backpressure distributes work;
+exact pinned routes use derived per-member topics with `Exclusive`.
 Anonymous visitors to the routed demo see only the auth-gated landing card with peer `Sign in`
 and `Create account` actions; the summary grid, Chat tab, Artifacts tab, and manual-inference
 workspace render only after the SPA holds a Keycloak JWT. The routed Keycloak login and
@@ -203,31 +205,30 @@ Keycloak JWT on `/harbor`, `/pulsar/admin`, and `/minio/s3` through a cookie wri
 a direct bearer token header. The signed-in shell also offers `Delete account`, which first calls
 `DELETE /api/account` to synchronously remove the caller's `infernix-demo-objects` prefix and
 demo Pulsar topics, then starts Keycloak's `kc_action=delete_account` action.
-The frontend and coordinator Deployments scale horizontally with replicas ≥ 2 under HA defaults;
-the engine role runs at most one pod per node because multiple engines per node would duplicate
-KV cache and model-weight memory with no performance gain. On `linux-gpu`, the base engine handles
-canonical native-fallback batches and per-engine framework images run as
-`infernix-engine-<engine>` Deployments selected by `inference.batch.linux-gpu.<engine>` topics;
-repo-owned single-GPU validation starts those per-engine deployments at zero replicas and scales
-one at a time.
+The frontend and coordinator Deployments scale horizontally with replicas ≥ 2 under HA defaults.
+Engine-pool placement is substrate-specific: Linux pools use Kubernetes placement rules and
+anti-affinity, while Apple pools use durable host ids. On `linux-gpu`, framework-specific pools may
+still render as `infernix-engine-<engine>` Deployments, but routing is derived from the typed pool
+graph rather than from handwritten topic strings.
 **No daemon has a PVC** — durable state lives only in MinIO and Pulsar. Model
 weights are pulled from the `infernix-models` MinIO bucket on first use (lazy bootstrap via a
 Pulsar Failover subscription owned by the coordinator with exactly-once semantics) and staged
 into the engine pod's ephemeral `emptyDir` model cache with a hard `sizeLimit`; pod restart
 wipes the cache and the next request repopulates from MinIO. User uploads and engine-generated
 artifacts (images, audio, video) live in the demo-gated `infernix-demo-objects` bucket; the
-browser reads and writes them through presigned URLs minted at `/api/objects`. On Apple, `./.build/infernix` builds and drives the control plane from the
-host, `cluster up` keeps Harbor, MinIO, Pulsar, PostgreSQL, Envoy Gateway, `infernix-demo`, and
-the stateless `infernix-coordinator` Deployment in Kind, and routed manual inference enters the
-coordinator before Apple-native batches move through Pulsar to the host-side `./.build/infernix`
-engine daemon. Apple host singleton ownership is Pulsar-owned through `Exclusive` or intentional
-`Failover` subscriptions; `Shared` is rejected for local engine execution. On Linux, the same routed demo surface bridges through Pulsar into the coordinator
-Deployment, which hands batches off to the engine-role Deployment set. `/api/publication` now keeps
+browser reads and writes them through presigned URLs minted at `/api/objects`. On Apple,
+`./.build/infernix` builds and drives the control plane from the host while `cluster up` keeps
+Harbor, MinIO, Pulsar, PostgreSQL, Envoy Gateway, `infernix-demo`, and the stateless
+`infernix-coordinator` Deployment in Kind. Routed manual inference enters the coordinator before
+Apple-native batches move through Pulsar to eligible host-side `./.build/infernix` engine daemons.
+On Linux, the same routed demo surface bridges through Pulsar into the coordinator Deployment, which
+hands batches off to Kubernetes engine pools. `/api/publication` now keeps
 `apiUpstream.mode: cluster-demo` for the stable browser base URL, reports
 `daemonLocation: cluster-pod` for every substrate, adds `inferenceExecutorLocation`, and keeps
 `inferenceDispatchMode` so Apple can advertise `pulsar-bridge-to-host-daemon` while Linux
 advertises `pulsar-bridge-to-cluster-daemon`. Production deployments leave the demo flag off,
-accept inference work via Pulsar subscription only, and run only the engine-role Deployment set. The
+accept inference work via Pulsar subscription only, keep the coordinator as the production router,
+and omit only the demo/frontend identity surface. The
 local Kind and HA substrate is the validation and operator baseline for Apple, CPU, and CUDA
 runtime targets.
 
@@ -723,11 +724,12 @@ rebuildable.
 
 ## Configuration and Runtime Contract
 
-- a `.dhall` configuration defines the runtime contract for supported service flows; the active
-  `.dhall` names `daemonRole`, `coordinator`, legacy-compatible `engine`,
-  `engineDaemons : List DaemonConfig`, `request_topics : List Text`, `result_topic : Text`,
-  `engines : List EngineBinding`, and the optional `demo_ui : Bool` flag that gates the
-  `infernix-demo` workload
+- a `.dhall` configuration defines the runtime contract for supported service flows; the
+  active `.dhall` names the coordinator, validated engine pools and members, request topics, result
+  topic, engine bindings, and the optional `demo_ui : Bool` flag that gates the `infernix-demo`
+  workload. The current worktree still carries the legacy-compatible `engine` /
+  `engineDaemons : List DaemonConfig` projection until the deletion-ledger cleanup removes the old
+  raw-topic surfaces
 - Apple host lifecycle and validation commands materialize or verify that file under `./.build/`;
   `./.build/infernix internal materialize-substrate apple-silicon` remains the direct helper for
   explicit restaging or inspection
@@ -741,35 +743,29 @@ rebuildable.
   appear in the demo UI for that mode (when the demo UI is enabled)
 - the set of generated mode-specific demo `.dhall` files must cover every model or workload row in
   the comprehensive model, format, and engine matrix
-- each daemon reads the staged substrate file at startup; hot reload, admin HTTP, and route or
-  device remapping are outside the supported service contract
-- the production inference surface is Pulsar subscription only and runs only the engine role
-  (`infernix-engine` plus any Linux GPU `infernix-engine-<engine>` Deployments on Linux
-  substrates; on-host `infernix service` daemon on Apple silicon). Repo-owned `linux-gpu`
-  lifecycle values keep per-engine deployments at zero replicas on the single-GPU lane and
-  validation scales one at a time; when the demo UI is enabled,
-  the stateless coordinator role (`infernix-coordinator` Deployment) joins the cluster to own
-  per-context dispatch, batching, and result writeback. On every substrate the coordinator consumes protobuf requests from the
-  configured request topics and forwards batches to the configured handoff topic: Linux CPU and
-  native-fallback Linux GPU work use `inference.batch.<mode>`, Linux GPU Python-native work can
-  use `inference.batch.<mode>.<engine>`, and Apple host-native work uses
-  `inference.batch.apple-silicon.host`. The engine role consumes those batches, executes
-  inference, and publishes results to `inference.result.<mode>`; no HTTP listener is bound on
-  either role
+- each daemon reads the staged substrate file at startup; changing model or member assignment is
+  currently a materialize-and-restart or rollout boundary. Future hot reload, if implemented, flows
+  through compacted assignment records rather than ad hoc admin HTTP or raw topic remapping
+- the production inference surface is Pulsar subscription only and includes both the stateless
+  coordinator role (`infernix-coordinator` Deployment) and engine pools (`infernix-engine` plus
+  any Linux GPU framework-specific Deployments on Linux substrates; on-host `infernix service`
+  member daemons on Apple silicon). Repo-owned `linux-gpu` lifecycle values may keep heavyweight
+  framework-specific deployments at zero replicas on the single-GPU lane and validation scales one
+  at a time. The coordinator owns dispatch, batching, model-to-pool routing, result writeback, and
+  model bootstrap. On every substrate the coordinator consumes protobuf requests from configured
+  request topics and forwards batches to derived engine-pool topics. Engine members consume assigned
+  batches, execute inference, and publish results to `inference.result.<mode>`; no HTTP listener is
+  bound on either role
 - local cache state is never authoritative; it is reconstructed from durable metadata and durable
   artifacts
 
 ## Messaging and Lane Model
 
 - the supported production topic contract centers on the configured request topics, result topic,
-  daemon role metadata, and the optional batch handoff topic carried in the active `.dhall`; the
-  generated defaults are one `inference.request.<runtime-mode>` topic family, one
-  `inference.result.<runtime-mode>` topic family, `inference.batch.linux-cpu` /
-  `inference.batch.linux-gpu` for canonical Linux coordinator-to-engine handoff,
-  `inference.batch.linux-gpu.<engine>` for Linux GPU per-engine Python-native handoff, and
-  `inference.batch.apple-silicon.host` for Apple host-native handoff
-- request routing is lane-oriented: one engine, one model, one device class or allocation, one
-  runtime-owned execution stream
+  daemon role metadata, and the validated engine-pool graph carried in the active `.dhall`; batch
+  topics are derived from runtime mode, pool id, model id, and optional pinned member id
+- request routing is pool-oriented: one model resolves to one or more eligible engine pools, and
+  Pulsar broker backpressure distributes work across eligible members in normal `Shared` pools
 - engine-specific workers remain responsible for batching and execution internals after Infernix
   selects the target lane
 - browser-driven manual inference and transport-driven automated inference are expected to converge
@@ -807,9 +803,10 @@ contracts.
   path under the demo surface
 - validation asserts a per-family result contract for every active-substrate catalog row (LLM and
   speech inline text; source-separation, audio-to-MIDI, music-transcription, image, video,
-  audio-generation, and OMR object-reference artifacts), proving the real engine ran rather than a
-  placeholder; one DRY substrate-aware integration suite traverses the README matrix and the union
-  across the `apple-silicon`, `linux-cpu`, and `linux-gpu` catalogs covers every matrix row. See
+  audio-generation, and OMR object-reference artifacts); the hardware proof that these assertions
+  exercise real engines rather than placeholders is tracked in the cohort gates. One DRY
+  substrate-aware integration suite traverses the README matrix and the union across the
+  `apple-silicon`, `linux-cpu`, and `linux-gpu` catalogs covers every matrix row. See
   [documents/development/testing_strategy.md](documents/development/testing_strategy.md)
 - when the demo UI is enabled, the supported product shape is a multi-user durable-context chat
   application: Keycloak self-signup (no email verification), WebSocket post-login transport,
@@ -826,7 +823,7 @@ contracts.
   the demo-specific bindings live in
   [documents/architecture/demo_app_design.md](documents/architecture/demo_app_design.md);
   the supported three-role daemon model (stateless frontend, stateless coordinator,
-  one-per-node stateful engine) lives in
+  substrate-specific engine pools) lives in
   [documents/architecture/daemon_topology.md](documents/architecture/daemon_topology.md);
   and the execution-ordered build out lives in
   [DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md](DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md)
@@ -874,9 +871,9 @@ ground and demo webapp provide the shared operator and demo substrate for this m
 - each matrix row carries a per-family result contract — its `ResultFamily` and whether it returns
   inline text or an `infernix-demo-objects` object reference, owned by
   [documents/architecture/model_catalog.md](documents/architecture/model_catalog.md) — and the
-  integration and Playwright suites assert that real per-family output rather than a placeholder;
-  "every row is covered by at least one substrate" is a mechanically checked invariant under
-  `infernix lint docs`
+  integration and Playwright suites assert that result surface; real-output proof remains a
+  substrate cohort gate. "Every row is covered by at least one substrate" is a mechanically checked
+  invariant under `infernix lint docs`
 - Apple, CPU, and CUDA runtime lanes must be validated as first-class targets rather than narrowing
   the matrix to only the local Kind demo-ground launcher paths
 

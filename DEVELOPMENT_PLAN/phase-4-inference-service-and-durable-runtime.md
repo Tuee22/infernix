@@ -13,11 +13,14 @@
 
 Phase 4 closes around the staged-substrate runtime contract, the shared Python
 adapter boundary, the Pulsar-driven request or result contract, the explicit engine-runner
-dispatch, and the mounted `InfernixCluster.dhall` cluster-wiring contract. The runtime,
-catalog, cache, object-storage, daemon-role, and substrate-file contracts are closed in the
-worktree and were validated in Wave A (Apple) and Wave C (CUDA Linux). The inference contract
-itself is now code-side complete: the worker resolves the real engine for every supported matrix
-row and publishes a real per-family result. The code-side closure for the reopened sprints
+dispatch, the mounted `InfernixCluster.dhall` cluster-wiring contract, and the reopened
+substrate-neutral engine-pool routing contract. The runtime, catalog, cache, object-storage,
+daemon-role, and substrate-file contracts have prior closure evidence from Wave A (Apple) and
+Wave C (CUDA Linux), but Sprint 4.19 reopens the routing schema and runtime contract so Apple,
+Linux CPU, and Linux GPU use one pool graph with derived topics and broker-native backpressure.
+The inference contract itself is code-side complete for dispatch shape: the worker resolves the
+selected engine entrypoint for every supported matrix row and publishes the typed per-family result
+surface. The code-side closure for the reopened sprints
 (4.1, 4.2, 4.3, 4.7, 4.8, 4.10, 4.11, 4.12, 4.14) and Sprint 4.15 — the typed contracts, payload
 routing, proto fields, adapter and worker dispatch, the native-fallback removal, and their unit
 coverage — is **Complete** and was proven by the machine-independent gate set (`cabal build all`,
@@ -30,7 +33,8 @@ per-sprint machine switch (see
 inference also depends on the replacement materialization lane owned by
 [Phase 1](phase-1-repository-and-control-plane-foundation.md) Sprint 1.14. The real per-family
 inference contract is re-validated on both cohorts in [Wave I](cohort-validation-waves.md), and the
-phase cannot return to `Done` until that wave closes. The phase narrative
+engine-pool routing contract must pass its schema, coordinator-routing, and member-subscription
+gates before this phase can return to `Done`. The phase narrative
 describes the supported MinIO-backed shape directly through the runtime, cache, and object storage
 contracts.
 
@@ -45,9 +49,10 @@ behavior driven by the staged substrate file. Durable model artifact storage liv
 `infernix-substrate.dhall`, decoded in-process by the `dhall` Haskell library. The runtime
 contract distinguishes daemon role from inference executor location:
 cluster daemons exist on every substrate and own Pulsar request-topic consumption; Linux cluster
-daemons run inference directly and publish results; Apple cluster daemons publish work to a
-dedicated host batch topic consumed by same-binary host daemons that run Apple-native inference
-and publish the completed results. The
+daemons run inference directly and publish results; Apple cluster daemons publish work to derived
+pool/model topics consumed by same-binary host daemons that run Apple-native inference and publish
+the completed results. Legacy host batch topic metadata remains compatibility-only until cleanup.
+The
 runtime worker dispatches supported Python-native and native adapters through explicit harness
 branches and invokes the real engine for the selected binding: the Python adapter `transform`
 over a prebuilt host wheel for `python-stdio` bindings, or the real native runner binary resolved
@@ -179,7 +184,7 @@ derived local cache state become authoritative.
 
 Keep one service contract while telling the truth about execution context and inference
 placement: Apple control-plane commands are host-native, Apple cluster daemons own request-topic
-consumption and host-batch handoff, Apple inference execution and result publication are
+consumption and derived pool-topic handoff, Apple inference execution and result publication are
 host-side, and Linux inference execution and result publication remain cluster-resident.
 
 ### Deliverables
@@ -399,10 +404,10 @@ non-demo deployment.
 ### Deliverables
 
 - the active `.dhall` schema includes `request_topics`, `result_topic`, daemon-role metadata, and
-  engine-binding metadata; the final Apple role schema also includes host batch-topic and Pulsar
+  engine-binding metadata; the final Apple role schema also includes member assignment and Pulsar
   connection-mode metadata
 - `src/Infernix/Runtime/Pulsar.hs` subscribes to request topics, dispatches work through the
-  worker or host-batch handoff path, and publishes typed protobuf responses to the configured
+  worker or derived pool-topic handoff path, and publishes typed protobuf responses to the configured
   result topic
 - production `infernix service` binds no HTTP port
 - the production chart deploys the role-specific engine daemon without a Kubernetes HTTP Service
@@ -960,7 +965,7 @@ own framework, making the cluster image flow practical.
   CUDA-runtime base + python + the binary + only that engine's `--with cuda` venv).
 - **Per-engine engine Deployments**: `chart/templates/deployment-engine.yaml` templates one engine
   Deployment per deployed framework engine, each referencing its per-engine image, keeping the
-  one-per-node `required` anti-affinity (keyed per engine label) and the GPU resource request.
+  Linux `required` anti-affinity per engine label and the GPU resource request.
 - **Coordinator→per-engine routing**: the coordinator publishes batch work to
   `inference.batch.<mode>.<engine>` keyed on the model's `selectedEngine`→engine name; each
   per-engine engine subscribes only to its own topic. `Infernix.Models` owns the
@@ -1067,21 +1072,88 @@ classes, and the README matrix must stop promoting residual or unproven engine c
 
 ---
 
+## Sprint 4.19: Substrate-Neutral Engine Pool Routing [Active]
+
+**Status**: Active
+**Code-side closure**: Complete on the present Linux outer-container lane — the staged Dhall schema
+now carries `enginePools` and `engineMembers`, Haskell encode/decode/render paths preserve that
+graph, generated configs derive normal pool topics and pinned member topics from
+`(runtimeMode, poolId/memberId, modelId)`, coordinator batch routing resolves model → pool from the
+validated graph, engine-role startup selects member assignments by stable member id first, and
+service consumer validation rejects illegal subscription states (`Failover` for service consumers,
+ambiguous model ownership, raw topic-like ids, unknown models, missing bidirectional pool/member
+links, empty pools or members, and routable models with no eligible member). Proven by
+`./bootstrap/linux-cpu.sh build`; rebuilt-image
+`docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm infernix infernix test unit`;
+and mounted live-source `cabal test infernix-unit`, `cabal test infernix-haskell-style`,
+`cabal run exe:infernix -- lint files/docs/proto/chart`, `cabal run exe:infernix -- docs check`,
+and `cabal run exe:infernix -- test lint`.
+**Cohort gate**: Pending [Wave J](cohort-validation-waves.md) — real Pulsar cluster validation
+must prove `Shared` pool backpressure, pinned `Exclusive` member routes, Apple multi-host member
+ids, Linux pool placement, and the production `demo_ui = false` coordinator-plus-engine-pools
+shape before this sprint can move to `Done`.
+**Implementation**: `dhall/InfernixSubstrate.dhall`, `src/Infernix/Types.hs`, `src/Infernix/Substrate.hs`, `src/Infernix/DemoConfig.hs`, `src/Infernix/Models.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Daemon.hs`, `test/unit/Spec.hs`, `test/integration/Spec.hs`
+**Docs to update**: `README.md`, `documents/architecture/engine_pool_routing.md`, `documents/architecture/daemon_topology.md`, `documents/tools/pulsar.md`, `documents/architecture/runtime_modes.md`, `DEVELOPMENT_PLAN/system-components.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
+
+### Objective
+
+Replace substrate-specific batch-topic special cases with one typed engine-pool graph. The
+coordinator routes to model-derived pool topics, Pulsar distributes normal pool work through broker
+backpressure, and pinned routes use explicit per-member topics.
+
+### Deliverables
+
+- add a typed `enginePools` / `engineMembers` schema to the staged substrate Dhall record
+- derive every legal batch topic from `(runtimeMode, poolId, modelId, optional memberId)` rather
+  than accepting operator-authored topic strings
+- validate that every routable model has at least one eligible member and every member-declared model
+  exists in the active generated catalog
+- replace the single Apple `inference.batch.apple-silicon.host` lane with Apple host-daemon members
+  selected by stable host id
+- preserve Linux GPU framework isolation as pool placement, not as a separate routing doctrine
+- keep model cache state independent from assignment state; removed assignments become evictable
+  rather than immediately deleting warm artifacts
+
+### Validation
+
+- unit coverage rejects duplicate pool ids, unknown model ids, no-member model routes, unknown
+  Apple host ids, and raw topic strings
+- unit coverage proves topic derivation and member subscription selection for Apple, Linux CPU, and
+  Linux GPU
+- integration coverage proves coordinator publication to derived pool/model topics and engine
+  consumption from assigned topics
+- a Pulsar-backed test proves normal pool members use `Shared` with bounded permits while pinned
+  routes use `Exclusive`
+
+### Remaining Work
+
+- **Code (machine-independent — DONE):** Dhall schema, Haskell decoder/renderer, topic derivation,
+  coordinator pool-topic handoff, member-id selection, and invalid-graph rejection have landed.
+  The generated `engineDaemons` list remains as a compatibility projection while cleanup and chart
+  integration finish; it is tracked in
+  [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
+- **Cohort gate ([Wave J](cohort-validation-waves.md)):** add real Pulsar integration coverage for
+  shared-pool backpressure, pinned-route duplicate-consumer rejection, Apple multi-host routing,
+  Linux CPU/GPU pool placement, and production `demo_ui = false` coordinator presence.
+
+---
+
 ## Remaining Work
 
 Phase 4 is `Active`. The real per-family inference contract is code-side **complete** across the
 reopened Sprints 4.1, 4.2, 4.3, 4.7, 4.8, 4.10, 4.11, 4.12, 4.14, Sprint 4.15, and Sprint 4.16
-(per-engine isolated framework venvs). Sprint 4.17's code-side implementation now includes the
-control-plane/per-engine Dockerfile split, the `Infernix.Models` engine→name/topic/image mapping,
-the `engineDaemons` substrate schema, coordinator→`inference.batch.<mode>.<engine>` routing,
-per-engine service selection, chart Deployments/PDBs, lifecycle per-engine image builds, and Harbor
-per-engine image overlays, plus generated lifecycle values and integration/E2E helpers that
-serialize per-engine deployment scale-up on the single-GPU `linux-gpu` lane. It is validated
-through the temp-copy Linux GPU launcher by `cabal build all`, `cabal test infernix-unit`,
-`cabal test infernix-haskell-style`, current-source
-`cabal run exe:infernix -- lint docs`, `docs check`, `lint chart`, `lint files`, `lint proto`, and a
-current-source linux-gpu substrate materialize/validate check that renders `engineDaemons` with
-canonical and per-engine batch topics. The **Wave I cohort sign-off** still remains:
+(per-engine isolated framework venvs). Sprint 4.17's code-side implementation includes the
+control-plane/per-engine Dockerfile split and legacy per-engine image publication surface, and
+Sprint 4.19 has now landed the substrate-neutral engine-pool graph on top of that surface: staged
+Dhall files carry `enginePools` and `engineMembers`, coordinator routing derives pool/model topics
+from validated model ownership, and engine startup selects assignments by stable member id. The
+legacy `engineDaemons` topic list remains as a compatibility projection and cleanup ledger item, not
+as the supported routing doctrine. Sprint 4.19 is validated on the present Linux outer-container
+lane by `./bootstrap/linux-cpu.sh build`, rebuilt-image `infernix test unit`, and mounted
+live-source `cabal test infernix-unit`, `cabal test infernix-haskell-style`,
+`infernix lint files/docs/proto/chart`, `infernix docs check`, and `infernix test lint` through
+`cabal run exe:infernix -- ...`.
+The **Wave I cohort sign-off** still remains:
 producing and asserting real per-family output on hardware is the Stage 2 cohort gate — both cohorts
 run the real engines (Apple Metal with headless materialization, and CUDA GPU real inference) under
 [Wave I](cohort-validation-waves.md), and Apple-native real inference additionally depends on
@@ -1093,7 +1165,10 @@ the generated runtime catalogs omit named residual rows, record them through
 surface for Linux native adapters by baking typed, smoke-validated
 `/opt/infernix/engines/<adapterId>/` roots. The remaining Phase 4 residual is real engine payload
 replacement and real-output validation: the phase returns to `Done` only after Wave I lands the full
-Apple and CUDA Linux gates against real inference and the per-engine routed cluster path.
+Apple and CUDA Linux gates against real inference and the per-engine routed cluster path. Sprint
+4.19's remaining pool-routing residual is Wave J real-cluster proof: shared-pool backpressure,
+pinned-route exclusivity, Apple multi-host membership, Linux pool placement, and cleanup of the
+legacy `engineDaemons` compatibility projection before Phase 4 can return to `Done`.
 See the two-axis execution rule in
 [development_plan_standards.md](development_plan_standards.md) Section Q.
 
@@ -1104,6 +1179,8 @@ See the two-axis execution rule in
 **Engineering docs to create/update:**
 - `documents/architecture/runtime_modes.md` - honest runtime model, host-native Apple control-plane, cluster-daemon role, Apple host inference executor behavior, and Linux substrate lanes
 - `documents/architecture/model_catalog.md` - per-substrate engine binding and generated catalog contract
+- `documents/architecture/engine_pool_routing.md` - substrate-neutral engine-pool graph, derived
+  topic contract, and broker-native backpressure model
 - `documents/engineering/docker_policy.md` - shared Linux substrate image doctrine and snapshot launcher expectations
 - `documents/engineering/build_artifacts.md` - build roots, generated proto handling, and image-owned toolchain contract
 - `documents/engineering/apple_silicon_metal_headless_builds.md` - Apple headless Metal/Core ML materialization and engine manifest rules

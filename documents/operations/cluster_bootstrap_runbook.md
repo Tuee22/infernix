@@ -114,14 +114,16 @@
 - confirm that `infernix kubectl get pods -n platform` shows the Envoy Gateway data plane,
   the Harbor application-plane workloads, the MinIO statefulset, the Pulsar statefulsets,
   the PostgreSQL operator-managed members, and the infernix-owned daemon set for the active
-  shape: `infernix-coordinator` plus the engine-role Deployment set when `demo_ui = true`, and
-  only the engine-role Deployment set when `demo_ui = false`. On `linux-gpu`, that set includes
-  the base `infernix-engine` Deployment plus zero-replica `infernix-engine-<engine>` per-engine
-  Deployments for Python-native framework images; routed validation scales one per-engine
-  deployment at a time on the single-GPU lane.
+  shape: `infernix-coordinator` plus substrate-specific engine pools on production and demo
+  deployments, with `infernix-demo` added only when `demo_ui = true`. On Linux, engine pools render
+  as Kubernetes workloads. On Apple, engine members are host daemons outside the pod inventory. On
+  `linux-gpu`, the Linux set includes the base `infernix-engine` Deployment plus zero-replica
+  `infernix-engine-<engine>` per-engine Deployments for Python-native framework images; routed
+  validation scales one per-engine deployment at a time on the single-GPU lane.
 - confirm `infernix kubectl get deployments -n platform` returns `infernix-coordinator` and
-  the engine-role Deployment set (and `infernix-demo` when `demo_ui = true`); under
-  `demo_ui = false` only the engine-role Deployment set is present
+  any Linux engine-pool Deployment set (and `infernix-demo` when `demo_ui = true`); under
+  `demo_ui = false` the coordinator and engine pools remain present while demo-only workloads are
+  absent
 - confirm `infernix kubectl get pvc -A` returns no daemon PVCs — the `infernix-coordinator`,
   engine-role, and `infernix-demo` Deployments are PVC-free in the supported target
   shape. PVCs are still present for Harbor, MinIO, Pulsar, and the operator-managed PostgreSQL

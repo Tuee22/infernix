@@ -231,10 +231,10 @@ exerciseRuntimeMode paths runtimeMode = do
       reportStep ("durable Pulsar topic families: " <> showRuntimeMode runtimeMode)
       validateDurableTopicFamilyRoundTrips paths runtimeMode representativeModelId
 
-      -- Phase 7 Sprint 7.23: Apple host-engine singleton ownership is
-      -- broker-owned. The first host daemon is already subscribed to the host
-      -- batch topic; this case validates that a second spawn exits non-zero
-      -- when the broker rejects a duplicate Exclusive consumer.
+      -- Compatibility guard for pinned Apple host-engine ownership. The
+      -- first host daemon is already subscribed to its assigned topic; this
+      -- case validates that a second spawn exits non-zero when the broker
+      -- rejects a duplicate Exclusive consumer.
       when (requiresHostServiceHarness paths runtimeMode) $ do
         reportStep ("apple host engine exclusive subscription enforcement: " <> showRuntimeMode runtimeMode)
         validateAppleHostEngineExclusiveSubscriptionEnforcement paths
@@ -269,7 +269,7 @@ exerciseRuntimeMode paths runtimeMode = do
         -- past the available engine-capable node count must leave the
         -- extra replica `Pending` with the anti-affinity rejection
         -- message in its scheduler events. The Apple-host equivalent
-        -- is covered by the duplicate Exclusive host-batch subscription
+        -- is covered by the duplicate Exclusive pinned-member subscription
         -- check above.
         reportStep "linux engine anti-affinity enforcement"
         validateLinuxEngineAntiAffinityEnforcement state
@@ -2096,10 +2096,10 @@ waitForPendingEnginePod state = go (60 :: Int)
               threadDelay 1000000
               go (remainingAttempts - 1)
 
--- | Phase 7 Sprint 7.23: Apple host-engine singleton chaos case. Spawn a
--- second @infernix service@ while the harness-owned first daemon is subscribed
--- to the host batch topic. The second invocation must exit non-zero because
--- the broker rejects the duplicate Exclusive consumer.
+-- | Apple pinned-member compatibility guard. Spawn a second @infernix service@
+-- while the harness-owned first daemon is subscribed to the assigned topic. The
+-- second invocation must exit non-zero because the broker rejects the duplicate
+-- Exclusive consumer.
 validateAppleHostEngineExclusiveSubscriptionEnforcement :: Paths -> IO ()
 validateAppleHostEngineExclusiveSubscriptionEnforcement paths = do
   infernixExecutable <- resolveInfernixExecutable
@@ -2116,7 +2116,7 @@ validateAppleHostEngineExclusiveSubscriptionEnforcement paths = do
       Nothing -> fail "a duplicate apple host engine service did not fail within 30 seconds"
   assert
     (exitCode /= ExitSuccess)
-    "a second `infernix service` invocation exits non-zero when the Exclusive host-batch subscription is already owned"
+    "a second `infernix service` invocation exits non-zero when the Exclusive pinned-member subscription is already owned"
   assert
     ("subscription rejected" `isInfixOf` stderrOutput || "Exclusive" `isInfixOf` stderrOutput || "exclusive" `isInfixOf` stderrOutput)
     "the second `infernix service` invocation surfaces the Exclusive subscription diagnostic on stderr"

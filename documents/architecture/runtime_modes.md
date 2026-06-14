@@ -66,19 +66,16 @@ inventory.
 
 ## Apple-Native Inference
 
-On the `apple-silicon` substrate the worker runs real Apple-native inference, not a placeholder.
-The runtime worker invokes the real engine for the selected binding — the Python adapter transform
-over a prebuilt host wheel for python-stdio bindings, or the real native runner binary resolved
-from a typed `HostConfig` absolute path for native-process-runner bindings — fetches model weights
-lazily from the infernix-models MinIO bucket via `adapters.model_cache.get_model_path`, and
-publishes a per-family real result: inline text for the LLM and speech families, and a typed object
-reference into the infernix-demo-objects MinIO bucket for the source-separation, audio-to-MIDI,
-music-transcription, image, video, audio-generation, and OMR artifact families. Apple native
-engine artifacts resolve from `./.data/engines/<adapterId>/` and the supported materialization
-target is Tart-free: a fixed host Metal bridge for runtime Metal source compilation plus typed
-engine-artifact manifests for Core ML and native runner payloads. The former Tart helper path has
-been removed; the retained command name now writes typed manifests without a VM dependency. The
-canonical homes are
+On the `apple-silicon` substrate the worker dispatches to Apple-native engine entrypoints, not to a
+generic placeholder branch. The runtime worker invokes the selected Python adapter or native runner,
+fetches model weights lazily from the `infernix-models` MinIO bucket via
+`adapters.model_cache.get_model_path`, and publishes the typed per-family result surface. Hardware
+proof that every runnable Apple row produces real output remains a cohort gate until the headless
+Metal/Core ML validation wave closes. Apple native engine artifacts resolve from
+`./.data/engines/<adapterId>/` and the supported materialization target is Tart-free: a fixed host
+Metal bridge for runtime Metal source compilation plus typed engine-artifact manifests for Core ML
+and native runner payloads. The former Tart helper path has been removed; the retained command name
+now writes typed manifests without a VM dependency. The canonical homes are
 [../engineering/apple_silicon_metal_headless_builds.md](../engineering/apple_silicon_metal_headless_builds.md),
 [../operations/apple_silicon_runbook.md](../operations/apple_silicon_runbook.md), and
 [../engineering/host_tools_manifest.md](../engineering/host_tools_manifest.md).
@@ -113,29 +110,27 @@ target shape is the three-role daemon model codified in
 - Apple host-native execution context means the supported `cluster up`, `cluster status`, and
   validation commands run through `./.build/infernix` on the host; it does not mean the supported
   clustered service daemons stay host-resident after reconcile
-- `cluster up` deploys the **frontend** Deployment (`infernix-demo`)
-  and the **coordinator** Deployment (`infernix-coordinator`) whenever
-  `demo_ui` is enabled, on every supported substrate. The **engine**
+- `cluster up` deploys the **coordinator** Deployment (`infernix-coordinator`) on every supported
+  substrate. The **frontend** Deployment (`infernix-demo`) is gated by `demo_ui`. The **engine**
   role runs as an in-cluster `infernix-engine` Deployment on Linux
-  substrates with a strict one-per-node anti-affinity rule; on `linux-gpu`,
-  Python-native framework work can use additional
-  `infernix-engine-<engine>` per-engine Deployments selected by
-  `inference.batch.linux-gpu.<engine>` topics. Repo-owned `linux-gpu`
-  lifecycle values keep those per-engine deployments at zero replicas on
-  the single-GPU lane and validation scales one at a time. Apple silicon runs
-  the engine role as the on-host `infernix service` daemon. The chart
-  ships `chart/templates/deployment-{coordinator,engine,demo}.yaml`,
+  substrates through Kubernetes engine pools; on `linux-gpu`, Python-native framework work can use
+  pool-specific or per-engine Deployments selected by derived pool/model topics. Repo-owned
+  `linux-gpu` lifecycle values may keep heavyweight per-engine deployments at zero replicas on the
+  single-GPU lane and validation scales one at a time. Apple silicon runs eligible engine-pool
+  members as on-host `infernix service` daemons. The chart ships
+  `chart/templates/deployment-{coordinator,engine,demo}.yaml`,
   `clusterServiceEnabled` returns `False` on every substrate, and
   `finalPhaseDeployments` waits on
   `deployment/infernix-{coordinator,engine}` plus the Linux GPU
   per-engine Deployment set when rendered. The Apple lane's
-  cluster-coordinator-to-host-engine batch bridge carries Apple-native
-  inference handoff.
+  cluster coordinator publishes Apple-native work to derived pool/model topics consumed by
+  eligible on-host engine members.
 - on `apple-silicon`, the clustered `infernix-demo` path runs from the
   `infernix-linux-cpu:local` image family while reading the staged `apple-silicon` substrate file
 - the direct `infernix service` command remains the Apple host engine-role entrypoint and
-  consumes the generated engine-role metadata, batch topic, result topic, and engine bindings
-  from the active `.dhall`
+  consumes the generated engine-role metadata, pool/member assignments, result topic, and engine
+  bindings from the active `.dhall`. Raw batch-topic metadata remains a legacy compatibility
+  projection until deletion-ledger cleanup removes the old surface
 - `/api/publication` keeps `apiUpstream.mode: cluster-demo` for the stable routed browser host,
   reports `daemonLocation: cluster-pod` for the in-cluster coordinator daemon on every substrate,
   reports `inferenceExecutorLocation: control-plane-host` on Apple, and distinguishes the

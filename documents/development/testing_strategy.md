@@ -152,11 +152,13 @@ The validation plan minimizes switching between the Apple Silicon and CUDA-capab
 - `infernix test integration` validates the service loop by publishing a typed request through the
   configured topic helper and asserting a matching typed result appears on the configured result
   topic
-- `infernix test integration` also validates the publication and status handoff metadata for the
-  active coordinator-to-engine path: routed publication JSON carries the configured
-  `hostInferenceBatchTopic`, `cluster status` carries `publicationHostInferenceBatchTopic` when
-  present, and the generated demo config routes coordinator request topics to the engine batch
-  topic without an engine self-forward loop
+- `infernix test integration` also validates publication and status handoff metadata for the active
+  coordinator-to-engine path. The target assertion is that routed publication JSON and
+  `cluster status` expose the validated engine-pool routing graph, and the generated substrate
+  config routes coordinator request topics to derived pool/model topics without an engine
+  self-forward loop. The old `hostInferenceBatchTopic` /
+  `publicationHostInferenceBatchTopic` assertions remain legacy compatibility coverage until the
+  deletion-ledger cleanup removes the single-host surface
 - on the `linux-cpu` lane, `infernix test integration` also validates
   `infernix internal materialize-substrate linux-cpu --demo-ui false`
 - on the host-native `apple-silicon` lane, `infernix test integration` also validates
@@ -202,25 +204,22 @@ The validation plan minimizes switching between the Apple Silicon and CUDA-capab
 ## Per-Family Result Contract
 
 The per-family result contract is the canonical substrate-aware integration plus
-substrate-agnostic browser layer that proves the real engine ran for every demo-visible row. The
+substrate-agnostic browser layer that asserts the real-output surface for every demo-visible row. The
 model-to-`ResultFamily` and inline-vs-object-ref mapping lives at
 [../architecture/model_catalog.md](../architecture/model_catalog.md); this section is the canonical
 home for the test contract itself.
 
-The runtime worker invokes the real engine for the selected binding — the Python adapter transform
-over a prebuilt host wheel for python-stdio bindings, or the real native runner binary resolved
-from a typed `HostConfig` absolute path for native-process-runner bindings — fetches model weights
-lazily from the infernix-models MinIO bucket via `adapters.model_cache.get_model_path`, and
-publishes a per-family real result: inline text for the LLM and speech families, and a typed object
-reference into the infernix-demo-objects MinIO bucket for the source-separation, audio-to-MIDI,
-music-transcription, image, video, audio-generation, and OMR artifact families.
+The runtime worker dispatches through the selected engine binding, fetches model weights lazily from
+the `infernix-models` MinIO bucket via `adapters.model_cache.get_model_path`, and publishes the
+typed per-family result surface. Hardware proof that every runnable row produces real output remains
+tracked in the cohort gates.
 
 ### One DRY substrate-aware suite
 
 There is exactly one DRY substrate-aware integration suite — never per-substrate suites. It reads
 the active substrate `.dhall`, traverses the README matrix rows that substrate selects, and asserts
-a per-family result contract proving the real engine ran by **shape and type, never golden
-strings**. A closed `ResultFamily` sum type is resolved from `family` + `artifactType` +
+a per-family result contract by **shape and type, never golden strings**. A closed `ResultFamily`
+sum type is resolved from `family` + `artifactType` +
 `matrixRowId`; the coarse `family` field collapses source-separation, audio-to-MIDI, and
 audio-generation under `audio`, so `ResultFamily` is the authoritative discriminator. One
 substrate-agnostic Playwright suite asserts the rendered side of the same contract.

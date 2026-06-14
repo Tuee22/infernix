@@ -11,8 +11,8 @@
 The repository target closes around the staged-substrate architecture: the two-binary topology,
 mandatory local HA platform services, Harbor-first image flow, manual storage doctrine, Pulsar-only
 production surface, Gateway-owned routing, Haskell-owned frontend contracts, substrate-specific
-validation, and a daemon-role model where role-specific `infernix service` daemons own Pulsar
-coordination while Apple-native engine execution runs in same-binary host daemons.
+validation, and a daemon-role model where the coordinator owns Pulsar routing while
+substrate-neutral engine pools run inference on Kubernetes workloads or Apple host daemons.
 
 ## Current Repo Assessment
 
@@ -28,38 +28,31 @@ cross-substrate rerun.
 The worktree omits the direct tool-route compatibility payloads and persists Linux cluster state
 before later rollout phases. Bootstrap shell entrypoints build or enter the active launcher only;
 the binary command materializes or verifies the active substrate file before lifecycle and
-validation commands rely on it. The final Apple product shape described by this plan is
-implemented:
-`apple-silicon` keeps Apple-native inference execution host-side for performance while Kind
-continues to host Harbor, MinIO, Pulsar, PostgreSQL, Envoy Gateway, the optional routed demo
-surface, and the demo-gated `infernix-coordinator` Deployment. Linux substrates also run
-`infernix-engine` in-cluster; Apple sets the cluster engine replica count to 0 and runs the engine
-role host-side. The generated final-phase Helm values use the role-specific
-`coordinator.replicaCount` and `engine.replicaCount` knobs instead of the legacy
-`service.replicaCount` surface. On Linux CPU, the coordinator publishes batch work to
-`inference.batch.linux-cpu`; on Linux GPU, native-fallback work uses
-`inference.batch.linux-gpu` and Python-native framework work can route to
-`inference.batch.linux-gpu.<engine>` per-engine topics consumed by
-`infernix-engine-<engine>` Deployments. On Apple, the coordinator publishes requests to a
-dedicated host batch topic consumed by same-binary host daemons, which execute Apple-native
-inference and publish the completed result. The staged `.dhall`
-tells each daemon the substrate and whether its role is `Coordinator` or `Engine`; host-role Apple
-metadata also includes the Pulsar connection mode plus the batch and result topics it uses.
-Publication now reports the cluster coordinator location separately from the Apple host inference
-executor location and batch topic. The runtime worker uses explicit Python or native adapter
-harnesses selected from the staged substrate file. Each harness invokes the real engine — the
-Python adapter `transform` over a prebuilt host wheel for `python-stdio` bindings, or the real
-native runner binary resolved from a typed `HostConfig` absolute path for `native-process-runner`
-bindings — fetches model weights lazily from the `infernix-models` MinIO bucket, and publishes a
-per-family real result: inline text for the LLM and speech families, and a typed
-`infernix-demo-objects` object reference for the source-separation, audio-to-MIDI,
-music-transcription, image, video, audio-generation, and OMR artifact families. On Apple Silicon
+validation commands rely on it. The current Apple split-executor shape is implemented, and the
+code-side routing target now uses a substrate-neutral engine-pool graph instead of single Apple
+host-topic routing or Linux-only per-engine topic special cases. `apple-silicon` keeps Apple-native inference
+execution host-side for performance while Kind continues to host Harbor, MinIO, Pulsar, PostgreSQL,
+Envoy Gateway, the optional routed demo surface, and the production `infernix-coordinator`
+Deployment. Linux substrates run Kubernetes engine-pool workloads; Apple uses same-binary host
+daemons identified by stable host ids. The generated final-phase Helm values use role-specific
+coordinator and engine knobs instead of the legacy `service.replicaCount` surface. The coordinator
+publishes batch work to topics derived from `(runtimeMode, pool id, model id, optional member id)`:
+normal pools use Pulsar `Shared` subscriptions and broker-native backpressure, while pinned routes
+use derived per-member topics with `Exclusive`. The staged `.dhall` tells each daemon the substrate
+and whether its role is `Coordinator` or `Engine`; host-role Apple metadata also includes the Pulsar
+connection mode plus pool membership. Publication reports the cluster coordinator location
+separately from the inference executor location. The runtime worker uses explicit Python or native
+adapter harnesses selected from the staged substrate file. Each harness dispatches to the selected
+engine entrypoint, fetches model weights lazily from the `infernix-models` MinIO bucket, and
+publishes the typed per-family result surface. Hardware proof for real per-family output remains in
+the cohort gates. On Apple Silicon
 the Haskell binaries build host-native and run on the host against Metal. Sprint 1.14 removes the
 legacy Sprint 1.13 `tart` / `hostTart` / `AppleTart` implementation from the current host-tool
 schema and retargets the retained `materialize-metal-engines` command to typed engine-artifact
-manifests. The remaining headless Metal/Core ML target uses a fixed host Metal runtime bridge, no
-Tart VM, no user keychain dependency, no host Xcode UI flow, and no request-time toolchain
-installation. The Apple clean-host bootstrap hardening is implemented and validated: the stage-0
+manifests. The materializer now writes the fixed host Metal bridge source and smoke command; the
+remaining Apple cohort gate is executing that smoke and loading a native/Core ML artifact. The
+headless target uses no Tart VM, no user keychain dependency, no host Xcode UI flow, and no
+request-time toolchain installation. The Apple clean-host bootstrap hardening is implemented and validated: the stage-0
 entrypoint verifies same-process ghcup-managed `ghc` and `cabal` resolution before direct
 `cabal install`, reconciles Homebrew `protoc`, and lets Apple adapter setup or validation paths
 reconcile the Homebrew-managed `python@3.12` formula and `python3.12` command plus a user-local
@@ -67,7 +60,7 @@ Poetry bootstrap on demand. The native-only workflow doctrine now forbids Apple 
 creation or switching, Colima VM creation, and cross-architecture emulation; Phase 1 Sprint 1.12
 replaced the previous Colima reconciliation path with a prerequisite check that reports the
 selected Docker context and daemon architecture, then stops before cluster work if the daemon is
-absent or non-native. The the recorded validation Apple validation closed both the positive lifecycle/full-test
+absent or non-native. The recorded Apple validation closed both the positive lifecycle/full-test
 gate and the negative no-daemon boundary without changing Docker contexts or Colima VM state. The
 Poetry bootstrap may reuse an already available compatible Python 3.12+ executable
 when one passes the implemented version check. Routed Apple Playwright validation runs
@@ -131,7 +124,7 @@ PASS.
 | CLI ownership | one Haskell command registry owns the supported command surface without any `--runtime-mode` override | implemented |
 | Substrate selection | one staged substrate file beside the active build root is the primary source of truth for substrate identity and generated catalog selection | implemented |
 | Staged substrate-file format | the substrate file and its mirrors use one explicit and consistent file format and filename contract | implemented; the current contract is a shared `infernix-substrate.dhall` filename carrying a typed Dhall record on local and cluster-mounted paths, decoded in-process by the `dhall` Haskell library |
-| Apple split-executor lane | the host-built binary manages Kind, the cluster runs the coordinator role for Pulsar ingress and host-batch handoff, and Apple-native inference batches are delegated to same-binary host engine daemons through Pulsar | implemented |
+| Apple split-executor lane | the host-built binary manages Kind, the cluster runs the coordinator role for Pulsar ingress and derived pool-topic handoff, and Apple-native inference batches are delegated to same-binary host engine daemons through Pulsar | implemented |
 | Apple stage-0 bootstrap determinism | a first-run Apple bootstrap verifies newly installed same-process tool resolution before handing off to direct `cabal` work | implemented; Apple cohort gate closed in [Wave A](cohort-validation-waves.md) |
 | Bootstrap responsibility boundary | shell bootstrap builds or enters the active launcher only, then delegates lifecycle, validation, image preparation, and teardown to `infernix`; Harbor-first image loading includes the active runtime image on every substrate after Harbor is responsive | implemented; Apple cohort gate closed in [Wave A](cohort-validation-waves.md); CUDA Linux cohort gate closed in [Wave C](cohort-validation-waves.md) |
 | Lifecycle false-negative protection | supported lifecycle surfaces report long-running build, publication, preload, and teardown phases clearly enough that operators do not mistake progress for failure | implemented; `cluster status` reports in-progress lifecycle phase, detail, and heartbeat fields during monitored long-running phases; Apple cohort gate closed in [Wave A](cohort-validation-waves.md); CUDA Linux cohort gate closed in [Wave C](cohort-validation-waves.md) |
@@ -155,9 +148,10 @@ passing on the recorded validation. The product-agnostic primitives live at
 [../documents/architecture/durable_context_design.md](../documents/architecture/durable_context_design.md);
 the demo's concrete bindings live at
 [../documents/architecture/demo_app_design.md](../documents/architecture/demo_app_design.md);
-the supported three-role daemon model (stateless frontend, stateless coordinator, one-per-node
-stateful engine) lives at
-[../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md);
+the supported three-role daemon model (stateless frontend, stateless coordinator, substrate-specific
+engine pools) lives at
+[../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md) and
+[../documents/architecture/engine_pool_routing.md](../documents/architecture/engine_pool_routing.md);
 the execution-ordered build out lives at
 [phase-7-demo-app-durable-context.md](phase-7-demo-app-durable-context.md). Phase 7 introduces
 a Keycloak release with its own Patroni Postgres, a per-context Pulsar conversation log topic
@@ -170,8 +164,8 @@ routes, and the demo MinIO bucket, is gated by the same `demo_ui` flag that gate
 of the `infernix-demo` browser surface. Phase 7 supersedes the previous single-form manual
 inference path: routed manual inference closes through the durable-context Chat surface and
 WebSocket-delivered `ConversationStatePatch` deltas rather than a direct HTTP request/poll
-cycle. Production deployments leave `demo_ui = false`, the Phase 7 surface is absent, and
-only the engine-role Deployment set is present.
+cycle. Production deployments leave `demo_ui = false`, the Phase 7 demo surface is absent, and the
+production coordinator plus engine pools remain present.
 
 ## Supported Outcome
 
@@ -221,7 +215,7 @@ only the engine-role Deployment set is present.
 - on Apple Silicon, the host-built binary manages Kind, deploys the mandatory cluster support
   services, the cluster coordinator daemon, and optional routed demo workload, and still owns the
   host-side same-binary engine daemon lane
-- on Apple Silicon, cluster daemons are canonical for Pulsar ingress and host-batch handoff; host
+- on Apple Silicon, cluster daemons are canonical for Pulsar ingress and derived pool-topic handoff; host
   daemons are canonical for Apple-native inference execution and result publication and consume a
   dedicated Pulsar batch topic using their `.dhall` role metadata plus published edge state
 - on Linux substrates, cluster daemons read from Pulsar, run inference directly, and publish
@@ -297,7 +291,7 @@ flowchart TB
         demo["infernix-demo"]
         coordinator["infernix-coordinator"]
         engine["infernix-engine (Linux only)"]
-        appleBatchTopic["Apple host-inference batch topic"]
+        enginePoolTopics["Derived engine-pool topics"]
         harbor["Harbor"]
         minio["MinIO"]
         pgop["Percona PostgreSQL operator"]
@@ -316,8 +310,8 @@ flowchart TB
     routes --> pulsar
     demo --> coordinator
     pulsar --> coordinator
-    coordinator --> appleBatchTopic
-    appleBatchTopic --> appleHostDaemon
+    coordinator --> enginePoolTopics
+    enginePoolTopics --> appleHostDaemon
     appleHostDaemon --> pulsar
     coordinator --> engine
     engine --> pulsar
@@ -328,7 +322,7 @@ flowchart TB
 
 Current code nuance: the topology above is the implemented supported path. Linux runs both
 coordinator and engine roles in-cluster, while Apple runs the coordinator in-cluster and hands
-batches to same-binary host engine daemons through Pulsar.
+batches to same-binary host engine daemons through derived Pulsar pool topics.
 
 ## Canonical Repository Shape
 
@@ -565,29 +559,22 @@ The plan keeps control-plane execution context separate from substrate.
 - when `demo_ui` is true, the demo app is cluster-resident across substrates
 - every substrate deploys cluster `infernix` daemon Deployments under the supported three-role
   split landed by Phase 7 Sprint 7.7: `infernix-coordinator` (stateless, Pulsar coordination +
-  dispatcher + result-bridge + model bootstrap) and the engine role (`infernix-engine` on Linux
-  substrates, plus Linux GPU `infernix-engine-<engine>` per-engine framework Deployments when
-  rendered; on-host Apple daemon owned by Pulsar `Exclusive` or intentional `Failover`
-  subscriptions in the target design). The legacy fused
+  dispatcher + result-bridge + model bootstrap + model-to-pool routing) and engine pools
+  (`infernix-engine` on Linux substrates, plus Linux GPU framework-specific Deployments when
+  configured; on-host Apple daemons selected by stable host id). The legacy fused
   `chart/templates/deployment-service.yaml` was legacy together with the `service.*` chart-values
   block on the recorded validation
-- on `linux-cpu`, the coordinator consumes request topics and publishes
-  `inference.batch.linux-cpu`; on `linux-gpu`, native-fallback work uses
-  `inference.batch.linux-gpu` and Python-native framework work can route to
-  `inference.batch.linux-gpu.<engine>` topics; engine daemons consume their configured batch topic,
-  execute inference, and publish results
-- on `apple-silicon`, the coordinator role consumes request topics and publishes inference work to
-  `inference.batch.apple-silicon`; the same-binary on-host engine daemon consumes that batch topic,
-  executes Apple-native inference, and publishes results
+- the coordinator consumes request topics and publishes inference work to derived engine-pool topics;
+  engine members consume their assigned pool or pinned-member topics, execute inference, and publish
+  results
 - the staged `.dhall` tells each daemon its substrate, whether its `daemonRole` is `Coordinator` or
-  `Engine`, and, for the Apple host engine, the Pulsar connection mode plus the batch and result
-  topics it uses
-- the supported HA defaults: coordinator `replicaCount >= 2` with soft anti-affinity, engine
-  required pod anti-affinity keyed on its own label with `topologyKey: kubernetes.io/hostname` so
-  two replicas of the same engine Deployment cannot share a node; per-role
-  `coordinator.replicaCount` and `engine.replicaCount` knobs in `chart/values.yaml`.
-  Pulsar-owned topics, `Shared` subscriptions
-  on the request and batch topics, and per-context `Failover` subscriptions on the result topic
+  `Engine`, and the validated pool/member assignments and derived topics it may use. Legacy
+  batch-topic metadata remains a compatibility projection until deletion-ledger cleanup removes it
+- the supported HA defaults: coordinator `replicaCount >= 2` with soft anti-affinity, Linux engine
+  placement governed by Kubernetes rules, Apple engine placement governed by host ids, and per-role
+  coordinator plus engine-pool knobs in `chart/values.yaml`. Pulsar-owned topics, `Shared`
+  subscriptions on normal pool topics, `Exclusive` on pinned member topics, and per-context
+  `Failover` subscriptions on coordinator-owned topics
   keep request handoff, inference, and result-publication ownership unambiguous
 
 ### 7. Local Harbor Is The Cluster Image Source

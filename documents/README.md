@@ -28,9 +28,13 @@
   `infernix/demo` topic namespace and `infernix-demo-objects` bucket, the `/auth` / `/ws` /
   `/api/objects` routes, the SPA view contract, and the `demo_ui` gating
 - [architecture/daemon_topology.md](architecture/daemon_topology.md) defines the supported
-  three-role daemon model — stateless frontend, stateless coordinator, one-per-node stateful
-  engine — including HA replica policy, per-substrate placement, library footprint per role,
+  three-role daemon model — stateless frontend, stateless coordinator, and substrate-specific
+  engine pools — including HA replica policy, per-substrate placement, library footprint per role,
   and failure semantics
+- [architecture/engine_pool_routing.md](architecture/engine_pool_routing.md) defines the
+  substrate-neutral engine-pool routing contract: typed model placement, derived Pulsar topics,
+  startup-time member assignment, broker-native backpressure validation, and invalid-state
+  rejection before rollout
 - [development/local_dev.md](development/local_dev.md) describes the supported local workflows
 - [development/assistant_workflow.md](development/assistant_workflow.md) defines the canonical
   repository-level workflow rules for automated agents and LLM coding assistants
@@ -92,8 +96,8 @@
   pre-seed contract, JWT validation surface, and demo-gated lifecycle for the durable-context
   demo
 - [tools/pulsar.md](tools/pulsar.md) records the production inference subscription and dispatch
-  contract (`request_topics`, `result_topic`, `engines` in the active `.dhall`) together with the
-  repo-local topic-spool harness used by unit-level validation
+  contract (`request_topics`, `result_topic`, `enginePools`, `engineMembers`, and `engines` in the
+  active `.dhall`) together with the repo-local topic-spool harness used by unit-level validation
 - [reference/cli_reference.md](reference/cli_reference.md) records the canonical CLI surface for
   both `infernix` and `infernix-demo`
 - [reference/web_portal_surface.md](reference/web_portal_surface.md) records the browser-visible

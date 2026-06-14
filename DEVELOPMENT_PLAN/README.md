@@ -26,7 +26,7 @@ govern this plan.
 | [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) | Haskell runtime, shared Python adapter project, cluster-daemon request consumption, Apple host inference execution, staged `.dhall` role control, and Pulsar production inference |
 | [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md) | PureScript demo UI, generated frontend contracts, clustered demo hosting, Apple host-backed browser dispatch, and Playwright ownership |
 | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) | Static quality, README-matrix-driven single-substrate validation, Apple cluster-to-host daemon split coverage, root-doc closure, HA validation, and false-negative doctrine hardening |
-| [phase-7-demo-app-durable-context.md](phase-7-demo-app-durable-context.md) | Multi-user durable-context demo: Keycloak auth, WebSocket transport, Pulsar-backed conversation history, MinIO artifact upload/download/render-or-download, Haskell-first logic via purescript-bridge, and the three-role daemon split (stateless frontend, stateless coordinator, one-per-node engine) with an HA-first chart |
+| [phase-7-demo-app-durable-context.md](phase-7-demo-app-durable-context.md) | Multi-user durable-context demo: Keycloak auth, WebSocket transport, Pulsar-backed conversation history, MinIO artifact upload/download/render-or-download, Haskell-first logic via purescript-bridge, and the three-role daemon split (stateless frontend, stateless coordinator, substrate-specific engine pools) with an HA-first chart |
 | [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) | Explicit cleanup and removal ledger |
 
 ## Status Vocabulary
@@ -66,10 +66,12 @@ through the already selected arm64 Docker daemon on this Apple Silicon machine. 
 staged-substrate architecture, the baked Linux outer-container launcher,
 the mandatory HA platform services, the Gateway-owned routed edge, the shared Python adapter
 project, the Haskell-owned browser-contract generation path, the substrate-specific validation
-surface, and the final Apple split-executor topology described below. The Apple lane deploys the
-cluster `infernix-coordinator` for request-topic consumption and host-batch handoff while
-same-binary host `infernix service` engine daemons consume the configured host batch topic, execute
-Apple-native inference, and publish completed results.
+surface, and the current Apple split-executor topology described below. The runtime-routing
+code-side target has landed around substrate-neutral engine pools: the coordinator remains the
+production router, normal pools use Pulsar `Shared` plus broker-native backpressure, pinned routes
+use derived per-member topics with `Exclusive`, Linux members are Kubernetes workloads, and Apple
+members are same-binary host daemons selected by stable host id. Legacy raw-topic compatibility
+surfaces remain tracked for deletion while Wave J supplies real-cluster proof.
 
 The repository implements the substrate-file doctrine described by this plan. Supported flows
 stage one `infernix-substrate.dhall` beside the active build root through the `infernix` command
@@ -80,9 +82,9 @@ the image overlay during image build, and supported Compose runs keep that activ
 image-local instead of bind-mounting the host `./.build/` tree. Focused `infernix lint ...` and
 `infernix docs check` remain substrate-file independent. The final substrate payload also
 distinguishes cluster and host daemon
-roles: cluster-role configs name the substrate, request and result topics, and any Apple
-host-inference batch topic, while host-role Apple configs include the routed Pulsar connection
-details and the batch topic consumed by the host daemon. Cluster publication mirrors the
+roles: cluster-role configs name the substrate, request and result topics, and the engine-pool graph,
+while host-role Apple configs include the routed Pulsar connection details and the host member's pool
+membership. Cluster publication mirrors the
 cluster-role payload locally under
 `./.data/runtime/configmaps/infernix-demo-config/infernix-substrate.dhall` and mounts the same
 filename inside cluster workloads at `/opt/build/infernix-substrate.dhall`, while the Apple host
@@ -96,28 +98,18 @@ publication JSON, and generated browser contracts still serialize that active su
 `runtimeMode` field names. `cluster status` does not mutate Kubernetes resources, publication
 state, or authoritative repo-local state; the accepted Linux outer-container exception is an
 idempotent Docker network membership repair that attaches the fresh launcher container to the
-private `kind` network for observation. The Apple split-executor contract
-is implemented on `apple-silicon`: `cluster up` keeps Harbor, MinIO, Pulsar,
-PostgreSQL, Envoy Gateway, the optional clustered `infernix-demo` surface, and cluster
-`infernix-coordinator` Deployment in Kind; that coordinator owns request-topic consumption and
-host-batch handoff but does not execute Apple-native inference or publish the completed result.
-Same-binary host engine daemons consume the host batch topic, run the Apple-native inference
-engine, and publish the result. On `linux-cpu`, the cluster coordinator publishes batch work to
-`inference.batch.linux-cpu`; on `linux-gpu`, native-fallback work uses `inference.batch.linux-gpu`
-and Python-native framework work can route to `inference.batch.linux-gpu.<engine>` per-engine
-topics consumed by `infernix-engine-<engine>` Deployments. The cluster engine role runs inference
-and publishes results. The generated final-phase Helm values use the role-specific
-`coordinator.replicaCount` and `engine.replicaCount` knobs; Apple sets the cluster engine replica
-count to 0 because the engine role is host-native. Pulsar-owned topics, exclusive subscriptions,
+private `kind` network for observation. The Apple split-executor contract is implemented on
+`apple-silicon`: `cluster up` keeps Harbor, MinIO, Pulsar, PostgreSQL, Envoy Gateway, the optional
+clustered `infernix-demo` surface, and cluster `infernix-coordinator` Deployment in Kind; Apple
+inference execution remains host-native. The pool target replaces the single Apple host topic and
+Linux-specific per-engine topic special cases with topics derived from `(runtimeMode, pool id, model
+id, optional member id)`. The generated final-phase Helm values use role-specific
+coordinator and engine knobs; Apple sets the cluster engine replica count to 0 because Apple engine
+members are host-native. Pulsar-owned topics, `Shared` pool subscriptions, `Exclusive` pinned routes,
 and acknowledgement handling are the ordering and ownership boundary for request handoff,
-inference, and result publication if operators deliberately scale that surface. The worker
-invokes the real engine for the selected binding — the Python adapter `transform` over a prebuilt
-host wheel for `python-stdio` bindings, or the real native runner binary resolved from a typed
-`HostConfig` absolute path for `native-process-runner` bindings — fetches model weights lazily from
-the `infernix-models` MinIO bucket, and publishes a per-family real result (inline text for the LLM
-and speech families; a typed `infernix-demo-objects` object reference for the source-separation,
-audio-to-MIDI, music-transcription, image, video, audio-generation, and OMR artifact families),
-while unsupported adapter ids fail
+inference, and result publication. The worker dispatches through the selected engine binding,
+fetches model weights lazily from `infernix-models`, and publishes the typed per-family result
+surface; hardware proof for real output remains in cohort gates, while unsupported adapter ids fail
 fast instead of falling through to a generic success path. The worktree omits the
 direct Harbor, MinIO, and Pulsar tool-route compatibility handlers, requires the real routed
 upstream behavior in integration, and persists Linux cluster state before later rollout phases.
@@ -142,9 +134,10 @@ daemon-architecture validation and closed on the recorded validation with both t
 gate and the negative no-daemon boundary gate. Phase 1 reopens the Apple Metal/Core ML
 materialization lane: Sprint 1.14 removes the prior Sprint 1.13 `tart` / `hostTart` /
 `AppleTart` implementation from the current host-tool schema and retargets the retained
-`materialize-metal-engines` command to typed engine-artifact manifests. The remaining target uses
-a headless host Metal runtime bridge with no Tart VM, user keychain dependency, host Xcode UI
-flow, or request-time toolchain install. The
+`materialize-metal-engines` command to typed engine-artifact manifests. The materializer now writes
+the fixed host Metal runtime bridge source and smoke command; Wave I still owns the Apple-side
+dispatch smoke and native/Core ML artifact load. The target has no Tart VM, user keychain
+dependency, host Xcode UI flow, or request-time toolchain install. The
 Poetry bootstrap may reuse an already available
 compatible Python 3.12+ executable when one passes the implemented version check. Routed Apple
 Playwright validation runs host-native `npm exec` against the published `127.0.0.1` edge port,
@@ -268,13 +261,13 @@ scope.
 | Phase | Name | Status | Document |
 |-------|------|--------|----------|
 | 0 | Documentation and Governance | Done (Sprints 0.1-0.10 closed; declarative-state documentation reconciliation complete) | [phase-0-documentation-and-governance.md](phase-0-documentation-and-governance.md) |
-| 1 | Repository and Control-Plane Foundation | Active (Sprint 1.13's Tart implementation is historical and removed from the current host-tool schema; Sprint 1.14 keeps the Apple Metal/Core ML materialization lane open for the host Metal runtime bridge, typed engine-artifact manifests, and Apple cohort validation in [Wave I](cohort-validation-waves.md). Sprints 1.1-1.12 remain closed, including the native-only Apple Docker boundary.) | [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md) |
+| 1 | Repository and Control-Plane Foundation | Active (Sprint 1.13's Tart implementation is historical and removed from the current host-tool schema; Sprint 1.14 is code-side closed for typed engine-artifact manifests and the fixed host Metal bridge source/smoke command, while Apple bridge dispatch and native/Core ML artifact load remain the [Wave I](cohort-validation-waves.md) cohort gate. Sprints 1.1-1.12 remain closed, including the native-only Apple Docker boundary.) | [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md) |
 | 2 | Kind Cluster Storage and Lifecycle | Done (Sprints 2.10-2.13 lifecycle, retained-state, bootstrap-boundary, and host-manifest closure validated by Apple Wave A and CUDA Linux Wave C) | [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md) |
 | 3 | HA Platform Services and Edge Routing | Done (Sprint 3.12 native `linux-cpu` architecture selector and native arm64 publication path closed in Wave F on the recorded validation through the already selected arm64 Docker daemon; Sprints 3.10–3.11 validated by Apple Wave A/A.2 and CUDA Linux Wave C) | [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md) |
-| 4 | Inference Service and Durable Runtime | Active (Sprints 4.1-4.17 have prior code-side evidence for real-output, per-engine routing, and Linux image-owned native-root fallback; Sprint 4.18 reopens engine-artifact manifests, the `infernix-engine-artifacts` bucket, atomic materialization, Linux native smoke roots, and README/generated-catalog matrix reconciliation. Wave I owns real Linux native payload replacement, routed per-engine GPU evidence, and Apple headless materialization.) | [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) |
+| 4 | Inference Service and Durable Runtime | Active (Sprints 4.1-4.17 have prior code-side evidence for real-output, per-engine routing, and Linux image-owned native-root fallback; Sprint 4.18 reopens engine-artifact manifests; Sprint 4.19 is code-side closed for substrate-neutral engine pools and derived pool/model topics. Wave I owns real Linux native payload replacement, routed per-engine GPU evidence, and Apple headless materialization; Wave J owns broker-backpressure and pinned-route real-cluster proof.) | [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) |
 | 5 | Web UI and Shared Types | Done (Sprints 5.1-5.10 closed with demo backend, Python adapter, and web/Node no-env-var path validated by Apple Wave A/A.2 and CUDA Linux Wave C) | [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md) |
-| 6 | Validation, E2E, and HA Hardening | Active (Sprints 6.1, 6.4, 6.5, and 6.7-6.30 remain closed; Sprints 6.2/6.3/6.6 carry the real-output cohort residual; Sprint 6.31 is code-side closed for README/generated-catalog matrix-drift linting and remains open only for Wave I headless Apple and CUDA Linux cohort evidence.) | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) |
-| 7 | Demo App Multi-User Durable Context | Active (Sprints 7.1-7.22 remain closed; Sprint 7.23 is code-side closed for Apple host engine singleton ownership through Pulsar `Exclusive` or intentional `Failover`, and remains open only for Wave I live Apple duplicate-consumer evidence.) | [phase-7-demo-app-durable-context.md](phase-7-demo-app-durable-context.md) |
+| 6 | Validation, E2E, and HA Hardening | Active (Sprints 6.1, 6.4, 6.5, and 6.7-6.30 remain closed; Sprints 6.2/6.3/6.6 carry the real-output cohort residual; Sprint 6.31 is code-side closed for README/generated-catalog matrix-drift linting; Sprint 6.32 is code-side closed for impossible pool-routing states and still awaits Wave J broker-backpressure and demo-off coordinator proof.) | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) |
+| 7 | Demo App Multi-User Durable Context | Active (Sprints 7.1-7.22 remain closed; Sprint 7.23 is superseded as an Apple singleton stopgap; Sprint 7.24 is code-side closed for startup-time substrate-neutral engine pools and Apple multi-host membership; Wave J owns broker-backpressure and production-shape real-cluster validation. Desired-state hot reload remains future work.) | [phase-7-demo-app-durable-context.md](phase-7-demo-app-durable-context.md) |
 
 > **Note**: Phase statuses describe current repository state. Earlier governed phases may remain
 > `Active` or `Blocked` for named follow-ons while later phases can be `Done` when their owned work
@@ -325,9 +318,9 @@ The supported platform now closes around these rules:
 - on Apple Silicon, the host-built `./.build/infernix` binary manages Kind, deploys the mandatory
   cluster support services, the cluster coordinator Deployment, and optional routed demo workload,
   and owns the host-side same-binary engine daemon lane
-- on Apple Silicon, the cluster coordinator is canonical for Pulsar ingress and host-batch
-  handoff, while the host engine daemon is canonical for Apple-native inference execution and
-  result publication; both roles consume `.dhall` role config from the same binary family
+- on Apple Silicon, the cluster coordinator is canonical for Pulsar ingress and derived pool-topic
+  handoff, while host engine daemons are canonical for Apple-native inference execution and result
+  publication; both roles consume `.dhall` role config from the same binary family
 - when the demo UI is enabled on Apple Silicon, the routed demo surface stays cluster-resident and
   manual inference flows through the cluster daemon's batching path before Apple inference batches
   move through Pulsar to host daemons
@@ -398,7 +391,7 @@ The supported platform now closes around these rules:
 | 4 | 0-3 | closes the runtime, adapter boundary, object-store contract, and Apple host-daemon bridge on top of the HA platform surfaces |
 | 5 | 0-4 | adds the clustered demo UI, generated frontend contracts, and routed browser validation on top of the runtime and publication contract |
 | 6 | 0-5 | validates the whole supported surface end to end and hardens the governed docs, routes, and lifecycle behavior around that implementation |
-| 7 | 0-6 | adds the multi-user durable-context demo application on top of the platform: Keycloak self-signup, WebSocket post-login transport, Pulsar-backed conversation log per context, MinIO-backed artifact upload/download/render-or-download, a Haskell-first logic boundary surfaced to PureScript via `purescript-bridge`, and the supported three-role daemon split (stateless `infernix-demo`, stateless `infernix-coordinator`, one-per-node `infernix-engine`). The platform contract Phase 7 builds on is implemented in code; Apple plus native Linux/CUDA real-cluster validation evidence is recorded in Waves A-C, and the Sprint 7.8 runtime KV-cache plus `Infernix.Runtime.Daemon` closure is recorded in Wave E. |
+| 7 | 0-6 | adds the multi-user durable-context demo application on top of the platform: Keycloak self-signup, WebSocket post-login transport, Pulsar-backed conversation log per context, MinIO-backed artifact upload/download/render-or-download, a Haskell-first logic boundary surfaced to PureScript via `purescript-bridge`, and the supported three-role daemon split (stateless `infernix-demo`, stateless `infernix-coordinator`, substrate-specific engine pools). The platform contract Phase 7 builds on is implemented in code; Apple plus native Linux/CUDA real-cluster validation evidence is recorded in Waves A-C, Sprint 7.8 runtime KV-cache plus `Infernix.Runtime.Daemon` closure is recorded in Wave E, and Sprint 7.24 reopens pool assignment and broker-native backpressure. |
 
 ## Cross-References
 

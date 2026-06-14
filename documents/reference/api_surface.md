@@ -16,7 +16,7 @@ surface is the `.dhall` topic contract described in [../tools/pulsar.md](../tool
 ## Endpoints
 
 - `GET /api/publication` returns the active runtime mode, control-plane context, cluster daemon
-  location, inference executor location, optional host batch topic, catalog source,
+  location, inference executor location, engine-pool routing metadata, catalog source,
   API-upstream mode, worker-execution mode, worker-adapter mode, artifact-acquisition mode,
   routed-upstream health or backing-state details, and published route inventory
 - `GET /api/models` lists generated catalog entries for the active runtime mode
@@ -67,9 +67,11 @@ surface is the `.dhall` topic contract described in [../tools/pulsar.md](../tool
   via `infernix cache rebuild`
 - publication details stay mode-stable and source from the repo-local publication-state file
 - on Apple, the supported clustered lifecycle publishes `daemonLocation: cluster-pod`,
-  `inferenceExecutorLocation: control-plane-host`, `hostInferenceBatchTopic`, and
+  `inferenceExecutorLocation: control-plane-host`, and
   `inferenceDispatchMode: pulsar-bridge-to-host-daemon`; on Linux, the same dispatch field
-  advertises `pulsar-bridge-to-cluster-daemon` and the executor location remains `cluster-pod`
+  advertises `pulsar-bridge-to-cluster-daemon` and the executor location remains `cluster-pod`.
+  The current `hostInferenceBatchTopic` field is legacy metadata until publication exposes the
+  validated engine-pool routing graph
 - `GET /api/demo-config` and `GET /api/models` stay aligned with the generated active-mode demo
   catalog
 - the demo `/api` remains stable across Apple and Linux substrates because the routed demo surface

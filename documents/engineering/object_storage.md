@@ -29,7 +29,7 @@ The supported shape uses three MinIO buckets and nothing else:
 
 | Bucket | Gating | Key layout | Purpose |
 |---|---|---|---|
-| `infernix-models` | Always-on (not demo-gated) | `<modelId>/<filename>` plus a per-model `<modelId>/.ready` sentinel object | Platform-owned model weights, tokenizers, and configs. Populated lazily by the coordinator's model-bootstrap Failover subscription on first use. Read by every engine pod (Linux substrates) and by the on-host engine daemon (Apple silicon). |
+| `infernix-models` | Always-on (not demo-gated) | `<modelId>/<filename>` plus a per-model `<modelId>/.ready` sentinel object | Platform-owned model weights, tokenizers, and configs. Populated lazily by the coordinator's model-bootstrap Failover subscription on first use. Read by Linux engine pods and by Apple host engine members. |
 | `infernix-engine-artifacts` | Always-on (not demo-gated) | `sha256/<digest>` plus optional adapter pointers such as `<substrate>/<adapterId>/<version>/manifest.pb` | Immutable engine software payloads: wheelhouses, native binaries, Core ML compiled models, JVM tools, and reusable Apple or Linux materialization payloads. Model weights never live here. |
 | `infernix-demo-objects` | Demo-gated (absent when `demo_ui = false`) | `users/<userId>/contexts/<contextId>/uploads/<objectKey>` and `users/<userId>/contexts/<contextId>/generated/<objectKey>` | User uploads and non-text INPUTS — audio and image references (browser → presigned PUT) on the `uploads/` prefix — plus real per-family engine-generated ARTIFACT results (source-separation stems, audio-to-MIDI / music-transcription MIDI and MusicXML, generated images, video, and audio) written by the engine adapter through the presigned PUT helper on the `generated/` prefix. Read by the browser via presigned GET URLs minted at `/api/objects`. This is the only demo/user artifact bucket; the retired `infernix-runtime` and `infernix-results` buckets are not part of the supported contract. |
 
@@ -65,7 +65,8 @@ The materialization flow is:
    `infernix-engine-artifacts`.
 3. Materialize into a temporary local directory under the active engine-install
    root.
-4. Run the manifest's smoke command.
+4. Validate the manifest contract today; run the manifest's real smoke/load command before rename
+   once the Wave I materialization lane lands.
 5. Rename atomically into `./.data/engines/<adapterId>/` on Apple or into the
    image-owned `/opt/infernix/engines/<adapterId>/` root on Linux.
 6. Ack the materialization work only after the local root is complete.

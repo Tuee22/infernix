@@ -77,6 +77,8 @@ data DhallDemoConfig = DhallDemoConfig
     dhallCoordinator :: DhallDaemonConfig,
     dhallEngineDaemon :: Maybe DhallDaemonConfig,
     dhallEngineDaemons :: [DhallDaemonConfig],
+    dhallEnginePools :: [DhallEnginePool],
+    dhallEngineMembers :: [DhallEngineMember],
     dhallConfigRequestTopics :: [Text],
     dhallConfigResultTopic :: Text,
     dhallModelsBucket :: Text,
@@ -114,6 +116,7 @@ instance Dhall.FromDhall LegacyDhallDemoConfig where
 data DhallDaemonConfig = DhallDaemonConfig
   { dhallRole :: Text,
     dhallLocation :: Text,
+    dhallMemberId :: Maybe Text,
     dhallDaemonRequestTopics :: [Text],
     dhallDaemonResultTopic :: Text,
     dhallHostBatchTopic :: Maybe Text,
@@ -122,6 +125,30 @@ data DhallDaemonConfig = DhallDaemonConfig
   deriving (Generic)
 
 instance Dhall.FromDhall DhallDaemonConfig where
+  autoWith _ = Dhall.genericAutoWith dhallInterpretOptions
+
+data DhallEnginePool = DhallEnginePool
+  { dhallPoolId :: Text,
+    dhallPoolRuntimeMode :: Text,
+    dhallPoolModelIds :: [Text],
+    dhallPoolMemberIds :: [Text],
+    dhallPoolSubscriptionType :: Text,
+    dhallMaxInflightPerMember :: Int
+  }
+  deriving (Generic)
+
+instance Dhall.FromDhall DhallEnginePool where
+  autoWith _ = Dhall.genericAutoWith dhallInterpretOptions
+
+data DhallEngineMember = DhallEngineMember
+  { dhallMemberConfigId :: Text,
+    dhallMemberRuntimeMode :: Text,
+    dhallMemberLocation :: Text,
+    dhallMemberPoolIds :: [Text]
+  }
+  deriving (Generic)
+
+instance Dhall.FromDhall DhallEngineMember where
   autoWith _ = Dhall.genericAutoWith dhallInterpretOptions
 
 data DhallEngineBinding = DhallEngineBinding
@@ -197,10 +224,22 @@ dhallFieldSuffixName suffix =
     "RequestTopics" -> "request_topics"
     "ResultTopic" -> "result_topic"
     "HostBatchTopic" -> "host_batch_topic"
+    "MemberId" -> "memberId"
     "ModelsBucket" -> "models_bucket"
     "ModelBootstrapTopic" -> "model_bootstrap_topic"
     "EngineDaemon" -> "engine"
     "EngineDaemons" -> "engineDaemons"
+    "EnginePools" -> "enginePools"
+    "EngineMembers" -> "engineMembers"
+    "PoolId" -> "id"
+    "PoolRuntimeMode" -> "runtimeMode"
+    "PoolModelIds" -> "models"
+    "PoolMemberIds" -> "members"
+    "PoolSubscriptionType" -> "subscription"
+    "MemberConfigId" -> "id"
+    "MemberRuntimeMode" -> "runtimeMode"
+    "MemberLocation" -> "location"
+    "MemberPoolIds" -> "pools"
     other -> lowerInitial other
 
 lowerInitial :: Text -> Text
@@ -216,6 +255,8 @@ demoConfigFromDhall rawConfig = do
   coordinatorDaemonValue <- withDefaultConsumerSubscriptionType runtimeModeValue <$> daemonConfigFromDhall (dhallCoordinator rawConfig)
   legacyEngineDaemonValue <- traverse (fmap (withDefaultConsumerSubscriptionType runtimeModeValue) . daemonConfigFromDhall) (dhallEngineDaemon rawConfig)
   engineDaemonValues <- traverse (fmap (withDefaultConsumerSubscriptionType runtimeModeValue) . daemonConfigFromDhall) (dhallEngineDaemons rawConfig)
+  enginePoolValues <- traverse enginePoolFromDhall (dhallEnginePools rawConfig)
+  engineMemberValues <- traverse engineMemberFromDhall (dhallEngineMembers rawConfig)
   engineValues <- traverse engineBindingFromDhall (dhallEngines rawConfig)
   modelValues <- traverse modelDescriptorFromDhall (dhallModels rawConfig)
   pure
@@ -232,6 +273,8 @@ demoConfigFromDhall rawConfig = do
           if null engineDaemonValues
             then maybeToList legacyEngineDaemonValue
             else engineDaemonValues,
+        enginePools = enginePoolValues,
+        engineMembers = engineMemberValues,
         requestTopics = dhallConfigRequestTopics rawConfig,
         resultTopic = dhallConfigResultTopic rawConfig,
         modelsBucket = dhallModelsBucket rawConfig,
@@ -259,6 +302,8 @@ legacyDemoConfigFromDhall rawConfig = do
         activeDaemonRole = activeDaemonRoleValue,
         coordinatorDaemon = coordinatorDaemonValue,
         engineDaemons = maybeToList engineDaemonValue,
+        enginePools = [],
+        engineMembers = [],
         requestTopics = legacyDhallConfigRequestTopics rawConfig,
         resultTopic = legacyDhallConfigResultTopic rawConfig,
         modelsBucket = legacyDhallModelsBucket rawConfig,
@@ -275,11 +320,37 @@ daemonConfigFromDhall rawConfig = do
     DaemonConfig
       { daemonConfigRole = roleValue,
         daemonConfigLocation = dhallLocation rawConfig,
+        daemonConfigMemberId = dhallMemberId rawConfig,
         daemonConfigRequestTopics = dhallDaemonRequestTopics rawConfig,
         daemonConfigResultTopic = dhallDaemonResultTopic rawConfig,
         daemonConfigHostBatchTopic = dhallHostBatchTopic rawConfig,
         daemonConfigPulsarConnectionMode = connectionModeValue,
         daemonConfigConsumerSubscriptionType = Nothing
+      }
+
+enginePoolFromDhall :: DhallEnginePool -> Either String EnginePool
+enginePoolFromDhall rawPool = do
+  runtimeModeValue <- parseEnum "engine pool runtimeMode" parseRuntimeMode (dhallPoolRuntimeMode rawPool)
+  subscriptionValue <- parseEnum "engine pool subscription" parseConsumerSubscriptionType (dhallPoolSubscriptionType rawPool)
+  pure
+    EnginePool
+      { enginePoolId = dhallPoolId rawPool,
+        enginePoolRuntimeMode = runtimeModeValue,
+        enginePoolModelIds = dhallPoolModelIds rawPool,
+        enginePoolMemberIds = dhallPoolMemberIds rawPool,
+        enginePoolSubscriptionType = subscriptionValue,
+        enginePoolMaxInflightPerMember = dhallMaxInflightPerMember rawPool
+      }
+
+engineMemberFromDhall :: DhallEngineMember -> Either String EngineMember
+engineMemberFromDhall rawMember = do
+  runtimeModeValue <- parseEnum "engine member runtimeMode" parseRuntimeMode (dhallMemberRuntimeMode rawMember)
+  pure
+    EngineMember
+      { engineMemberId = dhallMemberConfigId rawMember,
+        engineMemberRuntimeMode = runtimeModeValue,
+        engineMemberLocation = dhallMemberLocation rawMember,
+        engineMemberPoolIds = dhallMemberPoolIds rawMember
       }
 
 withDefaultConsumerSubscriptionType :: RuntimeMode -> DaemonConfig -> DaemonConfig
@@ -296,7 +367,7 @@ defaultConsumerSubscriptionType runtimeMode daemonConfig
   | runtimeMode == AppleSilicon
       && daemonConfigRole daemonConfig == Engine
       && daemonConfigLocation daemonConfig == "control-plane-host" =
-      ConsumerExclusive
+      ConsumerShared
   | otherwise = ConsumerShared
 
 engineBindingFromDhall :: DhallEngineBinding -> Either String EngineBinding
@@ -365,6 +436,8 @@ renderSubstrateConfig demoConfig =
       ", coordinator = " <> renderDaemonConfig (coordinatorDaemon demoConfig),
       ", engine = " <> dhallOptional daemonConfigType renderDaemonConfig (listToMaybe (engineDaemons demoConfig)),
       ", engineDaemons = " <> dhallList daemonConfigType renderDaemonConfig (engineDaemons demoConfig),
+      ", enginePools = " <> dhallList enginePoolType renderEnginePool (enginePools demoConfig),
+      ", engineMembers = " <> dhallList engineMemberType renderEngineMember (engineMembers demoConfig),
       ", request_topics = " <> dhallList "Text" dhallText (requestTopics demoConfig),
       ", result_topic = " <> dhallText (resultTopic demoConfig),
       ", models_bucket = " <> dhallText (modelsBucket demoConfig),
@@ -380,6 +453,8 @@ renderDaemonConfig daemonConfig =
     <> dhallText (daemonRoleId (daemonConfigRole daemonConfig))
     <> ", location = "
     <> dhallText (daemonConfigLocation daemonConfig)
+    <> ", memberId = "
+    <> dhallOptional "Text" dhallText (daemonConfigMemberId daemonConfig)
     <> ", request_topics = "
     <> dhallList "Text" dhallText (daemonConfigRequestTopics daemonConfig)
     <> ", result_topic = "
@@ -388,6 +463,34 @@ renderDaemonConfig daemonConfig =
     <> dhallOptional "Text" dhallText (daemonConfigHostBatchTopic daemonConfig)
     <> ", pulsarConnectionMode = "
     <> dhallText (pulsarConnectionModeId (daemonConfigPulsarConnectionMode daemonConfig))
+    <> " }"
+
+renderEnginePool :: EnginePool -> String
+renderEnginePool pool =
+  "{ id = "
+    <> dhallText (enginePoolId pool)
+    <> ", runtimeMode = "
+    <> dhallText (runtimeModeId (enginePoolRuntimeMode pool))
+    <> ", models = "
+    <> dhallList "Text" dhallText (enginePoolModelIds pool)
+    <> ", members = "
+    <> dhallList "Text" dhallText (enginePoolMemberIds pool)
+    <> ", subscription = "
+    <> dhallText (consumerSubscriptionTypeId (enginePoolSubscriptionType pool))
+    <> ", maxInflightPerMember = "
+    <> dhallInteger (enginePoolMaxInflightPerMember pool)
+    <> " }"
+
+renderEngineMember :: EngineMember -> String
+renderEngineMember member =
+  "{ id = "
+    <> dhallText (engineMemberId member)
+    <> ", runtimeMode = "
+    <> dhallText (runtimeModeId (engineMemberRuntimeMode member))
+    <> ", location = "
+    <> dhallText (engineMemberLocation member)
+    <> ", pools = "
+    <> dhallList "Text" dhallText (engineMemberPoolIds member)
     <> " }"
 
 renderEngineBinding :: EngineBinding -> String
@@ -483,7 +586,15 @@ dhallText value =
 
 daemonConfigType :: String
 daemonConfigType =
-  "{ role : Text, location : Text, request_topics : List Text, result_topic : Text, host_batch_topic : Optional Text, pulsarConnectionMode : Text }"
+  "{ role : Text, location : Text, memberId : Optional Text, request_topics : List Text, result_topic : Text, host_batch_topic : Optional Text, pulsarConnectionMode : Text }"
+
+enginePoolType :: String
+enginePoolType =
+  "{ id : Text, runtimeMode : Text, models : List Text, members : List Text, subscription : Text, maxInflightPerMember : Integer }"
+
+engineMemberType :: String
+engineMemberType =
+  "{ id : Text, runtimeMode : Text, location : Text, pools : List Text }"
 
 engineBindingType :: String
 engineBindingType =

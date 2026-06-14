@@ -1,10 +1,27 @@
 let DaemonConfig =
       { role : Text
       , location : Text
+      , memberId : Optional Text
       , request_topics : List Text
       , result_topic : Text
       , host_batch_topic : Optional Text
       , pulsarConnectionMode : Text
+      }
+
+let EnginePool =
+      { id : Text
+      , runtimeMode : Text
+      , models : List Text
+      , members : List Text
+      , subscription : Text
+      , maxInflightPerMember : Integer
+      }
+
+let EngineMember =
+      { id : Text
+      , runtimeMode : Text
+      , location : Text
+      , pools : List Text
       }
 
 let EngineBinding =
@@ -51,6 +68,8 @@ in  { runtimeMode : Text
     , coordinator : DaemonConfig
     , engine : Optional DaemonConfig
     , engineDaemons : List DaemonConfig
+    , enginePools : List EnginePool
+    , engineMembers : List EngineMember
     , request_topics : List Text
     , result_topic : Text
     , models_bucket : Text

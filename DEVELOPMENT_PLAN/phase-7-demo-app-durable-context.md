@@ -1,6 +1,6 @@
 # Phase 7: Demo App Multi-User Durable Context
 
-**Status**: Active (Sprints 7.1-7.22 remain closed on their recorded gates; Sprint 7.23 is code-side closed for replacing the Apple host engine `flock(2)` primary guard with Pulsar `Exclusive` or intentional `Failover` subscription ownership. Wave I owns the live Apple duplicate-consumer cohort proof.)
+**Status**: Active (Sprints 7.1-7.22 remain closed on their recorded gates; Sprint 7.23 is now a superseded Apple singleton stopgap, and Sprint 7.24 reopens the coordinator/engine daemon runtime for substrate-neutral engine pools, broker-native backpressure, Apple multi-host membership, and startup-time member assignment. Desired-state hot reload is a future extension, not part of the current code-side closure.)
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/durable_context_design.md](../documents/architecture/durable_context_design.md), [../documents/architecture/demo_app_design.md](../documents/architecture/demo_app_design.md), [../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Define the multi-user, durable-context shape of the `infernix-demo` workload —
@@ -11,17 +11,18 @@
 
 ## Phase Status
 
-Phase 7 is `Active` for Sprint 7.23. Sprints 7.1–7.18 remain closed, and Sprints 7.19–7.22 closed
-the auth-UX quad described in the Status block on the Wave G routed E2E validation. Code-side
-Sprint 7.23 closure replaces Apple host engine primary coordination with Pulsar `Exclusive` or
-intentional `Failover` subscription semantics; Phase 7 remains `Active` only for the Wave I live
-Apple duplicate-consumer cohort proof.
+Phase 7 is `Active` for Sprint 7.24. Sprints 7.1–7.18 remain closed, and Sprints 7.19–7.22 closed
+the auth-UX quad described in the Status block on the Wave G routed E2E validation. Sprint 7.23's
+Apple `Exclusive` / `Failover` singleton design is retained only as historical current-code context
+and is superseded by the engine-pool routing target: normal Apple fanout uses `Shared` across
+distinct host ids, exact-host routes use `Exclusive`, and the coordinator chooses pool/model topics
+rather than concrete nodes.
 
-Code-side closure: Sprints 7.1–7.17 are code-side closed covering the full
-daemon-split topology (stateless `infernix-demo` frontend, two-replica stateless
-`infernix-coordinator` with per-context dispatcher / result-bridge / model-bootstrap loops,
-one-per-node `infernix-engine` with KV cache), the durable-context schema (per-conversation
-Pulsar log topic, compacted per-user contexts + drafts topics, `infernix-models` and
+Code-side closure: Sprints 7.1–7.17 are code-side closed covering the daemon-split topology
+(stateless `infernix-demo` frontend, two-replica stateless `infernix-coordinator` with per-context
+dispatcher / result-bridge / model-bootstrap loops, and engine-role runtime with KV cache), the
+durable-context schema (per-conversation Pulsar log topic, compacted per-user contexts + drafts
+topics, `infernix-models` and
 `infernix-demo-objects` MinIO buckets, `/api/objects` presigner with JWKS TTL cache), and the
 browser SPA (Keycloak PKCE auth + refresh-token re-auth, durable-context Chat with WebSocket
 transport, Artifacts view with bounded text/JSON preview + inline media + browser-native PDF +
@@ -54,7 +55,7 @@ PASS + 5/6 e2e PASS), [Wave A.1](cohort-validation-waves.md) (artifact-upload su
 → 6/6 e2e PASS), [Wave A.2](cohort-validation-waves.md) (per-model browser smoke matrix
 → 7/7 e2e PASS exercising every demo-config catalog model), and
 [Wave A.3](cohort-validation-waves.md) (Apple `engine.lock` enforcement chaos case, now legacy
-coverage pending Sprint 7.23 replacement). CUDA
+coverage superseded by Sprint 7.24 engine-pool routing). CUDA
 Linux cohort closure closed in [Wave C](cohort-validation-waves.md): the native `linux-cpu`
 full-suite gate passed on the recorded cohort validation, and the real-hardware `linux-gpu` full-suite gate passed
 on the recorded cohort validation. Wave C covers the LinuxCpu integration chaos block + the multi-user throughput
@@ -63,9 +64,9 @@ Historical validation proof points are inventoried in
 [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) under "Historical Validation
 Evidence"; the underlying contracts they exercised still describe supported behavior.
 
-Phase 7 remains open only for Sprint 7.23's Apple cohort proof of the singleton-coordination
-replacement. The earlier durable-context and auth-UX scopes remain closed on their recorded
-validation.
+Phase 7 remains open for Sprint 7.24's real-cluster pool-routing validation. The coordinator and
+engine-daemon code-side pool-routing work has landed on the Linux outer-container lane; the earlier
+durable-context and auth-UX scopes remain closed on their recorded validation.
 
 ## Current Repo Assessment
 
@@ -89,9 +90,10 @@ the prior `/objects/:objectRef` HTTP route and `serveObject` handler are removed
 comment in `chart/templates/httproutes.yaml`, and the route inventory rows in `README.md`,
 `documents/engineering/edge_routing.md`, and `documents/reference/web_portal_surface.md`;
 the 80-character inline-payload threshold in `src/Infernix/Runtime.hs` is replaced with
-unconditional inline payloads; `src/Infernix/Service.hs` acquires an exclusive
-`flock(2)`-style lock on `./.data/runtime/engine.lock` at engine-role startup
-(the `Engine` daemon role and Linux engine pod uniformly acquire the same lock);
+unconditional inline payloads; the historical Sprint 7.7 implementation made
+`src/Infernix/Service.hs` acquire an exclusive `flock(2)`-style lock on
+`./.data/runtime/engine.lock` at engine-role startup, which is now superseded by the Sprint 7.24
+engine-pool assignment target;
 `src/Infernix/Runtime/Pulsar.hs` reconciles the
 supported `infernix` tenant plus `infernix/system` and `infernix/demo` namespaces, sets a
 compaction threshold on the demo namespace, and creates the
@@ -244,21 +246,23 @@ topology — and validated them end-to-end on `linux-cpu`. The closure surfaces:
   demo, coordinator, and engine Deployment templates; the demo backend now
   reads MinIO and Keycloak wiring from mounted `ClusterConfig` plus
   `SecretsConfig`.
-- `src/Infernix/Models.hs.hostBatchTopicForMode` now returns the
+- `src/Infernix/Models.hs.hostBatchTopicForMode` historically returned the
   canonical `inference.batch.<mode>` topic on every substrate (not just
-  Apple), and `Infernix.DemoConfig.engineDaemonConfigs` returns at least
+  Apple), and `Infernix.DemoConfig.engineDaemonConfigs` returned at least
   one engine daemon on every substrate so the in-cluster `infernix-engine`
-  Deployment has daemon metadata to start with.
-- `src/Infernix/Cluster.hs.finalPhaseDeployments` waits on
-  `deployment/infernix-engine` in every final deployment and adds the
-  demo-gated `deployment/infernix-{coordinator,demo,keycloak}` only
-  when `demo_ui = true` (no longer on the prior
-  `deployment/infernix-service`); `clusterServiceEnabled` returns
+  Deployment had daemon metadata to start with. Sprint 4.19 and Sprint 7.24 replace this with
+  derived pool/model topics and substrate-specific engine members.
+- `src/Infernix/Cluster.hs.finalPhaseDeployments` historically waited on
+  `deployment/infernix-engine` in every final deployment and added demo-gated
+  `deployment/infernix-{coordinator,demo,keycloak}` only when `demo_ui = true`.
+  Sprint 7.24 supersedes that production shape: the coordinator is production infrastructure,
+  `infernix-demo` and Keycloak remain demo-gated, and Apple engine members are host daemons rather
+  than in-cluster engine pods. `clusterServiceEnabled` returns
   `False` across every substrate. `renderHelmValues` zeros out the
-  coordinator + engine replica counts in every pre-Pulsar phase, raises
-  them to the supported demo-on values (coordinator ≥ 2, engine 1) in
-  `FinalPhase`, and sets `coordinator.enabled = false` when
-  `demo_ui = false`.
+  coordinator + engine replica counts in every pre-Pulsar phase and raises
+  them in `FinalPhase`. The legacy `coordinator.enabled = false` behavior for
+  `demo_ui = false` is tracked for deletion; the target keeps the coordinator enabled in
+  production.
 - `src/Infernix/Cluster/PublishImages.hs.buildHarborOverridesValue`
   rewrites `coordinator.image` + `engine.image` alongside `service.image`
   and `demo.image`, so the new pods pull from the Harbor mirror instead
@@ -432,8 +436,9 @@ The product-agnostic design lives at
 the demo-specific bindings live at
 [../documents/architecture/demo_app_design.md](../documents/architecture/demo_app_design.md);
 the supported three-role daemon model (stateless frontend, stateless coordinator,
-one-per-node stateful engine) lives at
-[../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md);
+substrate-specific engine pools) lives at
+[../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md) and
+[../documents/architecture/engine_pool_routing.md](../documents/architecture/engine_pool_routing.md);
 this section names the load-bearing decisions so phase readers can locate the right module
 boundary without re-reading the design docs.
 
@@ -516,8 +521,9 @@ The discipline is documented in
 [../documents/engineering/implementation_boundaries.md](../documents/engineering/implementation_boundaries.md);
 the reusable shape this discipline protects is codified in
 [../documents/architecture/durable_context_design.md](../documents/architecture/durable_context_design.md);
-the per-pod placement, replica policy, and one-per-node engine rule are codified in
-[../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md).
+the placement, replica policy, pool ownership, and pinned-member routing rules are codified in
+[../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md) and
+[../documents/architecture/engine_pool_routing.md](../documents/architecture/engine_pool_routing.md).
 
 ## Sprint 7.1: Keycloak Release and Realm Pre-Seed [Done]
 
@@ -1143,14 +1149,15 @@ for the authoritative target shape.
   entry in `Routes.hs`
 - **Move the planned `Infernix.Demo.ResultBridge` to `src/Infernix/Bridge/Result.hs`**
   (shared library; loaded by coordinator). The demo binary carries no result-bridge module
-- **Three new Deployments + PDBs**: `infernix-coordinator` (replicas ≥ 2 default, preferred
-  anti-affinity, demo-gated), `infernix-engine` (replicas operator-set
-  on Linux substrates; 0 on `apple-silicon`; required anti-affinity; GPU resource shape on
-  `linux-gpu`), `infernix-demo` (replicas ≥ 2 default; preferred anti-affinity; demo-gated).
-  PodDisruptionBudgets `maxUnavailable: 1` on each
-- **Production (`demo_ui = false`) deploys only the engine-role Deployment set.** Frontend and
-  coordinator are demo-gated; production bootstrap semantics for lazy model population remain
-  pending and must not reintroduce the demo coordinator deployment
+- **Three Deployments + PDBs**: `infernix-coordinator` (replicas ≥ 2 default, preferred
+  anti-affinity, production infrastructure), `infernix-engine` (Linux engine-pool workload with
+  operator-set replicas and GPU resource shape on `linux-gpu`; Apple engine members run on host),
+  `infernix-demo` (replicas ≥ 2 default; preferred anti-affinity; demo-gated). PodDisruptionBudgets
+  `maxUnavailable: 1` on Kubernetes workloads. Earlier Sprint 7.7 wording that demo-gated the
+  coordinator is superseded by Sprint 7.24.
+- **Production (`demo_ui = false`) keeps coordinator plus engine pools.** Frontend/demo API,
+  identity, and demo-owned routes or buckets are demo-gated; production bootstrap semantics for lazy
+  model population live in the coordinator.
 - **Readiness probes** match the role: coordinator probes Pulsar subscription readiness;
   engine probes adapter startup; demo probes HTTP listener
 - **Coordinator pod owns the only outbound-internet egress** in the supported daemon
@@ -1187,13 +1194,13 @@ for the authoritative target shape.
   producer dedup on `inference.result.<mode>` prevents a duplicate result
 - Chaos: drain a node hosting an engine pod; the engine PDB blocks the drain until another
   engine pod is available cluster-wide; the cluster keeps serving inference
-- One-engine-per-node enforcement: on Linux,
+- Engine placement enforcement: on Linux,
   `kubectl scale deployment/infernix-engine --replicas=N+1` (where N = engine-capable
-  nodes) leaves one replica `Pending` with the anti-affinity rejection message; on Apple,
-  launching a second `infernix service` on the same host while one is running exits
-  non-zero with the `engine.lock held by PID …` diagnostic
+  nodes) leaves one replica `Pending` with the anti-affinity rejection message. The older Apple
+  `engine.lock` duplicate-daemon diagnostic is historical and is superseded by stable host-id pool
+  membership plus pinned `Exclusive` routing in Sprint 7.24
 - Production-shape test: deploy with `demo_ui = false`;
-  `infernix kubectl -n platform get deployments` returns only the engine-role Deployment set;
+  `infernix kubectl -n platform get deployments` returns coordinator plus engine-pool workloads;
   `infernix-models` and `infernix-engine-artifacts` buckets are present;
   `infernix-demo-objects` bucket is absent;
   `/objects/:objectRef` route is not registered
@@ -2117,17 +2124,18 @@ and the multi-user throughput / fan-in batching / fan-out test.
   - **Concurrent bootstrap requests**: N engine pods request the same uncached model
     simultaneously; producer dedup + Pulsar Failover guarantees exactly one upstream
     download; all N engines observe the `.ready` sentinel and proceed
-  - **One-engine-per-node enforcement**: on Linux,
+  - **Engine placement enforcement**: on Linux,
     `kubectl scale deployment/infernix-engine --replicas=N+1` leaves the extra pod
-    `Pending` with the anti-affinity rejection; on Apple, launching a second
-    `infernix service` on the same host while one is running exits non-zero with
-    `engine.lock held by PID …`
+    `Pending` with the anti-affinity rejection; the older Apple duplicate-daemon
+    `engine.lock held by PID ...` diagnostic is historical and superseded by host-id pool
+    membership plus pinned `Exclusive` routes
   each case asserts exactly-once outcome and full state preservation
 - model-cache eviction test: trigger model loads until `/model-cache` size pressure
   exists; assert the adapter helper evicts LRU entries; assert the engine pod is not
   restarted by kubelet for ephemeral-storage exhaustion
 - production-shape test: deploy `demo_ui = false` and assert
-  `infernix kubectl -n platform get deployments` returns only the engine-role Deployment set;
+  `infernix kubectl -n platform get deployments` returns the production coordinator plus
+  engine-pool workloads;
   `infernix-models` and `infernix-engine-artifacts` buckets are present;
   `infernix-demo-objects` bucket is absent;
   `infernix kubectl get pvc -A` returns empty
@@ -2209,13 +2217,14 @@ the recorded cohort validation durable topic-family implementation:
   pod-kill reconnect coverage closed in the recorded cohort validation routed E2E pass, and coordinator
   replacement coverage closed in Wave C.
 
-the recorded cohort validation Linux GPU validation implementation:
+the recorded cohort validation Linux GPU validation implementation, now legacy metadata for the
+pool-routing replacement:
 
-- `src/Infernix/Cluster.hs.cluster status` now includes
+- `src/Infernix/Cluster.hs.cluster status` includes the legacy
   `publicationHostInferenceBatchTopic` when the active publication state carries a configured
   batch handoff topic, so operators can see the same request -> batch split that
-  `/api/publication` exposes.
-- `test/integration/Spec.hs` now asserts the `hostInferenceBatchTopic` field in routed
+  `/api/publication` exposes. Sprint 7.24 replaces this with engine-pool routing metadata.
+- `test/integration/Spec.hs` asserts the legacy `hostInferenceBatchTopic` field in routed
   publication JSON for every runtime mode, asserts the matching
   `publicationHostInferenceBatchTopic` line in `cluster status`, and verifies the generated
   demo config routes the coordinator from the substrate request topic to the configured batch
@@ -2766,7 +2775,7 @@ Per-sprint dated proof points are removed; cohort closure references via
 - Phase Status uses present-tense vocabulary; the runtime KV-cache and `Infernix.Runtime.Daemon`
   prose describes the supported shape directly.
 - Sprint 7.7 prose describes its deliverable as introducing the supported three-role split
-  (`infernix-coordinator` + `infernix-engine` + demo-gated `infernix-demo`) and the supported
+  (`infernix-coordinator` + substrate-specific engine pools + demo-gated `infernix-demo`) and the supported
   MinIO-backed object-storage contract, with cleanup receipts held in
   `legacy-tracking-for-deletion.md`.
 - Sprint 7.8/7.14/7.15/7.17 prose drops dated hardware proof points; cohort closure references
@@ -2827,7 +2836,7 @@ Linux/CUDA cohort validation closed in Wave C.
 
 **Operations docs to update:**
 - [../documents/operations/cluster_bootstrap_runbook.md](../documents/operations/cluster_bootstrap_runbook.md) — Keycloak addition note plus coordinator + engine pod inventory; expected `infernix kubectl get pvc -A` is empty; `infernix-models` bucket validation; first-use bootstrap latency note
-- [../documents/operations/apple_silicon_runbook.md](../documents/operations/apple_silicon_runbook.md) — coordinator + engine 3-role naming for the Apple lane; host engine daemon singleton ownership via Pulsar `Exclusive` or intentional `Failover`; host engine pulls weights from MinIO `infernix-models` via the same bootstrap workflow
+- [../documents/operations/apple_silicon_runbook.md](../documents/operations/apple_silicon_runbook.md) — coordinator + engine 3-role naming for the Apple lane; host engine daemon pool membership via stable host ids, `Shared` normal pools, and pinned `Exclusive` routes; host engine pulls weights from MinIO `infernix-models` via the same bootstrap workflow
 
 **Development docs to create/update:**
 (Already listed above; reaffirmed here that Sprint 7.7 adds bootstrap chaos cases to
@@ -2848,7 +2857,7 @@ Linux/CUDA cohort validation closed in Wave C.
 - [README.md](README.md) — Phase 7 row in Document Index and Phase Overview
 - [00-overview.md](00-overview.md) — Phase 7 in architecture baseline and dependency chain
 - [system-components.md](system-components.md) — Keycloak, demo MinIO bucket, demo Pulsar topic families, new routes, coordinator + engine Deployments, new `infernix-models` bucket, new `model.bootstrap.request` topic, no-PVC daemon shape
-- [development_plan_standards.md](development_plan_standards.md) — Sections K + L updated for the 3-role daemon contract, the uniform one-engine-per-node rule (Linux anti-affinity + Apple `flock`), the no-PVC posture, and MinIO + Pulsar as the only durable state
+- [development_plan_standards.md](development_plan_standards.md) — Sections K + L updated for the 3-role daemon contract, Linux anti-affinity, Apple host-id pool membership, the no-PVC posture, and MinIO + Pulsar as the only durable state
 - [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) — new Pending Removal entries for `./.data/object-store/`, the `s3://infernix-runtime/` URI scheme, the 80-char inline-payload threshold, the `/objects/:objectRef` route, and the chart-reserved `infernix-runtime` + `infernix-results` placeholder buckets; the previously-listed `persistentvolumeclaim-service-data.yaml` removal is reaffirmed and broadened to "no PVC on any daemon"
 
 **Cross-references to add:**
@@ -3141,63 +3150,134 @@ caller's MinIO prefix and user-owned Pulsar durable-context topics.
 
 ---
 
-## Sprint 7.23: Apple Host Engine Pulsar Singleton [Active]
+## Sprint 7.23: Apple Host Engine Pulsar Singleton [Done]
 
-**Status**: Active
-**Code-side closure**: Complete on the present Linux outer-container lane - `src/Infernix/Types.hs` adds typed `ConsumerSubscriptionType`; `src/Infernix/Substrate.hs` fills backward-compatible subscription defaults for existing staged Dhall files; `src/Infernix/Runtime/Pulsar.hs` selects `Exclusive` for Apple host engine consumers by default, allows explicit `Failover`, rejects `Shared`, uses process-qualified names for `Failover`, and treats `Exclusive` ownership conflicts as fatal; `src/Infernix/Runtime/Daemon.hs` runs the Apple host engine consumer in the daemon's main thread; `src/Infernix/Service.hs` no longer uses `engine.lock` as the Apple startup gate; `test/unit/Spec.hs` covers default/Failover/Shared-rejection selection; and `test/integration/Spec.hs` replaces the old lock-specific Apple chaos assertion with the duplicate Exclusive-consumer assertion for the Apple cohort. Proven code-side by `docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm ... infernix cabal run exe:infernix -- test unit`.
-**Cohort gate**: Wave I Apple cohort must run the live duplicate host-engine process assertion against Pulsar and record the broker-owned `Exclusive` rejection evidence.
+**Status**: Done (superseded by Sprint 7.24; no new Apple `Failover` evidence requested)
+**Code-side closure**: Superseded — the singleton-oriented Apple design has been demoted. Service
+consumer validation now rejects `Failover` for service consumers, accepts normal Apple `Shared`
+pool membership across distinct host ids, and reserves `Exclusive` for pinned member routes.
+Sprint 7.24 replaces the singleton-oriented design with substrate-neutral engine pools.
+**Cohort gate**: Replaced by Sprint 7.24 pool-routing validation; no new Apple `Failover` evidence is requested.
 **Implementation**: `src/Infernix/Types.hs`, `src/Infernix/Substrate.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Daemon.hs`, `src/Infernix/Service.hs`, `test/unit/Spec.hs`, `test/integration/Spec.hs`, `documents/architecture/daemon_topology.md`, `documents/tools/pulsar.md`
 **Docs to update**: [../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md), [../documents/tools/pulsar.md](../documents/tools/pulsar.md), [../documents/operations/apple_silicon_runbook.md](../documents/operations/apple_silicon_runbook.md), [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md)
 
 ### Objective
 
-Replace the Apple host engine's filesystem lock as the primary singleton primitive with Pulsar
-subscription ownership. The operator intent is still one active host engine worker, but the
-distributed coordination boundary belongs to the broker.
+Record the superseded intermediate attempt to replace the Apple host engine filesystem lock with a
+single-topic Pulsar singleton. The durable target is now engine pools: `Shared` across distinct Apple
+host ids for normal work distribution and `Exclusive` only for pinned host routes.
 
 ### Deliverables
 
-- Apple host engine batch consumption uses `Exclusive` by default so accidental duplicate workers
-  fail at subscription time.
-- Intentional standby host workers use `Failover`, with stable subscription names and
-  process-qualified consumer names.
-- `Shared` is rejected for Apple host engine execution and local engine-artifact materialization.
-- Messages are acknowledged only after local materialization, inference, and result publication
-  succeed; failed materialization leaves the message unacked or negatively acknowledged for
-  redelivery.
-- The existing `flock(2)` guard becomes a removable local safety check rather than the supported
-  coordination primitive.
+- Keep the historical code-side changes visible only as legacy compatibility context while Sprint
+  7.24 removes or demotes them.
+- Track Apple `Failover` standby wording and single-host-topic assumptions in
+  [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md), not in the supported
+  architecture.
+- Preserve the useful invariant that pinned routes use broker-owned `Exclusive` ownership.
 
 ### Validation
 
-- Integration coverage for a duplicate Apple host engine worker proving `Exclusive` rejects it with
-  a clear diagnostic.
-- Integration coverage for intentional `Failover` handoff or a focused Pulsar-level unit test when
-  only one Apple host is available.
-- Negative coverage proving `Shared` cannot be selected for Apple host engine execution.
-- Existing durable-context dispatcher/result-bridge and Linux anti-affinity chaos coverage remain
-  green.
+- Historical unit coverage remains useful only as a migration guard for the compatibility surfaces
+  tracked by Sprint 7.24 and the deletion ledger.
+- No new validation should promote Apple `Failover` as a supported operator mode.
 
 ### Remaining Work
 
-- Run and record the Wave I Apple cohort live duplicate-host-engine validation against Pulsar.
+None for the superseded singleton target. Any remaining compatibility references live in
+[legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) and are removed by the Sprint
+7.24 cleanup path.
 
 ### Documentation Requirements
 
 **Architecture and tools docs to update:**
-- [../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md) — Apple host engine singleton uses Pulsar `Exclusive` or intentional `Failover`.
-- [../documents/tools/pulsar.md](../documents/tools/pulsar.md) — Apple host batch subscription mode, ack-after-success, and no-`Shared` rule.
-- [../documents/operations/apple_silicon_runbook.md](../documents/operations/apple_silicon_runbook.md) — operator-facing singleton behavior.
+- [../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md) — remove Apple singleton/failover target wording.
+- [../documents/tools/pulsar.md](../documents/tools/pulsar.md) — move Apple work distribution to pool topics and broker backpressure.
+- [../documents/operations/apple_silicon_runbook.md](../documents/operations/apple_silicon_runbook.md) — operator-facing Apple multi-host pool behavior.
 
 **Plan docs to update:**
 - [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) — completed removal row for the old `engine.lock` primary guard.
 
+---
+
+## Sprint 7.24: Engine Pool Assignment and Broker-Native Backpressure [Active]
+
+**Status**: Active
+**Code-side closure**: Complete for startup-time member assignment on the present Linux
+outer-container lane — coordinator routing resolves model ids to validated pool topics, engine
+daemons select a stable member id from `daemonConfig.memberId` / `--engine-name`, normal service
+consumers use `Shared`, pinned routes retain `Exclusive`, and `Failover` remains limited to
+coordinator-owned dispatcher/result-bridge/model-bootstrap loops. No hot reload is implemented in
+this sprint; changing pool/member assignment remains a Dhall materialization and daemon restart or
+rollout boundary. Proven by `./bootstrap/linux-cpu.sh build`; rebuilt-image
+`docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm infernix infernix test unit`;
+and mounted live-source `cabal test infernix-unit`, `cabal test infernix-haskell-style`,
+`cabal run exe:infernix -- lint files/docs/proto/chart`, `cabal run exe:infernix -- docs check`,
+and `cabal run exe:infernix -- test lint`.
+**Cohort gate**: Pending [Wave J](cohort-validation-waves.md) — real Pulsar integration must prove
+shared-pool backlog distribution, pinned duplicate-consumer rejection, Apple multi-host operation,
+Linux pool placement, and production `demo_ui = false` coordinator presence.
+**Implementation**: `dhall/InfernixSubstrate.dhall`, `src/Infernix/Types.hs`, `src/Infernix/Models.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Daemon.hs`, `src/Infernix/DemoConfig.hs`, `src/Infernix/Substrate.hs`, `test/unit/Spec.hs`, `test/integration/Spec.hs`
+**Docs to update**: [../documents/architecture/engine_pool_routing.md](../documents/architecture/engine_pool_routing.md), [../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md), [../documents/tools/pulsar.md](../documents/tools/pulsar.md), [../documents/operations/apple_silicon_runbook.md](../documents/operations/apple_silicon_runbook.md), [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md)
+
+### Objective
+
+Make coordinator-to-engine routing substrate-neutral. The coordinator chooses a model/pool topic,
+not a node; Pulsar assigns work to eligible members through broker backpressure; exact-host or
+exact-member routes stay explicit through `Exclusive` pinned topics.
+
+### Deliverables
+
+- coordinator routing reads the validated engine-pool graph and publishes only to derived topics
+- Apple host daemons start with a stable host id and subscribe only to assigned model-pool topics
+- Linux engine workloads subscribe to the same derived pool/model topic shape as Apple members
+- normal pool consumers use `Shared` with receiver permits tied to local concurrency
+- pinned member consumers use `Exclusive`
+- assignment is startup-time in the current supported contract. Future hot reload, if implemented,
+  must use compacted desired-state records keyed by member id; assignment changes add subscriptions
+  for newly assigned models, drain removed subscriptions, and mark removed model-cache entries
+  evictable
+- production `demo_ui = false` keeps the coordinator and engine pools while omitting only demo-only
+  workloads and routes
+
+### Validation
+
+- unit tests for host-id/member selection and assignment-state transitions
+- Pulsar integration proving a busy shared-pool member stops receiving new work while a free member
+  receives new messages
+- pinned-route duplicate-consumer test proves `Exclusive` ownership
+- production-shape integration proves coordinator presence with `demo_ui = false`
+- regression coverage proves dispatcher, result-bridge, and model-bootstrap Failover subscriptions
+  remain coordinator-only leadership mechanisms
+
+### Remaining Work
+
+- **Code (machine-independent — DONE):** coordinator pool-topic routing, engine member subscription
+  selection, and Apple `ConsumerFailover` demotion have landed for startup-time assignment.
+- **Cohort gate ([Wave J](cohort-validation-waves.md)):** add real Pulsar integration coverage for
+  shared-pool backlog distribution, pinned `Exclusive` duplicate-consumer rejection, Apple
+  multi-host routing, Linux pool placement, and production `demo_ui = false` coordinator presence.
+- **Future extension:** compacted assignment/status topics and cache-drain hot reload remain
+  planned design space; they are not implemented or required for the current startup-time
+  assignment contract.
+
+### Documentation Requirements
+
+**Architecture and tools docs to update:**
+- [../documents/architecture/engine_pool_routing.md](../documents/architecture/engine_pool_routing.md) — startup-time pool assignment, future desired-state hot reload boundaries, and cache behavior.
+- [../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md) — coordinator and engine role behavior.
+- [../documents/tools/pulsar.md](../documents/tools/pulsar.md) — shared-pool and pinned-route subscription rules.
+
+**Plan docs to update:**
+- [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) — pending cleanup rows for Apple `Failover`, the single Apple host topic, and demo-off engine-only topology.
+
 ## Documentation Requirements
 
 **Engineering docs to create/update:**
-- [../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md) - Apple host engine singleton doctrine.
-- [../documents/tools/pulsar.md](../documents/tools/pulsar.md) - Apple batch-topic subscription mode and ack-after-success rule.
-- [../documents/operations/apple_silicon_runbook.md](../documents/operations/apple_silicon_runbook.md) - operator-facing Apple singleton behavior.
+- [../documents/architecture/engine_pool_routing.md](../documents/architecture/engine_pool_routing.md) - substrate-neutral engine-pool routing doctrine.
+- [../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md) - coordinator and engine pool topology.
+- [../documents/tools/pulsar.md](../documents/tools/pulsar.md) - shared-pool and pinned-route subscription rules.
+- [../documents/operations/apple_silicon_runbook.md](../documents/operations/apple_silicon_runbook.md) - operator-facing Apple multi-host pool behavior.
 
 **Product or reference docs to create/update:**
 - [../documents/development/demo_app_test_plan.md](../documents/development/demo_app_test_plan.md) - durable-context validation references when singleton tests move.

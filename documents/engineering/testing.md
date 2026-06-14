@@ -101,8 +101,9 @@
 - `infernix test integration` proves the active staged substrate's generated catalog, routed surfaces,
   publication state, cache contract, and the real cluster's HA or lifecycle assertions.
 - One DRY substrate-aware integration suite plus one substrate-agnostic Playwright suite assert a
-  per-family real-output result contract proving the real engine ran — asserting shape and type per
-  closed `ResultFamily`, never golden strings. Each of the nine families proves its real result:
+  per-family real-output result contract — asserting shape and type per closed `ResultFamily`, never
+  golden strings. Hardware proof that those assertions exercise real engines is tracked in the
+  cohort gates. Each of the nine families has a result surface:
   LLM and speech yield inline text; source separation, audio-to-MIDI, music transcription, image,
   video, audio generation, and OMR yield a typed `infernix-demo-objects` object reference. Each
   suite traverses the active substrate's catalog, and the UNION across the three substrate catalogs

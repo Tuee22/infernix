@@ -31,8 +31,9 @@
   Haskell consumes them through `proto-lens`-generated bindings, and the shared Python adapter
   project consumes them through matching auto-generated Python protobuf modules in
   `tools/generated_proto/`
-- production daemons (`infernix service`) keep the topic-shaped request, host-batch, and result
-  contract and use the Pulsar transport configured for the active substrate; unit-level harnesses
+- production daemons (`infernix service`) keep the topic-shaped request, derived engine-pool
+  handoff, and result contract and use the Pulsar transport configured for the active substrate;
+  unit-level harnesses
   can still exercise the repo-local topic spool under `./.data/runtime/pulsar/` when those
   endpoints are intentionally absent
 - on `apple-silicon`, cluster daemons own inbound request consumption and batch handoff to the
@@ -69,8 +70,10 @@
   idempotent setup-ready marker
 - per-engine software manifests record adapter id, engine name, substrate, architecture,
   artifact kind, source reference, runtime versions, digest, optional MinIO object key,
-  entrypoint, and smoke command. Materialization writes into a temporary root and renames
-  atomically only after the smoke command succeeds.
+  entrypoint, and smoke command. Current Apple materialization validates the manifest contract before
+  atomic rename; the target lane adds real smoke/load validation before rename as a Wave I Apple
+  cohort gate. Linux smoke-wrapper validation exists today and Wave I replaces those wrappers with
+  real native payloads.
 - derived cache state is keyed by runtime mode and model identity and is always rebuildable
 - the demo `/api/cache` surface operates on the manifest-backed contract exposed by the Haskell
   worker; the manifest reads the supported `minio://infernix-models/<modelId>/` durable source

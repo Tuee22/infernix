@@ -4287,12 +4287,10 @@ renderHelmValues paths controlPlane state demoConfigPayload deployPhase engineCo
       BootstrapPhase -> 0
       HarborFinalPhase -> 0
       FinalPhase -> 2
-    -- Phase 3 Sprint 3.11 follow-on (2026-05-30): on Apple Silicon the
-    -- engine role runs host-native (the same-binary host daemon launched
-    -- from `./.build/infernix`); the cluster substrate must NOT deploy
-    -- an in-cluster engine pod because it would subscribe to the same
-    -- Shared subscription on `inference.batch.apple-silicon.host` and
-    -- compete with the host daemon, producing non-deterministic results.
+    -- On Apple Silicon the engine role runs host-native (the same-binary
+    -- host daemon launched from `./.build/infernix`); the cluster substrate
+    -- must not deploy an in-cluster engine pod because it would compete with
+    -- host engine members for the same Metal-backed work.
     -- Linux substrates keep the in-cluster engine deployment.
     repoEngineReplicaCount :: HelmDeployPhase -> Int
     repoEngineReplicaCount phaseValue = case (phaseValue, clusterRuntimeMode state) of

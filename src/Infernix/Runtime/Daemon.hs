@@ -81,6 +81,8 @@ runProductionDaemon paths runtimeMode maybeClusterConfig daemonRole maybeEngineN
   putStrLn ("serviceDaemonRole: " <> Text.unpack (daemonRoleId daemonRole))
   forM_ maybeEngineName $ \engineName ->
     putStrLn ("serviceEngineName: " <> Text.unpack engineName)
+  forM_ (daemonConfigMemberId daemonConfig) $ \memberId ->
+    putStrLn ("serviceEngineMemberId: " <> Text.unpack memberId)
   putStrLn ("serviceDaemonLocation: " <> daemonLocation)
   putStrLn ("serviceCatalogSource: " <> catalogSource)
   putStrLn ("serviceRuntimeMode: " <> Text.unpack (runtimeModeId runtimeMode))
@@ -217,9 +219,12 @@ requireDaemonConfig runtimeMode daemonRole maybeEngineName demoConfig
     firstEngineDaemon =
       find ((== Engine) . daemonConfigRole) (engineDaemons demoConfig)
     engineDaemonForName engineName =
-      find (engineDaemonConsumes expectedTopic) (engineDaemons demoConfig)
+      find (engineDaemonMatches engineName) (engineDaemons demoConfig)
       where
         expectedTopic = perEngineBatchTopicForMode runtimeMode engineName
+        engineDaemonMatches selector daemonConfig =
+          daemonConfigRole daemonConfig == Engine
+            && (daemonConfigMemberId daemonConfig == Just selector || engineDaemonConsumes expectedTopic daemonConfig)
     engineDaemonConsumes expectedTopic daemonConfig =
       daemonConfigRole daemonConfig == Engine
         && expectedTopic `elem` daemonConfigRequestTopics daemonConfig

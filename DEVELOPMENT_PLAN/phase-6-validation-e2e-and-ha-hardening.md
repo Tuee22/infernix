@@ -19,9 +19,10 @@ and real Dhall substrate codec implemented in the current worktree. The validati
 routed coverage, HA hardening, governed-doc closure, and CLI-registry closure are `Done` after
 Apple cohort validation in Waves A/A.1/A.2/A.3 and CUDA Linux cohort validation in Wave C. The
 phase is `Active` because the inference-coverage sprints were upgraded from the metadata-echo
-assertion to the per-family real-output result contract: the reopened Sprints 6.2, 6.3, and 6.6
-assert that a real engine ran for every active-substrate row, and the union across the three
-substrate catalogs covers every README matrix row as a mechanically checked invariant. The
+assertion to the per-family result contract plus cohort hardware proof: the reopened Sprints 6.2,
+6.3, and 6.6 assert the typed per-family result surface for every active-substrate row, and the
+union across the three substrate catalogs covers every README matrix row as a mechanically checked
+invariant. The
 code-side closure for that coverage upgrade is complete and validated on the present CUDA Linux
 host (x86_64 + RTX 5090). The assertion and harness code for these sprints —
 the `ResultFamily` dispatch in the integration suite, the per-family Playwright assertions plus
@@ -37,8 +38,8 @@ re-validated on both cohorts in
 never a per-sprint machine switch (see
 [development_plan_standards.md](development_plan_standards.md) Section Q).
 The supported test story is substrate-specific in code. Sprint 6.25 closes around the implemented split topology: cluster daemons
-always run, Apple cluster daemons own request-topic consumption and host-batch handoff, Apple
-inference work moves through Pulsar to same-binary host daemons, and publication distinguishes
+always run, Apple cluster daemons own request-topic consumption and derived pool-topic handoff,
+Apple inference work moves through Pulsar to same-binary host daemons, and publication distinguishes
 cluster daemon location from inference executor location. Sprint 6.26 closes the lifecycle-warning
 cleanup: warning classification is documented, buildx support inside the Linux substrate image is
 implemented, the PureScript compiler bypasses the npm installer, Spago's `glob@11` transitive
@@ -61,6 +62,10 @@ substrate image installs a single `ghc-9.12.4` toolchain. The supported Linux ou
 root and chart archive cache in the image overlay, hydrates MinIO through the supported direct
 tarball path instead of Docker Hub-backed OCI metadata, and repairs the known stale retained
 Pulsar or ZooKeeper epoch mismatch by resetting only the Pulsar claim roots and retrying once.
+Sprint 6.32 reopens validation for the engine-pool routing target: unit gates now reject illegal
+pool graphs and service-consumer subscription states, while integration still must prove
+broker-native backpressure on `Shared` pools, `Exclusive` pinned routes, and production-shape
+coordinator presence when `demo_ui = false`.
 
 ## Current Repo Assessment
 
@@ -94,13 +99,14 @@ only in [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md). The 
 is closed in Wave A/A.1/A.2/A.3, and the CUDA Linux cohort gate is closed in Wave C.
 
 The runtime-topology implementation deploys the `infernix-coordinator` role on Apple and reports
-`daemonLocation: cluster-pod`, `inferenceExecutorLocation: control-plane-host`, and the Apple
-host batch topic in publication metadata. Linux substrates deploy both `infernix-coordinator` and
-`infernix-engine`; Apple sets the cluster engine replica count to 0 because host engine daemons
-own Apple-native inference execution. The supported routed and cluster validation path uses real
-Pulsar transport; the repo-local topic spool under `./.data/runtime/pulsar/` remains only for
-unit-level or intentionally endpoint-absent harness checks and is not accepted as routed Pulsar
-evidence.
+`daemonLocation: cluster-pod` plus `inferenceExecutorLocation: control-plane-host` in publication
+metadata. Linux substrates deploy both `infernix-coordinator` and `infernix-engine`; Apple sets the
+cluster engine replica count to 0 because host engine daemons own Apple-native inference execution.
+Pool-routing metadata is now the supported direction, while the old Apple host batch topic remains
+legacy compatibility coverage until deletion-ledger cleanup. The supported routed and cluster
+validation path uses real Pulsar transport; the repo-local topic spool under
+`./.data/runtime/pulsar/` remains only for unit-level or intentionally endpoint-absent harness
+checks and is not accepted as routed Pulsar evidence.
 
 ## Validation Surface
 
@@ -1264,22 +1270,22 @@ same-binary host daemon fed by Pulsar batches.
   Apple sets the cluster engine replica count to 0 and runs the engine role host-native
 - on `linux-cpu` and `linux-gpu`, the coordinator publishes batch work, the in-cluster engine
   executes inference, and the engine publishes results
-- on `apple-silicon`, the coordinator reads request topics and publishes inference work to a
-  dedicated host-consumed Pulsar topic
+- on `apple-silicon`, the coordinator reads request topics and publishes inference work to derived
+  pool/model topics
 - same-binary host daemons on Apple read host-role `.dhall`, connect to Pulsar through
-  auto-discovered published edge state or explicit endpoint environment variables, consume the
-  configured batch topic, execute Apple-native inference, and publish results back through the
-  configured result path
+  auto-discovered published edge state, consume their assigned pool/member topics, execute
+  Apple-native inference, and publish results back through the configured result path
 - if operators explicitly scale the coordinator or engine deployments or run multiple Apple host
   executors, Pulsar subscriptions remain the ownership boundary for shared request-topic
   consumption, batch handoff, and result publication
 - the staged `.dhall` distinguishes substrate, daemon role (`coordinator` or `engine`), host
-  Pulsar connection mode, result topics, and host batch topics instead of treating Apple host
-  execution as absence of a cluster daemon
+  Pulsar connection mode, result topics, stable member ids, and pool/member assignments instead of
+  treating Apple host execution as absence of a cluster daemon
 - publication and browser-visible metadata distinguish cluster daemon location from inference
   executor location, so `daemonLocation` no longer implies that Apple lacks a cluster daemon
-- Pulsar-owned topics, exclusive subscriptions, acknowledgements, and negative acknowledgements
-  form the ownership boundary for clean request handoff, inference, and result publication
+- Pulsar-owned topics, `Shared` pool subscriptions, `Exclusive` pinned subscriptions,
+  acknowledgements, and negative acknowledgements form the ownership boundary for clean request
+  handoff, inference, and result publication
 - legacy plan language that says Apple `cluster up` lacks a cluster coordinator is removed
 
 ### Validation
@@ -1617,6 +1623,62 @@ instead of the legacy Tart helper.
 
 ---
 
+## Sprint 6.32: Engine Pool Routing Validation Gates [Active]
+
+**Status**: Active
+**Code-side closure**: Complete for unit-enforced invalid-state rejection on the present Linux
+outer-container lane — generated configs and substrate decoding now reject duplicate pool/member
+ids, unknown model ids, ambiguous model ownership, empty pool/member assignments, one-sided
+pool/member links, raw topic-like ids, `Failover` service consumers, non-positive inflight limits,
+and routable models with no eligible member. Topic derivation and service subscription selection
+are covered for Apple, Linux CPU, and Linux GPU. Proven by
+`./bootstrap/linux-cpu.sh build`; rebuilt-image
+`docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm infernix infernix test unit`;
+and mounted live-source `cabal test infernix-unit`, `cabal test infernix-haskell-style`,
+`cabal run exe:infernix -- lint files/docs/proto/chart`, `cabal run exe:infernix -- docs check`,
+and `cabal run exe:infernix -- test lint`.
+**Cohort gate**: Pending [Wave J](cohort-validation-waves.md) — real Pulsar integration still must
+prove broker-native `Shared` backpressure under backlog, pinned `Exclusive` duplicate-consumer
+rejection, Apple multi-host routing, Linux GPU pool placement, and production `demo_ui = false`
+coordinator-plus-engine-pool presence.
+**Implementation**: `dhall/InfernixSubstrate.dhall`, `src/Infernix/Types.hs`, `src/Infernix/Substrate.hs`, `src/Infernix/DemoConfig.hs`, `src/Infernix/Models.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Daemon.hs`, `test/unit/Spec.hs`, `test/integration/Spec.hs`, `documents/architecture/engine_pool_routing.md`, `documents/architecture/daemon_topology.md`
+**Docs to update**: `README.md`, `documents/architecture/engine_pool_routing.md`, `documents/architecture/daemon_topology.md`, `documents/tools/pulsar.md`, `documents/development/testing_strategy.md`, `documents/development/chaos_testing.md`, `DEVELOPMENT_PLAN/cohort-validation-waves.md`
+
+### Objective
+
+Make the engine-pool routing contract mechanically enforceable. Invalid model placement must fail
+before rollout, and scalable pools must use Pulsar backpressure rather than coordinator-side node
+guessing.
+
+### Deliverables
+
+- generated-config and unit validation reject raw batch-topic strings in pool configuration
+- unit tests reject unknown model ids, duplicate pool/member ids, routable models with no eligible
+  members, and Apple host daemon startup with an unknown host id
+- integration validates that `demo_ui = false` omits only demo/frontend/identity surfaces while
+  retaining the coordinator and engine pools
+- integration validates `Shared` pool consumers with bounded permits and a backlog on one member
+  still allow free members to receive new work
+- integration validates pinned per-member routes use `Exclusive` and reject duplicate consumers
+
+### Validation
+
+- `infernix lint docs`
+- `infernix test unit`
+- `infernix test integration` on the active substrate
+- cohort reruns for Apple multi-host pool behavior and Linux GPU pool placement when hardware is
+  required
+
+### Remaining Work
+
+- **Code (machine-independent — DONE):** unit validation rejects invalid routing graphs and
+  subscription states, and proves derived topic/member selection for all three substrates.
+- **Cohort gate ([Wave J](cohort-validation-waves.md)):** add real Pulsar integration coverage for
+  shared-pool backpressure, pinned exclusivity, Apple multi-host routing, Linux GPU pool placement,
+  and production `demo_ui = false` coordinator presence.
+
+---
+
 ## Remaining Work
 
 Phase 6 is `Active` for the inference-coverage upgrade. The reopened Sprints 6.2, 6.3, and 6.6
@@ -1637,7 +1699,10 @@ cohort gate: each cohort runs them against its own catalog column (Apple Metal w
 materialization, and CUDA GPU; [Wave I](cohort-validation-waves.md)). Sprint 6.31's
 machine-independent matrix-drift lint and unit coverage are code-side closed; its remaining work is
 the Wave I cohort evidence for headless Apple materialization and CUDA Linux real native payloads.
-The phase returns to `Done` only after that wave closes.
+Sprint 6.32's code-side invalid-graph rejection is now complete and validated on the Linux
+outer-container unit lane; its remaining Wave J residual is real Pulsar validation for demo-off
+coordinator presence, shared-pool backpressure, pinned-route exclusivity, and multi-substrate pool
+placement before the phase returns to `Done`.
 See the two-axis execution rule in [development_plan_standards.md](development_plan_standards.md)
 Section Q.
 
@@ -1658,7 +1723,9 @@ Section Q.
 - `documents/engineering/implementation_boundaries.md` - ownership matrix, adapter-local versus shared-contract types, instance placement, and module-boundary rules
 - `documents/engineering/portability.md` - portable invariants versus substrate-specific detail, plus explicit current-status and validation sections where target direction still appears
 - `documents/engineering/storage_and_state.md` - owner or durability table, failure-mode rules, and cleanup contracts
-- `documents/architecture/runtime_modes.md` - daemon-role split, Apple cluster-to-host batch handoff, and host-role `.dhall` fields
+- `documents/architecture/runtime_modes.md` - daemon-role split, derived engine-pool handoff, and host-role `.dhall` fields
+- `documents/architecture/engine_pool_routing.md` - invalid-state validation, shared-pool
+  backpressure, pinned-route exclusivity, and production-shape expectations
 - `documents/engineering/model_lifecycle.md` - batch ownership, request handoff, and result-publication runtime contract
 - no `documents/engineering/monitoring.md` exists while monitoring remains unsupported; create it
   only if monitoring becomes a supported first-class surface in a later change

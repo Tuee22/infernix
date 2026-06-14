@@ -25,8 +25,10 @@ Phase 1 Sprint 1.14 has completed the machine-independent cleanup: `HostConfig.h
 `HostTool.HostTart`, and the `AppleTart` prerequisite are gone; the generated Linux host manifest no
 longer carries a `tart` field; and `infernix internal materialize-metal-engines` writes
 `engine-artifact.json` manifests under `./.data/engines/<adapterId>/` without invoking Tart. The
-Apple-only residual is validation of the fixed Metal runtime bridge and native/Core ML artifact
-load on an Apple Silicon host in
+`apple-metal-runtime-bridge` root also materializes fixed bridge source plus
+`bin/infernix-apple-metal-bridge-smoke`, which is the Apple-side smoke command for runtime Metal
+source compilation and kernel dispatch. The Apple-only residual is executing that bridge smoke and
+loading a native/Core ML artifact on an Apple Silicon host in
 [../../DEVELOPMENT_PLAN/cohort-validation-waves.md](../../DEVELOPMENT_PLAN/cohort-validation-waves.md).
 
 Apple-native runners that already use prebuilt host wheels or binaries remain the preferred path:
@@ -45,7 +47,7 @@ The target Apple build path separates execution from materialization:
    `MTLDevice.makeLibrary(source:options:)`.
 3. Engine artifacts are written under `./.data/engines/<adapterId>/` by a controlled
    materialization command and published with a manifest that records source identity, platform
-   identity, digest, and smoke validation.
+   identity, digest, and the intended smoke command.
 4. Runtime inference consumes already materialized artifacts and never installs toolchains or
    starts virtualization on a request path.
 
@@ -86,8 +88,9 @@ Every materialized engine artifact should have a typed manifest with at least th
 | `entrypoint` | Runner binary, Python entrypoint, bridge symbol, or JVM invocation. |
 | `smokeCommand` | Minimal validation command that proves the artifact can load. |
 
-The manifest and payload are written atomically: materialize into a temporary directory, verify the
-smoke command, then rename into the final install root.
+The current machine-independent materializer writes the manifest through a temporary directory and
+verifies the manifest contract before renaming into the final install root. The target lane adds the
+real artifact smoke/load command before that rename; that proof remains a Wave I Apple cohort gate.
 
 ## Storage Boundary
 

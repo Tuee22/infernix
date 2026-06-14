@@ -108,10 +108,9 @@ import Infernix.Dispatch.ContextModelMap qualified as ContextModelMap
 import Infernix.Dispatch.SingleFlight qualified as Dispatch
 import Infernix.HostConfig qualified as HostConfig
 import Infernix.Models
-  ( engineBindingForSelectedEngine,
-    engineNameForAdapterId,
+  ( enginePoolForModel,
+    enginePoolTopicForMode,
     findModel,
-    perEngineBatchTopicForMode,
   )
 import Infernix.Objects.Presigned qualified as Presigned
 import Infernix.Runtime (executeInferenceWithKVCache)
@@ -2101,21 +2100,15 @@ isFatalServiceConsumerError subscriptionType err =
     errorText = Text.toLower (Text.pack (displayException err))
 
 serviceConsumerSubscriptionType :: RuntimeMode -> DaemonConfig -> Either String ConsumerSubscriptionType
-serviceConsumerSubscriptionType runtimeMode daemonConfig
-  | appleHostEngine && selectedType == ConsumerShared =
-      Left "apple-silicon host engine consumers must use Exclusive or Failover; Shared is not supported for local engine execution or materialization state"
-  | not appleHostEngine && selectedType /= ConsumerShared =
-      Left "only the apple-silicon host engine consumer may select Exclusive or Failover; coordinator and Linux engine consumers use Shared"
+serviceConsumerSubscriptionType _runtimeMode daemonConfig
+  | selectedType == ConsumerFailover =
+      Left "service consumers must not use Failover; Failover is reserved for coordinator-owned dispatcher, result-bridge, and model-bootstrap leadership loops"
+  | daemonConfigRole daemonConfig /= Engine && selectedType /= ConsumerShared =
+      Left "coordinator service consumers use Shared; Exclusive is reserved for pinned engine member routes"
   | otherwise = Right selectedType
   where
-    appleHostEngine =
-      runtimeMode == AppleSilicon
-        && daemonConfigRole daemonConfig == Engine
-        && daemonConfigLocation daemonConfig == "control-plane-host"
     selectedType =
-      fromMaybe
-        (if appleHostEngine then ConsumerExclusive else ConsumerShared)
-        (daemonConfigConsumerSubscriptionType daemonConfig)
+      fromMaybe ConsumerShared (daemonConfigConsumerSubscriptionType daemonConfig)
 
 consumeTopicSession ::
   PulsarTransport ->
@@ -2159,12 +2152,10 @@ consumeTopicSession transport paths runtimeMode overrides daemonConfig demoConfi
   where
     handleConsumerEnvelope connection envelope = do
       decodedRequest <- decodeEnvelopePayload "inference request" envelope
-      -- Forward to the host-batch topic whenever the active daemon config
-      -- names one. Sprint 7.7 generalises this from an AppleSilicon-only
-      -- conditional to "every substrate honors the configured handoff
-      -- topic" so the cluster coordinator can hand off to a per-substrate
-      -- engine pool uniformly. When no host-batch topic is configured the
-      -- daemon executes inference inline and publishes the result itself.
+      -- Forward through the configured handoff path whenever the active
+      -- daemon config names one. The configured value is a legacy fallback;
+      -- normal routing resolves the request model against the validated
+      -- engine-pool graph and derives the pool/model topic.
       case daemonConfigHostBatchTopic daemonConfig of
         Just hostBatchTopicValue -> do
           let selectedBatchTopicValue =
@@ -2239,25 +2230,11 @@ serviceConsumerName subscriptionName subscriptionType processLabel =
 
 batchTopicForRequest :: RuntimeMode -> DemoConfig -> Text.Text -> ProtoInference.InferenceRequest -> Text.Text
 batchTopicForRequest runtimeMode demoConfig fallbackTopic requestValue =
-  case runtimeMode of
-    AppleSilicon -> fallbackTopic
-    _ ->
-      case findModel runtimeMode (view ProtoInferenceFields.requestModelId requestValue) of
-        Nothing -> fallbackTopic
-        Just modelDescriptor ->
-          let engineBinding =
-                engineBindingForSelectedEngine runtimeMode (selectedEngine modelDescriptor)
-              engineName =
-                engineNameForAdapterId (engineBindingAdapterId engineBinding)
-              perEngineTopic =
-                perEngineBatchTopicForMode runtimeMode engineName
-           in if engineBindingPythonNative engineBinding
-                && perEngineTopic `elem` configuredEngineTopics
-                then perEngineTopic
-                else fallbackTopic
+  case findModel runtimeMode modelIdValue >>= const (enginePoolForModel demoConfig modelIdValue) of
+    Just pool -> enginePoolTopicForMode runtimeMode (enginePoolId pool) modelIdValue
+    Nothing -> fallbackTopic
   where
-    configuredEngineTopics =
-      concatMap daemonConfigRequestTopics (engineDaemons demoConfig)
+    modelIdValue = view ProtoInferenceFields.requestModelId requestValue
 
 -- | Phase 7 Sprint 7.7 producer-side dedup wiring. Each publish carries
 -- a stable @producerName@ in the URL query. For the WebSocket API, the
@@ -3540,10 +3517,10 @@ buildServiceConsumerSocketPath websocketBase topicRef subscriptionName consumerN
   buildSocketPath
     websocketBase
     ("consumer/" <> renderTopicPath topicRef <> "/" <> subscriptionName)
-    -- Phase 7 Sprint 7.23: service consumers now choose subscription
-    -- ownership from typed daemon metadata. Shared remains the supported
-    -- coordinator/Linux engine mode; Apple host engines use Exclusive by
-    -- default or intentional Failover for standby host designs.
+    -- Service consumers choose subscription ownership from typed daemon
+    -- metadata. Shared is the normal coordinator/engine-pool mode; Exclusive
+    -- is reserved for pinned engine member routes. Failover is handled by
+    -- coordinator-owned leadership loops, not service work fanout.
     [ ("subscriptionType", pulsarConsumerSubscriptionTypeQueryValue subscriptionType),
       ("subscriptionInitialPosition", "Earliest"),
       ("receiverQueueSize", "1"),

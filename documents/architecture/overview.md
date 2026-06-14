@@ -26,16 +26,17 @@ PureScript demo UI, and one governed documentation suite.
   demo's concrete bindings (Keycloak as the IdP, `infernix/demo` topic namespace,
   `infernix-demo-objects` bucket, `/auth` / `/ws` / `/api/objects` routes, SPA views) are
   defined in [demo_app_design.md](demo_app_design.md). The supported per-pod placement —
-  stateless frontend and coordinator Deployments plus a one-per-node engine Deployment — is
-  codified in [daemon_topology.md](daemon_topology.md). All three are built out through
+  stateless frontend and coordinator Deployments plus engine pools — is codified in
+  [daemon_topology.md](daemon_topology.md) and [engine_pool_routing.md](engine_pool_routing.md).
+  All three are built out through
   [../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md](../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md)
-- the runtime executor produces REAL per-family output: the engine worker invokes the real engine
-  for the selected binding — the Python adapter transform over a prebuilt host wheel, or a real
-  native runner binary resolved from a typed `HostConfig` absolute path — fetches model weights
-  lazily from the `infernix-models` MinIO bucket, and publishes a per-family real result, inline
-  text for the LLM and speech families and a typed `infernix-demo-objects` object reference for the
-  artifact families. Inference work still flows only over Pulsar topics across the two repo-owned
-  Haskell binaries; see [daemon_topology.md](daemon_topology.md) for the role split and topic flow.
+- the runtime executor dispatches to real engine entrypoints: the engine worker invokes the selected
+  Python adapter or native runner, fetches model weights lazily from the `infernix-models` MinIO
+  bucket, and publishes the typed per-family result surface. Hardware proof for real output remains
+  tracked in `DEVELOPMENT_PLAN/` cohort waves until the Apple Metal/Core ML and CUDA gates close.
+  Inference work still flows only over Pulsar topics across the two repo-owned Haskell binaries; see
+  [daemon_topology.md](daemon_topology.md) and [engine_pool_routing.md](engine_pool_routing.md) for
+  the role split and topic flow.
 - Python is restricted to the shared adapter project under `python/`; the canonical quality gate
   is `poetry run check-code`, and all custom platform logic is Haskell
 - the demo UI is PureScript built with `spago`, tested with `purescript-spec`, with generated
@@ -79,6 +80,7 @@ and validation do not use cross-architecture emulation. See
 ## Cross-References
 
 - [runtime_modes.md](runtime_modes.md)
+- [engine_pool_routing.md](engine_pool_routing.md)
 - [web_ui_architecture.md](web_ui_architecture.md)
 - [durable_context_design.md](durable_context_design.md)
 - [demo_app_design.md](demo_app_design.md)

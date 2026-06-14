@@ -476,42 +476,52 @@ main = do
         ("containerPath: /var/run/nvidia-container-devices/all" `isInfixOf` generatedLinuxGpuKindConfig)
         "linux-gpu outer-container Kind config keeps the NVIDIA worker device mount"
       let demoConfig =
-            DemoConfig
-              { configRuntimeMode = LinuxCpu,
-                configEdgePort = 0,
-                configMapName = "infernix-demo-config",
-                generatedPath = "./.build/infernix-substrate.dhall",
-                mountedPath = "/opt/build/infernix-substrate.dhall",
-                demoUiEnabled = True,
-                activeDaemonRole = Coordinator,
-                coordinatorDaemon =
-                  DaemonConfig
-                    { daemonConfigRole = Coordinator,
-                      daemonConfigLocation = "cluster-pod",
-                      daemonConfigRequestTopics = requestTopicsForMode LinuxCpu,
-                      daemonConfigResultTopic = resultTopicForMode LinuxCpu,
-                      daemonConfigHostBatchTopic = Nothing,
-                      daemonConfigPulsarConnectionMode = ConfiguredTransport,
-                      daemonConfigConsumerSubscriptionType = Just ConsumerShared
-                    },
-                engineDaemons =
-                  [ DaemonConfig
-                      { daemonConfigRole = Engine,
-                        daemonConfigLocation = "cluster-pod",
-                        daemonConfigRequestTopics = maybe [] pure (hostBatchTopicForMode LinuxCpu),
-                        daemonConfigResultTopic = resultTopicForMode LinuxCpu,
-                        daemonConfigHostBatchTopic = Nothing,
-                        daemonConfigPulsarConnectionMode = ConfiguredTransport,
-                        daemonConfigConsumerSubscriptionType = Just ConsumerShared
-                      }
-                  ],
-                requestTopics = requestTopicsForMode LinuxCpu,
-                resultTopic = resultTopicForMode LinuxCpu,
-                modelsBucket = defaultModelsBucket,
-                modelBootstrapTopic = defaultModelBootstrapTopic,
-                engines = engineBindingsForMode LinuxCpu,
-                models = catalogForMode LinuxCpu
-              }
+            let linuxPools = enginePoolsForMode LinuxCpu
+                linuxMembers = engineMembersForMode LinuxCpu
+                linuxMemberTopics =
+                  case linuxMembers of
+                    member : _ -> engineMemberRequestTopics LinuxCpu linuxPools member
+                    [] -> []
+             in DemoConfig
+                  { configRuntimeMode = LinuxCpu,
+                    configEdgePort = 0,
+                    configMapName = "infernix-demo-config",
+                    generatedPath = "./.build/infernix-substrate.dhall",
+                    mountedPath = "/opt/build/infernix-substrate.dhall",
+                    demoUiEnabled = True,
+                    activeDaemonRole = Coordinator,
+                    coordinatorDaemon =
+                      DaemonConfig
+                        { daemonConfigRole = Coordinator,
+                          daemonConfigLocation = "cluster-pod",
+                          daemonConfigMemberId = Nothing,
+                          daemonConfigRequestTopics = requestTopicsForMode LinuxCpu,
+                          daemonConfigResultTopic = resultTopicForMode LinuxCpu,
+                          daemonConfigHostBatchTopic = Nothing,
+                          daemonConfigPulsarConnectionMode = ConfiguredTransport,
+                          daemonConfigConsumerSubscriptionType = Just ConsumerShared
+                        },
+                    engineDaemons =
+                      [ DaemonConfig
+                          { daemonConfigRole = Engine,
+                            daemonConfigLocation = "cluster-pod",
+                            daemonConfigMemberId = Just "linux-cpu-engine",
+                            daemonConfigRequestTopics = linuxMemberTopics,
+                            daemonConfigResultTopic = resultTopicForMode LinuxCpu,
+                            daemonConfigHostBatchTopic = Nothing,
+                            daemonConfigPulsarConnectionMode = ConfiguredTransport,
+                            daemonConfigConsumerSubscriptionType = Just ConsumerShared
+                          }
+                      ],
+                    enginePools = linuxPools,
+                    engineMembers = linuxMembers,
+                    requestTopics = requestTopicsForMode LinuxCpu,
+                    resultTopic = resultTopicForMode LinuxCpu,
+                    modelsBucket = defaultModelsBucket,
+                    modelBootstrapTopic = defaultModelBootstrapTopic,
+                    engines = engineBindingsForMode LinuxCpu,
+                    models = catalogForMode LinuxCpu
+                  }
           demoConfigPath = buildRoot paths </> "demo-config-test.dhall"
       createDirectoryIfMissing True (buildRoot paths)
       Lazy.writeFile demoConfigPath (encodeDemoConfig demoConfig)
@@ -534,77 +544,192 @@ main = do
       assert
         (all ((== Just ConsumerShared) . daemonConfigConsumerSubscriptionType) (engineDaemons decodedConfig))
         "linux engine metadata uses Shared service subscription ownership"
+      assert (enginePools decodedConfig == enginePoolsForMode LinuxCpu) "demo-config decode preserves engine pools"
+      assert (engineMembers decodedConfig == engineMembersForMode LinuxCpu) "demo-config decode preserves engine members"
+      assert
+        (enginePoolTopicForMode LinuxCpu "llama-cpp-cli" "llm-tinyllama-gguf" == "persistent://infernix/demo/inference.batch.linux-cpu.pool.llama-cpp-cli.model.llm-tinyllama-gguf")
+        "Sprint 4.19: normal pool topics are derived from runtime, pool id, and model id"
+      assert
+        (engineMemberPinnedTopicForMode AppleSilicon "mac-studio-1" "llm-qwen25-safetensors" == "persistent://infernix/demo/inference.batch.apple-silicon.member.mac-studio-1.model.llm-qwen25-safetensors")
+        "Sprint 4.19: pinned member topics are derived from runtime, member id, and model id"
       assert (requestTopics decodedConfig == requestTopicsForMode LinuxCpu) "demo-config decode preserves request topics"
       assert (resultTopic decodedConfig == resultTopicForMode LinuxCpu) "demo-config decode preserves the result topic"
       assert (engines decodedConfig == engineBindingsForMode LinuxCpu) "demo-config decode preserves engine bindings"
       assert (length (models decodedConfig) == length (catalogForMode LinuxCpu)) "demo-config decode preserves the model list"
+      case (enginePools decodedConfig, engineMembers decodedConfig) of
+        (firstPool : secondPool : remainingPools, firstMember : remainingMembers) -> do
+          firstModelId <-
+            maybe
+              (fail "expected linux-cpu demo config to include at least one model")
+              (pure . modelId)
+              (listToMaybe (models decodedConfig))
+          let firstPoolId = enginePoolId firstPool
+          assertDemoConfigDecodeFails
+            unitTestRoot
+            "duplicate-pool-id"
+            "duplicate engine pool ids"
+            decodedConfig {enginePools = firstPool : firstPool : secondPool : remainingPools}
+          assertDemoConfigDecodeFails
+            unitTestRoot
+            "duplicate-member-id"
+            "duplicate engine member ids"
+            decodedConfig {engineMembers = firstMember : firstMember : remainingMembers}
+          assertDemoConfigDecodeFails
+            unitTestRoot
+            "invalid-pool-id"
+            "invalid engine pool ids"
+            decodedConfig {enginePools = firstPool {enginePoolId = "persistent://bad/topic"} : secondPool : remainingPools}
+          assertDemoConfigDecodeFails
+            unitTestRoot
+            "unknown-model-id"
+            "engine pools reference unknown model ids"
+            decodedConfig {enginePools = firstPool {enginePoolModelIds = "missing-model" : enginePoolModelIds firstPool} : secondPool : remainingPools}
+          assertDemoConfigDecodeFails
+            unitTestRoot
+            "unknown-member-id"
+            "engine pools reference unknown member ids"
+            decodedConfig {enginePools = firstPool {enginePoolMemberIds = ["missing-member"]} : secondPool : remainingPools}
+          assertDemoConfigDecodeFails
+            unitTestRoot
+            "failover-pool"
+            "engine pools must not use Failover subscriptions"
+            decodedConfig {enginePools = firstPool {enginePoolSubscriptionType = ConsumerFailover} : secondPool : remainingPools}
+          assertDemoConfigDecodeFails
+            unitTestRoot
+            "invalid-inflight"
+            "engine pools must set maxInflightPerMember greater than zero"
+            decodedConfig {enginePools = firstPool {enginePoolMaxInflightPerMember = 0} : secondPool : remainingPools}
+          assertDemoConfigDecodeFails
+            unitTestRoot
+            "empty-member-responsibility"
+            "engine members must declare at least one pool id"
+            decodedConfig {engineMembers = firstMember {engineMemberPoolIds = []} : remainingMembers}
+          assertDemoConfigDecodeFails
+            unitTestRoot
+            "one-sided-pool-link"
+            "engine pool member links must be bidirectional"
+            decodedConfig {engineMembers = firstMember {engineMemberPoolIds = filter (/= firstPoolId) (engineMemberPoolIds firstMember)} : remainingMembers}
+          assertDemoConfigDecodeFails
+            unitTestRoot
+            "one-sided-member-link"
+            "engine member pool links must be bidirectional"
+            decodedConfig
+              { enginePools = firstPool {enginePoolMemberIds = ["linux-cpu-engine-secondary"]} : secondPool : remainingPools,
+                engineMembers =
+                  firstMember
+                    : firstMember
+                      { engineMemberId = "linux-cpu-engine-secondary",
+                        engineMemberPoolIds = [firstPoolId]
+                      }
+                    : remainingMembers
+              }
+          assertDemoConfigDecodeFails
+            unitTestRoot
+            "ambiguous-model-pool"
+            "engine pool model ownership is ambiguous"
+            decodedConfig {enginePools = firstPool : secondPool {enginePoolModelIds = firstModelId : enginePoolModelIds secondPool} : remainingPools}
+          case find ((> 1) . length . enginePoolModelIds) (enginePools decodedConfig) of
+            Just multiModelPool ->
+              case enginePoolModelIds multiModelPool of
+                removedModelId : _ ->
+                  let removeModel pool =
+                        if enginePoolId pool == enginePoolId multiModelPool
+                          then pool {enginePoolModelIds = filter (/= removedModelId) (enginePoolModelIds pool)}
+                          else pool
+                   in assertDemoConfigDecodeFails
+                        unitTestRoot
+                        "unroutable-model"
+                        "models without eligible engine members"
+                        decodedConfig {enginePools = map removeModel (enginePools decodedConfig)}
+                [] ->
+                  fail "expected selected multi-model engine pool to include model ids"
+            Nothing ->
+              fail "expected at least one multi-model engine pool for unroutable-model validation"
+        _ ->
+          fail "expected linux-cpu demo config to include at least two pools and one member"
       assertClusterConfig unitTestRoot demoConfigPath
       let appleHostConfig =
-            DemoConfig
-              { configRuntimeMode = AppleSilicon,
-                configEdgePort = 0,
-                configMapName = "infernix-demo-config",
-                generatedPath = "./.build/infernix-substrate.dhall",
-                mountedPath = "/opt/build/infernix-substrate.dhall",
-                demoUiEnabled = True,
-                activeDaemonRole = Engine,
-                coordinatorDaemon =
-                  DaemonConfig
-                    { daemonConfigRole = Coordinator,
-                      daemonConfigLocation = "cluster-pod",
-                      daemonConfigRequestTopics = requestTopicsForMode AppleSilicon,
-                      daemonConfigResultTopic = resultTopicForMode AppleSilicon,
-                      daemonConfigHostBatchTopic = hostBatchTopicForMode AppleSilicon,
-                      daemonConfigPulsarConnectionMode = ConfiguredTransport,
-                      daemonConfigConsumerSubscriptionType = Just ConsumerShared
-                    },
-                engineDaemons =
-                  [ DaemonConfig
-                      { daemonConfigRole = Engine,
-                        daemonConfigLocation = "control-plane-host",
-                        daemonConfigRequestTopics = maybe [] pure (hostBatchTopicForMode AppleSilicon),
-                        daemonConfigResultTopic = resultTopicForMode AppleSilicon,
-                        daemonConfigHostBatchTopic = Nothing,
-                        daemonConfigPulsarConnectionMode = PublicationEdgeAutoDiscovery,
-                        daemonConfigConsumerSubscriptionType = Just ConsumerExclusive
-                      }
-                  ],
-                requestTopics = requestTopicsForMode AppleSilicon,
-                resultTopic = resultTopicForMode AppleSilicon,
-                modelsBucket = defaultModelsBucket,
-                modelBootstrapTopic = defaultModelBootstrapTopic,
-                engines = engineBindingsForMode AppleSilicon,
-                models = catalogForMode AppleSilicon
-              }
+            let applePools = enginePoolsForMode AppleSilicon
+                appleMembers = engineMembersForMode AppleSilicon
+                appleMemberTopics =
+                  case appleMembers of
+                    member : _ -> engineMemberRequestTopics AppleSilicon applePools member
+                    [] -> []
+             in DemoConfig
+                  { configRuntimeMode = AppleSilicon,
+                    configEdgePort = 0,
+                    configMapName = "infernix-demo-config",
+                    generatedPath = "./.build/infernix-substrate.dhall",
+                    mountedPath = "/opt/build/infernix-substrate.dhall",
+                    demoUiEnabled = True,
+                    activeDaemonRole = Engine,
+                    coordinatorDaemon =
+                      DaemonConfig
+                        { daemonConfigRole = Coordinator,
+                          daemonConfigLocation = "cluster-pod",
+                          daemonConfigMemberId = Nothing,
+                          daemonConfigRequestTopics = requestTopicsForMode AppleSilicon,
+                          daemonConfigResultTopic = resultTopicForMode AppleSilicon,
+                          daemonConfigHostBatchTopic = hostBatchTopicForMode AppleSilicon,
+                          daemonConfigPulsarConnectionMode = ConfiguredTransport,
+                          daemonConfigConsumerSubscriptionType = Just ConsumerShared
+                        },
+                    engineDaemons =
+                      [ DaemonConfig
+                          { daemonConfigRole = Engine,
+                            daemonConfigLocation = "control-plane-host",
+                            daemonConfigMemberId = Just "apple-host-default",
+                            daemonConfigRequestTopics = appleMemberTopics,
+                            daemonConfigResultTopic = resultTopicForMode AppleSilicon,
+                            daemonConfigHostBatchTopic = Nothing,
+                            daemonConfigPulsarConnectionMode = PublicationEdgeAutoDiscovery,
+                            daemonConfigConsumerSubscriptionType = Just ConsumerShared
+                          }
+                      ],
+                    enginePools = applePools,
+                    engineMembers = appleMembers,
+                    requestTopics = requestTopicsForMode AppleSilicon,
+                    resultTopic = resultTopicForMode AppleSilicon,
+                    modelsBucket = defaultModelsBucket,
+                    modelBootstrapTopic = defaultModelBootstrapTopic,
+                    engines = engineBindingsForMode AppleSilicon,
+                    models = catalogForMode AppleSilicon
+                  }
           appleConfigPath = buildRoot paths </> "apple-host-demo-config-test.dhall"
+          expectedAppleMemberTopics =
+            case engineMembersForMode AppleSilicon of
+              member : _ -> engineMemberRequestTopics AppleSilicon (enginePoolsForMode AppleSilicon) member
+              [] -> []
       Lazy.writeFile appleConfigPath (encodeDemoConfig appleHostConfig)
       decodedAppleConfig <- decodeDemoConfigFile appleConfigPath
       assert (activeDaemonRole decodedAppleConfig == Engine) "apple host demo-config keeps host as the active local daemon role"
-      assert (daemonConfigHostBatchTopic (coordinatorDaemon decodedAppleConfig) == hostBatchTopicForMode AppleSilicon) "apple cluster daemon metadata publishes the host batch topic"
-      assert (map daemonConfigRequestTopics (engineDaemons decodedAppleConfig) == [maybe [] pure (hostBatchTopicForMode AppleSilicon)]) "apple host daemon metadata consumes the host batch topic"
+      assert (daemonConfigHostBatchTopic (coordinatorDaemon decodedAppleConfig) == hostBatchTopicForMode AppleSilicon) "apple cluster daemon metadata preserves the legacy handoff fallback"
+      assert (enginePools decodedAppleConfig == enginePoolsForMode AppleSilicon) "apple host demo-config preserves engine pools"
+      assert (engineMembers decodedAppleConfig == engineMembersForMode AppleSilicon) "apple host demo-config preserves engine members"
+      assert (map daemonConfigRequestTopics (engineDaemons decodedAppleConfig) == [expectedAppleMemberTopics]) "apple host daemon metadata consumes derived pool topics"
       assert (map daemonConfigHostBatchTopic (engineDaemons decodedAppleConfig) == [Nothing]) "apple host daemon metadata does not forward its own engine batch topic"
       assert
-        (map daemonConfigConsumerSubscriptionType (engineDaemons decodedAppleConfig) == [Just ConsumerExclusive])
-        "Sprint 7.23: apple host engine metadata defaults to Exclusive service subscription ownership"
+        (map daemonConfigConsumerSubscriptionType (engineDaemons decodedAppleConfig) == [Just ConsumerShared])
+        "Sprint 7.24: apple host engine metadata defaults to Shared pool subscription ownership"
       case engineDaemons decodedAppleConfig of
         [appleEngineDaemon] -> do
           let appleFailoverDaemon =
                 appleEngineDaemon
                   { daemonConfigConsumerSubscriptionType = Just ConsumerFailover
                   }
-              appleSharedDaemon =
+              appleExclusiveDaemon =
                 appleEngineDaemon
-                  { daemonConfigConsumerSubscriptionType = Just ConsumerShared
+                  { daemonConfigConsumerSubscriptionType = Just ConsumerExclusive
                   }
           assert
-            (serviceConsumerSubscriptionType AppleSilicon appleEngineDaemon == Right ConsumerExclusive)
-            "Sprint 7.23: apple host engine consumers select Exclusive by default"
+            (serviceConsumerSubscriptionType AppleSilicon appleEngineDaemon == Right ConsumerShared)
+            "Sprint 7.24: apple host engine consumers select Shared by default"
           assert
-            (serviceConsumerSubscriptionType AppleSilicon appleFailoverDaemon == Right ConsumerFailover)
-            "Sprint 7.23: apple host engine consumers allow intentional Failover"
+            (either (isInfixOf "Failover") (const False) (serviceConsumerSubscriptionType AppleSilicon appleFailoverDaemon))
+            "Sprint 7.24: apple host engine consumers reject Failover"
           assert
-            (either (isInfixOf "Shared") (const False) (serviceConsumerSubscriptionType AppleSilicon appleSharedDaemon))
-            "Sprint 7.23: apple host engine consumers reject Shared"
+            (serviceConsumerSubscriptionType AppleSilicon appleExclusiveDaemon == Right ConsumerExclusive)
+            "Sprint 7.24: pinned engine member consumers may select Exclusive"
         _ -> fail "apple host demo-config must decode exactly one engine daemon"
       let readinessMarkerPath = runtimeRoot paths </> "service" </> "subscription.ready"
       -- Phase 4 Sprint 4.13: the previous test injected the Pulsar
@@ -758,7 +883,7 @@ main = do
           AppleSilicon
           []
           InferenceRequest
-            { requestModelId = "speech-whisper-small",
+            { requestModelId = "llm-qwen15-mlx",
               inputText = "native runner coverage",
               inputObjectRef = Nothing
             }
@@ -1211,6 +1336,15 @@ assertJsonRoundtrip label value =
       assert
         (decoded == value)
         (label <> ": encode/decode roundtrip diverged. Original=" <> show value <> " Decoded=" <> show decoded)
+
+assertDemoConfigDecodeFails :: FilePath -> FilePath -> String -> DemoConfig -> IO ()
+assertDemoConfigDecodeFails root label expectedMessageFragment demoConfig = do
+  let configPath = root </> ("invalid-demo-config-" <> label <> ".dhall")
+  Lazy.writeFile configPath (encodeDemoConfig demoConfig)
+  decoded <- try (decodeDemoConfigFile configPath) :: IO (Either IOError DemoConfig)
+  assert
+    (either (isInfixOf expectedMessageFragment . show) (const False) decoded)
+    ("invalid demo config is rejected for " <> label)
 
 assertPhase7JsonRoundtrips :: IO ()
 assertPhase7JsonRoundtrips = do
@@ -2241,6 +2375,7 @@ assertLinuxHostBatchForwarding paths = do
         DaemonConfig
           { daemonConfigRole = Coordinator,
             daemonConfigLocation = "cluster-pod",
+            daemonConfigMemberId = Nothing,
             daemonConfigRequestTopics = [requestTopic],
             daemonConfigResultTopic = resultTopic,
             daemonConfigHostBatchTopic = Just batchTopic,
@@ -2255,10 +2390,10 @@ assertLinuxHostBatchForwarding paths = do
   batchExists <- doesFileExist batchPath
   resultExists <- doesFileExist resultPath
   batchPayload <- BS.readFile batchPath
-  assert (not requestStillExists) "linux host-batch forwarding removes the source request file"
-  assert batchExists "linux host-batch forwarding writes the request to the batch topic"
-  assert (not resultExists) "linux host-batch forwarding does not execute inference inline"
-  assert (batchPayload == payloadBytes) "linux host-batch forwarding preserves the request payload bytes"
+  assert (not requestStillExists) "linux handoff forwarding removes the source request file"
+  assert batchExists "linux handoff forwarding writes the request to the batch topic"
+  assert (not resultExists) "linux handoff forwarding does not execute inference inline"
+  assert (batchPayload == payloadBytes) "linux handoff forwarding preserves the request payload bytes"
   where
     removeIfPresent path =
       catchIOError (removePathForcibly path) $ \err ->
@@ -3039,10 +3174,16 @@ assertHostConfig testRoot = do
       let materializedRoot = metalEngineInstallRoot paths (metalEngineAdapterId materializedArtifact)
           staleTempRoot = engineArtifactTempRoot materializedRoot
           previousRoot = engineArtifactPreviousRoot materializedRoot
+          bridgeSourcePath = materializedRoot </> "src" </> "infernix_apple_metal_bridge.m"
+          bridgeSmokePath = materializedRoot </> "bin" </> "infernix-apple-metal-bridge-smoke"
       createDirectoryIfMissing True staleTempRoot
       writeFile (staleTempRoot </> "stale") "stale temp should be removed"
       installedRoot <- materializeMetalEngineArtifact paths materializedArtifact
       manifestExists <- doesFileExist (engineArtifactManifestPath installedRoot)
+      bridgeSourceExists <- doesFileExist bridgeSourcePath
+      bridgeSmokeExists <- doesFileExist bridgeSmokePath
+      bridgeSource <- readFile bridgeSourcePath
+      bridgeSmoke <- readFile bridgeSmokePath
       staleTempExists <- doesDirectoryExist staleTempRoot
       previousRootExists <- doesDirectoryExist previousRoot
       assert
@@ -3051,6 +3192,22 @@ assertHostConfig testRoot = do
       assert
         manifestExists
         "Sprint 1.14: materialization writes engine-artifact.json under the final root"
+      assert
+        (bridgeSourceExists && bridgeSmokeExists)
+        "Sprint 1.14: materialization writes the fixed Apple Metal bridge source and smoke script"
+      assert
+        ("MTLCreateSystemDefaultDevice" `isInfixOf` bridgeSource)
+        "Sprint 1.14: Apple bridge source probes the Metal runtime device"
+      assert
+        ("newLibraryWithSource" `isInfixOf` bridgeSource)
+        "Sprint 1.14: Apple bridge source uses runtime Metal source compilation"
+      let bridgeSmokeLower = Text.toLower (Text.pack bridgeSmoke)
+      assert
+        ( all
+            (\needle -> not (needle `Text.isInfixOf` bridgeSmokeLower))
+            ["tart", "xcrun", "/usr/bin/metal"]
+        )
+        "Sprint 1.14: bridge smoke script avoids Tart, xcrun, and the offline metal compiler"
       assert
         (not staleTempExists)
         "Sprint 1.14: materialization removes stale temp roots before writing"
