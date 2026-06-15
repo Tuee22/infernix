@@ -54,9 +54,10 @@ instance FromJSON ModelBootstrapReadyEvent where
       <*> value .: "readyAt"
 
 -- | A request the engine pod publishes when its adapter sees an uncached
--- model. The supported topic is @infernix/system/model.bootstrap.request@;
--- producer-side dedup is keyed by @modelId@ so two engines requesting the
--- same uncached model produce exactly one upstream download.
+-- model. The supported topic is @infernix/system/model.bootstrap.request@.
+-- Producer-side dedup is scoped to a single request attempt so exact
+-- replays collapse without permanently poisoning later retries for the
+-- same model.
 data ModelBootstrapRequest = ModelBootstrapRequest
   { bootstrapRequestModelId :: Text,
     bootstrapRequestDownloadUrl :: Text,
@@ -87,11 +88,13 @@ data ModelFile = ModelFile
 bootstrapSubscriptionName :: Text
 bootstrapSubscriptionName = "bootstrap-models"
 
--- | Producer-side dedup sequence ID for a bootstrap request. Keyed by
--- modelId so a crashed engine pod that re-publishes the same request does
--- not cause a duplicate upstream download.
+-- | Producer-side dedup sequence ID for a bootstrap request. It includes the
+-- request timestamp so a crashed engine that republishes the exact same
+-- request collapses, while a later recovery attempt can still enqueue work
+-- if the previous attempt never produced a ready event.
 bootstrapRequestDedupKey :: ModelBootstrapRequest -> Text
-bootstrapRequestDedupKey = bootstrapRequestModelId
+bootstrapRequestDedupKey request =
+  bootstrapRequestModelId request <> "@" <> bootstrapRequestRequestedAtIso8601 request
 
 -- | Producer-side dedup sequence ID for a ready event. Same semantics as
 -- the request key: one upstream download yields one ready event regardless

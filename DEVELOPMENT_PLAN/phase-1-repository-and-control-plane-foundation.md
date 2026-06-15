@@ -39,8 +39,11 @@ schema and retargets the retained `infernix internal materialize-metal-engines` 
 engine-artifact manifest materialization. The supported Apple Metal/Core ML materialization target
 uses a fixed host Metal runtime bridge, typed engine-artifact manifests, and no Tart VM, user
 keychain dependency, Xcode UI flow, or request-time toolchain install. The code-side cleanup is
-closed for the machine-independent bridge source, manifest, and install-root contract; the remaining
-Phase 1 gate is the Apple-only bridge/native-artifact smoke in [Wave I](cohort-validation-waves.md).
+closed for the machine-independent bridge source, manifest, and install-root contract. The current
+Apple host pass builds `./.build/infernix`, stages `apple-silicon`, materializes the typed
+Metal/Core ML engine manifests, proves the generated Metal bridge smoke, and proves the installed
+`coreml-native` runtime-load smoke. The remaining Phase 1 gate is the Wave I Apple full-suite
+evidence in [Wave I](cohort-validation-waves.md).
 
 ## Current Repo Assessment
 
@@ -880,8 +883,8 @@ None. The Tart-specific implementation is removed by Sprint 1.14 and recorded in
 ## Sprint 1.14: Apple Headless Metal/Core ML Materialization Reset [Active]
 
 **Status**: Active
-**Code-side closure**: Complete for the machine-independent scope — the `hostTart` host-manifest field, `HostTool.HostTart`, `AppleTart` prerequisite, and Tart argument builders are removed; the retained `infernix internal materialize-metal-engines` command writes typed engine-artifact manifests under `./.data/engines/<adapterId>/` through temp-root write, smoke-manifest validation, and atomic rename; and the `apple-metal-runtime-bridge` artifact now materializes the fixed Objective-C/C bridge source plus `bin/infernix-apple-metal-bridge-smoke`, which compiles the bridge with `/usr/bin/clang`, links Metal/Foundation at materialization-smoke time, calls `MTLCreateSystemDefaultDevice`, compiles MSL through `newLibraryWithSource`, dispatches a tiny kernel, and returns a typed diagnostic. Proven by `./bootstrap/linux-cpu.sh build`, rebuilt-image `infernix test unit`, and mounted live-source `cabal test infernix-unit`, `cabal test infernix-haskell-style`, `cabal run exe:infernix -- lint docs`, and `cabal run exe:infernix -- docs check` through the Linux outer-container lane; Apple runtime dispatch remains cohort-only.
-**Cohort gate**: Pending [Wave I](cohort-validation-waves.md) — Apple host bridge dispatch, Tart-absent materialization, native/Core ML artifact load, and host engine smoke on Apple Silicon.
+**Code-side closure**: Complete for the machine-independent scope — the `hostTart` host-manifest field, `HostTool.HostTart`, `AppleTart` prerequisite, and Tart argument builders are removed; the retained `infernix internal materialize-metal-engines` command writes typed engine-artifact manifests under `./.data/engines/<adapterId>/` through temp-root write, smoke-manifest validation, Darwin payload-smoke validation for materialized Apple payloads, and atomic rename; the `apple-metal-runtime-bridge` artifact materializes the fixed Objective-C/C bridge source plus `bin/infernix-apple-metal-bridge-smoke`, which compiles the bridge with `/usr/bin/clang`, links Metal/Foundation at materialization-smoke time, calls `MTLCreateSystemDefaultDevice`, compiles MSL through `newLibraryWithSource`, dispatches a tiny kernel, and returns a typed diagnostic; `coreml-native` materializes `bin/coreml-runner` plus Objective-C smoke source that links Foundation/CoreML and instantiates `MLModelConfiguration`; and the allowlisted Apple native adapter ids materialize smoke-capable deterministic validation-runner payloads under their manifest entrypoints. Proven by `./bootstrap/linux-cpu.sh build`, rebuilt-image `infernix test unit`, and mounted live-source `cabal test infernix-unit`, `cabal test infernix-haskell-style`, `cabal run exe:infernix -- lint docs`, and `cabal run exe:infernix -- docs check` through the Linux outer-container lane; the current Apple host pass also proves `cabal build all`, `./bootstrap/apple-silicon.sh build`, `./.build/infernix internal materialize-metal-engines`, direct Apple native validation-runner output for `llama-cpp-cli`, `coreml-native`, and `jvm-native`, and `./.build/infernix test unit` (Haskell unit plus PureScript 71/71).
+**Cohort gate**: Pending [Wave I](cohort-validation-waves.md) — Tart-absent manifest materialization, generated Metal bridge smoke, installed `coreml-native` runtime-load smoke, and Apple native validation-wrapper materialization have passed on Apple Silicon. The latest Apple integration rerun passed after rebuilding the changed repo-owned image once, then reusing the stamped `infernix-linux-cpu:local` image on later edge-port validation cluster cycles; it completed the active Apple catalog through the host engine daemon, proved the isolated pinned-member `Exclusive` duplicate-consumer guard, proved same-machine Apple `Shared` subscription coexistence through real Pulsar admin stats, and covered Apple production `demo_ui = false` route/publication assertions. Follow-up investigation of the earlier long Docker interval showed active Cabal dependency compilation, image export, Harbor push, and Helm/Pulsar readiness waits rather than a Docker daemon deadlock, and current source adds source-fingerprint image reuse plus dependency-layer caching to avoid unnecessary host-native Apple rebuilds. Apple e2e/all evidence and real native payload replacement remain pending; the native runners remain validation wrappers rather than real payloads.
 **Implementation**: `documents/engineering/apple_silicon_metal_headless_builds.md`, `src/Infernix/Engines/AppleSilicon.hs`, `src/Infernix/HostPrereqs.hs`, `src/Infernix/HostConfig.hs`, `dhall/InfernixHost.dhall`, `test/unit/Spec.hs`
 **Docs to update**: `README.md`, `AGENTS.md`, `CLAUDE.md`, `documents/engineering/apple_silicon_metal_headless_builds.md`, `documents/engineering/build_artifacts.md`, `documents/operations/apple_silicon_runbook.md`, `documents/architecture/configuration_doctrine.md`, `documents/engineering/host_tools_manifest.md`, `documents/engineering/portability.md`, `documents/engineering/docker_policy.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 
@@ -918,10 +921,10 @@ The replacement path must not require Tart, user keychain state, host Xcode UI f
 
 ### Remaining Work
 
-- Run the materialized host Metal bridge smoke on Apple Silicon.
-- Materialize and smoke at least one native/Core ML artifact on Apple Silicon, then prove the host
-  engine loads it from `./.data/engines/<adapterId>/`.
-- Close the headless bridge/materialization cohort gate in
+- Run the Apple integration/e2e/all cohort gate against the same state that proves the headless
+  bridge/materialization lane after the Phase 4 Apple real-engine venv/native payload residuals are
+  satisfied.
+- Close the Apple full-suite cohort gate in
   [Wave I](cohort-validation-waves.md).
 
 ---
@@ -933,8 +936,8 @@ closed in Wave A and CUDA Linux cohort validation closed in Wave C, and the reco
 Apple boundary rerun closed the native-only positive and negative Docker gates on the current Apple
 Silicon host. Sprint 1.13 is now a historical record: its Tart-specific implementation surfaces are
 removed, and the retained command name belongs to the Sprint 1.14 manifest lane. The phase returns
-to `Done` only after the host Metal bridge/native-artifact cohort gate in
-[Wave I](cohort-validation-waves.md) closes. See the two-axis execution rule in
+to `Done` only after the Apple full-suite cohort gate in [Wave I](cohort-validation-waves.md)
+closes. See the two-axis execution rule in
 [development_plan_standards.md](development_plan_standards.md) Section Q.
 
 ## Documentation Requirements

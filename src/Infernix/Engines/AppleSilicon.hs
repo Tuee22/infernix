@@ -19,13 +19,14 @@ module Infernix.Engines.AppleSilicon
   )
 where
 
-import Control.Exception (SomeException, try)
+import Control.Exception (IOException, throwIO, try)
 import Control.Monad (unless, when)
 import Crypto.Hash.SHA256 qualified as SHA256
 import Data.Aeson (encode, object, (.=))
 import Data.ByteString.Base16 qualified as Base16
 import Data.ByteString.Lazy qualified as LazyByteString
-import Data.List (nubBy)
+import Data.Char (toLower)
+import Data.List (isInfixOf, nubBy)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
@@ -35,7 +36,7 @@ import Infernix.Python (ensurePoetryExecutable, ensurePoetryProjectReady, python
 import Infernix.Types (EngineBinding (..), RuntimeMode (AppleSilicon))
 import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, getPermissions, removePathForcibly, renameDirectory, setOwnerExecutable, setPermissions)
 import System.Exit (ExitCode (ExitSuccess))
-import System.FilePath ((</>))
+import System.FilePath (takeDirectory, (</>))
 import System.Info (os)
 import System.Process (CreateProcess (cwd, env), proc, readCreateProcessWithExitCode)
 
@@ -269,25 +270,64 @@ materializeMetalEngineArtifact paths artifact = do
         <> ". The materialized payload and smoke command are recorded in engine-artifact.json.\n"
     )
   validateMaterializedManifest tempRoot
+  validateMaterializedPayloadSmoke tempRoot artifact
   installEngineArtifactRoot installRoot tempRoot
   pure installRoot
 
 writeMetalEngineArtifactPayload :: FilePath -> MetalEngineArtifact -> IO ()
 writeMetalEngineArtifactPayload tempRoot artifact =
-  when (metalEngineAdapterId artifact == "apple-metal-runtime-bridge") $ do
-    let sourceRoot = tempRoot </> "src"
-        binRoot = tempRoot </> "bin"
-        headerPath = sourceRoot </> "infernix_apple_metal_bridge.h"
-        bridgeSourcePath = sourceRoot </> "infernix_apple_metal_bridge.m"
-        smokeSourcePath = sourceRoot </> "infernix_apple_metal_bridge_smoke.c"
-        smokeScriptPath = binRoot </> "infernix-apple-metal-bridge-smoke"
-    createDirectoryIfMissing True sourceRoot
-    createDirectoryIfMissing True binRoot
-    writeFile headerPath appleMetalBridgeHeader
-    writeFile bridgeSourcePath appleMetalBridgeSource
-    writeFile smokeSourcePath appleMetalBridgeSmokeSource
-    writeFile smokeScriptPath appleMetalBridgeSmokeScript
-    makeExecutable smokeScriptPath
+  case metalEngineAdapterId artifact of
+    "apple-metal-runtime-bridge" -> writeAppleMetalBridgePayload tempRoot
+    "coreml-native" -> writeCoreMlNativeRunnerPayload tempRoot
+    adapterId
+      | adapterId `elem` appleNativeValidationRunnerAdapterIds ->
+          writeAppleNativeValidationRunnerPayload tempRoot artifact
+    _ -> pure ()
+
+appleNativeValidationRunnerAdapterIds :: [Text]
+appleNativeValidationRunnerAdapterIds =
+  [ "llama-cpp-cli",
+    "whisper-cpp-cli",
+    "ctranslate2-native",
+    "mlx-native",
+    "onnx-runtime-native",
+    "jvm-native"
+  ]
+
+writeAppleNativeValidationRunnerPayload :: FilePath -> MetalEngineArtifact -> IO ()
+writeAppleNativeValidationRunnerPayload tempRoot artifact = do
+  let runnerPath = tempRoot </> Text.unpack (metalEngineEntrypoint artifact)
+  createDirectoryIfMissing True (takeDirectory runnerPath)
+  writeFile runnerPath (appleNativeValidationRunnerScript artifact)
+  makeExecutable runnerPath
+
+writeAppleMetalBridgePayload :: FilePath -> IO ()
+writeAppleMetalBridgePayload tempRoot = do
+  let sourceRoot = tempRoot </> "src"
+      binRoot = tempRoot </> "bin"
+      headerPath = sourceRoot </> "infernix_apple_metal_bridge.h"
+      bridgeSourcePath = sourceRoot </> "infernix_apple_metal_bridge.m"
+      smokeSourcePath = sourceRoot </> "infernix_apple_metal_bridge_smoke.c"
+      smokeScriptPath = binRoot </> "infernix-apple-metal-bridge-smoke"
+  createDirectoryIfMissing True sourceRoot
+  createDirectoryIfMissing True binRoot
+  writeFile headerPath appleMetalBridgeHeader
+  writeFile bridgeSourcePath appleMetalBridgeSource
+  writeFile smokeSourcePath appleMetalBridgeSmokeSource
+  writeFile smokeScriptPath appleMetalBridgeSmokeScript
+  makeExecutable smokeScriptPath
+
+writeCoreMlNativeRunnerPayload :: FilePath -> IO ()
+writeCoreMlNativeRunnerPayload tempRoot = do
+  let sourceRoot = tempRoot </> "src"
+      binRoot = tempRoot </> "bin"
+      smokeSourcePath = sourceRoot </> "infernix_coreml_runner_smoke.m"
+      runnerScriptPath = binRoot </> "coreml-runner"
+  createDirectoryIfMissing True sourceRoot
+  createDirectoryIfMissing True binRoot
+  writeFile smokeSourcePath coreMlRunnerSmokeSource
+  writeFile runnerScriptPath coreMlRunnerScript
+  makeExecutable runnerScriptPath
 
 makeExecutable :: FilePath -> IO ()
 makeExecutable filePath = do
@@ -300,20 +340,99 @@ validateMaterializedManifest tempRoot = do
   unless manifestPresent $
     ioError (userError ("engine artifact manifest was not written under " <> tempRoot))
 
+validateMaterializedPayloadSmoke :: FilePath -> MetalEngineArtifact -> IO ()
+validateMaterializedPayloadSmoke tempRoot artifact =
+  when (os == "darwin") $
+    case payloadSmokeCommand artifact of
+      Nothing -> pure ()
+      Just (smokeExecutable, smokeArgs) -> do
+        let smokePath = tempRoot </> smokeExecutable
+        smokeExists <- doesFileExist smokePath
+        unless smokeExists $
+          ioError (userError ("engine artifact smoke command was not written: " <> smokePath))
+        (exitCode, stdoutOutput, stderrOutput) <-
+          readCreateProcessWithExitCode
+            ( (proc smokePath smokeArgs)
+                { cwd = Just tempRoot,
+                  env = Just []
+                }
+            )
+            ""
+        case exitCode of
+          ExitSuccess -> pure ()
+          _ ->
+            ioError
+              ( userError
+                  ( "engine artifact smoke command failed for "
+                      <> Text.unpack (metalEngineAdapterId artifact)
+                      <> ": "
+                      <> smokePath
+                      <> " "
+                      <> unwords smokeArgs
+                      <> "\nstdout:\n"
+                      <> stdoutOutput
+                      <> "\nstderr:\n"
+                      <> stderrOutput
+                  )
+              )
+
+payloadSmokeCommand :: MetalEngineArtifact -> Maybe (FilePath, [String])
+payloadSmokeCommand artifact =
+  case metalEngineAdapterId artifact of
+    "apple-metal-runtime-bridge" -> Just ("bin/infernix-apple-metal-bridge-smoke", [])
+    "coreml-native" -> Just ("bin/coreml-runner", ["--smoke"])
+    adapterId
+      | adapterId `elem` appleNativeValidationRunnerAdapterIds ->
+          Just (Text.unpack (metalEngineEntrypoint artifact), ["--help"])
+    _ -> Nothing
+
 installEngineArtifactRoot :: FilePath -> FilePath -> IO ()
 installEngineArtifactRoot installRoot tempRoot = do
   let previousRoot = engineArtifactPreviousRoot installRoot
   removePathForcibly previousRoot
-  finalExists <- doesDirectoryExist installRoot
-  when finalExists (renameDirectory installRoot previousRoot)
-  result <- try (renameDirectory tempRoot installRoot)
+  backupExists <- moveExistingArtifactRoot installRoot previousRoot
+  result <- try (renameDirectory tempRoot installRoot) :: IO (Either IOException ())
   case result of
     Right () -> removePathForcibly previousRoot
     Left err -> do
-      restored <- doesDirectoryExist previousRoot
-      currentFinal <- doesDirectoryExist installRoot
-      when (restored && not currentFinal) (renameDirectory previousRoot installRoot)
-      ioError (userError ("failed to install engine artifact root atomically: " <> show (err :: SomeException)))
+      when backupExists (restorePreviousArtifactRoot installRoot previousRoot)
+      ioError (userError ("failed to install engine artifact root: " <> show err))
+
+moveExistingArtifactRoot :: FilePath -> FilePath -> IO Bool
+moveExistingArtifactRoot installRoot previousRoot = do
+  finalExists <- doesDirectoryExist installRoot
+  if not finalExists
+    then pure False
+    else do
+      result <- try (renameDirectory installRoot previousRoot) :: IO (Either IOException ())
+      case result of
+        Right () -> pure True
+        Left err
+          | supportsReplaceFallback err -> do
+              -- Docker overlay can reject moving a lower-layer image root to a
+              -- sibling backup path. The temp root has already been fully
+              -- written and smoke-validated, so replace the generated final
+              -- root in place for idempotent image-layer reruns.
+              removePathForcibly installRoot
+              pure False
+          | otherwise -> throwIO err
+
+restorePreviousArtifactRoot :: FilePath -> FilePath -> IO ()
+restorePreviousArtifactRoot installRoot previousRoot = do
+  restored <- doesDirectoryExist previousRoot
+  currentFinal <- doesDirectoryExist installRoot
+  when (restored && not currentFinal) (renameDirectory previousRoot installRoot)
+
+supportsReplaceFallback :: IOException -> Bool
+supportsReplaceFallback err =
+  any
+    (`isInfixOf` failureText)
+    [ "cross-device",
+      "invalid cross-device link",
+      "unsupported operation"
+    ]
+  where
+    failureText = map toLower (show err)
 
 metalEngineLaneNotAppleMessage :: String
 metalEngineLaneNotAppleMessage =
@@ -491,3 +610,184 @@ appleMetalBridgeSmokeScript =
       "/usr/bin/clang -I \"$root/src\" \"$smoke_src\" -L \"$lib_dir\" -linfernix-apple-metal-bridge -Wl,-rpath,\"$lib_dir\" -o \"$runner\"",
       "\"$runner\""
     ]
+
+coreMlRunnerSmokeSource :: String
+coreMlRunnerSmokeSource =
+  unlines
+    [ "#import <CoreML/CoreML.h>",
+      "#import <Foundation/Foundation.h>",
+      "",
+      "#include <stdio.h>",
+      "",
+      "int main(void) {",
+      "  @autoreleasepool {",
+      "    Class modelClass = NSClassFromString(@\"MLModel\");",
+      "    Class configurationClass = NSClassFromString(@\"MLModelConfiguration\");",
+      "    if (modelClass == Nil || configurationClass == Nil) {",
+      "      fprintf(stderr, \"Core ML runtime classes are unavailable\\n\");",
+      "      return 2;",
+      "    }",
+      "",
+      "    MLModelConfiguration *configuration = [[MLModelConfiguration alloc] init];",
+      "    if (configuration == nil) {",
+      "      fprintf(stderr, \"Core ML model configuration allocation failed\\n\");",
+      "      return 3;",
+      "    }",
+      "",
+      "    printf(\"Core ML runtime probe passed\\n\");",
+      "    return 0;",
+      "  }",
+      "}"
+    ]
+
+coreMlRunnerScript :: String
+coreMlRunnerScript =
+  unlines
+    [ "#!/bin/bash",
+      "set -euo pipefail",
+      "",
+      "script_path=\"${BASH_SOURCE[0]}\"",
+      "script_dir=\"${script_path%/*}\"",
+      "root=\"$(CDPATH= cd -- \"$script_dir/..\" && pwd)\"",
+      "src=\"$root/src/infernix_coreml_runner_smoke.m\"",
+      "bin_dir=\"$root/bin\"",
+      "runner=\"$bin_dir/infernix-coreml-runner-smoke\"",
+      "",
+      appleNativeValidationResultShell,
+      "case \"${1:-}\" in",
+      "  --smoke|--help)",
+      "    if [[ \"$(/usr/bin/uname -s)\" != \"Darwin\" ]]; then",
+      "      printf '%s\\n' \"Core ML native runner smoke must run on Darwin/Apple Silicon\" >&2",
+      "      exit 70",
+      "    fi",
+      "    /bin/mkdir -p \"$bin_dir\"",
+      "    /usr/bin/clang -fobjc-arc -framework Foundation -framework CoreML \"$src\" -o \"$runner\"",
+      "    \"$runner\"",
+      "    ;;",
+      "  *)",
+      "    infernix_emit_validation_result \"coreml-native\" \"Core ML native runner\" \"$@\"",
+      "    ;;",
+      "esac",
+      ""
+    ]
+
+appleNativeValidationRunnerScript :: MetalEngineArtifact -> String
+appleNativeValidationRunnerScript artifact =
+  unlines
+    [ "#!/bin/sh",
+      "set -eu",
+      "",
+      appleNativeValidationResultShell,
+      "case \"${1:-}\" in",
+      "  --smoke|--help)",
+      "    printf '%s\\n' \"infernix apple native validation runner ok: " <> Text.unpack (metalEngineAdapterId artifact) <> "\"",
+      "    exit 0",
+      "    ;;",
+      "esac",
+      "",
+      "infernix_emit_validation_result "
+        <> shellLiteral (Text.unpack (metalEngineAdapterId artifact))
+        <> " "
+        <> shellLiteral (Text.unpack (metalEngineName artifact))
+        <> " \"$@\"",
+      ""
+    ]
+
+appleNativeValidationResultShell :: String
+appleNativeValidationResultShell =
+  unlines
+    [ "infernix_emit_validation_result() {",
+      "  adapter_id=\"$1\"",
+      "  engine_name=\"$2\"",
+      "  shift 2",
+      "  model_id=\"\"",
+      "  selected_engine=\"\"",
+      "  family=\"\"",
+      "  install_root=\"\"",
+      "  input_text=\"\"",
+      "  input_object_ref=\"\"",
+      "",
+      "  while [ \"$#\" -gt 0 ]; do",
+      "    case \"$1\" in",
+      "      --model)",
+      "        [ \"$#\" -ge 2 ] || { printf '%s\\n' \"missing value for --model\" >&2; exit 64; }",
+      "        model_id=\"$2\"",
+      "        shift 2",
+      "        ;;",
+      "      --engine)",
+      "        [ \"$#\" -ge 2 ] || { printf '%s\\n' \"missing value for --engine\" >&2; exit 64; }",
+      "        selected_engine=\"$2\"",
+      "        shift 2",
+      "        ;;",
+      "      --family)",
+      "        [ \"$#\" -ge 2 ] || { printf '%s\\n' \"missing value for --family\" >&2; exit 64; }",
+      "        family=\"$2\"",
+      "        shift 2",
+      "        ;;",
+      "      --install-root)",
+      "        [ \"$#\" -ge 2 ] || { printf '%s\\n' \"missing value for --install-root\" >&2; exit 64; }",
+      "        install_root=\"$2\"",
+      "        shift 2",
+      "        ;;",
+      "      --input-text)",
+      "        [ \"$#\" -ge 2 ] || { printf '%s\\n' \"missing value for --input-text\" >&2; exit 64; }",
+      "        input_text=\"$2\"",
+      "        shift 2",
+      "        ;;",
+      "      --input-object-ref)",
+      "        [ \"$#\" -ge 2 ] || { printf '%s\\n' \"missing value for --input-object-ref\" >&2; exit 64; }",
+      "        input_object_ref=\"$2\"",
+      "        shift 2",
+      "        ;;",
+      "      *)",
+      "        shift",
+      "        ;;",
+      "    esac",
+      "  done",
+      "",
+      "  [ -n \"$model_id\" ] || model_id=\"$adapter_id\"",
+      "  [ -n \"$family\" ] || family=\"native\"",
+      "",
+      "  case \"$family\" in",
+      "    llm)",
+      "      printf '%s\\n' \"Apple ${engine_name} validation output for ${model_id}: ${input_text:-prompt accepted}\"",
+      "      ;;",
+      "    speech)",
+      "      printf '%s\\n' \"Apple ${engine_name} validation transcript for ${model_id}: ${input_object_ref:-audio accepted}\"",
+      "      ;;",
+      "    audio)",
+      "      case \"$model_id\" in",
+      "        *demucs*|*open-unmix*|*unmix*) suffix='.zip' ;;",
+      "        *basic-pitch*) suffix='.mid' ;;",
+      "        *bark*) suffix='.wav' ;;",
+      "        *) suffix='.wav' ;;",
+      "      esac",
+      "      printf '%s\\n' \"infernix-demo-objects/apple-silicon/native-validation/${model_id}${suffix}\"",
+      "      ;;",
+      "    music)",
+      "      printf '%s\\n' \"infernix-demo-objects/apple-silicon/native-validation/${model_id}.mid\"",
+      "      ;;",
+      "    image)",
+      "      printf '%s\\n' \"infernix-demo-objects/apple-silicon/native-validation/${model_id}.png\"",
+      "      ;;",
+      "    video)",
+      "      printf '%s\\n' \"infernix-demo-objects/apple-silicon/native-validation/${model_id}.mp4\"",
+      "      ;;",
+      "    tool)",
+      "      printf '%s\\n' \"infernix-demo-objects/apple-silicon/native-validation/${model_id}.musicxml\"",
+      "      ;;",
+      "    *)",
+      "      printf '%s\\n' \"Apple ${engine_name} validation output for ${model_id}\"",
+      "      ;;",
+      "  esac",
+      "}",
+      "",
+      "# The normal invocation path is a deterministic validation wrapper. Wave I",
+      "# still owns replacing these roots with real Apple native payloads."
+    ]
+
+shellLiteral :: String -> String
+shellLiteral rawValue = "'" <> concatMap escapeCharacter rawValue <> "'"
+  where
+    escapeCharacter '\'' = "'\\''"
+    escapeCharacter character = [character]

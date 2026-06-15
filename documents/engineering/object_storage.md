@@ -155,8 +155,10 @@ single-flight dispatcher and the result-bridge) consumes
 
 - Pulsar named `Failover` subscription on the request topic — exactly
   one coordinator replica processes a given `modelId` at a time.
-- Producer dedup on the request topic keyed by `modelId` — concurrent
-  retries from multiple engine pods collapse to one queued request.
+- Producer dedup on the request topic uses an attempt-scoped
+  `modelId@requestedAt` sequence id while the Pulsar message key stays
+  `modelId` — exact request replays collapse, but later retry attempts
+  can enqueue work if readiness never appears.
 - The `.ready` sentinel written last — partial uploads are not
   visible to engines because the sentinel is the gate.
 
@@ -164,8 +166,8 @@ single-flight dispatcher and the result-bridge) consumes
 redelivers the unacked request to a surviving coordinator replica.
 The replica re-checks MinIO (idempotent guard) and either notices the
 upload is already complete (`.ready` present) and publishes the ready
-event, or restarts the download from scratch. Producer dedup on the
-inference result topic and the `.ready` sentinel guarantee at most
+event, or restarts the download from scratch. The Failover subscription,
+attempt-scoped request dedup, and the `.ready` sentinel guarantee at most
 one effective publication.
 
 ## Daemon Disk Posture

@@ -126,13 +126,45 @@ RUN set -eu; \
 
 WORKDIR /workspace
 
+COPY cabal.project infernix.cabal LICENSE README.md Setup.hs /workspace/
+COPY dhall /workspace/dhall
+COPY proto /workspace/proto
+COPY web/package.json /workspace/web/package.json
+COPY web/scripts /workspace/web/scripts
+COPY python/pyproject.toml /workspace/python/pyproject.toml
+
+RUN mkdir -p /workspace/.build /workspace/tools/generated_proto \
+    && cabal update \
+    && cabal build all --only-dependencies \
+    && npm --prefix web install --no-audit --no-fund \
+    && poetry install --directory python --no-root
+
 COPY . /workspace
 
 RUN mkdir -p /workspace/.build /opt/infernix /opt/infernix/dhall \
     && rm -rf /workspace/chart/charts \
     && ln -s /opt/infernix/chart/charts /workspace/chart/charts \
     && cd /workspace \
-    && find . -type f | sed 's#^\\./##' | LC_ALL=C sort > /opt/infernix/source-snapshot-files.txt
+    && find . \
+         \( -name .build -o -name .data -o -name .git -o -name .hpc -o -name .mypy_cache -o -name .parcel-cache -o -name .ruff_cache -o -name .spago -o -name .stack-work -o -name .venv -o -name __pycache__ -o -name dist-newstyle -o -name node_modules -o -path './chart/charts' -o -path './tools/generated_proto' -o -path './web/dist' -o -path './web/output' \) -prune \
+         -o -type f \
+         ! -name '*.aux' \
+         ! -name '*.dyn_hi' \
+         ! -name '*.dyn_o' \
+         ! -name '*.eventlog' \
+         ! -name '*.hi' \
+         ! -name '*.hp' \
+         ! -name '*.log' \
+         ! -name '*.o' \
+         ! -name '*.prof' \
+         ! -name '*.tix' \
+         ! -name '.DS_Store' \
+         ! -name '.gitignore' \
+         ! -name 'Chart.lock' \
+         ! -name 'poetry.lock' \
+         ! -name 'spago.lock' \
+         -print \
+       | sed 's#^\\./##' | LC_ALL=C sort > /opt/infernix/source-snapshot-files.txt
 
 # Phase 1 Sprint 1.11 — bake the supported Linux outer-container host
 # manifest into the image at the canonical mount path. The Haskell
@@ -199,8 +231,6 @@ RUN printf '%s\n' \
     > /opt/infernix/dhall/InfernixHost.dhall
 
 RUN mkdir -p /workspace/tools/generated_proto \
-    && cabal update \
-    && npm --prefix web install --no-audit --no-fund \
     && poetry install --directory python \
     && poetry --directory python run python -m grpc_tools.protoc \
          -I /workspace/proto \

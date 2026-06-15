@@ -30,6 +30,9 @@ non-Python binding.
   compatible Python 3.12+ executable when one passes the implemented version check
 - outside the cluster, `poetry install --directory python` materializes the repo-local
   `python/.venv/` environment for adapter validation on the Apple host path
+- concurrent host-daemon setup for the shared `python/` project serializes `poetry install` with
+  the repo-local `python/.infernix-poetry-install.lock` directory so multiple `infernix service`
+  processes do not mutate `python/.venv/` at the same time
 - Linux substrate image builds run `poetry install --directory python` during the image build and
   then execute adapters from the shared `python/` project root through `poetry run ...`
 - Poetry is not a generic platform prerequisite; it materializes only when an adapter validation or
@@ -42,6 +45,8 @@ Current status:
   validation first needs it; the Poetry bootstrap may reuse an already available compatible
   Python 3.12+ executable when one passes the implemented version check
 - once `poetry` exists, the shared project still materializes `python/.venv/` only on demand
+- concurrent materialization attempts for the same shared project are serialized by
+  `python/.infernix-poetry-install.lock`
 
 ## Quality Gate
 
@@ -106,8 +111,9 @@ own isolated in-project venv:
   package via an editable path dependency and declares its framework wheels in an **optional**
   substrate group. The default `poetry install` there pulls no framework; the substrate build opts
   in with `poetry install --directory python/engines/<engine> --with cuda` (linux-gpu, cu128 torch
-  for Blackwell). The linux-cpu and apple-silicon framework groups are a follow-on, because a single
-  project cannot co-resolve `torch` from two indices.
+  for Blackwell) or `--with apple-silicon` for the Apple host-native framework engines that publish
+  Darwin arm64 wheels (`transformers`, `pytorch`, and `diffusers`). The linux-cpu framework groups
+  remain a follow-on.
 - The Haskell worker (`src/Infernix/Runtime/Worker.hs`) resolves the per-engine venv at dispatch:
   when `python/engines/<engine>/.venv/bin/python` exists it runs `python -m adapters.<module>` in
   that venv (the in-project venv installs console scripts with a relative shebang, so the worker

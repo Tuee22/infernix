@@ -54,8 +54,8 @@ import Infernix.Types hiding (generatedDemoConfigPath)
 -- Pulsar transport module. The daemon layer decides which role starts
 -- coordinator loops, which role owns engine execution, and which
 -- process-local engine KV cache is threaded into request handling.
-runProductionDaemon :: Paths -> RuntimeMode -> Maybe ClusterConfig -> DaemonRole -> Maybe Text.Text -> IO ()
-runProductionDaemon paths runtimeMode maybeClusterConfig daemonRole maybeEngineName = do
+runProductionDaemon :: Paths -> RuntimeMode -> Maybe ClusterConfig -> Maybe FilePath -> DaemonRole -> Maybe Text.Text -> IO ()
+runProductionDaemon paths runtimeMode maybeClusterConfig maybeDemoConfigPath daemonRole maybeEngineName = do
   maybeTransport <- discoverPulsarTransport paths runtimeMode maybeClusterConfig
   engineKVCache <- KVCache.newEngineKVCache
   let controlPlane = case maybeClusterConfig of
@@ -64,11 +64,14 @@ runProductionDaemon paths runtimeMode maybeClusterConfig daemonRole maybeEngineN
       catalogSource = case maybeClusterConfig of
         Just clusterConfig -> Text.unpack (coordinatorCatalogSource (clusterCoordinator clusterConfig))
         Nothing -> demoConfigCatalogSource
-      selectedDemoConfigPath = case maybeClusterConfig of
-        Just clusterConfig ->
-          let demoPath = Text.unpack (demoConfigFilePath (clusterDemoBackend clusterConfig))
-           in if null demoPath then generatedDemoConfigPath paths else demoPath
-        Nothing -> generatedDemoConfigPath paths
+      selectedDemoConfigPath = case maybeDemoConfigPath of
+        Just demoConfigPath -> demoConfigPath
+        Nothing ->
+          case maybeClusterConfig of
+            Just clusterConfig ->
+              let demoPath = Text.unpack (demoConfigFilePath (clusterDemoBackend clusterConfig))
+               in if null demoPath then generatedDemoConfigPath paths else demoPath
+            Nothing -> generatedDemoConfigPath paths
       engineOverrides = engineOverridesFromClusterConfig maybeClusterConfig
   demoConfig <- decodeDemoConfigFile selectedDemoConfigPath
   daemonConfig <- requireDaemonConfig runtimeMode daemonRole maybeEngineName demoConfig

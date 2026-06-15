@@ -34,9 +34,12 @@ and routable models with no eligible member.
 The current worktree still carries `engineDaemons` and the old batch-topic helpers as compatibility
 surfaces while chart/runtime cleanup is staged through
 [../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md](../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md).
-Real Pulsar proof for `Shared` backlog distribution, pinned `Exclusive` duplicate-consumer
-rejection, Apple multi-host membership, Linux GPU placement, and production `demo_ui = false`
-coordinator presence remains in [Wave J](../../DEVELOPMENT_PLAN/cohort-validation-waves.md).
+Current Apple integration proves pinned `Exclusive` duplicate-consumer rejection, same-machine
+Apple host-member coexistence on one real `Shared` pool subscription, and production
+`demo_ui = false` route/publication assertions. Single-host logical `Shared`
+backlog/backpressure distribution and Linux GPU placement remain in
+[Wave J](../../DEVELOPMENT_PLAN/cohort-validation-waves.md). Physical Apple multi-host membership
+is hardware-deferred proof while no second Apple host is available.
 
 ## Routing Model
 
@@ -165,10 +168,13 @@ The pool contract is valid only when:
 - unit validation and substrate decoding reject a model route with no eligible members
 - coordinator routing can publish only to derived topics from the validated graph
 - engine members subscribe only to derived topics assigned to their pool or member id
-- `Shared` pool consumers distribute work through Pulsar permits/backpressure
+- same-machine Apple host-member daemons can coexist on one `Shared` subscription
+- single-host logical Apple pool consumers distribute work through Pulsar permits/backpressure
 - pinned routes use `Exclusive` and reject duplicate member consumers
 - `demo_ui = false` still deploys the production coordinator and engine pools while omitting only
   the demo frontend, browser API, Keycloak, and demo-only routes
+- physical Apple multi-host distribution repeats the same scenario across separate hosts when
+  hardware exists, but is deferred outside the current single-host validation envelope
 
 ## Cross-References
 

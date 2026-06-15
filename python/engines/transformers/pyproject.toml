@@ -6,13 +6,11 @@
 # framework-free `infernix-adapters` package. The shared `python/` project
 # stays framework-free so `poetry run check-code` remains machine-independent.
 #
-# The framework wheels live in an OPTIONAL `cuda` group, so the default
-# `poetry install` here pulls no framework (machine-independent); the
-# linux-gpu image build opts in with `poetry install --with cuda`. The
-# linux-cpu and apple-silicon framework groups (different torch index /
-# MLX + jax-metal) are a follow-on — a single project cannot co-resolve
-# torch from two indices, so per-substrate framework selection is its own
-# step. See documents/development/python_policy.md "Per-Engine Framework Venvs".
+# The framework wheels live in OPTIONAL substrate groups, so the default
+# `poetry install` here pulls no framework (machine-independent). The
+# linux-gpu image build opts in with `poetry install --with cuda`; Apple
+# host-native real inference opts in with `poetry install --with apple-silicon`.
+# See documents/development/python_policy.md "Per-Engine Framework Venvs".
 name = "infernix-engine-transformers"
 version = "0.1.0"
 description = "Isolated Transformers + PyTorch (CUDA) engine venv for infernix"
@@ -27,10 +25,23 @@ infernix-adapters = { path = "../..", develop = true }
 optional = true
 
 [tool.poetry.group.cuda.dependencies]
-torch = { version = ">=2.7", source = "pytorch-cu128" }
+torch = { version = ">=2.7", source = "pytorch-cu128", markers = "platform_system == 'Linux' and platform_machine == 'x86_64'" }
 transformers = ">=4.46"
 accelerate = ">=1.0"
 safetensors = ">=0.4"
+sentencepiece = ">=0.2"
+tiktoken = ">=0.8"
+
+[tool.poetry.group.apple-silicon]
+optional = true
+
+[tool.poetry.group.apple-silicon.dependencies]
+torch = { version = ">=2.7", markers = "platform_system == 'Darwin' and platform_machine == 'arm64'" }
+transformers = ">=4.46"
+accelerate = ">=1.0"
+safetensors = ">=0.4"
+sentencepiece = ">=0.2"
+tiktoken = ">=0.8"
 
 [[tool.poetry.source]]
 name = "pytorch-cu128"

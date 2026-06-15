@@ -18,9 +18,10 @@
   `./.data/kind/<runtime-mode>/<namespace>/<release>/<workload>/<ordinal>/<claim>`
 - `infernix test integration` validates PostgreSQL readiness, replacement-primary failover, and
   repeat lifecycle reuse of the same deterministic manually managed PV inventory and host paths
-- Harbor PostgreSQL bootstrap may recycle one startup pod once when that pod remains `Running`
-  but fails Patroni readiness beyond the supported grace window; that self-heal is part of the
-  supported readiness contract before any post-Harbor rollout depends on the cluster
+- Harbor PostgreSQL bootstrap may recycle unready startup pods when they remain `Running` but fail
+  Patroni readiness beyond the supported grace window. The recycle uses Kubernetes `--wait=false`
+  deletes so StatefulSet immediate name reuse does not block lifecycle progress; readiness remains
+  owned by the surrounding wait loop before any post-Harbor rollout depends on the cluster
 - on a pristine cluster, Harbor stays the first deployed service; only Harbor plus Harbor-required
   backend services such as MinIO and PostgreSQL may pull from public container repositories before
   Harbor is ready

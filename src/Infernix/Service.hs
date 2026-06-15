@@ -2,13 +2,15 @@
 
 module Infernix.Service
   ( runService,
+    serviceDemoConfigPath,
   )
 where
 
 import Control.Exception (IOException, bracketOnError, catch)
 import Data.Text qualified as Text
 import Infernix.ClusterConfig
-  ( ClusterConfig,
+  ( ClusterConfig (..),
+    DemoBackendWiring (..),
     decodeClusterConfigFile,
     defaultClusterConfigMountPath,
   )
@@ -40,13 +42,15 @@ import System.Posix.Process (getProcessID)
 -- @INFERNIX_DAEMON_ROLE@ env var. The chart-driven coordinator and
 -- engine Deployments pass @--role coordinator@ and @--role engine@
 -- through @args@; host-native flows omit the flag and fall back to
--- the active substrate dhall's @daemonRole@ field.
-runService :: Maybe RuntimeMode -> Maybe DaemonRole -> Maybe Text.Text -> IO ()
-runService maybeRuntimeMode maybeDaemonRole maybeEngineName = do
+-- the active substrate dhall's @daemonRole@ field. The optional
+-- explicit config path supports targeted host-side validation without
+-- rewriting the active generated substrate file.
+runService :: Maybe RuntimeMode -> Maybe DaemonRole -> Maybe Text.Text -> Maybe FilePath -> IO ()
+runService maybeRuntimeMode maybeDaemonRole maybeEngineName maybeDemoConfigPath = do
   paths <- discoverPaths
   ensureRepoLayout paths
   maybeClusterConfig <- tryLoadClusterConfig
-  demoConfig <- decodeDemoConfigFile (generatedDemoConfigPath paths)
+  demoConfig <- decodeDemoConfigFile (serviceDemoConfigPath paths maybeClusterConfig maybeDemoConfigPath)
   runtimeMode <- resolveServiceRuntimeMode maybeRuntimeMode demoConfig
   let daemonRole = resolveServiceDaemonRole maybeDaemonRole demoConfig
   ensureServiceRuntimeSupported paths runtimeMode daemonRole
@@ -56,7 +60,7 @@ runService maybeRuntimeMode maybeDaemonRole maybeEngineName = do
   -- only as a non-Apple engine-role safety check while Kubernetes
   -- anti-affinity owns the Linux distributed placement rule.
   acquireEngineLockIfEngineRole paths runtimeMode daemonRole
-  runProductionDaemon paths runtimeMode maybeClusterConfig daemonRole maybeEngineName
+  runProductionDaemon paths runtimeMode maybeClusterConfig maybeDemoConfigPath daemonRole maybeEngineName
 
 -- | Phase 4 Sprint 4.13: best-effort load of the cluster manifest
 -- mounted at the supported path. Cluster-resident pods have this
@@ -70,6 +74,17 @@ tryLoadClusterConfig = do
   if exists
     then Just <$> decodeClusterConfigFile path
     else pure Nothing
+
+serviceDemoConfigPath :: Paths -> Maybe ClusterConfig -> Maybe FilePath -> FilePath
+serviceDemoConfigPath paths maybeClusterConfig maybeDemoConfigPath =
+  case maybeDemoConfigPath of
+    Just demoConfigPath -> demoConfigPath
+    Nothing ->
+      case maybeClusterConfig of
+        Just clusterConfig ->
+          let mountedPath = Text.unpack (demoConfigFilePath (clusterDemoBackend clusterConfig))
+           in if null mountedPath then generatedDemoConfigPath paths else mountedPath
+        Nothing -> generatedDemoConfigPath paths
 
 resolveServiceRuntimeMode :: Maybe RuntimeMode -> DemoConfig -> IO RuntimeMode
 resolveServiceRuntimeMode maybeRuntimeMode demoConfig =

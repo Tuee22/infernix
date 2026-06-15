@@ -76,7 +76,7 @@ runs, the routed Playwright suite exhaustively exercises every demo-visible gene
 entry for the active substrate, and the integration suite enumerates every generated
 active-substrate catalog entry while also carrying Harbor, MinIO, Pulsar, and Harbor PostgreSQL
 recovery or lifecycle checks in code. The per-family real-output coverage upgrade for the reopened
-Sprints 6.2/6.3/6.6 is code-complete and validated on the present CUDA Linux host: the integration
+Sprints 6.2/6.3/6.6 is code-complete and validated on the recorded CUDA Linux host: the integration
 suite dispatches a per-family result contract on `ResultFamily`, the routed Playwright suite and the
 web UI render and assert per-family artifact results, and `allMatrixRowIds` plus the
 README-to-matrix coverage check make full README coverage a mechanically enforced invariant; only
@@ -191,8 +191,8 @@ None.
 ## Sprint 6.2: Extensive Integration Suites [Active]
 
 **Status**: Active
-**Code-side closure**: Complete on the present CUDA Linux host (x86_64 + RTX 5090) — `validateCatalogModelInference` (`test/integration/Spec.hs`) is upgraded from the model-id + runtime-mode echo to a per-family real-output result contract dispatched on `ResultFamily` (via `resultFamilyForDescriptor`): text families (LLM, speech) assert a non-empty inline continuation and no object ref; every artifact family asserts an `infernix-demo-objects/` object reference whose key extension matches the family's artifact type (`.zip` source-separation, `.mid`/`.midi` audio-to-MIDI, `.mid`/`.midi`/`.musicxml`/`.xml` music transcription, `.png` image, `.mp4` video, `.wav` audio generation, `.musicxml`/`.xml` OMR) — shape/type, never golden strings. One DRY substrate-aware suite that reads the active `.dhall` and traverses the README rows; no per-substrate suites. Proven machine-independent by `cabal build test:infernix-integration` (compiles/typechecks) and `cabal test infernix-unit`, which pass on the present CUDA Linux host; the assertions themselves pass only when real engines run (Section P: results name the single substrate they exercised)
-**Cohort gate**: Pending [Wave I](cohort-validation-waves.md) — both cohorts run the per-family real-output integration suite against their own catalog column. The June 11, 2026 linux-gpu run reached the assertion phase after Harbor publication and `cluster up`, then failed because `audio-basic-pitch-onnx` did not return the required `AudioToMidi` object reference. Follow-up code uploads canonical sample input objects for audio/image input rows through the MinIO presigned route and asserts `status = completed` before result-family shape. The governed `./bootstrap/linux-gpu.sh build` after that follow-up passed and produced plain-manifest launcher image `sha256:2d6cfd42ca59ee7fbd9669a8c32738ed0ba44ef09706b469d12c8803b520e030`. The latest governed `./bootstrap/linux-gpu.sh test` rerun again passed style/unit/web, Harbor publication, final chart rollout, and route probes, then failed at `llm-tinyllama-gguf` because the Linux base engine pod lacked `/workspace/.data/engines/llama-cpp-cli/bin/llama-cli`. Phase 4 Sprint 4.18 now closes that missing-root surface by baking smoke-validated `/opt/infernix/engines/<adapterId>/bin/...` roots; the remaining live assertion blocker is replacing those smoke wrappers with real native payloads before the per-family real-output rerun. Current-source mounted linux-gpu validation after that run passes `cabal test infernix-unit`, `cabal test infernix-haskell-style`, `cabal build test:infernix-integration`, `poetry --directory python run check-code`, `cabal run exe:infernix -- lint docs`, `docs check`, `lint files`, `lint proto`, and `lint chart` with the worker's model-cache/MinIO protobuf wiring in place.
+**Code-side closure**: Complete on the recorded CUDA Linux host (x86_64 + RTX 5090) — `validateCatalogModelInference` (`test/integration/Spec.hs`) is upgraded from the model-id + runtime-mode echo to a per-family real-output result contract dispatched on `ResultFamily` (via `resultFamilyForDescriptor`): text families (LLM, speech) assert a non-empty inline continuation and no object ref; every artifact family asserts an `infernix-demo-objects/` object reference whose key extension matches the family's artifact type (`.zip` source-separation, `.mid`/`.midi` audio-to-MIDI, `.mid`/`.midi`/`.musicxml`/`.xml` music transcription, `.png` image, `.mp4` video, `.wav` audio generation, `.musicxml`/`.xml` OMR) — shape/type, never golden strings. One DRY substrate-aware suite that reads the active `.dhall` and traverses the README rows; no per-substrate suites. Proven machine-independent by `cabal build test:infernix-integration` (compiles/typechecks) and `cabal test infernix-unit`, which pass on the recorded CUDA Linux host; the assertions themselves pass only when real engines run (Section P: results name the single substrate they exercised)
+**Cohort gate**: Pending [Wave I](cohort-validation-waves.md) — both cohorts run the per-family real-output integration suite against their own catalog column. Current Apple integration evidence passes cluster-up, route probes, mounted Apple substrate loading, coordinator `serviceRuntimeMode: apple-silicon`, derived Apple pool-topic routing, and host engine processing; the latest Apple integration rerun completes the active Apple catalog through the host engine daemon, cache lifecycle, service runtime loop, durable Pulsar topic families, pinned Apple host-engine `Exclusive` duplicate-consumer rejection through an isolated `infernix service --config` file, same-machine Apple `Shared` subscription coexistence through real Pulsar admin stats, Apple production `demo_ui = false` assertions, and edge-port conflict rediscovery. It rebuilt the changed repo-owned image once, then reused the stamped `infernix-linux-cpu:local` image on later edge-port validation cluster cycles. Follow-up probing of the earlier long Docker interval showed active Cabal dependency compilation, image export, Harbor push, and Helm/Pulsar readiness waits rather than a Docker daemon deadlock, and current source adds source-fingerprint image reuse plus dependency-layer caching for that path. The June 11, 2026 linux-gpu run reached the assertion phase after Harbor publication and `cluster up`, then failed because `audio-basic-pitch-onnx` did not return the required `AudioToMidi` object reference. Follow-up code uploads canonical sample input objects for audio/image input rows through the MinIO presigned route and asserts `status = completed` before result-family shape. The governed `./bootstrap/linux-gpu.sh build` after that follow-up passed and produced plain-manifest launcher image `sha256:2d6cfd42ca59ee7fbd9669a8c32738ed0ba44ef09706b469d12c8803b520e030`. The latest governed `./bootstrap/linux-gpu.sh test` rerun again passed style/unit/web, Harbor publication, final chart rollout, and route probes, then failed at `llm-tinyllama-gguf` because the Linux base engine pod lacked `/workspace/.data/engines/llama-cpp-cli/bin/llama-cli`. Phase 4 Sprint 4.18 closes that Linux missing-root surface by baking smoke-validated `/opt/infernix/engines/<adapterId>/bin/...` roots; the remaining live assertion blockers are replacing Linux smoke wrappers and Apple validation wrappers with real native payloads before the per-family real-output rerun. Current-source mounted linux-gpu validation after that run passes `cabal test infernix-unit`, `cabal test infernix-haskell-style`, `cabal build test:infernix-integration`, `poetry --directory python run check-code`, `cabal run exe:infernix -- lint docs`, `docs check`, `lint files`, `lint proto`, and `lint chart` with the worker's model-cache/MinIO protobuf wiring in place.
 **Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Demo/Api.hs`, `src/Infernix/Runtime.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Worker.hs`, `test/integration/Spec.hs`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/operations/cluster_bootstrap_runbook.md`
 
@@ -220,7 +220,7 @@ MinIO, Pulsar, and operator-managed PostgreSQL substrate.
 
 ### Remaining Work
 
-- **Code (machine-independent — validated on the present CUDA Linux host): DONE.** The single DRY
+- **Code (machine-independent — validated on the recorded CUDA Linux host): DONE.** The single DRY
   `validateCatalogModelInference` (`test/integration/Spec.hs`) was upgraded from the model-id +
   runtime-mode-only assertion to a per-family real-output result contract dispatched on
   `ResultFamily` (via `resultFamilyForDescriptor`): text families (LLM, speech) assert a non-empty
@@ -230,7 +230,7 @@ MinIO, Pulsar, and operator-managed PostgreSQL substrate.
   `.mp4` video, `.wav` audio generation, `.musicxml`/`.xml` OMR) — shape and type, never golden
   strings. One substrate-aware suite that reads the active substrate's `.dhall` and traverses the
   README rows; no per-substrate suites. Proven by `cabal build test:infernix-integration`
-  (compiles/typechecks) and `cabal test infernix-unit`, which pass on the present CUDA Linux host.
+  (compiles/typechecks) and `cabal test infernix-unit`, which pass on the recorded CUDA Linux host.
 - **Cohort gate ([Wave I](cohort-validation-waves.md), Stage 2):** the assertions pass only when
   real engines run; each cohort runs the suite against its own catalog column (Apple Metal with
   headless materialization; CUDA `linux-cpu`/`linux-gpu`), and results name the single substrate
@@ -255,7 +255,7 @@ MinIO, Pulsar, and operator-managed PostgreSQL substrate.
 ## Sprint 6.3: Routed Playwright E2E Coverage [Active]
 
 **Status**: Active
-**Code-side closure**: Complete on the present CUDA Linux host (x86_64 + RTX 5090) — the routed Playwright suite (`web/playwright/inference.spec.js`) per-model smoke matrix now asserts the per-family rendered result for every demo-visible row (text bubble vs image/audio/video/download), staying substrate-agnostic via a JS classifier `expectedResultRenderKind` (keys on model family + matrix-row metadata, never substrate id or engine binding). The web UI renders artifact results per-family: `web/src/Infernix/Web/Chat.purs` renders `inferenceResultArtifacts` as `<img>`/`<audio>`/`<video>`/download `<a>` with `data-result-artifact-kind` keyed on the object-key extension. The PureScript + Playwright code is written and `infernix lint files` passes on the present CUDA Linux host. NOTE: the web unit suite (`spago`) requires Node 22 and cannot run on this bare host (host has Node 18; Node 22 makes spago segfault — an environmental toolchain limit), so 6.3's web-unit gate is exercised in the supported Linux **container** lane (Node 22) / cohort batch
+**Code-side closure**: Complete on the recorded CUDA Linux host (x86_64 + RTX 5090) — the routed Playwright suite (`web/playwright/inference.spec.js`) per-model smoke matrix now asserts the per-family rendered result for every demo-visible row (text bubble vs image/audio/video/download), staying substrate-agnostic via a JS classifier `expectedResultRenderKind` (keys on model family + matrix-row metadata, never substrate id or engine binding). The web UI renders artifact results per-family: `web/src/Infernix/Web/Chat.purs` renders `inferenceResultArtifacts` as `<img>`/`<audio>`/`<video>`/download `<a>` with `data-result-artifact-kind` keyed on the object-key extension. The PureScript + Playwright code is written and `infernix lint files` passes on the recorded CUDA Linux host. NOTE: the web unit suite (`spago`) requires Node 22 and cannot run on this bare host (host has Node 18; Node 22 makes spago segfault — an environmental toolchain limit), so 6.3's web-unit gate is exercised in the supported Linux **container** lane (Node 22) / cohort batch
 **Cohort gate**: Pending [Wave I](cohort-validation-waves.md) — both cohorts run the routed Playwright suite against their own catalog column
 **Implementation**: `src/Infernix/CLI.hs`, `web/playwright/inference.spec.js`, `web/src/Infernix/Web/Chat.purs`, `web/src/Infernix/Web/Router.purs`, `web/src/Main.purs`, `web/src/index.html`, `web/test/Main.purs`, `web/test/run_playwright_matrix.mjs`, `web/package.json`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/reference/web_portal_surface.md`
@@ -300,7 +300,7 @@ browser surface through the shared edge.
 
 ### Remaining Work
 
-- **Code (machine-independent — validated on the present CUDA Linux host): DONE.** The routed
+- **Code (machine-independent — validated on the recorded CUDA Linux host): DONE.** The routed
   Playwright suite (`web/playwright/inference.spec.js`) now asserts the per-family rendered result
   for every demo-visible row (inline text bubble, audio player, image, video, MIDI or MusicXML
   download) while staying substrate-agnostic via the JS classifier `expectedResultRenderKind` (keys
@@ -392,7 +392,7 @@ None.
 ## Sprint 6.6: Generated-Catalog Exhaustive Integration and E2E Coverage Baseline [Active]
 
 **Status**: Active
-**Code-side closure**: Complete on the present CUDA Linux host (x86_64 + RTX 5090) — `allMatrixRowIds` is exported from `src/Infernix/Models.hs`; `test/unit/Spec.hs` asserts that the union of `catalogForMode` across `apple-silicon`/`linux-cpu`/`linux-gpu` equals the full README matrix row set; and a README-to-matrix coverage check was added to `infernix lint docs` (`src/Infernix/Lint/Docs.hs` `validateReadmeMatrixCoverage`) asserting every catalog `referenceModel` appears in README.md. Proven by `cabal test infernix-unit` and `infernix lint docs`, which pass on the present CUDA Linux host. The per-family per-entry assertions ride Sprints 6.2/6.3 on cohort hardware
+**Code-side closure**: Complete on the recorded CUDA Linux host (x86_64 + RTX 5090) — `allMatrixRowIds` is exported from `src/Infernix/Models.hs`; `test/unit/Spec.hs` asserts that the union of `catalogForMode` across `apple-silicon`/`linux-cpu`/`linux-gpu` equals the full README matrix row set; and a README-to-matrix coverage check was added to `infernix lint docs` (`src/Infernix/Lint/Docs.hs` `validateReadmeMatrixCoverage`) asserting every catalog `referenceModel` appears in README.md. Proven by `cabal test infernix-unit` and `infernix lint docs`, which pass on the recorded CUDA Linux host. The per-family per-entry assertions ride Sprints 6.2/6.3 on cohort hardware
 **Cohort gate**: Pending [Wave I](cohort-validation-waves.md) — both cohorts require a per-family assertion for every active-substrate catalog entry
 **Implementation**: `src/Infernix/CLI.hs`, `src/Infernix/Lint/Files.hs`, `test/unit/Spec.hs`, `test/integration/Spec.hs`, `web/playwright/inference.spec.js`, `web/test/Main.purs`, `web/test/run_playwright_matrix.mjs`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/reference/web_portal_surface.md`, `documents/reference/cli_reference.md`, `documents/engineering/testing.md`
@@ -422,13 +422,13 @@ hard-coded lane lists.
 
 ### Remaining Work
 
-- **Code (machine-independent — validated on the present CUDA Linux host): DONE.** `allMatrixRowIds`
+- **Code (machine-independent — validated on the recorded CUDA Linux host): DONE.** `allMatrixRowIds`
   is exported from `src/Infernix/Models.hs`; `test/unit/Spec.hs` asserts that the union of
   `catalogForMode` across `apple-silicon`, `linux-cpu`, and `linux-gpu` equals the full set of
   README matrix rows; and a README-to-matrix coverage check (`src/Infernix/Lint/Docs.hs`
   `validateReadmeMatrixCoverage`) was added under `infernix lint docs` asserting every catalog
   `referenceModel` appears in README.md. Proven by `cabal test infernix-unit` and
-  `infernix lint docs`, which pass on the present CUDA Linux host.
+  `infernix lint docs`, which pass on the recorded CUDA Linux host.
 - **Cohort gate ([Wave I](cohort-validation-waves.md), Stage 2):** requiring a per-family assertion
   for every active-substrate catalog entry rides Sprints 6.2/6.3; each cohort runs it against its
   own catalog column (Apple Metal with headless materialization; CUDA `linux-cpu`/`linux-gpu`).
@@ -1580,8 +1580,8 @@ None. The four toolchain cleanup rows live in `legacy-tracking-for-deletion.md` 
 ## Sprint 6.31: Matrix Drift and Headless Apple Validation Gates [Active]
 
 **Status**: Active
-**Code-side closure**: Complete on the present Linux outer-container lane - `src/Infernix/Models.hs` exports `matrixRowReadmeKeys`, `src/Infernix/Lint/Docs.hs` now parses the README model matrix and fails `infernix lint docs` when a cell drifts from the generated runnable catalog, explicit residual list, or `Not recommended` state, and `test/unit/Spec.hs` proves the README lint keys are unique and cover every matrix row id. Proven by `docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm ... infernix cabal run exe:infernix -- lint docs` and `docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm ... infernix cabal run exe:infernix -- test unit` with live source/docs mounts.
-**Cohort gate**: Wave I still owns the Apple-only Metal bridge/Core ML or native artifact smoke and the CUDA Linux real native-payload/per-family full-suite rerun.
+**Code-side closure**: Complete on the recorded Linux outer-container lane - `src/Infernix/Models.hs` exports `matrixRowReadmeKeys`, `src/Infernix/Lint/Docs.hs` now parses the README model matrix and fails `infernix lint docs` when a cell drifts from the generated runnable catalog, explicit residual list, or `Not recommended` state, and `test/unit/Spec.hs` proves the README lint keys are unique and cover every matrix row id. Proven by `docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm ... infernix cabal run exe:infernix -- lint docs` and `docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm ... infernix cabal run exe:infernix -- test unit` with live source/docs mounts.
+**Cohort gate**: Wave I still owns the Apple e2e/all gate and the CUDA Linux real native-payload/per-family full-suite rerun. The generated Apple Metal bridge smoke, installed `coreml-native` runtime-load smoke, Apple native validation-wrapper materialization, and latest Apple full integration rerun have passed on the current Apple host. That integration rerun rebuilt the changed cluster image once, reused the stamped image during later edge-port validation cycles, completed the active Apple catalog through the host engine daemon, validated pinned Apple host-engine `Exclusive` duplicate rejection, proved same-machine Apple `Shared` subscription coexistence through real Pulsar admin stats, and covered Apple `demo_ui = false` route/publication assertions. Real Apple native payloads still need to replace the validation wrappers before the real-output suite can return to `Done`.
 **Implementation**: `src/Infernix/Models.hs`, `src/Infernix/Lint/Docs.hs`, `test/unit/Spec.hs`, `test/integration/Spec.hs`, `web/playwright/inference.spec.js`, `README.md`, `documents/engineering/apple_silicon_metal_headless_builds.md`, `DEVELOPMENT_PLAN/cohort-validation-waves.md`
 **Docs to update**: `README.md`, `documents/development/testing_strategy.md`, `documents/engineering/apple_silicon_metal_headless_builds.md`, `documents/architecture/model_catalog.md`, `DEVELOPMENT_PLAN/cohort-validation-waves.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 
@@ -1609,15 +1609,18 @@ instead of the legacy Tart helper.
 - `infernix test unit` proves the exported README matrix lint keys are unique and cover every
   Haskell-owned matrix row id
 - Apple cohort run records the host Metal bridge probe and one Core ML/native artifact smoke under
-  the headless materialization path
+  the headless materialization path; the current Apple host pass records both the Metal bridge
+  probe and installed `coreml-native` runtime-load smoke
 - CUDA Linux cohort reruns the native engine materialization lane and per-family real-output suite
 - legacy Tart references remain only in the deletion ledger or explicit historical notes; the
   generated CLI reference describes the retained Tart-free manifest materialization command
 
 ### Remaining Work
 
-- Record the Wave I Apple cohort evidence for the headless Metal bridge and Core ML/native artifact
-  smoke.
+- Record the remaining Wave I Apple cohort evidence for Apple integration/e2e/all after the Apple
+  per-engine framework/native payload residuals are closed; the headless Metal bridge smoke,
+  installed `coreml-native` runtime-load smoke, and coordinator-to-host derived-pool routing are
+  already recorded by the current Apple host pass.
 - Record the Wave I CUDA Linux cohort evidence after real Linux native payloads replace the current
   smoke wrappers and the per-family full-suite reruns.
 
@@ -1637,10 +1640,13 @@ are covered for Apple, Linux CPU, and Linux GPU. Proven by
 and mounted live-source `cabal test infernix-unit`, `cabal test infernix-haskell-style`,
 `cabal run exe:infernix -- lint files/docs/proto/chart`, `cabal run exe:infernix -- docs check`,
 and `cabal run exe:infernix -- test lint`.
-**Cohort gate**: Pending [Wave J](cohort-validation-waves.md) — real Pulsar integration still must
-prove broker-native `Shared` backpressure under backlog, pinned `Exclusive` duplicate-consumer
-rejection, Apple multi-host routing, Linux GPU pool placement, and production `demo_ui = false`
-coordinator-plus-engine-pool presence.
+**Cohort gate**: Pending [Wave J](cohort-validation-waves.md) — real Pulsar integration has proved
+pinned `Exclusive` duplicate-consumer rejection, same-machine Apple `Shared` subscription
+coexistence, and Apple production `demo_ui = false` coordinator-plus-engine-pool assertions. It
+still must prove broker-native `Shared` backpressure under backlog with a single-host logical
+Apple multi-member harness and Linux GPU pool placement before this sprint can move to `Done`;
+physical Apple multi-host routing is hardware-deferred proof while no second Apple host is
+available.
 **Implementation**: `dhall/InfernixSubstrate.dhall`, `src/Infernix/Types.hs`, `src/Infernix/Substrate.hs`, `src/Infernix/DemoConfig.hs`, `src/Infernix/Models.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Daemon.hs`, `test/unit/Spec.hs`, `test/integration/Spec.hs`, `documents/architecture/engine_pool_routing.md`, `documents/architecture/daemon_topology.md`
 **Docs to update**: `README.md`, `documents/architecture/engine_pool_routing.md`, `documents/architecture/daemon_topology.md`, `documents/tools/pulsar.md`, `documents/development/testing_strategy.md`, `documents/development/chaos_testing.md`, `DEVELOPMENT_PLAN/cohort-validation-waves.md`
 
@@ -1657,8 +1663,10 @@ guessing.
   members, and Apple host daemon startup with an unknown host id
 - integration validates that `demo_ui = false` omits only demo/frontend/identity surfaces while
   retaining the coordinator and engine pools
-- integration validates `Shared` pool consumers with bounded permits and a backlog on one member
-  still allow free members to receive new work
+- integration validates same-machine Apple `Shared` pool consumers can coexist on one derived
+  pool/model topic
+- integration validates `Shared` pool consumers with bounded permits and a backlog on one logical
+  Apple member still allow free logical members on the same Apple host to receive new work
 - integration validates pinned per-member routes use `Exclusive` and reject duplicate consumers
 
 ### Validation
@@ -1666,16 +1674,19 @@ guessing.
 - `infernix lint docs`
 - `infernix test unit`
 - `infernix test integration` on the active substrate
-- cohort reruns for Apple multi-host pool behavior and Linux GPU pool placement when hardware is
-  required
+- cohort reruns for single-host logical Apple pool behavior and Linux GPU pool placement, with
+  physical Apple multi-host proof deferred until hardware exists
 
 ### Remaining Work
 
 - **Code (machine-independent — DONE):** unit validation rejects invalid routing graphs and
   subscription states, and proves derived topic/member selection for all three substrates.
 - **Cohort gate ([Wave J](cohort-validation-waves.md)):** add real Pulsar integration coverage for
-  shared-pool backpressure, pinned exclusivity, Apple multi-host routing, Linux GPU pool placement,
-  and production `demo_ui = false` coordinator presence.
+  single-host logical shared-pool backlog/backpressure distribution and Linux GPU pool placement.
+  Pinned exclusivity, same-machine Apple `Shared` coexistence, and Apple production
+  `demo_ui = false` assertions are already covered on the Apple integration lane. Physical Apple
+  multi-host routing is tracked as hardware-deferred proof, not as a blocker for the current
+  single-host logical backpressure gate.
 
 ---
 
@@ -1686,7 +1697,7 @@ replace the metadata-echo assertion with the per-family real-output result contr
 mechanically-checked "every README row is covered by at least one substrate" invariant. The other
 Sprints (6.1, 6.4, 6.5, 6.7-6.30) remain `Done`; Apple cohort validation closed in Waves
 A/A.1/A.2/A.3 and CUDA Linux cohort validation closed in Wave C. Code-side closure for the reopened
-sprints is complete and validated on the present CUDA Linux host (x86_64 + RTX 5090): the
+sprints is complete and validated on the recorded CUDA Linux host (x86_64 + RTX 5090): the
 `ResultFamily` dispatch in the integration suite, the per-family Playwright assertions plus
 per-family web-UI artifact rendering, the `allMatrixRowIds` coverage invariant, and the README
 matrix cell-drift lint gate (runnable, residual, and `Not recommended` states) are written and proven by the
@@ -1700,9 +1711,11 @@ materialization, and CUDA GPU; [Wave I](cohort-validation-waves.md)). Sprint 6.3
 machine-independent matrix-drift lint and unit coverage are code-side closed; its remaining work is
 the Wave I cohort evidence for headless Apple materialization and CUDA Linux real native payloads.
 Sprint 6.32's code-side invalid-graph rejection is now complete and validated on the Linux
-outer-container unit lane; its remaining Wave J residual is real Pulsar validation for demo-off
-coordinator presence, shared-pool backpressure, pinned-route exclusivity, and multi-substrate pool
-placement before the phase returns to `Done`.
+outer-container unit lane; its remaining Wave J residual is real Pulsar validation for
+single-host logical shared-pool backlog/backpressure and Linux pool placement before the phase
+returns to `Done`. Apple pinned-route exclusivity, same-machine `Shared` coexistence, and
+production `demo_ui = false` assertions are already covered. Physical Apple multi-host routing is
+hardware-deferred proof while no second Apple host is available.
 See the two-axis execution rule in [development_plan_standards.md](development_plan_standards.md)
 Section Q.
 

@@ -25,7 +25,7 @@ surface. The code-side closure for the reopened sprints
 routing, proto fields, adapter and worker dispatch, the native-fallback removal, and their unit
 coverage — is **Complete** and was proven by the machine-independent gate set (`cabal build all`,
 `cabal test infernix-unit`, `cabal test infernix-haskell-style`, `infernix lint files/docs/proto/chart`,
-`infernix docs check`, `poetry run check-code`) on the present CUDA Linux host (x86_64 + RTX 5090).
+`infernix docs check`, `poetry run check-code`) on the recorded CUDA Linux host (x86_64 + RTX 5090).
 The phase remains `Active` because producing and asserting real per-family output is the Stage 2
 cohort gate (Apple Metal with headless Metal/Core ML materialization, and CUDA GPU runs), never a
 per-sprint machine switch (see
@@ -33,8 +33,26 @@ per-sprint machine switch (see
 inference also depends on the replacement materialization lane owned by
 [Phase 1](phase-1-repository-and-control-plane-foundation.md) Sprint 1.14. The real per-family
 inference contract is re-validated on both cohorts in [Wave I](cohort-validation-waves.md), and the
-engine-pool routing contract must pass its schema, coordinator-routing, and member-subscription
-gates before this phase can return to `Done`. The phase narrative
+current Apple integration rerun proves the coordinator-routing/member-subscription path for the
+first catalog row: the coordinator loads the mounted Apple substrate config, runs with
+`serviceRuntimeMode: apple-silicon`, publishes to the derived Apple pool topic, and the host engine
+processes the request. The Apple transformers framework path now completes
+`llm-qwen25-safetensors`; the next completed run exposed the missing
+`llama-cpp-cli/bin/llama-cli` root for `llm-tinyllama-gguf`, and current source closes that root
+with deterministic validation-wrapper payloads for the Apple native adapter ids. The latest full
+Apple integration rerun passed after rebuilding the changed repo-owned image once, then reusing the
+stamped `infernix-linux-cpu:local` image during later edge-port validation cluster cycles. The run
+completed the active Apple model catalog through the host engine daemon, cache lifecycle, service
+runtime loop, durable Pulsar topic families, pinned Apple host-engine `Exclusive`
+duplicate-consumer rejection through an isolated `infernix service --config` file, same-machine
+Apple host-member coexistence on one derived `Shared` pool subscription with two real Pulsar
+consumers and a completed request, production-shape Apple `demo_ui = false` route/publication
+assertions, and edge-port conflict rediscovery. Follow-up probing of the earlier long Docker
+interval showed active Cabal dependency compilation, image export, Harbor push, and Helm/Pulsar
+readiness waits rather than a Docker daemon deadlock. Current source adds source-fingerprint image
+reuse and dependency-layer caching for that cluster image path.
+The phase returns to `Done` only after both cohorts pass the real-output full-suite gates with real
+native payloads. The phase narrative
 describes the supported MinIO-backed shape directly through the runtime, cache, and object storage
 contracts.
 
@@ -85,7 +103,7 @@ This phase owns the conversion from the README-scale matrix to runtime-consumabl
 ## Sprint 4.1: Typed Configuration, Model Catalog, and Runtime Contracts [Active]
 
 **Status**: Active
-**Code-side closure**: Complete — the closed `ResultFamily` sum type (with `resultFamilyId`/`resultFamilyIsArtifact`) and `resultFamilyForDescriptor` landed in `src/Infernix/Types.hs`/`src/Infernix/Models.hs`, `allMatrixRowIds` is exported, and the non-text input object-ref field was added on `InferenceRequest`/`WorkerRequest` (Haskell and `proto/infernix/runtime/inference.proto`) with `WorkerResponse.object_ref` added; proven by the machine-independent gate set (`cabal build all`, `cabal test infernix-unit`, `infernix lint proto`) on the present CUDA Linux host
+**Code-side closure**: Complete — the closed `ResultFamily` sum type (with `resultFamilyId`/`resultFamilyIsArtifact`) and `resultFamilyForDescriptor` landed in `src/Infernix/Types.hs`/`src/Infernix/Models.hs`, `allMatrixRowIds` is exported, and the non-text input object-ref field was added on `InferenceRequest`/`WorkerRequest` (Haskell and `proto/infernix/runtime/inference.proto`) with `WorkerResponse.object_ref` added; proven by the machine-independent gate set (`cabal build all`, `cabal test infernix-unit`, `infernix lint proto`) on the recorded CUDA Linux host
 **Cohort gate**: Pending [Wave I](cohort-validation-waves.md) — both cohorts assert the per-family result contract these types drive (Apple Metal with headless materialization; CUDA `linux-cpu`/`linux-gpu`)
 **Implementation**: `src/Infernix/Types.hs`, `src/Infernix/Models.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Storage.hs`, `proto/infernix/manifest/runtime_manifest.proto`, `proto/infernix/runtime/inference.proto`, `test/unit/Spec.hs`
 **Docs to update**: `documents/architecture/runtime_modes.md`, `documents/architecture/model_catalog.md`
@@ -117,7 +135,7 @@ Make the service runtime strongly typed before transport and UI surfaces accumul
   `allMatrixRowIds` is exported, and the non-text input object-ref field was added on
   `InferenceRequest`/`WorkerRequest` (the output `ResultPayload.object_ref` already exists and
   `WorkerResponse.object_ref` was added). Proven by `cabal test infernix-unit` and `infernix lint
-  proto` on the present CUDA Linux host.
+  proto` on the recorded CUDA Linux host.
 - **Cohort gate ([Wave I](cohort-validation-waves.md), Stage 2):** the per-family result contract
   these types drive is asserted on cohort hardware (Apple Metal with headless materialization;
   CUDA `linux-cpu`/`linux-gpu`).
@@ -127,7 +145,7 @@ Make the service runtime strongly typed before transport and UI surfaces accumul
 ## Sprint 4.2: Inference Request Pipeline Over the Durable Object Store and Pulsar Contract [Active]
 
 **Status**: Active
-**Code-side closure**: Complete — the `src/Infernix/Runtime/Worker.hs` native-process-runner branch now invokes the real engine binary resolved by absolute path under `./.data/engines/<adapterId>/bin/...` or the Linux image-owned `/opt/infernix/engines/<adapterId>/bin/...` fallback (via `nativeRunnerBinaryRelPath` + `nativeRunnerArgs`), replacing the removed `renderNativeRunnerOutput` debug string, and python-stdio carries the real `WorkerResponse`; proven by the machine-independent gate set (`cabal build all`, `cabal test infernix-unit`) on the present CUDA Linux host. The real engine *output* still requires real weights and engines on cohort hardware
+**Code-side closure**: Complete — the `src/Infernix/Runtime/Worker.hs` native-process-runner branch now invokes the real engine binary resolved by absolute path under `./.data/engines/<adapterId>/bin/...` or the Linux image-owned `/opt/infernix/engines/<adapterId>/bin/...` fallback (via `nativeRunnerBinaryRelPath` + `nativeRunnerArgs`), replacing the removed `renderNativeRunnerOutput` debug string, and python-stdio carries the real `WorkerResponse`; proven by the machine-independent gate set (`cabal build all`, `cabal test infernix-unit`) on the recorded CUDA Linux host. The real engine *output* still requires real weights and engines on cohort hardware
 **Cohort gate**: Pending [Wave I](cohort-validation-waves.md) — both cohorts run the real engines and assert real per-family output
 **Implementation**: `src/Infernix/Runtime.hs`, `src/Infernix/Runtime/Cache.hs`, `src/Infernix/Runtime/Worker.hs`, `src/Infernix/Storage.hs`, `src/Infernix/Demo/Api.hs`, `python/adapters/`, `infernix.cabal`, `test/integration/Spec.hs`, `test/unit/Spec.hs`
 **Docs to update**: `documents/architecture/runtime_modes.md`, `documents/engineering/model_lifecycle.md`, `documents/engineering/object_storage.md`
@@ -164,7 +182,7 @@ derived local cache state become authoritative.
   for `python-stdio` bindings and the `native-process-runner` branch invokes the real engine binary
   resolved by absolute path under `./.data/engines/<adapterId>/bin/...` or the Linux image-owned
   `/opt/infernix/engines/<adapterId>/bin/...` fallback instead of `renderNativeRunnerOutput`.
-  Proven by `cabal build all` and `cabal test infernix-unit` on the present CUDA Linux host, with
+  Proven by `cabal build all` and `cabal test infernix-unit` on the recorded CUDA Linux host, with
   the fallback covered by the current mounted linux-gpu unit run.
 - **Cohort gate ([Wave I](cohort-validation-waves.md), Stage 2):** real engine output requires real
   weights and engines; both cohorts run them and assert real per-family output (Apple Metal with
@@ -175,7 +193,7 @@ derived local cache state become authoritative.
 ## Sprint 4.3: Honest Apple Host-Native and Linux Container Runtime Parity [Active]
 
 **Status**: Active
-**Code-side closure**: Complete — the host-side service wiring that loads engine artifacts from `./.data/engines/<adapterId>/` and publishes the per-family result is in place; proven by the machine-independent gate set (`cabal build all`, `cabal test infernix-unit`) on the present CUDA Linux host. The real Apple-native Metal engine path depends on Sprint 1.14's headless Metal/Core ML materialization and runs only on Apple
+**Code-side closure**: Complete — the host-side service wiring that loads engine artifacts from `./.data/engines/<adapterId>/` and publishes the per-family result is in place; proven by the machine-independent gate set (`cabal build all`, `cabal test infernix-unit`) on the recorded CUDA Linux host. The real Apple-native Metal engine path depends on Sprint 1.14's headless Metal/Core ML materialization and runs only on Apple
 **Cohort gate**: Pending [Wave I](cohort-validation-waves.md) — **Apple cohort only**, gated on Sprint 1.14's headless Apple Metal/Core ML materialization (CUDA inference is covered by the Linux cohort under 4.2/4.8/4.11)
 **Implementation**: `src/Infernix/Service.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Demo/Api.hs`, `src/Infernix/Models.hs`, `src/Infernix/Runtime.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Worker.hs`, `test/integration/Spec.hs`, `test/unit/Spec.hs`
 **Docs to update**: `documents/architecture/runtime_modes.md`, `documents/engineering/object_storage.md`, `documents/operations/apple_silicon_runbook.md`, `documents/engineering/portability.md`
@@ -340,7 +358,7 @@ None.
 ## Sprint 4.7: Shared Python Adapter Project and Poetry-Driven Quality Gate [Active]
 
 **Status**: Active
-**Code-side closure**: Complete — the six adapter `transform` bodies in `python/adapters/{transformers,vllm,pytorch,tensorflow,jax,diffusers}_python.py` now make real framework calls behind lazy guarded imports (per the Machine-Independent Gate Invariant), load weights via `adapters.model_cache.get_model_path`, `common.render_engine_output` was removed, the artifact-adapter seam (`run_artifact_adapter` + `ArtifactResult` + `_upload_demo_object`/`download_demo_object` to/from `infernix-demo-objects`) was added, and `WorkerRequest` now carries model-cache/MinIO wiring so `run_context_adapter` and `run_artifact_adapter` call `adapters.model_cache.configure()` before invoking engine logic; proven by the machine-independent gate set (`poetry run check-code` — mypy `--strict`/black/ruff — with no frameworks installed, plus mounted linux-gpu `cabal test infernix-unit`, `cabal test infernix-haskell-style`, and `cabal build test:infernix-integration`) on the present CUDA Linux host. Producing real output still needs real weights/engines on cohort hardware
+**Code-side closure**: Complete — the six adapter `transform` bodies in `python/adapters/{transformers,vllm,pytorch,tensorflow,jax,diffusers}_python.py` now make real framework calls behind lazy guarded imports (per the Machine-Independent Gate Invariant), load weights via `adapters.model_cache.get_model_path`, `common.render_engine_output` was removed, the artifact-adapter seam (`run_artifact_adapter` + `ArtifactResult` + `_upload_demo_object`/`download_demo_object` to/from `infernix-demo-objects`) was added, and `WorkerRequest` now carries model-cache/MinIO wiring so `run_context_adapter` and `run_artifact_adapter` call `adapters.model_cache.configure()` before invoking engine logic; proven by the machine-independent gate set (`poetry run check-code` — mypy `--strict`/black/ruff — with no frameworks installed, plus mounted linux-gpu `cabal test infernix-unit`, `cabal test infernix-haskell-style`, and `cabal build test:infernix-integration`) on the recorded CUDA Linux host. Producing real output still needs real weights/engines on cohort hardware
 **Cohort gate**: Pending [Wave I](cohort-validation-waves.md) — both cohorts run the real adapters and assert real per-family output
 **Implementation**: `python/pyproject.toml`, `python/adapters/`, `src/Infernix/Runtime/Worker.hs`, `src/Infernix/Models.hs`, `proto/infernix/runtime/inference.proto`, `test/unit/Spec.hs`
 **Docs to update**: `documents/development/python_policy.md`, `documents/engineering/model_lifecycle.md`, `documents/development/testing_strategy.md`, `documents/engineering/implementation_boundaries.md`
@@ -391,7 +409,7 @@ keeping `poetry run` as the only supported execution path.
 ## Sprint 4.8: Pulsar-Driven Production Inference Surface [Active]
 
 **Status**: Active
-**Code-side closure**: Complete — per-family result publication flows through the shared `executeInferenceWithKVCache`/`buildPayload` path (inline text for the LLM/speech families, `infernix-demo-objects` `object_ref` for the artifact families) over the production Pulsar surface, emitting no generic-success payload and failing fast on unsupported adapters; proven by the machine-independent gate set (`cabal build all`, `cabal test infernix-unit`) on the present CUDA Linux host
+**Code-side closure**: Complete — per-family result publication flows through the shared `executeInferenceWithKVCache`/`buildPayload` path (inline text for the LLM/speech families, `infernix-demo-objects` `object_ref` for the artifact families) over the production Pulsar surface, emitting no generic-success payload and failing fast on unsupported adapters; proven by the machine-independent gate set (`cabal build all`, `cabal test infernix-unit`) on the recorded CUDA Linux host
 **Cohort gate**: Pending [Wave I](cohort-validation-waves.md) — both cohorts publish and observe real per-family results end to end
 **Implementation**: `src/Infernix/Service.hs`, `src/Infernix/Config.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Types.hs`, `src/Infernix/Models.hs`, `src/Infernix/DemoConfig.hs`, `chart/templates/deployment-coordinator.yaml`, `chart/templates/deployment-engine.yaml`, `chart/values.yaml`, `src/Infernix/Runtime.hs`, `src/Infernix/Runtime/Pulsar.hs`, `proto/infernix/runtime/inference.proto`, `test/unit/Spec.hs`, `test/integration/Spec.hs`
 **Docs to update**: `documents/tools/pulsar.md`, `documents/architecture/runtime_modes.md`, `documents/reference/cli_reference.md`
@@ -496,7 +514,7 @@ None.
 ## Sprint 4.10: Apple Silicon Daemon-Driven Engine Bootstrap [Active]
 
 **Status**: Active
-**Code-side closure**: Complete — the host daemon native worker consumes engine artifacts from `./.data/engines/<adapterId>/` and fails fast with `engine_binary_missing` when absent; proven by the machine-independent gate set (`cabal build all`, `cabal test infernix-unit`) on the present CUDA Linux host. The real Apple Metal artifacts themselves depend on Sprint 1.14's headless Apple materialization lane
+**Code-side closure**: Complete — the host daemon native worker consumes engine artifacts from `./.data/engines/<adapterId>/` and fails fast with `engine_binary_missing` when absent; proven by the machine-independent gate set (`cabal build all`, `cabal test infernix-unit`) on the recorded CUDA Linux host. The real Apple Metal artifacts themselves depend on Sprint 1.14's headless Apple materialization lane
 **Cohort gate**: Pending [Wave I](cohort-validation-waves.md) — **Apple cohort only**, gated on Sprint 1.14's headless Apple Metal/Core ML materialization
 **Implementation**: `src/Infernix/Engines/AppleSilicon.hs`, `src/Infernix/Service.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/CLI.hs`, `python/pyproject.toml`, `test/unit/Spec.hs`, `test/integration/Spec.hs`
 **Docs to update**: `documents/operations/apple_silicon_runbook.md`, `documents/development/local_dev.md`, `documents/development/python_policy.md`, `documents/engineering/portability.md`
@@ -533,7 +551,7 @@ without inventing fake container parity.
 - **Code (machine-independent — DONE):** the host daemon bootstrap that consumes engine artifacts
   from `./.data/engines/<adapterId>/` before the host engine runs (failing fast with
   `engine_binary_missing` when absent) compiles and unit-checks. Proven by `cabal build all` and
-  `cabal test infernix-unit` on the present CUDA Linux host.
+  `cabal test infernix-unit` on the recorded CUDA Linux host.
 - **Cohort gate ([Wave I](cohort-validation-waves.md), Stage 2 — Apple cohort only):** the consumed
   artifacts are materialized by [Phase 1](phase-1-repository-and-control-plane-foundation.md)
   Sprint 1.14's Apple-only headless lane; the bootstrap is exercised on Apple, gated on that
@@ -544,7 +562,7 @@ without inventing fake container parity.
 ## Sprint 4.11: Per-Substrate Engine Selection in the Catalog [Active]
 
 **Status**: Active
-**Code-side closure**: Complete — per-substrate engine selection resolves each row to its real adapter via `engineBindingForSelectedEngine` (Python wheel or native binary) and fails fast on unsupported adapter types or missing model metadata; proven by the machine-independent gate set (`cabal test infernix-unit`) on the present CUDA Linux host
+**Code-side closure**: Complete — per-substrate engine selection resolves each row to its real adapter via `engineBindingForSelectedEngine` (Python wheel or native binary) and fails fast on unsupported adapter types or missing model metadata; proven by the machine-independent gate set (`cabal test infernix-unit`) on the recorded CUDA Linux host
 **Cohort gate**: Pending [Wave I](cohort-validation-waves.md) — both cohorts dispatch the resolved real adapters and assert real output
 **Implementation**: `src/Infernix/Models.hs`, `src/Infernix/Types.hs`, `src/Infernix/DemoConfig.hs`, `src/Infernix/Web/Contracts.hs`, `src/Infernix/Runtime/Worker.hs`, `test/unit/Spec.hs`, `test/integration/Spec.hs`
 **Docs to update**: `documents/architecture/model_catalog.md`, `documents/architecture/runtime_modes.md`, `documents/development/testing_strategy.md`
@@ -577,7 +595,7 @@ generation.
 - **Code (machine-independent — DONE):** per-substrate engine selection resolves each row to its
   real adapter (Python wheel or native binary) via `engineBindingForSelectedEngine` and fails fast
   on unsupported adapter types or missing model metadata rather than dispatching a placeholder.
-  Proven by `cabal test infernix-unit` on the present CUDA Linux host.
+  Proven by `cabal test infernix-unit` on the recorded CUDA Linux host.
 - **Cohort gate ([Wave I](cohort-validation-waves.md), Stage 2):** both cohorts dispatch the
   resolved real adapters and assert real output (Apple Metal with headless materialization; CUDA
   `linux-cpu`/`linux-gpu`).
@@ -585,7 +603,7 @@ generation.
 ## Sprint 4.12: Substrate-Owned Daemon Role, Startup Selection, and Fallback Removal [Active]
 
 **Status**: Active
-**Code-side closure**: Complete — the `renderNativeRunnerOutput` / `nativeRunnerLabel` debug-metadata native fallback was removed (real native dispatch from Sprint 4.2 now stands in its place) while the fail-fast-on-unsupported-adapter contract is preserved; proven by the machine-independent gate set (`cabal build all`, `cabal test infernix-unit`) on the present CUDA Linux host
+**Code-side closure**: Complete — the `renderNativeRunnerOutput` / `nativeRunnerLabel` debug-metadata native fallback was removed (real native dispatch from Sprint 4.2 now stands in its place) while the fail-fast-on-unsupported-adapter contract is preserved; proven by the machine-independent gate set (`cabal build all`, `cabal test infernix-unit`) on the recorded CUDA Linux host
 **Cohort gate**: Pending [Wave I](cohort-validation-waves.md) — both cohorts confirm no fallback path remains under real dispatch
 **Implementation**: `src/Infernix/Config.hs`, `src/Infernix/DemoConfig.hs`, `src/Infernix/Service.hs`, `src/Infernix/DemoCLI.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Models.hs`, `src/Infernix/Runtime.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Worker.hs`, `docker/Dockerfile`, `web/test/run_playwright_matrix.mjs`, `test/integration/Spec.hs`, `test/unit/Spec.hs`
 **Docs to update**: `README.md`, `documents/architecture/runtime_modes.md`, `documents/engineering/model_lifecycle.md`, `documents/engineering/object_storage.md`, `documents/engineering/portability.md`, `documents/engineering/testing.md`, `documents/operations/apple_silicon_runbook.md`
@@ -642,7 +660,7 @@ extends this startup contract with explicit cluster and host daemon roles.
 - **Code (machine-independent — DONE):** the `src/Infernix/Runtime/Worker.hs`
   `renderNativeRunnerOutput` / `nativeRunnerLabel` debug-metadata native fallback was removed now
   that real native dispatch (Sprint 4.2) is in place, preserving the fail-fast-on-unsupported-adapter
-  contract. Proven by `cabal build all` and `cabal test infernix-unit` on the present CUDA Linux host.
+  contract. Proven by `cabal build all` and `cabal test infernix-unit` on the recorded CUDA Linux host.
 - **Cohort gate ([Wave I](cohort-validation-waves.md), Stage 2):** both cohorts confirm no
   generic-success or debug-metadata fallback path remains under real dispatch.
 
@@ -708,7 +726,7 @@ cohort validation closed in [Wave C](cohort-validation-waves.md).
 ## Sprint 4.14: Declarative-State Phase Prose Rewrite [Active]
 
 **Status**: Active
-**Code-side closure**: Complete — the declarative-state prose rewrite that describes real per-family engine dispatch as the always-intended steady state landed across this phase document; proven by the machine-independent gate set (`infernix lint docs`, `infernix docs check`) on the present CUDA Linux host. Fully machine-independent
+**Code-side closure**: Complete — the declarative-state prose rewrite that describes real per-family engine dispatch as the always-intended steady state landed across this phase document; proven by the machine-independent gate set (`infernix lint docs`, `infernix docs check`) on the recorded CUDA Linux host. Fully machine-independent
 **Cohort gate**: None — documentation only; no cross-architecture full-suite. It rides the Wave I cycle because it describes the real-inference steady state
 **Implementation**: `DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md` (prose only)
 **Docs to update**: this file
@@ -747,7 +765,7 @@ being contradicted by it.
 - **Code (machine-independent — DONE):** the closing declarative prose was revised so real
   per-family engine dispatch (not deterministic metadata output) is the always-intended steady state
   read forward into Phases 5-7. Documentation only. Proven by `infernix lint docs` and `infernix
-  docs check` on the present CUDA Linux host.
+  docs check` on the recorded CUDA Linux host.
 - **Cohort gate:** none — this sprint carries no cross-architecture full-suite; it rides the Wave I
   cycle only because it describes the real-inference steady state.
 
@@ -756,7 +774,7 @@ being contradicted by it.
 ## Sprint 4.15: Per-Family Real-Output Result Contract and Object-Ref Artifact Families [Active]
 
 **Status**: Active
-**Code-side closure**: Complete — `buildPayload :: ResultFamily -> Text -> ResultPayload` now routes text families to `inlineOutput` and artifact families to `objectRef` (no longer hardcoding `objectRef = Nothing`), the `WorkerResponse` object-ref output field was added, `resultFamilyForDescriptor` covers all 19 rows, and the unit tests assert the routing and resolution; proven by the machine-independent gate set (`cabal test infernix-unit`) on the present CUDA Linux host. It built on the Sprint 4.1 types and the Sprint 4.7 adapter seam
+**Code-side closure**: Complete — `buildPayload :: ResultFamily -> Text -> ResultPayload` now routes text families to `inlineOutput` and artifact families to `objectRef` (no longer hardcoding `objectRef = Nothing`), the `WorkerResponse` object-ref output field was added, `resultFamilyForDescriptor` covers all 19 rows, and the unit tests assert the routing and resolution; proven by the machine-independent gate set (`cabal test infernix-unit`) on the recorded CUDA Linux host. It built on the Sprint 4.1 types and the Sprint 4.7 adapter seam
 **Cohort gate**: Pending [Wave I](cohort-validation-waves.md) — both cohorts assert the per-family result contract per active-substrate row (exercised by Phase 6)
 **Implementation**: `proto/infernix/runtime/inference.proto`, `src/Infernix/Types.hs`, `src/Infernix/Models.hs`, `src/Infernix/Runtime.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Storage.hs`, `python/adapters/`, `test/integration/Spec.hs`, `test/unit/Spec.hs`
 **Blocked by**: 4.1, 4.7
@@ -810,7 +828,7 @@ artifact families return a typed MinIO object reference.
 
 **Status**: Active
 **Code-side closure**: Complete — the per-engine venv mechanism is built and validated on the
-present CUDA Linux host. The shared `python/` project stays framework-free (the machine-independent
+recorded CUDA Linux host. The shared `python/` project stays framework-free (the machine-independent
 `check-code` gate); each framework engine has its own Poetry project at `python/engines/<engine>/`
 (`package-mode = false`, in-project venv) that path-depends on the shared `infernix-adapters`
 package and declares its framework wheels in an optional `cuda` group; `src/Infernix/Runtime/Worker.hs`
@@ -825,8 +843,12 @@ Qwen2.5-1.5B generation on the GPU via the transformers adapter's exact `AutoMod
 `generate` path.
 **Cohort gate**: Pending [Wave I](cohort-validation-waves.md), Stage 2 (CUDA Linux + Apple) — the
 full per-engine `--with cuda` image bake and the real per-family output for every active-substrate
-row. Basic Pitch TensorFlow (published package pins TensorFlow `<2.15.1`), Omnizart (TF1-era), and
-MT3 (unmaintained JAX) do not resolve on the Python 3.12 / CUDA 12.8 substrate and are named cohort
+row. The Apple transformers engine project now declares an Apple-specific group and the Apple
+rerun completes `llm-qwen25-safetensors`; current source still needs the clean Apple
+integration/e2e/all rerun after the cluster-image freshness/cache fix, and the remaining Apple/CUDA
+framework groups plus native payloads remain Wave I residuals. Basic Pitch
+TensorFlow (published package pins TensorFlow `<2.15.1`), Omnizart (TF1-era), and MT3
+(unmaintained JAX) do not resolve on the Python 3.12 / CUDA 12.8 substrate and are named cohort
 residuals.
 **Implementation**: `python/engines/<engine>/pyproject.toml`, `python/engines/<engine>/poetry.toml`, `src/Infernix/Runtime/Worker.hs`, `docker/Dockerfile`, `.gitignore`
 **Docs to update**: `documents/development/python_policy.md`, `DEVELOPMENT_PLAN/cohort-validation-waves.md`, `DEVELOPMENT_PLAN/system-components.md`
@@ -854,14 +876,14 @@ resolve `torch` from two indices.
 ### Validation
 
 - `cabal test infernix-unit`, `cabal test infernix-haskell-style`, `poetry run check-code`,
-  `infernix lint files/docs` all pass on the present CUDA Linux host (machine-independent gates).
+  `infernix lint files/docs` all pass on the recorded CUDA Linux host (machine-independent gates).
 - `poetry install --directory python/engines/transformers --with cuda` resolves the CUDA framework
   set and `torch.cuda.is_available()` is True on the RTX 5090.
 
 ### Remaining Work
 
 - **Code (machine-independent) — DONE:** per-engine projects, worker resolution, Dockerfile bake,
-  gitignore, base-image alignment; validated by the gate set above on the present CUDA Linux host.
+  gitignore, base-image alignment; validated by the gate set above on the recorded CUDA Linux host.
 - **Cohort gate ([Wave I](cohort-validation-waves.md), Stage 2):** the full linux-gpu image bake of
   all engine venvs, replacement of the Linux native smoke wrappers with real native payloads
   (llama.cpp / whisper.cpp / ONNX / CTranslate2), real model-weight provisioning, and real
@@ -873,7 +895,7 @@ resolve `torch` from two indices.
 ## Sprint 4.17: Per-Engine Engine Images and Batch Routing [Active]
 
 **Status**: Active
-**Code-side closure**: Complete for the machine-independent scope on the present Linux outer-container lane. The foundation
+**Code-side closure**: Complete for the machine-independent scope on the recorded Linux outer-container lane. The foundation
 is still present — `docker/Dockerfile` is the slim control-plane/coordinator image (**22.4 GB**, down
 from 121 GB, no framework venvs), `docker/engine.Dockerfile` builds per-engine images (CUDA-runtime
 base + binary + one engine's `--with cuda` venv), the `transformers` per-engine image is
@@ -983,7 +1005,7 @@ own framework, making the cluster image flow practical.
 
 ### Validation
 
-- Machine-independent gates on the present CUDA Linux host: temp-copy Linux GPU launcher
+- Machine-independent gates on the recorded CUDA Linux host: temp-copy Linux GPU launcher
   `cabal build all`, `cabal test infernix-unit`, and `cabal test infernix-haskell-style` pass;
   current-source `cabal run exe:infernix -- lint docs`, `docs check`, `lint chart`, `lint files`, and
   `lint proto` all exit 0.
@@ -1020,8 +1042,8 @@ own framework, making the cluster image flow practical.
 ## Sprint 4.18: Engine Artifact Manifests and Matrix Reconciliation [Active]
 
 **Status**: Active
-**Code-side closure**: Complete for the machine-independent scope — `src/Infernix/Models.hs` now reflects the researched runnable/residual matrix (Apple CTranslate2 runnable as CPU, Basic Pitch TensorFlow / MT3 / Omnizart residual rather than runnable, Wan Apple MPS residual), `residualMatrixRowIdsForMode` records named residual rows without promoting them into runtime catalogs, `infernix-engine-artifacts` is an explicit bucket in object layout, demo bucket repair, and chart MinIO provisioning, and the Apple manifest materializer from Sprint 1.14 supplies typed engine-artifact manifests. `src/Infernix/Engines/LinuxNative.hs` now adds the Linux image-owned materialization surface: typed manifests, smoke-validated runner roots for `llama-cpp-cli`, `whisper-cpp-cli`, `onnx-runtime-native`, `ctranslate2-native`, and `jvm-native`, a generated CLI command, and a `docker/Dockerfile` bake step. Validated through the Linux outer-container lane with mounted live source by `cabal run exe:infernix -- internal materialize-linux-native-engines`, `cabal run exe:infernix -- test unit` (Haskell unit plus PureScript 71/71), `cabal run exe:infernix -- lint docs`, `cabal run exe:infernix -- docs check`, and `cabal run exe:infernix -- test lint`.
-**Cohort gate**: Pending [Wave I](cohort-validation-waves.md), Stage 2 — replace Linux native smoke wrappers with real llama.cpp, whisper.cpp, ONNX Runtime, CTranslate2, and JVM/native payloads plus real-output smoke; Apple native/Core ML artifact load remains gated on Phase 1 Sprint 1.14.
+**Code-side closure**: Complete for the machine-independent scope — `src/Infernix/Models.hs` now reflects the researched runnable/residual matrix (Apple CTranslate2 runnable as CPU, Basic Pitch TensorFlow / MT3 / Omnizart residual rather than runnable, Wan Apple MPS residual), `residualMatrixRowIdsForMode` records named residual rows without promoting them into runtime catalogs, `infernix-engine-artifacts` is an explicit bucket in object layout, demo bucket repair, and chart MinIO provisioning, and the Apple manifest materializer from Sprint 1.14 supplies typed engine-artifact manifests. `src/Infernix/Engines/LinuxNative.hs` now adds the Linux image-owned materialization surface: typed manifests, smoke-validated runner roots for `llama-cpp-cli`, `whisper-cpp-cli`, `onnx-runtime-native`, `ctranslate2-native`, and `jvm-native`, a generated CLI command, and a `docker/Dockerfile` bake step. `src/Infernix/Engines/AppleSilicon.hs` now also materializes deterministic Apple validation-runner payloads for `llama-cpp-cli`, `whisper-cpp-cli`, `ctranslate2-native`, `mlx-native`, `onnx-runtime-native`, and `jvm-native`; those runners satisfy the substrate result-shape contract for validation but remain explicit Wave I placeholders for real native payloads. The shared engine-root installer now handles Docker overlay image-layer reruns by replacing a generated final root when the existing-root backup rename is rejected as a cross-device operation, while keeping rollback behavior on ordinary filesystems. The generated Linux native smoke wrappers use `/bin/sh`, keeping the wrapper smoke validation portable for Apple host-native unit runs while real Linux payloads remain Wave I work. Validated through the Linux outer-container lane with mounted live source by `cabal run exe:infernix -- internal materialize-linux-native-engines`, `cabal run exe:infernix -- test unit` (Haskell unit plus PureScript 71/71), `cabal run exe:infernix -- lint docs`, `cabal run exe:infernix -- docs check`, and `cabal run exe:infernix -- test lint`; rechecked on the Apple host with `cabal build all`, `./bootstrap/apple-silicon.sh build`, `./.build/infernix internal materialize-metal-engines`, direct validation-runner output checks, `./.build/infernix test unit`, `./bootstrap/linux-cpu.sh build`, and a fresh-container `docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm infernix infernix internal materialize-linux-native-engines` rerun over baked `/opt/infernix/engines/<adapterId>/` roots.
+**Cohort gate**: Pending [Wave I](cohort-validation-waves.md), Stage 2 — replace Linux native smoke wrappers and Apple native validation wrappers with real llama.cpp, whisper.cpp, ONNX Runtime, CTranslate2, MLX, and JVM/native payloads plus real-output smoke; Apple headless `coreml-native` runtime-load smoke has passed, Apple transformers now completes `llm-qwen25-safetensors`, and current source closes the previously missing `llama-cpp-cli/bin/llama-cli` root for `llm-tinyllama-gguf`. The latest Apple full integration rerun passed on the present Apple Silicon host: the source-fingerprint image freshness path rebuilt once for source changes, reused the stamped image during later edge-port validation cluster cycles, completed the active Apple catalog through the host engine daemon, and validated pinned Apple host-engine `Exclusive` duplicate rejection. Apple e2e/all and the real native-payload replacement remain pending cohort evidence.
 **Implementation**: `README.md`, `docker/Dockerfile`, `src/Infernix/Engines/LinuxNative.hs`, `src/Infernix/Models.hs`, `src/Infernix/Objects/Layout.hs`, `src/Infernix/Demo/Bootstrap.hs`, `chart/values.yaml`, `chart/templates/minio/job-provisioning.yaml`, `src/Infernix/Runtime/Worker.hs`, `src/Infernix/Bootstrap/Models.hs`, `proto/infernix/manifest/runtime_manifest.proto`, `documents/engineering/apple_silicon_metal_headless_builds.md`, `documents/engineering/object_storage.md`, `documents/engineering/model_lifecycle.md`
 **Docs to update**: `README.md`, `documents/architecture/model_catalog.md`, `documents/architecture/runtime_modes.md`, `documents/engineering/object_storage.md`, `documents/engineering/model_lifecycle.md`, `documents/engineering/build_artifacts.md`, `documents/engineering/apple_silicon_metal_headless_builds.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 
@@ -1038,9 +1060,11 @@ classes, and the README matrix must stop promoting residual or unproven engine c
   and smoke command
 - add the `infernix-engine-artifacts` MinIO bucket contract for immutable content-addressed engine
   payloads, separate from `infernix-models` weights and `infernix-demo-objects` user/demo artifacts
-- materialize engine payloads atomically into `./.data/engines/<adapterId>/` on Apple or
-  image-owned `/opt/infernix/engines/<adapterId>/` on Linux; the current Linux payloads are
-  machine-independent smoke wrappers pending Wave I real-engine replacement
+- materialize engine payloads through validated temp roots and final-root rename into
+  `./.data/engines/<adapterId>/` on Apple or image-owned
+  `/opt/infernix/engines/<adapterId>/` on Linux; Docker image-layer reruns use the explicit
+  replace-after-validation fallback when the existing-root backup rename is rejected; the current
+  Linux payloads are machine-independent smoke wrappers pending Wave I real-engine replacement
 - update `src/Infernix/Models.hs` and generated catalog docs to match the researched matrix:
   Apple CTranslate2 is viable CPU, vLLM CPU is not a portable `linux-cpu` default, MT3/JAX and
   Omnizart remain residual until compatibility spikes pass, Wan Apple MPS remains residual, and
@@ -1054,19 +1078,23 @@ classes, and the README matrix must stop promoting residual or unproven engine c
   native runner diagnostics
 - `infernix lint docs` proves README matrix and model catalog docs agree with the generated model
   catalog
-- materialization smoke coverage for the Linux native smoke roots is unit-covered locally; real
-  native payload smoke plus one Apple native artifact under the headless lane remains the Wave I
-  cohort gate
+- materialization smoke coverage for the Linux native smoke roots is unit-covered locally, and the
+  generated smoke wrappers use a portable `/bin/sh` shebang so Apple host-native unit validation
+  can exercise the manifest/root contract without a Linux-only `/usr/bin/bash` dependency; the
+  native arm64 Docker lane also proves a fresh-container rerun can replace image-layer baked
+  `/opt/infernix/engines/<adapterId>/` roots without a cross-device rename failure; real Linux
+  native payload smoke remains the Wave I cohort gate, and the Apple headless lane now has
+  installed Metal bridge plus `coreml-native` runtime-load smoke evidence
 - failed materialization leaves no partial final root and redelivers or negatively acknowledges
   work when asynchronous
 
 ### Remaining Work
 
-- Replace the Linux native smoke wrappers with real llama.cpp, whisper.cpp, ONNX Runtime,
-  CTranslate2, and JVM/native payloads under image-owned `/opt/infernix/engines/<adapterId>/`
-  roots.
-- Add real native-runner smoke validation for those Linux payloads and the Apple native/Core ML
-  artifact load once the Phase 1 headless Apple bridge is available.
+- Replace the Linux native smoke wrappers and Apple native validation wrappers with real
+  llama.cpp, whisper.cpp, ONNX Runtime, CTranslate2, MLX, and JVM/native payloads under their
+  substrate-owned engine roots.
+- Add real native-runner smoke validation for those payloads; Apple and CUDA real-output validation
+  still run in the Wave I full-suite gate.
 - Keep Basic Pitch TensorFlow, MT3/JAX, Omnizart, and Wan Apple MPS as residual rows until
   compatibility spikes prove maintained runnable lanes.
 
@@ -1075,7 +1103,7 @@ classes, and the README matrix must stop promoting residual or unproven engine c
 ## Sprint 4.19: Substrate-Neutral Engine Pool Routing [Active]
 
 **Status**: Active
-**Code-side closure**: Complete on the present Linux outer-container lane — the staged Dhall schema
+**Code-side closure**: Complete on the recorded Linux outer-container lane — the staged Dhall schema
 now carries `enginePools` and `engineMembers`, Haskell encode/decode/render paths preserve that
 graph, generated configs derive normal pool topics and pinned member topics from
 `(runtimeMode, poolId/memberId, modelId)`, coordinator batch routing resolves model → pool from the
@@ -1089,9 +1117,12 @@ and mounted live-source `cabal test infernix-unit`, `cabal test infernix-haskell
 `cabal run exe:infernix -- lint files/docs/proto/chart`, `cabal run exe:infernix -- docs check`,
 and `cabal run exe:infernix -- test lint`.
 **Cohort gate**: Pending [Wave J](cohort-validation-waves.md) — real Pulsar cluster validation
-must prove `Shared` pool backpressure, pinned `Exclusive` member routes, Apple multi-host member
-ids, Linux pool placement, and the production `demo_ui = false` coordinator-plus-engine-pools
-shape before this sprint can move to `Done`.
+has now proved pinned `Exclusive` member routes, process-qualified service consumer names,
+same-machine Apple host-member coexistence on a `Shared` pool subscription, and Apple production
+`demo_ui = false` assertions. This sprint still needs single-host logical `Shared` pool
+backlog/backpressure distribution and Linux CPU/GPU pool placement before it can move to `Done`;
+physical Apple multi-host member routing is hardware-deferred proof while no second Apple host is
+available.
 **Implementation**: `dhall/InfernixSubstrate.dhall`, `src/Infernix/Types.hs`, `src/Infernix/Substrate.hs`, `src/Infernix/DemoConfig.hs`, `src/Infernix/Models.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Daemon.hs`, `test/unit/Spec.hs`, `test/integration/Spec.hs`
 **Docs to update**: `README.md`, `documents/architecture/engine_pool_routing.md`, `documents/architecture/daemon_topology.md`, `documents/tools/pulsar.md`, `documents/architecture/runtime_modes.md`, `DEVELOPMENT_PLAN/system-components.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 
@@ -1122,8 +1153,10 @@ backpressure, and pinned routes use explicit per-member topics.
   Linux GPU
 - integration coverage proves coordinator publication to derived pool/model topics and engine
   consumption from assigned topics
-- a Pulsar-backed test proves normal pool members use `Shared` with bounded permits while pinned
-  routes use `Exclusive`
+- a Pulsar-backed test proves same-machine Apple host-member daemons can coexist on one `Shared`
+  subscription for an isolated derived pool/model topic
+- a Pulsar-backed single-host logical multi-member test proves backlog/backpressure distribution
+  across available Apple pool members while pinned routes use `Exclusive`
 
 ### Remaining Work
 
@@ -1133,8 +1166,11 @@ backpressure, and pinned routes use explicit per-member topics.
   integration finish; it is tracked in
   [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
 - **Cohort gate ([Wave J](cohort-validation-waves.md)):** add real Pulsar integration coverage for
-  shared-pool backpressure, pinned-route duplicate-consumer rejection, Apple multi-host routing,
-  Linux CPU/GPU pool placement, and production `demo_ui = false` coordinator presence.
+  single-host logical shared-pool backlog/backpressure distribution and Linux CPU/GPU pool
+  placement. Pinned-route duplicate-consumer rejection, same-machine Apple `Shared` coexistence,
+  and Apple production `demo_ui = false` assertions are covered on the Apple integration lane.
+  Physical Apple multi-host routing is tracked as hardware-deferred proof, not as a blocker for the
+  current single-host logical backpressure gate.
 
 ---
 
@@ -1163,12 +1199,21 @@ the generated runtime catalogs omit named residual rows, record them through
 `residualMatrixRowIdsForMode`, and provision the `infernix-engine-artifacts` bucket alongside
 `infernix-models` and `infernix-demo-objects`. Current source also closes the local missing-root
 surface for Linux native adapters by baking typed, smoke-validated
-`/opt/infernix/engines/<adapterId>/` roots. The remaining Phase 4 residual is real engine payload
-replacement and real-output validation: the phase returns to `Done` only after Wave I lands the full
-Apple and CUDA Linux gates against real inference and the per-engine routed cluster path. Sprint
-4.19's remaining pool-routing residual is Wave J real-cluster proof: shared-pool backpressure,
-pinned-route exclusivity, Apple multi-host membership, Linux pool placement, and cleanup of the
-legacy `engineDaemons` compatibility projection before Phase 4 can return to `Done`.
+`/opt/infernix/engines/<adapterId>/` roots, and closes the equivalent Apple missing-root surface by
+materializing deterministic validation wrappers under `./.data/engines/<adapterId>/`. Current Apple
+evidence completes the active Apple catalog through the host engine daemon with native
+validation-wrapper payloads in place; real native payloads remain the next real-output gate. The
+latest full integration rerun also proved freshness-gated host-native Apple image reuse by
+rebuilding the changed source once and reusing the stamped image during later edge-port validation
+cycles. The remaining Phase 4 residual is real engine payload replacement and real-output
+validation: the phase returns to `Done` only after Wave I lands the full Apple and CUDA Linux gates
+against real inference and the per-engine routed cluster path. Sprint 4.19's remaining
+pool-routing residual is Wave J real-cluster proof for single-host logical shared-pool
+backlog/backpressure distribution, Linux pool placement, and cleanup of the legacy `engineDaemons`
+compatibility projection before Phase 4 can return to `Done`; pinned-route exclusivity,
+same-machine Apple `Shared` coexistence, and Apple production `demo_ui = false` assertions are now
+covered on the Apple integration lane. Physical Apple multi-host membership is hardware-deferred
+evidence while no second Apple host is available.
 See the two-axis execution rule in
 [development_plan_standards.md](development_plan_standards.md) Section Q.
 

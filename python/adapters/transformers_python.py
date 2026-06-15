@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from adapters.common import AdapterContext, run_context_adapter, run_setup_from_argv
 from adapters.model_cache import get_model_path
 
@@ -20,8 +22,11 @@ def transform(context: AdapterContext) -> str:
         ) from exc
     weights_dir = get_model_path(context.model_id)
     tokenizer = AutoTokenizer.from_pretrained(str(weights_dir))
-    model = AutoModelForCausalLM.from_pretrained(str(weights_dir))
+    model = AutoModelForCausalLM.from_pretrained(str(weights_dir), torch_dtype="auto")
+    device = _preferred_torch_device(torch)
+    model = model.to(device)
     inputs = tokenizer(context.input_text, return_tensors="pt")
+    inputs = {key: value.to(device) for key, value in inputs.items()}
     with torch.no_grad():
         generated = model.generate(**inputs, max_new_tokens=256)
     prompt_length = inputs["input_ids"].shape[1]
@@ -29,6 +34,18 @@ def transform(context: AdapterContext) -> str:
         generated[0][prompt_length:], skip_special_tokens=True
     )
     return continuation
+
+
+def _preferred_torch_device(torch_module: Any) -> str:
+    mps_backend = getattr(getattr(torch_module, "backends", object()), "mps", None)
+    if mps_backend is not None and mps_backend.is_available():
+        return "mps"
+    cuda_available = getattr(
+        getattr(torch_module, "cuda", object()), "is_available", None
+    )
+    if cuda_available is not None and cuda_available():
+        return "cuda"
+    return "cpu"
 
 
 def main() -> int:

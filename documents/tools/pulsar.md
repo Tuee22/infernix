@@ -98,11 +98,17 @@ implementation derives coordinator pool handoff from this graph. The earlier
 `inference.batch.apple-silicon.host` helpers remain only as legacy compatibility surfaces while the
 deletion-ledger cleanup retires old chart and daemon-selection assumptions.
 
-The unit suite already validates invalid graph rejection and derived topic selection. The Wave J
-integration suite validates the pool handoff contract on a real cluster: generated configuration
-rejects a routable model with no eligible pool member, the coordinator publishes only to derived
-topics, pool consumers use `Shared` with bounded permits, pinned consumers use `Exclusive`, and
-`demo_ui = false` keeps the production coordinator while omitting demo-only workloads.
+The unit suite already validates invalid graph rejection and derived topic selection. Current Apple
+integration validates the pinned-member path on a real broker by starting one
+`infernix service --role engine --engine-name ... --config <isolated-dhall>` consumer, publishing
+to the derived member topic, and asserting a duplicate consumer receives the broker's `Exclusive`
+409 rejection. It also launches two same-machine Apple host-member daemons on one isolated derived
+pool/model topic, observes two real consumers on the `Shared` subscription through Pulsar admin
+stats, and completes an inference request; production `demo_ui = false` route/publication
+assertions also pass on Apple. Wave J still owns the remaining real-cluster pool handoff proof:
+single-host logical broker-native backlog/backpressure distribution and Linux CPU/GPU pool
+placement. Physical Apple multi-host routing is hardware-deferred proof while no second Apple host
+is available.
 
 ## Demo Conversation and Metadata Topics
 
@@ -180,7 +186,7 @@ cluster:
 
 | Topic | Pattern | Purpose |
 |---|---|---|
-| Model bootstrap request | `persistent://infernix/system/model.bootstrap.request` | Engine pods publish a request keyed by `modelId` when a model is not yet present in `infernix-models`. Producer dedup on `modelId` collapses concurrent retries. |
+| Model bootstrap request | `persistent://infernix/system/model.bootstrap.request` | Engine pods publish a request with message key `modelId` when a model is not yet present in `infernix-models`. Producer dedup uses the attempt-scoped `modelId@requestedAt` key so exact request replays collapse while later retry attempts can enqueue work if readiness never appears. |
 | Model bootstrap ready | `persistent://infernix/system/model.bootstrap.ready.<modelId>` | Coordinator's bootstrap worker publishes a ready event after `infernix-models/<modelId>/.ready` has been written. The ready record is keyed by `modelId`. Engine pods that published a request subscribe with bounded timeout. |
 
 Rules:

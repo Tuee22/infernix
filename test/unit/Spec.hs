@@ -10,7 +10,7 @@ import Data.Aeson qualified as Aeson
 import Data.ByteString qualified as BS
 import Data.ByteString.Base64.URL qualified
 import Data.ByteString.Lazy qualified as Lazy
-import Data.List (find, isInfixOf, nub)
+import Data.List (find, isInfixOf, isPrefixOf, nub)
 import Data.Map.Strict qualified as Map
 import Data.Map.Strict qualified as MapStrict
 import Data.Maybe (isJust, isNothing, listToMaybe)
@@ -24,6 +24,7 @@ import Infernix.Bridge.Result qualified as ResultBridge
 import Infernix.CLI (writeGeneratedPursContracts)
 import Infernix.Cluster (clusterWorkloadArchitectureForHostArchitecture, linuxGpuNvkindConfigMapBug, writeGeneratedKindConfig)
 import Infernix.Cluster.Discover
+import Infernix.Cluster.ImageFingerprint qualified as ImageFingerprint
 import Infernix.Cluster.PublishImages
   ( HarborPublishOptions (..),
     PublishedImage,
@@ -111,9 +112,12 @@ import Infernix.Runtime.Pulsar
   ( DemoClientMessageError (..),
     DemoClientMessagePublication (..),
     drainTopic,
+    modelCacheBootstrapRetryableError,
     parseMessageIdToSequenceId,
     planDemoClientMessagePublications,
+    serviceConsumerName,
     serviceConsumerSubscriptionType,
+    serviceConsumerSubscriptionTypeForTopic,
     topicDirectoryPath,
     validateDemoClientMessageCatalog,
   )
@@ -121,9 +125,11 @@ import Infernix.Runtime.Pulsar.Failover qualified as PulsarFailover
 import Infernix.Runtime.Worker
   ( WorkerModelCacheConfig (..),
     buildWorkerRequest,
+    loadWorkerModelCacheConfig,
     nativeEngineInstallRootCandidates,
     workerRequestModelCacheConfig,
   )
+import Infernix.Service (serviceDemoConfigPath)
 import Infernix.Topic.Drafts qualified as TopicDrafts
 import Infernix.Topic.Metadata qualified as TopicMetadata
 import Infernix.Types
@@ -245,6 +251,29 @@ main = do
   assert
     (not ("colima" `isInfixOf` linuxDockerfileContents))
     "Linux launcher image host manifest does not carry the retired Colima tool field"
+  dockerIgnoreContents <- readFile ".dockerignore"
+  dockerIgnorePatterns <-
+    expectRight
+      "dockerignore parser accepts the repository ignore file"
+      (ImageFingerprint.parseDockerIgnorePatterns dockerIgnoreContents)
+  assert
+    (ImageFingerprint.dockerIgnorePathIgnored dockerIgnorePatterns ".build/infernix")
+    "cluster image fingerprint ignores the host-native build root"
+  assert
+    (ImageFingerprint.dockerIgnorePathIgnored dockerIgnorePatterns "web/node_modules/.package-lock.json")
+    "cluster image fingerprint ignores frontend dependency output"
+  assert
+    (ImageFingerprint.dockerIgnorePathIgnored dockerIgnorePatterns "python/engines/transformers/.venv/pyvenv.cfg")
+    "cluster image fingerprint applies segmented dockerignore globs"
+  assert
+    (ImageFingerprint.dockerIgnorePathIgnored dockerIgnorePatterns "python/poetry.lock")
+    "cluster image fingerprint applies recursive dockerignore globs"
+  assert
+    (not (ImageFingerprint.dockerIgnorePathIgnored dockerIgnorePatterns "python/adapters/model_bootstrap.py"))
+    "cluster image fingerprint includes adapter source files"
+  assert
+    (not (ImageFingerprint.dockerIgnorePathIgnored dockerIgnorePatterns "src/Infernix/Cluster.hs"))
+    "cluster image fingerprint includes Haskell source files"
   assert
     (appleHostRequirementIds AppleSilicon ClusterUpCommand == ["docker", "kind", "kubectl", "helm", "node", "python", "poetry"])
     "apple host prerequisite planning includes the full cluster and adapter toolchain for apple-silicon cluster up"
@@ -725,12 +754,42 @@ main = do
             (serviceConsumerSubscriptionType AppleSilicon appleEngineDaemon == Right ConsumerShared)
             "Sprint 7.24: apple host engine consumers select Shared by default"
           assert
+            ( serviceConsumerSubscriptionTypeForTopic
+                AppleSilicon
+                appleEngineDaemon
+                (engineMemberPinnedTopicForMode AppleSilicon "apple-host-default" "image-sdxl-turbo")
+                == Right ConsumerExclusive
+            )
+            "Sprint 7.24: pinned apple host engine topics select Exclusive ownership"
+          assert
             (either (isInfixOf "Failover") (const False) (serviceConsumerSubscriptionType AppleSilicon appleFailoverDaemon))
             "Sprint 7.24: apple host engine consumers reject Failover"
           assert
             (serviceConsumerSubscriptionType AppleSilicon appleExclusiveDaemon == Right ConsumerExclusive)
             "Sprint 7.24: pinned engine member consumers may select Exclusive"
+          assert
+            ( serviceConsumerName "infernix-service-demo-topic" ConsumerShared "member-a"
+                /= serviceConsumerName "infernix-service-demo-topic" ConsumerShared "member-b"
+            )
+            "Sprint 7.24: Shared service consumers use process-qualified consumer names"
+          assert
+            ( serviceConsumerName "infernix-service-demo-topic" ConsumerExclusive "member-a"
+                /= serviceConsumerName "infernix-service-demo-topic" ConsumerExclusive "member-b"
+            )
+            "Sprint 7.24: Exclusive service consumers use process-qualified consumer names so broker rejection proves ownership"
+          assert
+            ( "infernix-service-demo-topic-consumer-member-a"
+                == serviceConsumerName "infernix-service-demo-topic" ConsumerShared "member-a"
+            )
+            "Sprint 7.24: service consumer names keep the subscription name as their stable prefix"
         _ -> fail "apple host demo-config must decode exactly one engine daemon"
+      assert
+        (serviceDemoConfigPath paths (Just (unitTestClusterConfigFixture appleConfigPath)) Nothing == appleConfigPath)
+        "cluster-resident services resolve runtime and daemon role from the mounted demo config"
+      let explicitDemoConfigPath = buildRoot paths </> "explicit-service-substrate.dhall"
+      assert
+        (serviceDemoConfigPath paths (Just (unitTestClusterConfigFixture appleConfigPath)) (Just explicitDemoConfigPath) == explicitDemoConfigPath)
+        "explicit service config path overrides the mounted demo config for targeted validation"
       let readinessMarkerPath = runtimeRoot paths </> "service" </> "subscription.ready"
       -- Phase 4 Sprint 4.13: the previous test injected the Pulsar
       -- endpoint + demo-config path via @INFERNIX_PULSAR_*@ +
@@ -738,7 +797,7 @@ main = do
       -- The test builds a typed `ClusterConfig` fixture with the same
       -- values and passes it directly to 'runProductionDaemon'.
       let clusterConfigFixture = unitTestClusterConfigFixture demoConfigPath
-      _ <- timeout 2000000 (runProductionDaemon paths LinuxCpu (Just clusterConfigFixture) Coordinator Nothing)
+      _ <- timeout 2000000 (runProductionDaemon paths LinuxCpu (Just clusterConfigFixture) Nothing Coordinator Nothing)
       readinessMarkerPresent <- doesFileExist readinessMarkerPath
       assert
         (not readinessMarkerPresent)
@@ -868,6 +927,13 @@ main = do
       assert
         (all (`elem` frameworkEngineNamesForMode LinuxGpu) ["vllm", "diffusers", "pytorch"])
         "Sprint 4.17: the linux-gpu catalog deploys the vllm/diffusers/pytorch framework engines"
+      transformersEnginePyproject <- readFile (repoRoot paths </> "python" </> "engines" </> "transformers" </> "pyproject.toml")
+      assert
+        ( "[tool.poetry.group.apple-silicon.dependencies]" `isInfixOf` transformersEnginePyproject
+            && "platform_system == 'Darwin' and platform_machine == 'arm64'" `isInfixOf` transformersEnginePyproject
+            && "platform_system == 'Linux' and platform_machine == 'x86_64'" `isInfixOf` transformersEnginePyproject
+        )
+        "Sprint 4.16/Wave I: transformers per-engine venvs separate Apple torch wheels from the CUDA torch source"
       persistInferenceResult paths textPayloadResult
       reloadedResult <- loadInferenceResult paths "req-unit-text"
       assert
@@ -961,6 +1027,58 @@ main = do
                 }
         )
         "worker protobuf requests carry typed model-cache and MinIO wiring to Python adapters"
+      assert
+        ( modelCacheBootstrapRetryableError
+            ErrorResponse
+              { errorCode = "model_cache_not_populated",
+                message = "MinIO infernix-models/llm-qwen25-safetensors/ is missing the .ready sentinel object."
+              }
+            && not
+              ( modelCacheBootstrapRetryableError
+                  ErrorResponse
+                    { errorCode = "adapter_failed",
+                      message = "transformers/torch are not installed"
+                    }
+              )
+        )
+        "only model-cache-not-populated adapter failures trigger the bootstrap retry path"
+      let hostWorkerState =
+            ClusterState
+              True
+              19090
+              30002
+              []
+              "infernix-manual"
+              []
+              AppleSilicon
+              (generatedKubeconfigPath paths)
+              (Config.generatedDemoConfigPath paths)
+              (Config.publishedConfigMapCatalogPath paths)
+              (Config.publishedConfigMapManifestPath paths)
+              "/opt/build/infernix-substrate.dhall"
+              Nothing
+              resultNow
+          hostClusterStatePath = runtimeRoot paths </> "cluster-state.state"
+          hostSecretsManifestPath = runtimeRoot paths </> "secrets" </> "InfernixSecrets.dhall"
+      writeFile hostClusterStatePath (show hostWorkerState)
+      maybeHostWorkerConfig <- loadWorkerModelCacheConfig paths AppleSilicon
+      hostSecretsManifestExists <- doesFileExist hostSecretsManifestPath
+      assert
+        ( maybeHostWorkerConfig
+            == Just
+              WorkerModelCacheConfig
+                { workerModelCacheRoot = Text.pack (modelCacheRoot paths),
+                  workerModelCacheQuotaBytes = 34359738368,
+                  workerMinioEndpoint = "http://127.0.0.1:30011",
+                  workerMinioModelsBucket = "infernix-models",
+                  workerMinioDemoArtifactsBucket = "infernix-demo-objects",
+                  workerMinioRegion = "us-east-1",
+                  workerMinioAccessKey = "minioadmin",
+                  workerMinioSecretKey = "minioadmin123"
+                }
+            && hostSecretsManifestExists
+        )
+        "Apple host workers derive host-routable MinIO model-cache wiring from repo-local cluster state and host secrets"
 
       assertRuntimeKVCachePath paths
 
@@ -2251,8 +2369,8 @@ assertBootstrapModels = do
     (BootstrapModels.bootstrapSubscriptionName == "bootstrap-models")
     "bootstrap-models subscription name is the supported label"
   assert
-    (BootstrapModels.bootstrapRequestDedupKey req == "qwen2.5-7b")
-    "bootstrap request dedup key is the modelId"
+    (BootstrapModels.bootstrapRequestDedupKey req == "qwen2.5-7b@2026-05-21T00:00:00Z")
+    "bootstrap request dedup key is scoped to the request attempt"
   assert
     (BootstrapModels.readyEventDedupKey ev == "qwen2.5-7b")
     "ready event dedup key is the modelId"
@@ -3143,6 +3261,9 @@ assertHostConfig testRoot = do
         ("--smoke|--help" `isInfixOf` sampleLinuxScript)
         "Sprint 4.18: Linux native smoke wrappers support the smoke command"
       assert
+        ("#!/bin/sh" `isPrefixOf` sampleLinuxScript)
+        "Sprint 4.18: Linux native smoke wrappers use a portable POSIX shell shebang"
+      assert
         (either (const False) (const True) (decodeLazy sampleLinuxManifestJson :: Either String Aeson.Value))
         "Sprint 4.18: Linux native manifest JSON decodes as valid Aeson"
   materializeLinuxNativeEnginesAt (testRoot </> "linux-native-engines")
@@ -3153,6 +3274,13 @@ assertHostConfig testRoot = do
   assert
     (linuxRunnerPresent && linuxManifestPresent)
     "Sprint 4.18: Linux native materialization writes an executable root plus manifest"
+  materializeLinuxNativeEnginesAt (testRoot </> "linux-native-engines")
+  linuxRunnerAfterRerun <- doesFileExist llamaRunnerPath
+  linuxTempAfterRerun <- doesDirectoryExist (engineArtifactTempRoot llamaInstallRoot)
+  linuxPreviousAfterRerun <- doesDirectoryExist (engineArtifactPreviousRoot llamaInstallRoot)
+  assert
+    (linuxRunnerAfterRerun && not linuxTempAfterRerun && not linuxPreviousAfterRerun)
+    "Sprint 4.18: Linux native materialization reruns cleanly over an existing root"
   assert
     (HostTools.hostToolName HostTools.HostKubectl == "kubectl")
     "HostTools reports the supported short name for each tool"
@@ -3214,6 +3342,64 @@ assertHostConfig testRoot = do
       assert
         (not previousRootExists)
         "Sprint 1.14: successful materialization leaves no previous-root cleanup residue"
+  case find ((== "coreml-native") . metalEngineAdapterId) metalEngineBuildPlan of
+    Nothing ->
+      assert False "Sprint 1.14: the Apple materialization plan includes coreml-native"
+    Just coreMlArtifact -> do
+      let coreMlRoot = metalEngineInstallRoot paths (metalEngineAdapterId coreMlArtifact)
+          coreMlRunnerPath = coreMlRoot </> "bin" </> "coreml-runner"
+          coreMlSmokeSourcePath = coreMlRoot </> "src" </> "infernix_coreml_runner_smoke.m"
+      installedCoreMlRoot <- materializeMetalEngineArtifact paths coreMlArtifact
+      coreMlManifestExists <- doesFileExist (engineArtifactManifestPath installedCoreMlRoot)
+      coreMlRunnerExists <- doesFileExist coreMlRunnerPath
+      coreMlSmokeSource <- readFile coreMlSmokeSourcePath
+      coreMlRunner <- readFile coreMlRunnerPath
+      assert
+        (installedCoreMlRoot == coreMlRoot)
+        "Sprint 1.14: coreml-native materialization returns the final adapter install root"
+      assert
+        coreMlManifestExists
+        "Sprint 1.14: coreml-native materialization writes engine-artifact.json"
+      assert
+        coreMlRunnerExists
+        "Sprint 1.14: coreml-native materialization writes bin/coreml-runner"
+      assert
+        ("#import <CoreML/CoreML.h>" `isInfixOf` coreMlSmokeSource)
+        "Sprint 1.14: coreml-native smoke source links the Core ML framework"
+      assert
+        ("MLModelConfiguration" `isInfixOf` coreMlSmokeSource)
+        "Sprint 1.14: coreml-native smoke source instantiates a Core ML runtime type"
+      assert
+        ("-framework CoreML" `isInfixOf` coreMlRunner)
+        "Sprint 1.14: coreml-native smoke command links Core ML through clang"
+      assert
+        ("Wave I" `isInfixOf` coreMlRunner)
+        "Sprint 1.14: coreml-native normal path keeps real payload replacement explicit"
+  case find ((== "llama-cpp-cli") . metalEngineAdapterId) metalEngineBuildPlan of
+    Nothing ->
+      assert False "Sprint 1.14: the Apple materialization plan includes llama-cpp-cli"
+    Just llamaArtifact -> do
+      let llamaRoot = metalEngineInstallRoot paths (metalEngineAdapterId llamaArtifact)
+          appleLlamaRunnerPath = llamaRoot </> "bin" </> "llama-cli"
+      installedLlamaRoot <- materializeMetalEngineArtifact paths llamaArtifact
+      llamaManifestExists <- doesFileExist (engineArtifactManifestPath installedLlamaRoot)
+      llamaRunnerExists <- doesFileExist appleLlamaRunnerPath
+      llamaRunner <- readFile appleLlamaRunnerPath
+      assert
+        (installedLlamaRoot == llamaRoot)
+        "Sprint 1.14: llama-cpp-cli materialization returns the final adapter install root"
+      assert
+        llamaManifestExists
+        "Sprint 1.14: llama-cpp-cli materialization writes engine-artifact.json"
+      assert
+        llamaRunnerExists
+        "Sprint 1.14: llama-cpp-cli materialization writes bin/llama-cli"
+      assert
+        ("infernix apple native validation runner ok: llama-cpp-cli" `isInfixOf` llamaRunner)
+        "Sprint 1.14: llama-cpp-cli materialization writes a smoke-capable Apple native validation runner"
+      assert
+        ("Wave I" `isInfixOf` llamaRunner)
+        "Sprint 1.14: Apple native validation runners keep real payload replacement explicit"
 
 -- Phase 4 Sprint 4.13 — ClusterConfig renderer + decoder roundtrip.
 assertClusterConfig :: FilePath -> FilePath -> IO ()

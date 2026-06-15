@@ -37,6 +37,7 @@ library
         Infernix.Bootstrap.Models
         Infernix.Bridge.Result
         Infernix.Cluster.Discover
+        Infernix.Cluster.ImageFingerprint
         Infernix.Cluster.PublishImages
         Infernix.Config
         Infernix.Conversation.Event

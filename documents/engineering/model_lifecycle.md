@@ -70,10 +70,12 @@
   idempotent setup-ready marker
 - per-engine software manifests record adapter id, engine name, substrate, architecture,
   artifact kind, source reference, runtime versions, digest, optional MinIO object key,
-  entrypoint, and smoke command. Current Apple materialization validates the manifest contract before
-  atomic rename; the target lane adds real smoke/load validation before rename as a Wave I Apple
-  cohort gate. Linux smoke-wrapper validation exists today and Wave I replaces those wrappers with
-  real native payloads.
+  entrypoint, and smoke command. Current Apple materialization validates the manifest contract and
+  smoke-loads materialized Apple payloads before atomic rename on Darwin; the full Apple
+  integration rerun now reaches the host engine through derived Apple pool topics and blocks on
+  the first missing real framework payload (`transformers`/`torch` for
+  `llm-qwen25-safetensors`); the full Apple e2e/all gate remains in Wave I. Linux smoke-wrapper
+  validation exists today and Wave I replaces those wrappers with real native payloads.
 - derived cache state is keyed by runtime mode and model identity and is always rebuildable
 - the demo `/api/cache` surface operates on the manifest-backed contract exposed by the Haskell
   worker; the manifest reads the supported `minio://infernix-models/<modelId>/` durable source

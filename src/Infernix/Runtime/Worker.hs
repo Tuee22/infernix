@@ -7,15 +7,17 @@ module Infernix.Runtime.Worker
     WorkerModelCacheConfig (..),
     buildWorkerRequest,
     lookupEngineCommandOverride,
+    loadWorkerModelCacheConfig,
     nativeEngineInstallRootCandidates,
     runInferenceWorker,
     workerRequestModelCacheConfig,
   )
 where
 
+import Control.Monad (unless)
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Char8 qualified as ByteString8
-import Data.List (dropWhileEnd, find)
+import Data.List (dropWhileEnd, find, intercalate)
 import Data.Maybe (catMaybes, fromMaybe, listToMaybe)
 import Data.ProtoLens (decodeMessage, defMessage, encodeMessage)
 import Data.ProtoLens.Field (field)
@@ -25,14 +27,14 @@ import Data.Word (Word64)
 import Infernix.ClusterConfig qualified as Cluster
 import Infernix.Config (Paths (..))
 import Infernix.Models (engineBindingForSelectedEngine)
-import Infernix.Python (ensurePoetryExecutable, ensurePoetryProjectReady)
+import Infernix.Python (ensurePoetryExecutable, ensurePoetryProjectInstalledWithGroups, ensurePoetryProjectReady)
 import Infernix.Runtime.KVCache qualified as KVCache
 import Infernix.SecretsConfig qualified as Secrets
 import Infernix.Types
 import Lens.Family2 (set, view)
 import Proto.Infernix.Runtime.Inference qualified as ProtoInference
 import Proto.Infernix.Runtime.Inference_Fields qualified as ProtoInferenceFields
-import System.Directory (doesFileExist)
+import System.Directory (createDirectoryIfMissing, doesFileExist)
 import System.Exit (ExitCode (ExitSuccess))
 import System.FilePath ((</>))
 import System.IO (hClose)
@@ -45,6 +47,7 @@ import System.Process
     shell,
     waitForProcess,
   )
+import Text.Read (readMaybe)
 
 -- | Phase 4 Sprint 4.13 — engine-command override lookup keyed by the
 -- engine binding's adapter id. The supported source is the
@@ -120,7 +123,7 @@ runPythonWorker ::
 runPythonWorker paths runtimeMode overrides model engineBinding request _cacheObservation = do
   let maybeOverride = lookupEngineCommandOverride overrides engineBinding
   invocation <- resolvePythonInvocation paths engineBinding maybeOverride
-  maybeModelCacheConfig <- loadWorkerModelCacheConfig
+  maybeModelCacheConfig <- loadWorkerModelCacheConfig paths runtimeMode
   let workerRequest = encodeMessage (buildWorkerRequest paths runtimeMode maybeModelCacheConfig model engineBinding request)
   workerResult <- runWorkerInvocation paths invocation workerRequest
   pure (workerResultToOutput workerResult)
@@ -161,6 +164,65 @@ ensurePythonEngineSetupReady paths runtimeMode engineBinding = do
       poetryExecutable <- ensurePoetryExecutable paths
       ensurePoetryProjectReady paths projectDirectory
       runSetupInvocation paths poetryExecutable projectDirectory installRoot runtimeMode engineBinding
+  ensurePerEngineFrameworkVenvReady paths runtimeMode engineBinding
+
+ensurePerEngineFrameworkVenvReady :: Paths -> RuntimeMode -> EngineBinding -> IO ()
+ensurePerEngineFrameworkVenvReady paths runtimeMode engineBinding =
+  case perEngineFrameworkGroups runtimeMode engineBinding of
+    [] -> pure ()
+    groups -> do
+      let markerPath = perEngineFrameworkMarkerPath paths runtimeMode engineBinding groups
+      markerPresent <- doesFileExist markerPath
+      maybeVenvPython <- perEngineVenvPython paths engineBinding
+      case maybeVenvPython of
+        Just _
+          | markerPresent -> pure ()
+        _ -> do
+          let projectDirectory = perEngineProjectDirectory paths engineBinding
+          ensurePoetryProjectInstalledWithGroups paths projectDirectory groups
+          refreshedVenvPython <- perEngineVenvPython paths engineBinding
+          case refreshedVenvPython of
+            Just _ ->
+              writeFile markerPath (perEngineFrameworkMarkerContents runtimeMode engineBinding groups)
+            Nothing ->
+              ioError
+                ( userError
+                    ( "per-engine framework venv install completed but no python interpreter was found at "
+                        <> perEnginePythonPath paths engineBinding
+                    )
+                )
+
+perEngineFrameworkGroups :: RuntimeMode -> EngineBinding -> [String]
+perEngineFrameworkGroups runtimeMode engineBinding =
+  case runtimeMode of
+    AppleSilicon
+      | engineBindingAdapterId engineBinding `elem` appleSiliconFrameworkAdapterIds -> ["apple-silicon"]
+    _ -> []
+
+appleSiliconFrameworkAdapterIds :: [Text]
+appleSiliconFrameworkAdapterIds =
+  [ "transformers-python",
+    "pytorch-python",
+    "diffusers-python"
+  ]
+
+perEngineFrameworkMarkerPath :: Paths -> RuntimeMode -> EngineBinding -> [String] -> FilePath
+perEngineFrameworkMarkerPath paths runtimeMode engineBinding groups =
+  perEngineProjectDirectory paths engineBinding
+    </> ".venv"
+    </> ( ".infernix-framework-groups-"
+            <> Text.unpack (runtimeModeId runtimeMode)
+            <> "-"
+            <> intercalate "-" groups
+        )
+
+perEngineFrameworkMarkerContents :: RuntimeMode -> EngineBinding -> [String] -> String
+perEngineFrameworkMarkerContents runtimeMode engineBinding groups =
+  unlines
+    [ "runtimeMode=" <> Text.unpack (runtimeModeId runtimeMode),
+      "adapterId=" <> Text.unpack (engineBindingAdapterId engineBinding),
+      "groups=" <> intercalate "," groups
+    ]
 
 runSetupInvocation :: Paths -> FilePath -> FilePath -> FilePath -> RuntimeMode -> EngineBinding -> IO ()
 runSetupInvocation paths poetryExecutable projectDirectory installRoot _runtimeMode engineBinding = do
@@ -267,17 +329,27 @@ resolvePythonInvocation paths engineBinding maybeOverride = do
 -- unsupported/absent frameworks fail fast.
 perEngineVenvPython :: Paths -> EngineBinding -> IO (Maybe FilePath)
 perEngineVenvPython paths engineBinding = do
-  let engineName = Text.unpack (Text.replace "-python" "" (engineBindingAdapterId engineBinding))
-      pythonPath =
-        repoRoot paths
-          </> "python"
-          </> "engines"
-          </> engineName
-          </> ".venv"
-          </> "bin"
-          </> "python"
+  let pythonPath = perEnginePythonPath paths engineBinding
   present <- doesFileExist pythonPath
   pure (if present then Just pythonPath else Nothing)
+
+perEngineProjectDirectory :: Paths -> EngineBinding -> FilePath
+perEngineProjectDirectory paths engineBinding =
+  repoRoot paths
+    </> "python"
+    </> "engines"
+    </> perEngineName engineBinding
+
+perEnginePythonPath :: Paths -> EngineBinding -> FilePath
+perEnginePythonPath paths engineBinding =
+  perEngineProjectDirectory paths engineBinding
+    </> ".venv"
+    </> "bin"
+    </> "python"
+
+perEngineName :: EngineBinding -> String
+perEngineName engineBinding =
+  Text.unpack (Text.replace "-python" "" (engineBindingAdapterId engineBinding))
 
 -- | The @adapters.<module>@ import path for an engine's adapter (run via
 -- @python -m@ in the per-engine venv). @transformers-python@ -> @adapters.transformers_python@.
@@ -536,31 +608,16 @@ workerRequestModelCacheConfig workerRequest =
         && Text.null (view ProtoInferenceFields.minioAccessKey workerRequest)
         && Text.null (view ProtoInferenceFields.minioSecretKey workerRequest)
 
-loadWorkerModelCacheConfig :: IO (Maybe WorkerModelCacheConfig)
-loadWorkerModelCacheConfig = do
+loadWorkerModelCacheConfig :: Paths -> RuntimeMode -> IO (Maybe WorkerModelCacheConfig)
+loadWorkerModelCacheConfig paths runtimeMode = do
   clusterExists <- doesFileExist Cluster.defaultClusterConfigMountPath
   secretsExists <- doesFileExist Secrets.defaultClusterSecretsMountPath
   case (clusterExists, secretsExists) of
-    (False, False) -> pure Nothing
     (True, True) -> do
       clusterConfig <- Cluster.decodeClusterConfigFile Cluster.defaultClusterConfigMountPath
       secretsConfig <- Secrets.decodeSecretsConfigFile Secrets.defaultClusterSecretsMountPath
-      minioCreds <- Secrets.readMinioCredentials (Secrets.secretsMinio secretsConfig)
-      let engineConfig = Cluster.clusterEngine clusterConfig
-          minioConfig = Cluster.clusterMinio clusterConfig
-      pure
-        ( Just
-            WorkerModelCacheConfig
-              { workerModelCacheRoot = Cluster.engineModelCacheRoot engineConfig,
-                workerModelCacheQuotaBytes = fromIntegral (Cluster.engineModelCacheQuotaBytes engineConfig),
-                workerMinioEndpoint = Cluster.minioEndpoint minioConfig,
-                workerMinioModelsBucket = Cluster.minioModelsBucket minioConfig,
-                workerMinioDemoArtifactsBucket = Cluster.minioDemoArtifactsBucket minioConfig,
-                workerMinioRegion = Cluster.minioRegion minioConfig,
-                workerMinioAccessKey = Secrets.minioAccessKey minioCreds,
-                workerMinioSecretKey = Secrets.minioSecretKey minioCreds
-              }
-        )
+      Just <$> workerModelCacheConfigFromCluster clusterConfig secretsConfig
+    (False, False) -> loadHostWorkerModelCacheConfig paths runtimeMode
     _ ->
       ioError
         ( userError
@@ -571,6 +628,90 @@ loadWorkerModelCacheConfig = do
                 <> " when either cluster-side manifest is present"
             )
         )
+
+workerModelCacheConfigFromCluster :: Cluster.ClusterConfig -> Secrets.SecretsConfig -> IO WorkerModelCacheConfig
+workerModelCacheConfigFromCluster clusterConfig secretsConfig = do
+  minioCreds <- Secrets.readMinioCredentials (Secrets.secretsMinio secretsConfig)
+  let engineConfig = Cluster.clusterEngine clusterConfig
+      minioConfig = Cluster.clusterMinio clusterConfig
+  pure
+    WorkerModelCacheConfig
+      { workerModelCacheRoot = Cluster.engineModelCacheRoot engineConfig,
+        workerModelCacheQuotaBytes = fromIntegral (Cluster.engineModelCacheQuotaBytes engineConfig),
+        workerMinioEndpoint = Cluster.minioEndpoint minioConfig,
+        workerMinioModelsBucket = Cluster.minioModelsBucket minioConfig,
+        workerMinioDemoArtifactsBucket = Cluster.minioDemoArtifactsBucket minioConfig,
+        workerMinioRegion = Cluster.minioRegion minioConfig,
+        workerMinioAccessKey = Secrets.minioAccessKey minioCreds,
+        workerMinioSecretKey = Secrets.minioSecretKey minioCreds
+      }
+
+loadHostWorkerModelCacheConfig :: Paths -> RuntimeMode -> IO (Maybe WorkerModelCacheConfig)
+loadHostWorkerModelCacheConfig paths runtimeMode = do
+  maybeState <- loadWorkerClusterState paths runtimeMode
+  case maybeState of
+    Nothing -> pure Nothing
+    Just _state -> do
+      secretsConfig <- ensureHostWorkerSecrets paths
+      minioCreds <- Secrets.readMinioCredentials (Secrets.secretsMinio secretsConfig)
+      pure
+        ( Just
+            WorkerModelCacheConfig
+              { workerModelCacheRoot = Text.pack (modelCacheRoot paths),
+                workerModelCacheQuotaBytes = 34359738368,
+                workerMinioEndpoint = "http://127.0.0.1:30011",
+                workerMinioModelsBucket = "infernix-models",
+                workerMinioDemoArtifactsBucket = "infernix-demo-objects",
+                workerMinioRegion = "us-east-1",
+                workerMinioAccessKey = Secrets.minioAccessKey minioCreds,
+                workerMinioSecretKey = Secrets.minioSecretKey minioCreds
+              }
+        )
+
+loadWorkerClusterState :: Paths -> RuntimeMode -> IO (Maybe ClusterState)
+loadWorkerClusterState paths runtimeMode = do
+  let statePath = runtimeRoot paths </> "cluster-state.state"
+  stateExists <- doesFileExist statePath
+  if not stateExists
+    then pure Nothing
+    else do
+      rawState <- readFile statePath
+      case readMaybe rawState of
+        Just state
+          | clusterPresent state && clusterRuntimeMode state == runtimeMode ->
+              pure (Just state)
+        _ -> pure Nothing
+
+ensureHostWorkerSecrets :: Paths -> IO Secrets.SecretsConfig
+ensureHostWorkerSecrets paths = do
+  let secretsRoot = runtimeRoot paths </> "secrets"
+      manifestPath = secretsRoot </> "InfernixSecrets.dhall"
+      minioPath = secretsRoot </> "minio.json"
+      keycloakAdminPath = secretsRoot </> "keycloak-admin.json"
+      keycloakDbPath = secretsRoot </> "keycloak-db.json"
+  createDirectoryIfMissing True secretsRoot
+  writeFileIfMissing manifestPath (hostSecretsManifest minioPath keycloakAdminPath keycloakDbPath)
+  writeFileIfMissing minioPath "{ \"accessKey\": \"minioadmin\", \"secretKey\": \"minioadmin123\" }\n"
+  writeFileIfMissing keycloakAdminPath "{ \"username\": \"admin\", \"password\": \"operator-managed\" }\n"
+  writeFileIfMissing keycloakDbPath "{ \"username\": \"keycloak\", \"password\": \"operator-managed\" }\n"
+  Secrets.decodeSecretsConfigFile manifestPath
+
+writeFileIfMissing :: FilePath -> String -> IO ()
+writeFileIfMissing filePath contents = do
+  exists <- doesFileExist filePath
+  unless exists (writeFile filePath contents)
+
+hostSecretsManifest :: FilePath -> FilePath -> FilePath -> String
+hostSecretsManifest minioPath keycloakAdminPath keycloakDbPath =
+  unlines
+    [ "let MinioCredentials = { credentialsPath : Text }",
+      "let KeycloakAdminCredentials = { credentialsPath : Text }",
+      "let KeycloakDbCredentials = { credentialsPath : Text }",
+      "in  { minio = { credentialsPath = " <> show minioPath <> " }",
+      "    , keycloakAdmin = { credentialsPath = " <> show keycloakAdminPath <> " }",
+      "    , keycloakDb = { credentialsPath = " <> show keycloakDbPath <> " }",
+      "    }"
+    ]
 
 -- | Decode the worker output from a 'WorkerResponse'. Phase 4 Sprint 4.15:
 -- artifact adapters return an @infernix-demo-objects@ object reference in

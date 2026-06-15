@@ -15,6 +15,7 @@ grpcio-tools = "^1.73.0"
 # Haskell engine daemon supplies the client config through the typed
 # ModelCacheConfig record.
 boto3 = "^1.35.0"
+huggingface-hub = "^0.36.0"
 
 [tool.poetry.group.dev.dependencies]
 black = "^24.10.0"
@@ -29,6 +30,7 @@ adapter-pytorch-python = "adapters.pytorch_python:main"
 adapter-tensorflow-python = "adapters.tensorflow_python:main"
 adapter-transformers-python = "adapters.transformers_python:main"
 adapter-vllm-python = "adapters.vllm_python:main"
+bootstrap-model-snapshot = "adapters.common:run_model_bootstrap_from_argv"
 setup-diffusers-python = "adapters.diffusers_python:setup"
 setup-jax-python = "adapters.jax_python:setup"
 setup-pytorch-python = "adapters.pytorch_python:setup"
@@ -62,6 +64,8 @@ module = [
   "boto3.*",
   "botocore",
   "botocore.*",
+  "huggingface_hub",
+  "huggingface_hub.*",
   "torch",
   "torch.*",
   "torchaudio",
@@ -73,6 +77,8 @@ module = [
   "diffusers.*",
   "scipy",
   "scipy.*",
+  "soundfile",
+  "soundfile.*",
   "demucs",
   "demucs.*",
   "basic_pitch",

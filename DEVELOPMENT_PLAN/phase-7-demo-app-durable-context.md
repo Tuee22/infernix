@@ -1,6 +1,6 @@
 # Phase 7: Demo App Multi-User Durable Context
 
-**Status**: Active (Sprints 7.1-7.22 remain closed on their recorded gates; Sprint 7.23 is now a superseded Apple singleton stopgap, and Sprint 7.24 reopens the coordinator/engine daemon runtime for substrate-neutral engine pools, broker-native backpressure, Apple multi-host membership, and startup-time member assignment. Desired-state hot reload is a future extension, not part of the current code-side closure.)
+**Status**: Active (Sprints 7.1-7.22 remain closed on their recorded gates; Sprint 7.23 is now a superseded Apple singleton stopgap, and Sprint 7.24 reopens the coordinator/engine daemon runtime for substrate-neutral engine pools, broker-native backpressure, Apple host-member pool membership, and startup-time member assignment. Desired-state hot reload is a future extension, not part of the current code-side closure.)
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/durable_context_design.md](../documents/architecture/durable_context_design.md), [../documents/architecture/demo_app_design.md](../documents/architecture/demo_app_design.md), [../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Define the multi-user, durable-context shape of the `infernix-demo` workload —
@@ -64,9 +64,14 @@ Historical validation proof points are inventoried in
 [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) under "Historical Validation
 Evidence"; the underlying contracts they exercised still describe supported behavior.
 
-Phase 7 remains open for Sprint 7.24's real-cluster pool-routing validation. The coordinator and
-engine-daemon code-side pool-routing work has landed on the Linux outer-container lane; the earlier
-durable-context and auth-UX scopes remain closed on their recorded validation.
+Phase 7 remains open for Sprint 7.24's remaining real-cluster pool-routing validation. The
+coordinator and engine-daemon code-side pool-routing work has landed on the Linux outer-container
+lane, and the Apple integration lane now proves pinned `Exclusive` routes, same-machine
+host-member coexistence on a real `Shared` subscription, and production `demo_ui = false`
+route/publication assertions. Single-host logical backlog/backpressure distribution, Linux
+placement, and full cohort validation remain Wave J residuals; physical Apple multi-host routing
+is hardware-deferred proof while no second Apple host is available. The earlier durable-context and
+auth-UX scopes remain closed on their recorded validation.
 
 ## Current Repo Assessment
 
@@ -1106,7 +1111,8 @@ for the authoritative target shape.
   `daemonConfigHostBatchTopic` whenever that field is set, irrespective of `runtimeMode`, and
   `inference.batch.<mode>` topic definitions exist for `linux-cpu` and `linux-gpu`
 - **Introduce the `infernix/system` Pulsar namespace** carrying the
-  `model.bootstrap.request` topic; producer dedup keyed by `modelId`
+  `model.bootstrap.request` topic; request message key `modelId` plus
+  attempt-scoped producer dedup keyed by `modelId@requestedAt`
 - **Lazy model-weight population to MinIO with exactly-once semantics.** Engine sees an
   uncached model → publishes a bootstrap request; the coordinator's third Failover
   subscription (alongside dispatcher and result-bridge) downloads from the upstream URL
@@ -2118,8 +2124,9 @@ and the multi-user throughput / fan-in batching / fan-out test.
     available cluster-wide; cluster keeps serving inference throughout
   - **Coordinator pod kill mid-bootstrap upload**: kill the active coordinator replica
     after some weight files have PUT to `infernix-models/<modelId>/` but before the
-    `.ready` sentinel; surviving coordinator replica resumes (producer dedup on
-    `model.bootstrap.request` prevents a duplicate upstream download); the `.ready`
+    `.ready` sentinel; surviving coordinator replica resumes (the Failover subscription,
+    attempt-scoped request dedup, and MinIO `.ready` guard prevent duplicate effective
+    population); the `.ready`
     sentinel appears exactly once; waiting engines observe ready and proceed
   - **Concurrent bootstrap requests**: N engine pods request the same uncached model
     simultaneously; producer dedup + Pulsar Failover guarantees exactly one upstream
@@ -2227,8 +2234,8 @@ pool-routing replacement:
 - `test/integration/Spec.hs` asserts the legacy `hostInferenceBatchTopic` field in routed
   publication JSON for every runtime mode, asserts the matching
   `publicationHostInferenceBatchTopic` line in `cluster status`, and verifies the generated
-  demo config routes the coordinator from the substrate request topic to the configured batch
-  topic while the engine consumes that batch topic and keeps
+  demo config routes the coordinator from the substrate request topic to the legacy fallback batch
+  topic while engine metadata consumes derived pool/model request topics and keeps
   `daemonConfigHostBatchTopic = Nothing`.
 - The Linux GPU launcher image was rebuilt with
   `env -i /usr/bin/bash ./bootstrap/linux-gpu.sh build`, then validated with
@@ -2831,7 +2838,7 @@ Linux/CUDA cohort validation closed in Wave C.
 
 **Tools docs to create/update:**
 - [../documents/tools/keycloak.md](../documents/tools/keycloak.md) — new authoritative Keycloak surface
-- [../documents/tools/pulsar.md](../documents/tools/pulsar.md) — demo conversation and metadata topics; `inference.batch.<mode>` topic family on every substrate; new `infernix/system/model.bootstrap.request` topic with Failover subscription contract and `modelId` dedup key
+- [../documents/tools/pulsar.md](../documents/tools/pulsar.md) — demo conversation and metadata topics; `inference.batch.<mode>` topic family on every substrate; new `infernix/system/model.bootstrap.request` topic with Failover subscription contract, model-scoped message key, and attempt-scoped dedup key
 - [../documents/tools/minio.md](../documents/tools/minio.md) — full bucket inventory rewrite: drop `infernix-runtime` and `infernix-results`; add `infernix-models` always-on; document the `.ready` sentinel; demo artifact bucket retained
 
 **Operations docs to update:**
@@ -3193,7 +3200,7 @@ None for the superseded singleton target. Any remaining compatibility references
 **Architecture and tools docs to update:**
 - [../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md) — remove Apple singleton/failover target wording.
 - [../documents/tools/pulsar.md](../documents/tools/pulsar.md) — move Apple work distribution to pool topics and broker backpressure.
-- [../documents/operations/apple_silicon_runbook.md](../documents/operations/apple_silicon_runbook.md) — operator-facing Apple multi-host pool behavior.
+- [../documents/operations/apple_silicon_runbook.md](../documents/operations/apple_silicon_runbook.md) — operator-facing Apple host-member pool behavior.
 
 **Plan docs to update:**
 - [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) — completed removal row for the old `engine.lock` primary guard.
@@ -3204,19 +3211,30 @@ None for the superseded singleton target. Any remaining compatibility references
 
 **Status**: Active
 **Code-side closure**: Complete for startup-time member assignment on the present Linux
-outer-container lane — coordinator routing resolves model ids to validated pool topics, engine
-daemons select a stable member id from `daemonConfig.memberId` / `--engine-name`, normal service
-consumers use `Shared`, pinned routes retain `Exclusive`, and `Failover` remains limited to
-coordinator-owned dispatcher/result-bridge/model-bootstrap loops. No hot reload is implemented in
-this sprint; changing pool/member assignment remains a Dhall materialization and daemon restart or
-rollout boundary. Proven by `./bootstrap/linux-cpu.sh build`; rebuilt-image
+outer-container lane and the Apple pinned/shared validation path — coordinator routing resolves
+model ids to validated pool topics, engine daemons select a stable member id from
+`daemonConfig.memberId` / `--engine-name`, normal service consumers use `Shared`, pinned routes
+retain `Exclusive`, and `Failover` remains limited to coordinator-owned
+dispatcher/result-bridge/model-bootstrap loops. The current Apple integration pass proves one
+pinned Apple host member consumes an exact member topic through `Exclusive`, processes a
+validation request, and rejects a duplicate daemon with the broker 409 conflict by launching both
+daemons against an isolated `infernix service --config` substrate file. The same pass starts two
+same-machine Apple host-member daemons on one isolated derived pool/model topic, observes two real
+Pulsar consumers on the `Shared` subscription through the admin stats endpoint, and completes an
+inference request. It also covers Apple production `demo_ui = false` route/publication assertions.
+No hot reload is implemented in this sprint; changing pool/member assignment remains a Dhall
+materialization and daemon restart or rollout boundary. Proven by `./bootstrap/linux-cpu.sh build`;
+rebuilt-image
 `docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm infernix infernix test unit`;
 and mounted live-source `cabal test infernix-unit`, `cabal test infernix-haskell-style`,
 `cabal run exe:infernix -- lint files/docs/proto/chart`, `cabal run exe:infernix -- docs check`,
 and `cabal run exe:infernix -- test lint`.
-**Cohort gate**: Pending [Wave J](cohort-validation-waves.md) — real Pulsar integration must prove
-shared-pool backlog distribution, pinned duplicate-consumer rejection, Apple multi-host operation,
-Linux pool placement, and production `demo_ui = false` coordinator presence.
+**Cohort gate**: Pending [Wave J](cohort-validation-waves.md) — real Pulsar integration has proved
+pinned duplicate-consumer rejection, same-machine Apple `Shared` coexistence, and Apple
+production `demo_ui = false` assertions. It still must prove shared-pool backlog/backpressure
+distribution with a single-host logical Apple multi-member harness, Linux pool placement, and full
+cohort validation before this sprint can move to `Done`; physical Apple multi-host operation is
+hardware-deferred proof while no second Apple host is available.
 **Implementation**: `dhall/InfernixSubstrate.dhall`, `src/Infernix/Types.hs`, `src/Infernix/Models.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Daemon.hs`, `src/Infernix/DemoConfig.hs`, `src/Infernix/Substrate.hs`, `test/unit/Spec.hs`, `test/integration/Spec.hs`
 **Docs to update**: [../documents/architecture/engine_pool_routing.md](../documents/architecture/engine_pool_routing.md), [../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md), [../documents/tools/pulsar.md](../documents/tools/pulsar.md), [../documents/operations/apple_silicon_runbook.md](../documents/operations/apple_silicon_runbook.md), [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md)
 
@@ -3243,9 +3261,12 @@ exact-member routes stay explicit through `Exclusive` pinned topics.
 ### Validation
 
 - unit tests for host-id/member selection and assignment-state transitions
-- Pulsar integration proving a busy shared-pool member stops receiving new work while a free member
-  receives new messages
-- pinned-route duplicate-consumer test proves `Exclusive` ownership
+- Pulsar integration proving two same-machine Apple host-member daemons can coexist on one derived
+  `Shared` pool/model topic
+- Pulsar integration proving a busy logical shared-pool Apple member stops receiving new work while
+  a free logical member on the same Apple host receives new messages
+- pinned-route duplicate-consumer test proves `Exclusive` ownership on the Apple host integration
+  lane
 - production-shape integration proves coordinator presence with `demo_ui = false`
 - regression coverage proves dispatcher, result-bridge, and model-bootstrap Failover subscriptions
   remain coordinator-only leadership mechanisms
@@ -3255,8 +3276,11 @@ exact-member routes stay explicit through `Exclusive` pinned topics.
 - **Code (machine-independent — DONE):** coordinator pool-topic routing, engine member subscription
   selection, and Apple `ConsumerFailover` demotion have landed for startup-time assignment.
 - **Cohort gate ([Wave J](cohort-validation-waves.md)):** add real Pulsar integration coverage for
-  shared-pool backlog distribution, pinned `Exclusive` duplicate-consumer rejection, Apple
-  multi-host routing, Linux pool placement, and production `demo_ui = false` coordinator presence.
+  single-host logical shared-pool backlog/backpressure distribution, Linux pool placement, and full
+  cohort validation. Pinned `Exclusive` duplicate-consumer rejection, same-machine Apple `Shared`
+  coexistence, and Apple production `demo_ui = false` assertions are covered by the Apple
+  integration lane. Physical Apple multi-host routing is tracked as hardware-deferred proof, not
+  as a blocker for the current single-host logical backpressure gate.
 - **Future extension:** compacted assignment/status topics and cache-drain hot reload remain
   planned design space; they are not implemented or required for the current startup-time
   assignment contract.
@@ -3277,7 +3301,7 @@ exact-member routes stay explicit through `Exclusive` pinned topics.
 - [../documents/architecture/engine_pool_routing.md](../documents/architecture/engine_pool_routing.md) - substrate-neutral engine-pool routing doctrine.
 - [../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md) - coordinator and engine pool topology.
 - [../documents/tools/pulsar.md](../documents/tools/pulsar.md) - shared-pool and pinned-route subscription rules.
-- [../documents/operations/apple_silicon_runbook.md](../documents/operations/apple_silicon_runbook.md) - operator-facing Apple multi-host pool behavior.
+- [../documents/operations/apple_silicon_runbook.md](../documents/operations/apple_silicon_runbook.md) - operator-facing Apple host-member pool behavior.
 
 **Product or reference docs to create/update:**
 - [../documents/development/demo_app_test_plan.md](../documents/development/demo_app_test_plan.md) - durable-context validation references when singleton tests move.

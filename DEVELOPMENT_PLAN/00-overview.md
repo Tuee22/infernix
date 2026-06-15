@@ -49,10 +49,12 @@ the cohort gates. On Apple Silicon
 the Haskell binaries build host-native and run on the host against Metal. Sprint 1.14 removes the
 legacy Sprint 1.13 `tart` / `hostTart` / `AppleTart` implementation from the current host-tool
 schema and retargets the retained `materialize-metal-engines` command to typed engine-artifact
-manifests. The materializer now writes the fixed host Metal bridge source and smoke command; the
-remaining Apple cohort gate is executing that smoke and loading a native/Core ML artifact. The
-headless target uses no Tart VM, no user keychain dependency, no host Xcode UI flow, and no
-request-time toolchain installation. The Apple clean-host bootstrap hardening is implemented and validated: the stage-0
+manifests. The materializer now writes the fixed host Metal bridge source and smoke command, and it
+also writes and smoke-loads the `coreml-native` runner from the temp root before atomic install.
+The current Apple host pass executes both installed smoke commands. The remaining
+Apple cohort gate is the Apple integration/e2e/all evidence against the reopened real-output
+surface. The headless target uses no Tart VM, no user keychain dependency, no host Xcode UI flow,
+and no request-time toolchain installation. The Apple clean-host bootstrap hardening is implemented and validated: the stage-0
 entrypoint verifies same-process ghcup-managed `ghc` and `cabal` resolution before direct
 `cabal install`, reconciles Homebrew `protoc`, and lets Apple adapter setup or validation paths
 reconcile the Homebrew-managed `python@3.12` formula and `python3.12` command plus a user-local
@@ -91,14 +93,35 @@ so retry recovery does not depend on a previously retained target tag. The under
 they exercised still describe supported behavior; revalidation on the new host is tracked by
 [cohort-validation-waves.md](cohort-validation-waves.md).
 
-**Cohort validation status (present development host = native CUDA Linux).** Consistent with the
-two-axis doctrine — implement and run code-side closure on whichever single machine is present — the
-present development host is a native CUDA Linux host (x86_64 + NVIDIA RTX 5090). Code-side closure
-for every open phase proceeds here with no machine switch, and the CUDA Linux cohort full-suite
-(`linux-cpu` and `linux-gpu`) is producible on this host directly; the single remaining cohort
-switch is to an Apple Silicon machine for the Apple cohort wave (Metal, including headless
-Metal/Core ML materialization and the `apple-silicon` catalog rows). The legacy dated proof points are
-inventoried in
+**Cohort validation status (present development host = Apple Silicon).** Consistent with the
+two-axis doctrine — implement and run code-side closure on whichever single machine is present —
+the current workspace is Apple Silicon (`Darwin arm64`) with the selected Docker daemon reporting
+native `linux/arm64`. Apple host-native gates proceed here without a machine switch; CUDA Linux
+Wave I work remains scheduled for a native CUDA Linux host. The current Apple-side Wave I pass
+builds the host binaries, materializes the `apple-silicon` substrate and typed Metal/Core ML engine
+manifests, proves the generated Metal runtime bridge smoke, and proves the installed
+`coreml-native` runtime-load smoke (`Core ML runtime probe passed`). It also materializes
+smoke-capable Apple native validation runners for the allowlisted native adapter ids. It does not
+close Wave I: the current Apple integration evidence completes the active Apple catalog through the
+host engine daemon with deterministic validation-wrapper payloads while real native payloads remain
+cohort work. The latest Apple integration rerun passed after rebuilding the changed repo-owned
+image once, then reusing the stamped `infernix-linux-cpu:local` image on the edge-port rediscovery
+cluster cycles. The run completed cache lifecycle, service runtime loop, durable Pulsar topic
+families, pinned Apple host-engine `Exclusive` duplicate-consumer rejection through an isolated
+`infernix service --config` file, same-machine Apple host-member coexistence on one derived
+`Shared` pool subscription with two real Pulsar consumers and a completed request, production-shape
+Apple `demo_ui = false` route/publication assertions, and edge-port conflict rediscovery.
+Investigation of the earlier long Docker interval showed active Cabal dependency compilation,
+image export, Harbor push, and Helm/Pulsar readiness waits rather than a Docker daemon deadlock;
+current source stamps repo-owned cluster images with a source fingerprint, allows host-native Apple
+reuse only when that fingerprint, runtime mode, architecture, and pushable manifest shape match,
+and splits the Dockerfile dependency layer so ordinary source edits do not redownload
+Cabal/NPM/Poetry dependencies. The native arm64 Docker lane also rebuilds the `linux-cpu` launcher
+and proves a fresh-container `infernix internal materialize-linux-native-engines` rerun can replace
+image-layer baked `/opt/infernix/engines/<adapterId>/` roots without the earlier cross-device
+rename failure. Apple e2e/all and CUDA Linux still own the remaining real payload plus full-suite
+proof. The legacy
+dated proof points are inventoried in
 [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) under "Retired Historical
 Validation Evidence". The underlying contracts they exercised still describe supported behavior,
 but the proof points themselves are not current. Revalidation is tracked by

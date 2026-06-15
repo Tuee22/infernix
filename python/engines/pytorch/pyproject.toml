@@ -1,7 +1,8 @@
 [tool.poetry]
 # Phase 4 Sprint 4.16 — isolated PyTorch engine venv (source-separation:
-# Demucs / Open-Unmix, and audio-generation: Bark, on linux-gpu). cu128 torch
-# for Blackwell. Optional `cuda` group keeps the default install
+# Demucs / Open-Unmix, and audio-generation: Bark). CUDA uses cu128 torch for
+# Blackwell; Apple host-native inference uses the upstream Darwin arm64 torch
+# and torchaudio wheels. Optional groups keep the default install
 # framework-free. See documents/development/python_policy.md "Per-Engine
 # Framework Venvs".
 name = "infernix-engine-pytorch"
@@ -18,8 +19,20 @@ infernix-adapters = { path = "../..", develop = true }
 optional = true
 
 [tool.poetry.group.cuda.dependencies]
-torch = { version = ">=2.7", source = "pytorch-cu128" }
-torchaudio = { version = ">=2.7", source = "pytorch-cu128" }
+torch = { version = ">=2.7", source = "pytorch-cu128", markers = "platform_system == 'Linux' and platform_machine == 'x86_64'" }
+torchaudio = { version = ">=2.7", source = "pytorch-cu128", markers = "platform_system == 'Linux' and platform_machine == 'x86_64'" }
+transformers = ">=4.46"
+demucs = ">=4.0"
+scipy = ">=1.13"
+soundfile = ">=0.12"
+numpy = ">=1.26"
+
+[tool.poetry.group.apple-silicon]
+optional = true
+
+[tool.poetry.group.apple-silicon.dependencies]
+torch = { version = ">=2.7", markers = "platform_system == 'Darwin' and platform_machine == 'arm64'" }
+torchaudio = { version = ">=2.7", markers = "platform_system == 'Darwin' and platform_machine == 'arm64'" }
 transformers = ">=4.46"
 demucs = ">=4.0"
 scipy = ">=1.13"

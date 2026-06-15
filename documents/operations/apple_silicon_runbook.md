@@ -38,7 +38,9 @@
   transient registry resets
 - retained-state Apple reruns may also log a targeted Harbor PostgreSQL replica reinitialization
   from the current Patroni leader when stopped replicas need a fresh base backup after timeline
-  advancement; treat that as supported retained-state repair rather than an unexpected failure mode
+  advancement, or a non-waiting recycle of unready Harbor PostgreSQL startup pods when Patroni
+  readiness does not converge; treat those as supported retained-state repair rather than
+  unexpected failure modes
 - Apple Metal/Core ML engine materialization uses a Tart-free headless host lane. The retained
   `materialize-metal-engines` helper name now writes typed engine-artifact manifests; the Apple
   cohort still owns the host Metal runtime bridge smoke and native artifact load evidence named in
@@ -72,6 +74,14 @@ Direct reference path:
   `build-cluster-images`, `publish-harbor-images`, `preload-harbor-images`, and
   `replay-retained-state`; a cold `build-cluster-images` phase can remain healthy well past
   twenty minutes before Harbor publication begins
+- on host-native Apple, `build-cluster-images` reuses `infernix-linux-cpu:local` only when the local
+  image carries the current source fingerprint, runtime-mode label, architecture, and pushable
+  manifest shape; the first run after source changes may rebuild, while unchanged-source reruns
+  should reuse the stamped image before Harbor publication
+- `infernix test integration` may perform several internal cluster cycles. A source edit changes
+  the fingerprint and forces one rebuild; subsequent cycles in the same run should print
+  `reusing cluster image for linux-cpu: infernix-linux-cpu:local` when source is unchanged. The
+  2026-06-15 Apple integration rerun exercised that pattern and completed successfully.
 - `publish-harbor-images` includes readiness-gated bounded retries for Docker push failures, so a
   transient registry reset during large-image publication is not a hard failure unless the retry
   budget is exhausted and the image is still neither tagged nor pullable; repo-owned local images
@@ -90,6 +100,8 @@ Direct reference path:
 - if a retained-state rerun logs Harbor PostgreSQL replica repair from the current leader, treat
   that as an expected recovery step on the supported path and wait for the same heartbeat-driven
   progress rules instead of treating the repair itself as hard failure
+- if warmup logs a Harbor PostgreSQL startup-pod recycle, the delete is intentionally non-waiting;
+  StatefulSet recreation and final readiness are owned by the surrounding lifecycle wait loop
 
 ## Rules
 
@@ -124,8 +136,8 @@ Direct reference path:
 - on `apple-silicon`, the clustered demo and coordinator workloads run from the
   `infernix-linux-cpu:local` image family while reading the staged `apple-silicon` substrate file;
   the coordinator role owns request fan-in and batch handoff, not Apple-native inference
-  execution, and the host-native `infernix` binary builds and publishes that image family to
-  Harbor after Harbor is responsive
+  execution, and the host-native `infernix` binary builds or freshness-reuses that image family and
+  publishes it to Harbor after Harbor is responsive
 - `/api/publication` keeps the routed demo API on `apiUpstream.mode: cluster-demo`, reports
   `daemonLocation: cluster-pod`, reports `inferenceExecutorLocation: control-plane-host`, and
   publishes `inferenceDispatchMode: pulsar-bridge-to-host-daemon` so the routed demo surface can
@@ -136,7 +148,10 @@ Direct reference path:
   edge) from published cluster state when needed, and forks Python adapters from `python/adapters/`
   only when the bound engine is Python-native. Normal Apple pools use Pulsar `Shared`
   subscriptions across distinct host ids so broker-native backpressure assigns work to available
-  hosts; exact-host routes use derived per-host topics with `Exclusive`.
+  hosts; exact-host routes use derived per-host topics with `Exclusive`. Current Apple integration
+  evidence includes two same-machine host-member daemons on one `Shared` subscription; physical
+  multi-host distribution is hardware-deferred, and the current Wave J backlog/backpressure gate is
+  a single-host logical multi-member Pulsar harness.
 - model weights for the host engine come from the `infernix-models` MinIO bucket via the
   same lazy bootstrap workflow the in-cluster Linux engine pods use. The host daemon caches
   weights under `./.data/runtime/model-cache/<modelId>/`; this cache is host-local ephemeral

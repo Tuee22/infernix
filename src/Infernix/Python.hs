@@ -2,13 +2,16 @@
 
 module Infernix.Python
   ( ensurePoetryExecutable,
+    ensurePoetryProjectInstalledWithGroups,
+    ensurePoetryProjectReadyWithGroups,
     ensurePoetryProjectReady,
     pythonAdaptersPresent,
     pythonProjectDirectory,
   )
 where
 
-import Control.Exception (throwIO)
+import Control.Concurrent (threadDelay)
+import Control.Exception (bracket_, throwIO)
 import Control.Monad (unless)
 import Data.Text qualified as Text
 import Infernix.Config (ControlPlaneContext (HostNative), Paths (..), controlPlaneContext)
@@ -17,14 +20,17 @@ import Infernix.HostConfig qualified as HostConfig
 import Infernix.Internal.Util (allM, findFirstM, firstJustM)
 import Infernix.Types (RuntimeMode)
 import System.Directory
-  ( createDirectoryIfMissing,
+  ( createDirectory,
+    createDirectoryIfMissing,
     doesDirectoryExist,
     doesFileExist,
     findExecutable,
     listDirectory,
+    removeDirectory,
   )
 import System.Exit (ExitCode (ExitSuccess))
 import System.FilePath ((</>))
+import System.IO.Error (catchIOError, isAlreadyExistsError, isDoesNotExistError)
 import System.Info (os)
 import System.Process (CreateProcess (cwd), proc, readCreateProcessWithExitCode)
 
@@ -75,17 +81,59 @@ ensurePoetryExecutable paths = do
       | otherwise -> throwIO PoetryUnavailable
 
 ensurePoetryProjectReady :: Paths -> FilePath -> IO ()
-ensurePoetryProjectReady paths projectDirectory = do
+ensurePoetryProjectReady paths projectDirectory =
+  ensurePoetryProjectReadyWithGroups paths projectDirectory []
+
+ensurePoetryProjectReadyWithGroups :: Paths -> FilePath -> [String] -> IO ()
+ensurePoetryProjectReadyWithGroups paths projectDirectory optionalGroups = do
+  ensurePoetryProjectInstalledWithGroups paths projectDirectory optionalGroups
+  ensureGeneratedPythonProto paths projectDirectory
+
+ensurePoetryProjectInstalledWithGroups :: Paths -> FilePath -> [String] -> IO ()
+ensurePoetryProjectInstalledWithGroups paths projectDirectory optionalGroups = do
   projectPresent <- doesDirectoryExist projectDirectory
   if not projectPresent
     then throwIO (PythonProjectMissing projectDirectory)
     else do
-      runPoetryCommand
-        paths
-        projectDirectory
-        ["install", "--directory", projectDirectory]
-        ("failed to install poetry project " <> projectDirectory)
-      ensureGeneratedPythonProto paths projectDirectory
+      withPoetryProjectInstallLock projectDirectory $
+        runPoetryCommand
+          paths
+          projectDirectory
+          (["install", "--directory", projectDirectory] <> optionalGroupArgs optionalGroups)
+          ("failed to install poetry project " <> projectDirectory)
+
+withPoetryProjectInstallLock :: FilePath -> IO a -> IO a
+withPoetryProjectInstallLock projectDirectory =
+  bracket_ acquireLock releaseLock
+  where
+    lockDirectory = projectDirectory </> ".infernix-poetry-install.lock"
+    acquireLock = go (600 :: Int)
+      where
+        go remainingAttempts
+          | remainingAttempts <= 0 =
+              ioError (userError ("timed out waiting for Poetry project install lock: " <> lockDirectory))
+          | otherwise =
+              catchIOError
+                (createDirectory lockDirectory)
+                ( \err ->
+                    if isAlreadyExistsError err
+                      then do
+                        threadDelay 500000
+                        go (remainingAttempts - 1)
+                      else ioError err
+                )
+    releaseLock =
+      catchIOError
+        (removeDirectory lockDirectory)
+        ( \err ->
+            unless (isDoesNotExistError err) (ioError err)
+        )
+
+optionalGroupArgs :: [String] -> [String]
+optionalGroupArgs optionalGroups =
+  case filter (not . null) optionalGroups of
+    [] -> []
+    groups -> ["--with", Text.unpack (Text.intercalate "," (map Text.pack groups))]
 
 ensureGeneratedPythonProto :: Paths -> FilePath -> IO ()
 ensureGeneratedPythonProto paths projectDirectory = do

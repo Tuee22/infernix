@@ -110,8 +110,9 @@ inferenceBatchTopicName :: TopicNamespace -> Text -> Text
 inferenceBatchTopicName ns substrateId =
   qualifiedTopic ns ("inference.batch." <> substrateId)
 
--- | Model-weight bootstrap request topic. Producer dedup keyed by @modelId@;
--- Failover subscription guarantees exactly-one upstream download.
+-- | Model-weight bootstrap request topic. Producer dedup is scoped to an
+-- individual request attempt; Failover subscription owns coordinator
+-- leadership while the message key remains @modelId@.
 modelBootstrapRequestTopicName :: TopicNamespace -> Text
 modelBootstrapRequestTopicName ns =
   qualifiedTopic ns "model.bootstrap.request"

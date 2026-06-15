@@ -91,7 +91,7 @@ operations have a buildx-capable CLI when needed.
 - the substrate image uses `tini` as its `ENTRYPOINT` so PID 1 forwards signals cleanly and reaps
   zombie processes for cluster lifecycle commands
 - the baked launcher binaries under `/usr/local/bin/` are authoritative
-- the shared substrate images bake `/opt/infernix/source-snapshot-files.txt` before later
+- the shared substrate images bake a pruned `/opt/infernix/source-snapshot-files.txt` before later
   generated outputs are created so git-less image runs of `infernix lint files` validate the
   source snapshot rather than the mutated runtime tree; the manifest stays in the image overlay
 - mounted-source outer-container runs execute `git ls-files` with a scoped
@@ -101,6 +101,14 @@ operations have a buildx-capable CLI when needed.
   `infernix-linux-<mode>:local` snapshot selected by the launcher and publishes that image into
   Harbor before final rollout instead of asking the shell bootstrap to build or push images
   directly
+- on the Apple host-native path, `cluster up` computes a deterministic source fingerprint for the
+  `infernix-linux-cpu:local` cluster workload image inputs and reuses the local image only when the
+  fingerprint label, fingerprint-version label, runtime-mode label, target architecture, and
+  non-index manifest shape match; otherwise it rebuilds and stamps the refreshed image before
+  Harbor publication
+- `docker/Dockerfile` installs Cabal/NPM/Poetry dependency layers from package metadata before the
+  full source copy, then performs protobuf generation, project build, native-engine materialization,
+  web build, and Python checks after the full source is present
 - cluster-backed outer-container commands keep host-published Kind API and routed ports on
   `127.0.0.1`
 - cluster-backed outer-container commands join the private Docker `kind` network and use

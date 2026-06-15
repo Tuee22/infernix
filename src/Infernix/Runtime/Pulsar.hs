@@ -24,6 +24,7 @@ module Infernix.Runtime.Pulsar
     validateDemoClientMessageCatalog,
     ensureRegisteredSchemasWithRetry,
     ensureSchemaMarkers,
+    modelCacheBootstrapRetryableError,
     reconcileSupportedNamespacesWithRetry,
     renderPulsarWebSocketBase,
     publishInferenceRequest,
@@ -41,6 +42,8 @@ module Infernix.Runtime.Pulsar
     runResultBridgeLoop,
     schemaMarkerPath,
     serviceConsumerSubscriptionType,
+    serviceConsumerSubscriptionTypeForTopic,
+    serviceConsumerName,
     serviceReadinessMarkerPath,
     topicDirectoryPath,
     writeServiceReadinessMarker,
@@ -113,6 +116,7 @@ import Infernix.Models
     findModel,
   )
 import Infernix.Objects.Presigned qualified as Presigned
+import Infernix.Python (ensurePoetryExecutable)
 import Infernix.Runtime (executeInferenceWithKVCache)
 import Infernix.Runtime.KVCache qualified as KVCache
 import Infernix.Runtime.Pulsar.Failover qualified as PulsarFailover
@@ -135,6 +139,7 @@ import Network.HTTP.Client
     responseBody,
     responseStatus,
   )
+import Network.HTTP.Client.TLS (tlsManagerSettings)
 import Network.HTTP.Types.Status (statusCode)
 import Network.WebSockets qualified as WebSockets
 import Proto.Infernix.Runtime.Inference qualified as ProtoInference
@@ -1012,21 +1017,27 @@ publishModelBootstrapRequest paths runtimeMode maybeClusterConfig request = do
                 <> "; no Pulsar transport could be discovered"
             )
         )
-    Just transport -> do
-      let systemNamespace = ConversationTopic.systemTopicNamespace
-          requestTopic = ConversationTopic.modelBootstrapRequestTopicName systemNamespace
-          dedupKey = BootstrapModels.bootstrapRequestDedupKey request
-          options =
-            (defaultPublishOptions ("infernix-engine-model-bootstrap-" <> dedupKey))
-              { publishMessageKey = Just dedupKey,
-                publishSequenceId = Just (stableSequenceId dedupKey)
-              }
-      publishTopicPayload
-        transport
-        requestTopic
-        options
-        dedupKey
-        (Lazy.toStrict (encode request))
+    Just transport -> publishModelBootstrapRequestViaTransport transport request
+
+publishModelBootstrapRequestViaTransport ::
+  PulsarTransport ->
+  BootstrapModels.ModelBootstrapRequest ->
+  IO ()
+publishModelBootstrapRequestViaTransport transport request = do
+  let systemNamespace = ConversationTopic.systemTopicNamespace
+      requestTopic = ConversationTopic.modelBootstrapRequestTopicName systemNamespace
+      dedupKey = BootstrapModels.bootstrapRequestDedupKey request
+      options =
+        (defaultPublishOptions ("infernix-engine-model-bootstrap-" <> dedupKey))
+          { publishMessageKey = Just (BootstrapModels.bootstrapRequestModelId request),
+            publishSequenceId = Just (stableSequenceId dedupKey)
+          }
+  publishTopicPayload
+    transport
+    requestTopic
+    options
+    dedupKey
+    (Lazy.toStrict (encode request))
 
 readRawTopicPayloads ::
   Paths ->
@@ -1294,7 +1305,7 @@ drainInferenceTopic paths runtimeMode overrides maybeEngineKVCache resultTopicVa
       Left err ->
         ioError (userError ("failed to decode inference request from " <> requestPath <> ": " <> err))
       Right protoRequest -> do
-        publishedResult <- publishedResultFromRequest paths runtimeMode overrides maybeEngineKVCache protoRequest
+        publishedResult <- publishedResultFromRequest Nothing paths runtimeMode overrides maybeEngineKVCache protoRequest
         createDirectoryIfMissing True (topicDirectoryPath paths resultTopicValue)
         writeInferenceResultFile
           (topicDirectoryPath paths resultTopicValue </> Text.unpack (requestId publishedResult) <.> "pb")
@@ -2063,7 +2074,7 @@ consumeTopicForever ::
   Text.Text ->
   IO ()
 consumeTopicForever transport paths runtimeMode overrides daemonConfig demoConfig maybeEngineKVCache requestTopicValue =
-  case serviceConsumerSubscriptionType runtimeMode daemonConfig of
+  case serviceConsumerSubscriptionTypeForTopic runtimeMode daemonConfig requestTopicValue of
     Left err -> ioError (userError err)
     Right subscriptionType ->
       forever $ do
@@ -2100,15 +2111,31 @@ isFatalServiceConsumerError subscriptionType err =
     errorText = Text.toLower (Text.pack (displayException err))
 
 serviceConsumerSubscriptionType :: RuntimeMode -> DaemonConfig -> Either String ConsumerSubscriptionType
-serviceConsumerSubscriptionType _runtimeMode daemonConfig
+serviceConsumerSubscriptionType runtimeMode daemonConfig =
+  serviceConsumerSubscriptionTypeForTopic runtimeMode daemonConfig ""
+
+serviceConsumerSubscriptionTypeForTopic :: RuntimeMode -> DaemonConfig -> Text.Text -> Either String ConsumerSubscriptionType
+serviceConsumerSubscriptionTypeForTopic runtimeMode daemonConfig requestTopicValue
   | selectedType == ConsumerFailover =
       Left "service consumers must not use Failover; Failover is reserved for coordinator-owned dispatcher, result-bridge, and model-bootstrap leadership loops"
   | daemonConfigRole daemonConfig /= Engine && selectedType /= ConsumerShared =
       Left "coordinator service consumers use Shared; Exclusive is reserved for pinned engine member routes"
+  | daemonConfigRole daemonConfig == Engine
+      && isPinnedEngineMemberTopic runtimeMode requestTopicValue =
+      Right ConsumerExclusive
   | otherwise = Right selectedType
   where
     selectedType =
       fromMaybe ConsumerShared (daemonConfigConsumerSubscriptionType daemonConfig)
+
+isPinnedEngineMemberTopic :: RuntimeMode -> Text.Text -> Bool
+isPinnedEngineMemberTopic runtimeMode requestTopicValue =
+  pinnedPrefix `Text.isPrefixOf` requestTopicValue
+  where
+    pinnedPrefix =
+      "persistent://infernix/demo/inference.batch."
+        <> runtimeModeId runtimeMode
+        <> ".member."
 
 consumeTopicSession ::
   PulsarTransport ->
@@ -2190,7 +2217,7 @@ consumeTopicSession transport paths runtimeMode overrides daemonConfig demoConfi
           publishedResult <-
             if Text.null modelIdValue
               then pure (emptyModelIdRejectionResult runtimeMode decodedRequest)
-              else publishedResultFromRequest paths runtimeMode overrides maybeEngineKVCache decodedRequest
+              else publishedResultFromRequest (Just transport) paths runtimeMode overrides maybeEngineKVCache decodedRequest
           -- Phase 7 Sprint 7.14 follow-on (2026-05-30): one-line trace per
           -- engine-side inference so the host daemon log surfaces the
           -- request id, resolved model id, and final status. Diagnoses
@@ -2226,7 +2253,7 @@ serviceConsumerName subscriptionName subscriptionType processLabel =
   case subscriptionType of
     ConsumerFailover ->
       Text.unpack (PulsarFailover.failoverConsumerName (Text.pack subscriptionName) processLabel)
-    _ -> subscriptionName <> "-consumer"
+    _ -> subscriptionName <> "-consumer-" <> sanitizeTopic processLabel
 
 batchTopicForRequest :: RuntimeMode -> DemoConfig -> Text.Text -> ProtoInference.InferenceRequest -> Text.Text
 batchTopicForRequest runtimeMode demoConfig fallbackTopic requestValue =
@@ -2545,7 +2572,7 @@ runDispatcherLoop transport runtimeMode requestTopic topicNamespace contextModel
   | otherwise = do
       managedContexts <- newMVar Set.empty
       managedUsers <- newMVar Set.empty
-      manager <- newManager defaultManagerSettings
+      manager <- newManager tlsManagerSettings
       forever $ do
         outcome <-
           try @SomeException
@@ -2988,21 +3015,24 @@ publishDispatchedInferenceRequest transport runtimeMode requestTopic resolvedMod
 --    duplicate work after Failover handoff is a no-op (the helper
 --    'sentinelExistsInMinio' returns @True@ when the object is
 --    already present; we skip straight to publishing the ready event).
--- 2. HTTP @GET@ the upstream @downloadUrl@ carried on the request
+-- 2. Materialize the upstream @downloadUrl@ carried on the request
 --    envelope (this is the only point in the supported daemon
---    topology that reaches the public internet).
--- 3. @PUT@ the downloaded bytes to MinIO under
---    @infernix-models/<modelId>/payload@ via a presigned PUT URL
---    minted from mounted @ClusterConfig.minio@ wiring and
+--    topology that reaches the public internet). Hugging Face model
+--    repository URLs are downloaded as snapshots; non-repository URLs
+--    keep the single-payload fallback.
+-- 3. @PUT@ the materialized model files to MinIO under
+--    @infernix-models/<modelId>/...@ via S3 credentials minted from
+--    mounted @ClusterConfig.minio@ wiring and
 --    @SecretsConfig.minio.credentialsPath@ credentials.
 -- 4. @PUT@ the @.ready@ sentinel last so partial uploads are not
 --    visible to engines (the engine helper waits on this sentinel).
 -- 5. Publish a 'ModelBootstrapReadyEvent' on the matching ready topic
 --    and ack the original request.
 --
--- Producer-side dedup on the request topic (keyed by @modelId@) and
--- the named Failover subscription together give exactly-once
--- semantics for the upstream download under concurrent retries.
+-- Producer-side dedup on the request topic is scoped to the request
+-- attempt, while the message key remains @modelId@. Exact replays of
+-- the same request collapse; later recovery attempts can still enqueue
+-- work if a previous attempt never produced readiness.
 runModelBootstrapLoop ::
   PulsarTransport ->
   ConversationTopic.TopicNamespace ->
@@ -3116,17 +3146,71 @@ processBootstrapRequest transport systemNamespace request = do
                 Contracts.objectKey =
                   modelId <> "/" <> BootstrapModels.readySentinelFilename
               }
-      manager <- newManager defaultManagerSettings
+      manager <- newManager tlsManagerSettings
       now <- getCurrentTime
       sentinelPresent <- minioObjectExists presigned manager sentinelObject
       if sentinelPresent
         then publishBootstrapReadyEvent transport systemNamespace request
         else do
-          downloadedBytes <-
-            downloadUpstreamModel manager (BootstrapModels.bootstrapRequestDownloadUrl request)
-          putMinioObject presigned manager now payloadObject downloadedBytes
-          putMinioObject presigned manager now sentinelObject "ready\n"
+          if isHuggingFaceModelRepoUrl (BootstrapModels.bootstrapRequestDownloadUrl request)
+            then runModelBootstrapSnapshotHelper presigned request
+            else do
+              downloadedBytes <-
+                downloadUpstreamModel manager (BootstrapModels.bootstrapRequestDownloadUrl request)
+              putMinioObject presigned manager now payloadObject downloadedBytes
+              putMinioObject presigned manager now sentinelObject "ready\n"
           publishBootstrapReadyEvent transport systemNamespace request
+
+isHuggingFaceModelRepoUrl :: Text.Text -> Bool
+isHuggingFaceModelRepoUrl rawUrl =
+  ("https://huggingface.co/" `Text.isPrefixOf` rawUrl || "http://huggingface.co/" `Text.isPrefixOf` rawUrl)
+    && not ("/resolve/" `Text.isInfixOf` rawUrl)
+    && not ("/blob/" `Text.isInfixOf` rawUrl)
+
+runModelBootstrapSnapshotHelper ::
+  Presigned.PresignedUrlConfig ->
+  BootstrapModels.ModelBootstrapRequest ->
+  IO ()
+runModelBootstrapSnapshotHelper presigned request = do
+  paths <- discoverPaths
+  poetryExecutable <- ensurePoetryExecutable paths
+  let minioEndpoint =
+        Presigned.presignedScheme presigned
+          <> "://"
+          <> Presigned.presignedEndpoint presigned
+      args =
+        [ "--directory",
+          "python",
+          "run",
+          "bootstrap-model-snapshot",
+          "--model-id",
+          Text.unpack (BootstrapModels.bootstrapRequestModelId request),
+          "--download-url",
+          Text.unpack (BootstrapModels.bootstrapRequestDownloadUrl request),
+          "--minio-endpoint",
+          Text.unpack minioEndpoint,
+          "--minio-access-key",
+          Text.unpack (Presigned.presignedAccessKeyId presigned),
+          "--minio-secret-key",
+          Text.unpack (Presigned.presignedSecretAccessKey presigned),
+          "--minio-region",
+          Text.unpack (Presigned.presignedRegion presigned),
+          "--models-bucket",
+          "infernix-models"
+        ]
+  (exitCode, stdoutOutput, stderrOutput) <- readProcessWithExitCode poetryExecutable args ""
+  case exitCode of
+    ExitSuccess -> pure ()
+    _ ->
+      ioError
+        ( userError
+            ( "model-bootstrap snapshot helper failed for "
+                <> Text.unpack (BootstrapModels.bootstrapRequestModelId request)
+                <> ":\n"
+                <> stdoutOutput
+                <> stderrOutput
+            )
+        )
 
 publishBootstrapReadyEvent ::
   PulsarTransport ->
@@ -3365,15 +3449,17 @@ emptyModelIdRejectionTimestamp =
     Nothing -> error "internal: failed to parse fixed epoch timestamp"
 
 publishedResultFromRequest ::
+  Maybe PulsarTransport ->
   Paths ->
   RuntimeMode ->
   EngineCommandOverrideMap ->
   Maybe KVCache.EngineKVCache ->
   ProtoInference.InferenceRequest ->
   IO InferenceResult
-publishedResultFromRequest paths runtimeMode overrides maybeEngineKVCache protoRequest = do
+publishedResultFromRequest maybeTransport paths runtimeMode overrides maybeEngineKVCache protoRequest = do
   domainResult <-
-    executeInferenceWithKVCache
+    executeInferenceWithModelBootstrapRetry
+      maybeTransport
       paths
       runtimeMode
       overrides
@@ -3412,6 +3498,117 @@ publishedResultFromRequest paths runtimeMode overrides maybeEngineKVCache protoR
             resultContextId = envelopeContextId,
             resultCausalRef = envelopeCausalRef
           }
+
+executeInferenceWithModelBootstrapRetry ::
+  Maybe PulsarTransport ->
+  Paths ->
+  RuntimeMode ->
+  EngineCommandOverrideMap ->
+  Maybe KVCache.EngineKVCache ->
+  Maybe KVCache.KVCacheRequest ->
+  InferenceRequest ->
+  IO (Either ErrorResponse InferenceResult)
+executeInferenceWithModelBootstrapRetry maybeTransport paths runtimeMode overrides maybeEngineKVCache maybeKVCacheRequest requestValue = do
+  firstResult <- runOnce
+  case firstResult of
+    Left errorValue
+      | modelCacheBootstrapRetryableError errorValue ->
+          case maybeTransport of
+            Nothing -> pure firstResult
+            Just transport -> bootstrapAndRetry transport errorValue
+    _ -> pure firstResult
+  where
+    runOnce =
+      executeInferenceWithKVCache
+        paths
+        runtimeMode
+        overrides
+        maybeEngineKVCache
+        maybeKVCacheRequest
+        requestValue
+    bootstrapAndRetry transport errorValue =
+      case findModel runtimeMode (requestModelId requestValue) of
+        Nothing -> pure (Left errorValue)
+        Just model -> do
+          request <- modelBootstrapRequestFor model
+          publishModelBootstrapRequestViaTransport transport request
+          ready <-
+            waitForModelBootstrapReady
+              transport
+              (BootstrapModels.bootstrapRequestModelId request)
+          if ready
+            then runOnce
+            else
+              pure
+                ( Left
+                    ErrorResponse
+                      { errorCode = "model_cache_bootstrap_timeout",
+                        message =
+                          "Timed out waiting for model bootstrap readiness for "
+                            <> BootstrapModels.bootstrapRequestModelId request
+                            <> " after publishing a bootstrap request."
+                      }
+                )
+
+modelBootstrapRequestFor :: ModelDescriptor -> IO BootstrapModels.ModelBootstrapRequest
+modelBootstrapRequestFor model = do
+  now <- getCurrentTime
+  pure
+    BootstrapModels.ModelBootstrapRequest
+      { BootstrapModels.bootstrapRequestModelId = modelId model,
+        BootstrapModels.bootstrapRequestDownloadUrl = downloadUrl model,
+        BootstrapModels.bootstrapRequestRequestedAtIso8601 =
+          Text.pack (formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%SZ" now)
+      }
+
+modelBootstrapReadyWaitAttempts :: Int
+modelBootstrapReadyWaitAttempts = 240
+
+waitForModelBootstrapReady :: PulsarTransport -> Text.Text -> IO Bool
+waitForModelBootstrapReady transport modelIdValue = do
+  topicRef <- requireTopicRef readyTopic
+  let readerName = "infernix-read-" <> sanitizeTopic readyTopic <> "-ready"
+      readerPath = buildReaderSocketPath (pulsarWebSocketBase transport) topicRef readerName
+  runPulsarWebSocketClient (pulsarWebSocketBase transport) readerPath $ \connection ->
+    go connection modelBootstrapReadyWaitAttempts
+  where
+    readyTopic =
+      BootstrapModels.bootstrapReadyTopicFor
+        (qualifiedReadyTopicPrefix ConversationTopic.systemTopicNamespace)
+        modelIdValue
+    go connection remainingAttempts
+      | remainingAttempts <= 0 = pure False
+      | otherwise = do
+          maybeRawEnvelope <- timeout 250000 (receiveJsonFrame "Pulsar model-bootstrap ready reader message" connection)
+          case maybeRawEnvelope of
+            Nothing -> go connection (remainingAttempts - 1)
+            Just rawEnvelope -> do
+              envelope <- decodeJsonText "Pulsar model-bootstrap ready reader message" rawEnvelope
+              sendAck connection (envelopeMessageId envelope)
+              payloadBytes <- decodeEnvelopeBase64Payload "model-bootstrap ready" envelope
+              if matchesReadyEvent payloadBytes
+                then pure True
+                else go connection (remainingAttempts - 1)
+    matchesReadyEvent payloadBytes =
+      case eitherDecodeStrict' payloadBytes of
+        Right readyEvent ->
+          BootstrapModels.readyEventModelId readyEvent == modelIdValue
+        Left _ -> False
+
+modelCacheBootstrapRetryableError :: ErrorResponse -> Bool
+modelCacheBootstrapRetryableError errorValue =
+  errorCode errorValue == "model_cache_not_populated"
+    || ( errorCode errorValue == "adapter_failed"
+           && any (`Text.isInfixOf` messageText) retryableMessageFragments
+       )
+  where
+    messageText = Text.toLower (message errorValue)
+    retryableMessageFragments =
+      [ "modelcachenotpopulated",
+        "missing the .ready sentinel",
+        "published the .ready sentinel",
+        "model cache config"
+      ]
 
 kvCacheRequestFromProto :: ProtoInference.InferenceRequest -> Maybe KVCache.KVCacheRequest
 kvCacheRequestFromProto protoRequest = do
@@ -3494,8 +3691,9 @@ decodeJsonText label rawValue =
     Right decodedValue -> pure decodedValue
 
 runPulsarWebSocketClient :: PulsarWebSocketBase -> String -> (WebSockets.Connection -> IO a) -> IO a
-runPulsarWebSocketClient websocketBase =
-  WebSockets.runClient (pulsarWsHost websocketBase) (pulsarWsPort websocketBase)
+runPulsarWebSocketClient websocketBase socketPath action =
+  WebSockets.runClient (pulsarWsHost websocketBase) (pulsarWsPort websocketBase) socketPath $ \connection ->
+    WebSockets.withPingThread connection 15 (pure ()) (action connection)
 
 -- | Build the Pulsar WebSocket producer URL with stable @producerName@
 -- plus optional @initialSequenceId@ query parameters so the broker-side

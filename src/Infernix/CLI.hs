@@ -105,7 +105,7 @@ dispatch command =
   case command of
     ShowRootHelp -> putStrLn helpText
     ShowTopicHelp topic -> putStrLn (topicHelpText topic)
-    ServiceCommand maybeRole maybeEngineName -> runService Nothing maybeRole (Text.pack <$> maybeEngineName)
+    ServiceCommand maybeRole maybeEngineName maybeConfigPath -> runService Nothing maybeRole (Text.pack <$> maybeEngineName) maybeConfigPath
     ClusterUpCommand -> clusterUp Nothing
     ClusterDownCommand -> clusterDown Nothing
     ClusterStatusCommand -> clusterStatus Nothing
@@ -188,7 +188,7 @@ validateCommandExecutionContext command = do
   where
     runtimeModeForCommand selectedCommand =
       case selectedCommand of
-        ServiceCommand _ _ -> activeRuntimeMode
+        ServiceCommand {} -> activeRuntimeMode
         ClusterUpCommand -> activeRuntimeMode
         ClusterDownCommand -> activeRuntimeMode
         ClusterStatusCommand -> activeRuntimeMode

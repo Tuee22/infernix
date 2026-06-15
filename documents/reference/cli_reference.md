@@ -10,7 +10,7 @@
 
 ### `service`
 
-- `infernix service [--role coordinator|engine] [--engine-name NAME]` - starts the long-running production daemon; it binds no HTTP port and consumes the active `.dhall` request and result topics. The optional `--role` arg overrides the substrate dhall's `daemonRole` field for split coordinator/engine Deployments, and `--engine-name` selects a stable engine member id first with a legacy per-engine fallback.
+- `infernix service [--role coordinator|engine] [--engine-name NAME] [--config PATH]` - starts the long-running production daemon; it binds no HTTP port and consumes the active `.dhall` request and result topics. The optional `--role` arg overrides the substrate dhall's `daemonRole` field for split coordinator/engine Deployments, `--engine-name` selects a stable engine member id first with a legacy per-engine fallback, and `--config` points the daemon at an explicit substrate file.
 
 ### `cluster`
 
@@ -93,7 +93,8 @@
   `.dhall` request/result topics, engine bindings, and engine-pool assignment metadata, and uses
   the Pulsar transport configured for the active substrate. `--engine-name NAME` now selects a
   stable engine member id first and falls back to the legacy per-engine `engineDaemons` selector
-  while the compatibility projection is retired
+  while the compatibility projection is retired; `--config PATH` is the supported explicit
+  substrate-file override for targeted daemon validation and diagnostics
 - `infernix-demo serve` is the only repo-owned demo HTTP host in this repository; the routed
   cluster-resident demo workload and direct `serve` both expose the same Haskell `/api` contract
   through `src/Infernix/Demo/Api.hs`

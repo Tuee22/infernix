@@ -32,6 +32,7 @@ import Data.Text qualified as Text
 import Data.Time (UTCTime, diffUTCTime, getCurrentTime)
 import Data.Vector qualified as Vector
 import Infernix.Cluster.Discover
+import Infernix.Cluster.ImageFingerprint
 import Infernix.Cluster.PublishImages qualified as PublishImages
 import Infernix.Config (ControlPlaneContext (..), Paths (..), controlPlaneContextId)
 import Infernix.Config qualified as Config
@@ -1736,19 +1737,35 @@ applyStorageClass state =
 
 buildClusterImages :: Paths -> ClusterState -> RuntimeMode -> IO ()
 buildClusterImages paths state runtimeMode = do
-  let runtimeModeName = Text.unpack (runtimeModeId (clusterWorkloadRuntimeMode runtimeMode))
+  targetArchitecture <- resolveClusterWorkloadArchitecture paths runtimeMode
+  let workloadRuntimeMode = clusterWorkloadRuntimeMode runtimeMode
+      runtimeModeName = Text.unpack (runtimeModeId workloadRuntimeMode)
       imageRef = clusterWorkloadImageRef runtimeMode
       goImage = "golang:1.24"
       baseImage =
-        case clusterWorkloadRuntimeMode runtimeMode of
+        case workloadRuntimeMode of
           LinuxGpu -> "nvidia/cuda:12.8.1-cudnn-runtime-ubuntu24.04"
           _ -> "ubuntu:24.04"
       engineBaseImage = "nvidia/cuda:12.8.1-cudnn-runtime-ubuntu24.04"
-      dockerBuildArgs targetImageRef =
+      buildInputs =
+        ClusterImageBuildInputs
+          { clusterImageBuildRuntimeMode = workloadRuntimeMode,
+            clusterImageBuildGoImage = goImage,
+            clusterImageBuildBaseImage = baseImage,
+            clusterImageBuildTargetArchitecture = targetArchitecture,
+            clusterImageBuildDemoUi = True
+          }
+      dockerBuildArgs targetImageRef sourceFingerprint =
         [ "build",
           "-f",
           "docker/Dockerfile",
           "--provenance=false",
+          "--label",
+          clusterImageFingerprintLabel <> "=" <> sourceFingerprint,
+          "--label",
+          clusterImageFingerprintVersionLabel <> "=" <> clusterImageFingerprintVersion,
+          "--label",
+          clusterImageRuntimeModeLabel <> "=" <> runtimeModeName,
           "--build-arg",
           "GO_IMAGE=" <> goImage,
           "--build-arg",
@@ -1759,9 +1776,10 @@ buildClusterImages paths state runtimeMode = do
           targetImageRef,
           "."
         ]
-  imageReusable <- dockerImageReusableForHarborPush imageRef
-  if Config.controlPlaneContext paths == OuterContainer && imageReusable
-    then putStrLn ("reusing baked cluster image for " <> runtimeModeName <> ": " <> imageRef)
+  sourceFingerprint <- clusterImageSourceFingerprint paths buildInputs
+  imageReusable <- clusterWorkloadImageReusableForBuild paths imageRef runtimeModeName targetArchitecture sourceFingerprint
+  if imageReusable
+    then putStrLn ("reusing cluster image for " <> runtimeModeName <> ": " <> imageRef)
     else do
       putStrLn ("building cluster images for " <> runtimeModeName)
       ensureDockerBuildBaseImage paths state goImage
@@ -1772,7 +1790,7 @@ buildClusterImages paths state runtimeMode = do
         (Just (repoRoot paths))
         []
         "docker"
-        (dockerBuildArgs imageRef)
+        (dockerBuildArgs imageRef sourceFingerprint)
   buildPerEngineImages imageRef baseImage engineBaseImage
   where
     buildPerEngineImages controlPlaneImageRef controlPlaneBaseImage engineBaseImage =
@@ -1808,6 +1826,28 @@ buildClusterImages paths state runtimeMode = do
                   ]
         _ -> pure ()
 
+clusterWorkloadImageReusableForBuild :: Paths -> String -> String -> String -> String -> IO Bool
+clusterWorkloadImageReusableForBuild paths imageRef runtimeModeName targetArchitecture sourceFingerprint =
+  case Config.controlPlaneContext paths of
+    OuterContainer -> dockerImageReusableForHarborPush imageRef
+    HostNative ->
+      dockerImageReusableForHostBuild imageRef runtimeModeName targetArchitecture sourceFingerprint
+
+dockerImageReusableForHostBuild :: String -> String -> String -> String -> IO Bool
+dockerImageReusableForHostBuild imageRef runtimeModeName targetArchitecture sourceFingerprint = do
+  pushReusable <- dockerImageReusableForHarborPush imageRef
+  architectureMatches <- dockerImageInspectValueEquals imageRef "{{.Architecture}}" targetArchitecture
+  fingerprintVersionMatches <- dockerImageLabelEquals imageRef clusterImageFingerprintVersionLabel clusterImageFingerprintVersion
+  runtimeModeMatches <- dockerImageLabelEquals imageRef clusterImageRuntimeModeLabel runtimeModeName
+  fingerprintMatches <- dockerImageLabelEquals imageRef clusterImageFingerprintLabel sourceFingerprint
+  pure
+    ( pushReusable
+        && architectureMatches
+        && fingerprintVersionMatches
+        && runtimeModeMatches
+        && fingerprintMatches
+    )
+
 -- Docker 29 + BuildKit may leave local repo-owned images as OCI indexes
 -- with provenance attestations. Harbor publication is still Docker-push
 -- based for repo-owned images, and those indexed local images have produced
@@ -1824,6 +1864,20 @@ dockerImageReusableForHarborPush imageRef = do
       | "image.index" `List.isInfixOf` descriptor -> pure False
       | "manifest.list" `List.isInfixOf` descriptor -> pure False
       | otherwise -> pure True
+
+dockerImageLabelEquals :: String -> String -> String -> IO Bool
+dockerImageLabelEquals imageRef labelName =
+  dockerImageInspectValueEquals imageRef ("{{ index .Config.Labels \"" <> labelName <> "\" }}")
+
+dockerImageInspectValueEquals :: String -> String -> String -> IO Bool
+dockerImageInspectValueEquals imageRef formatValue expectedValue = do
+  inspectResult <- tryCommand Nothing [] "docker" ["image", "inspect", imageRef, "--format", formatValue]
+  pure $
+    case inspectResult of
+      Left _ -> False
+      Right rawValue ->
+        let actualValue = trim rawValue
+         in actualValue == expectedValue
 
 ensureDockerBuildBaseImage :: Paths -> ClusterState -> String -> IO ()
 ensureDockerBuildBaseImage paths state imageRef = do
@@ -2408,7 +2462,7 @@ restartHarborPostgresStartupPodsIfStuck state _allStartupPodsPresent attemptsEla
         Nothing
         []
         "kubectl"
-        (kubeconfigArgs state <> ["-n", "platform", "delete", "pod"] <> unreadyPodNames)
+        (kubeconfigArgs state <> ["-n", "platform", "delete", "pod"] <> unreadyPodNames <> ["--ignore-not-found=true", "--wait=false"])
       pure True
     else pure False
   where

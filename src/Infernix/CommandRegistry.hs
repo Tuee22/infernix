@@ -20,7 +20,7 @@ import Infernix.Types (DaemonRole, RuntimeMode, parseDaemonRole, parseRuntimeMod
 data Command
   = ShowRootHelp
   | ShowTopicHelp String
-  | ServiceCommand (Maybe DaemonRole) (Maybe String)
+  | ServiceCommand (Maybe DaemonRole) (Maybe String) (Maybe FilePath)
   | ClusterUpCommand
   | ClusterDownCommand
   | ClusterStatusCommand
@@ -151,31 +151,45 @@ serviceCommandFamily =
         ]
     }
 
--- | `infernix service [--role coordinator|engine] [--engine-name NAME]`. The optional
--- `--role` arg replaces the retired `INFERNIX_DAEMON_ROLE` env var
--- (Phase 4 Sprint 4.13): coordinator + engine pods each pass the
--- matching role via chart-supplied `args`, while host-native flows
+-- | `infernix service [--role coordinator|engine] [--engine-name NAME] [--config PATH]`.
+-- The optional `--role` arg replaces the retired `INFERNIX_DAEMON_ROLE`
+-- env var (Phase 4 Sprint 4.13): coordinator + engine pods each pass
+-- the matching role via chart-supplied `args`, while host-native flows
 -- omit the flag and fall back to the active substrate dhall's
 -- `daemonRole` field. Engine pods or host daemons may pass
--- `--engine-name` to select a stable engine member id first; the
--- legacy per-engine daemon selector remains as a fallback while the
--- compatibility projection is retired.
+-- `--engine-name` to select a stable engine member id first; the legacy
+-- per-engine daemon selector remains as a fallback while the
+-- compatibility projection is retired. `--config` is a typed path
+-- override used by targeted validation harnesses and operator
+-- diagnostics that need an isolated substrate file.
 serviceCommandSpec :: CommandSpec
 serviceCommandSpec =
   CommandSpec
-    { commandUsageSuffix = "service [--role coordinator|engine] [--engine-name NAME]",
+    { commandUsageSuffix = "service [--role coordinator|engine] [--engine-name NAME] [--config PATH]",
       commandDescription =
-        "starts the long-running production daemon; it binds no HTTP port and consumes the active `.dhall` request and result topics. The optional `--role` arg overrides the substrate dhall's `daemonRole` field for split coordinator/engine Deployments, and `--engine-name` selects a stable engine member id first with a legacy per-engine fallback.",
-      commandParse = \case
-        ["service"] -> Just (ServiceCommand Nothing Nothing)
-        ["service", "--role", rawRole] ->
-          (\role -> ServiceCommand (Just role) Nothing) <$> parseDaemonRole (Text.pack rawRole)
-        ["service", "--role", rawRole, "--engine-name", engineName] ->
-          (\role -> ServiceCommand (Just role) (Just engineName)) <$> parseDaemonRole (Text.pack rawRole)
-        ["service", "--engine-name", engineName] ->
-          Just (ServiceCommand Nothing (Just engineName))
-        _ -> Nothing
+        "starts the long-running production daemon; it binds no HTTP port and consumes the active `.dhall` request and result topics. The optional `--role` arg overrides the substrate dhall's `daemonRole` field for split coordinator/engine Deployments, `--engine-name` selects a stable engine member id first with a legacy per-engine fallback, and `--config` points the daemon at an explicit substrate file.",
+      commandParse = parseServiceCommand
     }
+
+parseServiceCommand :: [String] -> Maybe Command
+parseServiceCommand = \case
+  "service" : args -> parseServiceArgs Nothing Nothing Nothing args
+  _ -> Nothing
+
+parseServiceArgs :: Maybe DaemonRole -> Maybe String -> Maybe FilePath -> [String] -> Maybe Command
+parseServiceArgs maybeRole maybeEngineName maybeConfigPath = \case
+  [] -> Just (ServiceCommand maybeRole maybeEngineName maybeConfigPath)
+  "--role" : rawRole : rest
+    | Nothing <- maybeRole,
+      Just role <- parseDaemonRole (Text.pack rawRole) ->
+        parseServiceArgs (Just role) maybeEngineName maybeConfigPath rest
+  "--engine-name" : engineName : rest
+    | Nothing <- maybeEngineName ->
+        parseServiceArgs maybeRole (Just engineName) maybeConfigPath rest
+  "--config" : configPath : rest
+    | Nothing <- maybeConfigPath ->
+        parseServiceArgs maybeRole maybeEngineName (Just configPath) rest
+  _ -> Nothing
 
 clusterCommandFamily :: CommandFamily
 clusterCommandFamily =

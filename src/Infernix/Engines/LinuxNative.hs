@@ -165,7 +165,7 @@ writeLinuxNativeRunner tempRoot artifact = do
 linuxNativeRunnerScript :: LinuxNativeEngineArtifact -> String
 linuxNativeRunnerScript artifact =
   unlines
-    [ "#!/usr/bin/bash",
+    [ "#!/bin/sh",
       "set -eu",
       "adapter_id=" <> shellLiteral (Text.unpack (linuxNativeEngineAdapterId artifact)),
       "engine_name=" <> shellLiteral (Text.unpack (linuxNativeEngineName artifact)),

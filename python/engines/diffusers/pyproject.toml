@@ -1,8 +1,9 @@
 [tool.poetry]
 # Phase 4 Sprint 4.16 — isolated Diffusers engine venv (image + video
-# generation families on linux-gpu: SDXL Turbo, Wan2.1 T2V). cu128 torch for
-# Blackwell. Optional `cuda` group keeps the default install framework-free.
-# See documents/development/python_policy.md "Per-Engine Framework Venvs".
+# generation families: SDXL Turbo, Wan2.1 T2V). CUDA uses cu128 torch for
+# Blackwell; Apple host-native inference uses upstream Darwin arm64 torch.
+# Optional groups keep the default install framework-free. See
+# documents/development/python_policy.md "Per-Engine Framework Venvs".
 name = "infernix-engine-diffusers"
 version = "0.1.0"
 description = "Isolated Diffusers + PyTorch (CUDA) engine venv for infernix"
@@ -17,7 +18,18 @@ infernix-adapters = { path = "../..", develop = true }
 optional = true
 
 [tool.poetry.group.cuda.dependencies]
-torch = { version = ">=2.7", source = "pytorch-cu128" }
+torch = { version = ">=2.7", source = "pytorch-cu128", markers = "platform_system == 'Linux' and platform_machine == 'x86_64'" }
+diffusers = ">=0.31"
+transformers = ">=4.46"
+accelerate = ">=1.0"
+safetensors = ">=0.4"
+imageio = { version = ">=2.34", extras = ["ffmpeg"] }
+
+[tool.poetry.group.apple-silicon]
+optional = true
+
+[tool.poetry.group.apple-silicon.dependencies]
+torch = { version = ">=2.7", markers = "platform_system == 'Darwin' and platform_machine == 'arm64'" }
 diffusers = ">=0.31"
 transformers = ">=4.46"
 accelerate = ">=1.0"

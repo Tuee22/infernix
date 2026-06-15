@@ -49,9 +49,12 @@ orchestration. Failover consumer names stay process-qualified under stable
 subscription names via `Infernix.Runtime.Pulsar.Failover`. Unit coverage
 proves runtime rebuild/reuse decisions; the integration suite validates the current
 coordinator/engine durable prompt flow, engine pod replacement, engine node drain, exact broker
-counts, throughput, and production-shape deployment. Wave J still owns real-cluster proof for typed
-Apple engine pools, `Shared` backlog distribution, pinned `Exclusive` routes, and production
-`demo_ui = false` coordinator presence.
+counts, throughput, and production-shape deployment. The current Apple integration pass proves one
+pinned Apple host member route with broker-enforced `Exclusive` duplicate rejection, same-machine
+Apple host-member coexistence on a real `Shared` subscription, and Apple production
+`demo_ui = false` route/publication assertions. Wave J still owns real-cluster proof for
+single-host logical `Shared` backlog/backpressure distribution and Linux pool placement. Physical
+Apple multi-host membership is hardware-deferred proof while no second Apple host is available.
 
 ## Roles and Responsibilities
 
@@ -248,7 +251,7 @@ Engine pod or host daemon (consumer sub on assigned pool/member topic)
        ├─ present: load weights from /model-cache (populating from
        │           MinIO if not yet cached); run adapter
        └─ absent:
-            └─[publish, dedup by modelId]──> model.bootstrap.request
+            └─[publish, key modelId, dedup by modelId@requestedAt]──> model.bootstrap.request
             └─[await]──> model.bootstrap.ready.<modelId>
             └─ load weights via the shared adapter helper, run adapter
   └─[publish, dedup by userPromptMessageId]──> inference.result.<mode>

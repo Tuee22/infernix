@@ -46,9 +46,9 @@ of the supported artifact contract.
 - on the outer-container path, the Helm dependency archive cache is baked into
   `/opt/infernix/chart/charts/`, and `/workspace/chart/charts` links to that image-local cache so
   Helm uses local archives without a host bind mount
-- the substrate image captures the sorted source snapshot at
-  `/opt/infernix/source-snapshot-files.txt`, which stays in the image overlay
-  so it stays in the image overlay where git-less `infernix lint files` runs can read it
+- the substrate image captures the sorted, pruned source snapshot at
+  `/opt/infernix/source-snapshot-files.txt`, which stays in the image overlay where git-less
+  `infernix lint files` runs can read it
 - `cluster up` publishes `./.build/infernix.kubeconfig` on the host path after Kind create or
   delete uses a transient host-local scratch kubeconfig
 - `cluster up` publishes `./.data/runtime/infernix.kubeconfig` on the outer-container path after
@@ -87,15 +87,29 @@ Current implementation note: Phase 1 Sprint 1.14 removed the Sprint 1.13 `hostTa
 field, the `AppleTart` prerequisite, and the Tart VM argument builders. The retained
 `infernix internal materialize-metal-engines` helper writes a typed `engine-artifact.json` manifest
 for each allowlisted Apple adapter into its final engine root. The `apple-metal-runtime-bridge`
-root also carries the fixed bridge source and smoke command; the Apple-only cohort residual is
-executing that Metal runtime smoke and native/Core ML artifact load evidence recorded in
+root also carries the fixed bridge source and smoke command, and the `coreml-native` root carries
+the runner script plus CoreML/Foundation smoke source. The native adapter roots currently carry
+smoke-capable deterministic validation wrappers at their manifest entrypoints; these wrappers prove
+root/executable/result-shape wiring and remain explicit Wave I placeholders for real engine
+payloads. The current Apple host evidence executes the installed Metal/Core ML smoke commands and
+directly checks representative native validation-runner output. Apple integration evidence now
+completes the active Apple catalog through the host engine daemon with native validation-wrapper
+payloads in place, validates pinned Apple host-engine `Exclusive` duplicate rejection, proves
+same-machine Apple `Shared` subscription coexistence, and covers Apple production
+`demo_ui = false` assertions. It also proves the source-fingerprint rebuild/reuse path by
+rebuilding the changed repo-owned image once before reusing the stamped image on later edge-port
+validation cycles. Follow-up plain-progress probing of the earlier long Docker interval showed
+active Cabal dependency compilation, image export, Harbor push, and Helm/Pulsar readiness waits
+rather than a Docker daemon deadlock, and current source adds source-fingerprint image reuse plus
+Dockerfile dependency caching for that host-native Apple cluster-image path. The Apple-only cohort
+residual is the remaining real-payload e2e/all evidence recorded in
 [../../DEVELOPMENT_PLAN/cohort-validation-waves.md](../../DEVELOPMENT_PLAN/cohort-validation-waves.md).
 
 Every materialized engine root should carry a typed manifest recording `adapterId`, `engineName`,
 `substrate`, `architecture`, `artifactKind`, `sourceRef`, versions, digest, optional MinIO object
 key, local install root, entrypoint, and smoke command. Current Apple materialization validates the
-manifest contract before atomic rename; the target lane adds real smoke/load validation before
-rename as a Wave I Apple cohort gate. Linux native roots already exercise smoke-wrapper command
+manifest contract and smoke-loads materialized Apple payloads before atomic rename on Darwin.
+Linux native roots and current Apple native roots already exercise smoke-wrapper command
 validation, and Wave I replaces those wrappers with real payloads.
 
 ## Linux Native Engine Artifacts
@@ -108,10 +122,14 @@ depend on image content under `/workspace/.data/engines` surviving a pod mount.
 
 `infernix internal materialize-linux-native-engines` is the image-build helper for these roots. It
 writes typed `engine-artifact.json` manifests, creates the allowlisted runner entrypoints, executes
-each runner's `--smoke` command, and atomically installs the result under
-`/opt/infernix/engines/<adapterId>/`. The current machine-independent payloads are smoke wrappers;
-Wave I replaces them with the real `llama.cpp`, `whisper.cpp`, ONNX Runtime, CTranslate2, and JVM
-tool payloads before real-output sign-off.
+each runner's `--smoke` command, and installs the result under
+`/opt/infernix/engines/<adapterId>/` by renaming a validated temp root into place. On ordinary
+mutable filesystems the existing root is first moved to a rollback backup. The installer also
+tolerates reruns over roots baked into a Docker image layer: when Docker overlay rejects the
+existing-root backup rename with a cross-device operation error, the helper removes the existing
+generated root and renames the freshly smoke-validated temp root into place. The current machine-
+independent payloads are smoke wrappers; Wave I replaces them with the real `llama.cpp`,
+`whisper.cpp`, ONNX Runtime, CTranslate2, and JVM tool payloads before real-output sign-off.
 
 ## Generated Demo Config Publication
 

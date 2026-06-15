@@ -66,13 +66,13 @@ redelivery, Pulsar producer-side deduplication, and projection-layer idempotency
 - **Coordinator pod kill mid-bootstrap upload.** Submit an inference request for a model
   that is not yet present in `infernix-models`, kill the active `infernix-coordinator`
   replica after some weight files have PUT to `infernix-models/<modelId>/` but before the
-  `.ready` sentinel; assert a surviving coordinator replica resumes (producer dedup on
-  `infernix/system/model.bootstrap.request` prevents a duplicate upstream download), the
-  `.ready` sentinel appears exactly once, and waiting engine pods observe the ready event
-  and proceed.
+  `.ready` sentinel; assert a surviving coordinator replica resumes (the Failover subscription,
+  attempt-scoped request dedup, and MinIO `.ready` guard prevent duplicate effective population),
+  the `.ready` sentinel appears exactly once, and waiting engine pods observe the ready event and
+  proceed.
 - **Concurrent model-bootstrap requests.** N engine pods request the same uncached model
-  simultaneously; assert producer dedup + Pulsar Failover guarantees exactly one upstream
-  download, the `.ready` sentinel appears exactly once, and all N engine pods observe it
+  simultaneously; assert Pulsar Failover plus the MinIO `.ready` guard guarantees exactly one
+  effective population, the `.ready` sentinel appears exactly once, and all N engine pods observe it
   and proceed.
 - **Engine placement and pool ownership.** On Linux, scaling a pool beyond its legal placement leaves
   the extra replica unschedulable with the expected Kubernetes placement diagnostic. On Apple,

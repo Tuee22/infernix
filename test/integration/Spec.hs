@@ -3,9 +3,11 @@
 module Main (main) where
 
 import Control.Concurrent (threadDelay)
-import Control.Exception (SomeException, bracket, bracketOnError, displayException, finally, try)
+import Control.Exception (SomeException, bracket, bracketOnError, bracket_, displayException, finally, try)
 import Control.Monad (forM, forM_, when)
 import Data.Aeson qualified as Aeson
+import Data.Aeson.Key qualified as AesonKey
+import Data.Aeson.KeyMap qualified as AesonKeyMap
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Char8 qualified as ByteString8
 import Data.ByteString.Lazy qualified as LazyByteString
@@ -13,7 +15,7 @@ import Data.ByteString.Lazy.Char8 qualified as LazyByteStringChar8
 import Data.Char (isAsciiUpper)
 import Data.List (find, isInfixOf, isPrefixOf, nub, partition, sort)
 import Data.Map.Strict qualified as Map
-import Data.Maybe (isJust, isNothing, mapMaybe, maybeToList)
+import Data.Maybe (isJust, isNothing, mapMaybe)
 import Data.Set qualified as Set
 import Data.Text qualified as Text
 import Data.Time.Clock (getCurrentTime)
@@ -24,9 +26,15 @@ import Infernix.Config (Paths (..))
 import Infernix.Config qualified as Config
 import Infernix.Conversation.Topic qualified as ConversationTopic
 import Infernix.DemoConfig (decodeDemoConfigFile)
+import Infernix.HostTools qualified as HostTools
 import Infernix.Models
-  ( engineBindingForSelectedEngine,
+  ( encodeDemoConfig,
+    engineBindingForSelectedEngine,
+    engineMemberPinnedTopicForMode,
+    engineMemberRequestTopics,
     engineNameForSelectedEngine,
+    enginePoolForModel,
+    enginePoolTopicForMode,
     expectedDaemonLocationForRuntime,
     expectedInferenceExecutorLocationForRuntime,
     findModel,
@@ -53,6 +61,7 @@ import Infernix.Runtime.Pulsar
     readRawTopicPayloads,
     serviceReadinessMarkerPath,
   )
+import Infernix.Storage (readPulsarHttpPortMaybe)
 import Infernix.Types
 import Infernix.Web.Contracts qualified as Contracts
 import Network.Socket
@@ -64,6 +73,7 @@ import Network.Socket
     bind,
     close,
     defaultProtocol,
+    getSocketName,
     listen,
     setSocketOption,
     socket,
@@ -72,14 +82,15 @@ import Network.Socket
 import System.Directory
 import System.Exit (ExitCode (ExitSuccess))
 import System.FilePath ((</>))
-import System.IO (BufferMode (LineBuffering), IOMode (WriteMode), hClose, hFlush, hSetBuffering, openFile, stdout)
+import System.IO (BufferMode (LineBuffering), Handle, IOMode (WriteMode), hClose, hFlush, hSetBuffering, openFile, stdout)
 import System.IO.Error (catchIOError, isDoesNotExistError)
 import System.Process
   ( CreateProcess (cwd, std_err, std_out),
+    ProcessHandle,
     StdStream (UseHandle),
     createProcess,
+    getProcessExitCode,
     proc,
-    readCreateProcessWithExitCode,
     readProcess,
     readProcessWithExitCode,
     terminateProcess,
@@ -100,8 +111,7 @@ main = do
     paths <- Config.discoverPaths
     runtimeModes <- integrationRuntimeModes
     mapM_ (exerciseRuntimeMode paths) runtimeModes
-    when (LinuxCpu `elem` runtimeModes) $ do
-      validateDemoUiDisabled paths LinuxCpu
+    mapM_ (validateDemoUiDisabled paths) runtimeModes
     case runtimeModes of
       runtimeMode : _
         | Config.controlPlaneContext paths /= Config.OuterContainer ->
@@ -237,7 +247,9 @@ exerciseRuntimeMode paths runtimeMode = do
       -- rejects a duplicate Exclusive consumer.
       when (requiresHostServiceHarness paths runtimeMode) $ do
         reportStep ("apple host engine exclusive subscription enforcement: " <> showRuntimeMode runtimeMode)
-        validateAppleHostEngineExclusiveSubscriptionEnforcement paths
+        validateAppleHostEngineExclusiveSubscriptionEnforcement paths demoConfig
+        reportStep ("apple host engine shared subscription coexistence: " <> showRuntimeMode runtimeMode)
+        validateAppleHostEngineSharedSubscriptionCoexistence paths demoConfig
 
       when (runtimeMode == LinuxCpu) $ do
         reportStep "frontend pod replacement preserves durable state"
@@ -397,39 +409,162 @@ sampleInputForModel model =
 
 uploadIntegrationInputObject :: Paths -> ClusterState -> Contracts.ObjectRef -> ByteString.ByteString -> IO ()
 uploadIntegrationInputObject paths state objectReference payloadBytes = do
-  now <- getCurrentTime
-  let presigned =
-        Presigned.PresignedUrlConfig
-          { Presigned.presignedScheme = "http",
-            Presigned.presignedEndpoint = Text.pack ("127.0.0.1:" <> show (edgePort state)),
-            Presigned.presignedPathPrefix = "/minio/s3",
-            Presigned.presignedRegion = "us-east-1",
-            Presigned.presignedAccessKeyId = "minioadmin",
-            Presigned.presignedSecretAccessKey = "minioadmin123",
-            Presigned.presignedExpirySeconds = 900
-          }
-      signedUrl =
-        Text.unpack
-          (Presigned.unPresignedUrl (Presigned.presignedPutUrl presigned now objectReference))
-      samplePath =
-        buildRoot paths
-          </> "integration-input-"
-            <> sanitizeFileToken (Text.unpack (Contracts.objectKey objectReference))
-  ByteString.writeFile samplePath payloadBytes
-  (exitCode, _stdout, stderrOutput) <-
+  withMinioPortForward paths state $ \localPort -> do
+    now <- getCurrentTime
+    let presigned =
+          Presigned.PresignedUrlConfig
+            { Presigned.presignedScheme = "http",
+              Presigned.presignedEndpoint = Text.pack ("127.0.0.1:" <> show localPort),
+              Presigned.presignedPathPrefix = "",
+              Presigned.presignedRegion = "us-east-1",
+              Presigned.presignedAccessKeyId = "minioadmin",
+              Presigned.presignedSecretAccessKey = "minioadmin123",
+              Presigned.presignedExpirySeconds = 900
+            }
+        signedUrl =
+          Text.unpack
+            (Presigned.unPresignedUrl (Presigned.presignedPutUrl presigned now objectReference))
+        samplePath =
+          buildRoot paths
+            </> "integration-input-"
+              <> sanitizeFileToken (Text.unpack (Contracts.objectKey objectReference))
+    ByteString.writeFile samplePath payloadBytes
+    (exitCode, _stdout, stderrOutput) <-
+      readProcessWithExitCode
+        "curl"
+        ["-fsS", "-X", "PUT", "--data-binary", "@" <> samplePath, signedUrl]
+        ""
+    case exitCode of
+      ExitSuccess -> pure ()
+      _ ->
+        fail
+          ( "failed to upload integration input object "
+              <> Text.unpack (objectRefText objectReference)
+              <> ": "
+              <> stderrOutput
+          )
+
+withMinioPortForward :: Paths -> ClusterState -> (Int -> IO a) -> IO a
+withMinioPortForward paths state action = do
+  localPort <- allocateLoopbackPort
+  let logPath = buildRoot paths </> "minio-port-forward-" <> show localPort <> ".log"
+  createDirectoryIfMissing True (takeDirectoryPortable logPath)
+  bracket
+    (startMinioPortForward paths state localPort logPath)
+    stopMinioPortForward
+    $ \(processHandle, _logHandle) -> do
+      waitForMinioPortForward localPort processHandle logPath
+      action localPort
+
+allocateLoopbackPort :: IO Int
+allocateLoopbackPort =
+  bracket (socket AF_INET Stream defaultProtocol) close $ \socketValue -> do
+    setSocketOption socketValue ReuseAddr 1
+    bind socketValue (SockAddrInet 0 (tupleToHostAddress (127, 0, 0, 1)))
+    socketAddress <- getSocketName socketValue
+    case socketAddress of
+      SockAddrInet portNumber _ -> pure (fromIntegral portNumber)
+      _ -> fail ("unexpected socket address for loopback port allocation: " <> show socketAddress)
+
+startMinioPortForward :: Paths -> ClusterState -> Int -> FilePath -> IO (ProcessHandle, Handle)
+startMinioPortForward paths state localPort logPath = do
+  logHandle <- openFile logPath WriteMode
+  hSetBuffering logHandle LineBuffering
+  kubectlProcess <-
+    hostToolProcessForPaths
+      paths
+      HostTools.HostKubectl
+      ( ["--kubeconfig", kubeconfigPath state]
+          <> ["-n", "platform", "port-forward", "svc/infernix-minio", show localPort <> ":9000"]
+      )
+  (_, _, _, processHandle) <-
+    createProcess
+      kubectlProcess
+        { std_out = UseHandle logHandle,
+          std_err = UseHandle logHandle
+        }
+  pure (processHandle, logHandle)
+
+hostToolProcessForPaths :: Paths -> HostTools.HostTool -> [String] -> IO CreateProcess
+hostToolProcessForPaths paths tool args =
+  case pathsHostConfig paths of
+    Just hostConfig -> pure (HostTools.hostToolProcess hostConfig tool args)
+    Nothing -> do
+      toolPath <- requireFallbackHostTool tool
+      pure (proc toolPath args)
+
+requireFallbackHostTool :: HostTools.HostTool -> IO FilePath
+requireFallbackHostTool tool =
+  go (HostTools.hostToolFallbackCandidates tool)
+  where
+    go [] =
+      fail
+        ( "required host tool is unavailable: "
+            <> Text.unpack (HostTools.hostToolName tool)
+        )
+    go (candidate : rest) = do
+      exists <- doesFileExist candidate
+      if exists
+        then pure candidate
+        else go rest
+
+stopMinioPortForward :: (ProcessHandle, Handle) -> IO ()
+stopMinioPortForward (processHandle, logHandle) = do
+  maybeExitCode <- getProcessExitCode processHandle
+  when (isNothing maybeExitCode) (terminateProcess processHandle)
+  _ <- waitForProcess processHandle
+  hClose logHandle
+
+waitForMinioPortForward :: Int -> ProcessHandle -> FilePath -> IO ()
+waitForMinioPortForward localPort processHandle logPath =
+  go (60 :: Int)
+  where
+    go remainingAttempts
+      | remainingAttempts <= 0 = do
+          logContents <- readFileIfPresent logPath
+          fail
+            ( "timed out waiting for kubectl port-forward to MinIO on 127.0.0.1:"
+                <> show localPort
+                <> "\n"
+                <> logContents
+            )
+      | otherwise = do
+          maybeExitCode <- getProcessExitCode processHandle
+          case maybeExitCode of
+            Just exitCode -> do
+              logContents <- readFileIfPresent logPath
+              fail
+                ( "kubectl port-forward to MinIO exited before becoming ready ("
+                    <> show exitCode
+                    <> ")\n"
+                    <> logContents
+                )
+            Nothing -> do
+              ready <- minioPortForwardReady localPort
+              if ready
+                then pure ()
+                else do
+                  threadDelay 500000
+                  go (remainingAttempts - 1)
+
+minioPortForwardReady :: Int -> IO Bool
+minioPortForwardReady localPort = do
+  (exitCode, _stdoutOutput, _stderrOutput) <-
     readProcessWithExitCode
       "curl"
-      ["-fsS", "-X", "PUT", "--data-binary", "@" <> samplePath, signedUrl]
+      ["-fsS", "--max-time", "2", "http://127.0.0.1:" <> show localPort <> "/minio/health/live"]
       ""
-  case exitCode of
-    ExitSuccess -> pure ()
-    _ ->
-      fail
-        ( "failed to upload integration input object "
-            <> Text.unpack (objectRefText objectReference)
-            <> ": "
-            <> stderrOutput
-        )
+  pure (exitCode == ExitSuccess)
+
+readFileIfPresent :: FilePath -> IO String
+readFileIfPresent path =
+  catchIOError
+    (readFile path)
+    ( \err ->
+        if isDoesNotExistError err
+          then pure ""
+          else ioError err
+    )
 
 objectRefText :: Contracts.ObjectRef -> Text.Text
 objectRefText objectReference =
@@ -681,9 +816,16 @@ assertRoutedDaemonSplit runtimeMode routedDemoConfig = do
     (not (null (engineDaemons routedDemoConfig)))
     ("demo config omits engine metadata for " <> showRuntimeMode runtimeMode)
   mapM_ assertEngineConfig (engineDaemons routedDemoConfig)
+  let expectedEngineRequestTopics =
+        concatMap
+          (engineMemberRequestTopics runtimeMode (enginePools routedDemoConfig))
+          (engineMembers routedDemoConfig)
   assert
-    (maybeToList (hostBatchTopicForMode runtimeMode) `allTopicsPresentIn` concatMap daemonConfigRequestTopics (engineDaemons routedDemoConfig))
-    "engine metadata includes the configured inference batch handoff topic"
+    (not (null expectedEngineRequestTopics))
+    "engine metadata has derived engine-pool request topics to consume"
+  assert
+    (expectedEngineRequestTopics `allTopicsPresentIn` concatMap daemonConfigRequestTopics (engineDaemons routedDemoConfig))
+    "engine metadata includes the derived engine-pool request topics"
   where
     assertEngineConfig engineConfig = do
       assert (daemonConfigRole engineConfig == Engine) "demo config reports engine metadata"
@@ -2096,33 +2238,348 @@ waitForPendingEnginePod state = go (60 :: Int)
               threadDelay 1000000
               go (remainingAttempts - 1)
 
--- | Apple pinned-member compatibility guard. Spawn a second @infernix service@
--- while the harness-owned first daemon is subscribed to the assigned topic. The
--- second invocation must exit non-zero because the broker rejects the duplicate
--- Exclusive consumer.
-validateAppleHostEngineExclusiveSubscriptionEnforcement :: Paths -> IO ()
-validateAppleHostEngineExclusiveSubscriptionEnforcement paths = do
+-- | Apple pinned-member compatibility guard. Normal host-engine pool
+-- topics use Shared subscriptions, so the guard creates a temporary
+-- pinned-member daemon config whose request topic shape selects
+-- Exclusive broker ownership. The first daemon proves it owns the
+-- pinned route by completing one request; the second must fail.
+validateAppleHostEngineExclusiveSubscriptionEnforcement :: Paths -> DemoConfig -> IO ()
+validateAppleHostEngineExclusiveSubscriptionEnforcement paths demoConfig = do
   infernixExecutable <- resolveInfernixExecutable
-  maybeResult <-
-    timeout
-      (30 * 1000000)
-      ( readCreateProcessWithExitCode
-          (proc infernixExecutable ["service"]) {cwd = Just (repoRoot paths)}
-          ""
+  (pinnedConfig, memberIdValue, modelIdValue, pinnedTopic) <- applePinnedHostEngineConfig demoConfig
+  withPinnedDemoConfigFile paths pinnedConfig $ \pinnedConfigPath ->
+    withLoggedServiceDaemon
+      paths
+      infernixExecutable
+      ["service", "--role", "engine", "--engine-name", Text.unpack memberIdValue, "--config", pinnedConfigPath]
+      (runtimeRoot paths </> "service" </> "host-service-pinned-exclusive.log")
+      ( \pinnedProcessHandle pinnedLogPath -> do
+          waitForProcessLogContains pinnedProcessHandle pinnedLogPath "serviceSubscriptionMode: websocket-pulsar"
+          requestIdValue <-
+            publishInferenceRequest
+              paths
+              AppleSilicon
+              pinnedTopic
+              InferenceRequest
+                { requestModelId = modelIdValue,
+                  inputText = "pinned apple host engine exclusive subscription",
+                  inputObjectRef = Nothing
+                }
+          maybePinnedResult <- waitForPublishedResult paths AppleSilicon (resultTopic pinnedConfig) requestIdValue
+          case maybePinnedResult of
+            Nothing -> fail "pinned apple host engine daemon did not publish a validation result"
+            Just pinnedResult -> do
+              assert (resultModelId pinnedResult == modelIdValue) "pinned apple host engine daemon publishes the selected model id"
+              assert (status pinnedResult == "completed") "pinned apple host engine daemon completes the validation request"
+          duplicateLog <-
+            runDuplicatePinnedHostEngineAndCaptureLog
+              paths
+              infernixExecutable
+              memberIdValue
+              pinnedConfigPath
+          validateDuplicatePinnedHostEngineDiagnostic duplicateLog
       )
-  (exitCode, _stdoutOutput, stderrOutput) <-
-    case maybeResult of
-      Just result -> pure result
-      Nothing -> fail "a duplicate apple host engine service did not fail within 30 seconds"
+
+applePinnedHostEngineConfig :: DemoConfig -> IO (DemoConfig, Text.Text, Text.Text, Text.Text)
+applePinnedHostEngineConfig demoConfig =
+  case engineDaemons demoConfig of
+    [] -> fail "apple demo config does not contain an engine daemon for pinned-route validation"
+    engineDaemon : _ -> do
+      memberIdValue <-
+        case daemonConfigMemberId engineDaemon of
+          Just memberId -> pure memberId
+          Nothing -> fail "apple engine daemon metadata does not contain a stable member id"
+      modelIdValue <-
+        case find ((== "image-sdxl-turbo") . modelId) (models demoConfig) of
+          Just model -> pure (modelId model)
+          Nothing ->
+            case models demoConfig of
+              model : _ -> pure (modelId model)
+              [] -> fail "apple demo config does not contain a model for pinned-route validation"
+      let pinnedTopic = engineMemberPinnedTopicForMode AppleSilicon memberIdValue modelIdValue
+          pinnedDaemon =
+            engineDaemon
+              { daemonConfigRequestTopics = [pinnedTopic],
+                daemonConfigHostBatchTopic = Nothing
+              }
+      pure
+        ( demoConfig
+            { activeDaemonRole = Engine,
+              engineDaemons = [pinnedDaemon]
+            },
+          memberIdValue,
+          modelIdValue,
+          pinnedTopic
+        )
+
+-- | Phase 7 Sprint 7.24 Wave J: prove the normal Apple host-engine
+-- pool route admits multiple live Shared consumers on one stable
+-- broker subscription. The already-running default host daemon stays
+-- on the generated catalog topics, so this fixture uses an isolated
+-- pool topic and two temporary member-specific daemon configs.
+validateAppleHostEngineSharedSubscriptionCoexistence :: Paths -> DemoConfig -> IO ()
+validateAppleHostEngineSharedSubscriptionCoexistence paths demoConfig = do
+  infernixExecutable <- resolveInfernixExecutable
+  (sharedConfig, memberA, memberB, modelIdValue, sharedTopic) <- appleSharedHostEngineConfig demoConfig
+  withTemporaryDemoConfigFile paths "host-service-shared-two-member" sharedConfig $ \sharedConfigPath ->
+    withLoggedServiceDaemon
+      paths
+      infernixExecutable
+      ["service", "--role", "engine", "--engine-name", Text.unpack memberA, "--config", sharedConfigPath]
+      (runtimeRoot paths </> "service" </> "host-service-shared-a.log")
+      ( \memberAProcessHandle memberALogPath -> do
+          waitForProcessLogContains memberAProcessHandle memberALogPath ("serviceEngineMemberId: " <> Text.unpack memberA)
+          waitForProcessLogContains memberAProcessHandle memberALogPath "serviceSubscriptionMode: websocket-pulsar"
+          withLoggedServiceDaemon
+            paths
+            infernixExecutable
+            ["service", "--role", "engine", "--engine-name", Text.unpack memberB, "--config", sharedConfigPath]
+            (runtimeRoot paths </> "service" </> "host-service-shared-b.log")
+            ( \memberBProcessHandle memberBLogPath -> do
+                waitForProcessLogContains memberBProcessHandle memberBLogPath ("serviceEngineMemberId: " <> Text.unpack memberB)
+                waitForProcessLogContains memberBProcessHandle memberBLogPath "serviceSubscriptionMode: websocket-pulsar"
+                assertPulsarSharedSubscriptionConsumerCount paths sharedTopic 2
+                requestIdValue <-
+                  publishInferenceRequest
+                    paths
+                    AppleSilicon
+                    sharedTopic
+                    InferenceRequest
+                      { requestModelId = modelIdValue,
+                        inputText = "shared apple host engine subscription",
+                        inputObjectRef = Nothing
+                      }
+                maybeSharedResult <- waitForPublishedResult paths AppleSilicon (resultTopic sharedConfig) requestIdValue
+                case maybeSharedResult of
+                  Nothing -> fail "shared apple host engine daemons did not publish a validation result"
+                  Just sharedResult -> do
+                    assert (resultModelId sharedResult == modelIdValue) "shared apple host engine daemon publishes the selected model id"
+                    assert (status sharedResult == "completed") "shared apple host engine daemon completes the validation request"
+            )
+      )
+
+appleSharedHostEngineConfig :: DemoConfig -> IO (DemoConfig, Text.Text, Text.Text, Text.Text, Text.Text)
+appleSharedHostEngineConfig demoConfig =
+  case engineDaemons demoConfig of
+    [] -> fail "apple demo config does not contain an engine daemon for shared-subscription validation"
+    engineDaemon : _ -> do
+      selectedModel <-
+        case find ((== "image-sdxl-turbo") . modelId) (models demoConfig) of
+          Just model -> pure model
+          Nothing ->
+            case models demoConfig of
+              model : _ -> pure model
+              [] -> fail "apple demo config does not contain a model for shared-subscription validation"
+      selectedPool <-
+        case enginePoolForModel demoConfig (modelId selectedModel) of
+          Just pool -> pure pool
+          Nothing -> fail ("apple demo config does not contain an engine pool for " <> Text.unpack (modelId selectedModel))
+      let memberA = "apple-host-shared-a"
+          memberB = "apple-host-shared-b"
+          sharedPoolId = enginePoolId selectedPool <> "-integration-shared"
+          sharedTopic = enginePoolTopicForMode AppleSilicon sharedPoolId (modelId selectedModel)
+          sharedPool =
+            selectedPool
+              { enginePoolId = sharedPoolId,
+                enginePoolModelIds = [modelId selectedModel],
+                enginePoolMemberIds = [memberA, memberB],
+                enginePoolSubscriptionType = ConsumerShared,
+                enginePoolMaxInflightPerMember = 1
+              }
+          sharedMember memberIdValue =
+            EngineMember
+              { engineMemberId = memberIdValue,
+                engineMemberRuntimeMode = AppleSilicon,
+                engineMemberLocation = "control-plane-host",
+                engineMemberPoolIds = [sharedPoolId]
+              }
+          sharedDaemon memberIdValue =
+            engineDaemon
+              { daemonConfigMemberId = Just memberIdValue,
+                daemonConfigRequestTopics = [sharedTopic],
+                daemonConfigHostBatchTopic = Nothing,
+                daemonConfigConsumerSubscriptionType = Just ConsumerShared
+              }
+      pure
+        ( demoConfig
+            { activeDaemonRole = Engine,
+              engineDaemons = [sharedDaemon memberA, sharedDaemon memberB],
+              enginePools = [sharedPool],
+              engineMembers = [sharedMember memberA, sharedMember memberB],
+              requestTopics = [sharedTopic],
+              engines = [engineBindingForSelectedEngine AppleSilicon (selectedEngine selectedModel)],
+              models = [selectedModel]
+            },
+          memberA,
+          memberB,
+          modelId selectedModel,
+          sharedTopic
+        )
+
+assertPulsarSharedSubscriptionConsumerCount :: Paths -> Text.Text -> Int -> IO ()
+assertPulsarSharedSubscriptionConsumerCount paths topicValue expectedCount = go (120 :: Int) Nothing
+  where
+    subscriptionName = integrationServiceSubscriptionName topicValue
+    go remainingAttempts maybeLastObservation
+      | remainingAttempts <= 0 =
+          fail
+            ( "timed out waiting for Pulsar subscription "
+                <> subscriptionName
+                <> " to report at least "
+                <> show expectedCount
+                <> " consumers"
+                <> maybe "" ("\nlast observation: " <>) maybeLastObservation
+            )
+      | otherwise = do
+          statsResult <- try (readPulsarTopicStatsPayload paths topicValue) :: IO (Either SomeException LazyByteString.ByteString)
+          case statsResult of
+            Right statsPayload ->
+              case pulsarSubscriptionConsumerCount subscriptionName statsPayload of
+                Just consumerCount
+                  | consumerCount >= expectedCount -> pure ()
+                  | otherwise -> retry (Just ("observed " <> show consumerCount <> " consumers"))
+                Nothing -> retry (Just "Pulsar stats payload did not contain the expected subscription consumer list")
+            Left err -> retry (Just (displayException err))
+      where
+        retry observation = do
+          threadDelay 1000000
+          go (remainingAttempts - 1) observation
+
+readPulsarTopicStatsPayload :: Paths -> Text.Text -> IO LazyByteString.ByteString
+readPulsarTopicStatsPayload paths topicValue = do
+  pulsarHttpPort <-
+    maybe
+      (fail "Pulsar HTTP NodePort state file was not available after cluster up")
+      pure
+      =<< readPulsarHttpPortMaybe paths
+  statsUrl <- pulsarTopicStatsUrl pulsarHttpPort topicValue
+  LazyByteStringChar8.pack <$> readProcessWithTransientCurlRetry ["-fsS", statsUrl]
+
+pulsarTopicStatsUrl :: Int -> Text.Text -> IO String
+pulsarTopicStatsUrl pulsarHttpPort topicValue =
+  case Text.stripPrefix "persistent://" topicValue of
+    Just topicPath ->
+      pure ("http://127.0.0.1:" <> show pulsarHttpPort <> "/admin/v2/persistent/" <> Text.unpack topicPath <> "/stats")
+    Nothing -> fail ("unsupported Pulsar topic name for stats lookup: " <> Text.unpack topicValue)
+
+pulsarSubscriptionConsumerCount :: String -> LazyByteString.ByteString -> Maybe Int
+pulsarSubscriptionConsumerCount subscriptionName statsPayload = do
+  Aeson.Object root <- Aeson.decode statsPayload :: Maybe Aeson.Value
+  Aeson.Object subscriptionsObject <- AesonKeyMap.lookup (AesonKey.fromString "subscriptions") root
+  Aeson.Object subscriptionObject <- AesonKeyMap.lookup (AesonKey.fromString subscriptionName) subscriptionsObject
+  Aeson.Array consumersArray <- AesonKeyMap.lookup (AesonKey.fromString "consumers") subscriptionObject
+  pure (length consumersArray)
+
+integrationServiceSubscriptionName :: Text.Text -> String
+integrationServiceSubscriptionName topicValue =
+  "infernix-service-" <> sanitizePulsarSubscriptionSegment topicValue
+
+sanitizePulsarSubscriptionSegment :: Text.Text -> String
+sanitizePulsarSubscriptionSegment =
+  map replaceSeparator . Text.unpack
+  where
+    replaceSeparator '/' = '_'
+    replaceSeparator ':' = '_'
+    replaceSeparator '.' = '_'
+    replaceSeparator character = character
+
+withPinnedDemoConfigFile :: Paths -> DemoConfig -> (FilePath -> IO a) -> IO a
+withPinnedDemoConfigFile paths =
+  withTemporaryDemoConfigFile paths "host-service-pinned-exclusive"
+
+withTemporaryDemoConfigFile :: Paths -> String -> DemoConfig -> (FilePath -> IO a) -> IO a
+withTemporaryDemoConfigFile paths label demoConfig action = do
+  let configPath = runtimeRoot paths </> "service" </> sanitizeFileToken label <> ".dhall"
+  createDirectoryIfMissing True (takeDirectoryPortable configPath)
+  bracket_
+    (LazyByteString.writeFile configPath (encodeDemoConfig demoConfig))
+    (removePathForcibly configPath)
+    (action configPath)
+
+withLoggedServiceDaemon :: Paths -> FilePath -> [String] -> FilePath -> (ProcessHandle -> FilePath -> IO a) -> IO a
+withLoggedServiceDaemon paths infernixExecutable args logPath action = do
+  createDirectoryIfMissing True (takeDirectoryPortable logPath)
+  bracket
+    ( do
+        logHandle <- openFile logPath WriteMode
+        hSetBuffering logHandle LineBuffering
+        (_, _, _, processHandle) <-
+          createProcess
+            (proc infernixExecutable args)
+              { cwd = Just (repoRoot paths),
+                std_out = UseHandle logHandle,
+                std_err = UseHandle logHandle
+              }
+        pure (processHandle, logHandle)
+    )
+    ( \(processHandle, logHandle) -> do
+        maybeExitCode <- getProcessExitCode processHandle
+        when (isNothing maybeExitCode) (terminateProcess processHandle)
+        _ <- waitForProcess processHandle
+        hClose logHandle
+    )
+    ( \(processHandle, _logHandle) ->
+        action processHandle logPath
+    )
+
+waitForProcessLogContains :: ProcessHandle -> FilePath -> String -> IO ()
+waitForProcessLogContains processHandle logPath needle = go (600 :: Int)
+  where
+    go remainingAttempts
+      | remainingAttempts <= 0 = do
+          logSnapshot <- readFileIfPresent logPath
+          fail ("timed out waiting for service log line: " <> needle <> "\n" <> logSnapshot)
+      | otherwise = do
+          maybeExitCode <- getProcessExitCode processHandle
+          case maybeExitCode of
+            Just exitCode -> do
+              logSnapshot <- readFileIfPresent logPath
+              fail ("service daemon exited before log line " <> needle <> " (" <> show exitCode <> ")\n" <> logSnapshot)
+            Nothing -> do
+              logSnapshot <- readFileIfPresent logPath
+              if needle `isInfixOf` logSnapshot
+                then pure ()
+                else do
+                  threadDelay 100000
+                  go (remainingAttempts - 1)
+
+runDuplicatePinnedHostEngineAndCaptureLog :: Paths -> FilePath -> Text.Text -> FilePath -> IO String
+runDuplicatePinnedHostEngineAndCaptureLog paths infernixExecutable memberIdValue pinnedConfigPath = do
+  let duplicateLogPath = runtimeRoot paths </> "service" </> "host-service-pinned-exclusive-duplicate.log"
+  createDirectoryIfMissing True (takeDirectoryPortable duplicateLogPath)
+  logHandle <- openFile duplicateLogPath WriteMode
+  hSetBuffering logHandle LineBuffering
+  (_, _, _, processHandle) <-
+    createProcess
+      (proc infernixExecutable ["service", "--role", "engine", "--engine-name", Text.unpack memberIdValue, "--config", pinnedConfigPath])
+        { cwd = Just (repoRoot paths),
+          std_out = UseHandle logHandle,
+          std_err = UseHandle logHandle
+        }
+  maybeExitCode <- timeout (30 * 1000000) (waitForProcess processHandle)
+  case maybeExitCode of
+    Nothing -> do
+      terminateProcess processHandle
+      _ <- waitForProcess processHandle
+      hClose logHandle
+      logSnapshot <- readFileIfPresent duplicateLogPath
+      fail ("a duplicate pinned apple host engine service did not fail within 30 seconds\n" <> logSnapshot)
+    Just exitCode -> do
+      hClose logHandle
+      logSnapshot <- readFileIfPresent duplicateLogPath
+      assert
+        (exitCode /= ExitSuccess)
+        "a second pinned `infernix service` invocation exits non-zero when the Exclusive subscription is already owned"
+      pure logSnapshot
+
+validateDuplicatePinnedHostEngineDiagnostic :: String -> IO ()
+validateDuplicatePinnedHostEngineDiagnostic duplicateLog = do
   assert
-    (exitCode /= ExitSuccess)
-    "a second `infernix service` invocation exits non-zero when the Exclusive pinned-member subscription is already owned"
+    ("subscription rejected" `isInfixOf` duplicateLog || "Exclusive" `isInfixOf` duplicateLog || "exclusive" `isInfixOf` duplicateLog)
+    "the second pinned `infernix service` invocation surfaces the Exclusive subscription diagnostic"
   assert
-    ("subscription rejected" `isInfixOf` stderrOutput || "Exclusive" `isInfixOf` stderrOutput || "exclusive" `isInfixOf` stderrOutput)
-    "the second `infernix service` invocation surfaces the Exclusive subscription diagnostic on stderr"
-  assert
-    ("Shared" `notElem` words stderrOutput)
-    "the duplicate Apple host engine diagnostic does not fall back to Shared subscription ownership"
+    ("Shared" `notElem` words duplicateLog)
+    "the duplicate pinned Apple host engine diagnostic does not fall back to Shared subscription ownership"
 
 withRuntimeServiceDaemon :: Paths -> IO a -> IO a
 withRuntimeServiceDaemon paths action = do

@@ -27,8 +27,15 @@ longer carries a `tart` field; and `infernix internal materialize-metal-engines`
 `engine-artifact.json` manifests under `./.data/engines/<adapterId>/` without invoking Tart. The
 `apple-metal-runtime-bridge` root also materializes fixed bridge source plus
 `bin/infernix-apple-metal-bridge-smoke`, which is the Apple-side smoke command for runtime Metal
-source compilation and kernel dispatch. The Apple-only residual is executing that bridge smoke and
-loading a native/Core ML artifact on an Apple Silicon host in
+source compilation and kernel dispatch. The `coreml-native` root materializes `bin/coreml-runner`
+and Objective-C smoke source that links Foundation/CoreML and instantiates a Core ML runtime type.
+The allowlisted native adapter roots (`llama-cpp-cli`, `whisper-cpp-cli`, `ctranslate2-native`,
+`mlx-native`, `onnx-runtime-native`, and `jvm-native`) materialize smoke-capable deterministic
+validation wrappers at their manifest entrypoints. Those wrappers are explicit Wave I placeholders:
+they prove the root, executable, and result-shape wiring, but they are not real engine payloads. The
+current Apple host evidence executes the installed Metal/Core ML smoke commands, materializes the
+native validation wrappers, and directly checks representative normal outputs; the remaining Apple
+residual is the full integration/e2e/all cohort gate in
 [../../DEVELOPMENT_PLAN/cohort-validation-waves.md](../../DEVELOPMENT_PLAN/cohort-validation-waves.md).
 
 Apple-native runners that already use prebuilt host wheels or binaries remain the preferred path:
@@ -88,9 +95,20 @@ Every materialized engine artifact should have a typed manifest with at least th
 | `entrypoint` | Runner binary, Python entrypoint, bridge symbol, or JVM invocation. |
 | `smokeCommand` | Minimal validation command that proves the artifact can load. |
 
-The current machine-independent materializer writes the manifest through a temporary directory and
-verifies the manifest contract before renaming into the final install root. The target lane adds the
-real artifact smoke/load command before that rename; that proof remains a Wave I Apple cohort gate.
+The current materializer writes the manifest through a temporary directory, verifies the manifest
+contract, and on Darwin smoke-loads materialized Apple payloads before renaming into the final
+install root. The current Apple host evidence proves the Metal bridge and `coreml-native` smoke
+commands from `./.data/engines/<adapterId>/`, and proves the native validation-wrapper roots for
+representative text and artifact outputs. Apple integration evidence now completes the active Apple
+catalog through the host engine daemon with validation-wrapper native payloads in place, validates
+pinned Apple host-engine `Exclusive` duplicate rejection, proves same-machine Apple `Shared`
+subscription coexistence, and covers Apple production `demo_ui = false` assertions. It also proves
+the source-fingerprint rebuild/reuse path by rebuilding the changed repo-owned image once before
+reusing the stamped image on later edge-port validation cycles. Follow-up probing of the earlier
+long host-native Apple `infernix-linux-cpu:local` build showed active Cabal dependency
+compilation, image export, Harbor push, and Helm/Pulsar readiness waits rather than a Docker daemon
+deadlock. Current source adds source-fingerprint image reuse plus Dockerfile dependency caching for
+that path. The full Apple e2e/all pass with real native payloads remains a Wave I cohort gate.
 
 ## Storage Boundary
 
