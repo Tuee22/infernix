@@ -25,6 +25,7 @@ module Infernix.Runtime.Pulsar
     ensureRegisteredSchemasWithRetry,
     ensureSchemaMarkers,
     modelCacheBootstrapRetryableError,
+    modelBootstrapReadyWaitMaxSeconds,
     reconcileSupportedNamespacesWithRetry,
     renderPulsarWebSocketBase,
     publishInferenceRequest,
@@ -115,6 +116,7 @@ import Infernix.Models
   ( enginePoolForModel,
     enginePoolTopicForMode,
     findModel,
+    modelRequiresInputObject,
   )
 import Infernix.Objects.Presigned qualified as Presigned
 import Infernix.Python (ensurePoetryExecutable)
@@ -2563,8 +2565,9 @@ runDispatcherLoop ::
   Text.Text ->
   ConversationTopic.TopicNamespace ->
   ContextModelMap ->
+  [ModelDescriptor] ->
   IO ()
-runDispatcherLoop transport runtimeMode requestTopic topicNamespace contextModelMap
+runDispatcherLoop transport runtimeMode requestTopic topicNamespace contextModelMap modelCatalog
   | Text.null requestTopic = do
       hPutStrLn
         stderr
@@ -2586,6 +2589,7 @@ runDispatcherLoop transport runtimeMode requestTopic topicNamespace contextModel
                 managedContexts
                 managedUsers
                 contextModelMap
+                modelCatalog
             )
         case outcome of
           Right _ -> pure ()
@@ -2606,8 +2610,9 @@ discoverAndStartDispatchers ::
   MVar (Set Text.Text) ->
   MVar (Set Text.Text) ->
   ContextModelMap ->
+  [ModelDescriptor] ->
   IO ()
-discoverAndStartDispatchers transport runtimeMode requestTopic topicNamespace manager managedContexts managedUsers contextModelMap = do
+discoverAndStartDispatchers transport runtimeMode requestTopic topicNamespace manager managedContexts managedUsers contextModelMap modelCatalog = do
   adminBaseUrl <- requirePulsarAdminBaseUrl transport
   topics <- listNamespaceTopics manager adminBaseUrl topicNamespace
   forM_ topics $ \topicUrl -> do
@@ -2622,6 +2627,7 @@ discoverAndStartDispatchers transport runtimeMode requestTopic topicNamespace ma
           contextIdValue
           managedContexts
           contextModelMap
+          modelCatalog
         startContextsMetadataWorkerIfNeeded
           transport
           topicNamespace
@@ -2707,8 +2713,9 @@ startDispatcherWorkerIfNeeded ::
   Contracts.ContextId ->
   MVar (Set Text.Text) ->
   ContextModelMap ->
+  [ModelDescriptor] ->
   IO ()
-startDispatcherWorkerIfNeeded transport runtimeMode requestTopic conversationTopic userIdValue contextIdValue managedContexts contextModelMap = do
+startDispatcherWorkerIfNeeded transport runtimeMode requestTopic conversationTopic userIdValue contextIdValue managedContexts contextModelMap modelCatalog = do
   let Contracts.ContextId contextIdText = contextIdValue
   modifyMVar_ managedContexts $ \alreadyStarted ->
     if Set.member contextIdText alreadyStarted
@@ -2724,6 +2731,7 @@ startDispatcherWorkerIfNeeded transport runtimeMode requestTopic conversationTop
                   userIdValue
                   contextIdValue
                   contextModelMap
+                  modelCatalog
                   `finally` modifyMVar_
                     managedContexts
                     (pure . Set.delete contextIdText)
@@ -2840,8 +2848,9 @@ runDispatcherForContext ::
   Contracts.UserId ->
   Contracts.ContextId ->
   ContextModelMap ->
+  [ModelDescriptor] ->
   IO ()
-runDispatcherForContext transport runtimeMode requestTopic conversationTopic userIdValue contextIdValue contextModelMap = do
+runDispatcherForContext transport runtimeMode requestTopic conversationTopic userIdValue contextIdValue contextModelMap modelCatalog = do
   reducerStateRef <- newIORef (initialReducerState contextIdValue)
   processLabel <- currentProcessLabel
   let subscriptionName = Dispatch.dispatcherSubscriptionName contextIdValue
@@ -2864,6 +2873,7 @@ runDispatcherForContext transport runtimeMode requestTopic conversationTopic use
             contextIdValue
             reducerStateRef
             contextModelMap
+            modelCatalog
             connection
         )
 
@@ -2875,9 +2885,10 @@ handleDispatcherMessage ::
   Contracts.ContextId ->
   IORef ReducerState ->
   ContextModelMap ->
+  [ModelDescriptor] ->
   WebSockets.Connection ->
   IO ()
-handleDispatcherMessage transport runtimeMode requestTopic userIdValue contextIdValue reducerStateRef contextModelMap connection = do
+handleDispatcherMessage transport runtimeMode requestTopic userIdValue contextIdValue reducerStateRef contextModelMap modelCatalog connection = do
   rawEnvelope <- receiveJsonFrame "Pulsar dispatcher message" connection
   envelope <- decodeJsonText "Pulsar dispatcher message" rawEnvelope
   handled <-
@@ -2911,6 +2922,7 @@ handleDispatcherMessage transport runtimeMode requestTopic userIdValue contextId
                         transport
                         runtimeMode
                         requestTopic
+                        modelCatalog
                         modelIdValue
                         inferenceEnvelope
                       writeIORef reducerStateRef advancedState
@@ -2971,10 +2983,11 @@ publishDispatchedInferenceRequest ::
   PulsarTransport ->
   RuntimeMode ->
   Text.Text ->
+  [ModelDescriptor] ->
   Text.Text ->
   Dispatch.InferenceRequestEnvelope ->
   IO ()
-publishDispatchedInferenceRequest transport runtimeMode requestTopic resolvedModelId env = do
+publishDispatchedInferenceRequest transport runtimeMode requestTopic modelCatalog resolvedModelId env = do
   let Contracts.ContextId contextIdText = Dispatch.inferenceContextId env
       Contracts.UserId userIdText = Dispatch.inferenceUserId env
       Contracts.MessageId promptMessageIdText = Dispatch.inferenceUserPromptMessageId env
@@ -2984,6 +2997,7 @@ publishDispatchedInferenceRequest transport runtimeMode requestTopic resolvedMod
         set (field @"requestId") promptMessageIdText
           . set (field @"requestModelId") resolvedModelId
           . set (field @"inputText") (Dispatch.inferencePromptText env)
+          . set (field @"inputObjectRef") (fromMaybe "" (dispatchedInputObjectRef modelCatalog resolvedModelId env))
           . set (field @"runtimeMode") (runtimeModeId runtimeMode)
           . set (field @"userId") userIdText
           . set (field @"contextId") contextIdText
@@ -3005,6 +3019,22 @@ publishDispatchedInferenceRequest transport runtimeMode requestTopic resolvedMod
     options
     promptMessageIdText
     (encodeMessage protoPayload)
+
+dispatchedInputObjectRef :: [ModelDescriptor] -> Text.Text -> Dispatch.InferenceRequestEnvelope -> Maybe Text.Text
+dispatchedInputObjectRef modelCatalog resolvedModelId env = do
+  model <-
+    listToMaybe
+      [ candidate
+      | candidate <- modelCatalog,
+        modelId candidate == resolvedModelId
+      ]
+  if modelRequiresInputObject model
+    then renderDispatchedObjectRef <$> listToMaybe (Dispatch.inferencePromptUserUploads env)
+    else Nothing
+
+renderDispatchedObjectRef :: Contracts.ObjectRef -> Text.Text
+renderDispatchedObjectRef objectRef =
+  Contracts.objectBucket objectRef <> "/" <> Contracts.objectKey objectRef
 
 -- | Phase 7 Sprint 7.7 / 7.14 model-bootstrap runtime loop. The
 -- coordinator subscribes to @infernix/system/model.bootstrap.request@
@@ -3562,8 +3592,15 @@ modelBootstrapRequestFor model = do
           Text.pack (formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%SZ" now)
       }
 
+modelBootstrapReadyPollMicros :: Int
+modelBootstrapReadyPollMicros = 250000
+
+modelBootstrapReadyWaitMaxSeconds :: Int
+modelBootstrapReadyWaitMaxSeconds = 900
+
 modelBootstrapReadyWaitAttempts :: Int
-modelBootstrapReadyWaitAttempts = 240
+modelBootstrapReadyWaitAttempts =
+  modelBootstrapReadyWaitMaxSeconds * (1000000 `div` modelBootstrapReadyPollMicros)
 
 waitForModelBootstrapReady :: PulsarTransport -> Text.Text -> IO Bool
 waitForModelBootstrapReady transport modelIdValue = do
@@ -3580,7 +3617,7 @@ waitForModelBootstrapReady transport modelIdValue = do
     go connection remainingAttempts
       | remainingAttempts <= 0 = pure False
       | otherwise = do
-          maybeRawEnvelope <- timeout 250000 (receiveJsonFrame "Pulsar model-bootstrap ready reader message" connection)
+          maybeRawEnvelope <- timeout modelBootstrapReadyPollMicros (receiveJsonFrame "Pulsar model-bootstrap ready reader message" connection)
           case maybeRawEnvelope of
             Nothing -> go connection (remainingAttempts - 1)
             Just rawEnvelope -> do

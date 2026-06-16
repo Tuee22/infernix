@@ -29,6 +29,7 @@ import Infernix.Web.Contracts
     ConversationEvent (..),
     ConversationMessage (..),
     MessageId (..),
+    ObjectRef,
     UserId,
     UserPromptPayload (..),
   )
@@ -50,6 +51,9 @@ import Infernix.Web.Contracts
 -- * @inferencePrefixHash@ — Merkle-style hash of the projection at dispatch
 --   time. Engine compares against its KV cache key; on mismatch it rebuilds.
 -- * @inferencePromptText@ — the actual prompt payload the engine consumes.
+-- * @inferencePromptUserUploads@ — user-uploaded objects attached to the
+--   prompt. The runtime dispatcher selects from these only for models whose
+--   catalog descriptor requires an input object.
 data InferenceRequestEnvelope = InferenceRequestEnvelope
   { inferenceUserId :: UserId,
     inferenceContextId :: ContextId,
@@ -58,6 +62,7 @@ data InferenceRequestEnvelope = InferenceRequestEnvelope
     inferenceConversationLogOffset :: Int,
     inferencePrefixHash :: Text,
     inferencePromptText :: Text,
+    inferencePromptUserUploads :: [ObjectRef],
     inferenceCausalRef :: Text
   }
   deriving (Eq, Show)
@@ -122,6 +127,7 @@ envelopeFromPromptMessage userId state messages promptMessageId promptMsg =
             inferenceConversationLogOffset = conversationOffsetOf messages promptMessageId,
             inferencePrefixHash = unPrefixHash (reducerPrefixHash state),
             inferencePromptText = promptText payload,
+            inferencePromptUserUploads = promptUserUploads payload,
             inferenceCausalRef = unMessageId promptMessageId
           }
     _ -> DispatchNoOp

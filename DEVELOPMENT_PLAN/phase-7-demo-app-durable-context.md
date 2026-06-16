@@ -64,13 +64,15 @@ Historical validation proof points are inventoried in
 [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) under "Historical Validation
 Evidence"; the underlying contracts they exercised still describe supported behavior.
 
-Phase 7 remains open for Sprint 7.24's remaining real-cluster pool-routing validation. The
+Phase 7 remains open for Sprint 7.24's remaining Linux GPU/CUDA pool-routing validation. The
 coordinator and engine-daemon code-side pool-routing work has landed on the Linux outer-container
-lane, and the Apple integration lane now proves pinned `Exclusive` routes, same-machine
-host-member coexistence on a real `Shared` subscription, and production `demo_ui = false`
-route/publication assertions. Current source adds and compile-validates the single-host logical
-`Shared` backlog harness, but real Apple execution of that harness, Linux placement, and full
-cohort validation remain Wave J residuals; physical Apple multi-host routing is hardware-deferred
+lane, and the Apple integration plus aggregate `test all` lanes now prove pinned `Exclusive` routes,
+same-machine host-member coexistence on a real `Shared` subscription, single-host logical `Shared`
+backlog/backpressure, production `demo_ui = false` route/publication assertions, and the full
+browser matrix on the current Apple host. The 2026-06-16 Linux CPU integration run proves
+Kubernetes-observed pool placement, shared-subscription backlog/backpressure, replacement/drain
+cases, anti-affinity, lifecycle rebinding, and demo-off publication. Linux GPU/CUDA cohort
+validation remains the Wave J residual; physical Apple multi-host routing is hardware-deferred
 proof while no second Apple host is available. The earlier durable-context and auth-UX scopes
 remain closed on their recorded validation.
 
@@ -1119,8 +1121,8 @@ for the authoritative target shape.
   subscription (alongside dispatcher and result-bridge) downloads from the upstream URL
   carried in the active substrate `.dhall`, PUTs each file under
   `infernix-models/<modelId>/<filename>`, PUTs the `.ready` sentinel last, then publishes
-  `model.bootstrap.ready.<modelId>`. Engines wait on the ready event with a bounded timeout
-  and load from MinIO
+  `model.bootstrap.ready.<modelId>`. Engines wait on the ready event with a 900-second bounded
+  cold-bootstrap timeout and load from MinIO
 - **Two MinIO buckets, drop the placeholders.** `infernix-models` is always-on and holds
   platform model weights, tokenizers, and configs under `<modelId>/<filename>` with a
   `.ready` sentinel; `infernix-demo-objects` is demo-gated and holds user uploads plus
@@ -2805,8 +2807,10 @@ None.
 
 ## Remaining Work
 
-None. Sprints 7.1-7.18 are `Done`; Apple cohort gates closed in Waves A/A.1/A.2/A.3 and native
-Linux/CUDA cohort validation closed in Wave C.
+Sprint 7.24 remains open for [Wave J](cohort-validation-waves.md) Linux GPU/CUDA pool-placement
+and full cohort validation; Linux CPU pool-placement/backpressure passed in the 2026-06-16
+integration run. Sprints 7.1-7.18 are `Done`; Apple cohort gates closed in Waves A/A.1/A.2/A.3,
+the auth-UX quad closed in Wave G, and native Linux/CUDA cohort validation closed in Wave C.
 
 ---
 
@@ -3227,6 +3231,7 @@ Current source additionally adds a single-host logical `Shared` backlog harness 
 Pulsar WebSocket consumers on an isolated pool/model topic with service-shaped subscription names
 and `receiverQueueSize=1`, holds the first request unacked, publishes a second request, and asserts
 the free consumer receives that second request by decoding the request id from the Pulsar payload.
+The 2026-06-16 Apple integration rerun executed that harness against the live Apple Pulsar lane.
 No hot reload is implemented in this sprint; changing pool/member assignment remains a Dhall
 materialization and daemon restart or rollout boundary. Proven by `./bootstrap/linux-cpu.sh build`;
 rebuilt-image
@@ -3236,13 +3241,19 @@ and mounted live-source `cabal test infernix-unit`, `cabal test infernix-haskell
 `cabal run exe:infernix -- test lint`, and a mounted-source linux-gpu Compose launcher run of
 `cabal build test:infernix-integration`. The same current-source mounted linux-gpu validation also
 passes `infernix test lint`, `infernix test unit`, focused `infernix lint files/docs/proto/chart`,
-`infernix docs check`, and `git diff --check`.
+`infernix docs check`, and `git diff --check`. The 2026-06-16 Linux CPU rebuilt-image integration
+pass exercises the real-cluster Linux side of this sprint: Kubernetes-observed pool placement
+across the two-worker Kind topology, unique-topic `Shared` backlog/backpressure, frontend and
+engine replacement cases, engine node drain, model-bootstrap failover/deduplication, anti-affinity,
+lifecycle rebinding, and demo-off coordinator/engine publication.
 **Cohort gate**: Pending [Wave J](cohort-validation-waves.md) — real Pulsar integration has proved
 pinned duplicate-consumer rejection, same-machine Apple `Shared` coexistence, and Apple
-production `demo_ui = false` assertions. It still must execute the newly added single-host logical
-Apple `Shared` backlog/backpressure harness, prove Linux pool placement, and pass full cohort
-validation before this sprint can move to `Done`; physical Apple multi-host operation is
-hardware-deferred proof while no second Apple host is available.
+production `demo_ui = false` assertions, plus the single-host logical `Shared`
+backlog/backpressure harness. The current full Apple aggregate `./.build/infernix test all` also
+passes against this state, and Linux CPU integration proves pool placement/backpressure in Kind. It
+still must prove Linux GPU/CUDA pool placement and pass full cohort validation before this sprint
+can move to `Done`; physical Apple multi-host operation is hardware-deferred proof while no second
+Apple host is available.
 **Implementation**: `dhall/InfernixSubstrate.dhall`, `src/Infernix/Types.hs`, `src/Infernix/Models.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Daemon.hs`, `src/Infernix/DemoConfig.hs`, `src/Infernix/Substrate.hs`, `test/unit/Spec.hs`, `test/integration/Spec.hs`
 **Docs to update**: [../documents/architecture/engine_pool_routing.md](../documents/architecture/engine_pool_routing.md), [../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md), [../documents/tools/pulsar.md](../documents/tools/pulsar.md), [../documents/operations/apple_silicon_runbook.md](../documents/operations/apple_silicon_runbook.md), [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md)
 
@@ -3273,6 +3284,8 @@ exact-member routes stay explicit through `Exclusive` pinned topics.
   `Shared` pool/model topic
 - Pulsar integration proving a busy logical shared-pool Apple member stops receiving new work while
   a free logical member on the same Apple host receives new messages
+- Linux CPU integration proving Kubernetes-observed pool placement and shared-subscription
+  backpressure on unique derived pool/model topics
 - pinned-route duplicate-consumer test proves `Exclusive` ownership on the Apple host integration
   lane
 - production-shape integration proves coordinator presence with `demo_ui = false`
@@ -3283,13 +3296,12 @@ exact-member routes stay explicit through `Exclusive` pinned topics.
 
 - **Code (machine-independent — DONE):** coordinator pool-topic routing, engine member subscription
   selection, and Apple `ConsumerFailover` demotion have landed for startup-time assignment.
-- **Cohort gate ([Wave J](cohort-validation-waves.md)):** run the newly added real Pulsar
-  single-host logical shared-pool backlog/backpressure harness on the Apple integration lane, and
-  add/run Linux pool-placement evidence plus full cohort validation. Pinned `Exclusive`
-  duplicate-consumer rejection, same-machine Apple `Shared` coexistence, and Apple production
-  `demo_ui = false` assertions are covered by the Apple integration lane. Physical Apple
-  multi-host routing is tracked as hardware-deferred proof, not as a blocker for the current
-  single-host logical backpressure gate.
+- **Cohort gate ([Wave J](cohort-validation-waves.md)):** add/run Linux GPU/CUDA pool-placement
+  evidence plus full cohort validation. Pinned `Exclusive` duplicate-consumer rejection,
+  same-machine Apple `Shared` coexistence, Apple single-host logical backlog/backpressure, Apple
+  production `demo_ui = false` assertions, and Linux CPU placement/backpressure are covered.
+  Physical Apple multi-host routing is tracked as hardware-deferred proof, not as a blocker for
+  the current single-host logical backpressure gate.
 - **Future extension:** compacted assignment/status topics and cache-drain hot reload remain
   planned design space; they are not implemented or required for the current startup-time
   assignment contract.

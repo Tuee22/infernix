@@ -111,9 +111,11 @@ own isolated in-project venv:
   package via an editable path dependency and declares its framework wheels in an **optional**
   substrate group. The default `poetry install` there pulls no framework; the substrate build opts
   in with `poetry install --directory python/engines/<engine> --with cuda` (linux-gpu, cu128 torch
-  for Blackwell) or `--with apple-silicon` for the Apple host-native framework engines that publish
-  Darwin arm64 wheels (`transformers`, `pytorch`, and `diffusers`). The linux-cpu framework groups
-  remain a follow-on.
+  for Blackwell), `--with apple-silicon` for the Apple host-native framework engines that publish
+  Darwin arm64 wheels (`transformers`, `pytorch`, and `diffusers`), or `--with linux-cpu` for the
+  Linux CPU `transformers` and `pytorch` validation engines. The Linux CPU image bakes those two
+  CPU framework venvs only on an actual Linux runtime; Darwin host validation keeps them absent and
+  exercises the fail-fast shared path.
 - The Haskell worker (`src/Infernix/Runtime/Worker.hs`) resolves the per-engine venv at dispatch:
   when `python/engines/<engine>/.venv/bin/python` exists it runs `python -m adapters.<module>` in
   that venv (the in-project venv installs console scripts with a relative shebang, so the worker
@@ -122,7 +124,13 @@ own isolated in-project venv:
   framework-free project so an absent framework fails fast.
 - The linux-gpu image build (`docker/Dockerfile`) bakes each engine's `--with cuda` venv as a
   separate layer; a failed engine install removes its partial venv so the runtime falls back to the
-  fail-fast path (a named cohort residual) rather than a broken venv. Basic Pitch TensorFlow
+  fail-fast path (a named cohort residual) rather than a broken venv. The linux-cpu image bakes
+  `transformers` and `pytorch` with their `linux-cpu` groups and writes marker files for the baked
+  venvs. On Linux CPU, the Transformers adapter intentionally uses a deterministic validation smoke
+  path for the Qwen row: it loads the local tokenizer/config and returns a token-count response
+  rather than running full Qwen generation. The PyTorch Bark row emits a deterministic WAV
+  validation artifact for `audio-bark-small` on Apple/Linux CPU; CUDA remains the real Bark
+  generation lane. Basic Pitch TensorFlow
   (published wheel pins TensorFlow `<2.15.1`), Omnizart (TF1-era), and MT3 (unmaintained JAX) do
   not resolve on the supported Python 3.12 / CUDA 12.8 substrate and are named cohort residuals
   (see [../../DEVELOPMENT_PLAN/cohort-validation-waves.md](../../DEVELOPMENT_PLAN/cohort-validation-waves.md)).

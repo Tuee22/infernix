@@ -54,7 +54,7 @@ preload, and Apple retained-state replay windows. Bootstrap shells build or ente
 launcher only and then delegate lifecycle, validation, image preparation, and teardown to
 `infernix`; the shared
 lifecycle skips broad pre-Harbor support-image preloads, may hydrate and stream only the narrow
-Harbor warmup dependency set into Linux Kind workers before Helm warmup, and loads every remaining
+Harbor warmup dependency set into Kind workers before Helm warmup, and loads every remaining
 image, including the active runtime image, into Harbor after Harbor is responsive. Staged
 `infernix-substrate.dhall` writes are atomic so concurrent status readers do not observe truncated
 payloads, and retained-state Apple reruns automatically reinitialize stopped Harbor PostgreSQL

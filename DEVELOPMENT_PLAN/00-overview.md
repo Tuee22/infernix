@@ -51,9 +51,9 @@ legacy Sprint 1.13 `tart` / `hostTart` / `AppleTart` implementation from the cur
 schema and retargets the retained `materialize-metal-engines` command to typed engine-artifact
 manifests. The materializer now writes the fixed host Metal bridge source and smoke command, and it
 also writes and smoke-loads the `coreml-native` runner from the temp root before atomic install.
-The current Apple host pass executes both installed smoke commands. The remaining
-Apple cohort gate is the Apple integration/e2e/all evidence against the reopened real-output
-surface. The headless target uses no Tart VM, no user keychain dependency, no host Xcode UI flow,
+The current Apple host pass executes both installed smoke commands and passes Apple
+integration/e2e/all against the validation-wrapper state. The remaining Wave I gate is real native
+payload output on the reopened real-output surface. The headless target uses no Tart VM, no user keychain dependency, no host Xcode UI flow,
 and no request-time toolchain installation. The Apple clean-host bootstrap hardening is implemented and validated: the stage-0
 entrypoint verifies same-process ghcup-managed `ghc` and `cabal` resolution before direct
 `cabal install`, reconciles Homebrew `protoc`, and lets Apple adapter setup or validation paths
@@ -76,7 +76,7 @@ current Patroni leader when timeline drift leaves replicas unready after promoti
 non-retained Harbor and Keycloak Patroni claim roots before recreating claim directories and after
 retained-state sync. The shared lifecycle skips broad
 pre-Harbor support-image preloads and performs binary-owned Harbor-first image preparation, where
-Linux lanes may hydrate and stream only the narrow Harbor warmup dependency set into Kind before
+supported lanes hydrate and stream only the narrow Harbor warmup dependency set into Kind before
 Helm warmup, only Harbor-required services may pull upstream before Harbor is responsive, and
 every remaining image, including the active `infernix` runtime image, is loaded into Harbor before
 final rollout.
@@ -110,7 +110,8 @@ cluster cycles. The run completed cache lifecycle, service runtime loop, durable
 families, pinned Apple host-engine `Exclusive` duplicate-consumer rejection through an isolated
 `infernix service --config` file, same-machine Apple host-member coexistence on one derived
 `Shared` pool subscription with two real Pulsar consumers and a completed request, production-shape
-Apple `demo_ui = false` route/publication assertions, and edge-port conflict rediscovery.
+Apple `demo_ui = false` route/publication assertions, single-host logical `Shared`
+backlog/backpressure, and edge-port conflict rediscovery.
 Investigation of the earlier long Docker interval showed active Cabal dependency compilation,
 image export, Harbor push, and Helm/Pulsar readiness waits rather than a Docker daemon deadlock;
 current source stamps repo-owned cluster images with a source fingerprint, allows host-native Apple
@@ -119,8 +120,12 @@ and splits the Dockerfile dependency layer so ordinary source edits do not redow
 Cabal/NPM/Poetry dependencies. The native arm64 Docker lane also rebuilds the `linux-cpu` launcher
 and proves a fresh-container `infernix internal materialize-linux-native-engines` rerun can replace
 image-layer baked `/opt/infernix/engines/<adapterId>/` roots without the earlier cross-device
-rename failure. Apple e2e/all and CUDA Linux still own the remaining real payload plus full-suite
-proof. The legacy
+rename failure. The 2026-06-16 Linux CPU rebuilt-image integration pass on the native arm64 Docker
+lane proves two-worker engine-pool placement, unique-topic `Shared` backlog/backpressure, pod
+replacement, node drain, anti-affinity, lifecycle rebinding, demo-off publication, Linux CPU
+framework-venv smoke paths, and clean teardown against image digest
+`sha256:ae06ba36fe1f3ffecf48aa86c34abeb0dd1c98cabb030a7da783681ac87a81df`. CUDA Linux/GPU and
+real native payloads still own the remaining real-output full-suite proof. The legacy
 dated proof points are inventoried in
 [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) under "Retired Historical
 Validation Evidence". The underlying contracts they exercised still describe supported behavior,

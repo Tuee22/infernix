@@ -159,15 +159,16 @@ runWebSocketPulsarDaemon paths runtimeMode engineOverrides daemonConfig demoConf
         (daemonConfigRequestTopics daemonConfig)
         (forkIO . consumeTopicForever transport paths runtimeMode engineOverrides daemonConfig demoConfig (Just engineKVCache))
       when (daemonRole == Coordinator) $
-        startCoordinatorLoops transport runtimeMode daemonConfig
+        startCoordinatorLoops transport runtimeMode daemonConfig demoConfig
       forever (threadDelay 60000000)
 
 startCoordinatorLoops ::
   PulsarTransport ->
   RuntimeMode ->
   DaemonConfig ->
+  DemoConfig ->
   IO ()
-startCoordinatorLoops transport runtimeMode daemonConfig = do
+startCoordinatorLoops transport runtimeMode daemonConfig demoConfig = do
   putStrLn "serviceResultBridgeMode: failover-subscription"
   _ <-
     forkIO
@@ -194,6 +195,7 @@ startCoordinatorLoops transport runtimeMode daemonConfig = do
           (firstOrEmpty (daemonConfigRequestTopics daemonConfig))
           ConversationTopic.defaultDemoTopicNamespace
           contextModelMap
+          (models demoConfig)
       )
   pure ()
 

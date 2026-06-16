@@ -36,10 +36,11 @@ surfaces while chart/runtime cleanup is staged through
 [../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md](../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md).
 Current Apple integration proves pinned `Exclusive` duplicate-consumer rejection, same-machine
 Apple host-member coexistence on one real `Shared` pool subscription, and production
-`demo_ui = false` route/publication assertions. Current source also includes a compile-validated
-single-host logical `Shared` backlog harness that holds one Pulsar WebSocket consumer unacked and
-asserts a second request reaches a free consumer on the same service-shaped subscription; executing
-that harness on Apple and proving Linux GPU placement remain in
+`demo_ui = false` route/publication assertions. Current Apple integration also executes the
+single-host logical `Shared` backlog harness by holding one Pulsar WebSocket consumer unacked and
+asserting a second request reaches a free consumer on the same service-shaped subscription.
+Current Linux CPU integration proves Kubernetes-observed pool placement and shared-subscription
+backpressure on unique derived pool/model topics; Linux GPU/CUDA cohort validation remains in
 [Wave J](../../DEVELOPMENT_PLAN/cohort-validation-waves.md). Physical Apple multi-host membership
 is hardware-deferred proof while no second Apple host is available.
 
@@ -172,6 +173,7 @@ The pool contract is valid only when:
 - engine members subscribe only to derived topics assigned to their pool or member id
 - same-machine Apple host-member daemons can coexist on one `Shared` subscription
 - single-host logical Apple pool consumers distribute work through Pulsar permits/backpressure
+- Linux CPU engine pods prove pool placement and broker backpressure on derived pool/model topics
 - pinned routes use `Exclusive` and reject duplicate member consumers
 - `demo_ui = false` still deploys the production coordinator and engine pools while omitting only
   the demo frontend, browser API, Keycloak, and demo-only routes

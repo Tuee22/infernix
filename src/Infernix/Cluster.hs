@@ -1159,7 +1159,7 @@ createKindCluster paths runtimeMode = case runtimeMode of
       case result of
         Right _ -> pure (candidatePort, harborPortCandidate, pulsarHttpPortCandidate)
         Left err
-          | "address already in use" `List.isInfixOf` err ->
+          | kindHostPortConflict err ->
               go (candidatePort + 1) (harborPortCandidate + 1) (pulsarHttpPortCandidate + 1)
           | otherwise ->
               ioError
@@ -1191,7 +1191,7 @@ createLinuxGpuCluster paths = go
       case result of
         Right _ -> pure (candidatePort, harborPortCandidate, pulsarHttpPortCandidate)
         Left err
-          | "address already in use" `List.isInfixOf` err ->
+          | kindHostPortConflict err ->
               go (candidatePort + 1) (harborPortCandidate + 1) (pulsarHttpPortCandidate + 1)
           | linuxGpuNvkindConfigMapBug err -> do
               clusterCreated <- kindClusterExists paths LinuxGpu
@@ -1226,6 +1226,10 @@ createLinuxGpuCluster paths = go
           | otherwise ->
               ioError
                 (userError ("nvkind cluster create failed for " <> kindClusterName paths LinuxGpu <> ":\n" <> err))
+
+kindHostPortConflict :: String -> Bool
+kindHostPortConflict err =
+  any (`List.isInfixOf` err) ["address already in use", "port is already allocated"]
 
 linuxGpuNvkindConfigMapBug :: String -> Bool
 linuxGpuNvkindConfigMapBug err =
@@ -1957,11 +1961,10 @@ publishClusterImages paths state renderedChartPath runtimeMode = do
   pure outputPath
 
 preloadHostCachedWarmupImagesOnKindWorker :: Paths -> ClusterState -> RuntimeMode -> IO ()
-preloadHostCachedWarmupImagesOnKindWorker paths state runtimeMode =
-  when (runtimeMode /= AppleSilicon) $ do
-    workerContainers <- kindWorkerNodeNames paths runtimeMode
-    forM_ workerContainers $ \workerContainer ->
-      mapM_ (preloadHostCachedWarmupImage paths state workerContainer) hostCachedWarmupImageRefs
+preloadHostCachedWarmupImagesOnKindWorker paths state runtimeMode = do
+  workerContainers <- kindWorkerNodeNames paths runtimeMode
+  forM_ workerContainers $ \workerContainer ->
+    mapM_ (preloadHostCachedWarmupImage paths state workerContainer) hostCachedWarmupImageRefs
 
 -- | Phase 3 Sprint 3.11 (2026-05-29): the warmup-preload list tracks
 -- the multi-arch upstream image inventory after the `bitnamilegacy/*`

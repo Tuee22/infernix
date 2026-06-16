@@ -9,7 +9,8 @@
 # The framework wheels live in OPTIONAL substrate groups, so the default
 # `poetry install` here pulls no framework (machine-independent). The
 # linux-gpu image build opts in with `poetry install --with cuda`; Apple
-# host-native real inference opts in with `poetry install --with apple-silicon`.
+# host-native real inference opts in with `poetry install --with apple-silicon`;
+# Linux CPU opts in with `poetry install --with linux-cpu`.
 # See documents/development/python_policy.md "Per-Engine Framework Venvs".
 name = "infernix-engine-transformers"
 version = "0.1.0"
@@ -32,6 +33,17 @@ safetensors = ">=0.4"
 sentencepiece = ">=0.2"
 tiktoken = ">=0.8"
 
+[tool.poetry.group.linux-cpu]
+optional = true
+
+[tool.poetry.group.linux-cpu.dependencies]
+torch = { version = ">=2.7", source = "pytorch-cpu", markers = "platform_system == 'Linux' and platform_machine != 'x86_64'" }
+transformers = ">=4.46"
+accelerate = ">=1.0"
+safetensors = ">=0.4"
+sentencepiece = ">=0.2"
+tiktoken = ">=0.8"
+
 [tool.poetry.group.apple-silicon]
 optional = true
 
@@ -46,6 +58,11 @@ tiktoken = ">=0.8"
 [[tool.poetry.source]]
 name = "pytorch-cu128"
 url = "https://download.pytorch.org/whl/cu128"
+priority = "explicit"
+
+[[tool.poetry.source]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
 priority = "explicit"
 
 [build-system]

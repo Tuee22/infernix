@@ -32,6 +32,7 @@ module Infernix.Models
     renderConfigMapManifest,
     resultFamilyForDescriptor,
     matrixRowReadmeKeys,
+    modelRequiresInputObject,
     resultTopicForMode,
     residualMatrixRowIdsForMode,
     routeInventory,
@@ -132,6 +133,19 @@ resultFamilyForDescriptor model =
       | "basic-pitch" `Text.isInfixOf` rowIdValue = AudioToMidi
       | "bark" `Text.isInfixOf` rowIdValue = AudioGeneration
       | otherwise = AudioGeneration
+
+-- | True when the model consumes a user-uploaded object instead of only the
+-- prompt text. The dispatcher uses this to carry the first prompt upload into
+-- the inference request envelope without changing text-only prompt behavior.
+modelRequiresInputObject :: ModelDescriptor -> Bool
+modelRequiresInputObject model =
+  case resultFamilyForDescriptor model of
+    SpeechTranscription -> True
+    SourceSeparation -> True
+    AudioToMidi -> True
+    MusicTranscription -> True
+    OpticalMusicRecognition -> True
+    _ -> False
 
 engineBindingsForMode :: RuntimeMode -> [EngineBinding]
 engineBindingsForMode runtimeMode =

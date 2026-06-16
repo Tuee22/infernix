@@ -28,7 +28,7 @@ def _generate_bark(context: AdapterContext) -> ArtifactResult:
     try:
         weights_dir = get_model_path(context.model_id)
     except ModelCacheNotPopulated:
-        if _uses_apple_validation_artifact(context):
+        if _uses_portable_bark_validation_artifact(context):
             return _validation_audio_generation(context.input_text)
         raise
     try:
@@ -100,9 +100,9 @@ def _has_bootstrap_placeholder_payload(weights_dir: Path) -> bool:
     ).is_file()
 
 
-def _uses_apple_validation_artifact(context: AdapterContext) -> bool:
+def _uses_portable_bark_validation_artifact(context: AdapterContext) -> bool:
     return (
-        context.runtime_mode == "apple-silicon"
+        context.runtime_mode in {"apple-silicon", "linux-cpu"}
         and context.family == "audio"
         and context.model_id == "audio-bark-small"
     )

@@ -112,6 +112,7 @@ import Infernix.Runtime.Pulsar
   ( DemoClientMessageError (..),
     DemoClientMessagePublication (..),
     drainTopic,
+    modelBootstrapReadyWaitMaxSeconds,
     modelCacheBootstrapRetryableError,
     parseMessageIdToSequenceId,
     planDemoClientMessagePublications,
@@ -884,6 +885,18 @@ main = do
       assert
         ((resultFamilyForDescriptor <$> findModel LinuxCpu "tool-audiveris") == Just OpticalMusicRecognition)
         "Sprint 4.15: the audiveris row resolves to the OMR family"
+      assert
+        (maybe False modelRequiresInputObject (findModel AppleSilicon "audio-demucs-htdemucs"))
+        "dispatcher marks source-separation models as object-input consumers"
+      assert
+        (maybe False modelRequiresInputObject (findModel AppleSilicon "speech-whisper-small"))
+        "dispatcher marks speech transcription models as object-input consumers"
+      assert
+        (maybe True (not . modelRequiresInputObject) (findModel AppleSilicon "audio-bark-small"))
+        "dispatcher keeps text-to-audio generation on prompt text"
+      assert
+        (maybe True (not . modelRequiresInputObject) (findModel AppleSilicon "llm-qwen25-safetensors"))
+        "dispatcher keeps LLM models on prompt text"
       -- Phase 4 Sprint 4.18 / Phase 6 Sprint 6.31: the union of every
       -- runnable substrate catalog plus the explicit residual rows equals the
       -- full README matrix row set. Residual cells are not runtime bindings.
@@ -931,12 +944,18 @@ main = do
         (all (`elem` frameworkEngineNamesForMode LinuxGpu) ["vllm", "diffusers", "pytorch"])
         "Sprint 4.17: the linux-gpu catalog deploys the vllm/diffusers/pytorch framework engines"
       transformersEnginePyproject <- readFile (repoRoot paths </> "python" </> "engines" </> "transformers" </> "pyproject.toml")
+      pytorchEnginePyproject <- readFile (repoRoot paths </> "python" </> "engines" </> "pytorch" </> "pyproject.toml")
       assert
         ( "[tool.poetry.group.apple-silicon.dependencies]" `isInfixOf` transformersEnginePyproject
+            && "[tool.poetry.group.linux-cpu.dependencies]" `isInfixOf` transformersEnginePyproject
+            && "source = \"pytorch-cpu\"" `isInfixOf` transformersEnginePyproject
             && "platform_system == 'Darwin' and platform_machine == 'arm64'" `isInfixOf` transformersEnginePyproject
             && "platform_system == 'Linux' and platform_machine == 'x86_64'" `isInfixOf` transformersEnginePyproject
+            && "[tool.poetry.group.linux-cpu.dependencies]" `isInfixOf` pytorchEnginePyproject
+            && "source = \"pytorch-cpu\"" `isInfixOf` pytorchEnginePyproject
+            && "platform_system == 'Linux'" `isInfixOf` pytorchEnginePyproject
         )
-        "Sprint 4.16/Wave I: transformers per-engine venvs separate Apple torch wheels from the CUDA torch source"
+        "Sprint 4.16/Wave I: framework per-engine venvs separate Apple, Linux CPU, and CUDA torch sources"
       persistInferenceResult paths textPayloadResult
       reloadedResult <- loadInferenceResult paths "req-unit-text"
       assert
@@ -1094,6 +1113,9 @@ main = do
               )
         )
         "only model-cache-not-populated adapter failures trigger the bootstrap retry path"
+      assert
+        (modelBootstrapReadyWaitMaxSeconds >= 900)
+        "model-bootstrap ready wait supports cold Hugging Face snapshot downloads"
       let hostWorkerState =
             ClusterState
               True
@@ -2036,16 +2058,27 @@ assertSingleFlightDispatcher :: IO ()
 assertSingleFlightDispatcher = do
   let userId = Contracts.UserId "user-1"
       contextId = Contracts.ContextId "ctx-flight"
-      promptPayload text key =
+      uploadRef =
+        Contracts.ObjectRef
+          { Contracts.objectBucket = "infernix-demo-objects",
+            Contracts.objectKey = "users/user-1/contexts/ctx-flight/uploads/input.wav"
+          }
+      promptPayloadWithUploads text key uploads =
         Contracts.UserPromptPayload
           { Contracts.promptText = text,
             Contracts.promptClientIdempotencyKey = Contracts.ClientIdempotencyKey key,
-            Contracts.promptUserUploads = []
+            Contracts.promptUserUploads = uploads
           }
+      promptPayload text key = promptPayloadWithUploads text key []
       promptMsg mid text key =
         Contracts.ConversationMessage
           { Contracts.conversationMessageId = Contracts.MessageId mid,
             Contracts.conversationMessageEvent = Contracts.ConversationUserPromptEvent (promptPayload text key)
+          }
+      promptMsgWithUploads mid text key uploads =
+        Contracts.ConversationMessage
+          { Contracts.conversationMessageId = Contracts.MessageId mid,
+            Contracts.conversationMessageEvent = Contracts.ConversationUserPromptEvent (promptPayloadWithUploads text key uploads)
           }
       resultMsg mid forPrompt =
         Contracts.ConversationMessage
@@ -2088,6 +2121,9 @@ assertSingleFlightDispatcher = do
         (Dispatch.inferencePromptText envelope == "first")
         "dispatched envelope carries the prompt text"
       assert
+        (null (Dispatch.inferencePromptUserUploads envelope))
+        "dispatched envelope has no uploads when the prompt did not attach any"
+      assert
         (Dispatch.inferenceConversationLogOffset envelope == 0)
         "dispatched envelope carries the conversation log offset for the head prompt"
       assert
@@ -2096,6 +2132,15 @@ assertSingleFlightDispatcher = do
       assert
         (Dispatch.producerDedupSequenceId envelope == "p-1")
         "producer-dedup sequence id is the user prompt message id"
+
+  let uploadedState = ConversationReducer.foldEvents contextId [promptMsgWithUploads "p-upload" "audio input" "idem-upload" [uploadRef]]
+      uploadedDecision = Dispatch.buildDispatchDecision userId uploadedState
+  case uploadedDecision of
+    Dispatch.DispatchPrompt envelope ->
+      assert
+        (Dispatch.inferencePromptUserUploads envelope == [uploadRef])
+        "single-flight dispatcher preserves prompt upload object refs"
+    _ -> fail "single-flight dispatcher should dispatch a prompt with uploads"
 
   -- Two prompts in a row: dispatcher still picks the first (single-flight)
   let twoState = ConversationReducer.foldEvents contextId [promptMsg "p-1" "a" "idem-1", promptMsg "p-2" "b" "idem-2"]

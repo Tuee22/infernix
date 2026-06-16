@@ -36,7 +36,10 @@ cohort gate (Apple Metal with headless Metal/Core ML materialization, and CUDA G
 re-validated on both cohorts in
 [Wave I](cohort-validation-waves.md); the phase returns to `Done` only after that wave closes —
 never a per-sprint machine switch (see
-[development_plan_standards.md](development_plan_standards.md) Section Q).
+[development_plan_standards.md](development_plan_standards.md) Section Q). Current Apple focused
+e2e and aggregate `test all` reruns pass the active catalog after the object-input prompt upload
+fix and the 900-second cold-bootstrap ready wait fix, but real native payload evidence remains an
+open Wave I gate.
 The supported test story is substrate-specific in code. Sprint 6.25 closes around the implemented split topology: cluster daemons
 always run, Apple cluster daemons own request-topic consumption and derived pool-topic handoff,
 Apple inference work moves through Pulsar to same-binary host daemons, and publication distinguishes
@@ -63,9 +66,11 @@ root and chart archive cache in the image overlay, hydrates MinIO through the su
 tarball path instead of Docker Hub-backed OCI metadata, and repairs the known stale retained
 Pulsar or ZooKeeper epoch mismatch by resetting only the Pulsar claim roots and retrying once.
 Sprint 6.32 reopens validation for the engine-pool routing target: unit gates now reject illegal
-pool graphs and service-consumer subscription states, while integration still must prove
+pool graphs and service-consumer subscription states, while Apple integration now proves
 broker-native backpressure on `Shared` pools, `Exclusive` pinned routes, and production-shape
-coordinator presence when `demo_ui = false`.
+coordinator presence when `demo_ui = false`. Linux CPU integration now proves Kubernetes-observed
+pool placement and shared-subscription backpressure; Linux GPU/CUDA cohort validation remains the
+Wave J residual.
 
 ## Current Repo Assessment
 
@@ -89,7 +94,7 @@ upstream behavior, persists cluster state before later Linux rollout phases, own
 substrate preflight in the binary command, reuses a persistent Linux chart-archive cache, and
 performs the targeted Pulsar claim-root reset when the known retained ZooKeeper epoch-state
 corruption blocks bootstrap. The current lifecycle skips broad pre-Harbor support-image preloads
-on supported lanes, may hydrate and stream only the narrow Harbor warmup dependency set into Linux
+on supported lanes, may hydrate and stream only the narrow Harbor warmup dependency set into
 Kind workers before Helm warmup, and follows the stricter Harbor-first boundary where only
 Harbor-required services may pull upstream before Harbor is responsive.
 
@@ -263,7 +268,7 @@ MinIO, Pulsar, and operator-managed PostgreSQL substrate.
 
 **Status**: Active
 **Code-side closure**: Complete on the recorded CUDA Linux host (x86_64 + RTX 5090) — the routed Playwright suite (`web/playwright/inference.spec.js`) per-model smoke matrix now asserts the per-family rendered result for every demo-visible row (text bubble vs image/audio/video/download), staying substrate-agnostic via a JS classifier `expectedResultRenderKind` (keys on model family + matrix-row metadata, never substrate id or engine binding). The web UI renders artifact results per-family: `web/src/Infernix/Web/Chat.purs` renders `inferenceResultArtifacts` as `<img>`/`<audio>`/`<video>`/download `<a>` with `data-result-artifact-kind` keyed on the object-key extension. The PureScript + Playwright code is written and `infernix lint files` passes on the recorded CUDA Linux host. NOTE: the web unit suite (`spago`) requires Node 22 and cannot run on this bare host (host has Node 18; Node 22 makes spago segfault — an environmental toolchain limit), so 6.3's web-unit gate is exercised in the supported Linux **container** lane (Node 22) / cohort batch
-**Cohort gate**: Pending [Wave I](cohort-validation-waves.md) — both cohorts run the routed Playwright suite against their own catalog column
+**Cohort gate**: Pending [Wave I](cohort-validation-waves.md) — both cohorts run the routed Playwright suite against their own catalog column. Current Apple focused e2e passes 9/9 after the browser matrix uploads object fixtures for object-input model families, asserts generated artifact refs without requiring presigned media visibility, and allows a real cold Hugging Face snapshot through the 900-second bootstrap-ready envelope; the latest focused pass used rebuilt cluster image digest `sha256-ed34da86992bb1a4d285f00feb77051d12eb4fa594b7bb34ed73561a027b1a71`. The subsequent full Apple `./.build/infernix test all` aggregate passed lint, unit (Haskell plus web 71/71), integration, and 9/9 routed Playwright against rebuilt cluster image digest `sha256-f4a30f4e177206b64ce5a0d3abea8d72a8bdbe637148530e1619bdf5ce8ae7c3`, including Qwen, object-input audio/tool rows, and every active Apple catalog row. Real native payload replacement remains pending.
 **Implementation**: `src/Infernix/CLI.hs`, `web/playwright/inference.spec.js`, `web/src/Infernix/Web/Chat.purs`, `web/src/Infernix/Web/Router.purs`, `web/src/Main.purs`, `web/src/index.html`, `web/test/Main.purs`, `web/test/run_playwright_matrix.mjs`, `web/package.json`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/reference/web_portal_surface.md`
 
@@ -1588,7 +1593,7 @@ None. The four toolchain cleanup rows live in `legacy-tracking-for-deletion.md` 
 
 **Status**: Active
 **Code-side closure**: Complete on the recorded Linux outer-container lane - `src/Infernix/Models.hs` exports `matrixRowReadmeKeys`, `src/Infernix/Lint/Docs.hs` now parses the README model matrix and fails `infernix lint docs` when a cell drifts from the generated runnable catalog, explicit residual list, or `Not recommended` state, and `test/unit/Spec.hs` proves the README lint keys are unique and cover every matrix row id. Proven by `docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm ... infernix cabal run exe:infernix -- lint docs` and `docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm ... infernix cabal run exe:infernix -- test unit` with live source/docs mounts.
-**Cohort gate**: Wave I still owns the Apple e2e/all gate and the CUDA Linux real native-payload/per-family full-suite rerun. The generated Apple Metal bridge smoke, installed `coreml-native` runtime-load smoke, Apple native validation-wrapper materialization, and latest Apple full integration rerun have passed on the current Apple host. That integration rerun rebuilt the changed cluster image once, reused the stamped image during later edge-port validation cycles, completed the active Apple catalog through the host engine daemon, validated pinned Apple host-engine `Exclusive` duplicate rejection, proved same-machine Apple `Shared` subscription coexistence through real Pulsar admin stats, and covered Apple `demo_ui = false` route/publication assertions. Real Apple native payloads still need to replace the validation wrappers before the real-output suite can return to `Done`.
+**Cohort gate**: Wave I still owns the CUDA Linux real native-payload/per-family full-suite rerun. The generated Apple Metal bridge smoke, installed `coreml-native` runtime-load smoke, Apple native validation-wrapper materialization, latest Apple full integration rerun, focused Apple e2e reruns, and the full Apple aggregate `./.build/infernix test all` have passed on the current Apple host. The integration rerun rebuilt the changed cluster image once, reused the stamped image during later edge-port validation cycles, completed the active Apple catalog through the host engine daemon, validated pinned Apple host-engine `Exclusive` duplicate rejection, proved same-machine Apple `Shared` subscription coexistence through real Pulsar admin stats, executed the single-host logical `Shared` backlog/backpressure harness, and covered Apple `demo_ui = false` route/publication assertions. The latest focused e2e rerun passed after preserving prompt uploads for object-input rows and raising the cold-bootstrap readiness wait to 900 seconds; it used rebuilt cluster image digest `sha256-ed34da86992bb1a4d285f00feb77051d12eb4fa594b7bb34ed73561a027b1a71`. The full Apple aggregate passed lint, unit (Haskell plus web 71/71), integration, and 9/9 routed Playwright against rebuilt cluster image digest `sha256-f4a30f4e177206b64ce5a0d3abea8d72a8bdbe637148530e1619bdf5ce8ae7c3`. Real Apple native payloads still need to replace the validation wrappers before the real-output suite can return to `Done`.
 **Implementation**: `src/Infernix/Models.hs`, `src/Infernix/Lint/Docs.hs`, `test/unit/Spec.hs`, `test/integration/Spec.hs`, `web/playwright/inference.spec.js`, `README.md`, `documents/engineering/apple_silicon_metal_headless_builds.md`, `DEVELOPMENT_PLAN/cohort-validation-waves.md`
 **Docs to update**: `README.md`, `documents/development/testing_strategy.md`, `documents/engineering/apple_silicon_metal_headless_builds.md`, `documents/architecture/model_catalog.md`, `DEVELOPMENT_PLAN/cohort-validation-waves.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 
@@ -1624,10 +1629,11 @@ instead of the legacy Tart helper.
 
 ### Remaining Work
 
-- Record the remaining Wave I Apple cohort evidence for Apple integration/e2e/all after the Apple
-  per-engine framework/native payload residuals are closed; the headless Metal bridge smoke,
-  installed `coreml-native` runtime-load smoke, and coordinator-to-host derived-pool routing are
-  already recorded by the current Apple host pass.
+- Record the remaining Wave I real native-payload evidence after the Apple per-engine
+  framework/native payload residuals are closed; the headless Metal bridge smoke, installed
+  `coreml-native` runtime-load smoke, coordinator-to-host derived-pool routing, focused e2e with
+  object-input and cold-bootstrap fixes, and full Apple aggregate `test all` are already recorded by
+  the current Apple host pass.
 - Record the Wave I CUDA Linux cohort evidence after real Linux native payloads replace the current
   runner-contract payloads and the per-family full-suite reruns.
 
@@ -1649,17 +1655,20 @@ and mounted live-source `cabal test infernix-unit`, `cabal test infernix-haskell
 and `cabal run exe:infernix -- test lint`. Current source also adds the real Pulsar
 single-host logical `Shared` backlog harness in `test/integration/Spec.hs` and compile-validates it
 on the present Linux outer-container lane with a mounted-source linux-gpu Compose launcher run of
-`cabal build test:infernix-integration`; real Apple execution remains a Wave J cohort gate. The
-same current-source mounted linux-gpu validation also passes `infernix test lint`,
-`infernix test unit`, focused `infernix lint files/docs/proto/chart`, `infernix docs check`, and
-`git diff --check`.
+`cabal build test:infernix-integration`; the 2026-06-16 Apple integration rerun executes it against
+the live Apple Pulsar lane. The same current-source mounted linux-gpu validation also passes
+`infernix test lint`, `infernix test unit`, focused `infernix lint files/docs/proto/chart`,
+`infernix docs check`, and `git diff --check`. The 2026-06-16 rebuilt-image Linux CPU integration
+pass exercises the Kubernetes validation side: engine-pool placement across two workers,
+unique-topic `Shared` backlog/backpressure, pod replacement, node drain, anti-affinity, lifecycle
+rebinding, production `demo_ui = false` publication, and pool-topic exactly-once accounting.
 **Cohort gate**: Pending [Wave J](cohort-validation-waves.md) — real Pulsar integration has proved
 pinned `Exclusive` duplicate-consumer rejection, same-machine Apple `Shared` subscription
-coexistence, and Apple production `demo_ui = false` coordinator-plus-engine-pool assertions. It
-still must execute the newly added single-host logical Apple `Shared` backlog/backpressure harness
-on the Apple integration lane and prove Linux GPU pool placement before this sprint can move to
-`Done`; physical Apple multi-host routing is hardware-deferred proof while no second Apple host is
-available.
+coexistence, Apple single-host logical `Shared` backlog/backpressure, and Apple production
+`demo_ui = false` coordinator-plus-engine-pool assertions, plus Linux CPU pool placement and
+backpressure. It still must prove Linux GPU/CUDA pool placement and full cohort validation before
+this sprint can move to `Done`; physical Apple multi-host routing is hardware-deferred proof while
+no second Apple host is available.
 **Implementation**: `dhall/InfernixSubstrate.dhall`, `src/Infernix/Types.hs`, `src/Infernix/Substrate.hs`, `src/Infernix/DemoConfig.hs`, `src/Infernix/Models.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Daemon.hs`, `test/unit/Spec.hs`, `test/integration/Spec.hs`, `documents/architecture/engine_pool_routing.md`, `documents/architecture/daemon_topology.md`
 **Docs to update**: `README.md`, `documents/architecture/engine_pool_routing.md`, `documents/architecture/daemon_topology.md`, `documents/tools/pulsar.md`, `documents/development/testing_strategy.md`, `documents/development/chaos_testing.md`, `DEVELOPMENT_PLAN/cohort-validation-waves.md`
 
@@ -1681,25 +1690,27 @@ guessing.
 - integration validates `Shared` pool consumers with bounded permits and a backlog on one logical
   Apple member still allow free logical members on the same Apple host to receive new work
 - integration validates pinned per-member routes use `Exclusive` and reject duplicate consumers
+- integration validates Linux CPU Kubernetes placement and `Shared` backlog/backpressure on unique
+  derived pool/model topics
 
 ### Validation
 
 - `infernix lint docs`
 - `infernix test unit`
 - `infernix test integration` on the active substrate
-- cohort reruns for single-host logical Apple pool behavior and Linux GPU pool placement, with
-  physical Apple multi-host proof deferred until hardware exists
+- cohort reruns for single-host logical Apple pool behavior, Linux CPU pool placement, and Linux
+  GPU/CUDA pool placement, with physical Apple multi-host proof deferred until hardware exists
 
 ### Remaining Work
 
 - **Code (machine-independent — DONE):** unit validation rejects invalid routing graphs and
   subscription states, and proves derived topic/member selection for all three substrates.
-- **Cohort gate ([Wave J](cohort-validation-waves.md)):** run the newly added real Pulsar
-  single-host logical shared-pool backlog/backpressure harness on the Apple integration lane, and
-  add/run Linux GPU pool-placement evidence. Pinned exclusivity, same-machine Apple `Shared`
-  coexistence, and Apple production `demo_ui = false` assertions are already covered on the Apple
-  integration lane. Physical Apple multi-host routing is tracked as hardware-deferred proof, not
-  as a blocker for the current single-host logical backpressure gate.
+- **Cohort gate ([Wave J](cohort-validation-waves.md)):** add/run Linux GPU pool-placement evidence
+  and full cohort validation. Pinned exclusivity, same-machine Apple `Shared` coexistence, Apple
+  single-host logical backlog/backpressure, Apple production `demo_ui = false` assertions, and
+  Linux CPU Kubernetes placement/backpressure are already covered. Physical Apple multi-host
+  routing is tracked as hardware-deferred proof, not as a blocker for the current single-host
+  logical backpressure gate.
 
 ---
 
@@ -1724,12 +1735,14 @@ materialization, and CUDA GPU; [Wave I](cohort-validation-waves.md)). Sprint 6.3
 machine-independent matrix-drift lint and unit coverage are code-side closed; its remaining work is
 the Wave I cohort evidence for headless Apple materialization and CUDA Linux real native payloads.
 Sprint 6.32's code-side invalid-graph rejection is now complete and validated on the Linux
-outer-container unit lane; current source also adds and compile-validates the Apple single-host
-logical `Shared` backlog harness. Its remaining Wave J residual is real Apple execution of that
-harness plus Linux pool placement before the phase returns to `Done`. Apple pinned-route
-exclusivity, same-machine `Shared` coexistence, and production `demo_ui = false` assertions are
-already covered. Physical Apple multi-host routing is hardware-deferred proof while no second Apple
-host is available.
+outer-container unit lane; current source also adds and Apple-executes the single-host logical
+`Shared` backlog harness. The 2026-06-16 Linux CPU integration run covers Kubernetes pool
+placement and shared-subscription backpressure. Its remaining Wave J residual is Linux GPU/CUDA
+pool placement plus full cohort validation before the phase returns to `Done`. Apple pinned-route
+exclusivity, same-machine `Shared` coexistence, single-host logical backlog/backpressure,
+production `demo_ui = false` assertions, and Linux CPU placement/backpressure are already covered.
+Physical Apple multi-host routing is hardware-deferred proof while no second Apple host is
+available.
 See the two-axis execution rule in [development_plan_standards.md](development_plan_standards.md)
 Section Q.
 

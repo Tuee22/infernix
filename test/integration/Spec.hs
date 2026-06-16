@@ -3,7 +3,7 @@
 module Main (main) where
 
 import Control.Concurrent (threadDelay)
-import Control.Exception (SomeException, bracket, bracketOnError, bracket_, displayException, finally, try)
+import Control.Exception (IOException, SomeException, bracket, bracketOnError, bracket_, displayException, finally, try)
 import Control.Monad (forM, forM_, when)
 import Data.Aeson ((.:), (.=))
 import Data.Aeson qualified as Aeson
@@ -67,7 +67,6 @@ import Infernix.Runtime.Pulsar
     serviceConsumerName,
     serviceReadinessMarkerPath,
   )
-import Infernix.Storage (readPulsarHttpPortMaybe)
 import Infernix.Types
 import Infernix.Web.Contracts qualified as Contracts
 import Network.Socket
@@ -90,7 +89,7 @@ import System.Directory
 import System.Exit (ExitCode (ExitSuccess))
 import System.FilePath ((</>))
 import System.IO (BufferMode (LineBuffering), Handle, IOMode (WriteMode), hClose, hFlush, hSetBuffering, openFile, stdout)
-import System.IO.Error (catchIOError, isDoesNotExistError)
+import System.IO.Error (catchIOError, isAlreadyInUseError, isDoesNotExistError)
 import System.Process
   ( CreateProcess (cwd, std_err, std_out),
     ProcessHandle,
@@ -273,14 +272,18 @@ exerciseRuntimeMode paths runtimeMode = do
         validateAppleSharedSubscriptionBackpressure paths demoConfig
 
       when (runtimeMode == LinuxCpu) $ do
+        reportStep "linux engine pool placement"
+        validateLinuxEnginePoolPlacement state runtimeMode demoConfig
+        reportStep "linux shared subscription backlog backpressure"
+        validateLinuxSharedSubscriptionBackpressure paths runtimeMode demoConfig
         reportStep "frontend pod replacement preserves durable state"
-        validateFrontendPodReplacementPreservesDurableState paths state runtimeMode representativeModelId
+        validateFrontendPodReplacementPreservesDurableState paths state runtimeMode demoConfig representativeModelId
         reportStep "coordinator failover preserves durable prompt dispatch"
-        validateCoordinatorFailoverDurablePrompt paths state runtimeMode representativeModelId
+        validateCoordinatorFailoverDurablePrompt paths state runtimeMode demoConfig representativeModelId
         reportStep "engine pod replacement preserves durable prompt result"
-        validateEnginePodReplacementDurablePrompt paths state runtimeMode representativeModelId
+        validateEnginePodReplacementDurablePrompt paths state runtimeMode demoConfig representativeModelId
         reportStep "engine node drain preserves durable prompt result"
-        validateEngineNodeDrainDurablePrompt paths state runtimeMode representativeModelId
+        validateEngineNodeDrainDurablePrompt paths state runtimeMode demoConfig representativeModelId
         reportStep "model bootstrap failover and deduplication"
         validateModelBootstrapDeduplication paths state runtimeMode
         reportStep "multi-user durable prompt throughput"
@@ -1001,6 +1004,7 @@ integrationRunToken = do
 data DurablePromptContext = DurablePromptContext
   { durablePromptUserId :: Contracts.UserId,
     durablePromptContextId :: Contracts.ContextId,
+    durablePromptModelId :: Text.Text,
     durablePromptConversationTopic :: Text.Text,
     durablePromptToken :: Text.Text
   }
@@ -1049,6 +1053,7 @@ createDurablePromptContext paths runtimeMode modelIdText label = do
     DurablePromptContext
       { durablePromptUserId = userIdValue,
         durablePromptContextId = contextIdValue,
+        durablePromptModelId = modelIdText,
         durablePromptConversationTopic = conversationTopic,
         durablePromptToken = runToken
       }
@@ -1141,30 +1146,31 @@ conversationResultPayloadsForPrompt promptMessageId messages =
     Contracts.inferenceResultUserPromptMessageId resultPayload == promptMessageId
   ]
 
-waitForPromptPipelineCounts :: Paths -> RuntimeMode -> DurablePromptRef -> IO PromptPipelineCounts
-waitForPromptPipelineCounts paths runtimeMode promptRef = go (120 :: Int)
+waitForPromptPipelineCounts :: Paths -> RuntimeMode -> DemoConfig -> DurablePromptRef -> IO PromptPipelineCounts
+waitForPromptPipelineCounts paths runtimeMode demoConfig promptRef = go (120 :: Int)
   where
     go remainingAttempts
       | remainingAttempts <= 0 =
           fail ("timed out waiting for prompt pipeline counts for " <> Text.unpack promptIdText)
       | otherwise = do
-          counts <- readPromptPipelineCounts paths runtimeMode promptRef
+          counts <- readPromptPipelineCounts paths runtimeMode demoConfig promptRef
           if promptPipelineComplete counts
             then do
               threadDelay 2000000
-              readPromptPipelineCounts paths runtimeMode promptRef
+              readPromptPipelineCounts paths runtimeMode demoConfig promptRef
             else do
               threadDelay 1000000
               go (remainingAttempts - 1)
     promptIdText = Contracts.unMessageId (durablePromptRefMessageId promptRef)
+    maybeBatchTopic = batchTopicForPrompt demoConfig runtimeMode promptRef
     promptPipelineComplete counts =
       promptPipelineRequestCount counts >= 1
-        && maybe True (const (promptPipelineBatchCount counts >= 1)) (hostBatchTopicForMode runtimeMode)
+        && maybe True (const (promptPipelineBatchCount counts >= 1)) maybeBatchTopic
         && promptPipelineResultCount counts >= 1
         && promptPipelineConversationResultCount counts >= 1
 
-readPromptPipelineCounts :: Paths -> RuntimeMode -> DurablePromptRef -> IO PromptPipelineCounts
-readPromptPipelineCounts paths runtimeMode promptRef = do
+readPromptPipelineCounts :: Paths -> RuntimeMode -> DemoConfig -> DurablePromptRef -> IO PromptPipelineCounts
+readPromptPipelineCounts paths runtimeMode demoConfig promptRef = do
   requestTopic <-
     case requestTopicsForMode runtimeMode of
       topic : _ -> pure topic
@@ -1174,7 +1180,7 @@ readPromptPipelineCounts paths runtimeMode promptRef = do
       conversationTopic = durablePromptConversationTopic (durablePromptRefContext promptRef)
   requestMessages <- readRawTopicPayloads paths runtimeMode Nothing requestTopic 1024
   batchMessages <-
-    case hostBatchTopicForMode runtimeMode of
+    case batchTopicForPrompt demoConfig runtimeMode promptRef of
       Nothing -> pure []
       Just batchTopic -> readRawTopicPayloads paths runtimeMode Nothing batchTopic 1024
   resultMessages <- readRawTopicPayloads paths runtimeMode Nothing resultTopic 1024
@@ -1203,13 +1209,21 @@ readPromptPipelineCounts paths runtimeMode promptRef = do
           length (conversationResultPayloadsForPrompt (durablePromptRefMessageId promptRef) conversationMessages)
       }
 
-assertPromptPipelineExactlyOnce :: Paths -> RuntimeMode -> DurablePromptRef -> IO ()
-assertPromptPipelineExactlyOnce paths runtimeMode promptRef = do
-  counts <- waitForPromptPipelineCounts paths runtimeMode promptRef
+batchTopicForPrompt :: DemoConfig -> RuntimeMode -> DurablePromptRef -> Maybe Text.Text
+batchTopicForPrompt demoConfig runtimeMode promptRef =
+  case enginePoolForModel demoConfig modelIdText of
+    Just pool -> Just (enginePoolTopicForMode runtimeMode (enginePoolId pool) modelIdText)
+    Nothing -> hostBatchTopicForMode runtimeMode
+  where
+    modelIdText = durablePromptModelId (durablePromptRefContext promptRef)
+
+assertPromptPipelineExactlyOnce :: Paths -> RuntimeMode -> DemoConfig -> DurablePromptRef -> IO ()
+assertPromptPipelineExactlyOnce paths runtimeMode demoConfig promptRef = do
+  counts <- waitForPromptPipelineCounts paths runtimeMode demoConfig promptRef
   assert
     (promptPipelineRequestCount counts == 1)
     ("exactly one inference request is published for " <> Text.unpack promptIdText <> ": " <> show counts)
-  case hostBatchTopicForMode runtimeMode of
+  case batchTopicForPrompt demoConfig runtimeMode promptRef of
     Nothing -> pure ()
     Just _ ->
       assert
@@ -1230,8 +1244,8 @@ assertCompletedResultPayload resultPayload message =
     (Contracts.inferenceResultStatus resultPayload == "completed")
     (message <> ": " <> show resultPayload)
 
-validateFrontendPodReplacementPreservesDurableState :: Paths -> ClusterState -> RuntimeMode -> String -> IO ()
-validateFrontendPodReplacementPreservesDurableState paths state runtimeMode representativeModelId = do
+validateFrontendPodReplacementPreservesDurableState :: Paths -> ClusterState -> RuntimeMode -> DemoConfig -> String -> IO ()
+validateFrontendPodReplacementPreservesDurableState paths state runtimeMode demoConfig representativeModelId = do
   waitForDeploymentReadyReplicasAtLeast state "infernix-demo" 2
   context <- createDurablePromptContext paths runtimeMode (Text.pack representativeModelId) "frontend"
   let draftsTopic = ConversationTopic.draftsMetadataTopicName ConversationTopic.defaultDemoTopicNamespace (durablePromptUserId context)
@@ -1261,10 +1275,10 @@ validateFrontendPodReplacementPreservesDurableState paths state runtimeMode repr
       (durablePromptConversationTopic context)
       (durablePromptRefMessageId promptRef)
   assertCompletedResultPayload resultPayload "durable prompt still completes after frontend pod replacement"
-  assertPromptPipelineExactlyOnce paths runtimeMode promptRef
+  assertPromptPipelineExactlyOnce paths runtimeMode demoConfig promptRef
 
-validateCoordinatorFailoverDurablePrompt :: Paths -> ClusterState -> RuntimeMode -> String -> IO ()
-validateCoordinatorFailoverDurablePrompt paths state runtimeMode representativeModelId = do
+validateCoordinatorFailoverDurablePrompt :: Paths -> ClusterState -> RuntimeMode -> DemoConfig -> String -> IO ()
+validateCoordinatorFailoverDurablePrompt paths state runtimeMode demoConfig representativeModelId = do
   waitForDeploymentReadyReplicasAtLeast state "infernix-coordinator" 2
   context <- createDurablePromptContext paths runtimeMode (Text.pack representativeModelId) "coordinator"
   waitForDispatcherDiscovery
@@ -1280,10 +1294,10 @@ validateCoordinatorFailoverDurablePrompt paths state runtimeMode representativeM
       (durablePromptConversationTopic context)
       (durablePromptRefMessageId promptRef)
   assertCompletedResultPayload resultPayload "durable prompt completes through coordinator pod replacement"
-  assertPromptPipelineExactlyOnce paths runtimeMode promptRef
+  assertPromptPipelineExactlyOnce paths runtimeMode demoConfig promptRef
 
-validateEnginePodReplacementDurablePrompt :: Paths -> ClusterState -> RuntimeMode -> String -> IO ()
-validateEnginePodReplacementDurablePrompt paths state runtimeMode representativeModelId = do
+validateEnginePodReplacementDurablePrompt :: Paths -> ClusterState -> RuntimeMode -> DemoConfig -> String -> IO ()
+validateEnginePodReplacementDurablePrompt paths state runtimeMode demoConfig representativeModelId = do
   waitForDeploymentReadyReplicasAtLeast state "infernix-engine" 2
   context <- createDurablePromptContext paths runtimeMode (Text.pack representativeModelId) "engine"
   waitForDispatcherDiscovery
@@ -1299,10 +1313,10 @@ validateEnginePodReplacementDurablePrompt paths state runtimeMode representative
       (durablePromptConversationTopic context)
       (durablePromptRefMessageId promptRef)
   assertCompletedResultPayload resultPayload "durable prompt completes through engine pod replacement"
-  assertPromptPipelineExactlyOnce paths runtimeMode promptRef
+  assertPromptPipelineExactlyOnce paths runtimeMode demoConfig promptRef
 
-validateEngineNodeDrainDurablePrompt :: Paths -> ClusterState -> RuntimeMode -> String -> IO ()
-validateEngineNodeDrainDurablePrompt paths state runtimeMode representativeModelId = do
+validateEngineNodeDrainDurablePrompt :: Paths -> ClusterState -> RuntimeMode -> DemoConfig -> String -> IO ()
+validateEngineNodeDrainDurablePrompt paths state runtimeMode demoConfig representativeModelId = do
   waitForDeploymentReadyReplicasAtLeast state "infernix-engine" 2
   (_, nodeName) <- requireReadyEnginePodNode state
   let restore =
@@ -1334,7 +1348,7 @@ validateEngineNodeDrainDurablePrompt paths state runtimeMode representativeModel
           (durablePromptConversationTopic context)
           (durablePromptRefMessageId promptRef)
       assertCompletedResultPayload resultPayload "durable prompt completes while an engine node is drained"
-      assertPromptPipelineExactlyOnce paths runtimeMode promptRef
+      assertPromptPipelineExactlyOnce paths runtimeMode demoConfig promptRef
     )
     `finally` restore
 
@@ -1765,7 +1779,7 @@ validateEdgePortConflictAndRediscovery :: Paths -> RuntimeMode -> IO ()
 validateEdgePortConflictAndRediscovery paths runtimeMode = do
   cleanupRuntimeState paths
   busyState <-
-    bracket (openBusyTcpPort 9090) close $ \_busySocket -> do
+    bracket (openBusyTcpPort 9090) closeBusyTcpPortFixture $ \_busyFixture -> do
       waitForPortConflictHelper
       withClusterLifecycle runtimeMode $ do
         maybeState <- loadClusterState paths
@@ -1779,7 +1793,17 @@ validateEdgePortConflictAndRediscovery paths runtimeMode = do
     waitForPortConflictHelper = do
       threadDelay 250000
 
-openBusyTcpPort :: Int -> IO Socket
+data BusyTcpPortFixture
+  = OwnedBusyTcpPort Socket
+  | PreexistingBusyTcpPort
+
+closeBusyTcpPortFixture :: BusyTcpPortFixture -> IO ()
+closeBusyTcpPortFixture fixture =
+  case fixture of
+    OwnedBusyTcpPort busySocket -> close busySocket
+    PreexistingBusyTcpPort -> pure ()
+
+openBusyTcpPort :: Int -> IO BusyTcpPortFixture
 openBusyTcpPort port = go (300 :: Int) Nothing
   where
     go remainingAttempts maybeLastError
@@ -1792,12 +1816,14 @@ openBusyTcpPort port = go (300 :: Int) Nothing
                 )
             )
       | otherwise = do
-          result <- try (openBusyTcpPortOnce port) :: IO (Either SomeException Socket)
+          result <- try (openBusyTcpPortOnce port) :: IO (Either IOException Socket)
           case result of
-            Right busySocket -> pure busySocket
-            Left err -> do
-              threadDelay 100000
-              go (remainingAttempts - 1) (Just err)
+            Right busySocket -> pure (OwnedBusyTcpPort busySocket)
+            Left err
+              | isAlreadyInUseError err -> pure PreexistingBusyTcpPort
+              | otherwise -> do
+                  threadDelay 100000
+                  go (remainingAttempts - 1) (Just err)
 
 openBusyTcpPortOnce :: Int -> IO Socket
 openBusyTcpPortOnce port =
@@ -2259,6 +2285,77 @@ waitForPendingEnginePod state = go (60 :: Int)
               threadDelay 1000000
               go (remainingAttempts - 1)
 
+data EnginePodPlacement = EnginePodPlacement
+  { enginePodPlacementPodName :: String,
+    enginePodPlacementNodeName :: String,
+    enginePodPlacementPhase :: String
+  }
+  deriving (Eq, Show)
+
+validateLinuxEnginePoolPlacement :: ClusterState -> RuntimeMode -> DemoConfig -> IO ()
+validateLinuxEnginePoolPlacement state runtimeMode demoConfig = do
+  runKubectl state ["-n", "platform", "rollout", "status", "deployment/infernix-engine", "--timeout=900s"]
+  podPlacementLines <-
+    lines
+      <$> kubectlOutputForState
+        state
+        [ "-n",
+          "platform",
+          "get",
+          "pods",
+          "-l",
+          "app.kubernetes.io/name=infernix-engine",
+          "-o",
+          "jsonpath={range .items[*]}{.metadata.name}|{.spec.nodeName}|{.status.phase}{\"\\n\"}{end}"
+        ]
+  let placements = mapMaybe parseEnginePodPlacement podPlacementLines
+      runningPlacements = filter ((== "Running") . enginePodPlacementPhase) placements
+      placementNodeNames = nub (map enginePodPlacementNodeName runningPlacements)
+      memberIds = map engineMemberId (engineMembers demoConfig)
+      engineTopics = concatMap daemonConfigRequestTopics (engineDaemons demoConfig)
+      expectedTopics = concatMap (engineMemberRequestTopics runtimeMode (enginePools demoConfig)) (engineMembers demoConfig)
+      routingSurface =
+        Text.unpack
+          ( Text.unwords
+              ( memberIds
+                  <> concatMap engineMemberPoolIds (engineMembers demoConfig)
+                  <> concatMap enginePoolModelIds (enginePools demoConfig)
+                  <> engineTopics
+              )
+          )
+  assert (runtimeMode == LinuxCpu) "linux engine placement validation runs on the linux-cpu cohort"
+  assert (length runningPlacements >= 2) "linux-cpu has at least two running engine pods for placement validation"
+  assert (length placementNodeNames >= 2) "linux-cpu engine pods are placed on distinct Kubernetes worker nodes"
+  assert (memberIds == ["linux-cpu-engine"]) "linux-cpu keeps one logical engine member id independent of pod count"
+  assert (all ((== "cluster-pod") . engineMemberLocation) (engineMembers demoConfig)) "linux engine members are cluster-pod members"
+  assert (sort engineTopics == sort expectedTopics) "linux engine daemon topics are derived from engine pool membership"
+  forM_ runningPlacements $ \placement -> do
+    assert
+      (enginePodPlacementPodName placement `notElemString` routingSurface)
+      "linux routing ids do not encode live engine pod names"
+    assert
+      (enginePodPlacementNodeName placement `notElemString` routingSurface)
+      "linux routing ids do not encode Kubernetes node names"
+
+parseEnginePodPlacement :: String -> Maybe EnginePodPlacement
+parseEnginePodPlacement lineValue =
+  case splitPipes lineValue of
+    [podNameValue, nodeNameValue, phaseValue]
+      | not (null podNameValue) && not (null nodeNameValue) ->
+          Just
+            EnginePodPlacement
+              { enginePodPlacementPodName = podNameValue,
+                enginePodPlacementNodeName = nodeNameValue,
+                enginePodPlacementPhase = phaseValue
+              }
+    _ -> Nothing
+
+splitPipes :: String -> [String]
+splitPipes value =
+  case break (== '|') value of
+    (segment, []) -> [segment]
+    (segment, _ : rest) -> segment : splitPipes rest
+
 -- | Apple pinned-member compatibility guard. Normal host-engine pool
 -- topics use Shared subscriptions, so the guard creates a temporary
 -- pinned-member daemon config whose request topic shape selects
@@ -2342,6 +2439,11 @@ validateAppleHostEngineSharedSubscriptionCoexistence :: Paths -> DemoConfig -> I
 validateAppleHostEngineSharedSubscriptionCoexistence paths demoConfig = do
   infernixExecutable <- resolveInfernixExecutable
   (sharedConfig, memberA, memberB, modelIdValue, sharedTopic) <- appleSharedHostEngineConfig demoConfig
+  transport <-
+    maybe
+      (fail "Pulsar transport was unavailable for apple shared-subscription coexistence validation")
+      pure
+      =<< discoverPulsarTransport paths AppleSilicon Nothing
   withTemporaryDemoConfigFile paths "host-service-shared-two-member" sharedConfig $ \sharedConfigPath ->
     withLoggedServiceDaemon
       paths
@@ -2359,7 +2461,7 @@ validateAppleHostEngineSharedSubscriptionCoexistence paths demoConfig = do
             ( \memberBProcessHandle memberBLogPath -> do
                 waitForProcessLogContains memberBProcessHandle memberBLogPath ("serviceEngineMemberId: " <> Text.unpack memberB)
                 waitForProcessLogContains memberBProcessHandle memberBLogPath "serviceSubscriptionMode: websocket-pulsar"
-                assertPulsarSharedSubscriptionConsumerCount paths sharedTopic 2
+                assertPulsarSharedSubscriptionConsumerCount transport sharedTopic 2
                 requestIdValue <-
                   publishInferenceRequest
                     paths
@@ -2388,11 +2490,20 @@ validateAppleHostEngineSharedSubscriptionCoexistence paths demoConfig = do
 validateAppleSharedSubscriptionBackpressure :: Paths -> DemoConfig -> IO ()
 validateAppleSharedSubscriptionBackpressure paths demoConfig = do
   (sharedConfig, _memberA, _memberB, modelIdValue, sharedTopic) <- appleSharedHostEngineConfig demoConfig
+  validateSharedSubscriptionBackpressure paths AppleSilicon sharedConfig modelIdValue sharedTopic "apple"
+
+validateLinuxSharedSubscriptionBackpressure :: Paths -> RuntimeMode -> DemoConfig -> IO ()
+validateLinuxSharedSubscriptionBackpressure paths runtimeMode demoConfig = do
+  (sharedConfig, modelIdValue, sharedTopic) <- isolatedLinuxSharedPoolConfig runtimeMode demoConfig
+  validateSharedSubscriptionBackpressure paths runtimeMode sharedConfig modelIdValue sharedTopic "linux"
+
+validateSharedSubscriptionBackpressure :: Paths -> RuntimeMode -> DemoConfig -> Text.Text -> Text.Text -> String -> IO ()
+validateSharedSubscriptionBackpressure paths runtimeMode sharedConfig modelIdValue sharedTopic cohortLabel = do
   transport <-
     maybe
-      (fail "Pulsar transport was unavailable for Apple shared backpressure validation")
+      (fail ("Pulsar transport was unavailable for " <> cohortLabel <> " shared backpressure validation"))
       pure
-      =<< discoverPulsarTransport paths AppleSilicon Nothing
+      =<< discoverPulsarTransport paths runtimeMode Nothing
   ensureRegisteredSchemasWithRetry paths transport sharedConfig
   let websocketBase = pulsarWebSocketBase transport
       subscriptionName = integrationServiceSubscriptionName sharedTopic
@@ -2404,11 +2515,11 @@ validateAppleSharedSubscriptionBackpressure paths demoConfig = do
     busyRequestId <-
       publishInferenceRequest
         paths
-        AppleSilicon
+        runtimeMode
         sharedTopic
         InferenceRequest
           { requestModelId = modelIdValue,
-            inputText = "shared apple host engine busy logical member",
+            inputText = Text.pack ("shared " <> cohortLabel <> " engine busy logical member"),
             inputObjectRef = Nothing
           }
     (busyMessageId, observedBusyRequestId) <-
@@ -2417,15 +2528,15 @@ validateAppleSharedSubscriptionBackpressure paths demoConfig = do
       (observedBusyRequestId == busyRequestId)
       "busy shared-subscription consumer receives the first published request"
     withIntegrationPulsarClient websocketBase freeConsumerPath $ \freeConnection -> do
-      assertPulsarSharedSubscriptionConsumerCount paths sharedTopic 2
+      assertPulsarSharedSubscriptionConsumerCount transport sharedTopic 2
       freeRequestId <-
         publishInferenceRequest
           paths
-          AppleSilicon
+          runtimeMode
           sharedTopic
           InferenceRequest
             { requestModelId = modelIdValue,
-              inputText = "shared apple host engine free logical member",
+              inputText = Text.pack ("shared " <> cohortLabel <> " engine free logical member"),
               inputObjectRef = Nothing
             }
       (freeMessageId, observedFreeRequestId) <-
@@ -2435,6 +2546,46 @@ validateAppleSharedSubscriptionBackpressure paths demoConfig = do
         "free shared-subscription consumer receives the second request while the first consumer is busy"
       ackIntegrationPulsarMessage freeConnection freeMessageId
       ackIntegrationPulsarMessage busyConnection busyMessageId
+
+isolatedLinuxSharedPoolConfig :: RuntimeMode -> DemoConfig -> IO (DemoConfig, Text.Text, Text.Text)
+isolatedLinuxSharedPoolConfig runtimeMode demoConfig = do
+  uniqueSuffix <- Text.pack <$> integrationRunToken
+  selectedModel <-
+    case models demoConfig of
+      model : _ -> pure model
+      [] -> fail "linux demo config does not contain a model for shared-subscription validation"
+  selectedPool <-
+    case enginePoolForModel demoConfig (modelId selectedModel) of
+      Just pool -> pure pool
+      Nothing -> fail ("linux demo config does not contain an engine pool for " <> Text.unpack (modelId selectedModel))
+  let memberA = "linux-integration-shared-a"
+      memberB = "linux-integration-shared-b"
+      sharedPoolId = enginePoolId selectedPool <> "-integration-shared-" <> uniqueSuffix
+      sharedTopic = enginePoolTopicForMode runtimeMode sharedPoolId (modelId selectedModel)
+      sharedPool =
+        selectedPool
+          { enginePoolId = sharedPoolId,
+            enginePoolModelIds = [modelId selectedModel],
+            enginePoolMemberIds = [memberA, memberB],
+            enginePoolSubscriptionType = ConsumerShared,
+            enginePoolMaxInflightPerMember = 1
+          }
+      sharedMember memberIdValue =
+        EngineMember
+          { engineMemberId = memberIdValue,
+            engineMemberRuntimeMode = runtimeMode,
+            engineMemberLocation = "cluster-pod",
+            engineMemberPoolIds = [sharedPoolId]
+          }
+  pure
+    ( demoConfig
+        { requestTopics = [sharedTopic],
+          enginePools = [sharedPool],
+          engineMembers = [sharedMember memberA, sharedMember memberB]
+        },
+      modelId selectedModel,
+      sharedTopic
+    )
 
 integrationSharedConsumerSocketPath :: PulsarWebSocketBase -> Text.Text -> String -> String -> IO String
 integrationSharedConsumerSocketPath websocketBase topicValue subscriptionName consumerName = do
@@ -2522,6 +2673,7 @@ appleSharedHostEngineConfig demoConfig =
   case engineDaemons demoConfig of
     [] -> fail "apple demo config does not contain an engine daemon for shared-subscription validation"
     engineDaemon : _ -> do
+      uniqueSuffix <- Text.pack <$> integrationRunToken
       selectedModel <-
         case find ((== "image-sdxl-turbo") . modelId) (models demoConfig) of
           Just model -> pure model
@@ -2535,7 +2687,7 @@ appleSharedHostEngineConfig demoConfig =
           Nothing -> fail ("apple demo config does not contain an engine pool for " <> Text.unpack (modelId selectedModel))
       let memberA = "apple-host-shared-a"
           memberB = "apple-host-shared-b"
-          sharedPoolId = enginePoolId selectedPool <> "-integration-shared"
+          sharedPoolId = enginePoolId selectedPool <> "-integration-shared-" <> uniqueSuffix
           sharedTopic = enginePoolTopicForMode AppleSilicon sharedPoolId (modelId selectedModel)
           sharedPool =
             selectedPool
@@ -2575,8 +2727,8 @@ appleSharedHostEngineConfig demoConfig =
           sharedTopic
         )
 
-assertPulsarSharedSubscriptionConsumerCount :: Paths -> Text.Text -> Int -> IO ()
-assertPulsarSharedSubscriptionConsumerCount paths topicValue expectedCount = go (120 :: Int) Nothing
+assertPulsarSharedSubscriptionConsumerCount :: PulsarTransport -> Text.Text -> Int -> IO ()
+assertPulsarSharedSubscriptionConsumerCount transport topicValue expectedCount = go (120 :: Int) Nothing
   where
     subscriptionName = integrationServiceSubscriptionName topicValue
     go remainingAttempts maybeLastObservation
@@ -2590,7 +2742,7 @@ assertPulsarSharedSubscriptionConsumerCount paths topicValue expectedCount = go 
                 <> maybe "" ("\nlast observation: " <>) maybeLastObservation
             )
       | otherwise = do
-          statsResult <- try (readPulsarTopicStatsPayload paths topicValue) :: IO (Either SomeException LazyByteString.ByteString)
+          statsResult <- try (readPulsarTopicStatsPayload transport topicValue) :: IO (Either SomeException LazyByteString.ByteString)
           case statsResult of
             Right statsPayload ->
               case pulsarSubscriptionConsumerCount subscriptionName statsPayload of
@@ -2604,21 +2756,21 @@ assertPulsarSharedSubscriptionConsumerCount paths topicValue expectedCount = go 
           threadDelay 1000000
           go (remainingAttempts - 1) observation
 
-readPulsarTopicStatsPayload :: Paths -> Text.Text -> IO LazyByteString.ByteString
-readPulsarTopicStatsPayload paths topicValue = do
-  pulsarHttpPort <-
-    maybe
-      (fail "Pulsar HTTP NodePort state file was not available after cluster up")
-      pure
-      =<< readPulsarHttpPortMaybe paths
-  statsUrl <- pulsarTopicStatsUrl pulsarHttpPort topicValue
+readPulsarTopicStatsPayload :: PulsarTransport -> Text.Text -> IO LazyByteString.ByteString
+readPulsarTopicStatsPayload transport topicValue = do
+  statsUrl <- pulsarTopicStatsUrl transport topicValue
   LazyByteStringChar8.pack <$> readProcessWithTransientCurlRetry ["-fsS", statsUrl]
 
-pulsarTopicStatsUrl :: Int -> Text.Text -> IO String
-pulsarTopicStatsUrl pulsarHttpPort topicValue =
+pulsarTopicStatsUrl :: PulsarTransport -> Text.Text -> IO String
+pulsarTopicStatsUrl transport topicValue = do
+  adminBaseUrl <-
+    maybe
+      (fail "Pulsar admin base URL is not available for subscription stats lookup")
+      pure
+      (pulsarAdminBaseUrl transport)
   case Text.stripPrefix "persistent://" topicValue of
     Just topicPath ->
-      pure ("http://127.0.0.1:" <> show pulsarHttpPort <> "/admin/v2/persistent/" <> Text.unpack topicPath <> "/stats")
+      pure (trimTrailingSlash adminBaseUrl <> "/persistent/" <> Text.unpack topicPath <> "/stats")
     Nothing -> fail ("unsupported Pulsar topic name for stats lookup: " <> Text.unpack topicValue)
 
 pulsarSubscriptionConsumerCount :: String -> LazyByteString.ByteString -> Maybe Int

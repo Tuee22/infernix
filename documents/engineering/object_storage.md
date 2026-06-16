@@ -93,7 +93,7 @@ The helper:
    - If absent, publishes a request to
      `infernix/system/model.bootstrap.request` with producer dedup
      key = `modelId`, then subscribes to
-     `model.bootstrap.ready.<modelId>` with a bounded timeout. The
+     `model.bootstrap.ready.<modelId>` with a 900-second bounded timeout. The
      coordinator's bootstrap worker handles the upload (see below).
    - When `.ready` appears in MinIO, downloads every file under
      `infernix-models/<modelId>/` to `/model-cache/<modelId>/`,

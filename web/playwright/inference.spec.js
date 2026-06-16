@@ -1023,6 +1023,20 @@ test("browser per-model smoke matrix exercises every catalog model", async ({ pa
       page.locator(`.chat-context-item.active[data-context-id="${contextId}"]`),
     ).toBeVisible();
 
+    const inputArtifact = browserInputArtifactForModel(model, matrixToken, index);
+    if (inputArtifact) {
+      await page.locator("#route-artifacts").click();
+      await uploadArtifactThroughBrowser(page, inputArtifact);
+      await page.locator("#route-chat").click();
+      await expectConversationUploadVisible(page, wsFrames, inputArtifact, contextId);
+      await page
+        .locator(`.chat-context-item[data-context-id="${contextId}"] [data-role='select-context']`)
+        .click();
+      await expect(
+        page.locator(`.chat-context-item.active[data-context-id="${contextId}"]`),
+      ).toBeVisible();
+    }
+
     const promptText = `smoke ${modelId} ${matrixToken}-${index}`;
     await page.locator("textarea[name='prompt']").fill(promptText);
     await waitForSentFrameAfter(
@@ -1082,9 +1096,12 @@ test("browser per-model smoke matrix exercises every catalog model", async ({ pa
       });
       await expect(resultMessage.locator(".chat-result-artifact")).toHaveCount(0);
     } else {
-      const artifact = resultMessage.locator(`.chat-result-${expectedKind}`).first();
-      await expect(artifact).toBeVisible({ timeout: 30000 });
+      const artifacts = resultMessage.locator(`.chat-result-${expectedKind}`);
+      await expect(artifacts).toHaveCount(1, { timeout: 30000 });
+      const artifact = artifacts.first();
       await expect(artifact).toHaveAttribute("data-result-artifact-kind", expectedKind);
+      await expect(artifact).toHaveAttribute("data-object-bucket", "infernix-demo-objects");
+      await expect(artifact).toHaveAttribute("data-object-key", /.+/);
     }
   }
 });
@@ -1105,6 +1122,37 @@ function expectedResultRenderKind(model) {
     return "download";
   }
   return "text";
+}
+
+function browserInputArtifactForModel(model, matrixToken, index) {
+  if (!modelRequiresBrowserInputObject(model)) return null;
+  const baseName = `matrix-input-${safeArtifactNameSegment(model?.modelId)}-${index}-${safeArtifactNameSegment(
+    matrixToken,
+  ).slice(0, 8)}`;
+  if ((model?.family || "") === "tool") {
+    return {
+      name: `${baseName}.musicxml`,
+      mimeType: "application/vnd.recordare.musicxml+xml",
+      buffer: musicXmlBuffer(),
+    };
+  }
+  return {
+    name: `${baseName}.wav`,
+    mimeType: "audio/wav",
+    buffer: tinyWavBuffer(),
+  };
+}
+
+function modelRequiresBrowserInputObject(model) {
+  const family = model?.family || "";
+  const rowId = model?.matrixRowId || "";
+  if (family === "speech" || family === "music" || family === "tool") return true;
+  if (family === "audio") return !rowId.includes("bark");
+  return false;
+}
+
+function safeArtifactNameSegment(value) {
+  return String(value || "model").replace(/[^a-zA-Z0-9._-]+/g, "-").slice(0, 80);
 }
 
 function renderDispositionTag(downloadGrant) {
@@ -1255,7 +1303,7 @@ async function fillDraftAndWaitForUpdate(page, frames, startIndex, contextId, dr
 }
 
 async function waitForCompletedConversationPatchAfter(frames, startIndex, details) {
-  const timeoutMs = 300000;
+  const timeoutMs = 900000;
   const deadline = Date.now() + timeoutMs;
   let lastContextPatch = null;
   while (Date.now() < deadline) {

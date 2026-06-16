@@ -105,10 +105,11 @@ to the derived member topic, and asserting a duplicate consumer receives the bro
 409 rejection. It also launches two same-machine Apple host-member daemons on one isolated derived
 pool/model topic, observes two real consumers on the `Shared` subscription through Pulsar admin
 stats, and completes an inference request; production `demo_ui = false` route/publication
-assertions also pass on Apple. Current source also includes a compile-validated single-host
-logical `Shared` backlog harness that holds one service-shaped WebSocket consumer unacked and
-asserts a second request reaches a free consumer on the same subscription. Wave J still owns
-Apple execution of that harness plus Linux CPU/GPU pool placement. Physical Apple multi-host
+assertions also pass on Apple. Current Apple integration executes the single-host logical `Shared`
+backlog harness by holding one service-shaped WebSocket consumer unacked and asserting a second
+request reaches a free consumer on the same subscription. Current Linux CPU integration proves
+Kubernetes-observed pool placement and shared-subscription backlog/backpressure on unique derived
+pool/model topics. Wave J still owns Linux GPU/CUDA cohort validation. Physical Apple multi-host
 routing is hardware-deferred proof while no second Apple host is available.
 
 ## Demo Conversation and Metadata Topics
@@ -188,7 +189,7 @@ cluster:
 | Topic | Pattern | Purpose |
 |---|---|---|
 | Model bootstrap request | `persistent://infernix/system/model.bootstrap.request` | Engine pods publish a request with message key `modelId` when a model is not yet present in `infernix-models`. Producer dedup uses the attempt-scoped `modelId@requestedAt` key so exact request replays collapse while later retry attempts can enqueue work if readiness never appears. |
-| Model bootstrap ready | `persistent://infernix/system/model.bootstrap.ready.<modelId>` | Coordinator's bootstrap worker publishes a ready event after `infernix-models/<modelId>/.ready` has been written. The ready record is keyed by `modelId`. Engine pods that published a request subscribe with bounded timeout. |
+| Model bootstrap ready | `persistent://infernix/system/model.bootstrap.ready.<modelId>` | Coordinator's bootstrap worker publishes a ready event after `infernix-models/<modelId>/.ready` has been written. The ready record is keyed by `modelId`. Engine pods that published a request subscribe with a 900-second bounded timeout. |
 
 Rules:
 

@@ -96,7 +96,7 @@
 - on the real Kind path, confirm that Harbor is the first deployed service on a pristine cluster
   and that only Harbor-required backend services pull from public container repositories before
   Harbor is ready
-- on Linux Kind lanes, `cluster up` may hydrate missing Docker Hub warmup dependency images from
+- on supported Kind lanes, `cluster up` may hydrate missing Docker Hub warmup dependency images from
   `mirror.gcr.io`, tag them under the original chart reference, and stream warmup images into the
   worker before the Helm warmup pass by piping `docker image save` into
   `docker exec -i <worker> ctr --namespace=k8s.io images import -`; missing non-Docker-Hub
@@ -137,7 +137,8 @@
   Lazy first-use bootstrap means `infernix-models` may be empty immediately after `cluster
   up`; the first inference request for a given model triggers the coordinator's bootstrap
   workflow and the model's files plus `.ready` sentinel appear under `infernix-models/<modelId>/`
-  shortly afterward (latency bounded by upstream download speed)
+  shortly afterward (latency bounded by upstream download speed and the engine's 900-second
+  bootstrap-ready wait)
 - on `apple-silicon`, confirm `infernix-coordinator` is present in Kind, the on-host engine
   daemon is running, and `/api/publication` reports `daemonLocation: cluster-pod`,
   `inferenceExecutorLocation: control-plane-host`, and the Apple batch topic

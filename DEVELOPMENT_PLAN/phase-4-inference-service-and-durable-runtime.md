@@ -34,7 +34,7 @@ inference also depends on the replacement materialization lane owned by
 [Phase 1](phase-1-repository-and-control-plane-foundation.md) Sprint 1.14. The real per-family
 inference contract is re-validated on both cohorts in [Wave I](cohort-validation-waves.md), and the
 current Apple integration rerun proves the coordinator-routing/member-subscription path for the
-first catalog row: the coordinator loads the mounted Apple substrate config, runs with
+active catalog: the coordinator loads the mounted Apple substrate config, runs with
 `serviceRuntimeMode: apple-silicon`, publishes to the derived Apple pool topic, and the host engine
 processes the request. The Apple transformers framework path now completes
 `llm-qwen25-safetensors`; the next completed run exposed the missing
@@ -46,11 +46,29 @@ completed the active Apple model catalog through the host engine daemon, cache l
 runtime loop, durable Pulsar topic families, pinned Apple host-engine `Exclusive`
 duplicate-consumer rejection through an isolated `infernix service --config` file, same-machine
 Apple host-member coexistence on one derived `Shared` pool subscription with two real Pulsar
-consumers and a completed request, production-shape Apple `demo_ui = false` route/publication
-assertions, and edge-port conflict rediscovery. Follow-up probing of the earlier long Docker
+consumers and a completed request, the single-host logical `Shared` backlog/backpressure harness,
+production-shape Apple `demo_ui = false` route/publication assertions, and edge-port conflict
+rediscovery. Follow-up probing of the earlier long Docker
 interval showed active Cabal dependency compilation, image export, Harbor push, and Helm/Pulsar
 readiness waits rather than a Docker daemon deadlock. Current source adds source-fingerprint image
-reuse and dependency-layer caching for that cluster image path.
+reuse and dependency-layer caching for that cluster image path. The focused Apple
+`./.build/infernix test e2e` rerun now passes 9/9 after prompt upload refs are preserved through
+single-flight dispatch and object-input catalog families receive an `inputObjectRef`; the earlier
+aggregate `./.build/infernix test all` attempt reached Playwright and failed on that missing
+`audio-demucs-htdemucs` input object. A later aggregate rerun reached the Playwright matrix and
+failed on `llm-qwen25-safetensors` because the engine-side model-bootstrap readiness wait treated a
+cold Hugging Face snapshot as failed after 60 seconds. Current source names that backend wait as a
+900-second envelope and aligns the browser result wait; the follow-up focused Apple
+`./.build/infernix test e2e` rerun passed 9/9 against rebuilt cluster image digest
+`sha256-ed34da86992bb1a4d285f00feb77051d12eb4fa594b7bb34ed73561a027b1a71`, including every active
+Apple catalog row. The subsequent full Apple `./.build/infernix test all` aggregate passed lint,
+unit, integration, and 9/9 routed Playwright against rebuilt cluster image digest
+`sha256-f4a30f4e177206b64ce5a0d3abea8d72a8bdbe637148530e1619bdf5ce8ae7c3`.
+The 2026-06-16 Linux CPU validation rebuilt `infernix-linux-cpu:local` to digest
+`sha256:ae06ba36fe1f3ffecf48aa86c34abeb0dd1c98cabb030a7da783681ac87a81df` and passed the
+Kind-backed integration lane through Kubernetes-observed engine-pool placement, unique-topic
+`Shared` backlog/backpressure, pod replacement, node drain, anti-affinity, lifecycle rebinding,
+demo-off publication, and the Linux CPU `transformers`/`pytorch` framework-venv smoke paths.
 The phase returns to `Done` only after both cohorts pass the real-output full-suite gates with real
 native payloads. The phase narrative
 describes the supported MinIO-backed shape directly through the runtime, cache, and object storage
@@ -840,13 +858,17 @@ venv). An early Stage 2 cohort proof on this host (a CUDA GPU run, not part of c
 `poetry install --directory python/engines/transformers --with cuda` resolving torch `2.7.1+cu128`
 + transformers `5.11.0` with `torch.cuda.is_available()` True on the RTX 5090, and a real
 Qwen2.5-1.5B generation on the GPU via the transformers adapter's exact `AutoModelForCausalLM` +
-`generate` path.
+`generate` path. Current source also adds Linux CPU `--with linux-cpu` groups for the
+`transformers` and `pytorch` engine projects, gates worker use to actual Linux runtimes, bakes
+those venvs into the Linux CPU image, and validates them through the 2026-06-16 Linux CPU
+integration run. The Linux CPU Qwen row is a deterministic tokenizer/config smoke response rather
+than full generation, and the Linux CPU Bark row emits a deterministic WAV validation artifact.
 **Cohort gate**: Pending [Wave I](cohort-validation-waves.md), Stage 2 (CUDA Linux + Apple) — the
 full per-engine `--with cuda` image bake and the real per-family output for every active-substrate
 row. The Apple transformers engine project now declares an Apple-specific group and the Apple
-rerun completes `llm-qwen25-safetensors`; current source still needs the clean Apple
-integration/e2e/all rerun after the cluster-image freshness/cache fix, and the remaining Apple/CUDA
-framework groups plus native payloads remain Wave I residuals. Basic Pitch
+rerun completes `llm-qwen25-safetensors`; the current Apple aggregate `test all` is green against
+the validation-wrapper state, and the remaining Wave I residual is real native payload replacement
+plus CUDA/Linux GPU real-output evidence. Basic Pitch
 TensorFlow (published package pins TensorFlow `<2.15.1`), Omnizart (TF1-era), and MT3
 (unmaintained JAX) do not resolve on the Python 3.12 / CUDA 12.8 substrate and are named cohort
 residuals.
@@ -867,6 +889,8 @@ resolve `torch` from two indices.
 - One isolated Poetry project + in-project venv per framework engine under `python/engines/<engine>/`,
   path-depending on the shared `infernix-adapters` package, with framework wheels in an optional
   `cuda` group (cu128 torch for Blackwell on linux-gpu).
+- Linux CPU substrate builds opt in to `--with linux-cpu` for `transformers` and `pytorch`, baking
+  CPU framework venvs for validation while preserving the shared framework-free gate.
 - The Haskell worker prefers the per-engine venv (`python -m adapters.<module>`) and falls back to
   the fail-fast shared path when absent.
 - The linux-gpu image build bakes each engine's `--with cuda` venv as a resilient, separate layer.
@@ -879,11 +903,16 @@ resolve `torch` from two indices.
   `infernix lint files/docs` all pass on the recorded CUDA Linux host (machine-independent gates).
 - `poetry install --directory python/engines/transformers --with cuda` resolves the CUDA framework
   set and `torch.cuda.is_available()` is True on the RTX 5090.
+- The 2026-06-16 Linux CPU image build bakes the `transformers` and `pytorch` `--with linux-cpu`
+  venvs, passes `poetry --directory python run check-code`, and the subsequent Linux CPU
+  integration run exercises the deterministic Transformers CPU smoke path and Bark validation WAV.
 
 ### Remaining Work
 
 - **Code (machine-independent) — DONE:** per-engine projects, worker resolution, Dockerfile bake,
-  gitignore, base-image alignment; validated by the gate set above on the recorded CUDA Linux host.
+  gitignore, base-image alignment, and Linux CPU framework venv groups for `transformers` and
+  `pytorch`; validated by the gate set above on the recorded CUDA Linux host and the 2026-06-16
+  Linux CPU image/integration lane.
 - **Cohort gate ([Wave I](cohort-validation-waves.md), Stage 2):** the full linux-gpu image bake of
   all engine venvs, replacement of the Linux native runner-contract payloads with real native payloads
   (llama.cpp / whisper.cpp / ONNX / CTranslate2), real model-weight provisioning, and real
@@ -971,7 +1000,11 @@ infernix-haskell-style`, `cabal build test:infernix-integration`,
 `cabal run exe:infernix -- internal materialize-linux-native-engines`,
 `cabal run exe:infernix -- lint docs`, `cabal run exe:infernix -- docs check`,
 `cabal run exe:infernix -- test unit`, and `cabal run exe:infernix -- test lint` with mounted live
-source after adding the Linux native runner-root materializer.
+source after adding the Linux native runner-root materializer. The 2026-06-16 Apple host refresh
+rechecks the machine-independent Phase 4 gate slice with `poetry run check-code` from `python/`,
+`cabal build test:infernix-integration`, `cabal build all`, `./.build/infernix test unit`,
+`./.build/infernix test lint`, `./.build/infernix docs check`, and focused
+`./.build/infernix lint files/docs/proto/chart`.
 **Cohort gate**: Pending [Wave I](cohort-validation-waves.md), Stage 2 (CUDA Linux).
 **Implementation**: `docker/Dockerfile`, `src/Infernix/Models.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Runtime/Pulsar.hs`, `chart/templates/deployment-engine.yaml`, `chart/values.yaml`, `bootstrap/linux-gpu.sh`
 **Docs to update**: `DEVELOPMENT_PLAN/system-components.md`, `documents/architecture/daemon_topology.md`, `DEVELOPMENT_PLAN/cohort-validation-waves.md`
@@ -1050,7 +1083,7 @@ own framework, making the cluster image flow practical.
 
 **Status**: Active
 **Code-side closure**: Complete for the machine-independent scope — `src/Infernix/Models.hs` now reflects the researched runnable/residual matrix (Apple CTranslate2 runnable as CPU, Basic Pitch TensorFlow / MT3 / Omnizart residual rather than runnable, Wan Apple MPS residual), `residualMatrixRowIdsForMode` records named residual rows without promoting them into runtime catalogs, `infernix-engine-artifacts` is an explicit bucket in object layout, demo bucket repair, and chart MinIO provisioning, and the Apple manifest materializer from Sprint 1.14 supplies typed engine-artifact manifests. `src/Infernix/Engines/LinuxNative.hs` now adds the Linux image-owned materialization surface: typed manifests, smoke-validated runner roots for `llama-cpp-cli`, `whisper-cpp-cli`, `onnx-runtime-native`, `ctranslate2-native`, and `jvm-native`, a generated CLI command, a `docker/Dockerfile` bake step, and runner-contract payloads that parse the native worker argument shape, can emit worker-upload artifact markers, and return per-family result shapes instead of failing normal invocation. `src/Infernix/Runtime/Worker.hs` now passes non-secret model-cache hints and optional artifact output directories to native runners, uploads `infernix-native-artifact-file:<path>` outputs to `infernix-demo-objects` with worker-owned MinIO credentials, and maps native exit 75 to `model_cache_not_populated`, preserving the bootstrap retry family for future real native cache misses. `src/Infernix/Engines/AppleSilicon.hs` now also materializes deterministic Apple validation-runner payloads for `llama-cpp-cli`, `whisper-cpp-cli`, `ctranslate2-native`, `mlx-native`, `onnx-runtime-native`, and `jvm-native`; those runners satisfy the substrate result-shape contract for validation but remain explicit Wave I placeholders for real native payloads. The shared engine-root installer now handles Docker overlay image-layer reruns by replacing a generated final root when the existing-root backup rename is rejected as a cross-device operation, while keeping rollback behavior on ordinary filesystems. The generated Linux native runner-contract payloads use `/bin/sh`, keeping the runner validation portable for Apple host-native unit runs while real Linux payloads remain Wave I work. The 2026-06-15 native CUDA Linux validation promoted the local marker/upload evidence with `./bootstrap/linux-gpu.sh build`, baked-image `infernix test unit`, `infernix test lint`, focused lints, native materialization, and direct runner checks; the marker check invoked ONNX Basic Pitch with `--output-dir`, received `infernix-native-artifact-file:/tmp/infernix-native-output-check/audio-basic-pitch-onnx.mid`, and verified the file existed. This proves the runner marker contract and worker upload wiring in the baked image; live MinIO upload with real native payloads remains Wave I real-output evidence. Earlier validation passed through the Linux outer-container lane with mounted live source by `cabal run exe:infernix -- internal materialize-linux-native-engines`, `cabal run exe:infernix -- test unit` (Haskell unit plus PureScript 71/71), `cabal run exe:infernix -- lint docs`, `cabal run exe:infernix -- docs check`, and `cabal run exe:infernix -- test lint`; rechecked on the Apple host with `cabal build all`, `./bootstrap/apple-silicon.sh build`, `./.build/infernix internal materialize-metal-engines`, direct validation-runner output checks, `./.build/infernix test unit`, `./bootstrap/linux-cpu.sh build`, and a fresh-container `docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm infernix infernix internal materialize-linux-native-engines` rerun over baked `/opt/infernix/engines/<adapterId>/` roots.
-**Cohort gate**: Pending [Wave I](cohort-validation-waves.md), Stage 2 — replace Linux native runner-contract payloads and Apple native validation wrappers with real llama.cpp, whisper.cpp, ONNX Runtime, CTranslate2, MLX, and JVM/native payloads plus real-output smoke; Apple headless `coreml-native` runtime-load smoke has passed, Apple transformers now completes `llm-qwen25-safetensors`, and current source closes the previously missing `llama-cpp-cli/bin/llama-cli` root for `llm-tinyllama-gguf`. The latest Apple full integration rerun passed on the present Apple Silicon host: the source-fingerprint image freshness path rebuilt once for source changes, reused the stamped image during later edge-port validation cluster cycles, completed the active Apple catalog through the host engine daemon, and validated pinned Apple host-engine `Exclusive` duplicate rejection. Apple e2e/all and the real native-payload replacement remain pending cohort evidence.
+**Cohort gate**: Pending [Wave I](cohort-validation-waves.md), Stage 2 — replace Linux native runner-contract payloads and Apple native validation wrappers with real llama.cpp, whisper.cpp, ONNX Runtime, CTranslate2, MLX, and JVM/native payloads plus real-output smoke; Apple headless `coreml-native` runtime-load smoke has passed, Apple transformers now completes `llm-qwen25-safetensors`, and current source closes the previously missing `llama-cpp-cli/bin/llama-cli` root for `llm-tinyllama-gguf`. The latest Apple full integration rerun passed on the present Apple Silicon host: the source-fingerprint image freshness path rebuilt once for source changes, reused the stamped image during later edge-port validation cluster cycles, completed the active Apple catalog through the host engine daemon, and validated pinned Apple host-engine `Exclusive` duplicate rejection. Focused Apple e2e now passes after preserving prompt upload refs, sending input-object refs only to object-input model families, and extending the model-bootstrap ready wait to a 900-second cold-start envelope; the latest focused pass used rebuilt image digest `sha256-ed34da86992bb1a4d285f00feb77051d12eb4fa594b7bb34ed73561a027b1a71`. The subsequent full Apple `./.build/infernix test all` aggregate passed lint, unit (Haskell plus web 71/71), integration, and 9/9 routed Playwright against rebuilt cluster image digest `sha256-f4a30f4e177206b64ce5a0d3abea8d72a8bdbe637148530e1619bdf5ce8ae7c3`, including Qwen, object-input audio/tool rows, and every active Apple catalog row. Real native-payload replacement remains pending cohort evidence.
 **Implementation**: `README.md`, `docker/Dockerfile`, `src/Infernix/Engines/LinuxNative.hs`, `src/Infernix/Models.hs`, `src/Infernix/Objects/Layout.hs`, `src/Infernix/Objects/Upload.hs`, `src/Infernix/Demo/Bootstrap.hs`, `chart/values.yaml`, `chart/templates/minio/job-provisioning.yaml`, `src/Infernix/Runtime/Worker.hs`, `src/Infernix/Bootstrap/Models.hs`, `proto/infernix/manifest/runtime_manifest.proto`, `documents/engineering/apple_silicon_metal_headless_builds.md`, `documents/engineering/object_storage.md`, `documents/engineering/model_lifecycle.md`
 **Docs to update**: `README.md`, `documents/architecture/model_catalog.md`, `documents/architecture/runtime_modes.md`, `documents/engineering/object_storage.md`, `documents/engineering/model_lifecycle.md`, `documents/engineering/build_artifacts.md`, `documents/engineering/apple_silicon_metal_headless_builds.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 
@@ -1149,17 +1182,23 @@ consumers on an isolated derived pool/model topic with service-shaped subscripti
 `receiverQueueSize=1`, holds the first request unacked, publishes a second request, and asserts the
 free consumer receives that second request by decoding the request id from the Pulsar payload. The
 harness is compile-validated on the present Linux outer-container lane by
-a mounted-source linux-gpu Compose launcher run of `cabal build test:infernix-integration`; real
-Apple execution remains a Wave J cohort gate. The same current-source mounted linux-gpu validation
-also passes `infernix test lint`, `infernix test unit`, focused `infernix lint files/docs/proto/chart`,
-`infernix docs check`, and `git diff --check`.
+a mounted-source linux-gpu Compose launcher run of `cabal build test:infernix-integration`. The
+2026-06-16 Apple integration rerun executed the harness against the live Apple Pulsar lane. The
+same current-source mounted linux-gpu validation also passes `infernix test lint`,
+`infernix test unit`, focused `infernix lint files/docs/proto/chart`, `infernix docs check`, and
+`git diff --check`. The 2026-06-16 Apple host refresh also compile-validates this integration
+target with `cabal build test:infernix-integration`. The 2026-06-16 Linux CPU rebuilt-image
+integration pass then exercised the Kubernetes side of the same contract: two-worker engine-pool
+placement, unique-topic `Shared` backlog/backpressure, engine pod replacement, engine node drain,
+anti-affinity, lifecycle rebinding, demo-off coordinator/engine publication, and pool-topic
+exactly-once accounting.
 **Cohort gate**: Pending [Wave J](cohort-validation-waves.md) — real Pulsar cluster validation
 has now proved pinned `Exclusive` member routes, process-qualified service consumer names,
-same-machine Apple host-member coexistence on a `Shared` pool subscription, and Apple production
-`demo_ui = false` assertions. This sprint still needs Apple execution of the newly added
-single-host logical `Shared` backlog/backpressure harness and Linux CPU/GPU pool placement before
-it can move to `Done`; physical Apple multi-host member routing is hardware-deferred proof while
-no second Apple host is available.
+same-machine Apple host-member coexistence on a `Shared` pool subscription, Apple single-host
+logical `Shared` backlog/backpressure, Apple production `demo_ui = false` assertions, and Linux
+CPU pool placement/backpressure in the Kind topology. This sprint still needs Linux GPU/CUDA cohort
+validation before it can move to `Done`; physical Apple multi-host member routing is
+hardware-deferred proof while no second Apple host is available.
 **Implementation**: `dhall/InfernixSubstrate.dhall`, `src/Infernix/Types.hs`, `src/Infernix/Substrate.hs`, `src/Infernix/DemoConfig.hs`, `src/Infernix/Models.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Daemon.hs`, `test/unit/Spec.hs`, `test/integration/Spec.hs`
 **Docs to update**: `README.md`, `documents/architecture/engine_pool_routing.md`, `documents/architecture/daemon_topology.md`, `documents/tools/pulsar.md`, `documents/architecture/runtime_modes.md`, `DEVELOPMENT_PLAN/system-components.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 
@@ -1190,6 +1229,8 @@ backpressure, and pinned routes use explicit per-member topics.
   Linux GPU
 - integration coverage proves coordinator publication to derived pool/model topics and engine
   consumption from assigned topics
+- Linux CPU integration proves Kubernetes-observed pool/member placement and broker-native
+  backpressure on unique derived pool/model topics
 - a Pulsar-backed test proves same-machine Apple host-member daemons can coexist on one `Shared`
   subscription for an isolated derived pool/model topic
 - a Pulsar-backed single-host logical multi-member test proves backlog/backpressure distribution
@@ -1202,12 +1243,12 @@ backpressure, and pinned routes use explicit per-member topics.
   The generated `engineDaemons` list remains as a compatibility projection while cleanup and chart
   integration finish; it is tracked in
   [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
-- **Cohort gate ([Wave J](cohort-validation-waves.md)):** run the newly added real Pulsar
-  single-host logical shared-pool backlog/backpressure harness on the Apple integration lane, and
-  add/run Linux CPU/GPU pool-placement evidence. Pinned-route duplicate-consumer rejection,
-  same-machine Apple `Shared` coexistence, and Apple production `demo_ui = false` assertions are
-  already covered on the Apple integration lane. Physical Apple multi-host routing is tracked as
-  hardware-deferred proof, not as a blocker for the current single-host logical backpressure gate.
+- **Cohort gate ([Wave J](cohort-validation-waves.md)):** add/run Linux GPU/CUDA pool-placement
+  evidence and full cohort validation. Pinned-route duplicate-consumer rejection, same-machine
+  Apple `Shared` coexistence, Apple single-host logical backlog/backpressure, Apple production
+  `demo_ui = false` assertions, and Linux CPU Kubernetes placement/backpressure are covered.
+  Physical Apple multi-host routing is tracked as hardware-deferred proof, not as a blocker for
+  the current single-host logical backpressure gate.
 
 ---
 
@@ -1226,6 +1267,10 @@ lane by `./bootstrap/linux-cpu.sh build`, rebuilt-image `infernix test unit`, an
 live-source `cabal test infernix-unit`, `cabal test infernix-haskell-style`,
 `infernix lint files/docs/proto/chart`, `infernix docs check`, and `infernix test lint` through
 `cabal run exe:infernix -- ...`.
+The 2026-06-16 Apple host refresh rechecks the machine-independent Phase 4 slice with
+`poetry run check-code`, `cabal build test:infernix-integration`, `cabal build all`,
+`./.build/infernix test unit`, `./.build/infernix test lint`, `./.build/infernix docs check`, and
+focused `./.build/infernix lint files/docs/proto/chart`.
 The **Wave I cohort sign-off** still remains:
 producing and asserting real per-family output on hardware is the Stage 2 cohort gate — both cohorts
 run the real engines (Apple Metal with headless materialization, and CUDA GPU real inference) under
@@ -1242,14 +1287,20 @@ evidence completes the active Apple catalog through the host engine daemon with 
 validation-wrapper payloads in place; real native payloads remain the next real-output gate. The
 latest full integration rerun also proved freshness-gated host-native Apple image reuse by
 rebuilding the changed source once and reusing the stamped image during later edge-port validation
-cycles. The remaining Phase 4 residual is real engine payload replacement and real-output
+cycles. Focused Apple e2e reruns passed after object-input prompts were wired through the
+single-flight dispatcher and browser fixtures and after the Qwen cold-bootstrap ready wait was
+raised to 900 seconds; the latest pass used rebuilt image digest
+`sha256-ed34da86992bb1a4d285f00feb77051d12eb4fa594b7bb34ed73561a027b1a71`. The full Apple
+`test all` aggregate then passed lint, unit, integration, and 9/9 routed Playwright against rebuilt
+cluster image digest `sha256-f4a30f4e177206b64ce5a0d3abea8d72a8bdbe637148530e1619bdf5ce8ae7c3`.
+The remaining Phase 4 residual is real engine payload replacement and real-output
 validation: the phase returns to `Done` only after Wave I lands the full Apple and CUDA Linux gates
 against real inference and the per-engine routed cluster path. Sprint 4.19's remaining
-pool-routing residual is Wave J real-cluster execution of the newly added single-host logical
-shared-pool backlog/backpressure harness, Linux pool placement, and cleanup of the legacy
+pool-routing residual is Wave J Linux GPU/CUDA cohort validation and cleanup of the legacy
 `engineDaemons` compatibility projection before Phase 4 can return to `Done`; pinned-route
-exclusivity, same-machine Apple `Shared` coexistence, and Apple production `demo_ui = false`
-assertions are now covered on the Apple integration lane. Physical Apple multi-host membership is
+exclusivity, same-machine Apple `Shared` coexistence, Apple single-host logical
+backlog/backpressure, Apple production `demo_ui = false` assertions, and Linux CPU
+pool-placement/backpressure are now covered. Physical Apple multi-host membership is
 hardware-deferred evidence while no second Apple host is available.
 See the two-axis execution rule in
 [development_plan_standards.md](development_plan_standards.md) Section Q.

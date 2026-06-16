@@ -246,18 +246,31 @@ RUN mkdir -p /workspace/tools/generated_proto \
          exe:infernix-demo \
     && infernix internal materialize-substrate ${RUNTIME_MODE} --demo-ui ${DEMO_UI} \
     && infernix internal materialize-linux-native-engines \
+    && if [ "${RUNTIME_MODE}" = "linux-cpu" ]; then \
+         poetry install --directory python/engines/transformers --with linux-cpu --no-interaction; \
+         printf '%s\n' \
+           'runtimeMode=linux-cpu' \
+           'adapterId=transformers-python' \
+           'groups=linux-cpu' \
+           > python/engines/transformers/.venv/.infernix-framework-groups-linux-cpu-linux-cpu; \
+         poetry install --directory python/engines/pytorch --with linux-cpu --no-interaction; \
+         printf '%s\n' \
+           'runtimeMode=linux-cpu' \
+           'adapterId=pytorch-python' \
+           'groups=linux-cpu' \
+           > python/engines/pytorch/.venv/.infernix-framework-groups-linux-cpu-linux-cpu; \
+       fi \
     && npm --prefix web run build \
     && poetry --directory python run check-code
 
 # Phase 4 Sprint 4.17 — this is the slim control-plane / coordinator image: it
-# carries the `infernix` binaries, the framework-free `python/` project (so the
-# coordinator's `check-code` and adapter dispatch resolve), and the cluster
-# toolbelt, but NO ML framework venvs. Each framework engine's CUDA venv lives in
-# its own per-engine image built from `docker/engine.Dockerfile` (CUDA-runtime
-# base + this image's binary/python + only that engine's `--with cuda` venv), so
-# an engine pod pulls only its own framework instead of a ~121 GB monolith. The
-# Sprint 4.16 per-engine venv mechanism is unchanged; only where it is installed
-# moved (per-engine image, not this one).
+# carries the `infernix` binaries, the framework-free shared `python/` project
+# (so the coordinator's `check-code` and adapter dispatch resolve), and the
+# cluster toolbelt. The `linux-cpu` image additionally bakes the small CPU
+# framework groups needed by its in-cluster engine pods. CUDA framework venvs
+# still live only in per-engine images built from `docker/engine.Dockerfile`
+# (CUDA-runtime base + this image's binary/python + one engine's `--with cuda`
+# venv), so the GPU lane avoids the retired ~121 GB monolith.
 
 # Phase 3 Sprint 3.10 — Playwright system dependencies + browser
 # install live in the launcher image. The previous dedicated

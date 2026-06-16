@@ -52,10 +52,11 @@ coordinator/engine durable prompt flow, engine pod replacement, engine node drai
 counts, throughput, and production-shape deployment. The current Apple integration pass proves one
 pinned Apple host member route with broker-enforced `Exclusive` duplicate rejection, same-machine
 Apple host-member coexistence on a real `Shared` subscription, and Apple production
-`demo_ui = false` route/publication assertions. Current source also includes a compile-validated
-single-host logical `Shared` backlog harness using real Pulsar WebSocket consumers; Wave J still
-owns Apple execution of that harness plus Linux pool placement. Physical Apple multi-host
-membership is hardware-deferred proof while no second Apple host is available.
+`demo_ui = false` route/publication assertions, and the single-host logical `Shared`
+backlog/backpressure harness using real Pulsar WebSocket consumers. Current Linux CPU integration
+proves Kubernetes-observed pool placement and shared-subscription backlog/backpressure. Wave J
+still owns Linux GPU/CUDA cohort validation. Physical Apple multi-host membership is
+hardware-deferred proof while no second Apple host is available.
 
 ## Roles and Responsibilities
 

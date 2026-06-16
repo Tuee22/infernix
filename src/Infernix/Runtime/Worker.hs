@@ -16,7 +16,7 @@ module Infernix.Runtime.Worker
 where
 
 import Control.Exception (SomeException, displayException, try)
-import Control.Monad (unless)
+import Control.Monad (unless, when)
 import Crypto.Hash.SHA256 qualified as SHA256
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Base16 qualified as Base16
@@ -34,6 +34,7 @@ import Data.Word (Word64)
 import Infernix.ClusterConfig qualified as Cluster
 import Infernix.Config (Paths (..))
 import Infernix.Models (engineBindingForSelectedEngine, resultFamilyForDescriptor)
+import Infernix.Objects.Presigned qualified as Presigned
 import Infernix.Objects.Upload qualified as ObjectUpload
 import Infernix.Python (ensurePoetryExecutable, ensurePoetryProjectInstalledWithGroups, ensurePoetryProjectReady)
 import Infernix.Runtime.KVCache qualified as KVCache
@@ -41,13 +42,15 @@ import Infernix.SecretsConfig qualified as Secrets
 import Infernix.Types
 import Infernix.Web.Contracts qualified as Contracts
 import Lens.Family2 (set, view)
-import Network.HTTP.Client (defaultManagerSettings, newManager)
+import Network.HTTP.Client (defaultManagerSettings, httpLbs, newManager, parseRequest, responseStatus)
+import Network.HTTP.Types.Status (statusCode)
 import Proto.Infernix.Runtime.Inference qualified as ProtoInference
 import Proto.Infernix.Runtime.Inference_Fields qualified as ProtoInferenceFields
 import System.Directory (createDirectoryIfMissing, doesFileExist, getTemporaryDirectory)
 import System.Exit (ExitCode (ExitFailure, ExitSuccess))
-import System.FilePath (takeExtension, (</>))
+import System.FilePath (takeDirectory, takeExtension, (</>))
 import System.IO (hClose)
+import System.Info qualified as SystemInfo
 import System.Posix.Process (getProcessID)
 import System.Process
   ( CreateProcess (cwd, env, std_err, std_in, std_out),
@@ -208,6 +211,10 @@ perEngineFrameworkGroups runtimeMode engineBinding =
   case runtimeMode of
     AppleSilicon
       | engineBindingAdapterId engineBinding `elem` appleSiliconFrameworkAdapterIds -> ["apple-silicon"]
+    LinuxCpu
+      | SystemInfo.os == "linux"
+          && engineBindingAdapterId engineBinding `elem` linuxCpuFrameworkAdapterIds ->
+          ["linux-cpu"]
     _ -> []
 
 appleSiliconFrameworkAdapterIds :: [Text]
@@ -215,6 +222,12 @@ appleSiliconFrameworkAdapterIds =
   [ "transformers-python",
     "pytorch-python",
     "diffusers-python"
+  ]
+
+linuxCpuFrameworkAdapterIds :: [Text]
+linuxCpuFrameworkAdapterIds =
+  [ "transformers-python",
+    "pytorch-python"
   ]
 
 perEngineFrameworkMarkerPath :: Paths -> RuntimeMode -> EngineBinding -> [String] -> FilePath
@@ -414,6 +427,7 @@ runNativeWorker paths _runtimeMode model engineBinding request _cacheObservation
                 )
         Just (installRoot, binaryPath) -> do
           maybeModelCacheConfig <- loadWorkerModelCacheConfig paths _runtimeMode
+          ensureNativeRunnerContractCacheReady model maybeModelCacheConfig
           maybeOutputDir <- nativeRunnerOutputDir model maybeModelCacheConfig
           processEnvironment <- workerProcessEnvironment paths []
           (exitCode, stdoutOutput, stderrOutput) <-
@@ -425,6 +439,50 @@ runNativeWorker paths _runtimeMode model engineBinding request _cacheObservation
               )
               ""
           nativeRunnerResult model engineBinding binaryPath maybeModelCacheConfig exitCode stdoutOutput stderrOutput
+
+-- | Current Linux native artifacts are runner-contract payloads until Wave I
+-- replaces them with real engine binaries. They still participate in the
+-- model-bootstrap protocol: the first invocation reports a cache miss, the
+-- coordinator populates MinIO, and the retry should see local readiness. Keep
+-- MinIO credentials in this Haskell worker, not in native process argv.
+ensureNativeRunnerContractCacheReady :: ModelDescriptor -> Maybe WorkerModelCacheConfig -> IO ()
+ensureNativeRunnerContractCacheReady _ Nothing = pure ()
+ensureNativeRunnerContractCacheReady model (Just modelCacheConfig) = do
+  let readyPath = nativeRunnerContractReadyPath modelCacheConfig (modelId model)
+  localReady <- doesFileExist readyPath
+  unless localReady $ do
+    upstreamReady <- nativeModelReadySentinelExists modelCacheConfig (modelId model)
+    when upstreamReady $ do
+      createDirectoryIfMissing True (takeDirectory readyPath)
+      writeFile readyPath "native-runner-contract-ready\n"
+
+nativeRunnerContractReadyPath :: WorkerModelCacheConfig -> Text -> FilePath
+nativeRunnerContractReadyPath modelCacheConfig modelIdValue =
+  Text.unpack (workerModelCacheRoot modelCacheConfig)
+    </> Text.unpack modelIdValue
+    </> ".ready"
+
+nativeModelReadySentinelExists :: WorkerModelCacheConfig -> Text -> IO Bool
+nativeModelReadySentinelExists modelCacheConfig modelIdValue = do
+  manager <- newManager defaultManagerSettings
+  now <- getCurrentTime
+  let objectRef =
+        Contracts.ObjectRef
+          { Contracts.objectBucket = workerMinioModelsBucket modelCacheConfig,
+            Contracts.objectKey = modelIdValue <> "/.ready"
+          }
+      signedUrl =
+        Text.unpack
+          ( Presigned.unPresignedUrl
+              (Presigned.presignedGetUrl (workerPresignedUrlConfig modelCacheConfig) now objectRef)
+          )
+  responseResult <-
+    try @SomeException $ do
+      request <- parseRequest signedUrl
+      httpLbs request manager
+  case responseResult of
+    Right response -> pure (statusCode (responseStatus response) == 200)
+    Left _ -> pure False
 
 firstPresentNativeRunner :: Paths -> EngineBinding -> FilePath -> IO (Maybe (FilePath, FilePath))
 firstPresentNativeRunner paths engineBinding binaryRelPath = do
@@ -644,6 +702,19 @@ workerObjectUploadConfig modelCacheConfig =
           ObjectUpload.objectUploadAccessKeyId = workerMinioAccessKey modelCacheConfig,
           ObjectUpload.objectUploadSecretAccessKey = workerMinioSecretKey modelCacheConfig,
           ObjectUpload.objectUploadExpirySeconds = 60
+        }
+
+workerPresignedUrlConfig :: WorkerModelCacheConfig -> Presigned.PresignedUrlConfig
+workerPresignedUrlConfig modelCacheConfig =
+  let (scheme, hostPort) = splitMinioEndpoint (workerMinioEndpoint modelCacheConfig)
+   in Presigned.PresignedUrlConfig
+        { Presigned.presignedScheme = scheme,
+          Presigned.presignedEndpoint = hostPort,
+          Presigned.presignedPathPrefix = "",
+          Presigned.presignedRegion = workerMinioRegion modelCacheConfig,
+          Presigned.presignedAccessKeyId = workerMinioAccessKey modelCacheConfig,
+          Presigned.presignedSecretAccessKey = workerMinioSecretKey modelCacheConfig,
+          Presigned.presignedExpirySeconds = 60
         }
 
 splitMinioEndpoint :: Text -> (Text, Text)
