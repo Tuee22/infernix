@@ -128,6 +128,10 @@ rather than inlined. `ResultPayload` carries the
 families to object references. The newer proto fields are a non-text
 INPUT object reference on `InferenceRequest` / `WorkerRequest` and an
 object-reference OUTPUT on `WorkerResponse` for the artifact adapters.
+For native-process-runner artifact families, the child process may return a local artifact-file
+marker instead of doing its own MinIO write; the Haskell worker uploads that file to
+`infernix-demo-objects` using secret-backed presigned PUT credentials and publishes the same
+object-reference output shape.
 
 ## Coordinator Model-Bootstrap Workflow
 

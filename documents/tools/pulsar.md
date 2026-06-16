@@ -105,10 +105,11 @@ to the derived member topic, and asserting a duplicate consumer receives the bro
 409 rejection. It also launches two same-machine Apple host-member daemons on one isolated derived
 pool/model topic, observes two real consumers on the `Shared` subscription through Pulsar admin
 stats, and completes an inference request; production `demo_ui = false` route/publication
-assertions also pass on Apple. Wave J still owns the remaining real-cluster pool handoff proof:
-single-host logical broker-native backlog/backpressure distribution and Linux CPU/GPU pool
-placement. Physical Apple multi-host routing is hardware-deferred proof while no second Apple host
-is available.
+assertions also pass on Apple. Current source also includes a compile-validated single-host
+logical `Shared` backlog harness that holds one service-shaped WebSocket consumer unacked and
+asserts a second request reaches a free consumer on the same subscription. Wave J still owns
+Apple execution of that harness plus Linux CPU/GPU pool placement. Physical Apple multi-host
+routing is hardware-deferred proof while no second Apple host is available.
 
 ## Demo Conversation and Metadata Topics
 

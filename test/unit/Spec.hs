@@ -127,6 +127,7 @@ import Infernix.Runtime.Worker
     buildWorkerRequest,
     loadWorkerModelCacheConfig,
     nativeEngineInstallRootCandidates,
+    nativeRunnerArgs,
     workerRequestModelCacheConfig,
   )
 import Infernix.Service (serviceDemoConfigPath)
@@ -135,9 +136,11 @@ import Infernix.Topic.Metadata qualified as TopicMetadata
 import Infernix.Types
 import Infernix.Web.Contracts qualified as Contracts
 import System.Directory
+import System.Exit (ExitCode (..))
 import System.FilePath ((</>))
 import System.IO qualified
 import System.IO.Error (catchIOError, isDoesNotExistError)
+import System.Process (proc, readCreateProcessWithExitCode)
 import System.Timeout (timeout)
 import Test.QuickCheck
   ( Args (..),
@@ -982,6 +985,76 @@ main = do
                ]
         )
         "native runner lookup checks the repo data root before the image-owned Linux engine root"
+      let sampleModelCacheConfig =
+            WorkerModelCacheConfig
+              { workerModelCacheRoot = "/model-cache",
+                workerModelCacheQuotaBytes = 123456,
+                workerMinioEndpoint = "http://infernix-minio.platform.svc.cluster.local:9000",
+                workerMinioModelsBucket = "infernix-models",
+                workerMinioDemoArtifactsBucket = "infernix-demo-objects",
+                workerMinioRegion = "us-east-1",
+                workerMinioAccessKey = "unit-access-key",
+                workerMinioSecretKey = "unit-secret-key"
+              }
+          linuxNativeArgs =
+            nativeRunnerArgs
+              linuxNativeModel
+              InferenceRequest
+                { requestModelId = "llm-tinyllama-gguf",
+                  inputText = "native runner cache wiring",
+                  inputObjectRef = Nothing
+                }
+              "/opt/infernix/engines/llama-cpp-cli"
+              (Just sampleModelCacheConfig)
+              Nothing
+      assert
+        ( all
+            (`elem` linuxNativeArgs)
+            [ "--model-cache-root",
+              "/model-cache",
+              "--model-cache-quota-bytes",
+              "123456",
+              "--minio-endpoint",
+              "http://infernix-minio.platform.svc.cluster.local:9000",
+              "--minio-models-bucket",
+              "infernix-models",
+              "--minio-demo-artifacts-bucket",
+              "infernix-demo-objects",
+              "--minio-region",
+              "us-east-1"
+            ]
+            && "unit-access-key" `notElem` linuxNativeArgs
+            && "unit-secret-key" `notElem` linuxNativeArgs
+        )
+        "native runner args carry non-secret model-cache wiring without MinIO credentials"
+      linuxNativeArtifactModel <-
+        maybe
+          (fail "expected the linux-gpu Basic Pitch ONNX row")
+          pure
+          (findModel LinuxGpu "audio-basic-pitch-onnx")
+      let linuxNativeArtifactArgs =
+            nativeRunnerArgs
+              linuxNativeArtifactModel
+              InferenceRequest
+                { requestModelId = "audio-basic-pitch-onnx",
+                  inputText = "",
+                  inputObjectRef = Just "infernix-demo-objects/unit/input.wav"
+                }
+              "/opt/infernix/engines/onnx-runtime-native"
+              (Just sampleModelCacheConfig)
+              (Just "/tmp/infernix-native-output/unit")
+      assert
+        ( all
+            (`elem` linuxNativeArtifactArgs)
+            [ "--input-object-ref",
+              "infernix-demo-objects/unit/input.wav",
+              "--output-dir",
+              "/tmp/infernix-native-output/unit"
+            ]
+            && "unit-access-key" `notElem` linuxNativeArtifactArgs
+            && "unit-secret-key" `notElem` linuxNativeArtifactArgs
+        )
+        "native artifact runner args carry input object refs and an output directory without MinIO credentials"
 
       pythonModel <-
         maybe
@@ -993,18 +1066,7 @@ main = do
             buildWorkerRequest
               paths
               LinuxGpu
-              ( Just
-                  WorkerModelCacheConfig
-                    { workerModelCacheRoot = "/model-cache",
-                      workerModelCacheQuotaBytes = 123456,
-                      workerMinioEndpoint = "http://infernix-minio.platform.svc.cluster.local:9000",
-                      workerMinioModelsBucket = "infernix-models",
-                      workerMinioDemoArtifactsBucket = "infernix-demo-objects",
-                      workerMinioRegion = "us-east-1",
-                      workerMinioAccessKey = "minioadmin",
-                      workerMinioSecretKey = "minioadmin123"
-                    }
-              )
+              (Just sampleModelCacheConfig)
               pythonModel
               pythonBinding
               InferenceRequest
@@ -1014,17 +1076,7 @@ main = do
                 }
       assert
         ( workerRequestModelCacheConfig workerRequest
-            == Just
-              WorkerModelCacheConfig
-                { workerModelCacheRoot = "/model-cache",
-                  workerModelCacheQuotaBytes = 123456,
-                  workerMinioEndpoint = "http://infernix-minio.platform.svc.cluster.local:9000",
-                  workerMinioModelsBucket = "infernix-models",
-                  workerMinioDemoArtifactsBucket = "infernix-demo-objects",
-                  workerMinioRegion = "us-east-1",
-                  workerMinioAccessKey = "minioadmin",
-                  workerMinioSecretKey = "minioadmin123"
-                }
+            == Just sampleModelCacheConfig
         )
         "worker protobuf requests carry typed model-cache and MinIO wiring to Python adapters"
       assert
@@ -3259,10 +3311,19 @@ assertHostConfig testRoot = do
         "Sprint 4.18: Linux native manifests use the engine-artifacts Linux key namespace"
       assert
         ("--smoke|--help" `isInfixOf` sampleLinuxScript)
-        "Sprint 4.18: Linux native smoke wrappers support the smoke command"
+        "Sprint 4.18: Linux native runner-contract payloads support the smoke command"
       assert
         ("#!/bin/sh" `isPrefixOf` sampleLinuxScript)
-        "Sprint 4.18: Linux native smoke wrappers use a portable POSIX shell shebang"
+        "Sprint 4.18: Linux native runner-contract payloads use a portable POSIX shell shebang"
+      assert
+        ("runner-contract" `isInfixOf` sampleLinuxScript && "infernix-demo-objects" `isInfixOf` sampleLinuxScript)
+        "Sprint 4.18: Linux native runner-contract payloads return per-family result shapes"
+      assert
+        ("--output-dir" `isInfixOf` sampleLinuxScript && "infernix-native-artifact-file:" `isInfixOf` sampleLinuxScript)
+        "Sprint 4.18: Linux native runner-contract payloads can emit worker-upload artifact markers"
+      assert
+        ("model_cache_not_populated" `isInfixOf` sampleLinuxScript && "exit 75" `isInfixOf` sampleLinuxScript)
+        "Sprint 4.18: Linux native runner-contract payloads fail fast on missing model-cache readiness"
       assert
         (either (const False) (const True) (decodeLazy sampleLinuxManifestJson :: Either String Aeson.Value))
         "Sprint 4.18: Linux native manifest JSON decodes as valid Aeson"
@@ -3281,6 +3342,34 @@ assertHostConfig testRoot = do
   assert
     (linuxRunnerAfterRerun && not linuxTempAfterRerun && not linuxPreviousAfterRerun)
     "Sprint 4.18: Linux native materialization reruns cleanly over an existing root"
+  let linuxNativeCacheRoot = testRoot </> "linux-native-model-cache"
+      linuxNativeReadyDir = linuxNativeCacheRoot </> "llm-tinyllama-gguf"
+      linuxNativeRunnerArgs =
+        [ "--model",
+          "llm-tinyllama-gguf",
+          "--engine",
+          "llama.cpp",
+          "--family",
+          "llm",
+          "--install-root",
+          llamaInstallRoot,
+          "--input-text",
+          "unit native cache probe",
+          "--model-cache-root",
+          linuxNativeCacheRoot
+        ]
+  (missingCacheExit, _, missingCacheStderr) <-
+    readCreateProcessWithExitCode (proc llamaRunnerPath linuxNativeRunnerArgs) ""
+  assert
+    (missingCacheExit == ExitFailure 75 && "model_cache_not_populated" `isInfixOf` missingCacheStderr)
+    "Sprint 4.18: Linux native runner-contract execution maps missing cache readiness to exit 75"
+  createDirectoryIfMissing True linuxNativeReadyDir
+  writeFile (linuxNativeReadyDir </> ".ready") "ready\n"
+  (readyCacheExit, readyCacheStdout, _) <-
+    readCreateProcessWithExitCode (proc llamaRunnerPath linuxNativeRunnerArgs) ""
+  assert
+    (readyCacheExit == ExitSuccess && "unit native cache probe" `isInfixOf` readyCacheStdout)
+    "Sprint 4.18: Linux native runner-contract execution proceeds after model-cache readiness"
   assert
     (HostTools.hostToolName HostTools.HostKubectl == "kubectl")
     "HostTools reports the supported short name for each tool"

@@ -82,8 +82,11 @@ now writes typed manifests without a VM dependency. The canonical homes are
 
 On Linux substrates, `infernix internal materialize-linux-native-engines` bakes image-owned
 `/opt/infernix/engines/<adapterId>/` roots with typed manifests and smoke-validated runner
-entrypoints. Those roots are currently smoke wrappers; Wave I replaces them with real native
-payloads before real-output sign-off.
+entrypoints. Those roots are currently runner-contract payloads that parse the native worker
+argument shape, fail with exit 75 until the requested model cache contains a `.ready` sentinel,
+can emit a local artifact-file marker for Haskell-owned MinIO upload, and return the per-family
+result shape; Wave I replaces them with external native engine payloads before real-output
+sign-off.
 
 ## Generated Demo Config Contract
 

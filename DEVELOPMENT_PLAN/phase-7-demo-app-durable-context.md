@@ -68,10 +68,11 @@ Phase 7 remains open for Sprint 7.24's remaining real-cluster pool-routing valid
 coordinator and engine-daemon code-side pool-routing work has landed on the Linux outer-container
 lane, and the Apple integration lane now proves pinned `Exclusive` routes, same-machine
 host-member coexistence on a real `Shared` subscription, and production `demo_ui = false`
-route/publication assertions. Single-host logical backlog/backpressure distribution, Linux
-placement, and full cohort validation remain Wave J residuals; physical Apple multi-host routing
-is hardware-deferred proof while no second Apple host is available. The earlier durable-context and
-auth-UX scopes remain closed on their recorded validation.
+route/publication assertions. Current source adds and compile-validates the single-host logical
+`Shared` backlog harness, but real Apple execution of that harness, Linux placement, and full
+cohort validation remain Wave J residuals; physical Apple multi-host routing is hardware-deferred
+proof while no second Apple host is available. The earlier durable-context and auth-UX scopes
+remain closed on their recorded validation.
 
 ## Current Repo Assessment
 
@@ -3222,18 +3223,25 @@ daemons against an isolated `infernix service --config` substrate file. The same
 same-machine Apple host-member daemons on one isolated derived pool/model topic, observes two real
 Pulsar consumers on the `Shared` subscription through the admin stats endpoint, and completes an
 inference request. It also covers Apple production `demo_ui = false` route/publication assertions.
+Current source additionally adds a single-host logical `Shared` backlog harness that opens two real
+Pulsar WebSocket consumers on an isolated pool/model topic with service-shaped subscription names
+and `receiverQueueSize=1`, holds the first request unacked, publishes a second request, and asserts
+the free consumer receives that second request by decoding the request id from the Pulsar payload.
 No hot reload is implemented in this sprint; changing pool/member assignment remains a Dhall
 materialization and daemon restart or rollout boundary. Proven by `./bootstrap/linux-cpu.sh build`;
 rebuilt-image
 `docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm infernix infernix test unit`;
 and mounted live-source `cabal test infernix-unit`, `cabal test infernix-haskell-style`,
 `cabal run exe:infernix -- lint files/docs/proto/chart`, `cabal run exe:infernix -- docs check`,
-and `cabal run exe:infernix -- test lint`.
+`cabal run exe:infernix -- test lint`, and a mounted-source linux-gpu Compose launcher run of
+`cabal build test:infernix-integration`. The same current-source mounted linux-gpu validation also
+passes `infernix test lint`, `infernix test unit`, focused `infernix lint files/docs/proto/chart`,
+`infernix docs check`, and `git diff --check`.
 **Cohort gate**: Pending [Wave J](cohort-validation-waves.md) — real Pulsar integration has proved
 pinned duplicate-consumer rejection, same-machine Apple `Shared` coexistence, and Apple
-production `demo_ui = false` assertions. It still must prove shared-pool backlog/backpressure
-distribution with a single-host logical Apple multi-member harness, Linux pool placement, and full
-cohort validation before this sprint can move to `Done`; physical Apple multi-host operation is
+production `demo_ui = false` assertions. It still must execute the newly added single-host logical
+Apple `Shared` backlog/backpressure harness, prove Linux pool placement, and pass full cohort
+validation before this sprint can move to `Done`; physical Apple multi-host operation is
 hardware-deferred proof while no second Apple host is available.
 **Implementation**: `dhall/InfernixSubstrate.dhall`, `src/Infernix/Types.hs`, `src/Infernix/Models.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Daemon.hs`, `src/Infernix/DemoConfig.hs`, `src/Infernix/Substrate.hs`, `test/unit/Spec.hs`, `test/integration/Spec.hs`
 **Docs to update**: [../documents/architecture/engine_pool_routing.md](../documents/architecture/engine_pool_routing.md), [../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md), [../documents/tools/pulsar.md](../documents/tools/pulsar.md), [../documents/operations/apple_silicon_runbook.md](../documents/operations/apple_silicon_runbook.md), [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md)
@@ -3275,12 +3283,13 @@ exact-member routes stay explicit through `Exclusive` pinned topics.
 
 - **Code (machine-independent — DONE):** coordinator pool-topic routing, engine member subscription
   selection, and Apple `ConsumerFailover` demotion have landed for startup-time assignment.
-- **Cohort gate ([Wave J](cohort-validation-waves.md)):** add real Pulsar integration coverage for
-  single-host logical shared-pool backlog/backpressure distribution, Linux pool placement, and full
-  cohort validation. Pinned `Exclusive` duplicate-consumer rejection, same-machine Apple `Shared`
-  coexistence, and Apple production `demo_ui = false` assertions are covered by the Apple
-  integration lane. Physical Apple multi-host routing is tracked as hardware-deferred proof, not
-  as a blocker for the current single-host logical backpressure gate.
+- **Cohort gate ([Wave J](cohort-validation-waves.md)):** run the newly added real Pulsar
+  single-host logical shared-pool backlog/backpressure harness on the Apple integration lane, and
+  add/run Linux pool-placement evidence plus full cohort validation. Pinned `Exclusive`
+  duplicate-consumer rejection, same-machine Apple `Shared` coexistence, and Apple production
+  `demo_ui = false` assertions are covered by the Apple integration lane. Physical Apple
+  multi-host routing is tracked as hardware-deferred proof, not as a blocker for the current
+  single-host logical backpressure gate.
 - **Future extension:** compacted assignment/status topics and cache-drain hot reload remain
   planned design space; they are not implemented or required for the current startup-time
   assignment contract.

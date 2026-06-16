@@ -36,8 +36,10 @@ surfaces while chart/runtime cleanup is staged through
 [../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md](../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md).
 Current Apple integration proves pinned `Exclusive` duplicate-consumer rejection, same-machine
 Apple host-member coexistence on one real `Shared` pool subscription, and production
-`demo_ui = false` route/publication assertions. Single-host logical `Shared`
-backlog/backpressure distribution and Linux GPU placement remain in
+`demo_ui = false` route/publication assertions. Current source also includes a compile-validated
+single-host logical `Shared` backlog harness that holds one Pulsar WebSocket consumer unacked and
+asserts a second request reaches a free consumer on the same service-shaped subscription; executing
+that harness on Apple and proving Linux GPU placement remain in
 [Wave J](../../DEVELOPMENT_PLAN/cohort-validation-waves.md). Physical Apple multi-host membership
 is hardware-deferred proof while no second Apple host is available.
 

@@ -9,35 +9,46 @@ module Infernix.Runtime.Worker
     lookupEngineCommandOverride,
     loadWorkerModelCacheConfig,
     nativeEngineInstallRootCandidates,
+    nativeRunnerArgs,
     runInferenceWorker,
     workerRequestModelCacheConfig,
   )
 where
 
+import Control.Exception (SomeException, displayException, try)
 import Control.Monad (unless)
+import Crypto.Hash.SHA256 qualified as SHA256
 import Data.ByteString qualified as ByteString
+import Data.ByteString.Base16 qualified as Base16
 import Data.ByteString.Char8 qualified as ByteString8
+import Data.Char (isAsciiLower, isAsciiUpper, isDigit)
 import Data.List (dropWhileEnd, find, intercalate)
 import Data.Maybe (catMaybes, fromMaybe, listToMaybe)
 import Data.ProtoLens (decodeMessage, defMessage, encodeMessage)
 import Data.ProtoLens.Field (field)
 import Data.Text (Text)
 import Data.Text qualified as Text
+import Data.Text.Encoding qualified as TextEncoding
+import Data.Time (defaultTimeLocale, formatTime, getCurrentTime)
 import Data.Word (Word64)
 import Infernix.ClusterConfig qualified as Cluster
 import Infernix.Config (Paths (..))
-import Infernix.Models (engineBindingForSelectedEngine)
+import Infernix.Models (engineBindingForSelectedEngine, resultFamilyForDescriptor)
+import Infernix.Objects.Upload qualified as ObjectUpload
 import Infernix.Python (ensurePoetryExecutable, ensurePoetryProjectInstalledWithGroups, ensurePoetryProjectReady)
 import Infernix.Runtime.KVCache qualified as KVCache
 import Infernix.SecretsConfig qualified as Secrets
 import Infernix.Types
+import Infernix.Web.Contracts qualified as Contracts
 import Lens.Family2 (set, view)
+import Network.HTTP.Client (defaultManagerSettings, newManager)
 import Proto.Infernix.Runtime.Inference qualified as ProtoInference
 import Proto.Infernix.Runtime.Inference_Fields qualified as ProtoInferenceFields
-import System.Directory (createDirectoryIfMissing, doesFileExist)
-import System.Exit (ExitCode (ExitSuccess))
-import System.FilePath ((</>))
+import System.Directory (createDirectoryIfMissing, doesFileExist, getTemporaryDirectory)
+import System.Exit (ExitCode (ExitFailure, ExitSuccess))
+import System.FilePath (takeExtension, (</>))
 import System.IO (hClose)
+import System.Posix.Process (getProcessID)
 import System.Process
   ( CreateProcess (cwd, env, std_err, std_in, std_out),
     StdStream (CreatePipe),
@@ -402,16 +413,18 @@ runNativeWorker paths _runtimeMode model engineBinding request _cacheObservation
                       }
                 )
         Just (installRoot, binaryPath) -> do
+          maybeModelCacheConfig <- loadWorkerModelCacheConfig paths _runtimeMode
+          maybeOutputDir <- nativeRunnerOutputDir model maybeModelCacheConfig
           processEnvironment <- workerProcessEnvironment paths []
           (exitCode, stdoutOutput, stderrOutput) <-
             readCreateProcessWithExitCode
-              ( (proc binaryPath (nativeRunnerArgs model request installRoot))
+              ( (proc binaryPath (nativeRunnerArgs model request installRoot maybeModelCacheConfig maybeOutputDir))
                   { cwd = Just installRoot,
                     env = Just processEnvironment
                   }
               )
               ""
-          pure (nativeRunnerResult engineBinding binaryPath exitCode stdoutOutput stderrOutput)
+          nativeRunnerResult model engineBinding binaryPath maybeModelCacheConfig exitCode stdoutOutput stderrOutput
 
 firstPresentNativeRunner :: Paths -> EngineBinding -> FilePath -> IO (Maybe (FilePath, FilePath))
 firstPresentNativeRunner paths engineBinding binaryRelPath = do
@@ -450,8 +463,11 @@ nativeRunnerBinaryRelPath adapterId =
 -- | Pure argument vector for a native engine binary (unit-tested). Text
 -- families pass @--input-text@; the audio and image input families pass
 -- the @--input-object-ref@ that points into @infernix-demo-objects@.
-nativeRunnerArgs :: ModelDescriptor -> InferenceRequest -> FilePath -> [String]
-nativeRunnerArgs model request installRoot =
+-- Artifact-producing invocations may also receive an @--output-dir@; the
+-- runner writes a local file there and prints an artifact-file marker while
+-- this worker owns the credentialed MinIO upload.
+nativeRunnerArgs :: ModelDescriptor -> InferenceRequest -> FilePath -> Maybe WorkerModelCacheConfig -> Maybe FilePath -> [String]
+nativeRunnerArgs model request installRoot maybeModelCacheConfig maybeOutputDir =
   [ "--model",
     Text.unpack (modelId model),
     "--engine",
@@ -464,28 +480,223 @@ nativeRunnerArgs model request installRoot =
     <> case inputObjectRef request of
       Just ref -> ["--input-object-ref", Text.unpack ref]
       Nothing -> ["--input-text", Text.unpack (inputText request)]
+    <> nativeRunnerModelCacheArgs maybeModelCacheConfig
+    <> nativeRunnerOutputArgs maybeOutputDir
 
-nativeRunnerResult :: EngineBinding -> FilePath -> ExitCode -> String -> String -> Either ErrorResponse Text
-nativeRunnerResult engineBinding binaryPath exitCode stdoutOutput stderrOutput =
+nativeRunnerModelCacheArgs :: Maybe WorkerModelCacheConfig -> [String]
+nativeRunnerModelCacheArgs maybeModelCacheConfig =
+  case maybeModelCacheConfig of
+    Nothing -> []
+    Just modelCacheConfig ->
+      [ "--model-cache-root",
+        Text.unpack (workerModelCacheRoot modelCacheConfig),
+        "--model-cache-quota-bytes",
+        show (workerModelCacheQuotaBytes modelCacheConfig),
+        "--minio-endpoint",
+        Text.unpack (workerMinioEndpoint modelCacheConfig),
+        "--minio-models-bucket",
+        Text.unpack (workerMinioModelsBucket modelCacheConfig),
+        "--minio-demo-artifacts-bucket",
+        Text.unpack (workerMinioDemoArtifactsBucket modelCacheConfig),
+        "--minio-region",
+        Text.unpack (workerMinioRegion modelCacheConfig)
+      ]
+
+nativeRunnerOutputArgs :: Maybe FilePath -> [String]
+nativeRunnerOutputArgs maybeOutputDir =
+  case maybeOutputDir of
+    Nothing -> []
+    Just outputDir -> ["--output-dir", outputDir]
+
+nativeRunnerOutputDir :: ModelDescriptor -> Maybe WorkerModelCacheConfig -> IO (Maybe FilePath)
+nativeRunnerOutputDir model maybeModelCacheConfig =
+  case maybeModelCacheConfig of
+    Just _
+      | resultFamilyIsArtifact (resultFamilyForDescriptor model) -> do
+          tempRoot <- getTemporaryDirectory
+          pid <- getProcessID
+          now <- getCurrentTime
+          let outputDir =
+                tempRoot
+                  </> "infernix-native-output"
+                  </> ( safePathSegment (Text.unpack (modelId model))
+                          <> "-"
+                          <> show pid
+                          <> "-"
+                          <> formatTime defaultTimeLocale "%s%q" now
+                      )
+          createDirectoryIfMissing True outputDir
+          pure (Just outputDir)
+    _ -> pure Nothing
+
+nativeRunnerResult :: ModelDescriptor -> EngineBinding -> FilePath -> Maybe WorkerModelCacheConfig -> ExitCode -> String -> String -> IO (Either ErrorResponse Text)
+nativeRunnerResult model engineBinding binaryPath maybeModelCacheConfig exitCode stdoutOutput stderrOutput =
   case exitCode of
     ExitSuccess ->
       case trimWhitespace stdoutOutput of
-        Just trimmed -> Right (Text.pack trimmed)
+        Just trimmed -> nativeRunnerSuccessOutput model maybeModelCacheConfig (Text.pack trimmed)
         Nothing ->
-          Left
+          pure
+            ( Left
+                ErrorResponse
+                  { errorCode = "worker_empty_output",
+                    message = "native engine " <> engineBindingAdapterId engineBinding <> " returned no output."
+                  }
+            )
+    ExitFailure 75 ->
+      pure
+        ( Left
             ErrorResponse
-              { errorCode = "worker_empty_output",
-                message = "native engine " <> engineBindingAdapterId engineBinding <> " returned no output."
+              { errorCode = "model_cache_not_populated",
+                message =
+                  "native engine "
+                    <> engineBindingAdapterId engineBinding
+                    <> " could not load populated model cache state"
+                    <> Text.pack (stderrSuffix (ByteString8.pack stderrOutput))
               }
+        )
     _ ->
-      Left
-        ErrorResponse
-          { errorCode = "worker_failed",
-            message =
-              "native engine worker failed: "
-                <> Text.pack binaryPath
-                <> Text.pack (stderrSuffix (ByteString8.pack stderrOutput))
-          }
+      pure
+        ( Left
+            ErrorResponse
+              { errorCode = "worker_failed",
+                message =
+                  "native engine worker failed: "
+                    <> Text.pack binaryPath
+                    <> Text.pack (stderrSuffix (ByteString8.pack stderrOutput))
+              }
+        )
+
+nativeArtifactOutputPrefix :: Text
+nativeArtifactOutputPrefix = "infernix-native-artifact-file:"
+
+nativeRunnerSuccessOutput :: ModelDescriptor -> Maybe WorkerModelCacheConfig -> Text -> IO (Either ErrorResponse Text)
+nativeRunnerSuccessOutput model maybeModelCacheConfig outputText =
+  case Text.stripPrefix nativeArtifactOutputPrefix outputText of
+    Nothing -> pure (Right outputText)
+    Just artifactPathText ->
+      case maybeModelCacheConfig of
+        Nothing ->
+          pure
+            ( Left
+                ErrorResponse
+                  { errorCode = "native_artifact_upload_unconfigured",
+                    message = "native engine returned a local artifact file, but model-cache MinIO wiring is unavailable."
+                  }
+            )
+        Just modelCacheConfig -> do
+          let artifactPath = Text.unpack artifactPathText
+          artifactExists <- doesFileExist artifactPath
+          if not artifactExists
+            then
+              pure
+                ( Left
+                    ErrorResponse
+                      { errorCode = "native_artifact_missing",
+                        message = "native engine returned an artifact path that does not exist: " <> artifactPathText
+                      }
+                )
+            else do
+              uploadResult <- try @SomeException (nativeArtifactObjectRefFromFile model modelCacheConfig artifactPath)
+              case uploadResult of
+                Right objectRef -> pure (Right (renderObjectRef objectRef))
+                Left err ->
+                  pure
+                    ( Left
+                        ErrorResponse
+                          { errorCode = "native_artifact_upload_failed",
+                            message = Text.pack ("native artifact upload failed: " <> displayException err)
+                          }
+                    )
+
+nativeArtifactObjectRefFromFile :: ModelDescriptor -> WorkerModelCacheConfig -> FilePath -> IO Contracts.ObjectRef
+nativeArtifactObjectRefFromFile model modelCacheConfig artifactPath = do
+  payload <- ByteString.readFile artifactPath
+  let objectRef = nativeArtifactObjectRef modelCacheConfig model artifactPath payload
+      uploadConfig = workerObjectUploadConfig modelCacheConfig
+  manager <- newManager defaultManagerSettings
+  now <- getCurrentTime
+  ObjectUpload.putObjectWithPresignedUrl uploadConfig manager now objectRef payload
+  pure objectRef
+
+nativeArtifactObjectRef :: WorkerModelCacheConfig -> ModelDescriptor -> FilePath -> ByteString.ByteString -> Contracts.ObjectRef
+nativeArtifactObjectRef modelCacheConfig model artifactPath payload =
+  Contracts.ObjectRef
+    { Contracts.objectBucket = workerMinioDemoArtifactsBucket modelCacheConfig,
+      Contracts.objectKey =
+        Text.intercalate
+          "/"
+          [ "native-generated",
+            resultFamilyId (resultFamilyForDescriptor model),
+            safeObjectKeySegment (modelId model),
+            "sha256-" <> sha256Hex payload <> artifactExtension artifactPath
+          ]
+    }
+
+workerObjectUploadConfig :: WorkerModelCacheConfig -> ObjectUpload.ObjectUploadConfig
+workerObjectUploadConfig modelCacheConfig =
+  let (scheme, hostPort) = splitMinioEndpoint (workerMinioEndpoint modelCacheConfig)
+   in ObjectUpload.ObjectUploadConfig
+        { ObjectUpload.objectUploadScheme = scheme,
+          ObjectUpload.objectUploadEndpoint = hostPort,
+          ObjectUpload.objectUploadPathPrefix = "",
+          ObjectUpload.objectUploadRegion = workerMinioRegion modelCacheConfig,
+          ObjectUpload.objectUploadAccessKeyId = workerMinioAccessKey modelCacheConfig,
+          ObjectUpload.objectUploadSecretAccessKey = workerMinioSecretKey modelCacheConfig,
+          ObjectUpload.objectUploadExpirySeconds = 60
+        }
+
+splitMinioEndpoint :: Text -> (Text, Text)
+splitMinioEndpoint raw =
+  case Text.stripPrefix "https://" raw of
+    Just hostPort -> ("https", hostPort)
+    Nothing ->
+      case Text.stripPrefix "http://" raw of
+        Just hostPort -> ("http", hostPort)
+        Nothing -> ("http", raw)
+
+renderObjectRef :: Contracts.ObjectRef -> Text
+renderObjectRef objectRef =
+  Contracts.objectBucket objectRef <> "/" <> Contracts.objectKey objectRef
+
+sha256Hex :: ByteString.ByteString -> Text
+sha256Hex payload =
+  TextEncoding.decodeUtf8 (Base16.encode (SHA256.hash payload))
+
+artifactExtension :: FilePath -> Text
+artifactExtension artifactPath =
+  case takeExtension artifactPath of
+    "" -> ".bin"
+    extension -> Text.pack extension
+
+safeObjectKeySegment :: Text -> Text
+safeObjectKeySegment =
+  Text.map safeObjectKeyChar
+
+safePathSegment :: String -> String
+safePathSegment rawValue =
+  case map safePathChar rawValue of
+    "" -> "artifact"
+    value -> value
+
+safeObjectKeyChar :: Char -> Char
+safeObjectKeyChar character
+  | safeSegmentChar character = character
+  | otherwise = '-'
+
+safePathChar :: Char -> Char
+safePathChar character
+  | safeSegmentChar character = character
+  | otherwise = '-'
+
+safeSegmentChar :: Char -> Bool
+safeSegmentChar character =
+  isAsciiLower character
+    || isAsciiUpper character
+    || isDigit character
+    || character == '-'
+    || character == '_'
+    || character == '.'
 
 runWorkerInvocation :: Paths -> WorkerInvocation -> ByteString.ByteString -> IO (Either String ByteString.ByteString)
 runWorkerInvocation paths invocation inputPayload = do

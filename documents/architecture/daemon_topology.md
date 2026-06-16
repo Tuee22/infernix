@@ -52,9 +52,10 @@ coordinator/engine durable prompt flow, engine pod replacement, engine node drai
 counts, throughput, and production-shape deployment. The current Apple integration pass proves one
 pinned Apple host member route with broker-enforced `Exclusive` duplicate rejection, same-machine
 Apple host-member coexistence on a real `Shared` subscription, and Apple production
-`demo_ui = false` route/publication assertions. Wave J still owns real-cluster proof for
-single-host logical `Shared` backlog/backpressure distribution and Linux pool placement. Physical
-Apple multi-host membership is hardware-deferred proof while no second Apple host is available.
+`demo_ui = false` route/publication assertions. Current source also includes a compile-validated
+single-host logical `Shared` backlog harness using real Pulsar WebSocket consumers; Wave J still
+owns Apple execution of that harness plus Linux pool placement. Physical Apple multi-host
+membership is hardware-deferred proof while no second Apple host is available.
 
 ## Roles and Responsibilities
 
@@ -134,12 +135,13 @@ The product-agnostic inference executor. Owns:
 - Consumer subscriptions on derived engine-pool topics. Normal scalable pools use `Shared`
   subscriptions and broker-native backpressure; pinned per-member topics use `Exclusive`.
 - Engine adapter process management (Python or native) per
-  `python/adapters/` contract. Python worker requests carry the
-  selected model metadata plus model-cache/MinIO wiring decoded from
+  `python/adapters/` and `src/Infernix/Runtime/Worker.hs` contracts.
+  Worker requests carry the selected model metadata plus model-cache/MinIO wiring decoded from
   mounted `ClusterConfig` and secret-file-backed `SecretsConfig`
-  values so the shared adapter entrypoints call
-  `adapters.model_cache.configure()` before loading weights or
-  reading/writing object storage.
+  values. Python adapter entrypoints call `adapters.model_cache.configure()` before loading
+  weights or reading/writing object storage; native artifact runners receive only non-secret
+  cache/bucket hints plus an optional output directory, and the Haskell worker owns the
+  credentialed upload when they return a local artifact-file marker.
 - **Model weight cache** under `/model-cache/<modelId>/` (ephemeral
   `emptyDir` mount with hard `sizeLimit`); populated from the
   `infernix-models` MinIO bucket via the shared adapter helper

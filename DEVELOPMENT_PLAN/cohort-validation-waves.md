@@ -39,8 +39,8 @@
 | F | Native arm64 Linux CPU execution | Validation-only Phase 3 Sprint 3.12 closure: native `linux/arm64` `linux-cpu` validation through the already selected arm64 Docker daemon on this Apple Silicon machine. Proved Harbor publication, warmup hydration, final Harbor-backed preload, integration, and routed E2E on the native ARM publication path without cross-architecture emulation or Docker-context changes. | Closed | the recorded validation |
 | G | Apple Silicon (current host) | Phase 7 auth-UX quad closure: Sprint 7.19 auth-gated landing with dual Keycloak entry points, Sprint 7.20 themed Keycloak login surface, Sprint 7.21 operator console ribbon with edge JWT gating for `/harbor`, `/pulsar/admin`, and `/minio/s3`, and Sprint 7.22 self-service account deletion with MinIO + Pulsar per-user state reaping before Keycloak account removal. | Closed | the recorded Apple host-native validation |
 | H | Apple Silicon (current host) | Full current-host Apple lifecycle revalidation from a clean build root (no prior `./.build` artifacts): `cabal install all:exes`; `infernix lint files/docs/chart/proto` plus `infernix docs check`; `infernix test lint` (haskell-style) and `infernix test unit` (`infernix-unit` plus web 71/71); explicit `infernix cluster up` → `cluster status` (77 pods across 2 nodes, `infernix-manual` storage, full Envoy Gateway route set, `pulsar-bridge-to-host-daemon` dispatch) → `cluster down` (retained-state replay, `./.data` preserved) → post-teardown `cluster status` (`clusterPresent: False`, `lifecyclePhase: cluster-absent`); `infernix test integration` PASS; `infernix test e2e` 9/9; aggregate `infernix test all`. The dynamic `choosePulsarHttpPort` chooser shifted the Pulsar host port 30080→30081 around a VS Code-held `127.0.0.1:30080`. Native arm64 throughout (colima `aarch64`, no emulation or Docker-context changes). Published cluster image `infernix-linux-cpu@sha256:7f341cb1629c1d0af9b72db0fef7b89cc1f13d2bd02afe9be1daeed5e7f18454`. | Closed | 2026-06-09 |
-| I | Apple Silicon (present host) + paired CUDA Linux | Real per-family inference, engine-artifact manifest/materialization, and headless Apple Metal/Core ML validation. Apple cohort: prove the host Metal runtime bridge, materialize and smoke an Apple native/Core ML artifact without Tart or keychain dependency, assert the corrected `apple-silicon` catalog column, and run `infernix test integration`/`e2e`/`all`. The current Apple host pass has built the host binaries, materialized the typed engine manifests, passed the generated Metal runtime bridge smoke, and passed the installed `coreml-native` runtime-load smoke; Apple full-suite remains pending. CUDA Linux cohort: re-validate the `linux-cpu` and `linux-gpu` catalog columns, replace the Linux native smoke wrappers with real native payloads, and validate routed framework-specific GPU rows. Re-opens Phase 1 (Sprint 1.14; Sprint 1.13 legacy deletion is code-side closed), Phase 4 (Sprints 4.17/4.18 plus the real-output residuals), and Phase 6 (Sprints 6.2/6.3/6.6 plus 6.31). They return to `Done` only after both cohorts pass their full-suite gates against the same state. **Stage 1 (code-side, single machine, natural order 1→4→6, no machine switch):** land the machine-independent implementation plus the machine-independent gates. **Stage 2 (paired cohort batch — the only machine switch):** Apple full-suite once (including headless Metal/Core ML materialization and the `apple-silicon` rows), then CUDA full-suite once (`linux-cpu`/`linux-gpu` rows), against frozen code. | Active | pending |
-| J | Apple Silicon + Linux CPU/GPU | Substrate-neutral engine-pool routing and broker-native backpressure. Re-opens Phase 4 Sprint 4.19, Phase 6 Sprint 6.32, and Phase 7 Sprint 7.24 to replace raw batch-topic routing, the Apple singleton/failover stopgap, and demo-off coordinator gating with a validated pool/member graph. Stage 1 code-side work has landed on the Linux outer-container lane: Dhall schema/codec/rendering, generated pool/member graphs, derived topic helpers, coordinator pool routing, member-id daemon selection, invalid-graph rejection, and Apple `Failover` demotion. Apple Stage 2 evidence now covers pinned `Exclusive` member routes, same-machine host-member coexistence on a real `Shared` pool subscription, and production `demo_ui = false` route/publication assertions. The remaining Stage 2 gate accepts a single-Apple-host logical multi-member harness for `Shared` normal-pool work distribution under real backlog, plus Kubernetes-observational Linux members and full cohort suites. Physical Apple multi-host routing is a deferred hardware proof, not a blocker for closing the current single-host logical routing/backpressure validation while no second Apple host exists. | Active | pending |
+| I | Apple Silicon (present host) + paired CUDA Linux | Real per-family inference, engine-artifact manifest/materialization, and headless Apple Metal/Core ML validation. Apple cohort: prove the host Metal runtime bridge, materialize and smoke an Apple native/Core ML artifact without Tart or keychain dependency, assert the corrected `apple-silicon` catalog column, and run `infernix test integration`/`e2e`/`all`. The current Apple host pass has built the host binaries, materialized the typed engine manifests, passed the generated Metal runtime bridge smoke, and passed the installed `coreml-native` runtime-load smoke; Apple full-suite remains pending. CUDA Linux cohort: re-validate the `linux-cpu` and `linux-gpu` catalog columns, replace the Linux native runner-contract payloads with real external native payloads, and validate routed framework-specific GPU rows. Re-opens Phase 1 (Sprint 1.14; Sprint 1.13 legacy deletion is code-side closed), Phase 4 (Sprints 4.17/4.18 plus the real-output residuals), and Phase 6 (Sprints 6.2/6.3/6.6 plus 6.31). They return to `Done` only after both cohorts pass their full-suite gates against the same state. **Stage 1 (code-side, single machine, natural order 1→4→6, no machine switch):** land the machine-independent implementation plus the machine-independent gates. **Stage 2 (paired cohort batch — the only machine switch):** Apple full-suite once (including headless Metal/Core ML materialization and the `apple-silicon` rows), then CUDA full-suite once (`linux-cpu`/`linux-gpu` rows), against frozen code. | Active | pending |
+| J | Apple Silicon + Linux CPU/GPU | Substrate-neutral engine-pool routing and broker-native backpressure. Re-opens Phase 4 Sprint 4.19, Phase 6 Sprint 6.32, and Phase 7 Sprint 7.24 to replace raw batch-topic routing, the Apple singleton/failover stopgap, and demo-off coordinator gating with a validated pool/member graph. Stage 1 code-side work has landed on the Linux outer-container lane: Dhall schema/codec/rendering, generated pool/member graphs, derived topic helpers, coordinator pool routing, member-id daemon selection, invalid-graph rejection, Apple `Failover` demotion, and a compile-validated single-host logical `Shared` backlog harness. Apple Stage 2 evidence now covers pinned `Exclusive` member routes, same-machine host-member coexistence on a real `Shared` pool subscription, and production `demo_ui = false` route/publication assertions. The remaining Stage 2 gate requires Apple execution of the newly added logical multi-member backlog harness, plus Kubernetes-observational Linux members and full cohort suites. Physical Apple multi-host routing is a deferred hardware proof, not a blocker for closing the current single-host logical routing/backpressure validation while no second Apple host exists. | Active | pending |
 
 ### Wave J Stage 1 — Code-Side Landing Complete; Stage 2 Pending
 
@@ -55,7 +55,7 @@ Phase 4 Sprint 4.19, Phase 6 Sprint 6.32, and Phase 7 Sprint 7.24. Current evide
 - The 2026-06-15 native arm64 Docker rerun rebuilt `infernix-linux-cpu:local` through
   `./bootstrap/linux-cpu.sh build` to image digest
   `sha256:1231b46fef9caa98034985921f5db45b6fac5cc043b842c4fc4badab30c5b5db`, including Haskell
-  build/install, Linux CPU substrate materialization, Linux native smoke-root materialization, web
+  build/install, Linux CPU substrate materialization, Linux native runner-root materialization, web
   build, Python checks, and Playwright dependency setup. A fresh launcher container then passed
   `docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm infernix infernix internal materialize-linux-native-engines`,
   proving the shared engine-root installer handles reruns over image-layer baked
@@ -64,6 +64,15 @@ Phase 4 Sprint 4.19, Phase 6 Sprint 6.32, and Phase 7 Sprint 7.24. Current evide
   `cabal test infernix-unit`, `cabal test infernix-haskell-style`,
   `cabal run exe:infernix -- lint files`, `lint docs`, `lint proto`, `lint chart`,
   `cabal run exe:infernix -- docs check`, and `cabal run exe:infernix -- test lint`.
+- The current source adds a single-host logical `Shared` backlog harness in
+  `test/integration/Spec.hs`: two real Pulsar WebSocket consumers join one isolated service-shaped
+  subscription with `receiverQueueSize=1`, the first request is held unacked on the busy consumer,
+  and the second published request is decoded from the free consumer's Pulsar payload. The present
+  Linux outer-container lane compile-validates the harness with a mounted-source linux-gpu Compose
+  launcher run of `cabal build test:infernix-integration`. The same current-source pass also
+  validates `infernix test lint`, `infernix test unit`, focused
+  `infernix lint files/docs/proto/chart`, `infernix docs check`, and `git diff --check`; Apple
+  execution remains Stage 2.
 
 The 2026-06-15 Apple `cabal test infernix-integration --test-show-details=direct` rerun now covers
 additional Stage 2 slices: the source-fingerprint image freshness path rebuilt once for source
@@ -75,8 +84,9 @@ service consumer names by launching two same-machine Apple host-member daemons o
 derived pool/model topic, observing two real Pulsar consumers on the `Shared` subscription through
 the admin stats endpoint, and completing an inference request. The Apple integration also covered
 production `demo_ui = false` route/publication assertions and edge-port rediscovery. Stage 2
-remains pending for single-host logical shared-pool backlog/backpressure distribution, Linux CPU/GPU
-pool placement, Apple e2e/all, CUDA Linux validation, and Wave I real native payload replacement.
+remains pending for Apple execution of the newly added single-host logical shared-pool
+backlog/backpressure harness, Linux CPU/GPU pool placement, Apple e2e/all, CUDA Linux validation,
+and Wave I real native payload replacement.
 Physical Apple multi-host routing is tracked as deferred hardware proof and is not required to
 close the single-host logical Wave J Apple routing/backpressure gate while no second Apple host is
 available.
@@ -84,15 +94,17 @@ available.
 ### Wave J Apple Logical Multi-Member Criteria
 
 Until a second Apple host is available, the Apple shared-pool distribution gate is satisfied by a
-single-host logical multi-member harness that uses real Pulsar transport and separate daemon
-identities:
+single-host logical multi-member harness that uses real Pulsar transport and separate service
+subscription identities:
 
 - launch at least two Apple engine daemon processes on the same Apple host with distinct member ids,
   process-qualified consumer names, isolated runtime roots, and one isolated derived
   `Shared` pool/model topic
 - prove Pulsar admin stats report both consumers on the same `Shared` subscription
 - create a real backlog with one member intentionally busy or permit-limited, then prove new work is
-  assigned to an available member and every accepted request completes once
+  assigned to an available member; the current source performs this broker-permit proof with direct
+  service-shaped WebSocket consumers and combines it with the existing same-machine daemon
+  completion check for the same `Shared` subscription shape
 - keep pinned member routes on derived per-member topics with `Exclusive` duplicate-consumer
   rejection
 - keep production-shape `demo_ui = false` assertions proving coordinator and engine-pool surfaces
@@ -688,12 +700,22 @@ still required before the full `infernix test all` per-family run closes on this
 > `/workspace/.data/engines/llama-cpp-cli/bin/llama-cli`. Current source closes the missing-root
 > surface by baking smoke-validated `/opt/infernix/engines/<adapterId>/bin/...` roots through
 > `infernix internal materialize-linux-native-engines`; the first remaining CUDA Linux blocker is
-> replacing those smoke wrappers with real native payloads before the audio-to-MIDI native rows can
-> be retried. Current-source mounted linux-gpu validation after that run passes `cabal test
-> infernix-unit`, `cabal test infernix-haskell-style`, `cabal build test:infernix-integration`,
-> `poetry --directory python run check-code`, `cabal run exe:infernix -- lint docs`, `docs check`,
-> `lint files`, `lint proto`, and `lint chart` with the worker's model-cache/MinIO protobuf wiring
-> and image-owned native-runner root fallback in place.
+> replacing those runner-contract payloads with real native payloads before the audio-to-MIDI native
+> rows can be retried. Current linux-gpu validation also includes the 2026-06-15 governed
+> `./bootstrap/linux-gpu.sh build`, baked-image `infernix test unit`, `infernix test lint`, focused
+> `infernix lint files/docs/proto/chart`, `infernix docs check`, and
+> `infernix internal materialize-linux-native-engines`, plus direct baked-runner checks for LLM
+> inline text, image `.png` object refs, and Basic Pitch `.mid` object refs. That evidence proves
+> the worker model-cache argument plumbing and image-owned runner-contract fallback; the current
+> follow-up also executes the generated `llama-cpp-cli` runner on missing-cache and ready-cache
+> paths, proving exit 75 before `<model-cache-root>/<model-id>/.ready` exists. Mounted
+> current-source linux-gpu validation passes `infernix test unit`, `infernix test lint`, focused
+> `infernix lint files/docs/proto/chart`, `infernix docs check`, and
+> `infernix internal materialize-linux-native-engines`. The current pass also validated the
+> `--output-dir` marker path by producing
+> `infernix-native-artifact-file:/tmp/infernix-native-output-check/audio-basic-pitch-onnx.mid` and
+> verifying the file existed, which proves the local marker/upload wiring while live MinIO upload
+> with real native output remains pending Wave I.
 
 Phases 1, 4, and 6 stay `Active` with Wave I as their cohort-pending residual and cannot return to
 `Done` until both cohorts pass their full-suite gates against the same state.
@@ -756,11 +778,11 @@ Hardware-specific proof is deferred to Stage 2.
 ### Stage 2 — Paired cohort validation
 
 - Apple Silicon proves stable host-id membership and `Shared` work distribution across distinct
-  logical host daemons on the same Apple machine, including backlog/backpressure behavior and the
-  documented restart/reconcile boundary. Exact-host `Exclusive` duplicate rejection, same-machine
-  `Shared` coexistence, and production `demo_ui = false` assertions are already covered on the
-  Apple host integration lane. Physical multi-host distribution is hardware-deferred proof while no
-  second Apple host is available.
+  logical host identities on the same Apple machine, including execution of the newly added
+  backlog/backpressure harness and the documented restart/reconcile boundary. Exact-host
+  `Exclusive` duplicate rejection, same-machine `Shared` coexistence, and production
+  `demo_ui = false` assertions are already covered on the Apple host integration lane. Physical
+  multi-host distribution is hardware-deferred proof while no second Apple host is available.
 - Linux CPU/GPU proves Kubernetes member placement is observational rather than a durable routing
   id, that framework-specific GPU isolation remains a pool placement concern, and that backlog on
   one member lets Pulsar deliver new work to another available member through broker backpressure.
@@ -781,10 +803,10 @@ pending Wave J residuals.
 | 1 | Sprints 1.1-1.12 `Done`; Sprint 1.13 Tart implementation is historical and removed; Sprint 1.14 is code-side closed for the manifest materializer, fixed host Metal bridge, `coreml-native` source/smoke commands, and Apple native validation-wrapper roots | Closed in Wave A for 1.1-1.12; Sprint 1.14 Tart-free manifest materialization, generated Metal bridge smoke, installed Core ML runtime-load smoke, and native validation-wrapper materialization passed on the current Apple host; Apple full-suite pending Wave I | `linux-cpu` passed the recorded validation; `linux-gpu` passed the recorded validation; Sprint 1.14 has no CUDA Linux Metal surface |
 | 2 | Sprints 2.1–2.13 `Done` | Closed in Wave A (retained-state replay + Patroni filter + cluster lifecycle) | `linux-cpu` passed the recorded validation; `linux-gpu` passed the recorded validation |
 | 3 | Sprints 3.1–3.12 `Done` | Closed in Wave A/A.2 (substrate-aware publication, Harbor port, containerd, hand-authored MinIO, and Apple host-native E2E) | `linux-cpu` amd64 passed the recorded validation; `linux-gpu` passed the recorded validation; native arm64 `linux-cpu` passed in Wave F on the recorded validation |
-| 4 | Sprints 4.1-4.17 have prior code-side evidence for real-output and per-engine routing; Sprint 4.18 is code-side closed for engine-artifact manifests, `infernix-engine-artifacts`, Linux native smoke roots, Apple native validation-wrapper roots, and matrix reconciliation; Sprint 4.19 is code-side closed for typed engine-pool routing | Original contract closed in Wave A; per-family real-output plus Apple headless materialization with real native payloads pending Wave I; engine-pool routing still pending Wave J for single-host logical backlog/backpressure proof, while pinned `Exclusive`, same-machine `Shared` coexistence, and Apple demo-off assertions passed on the Apple integration lane; physical Apple multi-host proof is hardware-deferred | `linux-cpu`/`linux-gpu` original contract passed the recorded validation; real Linux native payload replacement and routed framework-specific linux-gpu Stage 2 pending Wave I; engine-pool routing pending Wave J for Linux placement |
+| 4 | Sprints 4.1-4.17 have prior code-side evidence for real-output and per-engine routing; Sprint 4.18 is code-side closed for engine-artifact manifests, `infernix-engine-artifacts`, Linux native runner-contract roots, the Haskell-owned native artifact marker/upload bridge, Apple native validation-wrapper roots, and matrix reconciliation; Sprint 4.19 is code-side closed for typed engine-pool routing and the compile-validated single-host logical `Shared` backlog harness | Original contract closed in Wave A; per-family real-output plus Apple headless materialization with real native payloads pending Wave I; engine-pool routing still pending Wave J for Apple execution of the new single-host logical backlog/backpressure harness, while pinned `Exclusive`, same-machine `Shared` coexistence, and Apple demo-off assertions passed on the Apple integration lane; physical Apple multi-host proof is hardware-deferred | `linux-cpu`/`linux-gpu` original contract passed the recorded validation; real Linux native payload replacement and routed framework-specific linux-gpu Stage 2 pending Wave I; engine-pool routing pending Wave J for Linux placement |
 | 5 | Sprints 5.1-5.10 `Done` | Closed in Wave A/A.2 (demo backend + adapter dhall reads via integration suite and routed E2E) | `linux-cpu` passed the recorded validation; `linux-gpu` passed the recorded validation |
-| 6 | Sprints 6.1, 6.4, 6.5, 6.7-6.30 `Done`; per-family real-output coverage has prior code-side evidence across 6.2/6.3/6.6; Sprint 6.31 is code-side closed for README/generated-catalog matrix-drift linting and remains `Active` only for cohort evidence; Sprint 6.32 is code-side closed for pool-routing validation gates | Original coverage closed in Wave A/A.1/A.2/A.3; per-family real-output and headless Apple validation Stage 2 pending Wave I; engine-pool validation pending Wave J for single-host logical backlog/backpressure and Linux placement, with pinned duplicate rejection, same-machine `Shared` coexistence, and demo-off assertions passed on Apple; physical Apple multi-host proof is hardware-deferred | `linux-cpu` and `linux-gpu` original coverage passed the recorded validation; per-family real-output and real native-payload replacement Stage 2 pending Wave I; engine-pool validation pending Wave J for Linux placement |
-| 7 | Sprints 7.1-7.22 `Done`; Sprint 7.23 is superseded historical Apple singleton work; Sprint 7.24 is code-side closed for engine-pool assignment, broker-native backpressure, and production coordinator presence with `demo_ui = false` | Original durable-context gates closed in Wave A/A.1/A.2/A.3; Wave G closed for auth-UX; Sprint 7.24 pinned `Exclusive` duplicate rejection, same-machine Apple `Shared` coexistence, and Apple demo-off assertions passed; single-host logical backlog/backpressure remains pending Wave J and physical Apple multi-host proof is hardware-deferred | `linux-cpu` and `linux-gpu` durable-context gates passed the recorded validation; Sprint 7.24 Linux pool-routing regression and backpressure evidence pending Wave J |
+| 6 | Sprints 6.1, 6.4, 6.5, 6.7-6.30 `Done`; per-family real-output coverage has prior code-side evidence across 6.2/6.3/6.6; Sprint 6.31 is code-side closed for README/generated-catalog matrix-drift linting and remains `Active` only for cohort evidence; Sprint 6.32 is code-side closed for pool-routing validation gates and the compile-validated single-host logical `Shared` backlog harness | Original coverage closed in Wave A/A.1/A.2/A.3; per-family real-output and headless Apple validation Stage 2 pending Wave I; engine-pool validation pending Wave J for Apple execution of the new single-host logical backlog/backpressure harness and Linux placement, with pinned duplicate rejection, same-machine `Shared` coexistence, and demo-off assertions passed on Apple; physical Apple multi-host proof is hardware-deferred | `linux-cpu` and `linux-gpu` original coverage passed the recorded validation; per-family real-output and real native-payload replacement Stage 2 pending Wave I; engine-pool validation pending Wave J for Linux placement |
+| 7 | Sprints 7.1-7.22 `Done`; Sprint 7.23 is superseded historical Apple singleton work; Sprint 7.24 is code-side closed for engine-pool assignment, broker-native backpressure, production coordinator presence with `demo_ui = false`, and the compile-validated single-host logical `Shared` backlog harness | Original durable-context gates closed in Wave A/A.1/A.2/A.3; Wave G closed for auth-UX; Sprint 7.24 pinned `Exclusive` duplicate rejection, same-machine Apple `Shared` coexistence, and Apple demo-off assertions passed; Apple execution of the new single-host logical backlog/backpressure harness remains pending Wave J and physical Apple multi-host proof is hardware-deferred | `linux-cpu` and `linux-gpu` durable-context gates passed the recorded validation; Sprint 7.24 Linux pool-routing regression and backpressure evidence pending Wave J |
 
 Every Apple cohort gate above was additionally re-confirmed end to end on the Apple cohort host by
 Wave H (2026-06-09) from a clean build root: `cabal install all:exes`, the lint/style/unit

@@ -30,6 +30,7 @@ module Infernix.Runtime.Pulsar
     publishInferenceRequest,
     parseMessageIdToSequenceId,
     readNamespaceCompactionThreshold,
+    rawTopicInferenceRequestIds,
     readRawTopicPayloads,
     rawTopicInferenceRequestPromptIds,
     rawTopicInferenceResultCausalRefs,
@@ -3903,6 +3904,13 @@ nonEmptyText value
 rawTopicInferenceRequestPromptIds :: [RawTopicMessage] -> [Text.Text]
 rawTopicInferenceRequestPromptIds messages =
   [ view (field @"userPromptMessageId") request
+  | rawMessage <- messages,
+    Right request <- [decodeMessage (rawTopicMessagePayload rawMessage) :: Either String ProtoInference.InferenceRequest]
+  ]
+
+rawTopicInferenceRequestIds :: [RawTopicMessage] -> [Text.Text]
+rawTopicInferenceRequestIds messages =
+  [ view (field @"requestId") request
   | rawMessage <- messages,
     Right request <- [decodeMessage (rawTopicMessagePayload rawMessage) :: Either String ProtoInference.InferenceRequest]
   ]

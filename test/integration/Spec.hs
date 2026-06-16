@@ -5,19 +5,22 @@ module Main (main) where
 import Control.Concurrent (threadDelay)
 import Control.Exception (SomeException, bracket, bracketOnError, bracket_, displayException, finally, try)
 import Control.Monad (forM, forM_, when)
+import Data.Aeson ((.:), (.=))
 import Data.Aeson qualified as Aeson
 import Data.Aeson.Key qualified as AesonKey
 import Data.Aeson.KeyMap qualified as AesonKeyMap
 import Data.ByteString qualified as ByteString
+import Data.ByteString.Base64 qualified as Base64
 import Data.ByteString.Char8 qualified as ByteString8
 import Data.ByteString.Lazy qualified as LazyByteString
 import Data.ByteString.Lazy.Char8 qualified as LazyByteStringChar8
 import Data.Char (isAsciiUpper)
-import Data.List (find, isInfixOf, isPrefixOf, nub, partition, sort)
+import Data.List (find, intercalate, isInfixOf, isPrefixOf, nub, partition, sort)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (isJust, isNothing, mapMaybe)
 import Data.Set qualified as Set
 import Data.Text qualified as Text
+import Data.Text.Encoding qualified as TextEncoding
 import Data.Time.Clock (getCurrentTime)
 import Data.Time.Clock.POSIX (getPOSIXTime)
 import Infernix.Bootstrap.Models qualified as BootstrapModels
@@ -45,20 +48,23 @@ import Infernix.Models
   )
 import Infernix.Objects.Presigned qualified as Presigned
 import Infernix.Runtime.Pulsar
-  ( RawTopicMessage,
+  ( PulsarTransport (..),
+    PulsarWebSocketBase (..),
+    RawTopicMessage (..),
     compactTopicAndWait,
+    discoverPulsarTransport,
+    ensureRegisteredSchemasWithRetry,
     publishDemoClientMessage,
     publishInferenceRequest,
     publishModelBootstrapRequest,
     publishRawTopicPayload,
+    rawTopicInferenceRequestIds,
     rawTopicInferenceRequestPromptIds,
     rawTopicInferenceResultCausalRefs,
-    rawTopicMessageId,
-    rawTopicMessageKey,
-    rawTopicMessagePayload,
     readNamespaceCompactionThreshold,
     readPublishedInferenceResultMaybe,
     readRawTopicPayloads,
+    serviceConsumerName,
     serviceReadinessMarkerPath,
   )
 import Infernix.Storage (readPulsarHttpPortMaybe)
@@ -79,6 +85,7 @@ import Network.Socket
     socket,
     tupleToHostAddress,
   )
+import Network.WebSockets qualified as WebSockets
 import System.Directory
 import System.Exit (ExitCode (ExitSuccess))
 import System.FilePath ((</>))
@@ -103,6 +110,18 @@ data CompactedTopicMessage = CompactedTopicMessage
     compactedTopicMessagePayload :: ByteString.ByteString
   }
   deriving (Eq, Show)
+
+data IntegrationPulsarEnvelope = IntegrationPulsarEnvelope
+  { integrationEnvelopeMessageId :: Text.Text,
+    integrationEnvelopePayload :: Text.Text
+  }
+  deriving (Eq, Show)
+
+instance Aeson.FromJSON IntegrationPulsarEnvelope where
+  parseJSON = Aeson.withObject "IntegrationPulsarEnvelope" $ \value ->
+    IntegrationPulsarEnvelope
+      <$> value .: "messageId"
+      <*> value .: "payload"
 
 main :: IO ()
 main = do
@@ -250,6 +269,8 @@ exerciseRuntimeMode paths runtimeMode = do
         validateAppleHostEngineExclusiveSubscriptionEnforcement paths demoConfig
         reportStep ("apple host engine shared subscription coexistence: " <> showRuntimeMode runtimeMode)
         validateAppleHostEngineSharedSubscriptionCoexistence paths demoConfig
+        reportStep ("apple shared subscription backlog backpressure: " <> showRuntimeMode runtimeMode)
+        validateAppleSharedSubscriptionBackpressure paths demoConfig
 
       when (runtimeMode == LinuxCpu) $ do
         reportStep "frontend pod replacement preserves durable state"
@@ -2357,6 +2378,144 @@ validateAppleHostEngineSharedSubscriptionCoexistence paths demoConfig = do
                     assert (status sharedResult == "completed") "shared apple host engine daemon completes the validation request"
             )
       )
+
+-- | Phase 7 Sprint 7.24 Wave J: prove the Shared subscription's
+-- broker-native permit/backlog behavior with one busy logical Apple
+-- member and one free logical Apple member. The first consumer holds a
+-- delivered request unacked; with receiverQueueSize=1 the second
+-- published request must be assigned to the free consumer on the same
+-- service subscription.
+validateAppleSharedSubscriptionBackpressure :: Paths -> DemoConfig -> IO ()
+validateAppleSharedSubscriptionBackpressure paths demoConfig = do
+  (sharedConfig, _memberA, _memberB, modelIdValue, sharedTopic) <- appleSharedHostEngineConfig demoConfig
+  transport <-
+    maybe
+      (fail "Pulsar transport was unavailable for Apple shared backpressure validation")
+      pure
+      =<< discoverPulsarTransport paths AppleSilicon Nothing
+  ensureRegisteredSchemasWithRetry paths transport sharedConfig
+  let websocketBase = pulsarWebSocketBase transport
+      subscriptionName = integrationServiceSubscriptionName sharedTopic
+      busyConsumerName = serviceConsumerName subscriptionName ConsumerShared "integration-busy"
+      freeConsumerName = serviceConsumerName subscriptionName ConsumerShared "integration-free"
+  busyConsumerPath <- integrationSharedConsumerSocketPath websocketBase sharedTopic subscriptionName busyConsumerName
+  freeConsumerPath <- integrationSharedConsumerSocketPath websocketBase sharedTopic subscriptionName freeConsumerName
+  withIntegrationPulsarClient websocketBase busyConsumerPath $ \busyConnection -> do
+    busyRequestId <-
+      publishInferenceRequest
+        paths
+        AppleSilicon
+        sharedTopic
+        InferenceRequest
+          { requestModelId = modelIdValue,
+            inputText = "shared apple host engine busy logical member",
+            inputObjectRef = Nothing
+          }
+    (busyMessageId, observedBusyRequestId) <-
+      receiveSharedInferenceRequest busyConnection "busy shared-subscription consumer"
+    assert
+      (observedBusyRequestId == busyRequestId)
+      "busy shared-subscription consumer receives the first published request"
+    withIntegrationPulsarClient websocketBase freeConsumerPath $ \freeConnection -> do
+      assertPulsarSharedSubscriptionConsumerCount paths sharedTopic 2
+      freeRequestId <-
+        publishInferenceRequest
+          paths
+          AppleSilicon
+          sharedTopic
+          InferenceRequest
+            { requestModelId = modelIdValue,
+              inputText = "shared apple host engine free logical member",
+              inputObjectRef = Nothing
+            }
+      (freeMessageId, observedFreeRequestId) <-
+        receiveSharedInferenceRequest freeConnection "free shared-subscription consumer"
+      assert
+        (observedFreeRequestId == freeRequestId)
+        "free shared-subscription consumer receives the second request while the first consumer is busy"
+      ackIntegrationPulsarMessage freeConnection freeMessageId
+      ackIntegrationPulsarMessage busyConnection busyMessageId
+
+integrationSharedConsumerSocketPath :: PulsarWebSocketBase -> Text.Text -> String -> String -> IO String
+integrationSharedConsumerSocketPath websocketBase topicValue subscriptionName consumerName = do
+  topicPath <- integrationPersistentTopicPath topicValue
+  pure
+    ( integrationSocketPath
+        websocketBase
+        ("consumer/" <> topicPath <> "/" <> subscriptionName)
+        [ ("subscriptionType", "Shared"),
+          ("subscriptionInitialPosition", "Earliest"),
+          ("receiverQueueSize", "1"),
+          ("consumerName", consumerName)
+        ]
+    )
+
+integrationPersistentTopicPath :: Text.Text -> IO String
+integrationPersistentTopicPath topicValue =
+  case Text.stripPrefix "persistent://" topicValue of
+    Just topicPath | not (Text.null topicPath) -> pure ("persistent/" <> Text.unpack topicPath)
+    _ -> fail ("unsupported Pulsar topic name for WebSocket consumer: " <> Text.unpack topicValue)
+
+integrationSocketPath :: PulsarWebSocketBase -> String -> [(String, String)] -> String
+integrationSocketPath websocketBase relativePath queryParameters =
+  case queryParameters of
+    [] -> path
+    _ -> path <> "?" <> intercalate "&" [key <> "=" <> value | (key, value) <- queryParameters]
+  where
+    path = joinIntegrationSocketPath (pulsarWsPathPrefix websocketBase) relativePath
+
+joinIntegrationSocketPath :: String -> String -> String
+joinIntegrationSocketPath basePath relativePath =
+  case trimTrailingSlash basePath of
+    "" -> "/" <> normalizedRelative
+    normalizedBase -> normalizedBase <> "/" <> normalizedRelative
+  where
+    normalizedRelative = dropWhile (== '/') relativePath
+
+trimTrailingSlash :: String -> String
+trimTrailingSlash =
+  reverse . dropWhile (== '/') . reverse
+
+withIntegrationPulsarClient :: PulsarWebSocketBase -> String -> (WebSockets.Connection -> IO a) -> IO a
+withIntegrationPulsarClient websocketBase socketPath action =
+  WebSockets.runClient (pulsarWsHost websocketBase) (pulsarWsPort websocketBase) socketPath $ \connection ->
+    WebSockets.withPingThread connection 15 (pure ()) (action connection)
+
+receiveSharedInferenceRequest :: WebSockets.Connection -> String -> IO (Text.Text, Text.Text)
+receiveSharedInferenceRequest connection label = do
+  maybeRawFrame <- timeout (10 * 1000000) (WebSockets.receiveData connection :: IO Text.Text)
+  rawFrame <-
+    maybe
+      (fail ("timed out waiting for Pulsar message on " <> label))
+      pure
+      maybeRawFrame
+  envelope <-
+    case Aeson.eitherDecodeStrict' (TextEncoding.encodeUtf8 rawFrame) of
+      Right decodedEnvelope -> pure decodedEnvelope
+      Left err -> fail ("failed to decode Pulsar message envelope on " <> label <> ": " <> err)
+  payloadBytes <-
+    case Base64.decode (TextEncoding.encodeUtf8 (integrationEnvelopePayload envelope)) of
+      Right decodedPayload -> pure decodedPayload
+      Left err -> fail ("failed to decode Pulsar message payload on " <> label <> ": " <> err)
+  case rawTopicInferenceRequestIds
+    [ RawTopicMessage
+        { rawTopicMessageId = integrationEnvelopeMessageId envelope,
+          rawTopicMessageKey = Nothing,
+          rawTopicMessagePayload = payloadBytes
+        }
+    ] of
+    requestIdValue : _ -> pure (integrationEnvelopeMessageId envelope, requestIdValue)
+    [] -> fail ("failed to decode inference request payload on " <> label)
+
+ackIntegrationPulsarMessage :: WebSockets.Connection -> Text.Text -> IO ()
+ackIntegrationPulsarMessage connection messageIdValue =
+  WebSockets.sendTextData
+    connection
+    ( TextEncoding.decodeUtf8
+        ( LazyByteString.toStrict
+            (Aeson.encode (Aeson.object ["messageId" .= messageIdValue]))
+        )
+    )
 
 appleSharedHostEngineConfig :: DemoConfig -> IO (DemoConfig, Text.Text, Text.Text, Text.Text, Text.Text)
 appleSharedHostEngineConfig demoConfig =

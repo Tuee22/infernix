@@ -665,8 +665,10 @@ around upstream `kubectl`, not a parallel lifecycle surface.
   active demo `.dhall` file that defines the demo catalog and the engine binding for each
   demo-visible model on that substrate
 - `infernix internal materialize-linux-native-engines` bakes image-owned Linux native runner roots
-  under `/opt/infernix/engines/<adapterId>/`; the current machine-independent roots are smoke
-  wrappers pending Wave I real-engine payload replacement
+  under `/opt/infernix/engines/<adapterId>/`; the current machine-independent roots are
+  runner-contract payloads that exercise native argv parsing, model-cache readiness failure,
+  per-family result shape, and the Haskell-owned artifact upload marker while Wave I still owns
+  external-engine payload replacement
 - `cluster up` bootstraps Harbor first through Helm and allows Harbor plus only the storage or
   support services Harbor needs during bootstrap, including MinIO and PostgreSQL, to pull from
   public container repositories

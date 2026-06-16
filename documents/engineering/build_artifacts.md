@@ -109,8 +109,9 @@ Every materialized engine root should carry a typed manifest recording `adapterI
 `substrate`, `architecture`, `artifactKind`, `sourceRef`, versions, digest, optional MinIO object
 key, local install root, entrypoint, and smoke command. Current Apple materialization validates the
 manifest contract and smoke-loads materialized Apple payloads before atomic rename on Darwin.
-Linux native roots and current Apple native roots already exercise smoke-wrapper command
-validation, and Wave I replaces those wrappers with real payloads.
+Linux native roots already exercise runner-contract command validation, current Apple native roots
+still exercise validation-wrapper command validation, and Wave I replaces those payloads with real
+external engines.
 
 ## Linux Native Engine Artifacts
 
@@ -128,8 +129,12 @@ mutable filesystems the existing root is first moved to a rollback backup. The i
 tolerates reruns over roots baked into a Docker image layer: when Docker overlay rejects the
 existing-root backup rename with a cross-device operation error, the helper removes the existing
 generated root and renames the freshly smoke-validated temp root into place. The current machine-
-independent payloads are smoke wrappers; Wave I replaces them with the real `llama.cpp`,
-`whisper.cpp`, ONNX Runtime, CTranslate2, and JVM tool payloads before real-output sign-off.
+independent payloads are runner-contract payloads that parse native worker arguments, support
+`--output-dir` for artifact-producing families, fail with exit 75 until the requested model-cache
+entry has a `.ready` sentinel, and can emit the local
+`infernix-native-artifact-file:<path>` marker consumed by the Haskell worker's credentialed MinIO
+upload bridge. Wave I replaces them with the real `llama.cpp`, `whisper.cpp`, ONNX Runtime,
+CTranslate2, and JVM tool payloads before real-output sign-off.
 
 ## Generated Demo Config Publication
 
