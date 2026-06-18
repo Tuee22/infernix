@@ -11,6 +11,16 @@
 
 ## Phase Status
 
+> **Common-shape reopen (Webapp role).** Phase 7 reopens to fold the demo frontend
+> from the separate `infernix-demo` binary into a **one-binary `Webapp` role**
+> selected by typed Dhall `activeRole` and run through the shared role-lifecycle
+> skeleton, per the shared contract (see [README.md](README.md) → Common-Shape Reopen
+> and [development_plan_standards.md](development_plan_standards.md) §Q). The Webapp
+> stays a thin websocket server talking only to Pulsar + MinIO (no ML compute), which
+> it already is. The current two-binary split is recorded in
+> [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) and carried in
+> this phase's `Remaining Work`.
+
 Phase 7 is `Active` for Sprint 7.24. Sprints 7.1–7.18 remain closed, and Sprints 7.19–7.22 closed
 the auth-UX quad described in the Status block on the Wave G routed E2E validation. Sprint 7.23's
 Apple `Exclusive` / `Failover` singleton design is retained only as historical current-code context

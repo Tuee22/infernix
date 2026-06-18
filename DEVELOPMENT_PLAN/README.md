@@ -11,6 +11,25 @@
 See [development_plan_standards.md](development_plan_standards.md) for the maintenance rules that
 govern this plan.
 
+## Common-Shape Reopen (Pulsar ML-Workflow convergence)
+
+`infernix` and the `jitML` sister project are converging on one shared contract,
+[../documents/architecture/pulsar_ml_workflow.md](../documents/architecture/pulsar_ml_workflow.md)
+(Engine / Coordinator / Webapp roles, a derived topic algebra, the `Work*` envelope
+family, the artifact + `.ready` readiness contract, websocket snapshot/patch, and a
+reflected-Dhall-schema one-binary role model). This reopens three surfaces, each
+tracked in [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md):
+
+- **Phase 4** — the **Coordinator** gains explicit topic-lifecycle ownership
+  (replacing implicit broker auto-create), and the binary emits its own reflected
+  Dhall schema.
+- **Phase 6** — phase validation moves to **single-accelerator-per-phase** (standards
+  §Q): one of `apple-silicon` or `linux-gpu` plus `linux-cpu`, never both;
+  `cohort-validation-waves.md` is repurposed as per-accelerator attestation ledgers.
+- **Phase 7** — the demo frontend folds into a one-binary **Webapp** role.
+
+Each reopened phase carries the convergence work in its `Remaining Work`.
+
 ## Document Index
 
 | Document | Purpose |
@@ -18,7 +37,7 @@ govern this plan.
 | [development_plan_standards.md](development_plan_standards.md) | Maintenance rules for the development plan |
 | [00-overview.md](00-overview.md) | Architecture baseline, hard constraints, substrate contract, and canonical repository shape |
 | [system-components.md](system-components.md) | Authoritative component inventory and state-location map |
-| [cohort-validation-waves.md](cohort-validation-waves.md) | Operationalizes Section Q of the standards by naming the explicit batched-switch boundaries between Apple Silicon and CUDA Linux validation |
+| [cohort-validation-waves.md](cohort-validation-waves.md) | Per-accelerator attestation ledgers (one per accelerator) under Section Q's single-accelerator-per-phase rule; a `linux-cpu` aggregation phase merges them |
 | [phase-0-documentation-and-governance.md](phase-0-documentation-and-governance.md) | `documents/` suite bootstrap plus the substrate-doctrine documentation reset |
 | [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md) | Repository scaffold, CLI contract, build-root doctrine, launcher ownership, and substrate-selection closure |
 | [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md) | Kind bootstrap, manual PV doctrine, Harbor-first image flow, substrate `.dhall` publication, Linux launcher closure, and lifecycle-progress hardening |
@@ -43,20 +62,23 @@ govern this plan.
 A phase or sprint can move to `Done` only when all of the following are true:
 
 1. The listed implementation paths exist in the current worktree.
-2. The listed validation gates pass on the supported execution path or matrix, with Apple Silicon
-   and CUDA Linux cohort evidence both recorded when substrate-aware behavior is in scope.
+2. The listed validation gates pass on the supported execution path, with the phase's **single
+   chosen accelerator** cohort (`apple-silicon` **or** `linux-gpu`) plus `linux-cpu` recorded when
+   substrate-aware behavior is in scope — never both accelerators against one phase.
 3. The governed docs named in `Docs to update` match the implementation.
 4. No remaining cleanup or compatibility surface is left unstated.
 5. Cleanup promised by the sprint is reflected in
    [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
 
-`Done` is the cohort sign-off gate (item 2's dual-cohort evidence). It is distinct from *code-side
-closure* — the implementation plus the machine-independent gate set — which is completed in natural
-phase order on a single machine and is the gate to begin the *next* phase's implementation. A phase
-whose code-side closure is complete but whose cross-architecture full-suite is still pending stays
-`Active` with a named `Cohort gate` residual; that residual does not block the next phase's
-implementation. See the two-axis execution rule in
-[development_plan_standards.md](development_plan_standards.md) Section Q.
+`Done` is the single-accelerator sign-off gate (item 2's one-accelerator-plus-`linux-cpu` evidence).
+It is distinct from *code-side closure* — the implementation plus the machine-independent gate set —
+which is completed in natural phase order on a single machine and is the gate to begin the *next*
+phase's implementation. A phase whose code-side closure is complete but whose single chosen
+accelerator full-suite is still pending stays `Active` with a named `Cohort gate` residual; that
+residual does not block the next phase's implementation. See the single-accelerator execution rule in
+[development_plan_standards.md](development_plan_standards.md) Section Q, and the shared
+[../documents/architecture/pulsar_ml_workflow.md](../documents/architecture/pulsar_ml_workflow.md)
+contract.
 
 ## Current Repo Assessment
 

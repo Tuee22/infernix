@@ -12,6 +12,16 @@
 
 ## Phase Status
 
+> **Common-shape reopen (single-accelerator phasing).** Phase 6 reopens to adopt the
+> **single-accelerator-per-phase** rule (see [README.md](README.md) → Common-Shape
+> Reopen and [development_plan_standards.md](development_plan_standards.md) §Q): each
+> accelerator-bearing phase validates **one** of `apple-silicon` or `linux-gpu` plus
+> `linux-cpu`, never both, and cross-accelerator coverage is a `linux-cpu`-only
+> aggregation phase. The prior "two-axis / batch-both-cohorts" framing and
+> `cohort-validation-waves.md` are repurposed into per-accelerator attestation
+> ledgers, recorded in
+> [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
+
 Phase 6 closes around the validation entrypoints, routed coverage, governed-root-document
 metadata closure, structured CLI-registry closure, route-hardening cleanup, supported bootstrap
 lifecycle fixes, false-negative doctrine, Harbor publication retry closure, daemon-role split,

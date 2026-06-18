@@ -12,7 +12,12 @@
 
 The plan reads as one ordered buildout from empty repository to supported local platform.
 
-- Each phase is written after the previous phase in dependency order.
+- Each phase is written after the previous phase in dependency order, and the
+  phase graph is a **strict forward DAG**: every `Blocked by` / dependency edge
+  references an equal-or-lower-numbered phase, so no earlier phase is ever blocked
+  by an incomplete later phase and the plan is workable in strict numerical order.
+  The binding form of this invariant, together with single-accelerator-per-phase
+  validation, lives in [§Q](#q-single-accelerator-phase-validation-and-forward-only-cohorts).
 - Implementation order and hardware-validation scheduling are separate concerns. Phase docs stay
   execution-ordered for code and architecture, while cohort-only proof points that require a
   different physical host are batched in [cohort-validation-waves.md](cohort-validation-waves.md).
@@ -68,10 +73,10 @@ Rules:
   same-cohort work that does not depend on that proof point, and request the switch only at the
   named wave boundary or when no same-cohort work remains.
 - A phase or sprint whose code-side closure is complete and locally validated (the
-  machine-independent gate set) but whose cross-architecture cohort full-suite is still pending
+  machine-independent gate set) but whose single chosen accelerator full-suite is still pending
   stays `Active` with a named `Cohort gate` residual. Code-side closure in natural phase order is
-  the gate to begin the next phase's implementation; the dual-cohort full-suite remains the gate
-  for `Done`. See the two-axis execution rule in Section Q.
+  the gate to begin the next phase's implementation; the phase's **one** accelerator cohort plus
+  `linux-cpu` is the gate for `Done`. See the single-accelerator execution rule in Section Q.
 
 ### D. Declarative Current-State Language
 
@@ -141,8 +146,9 @@ Additional sections such as `Architecture`, `Execution Contexts`, `Substrate Con
 
 A cohort-gated sprint may also carry two optional header fields directly after `**Status**`:
 `**Code-side closure**:` (the machine-independent implementation state and the gates that prove it)
-and `**Cohort gate**:` (the pending cross-architecture full-suite and its owning wave). These make
-the two-axis execution state from Section Q explicit at the top of the sprint.
+and `**Cohort gate**:` (the pending single-accelerator full-suite — one of `apple-silicon` or
+`linux-gpu` plus `linux-cpu` — and its owning wave). These make the single-accelerator execution
+state from Section Q explicit at the top of the sprint.
 
 ### H. Documentation Requirements Section
 
@@ -607,8 +613,12 @@ Substrate-specific validation is explicit.
   the built substrate. Repository closure requires separate substrate-specific reruns instead of
   one default matrix run that silently covers Apple, CPU, and GPU together.
 
-### Q. Hardware Cohort Validation Cadence
+### Q. Single-Accelerator Phase Validation and Forward-Only Cohorts
 
+Phase validation is scoped to **one accelerator at a time, never both**, and the
+plan stays workable in strict numerical order. This is the binding form of the two
+phasing rules shared verbatim with the `jitML` sister project (see
+[../documents/architecture/pulsar_ml_workflow.md](../documents/architecture/pulsar_ml_workflow.md)).
 Phase work is planned around hardware cohorts, not repeated machine hopping.
 
 Definitions:
@@ -621,7 +631,22 @@ Definitions:
 - **Portable CPU lane:** the `linux-cpu` outer-container workflow on native Linux amd64 or native
   Linux arm64. It may validate CPU-only behavior on those native Linux hosts, but it does not
   replace the CUDA Linux cohort when GPU behavior, CUDA image construction, `nvkind`, or NVIDIA
-  scheduling is in scope.
+  scheduling is in scope. `linux-cpu` runs on **both** hardware sets (an Apple host
+  and a CUDA Linux host) and is the only lane every phase may assume is present.
+
+Two binding invariants (mechanically checkable; the maintenance pass scans for them):
+
+1. **Forward-only DAG.** Every `Blocked by` / dependency edge references an
+   equal-or-lower-numbered phase or sprint. No earlier phase is blocked by an
+   incomplete later phase; the plan is workable in numerical order, each phase
+   validated before the next begins.
+2. **Single-accelerator per phase.** A phase that needs an accelerator selects
+   **exactly one** of `{apple-silicon, linux-gpu}` plus `linux-cpu`. No phase's
+   `Validation` lists a single must-pass-together gate spanning both accelerators.
+   A contract that must hold on both accelerators is split into two sibling phases
+   (one per accelerator) or attested per-lane and aggregated by a later
+   `linux-cpu`-only phase that consumes the committed per-lane attestations and
+   never re-runs an accelerator lane.
 
 Rules:
 
@@ -634,13 +659,15 @@ Rules:
   complete and only a different physical host can provide the final proof point, the affected phase
   or sprint names the blocker as `validation-only`, references the owning wave, and does not ask
   the operator to switch machines until that wave is intentionally scheduled.
-- A phase may stay `Active` with an explicit `Apple cohort pending` or
-  `CUDA Linux cohort pending` residual after one cohort validates, but it cannot move to `Done`
-  until both relevant hardware cohorts have run their full-suite gates against the same phase
-  state.
-- The paired closure batch is the preferred switching boundary: finish a coherent phase slice on
-  one machine, record that evidence, then run the counterpart machine's full validation once for
-  the batch.
+- A phase moves to `Done` when its **single chosen accelerator cohort plus
+  `linux-cpu`** have passed the phase's full-suite gates against the same frozen
+  phase state — never when "both cohorts" have run. A phase never waits on the
+  other accelerator; cross-accelerator coverage is achieved by sibling
+  per-accelerator phases or a later `linux-cpu`-only aggregation phase.
+- Per-accelerator full-suite evidence is recorded as committed per-lane
+  attestations; [cohort-validation-waves.md](cohort-validation-waves.md) is the
+  per-accelerator attestation ledger that the `linux-cpu` aggregation phase merges,
+  not a "batch both cohorts" switch list.
 - Current-state text in `DEVELOPMENT_PLAN/README.md`, `00-overview.md`, and each affected phase
   document must name which cohort has validated and which cohort remains, rather than describing
   a vague deferred validation pass.
@@ -649,25 +676,37 @@ Rules:
   `Remaining Work` blocks reference the active wave instead of restating per-sprint cohort
   residuals.
 
-**Two-axis execution rule (single-machine implementation, batched cohort sign-off).**
+**Single-accelerator execution rule (single-machine implementation, one-accelerator sign-off).**
 
-> **Implement in natural phase order on whichever single machine is present. The cohort gate is a
-> batched wave — the only supported machine switch — not a per-sprint or per-phase trigger.** Every
-> open phase and sprint has two independent axes. *Code-side closure* (Axis 1) is the implementation
-> plus the machine-independent gate set — `cabal build all`, `cabal test infernix-unit`,
-> `cabal test infernix-haskell-style`, `infernix lint files/docs/chart/proto`, `infernix docs
-> check`, the web unit suite, and `poetry run check-code`; completed in natural order on one
-> machine, it is the gate to begin the *next* phase's implementation. *Cohort sign-off* (Axis 2) is
-> the hardware-specific full-suite — Apple Metal including headless Metal/Core ML materialization,
-> and CUDA GPU runs — batched once per closure cycle against frozen code and tracked in
-> `cohort-validation-waves.md`; it is the gate for `Done` and never the gate for moving on. **The
-> next action for any open phase is always its remaining code-side closure on the machine you
-> already have; do not switch machines to "validate the open phase." The machine switch happens only
-> at a scheduled wave boundary, once per cohort.** A deliverable that is intrinsically
-> hardware-bound — for example the Apple-only Metal runtime bridge probe and Core ML materialization
-> smoke of Phase 1 Sprint 1.14 — is named as
-> such in its `Code-side closure` field and is exercised inside its cohort's wave, never pre-claimed
-> as machine-independent.
+> **Implement in natural phase order on whichever single machine is present, and
+> validate each phase on exactly one accelerator plus `linux-cpu` — never both
+> accelerators.** Every open phase has two independent axes. *Code-side closure*
+> (Axis 1) is the implementation plus the machine-independent gate set —
+> `cabal build all`, `cabal test infernix-unit`, `cabal test infernix-haskell-style`,
+> `infernix lint files/docs/chart/proto`, `infernix docs check`, the web unit
+> suite, and `poetry run check-code`; completed in natural order on one machine, it
+> is the gate to begin the *next* phase's implementation. *Single-accelerator
+> sign-off* (Axis 2) is the hardware-specific full-suite for the phase's **one**
+> chosen accelerator (`apple-silicon` Metal/Core ML, **or** `linux-gpu` CUDA) plus
+> `linux-cpu`, recorded as a committed per-lane attestation; it is the gate for
+> `Done`. A phase never requires the other accelerator. Cross-accelerator contracts
+> are split across sibling per-accelerator phases or merged by a later
+> `linux-cpu`-only aggregation phase that re-runs no accelerator lane. A deliverable
+> that is intrinsically hardware-bound names the single accelerator it belongs to in
+> its `Code-side closure` field.
+
+#### Q. Enforcement
+
+The maintenance pass runs two deterministic scans over `phase-*.md`; the plan must
+report each at zero before a plan change closes:
+
+1. **Zero backward edges** — every `N'.M` / `Phase N'` named in a `Blocked by` line
+   satisfies `N' <= N`.
+2. **No dual-accelerator validation gate** — no single `Validation` gate names both
+   an `apple-silicon` lane (`--apple-silicon` / `apple-silicon.sh`) and a
+   `linux-gpu` lane (`linux-gpu.sh`); a `linux-cpu`-aggregation phase's `Validation`
+   names only `linux-cpu` invocations plus "merge committed per-lane attestation"
+   steps.
 
 `poetry run check-code` stays in the machine-independent gate set only because adapters never
 declare or top-level-import substrate-specific inference wheels; the lazy-import invariant that

@@ -35,6 +35,11 @@
   substrate-neutral engine-pool routing contract: typed model placement, derived Pulsar topics,
   startup-time member assignment, broker-native backpressure validation, and invalid-state
   rejection before rollout
+- [architecture/pulsar_ml_workflow.md](architecture/pulsar_ml_workflow.md) is the cross-project
+  contract shared verbatim with the `jitML` sister project: the three-role split (Engine /
+  Coordinator / Webapp), the derived topic algebra, the `Work*` envelope family covering training
+  and inference, the artifact + `.ready` readiness contract, the websocket snapshot/patch surface,
+  the coordination primitives, and the forward-only-DAG + single-accelerator-per-phase phasing rules
 - [development/local_dev.md](development/local_dev.md) describes the supported local workflows
 - [development/assistant_workflow.md](development/assistant_workflow.md) defines the canonical
   repository-level workflow rules for automated agents and LLM coding assistants

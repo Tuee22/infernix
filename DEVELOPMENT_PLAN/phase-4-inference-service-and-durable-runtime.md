@@ -11,6 +11,16 @@
 
 ## Phase Status
 
+> **Common-shape reopen (Pulsar ML-Workflow convergence).** Phase 4 reopens for two
+> deltas toward the shared contract (see [README.md](README.md) → Common-Shape Reopen
+> and [development_plan_standards.md](development_plan_standards.md) §Q): the
+> **Coordinator** gains **explicit** Pulsar topic-lifecycle ownership — deriving every
+> topic from the typed topology descriptor + validated routing graph and reconciling
+> the exact set at startup, replacing implicit broker auto-create — and the binary
+> emits its own **reflected** Dhall schema. Both current surfaces are recorded in
+> [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) and carried in this
+> phase's `Remaining Work`.
+
 Phase 4 closes around the staged-substrate runtime contract, the shared Python
 adapter boundary, the Pulsar-driven request or result contract, the explicit engine-runner
 dispatch, the mounted `InfernixCluster.dhall` cluster-wiring contract, and the reopened

@@ -146,6 +146,23 @@ classes.
 
 ## Local Architecture
 
+> **Convergence target — common Pulsar ML-workflow shape.** `infernix` and the
+> `jitML` sister project are converging on one shared contract,
+> [documents/architecture/pulsar_ml_workflow.md](documents/architecture/pulsar_ml_workflow.md):
+> a three-role split (**Engine** = compute-only; **Coordinator** = topic
+> lifecycle + coordination + readiness gating; **Webapp** = thin websocket,
+> Pulsar+MinIO only), a derived **topic algebra**, the `Work*` envelope family,
+> the artifact + `.ready` readiness contract, websocket snapshot/patch, and a
+> reflected-Dhall-schema, one-binary role model. Three deltas from the shape are
+> in progress and tracked as reopened plan work (Phases `4`/`6`/`7`) with the
+> current surfaces recorded in
+> [DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md](DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md):
+> (1) the two-binary `infernix` + `infernix-demo` split folds into a one-binary
+> **Webapp** role; (2) the coordinator gains **explicit** topic-lifecycle
+> ownership (replacing implicit broker auto-create); (3) the binary emits its own
+> **reflected** Dhall schema. Until those land, the three roles below are the two
+> production daemons plus the demo frontend.
+
 The supported local platform is built around:
 
 - one Kind cluster used as the HA testing and demo ground for Harbor, MinIO, Pulsar, the Envoy

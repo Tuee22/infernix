@@ -94,8 +94,10 @@ they exercised still describe supported behavior; revalidation on the new host i
 [cohort-validation-waves.md](cohort-validation-waves.md).
 
 **Cohort validation status (present development host = Apple Silicon).** Consistent with the
-two-axis doctrine — implement and run code-side closure on whichever single machine is present —
-the current workspace is Apple Silicon (`Darwin arm64`) with the selected Docker daemon reporting
+single-accelerator doctrine — implement and run code-side closure on whichever single machine is
+present, and validate each phase on **one** accelerator (`apple-silicon` or `linux-gpu`) plus
+`linux-cpu`, never both — the current workspace is Apple Silicon (`Darwin arm64`) with the selected
+Docker daemon reporting
 native `linux/arm64`. Apple host-native gates proceed here without a machine switch; CUDA Linux
 Wave I work remains scheduled for a native CUDA Linux host. The current Apple-side Wave I pass
 builds the host binaries, materializes the `apple-silicon` substrate and typed Metal/Core ML engine
@@ -276,12 +278,12 @@ production coordinator plus engine pools remain present.
   mandatory doctrine
 - supported validation is substrate-specific: integration, E2E, and `test all` run the complete
   supported suites against the built and deployed substrate and report that substrate explicitly
-- phase validation is two-axis: code-side closure (implementation plus the machine-independent gate
-  set) is completed in natural phase order on whichever single machine is present and gates the next
-  phase's implementation, while the cross-architecture cohort full-suite is a batched wave — the
-  only supported machine switch — and gates `Done`; Apple Silicon and CUDA Linux each carry local
-  development without alternating hosts per sprint, and `Done` batches the counterpart host run so
-  both machines validate the same frozen phase state (see
+- phase validation is single-accelerator: code-side closure (implementation plus the
+  machine-independent gate set) is completed in natural phase order on whichever single machine is
+  present and gates the next phase's implementation, while the hardware full-suite for the phase's
+  **one** chosen accelerator (`apple-silicon` **or** `linux-gpu`) plus `linux-cpu` gates `Done`; no
+  phase requires both accelerators, and cross-accelerator coverage is a `linux-cpu`-only aggregation
+  phase that merges committed per-accelerator attestations (see
   [development_plan_standards.md](development_plan_standards.md) Section Q)
 - the supported control plane keeps one Haskell command registry,
   imperative cluster or host prerequisite orchestration, the current `ormolu` plus `hlint` plus
