@@ -108,6 +108,31 @@ Physical Apple multi-host routing is tracked as deferred hardware proof and is n
 close the single-host logical Wave J Apple routing/backpressure gate while no second Apple host is
 available.
 
+The 2026-06-16 **native amd64** Linux CPU run executed on the actual CUDA Linux cohort host
+(Ubuntu 24.04 amd64, NVIDIA RTX 5090, native `nvidia` Docker runtime) rather than through an Apple
+arm64 daemon. `./bootstrap/linux-cpu.sh build` produced launcher image
+`infernix-linux-cpu:local` (image id
+`sha256:826300f10bd05ab2327d9d7cc201c1b9c563a5c45a4c21b8d73d7f25a3f0a7fe`). The first
+`infernix test all` attempt surfaced a code-side regression introduced by the most recent HEAD
+`refactor` commit: `src/Infernix/Runtime/Worker.hs` had begun importing
+`Infernix.Objects.Presigned` directly, which the `infernix-haskell-style` engine-runtime-boundary
+gate rejects (`forbiddenEngineRuntimeImports`). The fix moved the presigned-GET object-existence
+probe behind the allowed object-access wrapper as
+`Infernix.Objects.Upload.objectExistsViaPresignedGet`, dropping the direct `Presigned` import and
+the now-unused HTTP imports from `Worker.hs`. Mounted-source `cabal build all` (warnings-as-errors),
+`cabal test infernix-haskell-style`, and `cabal test infernix-unit` then passed, the launcher image
+was rebuilt with the fix, and the full `./bootstrap/linux-cpu.sh test` (`infernix test all`) passed
+end to end: `infernix-haskell-style` PASS, `infernix-unit` PASS plus web unit 71/71,
+`infernix-integration` PASS (per-model inference over the active `linux-cpu` catalog, pool
+placement, unique-topic `Shared` backlog/backpressure, frontend/coordinator/engine pod replacement,
+engine node drain, model-bootstrap failover/deduplication, multi-user durable prompt throughput at
+`p95Seconds=96.69`, Harbor/MinIO/Pulsar/Postgres recovery, lifecycle rebinding, anti-affinity, and
+production `demo_ui = false` assertions), and routed Playwright e2e `9 passed (5.4m)` including the
+per-model browser smoke matrix. This is fresh native-amd64 evidence for the Wave J Linux CPU
+pool-routing gate and the Wave I `linux-cpu` full-suite re-validation against current source; the
+Wave J Linux GPU/CUDA gate and the Wave I real-native-payload replacement remain open and are owned
+by the in-progress `linux-gpu` lane on the same host.
+
 ### Wave J Apple Logical Multi-Member Criteria
 
 Until a second Apple host is available, the Apple shared-pool distribution gate is satisfied by a
@@ -759,6 +784,245 @@ still required before the full `infernix test all` per-family run closes on this
 > `infernix-native-artifact-file:/tmp/infernix-native-output-check/audio-basic-pitch-onnx.mid` and
 > verifying the file existed, which proves the local marker/upload wiring while live MinIO upload
 > with real native output remains pending Wave I.
+
+**2026-06-16 CUDA Linux cohort host (native amd64 Ubuntu 24.04, NVIDIA RTX 5090, driver 570 /
+CUDA 12.8) — real per-family GPU output progress and two code-side fixes.** A governed
+`./bootstrap/linux-gpu.sh build` rebuilt the slim control-plane image (`infernix-linux-gpu:local`,
+22.2 GB), and `./bootstrap/linux-gpu.sh test` built the three framework per-engine images
+(`vllm`, `pytorch`, `diffusers`) from `docker/engine.Dockerfile`, push/pull-verified every per-engine
+and chart image through Harbor, completed final chart rollout, and brought the routed `linux-gpu`
+cluster up. Integration then passed config decode, route probes, the native runner-contract rows,
+and reached the per-engine GPU deployments, where the first real diffusion row `image-sdxl-turbo`
+failed with `service daemon did not publish a result`. Root-causing surfaced two real defects in the
+machine-independent code, now fixed:
+
+- **GPU artifact adapters never moved models to the accelerator.** `python/adapters/diffusers_python.py`
+  (`DiffusionPipeline.from_pretrained(weights_dir)`) and `python/adapters/pytorch_python.py` (Bark
+  `BarkModel.from_pretrained(...)` and Demucs `apply_model(...)`) loaded in fp32 on CPU, while only
+  `transformers_python.py` selected `cuda`/`mps` and called `model.to(device)`. On the GPU lane this
+  ran SDXL/Bark/Demucs on CPU, which cannot finish inside the routed result-publish budget. All three
+  adapters now mirror the transformers `_preferred_torch_device` pattern: half precision plus
+  `.to(device)` on `cuda`/`mps`, validated by `poetry run check-code` (ruff/mypy/black) keeping the
+  lazy-import machine-independent invariant. A direct `docker run --gpus all` probe against the
+  diffusers engine image confirmed the fixed path on Blackwell: SDXL-Turbo loaded in fp16 **on CUDA**
+  in 5.7 s (`torch 2.11.0+cu128`, `cuda available: True`, `NVIDIA GeForce RTX 5090`).
+- **The integration result-wait was shorter than the cold model-bootstrap envelope.** The same probe
+  measured the SDXL-Turbo Hugging Face snapshot fetch at ~14.5 min on this host, but
+  `test/integration/Spec.hs` `waitForPublishedResult` waited only ~5 min (3000 × 100 ms) — a budget
+  whose own comment accounted only for adapter bootstrap plus the Pulsar two-hop handoff, never a
+  multi-GB weight download. The wait is now a 25-minute wall-clock deadline that comfortably exceeds
+  the engine's own 900 s bootstrap envelope plus the MinIO pull and on-GPU inference, while a
+  genuinely failed bootstrap still fast-fails on the engine's published failed-status result. The
+  change compiles and links clean under warnings-as-errors.
+
+Both fixes were baked into a fresh `linux-gpu` launcher rebuild and the routed
+`./bootstrap/linux-gpu.sh test` re-run reached real GPU inference. **Milestone: the diffusers
+`image-sdxl-turbo` row produced real per-family GPU output and the assertion `inference completes
+for image-sdxl-turbo` passed** — the first real diffusion artifact generated on the RTX 5090 through
+the routed coordinator → engine-pool → result path, confirming the adapter device-placement fix and
+the cold-bootstrap wait fix end to end. (The fixed adapters were delivered into the per-engine
+images with a fast COPY-overlay of the two `.py` files, because the lifecycle's per-engine image
+reuse check keys on Harbor-push manifest shape and did not detect the adapter source change on its
+own — a follow-on cleanup item: the per-engine reuse predicate should also compare the cluster
+source fingerprint.)
+
+The same run then failed at the next diffusers row `video-wan21-t2v`: `DiffusionPipeline.from_pretrained`
+reported `no file named model_index.json` because the catalog pointed at the raw-weights repo
+`Wan-AI/Wan2.1-T2V-1.3B` rather than the diffusers-format `Wan-AI/Wan2.1-T2V-1.3B-Diffusers` variant
+(which does carry `model_index.json`). The catalog URL in `src/Infernix/Models.hs` and the README
+matrix row are corrected to the `-Diffusers` repo. A direct `docker run --gpus all` probe of the
+fixed path then proved the whole Wan2.1 generation end to end on the RTX 5090: the `-Diffusers`
+snapshot downloaded, `DiffusionPipeline.from_pretrained` resolved `WanPipeline` in fp16 on CUDA, the
+generic `pipeline(prompt)` adapter call generated frames in 168 s, and `export_to_video` wrote a
+401 KB mp4 (`WAN_EXIT=0`) — so no Wan-specific adapter arguments are needed.
+
+The follow-on routed rerun then surfaced a third defect, a **resource/config** one: the diffusers
+engine pods were `Evicted` (exit 137) with `Usage of EmptyDir volume "model-cache" exceeds the limit
+"32Gi"`. The diffusers engine caches both the SDXL repo and the large Wan2.1 `-Diffusers` repo (which
+bundles the multi-GB umt5-xxl text encoder) in one `/model-cache` `emptyDir`; together they overflow
+the 32 GiB ceiling and kubelet evicts the pod mid-bootstrap (the Wan inference itself works, as the
+probe showed). `chart/values.yaml` now raises `engine.modelCache.sizeLimit` to `64Gi` and the matched
+`clusterConfig.engine.modelCacheQuotaBytes` to `68719476736`. The 64 GiB headroom resolved the
+eviction, after which a fourth issue surfaced — a retained-state one: the lazy model bootstrap keys
+its MinIO `.ready` sentinel on the model id, not on the repo identity, so when the catalog repo for
+`video-wan21-t2v` changed from the raw-weights repo to the `-Diffusers` variant, the bootstrap saw
+the stale `.ready` over the old original-format snapshot (no `model_index.json`) and skipped
+re-downloading. Clearing the stale `infernix-models/video-wan21-t2v` retained state forces a fresh
+`-Diffusers` fetch; a follow-on robustness item is to key the bootstrap `.ready` sentinel on repo
+identity/content so a catalog repo change busts the cache automatically.
+
+With the cleared state, the rerun then hit a fifth issue and the controlling constraint for this row:
+`Timed out waiting for model bootstrap readiness for video-wan21-t2v`. The routed lazy bootstrap
+(coordinator Hugging Face download → MinIO upload → engine pull) of the large Wan2.1 `-Diffusers`
+snapshot exceeds the engine's `modelBootstrapReadyWaitMaxSeconds = 900` envelope
+(`src/Infernix/Runtime/Pulsar.hs`) on this host's HF throughput — even though the model itself runs
+(the direct probe generated a valid mp4 in 168 s). **`video-wan21-t2v` is therefore recorded as a
+named CUDA Linux residual for the routed lazy-bootstrap path:** the real-output capability is proven,
+but routed closure needs either a larger coupled bootstrap/result-wait envelope (raise
+`modelBootstrapReadyWaitMaxSeconds` above ~30 min and the integration `waitForPublishedResult`
+deadline above it) or pre-staged Wan weights, on a faster link than this host provides. The catalog
+already flags Wan as an Apple-MPS residual; this extends the residual to the CUDA routed path for the
+same large-model reason. The diffusers **image** family (`image-sdxl-turbo`) remains fully proven
+routed; the PyTorch Bark/Demucs and vLLM rows sit behind the Wan blocker in per-engine order and have
+not yet been routed-validated this cycle.
+
+**Follow-on fix landed for the Wan bootstrap envelope.** Root-causing the repeated Wan failures
+showed the controlling defect was the engine-side bootstrap envelope, not the model: the coordinator
+`snapshot_download` has no hard wall, but the engine gave up after
+`modelBootstrapReadyWaitMaxSeconds = 900`, and when the cluster then tore down the partial download
+was left under a premature `.ready` sentinel (missing `model_index.json`), which the next run trusted
+and served incomplete. `src/Infernix/Runtime/Pulsar.hs` now raises that engine envelope to `3600`
+seconds and `test/integration/Spec.hs` raises the `waitForPublishedResult` deadline to `4200`
+seconds (above the envelope plus the MinIO pull and on-GPU inference), so a fresh large-model
+download completes fully before the engine gives up and a genuine failure still surfaces as a
+failed-status result. Both compile clean under warnings-as-errors. A follow-on robustness item
+remains: the bootstrap should only write `.ready` after a verified-complete snapshot (and key it on
+repo identity), so an interrupted download cannot leave a `.ready` over partial weights.
+
+Even with the 3600 s envelope and a cleared cache, the routed Wan bootstrap still timed out: the
+coordinator HF → MinIO download of the ~27 GB `-Diffusers` snapshot exceeded 60 minutes. The cause
+is **not** Hugging Face throttling — a direct host-side `snapshot_download` of the same repo
+completed in 440 s (~62 MB/s, full 27 GB). The gap is **in-cluster egress**: the coordinator runs the
+download inside a Kind pod, whose nested-Docker network path to the internet is far slower than the
+host's, compounded by the four-replica MinIO erasure write. The model's real output is proven (probe
+mp4) and the engine/integration envelopes are now sized for large models; the remaining gap is purely
+getting 27 GB of weights into `infernix-models` without the slow in-cluster fetch.
+
+The supported way to close this is **pre-staging**: seed the `infernix-models/video-wan21-t2v/`
+objects (plus the `.ready` sentinel) directly into MinIO from the fast host download, so the engine
+streams them cluster-internally instead of the coordinator pulling them over the slow Kind-pod path.
+That seed-and-replay path was exercised on this host (host `snapshot_download` of the 27 GB
+`-Diffusers` repo in 440 s → boto3 upload to the cluster `infernix-minio` service → retained-state
+replay → routed `test`) and **closed the Wan row: the diffusers engine cleared both `image-sdxl-turbo`
+and `video-wan21-t2v` routed, so the full diffusers image+video family is now proven real-output on
+the RTX 5090.** The seeding bypassed the slow in-cluster fetch entirely — the engine streamed the
+27 GB from MinIO cluster-internally.
+
+That run then advanced to the PyTorch engine and timed out on `audio-bark-small`. **In-cluster
+diagnosis on a live cluster pinned the cause to a transient external rate-limit, not a code or infra
+defect.** From the running coordinator pod: direct file egress is healthy (an 80 MB Hugging Face
+object pulled at 7.8 MB/s — Bark's ~5 GB would land in ~11 min, far under the 3600 s envelope), and
+MTU is a uniform 1500 across host/docker0/kind. But the model bootstrap's `snapshot_download` failed
+with `LocalEntryNotFoundError`, and a direct probe of `https://huggingface.co/api/models/...` from
+the pod returned **HTTP 429** — Hugging Face is rate-limiting this host's IP after the night's heavy
+repeated model fetches. The metadata/API path is throttled while the CDN file path is not, so every
+in-cluster `snapshot_download` errors; this is also the most likely real cause of the earlier Wan
+routed "timeout" (the coordinator erroring on the 429, not a slow download), which the direct MinIO
+seed bypassed. The rate-limit is self-inflicted and transient (per-IP, clears over time).
+
+Net state of the GPU integration this cycle: the diffusers engine (SDXL + Wan) is fully
+routed-validated; the runtime, adapters, lifecycle, 64 GiB cache, bootstrap envelopes, and pod
+network are all proven sound.
+
+**Root cause and fix for the remaining-row block (definitive).** A focused in-image reproduction
+isolated the 429 to Hugging Face's **Xet** large-file transport: `huggingface_hub` ships the optional
+`hf_xet` client, which routes weight downloads through the Hub's `xet-read-token` API, and HF
+rate-limits that endpoint hard per source IP (`429 ... We had to rate limit your IP ... pass a
+HF_TOKEN`) under a busy cohort run — while the ordinary `resolve` -> CDN HTTP path stays healthy
+(measured 7.8 MB/s from a pod, MTU uniform 1500). Two fixes land, both doctrine-compliant (no env
+var): `docker/Dockerfile` removes `hf_xet` from the coordinator's base venv so its
+`snapshot_download` falls back to the un-throttled HTTP path, and `adapters/model_bootstrap.py` wraps
+the download in retry-with-backoff for any residual transient error. With `hf_xet` disabled and the
+Wave I adapter device fix, a direct GPU reproduction downloaded `suno/bark-small` cleanly and
+generated real audio (`GENERATE_OK`), confirming the PyTorch Bark model path end to end. The routed
+rerun with the fix baked confirmed the unblock: the coordinator downloaded Bark without a 429 (the
+xet-429 blocker is resolved) and the diffusers engine cleared again. The first PyTorch row then
+exposed a separate, narrower defect: the engine failed to load Bark from the MinIO-round-tripped
+`/model-cache` with `stat: path should be string ... not NoneType`. The live engine-pod traceback
+localized it to `AutoProcessor.from_pretrained` -> Bark's `BertTokenizer.__init__` ->
+`os.path.isfile(vocab_file=None)`: the cached snapshot was **a stale partial** — config, weights, and
+all 502 speaker-embedding files were present, but every tokenizer file (`vocab.txt`,
+`tokenizer.json`, `tokenizer_config.json`, `special_tokens_map.json`) was missing, with `.ready`
+already set (a historical artifact from a pre-fix run; the bootstrap's `_sentinel_exists`
+early-return then propagated it forward). It was not a defect in the current download/round-trip
+code: clearing the stale prefix and re-running the **real coordinator bootstrap** (`hf_xet`-removed
+build, with the retry recovering a transient CDN read-timeout) re-uploaded the complete snapshot
+including the tokenizer files (`HAS_VOCAB=True`), and the in-pod adapter then loaded Bark from the
+real MinIO `/model-cache` and generated a 1.44 MB WAV (`BARK_OK`). The integration rerun confirmed it
+end to end: the **diffusers (SDXL + Wan) and PyTorch (Bark + Demucs + Open-Unmix) rows both passed
+routed**.
+
+That rerun then exposed the **vLLM Qwen** row failing with `Unable to decode worker response:
+WorkerResponse: Unknown wire type 7`. The diagnosis took several layers and ended up uncovering a
+*real engine defect that the error had been masking*:
+
+1. **Stdio framing.** The adapter harness transmits the serialized `WorkerResponse` protobuf over
+   the adapter's **stdout** (the Haskell worker reads the frame from fd 1) and captures the adapter's
+   **stderr** on a pipe it does not drain until the response arrives. vLLM logs copiously to *both*
+   fds while constructing the engine, so leaving either on its pipe either corrupts the frame
+   (`Unknown wire type`) or, once a 64 KB pipe buffer fills, deadlocks the engine on
+   `anon_pipe_write` mid-init (confirmed via `/proc/<pid>/wchan` + matching `fd1=fd2=pipe`). The fix
+   in `python/adapters/common.py` (`_isolate_protobuf_stdout()`, called after `_decode_request` in
+   both adapter seams) duplicates the real stdout to a private fd that `_write_response` targets,
+   then redirects **both fd 1 and fd 2 to `/dev/null`** so no backend chatter — Python or native
+   C/CUDA — can reach either pipe. Doctrine-compliant (no `VLLM_LOGGING_LEVEL` env toggle); enforced
+   structurally at the fd boundary. (Two earlier iterations — discard stdout only, then redirect
+   stdout→stderr — were rejected: the first left stderr corrupting, the second moved the deadlock
+   onto the undrained stderr pipe.)
+2. **Engine core init (the masked defect).** With the frame clean, the response decoded to an
+   *error* `WorkerResponse`: `RuntimeError: Engine core initialization failed` →
+   `torch._inductor InductorError: Failed to find C compiler`. vLLM V1's default path runs
+   `torch.compile` (inductor + triton), which JIT-compiles kernels through a **host C compiler the
+   framework-free engine image deliberately does not ship**, so the engine core never initialized —
+   and the original `wire type 7` was *that* error response getting shredded by the stdout pollution.
+   Fixed in `python/adapters/vllm_python.py` with `LLM(..., enforce_eager=True)`, which runs the same
+   real GPU inference without the compile/toolchain dependency.
+
+Both fixes validated **end-to-end in-pod** against the live cluster: the vLLM adapter, driven through
+a worker-faithful boundary (request on stdin, stdout drained, **stderr left undrained**), loaded
+`llm-qwen25-safetensors` and returned a clean `WorkerResponse` with real text
+(`"...Paris and the largest city is London..."`, empty `error_code`). `check-code` clean.
+
+Two infrastructure blockers were also resolved along the way, both environmental rather than code
+defects: (a) the Harbor engine-image push (~44 GB of fresh CUDA layers, ~20 GB for vLLM alone) hung
+under **host disk pressure** — the retained `.data` MinIO cache had grown to 182 GB and the disk sat
+at 94%, so the MinIO-backed registry could not ingest the fresh blobs; clearing stale retained models
+(disk → 82%) let the push complete with zero retries, and `pushAttempts` in
+`src/Infernix/Cluster/PublishImages.hs` was widened 8→30 as defensive hardening. (b) The
+`infernix-unit` suite hung invoking `poetry install --with apple-silicon` for the transformers
+engine: poetry deadlocked on the **keyring/dbus** backend in the headless container; fixed in
+`docker/Dockerfile` with `poetry config keyring.enabled false` (config file, not an env var) —
+verified by a probe that completed the install in 2m42s with keyring disabled vs. an indefinite hang.
+
+Net: the **xet-429 download blocker, the Bark stale-partial-cache load defect, the vLLM
+stdio-framing + engine-core (enforce_eager) defects, the Harbor large-layer push (disk), and the
+poetry keyring hang are all fixed and validated** at the code-side and component level. diffusers and
+PyTorch rows pass routed on-GPU; the vLLM adapter is proven generating real qwen text end-to-end
+in-pod. **What has not yet happened is a single clean end-to-end `linux-gpu test all` run** that
+carries the per-engine sequence through the previously-unreached **vLLM → native rows → Wave J GPU
+pool-routing/backpressure/chaos/recovery → e2e** with every fix simultaneously in the images: each
+attempt so far surfaced the next blocker in the chain, and the most recent full attempts also fought
+host disk pressure and external-workload contention rather than code defects. So the CUDA Linux
+cohort full-suite remains the open **Axis-2 cohort gate**; the central Wave I residual (real
+native-engine payloads replacing the runner-contract stubs) is unchanged and independent of these
+fixes.
+
+**Resume point for the next session.** The launcher/base image `infernix-linux-gpu:local` is already
+rebuilt from the current worktree and **verified to contain both vLLM fixes** (`common.py` fd1+fd2
+isolation and `vllm_python.py` `enforce_eager=True`); the per-engine `infernix-engine-*-linux-gpu`
+images were deleted so the next cluster-up rebuilds them from that base. The next action is simply to
+re-run the CUDA Linux full-suite from the repo root:
+`./bootstrap/linux-gpu.sh test` (Compose-launched `docker compose run --rm infernix infernix test
+all`). Two operational lessons must be respected on the rerun: (1) **uncommitted `python/` edits do
+not change the git-based build fingerprint**, so a plain `build`/`test` silently *reuses* the prior
+engine images — force a clean rebuild by `docker rmi`-ing the four `:local` images first (or commit
+the edits) whenever an adapter change must reach the pods; verify with
+`docker run --rm infernix-linux-gpu:local grep -c enforce_eager /workspace/python/adapters/vllm_python.py`
+before trusting a run. (2) The Harbor engine-image push needs disk headroom — keep `df -h /` well
+under ~90% (clear stale `./.data/runtime/kind/*/.../infernix-models/*` prefixes if the retained cache
+has grown past ~150 GB) so the ~44 GB of fresh CUDA layers ingest into the MinIO-backed registry.
+
+Wave I therefore stays `Active`. Confirmed this cycle, **routed on-GPU**: the diffusers engine
+(`image-sdxl-turbo` and Wan2.1 video) and the PyTorch engine (Bark audio generation, Demucs
+source-separation, Open-Unmix) both passed their per-engine inference rows end to end, plus full GPU
+build/Harbor-publication/cluster bring-up; and the **vLLM engine is proven generating real qwen text
+end-to-end in-pod** (both adapter fixes applied), pending its confirmation inside one clean full
+routed `linux-gpu test all` (the named resume point above). Still open under this wave: a single
+end-to-end full-suite pass that reaches the native rows and the Wave J GPU
+pool/chaos/recovery/e2e steps for the first time with all fixes in the images at once; and the
+central residual — the real native-engine payloads (llama.cpp / whisper.cpp / ONNX Runtime /
+CTranslate2) remain runner-contract stubs whose replacement is still owned by this wave. Basic Pitch
+TensorFlow, Omnizart, and MT3 remain named upstream-incompatible residuals.
 
 Phases 1, 4, and 6 stay `Active` with Wave I as their cohort-pending residual and cannot return to
 `Done` until both cohorts pass their full-suite gates against the same state.

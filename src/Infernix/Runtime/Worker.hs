@@ -34,7 +34,6 @@ import Data.Word (Word64)
 import Infernix.ClusterConfig qualified as Cluster
 import Infernix.Config (Paths (..))
 import Infernix.Models (engineBindingForSelectedEngine, resultFamilyForDescriptor)
-import Infernix.Objects.Presigned qualified as Presigned
 import Infernix.Objects.Upload qualified as ObjectUpload
 import Infernix.Python (ensurePoetryExecutable, ensurePoetryProjectInstalledWithGroups, ensurePoetryProjectReady)
 import Infernix.Runtime.KVCache qualified as KVCache
@@ -42,8 +41,7 @@ import Infernix.SecretsConfig qualified as Secrets
 import Infernix.Types
 import Infernix.Web.Contracts qualified as Contracts
 import Lens.Family2 (set, view)
-import Network.HTTP.Client (defaultManagerSettings, httpLbs, newManager, parseRequest, responseStatus)
-import Network.HTTP.Types.Status (statusCode)
+import Network.HTTP.Client (defaultManagerSettings, newManager)
 import Proto.Infernix.Runtime.Inference qualified as ProtoInference
 import Proto.Infernix.Runtime.Inference_Fields qualified as ProtoInferenceFields
 import System.Directory (createDirectoryIfMissing, doesFileExist, getTemporaryDirectory)
@@ -471,17 +469,11 @@ nativeModelReadySentinelExists modelCacheConfig modelIdValue = do
           { Contracts.objectBucket = workerMinioModelsBucket modelCacheConfig,
             Contracts.objectKey = modelIdValue <> "/.ready"
           }
-      signedUrl =
-        Text.unpack
-          ( Presigned.unPresignedUrl
-              (Presigned.presignedGetUrl (workerPresignedUrlConfig modelCacheConfig) now objectRef)
-          )
   responseResult <-
-    try @SomeException $ do
-      request <- parseRequest signedUrl
-      httpLbs request manager
+    try @SomeException
+      (ObjectUpload.objectExistsViaPresignedGet (workerObjectUploadConfig modelCacheConfig) manager now objectRef)
   case responseResult of
-    Right response -> pure (statusCode (responseStatus response) == 200)
+    Right objectPresent -> pure objectPresent
     Left _ -> pure False
 
 firstPresentNativeRunner :: Paths -> EngineBinding -> FilePath -> IO (Maybe (FilePath, FilePath))
@@ -702,19 +694,6 @@ workerObjectUploadConfig modelCacheConfig =
           ObjectUpload.objectUploadAccessKeyId = workerMinioAccessKey modelCacheConfig,
           ObjectUpload.objectUploadSecretAccessKey = workerMinioSecretKey modelCacheConfig,
           ObjectUpload.objectUploadExpirySeconds = 60
-        }
-
-workerPresignedUrlConfig :: WorkerModelCacheConfig -> Presigned.PresignedUrlConfig
-workerPresignedUrlConfig modelCacheConfig =
-  let (scheme, hostPort) = splitMinioEndpoint (workerMinioEndpoint modelCacheConfig)
-   in Presigned.PresignedUrlConfig
-        { Presigned.presignedScheme = scheme,
-          Presigned.presignedEndpoint = hostPort,
-          Presigned.presignedPathPrefix = "",
-          Presigned.presignedRegion = workerMinioRegion modelCacheConfig,
-          Presigned.presignedAccessKeyId = workerMinioAccessKey modelCacheConfig,
-          Presigned.presignedSecretAccessKey = workerMinioSecretKey modelCacheConfig,
-          Presigned.presignedExpirySeconds = 60
         }
 
 splitMinioEndpoint :: Text -> (Text, Text)

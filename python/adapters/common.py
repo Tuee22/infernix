@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import importlib
 import json
+import os
 import subprocess
 import sys
 from collections.abc import Callable
@@ -117,8 +118,51 @@ def _decode_request() -> inference_pb2.WorkerRequest:
     return request
 
 
+_PROTOBUF_STDOUT_FD: int | None = None
+
+
+def _isolate_protobuf_stdout() -> None:
+    """Reserve the adapter's stdout for the protobuf ``WorkerResponse`` alone.
+
+    The Haskell worker streams the request to the adapter's stdin and reads the
+    serialized ``WorkerResponse`` back from its stdout, so any other bytes on
+    file descriptor 1 corrupt the protobuf frame (it surfaces in the worker as
+    ``Unknown wire type``). Inference backends such as vLLM log copiously to
+    stdout while constructing the engine, which lands ahead of the protobuf and
+    breaks the decode. Duplicate the real stdout to a private fd that
+    ``_write_response`` targets, then point fd 1 at ``/dev/null`` so every other
+    stdout write — Python or native C/CUDA — is discarded away from the frame.
+
+    Both fd 1 and fd 2 are pointed at ``/dev/null``: the worker captures the
+    adapter's stdout AND stderr on pipes it does not drain until the response
+    arrives, and vLLM logs copiously to both while constructing the engine, so
+    leaving either fd on its pipe lets the buffer fill and deadlocks the engine
+    on ``write`` mid-construction (observed as fd 2 / stderr blocking on
+    ``anon_pipe_write``). The serialized response — including any adapter error,
+    which is caught and returned as a ``WorkerResponse`` rather than printed —
+    travels on the saved real-stdout fd, so discarding both streams loses only
+    backend log chatter. Configuration doctrine forbids env toggles (e.g.
+    ``VLLM_LOGGING_LEVEL``), so this is enforced structurally at the fd boundary.
+    """
+    global _PROTOBUF_STDOUT_FD
+    if _PROTOBUF_STDOUT_FD is not None:
+        return
+    sys.stdout.flush()
+    sys.stderr.flush()
+    _PROTOBUF_STDOUT_FD = os.dup(1)
+    discard_fd = os.open(os.devnull, os.O_WRONLY)
+    os.dup2(discard_fd, 1)
+    os.dup2(discard_fd, 2)
+    os.close(discard_fd)
+
+
 def _write_response(response: inference_pb2.WorkerResponse) -> None:
-    sys.stdout.buffer.write(response.SerializeToString())
+    payload = response.SerializeToString()
+    if _PROTOBUF_STDOUT_FD is not None:
+        os.write(_PROTOBUF_STDOUT_FD, payload)
+        return
+    sys.stdout.buffer.write(payload)
+    sys.stdout.buffer.flush()
 
 
 def _adapter_error_code(exc: Exception) -> str:
@@ -135,6 +179,7 @@ def normalized_input_text(value: str) -> str:
 
 def run_context_adapter(transform: Callable[[AdapterContext], str]) -> int:
     request = _decode_request()
+    _isolate_protobuf_stdout()
     try:
         _configure_model_cache_from_request(request)
         output_text = transform(load_adapter_context(request))
@@ -173,6 +218,7 @@ def run_artifact_adapter(transform: Callable[[AdapterContext], ArtifactResult]) 
     and OMR families; the text families keep using ``run_context_adapter``.
     """
     request = _decode_request()
+    _isolate_protobuf_stdout()
     try:
         _configure_model_cache_from_request(request)
         context = load_adapter_context(request)

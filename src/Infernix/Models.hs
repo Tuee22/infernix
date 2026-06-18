@@ -920,7 +920,7 @@ matrixRows =
       "Small reference text-to-video model."
       "Diffusers / safetensors pipeline"
       "Wan2.1-T2V-1.3B"
-      "https://huggingface.co/Wan-AI/Wan2.1-T2V-1.3B"
+      "https://huggingface.co/Wan-AI/Wan2.1-T2V-1.3B-Diffusers"
       "Small reference text-to-video model; Apple MPS remains residual until validated."
       "Prompt"
       Nothing

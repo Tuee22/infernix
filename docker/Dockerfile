@@ -84,7 +84,8 @@ RUN apt-get update \
 RUN python3 -m venv ${POETRY_HOME} \
     && ${POETRY_HOME}/bin/python -m pip install --upgrade pip \
     && ${POETRY_HOME}/bin/pip install poetry \
-    && ln -sfn ${POETRY_HOME}/bin/poetry /usr/local/bin/poetry
+    && ln -sfn ${POETRY_HOME}/bin/poetry /usr/local/bin/poetry \
+    && poetry config keyring.enabled false
 
 RUN curl https://get-ghcup.haskell.org -sSf | sh \
     && ghcup install ghc ${GHC_VERSION} \
@@ -230,8 +231,16 @@ RUN printf '%s\n' \
     '}' \
     > /opt/infernix/dhall/InfernixHost.dhall
 
+# Wave I: huggingface_hub installs `hf_xet`, whose Xet large-file transport
+# routes weight downloads through HF's `xet-read-token` API, which the Hub
+# rate-limits aggressively per source IP (HTTP 429) under a busy cohort run —
+# while the regular `resolve` -> CDN HTTP path is not throttled. The coordinator's
+# lazy model bootstrap (`adapters/model_bootstrap.py` `snapshot_download`) runs in
+# this base venv, so removing `hf_xet` forces the un-throttled HTTP fallback. This
+# is a dependency-level removal, not an env var, per the configuration doctrine.
 RUN mkdir -p /workspace/tools/generated_proto \
     && poetry install --directory python \
+    && poetry --directory python run pip uninstall -y hf_xet \
     && poetry --directory python run python -m grpc_tools.protoc \
          -I /workspace/proto \
          --python_out /workspace/tools/generated_proto \

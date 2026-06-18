@@ -99,26 +99,45 @@ def _hugging_face_repo_id(download_url: str) -> str | None:
 
 
 def _download_hugging_face_snapshot(repo_id: str, destination: Path) -> None:
-    from huggingface_hub import snapshot_download
+    import time
 
-    snapshot_download(
-        repo_id=repo_id,
-        revision="main",
-        local_dir=str(destination),
-        ignore_patterns=[
-            ".gitattributes",
-            "*.md",
-            "*.png",
-            "*.jpg",
-            "*.jpeg",
-            "*.gif",
-            "*.h5",
-            "*.msgpack",
-            "*.onnx",
-            "*.ot",
-            "*.tflite",
-        ],
-    )
+    from huggingface_hub import snapshot_download
+    from huggingface_hub.errors import HfHubHTTPError, LocalEntryNotFoundError
+
+    ignore_patterns = [
+        ".gitattributes",
+        "*.md",
+        "*.png",
+        "*.jpg",
+        "*.jpeg",
+        "*.gif",
+        "*.h5",
+        "*.msgpack",
+        "*.onnx",
+        "*.ot",
+        "*.tflite",
+    ]
+    # The Hub metadata/API surface is rate-limited per source IP; under a busy
+    # cohort run it intermittently returns HTTP 429, which surfaces here as
+    # LocalEntryNotFoundError / HfHubHTTPError even when the CDN file path is
+    # healthy. snapshot_download resumes partial downloads, so retry with
+    # exponential backoff until a non-throttled window lands rather than failing
+    # the whole model bootstrap on a transient 429.
+    last_error: Exception | None = None
+    for attempt in range(10):
+        try:
+            snapshot_download(
+                repo_id=repo_id,
+                revision="main",
+                local_dir=str(destination),
+                ignore_patterns=ignore_patterns,
+            )
+            return
+        except (LocalEntryNotFoundError, HfHubHTTPError, OSError) as error:
+            last_error = error
+            time.sleep(min(60.0, 5.0 * (2.0**attempt)))
+    if last_error is not None:
+        raise last_error
 
 
 def _download_single_payload(download_url: str, destination: Path) -> None:

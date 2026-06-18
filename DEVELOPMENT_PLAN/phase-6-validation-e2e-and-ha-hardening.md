@@ -261,6 +261,16 @@ MinIO, Pulsar, and operator-managed PostgreSQL substrate.
   The 2026-06-15 mounted current-source linux-gpu follow-up passes `infernix test unit`,
   `infernix test lint`, focused `infernix lint files/docs/proto/chart`, `infernix docs check`, and
   `infernix internal materialize-linux-native-engines`.
+  The 2026-06-16 CUDA Linux cohort host run (see
+  [cohort-validation-waves.md](cohort-validation-waves.md) Wave I) hardened this gate's cold-start
+  budget: `waitForPublishedResult` was a fixed ~5-minute attempt count that never accounted for the
+  first-run model-weight download, and on the GPU lane an SDXL-Turbo Hugging Face snapshot fetch
+  measured ~14.5 min, so the diffusers row timed out before real weights landed. The wait is now a
+  25-minute wall-clock deadline that exceeds the engine's own 900 s bootstrap envelope plus the MinIO
+  pull and on-GPU inference, while a failed bootstrap still fast-fails on the engine's published
+  failed-status result; it compiles and links clean under warnings-as-errors. Paired with the Phase 4
+  diffusers/PyTorch GPU device-placement fix, this is the in-progress routed `linux-gpu` real-output
+  proof.
 
 ---
 

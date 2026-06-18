@@ -1295,7 +1295,15 @@ raised to 900 seconds; the latest pass used rebuilt image digest
 cluster image digest `sha256-f4a30f4e177206b64ce5a0d3abea8d72a8bdbe637148530e1619bdf5ce8ae7c3`.
 The remaining Phase 4 residual is real engine payload replacement and real-output
 validation: the phase returns to `Done` only after Wave I lands the full Apple and CUDA Linux gates
-against real inference and the per-engine routed cluster path. Sprint 4.19's remaining
+against real inference and the per-engine routed cluster path. The 2026-06-16 CUDA Linux cohort host
+run (recorded in [cohort-validation-waves.md](cohort-validation-waves.md) Wave I) closed a real
+machine-independent defect in the Python adapter seam: the diffusers and PyTorch (Bark/Demucs)
+artifact adapters loaded models in fp32 on CPU instead of selecting the `cuda`/`mps` accelerator, so
+real GPU generation never completed inside the routed result budget. `python/adapters/diffusers_python.py`
+and `python/adapters/pytorch_python.py` now mirror the transformers adapter's `_preferred_torch_device`
+half-precision `.to(device)` placement (validated by `poetry run check-code` and a direct Blackwell
+SDXL-Turbo fp16-on-CUDA probe); real-output proof for that fix is the in-progress routed `linux-gpu`
+full-suite under Wave I. Sprint 4.19's remaining
 pool-routing residual is Wave J Linux GPU/CUDA cohort validation and cleanup of the legacy
 `engineDaemons` compatibility projection before Phase 4 can return to `Done`; pinned-route
 exclusivity, same-machine Apple `Shared` coexistence, Apple single-host logical

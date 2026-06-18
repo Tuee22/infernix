@@ -3595,8 +3595,18 @@ modelBootstrapRequestFor model = do
 modelBootstrapReadyPollMicros :: Int
 modelBootstrapReadyPollMicros = 250000
 
+-- | Engine-side ceiling for how long an engine waits on the coordinator's
+-- lazy model bootstrap (Hugging Face download -> MinIO upload -> ready event)
+-- after publishing a bootstrap request. The coordinator's `snapshot_download`
+-- has no hard wall, so this is the effective envelope. 60 min accommodates the
+-- largest catalog repos on a constrained link: Wan2.1-T2V-1.3B `-Diffusers`
+-- bundles the multi-GB umt5-xxl text encoder, and the routed
+-- HF -> MinIO -> engine path exceeded the previous 900 s ceiling on the CUDA
+-- Linux cohort host. The integration `waitForPublishedResult` deadline is sized
+-- above this so a genuine bootstrap timeout still surfaces as a failed-status
+-- result rather than a client-side wait expiry.
 modelBootstrapReadyWaitMaxSeconds :: Int
-modelBootstrapReadyWaitMaxSeconds = 900
+modelBootstrapReadyWaitMaxSeconds = 3600
 
 modelBootstrapReadyWaitAttempts :: Int
 modelBootstrapReadyWaitAttempts =

@@ -1754,26 +1754,36 @@ shellSingleQuote value =
     quoteChar '\'' = "'\\''"
     quoteChar ch = [ch]
 
--- | Phase 6 Sprint 6.28 follow-on (May 26, 2026): bumped the
--- per-request inference roundtrip timeout from 6 s (60 attempts at
--- 100 ms) to 5 minutes (3000 attempts at 100 ms). The supported
--- cluster lifecycle's first-run inference includes Poetry adapter
--- bootstrap (~30 s) plus Pulsar coordinator/engine two-hop
--- handoff; the previous 6 s ceiling was sufficient only for warm
--- in-process unit-style runs and was unrealistic for the
--- routed-cluster integration path.
+-- | Wave I (CUDA Linux cohort): the routed result-publish wait is a wall-clock
+-- deadline rather than a fixed attempt count. The first GPU inference per engine
+-- triggers a cold model bootstrap (Hugging Face -> MinIO -> engine model-cache):
+-- on the cohort host an SDXL-Turbo snapshot alone fetches in ~14.5 min, so the
+-- earlier 5-minute (3000 x 100 ms) ceiling — sized only for Poetry adapter
+-- bootstrap plus the Pulsar two-hop handoff — timed out before real weights
+-- landed. The deadline must sit above the engine's own
+-- `modelBootstrapReadyWaitMaxSeconds` (3600 s) bootstrap envelope plus the MinIO
+-- pull and on-GPU inference, so that a genuinely failed bootstrap surfaces as a
+-- failed-status result this loop returns immediately (the caller then asserts on
+-- the failure payload) rather than a client-side wait expiry. 70 minutes covers
+-- the largest catalog repo (Wan2.1-T2V-1.3B `-Diffusers`) on a constrained link.
+-- Warm/cached rows return in seconds.
 waitForPublishedResult :: Paths -> RuntimeMode -> Text.Text -> Text.Text -> IO (Maybe InferenceResult)
-waitForPublishedResult paths runtimeMode resultTopic requestIdValue = go (3000 :: Int)
+waitForPublishedResult paths runtimeMode resultTopic requestIdValue = do
+  startTime <- getPOSIXTime
+  go startTime
   where
-    go remainingAttempts
-      | remainingAttempts <= 0 = pure Nothing
-      | otherwise = do
-          maybeResult <- readPublishedInferenceResultMaybe paths runtimeMode resultTopic requestIdValue
-          case maybeResult of
-            Just resultValue -> pure (Just resultValue)
-            Nothing -> do
+    deadlineSeconds = 4200 :: Double
+    go startTime = do
+      maybeResult <- readPublishedInferenceResultMaybe paths runtimeMode resultTopic requestIdValue
+      case maybeResult of
+        Just resultValue -> pure (Just resultValue)
+        Nothing -> do
+          nowTime <- getPOSIXTime
+          if realToFrac (nowTime - startTime) >= deadlineSeconds
+            then pure Nothing
+            else do
               threadDelay 100000
-              go (remainingAttempts - 1)
+              go startTime
 
 validateEdgePortConflictAndRediscovery :: Paths -> RuntimeMode -> IO ()
 validateEdgePortConflictAndRediscovery paths runtimeMode = do

@@ -127,9 +127,12 @@ clusterConfig:
   engine:
     modelCacheRoot: /model-cache
     # Sized to match the engine deployment's `modelCache.sizeLimit`
-    # (32 GiB) so the adapter-side LRU eviction stays under kubelet's
-    # ephemeral-storage threshold.
-    modelCacheQuotaBytes: 34359738368
+    # (64 GiB) so the adapter-side LRU eviction stays under kubelet's
+    # ephemeral-storage threshold. 64 GiB headroom is required because the
+    # diffusers engine caches large diffusers-format repos (Wan2.1-T2V-1.3B
+    # ships the multi-GB umt5-xxl text encoder) alongside SDXL in one engine
+    # cache; 32 GiB evicted the diffusers pod mid-bootstrap on linux-gpu.
+    modelCacheQuotaBytes: 68719476736
   coordinator:
     catalogSource: mounted-configmap
     daemonLocation: cluster-pod
@@ -174,8 +177,10 @@ engine:
     # `emptyDir` sizeLimit on the engine pod's `/model-cache` volume. The
     # adapter-side LRU eviction keeps the actual on-disk size under this
     # ceiling so kubelet never restarts the pod for ephemeral-storage
-    # exhaustion.
-    sizeLimit: 32Gi
+    # exhaustion. 64Gi accommodates the diffusers engine caching large
+    # diffusers-format repos (e.g. Wan2.1-T2V-1.3B with the umt5-xxl text
+    # encoder) alongside SDXL; 32Gi caused mid-bootstrap eviction on linux-gpu.
+    sizeLimit: 64Gi
   podDisruptionBudget:
     maxUnavailable: 1
 

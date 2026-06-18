@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+from typing import Any
 
 from adapters.common import (
     AdapterContext,
@@ -23,16 +24,36 @@ def transform(context: AdapterContext) -> ArtifactResult:
             return _validation_image()
         raise
     try:
+        import torch
         from diffusers import DiffusionPipeline
     except ImportError as exc:
         raise RuntimeError(
             "diffusers is not installed in this engine venv; "
             "install the prebuilt host wheels for the diffusers engine."
         ) from exc
-    pipeline = DiffusionPipeline.from_pretrained(str(weights_dir))
+    # Wave I real-output fix: diffusion pipelines must run on the GPU/MPS
+    # accelerator, not the default CPU placement. On CPU (fp32) SDXL never
+    # finishes inside the routed result-publish budget; the cohort lanes load
+    # in half precision and move the pipeline to the available device.
+    device = _preferred_torch_device(torch)
+    dtype = torch.float16 if device in {"cuda", "mps"} else torch.float32
+    pipeline = DiffusionPipeline.from_pretrained(str(weights_dir), torch_dtype=dtype)
+    pipeline = pipeline.to(device)
     if context.family == "video":
         return _render_video(pipeline, context.input_text)
     return _render_image(pipeline, context.input_text)
+
+
+def _preferred_torch_device(torch_module: Any) -> str:
+    mps_backend = getattr(getattr(torch_module, "backends", object()), "mps", None)
+    if mps_backend is not None and mps_backend.is_available():
+        return "mps"
+    cuda_available = getattr(
+        getattr(torch_module, "cuda", object()), "is_available", None
+    )
+    if cuda_available is not None and cuda_available():
+        return "cuda"
+    return "cpu"
 
 
 def _render_image(pipeline: object, prompt: str) -> ArtifactResult:

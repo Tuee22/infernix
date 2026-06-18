@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import zipfile
 from pathlib import Path
+from typing import Any
 
 from adapters.common import (
     AdapterContext,
@@ -12,6 +13,18 @@ from adapters.common import (
     run_setup_from_argv,
 )
 from adapters.model_cache import ModelCacheNotPopulated, get_model_path
+
+
+def _preferred_torch_device(torch_module: Any) -> str:
+    mps_backend = getattr(getattr(torch_module, "backends", object()), "mps", None)
+    if mps_backend is not None and mps_backend.is_available():
+        return "mps"
+    cuda_available = getattr(
+        getattr(torch_module, "cuda", object()), "is_available", None
+    )
+    if cuda_available is not None and cuda_available():
+        return "cuda"
+    return "cpu"
 
 
 def transform(context: AdapterContext) -> ArtifactResult:
@@ -33,15 +46,25 @@ def _generate_bark(context: AdapterContext) -> ArtifactResult:
         raise
     try:
         import scipy.io.wavfile
+        import torch
         from transformers import AutoProcessor, BarkModel
     except ImportError as exc:
         raise RuntimeError(
             "transformers/scipy are not installed in this engine venv; "
             "install the prebuilt host wheels for the Bark audio engine."
         ) from exc
+    # Wave I real-output fix: run Bark on the GPU/MPS accelerator instead of
+    # the default CPU placement so generation completes within the routed
+    # result-publish budget. Move the model and every tensor input to the
+    # device, leaving non-tensor processor entries (e.g. voice presets) intact.
+    device = _preferred_torch_device(torch)
     processor = AutoProcessor.from_pretrained(str(weights_dir))
-    model = BarkModel.from_pretrained(str(weights_dir))
+    model = BarkModel.from_pretrained(str(weights_dir)).to(device)
     inputs = processor(context.input_text)
+    inputs = {
+        key: (value.to(device) if hasattr(value, "to") else value)
+        for key, value in inputs.items()
+    }
     audio = model.generate(**inputs)
     sample_rate = int(model.generation_config.sample_rate)
     buffer = io.BytesIO()
@@ -63,6 +86,7 @@ def _separate_sources(context: AdapterContext) -> ArtifactResult:
             "install the prebuilt host wheels for the source-separation engine."
         ) from exc
     weights_dir = get_model_path(context.model_id)
+    device = _preferred_torch_device(torch)
     input_audio = download_demo_object(context.input_object_ref)
     audio_array, sample_rate = soundfile.read(
         io.BytesIO(input_audio),
@@ -81,7 +105,9 @@ def _separate_sources(context: AdapterContext) -> ArtifactResult:
         raise RuntimeError(
             f"unable to load source-separation model from {weights_dir}"
         ) from exc
-    stems = apply_model(model, waveform.unsqueeze(0))[0]
+    # Wave I real-output fix: run separation on the GPU/MPS accelerator; demucs
+    # `apply_model` moves the model and per-chunk tensors to the named device.
+    stems = apply_model(model, waveform.unsqueeze(0), device=device)[0]
     archive = io.BytesIO()
     with zipfile.ZipFile(archive, "w") as bundle:
         for index, source_name in enumerate(model.sources):

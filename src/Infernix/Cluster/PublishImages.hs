@@ -137,14 +137,22 @@ loginAttempts = 6
 pullVerifyAttempts :: Int
 pullVerifyAttempts = 6
 
+-- The repo-owned engine images carry a single very large CUDA venv layer (the
+-- vLLM engine's @poetry install --with cuda@ layer is ~20 GB). Harbor's
+-- registry is backed by the same in-cluster MinIO that the retained-state
+-- replay rehydrates with the model cache (~40 GB) at cluster-up, so a fresh
+-- 20 GB blob push contends with that replay and the registry intermittently
+-- stalls accepting the upload. Give the push a wide retry window (~25 min of
+-- backoff) so it outlasts the replay contention rather than aborting the whole
+-- cluster-up on a transient registry stall.
 pushAttempts :: Int
-pushAttempts = 8
+pushAttempts = 30
 
 pushRetryBaseDelayMicros :: Int
 pushRetryBaseDelayMicros = 5000000
 
 pushRetryMaxDelayMicros :: Int
-pushRetryMaxDelayMicros = 30000000
+pushRetryMaxDelayMicros = 90000000
 
 -- type CommandMonitorFactory = String -> IO (Maybe ProcessMonitor.CommandMonitor)
 publishChartImagesFile ::
