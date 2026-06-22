@@ -82,11 +82,12 @@ now writes typed manifests without a VM dependency. The canonical homes are
 
 On Linux substrates, `infernix internal materialize-linux-native-engines` bakes image-owned
 `/opt/infernix/engines/<adapterId>/` roots with typed manifests and smoke-validated runner
-entrypoints. Those roots are currently runner-contract payloads that parse the native worker
-argument shape, fail with exit 75 until the requested model cache contains a `.ready` sentinel,
-can emit a local artifact-file marker for Haskell-owned MinIO upload, and return the per-family
-result shape; Wave I replaces them with external native engine payloads before real-output
-sign-off.
+entrypoints. The image build now installs the native payload layer for llama.cpp, whisper.cpp,
+Basic Pitch's ONNX model, ONNX Runtime/CTranslate2 Python dependencies, faster-whisper, and
+Audiveris; generated wrappers fail with exit 75 until the requested model cache contains a `.ready`
+sentinel, can emit a local artifact-file marker for Haskell-owned MinIO upload, and delegate strict
+smoke checks to those baked payloads. Wave I still owns the full routed `linux-gpu` plus
+`linux-cpu` real-output sign-off.
 
 ## Generated Demo Config Contract
 
@@ -132,8 +133,8 @@ target shape is the three-role daemon model codified in
   `infernix-linux-cpu:local` image family while reading the staged `apple-silicon` substrate file
 - the direct `infernix service` command remains the Apple host engine-role entrypoint and
   consumes the generated engine-role metadata, pool/member assignments, result topic, and engine
-  bindings from the active `.dhall`. Raw batch-topic metadata remains a legacy compatibility
-  projection until deletion-ledger cleanup removes the old surface
+  bindings from the active `.dhall`. Engine-role metadata is derived from the validated
+  pool/member graph; raw batch-topic metadata is not part of the supported surface
 - `/api/publication` keeps `apiUpstream.mode: cluster-demo` for the stable routed browser host,
   reports `daemonLocation: cluster-pod` for the in-cluster coordinator daemon on every substrate,
   reports `inferenceExecutorLocation: control-plane-host` on Apple, and distinguishes the

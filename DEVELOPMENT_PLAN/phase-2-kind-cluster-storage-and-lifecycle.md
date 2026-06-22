@@ -522,7 +522,7 @@ Make bootstrap scripts narrow stage-0 launchers and move lifecycle responsibilit
   Haskell integration, routed Playwright E2E, split-daemon Apple inference, and repeated internal
   retained-state cluster `down` or `up` cycles on the legacy hardware; this is no longer a
   current proof point
-- final the recorded validation Apple `status` after explicit bootstrap `down` had reported
+- the recorded validation Apple `status` after explicit bootstrap `down` had reported
   `clusterPresent: False`, `lifecycleStatus: idle`, and `lifecyclePhase: cluster-absent`, with
   retained `./.build/`, `./.data/`, local images, and the Apple host binary still present, on
   the legacy hardware; this is no longer a current proof point
@@ -581,26 +581,26 @@ materialized in Phase 1 Sprint 1.11.
 
 ### Remaining Work
 
-Env-side retirement landed (the recorded validation):
+Env-side retirement landed on the recorded validation:
 
-- **`INFERNIX_HOST_KIND_ROOT` legacy in `src/Infernix/Cluster.hs.resolveHostKindRoot`.**
+- **`INFERNIX_HOST_KIND_ROOT` read retired in `src/Infernix/Cluster.hs.resolveHostKindRoot`.**
   The supported `Paths.kindRoot` field is already derived from
   `HostConfig.hostFilesystem.hostKindRoot` in
   `Infernix.Config.discoverPaths`, so `resolveHostKindRoot` now flows
   through `resolveHostRepoPath paths (kindRuntimeRoot paths runtimeMode)`
   without consulting `lookupEnv`.
-- **`INFERNIX_HOST_REPO_ROOT` legacy in `Cluster.hs.resolveHostRepoRoot`
+- **`INFERNIX_HOST_REPO_ROOT` read retired in `Cluster.hs.resolveHostRepoRoot`
   and `kindUsesHostBindMounts`.** Both now read
   `HostConfig.hostFilesystem.hostRepoRoot` indirectly via
   `Paths.repoRoot` and the typed `Config.controlPlaneContext paths`
   check; the env-var consultation is deleted.
-- **`HOSTNAME` env legacy in `Cluster.hs.currentLauncherContainerName`.**
+- **`HOSTNAME` env read retired in `Cluster.hs.currentLauncherContainerName`.**
   The supported in-container hostname discovery now reads
   `/etc/hostname` directly (Docker writes the container id there at
   startup); the `hostname` binary stays as the fallback path. New
   helper `readEtcHostnameMaybe` provides the typed file-backed
   alternative.
-- **`getEnvironment` whole-env captures legacy in
+- **`getEnvironment` whole-env captures retired in
   `Cluster.hs.runCommandWithInput`, `Cluster.hs.tryCommand`, and
   `ProcessMonitor.hs.tryCommandMonitored`.** Each now derives the
   subprocess `PATH` from the staged host manifest's `toolPaths.*`
@@ -617,7 +617,7 @@ Env-side retirement landed (the recorded validation):
   prior hardcoded-only PATH constant
   (`/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`)
   was insufficient on Apple Silicon because Homebrew installs at
-  `/opt/homebrew/bin`, and was surfaced by the recorded validation Apple
+  `/opt/homebrew/bin`, and was surfaced by the recorded-validation Apple
   cohort rerun (`kind get clusters` failed with "exec: docker:
   executable file not found in $PATH"). The manifest-derived PATH
   helper fixed it without re-introducing env-var consumption.
@@ -625,7 +625,7 @@ Env-side retirement landed (the recorded validation):
   `src/Infernix/Cluster.hs`) now passes `-m 30` to `curl`** so the
   bounded 60-attempt × 5s retry loop actually surfaces a typed
   "Harbor registry never became ready" error within ~30 minutes
-  when the host-side NodePort target is unreachable. The the recorded validation
+  when the host-side NodePort target is unreachable. The recorded-validation
   Apple cohort rerun surfaced an indefinite hang when an unrelated
   host process (a VSCode Helper plugin worker) was squatting on
   `127.0.0.1:30002`, leaving the `cluster up` Harbor publication
@@ -660,7 +660,7 @@ Env-side retirement landed (the recorded validation):
   `linuxOuterContainerUnitTestFixture` `HostConfig.hostRepoRoot`
   field directly; the assertion compares against the typed fixture's
   `realRepoRoot` instead.
-- **`Engines/AppleSilicon.hs` `getEnvironment` capture legacy
+- **`Engines/AppleSilicon.hs` `getEnvironment` capture retired
   (code-side).** The host setup entrypoint invocation now matches the
   supported Python worker setup path: Poetry virtualenv placement is
   owned by `python/poetry.toml`, the adapter install root is passed as
@@ -680,8 +680,8 @@ reads remain.
 ## Remaining Work
 
 None. Sprints 2.1–2.13 are `Done`. Sprint 2.13 closed the env reads and HostTool routing:
-5 env reads legacy in `Cluster.hs`, 1 `getEnvironment` legacy in `ProcessMonitor.hs`, the
-Apple setup `getEnvironment` capture legacy in `Engines/AppleSilicon.hs`,
+5 env reads retired in `Cluster.hs`, 1 `getEnvironment` read retired in `ProcessMonitor.hs`, the
+Apple setup `getEnvironment` capture retired in `Engines/AppleSilicon.hs`,
 `engineCommandOverridesFromEnvironment` deleted, supporting unit-test fixture rewired, shared
 cluster command helpers resolve known tools through the staged host manifest, and
 `Cluster/PublishImages.hs` receives resolved `docker` + `skopeo` commands through

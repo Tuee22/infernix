@@ -336,7 +336,7 @@ Rules:
 - On Apple Silicon, operators do not use Compose as a user-facing launcher for ordinary CLI work.
   Host-native routed E2E uses host `npm exec` Playwright fed by the same typed fixture against the
   published localhost edge port and is covered by Apple cohort validation batches. Phase 3 Sprint 3.10
-  (the recorded validation) legacy the previous dedicated `infernix-playwright:local` image and the
+  (the recorded validation) retired the previous dedicated `infernix-playwright:local` image and the
   `docker compose run --rm playwright` invocation; Linux substrates now run Playwright in-container
   inside the substrate image via `npm --prefix web exec -- playwright test ...`.
 - On Linux CPU, host prerequisites stop at Docker Engine plus the Docker buildx and Compose
@@ -811,6 +811,9 @@ Rules:
   Tests pass typed `HostConfig` / `ClusterConfig` / `SecretsConfig` records as fixtures.
 - No Haskell module may call `proc "<bare-command-name>"` where the command name resolves through
   `$PATH`. Every external invocation reads the absolute path from `HostConfig.toolPaths.*`.
+  Haskell modules also must not call `findExecutable` or `findExecutables` to discover
+  manifest-owned tools; bootstrap-adjacent fallbacks use fixed absolute candidates from
+  `Infernix.HostTools`.
 - No bash / shell script may consume an inherited env var. Bootstrap scripts derive every variable
   from `${BASH_SOURCE[0]}` (script location), `/etc/passwd` (operator home), or literal absolute
   constants written into the script. Each script's first line resets `PATH=/usr/bin:/bin` so the
@@ -868,8 +871,8 @@ Rules:
   invocation in Haskell or shell.
 - Every Haskell invocation reads the absolute path from the loaded `HostConfig` record (the
   canonical helper is `runHostTool :: HostConfig -> HostTool -> [String] -> IO a`). Bare
-  `proc "<name>"` calls are forbidden and rejected by the Haskell-style lint gate added in
-  Phase 6 Sprint 6.28.
+  `proc "<name>"` calls and direct `findExecutable` / `findExecutables` discovery are forbidden
+  and rejected by the Haskell-style lint gate added in Phase 6 Sprint 6.28.
 - Every bootstrap-script invocation uses either a hardcoded absolute-path constant (for the small
   set of commands that precede the launcher binary — `apt-get`, `sudo`, `docker`, `ghcup` paths
   under the operator's `/etc/passwd`-derived home) or delegates to the launcher binary after it

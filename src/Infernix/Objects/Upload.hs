@@ -3,6 +3,7 @@
 module Infernix.Objects.Upload
   ( ObjectUploadConfig (..),
     putObjectWithPresignedUrl,
+    getObjectWithPresignedUrl,
     objectExistsViaPresignedGet,
   )
 where
@@ -21,6 +22,7 @@ import Network.HTTP.Client
     method,
     parseRequest,
     requestBody,
+    responseBody,
     responseStatus,
   )
 import Network.HTTP.Types.Status (statusCode)
@@ -55,6 +57,21 @@ putObjectWithPresignedUrl uploadConfig manager now objectRef payload = do
   if responseCode >= 200 && responseCode < 300
     then pure ()
     else fail ("MinIO artifact upload returned HTTP " <> show responseCode)
+
+getObjectWithPresignedUrl :: ObjectUploadConfig -> Manager -> UTCTime -> Contracts.ObjectRef -> IO ByteString.ByteString
+getObjectWithPresignedUrl uploadConfig manager now objectRef = do
+  request <-
+    parseRequest
+      ( Text.unpack
+          ( Presigned.unPresignedUrl
+              (Presigned.presignedGetUrl (presignedUrlConfig uploadConfig) now objectRef)
+          )
+      )
+  response <- httpLbs request manager
+  let responseCode = statusCode (responseStatus response)
+  if responseCode >= 200 && responseCode < 300
+    then pure (LazyByteString.toStrict (responseBody response))
+    else fail ("MinIO artifact download returned HTTP " <> show responseCode)
 
 -- | Probe whether an object exists by issuing a presigned GET and treating an
 -- HTTP 200 as present. Keeps the @Infernix.Objects.Presigned@ dependency inside

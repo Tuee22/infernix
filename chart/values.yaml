@@ -88,10 +88,10 @@ service:
 
 # Phase 7 Sprint 7.7: the supported three-role daemon split is now the
 # default cluster topology. `daemonSplit.enabled = true` activates the
-# coordinator + engine + demo Deployments below; the per-role `enabled`
-# flags stay so operators can disable individual roles for production
-# (where only the engine role runs in the supported `demo_ui = false`
-# shape).
+# coordinator + engine + demo Deployment templates below. Current
+# generated values keep the coordinator and engine roles enabled for
+# production `demo_ui = false` deployments; only `demo.enabled` follows
+# the demo UI flag.
 daemonSplit:
   enabled: true
 

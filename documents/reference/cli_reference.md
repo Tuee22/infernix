@@ -10,7 +10,7 @@
 
 ### `service`
 
-- `infernix service [--role coordinator|engine] [--engine-name NAME] [--config PATH]` - starts the long-running production daemon; it binds no HTTP port and consumes the active `.dhall` request and result topics. The optional `--role` arg overrides the substrate dhall's `daemonRole` field for split coordinator/engine Deployments, `--engine-name` selects a stable engine member id first with a legacy per-engine fallback, and `--config` points the daemon at an explicit substrate file.
+- `infernix service [--role coordinator|engine] [--engine-name NAME] [--config PATH]` - starts the long-running production daemon; it binds no HTTP port and consumes the active `.dhall` request and result topics. The optional `--role` arg overrides the substrate dhall's `daemonRole` field for split coordinator/engine Deployments, `--engine-name` selects a stable engine member id, and `--config` points the daemon at an explicit substrate file.
 
 ### `cluster`
 
@@ -59,6 +59,7 @@
 - `infernix internal materialize-linux-native-engines` - materializes the allowlisted Linux native runner roots under `/opt/infernix/engines/<adapterId>/` for substrate images
 - `infernix internal demo-config load PATH` - loads one generated demo config and prints the rendered model listing
 - `infernix internal demo-config validate PATH` - validates one generated demo config file
+- `infernix internal dhall-schema host|cluster|secrets|substrate` - prints the Dhall type expression reflected from the binary's decoder for one packaged schema
 - `infernix internal pulsar-roundtrip DEMO_CONFIG_PATH MODEL_ID INPUT_TEXT` - publishes one inference request through Pulsar and waits for the matching result
 <!-- infernix:command-registry:end -->
 
@@ -91,9 +92,8 @@
   preflight cannot complete
 - `infernix service` is the production daemon. It binds no HTTP port, consumes the active
   `.dhall` request/result topics, engine bindings, and engine-pool assignment metadata, and uses
-  the Pulsar transport configured for the active substrate. `--engine-name NAME` now selects a
-  stable engine member id first and falls back to the legacy per-engine `engineDaemons` selector
-  while the compatibility projection is retired; `--config PATH` is the supported explicit
+  the Pulsar transport configured for the active substrate. `--engine-name NAME` selects a stable
+  engine member id from the derived pool/member graph; `--config PATH` is the supported explicit
   substrate-file override for targeted daemon validation and diagnostics
 - `infernix-demo serve` is the only repo-owned demo HTTP host in this repository; the routed
   cluster-resident demo workload and direct `serve` both expose the same Haskell `/api` contract

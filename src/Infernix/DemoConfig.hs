@@ -30,7 +30,6 @@ import Infernix.Models
     engineMemberRequestTopics,
     engineMembersForMode,
     enginePoolsForMode,
-    hostBatchTopicForMode,
     requestTopicsForMode,
     resultTopicForMode,
   )
@@ -198,7 +197,6 @@ coordinatorDaemonConfig runtimeMode =
       daemonConfigMemberId = Nothing,
       daemonConfigRequestTopics = requestTopicsForMode runtimeMode,
       daemonConfigResultTopic = resultTopicForMode runtimeMode,
-      daemonConfigHostBatchTopic = hostBatchTopicForMode runtimeMode,
       daemonConfigPulsarConnectionMode = ConfiguredTransport,
       daemonConfigConsumerSubscriptionType = Just ConsumerShared
     }
@@ -225,7 +223,6 @@ engineDaemonConfigForMember runtimeMode pools member =
       daemonConfigMemberId = Just (engineMemberId member),
       daemonConfigRequestTopics = engineMemberRequestTopics runtimeMode pools member,
       daemonConfigResultTopic = resultTopicForMode runtimeMode,
-      daemonConfigHostBatchTopic = Nothing,
       daemonConfigPulsarConnectionMode =
         if runtimeMode == AppleSilicon
           then PublicationEdgeAutoDiscovery
@@ -275,10 +272,6 @@ validateDemoConfig demoConfig
       Left "active daemon role must match either the coordinator or engine metadata"
   | invalidDaemonConfig (coordinatorDaemon demoConfig) =
       Left "coordinator metadata must declare role, location, request topics, and result topic"
-  | null (engineDaemons demoConfig) =
-      Left "engine metadata must not be empty"
-  | any invalidDaemonConfig (engineDaemons demoConfig) =
-      Left "every engine metadata entry must declare role, location, request topics, and result topic"
   | null (enginePools demoConfig) =
       Left "enginePools must not be empty"
   | null (engineMembers demoConfig) =
@@ -319,12 +312,14 @@ validateDemoConfig demoConfig
       Left ("engine pools must set maxInflightPerMember greater than zero: " <> intercalate ", " invalidInflightPoolIds)
   | unroutableModelIds /= [] =
       Left ("models without eligible engine members: " <> intercalate ", " unroutableModelIds)
+  | null (engineDaemons demoConfig) =
+      Left "engine metadata must not be empty"
+  | any invalidDaemonConfig (engineDaemons demoConfig) =
+      Left "every engine metadata entry must declare role, location, request topics, and result topic"
   | engineDaemonsWithoutMembers /= [] =
       Left ("engine daemons reference unknown member ids: " <> intercalate ", " engineDaemonsWithoutMembers)
   | configRuntimeMode demoConfig == AppleSilicon && isNothing primaryEngineDaemon =
       Left "apple-silicon configs must include engine metadata"
-  | configRuntimeMode demoConfig == AppleSilicon && isNothing (daemonConfigHostBatchTopic (coordinatorDaemon demoConfig)) =
-      Left "apple-silicon coordinator metadata must declare a legacy handoff topic fallback"
   | configRuntimeMode demoConfig == AppleSilicon && maybe True (null . daemonConfigRequestTopics) primaryEngineDaemon =
       Left "apple-silicon engine metadata must consume assigned pool topics"
   | any runtimeMismatch (models demoConfig) =

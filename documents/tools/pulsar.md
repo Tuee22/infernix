@@ -93,10 +93,9 @@ persistent://infernix/demo/inference.batch.<mode>.member.<memberId>.model.<model
 ```
 
 The first form is the scalable pool path; the second form is the pinned-member path. The current
-implementation derives coordinator pool handoff from this graph. The earlier
-`inference.batch.<mode>`, `inference.batch.<mode>.<engine>`, and
-`inference.batch.apple-silicon.host` helpers remain only as legacy compatibility surfaces while the
-deletion-ledger cleanup retires old chart and daemon-selection assumptions.
+implementation derives coordinator pool handoff and engine subscriptions from this graph. The
+earlier `inference.batch.<mode>`, `inference.batch.<mode>.<engine>`, and
+`inference.batch.apple-silicon.host` helper topics are removed from supported routing.
 
 The unit suite already validates invalid graph rejection and derived topic selection. Current Apple
 integration validates the pinned-member path on a real broker by starting one

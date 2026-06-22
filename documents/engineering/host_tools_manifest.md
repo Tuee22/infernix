@@ -18,7 +18,8 @@
   script (for the small set of commands that run before the launcher binary exists) or by
   delegating to the binary after it does.
 - No code path resolves a command name through the operator's shell search path. The
-  Haskell-style lint gate rejects `proc "<bare-name>"` for every command listed in the manifest.
+  Haskell-style lint gate rejects both `proc "<bare-name>"` and direct
+  `findExecutable` / `findExecutables` discovery for manifest-owned host tools.
 
 ## Schema
 
@@ -110,7 +111,7 @@ host architecture (`amd64` or `arm64`) used by the `linux-cpu` publication selec
 | npm | `toolPaths.npm` | `/opt/homebrew/bin/npm` | baked: `/usr/local/bin/npm` |
 | node | `toolPaths.node` | `/opt/homebrew/bin/node` | baked: `/usr/local/bin/node` |
 | python3 | `toolPaths.python3` | `/opt/homebrew/bin/python3.12` | `/usr/bin/python3` |
-| poetry | `toolPaths.poetry` | `${HOME}/.local/bin/poetry` | baked: `/opt/poetry/bin/poetry` |
+| poetry | `toolPaths.poetry` | `${HOME}/.local/bin/poetry` | baked: `/opt/poetry/bin/poetry`; manifestless fallback checks fixed `/opt/poetry/bin/poetry`, `/usr/local/bin/poetry`, `/usr/bin/poetry` only |
 | protoc | `toolPaths.protoc` | `/opt/homebrew/bin/protoc` | `/usr/bin/protoc` |
 | git | `toolPaths.git` | `/opt/homebrew/bin/git` | `/usr/bin/git` |
 | tar | `toolPaths.tar` | `/usr/bin/tar` | `/usr/bin/tar` |
@@ -184,7 +185,8 @@ When a sprint introduces a new external CLI:
 2. Update the materialization helper in `src/Infernix/CLI.hs` to seed the field with the
    supported default for each execution context.
 3. Use `runHostTool hostConfig <toolName> args` (helper in `src/Infernix/HostTools.hs`) at the
-   call site. Never write `proc "<bare-name>"` directly.
+   call site. Never write `proc "<bare-name>"` directly or call `findExecutable` /
+   `findExecutables` to discover a manifest-owned tool.
 4. Document the field + supported defaults in this manifest doc (the per-tool table above).
 5. The Haskell-style lint gate (`disallowedProcCommands`) recognizes the new name automatically
    because it reads the schema field list.
@@ -193,9 +195,12 @@ When a sprint introduces a new external CLI:
 
 - `cabal build all` — every decoder field must exist in the schema.
 - `infernix test lint` — the Haskell-style lint gate rejects any `proc "<bare-name>"` whose name
-  matches a `ToolPaths` field. Adding a new command without adding the schema field first fails
-  this check.
-- `grep -rEn '\bproc "(docker|kubectl|helm|kind|cabal|ghc|ghcup|npm|node|python3|poetry|protoc|git|tar|curl|apt-get|brew|skopeo|sudo|systemctl)"' src/ test/` returns zero matches.
+  matches a `ToolPaths` field, and rejects `findExecutable` / `findExecutables` outside the lint
+  module's own token list. Adding a new command without adding the schema field first fails this
+  check.
+- `grep -rEn '\bproc "(docker|kubectl|helm|kind|cabal|ghc|ghcup|npm|node|python3|poetry|protoc|git|tar|curl|apt-get|brew|skopeo|sudo|systemctl)"' src/ test/` returns zero matches, and
+  `rg -n 'findExecutable|findExecutables' Setup.hs src test` returns only the lint module's forbidden-token
+  list.
 
 ## Cross-References
 

@@ -14,7 +14,8 @@
   `dhall/InfernixSecrets.dhall` (paths to secret files, never values).
 - The `dhall` Haskell library is the only Dhall reader. There is no `dhall-to-json` bridge.
 - Every external command the project ever invokes is named in `InfernixHost.dhall` by absolute
-  path; no `proc "<bare-name>"` in Haskell, no bare-name invocations in shell.
+  path; no `proc "<bare-name>"` or `findExecutable` / `findExecutables` discovery in Haskell, no
+  bare-name invocations in shell.
 - No Haskell module calls `lookupEnv` / `getEnv` / `getEnvironment` / `setEnv` / `unsetEnv`.
 - No `chart/templates/deployment-*.yaml` carries an `env:` block; pods mount the cluster Dhall
   ConfigMap + the cluster Secret instead.
@@ -168,7 +169,8 @@ contract.
 ## Validation
 
 - `infernix lint files` rejects any new `lookupEnv` / `getEnv` / `proc "<bare-name>"` outside the
-  documented exception list.
+  documented exception list, and `infernix test lint` rejects direct `findExecutable` /
+  `findExecutables` discovery outside the lint module's own token list.
 - `infernix lint chart` rejects any `env:` block in
   `chart/templates/deployment-{coordinator,engine,demo}.yaml`.
 - `infernix lint docs` rejects governed-doc language that presents project-prefixed env names or

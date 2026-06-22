@@ -104,6 +104,7 @@ def _download_hugging_face_snapshot(repo_id: str, destination: Path) -> None:
     from huggingface_hub import snapshot_download
     from huggingface_hub.errors import HfHubHTTPError, LocalEntryNotFoundError
 
+    allow_patterns = _snapshot_allow_patterns(repo_id)
     ignore_patterns = [
         ".gitattributes",
         "*.md",
@@ -114,6 +115,7 @@ def _download_hugging_face_snapshot(repo_id: str, destination: Path) -> None:
         "*.h5",
         "*.msgpack",
         "*.onnx",
+        "*.onnx_data",
         "*.ot",
         "*.tflite",
     ]
@@ -126,11 +128,16 @@ def _download_hugging_face_snapshot(repo_id: str, destination: Path) -> None:
     last_error: Exception | None = None
     for attempt in range(10):
         try:
+            download_options: dict[str, Any] = {
+                "repo_id": repo_id,
+                "revision": "main",
+                "local_dir": str(destination),
+                "ignore_patterns": ignore_patterns,
+            }
+            if allow_patterns is not None:
+                download_options["allow_patterns"] = allow_patterns
             snapshot_download(
-                repo_id=repo_id,
-                revision="main",
-                local_dir=str(destination),
-                ignore_patterns=ignore_patterns,
+                **download_options,
             )
             return
         except (LocalEntryNotFoundError, HfHubHTTPError, OSError) as error:
@@ -138,6 +145,26 @@ def _download_hugging_face_snapshot(repo_id: str, destination: Path) -> None:
             time.sleep(min(60.0, 5.0 * (2.0**attempt)))
     if last_error is not None:
         raise last_error
+
+
+def _snapshot_allow_patterns(repo_id: str) -> list[str] | None:
+    normalized_repo_id = repo_id.lower()
+    if normalized_repo_id == "stabilityai/sdxl-turbo":
+        return [
+            "model_index.json",
+            "scheduler/*",
+            "text_encoder/config.json",
+            "text_encoder/model.fp16.safetensors",
+            "text_encoder_2/config.json",
+            "text_encoder_2/model.fp16.safetensors",
+            "tokenizer/*",
+            "tokenizer_2/*",
+            "unet/config.json",
+            "unet/diffusion_pytorch_model.fp16.safetensors",
+            "vae/config.json",
+            "vae/diffusion_pytorch_model.fp16.safetensors",
+        ]
+    return None
 
 
 def _download_single_payload(download_url: str, destination: Path) -> None:

@@ -188,14 +188,15 @@ Current state:
   OMR artifact families. The shared `run_context_adapter` boundary is unchanged; an artifact-adapter
   seam returns an object reference for the non-text families rather than acting as a raw stdin echo
   path.
-- Current Linux native roots are runner-contract payloads produced by `infernix internal
-  materialize-linux-native-engines`; Wave I replaces them with external native engine payloads
-  before the real-output cohort gate. The runner-contract payloads use the same cache-readiness
-  contract as real native payloads: when `--model-cache-root` is present, they return exit 75
-  until `<model-cache-root>/<model-id>/.ready` exists. Native artifact-producing processes receive
-  non-secret cache and bucket hints plus an optional `--output-dir`; if they print
-  `infernix-native-artifact-file:<path>`, the Haskell worker performs the credentialed MinIO upload
-  and returns the object reference.
+- Current Linux native roots are runtime-backed wrappers produced by `infernix internal
+  materialize-linux-native-engines` and baked into the Linux images with the native payload layer.
+  They use the same cache-readiness contract as the worker: when `--model-cache-root` is present,
+  they return exit 75 until `<model-cache-root>/<model-id>/.ready` exists, then invoke the baked
+  llama.cpp, whisper.cpp, ONNX Runtime/CTranslate2, faster-whisper, or Audiveris payload as
+  appropriate. Native artifact-producing processes receive non-secret cache and bucket hints plus
+  an optional `--output-dir`; if they print `infernix-native-artifact-file:<path>`, the Haskell
+  worker performs the credentialed MinIO upload and returns the object reference. Wave I still owns
+  the routed full-suite proof against live MinIO-backed real output.
 
 Adapters do not open network sockets and do not subscribe to the topic transport themselves; the
 Haskell worker owns those boundaries and treats the adapter as a pure request-to-response process.

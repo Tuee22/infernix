@@ -65,8 +65,7 @@ The materialization flow is:
    `infernix-engine-artifacts`.
 3. Materialize into a temporary local directory under the active engine-install
    root.
-4. Validate the manifest contract today; run the manifest's real smoke/load command before rename
-   once the Wave I materialization lane lands.
+4. Validate the manifest contract and run the manifest's smoke/load command before rename.
 5. Rename atomically into `./.data/engines/<adapterId>/` on Apple or into the
    image-owned `/opt/infernix/engines/<adapterId>/` root on Linux.
 6. Ack the materialization work only after the local root is complete.

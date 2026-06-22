@@ -7,6 +7,8 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
+import traceback
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -119,6 +121,7 @@ def _decode_request() -> inference_pb2.WorkerRequest:
 
 
 _PROTOBUF_STDOUT_FD: int | None = None
+_ADAPTER_LOG_PATH: Path | None = None
 
 
 def _isolate_protobuf_stdout() -> None:
@@ -130,30 +133,33 @@ def _isolate_protobuf_stdout() -> None:
     ``Unknown wire type``). Inference backends such as vLLM log copiously to
     stdout while constructing the engine, which lands ahead of the protobuf and
     breaks the decode. Duplicate the real stdout to a private fd that
-    ``_write_response`` targets, then point fd 1 at ``/dev/null`` so every other
-    stdout write — Python or native C/CUDA — is discarded away from the frame.
+    ``_write_response`` targets, then point fd 1 at an adapter-owned temporary
+    file so every other stdout write — Python or native C/CUDA — stays away from
+    the frame.
 
-    Both fd 1 and fd 2 are pointed at ``/dev/null``: the worker captures the
+    Both fd 1 and fd 2 are pointed at the temporary file: the worker captures the
     adapter's stdout AND stderr on pipes it does not drain until the response
     arrives, and vLLM logs copiously to both while constructing the engine, so
     leaving either fd on its pipe lets the buffer fill and deadlocks the engine
     on ``write`` mid-construction (observed as fd 2 / stderr blocking on
     ``anon_pipe_write``). The serialized response — including any adapter error,
     which is caught and returned as a ``WorkerResponse`` rather than printed —
-    travels on the saved real-stdout fd, so discarding both streams loses only
-    backend log chatter. Configuration doctrine forbids env toggles (e.g.
+    travels on the saved real-stdout fd. Failed responses include a bounded tail
+    of the backend log so engine-core errors keep their root cause without
+    risking pipe deadlocks. Configuration doctrine forbids env toggles (e.g.
     ``VLLM_LOGGING_LEVEL``), so this is enforced structurally at the fd boundary.
     """
-    global _PROTOBUF_STDOUT_FD
+    global _ADAPTER_LOG_PATH, _PROTOBUF_STDOUT_FD
     if _PROTOBUF_STDOUT_FD is not None:
         return
     sys.stdout.flush()
     sys.stderr.flush()
     _PROTOBUF_STDOUT_FD = os.dup(1)
-    discard_fd = os.open(os.devnull, os.O_WRONLY)
-    os.dup2(discard_fd, 1)
-    os.dup2(discard_fd, 2)
-    os.close(discard_fd)
+    log_fd, log_path = tempfile.mkstemp(prefix="infernix-adapter-", suffix=".log")
+    _ADAPTER_LOG_PATH = Path(log_path)
+    os.dup2(log_fd, 1)
+    os.dup2(log_fd, 2)
+    os.close(log_fd)
 
 
 def _write_response(response: inference_pb2.WorkerResponse) -> None:
@@ -163,6 +169,48 @@ def _write_response(response: inference_pb2.WorkerResponse) -> None:
         return
     sys.stdout.buffer.write(payload)
     sys.stdout.buffer.flush()
+
+
+def _adapter_backend_log_tail(max_bytes: int = 12000) -> str:
+    if _ADAPTER_LOG_PATH is None:
+        return ""
+    try:
+        with _ADAPTER_LOG_PATH.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            handle.seek(max(0, size - max_bytes), os.SEEK_SET)
+            payload = handle.read()
+    except OSError:
+        return ""
+    text = payload.decode("utf-8", errors="replace").strip()
+    if not text:
+        return ""
+    if size > max_bytes:
+        return "[backend log truncated]\n" + text
+    return text
+
+
+def _adapter_error_message(exc: Exception) -> str:
+    message_parts = [
+        f"{type(exc).__name__}: {exc}",
+        "Python traceback:",
+        "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)).strip(),
+    ]
+    backend_tail = _adapter_backend_log_tail()
+    if backend_tail:
+        message_parts.extend(["Backend log tail:", backend_tail])
+    return "\n".join(part for part in message_parts if part)
+
+
+def _cleanup_adapter_log() -> None:
+    global _ADAPTER_LOG_PATH
+    if _ADAPTER_LOG_PATH is None:
+        return
+    try:
+        _ADAPTER_LOG_PATH.unlink(missing_ok=True)
+    except OSError:
+        pass
+    _ADAPTER_LOG_PATH = None
 
 
 def _adapter_error_code(exc: Exception) -> str:
@@ -186,12 +234,14 @@ def run_context_adapter(transform: Callable[[AdapterContext], str]) -> int:
     except Exception as exc:  # pragma: no cover - surfaced through worker tests
         error_response = inference_pb2.WorkerResponse(
             error_code=_adapter_error_code(exc),
-            error_message=str(exc),
+            error_message=_adapter_error_message(exc),
         )
         _write_response(error_response)
+        _cleanup_adapter_log()
         return 0
     response = inference_pb2.WorkerResponse(output_text=output_text)
     _write_response(response)
+    _cleanup_adapter_log()
     return 0
 
 
@@ -227,12 +277,14 @@ def run_artifact_adapter(transform: Callable[[AdapterContext], ArtifactResult]) 
     except Exception as exc:  # pragma: no cover - surfaced through worker tests
         error_response = inference_pb2.WorkerResponse(
             error_code=_adapter_error_code(exc),
-            error_message=str(exc),
+            error_message=_adapter_error_message(exc),
         )
         _write_response(error_response)
+        _cleanup_adapter_log()
         return 0
     response = inference_pb2.WorkerResponse(object_ref=object_ref)
     _write_response(response)
+    _cleanup_adapter_log()
     return 0
 
 

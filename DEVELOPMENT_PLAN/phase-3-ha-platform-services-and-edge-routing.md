@@ -472,7 +472,7 @@ INFERNIX_PLAYWRIGHT_* / INFERNIX_EXPECT_* reads remain.
 
 Closed validation:
 
-- **Linux in-container Playwright E2E proof point the recorded validation (legacy hardware).** The
+- **Linux in-container Playwright E2E proof point on the recorded validation (legacy hardware).** The
   clean-env compose-run command
   `env -i LAUNCHER_IMAGE=infernix-linux-gpu:local /usr/bin/docker compose --project-name infernix-linux-gpu --file compose.yaml run --rm infernix infernix test e2e`
   had reconciled the live `linux-gpu` cluster, ran Playwright inside the
@@ -594,7 +594,7 @@ workers dialed `localhost` literally.
     `clusterPresent: False`, `lifecycleStatus: idle`,
     `lifecyclePhase: cluster-absent`.
 
-- **`infernix test all` Apple cohort residual.** The the recorded validation
+- **`infernix test all` Apple cohort residual.** The recorded-validation
   Apple `cluster up → status → cluster down → status` cycle above is
   the validated platform proof point. The full `test all` integration
   layer additionally exercises a clean-state cluster down + cluster
@@ -602,7 +602,7 @@ workers dialed `localhost` literally.
   corruption issue (the previous instance's partial `/pgdata/pg18`
   tree, when copied back from the retained host directory into a
   fresh Kind worker, causes `postgres-startup` to crash with an
-  initialization error). The supported fix landed the recorded validation in
+  initialization error). The supported fix landed on the recorded validation in
   `src/Infernix/Cluster.hs`: `isPatroniManagedClaim` filters operator-
   managed Patroni claims (`harbor-postgresql-*`,
   `keycloak-postgresql-*`) out of `syncClaimDirectoriesFromOwningNodes`

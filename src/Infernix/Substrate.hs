@@ -1,11 +1,13 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TypeApplications #-}
 
 module Infernix.Substrate
   ( decodeSubstrateConfigFile,
     demoConfigGeneratedBanner,
     demoConfigGeneratedBannerLine,
     encodeSubstrateConfig,
+    renderSubstrateConfigSchema,
     renderSubstrateConfig,
     resolveRuntimeModeFromSubstrateFile,
   )
@@ -13,14 +15,14 @@ where
 
 import Control.Exception (SomeException, displayException, try)
 import Data.ByteString.Lazy.Char8 qualified as LazyChar8
-import Data.Char (toLower)
+import Data.Char (isAlphaNum, toLower)
 import Data.List (intercalate)
-import Data.Maybe (listToMaybe, maybeToList)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Dhall qualified
 import Dhall.Core qualified as DhallCore
 import GHC.Generics (Generic)
+import Infernix.DhallSchema.Reflection (renderDecoderExpected)
 import Infernix.Types
 
 demoConfigGeneratedBannerLine :: String
@@ -37,19 +39,9 @@ decodeSubstrateConfigFile :: FilePath -> IO DemoConfig
 decodeSubstrateConfigFile filePath = do
   decodedValue <- try (Dhall.inputFile Dhall.auto filePath :: IO DhallDemoConfig)
   case decodedValue of
-    Left err -> do
-      legacyDecodedValue <-
-        ( try (Dhall.inputFile Dhall.auto filePath :: IO LegacyDhallDemoConfig) ::
-            IO (Either SomeException LegacyDhallDemoConfig)
-        )
-      case legacyDecodedValue of
-        Left _ ->
-          ioError
-            (userError ("invalid generated substrate Dhall: " <> displayException (err :: SomeException)))
-        Right legacyRawConfig ->
-          case legacyDemoConfigFromDhall legacyRawConfig of
-            Left message -> ioError (userError ("invalid generated substrate Dhall: " <> message))
-            Right demoConfig -> pure demoConfig
+    Left err ->
+      ioError
+        (userError ("invalid generated substrate Dhall: " <> displayException (err :: SomeException)))
     Right rawConfig ->
       case demoConfigFromDhall rawConfig of
         Left message -> ioError (userError ("invalid generated substrate Dhall: " <> message))
@@ -59,6 +51,10 @@ resolveRuntimeModeFromSubstrateFile :: FilePath -> IO RuntimeMode
 resolveRuntimeModeFromSubstrateFile filePath =
   configRuntimeMode <$> decodeSubstrateConfigFile filePath
 
+renderSubstrateConfigSchema :: Either String Text
+renderSubstrateConfigSchema =
+  renderDecoderExpected (Dhall.auto @DhallDemoConfig)
+
 data DhallDemoConfig = DhallDemoConfig
   { dhallConfigRuntimeMode :: Text,
     dhallEdgePort :: Int,
@@ -67,16 +63,7 @@ data DhallDemoConfig = DhallDemoConfig
     dhallMountedPath :: Text,
     dhallDemoUi :: Bool,
     dhallDaemonRole :: Text,
-    -- Phase 7 Sprint 7.7 renamed Dhall fields:
-    -- @clusterDaemon@ -> @coordinator@ and @hostDaemon@ -> @engine@.
-    -- The Haskell record selector for the engine role daemon uses the
-    -- @EngineDaemon@ suffix to avoid colliding with
-    -- 'DhallEngineBinding.dhallEngine' (the engine-name string in the
-    -- engine binding record); 'dhallFieldName' maps it to the @engine@
-    -- key on the dhall wire side.
     dhallCoordinator :: DhallDaemonConfig,
-    dhallEngineDaemon :: Maybe DhallDaemonConfig,
-    dhallEngineDaemons :: [DhallDaemonConfig],
     dhallEnginePools :: [DhallEnginePool],
     dhallEngineMembers :: [DhallEngineMember],
     dhallConfigRequestTopics :: [Text],
@@ -91,35 +78,12 @@ data DhallDemoConfig = DhallDemoConfig
 instance Dhall.FromDhall DhallDemoConfig where
   autoWith _ = Dhall.genericAutoWith dhallInterpretOptions
 
-data LegacyDhallDemoConfig = LegacyDhallDemoConfig
-  { legacyDhallConfigRuntimeMode :: Text,
-    legacyDhallEdgePort :: Int,
-    legacyDhallConfigMapName :: Text,
-    legacyDhallGeneratedPath :: Text,
-    legacyDhallMountedPath :: Text,
-    legacyDhallDemoUi :: Bool,
-    legacyDhallDaemonRole :: Text,
-    legacyDhallCoordinator :: DhallDaemonConfig,
-    legacyDhallEngineDaemon :: Maybe DhallDaemonConfig,
-    legacyDhallConfigRequestTopics :: [Text],
-    legacyDhallConfigResultTopic :: Text,
-    legacyDhallModelsBucket :: Text,
-    legacyDhallModelBootstrapTopic :: Text,
-    legacyDhallEngines :: [DhallEngineBinding],
-    legacyDhallModels :: [DhallModelDescriptor]
-  }
-  deriving (Generic)
-
-instance Dhall.FromDhall LegacyDhallDemoConfig where
-  autoWith _ = Dhall.genericAutoWith dhallInterpretOptions
-
 data DhallDaemonConfig = DhallDaemonConfig
   { dhallRole :: Text,
     dhallLocation :: Text,
     dhallMemberId :: Maybe Text,
     dhallDaemonRequestTopics :: [Text],
     dhallDaemonResultTopic :: Text,
-    dhallHostBatchTopic :: Maybe Text,
     dhallPulsarConnectionMode :: Text
   }
   deriving (Generic)
@@ -223,12 +187,9 @@ dhallFieldSuffixName suffix =
     "DemoUi" -> "demo_ui"
     "RequestTopics" -> "request_topics"
     "ResultTopic" -> "result_topic"
-    "HostBatchTopic" -> "host_batch_topic"
     "MemberId" -> "memberId"
     "ModelsBucket" -> "models_bucket"
     "ModelBootstrapTopic" -> "model_bootstrap_topic"
-    "EngineDaemon" -> "engine"
-    "EngineDaemons" -> "engineDaemons"
     "EnginePools" -> "enginePools"
     "EngineMembers" -> "engineMembers"
     "PoolId" -> "id"
@@ -253,8 +214,6 @@ demoConfigFromDhall rawConfig = do
   runtimeModeValue <- parseEnum "runtimeMode" parseRuntimeMode (dhallConfigRuntimeMode rawConfig)
   activeDaemonRoleValue <- parseEnum "daemonRole" parseDaemonRole (dhallDaemonRole rawConfig)
   coordinatorDaemonValue <- withDefaultConsumerSubscriptionType runtimeModeValue <$> daemonConfigFromDhall (dhallCoordinator rawConfig)
-  legacyEngineDaemonValue <- traverse (fmap (withDefaultConsumerSubscriptionType runtimeModeValue) . daemonConfigFromDhall) (dhallEngineDaemon rawConfig)
-  engineDaemonValues <- traverse (fmap (withDefaultConsumerSubscriptionType runtimeModeValue) . daemonConfigFromDhall) (dhallEngineDaemons rawConfig)
   enginePoolValues <- traverse enginePoolFromDhall (dhallEnginePools rawConfig)
   engineMemberValues <- traverse engineMemberFromDhall (dhallEngineMembers rawConfig)
   engineValues <- traverse engineBindingFromDhall (dhallEngines rawConfig)
@@ -270,9 +229,11 @@ demoConfigFromDhall rawConfig = do
         activeDaemonRole = activeDaemonRoleValue,
         coordinatorDaemon = coordinatorDaemonValue,
         engineDaemons =
-          if null engineDaemonValues
-            then maybeToList legacyEngineDaemonValue
-            else engineDaemonValues,
+          deriveEngineDaemonConfigs
+            runtimeModeValue
+            enginePoolValues
+            engineMemberValues
+            (dhallConfigResultTopic rawConfig),
         enginePools = enginePoolValues,
         engineMembers = engineMemberValues,
         requestTopics = dhallConfigRequestTopics rawConfig,
@@ -283,34 +244,49 @@ demoConfigFromDhall rawConfig = do
         models = modelValues
       }
 
-legacyDemoConfigFromDhall :: LegacyDhallDemoConfig -> Either String DemoConfig
-legacyDemoConfigFromDhall rawConfig = do
-  runtimeModeValue <- parseEnum "runtimeMode" parseRuntimeMode (legacyDhallConfigRuntimeMode rawConfig)
-  activeDaemonRoleValue <- parseEnum "daemonRole" parseDaemonRole (legacyDhallDaemonRole rawConfig)
-  coordinatorDaemonValue <- withDefaultConsumerSubscriptionType runtimeModeValue <$> daemonConfigFromDhall (legacyDhallCoordinator rawConfig)
-  engineDaemonValue <- traverse (fmap (withDefaultConsumerSubscriptionType runtimeModeValue) . daemonConfigFromDhall) (legacyDhallEngineDaemon rawConfig)
-  engineValues <- traverse engineBindingFromDhall (legacyDhallEngines rawConfig)
-  modelValues <- traverse modelDescriptorFromDhall (legacyDhallModels rawConfig)
-  pure
-    DemoConfig
-      { configRuntimeMode = runtimeModeValue,
-        configEdgePort = legacyDhallEdgePort rawConfig,
-        configMapName = legacyDhallConfigMapName rawConfig,
-        generatedPath = Text.unpack (legacyDhallGeneratedPath rawConfig),
-        mountedPath = Text.unpack (legacyDhallMountedPath rawConfig),
-        demoUiEnabled = legacyDhallDemoUi rawConfig,
-        activeDaemonRole = activeDaemonRoleValue,
-        coordinatorDaemon = coordinatorDaemonValue,
-        engineDaemons = maybeToList engineDaemonValue,
-        enginePools = [],
-        engineMembers = [],
-        requestTopics = legacyDhallConfigRequestTopics rawConfig,
-        resultTopic = legacyDhallConfigResultTopic rawConfig,
-        modelsBucket = legacyDhallModelsBucket rawConfig,
-        modelBootstrapTopic = legacyDhallModelBootstrapTopic rawConfig,
-        engines = engineValues,
-        models = modelValues
-      }
+deriveEngineDaemonConfigs :: RuntimeMode -> [EnginePool] -> [EngineMember] -> Text -> [DaemonConfig]
+deriveEngineDaemonConfigs runtimeMode pools members resultTopicValue =
+  map engineDaemonConfigForMember members
+  where
+    engineDaemonConfigForMember member =
+      DaemonConfig
+        { daemonConfigRole = Engine,
+          daemonConfigLocation = engineMemberLocation member,
+          daemonConfigMemberId = Just (engineMemberId member),
+          daemonConfigRequestTopics = derivedEngineMemberRequestTopics runtimeMode pools member,
+          daemonConfigResultTopic = resultTopicValue,
+          daemonConfigPulsarConnectionMode =
+            if runtimeMode == AppleSilicon
+              then PublicationEdgeAutoDiscovery
+              else ConfiguredTransport,
+          daemonConfigConsumerSubscriptionType = Just ConsumerShared
+        }
+
+derivedEngineMemberRequestTopics :: RuntimeMode -> [EnginePool] -> EngineMember -> [Text]
+derivedEngineMemberRequestTopics runtimeMode pools member =
+  [ derivedEnginePoolTopicForMode runtimeMode (enginePoolId pool) modelIdValue
+  | pool <- pools,
+    enginePoolId pool `elem` engineMemberPoolIds member,
+    engineMemberId member `elem` enginePoolMemberIds pool,
+    modelIdValue <- enginePoolModelIds pool
+  ]
+
+derivedEnginePoolTopicForMode :: RuntimeMode -> Text -> Text -> Text
+derivedEnginePoolTopicForMode runtimeMode poolId modelIdValue =
+  "persistent://infernix/demo/inference.batch."
+    <> runtimeModeId runtimeMode
+    <> ".pool."
+    <> topicSegment poolId
+    <> ".model."
+    <> topicSegment modelIdValue
+
+topicSegment :: Text -> Text
+topicSegment =
+  Text.map replaceInvalid
+  where
+    replaceInvalid character
+      | isAlphaNum character || character == '-' || character == '_' || character == '.' = character
+      | otherwise = '-'
 
 daemonConfigFromDhall :: DhallDaemonConfig -> Either String DaemonConfig
 daemonConfigFromDhall rawConfig = do
@@ -323,7 +299,6 @@ daemonConfigFromDhall rawConfig = do
         daemonConfigMemberId = dhallMemberId rawConfig,
         daemonConfigRequestTopics = dhallDaemonRequestTopics rawConfig,
         daemonConfigResultTopic = dhallDaemonResultTopic rawConfig,
-        daemonConfigHostBatchTopic = dhallHostBatchTopic rawConfig,
         daemonConfigPulsarConnectionMode = connectionModeValue,
         daemonConfigConsumerSubscriptionType = Nothing
       }
@@ -434,8 +409,6 @@ renderSubstrateConfig demoConfig =
       ", demo_ui = " <> dhallBool (demoUiEnabled demoConfig),
       ", daemonRole = " <> dhallText (daemonRoleId (activeDaemonRole demoConfig)),
       ", coordinator = " <> renderDaemonConfig (coordinatorDaemon demoConfig),
-      ", engine = " <> dhallOptional daemonConfigType renderDaemonConfig (listToMaybe (engineDaemons demoConfig)),
-      ", engineDaemons = " <> dhallList daemonConfigType renderDaemonConfig (engineDaemons demoConfig),
       ", enginePools = " <> dhallList enginePoolType renderEnginePool (enginePools demoConfig),
       ", engineMembers = " <> dhallList engineMemberType renderEngineMember (engineMembers demoConfig),
       ", request_topics = " <> dhallList "Text" dhallText (requestTopics demoConfig),
@@ -459,8 +432,6 @@ renderDaemonConfig daemonConfig =
     <> dhallList "Text" dhallText (daemonConfigRequestTopics daemonConfig)
     <> ", result_topic = "
     <> dhallText (daemonConfigResultTopic daemonConfig)
-    <> ", host_batch_topic = "
-    <> dhallOptional "Text" dhallText (daemonConfigHostBatchTopic daemonConfig)
     <> ", pulsarConnectionMode = "
     <> dhallText (pulsarConnectionModeId (daemonConfigPulsarConnectionMode daemonConfig))
     <> " }"
@@ -583,10 +554,6 @@ dhallFilePath = dhallText . Text.pack
 dhallText :: Text -> String
 dhallText value =
   Text.unpack ("\"" <> DhallCore.escapeText value <> "\"")
-
-daemonConfigType :: String
-daemonConfigType =
-  "{ role : Text, location : Text, memberId : Optional Text, request_topics : List Text, result_topic : Text, host_batch_topic : Optional Text, pulsarConnectionMode : Text }"
 
 enginePoolType :: String
 enginePoolType =

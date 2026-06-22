@@ -13,6 +13,12 @@ import Infernix.CommandRegistry
     renderCliSurfaceFamiliesSection,
   )
 import Infernix.Config (Paths (..), discoverPaths)
+import Infernix.DhallSchema
+  ( allDhallSchemas,
+    dhallSchemaFileName,
+    dhallSchemaName,
+    renderDhallSchema,
+  )
 import Infernix.Models (catalogForMode, matrixRowReadmeKeys, residualMatrixRowIdsForMode)
 import Infernix.Routes
   ( renderClusterBootstrapRouteChecksSection,
@@ -364,6 +370,7 @@ runDocsLint = do
   forM_ documentStructureRules $ \rule -> do
     contents <- readFile (repoRoot paths </> documentStructurePath rule)
     validateDocumentStructure rule contents
+  validateDhallSchemaDrift paths
   validateTestingDocOwnership paths
   validateUnsupportedMonitoringStance paths
   forM_ phaseDocs $ \relativePath -> do
@@ -431,6 +438,30 @@ validateGeneratedSection rule contents =
                 ( generatedSectionPath rule
                     <> " has drifted from the Haskell command registry generated section"
                 )
+            )
+        )
+
+validateDhallSchemaDrift :: Paths -> IO ()
+validateDhallSchemaDrift paths =
+  forM_ allDhallSchemas $ \schema -> do
+    let relativePath = "dhall" </> dhallSchemaFileName schema
+        fullPath = repoRoot paths </> relativePath
+    actual <- readFile fullPath
+    expected <-
+      case renderDhallSchema schema of
+        Left err ->
+          ioError (userError ("could not render " <> Text.unpack (dhallSchemaName schema) <> " Dhall schema: " <> err))
+        Right schemaText ->
+          pure (Text.unpack schemaText)
+    unless (actual == expected) $
+      ioError
+        ( userError
+            ( relativePath
+                <> " has drifted from the decoder-reflected schema; regenerate with `infernix internal dhall-schema "
+                <> Text.unpack (dhallSchemaName schema)
+                <> " > "
+                <> relativePath
+                <> "`"
             )
         )
 

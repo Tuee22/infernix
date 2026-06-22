@@ -35,7 +35,9 @@
 - Every demo surface is gated by the active substrate's generated `.dhall`
   `demo_ui` flag. When `demo_ui = false`, the Keycloak release, demo
   Pulsar topic namespaces, demo MinIO bucket, `infernix-demo` workload,
-  `infernix-coordinator` workload, and all demo routes are absent.
+  and all demo routes are absent. The production coordinator remains
+  deployed because it owns request fan-in, batching, model-to-pool routing,
+  result writeback, and model bootstrap.
 
 ## Current Status
 

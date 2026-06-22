@@ -66,6 +66,13 @@ import Infernix.Demo.Api qualified as DemoApi
 import Infernix.Demo.Auth qualified as DemoAuth
 import Infernix.Demo.Bootstrap qualified as DemoBootstrap
 import Infernix.DemoConfig (decodeDemoConfigFile)
+import Infernix.DhallSchema
+  ( DhallSchema (..),
+    allDhallSchemas,
+    dhallSchemaFileName,
+    dhallSchemaName,
+    renderDhallSchema,
+  )
 import Infernix.Dispatch.ContextModelMap qualified as ContextModelMap
 import Infernix.Dispatch.SingleFlight qualified as Dispatch
 import Infernix.Engines.AppleSilicon
@@ -112,13 +119,17 @@ import Infernix.Runtime.Pulsar
   ( DemoClientMessageError (..),
     DemoClientMessagePublication (..),
     drainTopic,
+    inferenceRequestProducerNameForFields,
+    inferenceRequestSequenceIdForFields,
     modelBootstrapReadyWaitMaxSeconds,
     modelCacheBootstrapRetryableError,
     parseMessageIdToSequenceId,
     planDemoClientMessagePublications,
+    publishInferenceRequest,
     serviceConsumerName,
     serviceConsumerSubscriptionType,
     serviceConsumerSubscriptionTypeForTopic,
+    startupTopicsForDemoConfig,
     topicDirectoryPath,
     validateDemoClientMessageCatalog,
   )
@@ -138,7 +149,7 @@ import Infernix.Types
 import Infernix.Web.Contracts qualified as Contracts
 import System.Directory
 import System.Exit (ExitCode (..))
-import System.FilePath ((</>))
+import System.FilePath ((<.>), (</>))
 import System.IO qualified
 import System.IO.Error (catchIOError, isDoesNotExistError)
 import System.Process (proc, readCreateProcessWithExitCode)
@@ -207,6 +218,14 @@ main = do
   assert
     (parseCommand ["internal", "materialize-linux-native-engines"] == Right InternalMaterializeLinuxNativeEnginesCommand)
     "the structured command registry parses Linux native engine materialization"
+  mapM_
+    ( \schema ->
+        assert
+          (parseCommand ["internal", "dhall-schema", Text.unpack (dhallSchemaName schema)] == Right (InternalDhallSchemaCommand schema))
+          "the structured command registry parses reflected Dhall schema commands"
+    )
+    allDhallSchemas
+  assertDhallSchemaReflection
   assert
     ("### `cluster`" `isInfixOf` renderCliReferenceCommandsSection)
     "the generated CLI reference includes the cluster family heading"
@@ -530,7 +549,6 @@ main = do
                           daemonConfigMemberId = Nothing,
                           daemonConfigRequestTopics = requestTopicsForMode LinuxCpu,
                           daemonConfigResultTopic = resultTopicForMode LinuxCpu,
-                          daemonConfigHostBatchTopic = Nothing,
                           daemonConfigPulsarConnectionMode = ConfiguredTransport,
                           daemonConfigConsumerSubscriptionType = Just ConsumerShared
                         },
@@ -541,7 +559,6 @@ main = do
                             daemonConfigMemberId = Just "linux-cpu-engine",
                             daemonConfigRequestTopics = linuxMemberTopics,
                             daemonConfigResultTopic = resultTopicForMode LinuxCpu,
-                            daemonConfigHostBatchTopic = Nothing,
                             daemonConfigPulsarConnectionMode = ConfiguredTransport,
                             daemonConfigConsumerSubscriptionType = Just ConsumerShared
                           }
@@ -565,6 +582,14 @@ main = do
       assert
         (not ("\"runtimeMode\":" `isInfixOf` demoConfigContents))
         "generated substrate materialization no longer writes banner-prefixed JSON"
+      assert
+        (not ("engineDaemons" `isInfixOf` demoConfigContents) && not ("host_batch_topic" `isInfixOf` demoConfigContents))
+        "generated substrate materialization omits legacy daemon projection and host-batch fields"
+      decodedJsonConfig <-
+        maybe (fail "public JSON demo config decode failed") pure (Aeson.decode (Aeson.encode demoConfig))
+      assert
+        (not (null (engineDaemons decodedJsonConfig)))
+        "public JSON demo-config decode derives engine daemon metadata from engine pools and members"
       decodedConfig <- decodeDemoConfigFile demoConfigPath
       assert (configRuntimeMode decodedConfig == LinuxCpu) "demo-config decode preserves runtime mode"
       assert (demoUiEnabled decodedConfig) "demo-config decode preserves the demo UI flag"
@@ -587,6 +612,31 @@ main = do
         "Sprint 4.19: pinned member topics are derived from runtime, member id, and model id"
       assert (requestTopics decodedConfig == requestTopicsForMode LinuxCpu) "demo-config decode preserves request topics"
       assert (resultTopic decodedConfig == resultTopicForMode LinuxCpu) "demo-config decode preserves the result topic"
+      let startupTopics = startupTopicsForDemoConfig decodedConfig
+      assert
+        (all (`elem` startupTopics) (requestTopics decodedConfig))
+        "startup topic reconciliation includes coordinator request topics"
+      assert
+        (all (all (`elem` startupTopics) . daemonConfigRequestTopics) (engineDaemons decodedConfig))
+        "startup topic reconciliation includes derived engine pool request topics"
+      assert
+        (resultTopic decodedConfig `elem` startupTopics)
+        "startup topic reconciliation includes the result topic"
+      assert
+        (modelBootstrapTopic decodedConfig `elem` startupTopics)
+        "startup topic reconciliation includes the model-bootstrap request topic"
+      case listToMaybe (models decodedConfig) of
+        Just firstModel ->
+          assert
+            ( ConversationTopic.modelBootstrapReadyTopicName ConversationTopic.systemTopicNamespace (modelId firstModel)
+                `elem` startupTopics
+            )
+            "startup topic reconciliation includes per-model bootstrap ready topics"
+        Nothing ->
+          fail "expected decoded linux-cpu demo config to include models"
+      assert
+        (length startupTopics == length (nub startupTopics))
+        "startup topic reconciliation produces a deduplicated topic set"
       assert (engines decodedConfig == engineBindingsForMode LinuxCpu) "demo-config decode preserves engine bindings"
       assert (length (models decodedConfig) == length (catalogForMode LinuxCpu)) "demo-config decode preserves the model list"
       case (enginePools decodedConfig, engineMembers decodedConfig) of
@@ -703,7 +753,6 @@ main = do
                           daemonConfigMemberId = Nothing,
                           daemonConfigRequestTopics = requestTopicsForMode AppleSilicon,
                           daemonConfigResultTopic = resultTopicForMode AppleSilicon,
-                          daemonConfigHostBatchTopic = hostBatchTopicForMode AppleSilicon,
                           daemonConfigPulsarConnectionMode = ConfiguredTransport,
                           daemonConfigConsumerSubscriptionType = Just ConsumerShared
                         },
@@ -714,7 +763,6 @@ main = do
                             daemonConfigMemberId = Just "apple-host-default",
                             daemonConfigRequestTopics = appleMemberTopics,
                             daemonConfigResultTopic = resultTopicForMode AppleSilicon,
-                            daemonConfigHostBatchTopic = Nothing,
                             daemonConfigPulsarConnectionMode = PublicationEdgeAutoDiscovery,
                             daemonConfigConsumerSubscriptionType = Just ConsumerShared
                           }
@@ -736,11 +784,9 @@ main = do
       Lazy.writeFile appleConfigPath (encodeDemoConfig appleHostConfig)
       decodedAppleConfig <- decodeDemoConfigFile appleConfigPath
       assert (activeDaemonRole decodedAppleConfig == Engine) "apple host demo-config keeps host as the active local daemon role"
-      assert (daemonConfigHostBatchTopic (coordinatorDaemon decodedAppleConfig) == hostBatchTopicForMode AppleSilicon) "apple cluster daemon metadata preserves the legacy handoff fallback"
       assert (enginePools decodedAppleConfig == enginePoolsForMode AppleSilicon) "apple host demo-config preserves engine pools"
       assert (engineMembers decodedAppleConfig == engineMembersForMode AppleSilicon) "apple host demo-config preserves engine members"
       assert (map daemonConfigRequestTopics (engineDaemons decodedAppleConfig) == [expectedAppleMemberTopics]) "apple host daemon metadata consumes derived pool topics"
-      assert (map daemonConfigHostBatchTopic (engineDaemons decodedAppleConfig) == [Nothing]) "apple host daemon metadata does not forward its own engine batch topic"
       assert
         (map daemonConfigConsumerSubscriptionType (engineDaemons decodedAppleConfig) == [Just ConsumerShared])
         "Sprint 7.24: apple host engine metadata defaults to Shared pool subscription ownership"
@@ -927,7 +973,8 @@ main = do
             && isNothing (findModel AppleSilicon "video-wan21-t2v")
         )
         "Sprint 4.18: researched matrix corrections are reflected in runnable catalog bindings"
-      -- Phase 4 Sprint 4.17: per-engine engine name / batch-topic / image mapping.
+      -- Phase 4 Sprint 4.17: per-engine image naming plus the Phase 4.19
+      -- derived pool-topic routing surface.
       assert
         (engineNameForSelectedEngine LinuxGpu "vLLM" == "vllm")
         "Sprint 4.17: vLLM resolves to the vllm per-engine name"
@@ -935,8 +982,8 @@ main = do
         (engineNameForSelectedEngine AppleSilicon "Transformers + PyTorch MPS" == "transformers")
         "Sprint 4.17: the transformers engine resolves to the transformers per-engine name"
       assert
-        (perEngineBatchTopicForMode LinuxGpu "vllm" == "persistent://infernix/demo/inference.batch.linux-gpu.vllm")
-        "Sprint 4.17: the per-engine batch topic is inference.batch.<mode>.<engine>"
+        (enginePoolTopicForMode LinuxGpu "vllm" "llm-qwen25-safetensors" == "persistent://infernix/demo/inference.batch.linux-gpu.pool.vllm.model.llm-qwen25-safetensors")
+        "Sprint 4.19: derived pool batch topics are inference.batch.<mode>.pool.<pool>.model.<model>"
       assert
         (perEngineImageName LinuxGpu "transformers" == "infernix-engine-transformers-linux-gpu:local")
         "Sprint 4.17: the per-engine image name is infernix-engine-<engine>-<mode>:local"
@@ -1040,7 +1087,8 @@ main = do
               "--minio-demo-artifacts-bucket",
               "infernix-demo-objects",
               "--minio-region",
-              "us-east-1"
+              "us-east-1",
+              "--require-native-payload"
             ]
             && "unit-access-key" `notElem` linuxNativeArgs
             && "unit-secret-key" `notElem` linuxNativeArgs
@@ -1068,7 +1116,8 @@ main = do
             [ "--input-object-ref",
               "infernix-demo-objects/unit/input.wav",
               "--output-dir",
-              "/tmp/infernix-native-output/unit"
+              "/tmp/infernix-native-output/unit",
+              "--require-native-payload"
             ]
             && "unit-access-key" `notElem` linuxNativeArtifactArgs
             && "unit-secret-key" `notElem` linuxNativeArtifactArgs
@@ -2506,22 +2555,12 @@ assertDemoAuthRealm = do
 
 assertResultBridgeAndBatchTopics :: IO ()
 assertResultBridgeAndBatchTopics = do
-  -- canonicalBatchTopicForMode now defined for every substrate
   assert
-    (canonicalBatchTopicForMode AppleSilicon == "persistent://infernix/demo/inference.batch.apple-silicon")
-    "canonicalBatchTopicForMode emits the supported topic name for apple-silicon"
+    (enginePoolTopicForMode LinuxCpu "llama-cpp-cli" "llm-tinyllama-gguf" == "persistent://infernix/demo/inference.batch.linux-cpu.pool.llama-cpp-cli.model.llm-tinyllama-gguf")
+    "linux-cpu coordinator metadata derives pool/model request topics"
   assert
-    (canonicalBatchTopicForMode LinuxCpu == "persistent://infernix/demo/inference.batch.linux-cpu")
-    "canonicalBatchTopicForMode emits the supported topic name for linux-cpu"
-  assert
-    (canonicalBatchTopicForMode LinuxGpu == "persistent://infernix/demo/inference.batch.linux-gpu")
-    "canonicalBatchTopicForMode emits the supported topic name for linux-gpu"
-  assert
-    (hostBatchTopicForMode LinuxCpu == Just (canonicalBatchTopicForMode LinuxCpu))
-    "linux-cpu coordinator metadata enables request-to-batch forwarding"
-  assert
-    (hostBatchTopicForMode LinuxGpu == Just (canonicalBatchTopicForMode LinuxGpu))
-    "linux-gpu coordinator metadata enables request-to-batch forwarding"
+    (engineMemberPinnedTopicForMode AppleSilicon "mac-studio-1" "llm-qwen25-safetensors" == "persistent://infernix/demo/inference.batch.apple-silicon.member.mac-studio-1.model.llm-qwen25-safetensors")
+    "apple pinned routes derive member/model request topics"
 
   -- Result-bridge subscription naming
   let bridgeConfig =
@@ -2564,6 +2603,15 @@ assertResultBridgeAndBatchTopics = do
 
 assertPulsarMessageIdSequenceParsing :: IO ()
 assertPulsarMessageIdSequenceParsing = do
+  let directSequence = inferenceRequestSequenceIdForFields "req-direct-1" ""
+      secondDirectSequence = inferenceRequestSequenceIdForFields "req-direct-2" ""
+      durableSequence = inferenceRequestSequenceIdForFields "req-direct-1" "12:34:0"
+      directProducer =
+        inferenceRequestProducerNameForFields "infernix-engine-result-linux-gpu" "req-direct-1" ""
+      secondDirectProducer =
+        inferenceRequestProducerNameForFields "infernix-engine-result-linux-gpu" "req-direct-2" ""
+      durableProducer =
+        inferenceRequestProducerNameForFields "infernix-engine-result-linux-gpu" "req-direct-1" "12:34:0"
   assert
     (parseMessageIdToSequenceId "12:34:0" == Just (12 * (2 ^ (32 :: Int)) + 34))
     "colon Pulsar message ids still derive a stable producer sequence"
@@ -2573,19 +2621,50 @@ assertPulsarMessageIdSequenceParsing = do
   assert
     (isNothing (parseMessageIdToSequenceId "not-a-message-id"))
     "unsupported message id encodings do not invent a sequence id"
+  assert
+    (isJust directSequence)
+    "direct inference requests derive a fallback sequence id from requestId"
+  assert
+    (directSequence /= secondDirectSequence)
+    "different direct request ids derive distinct fallback sequence ids"
+  assert
+    (directProducer /= secondDirectProducer)
+    "different direct request ids use request-scoped producer names so unordered sequence hashes cannot share one broker dedup cursor"
+  assert
+    (durableProducer == "infernix-engine-result-linux-gpu")
+    "durable prompt requests keep the stable context producer name"
+  assert
+    (durableSequence == Just (12 * (2 ^ (32 :: Int)) + 34))
+    "durable prompt requests keep userPromptMessageId as the dedup sequence id"
 
 assertLinuxHostBatchForwarding :: Paths -> IO ()
 assertLinuxHostBatchForwarding paths = do
   let requestTopic = "persistent://infernix/demo/inference.request.linux-cpu"
-      batchTopic = "persistent://infernix/demo/inference.batch.linux-cpu"
+      batchTopic = enginePoolTopicForMode LinuxCpu "llama-cpp-cli" "llm-tinyllama-gguf"
       resultTopic = "persistent://infernix/demo/inference.result.linux-cpu"
       requestDirectory = topicDirectoryPath paths requestTopic
       batchDirectory = topicDirectoryPath paths batchTopic
       resultDirectory = topicDirectoryPath paths resultTopic
-      requestPath = requestDirectory </> "forwarded.pb"
-      batchPath = batchDirectory </> "forwarded.pb"
-      resultPath = resultDirectory </> "forwarded.pb"
-      payloadBytes = "forward-me-without-decoding"
+      demoConfig =
+        DemoConfig
+          { configRuntimeMode = LinuxCpu,
+            configEdgePort = 0,
+            configMapName = "infernix-demo-config",
+            generatedPath = "./.build/infernix-substrate.dhall",
+            mountedPath = "/opt/build/infernix-substrate.dhall",
+            demoUiEnabled = True,
+            activeDaemonRole = Coordinator,
+            coordinatorDaemon = daemonConfig,
+            engineDaemons = [],
+            enginePools = enginePoolsForMode LinuxCpu,
+            engineMembers = engineMembersForMode LinuxCpu,
+            requestTopics = [requestTopic],
+            resultTopic = resultTopic,
+            modelsBucket = defaultModelsBucket,
+            modelBootstrapTopic = defaultModelBootstrapTopic,
+            engines = engineBindingsForMode LinuxCpu,
+            models = catalogForMode LinuxCpu
+          }
       daemonConfig =
         DaemonConfig
           { daemonConfigRole = Coordinator,
@@ -2593,14 +2672,25 @@ assertLinuxHostBatchForwarding paths = do
             daemonConfigMemberId = Nothing,
             daemonConfigRequestTopics = [requestTopic],
             daemonConfigResultTopic = resultTopic,
-            daemonConfigHostBatchTopic = Just batchTopic,
             daemonConfigPulsarConnectionMode = ConfiguredTransport,
             daemonConfigConsumerSubscriptionType = Just ConsumerShared
           }
   mapM_ removeIfPresent [requestDirectory, batchDirectory, resultDirectory]
-  createDirectoryIfMissing True requestDirectory
-  BS.writeFile requestPath payloadBytes
-  drainTopic paths LinuxCpu [] daemonConfig requestTopic
+  requestIdValue <-
+    publishInferenceRequest
+      paths
+      LinuxCpu
+      requestTopic
+      InferenceRequest
+        { requestModelId = "llm-tinyllama-gguf",
+          inputText = "forward me",
+          inputObjectRef = Nothing
+        }
+  let requestPath = requestDirectory </> Text.unpack requestIdValue <.> "pb"
+      batchPath = batchDirectory </> Text.unpack requestIdValue <.> "pb"
+      resultPath = resultDirectory </> Text.unpack requestIdValue <.> "pb"
+  payloadBytes <- BS.readFile requestPath
+  drainTopic paths LinuxCpu [] daemonConfig demoConfig requestTopic
   requestStillExists <- doesFileExist requestPath
   batchExists <- doesFileExist batchPath
   resultExists <- doesFileExist resultPath
@@ -2661,6 +2751,61 @@ integerToBytes n
 expectRight :: String -> Either String a -> IO a
 expectRight _ (Right value) = pure value
 expectRight context (Left err) = fail (context <> ": " <> err)
+
+assertDhallSchemaReflection :: IO ()
+assertDhallSchemaReflection =
+  mapM_ assertReflectedSchema allDhallSchemas
+  where
+    assertReflectedSchema schema = do
+      schemaFileExists <- doesFileExist ("dhall" </> dhallSchemaFileName schema)
+      assert
+        schemaFileExists
+        ("packaged Dhall schema file exists for " <> Text.unpack (dhallSchemaName schema))
+      rendered <-
+        expectRight
+          ("render reflected Dhall schema " <> Text.unpack (dhallSchemaName schema))
+          (renderDhallSchema schema)
+      assert
+        (not (Text.null rendered))
+        ("reflected Dhall schema is non-empty for " <> Text.unpack (dhallSchemaName schema))
+      assert
+        ("\n" `Text.isSuffixOf` rendered)
+        ("reflected Dhall schema is newline-terminated for " <> Text.unpack (dhallSchemaName schema))
+      mapM_
+        ( \fieldName ->
+            assert
+              (fieldName `Text.isInfixOf` rendered)
+              ("reflected Dhall schema includes " <> Text.unpack fieldName <> " for " <> Text.unpack (dhallSchemaName schema))
+        )
+        (dhallSchemaRequiredFields schema)
+
+dhallSchemaRequiredFields :: DhallSchema -> [Text.Text]
+dhallSchemaRequiredFields schema =
+  case schema of
+    HostSchema ->
+      [ "hostExecutionContext",
+        "toolPaths",
+        "filesystem",
+        "controlPlaneContext"
+      ]
+    ClusterSchema ->
+      [ "pulsar",
+        "minio",
+        "keycloak",
+        "coordinator"
+      ]
+    SecretsSchema ->
+      [ "minio",
+        "keycloakAdmin",
+        "keycloakDb"
+      ]
+    SubstrateSchema ->
+      [ "runtimeMode",
+        "coordinator",
+        "enginePools",
+        "engineMembers",
+        "models"
+      ]
 
 assertUniqueModelIds :: RuntimeMode -> IO ()
 assertUniqueModelIds mode = do
@@ -3356,19 +3501,19 @@ assertHostConfig testRoot = do
         "Sprint 4.18: Linux native manifests use the engine-artifacts Linux key namespace"
       assert
         ("--smoke|--help" `isInfixOf` sampleLinuxScript)
-        "Sprint 4.18: Linux native runner-contract payloads support the smoke command"
+        "Sprint 4.18: Linux native runtime-backed payloads support the smoke command"
       assert
         ("#!/bin/sh" `isPrefixOf` sampleLinuxScript)
-        "Sprint 4.18: Linux native runner-contract payloads use a portable POSIX shell shebang"
+        "Sprint 4.18: Linux native runtime-backed payloads use a portable POSIX shell shebang"
       assert
-        ("runner-contract" `isInfixOf` sampleLinuxScript && "infernix-demo-objects" `isInfixOf` sampleLinuxScript)
-        "Sprint 4.18: Linux native runner-contract payloads return per-family result shapes"
+        ("/opt/infernix/native-payloads" `isInfixOf` sampleLinuxScript && "infernix-demo-objects" `isInfixOf` sampleLinuxScript)
+        "Sprint 4.18: Linux native runtime-backed payloads return per-family result shapes"
       assert
         ("--output-dir" `isInfixOf` sampleLinuxScript && "infernix-native-artifact-file:" `isInfixOf` sampleLinuxScript)
-        "Sprint 4.18: Linux native runner-contract payloads can emit worker-upload artifact markers"
+        "Sprint 4.18: Linux native runtime-backed payloads can emit worker-upload artifact markers"
       assert
         ("model_cache_not_populated" `isInfixOf` sampleLinuxScript && "exit 75" `isInfixOf` sampleLinuxScript)
-        "Sprint 4.18: Linux native runner-contract payloads fail fast on missing model-cache readiness"
+        "Sprint 4.18: Linux native runtime-backed payloads fail fast on missing model-cache readiness"
       assert
         (either (const False) (const True) (decodeLazy sampleLinuxManifestJson :: Either String Aeson.Value))
         "Sprint 4.18: Linux native manifest JSON decodes as valid Aeson"
@@ -3407,14 +3552,14 @@ assertHostConfig testRoot = do
     readCreateProcessWithExitCode (proc llamaRunnerPath linuxNativeRunnerArgs) ""
   assert
     (missingCacheExit == ExitFailure 75 && "model_cache_not_populated" `isInfixOf` missingCacheStderr)
-    "Sprint 4.18: Linux native runner-contract execution maps missing cache readiness to exit 75"
+    "Sprint 4.18: Linux native runtime-backed execution maps missing cache readiness to exit 75"
   createDirectoryIfMissing True linuxNativeReadyDir
   writeFile (linuxNativeReadyDir </> ".ready") "ready\n"
   (readyCacheExit, readyCacheStdout, _) <-
     readCreateProcessWithExitCode (proc llamaRunnerPath linuxNativeRunnerArgs) ""
   assert
     (readyCacheExit == ExitSuccess && "unit native cache probe" `isInfixOf` readyCacheStdout)
-    "Sprint 4.18: Linux native runner-contract execution proceeds after model-cache readiness"
+    "Sprint 4.18: Linux native runtime-backed execution proceeds after model-cache readiness"
   assert
     (HostTools.hostToolName HostTools.HostKubectl == "kubectl")
     "HostTools reports the supported short name for each tool"

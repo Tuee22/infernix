@@ -13,6 +13,7 @@ module Infernix.HostTools
     hostToolName,
     hostToolPath,
     hostToolFallbackCandidates,
+    hostToolFallbackPath,
     runHostTool,
     runHostToolWithCwd,
     readHostTool,
@@ -148,7 +149,7 @@ hostToolFallbackCandidates tool = case tool of
   HostNpm -> ["/opt/homebrew/bin/npm", "/usr/local/bin/npm", "/usr/bin/npm"]
   HostNode -> ["/opt/homebrew/bin/node", "/usr/local/bin/node", "/usr/bin/node"]
   HostPython3 -> ["/opt/homebrew/bin/python3.12", "/opt/homebrew/bin/python3", "/usr/bin/python3"]
-  HostPoetry -> []
+  HostPoetry -> ["/opt/poetry/bin/poetry", "/usr/local/bin/poetry", "/usr/bin/poetry"]
   HostProtoc -> ["/opt/homebrew/bin/protoc", "/usr/local/bin/protoc", "/usr/bin/protoc"]
   HostGit -> ["/opt/homebrew/bin/git", "/usr/bin/git"]
   HostTar -> ["/usr/bin/tar"]
@@ -172,6 +173,16 @@ hostToolFallbackCandidates tool = case tool of
   HostNvkind -> ["/usr/local/bin/nvkind", "/usr/bin/nvkind"]
   HostSkopeo -> ["/opt/homebrew/bin/skopeo", "/usr/bin/skopeo"]
   HostHostname -> ["/bin/hostname", "/usr/bin/hostname"]
+
+-- | Deterministic absolute fallback for pure call sites that cannot
+-- check the filesystem before constructing a process description.
+-- IO-capable call sites should still prefer 'hostToolFallbackCandidates'
+-- plus an existence check.
+hostToolFallbackPath :: HostTool -> Maybe FilePath
+hostToolFallbackPath tool =
+  case hostToolFallbackCandidates tool of
+    [] -> Nothing
+    candidate : _ -> Just candidate
 
 pickToolPath :: HostTool -> HostToolPaths -> Text
 pickToolPath tool paths = case tool of

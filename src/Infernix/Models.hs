@@ -2,13 +2,11 @@
 
 module Infernix.Models
   ( allMatrixRowIds,
-    canonicalBatchTopicForMode,
     catalogForMode,
     clusterDemoApiUpstream,
     engineNameForAdapterId,
     engineNameForSelectedEngine,
     frameworkEngineNamesForMode,
-    perEngineBatchTopicForMode,
     perEngineImageRepository,
     perEngineImageName,
     engineBindingForSelectedEngine,
@@ -24,7 +22,6 @@ module Infernix.Models
     expectedInferenceExecutorLocationForRuntime,
     expectedInferenceDispatchModeForRuntime,
     findModel,
-    hostBatchTopicForMode,
     platformClaimsForRuntime,
     requestTopicsForMode,
     renderPublicationState,
@@ -168,28 +165,6 @@ resultTopicForMode :: RuntimeMode -> Text
 resultTopicForMode runtimeMode =
   defaultPulsarTopicPrefix <> "inference.result." <> runtimeModeId runtimeMode
 
--- | Phase 7 Sprint 7.7: the coordinator-to-engine handoff topic on
--- every substrate. The supported three-role daemon split publishes
--- pre-batched inference work to @persistent://infernix/demo/inference.batch.<mode>@;
--- the engine role consumes from it and publishes the result back to
--- @inference.result.<mode>@. On Apple silicon, the engine is on-host
--- and the topic name is suffixed with @.host@ for backward
--- compatibility with the pre-split lane.
-hostBatchTopicForMode :: RuntimeMode -> Maybe Text
-hostBatchTopicForMode runtimeMode =
-  case runtimeMode of
-    AppleSilicon -> Just (defaultPulsarTopicPrefix <> "inference.batch." <> runtimeModeId runtimeMode <> ".host")
-    LinuxCpu -> Just (canonicalBatchTopicForMode runtimeMode)
-    LinuxGpu -> Just (canonicalBatchTopicForMode runtimeMode)
-
--- | Canonical @inference.batch.<mode>@ topic name for any substrate.
--- The auto-generated Dhall file enables coordinator-to-engine handoff
--- through this topic family on Linux substrates, while the Apple lane keeps
--- the @.host@ suffix for the host-native engine daemon.
-canonicalBatchTopicForMode :: RuntimeMode -> Text
-canonicalBatchTopicForMode runtimeMode =
-  defaultPulsarTopicPrefix <> "inference.batch." <> runtimeModeId runtimeMode
-
 -- | Phase 4 Sprint 4.17 — the per-engine engine name derived from an adapter
 -- id. The python-stdio framework adapters carry a @-python@ suffix
 -- (@transformers-python@ -> @transformers@); native-process-runner adapter ids
@@ -198,9 +173,8 @@ engineNameForAdapterId :: Text -> Text
 engineNameForAdapterId adapterId =
   fromMaybe adapterId (Text.stripSuffix "-python" adapterId)
 
--- | The per-engine engine name a selected engine resolves to, via its adapter
--- binding. Used by the coordinator to route batch work to the matching
--- per-engine engine Deployment.
+-- | The per-engine image name a selected engine resolves to, via its adapter
+-- binding.
 engineNameForSelectedEngine :: RuntimeMode -> Text -> Text
 engineNameForSelectedEngine runtimeMode selectedEngineValue =
   engineNameForAdapterId
@@ -217,13 +191,6 @@ frameworkEngineNamesForMode runtimeMode =
     | engineBinding <- engineBindingsForMode runtimeMode,
       engineBindingPythonNative engineBinding
     ]
-
--- | Per-engine batch topic: @inference.batch.<mode>.<engine>@. The coordinator
--- publishes a request's batch work here keyed on the model's selected engine;
--- the matching per-engine engine Deployment subscribes exclusively to it.
-perEngineBatchTopicForMode :: RuntimeMode -> Text -> Text
-perEngineBatchTopicForMode runtimeMode engineName =
-  canonicalBatchTopicForMode runtimeMode <> "." <> engineName
 
 -- | Derived normal-pool topic. Operators declare pools and members, never
 -- raw topic strings; every legal batch topic is rendered from this helper.
@@ -478,9 +445,6 @@ renderPublicationStateWithApiUpstream controlPlane state apiUpstream =
     <> ",\n"
     <> "  \"inferenceExecutorLocation\": "
     <> jsonString (expectedInferenceExecutorLocationForRuntime (clusterRuntimeMode state))
-    <> ",\n"
-    <> "  \"hostInferenceBatchTopic\": "
-    <> maybe "null" jsonString (hostBatchTopicForMode (clusterRuntimeMode state))
     <> ",\n"
     <> "  \"catalogSource\": "
     <> jsonString "generated-build-root"
@@ -738,7 +702,7 @@ matrixRows =
       "Portable GGUF-based local inference path."
       "GGUF"
       "TinyLlama-1.1B-Chat-v1.0-GGUF"
-      "https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF"
+      "https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q2_K.gguf"
       "Best cross-platform local runtime path."
       "Prompt"
       (Just (ModeBinding "llama.cpp (Metal)" False))
@@ -766,7 +730,7 @@ matrixRows =
       "Compact speech transcription through whisper.cpp."
       "whisper.cpp model set / GGML-style"
       "whisper-small"
-      "https://github.com/ggml-org/whisper.cpp/tree/master/models"
+      "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin"
       "Best compact or native path."
       "Audio Input"
       (Just (ModeBinding "whisper.cpp (Metal)" False))
@@ -850,7 +814,7 @@ matrixRows =
       "Portable ONNX-based Basic Pitch fallback."
       "ONNX"
       "basic-pitch release artifacts"
-      "https://github.com/spotify/basic-pitch/releases"
+      "https://raw.githubusercontent.com/spotify/basic-pitch/main/basic_pitch/saved_models/icassp_2022/nmp.onnx"
       "Useful portable fallback artifact."
       "Audio Input"
       (Just (ModeBinding "ONNX Runtime" False))
@@ -948,7 +912,7 @@ matrixRows =
       "Optical music recognition and notation extraction tool."
       "JVM application"
       "Audiveris"
-      "https://github.com/Audiveris/audiveris"
+      "https://github.com/Audiveris/audiveris/releases/download/5.10.2/Audiveris-5.10.2-ubuntu24.04-x86_64.deb"
       "Treat as tool runtime, not a separately managed ANN kernel family."
       "Score Input"
       (Just (ModeBinding "JVM" False))

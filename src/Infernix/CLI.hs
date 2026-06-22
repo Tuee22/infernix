@@ -31,6 +31,7 @@ import Infernix.DemoConfig
     renderModelListing,
     validateDemoConfigFile,
   )
+import Infernix.DhallSchema (renderDhallSchema)
 import Infernix.Engines.AppleSilicon (materializeMetalEngines, metalEngineArtifactAdapterIds)
 import Infernix.Engines.LinuxNative (linuxNativeEngineArtifactAdapterIds, materializeLinuxNativeEngines)
 import Infernix.Error (InfernixError (EdgePortNotPublished))
@@ -167,6 +168,10 @@ dispatch command =
       putStr (renderModelListing demoConfig)
     InternalDemoConfigValidateCommand demoConfigPath ->
       validateDemoConfigFile demoConfigPath
+    InternalDhallSchemaCommand schema ->
+      case renderDhallSchema schema of
+        Left err -> ioError (userError err)
+        Right schemaText -> putStr (Text.unpack schemaText)
     InternalGeneratePursContractsCommand outputDir -> do
       runtimeMode <- resolveRuntimeMode Nothing
       writeGeneratedPursContracts runtimeMode outputDir
@@ -241,9 +246,14 @@ hostToolPathOrName paths tool =
     Just hostConfig ->
       let candidate = HostTools.hostToolPath hostConfig tool
        in if Text.null candidate
-            then Text.unpack (HostTools.hostToolName tool)
+            then fallbackPathOrName
             else Text.unpack candidate
-    Nothing -> Text.unpack (HostTools.hostToolName tool)
+    Nothing -> fallbackPathOrName
+  where
+    fallbackPathOrName =
+      case HostTools.hostToolFallbackPath tool of
+        Just path -> path
+        Nothing -> Text.unpack (HostTools.hostToolName tool)
 
 runLint :: Maybe RuntimeMode -> IO ()
 runLint maybeRuntimeMode = do

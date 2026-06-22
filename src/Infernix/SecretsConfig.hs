@@ -1,6 +1,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TypeApplications #-}
 
 -- | Phase 7 Sprint 7.17 — typed Haskell record for the
 -- @dhall/InfernixSecrets.dhall@ manifest. The manifest names the
@@ -19,6 +20,7 @@ module Infernix.SecretsConfig
     KeycloakDbCredentialsRef (..),
     MinioCredentials (..),
     decodeSecretsConfigFile,
+    renderSecretsConfigSchema,
     readMinioCredentials,
     defaultClusterSecretsMountPath,
     defaultHostSecretsManifestPath,
@@ -32,6 +34,7 @@ import Data.Text (Text)
 import Data.Text qualified as Text
 import Dhall qualified
 import GHC.Generics (Generic)
+import Infernix.DhallSchema.Reflection (renderDecoderExpected)
 
 -- | Path to the MinIO credentials JSON file. The file's payload is
 -- decoded into 'MinioCredentials' below; see 'readMinioCredentials'.
@@ -142,6 +145,10 @@ decodeSecretsConfigFile filePath = do
             )
         )
     Right value -> pure value
+
+renderSecretsConfigSchema :: Either String Text
+renderSecretsConfigSchema =
+  renderDecoderExpected (Dhall.auto @SecretsConfig)
 
 -- | Decoded MinIO credentials payload. The JSON shape is
 -- @{ "accessKey": "...", "secretKey": "..." }@.

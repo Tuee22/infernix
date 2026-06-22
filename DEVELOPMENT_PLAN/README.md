@@ -17,18 +17,25 @@ govern this plan.
 [../documents/architecture/pulsar_ml_workflow.md](../documents/architecture/pulsar_ml_workflow.md)
 (Engine / Coordinator / Webapp roles, a derived topic algebra, the `Work*` envelope
 family, the artifact + `.ready` readiness contract, websocket snapshot/patch, and a
-reflected-Dhall-schema one-binary role model). This reopens three surfaces, each
+reflected-Dhall-schema one-binary role model). This tracks three surfaces, each
 tracked in [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md):
 
-- **Phase 4** — the **Coordinator** gains explicit topic-lifecycle ownership
-  (replacing implicit broker auto-create), and the binary emits its own reflected
-  Dhall schema.
+- **Phase 4** — the **Coordinator** now owns explicit topic-lifecycle
+  reconciliation from the typed runtime graph, and the binary emits its own
+  reflected Dhall schema through `infernix internal dhall-schema
+  host|cluster|secrets|substrate`. The operator-facing `dhall/Infernix*.dhall`
+  files are the checked-in reflected output, and `infernix lint docs` drift-checks
+  them against the in-binary renderer.
 - **Phase 6** — phase validation moves to **single-accelerator-per-phase** (standards
   §Q): one of `apple-silicon` or `linux-gpu` plus `linux-cpu`, never both;
   `cohort-validation-waves.md` is repurposed as per-accelerator attestation ledgers.
-- **Phase 7** — the demo frontend folds into a one-binary **Webapp** role.
+- **Phase 7** — the demo frontend's eventual one-binary **Webapp** role is tracked as a
+  cleanup-ledger consolidation item while the current two-binary demo surface remains the validated
+  runtime.
 
-Each reopened phase carries the convergence work in its `Remaining Work`.
+Any still-present compatibility or consolidation surfaces are listed in
+[legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) rather than hidden in phase
+status prose.
 
 ## Document Index
 
@@ -93,7 +100,8 @@ code-side target has landed around substrate-neutral engine pools: the coordinat
 production router, normal pools use Pulsar `Shared` plus broker-native backpressure, pinned routes
 use derived per-member topics with `Exclusive`, Linux members are Kubernetes workloads, and Apple
 members are same-binary host daemons selected by stable host id. Legacy raw-topic compatibility
-surfaces remain tracked for deletion while Wave J supplies real-cluster proof.
+surfaces and the demo-off coordinator gate have been removed; the remaining tracked cleanup is the
+one-binary Webapp role consolidation.
 
 The repository implements the substrate-file doctrine described by this plan. Supported flows
 stage one `infernix-substrate.dhall` beside the active build root through the `infernix` command
@@ -131,8 +139,9 @@ members are host-native. Pulsar-owned topics, `Shared` pool subscriptions, `Excl
 and acknowledgement handling are the ordering and ownership boundary for request handoff,
 inference, and result publication. The worker dispatches through the selected engine binding,
 fetches model weights lazily from `infernix-models`, and publishes the typed per-family result
-surface; hardware proof for real output remains in cohort gates, while unsupported adapter ids fail
-fast instead of falling through to a generic success path. The worktree omits the
+surface; the selected `linux-gpu` plus `linux-cpu` real-output proof closed on 2026-06-20, while
+unsupported adapter ids fail fast instead of falling through to a generic success path. The
+worktree omits the
 direct Harbor, MinIO, and Pulsar tool-route compatibility handlers, requires the real routed
 upstream behavior in integration, and persists Linux cluster state before later rollout phases.
 Bootstrap shells no longer restage the active substrate payload before lifecycle commands; that
@@ -153,16 +162,18 @@ work to use an already selected native arm64 Docker daemon and forbids creating 
 Docker contexts, creating Colima VMs, or using cross-architecture emulation; Phase 1 Sprint 1.12
 replaced the previous Colima reconciliation path with selected Docker-context and
 daemon-architecture validation and closed on the recorded validation with both the positive Apple lifecycle
-gate and the negative no-daemon boundary gate. Phase 1 reopens the Apple Metal/Core ML
-materialization lane: Sprint 1.14 removes the prior Sprint 1.13 `tart` / `hostTart` /
+gate and the negative no-daemon boundary gate. Phase 1 Sprint 1.14 closes the Apple Metal/Core ML
+materialization lane under the Section Q single-accelerator rule: it removes the prior Sprint 1.13
+`tart` / `hostTart` /
 `AppleTart` implementation from the current host-tool schema and retargets the retained
 `materialize-metal-engines` command to typed engine-artifact manifests. The materializer now writes
 the fixed host Metal runtime bridge source and smoke command plus the `coreml-native` runner source
 and smoke command; the current Apple host pass executes both installed smoke commands from
 `./.data/engines/<adapterId>/` and passes integration, routed e2e, and aggregate `test all` against
-the validation-wrapper state. Wave I still owns real native-payload replacement on the reopened
-real-output surface. The target has no Tart VM, user keychain dependency, host Xcode UI flow, or
-request-time toolchain install. The
+the validation-wrapper state. Apple real-native-payload follow-on evidence and routed Linux
+real-output proof remain later runtime/output residuals owned by Phases 4 and 6, not Phase 1
+foundation blockers. The target has no Tart VM, user
+keychain dependency, host Xcode UI flow, or request-time toolchain install. The
 Poetry bootstrap may reuse an already available
 compatible Python 3.12+ executable when one passes the implemented version check. Routed Apple
 Playwright validation runs host-native `npm exec` against the published `127.0.0.1` edge port,
@@ -191,11 +202,13 @@ Sprint 6.27 closes the staged-substrate format cleanup: `infernix-substrate.dhal
 typed Dhall record decoded in-process by the `dhall` Haskell library, with the schema documented at
 `dhall/InfernixSubstrate.dhall`.
 
-**Cohort validation status (present development host = Apple Silicon).** The current workspace is
-on Apple Silicon (`Darwin arm64`) with the selected Docker daemon reporting native `linux/arm64`.
-Consistent with the two-axis doctrine — implement and run code-side closure on whichever single
-machine is present — Apple host-native gates proceed here without a machine switch, and CUDA Linux
-Wave I work remains scheduled for a native CUDA Linux host. The current Apple-side Wave I pass
+**Cohort validation status (present development host = CUDA Linux).** The current workspace is on
+native Ubuntu 24.04 amd64 (`Linux x86_64`) with an NVIDIA GeForce RTX 5090, driver `570.211.01`,
+and Docker reporting native `linux/x86_64` with the `nvidia` runtime available. Consistent with the
+Section Q single-accelerator doctrine — implement and run code-side closure on whichever single
+machine is present, and close each phase on one accelerator plus `linux-cpu` — CUDA Linux Wave I
+work proceeds here without a machine switch. The latest Apple-side Wave I pass, recorded on the
+Apple host before this CUDA Linux cycle,
 builds the host binaries, materializes the `apple-silicon` substrate and typed Metal/Core ML engine
 manifests, proves the generated Metal runtime bridge smoke (`Metal runtime probe passed on Apple
 M1 Max`) plus the installed `coreml-native` smoke (`Core ML runtime probe passed`), and writes
@@ -232,23 +245,26 @@ source-fingerprint cluster-image reuse and Dockerfile dependency-layer caching f
 two-worker engine-pool placement, unique-topic `Shared` backlog/backpressure, pod replacement,
 node drain, anti-affinity, lifecycle rebinding, demo-off publication, Linux CPU framework-venv
 smoke paths, and clean teardown against image digest
-`sha256:ae06ba36fe1f3ffecf48aa86c34abeb0dd1c98cabb030a7da783681ac87a81df`. CUDA Linux/GPU and real
-native payloads still own the remaining real-output full-suite proof.
+`sha256:ae06ba36fe1f3ffecf48aa86c34abeb0dd1c98cabb030a7da783681ac87a81df`. The current CUDA Linux
+cycle then closed the remaining selected-accelerator real-output proof: `./bootstrap/linux-gpu.sh
+test` passed style, unit, web unit, integration, and routed Playwright with the full 16-row
+`linux-gpu` browser matrix, and rebuilt-image `./bootstrap/linux-cpu.sh test` passed the matching
+CPU full-suite lane.
 The legacy dated proof points (the recorded validation) are inventoried in
 [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) under "Retired Historical
 Validation Evidence"; the underlying contracts they exercised still describe supported behavior,
 but the proof points themselves are not current. Revalidation is tracked by
 [cohort-validation-waves.md](cohort-validation-waves.md). [Wave A](cohort-validation-waves.md)
-(Apple cohort) closed the recorded validation with `cabal test infernix-integration` full PASS plus 5/6
+(Apple cohort) closed on the recorded validation with `cabal test infernix-integration` full PASS plus 5/6
 Playwright e2e PASS; Waves A.1 and A.2 subsequently closed the routed
 Playwright residuals with 7/7 e2e PASS, and Wave A.3 closed Apple engine-lock chaos.
 [Wave H](cohort-validation-waves.md) then re-confirmed the full Apple cohort lifecycle on the
 Apple cohort host on 2026-06-09 from a clean build root: the build, lint/style/unit gates, the
 explicit `cluster up` → `cluster status` → `cluster down` lifecycle with retained-state replay,
 `infernix test integration`, `infernix test e2e` 9/9, and aggregate `infernix test all`.
-[Wave C](cohort-validation-waves.md) closed the recorded validation on a native Linux/CUDA host: the
+[Wave C](cohort-validation-waves.md) closed on the recorded validation on a native Linux/CUDA host: the
 portable `linux-cpu` full-suite gate passed on the recorded validation and the real `linux-gpu`
-full-suite gate passed on the recorded validation. [Wave F](cohort-validation-waves.md) closed the recorded validation
+full-suite gate passed on the recorded validation. [Wave F](cohort-validation-waves.md) closed on the recorded validation
 with native `linux/arm64` `linux-cpu` validation through the selected Docker daemon
 (`server=linux/arm64`, runtime probe `aarch64` / `arm64`) and a full
 `docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm infernix infernix test all`
@@ -285,48 +301,38 @@ Development and validation are organized around two physical host cohorts:
 - **CUDA Linux cohort:** `./bootstrap/linux-gpu.sh ...` and the Compose-launched
   `docker compose run --rm infernix infernix ...` command surface.
 
-> **Implement in natural phase order on whichever single machine is present. The cohort gate is a
-> batched wave — the only supported machine switch — not a per-sprint or per-phase trigger.** Every
-> open phase and sprint has two independent axes. *Code-side closure* (Axis 1) is the implementation
-> plus the machine-independent gate set — `cabal build all`, `cabal test infernix-unit`,
-> `cabal test infernix-haskell-style`, `infernix lint files/docs/chart/proto`, `infernix docs
-> check`, the web unit suite, and `poetry run check-code`; completed in natural order on one
-> machine, it is the gate to begin the *next* phase's implementation. *Cohort sign-off* (Axis 2) is
-> the hardware-specific full-suite — Apple Metal including headless Metal/Core ML materialization,
-> and CUDA GPU runs — batched once per closure cycle against frozen code and tracked in
-> `cohort-validation-waves.md`; it is the gate for `Done` and never the gate for moving on. **The
-> next action for any open phase is always its remaining code-side closure on the machine you
-> already have; do not switch machines to "validate the open phase." The machine switch happens only
-> at a scheduled wave boundary, once per cohort.** A deliverable that is intrinsically
-> hardware-bound — for example the Apple-only Metal runtime bridge probe and Core ML materialization
-> smoke of Phase 1 Sprint 1.14 — is named as
-> such in its `Code-side closure` field and is exercised inside its cohort's wave, never pre-claimed
-> as machine-independent.
+> **Implement in natural phase order on whichever single machine is present, and validate each phase
+> on exactly one accelerator plus `linux-cpu` — never both accelerators.** Every open phase has two
+> independent axes. *Code-side closure* (Axis 1) is the implementation plus the machine-independent
+> gate set — `cabal build all`, `cabal test infernix-unit`, `cabal test infernix-haskell-style`,
+> `infernix lint files/docs/chart/proto`, `infernix docs check`, the web unit suite, and
+> `poetry run check-code`; completed in natural order on one machine, it is the gate to begin the
+> *next* phase's implementation. *Single-accelerator sign-off* (Axis 2) is the hardware-specific
+> full-suite for the phase's one chosen accelerator (`apple-silicon` Metal/Core ML, or `linux-gpu`
+> CUDA) plus `linux-cpu`, recorded in `cohort-validation-waves.md`; it is the gate for `Done` and
+> never the gate for moving on. A phase never requires the other accelerator; cross-accelerator
+> coverage is split across sibling phases or merged by a later `linux-cpu`-only aggregation phase.
 
-Phase work should stay on the current cohort until a coherent slice is ready. Apple-owned changes
-validate locally on Apple and queue CUDA Linux closure; Linux, CUDA, chart, and outer-container
-changes validate locally on CUDA Linux and queue Apple closure. Validation-only hardware residuals
-are queued in [cohort-validation-waves.md](cohort-validation-waves.md), and the counterpart run is
-a scheduled closure batch, not a per-sprint machine switch.
-
-Full phase closure requires both relevant hardware cohorts to rerun the complete gates against the
-same phase state. `linux-cpu` remains a portable CPU-only lane for native Linux amd64 and native
-Linux arm64 hosts, but it does not run through Apple Silicon emulation and does not replace the
-CUDA Linux cohort when GPU behavior, CUDA image construction, `nvkind`, or NVIDIA scheduling is in
-scope.
+Phase work should stay on the current cohort until a coherent slice is ready. Validation-only
+hardware residuals are queued in [cohort-validation-waves.md](cohort-validation-waves.md), but a
+phase closes only on its chosen accelerator plus `linux-cpu`, not by alternating between Apple and
+CUDA after each sprint. `linux-cpu` remains a portable CPU-only lane for native Linux amd64 and
+native Linux arm64 hosts, but it does not run through Apple Silicon emulation and does not replace
+the CUDA Linux cohort when a phase explicitly chooses `linux-gpu` for GPU behavior, CUDA image
+construction, `nvkind`, or NVIDIA scheduling.
 
 ## Phase Overview
 
 | Phase | Name | Status | Document |
 |-------|------|--------|----------|
 | 0 | Documentation and Governance | Done (Sprints 0.1-0.10 closed; declarative-state documentation reconciliation complete) | [phase-0-documentation-and-governance.md](phase-0-documentation-and-governance.md) |
-| 1 | Repository and Control-Plane Foundation | Active (Sprint 1.13's Tart implementation is historical and removed from the current host-tool schema; Sprint 1.14 is code-side closed for typed engine-artifact manifests, the fixed host Metal bridge, the `coreml-native` source/smoke command, and smoke-capable Apple native validation-runner roots. The current Apple host pass proves Tart-free manifest materialization, generated Metal bridge smoke, installed Core ML runtime-load smoke, native validation-wrapper materialization, integration, focused e2e after the object-input dispatch and cold-bootstrap wait fixes, and aggregate `test all` against the validation-wrapper state. Sprints 1.1-1.12 remain closed, including the native-only Apple Docker boundary; Wave I remains open for paired real native-payload cohort sign-off.) | [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md) |
+| 1 | Repository and Control-Plane Foundation | Done (Sprints 1.1-1.12 remain closed, including the native-only Apple Docker boundary; Sprint 1.13's Tart implementation is historical and removed from the current host-tool schema; Sprint 1.14 closes the typed engine-artifact manifest lane with the fixed host Metal bridge, the `coreml-native` source/smoke command, smoke-capable Apple native validation-runner roots, Apple materialization smoke, focused e2e, aggregate `test all`, and native `linux-cpu` support evidence. Apple real-native-payload follow-on evidence and routed Linux real-output proof remain owned by Phases 4 and 6.) | [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md) |
 | 2 | Kind Cluster Storage and Lifecycle | Done (Sprints 2.10-2.13 lifecycle, retained-state, bootstrap-boundary, and host-manifest closure validated by Apple Wave A and CUDA Linux Wave C) | [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md) |
 | 3 | HA Platform Services and Edge Routing | Done (Sprint 3.12 native `linux-cpu` architecture selector and native arm64 publication path closed in Wave F on the recorded validation through the already selected arm64 Docker daemon; Sprints 3.10–3.11 validated by Apple Wave A/A.2 and CUDA Linux Wave C) | [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md) |
-| 4 | Inference Service and Durable Runtime | Active (Sprints 4.1-4.17 have prior code-side evidence for real-output, per-engine routing, and Linux image-owned native-root fallback; Sprint 4.18 reopens engine-artifact manifests and now materializes Apple native validation-wrapper roots in addition to Linux runner-contract roots, with overlay-safe fresh-container Linux native materializer reruns validated on the native arm64 Docker lane and 2026-06-15 native CUDA Linux baked-image validation covering `./bootstrap/linux-gpu.sh build`, unit/lint/docs/materializer gates, and direct runner-contract normal invocations. Current source also threads non-secret model-cache hints to native runners, makes model-cache-aware Linux runner-contract payloads exit 75 until the requested `.ready` sentinel exists, lets artifact runners return local file markers for Haskell-owned MinIO upload, maps native exit 75 to `model_cache_not_populated`, and bakes Linux CPU `transformers`/`pytorch` framework venvs for smoke validation. Sprint 4.19 is code-side closed for substrate-neutral engine pools and derived pool/model topics; Apple integration executes the single-host logical `Shared` backlog harness, and Linux CPU integration proves Kubernetes pool placement/backpressure. Wave I owns real Linux and Apple native payload replacement, routed per-engine GPU evidence, and full real-output reruns; Wave J still owns Linux GPU/CUDA cohort validation, while physical Apple multi-host evidence is hardware-deferred.) | [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) |
+| 4 | Inference Service and Durable Runtime | Done (Sprints 4.1-4.20 closed; Sprint 4.18 materializes Apple validation-wrapper roots plus Linux runtime-backed native roots over image-baked llama.cpp, whisper.cpp, ONNX Runtime/CTranslate2, Basic Pitch ONNX, faster-whisper, and Audiveris payloads; Sprint 4.19 closes substrate-neutral engine pools and derived pool/model topics. Wave I and Wave J selected-lane gates closed on 2026-06-20 with full `./bootstrap/linux-gpu.sh test` plus rebuilt-image `./bootstrap/linux-cpu.sh test`; physical Apple multi-host evidence remains hardware-deferred proof, not Phase 4 work.) | [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) |
 | 5 | Web UI and Shared Types | Done (Sprints 5.1-5.10 closed with demo backend, Python adapter, and web/Node no-env-var path validated by Apple Wave A/A.2 and CUDA Linux Wave C) | [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md) |
-| 6 | Validation, E2E, and HA Hardening | Active (Sprints 6.1, 6.4, 6.5, and 6.7-6.30 remain closed; Sprints 6.2/6.3/6.6 carry the real-output cohort residual; Sprint 6.31 is code-side closed for README/generated-catalog matrix-drift linting; Sprint 6.32 is code-side closed for impossible pool-routing states and now has Apple evidence for pinned `Exclusive`, same-machine `Shared` coexistence, demo-off assertions, and live single-host logical `Shared` backlog/backpressure execution. Linux CPU integration proves Kubernetes placement/backpressure; Wave J still awaits Linux GPU/CUDA cohort validation, and physical Apple multi-host evidence is hardware-deferred.) | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) |
-| 7 | Demo App Multi-User Durable Context | Active (Sprints 7.1-7.22 remain closed; Sprint 7.23 is superseded as an Apple singleton stopgap; Sprint 7.24 is code-side closed for startup-time substrate-neutral engine pools, with pinned Apple `Exclusive` duplicate rejection, same-machine Apple `Shared` coexistence, Apple production demo-off assertions, and live single-host logical `Shared` backlog/backpressure execution. Linux CPU integration proves placement/backpressure and durable replacement/drain cases; Wave J still owns Linux GPU/CUDA cohort validation, and physical Apple multi-host evidence is hardware-deferred. Desired-state hot reload remains future work.) | [phase-7-demo-app-durable-context.md](phase-7-demo-app-durable-context.md) |
+| 6 | Validation, E2E, and HA Hardening | Done (Sprints 6.1-6.32 closed; Sprints 6.2/6.3/6.6 real-output assertions, Sprint 6.31 README/generated-catalog matrix-drift linting, and Sprint 6.32 pool-routing gates all have selected `linux-gpu` plus `linux-cpu` evidence from the 2026-06-20 full-suite reruns. Physical Apple multi-host evidence remains hardware-deferred proof, not Phase 6 work.) | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) |
+| 7 | Demo App Multi-User Durable Context | Done (Sprints 7.1-7.24 closed; Sprint 7.23 is superseded as an Apple singleton stopgap, and Sprint 7.24 closes startup-time substrate-neutral engine pools, pinned Apple `Exclusive` duplicate rejection, same-machine Apple `Shared` coexistence, production demo-off assertions, and live broker-native backpressure. Wave J closed on 2026-06-20 with full `linux-gpu` plus rebuilt-image `linux-cpu` validation. Desired-state hot reload remains future work.) | [phase-7-demo-app-durable-context.md](phase-7-demo-app-durable-context.md) |
 
 > **Note**: Phase statuses describe current repository state. Earlier governed phases may remain
 > `Active` or `Blocked` for named follow-ons while later phases can be `Done` when their owned work
@@ -450,7 +456,7 @@ The supported platform now closes around these rules:
 | 4 | 0-3 | closes the runtime, adapter boundary, object-store contract, and Apple host-daemon bridge on top of the HA platform surfaces |
 | 5 | 0-4 | adds the clustered demo UI, generated frontend contracts, and routed browser validation on top of the runtime and publication contract |
 | 6 | 0-5 | validates the whole supported surface end to end and hardens the governed docs, routes, and lifecycle behavior around that implementation |
-| 7 | 0-6 | adds the multi-user durable-context demo application on top of the platform: Keycloak self-signup, WebSocket post-login transport, Pulsar-backed conversation log per context, MinIO-backed artifact upload/download/render-or-download, a Haskell-first logic boundary surfaced to PureScript via `purescript-bridge`, and the supported three-role daemon split (stateless `infernix-demo`, stateless `infernix-coordinator`, substrate-specific engine pools). The platform contract Phase 7 builds on is implemented in code; Apple plus native Linux/CUDA real-cluster validation evidence is recorded in Waves A-C, Sprint 7.8 runtime KV-cache plus `Infernix.Runtime.Daemon` closure is recorded in Wave E, and Sprint 7.24 reopens pool assignment and broker-native backpressure. |
+| 7 | 0-6 | adds the multi-user durable-context demo application on top of the platform: Keycloak self-signup, WebSocket post-login transport, Pulsar-backed conversation log per context, MinIO-backed artifact upload/download/render-or-download, a Haskell-first logic boundary surfaced to PureScript via `purescript-bridge`, and the supported three-role daemon split (stateless `infernix-demo`, stateless `infernix-coordinator`, substrate-specific engine pools). The platform contract Phase 7 builds on is implemented in code; Apple plus native Linux/CUDA real-cluster validation evidence is recorded in Waves A-C, Sprint 7.8 runtime KV-cache plus `Infernix.Runtime.Daemon` closure is recorded in Wave E, and Sprint 7.24 pool assignment and broker-native backpressure closed in Wave J. |
 
 ## Cross-References
 

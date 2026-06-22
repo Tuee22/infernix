@@ -52,8 +52,9 @@ schema and retargets the retained `materialize-metal-engines` command to typed e
 manifests. The materializer now writes the fixed host Metal bridge source and smoke command, and it
 also writes and smoke-loads the `coreml-native` runner from the temp root before atomic install.
 The current Apple host pass executes both installed smoke commands and passes Apple
-integration/e2e/all against the validation-wrapper state. The remaining Wave I gate is real native
-payload output on the reopened real-output surface. The headless target uses no Tart VM, no user keychain dependency, no host Xcode UI flow,
+integration/e2e/all against the validation-wrapper state. That closes the Phase 1 headless
+materialization foundation; the selected Phase 4/6 `linux-gpu` plus `linux-cpu` real-output gate
+closed on 2026-06-20. The headless target uses no Tart VM, no user keychain dependency, no host Xcode UI flow,
 and no request-time toolchain installation. The Apple clean-host bootstrap hardening is implemented and validated: the stage-0
 entrypoint verifies same-process ghcup-managed `ghc` and `cabal` resolution before direct
 `cabal install`, reconciles Homebrew `protoc`, and lets Apple adapter setup or validation paths
@@ -93,20 +94,20 @@ so retry recovery does not depend on a previously retained target tag. The under
 they exercised still describe supported behavior; revalidation on the new host is tracked by
 [cohort-validation-waves.md](cohort-validation-waves.md).
 
-**Cohort validation status (present development host = Apple Silicon).** Consistent with the
+**Cohort validation status (present development host = CUDA Linux).** Consistent with the
 single-accelerator doctrine — implement and run code-side closure on whichever single machine is
 present, and validate each phase on **one** accelerator (`apple-silicon` or `linux-gpu`) plus
-`linux-cpu`, never both — the current workspace is Apple Silicon (`Darwin arm64`) with the selected
-Docker daemon reporting
-native `linux/arm64`. Apple host-native gates proceed here without a machine switch; CUDA Linux
-Wave I work remains scheduled for a native CUDA Linux host. The current Apple-side Wave I pass
+`linux-cpu`, never both — the current workspace is native Ubuntu 24.04 amd64 (`Linux x86_64`) with
+an NVIDIA GeForce RTX 5090, driver `570.211.01`, and Docker reporting native `linux/x86_64` with
+the `nvidia` runtime available. CUDA Linux Wave I and Wave J selected-lane closure ran here without
+a machine switch. The latest Apple-side Wave I pass, recorded on the Apple host before this CUDA Linux cycle,
 builds the host binaries, materializes the `apple-silicon` substrate and typed Metal/Core ML engine
 manifests, proves the generated Metal runtime bridge smoke, and proves the installed
 `coreml-native` runtime-load smoke (`Core ML runtime probe passed`). It also materializes
-smoke-capable Apple native validation runners for the allowlisted native adapter ids. It does not
-close Wave I: the current Apple integration evidence completes the active Apple catalog through the
-host engine daemon with deterministic validation-wrapper payloads while real native payloads remain
-cohort work. The latest Apple integration rerun passed after rebuilding the changed repo-owned
+smoke-capable Apple native validation runners for the allowlisted native adapter ids. The current
+Apple integration evidence completes the active Apple catalog through the host engine daemon with
+deterministic validation-wrapper payloads; the selected accelerator gate for Phase 4/6 is the
+2026-06-20 CUDA Linux closure. The latest Apple integration rerun passed after rebuilding the changed repo-owned
 image once, then reusing the stamped `infernix-linux-cpu:local` image on the edge-port rediscovery
 cluster cycles. The run completed cache lifecycle, service runtime loop, durable Pulsar topic
 families, pinned Apple host-engine `Exclusive` duplicate-consumer rejection through an isolated
@@ -126,23 +127,27 @@ rename failure. The 2026-06-16 Linux CPU rebuilt-image integration pass on the n
 lane proves two-worker engine-pool placement, unique-topic `Shared` backlog/backpressure, pod
 replacement, node drain, anti-affinity, lifecycle rebinding, demo-off publication, Linux CPU
 framework-venv smoke paths, and clean teardown against image digest
-`sha256:ae06ba36fe1f3ffecf48aa86c34abeb0dd1c98cabb030a7da783681ac87a81df`. CUDA Linux/GPU and
-real native payloads still own the remaining real-output full-suite proof. The legacy
+`sha256:ae06ba36fe1f3ffecf48aa86c34abeb0dd1c98cabb030a7da783681ac87a81df`. The current CUDA Linux
+cycle also rebuilt `infernix-linux-gpu:local`, strict-smoked the baked Linux native payload layer
+for all five native adapters with `--require-native-payload`, and then passed full
+`./bootstrap/linux-gpu.sh test` plus rebuilt-image `./bootstrap/linux-cpu.sh test` on 2026-06-20.
+That closure proves the routed `linux-gpu` plus `linux-cpu` real-output suite and Linux payload
+service path against current source. The legacy
 dated proof points are inventoried in
 [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) under "Retired Historical
 Validation Evidence". The underlying contracts they exercised still describe supported behavior,
 but the proof points themselves are not current. Revalidation is tracked by
 [cohort-validation-waves.md](cohort-validation-waves.md): [Wave A](cohort-validation-waves.md)
-(Apple cohort) closed the recorded validation with `cabal test infernix-integration` full PASS plus 5/6
+(Apple cohort) closed on the recorded validation with `cabal test infernix-integration` full PASS plus 5/6
 Playwright e2e PASS; Waves A.1 and A.2 subsequently closed the routed
 Playwright residuals with 7/7 e2e PASS, and Wave A.3 closed Apple engine-lock chaos.
 [Wave H](cohort-validation-waves.md) then re-confirmed the full Apple cohort lifecycle on the
 Apple cohort host on 2026-06-09 from a clean build root: the build, lint/style/unit gates, the
 explicit `cluster up` → `cluster status` → `cluster down` lifecycle with retained-state replay,
 `infernix test integration`, `infernix test e2e` 9/9, and aggregate `infernix test all`.
-[Wave C](cohort-validation-waves.md) closed the recorded validation on a native Linux/CUDA host: the
+[Wave C](cohort-validation-waves.md) closed on the recorded validation on a native Linux/CUDA host: the
 portable `linux-cpu` full-suite gate passed on the recorded validation and the real `linux-gpu`
-full-suite gate passed on the recorded validation. [Wave F](cohort-validation-waves.md) closed the recorded validation
+full-suite gate passed on the recorded validation. [Wave F](cohort-validation-waves.md) closed on the recorded validation
 with native `linux/arm64` `linux-cpu` validation through the selected Docker daemon
 (`server=linux/arm64`, runtime probe `aarch64` / `arm64`) and a full
 `docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm infernix infernix test all`
@@ -164,7 +169,7 @@ PASS.
 | Demo UI gating | the staged substrate file can disable the clustered demo surface | implemented; the supported materialization path accepts `--demo-ui false` |
 | Simulation stance | no simulated cluster, route, or generic inference-success fallback remains in the supported runtime or validation contract, and routed Pulsar checks require the real Gateway-backed upstream | implemented; inference execution goes through typed adapter harnesses, unsupported adapters fail fast, and the remaining repo-local topic spool under `./.data/runtime/pulsar/` is a harness-only path for unit-level or intentionally endpoint-absent daemon checks; Apple cohort gate closed in [Wave A](cohort-validation-waves.md); CUDA Linux cohort gate closed in [Wave C](cohort-validation-waves.md) |
 | Validation scope | integration uses one `.dhall`-driven suite over the README matrix, E2E stays substrate-agnostic at the browser layer, and `test all` runs every supported validation layer for one built substrate at a time | implemented; Apple cohort gate closed in [Wave A/A.2](cohort-validation-waves.md); CUDA Linux cohort gate closed in [Wave C](cohort-validation-waves.md) |
-| Hardware cohort cadence | code-side closure (implementation plus the machine-independent gate set) is completed in natural phase order on whichever single machine is present and gates the next phase's implementation; the cross-architecture cohort full-suite is a batched wave — the only supported machine switch — and gates `Done`, so contributors do not switch machines per sprint | implemented in the plan doctrine; operationalized in [cohort-validation-waves.md](cohort-validation-waves.md), where validation-only residuals are queued as named waves instead of ad hoc machine-switch requests |
+| Hardware cohort cadence | code-side closure (implementation plus the machine-independent gate set) is completed in natural phase order on whichever single machine is present and gates the next phase's implementation; `Done` requires exactly one chosen accelerator plus `linux-cpu`, never both accelerators in one phase gate | implemented in the plan doctrine; operationalized in [cohort-validation-waves.md](cohort-validation-waves.md), where validation-only residuals are queued as named per-accelerator attestations instead of ad hoc machine-switch requests |
 | Native container architecture | Apple Silicon -> `linux/arm64`; `linux-cpu` -> native Linux host architecture (`linux/amd64` or `linux/arm64`); `linux-gpu` -> `linux/amd64`; no development or validation lane uses cross-architecture emulation | implemented and validated: `linux-cpu` publication reads the normalized native host architecture from `InfernixHost.dhall`; Wave F closed the native arm64 `linux-cpu` full-suite gate on the recorded validation through the selected native arm64 Docker daemon |
 
 Monitoring is not a supported first-class surface.
@@ -592,14 +597,14 @@ The plan keeps control-plane execution context separate from substrate.
   dispatcher + result-bridge + model bootstrap + model-to-pool routing) and engine pools
   (`infernix-engine` on Linux substrates, plus Linux GPU framework-specific Deployments when
   configured; on-host Apple daemons selected by stable host id). The legacy fused
-  `chart/templates/deployment-service.yaml` was legacy together with the `service.*` chart-values
+  `chart/templates/deployment-service.yaml` was retired together with the `service.*` chart-values
   block on the recorded validation
 - the coordinator consumes request topics and publishes inference work to derived engine-pool topics;
   engine members consume their assigned pool or pinned-member topics, execute inference, and publish
   results
 - the staged `.dhall` tells each daemon its substrate, whether its `daemonRole` is `Coordinator` or
-  `Engine`, and the validated pool/member assignments and derived topics it may use. Legacy
-  batch-topic metadata remains a compatibility projection until deletion-ledger cleanup removes it
+  `Engine`, and the validated pool/member assignments and derived topics it may use. Engine daemon
+  metadata is derived internally from those assignments rather than exposed as a legacy projection
 - the supported HA defaults: coordinator `replicaCount >= 2` with soft anti-affinity, Linux engine
   placement governed by Kubernetes rules, Apple engine placement governed by host ids, and per-role
   coordinator plus engine-pool knobs in `chart/values.yaml`. Pulsar-owned topics, `Shared`
@@ -651,7 +656,7 @@ The plan keeps control-plane execution context separate from substrate.
 
 ### 10. Playwright Runs From Inside The Linux Substrate Image
 
-- Phase 3 Sprint 3.10 (landed the recorded validation) legacy the dedicated `infernix-playwright:local`
+- Phase 3 Sprint 3.10 (landed on the recorded validation) retired the dedicated `infernix-playwright:local`
   image and `docker/playwright.Dockerfile`; the Playwright system packages and the three browsers
   are now baked into `docker/Dockerfile`
 - on Linux substrates, routed Playwright execution runs in-container via

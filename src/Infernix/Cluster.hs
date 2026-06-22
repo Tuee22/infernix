@@ -65,7 +65,7 @@ import Network.HTTP.Types.Header (Header)
 import Network.HTTP.Types.Status (statusCode)
 import Network.HTTP.Types.URI (urlEncode)
 import Network.Socket qualified as Socket
-import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, findExecutable, getTemporaryDirectory, listDirectory, removeFile, removePathForcibly, renameFile)
+import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, getTemporaryDirectory, listDirectory, removeFile, removePathForcibly, renameFile)
 import System.Exit (ExitCode (..))
 import System.FilePath (addTrailingPathSeparator, normalise, takeDirectory, takeFileName, (</>))
 import System.Info qualified
@@ -134,24 +134,25 @@ envoyGatewayDependencyArchive = "chart/charts/gateway-helm-v1.7.2.tgz"
 helmDependencyArchivesDirectory :: Paths -> FilePath
 helmDependencyArchivesDirectory paths = repoRoot paths </> "chart/charts"
 
--- | Phase 7 Sprint 7.7: the supported daemon-split wait list. The
--- production-shaped @demo_ui = false@ topology brings up only the
--- engine role; the coordinator, Keycloak, and browser demo Deployments
--- are demo-gated. The retired @infernix-service@ Deployment is no
--- longer part of the chart.
+-- | Phase 7 Sprint 7.7 / 7.24: the supported daemon-split wait list.
+-- Production-shaped @demo_ui = false@ topologies still bring up the
+-- coordinator because it owns request fan-in, model-to-pool routing,
+-- result writeback, and model bootstrap. Only the browser demo and
+-- Keycloak remain demo-gated. The retired @infernix-service@
+-- Deployment is no longer part of the chart.
 finalPhaseDeployments :: ClusterState -> [String]
 finalPhaseDeployments state =
   baseDeployments
     <> [deployment | clusterStateHasDemoUi state, deployment <- demoDeployments]
   where
     baseDeployments =
-      [ "deployment/infernix-engine"
+      [ "deployment/infernix-coordinator",
+        "deployment/infernix-engine"
       ]
         <> map (("deployment/infernix-engine-" <>) . Text.unpack) (perEngineDeploymentNames (clusterRuntimeMode state))
         <> [deployment | clusterServiceEnabled (clusterRuntimeMode state), deployment <- ["deployment/infernix-service"]]
     demoDeployments =
-      [ "deployment/infernix-coordinator",
-        "deployment/infernix-demo",
+      [ "deployment/infernix-demo",
         "deployment/infernix-keycloak"
       ]
 
@@ -909,7 +910,6 @@ publicationStateSummaryLines publicationPath = do
       contents <- readFile publicationPath
       pure
         ( map ("publicationInferenceDispatchMode: " <>) (maybeToList (publicationInferenceDispatchMode contents))
-            <> map ("publicationHostInferenceBatchTopic: " <>) (maybeToList (publicationHostInferenceBatchTopic contents))
             <> map ("publicationApiUpstreamMode: " <>) (maybeToList (publicationApiUpstreamMode contents))
             <> publicationUpstreamLines contents
         )
@@ -919,13 +919,6 @@ publicationInferenceDispatchMode contents =
   firstJsonStringField
     "\"inferenceDispatchMode\":"
     "inferenceDispatchMode"
-    (lines contents)
-
-publicationHostInferenceBatchTopic :: String -> Maybe String
-publicationHostInferenceBatchTopic contents =
-  firstJsonStringField
-    "\"hostInferenceBatchTopic\":"
-    "hostInferenceBatchTopic"
     (lines contents)
 
 publicationApiUpstreamMode :: String -> Maybe String
@@ -1425,14 +1418,14 @@ dockerGpuVolumeMountProbeCommand =
   ]
 
 ensureNvkindBinary :: Paths -> IO FilePath
-ensureNvkindBinary _paths = do
-  maybeSystemNvkind <- findExecutable "nvkind"
+ensureNvkindBinary paths = do
+  maybeSystemNvkind <- existingHostToolPathForCluster paths HostNvkind
   case maybeSystemNvkind of
     Just executablePath -> pure executablePath
     Nothing ->
       ioError
         ( userError
-            "nvkind is not available on PATH. The supported linux-gpu control-plane path runs inside the shared linux substrate image, which supplies nvkind."
+            "nvkind is not available through HostConfig.toolPaths.nvkind or the fixed bootstrap fallback paths. The supported linux-gpu control-plane path runs inside the shared linux substrate image, which supplies nvkind."
         )
 
 waitForKindKubeconfig :: Paths -> RuntimeMode -> IO (Either String String)
@@ -1795,40 +1788,63 @@ buildClusterImages paths state runtimeMode = do
         []
         "docker"
         (dockerBuildArgs imageRef sourceFingerprint)
-  buildPerEngineImages imageRef baseImage engineBaseImage
+  buildPerEngineImages
+    imageRef
+    baseImage
+    engineBaseImage
+    runtimeModeName
+    targetArchitecture
+    sourceFingerprint
   where
-    buildPerEngineImages controlPlaneImageRef controlPlaneBaseImage engineBaseImage =
-      case runtimeMode of
-        LinuxGpu ->
-          forM_ (perEngineDeploymentNames runtimeMode) $ \engineName -> do
-            let engineImageRef = Text.unpack (perEngineImageName runtimeMode engineName)
-            engineImageReusable <- dockerImageReusableForHarborPush engineImageRef
-            if Config.controlPlaneContext paths == OuterContainer && engineImageReusable
-              then putStrLn ("reusing per-engine image for " <> Text.unpack engineName <> ": " <> engineImageRef)
-              else do
-                ensureDockerBuildBaseImage paths state controlPlaneBaseImage
-                ensureDockerBuildBaseImage paths state engineBaseImage
-                runCommandMonitored
-                  paths
-                  state
-                  (Just (repoRoot paths))
-                  []
-                  "docker"
-                  [ "build",
-                    "-f",
-                    "docker/engine.Dockerfile",
-                    "--provenance=false",
-                    "--build-arg",
-                    "ENGINE=" <> Text.unpack engineName,
-                    "--build-arg",
-                    "CONTROL_PLANE_IMAGE=" <> controlPlaneImageRef,
-                    "--build-arg",
-                    "BASE_IMAGE=" <> engineBaseImage,
-                    "-t",
-                    engineImageRef,
-                    "."
-                  ]
-        _ -> pure ()
+    buildPerEngineImages
+      controlPlaneImageRef
+      controlPlaneBaseImage
+      engineBaseImage
+      runtimeModeName
+      targetArchitecture
+      sourceFingerprint =
+        case runtimeMode of
+          LinuxGpu ->
+            forM_ (perEngineDeploymentNames runtimeMode) $ \engineName -> do
+              let engineImageRef = Text.unpack (perEngineImageName runtimeMode engineName)
+              engineImageReusable <-
+                dockerImageReusableWithSourceFingerprint
+                  engineImageRef
+                  runtimeModeName
+                  targetArchitecture
+                  sourceFingerprint
+              if engineImageReusable
+                then putStrLn ("reusing per-engine image for " <> Text.unpack engineName <> ": " <> engineImageRef)
+                else do
+                  ensureDockerBuildBaseImage paths state controlPlaneBaseImage
+                  ensureDockerBuildBaseImage paths state engineBaseImage
+                  runCommandMonitored
+                    paths
+                    state
+                    (Just (repoRoot paths))
+                    []
+                    "docker"
+                    [ "build",
+                      "-f",
+                      "docker/engine.Dockerfile",
+                      "--provenance=false",
+                      "--label",
+                      clusterImageFingerprintLabel <> "=" <> sourceFingerprint,
+                      "--label",
+                      clusterImageFingerprintVersionLabel <> "=" <> clusterImageFingerprintVersion,
+                      "--label",
+                      clusterImageRuntimeModeLabel <> "=" <> runtimeModeName,
+                      "--build-arg",
+                      "ENGINE=" <> Text.unpack engineName,
+                      "--build-arg",
+                      "CONTROL_PLANE_IMAGE=" <> controlPlaneImageRef,
+                      "--build-arg",
+                      "BASE_IMAGE=" <> engineBaseImage,
+                      "-t",
+                      engineImageRef,
+                      "."
+                    ]
+          _ -> pure ()
 
 clusterWorkloadImageReusableForBuild :: Paths -> String -> String -> String -> String -> IO Bool
 clusterWorkloadImageReusableForBuild paths imageRef runtimeModeName targetArchitecture sourceFingerprint =
@@ -1838,7 +1854,11 @@ clusterWorkloadImageReusableForBuild paths imageRef runtimeModeName targetArchit
       dockerImageReusableForHostBuild imageRef runtimeModeName targetArchitecture sourceFingerprint
 
 dockerImageReusableForHostBuild :: String -> String -> String -> String -> IO Bool
-dockerImageReusableForHostBuild imageRef runtimeModeName targetArchitecture sourceFingerprint = do
+dockerImageReusableForHostBuild =
+  dockerImageReusableWithSourceFingerprint
+
+dockerImageReusableWithSourceFingerprint :: String -> String -> String -> String -> IO Bool
+dockerImageReusableWithSourceFingerprint imageRef runtimeModeName targetArchitecture sourceFingerprint = do
   pushReusable <- dockerImageReusableForHarborPush imageRef
   architectureMatches <- dockerImageInspectValueEquals imageRef "{{.Architecture}}" targetArchitecture
   fingerprintVersionMatches <- dockerImageLabelEquals imageRef clusterImageFingerprintVersionLabel clusterImageFingerprintVersion
@@ -4287,7 +4307,7 @@ renderHelmValues paths controlPlane state demoConfigPayload deployPhase engineCo
         -- brings the upstream Pulsar chart up. `demo.replicaCount` was
         -- already phase-gated for the same reason.
         "coordinator:",
-        "  enabled: " <> yamlBool demoUiEnabledValue,
+        "  enabled: true",
         "  replicaCount: " <> show (repoCoordinatorReplicaCount deployPhase),
         "  image:",
         "    repository: " <> clusterWorkloadImageRepository (clusterRuntimeMode state),
@@ -4676,19 +4696,41 @@ waitForKindClusterAbsence paths runtimeMode = go (30 :: Int)
 -- | Phase 2 Sprint 2.13 — resolve an external tool's absolute path via
 -- the staged host manifest when 'pathsHostConfig' is present. When the
 -- manifest is absent (first-run bootstrap, unit tests without a
--- fixture), the bare tool name is returned and the caller's @env =
--- 'clusterSubprocessBaseEnv'@ supplies the supported minimal @PATH@.
--- Either way, the bare-name @proc "<command>"@ lint gate stays happy
--- because the lookup is typed.
+-- fixture), use the tool registry's deterministic absolute fallback
+-- candidate instead of resolving through the caller's @PATH@.
 resolveHostToolForCluster :: Paths -> HostTool -> FilePath
 resolveHostToolForCluster paths tool =
   case pathsHostConfig paths of
     Just config ->
       let candidate = HostTools.hostToolPath config tool
        in if Text.null candidate
-            then Text.unpack (HostTools.hostToolName tool)
+            then hostToolFallbackPathOrName tool
             else Text.unpack candidate
-    Nothing -> Text.unpack (HostTools.hostToolName tool)
+    Nothing -> hostToolFallbackPathOrName tool
+
+hostToolFallbackPathOrName :: HostTool -> FilePath
+hostToolFallbackPathOrName tool =
+  fromMaybe (Text.unpack (HostTools.hostToolName tool)) (HostTools.hostToolFallbackPath tool)
+
+existingHostToolPathForCluster :: Paths -> HostTool -> IO (Maybe FilePath)
+existingHostToolPathForCluster paths tool =
+  case pathsHostConfig paths of
+    Just config -> do
+      let configured = Text.unpack (HostTools.hostToolPath config tool)
+      if null configured
+        then firstExistingPath (HostTools.hostToolFallbackCandidates tool)
+        else do
+          present <- doesFileExist configured
+          pure (if present then Just configured else Nothing)
+    Nothing -> firstExistingPath (HostTools.hostToolFallbackCandidates tool)
+
+firstExistingPath :: [FilePath] -> IO (Maybe FilePath)
+firstExistingPath [] = pure Nothing
+firstExistingPath (candidate : rest) = do
+  present <- doesFileExist candidate
+  if present
+    then pure (Just candidate)
+    else firstExistingPath rest
 
 -- | Run a typed 'HostTool' invocation. Wraps 'runCommand' after
 -- resolving the absolute path through 'resolveHostToolForCluster'.

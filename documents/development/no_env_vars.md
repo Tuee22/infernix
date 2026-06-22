@@ -12,6 +12,8 @@
 - **Never call** `lookupEnv`, `getEnv`, `getEnvironment`, `setEnv`, or `unsetEnv` in Haskell.
 - **Never call** `proc "<bare-name>"` for any external command. Use
   `runHostTool hostConfig <toolName> args` instead.
+- **Never call** `findExecutable` or `findExecutables` to discover a manifest-owned tool. Use
+  `HostConfig.toolPaths.*` or the fixed absolute fallback candidates in `Infernix.HostTools`.
 - **Never read** `process.env` in Node/web/Playwright code, `os.environ` in Python, or inherited
   `$VAR` values in bash (except `${BASH_SOURCE[0]}` which is a bash array, not an env var).
 - **Never add** an `env:` entry to `chart/templates/deployment-{coordinator,engine,demo}.yaml`.
@@ -47,7 +49,9 @@ result <- runHostTool hostConfig HostDocker ["image", "inspect", imageRef]
 ```
 
 `runHostTool` (in `src/Infernix/HostTools.hs`) takes the typed `HostConfig` record + a
-`HostTool` enum value + arguments and invokes the command by absolute path. The `HostTool`
+`HostTool` enum value + arguments and invokes the command by absolute path. Manifestless
+bootstrap-adjacent helpers may check only the fixed absolute candidates from
+`hostToolFallbackCandidates`; they must not call `findExecutable`. The `HostTool`
 enum has one constructor per tool listed in
 [../engineering/host_tools_manifest.md](../engineering/host_tools_manifest.md).
 

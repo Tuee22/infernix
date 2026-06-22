@@ -426,23 +426,26 @@ runNativeWorker paths _runtimeMode model engineBinding request _cacheObservation
         Just (installRoot, binaryPath) -> do
           maybeModelCacheConfig <- loadWorkerModelCacheConfig paths _runtimeMode
           ensureNativeRunnerContractCacheReady model maybeModelCacheConfig
-          maybeOutputDir <- nativeRunnerOutputDir model maybeModelCacheConfig
-          processEnvironment <- workerProcessEnvironment paths []
-          (exitCode, stdoutOutput, stderrOutput) <-
-            readCreateProcessWithExitCode
-              ( (proc binaryPath (nativeRunnerArgs model request installRoot maybeModelCacheConfig maybeOutputDir))
-                  { cwd = Just installRoot,
-                    env = Just processEnvironment
-                  }
-              )
-              ""
-          nativeRunnerResult model engineBinding binaryPath maybeModelCacheConfig exitCode stdoutOutput stderrOutput
+          inputFileResult <- nativeRunnerInputFile model request maybeModelCacheConfig
+          case inputFileResult of
+            Left inputError -> pure (Left inputError)
+            Right maybeInputFile -> do
+              maybeOutputDir <- nativeRunnerOutputDir model maybeModelCacheConfig
+              processEnvironment <- workerProcessEnvironment paths []
+              (exitCode, stdoutOutput, stderrOutput) <-
+                readCreateProcessWithExitCode
+                  ( (proc binaryPath (nativeRunnerArgsWithInputFile model request installRoot maybeModelCacheConfig maybeOutputDir maybeInputFile))
+                      { cwd = Just installRoot,
+                        env = Just processEnvironment
+                      }
+                  )
+                  ""
+              nativeRunnerResult model engineBinding binaryPath maybeModelCacheConfig exitCode stdoutOutput stderrOutput
 
--- | Current Linux native artifacts are runner-contract payloads until Wave I
--- replaces them with real engine binaries. They still participate in the
--- model-bootstrap protocol: the first invocation reports a cache miss, the
--- coordinator populates MinIO, and the retry should see local readiness. Keep
--- MinIO credentials in this Haskell worker, not in native process argv.
+-- | Native runners participate in the model-bootstrap protocol: the first
+-- invocation reports a cache miss, the coordinator populates MinIO, and the
+-- retry hydrates local model files before strict native execution. Keep MinIO
+-- credentials in this Haskell worker, not in native process argv.
 ensureNativeRunnerContractCacheReady :: ModelDescriptor -> Maybe WorkerModelCacheConfig -> IO ()
 ensureNativeRunnerContractCacheReady _ Nothing = pure ()
 ensureNativeRunnerContractCacheReady model (Just modelCacheConfig) = do
@@ -452,7 +455,41 @@ ensureNativeRunnerContractCacheReady model (Just modelCacheConfig) = do
     upstreamReady <- nativeModelReadySentinelExists modelCacheConfig (modelId model)
     when upstreamReady $ do
       createDirectoryIfMissing True (takeDirectory readyPath)
-      writeFile readyPath "native-runner-contract-ready\n"
+      hydrateNativeModelCache model modelCacheConfig
+      writeFile readyPath "native-model-cache-ready\n"
+
+hydrateNativeModelCache :: ModelDescriptor -> WorkerModelCacheConfig -> IO ()
+hydrateNativeModelCache model modelCacheConfig =
+  mapM_ (downloadNativeModelCacheObject modelCacheConfig (modelId model)) (nativeModelCacheObjectKeys model)
+
+nativeModelCacheObjectKeys :: ModelDescriptor -> [Text]
+nativeModelCacheObjectKeys model
+  | modelId model == "speech-faster-whisper-ct2" =
+      [ "config.json",
+        "model.bin",
+        "tokenizer.json",
+        "vocabulary.txt"
+      ]
+  | otherwise = ["payload"]
+
+downloadNativeModelCacheObject :: WorkerModelCacheConfig -> Text -> Text -> IO ()
+downloadNativeModelCacheObject modelCacheConfig modelIdValue relativeKey = do
+  let destination =
+        Text.unpack (workerModelCacheRoot modelCacheConfig)
+          </> Text.unpack modelIdValue
+          </> Text.unpack relativeKey
+      objectRef =
+        Contracts.ObjectRef
+          { Contracts.objectBucket = workerMinioModelsBucket modelCacheConfig,
+            Contracts.objectKey = modelIdValue <> "/" <> relativeKey
+          }
+  destinationPresent <- doesFileExist destination
+  unless destinationPresent $ do
+    manager <- newManager defaultManagerSettings
+    now <- getCurrentTime
+    payload <- ObjectUpload.getObjectWithPresignedUrl (workerObjectUploadConfig modelCacheConfig) manager now objectRef
+    createDirectoryIfMissing True (takeDirectory destination)
+    ByteString.writeFile destination payload
 
 nativeRunnerContractReadyPath :: WorkerModelCacheConfig -> Text -> FilePath
 nativeRunnerContractReadyPath modelCacheConfig modelIdValue =
@@ -518,6 +555,10 @@ nativeRunnerBinaryRelPath adapterId =
 -- this worker owns the credentialed MinIO upload.
 nativeRunnerArgs :: ModelDescriptor -> InferenceRequest -> FilePath -> Maybe WorkerModelCacheConfig -> Maybe FilePath -> [String]
 nativeRunnerArgs model request installRoot maybeModelCacheConfig maybeOutputDir =
+  nativeRunnerArgsWithInputFile model request installRoot maybeModelCacheConfig maybeOutputDir Nothing
+
+nativeRunnerArgsWithInputFile :: ModelDescriptor -> InferenceRequest -> FilePath -> Maybe WorkerModelCacheConfig -> Maybe FilePath -> Maybe FilePath -> [String]
+nativeRunnerArgsWithInputFile model request installRoot maybeModelCacheConfig maybeOutputDir maybeInputFile =
   [ "--model",
     Text.unpack (modelId model),
     "--engine",
@@ -525,13 +566,15 @@ nativeRunnerArgs model request installRoot maybeModelCacheConfig maybeOutputDir 
     "--family",
     Text.unpack (family model),
     "--install-root",
-    installRoot
+    installRoot,
+    "--require-native-payload"
   ]
     <> case inputObjectRef request of
       Just ref -> ["--input-object-ref", Text.unpack ref]
       Nothing -> ["--input-text", Text.unpack (inputText request)]
     <> nativeRunnerModelCacheArgs maybeModelCacheConfig
     <> nativeRunnerOutputArgs maybeOutputDir
+    <> nativeRunnerInputFileArgs maybeInputFile
 
 nativeRunnerModelCacheArgs :: Maybe WorkerModelCacheConfig -> [String]
 nativeRunnerModelCacheArgs maybeModelCacheConfig =
@@ -557,6 +600,77 @@ nativeRunnerOutputArgs maybeOutputDir =
   case maybeOutputDir of
     Nothing -> []
     Just outputDir -> ["--output-dir", outputDir]
+
+nativeRunnerInputFileArgs :: Maybe FilePath -> [String]
+nativeRunnerInputFileArgs maybeInputFile =
+  case maybeInputFile of
+    Nothing -> []
+    Just inputFile -> ["--input-file", inputFile]
+
+nativeRunnerInputFile :: ModelDescriptor -> InferenceRequest -> Maybe WorkerModelCacheConfig -> IO (Either ErrorResponse (Maybe FilePath))
+nativeRunnerInputFile _model request maybeModelCacheConfig =
+  case (inputObjectRef request, maybeModelCacheConfig) of
+    (Just rawObjectRef, Just modelCacheConfig) ->
+      case objectRefFromText rawObjectRef of
+        Nothing ->
+          pure
+            ( Left
+                ErrorResponse
+                  { errorCode = "invalid_input_object_ref",
+                    message = "native engine input object ref is not bucket/key: " <> rawObjectRef
+                  }
+            )
+        Just objectRef -> do
+          result <- try @SomeException (downloadNativeInputObject modelCacheConfig objectRef)
+          pure $
+            case result of
+              Right inputPath -> Right (Just inputPath)
+              Left err ->
+                Left
+                  ErrorResponse
+                    { errorCode = "input_object_fetch_failed",
+                      message = Text.pack ("native engine input object download failed: " <> displayException err)
+                    }
+    _ -> pure (Right Nothing)
+
+downloadNativeInputObject :: WorkerModelCacheConfig -> Contracts.ObjectRef -> IO FilePath
+downloadNativeInputObject modelCacheConfig objectRef = do
+  manager <- newManager defaultManagerSettings
+  now <- getCurrentTime
+  payload <- ObjectUpload.getObjectWithPresignedUrl (workerObjectUploadConfig modelCacheConfig) manager now objectRef
+  tempRoot <- getTemporaryDirectory
+  pid <- getProcessID
+  nowForPath <- getCurrentTime
+  let extension =
+        case takeExtension (Text.unpack (Contracts.objectKey objectRef)) of
+          "" -> ".bin"
+          value -> value
+      inputPath =
+        tempRoot
+          </> "infernix-native-input"
+          </> ( safePathSegment (Text.unpack (Contracts.objectBucket objectRef <> "-" <> Contracts.objectKey objectRef))
+                  <> "-"
+                  <> show pid
+                  <> "-"
+                  <> formatTime defaultTimeLocale "%s%q" nowForPath
+                  <> extension
+              )
+  createDirectoryIfMissing True (takeDirectory inputPath)
+  ByteString.writeFile inputPath payload
+  pure inputPath
+
+objectRefFromText :: Text -> Maybe Contracts.ObjectRef
+objectRefFromText raw =
+  let (bucket, rawKey) = Text.breakOn "/" raw
+      key = Text.drop 1 rawKey
+   in if Text.null bucket || Text.null key || Text.null rawKey
+        then Nothing
+        else
+          Just
+            Contracts.ObjectRef
+              { Contracts.objectBucket = bucket,
+                Contracts.objectKey = key
+              }
 
 nativeRunnerOutputDir :: ModelDescriptor -> Maybe WorkerModelCacheConfig -> IO (Maybe FilePath)
 nativeRunnerOutputDir model maybeModelCacheConfig =

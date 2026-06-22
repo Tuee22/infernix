@@ -259,7 +259,7 @@ Lifecycle validation work on either substrate is batched into the active wave na
 [../../DEVELOPMENT_PLAN/cohort-validation-waves.md](../../DEVELOPMENT_PLAN/cohort-validation-waves.md).
 Operators bringing up a cluster for validation should check the active wave before starting a
 batched lifecycle: the waves doc names which substrate is in scope, what closure evidence is
-expected, and which counterpart cohort is queued for the next switch boundary.
+expected, and whether the phase's chosen accelerator plus `linux-cpu` evidence is complete.
 
 ## Cross-References
 

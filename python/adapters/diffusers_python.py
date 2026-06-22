@@ -37,7 +37,14 @@ def transform(context: AdapterContext) -> ArtifactResult:
     # in half precision and move the pipeline to the available device.
     device = _preferred_torch_device(torch)
     dtype = torch.float16 if device in {"cuda", "mps"} else torch.float32
-    pipeline = DiffusionPipeline.from_pretrained(str(weights_dir), torch_dtype=dtype)
+    load_options: dict[str, Any] = {
+        "torch_dtype": dtype,
+        "local_files_only": True,
+    }
+    if context.model_id == "image-sdxl-turbo":
+        load_options["variant"] = "fp16"
+        load_options["use_safetensors"] = True
+    pipeline = DiffusionPipeline.from_pretrained(str(weights_dir), **load_options)
     pipeline = pipeline.to(device)
     if context.family == "video":
         return _render_video(pipeline, context.input_text)

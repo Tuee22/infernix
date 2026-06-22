@@ -29,7 +29,6 @@ import Infernix.Config
 import Infernix.Conversation.Topic qualified as ConversationTopic
 import Infernix.DemoConfig (decodeDemoConfigFile)
 import Infernix.Dispatch.ContextModelMap qualified as ContextModelMap
-import Infernix.Models (perEngineBatchTopicForMode)
 import Infernix.Runtime.KVCache qualified as KVCache
 import Infernix.Runtime.Pulsar
   ( PulsarTransport,
@@ -40,6 +39,7 @@ import Infernix.Runtime.Pulsar
     ensureRegisteredSchemasWithRetry,
     ensureSchemaMarkers,
     pulsarWebSocketBase,
+    reconcileStartupTopicsWithRetry,
     reconcileSupportedNamespacesWithRetry,
     renderPulsarWebSocketBase,
     runDispatcherLoop,
@@ -74,7 +74,7 @@ runProductionDaemon paths runtimeMode maybeClusterConfig maybeDemoConfigPath dae
             Nothing -> generatedDemoConfigPath paths
       engineOverrides = engineOverridesFromClusterConfig maybeClusterConfig
   demoConfig <- decodeDemoConfigFile selectedDemoConfigPath
-  daemonConfig <- requireDaemonConfig runtimeMode daemonRole maybeEngineName demoConfig
+  daemonConfig <- requireDaemonConfig daemonRole maybeEngineName demoConfig
   let daemonLocation = case maybeClusterConfig of
         Just clusterConfig ->
           let mounted = Text.unpack (coordinatorDaemonLocation (clusterCoordinator clusterConfig))
@@ -93,8 +93,6 @@ runProductionDaemon paths runtimeMode maybeClusterConfig maybeDemoConfigPath dae
   putStrLn ("serviceMountedDemoConfigPath: " <> watchedDemoConfigPath)
   putStrLn ("serviceRequestTopics: " <> intercalate "," (map Text.unpack (daemonConfigRequestTopics daemonConfig)))
   putStrLn ("serviceResultTopic: " <> Text.unpack (daemonConfigResultTopic daemonConfig))
-  forM_ (daemonConfigHostBatchTopic daemonConfig) $ \topicValue ->
-    putStrLn ("serviceHostBatchTopic: " <> Text.unpack topicValue)
   putStrLn ("serviceEngineBindingCount: " <> show (length (engines demoConfig)))
   putStrLn "serviceHttpListener: disabled"
   clearServiceReadinessMarker paths
@@ -128,7 +126,7 @@ runFilesystemTopicSpool paths runtimeMode engineOverrides daemonConfig demoConfi
   forever $ do
     forM_
       (daemonConfigRequestTopics daemonConfig)
-      (drainTopicWithKVCache paths runtimeMode engineOverrides daemonConfig (Just engineKVCache))
+      (drainTopicWithKVCache paths runtimeMode engineOverrides daemonConfig demoConfig (Just engineKVCache))
     threadDelay 500000
 
 runWebSocketPulsarDaemon ::
@@ -144,6 +142,7 @@ runWebSocketPulsarDaemon ::
 runWebSocketPulsarDaemon paths runtimeMode engineOverrides daemonConfig demoConfig daemonRole engineKVCache transport = do
   ensureSchemaMarkers paths demoConfig
   reconcileSupportedNamespacesWithRetry transport demoConfig
+  reconcileStartupTopicsWithRetry transport demoConfig
   ensureRegisteredSchemasWithRetry paths transport demoConfig
   writeServiceReadinessMarker paths
   putStrLn "serviceSubscriptionMode: websocket-pulsar"
@@ -211,8 +210,8 @@ resolveClusterControlPlaneContext clusterConfig fallback =
 demoConfigCatalogSource :: String
 demoConfigCatalogSource = "generated-build-root"
 
-requireDaemonConfig :: RuntimeMode -> DaemonRole -> Maybe Text.Text -> DemoConfig -> IO DaemonConfig
-requireDaemonConfig runtimeMode daemonRole maybeEngineName demoConfig
+requireDaemonConfig :: DaemonRole -> Maybe Text.Text -> DemoConfig -> IO DaemonConfig
+requireDaemonConfig daemonRole maybeEngineName demoConfig
   | daemonConfigRole (coordinatorDaemon demoConfig) == daemonRole =
       pure (coordinatorDaemon demoConfig)
   | daemonRole == Engine =
@@ -225,14 +224,9 @@ requireDaemonConfig runtimeMode daemonRole maybeEngineName demoConfig
       find ((== Engine) . daemonConfigRole) (engineDaemons demoConfig)
     engineDaemonForName engineName =
       find (engineDaemonMatches engineName) (engineDaemons demoConfig)
-      where
-        expectedTopic = perEngineBatchTopicForMode runtimeMode engineName
-        engineDaemonMatches selector daemonConfig =
-          daemonConfigRole daemonConfig == Engine
-            && (daemonConfigMemberId daemonConfig == Just selector || engineDaemonConsumes expectedTopic daemonConfig)
-    engineDaemonConsumes expectedTopic daemonConfig =
+    engineDaemonMatches selector daemonConfig =
       daemonConfigRole daemonConfig == Engine
-        && expectedTopic `elem` daemonConfigRequestTopics daemonConfig
+        && daemonConfigMemberId daemonConfig == Just selector
     missingDaemonConfig =
       ioError
         ( userError

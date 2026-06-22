@@ -153,15 +153,16 @@ classes.
 > lifecycle + coordination + readiness gating; **Webapp** = thin websocket,
 > Pulsar+MinIO only), a derived **topic algebra**, the `Work*` envelope family,
 > the artifact + `.ready` readiness contract, websocket snapshot/patch, and a
-> reflected-Dhall-schema, one-binary role model. Three deltas from the shape are
-> in progress and tracked as reopened plan work (Phases `4`/`6`/`7`) with the
-> current surfaces recorded in
+> reflected-Dhall-schema, one-binary role model. The convergence deltas are
+> tracked as reopened plan work (Phases `4`/`6`/`7`) with the current surfaces recorded in
 > [DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md](DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md):
-> (1) the two-binary `infernix` + `infernix-demo` split folds into a one-binary
-> **Webapp** role; (2) the coordinator gains **explicit** topic-lifecycle
-> ownership (replacing implicit broker auto-create); (3) the binary emits its own
-> **reflected** Dhall schema. Until those land, the three roles below are the two
-> production daemons plus the demo frontend.
+> (1) the two-binary `infernix` + `infernix-demo` split still folds into a
+> one-binary **Webapp** role; (2) the coordinator now owns **explicit**
+> topic-lifecycle reconciliation from the typed runtime graph instead of relying on
+> implicit broker auto-create; (3) the binary emits the reflected Dhall schema it
+> decodes through `infernix internal dhall-schema host|cluster|secrets|substrate`.
+> Until the Webapp role lands, the three roles below remain the two production
+> daemons plus the demo frontend.
 
 The supported local platform is built around:
 
@@ -682,10 +683,11 @@ around upstream `kubectl`, not a parallel lifecycle surface.
   active demo `.dhall` file that defines the demo catalog and the engine binding for each
   demo-visible model on that substrate
 - `infernix internal materialize-linux-native-engines` bakes image-owned Linux native runner roots
-  under `/opt/infernix/engines/<adapterId>/`; the current machine-independent roots are
-  runner-contract payloads that exercise native argv parsing, model-cache readiness failure,
-  per-family result shape, and the Haskell-owned artifact upload marker while Wave I still owns
-  external-engine payload replacement
+  under `/opt/infernix/engines/<adapterId>/`; the Linux GPU/CPU images now carry runtime-backed
+  wrappers over image-baked native payloads for llama.cpp, whisper.cpp, ONNX Runtime/Basic Pitch,
+  CTranslate2/faster-whisper, and Audiveris. Strict image smoke checks validate payload presence,
+  imports, and command wiring, while full routed MinIO-backed real-output evidence remains tracked
+  by Wave I
 - `cluster up` bootstraps Harbor first through Helm and allows Harbor plus only the storage or
   support services Harbor needs during bootstrap, including MinIO and PostgreSQL, to pull from
   public container repositories
@@ -746,9 +748,9 @@ rebuildable.
 - a `.dhall` configuration defines the runtime contract for supported service flows; the
   active `.dhall` names the coordinator, validated engine pools and members, request topics, result
   topic, engine bindings, and the optional `demo_ui : Bool` flag that gates the `infernix-demo`
-  workload. The current worktree still carries the legacy-compatible `engine` /
-  `engineDaemons : List DaemonConfig` projection until the deletion-ledger cleanup removes the old
-  raw-topic surfaces
+  workload. Engine daemon metadata is derived internally from the validated pool/member graph during
+  decode; the supported configuration surface does not expose `engine`, `engineDaemons`,
+  `host_batch_topic`, or raw batch-topic fields
 - Apple host lifecycle and validation commands materialize or verify that file under `./.build/`;
   `./.build/infernix internal materialize-substrate apple-silicon` remains the direct helper for
   explicit restaging or inspection

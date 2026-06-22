@@ -1,14 +1,20 @@
-let DaemonConfig =
-      { role : Text
-      , location : Text
-      , memberId : Optional Text
-      , request_topics : List Text
-      , result_topic : Text
-      , host_batch_topic : Optional Text
-      , pulsarConnectionMode : Text
-      }
-
-let EnginePool =
+{ runtimeMode : Text
+, edgePort : Integer
+, configMapName : Text
+, generatedPath : Text
+, mountedPath : Text
+, demo_ui : Bool
+, daemonRole : Text
+, coordinator :
+    { role : Text
+    , location : Text
+    , memberId : Optional Text
+    , request_topics : List Text
+    , result_topic : Text
+    , pulsarConnectionMode : Text
+    }
+, enginePools :
+    List
       { id : Text
       , runtimeMode : Text
       , models : List Text
@@ -16,15 +22,14 @@ let EnginePool =
       , subscription : Text
       , maxInflightPerMember : Integer
       }
-
-let EngineMember =
-      { id : Text
-      , runtimeMode : Text
-      , location : Text
-      , pools : List Text
-      }
-
-let EngineBinding =
+, engineMembers :
+    List { id : Text, runtimeMode : Text, location : Text, pools : List Text }
+, request_topics : List Text
+, result_topic : Text
+, models_bucket : Text
+, model_bootstrap_topic : Text
+, engines :
+    List
       { engine : Text
       , adapterId : Text
       , adapterType : Text
@@ -34,14 +39,8 @@ let EngineBinding =
       , projectDirectory : Text
       , pythonNative : Bool
       }
-
-let RequestField =
-      { name : Text
-      , label : Text
-      , fieldType : Text
-      }
-
-let ModelDescriptor =
+, models :
+    List
       { matrixRowId : Text
       , modelId : Text
       , displayName : Text
@@ -51,29 +50,10 @@ let ModelDescriptor =
       , referenceModel : Text
       , downloadUrl : Text
       , selectedEngine : Text
-      , requestShape : List RequestField
+      , requestShape : List { name : Text, label : Text, fieldType : Text }
       , runtimeMode : Text
       , runtimeLane : Text
       , requiresGpu : Bool
       , notes : Text
       }
-
-in  { runtimeMode : Text
-    , edgePort : Integer
-    , configMapName : Text
-    , generatedPath : Text
-    , mountedPath : Text
-    , demo_ui : Bool
-    , daemonRole : Text
-    , coordinator : DaemonConfig
-    , engine : Optional DaemonConfig
-    , engineDaemons : List DaemonConfig
-    , enginePools : List EnginePool
-    , engineMembers : List EngineMember
-    , request_topics : List Text
-    , result_topic : Text
-    , models_bucket : Text
-    , model_bootstrap_topic : Text
-    , engines : List EngineBinding
-    , models : List ModelDescriptor
-    }
+}

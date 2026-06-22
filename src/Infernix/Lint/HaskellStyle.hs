@@ -150,6 +150,7 @@ checkSourceReadability repoRoot sourceFile = do
         <> aliasCommentViolations sourceFile numberedLines
         <> envFunctionViolations sourceFile numberedLines
         <> bareNameProcViolations sourceFile numberedLines
+        <> ambientToolLookupViolations sourceFile numberedLines
         <> engineRuntimeBoundaryViolations sourceFile numberedLines
         <> sharedPhase7BoundaryViolations sourceFile numberedLines
     )
@@ -239,6 +240,33 @@ forbiddenBareProcCommands =
 
 bareNameProcExemptedFiles :: [FilePath]
 bareNameProcExemptedFiles =
+  [ -- This lint module lists forbidden tokens as literals; exempt it.
+    "src/Infernix/Lint/HaskellStyle.hs"
+  ]
+
+-- | Phase 6 Sprint 6.28 follow-on: reject ambient executable discovery
+-- for registered host tools. Supported invocation paths either read
+-- absolute paths from HostConfig.toolPaths or use fixed absolute
+-- fallback candidates from Infernix.HostTools.
+ambientToolLookupViolations :: FilePath -> [(Int, String)] -> [String]
+ambientToolLookupViolations sourceFile numberedLines
+  | sourceFile `elem` ambientToolLookupExemptedFiles = []
+  | otherwise =
+      [ sourceFile <> ":" <> show lineNumber <> ": forbidden ambient host-tool lookup `" <> needle <> "`; route through HostTools and HostConfig.toolPaths"
+      | (lineNumber, lineValue) <- numberedLines,
+        not (isCommentLine lineValue),
+        needle <- forbiddenAmbientToolLookups,
+        containsToken needle lineValue
+      ]
+
+forbiddenAmbientToolLookups :: [String]
+forbiddenAmbientToolLookups =
+  [ "findExecutable",
+    "findExecutables"
+  ]
+
+ambientToolLookupExemptedFiles :: [FilePath]
+ambientToolLookupExemptedFiles =
   [ -- This lint module lists forbidden tokens as literals; exempt it.
     "src/Infernix/Lint/HaskellStyle.hs"
   ]

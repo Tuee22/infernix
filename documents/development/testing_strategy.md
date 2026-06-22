@@ -92,16 +92,13 @@ The validation plan minimizes switching between the Apple Silicon and CUDA-capab
 > such in its `Code-side closure` field and is exercised inside its cohort's wave, never pre-claimed
 > as machine-independent.
 
-- Work that is naturally Apple-owned validates locally with the Apple host-native bootstrap and
-  direct `./.build/infernix` commands, then queues the CUDA Linux cohort for the next phase
-  closure batch.
-- Work that is naturally Linux, CUDA, chart, or outer-container owned validates locally with the
-  `linux-gpu` bootstrap and Compose-launched `infernix`, then queues the Apple Silicon cohort for
-  the next phase closure batch.
-- The counterpart cohort runs after a coherent phase slice is ready, not after every small sprint.
-- Full phase closure requires both cohorts to run the relevant complete gates against the same
-  phase state; one cohort passing leaves an explicit residual instead of silently claiming full
-  cross-hardware evidence.
+- Work validates on the machine that owns the changed path, then records the phase's chosen
+  accelerator plus `linux-cpu` evidence in the relevant wave.
+- The other accelerator does not block that phase's `Done` state. Cross-accelerator coverage is
+  split into sibling phases or merged later by a `linux-cpu`-only aggregation phase that consumes
+  committed per-lane attestations.
+- A validation-only residual runs after a coherent phase slice is ready, not after every small
+  sprint.
 - `linux-cpu` remains a portable check and a fallback substrate on native Linux amd64 or native
   Linux arm64, but it is not the CUDA Linux cohort for GPU-sensitive work and is not exercised
   through Apple Silicon emulation.
@@ -156,9 +153,8 @@ The validation plan minimizes switching between the Apple Silicon and CUDA-capab
   coordinator-to-engine path. The target assertion is that routed publication JSON and
   `cluster status` expose the validated engine-pool routing graph, and the generated substrate
   config routes coordinator request topics to derived pool/model topics without an engine
-  self-forward loop. The old `hostInferenceBatchTopic` /
-  `publicationHostInferenceBatchTopic` assertions remain legacy compatibility coverage until the
-  deletion-ledger cleanup removes the single-host surface
+  self-forward loop. The integration suite also asserts that the old `hostInferenceBatchTopic` and
+  `publicationHostInferenceBatchTopic` compatibility fields are absent
 - on the `linux-cpu` lane, `infernix test integration` also validates
   `infernix internal materialize-substrate linux-cpu --demo-ui false`
 - on the host-native `apple-silicon` lane, `infernix test integration` also validates

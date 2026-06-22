@@ -1,6 +1,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE TypeApplications #-}
 
 -- | Phase 1 Sprint 1.11 — typed Haskell record for the
 -- @dhall/InfernixHost.dhall@ manifest. The supported contract is
@@ -16,6 +17,7 @@ module Infernix.HostConfig
     HostExecutionContext (..),
     decodeHostConfigFile,
     renderHostConfig,
+    renderHostConfigSchema,
     encodeHostConfig,
     hostConfigGeneratedBanner,
     normalizeHostArchitecture,
@@ -32,6 +34,7 @@ import Data.Text (Text)
 import Data.Text qualified as Text
 import Dhall qualified
 import GHC.Generics (Generic)
+import Infernix.DhallSchema.Reflection (renderDecoderExpected)
 import System.Info qualified
 
 -- | Where the supported binary is currently running. Mirrors the
@@ -240,6 +243,10 @@ renderHostConfig hostConfig =
           ", controlPlaneContext = " <> showT hostControlPlaneContext,
           "}"
         ]
+
+renderHostConfigSchema :: Either String Text
+renderHostConfigSchema =
+  renderDecoderExpected (Dhall.auto @HostConfig)
 
 -- | Supported defaults for the Linux outer-container launcher image.
 -- The image bakes its toolchain at known prefixes; operators override

@@ -1,0 +1,4 @@
+onnxruntime==1.27.0
+ctranslate2==4.8.0
+faster-whisper==1.2.1
+numpy>=1.26

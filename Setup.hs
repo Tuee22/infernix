@@ -1,8 +1,8 @@
 import Data.List (isPrefixOf)
 import Data.ProtoLens.Setup (generatingProtos)
 import Distribution.Simple (defaultMainWithHooks, simpleUserHooks)
-import System.Directory (createDirectoryIfMissing, doesFileExist, doesPathExist, findExecutable, getCurrentDirectory)
-import System.Environment (getEnv, lookupEnv, setEnv)
+import System.Directory (createDirectoryIfMissing, doesFileExist, doesPathExist, getCurrentDirectory)
+import System.Environment (lookupEnv, setEnv)
 import System.FilePath (isAbsolute, takeDirectory, (</>))
 import System.Process (callProcess)
 
@@ -26,31 +26,25 @@ main = do
       toolBuildDir = toolRoot </> "cabal"
       toolBinary = toolBinDir </> "proto-lens-protoc"
   createDirectoryIfMissing True toolBinDir
-  maybeToolOnPath <- findExecutable "proto-lens-protoc"
-  toolPath <-
-    case maybeToolOnPath of
-      Just path -> pure path
-      Nothing -> do
-        toolExists <- doesFileExist toolBinary
-        if toolExists
-          then pure toolBinary
-          else do
-            callProcess
-              "cabal"
-              ( [ "--ignore-project",
-                  "--builddir=" <> toolBuildDir,
-                  "install",
-                  "proto-lens-protoc",
-                  "--installdir",
-                  toolBinDir,
-                  "--install-method=copy",
-                  "--overwrite-policy=always"
-                ]
-                  <> concatMap (\constraintValue -> ["--allow-newer=" <> constraintValue]) protoLensAllowNewer
-              )
-            pure toolBinary
+  toolExists <- doesFileExist toolBinary
+  if toolExists
+    then pure ()
+    else
+      callProcess
+        "cabal"
+        ( [ "--ignore-project",
+            "--builddir=" <> toolBuildDir,
+            "install",
+            "proto-lens-protoc",
+            "--installdir",
+            toolBinDir,
+            "--install-method=copy",
+            "--overwrite-policy=always"
+          ]
+            <> concatMap (\constraintValue -> ["--allow-newer=" <> constraintValue]) protoLensAllowNewer
+        )
   prependPath toolBinDir
-  ensureToolVisible toolPath
+  ensureToolVisible toolBinary
   defaultMainWithHooks (generatingProtos "proto" simpleUserHooks)
 
 prependPath :: FilePath -> IO ()
@@ -65,16 +59,14 @@ prependPath entry = do
 
 ensureToolVisible :: FilePath -> IO ()
 ensureToolVisible expectedPath = do
-  maybeResolved <- findExecutable "proto-lens-protoc"
-  case maybeResolved of
-    Just _ -> pure ()
-    Nothing -> do
-      pathValue <- getEnv "PATH"
+  toolExists <- doesFileExist expectedPath
+  if toolExists
+    then pure ()
+    else
       error
         ( "proto-lens-protoc bootstrap failed; expected "
             <> expectedPath
-            <> " to be visible in PATH="
-            <> pathValue
+            <> " to exist after bootstrap"
         )
 
 resolveBuildRoot :: FilePath -> IO FilePath

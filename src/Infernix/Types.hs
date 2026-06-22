@@ -62,7 +62,8 @@ import Data.Aeson
     (.=),
   )
 import Data.Aeson.Types (Parser)
-import Data.Maybe (fromMaybe, listToMaybe, maybeToList)
+import Data.Char (isAlphaNum)
+import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Time (UTCTime)
@@ -362,7 +363,6 @@ data DaemonConfig = DaemonConfig
     daemonConfigMemberId :: Maybe Text,
     daemonConfigRequestTopics :: [Text],
     daemonConfigResultTopic :: Text,
-    daemonConfigHostBatchTopic :: Maybe Text,
     daemonConfigPulsarConnectionMode :: PulsarConnectionMode,
     daemonConfigConsumerSubscriptionType :: Maybe ConsumerSubscriptionType
   }
@@ -376,7 +376,6 @@ instance ToJSON DaemonConfig where
         "memberId" .= daemonConfigMemberId daemonConfig,
         "request_topics" .= daemonConfigRequestTopics daemonConfig,
         "result_topic" .= daemonConfigResultTopic daemonConfig,
-        "host_batch_topic" .= daemonConfigHostBatchTopic daemonConfig,
         "pulsarConnectionMode" .= daemonConfigPulsarConnectionMode daemonConfig,
         "consumerSubscriptionType" .= daemonConfigConsumerSubscriptionType daemonConfig
       ]
@@ -389,7 +388,6 @@ instance FromJSON DaemonConfig where
       <*> value .:? "memberId"
       <*> value .: "request_topics"
       <*> value .: "result_topic"
-      <*> value .:? "host_batch_topic"
       <*> value .:? "pulsarConnectionMode" .!= ConfiguredTransport
       <*> value .:? "consumerSubscriptionType"
 
@@ -748,8 +746,6 @@ instance ToJSON DemoConfig where
         "demo_ui" .= demoUiEnabled demoConfig,
         "daemonRole" .= activeDaemonRole demoConfig,
         "coordinator" .= coordinatorDaemon demoConfig,
-        "engine" .= listToMaybe (engineDaemons demoConfig),
-        "engineDaemons" .= engineDaemons demoConfig,
         "enginePools" .= enginePools demoConfig,
         "engineMembers" .= engineMembers demoConfig,
         "request_topics" .= requestTopics demoConfig,
@@ -785,24 +781,14 @@ instance FromJSON DemoConfig where
                       requestTopicValues
                       resultTopicValue
                   )
-    legacyEngineDaemonValue <-
-      do
-        engineMaybe <- value .:? "engine"
-        case engineMaybe of
-          Just engine -> pure engine
-          Nothing -> do
-            hostMaybe <- value .:? "hostDaemon"
-            case hostMaybe of
-              Just legacyHost -> pure legacyHost
-              Nothing -> pure (defaultEngineDaemonConfig runtimeModeValue resultTopicValue)
-    engineDaemonValues <-
-      do
-        engineDaemonsMaybe <- value .:? "engineDaemons"
-        case engineDaemonsMaybe of
-          Just configuredDaemons -> pure configuredDaemons
-          Nothing -> pure (maybeToList legacyEngineDaemonValue)
     enginePoolValues <- value .:? "enginePools" .!= []
     engineMemberValues <- value .:? "engineMembers" .!= []
+    parsedEngineDaemonValues <-
+      value .:? "engineDaemons" .!= []
+    let engineDaemonValues =
+          if null parsedEngineDaemonValues
+            then deriveEngineDaemonConfigs runtimeModeValue enginePoolValues engineMemberValues resultTopicValue
+            else parsedEngineDaemonValues
     modelsBucketValue <- value .:? "models_bucket" .!= defaultModelsBucket
     modelBootstrapTopicValue <-
       value .:? "model_bootstrap_topic" .!= defaultModelBootstrapTopic
@@ -844,40 +830,60 @@ defaultDaemonRole runtimeMode = case runtimeMode of
   _ -> Coordinator
 
 defaultCoordinatorDaemonConfig :: RuntimeMode -> [Text] -> Text -> DaemonConfig
-defaultCoordinatorDaemonConfig runtimeMode requestTopicValues resultTopicValue =
+defaultCoordinatorDaemonConfig _runtimeMode requestTopicValues resultTopicValue =
   DaemonConfig
     { daemonConfigRole = Coordinator,
       daemonConfigLocation = "cluster-pod",
       daemonConfigMemberId = Nothing,
       daemonConfigRequestTopics = requestTopicValues,
       daemonConfigResultTopic = resultTopicValue,
-      daemonConfigHostBatchTopic = defaultHostBatchTopic runtimeMode,
       daemonConfigPulsarConnectionMode = ConfiguredTransport,
       daemonConfigConsumerSubscriptionType = Just ConsumerShared
     }
 
-defaultEngineDaemonConfig :: RuntimeMode -> Text -> Maybe DaemonConfig
-defaultEngineDaemonConfig runtimeMode resultTopicValue =
-  case runtimeMode of
-    AppleSilicon ->
-      Just
-        DaemonConfig
-          { daemonConfigRole = Engine,
-            daemonConfigLocation = "control-plane-host",
-            daemonConfigMemberId = Just "apple-host-default",
-            daemonConfigRequestTopics = maybe [] pure (defaultHostBatchTopic runtimeMode),
-            daemonConfigResultTopic = resultTopicValue,
-            daemonConfigHostBatchTopic = Nothing,
-            daemonConfigPulsarConnectionMode = PublicationEdgeAutoDiscovery,
-            daemonConfigConsumerSubscriptionType = Just ConsumerShared
-          }
-    _ -> Nothing
+deriveEngineDaemonConfigs :: RuntimeMode -> [EnginePool] -> [EngineMember] -> Text -> [DaemonConfig]
+deriveEngineDaemonConfigs runtimeMode pools members resultTopicValue =
+  map engineDaemonConfigForMember members
+  where
+    engineDaemonConfigForMember member =
+      DaemonConfig
+        { daemonConfigRole = Engine,
+          daemonConfigLocation = engineMemberLocation member,
+          daemonConfigMemberId = Just (engineMemberId member),
+          daemonConfigRequestTopics = derivedEngineMemberRequestTopics runtimeMode pools member,
+          daemonConfigResultTopic = resultTopicValue,
+          daemonConfigPulsarConnectionMode =
+            if runtimeMode == AppleSilicon
+              then PublicationEdgeAutoDiscovery
+              else ConfiguredTransport,
+          daemonConfigConsumerSubscriptionType = Just ConsumerShared
+        }
 
-defaultHostBatchTopic :: RuntimeMode -> Maybe Text
-defaultHostBatchTopic runtimeMode =
-  case runtimeMode of
-    AppleSilicon -> Just ("persistent://infernix/demo/inference.batch." <> runtimeModeId runtimeMode <> ".host")
-    _ -> Just ("persistent://infernix/demo/inference.batch." <> runtimeModeId runtimeMode)
+derivedEngineMemberRequestTopics :: RuntimeMode -> [EnginePool] -> EngineMember -> [Text]
+derivedEngineMemberRequestTopics runtimeMode pools member =
+  [ derivedEnginePoolTopicForMode runtimeMode (enginePoolId pool) modelIdValue
+  | pool <- pools,
+    enginePoolId pool `elem` engineMemberPoolIds member,
+    engineMemberId member `elem` enginePoolMemberIds pool,
+    modelIdValue <- enginePoolModelIds pool
+  ]
+
+derivedEnginePoolTopicForMode :: RuntimeMode -> Text -> Text -> Text
+derivedEnginePoolTopicForMode runtimeMode poolId modelIdValue =
+  "persistent://infernix/demo/inference.batch."
+    <> runtimeModeId runtimeMode
+    <> ".pool."
+    <> topicSegment poolId
+    <> ".model."
+    <> topicSegment modelIdValue
+
+topicSegment :: Text -> Text
+topicSegment =
+  Text.map replaceInvalid
+  where
+    replaceInvalid character
+      | isAlphaNum character || character == '-' || character == '_' || character == '.' = character
+      | otherwise = '-'
 
 formatUtc :: UTCTime -> String
 formatUtc = formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%S%QZ"

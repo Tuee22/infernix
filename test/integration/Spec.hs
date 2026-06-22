@@ -41,7 +41,6 @@ import Infernix.Models
     expectedDaemonLocationForRuntime,
     expectedInferenceExecutorLocationForRuntime,
     findModel,
-    hostBatchTopicForMode,
     requestTopicsForMode,
     resultFamilyForDescriptor,
     resultTopicForMode,
@@ -160,15 +159,12 @@ exerciseRuntimeMode paths runtimeMode = do
       reportStep ("demo config decode: " <> showRuntimeMode runtimeMode)
       demoConfig <- decodeDemoConfigFile (generatedDemoConfigPath state)
       reportStep ("demo config loaded: " <> showRuntimeMode runtimeMode)
-      representativeModelId <-
-        case map (Text.unpack . modelId) (models demoConfig) of
-          modelIdValue : _ -> pure modelIdValue
-          [] -> fail "generated demo config did not publish any models"
       let activeModels = models demoConfig
           activeModelIds = map (Text.unpack . modelId) activeModels
           expectedDaemonLocation = Text.unpack (expectedDaemonLocationForRuntime runtimeMode)
           expectedInferenceExecutorLocation = Text.unpack (expectedInferenceExecutorLocationForRuntime runtimeMode)
           expectedDispatchMode = expectedInferenceDispatchMode runtimeMode
+      representativeModelId <- representativeModelForRuntime runtimeMode activeModels
       assert (clusterPresent state) ("cluster up records cluster presence for " <> showRuntimeMode runtimeMode)
       assertClusterServiceDeployment state
       let baseUrl = routeBaseUrl paths state
@@ -719,6 +715,20 @@ linuxGpuModelUsesPythonNativeEngine :: ModelDescriptor -> Bool
 linuxGpuModelUsesPythonNativeEngine model =
   engineBindingPythonNative (engineBindingForSelectedEngine LinuxGpu (selectedEngine model))
 
+representativeModelForRuntime :: RuntimeMode -> [ModelDescriptor] -> IO String
+representativeModelForRuntime runtimeMode activeModels =
+  case runtimeMode of
+    LinuxGpu ->
+      case find (not . linuxGpuModelUsesPythonNativeEngine) activeModels of
+        Just model -> pure (Text.unpack (modelId model))
+        Nothing -> fallbackRepresentative
+    _ -> fallbackRepresentative
+  where
+    fallbackRepresentative =
+      case activeModels of
+        model : _ -> pure (Text.unpack (modelId model))
+        [] -> fail "generated demo config did not publish any models"
+
 linuxGpuPerEngineDeploymentName :: ModelDescriptor -> Text.Text
 linuxGpuPerEngineDeploymentName model =
   engineNameForSelectedEngine LinuxGpu (selectedEngine model)
@@ -806,26 +816,15 @@ expectedArtifactSuffixes resultFamily =
 
 assertHostBatchPublication :: RuntimeMode -> String -> IO ()
 assertHostBatchPublication runtimeMode publicationResponse =
-  maybe assertNoHostBatch assertHostBatch (hostBatchTopicForMode runtimeMode)
-  where
-    assertNoHostBatch =
-      assert
-        ("\"hostInferenceBatchTopic\":null" `isInfixOf` compact publicationResponse)
-        ("publication reports no host inference batch topic for " <> showRuntimeMode runtimeMode)
-
-    assertHostBatch topic =
-      assert
-        (("\"hostInferenceBatchTopic\":\"" <> Text.unpack topic <> "\"") `isInfixOf` compact publicationResponse)
-        ("publication reports the configured inference batch handoff topic for " <> showRuntimeMode runtimeMode)
+  assert
+    (not ("hostInferenceBatchTopic" `isInfixOf` compact publicationResponse))
+    ("publication omits legacy host inference batch topic metadata for " <> showRuntimeMode runtimeMode)
 
 assertHostBatchStatus :: RuntimeMode -> String -> IO ()
 assertHostBatchStatus runtimeMode statusOutput =
-  mapM_ assertHostBatch (hostBatchTopicForMode runtimeMode)
-  where
-    assertHostBatch topic =
-      assert
-        (("publicationHostInferenceBatchTopic: " <> Text.unpack topic) `isInfixOf` statusOutput)
-        ("cluster status reports the inference batch handoff topic for " <> showRuntimeMode runtimeMode)
+  assert
+    (not ("publicationHostInferenceBatchTopic:" `isInfixOf` statusOutput))
+    ("cluster status omits legacy inference batch handoff topic for " <> showRuntimeMode runtimeMode)
 
 assertRoutedDaemonSplit :: RuntimeMode -> DemoConfig -> IO ()
 assertRoutedDaemonSplit runtimeMode routedDemoConfig = do
@@ -833,9 +832,6 @@ assertRoutedDaemonSplit runtimeMode routedDemoConfig = do
   assert
     (daemonConfigRequestTopics (coordinatorDaemon routedDemoConfig) == requestTopicsForMode runtimeMode)
     "coordinator consumes the substrate request topic"
-  assert
-    (daemonConfigHostBatchTopic (coordinatorDaemon routedDemoConfig) == hostBatchTopicForMode runtimeMode)
-    "coordinator publishes the configured inference batch handoff topic"
   assert
     (not (null (engineDaemons routedDemoConfig)))
     ("demo config omits engine metadata for " <> showRuntimeMode runtimeMode)
@@ -853,9 +849,6 @@ assertRoutedDaemonSplit runtimeMode routedDemoConfig = do
   where
     assertEngineConfig engineConfig = do
       assert (daemonConfigRole engineConfig == Engine) "demo config reports engine metadata"
-      assert
-        (isNothing (daemonConfigHostBatchTopic engineConfig))
-        "engine does not forward its own inference batch topic"
     allTopicsPresentIn expectedTopics actualTopics =
       all (`elem` actualTopics) expectedTopics
 
@@ -1213,7 +1206,7 @@ batchTopicForPrompt :: DemoConfig -> RuntimeMode -> DurablePromptRef -> Maybe Te
 batchTopicForPrompt demoConfig runtimeMode promptRef =
   case enginePoolForModel demoConfig modelIdText of
     Just pool -> Just (enginePoolTopicForMode runtimeMode (enginePoolId pool) modelIdText)
-    Nothing -> hostBatchTopicForMode runtimeMode
+    Nothing -> Nothing
   where
     modelIdText = durablePromptModelId (durablePromptRefContext promptRef)
 
@@ -1324,6 +1317,11 @@ validateEngineNodeDrainDurablePrompt paths state runtimeMode demoConfig represen
           >> waitForDeploymentReadyReplicasAtLeast state "infernix-engine" 2
           >> waitForDeploymentReadyReplicasAtLeast state "infernix-coordinator" 2
           >> waitForDeploymentReadyReplicasAtLeast state "infernix-demo" 2
+          -- The drain evicts every pod on the node, including Pulsar broker
+          -- StatefulSet pods. Restore the full cluster — not just the stateless
+          -- infernix Deployments — so a still-reconciling broker tier cannot
+          -- leak into later steps (e.g. routed pulsar recovery).
+          >> runKubectl state ["-n", "platform", "rollout", "status", "statefulset/infernix-infernix-pulsar-broker", "--timeout=600s"]
   ( do
       runKubectl
         state
@@ -1855,6 +1853,11 @@ validateDemoUiDisabled paths runtimeMode =
       withClusterLifecycle runtimeMode $ do
         state <- maybe (fail "cluster state was not available after demo-disabled cluster up") pure =<< loadClusterState paths
         assert (clusterPresent state) "cluster up records cluster presence when demo_ui is disabled"
+        coordinatorReplicas <- deploymentSpecReplicas state "infernix-coordinator"
+        assert (coordinatorReplicas >= 1) "production demo_ui=false topology keeps the coordinator deployment"
+        when (runtimeMode /= AppleSilicon) $ do
+          engineReplicas <- deploymentSpecReplicas state "infernix-engine"
+          assert (engineReplicas >= 1) "production demo_ui=false Linux topology keeps the engine deployment"
         assert (not (any ((== "/") . path) (routes state))) "route inventory omits the browser root when demo_ui is disabled"
         assert (not (any ((== "/api") . path) (routes state))) "route inventory omits the demo API when demo_ui is disabled"
         let baseUrl = routeBaseUrl paths state
@@ -2143,9 +2146,18 @@ validateRoutedPulsarRecovery :: Paths -> ClusterState -> RuntimeMode -> [String]
 validateRoutedPulsarRecovery paths state runtimeMode activeModelIds =
   case activeModelIds of
     firstModelId : secondModelId : _ -> do
+      -- Entry guard: the broker StatefulSet must be fully reconciled before we
+      -- act on it. Upstream chaos steps (notably the engine node drain) can
+      -- evict broker pods without re-establishing broker-tier health, so a bare
+      -- `delete pod <ordinal>` here races a still-reconciling StatefulSet.
+      runKubectl state ["-n", "platform", "rollout", "status", "statefulset/infernix-infernix-pulsar-broker", "--timeout=600s"]
       publishAndRequireResultWithRetry paths runtimeMode firstModelId "pulsar-pre-restart"
-      runKubectl state ["-n", "platform", "delete", "pod", "infernix-infernix-pulsar-broker-0"]
-      waitForPodReady state "platform" "infernix-infernix-pulsar-broker-0"
+      -- Restart the broker tier through the controller rather than hard-deleting
+      -- a hardcoded pod ordinal: never assumes a specific ordinal is present and
+      -- never aborts on a transient NotFound, while still proving routed
+      -- inference survives a broker restart.
+      runKubectl state ["-n", "platform", "rollout", "restart", "statefulset/infernix-infernix-pulsar-broker"]
+      runKubectl state ["-n", "platform", "rollout", "status", "statefulset/infernix-infernix-pulsar-broker", "--timeout=600s"]
       publishAndRequireResultWithRetry paths runtimeMode secondModelId "pulsar-post-restart"
     _ -> fail "need at least two catalog entries to validate routed Pulsar recovery"
 
@@ -2427,8 +2439,7 @@ applePinnedHostEngineConfig demoConfig =
       let pinnedTopic = engineMemberPinnedTopicForMode AppleSilicon memberIdValue modelIdValue
           pinnedDaemon =
             engineDaemon
-              { daemonConfigRequestTopics = [pinnedTopic],
-                daemonConfigHostBatchTopic = Nothing
+              { daemonConfigRequestTopics = [pinnedTopic]
               }
       pure
         ( demoConfig
@@ -2718,7 +2729,6 @@ appleSharedHostEngineConfig demoConfig =
             engineDaemon
               { daemonConfigMemberId = Just memberIdValue,
                 daemonConfigRequestTopics = [sharedTopic],
-                daemonConfigHostBatchTopic = Nothing,
                 daemonConfigConsumerSubscriptionType = Just ConsumerShared
               }
       pure

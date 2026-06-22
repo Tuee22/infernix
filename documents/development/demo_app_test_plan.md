@@ -122,9 +122,8 @@ Coverage:
 - **Coordinator-to-engine-pool handoff.** The integration suite should assert routed publication
   and `cluster status` report the validated engine-pool routing graph, and the generated substrate
   config routes the coordinator from request topics to derived pool/model topics while engine
-  members consume only assigned topics without forwarding again. Current Linux GPU per-engine and
-  Apple host-topic metadata remains legacy compatibility coverage until the deletion-ledger cleanup
-  removes it.
+  members consume only assigned topics without forwarding again. The old Linux per-engine and Apple
+  host-topic metadata is absent from supported publication/status outputs.
 - **Linux GPU service-loop round-trip.** The same run exercises cluster up, routed API
   probes, per-model inference, cache lifecycle, service runtime loop, and clean cluster down
   from the rebuilt CUDA launcher image.

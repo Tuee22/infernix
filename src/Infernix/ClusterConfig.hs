@@ -1,6 +1,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TypeApplications #-}
 
 -- | Phase 4 Sprint 4.13 — typed Haskell record for the
 -- @dhall/InfernixCluster.dhall@ manifest. The supported contract is
@@ -27,6 +28,7 @@ module Infernix.ClusterConfig
     EngineCommandOverride (..),
     decodeClusterConfigFile,
     renderClusterConfig,
+    renderClusterConfigSchema,
     encodeClusterConfig,
     clusterConfigGeneratedBanner,
     defaultClusterConfigMountPath,
@@ -41,6 +43,7 @@ import Data.Text qualified as Text
 import Dhall qualified
 import Dhall.Core qualified as DhallCore
 import GHC.Generics (Generic)
+import Infernix.DhallSchema.Reflection (renderDecoderExpected)
 import Numeric.Natural (Natural)
 
 -- | Pulsar wiring values. Maps to the @pulsar@ Dhall record. Replaces
@@ -275,6 +278,10 @@ renderClusterConfig clusterConfig =
       ", coordinator = " <> renderCoordinatorWiring (clusterCoordinator clusterConfig),
       "}"
     ]
+
+renderClusterConfigSchema :: Either String Text
+renderClusterConfigSchema =
+  renderDecoderExpected (Dhall.auto @ClusterConfig)
 
 renderPulsarWiring :: PulsarWiring -> String
 renderPulsarWiring value =

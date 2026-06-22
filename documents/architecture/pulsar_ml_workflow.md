@@ -132,6 +132,12 @@ unrepresentable in the domain.
   (so the schema cannot drift from the types). This is the convention both repos
   adopt now and the lever for the eventual `hostbootstrap` lift.
 
+`infernix` status as of 2026-06-18: the coordinator calls startup-topic
+reconciliation from the typed demo/runtime graph before schema registration, and
+the binary exposes `infernix internal dhall-schema host|cluster|secrets|substrate`
+for decoder-reflected schema output. The one-binary Webapp-role consolidation
+remains open.
+
 ## Phasing rules (both repos)
 
 These two rules govern every phase in both repos' `DEVELOPMENT_PLAN/`:
@@ -156,7 +162,7 @@ A project conforms to this contract when all hold:
 - [ ] One binary; role ∈ `{Engine, Coordinator, Webapp}` selected by typed Dhall.
 - [ ] Engine is the only role that computes; Webapp and Coordinator run no ML.
 - [ ] Webapp is substrate-agnostic (talks to Pulsar + MinIO only).
-- [ ] Coordinator owns explicit topic lifecycle; no implicit auto-create, no
+- [x] Coordinator owns explicit topic lifecycle; no implicit auto-create, no
       hardcoded topic list.
 - [ ] Every topic is derived from the typed descriptor + validated routing graph.
 - [ ] Training and inference use the `WorkCommand → WorkEvent* → WorkResult`
@@ -166,7 +172,7 @@ A project conforms to this contract when all hold:
 - [ ] The browser receives snapshot + patch frames over websocket; inference is
       asynchronous to the browser.
 - [ ] Failover subscriptions + producer dedup provide HA and effectively-once.
-- [ ] The binary emits its own (reflected) Dhall schema.
+- [x] The binary emits its own (reflected) Dhall schema.
 - [ ] Every phase obeys forward-only DAG + single-accelerator-per-phase.
 
 ## Related Documents

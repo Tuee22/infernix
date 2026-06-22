@@ -17,6 +17,7 @@ import Data.Text qualified as Text
 import Infernix.Config (ControlPlaneContext (HostNative), Paths (..), controlPlaneContext)
 import Infernix.Error (InfernixError (..))
 import Infernix.HostConfig qualified as HostConfig
+import Infernix.HostTools qualified as HostTools
 import Infernix.Internal.Util (allM, findFirstM, firstJustM)
 import Infernix.Types (RuntimeMode)
 import System.Directory
@@ -24,7 +25,6 @@ import System.Directory
     createDirectoryIfMissing,
     doesDirectoryExist,
     doesFileExist,
-    findExecutable,
     listDirectory,
     removeDirectory,
   )
@@ -52,8 +52,8 @@ pythonAdaptersPresent projectDirectory = do
 -- @./.build/infernix-host.dhall@ on Apple and
 -- @/opt/infernix/dhall/InfernixHost.dhall@ in the Linux launcher
 -- image). When the manifest is absent (unit-test fixture without a
--- supplied 'HostConfig'), the helper falls back to a @\$PATH@ lookup so
--- those fixtures still resolve a Poetry executable. The Apple
+-- supplied 'HostConfig'), the helper checks only fixed absolute
+-- fallback candidates from 'HostTools.hostToolFallbackCandidates'. The Apple
 -- host-native one-time bootstrap path
 -- ('bootstrapPoetryOnAppleHost') requires the staged manifest because
 -- the install location is derived from @HostFilesystem.homeDirectory@.
@@ -71,7 +71,7 @@ ensurePoetryExecutable paths = do
   candidate <-
     firstJustM
       [ maybe (pure Nothing) onlyIfExists manifestPoetry,
-        findExecutable "poetry"
+        findFirstM doesFileExist (HostTools.hostToolFallbackCandidates HostTools.HostPoetry)
       ]
   case candidate of
     Just executablePath -> pure executablePath

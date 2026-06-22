@@ -142,6 +142,38 @@ RUN mkdir -p /workspace/.build /workspace/tools/generated_proto \
 
 COPY . /workspace
 
+RUN set -eu; \
+    native_tmp="$(mktemp -d)"; \
+    mkdir -p \
+      /opt/infernix/native-payloads/llama.cpp \
+      /opt/infernix/native-payloads/whisper.cpp \
+      /opt/infernix/native-payloads/basic-pitch; \
+    curl -fsSL -o "${native_tmp}/llama.tar.gz" \
+      https://github.com/ggml-org/llama.cpp/releases/download/b9704/llama-b9704-bin-ubuntu-x64.tar.gz; \
+    tar -xzf "${native_tmp}/llama.tar.gz" -C /opt/infernix/native-payloads/llama.cpp; \
+    curl -fsSL -o "${native_tmp}/whisper.tar.gz" \
+      https://github.com/ggml-org/whisper.cpp/releases/download/v1.9.0/whisper-bin-ubuntu-x64.tar.gz; \
+    tar -xzf "${native_tmp}/whisper.tar.gz" -C /opt/infernix/native-payloads/whisper.cpp; \
+    curl -fsSL -o /opt/infernix/native-payloads/basic-pitch/nmp.onnx \
+      https://raw.githubusercontent.com/spotify/basic-pitch/main/basic_pitch/saved_models/icassp_2022/nmp.onnx; \
+    curl -fsSL -o "${native_tmp}/audiveris.deb" \
+      https://github.com/Audiveris/audiveris/releases/download/5.10.2/Audiveris-5.10.2-ubuntu24.04-x86_64.deb; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+      libasound2t64 \
+      libgomp1 \
+      libx11-6 \
+      libxext6 \
+      libxi6 \
+      libxrender1 \
+      libxtst6; \
+    dpkg-deb -x "${native_tmp}/audiveris.deb" /; \
+    python3 -m venv /opt/infernix/native-python; \
+    /opt/infernix/native-python/bin/python -m pip install --upgrade pip; \
+    /opt/infernix/native-python/bin/pip install --no-cache-dir -r /workspace/python/native-runners/requirements-linux.txt; \
+    /opt/infernix/native-python/bin/pip uninstall -y hf_xet || true; \
+    rm -rf "${native_tmp}" /var/lib/apt/lists/*
+
 RUN mkdir -p /workspace/.build /opt/infernix /opt/infernix/dhall \
     && rm -rf /workspace/chart/charts \
     && ln -s /opt/infernix/chart/charts /workspace/chart/charts \

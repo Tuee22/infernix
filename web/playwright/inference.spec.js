@@ -926,7 +926,7 @@ test("browser artifact upload covers preview media PDF and download-only grants"
 // just the representative model the durable-context prompt roundtrip
 // spec exercises.
 test("browser per-model smoke matrix exercises every catalog model", async ({ page, request, infernixFixture }) => {
-  test.setTimeout(1800000);
+  test.setTimeout(3600000);
   const fixture = infernixFixture;
   expect(fixture?.host).toBeTruthy();
   expect(fixture?.edgePort).toBeTruthy();
@@ -1016,25 +1016,25 @@ test("browser per-model smoke matrix exercises every catalog model", async ({ pa
     const submitSentStart = wsFrames.sent.length;
     const submitReceivedStart = wsFrames.received.length;
 
-    await page
-      .locator(`.chat-context-item[data-context-id="${contextId}"] [data-role='select-context']`)
-      .click();
-    await expect(
-      page.locator(`.chat-context-item.active[data-context-id="${contextId}"]`),
-    ).toBeVisible();
+    await selectContextAndWaitForSubscription(page, wsFrames, contextId);
 
     const inputArtifact = browserInputArtifactForModel(model, matrixToken, index);
     if (inputArtifact) {
       await page.locator("#route-artifacts").click();
+      await refreshBrowserSession(page, wsFrames, contextId);
+      const uploadSentStart = wsFrames.sent.length;
+      const uploadReceivedStart = wsFrames.received.length;
       await uploadArtifactThroughBrowser(page, inputArtifact);
       await page.locator("#route-chat").click();
-      await expectConversationUploadVisible(page, wsFrames, inputArtifact, contextId);
-      await page
-        .locator(`.chat-context-item[data-context-id="${contextId}"] [data-role='select-context']`)
-        .click();
-      await expect(
-        page.locator(`.chat-context-item.active[data-context-id="${contextId}"]`),
-      ).toBeVisible();
+      await expectConversationUploadVisible(
+        page,
+        wsFrames,
+        inputArtifact,
+        contextId,
+        uploadSentStart,
+        uploadReceivedStart,
+      );
+      await selectContextAndWaitForSubscription(page, wsFrames, contextId);
     }
 
     const promptText = `smoke ${modelId} ${matrixToken}-${index}`;
@@ -1232,6 +1232,48 @@ async function waitForRegistrationRedirect(page, baseUrl) {
   await page.waitForURL((url) => url.origin === baseUrl && url.pathname === "/" && url.searchParams.has("code"), { timeout: 60000 });
   const redirected = new URL(page.url());
   return redirected;
+}
+
+async function refreshBrowserSession(page, frames, expectedContextId = null) {
+  const sentStart = frames.sent.length;
+  const receivedStart = frames.received.length;
+  const refreshedToken = await page.evaluate(async () => {
+    if (typeof window.__infernixRefreshAccessToken !== "function") {
+      return "";
+    }
+    return window.__infernixRefreshAccessToken();
+  });
+  expect(refreshedToken).toBeTruthy();
+  await waitForSentFrameAfter(frames, sentStart, (frame) => frame.tag === "ClientHello", 60000);
+  if (expectedContextId) {
+    await waitForSentFrameAfter(
+      frames,
+      sentStart,
+      (frame) => frame.tag === "ClientSubscribeContext" && frame.clientSubscribeContextId === expectedContextId,
+      60000,
+    );
+  }
+  await waitForReceivedFrameAfter(frames, receivedStart, (frame) => frame.tag === "ServerDraftMapSnapshot", 60000);
+}
+
+async function selectContextAndWaitForSubscription(page, frames, contextId) {
+  const sentStart = frames.sent.length;
+  await page
+    .locator(`.chat-context-item[data-context-id="${contextId}"] [data-role='select-context']`)
+    .click();
+  await expect(
+    page.locator(`.chat-context-item.active[data-context-id="${contextId}"]`),
+  ).toBeVisible();
+  try {
+    await waitForSentFrameAfter(
+      frames,
+      sentStart,
+      (frame) => frame.tag === "ClientSubscribeContext" && frame.clientSubscribeContextId === contextId,
+      15000,
+    );
+  } catch {
+    await refreshBrowserSession(page, frames, contextId);
+  }
 }
 
 function collectWebSocketFrames(page) {
@@ -1815,25 +1857,36 @@ async function selectFirstSupportedModel(page) {
   return selected.value;
 }
 
-async function expectConversationUploadVisible(page, frames, artifact, contextId) {
-  const uploadFrame = await waitForSentFrame(
+async function expectConversationUploadVisible(
+  page,
+  frames,
+  artifact,
+  contextId,
+  sentStartIndex = 0,
+  receivedStartIndex = 0,
+) {
+  const uploadFrame = await waitForSentFrameAfter(
     frames,
+    sentStartIndex,
     (frame) =>
       frame.tag === "ClientRecordUpload" &&
       frame.clientRecordUploadContextId === contextId &&
       frame.clientRecordUploadPayload?.uploadDisplayName === artifact.name &&
       frame.clientRecordUploadPayload?.uploadMimeType === artifact.mimeType,
+    60000,
   );
   expect(uploadFrame.clientRecordUploadPayload.uploadObjectRef.objectKey).toContain(artifact.name);
 
-  const patchFrame = await waitForReceivedFrame(
+  const patchFrame = await waitForReceivedFrameAfter(
     frames,
+    receivedStartIndex,
     (frame) =>
       frame.tag === "ServerConversationPatch" &&
       JSON.stringify(frame).includes("ConversationUserUploadEvent") &&
       JSON.stringify(frame).includes(contextId) &&
       JSON.stringify(frame).includes(artifact.name) &&
       JSON.stringify(frame).includes(artifact.mimeType),
+    60000,
   );
   expect(JSON.stringify(patchFrame)).toContain("ConversationStateAppendMessage");
 

@@ -1,7 +1,37 @@
 from __future__ import annotations
 
+import gc
+from contextlib import suppress
+
 from adapters.common import AdapterContext, run_context_adapter, run_setup_from_argv
 from adapters.model_cache import get_model_path
+
+
+def _release_vllm_engine(engine: object | None) -> None:
+    if engine is not None:
+        llm_engine = getattr(engine, "llm_engine", None)
+        engine_core = getattr(llm_engine, "engine_core", None)
+        if engine_core is not None:
+            with suppress(Exception):
+                engine_core.shutdown()
+        sleep = getattr(engine, "sleep", None)
+        if callable(sleep):
+            with suppress(Exception):
+                sleep(level=2)
+
+    with suppress(Exception):
+        from vllm.distributed.parallel_state import cleanup_dist_env_and_memory
+
+        cleanup_dist_env_and_memory()
+
+    with suppress(Exception):
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
+    gc.collect()
 
 
 def transform(context: AdapterContext) -> str:
@@ -21,12 +51,29 @@ def transform(context: AdapterContext) -> str:
     # host C compiler at runtime. The framework-free engine image ships no
     # toolchain, so the compile path raises InductorError ("Failed to find C
     # compiler") and the engine core fails to initialize; eager execution runs
-    # the same real GPU inference without the toolchain dependency.
-    engine = LLM(model=str(weights_dir), enforce_eager=True)
-    sampling = SamplingParams(max_tokens=256)
-    outputs = engine.generate([context.input_text], sampling)
-    continuation: str = outputs[0].outputs[0].text
-    return continuation
+    # the same real GPU inference without the toolchain dependency. The routed
+    # smoke path asks for short continuations, so cap the KV-cache context window
+    # instead of letting long-context model defaults make quantized rows flaky on
+    # the single-GPU validation lane.
+    llm_options = {
+        "model": str(weights_dir),
+        "enforce_eager": True,
+        "max_model_len": 2048,
+        "gpu_memory_utilization": 0.25,
+    }
+    if context.model_id.endswith("-awq"):
+        llm_options.update({"quantization": "awq", "dtype": "half"})
+    elif context.model_id.endswith("-gptq"):
+        llm_options.update({"quantization": "gptq", "dtype": "half"})
+    engine = None
+    try:
+        engine = LLM(**llm_options)
+        sampling = SamplingParams(max_tokens=256)
+        outputs = engine.generate([context.input_text], sampling)
+        continuation: str = outputs[0].outputs[0].text
+        return continuation
+    finally:
+        _release_vllm_engine(engine)
 
 
 def main() -> int:

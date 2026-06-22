@@ -26,10 +26,14 @@ module Infernix.Runtime.Pulsar
     ensureSchemaMarkers,
     modelCacheBootstrapRetryableError,
     modelBootstrapReadyWaitMaxSeconds,
+    reconcileStartupTopicsWithRetry,
     reconcileSupportedNamespacesWithRetry,
     renderPulsarWebSocketBase,
     publishInferenceRequest,
     parseMessageIdToSequenceId,
+    inferenceRequestProducerNameForFields,
+    inferenceRequestSequenceId,
+    inferenceRequestSequenceIdForFields,
     readNamespaceCompactionThreshold,
     rawTopicInferenceRequestIds,
     readRawTopicPayloads,
@@ -47,6 +51,7 @@ module Infernix.Runtime.Pulsar
     serviceConsumerSubscriptionTypeForTopic,
     serviceConsumerName,
     serviceReadinessMarkerPath,
+    startupTopicsForDemoConfig,
     topicDirectoryPath,
     writeServiceReadinessMarker,
   )
@@ -258,19 +263,14 @@ publishInferenceRequest paths runtimeMode topic requestValue = do
       writeInferenceRequestFile outputPath protoPayload
       pure requestIdValue
     Just transport -> do
-      -- Phase 7 Sprint 7.7: stable producer name per
-      -- @inference.request.<mode>@ topic so the broker dedup gate can
-      -- track @(producerName, sequenceId)@ tuples across coordinator
-      -- replicas. Application-level dedup key derivation lives in
-      -- @Infernix.Dispatch.SingleFlight.producerDedupSequenceId@; the
-      -- direct @infernix-demo@ producer path leaves @sequenceId@
-      -- unset so retries from this code path do not collide with the
-      -- coordinator's typed envelope.
+      -- Direct/internal requests carry no durable prompt MessageId, so their
+      -- broker dedup tuple must be scoped by the generated request id. A stable
+      -- producer name would make later hash-derived sequence ids disappear
+      -- behind Pulsar's highest-sequence-per-producer cursor.
       let options =
-            defaultPublishOptions
-              ( "infernix-demo-publisher-"
-                  <> runtimeModeId runtimeMode
-              )
+            inferenceRequestPublishOptions
+              ("infernix-demo-publisher-" <> runtimeModeId runtimeMode)
+              protoPayload
       publishTopicPayload transport topic options requestIdValue (encodeMessage protoPayload)
       pure requestIdValue
 
@@ -1268,29 +1268,41 @@ readPublishedInferenceResultMaybe paths runtimeMode topic requestIdValue = do
     Just transport ->
       readPublishedInferenceResultViaPulsar transport topic requestIdValue
 
-drainTopic :: Paths -> RuntimeMode -> EngineCommandOverrideMap -> DaemonConfig -> Text.Text -> IO ()
-drainTopic paths runtimeMode overrides daemonConfig =
-  drainTopicWithKVCache paths runtimeMode overrides daemonConfig Nothing
+drainTopic :: Paths -> RuntimeMode -> EngineCommandOverrideMap -> DaemonConfig -> DemoConfig -> Text.Text -> IO ()
+drainTopic paths runtimeMode overrides daemonConfig demoConfig =
+  drainTopicWithKVCache paths runtimeMode overrides daemonConfig demoConfig Nothing
 
-drainTopicWithKVCache :: Paths -> RuntimeMode -> EngineCommandOverrideMap -> DaemonConfig -> Maybe KVCache.EngineKVCache -> Text.Text -> IO ()
-drainTopicWithKVCache paths runtimeMode overrides daemonConfig maybeEngineKVCache requestTopicValue =
-  case daemonConfigHostBatchTopic daemonConfig of
-    Just hostBatchTopicValue ->
-      forwardTopic paths hostBatchTopicValue requestTopicValue
-    _ ->
+drainTopicWithKVCache :: Paths -> RuntimeMode -> EngineCommandOverrideMap -> DaemonConfig -> DemoConfig -> Maybe KVCache.EngineKVCache -> Text.Text -> IO ()
+drainTopicWithKVCache paths runtimeMode overrides daemonConfig demoConfig maybeEngineKVCache requestTopicValue =
+  case daemonConfigRole daemonConfig of
+    Coordinator ->
+      forwardTopicToDerivedPool paths runtimeMode demoConfig requestTopicValue
+    Engine ->
       drainInferenceTopic paths runtimeMode overrides maybeEngineKVCache (daemonConfigResultTopic daemonConfig) requestTopicValue
 
-forwardTopic :: Paths -> Text.Text -> Text.Text -> IO ()
-forwardTopic paths targetTopicValue sourceTopicValue = do
+forwardTopicToDerivedPool :: Paths -> RuntimeMode -> DemoConfig -> Text.Text -> IO ()
+forwardTopicToDerivedPool paths runtimeMode demoConfig sourceTopicValue = do
   let sourceDirectory = topicDirectoryPath paths sourceTopicValue
   sourceDirectoryPresent <- doesDirectoryExist sourceDirectory
   unless sourceDirectoryPresent (createDirectoryIfMissing True sourceDirectory)
   requestFiles <- sort <$> listDirectory sourceDirectory
   forM_ (filter (".pb" `endsWith`) requestFiles) $ \requestFile -> do
     let sourcePath = sourceDirectory </> requestFile
-        targetDirectory = topicDirectoryPath paths targetTopicValue
-        targetPath = targetDirectory </> requestFile
     encodedRequest <- readFileBytes sourcePath
+    decodedRequest <-
+      case decodeMessage encodedRequest of
+        Left err ->
+          ioError (userError ("failed to decode inference request from " <> sourcePath <> ": " <> err))
+        Right requestValue ->
+          pure requestValue
+    targetTopicValue <-
+      case batchTopicForRequest runtimeMode demoConfig decodedRequest of
+        Left err ->
+          ioError (userError err)
+        Right topicValue ->
+          pure topicValue
+    let targetDirectory = topicDirectoryPath paths targetTopicValue
+        targetPath = targetDirectory </> requestFile
     createDirectoryIfMissing True targetDirectory
     ByteString.writeFile targetPath encodedRequest
     removeFile sourcePath
@@ -1545,11 +1557,16 @@ ensureRegisteredSchemas paths transport demoConfig = do
   manager <- newManager defaultManagerSettings
   forM_ (requestLikeSchemaTopics demoConfig) $ \topicValue ->
     ensureRemoteSchema manager adminBaseUrl topicValue "infernix.runtime.InferenceRequest"
-  ensureRemoteSchema manager adminBaseUrl (resultTopic demoConfig) "infernix.runtime.InferenceResult"
+  forM_ (resultLikeSchemaTopics demoConfig) $ \topicValue ->
+    ensureRemoteSchema manager adminBaseUrl topicValue "infernix.runtime.InferenceResult"
 
 schemaTopicsForDemoConfig :: DemoConfig -> [Text.Text]
 schemaTopicsForDemoConfig demoConfig =
-  uniqueTexts (requestLikeSchemaTopics demoConfig <> [resultTopic demoConfig])
+  uniqueTexts (requestLikeSchemaTopics demoConfig <> resultLikeSchemaTopics demoConfig)
+
+startupTopicsForDemoConfig :: DemoConfig -> [Text.Text]
+startupTopicsForDemoConfig demoConfig =
+  uniqueTexts (schemaTopicsForDemoConfig demoConfig <> modelBootstrapTopicsForDemoConfig demoConfig)
 
 requestLikeSchemaTopics :: DemoConfig -> [Text.Text]
 requestLikeSchemaTopics demoConfig =
@@ -1557,8 +1574,23 @@ requestLikeSchemaTopics demoConfig =
     ( requestTopics demoConfig
         <> daemonConfigRequestTopics (coordinatorDaemon demoConfig)
         <> concatMap daemonConfigRequestTopics (engineDaemons demoConfig)
-        <> maybe [] pure (daemonConfigHostBatchTopic (coordinatorDaemon demoConfig))
-        <> concatMap (maybe [] pure . daemonConfigHostBatchTopic) (engineDaemons demoConfig)
+    )
+
+resultLikeSchemaTopics :: DemoConfig -> [Text.Text]
+resultLikeSchemaTopics demoConfig =
+  uniqueTexts
+    ( resultTopic demoConfig
+        : daemonConfigResultTopic (coordinatorDaemon demoConfig)
+        : map daemonConfigResultTopic (engineDaemons demoConfig)
+    )
+
+modelBootstrapTopicsForDemoConfig :: DemoConfig -> [Text.Text]
+modelBootstrapTopicsForDemoConfig demoConfig =
+  uniqueTexts
+    ( modelBootstrapTopic demoConfig
+        : map
+          (ConversationTopic.modelBootstrapReadyTopicName ConversationTopic.systemTopicNamespace . modelId)
+          (models demoConfig)
     )
 
 uniqueTexts :: [Text.Text] -> [Text.Text]
@@ -1641,14 +1673,6 @@ reconcileSupportedNamespaces transport _demoConfig = do
   -- safe.
   ensureNamespaceDeduplicationEnabled manager adminBaseUrl "infernix/demo"
   ensureNamespaceDeduplicationEnabled manager adminBaseUrl "infernix/system"
-  -- The bootstrap request topic itself. Pulsar auto-creates topics on
-  -- first produce when @allowAutoTopicCreation = true@; doing the
-  -- create-here belt-and-braces means daemon startup logs a clear error
-  -- if broker policy disables auto-creation.
-  ensureNonPartitionedTopic
-    manager
-    adminBaseUrl
-    "persistent://infernix/system/model.bootstrap.request"
 
 reconcileSupportedNamespacesWithRetry :: PulsarTransport -> DemoConfig -> IO ()
 reconcileSupportedNamespacesWithRetry transport demoConfig =
@@ -1665,6 +1689,39 @@ reconcileSupportedNamespacesWithRetry transport demoConfig =
               hPutStrLn
                 stderr
                 ( "pulsar namespace reconcile attempt "
+                    <> show attempt
+                    <> " failed:\n"
+                    <> displayException err
+                )
+              threadDelay 1000000
+              retry (attempt + 1)
+
+-- | Reconcile every static startup topic derived from the typed
+-- 'DemoConfig' topology. This makes the coordinator/engine topic surface
+-- explicit before schema registration, rather than relying on broker
+-- auto-topic creation during first publish or first schema registration.
+reconcileStartupTopics :: PulsarTransport -> DemoConfig -> IO ()
+reconcileStartupTopics transport demoConfig = do
+  adminBaseUrl <- requirePulsarAdminBaseUrl transport
+  manager <- newManager defaultManagerSettings
+  forM_ (startupTopicsForDemoConfig demoConfig) $
+    ensureNonPartitionedTopic manager adminBaseUrl
+
+reconcileStartupTopicsWithRetry :: PulsarTransport -> DemoConfig -> IO ()
+reconcileStartupTopicsWithRetry transport demoConfig =
+  retry (1 :: Int)
+  where
+    retry attempt = do
+      reconcileResult <- try @SomeException (reconcileStartupTopics transport demoConfig)
+      case reconcileResult of
+        Right _ -> pure ()
+        Left err ->
+          case fromException err :: Maybe SomeAsyncException of
+            Just asyncErr -> throwIO asyncErr
+            Nothing -> do
+              hPutStrLn
+                stderr
+                ( "pulsar topic reconcile attempt "
                     <> show attempt
                     <> " failed:\n"
                     <> displayException err
@@ -2182,14 +2239,17 @@ consumeTopicSession transport paths runtimeMode overrides daemonConfig demoConfi
   where
     handleConsumerEnvelope connection envelope = do
       decodedRequest <- decodeEnvelopePayload "inference request" envelope
-      -- Forward through the configured handoff path whenever the active
-      -- daemon config names one. The configured value is a legacy fallback;
-      -- normal routing resolves the request model against the validated
-      -- engine-pool graph and derives the pool/model topic.
-      case daemonConfigHostBatchTopic daemonConfig of
-        Just hostBatchTopicValue -> do
-          let selectedBatchTopicValue =
-                batchTopicForRequest runtimeMode demoConfig hostBatchTopicValue decodedRequest
+      -- Coordinator-role handoff routes through the validated engine-pool
+      -- graph. Engine-role consumers execute the request and publish the
+      -- typed result.
+      case daemonConfigRole daemonConfig of
+        Coordinator -> do
+          selectedBatchTopicValue <-
+            case batchTopicForRequest runtimeMode demoConfig decodedRequest of
+              Left err ->
+                ioError (userError err)
+              Right topicValue ->
+                pure topicValue
           -- Coordinator-role hand-off to the engine-batch topic. The
           -- producer name is stable per coordinator role so the broker
           -- dedups concurrent coordinator replicas. Sequence-id
@@ -2204,17 +2264,14 @@ consumeTopicSession transport paths runtimeMode overrides daemonConfig demoConfi
                 if Text.null requestContextId
                   then "infernix-coordinator-batch-" <> runtimeModeId runtimeMode
                   else "infernix-coordinator-batch-" <> runtimeModeId runtimeMode <> "-" <> requestContextId
-              batchOptions =
-                (defaultPublishOptions batchProducerScope)
-                  { publishSequenceId = inferenceRequestSequenceId decodedRequest
-                  }
+              batchOptions = inferenceRequestPublishOptions batchProducerScope decodedRequest
           publishTopicPayload
             transport
             selectedBatchTopicValue
             batchOptions
             (view ProtoInferenceFields.requestId decodedRequest)
             (encodeMessage decodedRequest)
-        Nothing -> do
+        Engine -> do
           let modelIdValue = view ProtoInferenceFields.requestModelId decodedRequest
               requestIdValue = view ProtoInferenceFields.requestId decodedRequest
           publishedResult <-
@@ -2239,10 +2296,7 @@ consumeTopicSession transport paths runtimeMode overrides daemonConfig demoConfi
                 if Text.null publishedResultContextId
                   then "infernix-engine-result-" <> runtimeModeId runtimeMode
                   else "infernix-engine-result-" <> runtimeModeId runtimeMode <> "-" <> publishedResultContextId
-              resultOptions =
-                (defaultPublishOptions resultProducerScope)
-                  { publishSequenceId = inferenceRequestSequenceId decodedRequest
-                  }
+              resultOptions = inferenceRequestPublishOptions resultProducerScope decodedRequest
           publishTopicPayload
             transport
             (daemonConfigResultTopic daemonConfig)
@@ -2258,11 +2312,17 @@ serviceConsumerName subscriptionName subscriptionType processLabel =
       Text.unpack (PulsarFailover.failoverConsumerName (Text.pack subscriptionName) processLabel)
     _ -> subscriptionName <> "-consumer-" <> sanitizeTopic processLabel
 
-batchTopicForRequest :: RuntimeMode -> DemoConfig -> Text.Text -> ProtoInference.InferenceRequest -> Text.Text
-batchTopicForRequest runtimeMode demoConfig fallbackTopic requestValue =
+batchTopicForRequest :: RuntimeMode -> DemoConfig -> ProtoInference.InferenceRequest -> Either String Text.Text
+batchTopicForRequest runtimeMode demoConfig requestValue =
   case findModel runtimeMode modelIdValue >>= const (enginePoolForModel demoConfig modelIdValue) of
-    Just pool -> enginePoolTopicForMode runtimeMode (enginePoolId pool) modelIdValue
-    Nothing -> fallbackTopic
+    Just pool -> Right (enginePoolTopicForMode runtimeMode (enginePoolId pool) modelIdValue)
+    Nothing ->
+      Left
+        ( "no engine pool route for model "
+            <> Text.unpack modelIdValue
+            <> " on "
+            <> Text.unpack (runtimeModeId runtimeMode)
+        )
   where
     modelIdValue = view ProtoInferenceFields.requestModelId requestValue
 
@@ -2289,20 +2349,51 @@ defaultPublishOptions producerName =
       publishSequenceId = Nothing
     }
 
--- | Derive a per-message Pulsar dedup @sequenceId@ from an envelope's
--- @userPromptMessageId@. Pulsar MessageIds serialize as
--- @<ledgerId>:<entryId>:<partition>:<batchIdx>@; we pack ledger and
--- entry into a 64-bit value because both are monotonic per
--- topic-partition. The supported per-context dispatcher in
--- 'Infernix.Dispatch.SingleFlight' uses one producer per context, so
--- the resulting sequence is monotonic within a producer scope. If the
--- envelope's @userPromptMessageId@ is empty or unparseable (legacy
--- inference-request envelopes that predate Sprint 7.8), the helper
--- returns 'Nothing' and the broker assigns the sequence so dedup
--- degenerates to producer-name stability without breaking the publish.
+inferenceRequestPublishOptions :: Text.Text -> ProtoInference.InferenceRequest -> PublishOptions
+inferenceRequestPublishOptions producerScope request =
+  (defaultPublishOptions producerName)
+    { publishSequenceId = inferenceRequestSequenceId request
+    }
+  where
+    requestIdValue = view ProtoInferenceFields.requestId request
+    userPromptMessageId = view ProtoInferenceFields.userPromptMessageId request
+    producerName =
+      inferenceRequestProducerNameForFields producerScope requestIdValue userPromptMessageId
+
+-- | Producer name used with 'inferenceRequestSequenceId'. Durable prompt
+-- envelopes keep the context-scoped producer because their
+-- @userPromptMessageId@ maps to a monotonic Pulsar message sequence. Direct
+-- @publishInferenceRequest@ callers do not carry that causal id; their fallback
+-- sequence is a stable hash of the generated @requestId@, so the producer must
+-- also be request-scoped. Pulsar dedup stores the highest sequence per
+-- producer, not an unordered set of @(producer, sequence)@ pairs.
+inferenceRequestProducerNameForFields :: Text.Text -> Text.Text -> Text.Text -> Text.Text
+inferenceRequestProducerNameForFields producerScope requestIdValue userPromptMessageId
+  | isJust (parseMessageIdToSequenceId userPromptMessageId) = producerScope
+  | Text.null requestIdValue = producerScope
+  | otherwise = dedupProducerName producerScope requestIdValue
+
+-- | Derive a per-message Pulsar dedup @sequenceId@. Durable prompt envelopes
+-- use @userPromptMessageId@: Pulsar MessageIds serialize as
+-- @<ledgerId>:<entryId>:<partition>:<batchIdx>@; we pack ledger and entry into a
+-- 64-bit value because both are monotonic per topic-partition. Direct
+-- @publishInferenceRequest@ callers fall back to the generated @requestId@
+-- hash, which must be paired with 'inferenceRequestProducerNameForFields' so
+-- unordered hashes do not share one broker dedup cursor.
 inferenceRequestSequenceId :: ProtoInference.InferenceRequest -> Maybe Integer
 inferenceRequestSequenceId request =
-  parseMessageIdToSequenceId (view ProtoInferenceFields.userPromptMessageId request)
+  inferenceRequestSequenceIdForFields
+    (view ProtoInferenceFields.requestId request)
+    (view ProtoInferenceFields.userPromptMessageId request)
+
+inferenceRequestSequenceIdForFields :: Text.Text -> Text.Text -> Maybe Integer
+inferenceRequestSequenceIdForFields requestIdValue userPromptMessageId =
+  parseMessageIdToSequenceId userPromptMessageId
+    <|> directRequestSequenceId
+  where
+    directRequestSequenceId
+      | Text.null requestIdValue = Nothing
+      | otherwise = Just (stableSequenceId requestIdValue)
 
 parseMessageIdToSequenceId :: Text.Text -> Maybe Integer
 parseMessageIdToSequenceId raw =

@@ -70,8 +70,8 @@ surface is the `.dhall` topic contract described in [../tools/pulsar.md](../tool
   `inferenceExecutorLocation: control-plane-host`, and
   `inferenceDispatchMode: pulsar-bridge-to-host-daemon`; on Linux, the same dispatch field
   advertises `pulsar-bridge-to-cluster-daemon` and the executor location remains `cluster-pod`.
-  The current `hostInferenceBatchTopic` field is legacy metadata until publication exposes the
-  validated engine-pool routing graph
+  Publication exposes derived engine-pool routing metadata and omits the retired
+  `hostInferenceBatchTopic` compatibility field
 - `GET /api/demo-config` and `GET /api/models` stay aligned with the generated active-mode demo
   catalog
 - the demo `/api` remains stable across Apple and Linux substrates because the routed demo surface

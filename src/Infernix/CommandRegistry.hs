@@ -15,6 +15,7 @@ import Data.Char (toLower)
 import Data.List (find)
 import Data.Maybe (mapMaybe)
 import Data.Text qualified as Text
+import Infernix.DhallSchema (DhallSchema, parseDhallSchema)
 import Infernix.Types (DaemonRole, RuntimeMode, parseDaemonRole, parseRuntimeMode)
 
 data Command
@@ -47,6 +48,7 @@ data Command
   | InternalMaterializeLinuxNativeEnginesCommand
   | InternalDemoConfigLoadCommand FilePath
   | InternalDemoConfigValidateCommand FilePath
+  | InternalDhallSchemaCommand DhallSchema
   | InternalGeneratePursContractsCommand FilePath
   | InternalPulsarRoundTripCommand FilePath String String
   deriving (Eq, Show)
@@ -157,17 +159,16 @@ serviceCommandFamily =
 -- the matching role via chart-supplied `args`, while host-native flows
 -- omit the flag and fall back to the active substrate dhall's
 -- `daemonRole` field. Engine pods or host daemons may pass
--- `--engine-name` to select a stable engine member id first; the legacy
--- per-engine daemon selector remains as a fallback while the
--- compatibility projection is retired. `--config` is a typed path
--- override used by targeted validation harnesses and operator
--- diagnostics that need an isolated substrate file.
+-- `--engine-name` to select a stable engine member id from the derived
+-- pool/member graph. `--config` is a typed path override used by
+-- targeted validation harnesses and operator diagnostics that need an
+-- isolated substrate file.
 serviceCommandSpec :: CommandSpec
 serviceCommandSpec =
   CommandSpec
     { commandUsageSuffix = "service [--role coordinator|engine] [--engine-name NAME] [--config PATH]",
       commandDescription =
-        "starts the long-running production daemon; it binds no HTTP port and consumes the active `.dhall` request and result topics. The optional `--role` arg overrides the substrate dhall's `daemonRole` field for split coordinator/engine Deployments, `--engine-name` selects a stable engine member id first with a legacy per-engine fallback, and `--config` points the daemon at an explicit substrate file.",
+        "starts the long-running production daemon; it binds no HTTP port and consumes the active `.dhall` request and result topics. The optional `--role` arg overrides the substrate dhall's `daemonRole` field for split coordinator/engine Deployments, `--engine-name` selects a stable engine member id, and `--config` points the daemon at an explicit substrate file.",
       commandParse = parseServiceCommand
     }
 
@@ -324,6 +325,7 @@ internalCommandFamily =
             "validates one generated demo config file"
             InternalDemoConfigValidateCommand
             ["internal", "demo-config", "validate"],
+          dhallSchemaCommand,
           pulsarRoundTripCommand
         ]
     }
@@ -352,6 +354,17 @@ pulsarRoundTripCommand =
       commandParse = \case
         ["internal", "pulsar-roundtrip", demoConfigPath, modelIdValue, inputTextValue] ->
           Just (InternalPulsarRoundTripCommand demoConfigPath modelIdValue inputTextValue)
+        _ -> Nothing
+    }
+
+dhallSchemaCommand :: CommandSpec
+dhallSchemaCommand =
+  CommandSpec
+    { commandUsageSuffix = "internal dhall-schema host|cluster|secrets|substrate",
+      commandDescription = "prints the Dhall type expression reflected from the binary's decoder for one packaged schema",
+      commandParse = \case
+        ["internal", "dhall-schema", rawSchema] ->
+          InternalDhallSchemaCommand <$> parseDhallSchema rawSchema
         _ -> Nothing
     }
 
