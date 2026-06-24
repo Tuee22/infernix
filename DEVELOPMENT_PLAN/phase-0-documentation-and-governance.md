@@ -12,6 +12,16 @@ Phase 0 closes the documentation bootstrap only. Later phases still own follow-o
 work whenever the implementation direction changes, but they do so on top of the governed suite and
 lint rules established here.
 
+> **Realness reopen (governed-doc reconciliation).** The realness-by-construction program (reopened
+> Phases 1/4/6) changes the model bindings and replaces the "real-output proof remains a substrate
+> cohort gate" softener with a code-enforced realness invariant. Phase 0 therefore **reopens**
+> (`Active`, Sprint 0.11) to reconcile the governed docs — the README matrix + Coverage Closure Rules
+> (in lockstep with `Models.hs` and `model_catalog.md`), `model_catalog.md` / `testing_strategy.md` /
+> `python_policy.md`, a new realness doctrine home, and the forbidden-phrase purge — and to review
+> `README.md` / `AGENTS.md` / `CLAUDE.md` together. This is machine-independent (Axis-1 only:
+> `infernix lint docs` / `docs check`); it has no accelerator gate and does not block any accelerator
+> phase.
+
 ## Current Repo Assessment
 
 Phase 0 is closed around the governed `documents/` suite and the canonical root-document posture
@@ -413,9 +423,96 @@ None.
 
 ---
 
+## Sprint 0.11: Realness Doctrine and Matrix Reconciliation [Done]
+
+**Status**: Done
+**Code-side closure**: Complete (machine-independent; validated 2026-06-23 on the rebuilt `linux-cpu` image by `infernix lint docs` + `infernix docs check`) — recorded the realness-by-construction program in the
+governed docs: update the README "Comprehensive Model / Format / Engine Matrix" + Coverage Closure Rules
+(the latter from "real-output proof remains a substrate cohort gate" to the realness invariant) in
+lockstep with `Models.hs` and `model_catalog.md` so the `infernix lint docs` matrix↔catalog parity holds;
+rewrite `model_catalog.md`, `testing_strategy.md`, and `python_policy.md` to the realness invariant; add
+the new realness doctrine home (a dedicated `documents/architecture/realness_contract.md` or a canonical
+`model_catalog.md` section); add the retired wordings ("validation artifact", "cpu smoke", "Wave I still
+owns replacing", "native-validation") to `src/Infernix/Lint/Docs.hs` `forbiddenPhrases` and purge them
+from the governed docs; and review `README.md` + `AGENTS.md` + `CLAUDE.md` together for the new
+prerequisites and the realness lint gate. Validated by `infernix lint docs` + `infernix docs check`.
+**Implementation**: `README.md`, `AGENTS.md`, `CLAUDE.md`, `documents/architecture/model_catalog.md`, `documents/development/testing_strategy.md`, `documents/development/python_policy.md`, `documents/architecture/realness_contract.md`, `src/Infernix/Lint/Docs.hs`, `src/Infernix/Models.hs`
+**Docs to update**: as above
+
+### Objective
+
+Make the governed docs state the realness invariant and the new model bindings, mechanically consistent
+with the generated catalog and lint.
+
+### Deliverables
+
+- README matrix + Coverage Closure Rules updated in lockstep with `Models.hs` + `model_catalog.md`
+- `model_catalog.md` / `testing_strategy.md` / `python_policy.md` rewritten to realness; new realness
+  doctrine home; forbidden-phrase additions + purge
+- `README.md` / `AGENTS.md` / `CLAUDE.md` reviewed together
+
+### Validation
+
+- `infernix lint docs` + `infernix docs check` pass (metadata, links, README route block,
+  matrix↔catalog parity, forbidden phrases purged)
+
+### Remaining Work
+
+None. The matrix↔catalog lockstep (`Models.hs` + README + `model_catalog.md`), the
+`testing_strategy.md` / `python_policy.md` rewrites, the `realness_contract.md` doctrine home, and the
+`forbiddenPhrases` additions (`real-output proof remains`, `Wave I still owns replacing`) all landed
+and validated 2026-06-23.
+
+---
+
+## Sprint 0.12: Realness Lint Enforcement Infrastructure [Done]
+
+**Status**: Done
+**Code-side closure**: Complete (machine-independent; validated 2026-06-23 on the rebuilt `linux-cpu`
+image by `infernix test lint` + `poetry run check-code`) — the realness-by-construction invariant
+([../documents/architecture/realness_contract.md](../documents/architecture/realness_contract.md)) is
+mechanically enforced by two machine-independent lints owned here as governance: the Python
+`_run_realness_ast_check` in `python/adapters/common.py` `run_check_code` (forbids `return` inside
+`except`, `bytes([...])` / `b64decode` constant artifacts, and `_validation_*` / `*_smoke*` /
+`*_fallback*` helper definitions across the `*_python.py` transform modules) and the Haskell
+`realnessFabricationViolations` in `src/Infernix/Lint/HaskellStyle.hs` (run under the
+`infernix-haskell-style` cabal test; forbids `emit_fallback_result`, `infernix_emit_validation_result`,
+`native-validation`, `b64decode`, `native fallback` — `np.zeros` is intentionally not token-forbidden
+since real engines use it for scratch buffers). The lint **mechanism** is Phase 0
+governance; its **per-runner scope** (`realnessScopedFile`) is extended by each accelerator phase as it
+de-stubs — Phase 4 adds `Engines/LinuxNative.hs`, Phase 1 adds `Engines/AppleSilicon.hs` — so the lint
+is green at every phase's closure and no accelerator phase waits on another.
+**Implementation**: `python/adapters/common.py`, `src/Infernix/Lint/HaskellStyle.hs`
+**Docs to update**: `documents/architecture/realness_contract.md`, `documents/development/python_policy.md`
+
+### Objective
+
+Give the realness invariant a machine-independent enforcement mechanism so neither accelerator phase has
+to own — or wait on — the lint, and any reintroduced fabrication fails the quality gate.
+
+### Deliverables
+
+- the Python `check-code` AST realness guard and the Haskell `realnessFabricationViolations` lint, both
+  machine-independent, with a per-runner `realnessScopedFile` extended by the accelerator phases
+
+### Validation
+
+- `infernix test lint` + `poetry run check-code` pass and fail on any reintroduced fabrication token
+
+### Remaining Work
+
+None.
+
+---
+
 ## Remaining Work
 
-None. Sprints 0.1-0.10 are `Done`.
+Phase 0 was reopened (Sprints 0.11–0.12) for the realness governed-doc reconciliation and the
+machine-independent realness lint enforcement, and is **re-closed** (validated 2026-06-23 by
+`infernix lint docs` + `infernix docs check` + `infernix test lint`). Sprints 0.1-0.12 are Done.
+The work was machine-independent and gated nothing on hardware; the doc reconciliation landed in
+lockstep with the reopened Phase 4 catalog changes (matrix↔catalog parity), and the lint mechanism's
+per-runner scope is extended by the reopened Phases 1 (Apple) and 4 (Linux) as each de-stubs.
 
 ## Documentation Requirements
 

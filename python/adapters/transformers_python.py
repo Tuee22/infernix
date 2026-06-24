@@ -14,7 +14,7 @@ def transform(context: AdapterContext) -> str:
     # Invariant"); the wheel + weights are present only on cohort hardware.
     try:
         import torch
-        from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
+        from transformers import AutoModelForCausalLM, AutoTokenizer
     except ImportError as exc:
         raise RuntimeError(
             "transformers/torch are not installed in this engine venv; "
@@ -23,20 +23,6 @@ def transform(context: AdapterContext) -> str:
     weights_dir = get_model_path(context.model_id)
     device = _preferred_torch_device(torch)
     tokenizer = AutoTokenizer.from_pretrained(str(weights_dir), local_files_only=True)
-    if device == "cpu":
-        # The portable linux-cpu lane validates the isolated framework venv,
-        # local model-cache wiring, tokenizer/config loading, and result path
-        # without trying to cold-load multi-GB Qwen weights on arm64 CPU. Full
-        # model generation remains the CUDA/MPS real-output cohort gate.
-        config = AutoConfig.from_pretrained(str(weights_dir), local_files_only=True)
-        token_count = len(
-            tokenizer.encode(context.input_text, add_special_tokens=False)
-        )
-        model_type = getattr(config, "model_type", context.model_id)
-        return (
-            f"{model_type} transformers cpu smoke processed "
-            f"{token_count} prompt tokens from local cache"
-        )
     model = AutoModelForCausalLM.from_pretrained(
         str(weights_dir), torch_dtype="auto", local_files_only=True
     )

@@ -69,9 +69,10 @@ inventory.
 On the `apple-silicon` substrate the worker dispatches to Apple-native engine entrypoints, not to a
 generic placeholder branch. The runtime worker invokes the selected Python adapter or native runner,
 fetches model weights lazily from the `infernix-models` MinIO bucket via
-`adapters.model_cache.get_model_path`, and publishes the typed per-family result surface. Hardware
-proof that every runnable Apple row produces real output remains a cohort gate until the headless
-Metal/Core ML validation wave closes. Apple native engine artifacts resolve from
+`adapters.model_cache.get_model_path`, and publishes the typed per-family result surface. Realness is
+guaranteed by construction — the Apple engine code cannot return a fabricated result (enforced by the
+realness lint). The reopened Phase 1 delivers real Apple native engines, replacing the former
+validation wrappers; Apple rows whose real engine is not yet landed are explicit residuals. Apple native engine artifacts resolve from
 `./.data/engines/<adapterId>/` and the supported materialization target is Tart-free: a fixed host
 Metal bridge for runtime Metal source compilation plus typed engine-artifact manifests for Core ML
 and native runner payloads. The former Tart helper path has been removed; the retained command name
@@ -86,8 +87,9 @@ entrypoints. The image build now installs the native payload layer for llama.cpp
 Basic Pitch's ONNX model, ONNX Runtime/CTranslate2 Python dependencies, faster-whisper, and
 Audiveris; generated wrappers fail with exit 75 until the requested model cache contains a `.ready`
 sentinel, can emit a local artifact-file marker for Haskell-owned MinIO upload, and delegate strict
-smoke checks to those baked payloads. Wave I still owns the full routed `linux-gpu` plus
-`linux-cpu` real-output sign-off.
+smoke checks to those baked payloads. The reopened Phases 4/6 own the full routed `linux-gpu` plus
+`linux-cpu` real-output delivery (Wave K), with realness enforced in the engine code by the realness
+lint.
 
 ## Generated Demo Config Contract
 

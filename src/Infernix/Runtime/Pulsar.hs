@@ -3385,7 +3385,31 @@ downloadUpstreamModel manager urlText = do
               <> show code
           )
       )
-  pure (Lazy.toStrict (responseBody response))
+  let body = Lazy.toStrict (responseBody response)
+  when (bodyLooksLikeHtml body) $
+    ioError
+      ( userError
+          ( "upstream model download "
+              <> Text.unpack urlText
+              <> " returned non-weight content: the response body begins with markup or is "
+              <> "empty, not a binary single-file model weight; the download URL likely "
+              <> "points at a repository landing page rather than a direct weight artifact"
+          )
+      )
+  pure body
+
+-- | Reopened Phase 4 Sprint 4.21 — realness weight-staging guard. A real
+-- single-file model weight (ONNX, GGUF, safetensors, …) is binary and never
+-- begins with @<@; a repository landing page (the broken Demucs/Open-Unmix
+-- github-root URLs) returns an HTML document. Staging that HTML as the weight
+-- silently corrupted the row; this guard fails closed instead.
+bodyLooksLikeHtml :: ByteString.ByteString -> Bool
+bodyLooksLikeHtml body =
+  case ByteString.uncons (ByteString.dropWhile isAsciiSpace body) of
+    Just (firstByte, _) -> firstByte == 60
+    Nothing -> True
+  where
+    isAsciiSpace w = w == 32 || w == 9 || w == 10 || w == 13
 
 minioObjectExists ::
   Presigned.PresignedUrlConfig ->

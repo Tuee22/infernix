@@ -13,8 +13,12 @@ import { createHash, randomUUID } from "node:crypto";
 import { test as base, expect } from "playwright/test";
 import {
   binaryArtifactBuffer,
+  instrumentArpeggioWavBuffer,
   jsonPreviewBody,
   musicXmlBuffer,
+  scoreImagePngBuffer,
+  separationMixtureWavBuffer,
+  speechWavBuffer,
   textPreviewBody,
   tinyMidiBuffer,
   tinyMp4Buffer,
@@ -1102,6 +1106,18 @@ test("browser per-model smoke matrix exercises every catalog model", async ({ pa
       await expect(artifact).toHaveAttribute("data-result-artifact-kind", expectedKind);
       await expect(artifact).toHaveAttribute("data-object-bucket", "infernix-demo-objects");
       await expect(artifact).toHaveAttribute("data-object-key", /.+/);
+      // Phase 4 Sprint 4.23: fail-closed object-ref check. The completed-frame
+      // wait above already FAILS the row on `inferenceResultStatus:"failed"`
+      // (realness is the engine's job). Here we add a light existence check of
+      // the returned object reference: read the rendered object ref and assert
+      // a non-empty, well-formed engine-written key. The byte-level non-empty
+      // fetch + magic-bytes probe runs in the integration suite, which holds
+      // MinIO credentials (the browser download-grant API is user-key-scoped
+      // and cannot mint a presigned GET for engine-written result keys). We
+      // never assert dimensions / stem count / sample rate.
+      const objectKey = await artifact.getAttribute("data-object-key");
+      expect(objectKey && objectKey.trim().length).toBeGreaterThan(0);
+      expect(objectKey).not.toMatch(/^\s*$/);
     }
   }
 });
@@ -1124,31 +1140,59 @@ function expectedResultRenderKind(model) {
   return "text";
 }
 
+// Phase 4 Sprint 4.23: route each input family to a REAL fixture, dispatched
+// on the row's ResultFamily (mirrors `Infernix.Models.resultFamilyForDescriptor`).
+// The OMR/tool row now receives a real single-staff score IMAGE (PNG) instead
+// of MusicXML — this fixes the OMR input-type bug. Substrate-agnostic: no
+// branch on substrate id or engine binding.
 function browserInputArtifactForModel(model, matrixToken, index) {
-  if (!modelRequiresBrowserInputObject(model)) return null;
+  const family = browserInputFamily(model);
+  if (!family) return null;
   const baseName = `matrix-input-${safeArtifactNameSegment(model?.modelId)}-${index}-${safeArtifactNameSegment(
     matrixToken,
   ).slice(0, 8)}`;
-  if ((model?.family || "") === "tool") {
-    return {
-      name: `${baseName}.musicxml`,
-      mimeType: "application/vnd.recordare.musicxml+xml",
-      buffer: musicXmlBuffer(),
-    };
+  switch (family) {
+    case "speech":
+      return { name: `${baseName}.wav`, mimeType: "audio/wav", buffer: speechWavBuffer() };
+    case "source-separation":
+      return {
+        name: `${baseName}.wav`,
+        mimeType: "audio/wav",
+        buffer: separationMixtureWavBuffer(),
+      };
+    case "audio-to-midi":
+    case "music-transcription":
+      return {
+        name: `${baseName}.wav`,
+        mimeType: "audio/wav",
+        buffer: instrumentArpeggioWavBuffer(),
+      };
+    case "optical-music-recognition":
+      return { name: `${baseName}.png`, mimeType: "image/png", buffer: scoreImagePngBuffer() };
+    default:
+      return null;
   }
-  return {
-    name: `${baseName}.wav`,
-    mimeType: "audio/wav",
-    buffer: tinyWavBuffer(),
-  };
+}
+
+// Resolve a catalog row to the input-bearing ResultFamily that decides its
+// fixture, or null for the prompt-only families. Mirrors
+// `Infernix.Models.resultFamilyForDescriptor` / `modelRequiresInputObject`.
+function browserInputFamily(model) {
+  const family = model?.family || "";
+  const rowId = model?.matrixRowId || "";
+  if (family === "speech") return "speech";
+  if (family === "music") return "music-transcription";
+  if (family === "tool") return "optical-music-recognition";
+  if (family === "audio") {
+    if (rowId.includes("demucs") || rowId.includes("unmix")) return "source-separation";
+    if (rowId.includes("basic-pitch")) return "audio-to-midi";
+    return null; // bark / generative audio is prompt-only
+  }
+  return null;
 }
 
 function modelRequiresBrowserInputObject(model) {
-  const family = model?.family || "";
-  const rowId = model?.matrixRowId || "";
-  if (family === "speech" || family === "music" || family === "tool") return true;
-  if (family === "audio") return !rowId.includes("bark");
-  return false;
+  return browserInputFamily(model) !== null;
 }
 
 function safeArtifactNameSegment(value) {

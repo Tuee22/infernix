@@ -1,6 +1,6 @@
 # Phase 6: Validation, E2E, and HA Hardening
 
-**Status**: Done
+**Status**: Active
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/development/no_env_vars.md](../documents/development/no_env_vars.md)
 
 > **Purpose**: Define the supported static-quality and single-substrate validation contract for the
@@ -11,6 +11,21 @@
 > route-aware docs, and the CLI surface mechanically aligned with implementation.
 
 ## Phase Status
+
+> **Realness reopen (fail-closed real-only validation).** The audit behind the Phase 4 realness
+> reopen also established that this phase's suites accept fabricated results: `assertResultFamilyContract`
+> checks shape/extension only and never fetches an artifact (the "deeper byte/dimension checks on cohort
+> hardware" comment is unimplemented), the per-row inputs are degenerate (silence WAV, 1×1 PNG), the OMR
+> row is fed `musicXmlBuffer()` instead of a score image, and `validateServiceRuntimeLoop` /
+> `assertCompletedResultPayload` assert neither completion nor shape. Phase 6 therefore **reopens**
+> (`Active`, Sprint 6.33) to strengthen the HA / chaos / service-loop assertions so they fail closed on a
+> non-real or incomplete result. The machine-independent realness lint that mechanically forbids
+> fabrication is owned by Phase 0 (governance, Sprint 0.12); the real per-family fixtures, the OMR
+> input-type fix, and the fail-closed per-row int/e2e are owned by Phase 4 (Sprint 4.23); this phase
+> builds on both rather than re-owning them. Realness is guaranteed by the engine code (reopened Phase 4
+> / Phase 1); the tests trust the result and fail loudly on `status=failed`. The Linux gate is [Wave K](cohort-validation-waves.md) (`linux-gpu` + `linux-cpu`);
+> the same DRY suite re-runs on `apple-silicon` under [Wave L](cohort-validation-waves.md) (reopened
+> Phase 1), whose incompleteness does not block the Linux closure.
 
 > **Common-shape reopen (single-accelerator phasing).** Phase 6 reopens to adopt the
 > **single-accelerator-per-phase** rule (see [README.md](README.md) → Common-Shape
@@ -1690,14 +1705,59 @@ single-host logical backpressure gate.
 
 ---
 
+## Sprint 6.33: Fail-Closed HA and Service-Loop Assertions [Active]
+
+**Status**: Active
+**Code-side closure**: Done + validated 2026-06-24 (code-side: the rebuilt `linux-cpu` image compiles
+`test:infernix-integration`, with `infernix lint docs` / `test unit` / `test lint` green). Built on the
+realness enforcement established by Phase 0 (the `infernix-haskell-style` realness check + the
+`check-code` AST guard) and the real Linux engines + real per-family fixtures + fail-closed per-row
+int/e2e owned by Phase 4, it strengthened the HA / chaos / service-loop suites so they assert a real,
+completed result instead of tolerating a status-only pass: `validateServiceRuntimeLoop`
+(`test/integration/Spec.hs`) now uploads the per-family input fixture and asserts completion + per-family
+result shape (it previously asserted neither), and `assertCompletedResultPayload` is now family-aware via
+`ConversationInferenceResultPayload.inferenceResultArtifacts` across its chaos/throughput call sites
+(frontend / coordinator / engine pod replacement, engine node drain, multi-user durable throughput,
+fan-in batching, fan-out). This sprint does **not** re-own the realness lint (Phase 0) or the real
+per-family fixtures (Phase 4); it consumes them. Machine-independent gates gate the next step.
+**Cohort gate**: [Wave K](cohort-validation-waves.md) — `linux-gpu` + `linux-cpu`.
+**Implementation**: `test/integration/Spec.hs`
+**Docs to update**: `documents/development/chaos_testing.md`, `documents/engineering/testing.md`, `DEVELOPMENT_PLAN/cohort-validation-waves.md`
+
+### Objective
+
+Make the HA / chaos / service-loop suites fail closed on a non-real or incomplete result, building on —
+not duplicating — the realness enforcement (Phase 0) and the real-engine fixtures (Phase 4).
+
+### Deliverables
+
+- `validateServiceRuntimeLoop` asserts completion + per-family result shape
+- `assertCompletedResultPayload` is family-aware across every chaos / throughput call site
+
+### Validation
+
+- `./bootstrap/linux-gpu.sh test` plus rebuilt `./bootstrap/linux-cpu.sh test` HA / chaos suites fail
+  closed when a result is non-real or incomplete
+
+### Remaining Work
+
+Implementation **done + validated code-side 2026-06-24**: `validateServiceRuntimeLoop` uploads the
+per-family fixture and asserts completion + the `ResultFamily` contract; `assertCompletedResultPayload`
+is `ResultFamily`-aware and fail-closed (non-empty inline text for LLM/speech, a non-empty
+`inferenceResultArtifacts` object ref for artifact families) across all five chaos/throughput/HA call
+sites. The [Wave K](cohort-validation-waves.md) `linux-gpu` + `linux-cpu` real-output cohort gate is the
+remaining residual.
+
+---
+
 ## Remaining Work
 
-None. Phase 6 returned to `Done` on 2026-06-20. The reopened Sprints 6.2, 6.3, 6.6, 6.31, and
-6.32 have code-side closure and the selected `linux-gpu` plus `linux-cpu` full-suite evidence:
-`./bootstrap/linux-gpu.sh test` passed style, unit, web unit, integration, and routed Playwright
-against the CUDA catalog, and rebuilt-image `./bootstrap/linux-cpu.sh test` passed the same full
-lane against the CPU catalog. Physical Apple multi-host routing remains hardware-deferred proof
-while no second Apple host is available; it is not open Phase 6 work.
+Phase 6 is reopened (`Active`) for the fail-closed HA and service-loop assertions (Sprint 6.33), building
+on the Phase 0 realness lint (Sprint 0.12) and the Phase 4 real fixtures + fail-closed per-row tests
+(Sprint 4.23). The Sprint 6.1–6.32 closure stands; Sprint 6.33 makes the HA / chaos / service-loop suites
+fail closed on a non-real or incomplete result, gated by [Wave K](cohort-validation-waves.md)
+(`linux-gpu` + `linux-cpu`). It depends only on earlier phases (0 and 4), so no earlier-phase validation
+is blocked by Phase 6.
 
 ## Documentation Requirements
 

@@ -23,6 +23,15 @@ Read first:
 - never run `git commit`
 - never run `git push`
 - keep `DEVELOPMENT_PLAN/` truthful as implementation status changes
+- realness by construction: inference engine adapters (`python/adapters/*_python.py`) and native
+  runners (`src/Infernix/Engines/{LinuxNative,AppleSilicon}.hs`) must return only real model output or
+  raise / exit non-zero (→ `status=failed`). No fabricated results — no
+  `_validation_*`/`*_smoke*`/`*_fallback*` helpers, no hardcoded artifact/base64 constants, no
+  `np.zeros`→`session.run`, no print-and-`exit 0` failure masks, no `infernix_emit_validation_result`
+  wrapper. The realness lint (`realnessFabricationViolations` in `Infernix.Lint.HaskellStyle` plus the
+  `check-code` AST pass), owned by Phase 0 Sprint 0.12 with its per-runner scope extended by Phases 1/4,
+  enforces this. Canonical doctrine:
+  [documents/architecture/realness_contract.md](documents/architecture/realness_contract.md)
 - update `README.md`, `AGENTS.md`, and `CLAUDE.md` together when root workflow guidance or the
   supported bootstrap entrypoints change
 - run `infernix lint docs` before closing documentation changes, using the active execution

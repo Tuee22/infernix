@@ -92,8 +92,10 @@ in-process by the `dhall` Haskell library; the schema is defined at `dhall/Infer
 - dispatches to the real engine entrypoint selected by the active binding and publishes the typed
   per-family result surface — inline text for the LLM and speech families, and a typed
   `infernix-demo-objects` object reference for the source-separation, audio-to-MIDI,
-  music-transcription, image, video, audio-generation, and OMR artifact families; hardware proof for
-  real output is tracked in the development-plan cohort gates
+  music-transcription, image, video, audio-generation, and OMR artifact families. Realness is
+  guaranteed by construction — the engine code cannot return a fabricated result (any
+  missing-weights/load/engine failure raises → `failed`), enforced by the realness lint and delivered
+  by the reopened Phases 1/4/6
 - routes requests into validated engine-pool lanes while leaving engine-local batching and runtime
   memory policy to the selected engine member
 - stores large outputs in MinIO and returns references when appropriate
@@ -824,8 +826,10 @@ contracts.
   path under the demo surface
 - validation asserts a per-family result contract for every active-substrate catalog row (LLM and
   speech inline text; source-separation, audio-to-MIDI, music-transcription, image, video,
-  audio-generation, and OMR object-reference artifacts); the hardware proof that these assertions
-  exercise real engines rather than placeholders is tracked in the cohort gates. One DRY
+  audio-generation, and OMR object-reference artifacts) and fails closed on `status=failed`. Realness
+  is guaranteed by construction — the engine code is being made structurally incapable of returning a
+  fabricated result (the realness lint forbids it), delivered by the reopened Phases 1/4/6; rows whose
+  real engine is not yet landed are explicit residuals. One DRY
   substrate-aware integration suite traverses the README matrix and the union across the
   `apple-silicon`, `linux-cpu`, and `linux-gpu` catalogs covers every matrix row. See
   [documents/development/testing_strategy.md](documents/development/testing_strategy.md)
@@ -865,11 +869,10 @@ ground and demo webapp provide the shared operator and demo substrate for this m
 | Speech transcription | CTranslate2 | faster-whisper-small | https://huggingface.co/Systran/faster-whisper-small | CTranslate2 | CTranslate2 | CTranslate2 (CPU) | Viable Apple CPU path; CUDA remains the throughput-oriented lane |
 | Source separation | PyTorch checkpoint | htdemucs | https://github.com/facebookresearch/demucs | PyTorch CPU | PyTorch CUDA | PyTorch MPS | Canonical Demucs execution path |
 | Source separation | PyTorch checkpoint | Open-Unmix | https://github.com/sigsep/open-unmix-pytorch | PyTorch CPU | PyTorch CUDA | PyTorch MPS | Alternate separation path |
-| Audio-to-MIDI / pitch transcription | TensorFlow model family | basic-pitch | https://github.com/spotify/basic-pitch | Named residual on Python 3.12 | Named residual on CUDA 12.8 | Not recommended | Published package pins TensorFlow `<2.15.1`; use the ONNX or Core ML lane until a maintained TensorFlow package is adopted |
 | Audio-to-MIDI / pitch transcription | Core ML | basic-pitch | https://github.com/spotify/basic-pitch | Not recommended | Not recommended | Core ML | Preferred Apple production lane for Basic Pitch |
 | Audio-to-MIDI / pitch transcription | ONNX | basic-pitch release artifacts | https://github.com/spotify/basic-pitch/releases | ONNX Runtime CPU | ONNX Runtime CUDA | ONNX Runtime | Useful portable fallback artifact |
-| Multi-instrument music transcription | JAX checkpoint / codebase | MT3 | https://github.com/magenta/mt3 | Named residual: JAX compatibility spike | Named residual: JAX/XLA compatibility spike | Named residual: jax-metal compatibility spike | JAX is canonical, but the MT3 stack must be re-proven before promotion |
-| Music transcription / MIR family | TensorFlow model family | Omnizart | https://github.com/Music-and-Culture-Technology-Lab/omnizart | Named residual: TensorFlow compatibility spike | Named residual: TensorFlow CUDA compatibility spike | Named residual: owned Core ML export | Current Omnizart compatibility is unproven on the supported Python and Apple lanes |
+| Multi-instrument music transcription | PyTorch | YourMT3+ | https://github.com/mimbres/YourMT3 | PyTorch CPU | PyTorch CUDA | PyTorch MPS | Modern PyTorch reimplementation (YourMT3+ / mt3-infer) replacing the unmaintained JAX MT3 stack; declared-runnable target, its test is red until the adapter binding lands |
+| Music transcription / MIR family | PyTorch | piano_transcription_inference | https://zenodo.org/record/4034264/files/CRNN_note_F1%3D0.9677_pedal_F1%3D0.9186.pth?download=1 | PyTorch CPU | PyTorch CUDA | PyTorch MPS | ByteDance piano transcription (qiuqiangkong) on the pytorch adapter, replacing the ancient-TensorFlow Omnizart stack; real engine landed code-side, real-output pending the cohort gate |
 | Image generation | Diffusers / safetensors pipeline | SDXL Turbo | https://huggingface.co/stabilityai/sdxl-turbo | Not recommended | Diffusers or ComfyUI | Diffusers on MPS | Standard open image-generation stack |
 | Image generation | Core ML | Apple Stable Diffusion conversion toolchain | https://github.com/apple/ml-stable-diffusion | Not recommended | Not recommended | Core ML | Best Apple-native exported path when available |
 | Video generation | Diffusers / safetensors pipeline | Wan2.1-T2V-1.3B | https://huggingface.co/Wan-AI/Wan2.1-T2V-1.3B-Diffusers | Not recommended | Diffusers or ComfyUI | Named residual: Diffusers on MPS viability spike | Small reference text-to-video model; Apple MPS video diffusion is not promoted until validated |
@@ -892,9 +895,11 @@ ground and demo webapp provide the shared operator and demo substrate for this m
 - each matrix row carries a per-family result contract — its `ResultFamily` and whether it returns
   inline text or an `infernix-demo-objects` object reference, owned by
   [documents/architecture/model_catalog.md](documents/architecture/model_catalog.md) — and the
-  integration and Playwright suites assert that result surface; real-output proof remains a
-  substrate cohort gate. "Every row is covered by at least one substrate" is a mechanically checked
-  invariant under `infernix lint docs`
+  integration and Playwright suites assert that result surface and fail closed on `status=failed`.
+  Realness is guaranteed by construction — the engine code cannot fabricate a result (enforced by the
+  realness lint); delivery across substrates is owned by the reopened Phases 1/4/6, and rows whose real
+  engine is not yet landed are explicit residuals. The union-coverage invariant ("every row real on at
+  least one substrate") is mechanically checked under `infernix lint docs`
 - Apple, CPU, and CUDA runtime lanes must be validated as first-class targets rather than narrowing
   the matrix to only the local Kind demo-ground launcher paths
 

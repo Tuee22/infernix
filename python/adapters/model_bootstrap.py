@@ -169,12 +169,27 @@ def _snapshot_allow_patterns(repo_id: str) -> list[str] | None:
 
 def _download_single_payload(download_url: str, destination: Path) -> None:
     with urllib.request.urlopen(download_url) as response:
+        content_type = response.headers.get_content_type()
+        first_chunk = response.read(1024 * 1024)
+        if "html" in content_type or _looks_like_html(first_chunk):
+            raise RuntimeError(
+                f"refusing to stage non-weight content from {download_url}: "
+                "the response is an HTML page (Content-Type "
+                f"{content_type}), not a single-file model weight. The download "
+                "URL likely points at a repository landing page."
+            )
         with destination.open("wb") as handle:
+            handle.write(first_chunk)
             while True:
                 chunk = response.read(1024 * 1024)
                 if not chunk:
                     break
                 handle.write(chunk)
+
+
+def _looks_like_html(data: bytes) -> bool:
+    head = data[:512].lstrip().lower()
+    return head.startswith((b"<!doctype", b"<html", b"<head", b"<?xml"))
 
 
 def _upload_directory(client: Any, bucket: str, model_id: str, root: Path) -> None:

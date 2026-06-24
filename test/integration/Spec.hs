@@ -9,6 +9,7 @@ import Data.Aeson ((.:), (.=))
 import Data.Aeson qualified as Aeson
 import Data.Aeson.Key qualified as AesonKey
 import Data.Aeson.KeyMap qualified as AesonKeyMap
+import Data.Bits (shiftR, testBit, xor)
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Base64 qualified as Base64
 import Data.ByteString.Char8 qualified as ByteString8
@@ -23,6 +24,7 @@ import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
 import Data.Time.Clock (getCurrentTime)
 import Data.Time.Clock.POSIX (getPOSIXTime)
+import Data.Word (Word32, Word8)
 import Infernix.Bootstrap.Models qualified as BootstrapModels
 import Infernix.Cluster
 import Infernix.Config (Paths (..))
@@ -250,7 +252,7 @@ exerciseRuntimeMode paths runtimeMode = do
         "cache status endpoint returns a JSON array (the engine-pod manifest contents are not visible from the demo pod after the daemon split)"
 
       reportStep ("service runtime loop: " <> showRuntimeMode runtimeMode)
-      validateServiceRuntimeLoop paths runtimeMode representativeModelId
+      validateServiceRuntimeLoop paths state runtimeMode representativeModelId
 
       reportStep ("durable Pulsar topic families: " <> showRuntimeMode runtimeMode)
       validateDurableTopicFamilyRoundTrips paths runtimeMode representativeModelId
@@ -367,6 +369,97 @@ validateCatalogModelInference paths state runtimeMode modelIdValue = do
       -- README rows; the assertions pass only when a real engine ran on cohort
       -- hardware (Section P: results name the single substrate exercised).
       assertResultFamilyContract (resultFamilyForDescriptor model) modelIdValue (payload resultValue)
+      -- Phase 4 Sprint 4.23: fail-closed object-ref check. The status ==
+      -- "completed" assertion above already fails the row on status=failed
+      -- (realness is the engine's job). For the artifact families we add a
+      -- light existence/non-empty fetch of the returned object reference via
+      -- the live MinIO port-forward (plus a magic-bytes container probe), but
+      -- never assert dimensions / stem count / sample rate.
+      assertResultObjectRefFetchable paths state (resultFamilyForDescriptor model) modelIdValue (payload resultValue)
+
+-- | Phase 4 Sprint 4.23 — for artifact result families, fetch the returned
+-- object reference through the live MinIO port-forward and assert it exists
+-- and is non-empty, with a best-effort container magic-bytes probe. The text
+-- families carry no object reference and are skipped. We never inspect the
+-- artifact's internal shape (that is the engine's realness contract).
+assertResultObjectRefFetchable :: Paths -> ClusterState -> ResultFamily -> String -> ResultPayload -> IO ()
+assertResultObjectRefFetchable paths state resultFamily modelIdValue payloadValue
+  | not (resultFamilyIsArtifact resultFamily) = pure ()
+  | otherwise =
+      case objectRef payloadValue of
+        Nothing ->
+          fail ("artifact family result for " <> modelIdValue <> " carried no object reference to fetch")
+        Just ref -> do
+          fetched <- fetchObjectRefBytes paths state ref
+          assert
+            (not (ByteString.null fetched))
+            ("returned object ref " <> Text.unpack ref <> " for " <> modelIdValue <> " is fetchable and non-empty")
+          assert
+            (objectMagicBytesPlausible ref fetched)
+            ("returned object ref " <> Text.unpack ref <> " for " <> modelIdValue <> " starts with a plausible container signature")
+
+-- | Fetch the bytes of an @infernix-demo-objects@ object reference
+-- (@bucket\/key@) through a presigned GET minted against the live MinIO
+-- port-forward.
+fetchObjectRefBytes :: Paths -> ClusterState -> Text.Text -> IO ByteString.ByteString
+fetchObjectRefBytes paths state ref =
+  case Text.breakOn "/" ref of
+    (bucket, keyWithSlash)
+      | not (Text.null keyWithSlash) ->
+          withMinioPortForward paths state $ \localPort -> do
+            now <- getCurrentTime
+            let objectReference =
+                  Contracts.ObjectRef
+                    { Contracts.objectBucket = bucket,
+                      Contracts.objectKey = Text.drop 1 keyWithSlash
+                    }
+                presigned =
+                  Presigned.PresignedUrlConfig
+                    { Presigned.presignedScheme = "http",
+                      Presigned.presignedEndpoint = Text.pack ("127.0.0.1:" <> show localPort),
+                      Presigned.presignedPathPrefix = "",
+                      Presigned.presignedRegion = "us-east-1",
+                      Presigned.presignedAccessKeyId = "minioadmin",
+                      Presigned.presignedSecretAccessKey = "minioadmin123",
+                      Presigned.presignedExpirySeconds = 900
+                    }
+                signedUrl =
+                  Text.unpack
+                    (Presigned.unPresignedUrl (Presigned.presignedGetUrl presigned now objectReference))
+                downloadPath =
+                  buildRoot paths
+                    </> "integration-result-"
+                      <> sanitizeFileToken (Text.unpack ref)
+            (exitCode, _stdout, stderrOutput) <-
+              readProcessWithExitCode
+                "curl"
+                ["-fsS", "-o", downloadPath, signedUrl]
+                ""
+            case exitCode of
+              ExitSuccess -> ByteString.readFile downloadPath
+              _ ->
+                fail
+                  ( "failed to fetch returned object reference "
+                      <> Text.unpack ref
+                      <> ": "
+                      <> stderrOutput
+                  )
+    _ -> fail ("returned object reference is not a bucket/key pair: " <> Text.unpack ref)
+
+-- | Best-effort container magic-bytes probe keyed off the object-ref
+-- extension. Recognizes PNG / RIFF (WAV) / MThd (MIDI) / PK (ZIP) / ftyp
+-- (MP4). Unknown extensions (e.g. MusicXML) pass on non-empty bytes alone.
+objectMagicBytesPlausible :: Text.Text -> ByteString.ByteString -> Bool
+objectMagicBytesPlausible ref bytes
+  | hasExtension ".png" = startsWith (ByteString.pack [137, 80, 78, 71])
+  | hasExtension ".wav" = startsWith (ByteString8.pack "RIFF")
+  | hasExtension ".mid" || hasExtension ".midi" = startsWith (ByteString8.pack "MThd")
+  | hasExtension ".zip" = startsWith (ByteString8.pack "PK")
+  | hasExtension ".mp4" = ByteString8.pack "ftyp" `ByteString.isInfixOf` ByteString.take 12 bytes
+  | otherwise = not (ByteString.null bytes)
+  where
+    hasExtension extension = extension `Text.isSuffixOf` ref
+    startsWith signature = signature `ByteString.isPrefixOf` bytes
 
 validateCatalogModelInferenceForRuntime :: Paths -> ClusterState -> RuntimeMode -> [ModelDescriptor] -> IO ()
 validateCatalogModelInferenceForRuntime paths state runtimeMode activeModels =
@@ -414,14 +507,22 @@ ensureCatalogInputObject paths state runtimeMode model =
       uploadIntegrationInputObject paths state objectReference payloadBytes
       pure (Just (objectRefText objectReference))
 
+-- | Phase 4 Sprint 4.23 — real per-family input fixtures. The degenerate
+-- silence-WAV / 1×1-PNG inputs are replaced by programmatically generated
+-- real-signal fixtures (deterministic, so byte-identical across substrates):
+-- a non-silent speech-like formant sweep for transcription, a multi-tone
+-- music mixture for source separation, an instrument-like arpeggio phrase for
+-- audio→MIDI / music transcription, and a real single-staff score image
+-- (PNG, not MusicXML) for OMR. Routing dispatches purely on the row's
+-- 'ResultFamily'; the text families stay prompt-only.
 sampleInputForModel :: ModelDescriptor -> Maybe (Text.Text, ByteString.ByteString)
 sampleInputForModel model =
   case resultFamilyForDescriptor model of
-    SpeechTranscription -> Just (".wav", sampleWavBytes)
-    SourceSeparation -> Just (".wav", sampleWavBytes)
-    AudioToMidi -> Just (".wav", sampleWavBytes)
-    MusicTranscription -> Just (".wav", sampleWavBytes)
-    OpticalMusicRecognition -> Just (".png", samplePngBytes)
+    SpeechTranscription -> Just (".wav", speechWavBytes)
+    SourceSeparation -> Just (".wav", separationMixtureWavBytes)
+    AudioToMidi -> Just (".wav", instrumentArpeggioWavBytes)
+    MusicTranscription -> Just (".wav", instrumentArpeggioWavBytes)
+    OpticalMusicRecognition -> Just (".png", scoreImagePngBytes)
     LlmText -> Nothing
     ImageGeneration -> Nothing
     VideoGeneration -> Nothing
@@ -604,99 +705,277 @@ sanitizeFileToken =
       | character `elem` (['A' .. 'Z'] <> ['a' .. 'z'] <> ['0' .. '9'] <> ".-_") = character
       | otherwise = '-'
 
-sampleWavBytes :: ByteString.ByteString
-sampleWavBytes =
+-- | Phase 4 Sprint 4.23 — a non-silent, speech-like mono 16 kHz fixture.
+-- We synthesize a voiced source (a glottal-pulse-like sawtooth at a falling
+-- pitch) shaped by a pair of formant resonances that glide across the
+-- utterance, plus a light noise burst, so the decoder runs on real signal
+-- rather than digital silence. This is intelligible-shaped, not genuinely
+-- spoken; a real human utterance should be sourced for the cohort gate.
+speechWavBytes :: ByteString.ByteString
+speechWavBytes =
+  encodePcm16Wav 16000 1 samples
+  where
+    sampleRate = 16000 :: Int
+    durationSeconds = 1.6 :: Double
+    sampleCount = round (durationSeconds * fromIntegral sampleRate) :: Int
+    samples =
+      [ amplitudeAt index | index <- [0 .. sampleCount - 1]
+      ]
+    amplitudeAt index =
+      let t = fromIntegral index / fromIntegral sampleRate :: Double
+          progress = t / durationSeconds
+          -- Falling fundamental from 150 Hz to 95 Hz (a spoken-like contour).
+          f0 = 150 - 55 * progress
+          -- Sawtooth glottal source from summed harmonics.
+          source =
+            sum
+              [ (1 / fromIntegral harmonic)
+                  * sin (2 * pi * f0 * fromIntegral harmonic * t)
+              | harmonic <- [1 .. 12 :: Int]
+              ]
+          -- Two formants gliding across the utterance (vowel-like timbre).
+          formant1 = 500 + 300 * progress
+          formant2 = 1500 + 700 * progress
+          shaped =
+            source
+              * (0.6 + 0.4 * sin (2 * pi * formant1 * t))
+              + 0.3 * source * sin (2 * pi * formant2 * t)
+          -- Light aspiration noise from a cheap deterministic LCG.
+          noise = deterministicNoise index * 0.08
+          -- Soft fade in/out so we do not clip the WAV boundaries.
+          envelope = min 1 (min (progress * 8) ((1 - progress) * 8))
+       in clampToInt16 (0.5 * envelope * (shaped + noise))
+
+-- | Phase 4 Sprint 4.23 — a real music-like mixture for source separation:
+-- a sustained major triad (vocal/harmony stand-in), a low bass tone, and a
+-- rhythmic percussive pulse, rendered 44.1 kHz stereo so Demucs / Open-Unmix
+-- run on a genuine multi-source mixture instead of silence.
+separationMixtureWavBytes :: ByteString.ByteString
+separationMixtureWavBytes =
+  encodePcm16Wav 44100 2 interleaved
+  where
+    sampleRate = 44100 :: Int
+    durationSeconds = 2.0 :: Double
+    sampleCount = round (durationSeconds * fromIntegral sampleRate) :: Int
+    -- Interleave L/R; the chord leans left, the bass leans right so the
+    -- stereo field is non-degenerate.
+    interleaved =
+      concat
+        [ [leftAt index, rightAt index] | index <- [0 .. sampleCount - 1]
+        ]
+    leftAt index = clampToInt16 (0.32 * (chord index + 0.25 * pulse index + 0.5 * bass index))
+    rightAt index = clampToInt16 (0.32 * (0.6 * chord index + 0.3 * pulse index + bass index))
+    chord index =
+      let t = timeOf index
+       in sum [sin (2 * pi * freq * t) | freq <- [261.63, 329.63, 392.0]]
+    bass index = sin (2 * pi * 82.41 * timeOf index)
+    pulse index =
+      let t = timeOf index
+          -- A two-per-second percussive click train with a fast decay.
+          beatPhase = fromIntegral (index `mod` (sampleRate `div` 2))
+          decay = exp (negate beatPhase / 1200)
+       in decay * sin (2 * pi * 1800 * t)
+    timeOf index = fromIntegral index / fromIntegral sampleRate :: Double
+
+-- | Phase 4 Sprint 4.23 — a real instrument-like phrase for audio→MIDI /
+-- music transcription: a C-major arpeggio (C4 E4 G4 C5 G4 E4) of distinct
+-- sustained sawtooth notes at 22.05 kHz mono, each with an attack/decay
+-- envelope so the transcriber sees separable note onsets.
+instrumentArpeggioWavBytes :: ByteString.ByteString
+instrumentArpeggioWavBytes =
+  encodePcm16Wav 22050 1 (concatMap noteSamples arpeggio)
+  where
+    sampleRate = 22050 :: Int
+    noteSeconds = 0.4 :: Double
+    noteSampleCount = round (noteSeconds * fromIntegral sampleRate) :: Int
+    arpeggio = [261.63, 329.63, 392.0, 523.25, 392.0, 329.63] :: [Double]
+    noteSamples frequency =
+      [ noteAmplitude frequency index | index <- [0 .. noteSampleCount - 1]
+      ]
+    noteAmplitude frequency index =
+      let t = fromIntegral index / fromIntegral sampleRate :: Double
+          progress = fromIntegral index / fromIntegral noteSampleCount :: Double
+          -- Sawtooth from summed harmonics gives an instrument-like timbre.
+          tone =
+            sum
+              [ (1 / fromIntegral harmonic)
+                  * sin (2 * pi * frequency * fromIntegral harmonic * t)
+              | harmonic <- [1 .. 8 :: Int]
+              ]
+          -- Percussive attack, sustained body, gentle release.
+          envelope = min 1 (progress * 12) * exp (negate progress * 1.5)
+       in clampToInt16 (0.5 * envelope * tone)
+
+-- | Deterministic [-1, 1) pseudo-noise from a 32-bit LCG seeded by the sample
+-- index, so the fixture stays byte-identical across runs and substrates.
+deterministicNoise :: Int -> Double
+deterministicNoise index =
+  let seeded = (1103515245 * (fromIntegral index + 12345) + 12345) `mod` 2147483648 :: Integer
+   in fromIntegral seeded / 1073741824 - 1
+
+-- | Clamp a normalized [-1, 1] amplitude into a signed 16-bit PCM sample.
+clampToInt16 :: Double -> Int
+clampToInt16 amplitude =
+  max (-32768) (min 32767 (round (amplitude * 32767)))
+
+-- | Build a canonical 16-bit PCM WAV from a flat (interleaved) sample list.
+encodePcm16Wav :: Int -> Int -> [Int] -> ByteString.ByteString
+encodePcm16Wav sampleRate channels samples =
   ByteString.concat
     [ ByteString8.pack "RIFF",
       littleEndian32 (36 + payloadLength),
       ByteString8.pack "WAVEfmt ",
       littleEndian32 16,
       littleEndian16 1,
-      littleEndian16 1,
+      littleEndian16 channels,
       littleEndian32 sampleRate,
-      littleEndian32 (sampleRate * 2),
-      littleEndian16 2,
+      littleEndian32 byteRate,
+      littleEndian16 blockAlign,
       littleEndian16 16,
       ByteString8.pack "data",
       littleEndian32 payloadLength,
-      ByteString.replicate payloadLength 0
+      sampleBytes
     ]
   where
-    sampleRate = 8000
-    payloadLength = sampleRate `div` 5 * 2
+    blockAlign = channels * 2
+    byteRate = sampleRate * blockAlign
+    sampleBytes = ByteString.concat (map (littleEndian16 . wrapInt16) samples)
+    payloadLength = ByteString.length sampleBytes
 
-samplePngBytes :: ByteString.ByteString
-samplePngBytes =
-  ByteString.pack
-    [ 137,
-      80,
-      78,
-      71,
-      13,
-      10,
-      26,
-      10,
-      0,
-      0,
-      0,
-      13,
-      73,
-      72,
-      68,
-      82,
-      0,
-      0,
-      0,
-      1,
-      0,
-      0,
-      0,
-      1,
-      8,
-      4,
-      0,
-      0,
-      0,
-      181,
-      28,
-      12,
-      2,
-      0,
-      0,
-      0,
-      11,
-      73,
-      68,
-      65,
-      84,
-      120,
-      218,
-      99,
-      252,
-      255,
-      31,
-      0,
-      3,
-      3,
-      2,
-      0,
-      239,
-      191,
-      167,
-      219,
-      0,
-      0,
-      0,
-      0,
-      73,
-      69,
-      78,
-      68,
-      174,
-      66,
-      96,
-      130
+-- | Phase 4 Sprint 4.23 — a real single-staff score IMAGE (grayscale PNG, not
+-- MusicXML). We rasterize five staff lines, a clef-like vertical glyph, and a
+-- few filled noteheads into a real pixel buffer, then emit a standards-valid
+-- PNG (zlib stored/uncompressed deflate blocks with a real Adler-32 trailer
+-- and per-chunk CRC-32). This is the fixture that fixes the OMR input-type bug
+-- where the row used to be fed MusicXML instead of an image.
+scoreImagePngBytes :: ByteString.ByteString
+scoreImagePngBytes = encodeGrayscalePng scoreImageWidth scoreImageHeight scoreImagePixels
+
+scoreImageWidth :: Int
+scoreImageWidth = 240
+
+scoreImageHeight :: Int
+scoreImageHeight = 80
+
+-- | Pixel rows (top to bottom), each a list of 8-bit grayscale values
+-- (0 = black ink, 255 = white paper).
+scoreImagePixels :: [[Int]]
+scoreImagePixels =
+  [ [pixelAt x y | x <- [0 .. scoreImageWidth - 1]]
+  | y <- [0 .. scoreImageHeight - 1]
+  ]
+  where
+    staffLineRows = [20, 30, 40, 50, 60] :: [Int]
+    isStaffLine y = y `elem` staffLineRows
+    -- A clef-like vertical glyph near the left margin.
+    isClef x y = x >= 14 && x <= 18 && y >= 16 && y <= 64
+    -- Filled noteheads centered on staff positions across the bar.
+    noteheads = [(70, 50), (110, 40), (150, 30), (190, 45)] :: [(Int, Int)]
+    isNotehead x y =
+      any
+        (\(cx, cy) -> let dx = x - cx; dy = y - cy in dx * dx + dy * dy <= 36)
+        noteheads
+    pixelAt x y
+      | isClef x y = 0
+      | isNotehead x y = 0
+      | isStaffLine y && x >= 8 && x <= scoreImageWidth - 8 = 0
+      | otherwise = 255
+
+-- | Encode an 8-bit grayscale image as a valid PNG using uncompressed zlib
+-- (deflate stored blocks). No external zlib dependency: we compute the
+-- Adler-32 (zlib trailer) and CRC-32 (PNG chunk) checksums directly.
+encodeGrayscalePng :: Int -> Int -> [[Int]] -> ByteString.ByteString
+encodeGrayscalePng width height rows =
+  ByteString.concat
+    [ pngSignature,
+      pngChunk "IHDR" ihdr,
+      pngChunk "IDAT" (zlibStored rawScanlines),
+      pngChunk "IEND" ByteString.empty
     ]
+  where
+    pngSignature = ByteString.pack [137, 80, 78, 71, 13, 10, 26, 10]
+    ihdr =
+      ByteString.concat
+        [ bigEndian32 width,
+          bigEndian32 height,
+          ByteString.pack [8, 0, 0, 0, 0] -- 8-bit depth, grayscale, default filters
+        ]
+    -- Each scanline is prefixed by a 0 filter-type byte.
+    rawScanlines =
+      ByteString.concat
+        [ ByteString.cons 0 (ByteString.pack (map (fromIntegral . clampByte) row))
+        | row <- rows
+        ]
+    clampByte value = max 0 (min 255 value)
+
+-- | A PNG chunk: length, type, data, CRC-32 of (type ++ data).
+pngChunk :: String -> ByteString.ByteString -> ByteString.ByteString
+pngChunk chunkType chunkData =
+  ByteString.concat
+    [ bigEndian32 (ByteString.length chunkData),
+      typeBytes,
+      chunkData,
+      bigEndian32 (fromIntegral (crc32 (typeBytes <> chunkData)))
+    ]
+  where
+    typeBytes = ByteString8.pack chunkType
+
+-- | Wrap a raw byte payload in a zlib stream using only deflate stored
+-- (uncompressed) blocks, with the trailing Adler-32 checksum.
+zlibStored :: ByteString.ByteString -> ByteString.ByteString
+zlibStored payload =
+  ByteString.concat
+    [ ByteString.pack [0x78, 0x01], -- zlib header: deflate, 32K window, no dict
+      ByteString.concat (storedBlocks (chunkBytes maxBlock payload)),
+      bigEndian32 (fromIntegral (adler32 payload))
+    ]
+  where
+    maxBlock = 65535
+    storedBlocks [] = [ByteString.pack [1, 0, 0, 0xFF, 0xFF]] -- empty final block
+    storedBlocks blocks = zipWith storedBlock (markFinal blocks) blocks
+    markFinal blocks = replicate (length blocks - 1) False <> [True]
+    storedBlock isFinal block =
+      let len = ByteString.length block
+       in ByteString.concat
+            [ ByteString.singleton (if isFinal then 1 else 0), -- BFINAL, BTYPE=00
+              littleEndian16 len,
+              littleEndian16 (complement16 len),
+              block
+            ]
+    complement16 value = 0xFFFF - value
+
+-- | Split a ByteString into chunks of at most @size@ bytes.
+chunkBytes :: Int -> ByteString.ByteString -> [ByteString.ByteString]
+chunkBytes size bytes
+  | ByteString.null bytes = []
+  | otherwise =
+      let (chunk, rest) = ByteString.splitAt size bytes
+       in chunk : chunkBytes size rest
+
+-- | Adler-32 (RFC 1950), table-free.
+adler32 :: ByteString.ByteString -> Integer
+adler32 bytes =
+  let (finalA, finalB) = ByteString.foldl' step (1, 0) bytes
+   in (finalB * 65536) + finalA
+  where
+    step (a, b) byte =
+      let a' = (a + fromIntegral byte) `mod` 65521
+       in (a', (b + a') `mod` 65521)
+
+-- | CRC-32 (IEEE 802.3 / zlib polynomial 0xEDB88320), table-free.
+crc32 :: ByteString.ByteString -> Integer
+crc32 bytes =
+  toInteger (ByteString.foldl' step 0xFFFFFFFF bytes `xor` 0xFFFFFFFF)
+  where
+    step :: Word32 -> Word8 -> Word32
+    step acc byte =
+      iterate stepBit (acc `xor` fromIntegral byte) !! (8 :: Int)
+    stepBit value
+      | testBit value 0 = (value `shiftR` 1) `xor` 0xEDB88320
+      | otherwise = value `shiftR` 1
+
+wrapInt16 :: Int -> Int
+wrapInt16 value = value `mod` 65536
 
 littleEndian16 :: Int -> ByteString.ByteString
 littleEndian16 value =
@@ -709,6 +988,15 @@ littleEndian32 value =
       fromIntegral (value `div` 256),
       fromIntegral (value `div` 65536),
       fromIntegral (value `div` 16777216)
+    ]
+
+bigEndian32 :: Int -> ByteString.ByteString
+bigEndian32 value =
+  ByteString.pack
+    [ fromIntegral (value `div` 16777216),
+      fromIntegral (value `div` 65536),
+      fromIntegral (value `div` 256),
+      fromIntegral value
     ]
 
 linuxGpuModelUsesPythonNativeEngine :: ModelDescriptor -> Bool
@@ -883,13 +1171,19 @@ assertClusterServiceDeployment state = do
     (serviceSessionAffinity == "None")
     "demo Service disables Kubernetes session affinity so any stateless frontend replica can host WebSocket sessions"
 
-validateServiceRuntimeLoop :: Paths -> RuntimeMode -> String -> IO ()
-validateServiceRuntimeLoop paths runtimeMode representativeModelId = do
+validateServiceRuntimeLoop :: Paths -> ClusterState -> RuntimeMode -> String -> IO ()
+validateServiceRuntimeLoop paths state runtimeMode representativeModelId = do
   requestTopic <-
     case requestTopicsForMode runtimeMode of
       topic : _ -> pure topic
       [] -> fail ("no request topics configured for " <> showRuntimeMode runtimeMode)
   let resultTopic = resultTopicForMode runtimeMode
+  model <-
+    case findModel runtimeMode (Text.pack representativeModelId) of
+      Just descriptor -> pure descriptor
+      Nothing ->
+        fail ("model " <> representativeModelId <> " is not in the " <> showRuntimeMode runtimeMode <> " catalog")
+  maybeInputObjectRef <- ensureCatalogInputObject paths state runtimeMode model
   requestIdValue <-
     publishInferenceRequest
       paths
@@ -898,7 +1192,7 @@ validateServiceRuntimeLoop paths runtimeMode representativeModelId = do
       InferenceRequest
         { requestModelId = Text.pack representativeModelId,
           inputText = "service daemon request path",
-          inputObjectRef = Nothing
+          inputObjectRef = maybeInputObjectRef
         }
   maybeResult <- waitForPublishedResult paths runtimeMode resultTopic requestIdValue
   case maybeResult of
@@ -906,6 +1200,21 @@ validateServiceRuntimeLoop paths runtimeMode representativeModelId = do
     Just resultValue -> do
       assert (resultModelId resultValue == Text.pack representativeModelId) "service daemon publishes the selected model id"
       assert (resultRuntimeMode resultValue == runtimeMode) "service daemon preserves the runtime mode in published results"
+      -- Phase 6 Sprint 6.33 (2026-06-24): the service-runtime-loop HA test now
+      -- TRUSTS the engine result and FAILS CLOSED. We assert the result reaches
+      -- @status == "completed"@ (so @status=failed@ fails the loop — realness is
+      -- the engine's job) and the per-family 'ResultFamily' contract, dispatched
+      -- on the model descriptor so the check is substrate-agnostic: inline
+      -- non-empty text for the text families, an 'infernix-demo-objects'
+      -- object-ref for the artifact families. No dimension / byte-exactness
+      -- assertions.
+      assert
+        (status resultValue == "completed")
+        ( "service daemon completes the runtime-loop inference for "
+            <> representativeModelId
+            <> failurePayloadSuffix (payload resultValue)
+        )
+      assertResultFamilyContract (resultFamilyForDescriptor model) representativeModelId (payload resultValue)
 
 validateDurableTopicFamilyRoundTrips :: Paths -> RuntimeMode -> String -> IO ()
 validateDurableTopicFamilyRoundTrips paths runtimeMode representativeModelId = do
@@ -1231,14 +1540,71 @@ assertPromptPipelineExactlyOnce paths runtimeMode demoConfig promptRef = do
   where
     promptIdText = Contracts.unMessageId (durablePromptRefMessageId promptRef)
 
-assertCompletedResultPayload :: Contracts.ConversationInferenceResultPayload -> String -> IO ()
-assertCompletedResultPayload resultPayload message =
+-- | Phase 6 Sprint 6.33 (2026-06-24) — family-aware, fail-closed assertion for
+-- a durable-conversation inference result. The chaos / throughput / HA
+-- scenarios drive a real prompt through the service loop; this TRUSTS the
+-- engine result and asserts only the per-'ResultFamily' result surface, never
+-- dimensions / byte-exactness (realness is the engine code's job). It fails
+-- closed when @status /= "completed"@ (so @status=failed@ fails the scenario)
+-- or when the expected family surface is missing/empty: a non-empty inline
+-- result text for the text families (LLM, speech), and a non-empty
+-- 'inferenceResultArtifacts' object reference (bucket + key present) for the
+-- artifact families. Dispatch is purely on the model's 'ResultFamily', so the
+-- check stays substrate-agnostic.
+assertCompletedResultPayload :: ResultFamily -> Contracts.ConversationInferenceResultPayload -> String -> IO ()
+assertCompletedResultPayload resultFamily resultPayload message = do
   assert
     (Contracts.inferenceResultStatus resultPayload == "completed")
     (message <> ": " <> show resultPayload)
+  if resultFamilyIsArtifact resultFamily
+    then assertArtifactSurface
+    else assertTextSurface
+  where
+    familyLabel = Text.unpack (resultFamilyId resultFamily)
+    assertArtifactSurface =
+      case filter conversationArtifactRefNonEmpty (Contracts.inferenceResultArtifacts resultPayload) of
+        _ : _ -> pure ()
+        [] ->
+          fail
+            ( message
+                <> ": artifact family "
+                <> familyLabel
+                <> " returned no non-empty object reference: "
+                <> show resultPayload
+            )
+    assertTextSurface =
+      case Contracts.inferenceResultInlineOutput resultPayload of
+        Just text
+          | not (Text.null (Text.strip text)) -> pure ()
+        _ ->
+          fail
+            ( message
+                <> ": text family "
+                <> familyLabel
+                <> " returned no non-empty inline result: "
+                <> show resultPayload
+            )
+
+-- | A conversation result object reference is usable only when both the bucket
+-- and key are non-empty.
+conversationArtifactRefNonEmpty :: Contracts.ObjectRef -> Bool
+conversationArtifactRefNonEmpty ref =
+  not (Text.null (Contracts.objectBucket ref))
+    && not (Text.null (Contracts.objectKey ref))
+
+-- | Resolve the 'ResultFamily' of a substrate's representative model so the
+-- chaos / throughput / HA scenarios can dispatch the fail-closed payload
+-- assertion on it. Fails closed if the model is absent from the catalog.
+resultFamilyForRepresentativeModel :: RuntimeMode -> String -> IO ResultFamily
+resultFamilyForRepresentativeModel runtimeMode representativeModelId =
+  case findModel runtimeMode (Text.pack representativeModelId) of
+    Just descriptor -> pure (resultFamilyForDescriptor descriptor)
+    Nothing ->
+      fail ("model " <> representativeModelId <> " is not in the " <> showRuntimeMode runtimeMode <> " catalog")
 
 validateFrontendPodReplacementPreservesDurableState :: Paths -> ClusterState -> RuntimeMode -> DemoConfig -> String -> IO ()
 validateFrontendPodReplacementPreservesDurableState paths state runtimeMode demoConfig representativeModelId = do
+  resultFamily <- resultFamilyForRepresentativeModel runtimeMode representativeModelId
   waitForDeploymentReadyReplicasAtLeast state "infernix-demo" 2
   context <- createDurablePromptContext paths runtimeMode (Text.pack representativeModelId) "frontend"
   let draftsTopic = ConversationTopic.draftsMetadataTopicName ConversationTopic.defaultDemoTopicNamespace (durablePromptUserId context)
@@ -1267,11 +1633,12 @@ validateFrontendPodReplacementPreservesDurableState paths state runtimeMode demo
       runtimeMode
       (durablePromptConversationTopic context)
       (durablePromptRefMessageId promptRef)
-  assertCompletedResultPayload resultPayload "durable prompt still completes after frontend pod replacement"
+  assertCompletedResultPayload resultFamily resultPayload "durable prompt still completes after frontend pod replacement"
   assertPromptPipelineExactlyOnce paths runtimeMode demoConfig promptRef
 
 validateCoordinatorFailoverDurablePrompt :: Paths -> ClusterState -> RuntimeMode -> DemoConfig -> String -> IO ()
 validateCoordinatorFailoverDurablePrompt paths state runtimeMode demoConfig representativeModelId = do
+  resultFamily <- resultFamilyForRepresentativeModel runtimeMode representativeModelId
   waitForDeploymentReadyReplicasAtLeast state "infernix-coordinator" 2
   context <- createDurablePromptContext paths runtimeMode (Text.pack representativeModelId) "coordinator"
   waitForDispatcherDiscovery
@@ -1286,11 +1653,12 @@ validateCoordinatorFailoverDurablePrompt paths state runtimeMode demoConfig repr
       runtimeMode
       (durablePromptConversationTopic context)
       (durablePromptRefMessageId promptRef)
-  assertCompletedResultPayload resultPayload "durable prompt completes through coordinator pod replacement"
+  assertCompletedResultPayload resultFamily resultPayload "durable prompt completes through coordinator pod replacement"
   assertPromptPipelineExactlyOnce paths runtimeMode demoConfig promptRef
 
 validateEnginePodReplacementDurablePrompt :: Paths -> ClusterState -> RuntimeMode -> DemoConfig -> String -> IO ()
 validateEnginePodReplacementDurablePrompt paths state runtimeMode demoConfig representativeModelId = do
+  resultFamily <- resultFamilyForRepresentativeModel runtimeMode representativeModelId
   waitForDeploymentReadyReplicasAtLeast state "infernix-engine" 2
   context <- createDurablePromptContext paths runtimeMode (Text.pack representativeModelId) "engine"
   waitForDispatcherDiscovery
@@ -1305,11 +1673,12 @@ validateEnginePodReplacementDurablePrompt paths state runtimeMode demoConfig rep
       runtimeMode
       (durablePromptConversationTopic context)
       (durablePromptRefMessageId promptRef)
-  assertCompletedResultPayload resultPayload "durable prompt completes through engine pod replacement"
+  assertCompletedResultPayload resultFamily resultPayload "durable prompt completes through engine pod replacement"
   assertPromptPipelineExactlyOnce paths runtimeMode demoConfig promptRef
 
 validateEngineNodeDrainDurablePrompt :: Paths -> ClusterState -> RuntimeMode -> DemoConfig -> String -> IO ()
 validateEngineNodeDrainDurablePrompt paths state runtimeMode demoConfig representativeModelId = do
+  resultFamily <- resultFamilyForRepresentativeModel runtimeMode representativeModelId
   waitForDeploymentReadyReplicasAtLeast state "infernix-engine" 2
   (_, nodeName) <- requireReadyEnginePodNode state
   let restore =
@@ -1345,7 +1714,7 @@ validateEngineNodeDrainDurablePrompt paths state runtimeMode demoConfig represen
           runtimeMode
           (durablePromptConversationTopic context)
           (durablePromptRefMessageId promptRef)
-      assertCompletedResultPayload resultPayload "durable prompt completes while an engine node is drained"
+      assertCompletedResultPayload resultFamily resultPayload "durable prompt completes while an engine node is drained"
       assertPromptPipelineExactlyOnce paths runtimeMode demoConfig promptRef
     )
     `finally` restore
@@ -1423,6 +1792,7 @@ validateMultiUserDurablePromptThroughput =
 
 validateMultiUserDurablePromptThroughputWith :: ThroughputMatrix -> Paths -> RuntimeMode -> String -> IO ()
 validateMultiUserDurablePromptThroughputWith matrix paths runtimeMode representativeModelId = do
+  resultFamily <- resultFamilyForRepresentativeModel runtimeMode representativeModelId
   let userCount = throughputUserCount matrix
       contextsPerUser = throughputContextsPerUser matrix
       promptsPerContext = throughputPromptsPerContext matrix
@@ -1452,7 +1822,7 @@ validateMultiUserDurablePromptThroughputWith matrix paths runtimeMode representa
           runtimeMode
           (durablePromptConversationTopic (durablePromptRefContext promptRef))
           (durablePromptRefMessageId promptRef)
-      assertCompletedResultPayload resultPayload "throughput prompt writes a completed result"
+      assertCompletedResultPayload resultFamily resultPayload "throughput prompt writes a completed result"
       finishedAt <- realToFrac <$> getPOSIXTime
       pure (finishedAt - durablePromptRefStartedAt promptRef)
   forM_ contexts $ \context ->

@@ -640,12 +640,18 @@ coreMlRunnerSmokeSource =
       "}"
     ]
 
+-- | Phase 1 Sprint 1.15 realness de-stub — the Core ML runner keeps its
+-- real Darwin clang smoke on @--smoke@/@--help@ but no longer fabricates a
+-- per-family result on the normal invocation path: it parses the full
+-- inference arg contract and honest-fails with @exit 70@.
 coreMlRunnerScript :: String
 coreMlRunnerScript =
   unlines
     [ "#!/bin/bash",
       "set -euo pipefail",
       "",
+      "adapter_id=\"coreml-native\"",
+      "engine_name=\"Core ML native runner\"",
       "script_path=\"${BASH_SOURCE[0]}\"",
       "script_dir=\"${script_path%/*}\"",
       "root=\"$(CDPATH= cd -- \"$script_dir/..\" && pwd)\"",
@@ -653,7 +659,6 @@ coreMlRunnerScript =
       "bin_dir=\"$root/bin\"",
       "runner=\"$bin_dir/infernix-coreml-runner-smoke\"",
       "",
-      appleNativeValidationResultShell,
       "case \"${1:-}\" in",
       "  --smoke|--help)",
       "    if [[ \"$(/usr/bin/uname -s)\" != \"Darwin\" ]]; then",
@@ -663,128 +668,142 @@ coreMlRunnerScript =
       "    /bin/mkdir -p \"$bin_dir\"",
       "    /usr/bin/clang -fobjc-arc -framework Foundation -framework CoreML \"$src\" -o \"$runner\"",
       "    \"$runner\"",
-      "    ;;",
-      "  *)",
-      "    infernix_emit_validation_result \"coreml-native\" \"Core ML native runner\" \"$@\"",
-      "    ;;",
-      "esac",
-      ""
-    ]
-
-appleNativeValidationRunnerScript :: MetalEngineArtifact -> String
-appleNativeValidationRunnerScript artifact =
-  unlines
-    [ "#!/bin/sh",
-      "set -eu",
-      "",
-      appleNativeValidationResultShell,
-      "case \"${1:-}\" in",
-      "  --smoke|--help)",
-      "    printf '%s\\n' \"infernix apple native validation runner ok: " <> Text.unpack (metalEngineAdapterId artifact) <> "\"",
       "    exit 0",
       "    ;;",
       "esac",
-      "",
-      "infernix_emit_validation_result "
-        <> shellLiteral (Text.unpack (metalEngineAdapterId artifact))
-        <> " "
-        <> shellLiteral (Text.unpack (metalEngineName artifact))
-        <> " \"$@\"",
       ""
     ]
+    <> coreMlHonestInferenceBody
 
-appleNativeValidationResultShell :: String
-appleNativeValidationResultShell =
+-- | The Core ML normal-invocation path: parse the inference arg contract,
+-- enforce the model-cache @.ready@/exit-75 gate, then honest-fail with
+-- @exit 70@ (no fabricated Core ML result).
+coreMlHonestInferenceBody :: String
+coreMlHonestInferenceBody =
+  unlines appleNativeHonestRunnerBody
+
+-- | Phase 1 Sprint 1.15 realness de-stub — the generated Apple native
+-- runner preserves the full inference arg contract (mirroring the
+-- de-stubbed LinuxNative reference) and an install-time @--smoke@/@--help@
+-- presence probe that exits 0, but a real (non-smoke) invocation emits
+-- no fabricated result: it honest-fails with @exit 70@. Real Apple native
+-- payloads are materialized on Apple hardware through the headless
+-- Metal/Core ML lane.
+appleNativeValidationRunnerScript :: MetalEngineArtifact -> String
+appleNativeValidationRunnerScript artifact =
+  appleNativeHonestRunnerScript
+    "#!/bin/sh"
+    "set -eu"
+    (Text.unpack (metalEngineAdapterId artifact))
+    (Text.unpack (metalEngineName artifact))
+
+-- | Shared honest-fail Apple native runner body. The @shebang@/@setFlags@
+-- header is parameterised so the POSIX validation runners and the Core ML
+-- runner (which keeps its real Darwin clang smoke) reuse one contract:
+-- full arg parsing, an install-time @--smoke@/@--help@ presence probe that
+-- exits 0, a model-cache @.ready@/exit-75 gate, and a non-zero honest-fail
+-- on every real inference invocation.
+appleNativeHonestRunnerBody :: [String]
+appleNativeHonestRunnerBody =
+  [ "smoke_only=0",
+    "model_id=\"\"",
+    "selected_engine=\"\"",
+    "family=\"\"",
+    "install_root=\"\"",
+    "input_text=\"\"",
+    "input_object_ref=\"\"",
+    "input_file=\"\"",
+    "model_cache_root=\"\"",
+    "output_dir=\"\"",
+    "",
+    "while [ \"$#\" -gt 0 ]; do",
+    "  case \"$1\" in",
+    "    --smoke|--help)",
+    "      smoke_only=1",
+    "      shift",
+    "      ;;",
+    "    --model)",
+    "      [ \"$#\" -ge 2 ] || { printf '%s\\n' \"missing value for --model\" >&2; exit 64; }",
+    "      model_id=\"$2\"",
+    "      shift 2",
+    "      ;;",
+    "    --engine)",
+    "      [ \"$#\" -ge 2 ] || { printf '%s\\n' \"missing value for --engine\" >&2; exit 64; }",
+    "      selected_engine=\"$2\"",
+    "      shift 2",
+    "      ;;",
+    "    --family)",
+    "      [ \"$#\" -ge 2 ] || { printf '%s\\n' \"missing value for --family\" >&2; exit 64; }",
+    "      family=\"$2\"",
+    "      shift 2",
+    "      ;;",
+    "    --install-root)",
+    "      [ \"$#\" -ge 2 ] || { printf '%s\\n' \"missing value for --install-root\" >&2; exit 64; }",
+    "      install_root=\"$2\"",
+    "      shift 2",
+    "      ;;",
+    "    --input-text)",
+    "      [ \"$#\" -ge 2 ] || { printf '%s\\n' \"missing value for --input-text\" >&2; exit 64; }",
+    "      input_text=\"$2\"",
+    "      shift 2",
+    "      ;;",
+    "    --input-object-ref)",
+    "      [ \"$#\" -ge 2 ] || { printf '%s\\n' \"missing value for --input-object-ref\" >&2; exit 64; }",
+    "      input_object_ref=\"$2\"",
+    "      shift 2",
+    "      ;;",
+    "    --input-file)",
+    "      [ \"$#\" -ge 2 ] || { printf '%s\\n' \"missing value for --input-file\" >&2; exit 64; }",
+    "      input_file=\"$2\"",
+    "      shift 2",
+    "      ;;",
+    "    --model-cache-root)",
+    "      [ \"$#\" -ge 2 ] || { printf '%s\\n' \"missing value for --model-cache-root\" >&2; exit 64; }",
+    "      model_cache_root=\"$2\"",
+    "      shift 2",
+    "      ;;",
+    "    --output-dir)",
+    "      [ \"$#\" -ge 2 ] || { printf '%s\\n' \"missing value for --output-dir\" >&2; exit 64; }",
+    "      output_dir=\"$2\"",
+    "      shift 2",
+    "      ;;",
+    "    *)",
+    "      shift",
+    "      ;;",
+    "  esac",
+    "done",
+    "",
+    "[ -n \"$model_id\" ] || model_id=\"$adapter_id\"",
+    "[ -n \"$family\" ] || family=\"native\"",
+    "",
+    "if [ \"$smoke_only\" -eq 1 ]; then",
+    "  printf '%s\\n' \"infernix apple native runner ok: ${adapter_id}\"",
+    "  exit 0",
+    "fi",
+    "",
+    "if [ -n \"$model_cache_root\" ]; then",
+    "  model_ready_path=\"${model_cache_root}/${model_id}/.ready\"",
+    "  if [ ! -f \"$model_ready_path\" ]; then",
+    "    printf '%s\\n' \"model_cache_not_populated: missing ${model_ready_path}\" >&2",
+    "    exit 75",
+    "  fi",
+    "fi",
+    "",
+    "printf '%s\\n' \"real Apple ${engine_name:-native} runner is materialized on Apple hardware via the headless Metal/Core ML lane (reopened Phase 1 Sprint 1.15); not available on this execution context\" >&2",
+    "exit 70"
+  ]
+
+appleNativeHonestRunnerScript :: String -> String -> String -> String -> String
+appleNativeHonestRunnerScript shebang setFlags adapterId engineName =
   unlines
-    [ "infernix_emit_validation_result() {",
-      "  adapter_id=\"$1\"",
-      "  engine_name=\"$2\"",
-      "  shift 2",
-      "  model_id=\"\"",
-      "  selected_engine=\"\"",
-      "  family=\"\"",
-      "  install_root=\"\"",
-      "  input_text=\"\"",
-      "  input_object_ref=\"\"",
-      "",
-      "  while [ \"$#\" -gt 0 ]; do",
-      "    case \"$1\" in",
-      "      --model)",
-      "        [ \"$#\" -ge 2 ] || { printf '%s\\n' \"missing value for --model\" >&2; exit 64; }",
-      "        model_id=\"$2\"",
-      "        shift 2",
-      "        ;;",
-      "      --engine)",
-      "        [ \"$#\" -ge 2 ] || { printf '%s\\n' \"missing value for --engine\" >&2; exit 64; }",
-      "        selected_engine=\"$2\"",
-      "        shift 2",
-      "        ;;",
-      "      --family)",
-      "        [ \"$#\" -ge 2 ] || { printf '%s\\n' \"missing value for --family\" >&2; exit 64; }",
-      "        family=\"$2\"",
-      "        shift 2",
-      "        ;;",
-      "      --install-root)",
-      "        [ \"$#\" -ge 2 ] || { printf '%s\\n' \"missing value for --install-root\" >&2; exit 64; }",
-      "        install_root=\"$2\"",
-      "        shift 2",
-      "        ;;",
-      "      --input-text)",
-      "        [ \"$#\" -ge 2 ] || { printf '%s\\n' \"missing value for --input-text\" >&2; exit 64; }",
-      "        input_text=\"$2\"",
-      "        shift 2",
-      "        ;;",
-      "      --input-object-ref)",
-      "        [ \"$#\" -ge 2 ] || { printf '%s\\n' \"missing value for --input-object-ref\" >&2; exit 64; }",
-      "        input_object_ref=\"$2\"",
-      "        shift 2",
-      "        ;;",
-      "      *)",
-      "        shift",
-      "        ;;",
-      "    esac",
-      "  done",
-      "",
-      "  [ -n \"$model_id\" ] || model_id=\"$adapter_id\"",
-      "  [ -n \"$family\" ] || family=\"native\"",
-      "",
-      "  case \"$family\" in",
-      "    llm)",
-      "      printf '%s\\n' \"Apple ${engine_name} validation output for ${model_id}: ${input_text:-prompt accepted}\"",
-      "      ;;",
-      "    speech)",
-      "      printf '%s\\n' \"Apple ${engine_name} validation transcript for ${model_id}: ${input_object_ref:-audio accepted}\"",
-      "      ;;",
-      "    audio)",
-      "      case \"$model_id\" in",
-      "        *demucs*|*open-unmix*|*unmix*) suffix='.zip' ;;",
-      "        *basic-pitch*) suffix='.mid' ;;",
-      "        *bark*) suffix='.wav' ;;",
-      "        *) suffix='.wav' ;;",
-      "      esac",
-      "      printf '%s\\n' \"infernix-demo-objects/apple-silicon/native-validation/${model_id}${suffix}\"",
-      "      ;;",
-      "    music)",
-      "      printf '%s\\n' \"infernix-demo-objects/apple-silicon/native-validation/${model_id}.mid\"",
-      "      ;;",
-      "    image)",
-      "      printf '%s\\n' \"infernix-demo-objects/apple-silicon/native-validation/${model_id}.png\"",
-      "      ;;",
-      "    video)",
-      "      printf '%s\\n' \"infernix-demo-objects/apple-silicon/native-validation/${model_id}.mp4\"",
-      "      ;;",
-      "    tool)",
-      "      printf '%s\\n' \"infernix-demo-objects/apple-silicon/native-validation/${model_id}.musicxml\"",
-      "      ;;",
-      "    *)",
-      "      printf '%s\\n' \"Apple ${engine_name} validation output for ${model_id}\"",
-      "      ;;",
-      "  esac",
-      "}",
-      "",
-      "# The normal invocation path is a deterministic validation wrapper. Wave I",
-      "# still owns replacing these roots with real Apple native payloads."
-    ]
+    ( [ shebang,
+        setFlags,
+        "adapter_id=" <> shellLiteral adapterId,
+        "engine_name=" <> shellLiteral engineName,
+        ""
+      ]
+        <> appleNativeHonestRunnerBody
+    )
 
 shellLiteral :: String -> String
 shellLiteral rawValue = "'" <> concatMap escapeCharacter rawValue <> "'"

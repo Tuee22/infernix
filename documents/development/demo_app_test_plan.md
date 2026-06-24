@@ -387,9 +387,11 @@ e2e/browser layer asserts the family-appropriate rendered surface:
 The browser asserts the result surface by rendered shape (inline text, audio player, image, video,
 MIDI/MusicXML download) and never by golden strings. Inline-text rows render directly from
 `inline_output`; artifact rows render or download from a typed `object_ref` into the always-on
-infernix-demo-objects bucket. Hardware proof that those paths exercise real engines remains a cohort
-gate. The union across the three substrate catalogs covers every README matrix row even though no
-single substrate carries all 19 rows (apple 15, cpu 12, gpu 16).
+infernix-demo-objects bucket. Realness is guaranteed by construction — the engine code cannot
+fabricate a result (enforced by the realness lint) — so the browser trusts the result and fails closed
+on `status=failed`; the reopened Phases 1/4/6 deliver real output per accelerator (Waves K/L). The
+union across the three substrate catalogs covers every README matrix row even though no single
+substrate carries all 18 rows.
 
 ## Validation
 

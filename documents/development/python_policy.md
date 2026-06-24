@@ -90,10 +90,13 @@ single host installs every wheel. The gate stays machine-independent through one
 - This mirrors the established `adapters/model_cache.py` boto3 precedent: the import only fires at
   real-inference time, so `mypy --strict`/`black`/`ruff` over the adapter tree pass on any host
   without the wheels installed.
-- Installing the real wheels and producing real per-family output is the **cohort gate** (Wave I),
-  exercised on substrate hardware — it is never a precondition for `poetry run check-code`. A
-  top-level framework import or a framework entry in `pyproject.toml` silently re-couples the gate
-  to one host and is rejected on review.
+- Installing the real wheels and producing real per-family output happens on substrate hardware and
+  is never a precondition for `poetry run check-code` (the lazy-import invariant). Realness itself is
+  guaranteed by construction in the adapter code: the `check-code` realness AST pass forbids any
+  fabricated result — a `return` from an `except`, constant artifact bytes, or a
+  `_validation_*`/`*_smoke*`/`*_fallback*` helper — so a fabricated "success" cannot pass review. A
+  top-level framework import or a framework entry in `pyproject.toml` silently re-couples the
+  machine-independent gate to one host and is rejected on review.
 
 ## Per-Engine Framework Venvs
 
@@ -126,13 +129,13 @@ own isolated in-project venv:
   separate layer; a failed engine install removes its partial venv so the runtime falls back to the
   fail-fast path (a named cohort residual) rather than a broken venv. The linux-cpu image bakes
   `transformers` and `pytorch` with their `linux-cpu` groups and writes marker files for the baked
-  venvs. On Linux CPU, the Transformers adapter intentionally uses a deterministic validation smoke
-  path for the Qwen row: it loads the local tokenizer/config and returns a token-count response
-  rather than running full Qwen generation. The PyTorch Bark row emits a deterministic WAV
-  validation artifact for `audio-bark-small` on Apple/Linux CPU; CUDA remains the real Bark
-  generation lane. Basic Pitch TensorFlow
-  (published wheel pins TensorFlow `<2.15.1`), Omnizart (TF1-era), and MT3 (unmaintained JAX) do
-  not resolve on the supported Python 3.12 / CUDA 12.8 substrate and are named cohort residuals
+  venvs. Under realness-by-construction (reopened Phase 4) every adapter runs the real model or
+  raises → `failed`: deterministic validation-smoke or validation-artifact paths are not permitted
+  (the `check-code` realness pass forbids them), so a substrate that cannot run a row leaves it an
+  explicit residual rather than a fabricated success. The music-transcription rows rebind to
+  maintained PyTorch/ONNX models (basic-pitch ONNX/Core ML, MT3 → YourMT3+/`mt3-infer`, Omnizart → a
+  modern PyTorch transcription model), eliminating the finicky TensorFlow `<2.15.1` / TF1-era /
+  unmaintained-JAX pins; any row not yet rebound or not yet real on a substrate is a named residual
   (see [../../DEVELOPMENT_PLAN/cohort-validation-waves.md](../../DEVELOPMENT_PLAN/cohort-validation-waves.md)).
 
 `find python -name '*.py' -type f` still returns only files under `python/adapters/`; the
@@ -195,8 +198,9 @@ Current state:
   llama.cpp, whisper.cpp, ONNX Runtime/CTranslate2, faster-whisper, or Audiveris payload as
   appropriate. Native artifact-producing processes receive non-secret cache and bucket hints plus
   an optional `--output-dir`; if they print `infernix-native-artifact-file:<path>`, the Haskell
-  worker performs the credentialed MinIO upload and returns the object reference. Wave I still owns
-  the routed full-suite proof against live MinIO-backed real output.
+  worker performs the credentialed MinIO upload and returns the object reference. The reopened
+  Phases 4/6 own the routed full-suite real-output delivery (Wave K) against live MinIO; realness is
+  enforced in the engine code by the realness lint.
 
 Adapters do not open network sockets and do not subscribe to the topic transport themselves; the
 Haskell worker owns those boundaries and treats the adapter as a pure request-to-response process.

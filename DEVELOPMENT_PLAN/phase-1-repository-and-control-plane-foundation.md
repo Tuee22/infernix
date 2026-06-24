@@ -1,6 +1,6 @@
 # Phase 1: Repository and Control-Plane Foundation
 
-**Status**: Done
+**Status**: Active
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/engineering/host_tools_manifest.md](../documents/engineering/host_tools_manifest.md)
 
 > **Purpose**: Establish the canonical repository scaffold, the two-binary topology
@@ -9,6 +9,18 @@
 > generated-artifact hygiene, and the repository ownership rules that later phases build on.
 
 ## Phase Status
+
+> **Realness reopen (real Apple native engines).** Sprint 1.14 established the headless Apple
+> Metal/Core ML materialization lane but populated it with deterministic validation-wrapper runners
+> (`AppleSilicon.hs` `infernix_emit_validation_result`) that load no model — the audit behind the Phase 4
+> realness reopen confirmed the entire Apple native engine layer is fake. Phase 1 therefore **reopens**
+> (`Active`, Sprint 1.15) to materialize **real** Apple native engines (Core ML, MLX, llama.cpp/whisper.cpp
+> Metal, CTranslate2, ONNX, Audiveris) through that same lane. The scaffold, two-binary topology, and
+> host-manifest contracts from Sprints 1.1–1.14 stand and are not undone; only the wrapper payloads are
+> replaced. The Apple real-output cohort gate is [Wave L](cohort-validation-waves.md) (`apple-silicon` +
+> `linux-cpu`); it is a validation-only residual that does not block the reopened Phase 4/6 `linux-gpu`
+> gates. The removed validation wrappers are tracked in
+> [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
 
 Phase 1 closes Sprints 1.1-1.12 around the current repository scaffold, the two-binary topology,
 the staged substrate-file contract, the baked Linux launcher image, the governed
@@ -931,13 +943,63 @@ None.
 
 ---
 
+## Sprint 1.15: Real Apple Native Engine Materialization [Active]
+
+**Status**: Active
+**Code-side closure**: In progress. **Done + validated 2026-06-23** (machine-independent: rebuilt
+`linux-cpu` image build, `infernix lint docs`, `infernix test unit`, `infernix test lint`): the realness
+de-stub — the `infernix_emit_validation_result` validation-wrapper fabrication
+(`appleNativeValidationResultShell`) is deleted so the generated Apple runners **honest-fail** (exit
+non-zero) instead of emitting constant per-family output, preserving the full
+`--model/--engine/--family/--input-*/--model-cache-root/--output-dir` runner contract, the
+`--smoke|--help` install-time path, and a model-cache `exit 75` gate; `Engines/AppleSilicon.hs` is added
+to the Phase 0 `realnessScopedFiles` so the machine-independent realness lint (Sprint 0.12) forbids any
+reintroduced Apple validation wrapper; and the Apple runner unit tests assert the honest-fail behavior.
+**Remaining — the `apple-silicon` cohort gate (Mac):** replace the honest-fail runners with real native
+engines materialized through the headless Metal/Core ML lane, reusing the same runner contract (worker
+dispatch is substrate-agnostic): real llama.cpp (`-DGGML_METAL=ON`), whisper.cpp (`WHISPER_METAL=1`),
+CTranslate2 + ONNX via an Apple arm64 host-wheel venv, Audiveris via the macOS distribution, a real
+`mlx-runner` (`mlx_lm.generate`), and Core ML runners (basic-pitch official Core ML; Apple Stable
+Diffusion via `torch2coreml`). Add the multi-artifact `MatrixRow`
+schema for the Core ML conversion rows (content-addressed engine-artifact lane, not the model-bootstrap
+URL path). Per the declarative-target principle the Apple rows stay **declared-runnable** on their
+intended engines (Core ML / MLX / Metal); each fails closed under realness until its real runner lands
+(no reclassification-to-residual). Machine-independent gates gate the next step.
+**Cohort gate**: [Wave L](cohort-validation-waves.md) — `apple-silicon` + `linux-cpu` real per-family
+output for the Apple catalog; this Apple residual does not block the reopened Phase 4/6 `linux-gpu` gates.
+**Implementation**: `src/Infernix/Engines/AppleSilicon.hs`, `src/Infernix/Models.hs`, `src/Infernix/Runtime/Worker.hs`, `src/Infernix/HostConfig.hs`, `docker/Dockerfile`
+**Docs to update**: `documents/engineering/apple_silicon_metal_headless_builds.md`, `documents/engineering/host_tools_manifest.md`, `documents/operations/apple_silicon_runbook.md`, `README.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`, `DEVELOPMENT_PLAN/cohort-validation-waves.md`
+
+### Objective
+
+Make the Apple native engine layer run real models, replacing the deterministic validation wrappers
+materialized by Sprint 1.14.
+
+### Deliverables
+
+- real Apple runners (llama/whisper Metal, CTranslate2/ONNX host-wheel, Audiveris macOS, MLX, Core ML)
+  on the existing runner contract; delete the validation wrappers
+- multi-artifact `MatrixRow` schema for the Core ML conversion rows
+- Apple rows stay declared-runnable on their intended engines (declarative-target); each fails closed until its real runner lands
+
+### Validation
+
+- `./bootstrap/apple-silicon.sh test` (Apple host) plus `linux-cpu` pass only on real Apple inference;
+  the realness lint forbids any reintroduced validation wrapper
+
+### Remaining Work
+
+All implementation plus the [Wave L](cohort-validation-waves.md) `apple-silicon` + `linux-cpu` gate.
+
+---
+
 ## Remaining Work
 
-None. Phase 1 is `Done`: Sprints 1.1-1.12 remain closed; Sprint 1.13 is a historical record whose
-Tart-specific implementation surfaces are removed; and Sprint 1.14 closes the Tart-free Apple
-headless materialization foundation under the Section Q single-accelerator rule. Real native
-payload output remains open only in the later runtime and validation phases that own model-output
-fidelity.
+Phase 1 is reopened (`Active`) for real Apple native engine materialization (Sprint 1.15), replacing the
+Sprint 1.14 validation-wrapper runners. Sprints 1.1–1.14 remain closed and are not undone. The Apple
+real-output gate is [Wave L](cohort-validation-waves.md) (`apple-silicon` + `linux-cpu`); it does not
+block the reopened Phase 4/6 `linux-gpu` closure. The removed validation wrappers are tracked in
+[legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
 
 ## Documentation Requirements
 

@@ -170,9 +170,9 @@ import Test.QuickCheck
 main :: IO ()
 main = do
   unitTestRoot <- testRootPath "unit"
-  assert (length (catalogForMode AppleSilicon) == 13) "apple-silicon runnable catalog count matches the revised matrix"
-  assert (length (catalogForMode LinuxCpu) == 9) "linux-cpu runnable catalog count matches the revised matrix"
-  assert (length (catalogForMode LinuxGpu) == 13) "linux-gpu runnable catalog count matches the revised matrix"
+  assert (length (catalogForMode AppleSilicon) == 15) "apple-silicon runnable catalog count matches the revised matrix"
+  assert (length (catalogForMode LinuxCpu) == 11) "linux-cpu runnable catalog count matches the revised matrix"
+  assert (length (catalogForMode LinuxGpu) == 15) "linux-gpu runnable catalog count matches the revised matrix"
   assert
     (expectedDaemonLocationForRuntime AppleSilicon == "cluster-pod")
     "apple-silicon publication reports the cluster service daemon location"
@@ -3510,7 +3510,7 @@ assertHostConfig testRoot = do
         "Sprint 4.18: Linux native runtime-backed payloads return per-family result shapes"
       assert
         ("--output-dir" `isInfixOf` sampleLinuxScript && "infernix-native-artifact-file:" `isInfixOf` sampleLinuxScript)
-        "Sprint 4.18: Linux native runtime-backed payloads can emit worker-upload artifact markers"
+        "Phase 4 realness: Linux native artifact families (real basic-pitch ONNX, real Audiveris) emit real worker-upload artifact markers"
       assert
         ("model_cache_not_populated" `isInfixOf` sampleLinuxScript && "exit 75" `isInfixOf` sampleLinuxScript)
         "Sprint 4.18: Linux native runtime-backed payloads fail fast on missing model-cache readiness"
@@ -3555,11 +3555,11 @@ assertHostConfig testRoot = do
     "Sprint 4.18: Linux native runtime-backed execution maps missing cache readiness to exit 75"
   createDirectoryIfMissing True linuxNativeReadyDir
   writeFile (linuxNativeReadyDir </> ".ready") "ready\n"
-  (readyCacheExit, readyCacheStdout, _) <-
+  (readyCacheExit, _, readyCacheStderr) <-
     readCreateProcessWithExitCode (proc llamaRunnerPath linuxNativeRunnerArgs) ""
   assert
-    (readyCacheExit == ExitSuccess && "unit native cache probe" `isInfixOf` readyCacheStdout)
-    "Sprint 4.18: Linux native runtime-backed execution proceeds after model-cache readiness"
+    (readyCacheExit == ExitFailure 70 && "native_payload_missing" `isInfixOf` readyCacheStderr)
+    "Phase 4 Sprint 4.21 realness: with the model cache ready the runner crosses the readiness gate and fails closed on the genuinely-missing native binary (no fabricated fallback)"
   assert
     (HostTools.hostToolName HostTools.HostKubectl == "kubectl")
     "HostTools reports the supported short name for each tool"
@@ -3652,8 +3652,12 @@ assertHostConfig testRoot = do
         ("-framework CoreML" `isInfixOf` coreMlRunner)
         "Sprint 1.14: coreml-native smoke command links Core ML through clang"
       assert
-        ("Wave I" `isInfixOf` coreMlRunner)
-        "Sprint 1.14: coreml-native normal path keeps real payload replacement explicit"
+        ( "real Apple" `isInfixOf` coreMlRunner
+            && "exit 70" `isInfixOf` coreMlRunner
+            && not ("native-validation" `isInfixOf` coreMlRunner)
+            && not ("infernix_emit_validation_result" `isInfixOf` coreMlRunner)
+        )
+        "Phase 1 Sprint 1.15 realness: coreml-native normal path honest-fails (exit 70) with no fabricated validation result"
   case find ((== "llama-cpp-cli") . metalEngineAdapterId) metalEngineBuildPlan of
     Nothing ->
       assert False "Sprint 1.14: the Apple materialization plan includes llama-cpp-cli"
@@ -3674,11 +3678,29 @@ assertHostConfig testRoot = do
         llamaRunnerExists
         "Sprint 1.14: llama-cpp-cli materialization writes bin/llama-cli"
       assert
-        ("infernix apple native validation runner ok: llama-cpp-cli" `isInfixOf` llamaRunner)
-        "Sprint 1.14: llama-cpp-cli materialization writes a smoke-capable Apple native validation runner"
+        ( "#!/bin/sh" `isPrefixOf` llamaRunner
+            && "--smoke|--help" `isInfixOf` llamaRunner
+            && "infernix apple native runner ok" `isInfixOf` llamaRunner
+            && "adapter_id='llama-cpp-cli'" `isInfixOf` llamaRunner
+        )
+        "Phase 1 Sprint 1.15: llama-cpp-cli materialization writes a POSIX runner with a smoke-capable install-time presence probe"
       assert
-        ("Wave I" `isInfixOf` llamaRunner)
-        "Sprint 1.14: Apple native validation runners keep real payload replacement explicit"
+        ( "--model" `isInfixOf` llamaRunner
+            && "--input-text" `isInfixOf` llamaRunner
+            && "--input-file" `isInfixOf` llamaRunner
+            && "--model-cache-root" `isInfixOf` llamaRunner
+            && "--output-dir" `isInfixOf` llamaRunner
+            && "model_cache_not_populated" `isInfixOf` llamaRunner
+            && "exit 75" `isInfixOf` llamaRunner
+        )
+        "Phase 1 Sprint 1.15: Apple native runners preserve the full inference arg contract and the model-cache readiness gate"
+      assert
+        ( "real Apple" `isInfixOf` llamaRunner
+            && "exit 70" `isInfixOf` llamaRunner
+            && not ("native-validation" `isInfixOf` llamaRunner)
+            && not ("infernix_emit_validation_result" `isInfixOf` llamaRunner)
+        )
+        "Phase 1 Sprint 1.15 realness: Apple native runners honest-fail (exit 70) on real invocation with no fabricated validation output"
 
 -- Phase 4 Sprint 4.13 — ClusterConfig renderer + decoder roundtrip.
 assertClusterConfig :: FilePath -> FilePath -> IO ()

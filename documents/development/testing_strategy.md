@@ -207,8 +207,10 @@ home for the test contract itself.
 
 The runtime worker dispatches through the selected engine binding, fetches model weights lazily from
 the `infernix-models` MinIO bucket via `adapters.model_cache.get_model_path`, and publishes the
-typed per-family result surface. Hardware proof that every runnable row produces real output remains
-tracked in the cohort gates.
+typed per-family result surface. Realness is guaranteed by construction — the engine code cannot
+return a fabricated result (enforced by the realness lint), so the suites trust the result and fail
+closed on `status=failed`. The reopened Phases 1/4/6 deliver and re-attest real output per accelerator,
+and not-yet-real rows are explicit residuals.
 
 ### One DRY substrate-aware suite
 
@@ -259,10 +261,10 @@ MIDI/MusicXML download for the transcription and OMR families.
 ### Union-coverage invariant
 
 The active substrate's runnable catalog is traversed with `Not recommended` and named-residual rows
-omitted, so the runnable per-substrate counts are apple 13, cpu 9, and gpu 13. Coverage is enforced
+omitted, so the runnable per-substrate counts are apple 15, cpu 11, and gpu 15. Coverage is enforced
 as a mechanical invariant: `allMatrixRowIds` is exported from `Models.hs`, the union of
 `catalogForMode` over the three substrates plus `residualMatrixRowIdsForMode` equals the full
-19-row README matrix, and a README-to-matrix cross-check runs under `infernix lint docs`.
+18-row README matrix, and a README-to-matrix cross-check runs under `infernix lint docs`.
 
 ## Durable-Context Demo Validation
 

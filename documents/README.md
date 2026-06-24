@@ -16,6 +16,9 @@
   control-plane execution contexts, runtime-mode ids, and generated substrate-file contract
 - [architecture/model_catalog.md](architecture/model_catalog.md) defines the generated model-catalog
   contract derived from the README matrix
+- [architecture/realness_contract.md](architecture/realness_contract.md) defines the code-level
+  realness-by-construction invariant (real model output or a visible failure, never a fabricated
+  value) and the lint that enforces it
 - [architecture/web_ui_architecture.md](architecture/web_ui_architecture.md) describes the
   PureScript demo UI topology and the two-binary cluster image layout
 - [architecture/durable_context_design.md](architecture/durable_context_design.md) defines the

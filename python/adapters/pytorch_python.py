@@ -2,17 +2,17 @@ from __future__ import annotations
 
 import io
 import zipfile
-from pathlib import Path
 from typing import Any
 
 from adapters.common import (
     AdapterContext,
     ArtifactResult,
     download_demo_object,
+    materialize_temp_input,
     run_artifact_adapter,
     run_setup_from_argv,
 )
-from adapters.model_cache import ModelCacheNotPopulated, get_model_path
+from adapters.model_cache import get_model_path
 
 
 def _preferred_torch_device(torch_module: Any) -> str:
@@ -28,22 +28,29 @@ def _preferred_torch_device(torch_module: Any) -> str:
 
 
 def transform(context: AdapterContext) -> ArtifactResult:
-    # Phase 4 Sprint 4.7/4.15: real PyTorch artifact families — Bark audio
-    # generation (text prompt -> WAV) and Demucs/Open-Unmix source
-    # separation (audio input -> stem ZIP). Frameworks are lazy-imported so
-    # the quality gate stays machine-independent.
-    if "bark" in context.model_id:
+    # Phase 4 Sprint 4.7/4.15/4.22: real PyTorch artifact families dispatched
+    # by model id — Bark audio generation (text prompt -> WAV), Demucs/
+    # Open-Unmix source separation (audio input -> stem ZIP), and ByteDance
+    # piano transcription (audio input -> MIDI). Frameworks are lazy-imported
+    # so the quality gate stays machine-independent.
+    model_id = context.model_id
+    if "bark" in model_id:
         return _generate_bark(context)
-    return _separate_sources(context)
+    if "demucs" in model_id or "unmix" in model_id:
+        return _separate_sources(context)
+    if "omnizart" in model_id:
+        return _transcribe_piano(context)
+    if "mt3" in model_id:
+        raise RuntimeError(
+            "real MT3 multi-instrument transcription is not yet wired on the "
+            "pytorch adapter (reopened Phase 4 Sprint 4.22; YourMT3+ MoE "
+            "deferred)"
+        )
+    raise RuntimeError(f"no pytorch artifact family is wired for model id {model_id!r}")
 
 
 def _generate_bark(context: AdapterContext) -> ArtifactResult:
-    try:
-        weights_dir = get_model_path(context.model_id)
-    except ModelCacheNotPopulated:
-        if _uses_portable_bark_validation_artifact(context):
-            return _validation_audio_generation(context.input_text)
-        raise
+    weights_dir = get_model_path(context.model_id)
     try:
         import scipy.io.wavfile
         import torch
@@ -97,11 +104,6 @@ def _separate_sources(context: AdapterContext) -> ArtifactResult:
     try:
         model = get_model(str(weights_dir))
     except Exception as exc:
-        if _has_bootstrap_placeholder_payload(weights_dir):
-            return _validation_source_separation_archive(
-                audio_array,
-                sample_rate,
-            )
         raise RuntimeError(
             f"unable to load source-separation model from {weights_dir}"
         ) from exc
@@ -120,59 +122,38 @@ def _separate_sources(context: AdapterContext) -> ArtifactResult:
     )
 
 
-def _has_bootstrap_placeholder_payload(weights_dir: Path) -> bool:
-    return (weights_dir / "payload").is_file() or (
-        weights_dir / "materialized.txt"
-    ).is_file()
+def _transcribe_piano(context: AdapterContext) -> ArtifactResult:
+    # Phase 4 Sprint 4.22: ByteDance/qiuqiangkong piano transcription via the
+    # maintained `piano_transcription_inference` package. The single-file CRNN
+    # checkpoint is staged into the model cache (MinIO infernix-models) by the
+    # bootstrap path and resolved via get_model_path; we pass it explicitly as
+    # checkpoint_path so the package never auto-downloads to a HOME-relative
+    # path or reads MT3_CHECKPOINT_DIR (no-env-vars + model_cache doctrine).
+    import tempfile
 
-
-def _uses_portable_bark_validation_artifact(context: AdapterContext) -> bool:
-    return (
-        context.runtime_mode in {"apple-silicon", "linux-cpu"}
-        and context.family == "audio"
-        and context.model_id == "audio-bark-small"
-    )
-
-
-def _validation_audio_generation(prompt: str) -> ArtifactResult:
-    import math
-    import struct
-    import wave
-
-    sample_rate = 16000
-    frame_count = sample_rate // 4
-    frequency = 440.0 + float(len(prompt) % 200)
-    frames = bytearray()
-    for index in range(frame_count):
-        sample = int(12000 * math.sin(2.0 * math.pi * frequency * index / sample_rate))
-        frames.extend(struct.pack("<h", sample))
-
-    buffer = io.BytesIO()
-    with wave.open(buffer, "wb") as wav_file:
-        wav_file.setnchannels(1)
-        wav_file.setsampwidth(2)
-        wav_file.setframerate(sample_rate)
-        wav_file.writeframes(bytes(frames))
-    return ArtifactResult(
-        data=buffer.getvalue(), content_type="audio/wav", suffix=".wav"
-    )
-
-
-def _validation_source_separation_archive(
-    audio_array: object,
-    sample_rate: int,
-) -> ArtifactResult:
-    import soundfile
-
-    archive = io.BytesIO()
-    with zipfile.ZipFile(archive, "w") as bundle:
-        for source_name in ["mixture", "vocals", "accompaniment"]:
-            stem_buffer = io.BytesIO()
-            soundfile.write(stem_buffer, audio_array, sample_rate, format="WAV")
-            bundle.writestr(f"{source_name}.wav", stem_buffer.getvalue())
-    return ArtifactResult(
-        data=archive.getvalue(), content_type="application/zip", suffix=".zip"
-    )
+    try:
+        import librosa
+        import torch
+        from piano_transcription_inference import PianoTranscription
+    except ImportError as exc:
+        raise RuntimeError(
+            "librosa/piano_transcription_inference are not installed in this "
+            "engine venv; install the prebuilt host wheels for the piano "
+            "transcription engine."
+        ) from exc
+    weights_dir = get_model_path(context.model_id)
+    checkpoint = str(weights_dir / "payload")
+    device = _preferred_torch_device(torch)
+    input_audio = download_demo_object(context.input_object_ref)
+    temp_wav = materialize_temp_input(input_audio, ".wav")
+    audio, _ = librosa.load(temp_wav, sr=16000, mono=True)
+    with tempfile.NamedTemporaryFile(suffix=".mid", delete=False) as handle:
+        midi_path = handle.name
+    transcriptor = PianoTranscription(device=device, checkpoint_path=checkpoint)
+    transcriptor.transcribe(audio, midi_path)
+    with open(midi_path, "rb") as handle:
+        midi_bytes = handle.read()
+    return ArtifactResult(data=midi_bytes, content_type="audio/midi", suffix=".mid")
 
 
 def main() -> int:

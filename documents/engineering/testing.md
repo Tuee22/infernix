@@ -102,8 +102,10 @@
   publication state, cache contract, and the real cluster's HA or lifecycle assertions.
 - One DRY substrate-aware integration suite plus one substrate-agnostic Playwright suite assert a
   per-family real-output result contract — asserting shape and type per closed `ResultFamily`, never
-  golden strings. Hardware proof that those assertions exercise real engines is tracked in the
-  cohort gates. Each of the nine families has a result surface:
+  golden strings. Realness is guaranteed by construction — the engine code cannot fabricate a result
+  (enforced by the realness lint) — so the suites trust the result and fail closed on `status=failed`;
+  the reopened Phases 1/4/6 deliver and re-attest real output per accelerator (Waves K/L). Each of the
+  nine families has a result surface:
   LLM and speech yield inline text; source separation, audio-to-MIDI, music transcription, image,
   video, audio generation, and OMR yield a typed `infernix-demo-objects` object reference. Each
   suite traverses the active substrate's catalog, and the UNION across the three substrate catalogs

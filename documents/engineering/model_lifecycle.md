@@ -20,8 +20,9 @@
   roots under `./.data/engines/<adapterId>/` or Linux image-owned
   `/opt/infernix/engines/<adapterId>/`, with typed manifests and smoke validation. The current
   Linux image-build helper writes runtime-backed wrapper roots over image-baked llama.cpp,
-  whisper.cpp, ONNX Runtime/Basic Pitch, CTranslate2/faster-whisper, and Audiveris payloads; Wave I
-  still owns routed full-suite real-output sign-off.
+  whisper.cpp, ONNX Runtime/Basic Pitch, CTranslate2/faster-whisper, and Audiveris payloads; the
+  reopened Phases 4/6 own the routed full-suite real-output delivery (Wave K), with realness enforced
+  in the engine code by the realness lint.
 - the Haskell worker layer (`src/Infernix/Runtime/{Pulsar,Worker,Cache}.hs`)
   stores cache manifests beside the cached weights at
   `./.data/runtime/model-cache/<runtime-mode>/<model-id>/manifest.pb`
@@ -82,9 +83,10 @@
   smoke-loads materialized Apple payloads before atomic rename on Darwin; the full Apple
   integration rerun now reaches the host engine through derived Apple pool topics and blocks on
   the first missing real framework payload (`transformers`/`torch` for
-  `llm-qwen25-safetensors`); the full Apple e2e/all gate remains in Wave I. Linux native payload
-  strict smoke exists today, and Wave I owns the routed full-suite proof that consumes those
-  payloads through the service path.
+  `llm-qwen25-safetensors`); the full Apple e2e/all real-output gate is owned by the reopened Phase 1
+  (Wave L). Linux native payload strict smoke exists today, and the reopened Phases 4/6 own the routed
+  full-suite real-output delivery (Wave K) that consumes those payloads through the service path;
+  realness is enforced in the engine code by the realness lint.
 - derived cache state is keyed by runtime mode and model identity and is always rebuildable
 - the demo `/api/cache` surface operates on the manifest-backed contract exposed by the Haskell
   worker; the manifest reads the supported `minio://infernix-models/<modelId>/` durable source

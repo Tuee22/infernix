@@ -44,17 +44,20 @@ connection mode plus pool membership. Publication reports the cluster coordinato
 separately from the inference executor location. The runtime worker uses explicit Python or native
 adapter harnesses selected from the staged substrate file. Each harness dispatches to the selected
 engine entrypoint, fetches model weights lazily from the `infernix-models` MinIO bucket, and
-publishes the typed per-family result surface. Hardware proof for real per-family output remains in
-the cohort gates. On Apple Silicon
+publishes the typed per-family result surface. Realness is guaranteed by construction — the engine
+code cannot fabricate a result (enforced by the realness lint); the reopened Phases 1/4/6 deliver real
+per-family output per accelerator (Waves K/L). On Apple Silicon
 the Haskell binaries build host-native and run on the host against Metal. Sprint 1.14 removes the
 legacy Sprint 1.13 `tart` / `hostTart` / `AppleTart` implementation from the current host-tool
 schema and retargets the retained `materialize-metal-engines` command to typed engine-artifact
 manifests. The materializer now writes the fixed host Metal bridge source and smoke command, and it
 also writes and smoke-loads the `coreml-native` runner from the temp root before atomic install.
-The current Apple host pass executes both installed smoke commands and passes Apple
-integration/e2e/all against the validation-wrapper state. That closes the Phase 1 headless
-materialization foundation; the selected Phase 4/6 `linux-gpu` plus `linux-cpu` real-output gate
-closed on 2026-06-20. The headless target uses no Tart VM, no user keychain dependency, no host Xcode UI flow,
+The current Apple host pass executes both installed smoke commands against the validation-wrapper
+state; real Apple native engines (replacing those wrappers) are owned by the reopened Phase 1
+(Wave L). The Phase 1 headless materialization foundation stands; the prior Phase 4/6 `linux-gpu`
+plus `linux-cpu` "real-output" closure (2026-06-20) was satisfied by stub/wrapper engines for several
+rows and is **reopened** — real output is now delivered and re-attested by Phases 4/6 (Wave K),
+enforced by the realness lint. The headless target uses no Tart VM, no user keychain dependency, no host Xcode UI flow,
 and no request-time toolchain installation. The Apple clean-host bootstrap hardening is implemented and validated: the stage-0
 entrypoint verifies same-process ghcup-managed `ghc` and `cabal` resolution before direct
 `cabal install`, reconciles Homebrew `protoc`, and lets Apple adapter setup or validation paths
@@ -106,8 +109,10 @@ manifests, proves the generated Metal runtime bridge smoke, and proves the insta
 `coreml-native` runtime-load smoke (`Core ML runtime probe passed`). It also materializes
 smoke-capable Apple native validation runners for the allowlisted native adapter ids. The current
 Apple integration evidence completes the active Apple catalog through the host engine daemon with
-deterministic validation-wrapper payloads; the selected accelerator gate for Phase 4/6 is the
-2026-06-20 CUDA Linux closure. The latest Apple integration rerun passed after rebuilding the changed repo-owned
+deterministic validation-wrapper payloads (real Apple engines are owned by the reopened Phase 1,
+Wave L); the 2026-06-20 CUDA Linux closure validated the architecture and HA, but its inference
+real-output evidence was satisfied by stub/wrapper engines for several rows and is **reopened** —
+Phases 4/6 re-attest real Linux output under Wave K, enforced by the realness lint. The latest Apple integration rerun passed after rebuilding the changed repo-owned
 image once, then reusing the stamped `infernix-linux-cpu:local` image on the edge-port rediscovery
 cluster cycles. The run completed cache lifecycle, service runtime loop, durable Pulsar topic
 families, pinned Apple host-engine `Exclusive` duplicate-consumer rejection through an isolated
@@ -131,8 +136,10 @@ framework-venv smoke paths, and clean teardown against image digest
 cycle also rebuilt `infernix-linux-gpu:local`, strict-smoked the baked Linux native payload layer
 for all five native adapters with `--require-native-payload`, and then passed full
 `./bootstrap/linux-gpu.sh test` plus rebuilt-image `./bootstrap/linux-cpu.sh test` on 2026-06-20.
-That closure proves the routed `linux-gpu` plus `linux-cpu` real-output suite and Linux payload
-service path against current source. The legacy
+That closure proved the routed `linux-gpu` plus `linux-cpu` architecture, HA, and Linux payload
+service path against current source; its per-row inference real-output was satisfied by stub/wrapper
+engines for several rows (Demucs/Open-Unmix/basic-pitch/Audiveris; whisper/CT2 masks) and is
+**reopened** — Phases 4/6 re-attest real output under Wave K, enforced by the realness lint. The legacy
 dated proof points are inventoried in
 [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) under "Retired Historical
 Validation Evidence". The underlying contracts they exercised still describe supported behavior,
@@ -167,8 +174,8 @@ PASS.
 | Linux GPU naming | the NVIDIA-backed Linux substrate is standardized as `linux-gpu` | implemented |
 | Serialized substrate naming | the generated substrate file, publication JSON, `cluster status`, and browser contracts still carry the active substrate under `runtimeMode` field names | implemented |
 | Demo UI gating | the staged substrate file can disable the clustered demo surface | implemented; the supported materialization path accepts `--demo-ui false` |
-| Simulation stance | no simulated cluster, route, or generic inference-success fallback remains in the supported runtime or validation contract, and routed Pulsar checks require the real Gateway-backed upstream | implemented; inference execution goes through typed adapter harnesses, unsupported adapters fail fast, and the remaining repo-local topic spool under `./.data/runtime/pulsar/` is a harness-only path for unit-level or intentionally endpoint-absent daemon checks; Apple cohort gate closed in [Wave A](cohort-validation-waves.md); CUDA Linux cohort gate closed in [Wave C](cohort-validation-waves.md) |
-| Validation scope | integration uses one `.dhall`-driven suite over the README matrix, E2E stays substrate-agnostic at the browser layer, and `test all` runs every supported validation layer for one built substrate at a time | implemented; Apple cohort gate closed in [Wave A/A.2](cohort-validation-waves.md); CUDA Linux cohort gate closed in [Wave C](cohort-validation-waves.md) |
+| Simulation stance | no simulated cluster, route, or generic inference-success fallback remains in the supported runtime or validation contract, and routed Pulsar checks require the real Gateway-backed upstream | cluster/route simulation removal stands (routed Pulsar checks require the real Gateway-backed upstream; the repo-local topic spool under `./.data/runtime/pulsar/` is a harness-only unit/endpoint-absent path). The **inference-success-fallback** half regressed and is **reopened**: the realness audit found per-row fabrication (Apple validation wrappers; Linux Demucs/Open-Unmix/basic-pitch/Audiveris stubs + whisper/CT2 masks) the prior closure missed. The reopened Phases 1/4/6 restore the no-fabrication invariant by construction — the realness lint forbids any fabricated result; missing-weights/load/engine failures raise → `failed` — re-attested under Waves K/L |
+| Validation scope | integration uses one `.dhall`-driven suite over the README matrix, E2E stays substrate-agnostic at the browser layer, and `test all` runs every supported validation layer for one built substrate at a time | the suite structure (one DRY `.dhall`-driven integration suite + substrate-agnostic E2E) is implemented and stands. The per-row inference **real-output** assertions are **reopened** (they accepted fabricated results) and made fail-closed by the Phase 0 realness lint (Sprint 0.12) plus the Phase 4 real fixtures + fail-closed per-row tests (Sprint 4.23), with the Phase 6 HA/service-loop assertions (Sprint 6.33) on top; architecture closures in [Wave A/A.2](cohort-validation-waves.md) / [Wave C](cohort-validation-waves.md) stand, real-output re-attested under Waves K/L |
 | Hardware cohort cadence | code-side closure (implementation plus the machine-independent gate set) is completed in natural phase order on whichever single machine is present and gates the next phase's implementation; `Done` requires exactly one chosen accelerator plus `linux-cpu`, never both accelerators in one phase gate | implemented in the plan doctrine; operationalized in [cohort-validation-waves.md](cohort-validation-waves.md), where validation-only residuals are queued as named per-accelerator attestations instead of ad hoc machine-switch requests |
 | Native container architecture | Apple Silicon -> `linux/arm64`; `linux-cpu` -> native Linux host architecture (`linux/amd64` or `linux/arm64`); `linux-gpu` -> `linux/amd64`; no development or validation lane uses cross-architecture emulation | implemented and validated: `linux-cpu` publication reads the normalized native host architecture from `InfernixHost.dhall`; Wave F closed the native arm64 `linux-cpu` full-suite gate on the recorded validation through the selected native arm64 Docker daemon |
 

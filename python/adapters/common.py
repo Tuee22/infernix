@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
 import importlib
 import json
@@ -273,6 +274,11 @@ def run_artifact_adapter(transform: Callable[[AdapterContext], ArtifactResult]) 
         _configure_model_cache_from_request(request)
         context = load_adapter_context(request)
         artifact = transform(context)
+        if not artifact.data:
+            raise RuntimeError(
+                "artifact adapter returned empty bytes; refusing to publish a "
+                "non-real (empty) inference artifact"
+            )
         object_ref = _upload_demo_object(context, artifact)
     except Exception as exc:  # pragma: no cover - surfaced through worker tests
         error_response = inference_pb2.WorkerResponse(
@@ -451,6 +457,69 @@ def run_setup_bootstrap(adapter_id: str, install_root: Path | None = None) -> in
     return 0
 
 
+_REALNESS_ADAPTER_GLOB = "*_python.py"
+_FORBIDDEN_HELPER_FRAGMENTS = (
+    "validation",
+    "smoke",
+    "fallback",
+    "placeholder",
+    "stub",
+)
+
+
+def _run_realness_ast_check(adapters_dir: Path) -> None:
+    """Realness-by-construction static guard (reopened Phase 6).
+
+    Rejects the fabrication patterns that would let a per-family adapter
+    return a non-real result: a ``return`` inside an ``except`` (masking a
+    failure as a fabricated success), a fabrication-named helper definition,
+    or artifact bytes built from a literal ``bytes([...])`` or a decoded
+    constant. Scoped to the ``*_python.py`` transform modules; the ``common``
+    harness legitimately returns an error response from ``except``.
+    """
+    violations: list[str] = []
+    for path in sorted(adapters_dir.glob(_REALNESS_ADAPTER_GLOB)):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ExceptHandler):
+                for inner in ast.walk(node):
+                    if isinstance(inner, ast.Return) and inner.value is not None:
+                        violations.append(
+                            f"{path.name}:{inner.lineno}: return inside except "
+                            "masks a failure; re-raise so the worker reports "
+                            "status=failed"
+                        )
+            if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                lowered = node.name.lower()
+                if any(fragment in lowered for fragment in _FORBIDDEN_HELPER_FRAGMENTS):
+                    violations.append(
+                        f"{path.name}:{node.lineno}: helper '{node.name}' names "
+                        "a fabrication path; adapters return only real output"
+                    )
+            if isinstance(node, ast.Call):
+                name: str | None = None
+                if isinstance(node.func, ast.Name):
+                    name = node.func.id
+                elif isinstance(node.func, ast.Attribute):
+                    name = node.func.attr
+                if name == "bytes" and node.args and isinstance(node.args[0], ast.List):
+                    violations.append(
+                        f"{path.name}:{node.lineno}: bytes([...]) literal "
+                        "fabricates artifact bytes"
+                    )
+                if (
+                    name in {"b64decode", "b64encode"}
+                    and node.args
+                    and isinstance(node.args[0], ast.Constant)
+                ):
+                    violations.append(
+                        f"{path.name}:{node.lineno}: decoding a literal constant "
+                        "fabricates artifact bytes"
+                    )
+    if violations:
+        raise RuntimeError("realness check failed:\n" + "\n".join(violations))
+
+
 def run_check_code() -> int:
     project_root = Path(__file__).resolve().parent.parent
     env = {"MYPYPATH": str(generated_proto_root)}
@@ -461,6 +530,7 @@ def run_check_code() -> int:
     ]
     for command in commands:
         subprocess.run(command, cwd=project_root, check=True, env=env)
+    _run_realness_ast_check(project_root / "adapters")
     return 0
 
 

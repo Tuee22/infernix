@@ -153,6 +153,7 @@ checkSourceReadability repoRoot sourceFile = do
         <> ambientToolLookupViolations sourceFile numberedLines
         <> engineRuntimeBoundaryViolations sourceFile numberedLines
         <> sharedPhase7BoundaryViolations sourceFile numberedLines
+        <> realnessFabricationViolations sourceFile numberedLines
     )
 
 -- | Phase 6 Sprint 6.28 (initial landing — May 25, 2026): reject new
@@ -181,6 +182,46 @@ forbiddenEnvFunctions =
     "getEnvironment",
     "setEnv",
     "unsetEnv"
+  ]
+
+-- | Realness lint mechanism (Phase 0 Sprint 0.12 governance) — realness by
+-- construction. The generated native-engine runner must emit only real engine
+-- output (or exit non-zero); it may never fabricate a result. This lint module
+-- lists the fabrication tokens as literals and is itself out of scope, so it
+-- does not trip its own check. The per-runner scope ('realnessScopedFiles') is
+-- extended by each accelerator phase as it de-stubs, and now covers both
+-- generated-runner modules: Phase 4 Sprint 4.21 added Engines/LinuxNative.hs;
+-- Phase 1 Sprint 1.15 adds Engines/AppleSilicon.hs.
+-- Canonical doctrine: documents/architecture/realness_contract.md.
+realnessFabricationViolations :: FilePath -> [(Int, String)] -> [String]
+realnessFabricationViolations sourceFile numberedLines
+  | sourceFile `notElem` realnessScopedFiles = []
+  | otherwise =
+      [ sourceFile <> ":" <> show lineNumber <> ": forbidden fabrication token `" <> needle <> "`; native runners must emit real engine output or exit non-zero (see documents/architecture/realness_contract.md)"
+      | (lineNumber, lineValue) <- numberedLines,
+        not (isCommentLine lineValue),
+        needle <- forbiddenNativeFabricationTokens,
+        needle `isInfixOf` lineValue
+      ]
+
+realnessScopedFiles :: [FilePath]
+realnessScopedFiles =
+  [ "src/Infernix/Engines/LinuxNative.hs",
+    "src/Infernix/Engines/AppleSilicon.hs"
+  ]
+
+forbiddenNativeFabricationTokens :: [String]
+forbiddenNativeFabricationTokens =
+  -- NB: `np.zeros` is intentionally NOT forbidden — it is a fundamental NumPy
+  -- primitive that real engines use legitimately for scratch buffers (e.g. the
+  -- basic-pitch note-creation peak matrix). The fabrication signal is the
+  -- constant artifact (`b64decode` of a literal) and the masking helpers; the
+  -- fake-input-to-model pattern is prohibited by the realness doctrine + review.
+  [ "emit_fallback_result",
+    "infernix_emit_validation_result",
+    "native-validation",
+    "b64decode",
+    "native fallback"
   ]
 
 envFunctionExemptedFiles :: [FilePath]

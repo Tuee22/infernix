@@ -31,11 +31,13 @@ source compilation and kernel dispatch. The `coreml-native` root materializes `b
 and Objective-C smoke source that links Foundation/CoreML and instantiates a Core ML runtime type.
 The allowlisted native adapter roots (`llama-cpp-cli`, `whisper-cpp-cli`, `ctranslate2-native`,
 `mlx-native`, `onnx-runtime-native`, and `jvm-native`) materialize smoke-capable deterministic
-validation wrappers at their manifest entrypoints. Those wrappers are explicit Wave I placeholders:
-they prove the root, executable, and result-shape wiring, but they are not real engine payloads. The
-current Apple host evidence executes the installed Metal/Core ML smoke commands, materializes the
-native validation wrappers, and directly checks representative normal outputs; the remaining Apple
-residual is the full integration/e2e/all cohort gate in
+validation wrappers at their manifest entrypoints. Those wrappers are explicit placeholders: they
+prove the root, executable, and result-shape wiring, but they are not real engine payloads. They are
+being replaced with real Apple native engines by the reopened Phase 1 (Sprint 1.15); once real, the
+realness lint forbids any fabricated result and the wrappers are removed (tracked in
+[../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md](../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md)).
+The current Apple host evidence executes the installed Metal/Core ML smoke commands and materializes
+these wrapper roots; real per-family Apple output is the reopened Phase 1 cohort gate (Wave L) in
 [../../DEVELOPMENT_PLAN/cohort-validation-waves.md](../../DEVELOPMENT_PLAN/cohort-validation-waves.md).
 
 Apple-native runners that already use prebuilt host wheels or binaries remain the preferred path:
@@ -108,7 +110,8 @@ reusing the stamped image on later edge-port validation cycles. Follow-up probin
 long host-native Apple `infernix-linux-cpu:local` build showed active Cabal dependency
 compilation, image export, Harbor push, and Helm/Pulsar readiness waits rather than a Docker daemon
 deadlock. Current source adds source-fingerprint image reuse plus Dockerfile dependency caching for
-that path. The full Apple e2e/all pass with real native payloads remains a Wave I cohort gate.
+that path. The full Apple e2e/all pass with real native payloads is owned by the reopened Phase 1
+(Wave L); the realness lint forbids any fabricated result once the real engines land.
 
 ## Storage Boundary
 

@@ -25,6 +25,8 @@ transformers = ">=4.46"
 demucs = ">=4.0"
 scipy = ">=1.13"
 soundfile = ">=0.12"
+librosa = ">=0.10"
+piano-transcription-inference = ">=0.0.6"
 numpy = ">=1.26"
 
 [tool.poetry.group.linux-cpu]
@@ -37,6 +39,8 @@ transformers = ">=4.46"
 demucs = ">=4.0"
 scipy = ">=1.13"
 soundfile = ">=0.12"
+librosa = ">=0.10"
+piano-transcription-inference = ">=0.0.6"
 numpy = ">=1.26"
 
 [tool.poetry.group.apple-silicon]

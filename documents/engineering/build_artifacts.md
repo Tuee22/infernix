@@ -90,8 +90,9 @@ for each allowlisted Apple adapter into its final engine root. The `apple-metal-
 root also carries the fixed bridge source and smoke command, and the `coreml-native` root carries
 the runner script plus CoreML/Foundation smoke source. The native adapter roots currently carry
 smoke-capable deterministic validation wrappers at their manifest entrypoints; these wrappers prove
-root/executable/result-shape wiring and remain explicit Wave I placeholders for real engine
-payloads. The current Apple host evidence executes the installed Metal/Core ML smoke commands and
+root/executable/result-shape wiring and are explicit placeholders being replaced with real Apple
+native engine payloads by the reopened Phase 1 (Wave L), after which the realness lint forbids any
+fabricated result. The current Apple host evidence executes the installed Metal/Core ML smoke commands and
 directly checks representative native validation-runner output. Apple integration evidence now
 completes the active Apple catalog through the host engine daemon with native validation-wrapper
 payloads in place, validates pinned Apple host-engine `Exclusive` duplicate rejection, proves
@@ -110,8 +111,9 @@ Every materialized engine root should carry a typed manifest recording `adapterI
 key, local install root, entrypoint, and smoke command. Current Apple materialization validates the
 manifest contract and smoke-loads materialized Apple payloads before atomic rename on Darwin.
 Linux native roots now exercise runtime-backed payload smoke over the image-baked native layer,
-current Apple native roots still exercise validation-wrapper command validation, and Wave I records
-the routed full-suite evidence that consumes those payloads through the service path.
+current Apple native roots still exercise validation-wrapper command validation pending the reopened
+Phase 1 real engines (Wave L), and the reopened Phases 4/6 own the routed full-suite real-output
+delivery (Wave K) that consumes the Linux payloads through the service path.
 
 ## Linux Native Engine Artifacts
 
@@ -135,7 +137,8 @@ environment, and Audiveris executable to be present and loadable. Normal invocat
 worker arguments, support `--output-dir` for artifact-producing families, fail with exit 75 until
 the requested model-cache entry has a `.ready` sentinel, and can emit the local
 `infernix-native-artifact-file:<path>` marker consumed by the Haskell worker's credentialed MinIO
-upload bridge. Wave I still owns full routed real-output sign-off.
+upload bridge. The reopened Phases 4/6 own full routed real-output delivery (Wave K), with realness
+enforced in the engine code by the realness lint.
 
 ## Generated Demo Config Publication
 

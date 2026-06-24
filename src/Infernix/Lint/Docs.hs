@@ -99,7 +99,9 @@ forbiddenPhrases =
     "docker/linux-cpu.Dockerfile",
     "docker/linux-gpu.Dockerfile",
     "npx playwright",
-    "Harbor admin Basic-auth"
+    "Harbor admin Basic-auth",
+    "real-output proof remains",
+    "Wave I still owns replacing"
   ]
 
 phaseDocs :: [FilePath]

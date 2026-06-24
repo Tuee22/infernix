@@ -1,6 +1,6 @@
 # Phase 4: Inference Service and Durable Runtime
 
-**Status**: Done
+**Status**: Active
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/engineering/cluster_config_manifest.md](../documents/engineering/cluster_config_manifest.md)
 
 > **Purpose**: Define the Haskell service runtime, the shared Python engine-adapter contract, the
@@ -10,6 +10,26 @@
 > make the runtime model honest and durable.
 
 ## Phase Status
+
+> **Realness reopen (real per-family inference).** A multi-agent audit established that the prior
+> "real per-family output" closure was, for several catalog rows, satisfied by silent fabrication
+> rather than real model execution: the Apple native engine layer (`AppleSilicon.hs`
+> `infernix_emit_validation_result`) is entirely a validation wrapper, and on Linux the
+> source-separation (Demucs/Open-Unmix), audio-to-MIDI (basic-pitch ONNX run on `np.zeros`), and OMR
+> (Audiveris, never invoked) rows return constant/placeholder artifacts while whisper.cpp/CTranslate2
+> mask runtime failures. Phase 4 therefore **reopens** (`Active`, Sprints 4.21–4.22) to deliver
+> realness by construction — the engine code is made structurally incapable of returning a fabricated
+> result (every missing-weights/load/engine failure raises → `status=failed`), with real Linux engines,
+> fixed weight provisioning, ONNX adoption where it is the mature free choice, and modern PyTorch
+> rebinds for the music-transcription rows. The guarantee is mechanically enforced by a new realness
+> lint owned with [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md).
+> The architectural contracts (typed dispatch, catalog, pool routing, cache, object storage) from
+> Sprints 4.1–4.20 stand and are **not** undone; only the faked engine internals are replaced. The
+> Linux real-output cohort gate is [Wave K](cohort-validation-waves.md) (`linux-gpu` + `linux-cpu`);
+> the Apple real-engine gate is [Wave L](cohort-validation-waves.md), owned by the reopened
+> [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md),
+> and its incompleteness does not block the Linux gate. The removed fabrication surfaces are tracked in
+> [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
 
 > **Common-shape reopen (Pulsar ML-Workflow convergence).** Phase 4's two
 > common-shape deltas toward the shared contract (see [README.md](README.md) →
@@ -1268,15 +1288,187 @@ drift against the in-binary renderer.
 
 ---
 
+## Sprint 4.21: Realness by Construction and Real Linux Engines [Active]
+
+**Status**: Active
+**Code-side closure**: In progress. **Done + validated 2026-06-23** (rebuilt `linux-cpu` image:
+`poetry run check-code` AST realness guard, `infernix-haskell-style` realness check, `infernix test unit`,
+`infernix lint docs`): the fabrication removal, the two realness lints, and the `common.py`
+empty-artifact guard. Removed so the sole `status=completed` outcome is real model output and every
+missing-weights / load / engine failure raises — Python adapters (`pytorch_python`
+`_validation_source_separation_archive` / `_validation_audio_generation` /
+`_has_bootstrap_placeholder_payload` / `_uses_portable_bark_validation_artifact`; `diffusers_python`
+`_validation_image` / `_uses_apple_validation_artifact`; the `transformers_python` `device=="cpu"` smoke
+branch) and the Linux native runner (`LinuxNative.hs` ONNX basic-pitch `np.zeros`→constant-MIDI, the
+Audiveris constant-MusicXML branch, the whisper.cpp/CTranslate2 failure-masks, the empty-result canned
+strings, and `emit_fallback_result` / `emit_artifact_ref` + the `payload_missing` `exit 0` mask). Per the
+declarative-target principle the matrix keeps each row **declared-runnable on its intended engine** (no
+reclassification-to-residual); not-yet-real artifact engines honest-fail (`exit 70`) and turn green
+per-row as each real engine lands. **Landed code-side 2026-06-23** (build + `infernix lint docs` / `test unit` / `test lint`): the real
+Audiveris `-batch -export` OMR invocation (replacing the honest-fail), and the **weight-staging realness
+guard** — `downloadUpstreamModel` (`Pulsar.hs`, the live path) and `_download_single_payload`
+(`model_bootstrap.py`) now reject an HTML / non-binary response (`bodyLooksLikeHtml` / `_looks_like_html`)
+so a github repo-landing-page URL fails closed (`status=failed`) instead of staging the HTML page as the
+weight; this makes the broken-URL Demucs/Open-Unmix rows honest (red) rather than silently corrupt.
+SDXL-Turbo already runs real on `linux-gpu` via Diffusers.
+
+**basic-pitch → MIDI landed code-side 2026-06-23** (build + `infernix lint docs` / `test unit` /
+`test lint` green): a real, no-TensorFlow `soundfile`+`scipy`+`mido`+`onnxruntime` pipeline in the
+LinuxNative `onnx-runtime-native` runner — it decodes/resamples the actual input audio, windows it, runs
+the baked `nmp.onnx` over the real audio (not zeros), reproduces the upstream posteriorgram→MIDI
+note-creation, and writes a real `.mid` (every failure exits non-zero). Its real-MIDI output is the
+cohort-gate residual.
+
+**Remaining real engines** (a multi-agent research pass de-risked these — see Sprint 4.22 for the music
+rows): **Demucs → ONNX** is a decision (a single-vendor htdemucs-onnx export exists but is unproven, vs.
+keeping PyTorch + real multi-file weights); **Open-Unmix → ONNX is INFEASIBLE** (no public single-file
+ONNX export — its LSTM+Wiener graph does not lower to one ONNX session), so it stays declared-runnable and
+fails closed via the weight guard until a real engine (PyTorch) lands or the row is dropped. Each real
+engine proves real only on the `linux-gpu` (or `linux-cpu` for CPU paths) cohort gate with the Sprint
+4.23 real fixtures. Machine-independent gates (`cabal build all`, `cabal test infernix-unit`/
+`infernix-haskell-style`, `infernix lint files/docs/proto/chart`, `infernix docs check`,
+`poetry run check-code`) gate the next step.
+**Cohort gate**: [Wave K](cohort-validation-waves.md) — `linux-gpu` + `linux-cpu` real per-family
+output for the Linux catalog, with the realness lint passing.
+**Implementation**: `python/adapters/{pytorch_python,diffusers_python,transformers_python,common}.py`, `src/Infernix/Engines/LinuxNative.hs`, `src/Infernix/Models.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Worker.hs`, `python/adapters/model_bootstrap.py`, `docker/Dockerfile`
+**Docs to update**: `README.md`, `documents/architecture/model_catalog.md`, `documents/development/testing_strategy.md`, `documents/development/python_policy.md`, `documents/engineering/model_lifecycle.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`, `DEVELOPMENT_PLAN/cohort-validation-waves.md`
+
+### Objective
+
+Make the inference engine code structurally incapable of returning a fabricated result, and deliver
+real Linux inference for every Linux-catalog row.
+
+### Deliverables
+
+- remove every adapter/runner fabrication branch; the sole success is a real `transform()` return or a
+  real native-runner artifact, with all other cases raising / exiting non-zero
+- real ONNX basic-pitch over the user input; real Audiveris invocation; de-masked whisper.cpp/CT2/llama
+- ONNX source separation (Demucs/Open-Unmix) and SDXL-Turbo on `linux-gpu`, fixing the broken
+  github-`payload` weight staging
+- `common.py` empty-artifact guard; single-file weight naming for GGUF/whisper-ggml/basic-pitch-onnx
+- keep each row declared-runnable on its intended engine (declarative-target; no reclassification); not-yet-real rows fail closed until their real engine lands
+
+### Validation
+
+- `./bootstrap/linux-gpu.sh test` plus rebuilt `./bootstrap/linux-cpu.sh test` pass only on real
+  inference for every Linux-catalog row; withholding weights/engine yields a visible `status=failed`
+- the realness lint (Phase 6) blocks any reintroduced fabrication
+
+### Remaining Work
+
+All implementation plus the [Wave K](cohort-validation-waves.md) `linux-gpu` + `linux-cpu` real-output
+gate.
+
+---
+
+## Sprint 4.22: Modern Music-Transcription Models and JAX/TF Retirement [Active]
+
+**Status**: Active
+**Code-side closure**: Pending — rebind the music-transcription rows to maintained PyTorch/ONNX models
+on existing adapters: MT3 → the YourMT3+/MT3-PyTorch family (`openmirlab/mt3-infer`), Omnizart → a
+modern PyTorch transcription model (YourMT3+ or `piano_transcription_inference`), basic-pitch → its
+official ONNX runtime; drop the finicky JAX/ancient-TF pins. The now-dead `jax_python` /
+`tensorflow_python` adapters + their `python/engines/{jax,tensorflow}` venv projects + `pyproject.toml`
+scripts + the `Models.hs` `engineBindingForSelectedEngine` cases are **retired (deleted) 2026-06-23**
+(the resolved "support all mainstream formats" decision dropped TF/JAX coverage rather than binding new
+real rows); update `Models.hs` bindings/URLs and `model_catalog.md`. The MT3/Omnizart row identities are already rebound to declared-runnable PyTorch in
+the matrix lockstep (validated 2026-06-23) per declarative-target — not residual. The **Omnizart row's
+real engine landed code-side 2026-06-23** (build + `infernix lint docs` / `test unit` / `test lint`
+green): a `_transcribe_piano` branch on the `pytorch-python` adapter runs the maintained ByteDance
+`piano_transcription_inference` CRNN over the real input audio, with its checkpoint resolved from the
+model_cache (the real Zenodo `.pth` staged via the bootstrap path, not the package's HOME auto-download —
+no-env-vars + model_cache doctrine), and `librosa` + `piano-transcription-inference` added to the pytorch
+engine venv. The **MT3 row honest-fails** (`raise`): YourMT3+ is deferred — the research found it too
+heavy (MoE), with no pip package and contradictory checkpoint sourcing; the `mt3-infer` `mt3_pytorch`
+path is the documented future option. Real MIDI output for the Omnizart row is the `linux-gpu`/`cpu`
+cohort-gate residual.
+**Cohort gate**: [Wave K](cohort-validation-waves.md) — `linux-gpu` + `linux-cpu`.
+**Implementation**: `src/Infernix/Models.hs`, `python/adapters/pytorch_python.py`, `python/adapters/model_bootstrap.py`, `docker/Dockerfile`
+**Docs to update**: `README.md`, `documents/architecture/model_catalog.md`, `documents/development/testing_strategy.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
+
+### Objective
+
+Make the music-transcription rows real on all substrates using modern maintained models on adapters
+already supported, eliminating the JAX/ancient-TF stacks.
+
+### Deliverables
+
+- MT3 → YourMT3+/MT3-PyTorch (`openmirlab/mt3-infer`); Omnizart → modern PyTorch transcription;
+  basic-pitch → ONNX; all on `pytorch-python` / `onnx-runtime-native`
+- retire or repoint `jax_python` / `tensorflow_python`; update bindings/URLs; promote rows out of residuals
+- keep the README matrix ↔ generated catalog ↔ `model_catalog.md` in parity for `infernix lint docs`
+
+### Validation
+
+- `./bootstrap/linux-gpu.sh test` plus rebuilt `./bootstrap/linux-cpu.sh test` pass with the rebound
+  rows producing real output; `infernix lint docs` matrix↔catalog parity holds
+
+### Remaining Work
+
+All implementation plus the [Wave K](cohort-validation-waves.md) gate.
+
+---
+
+## Sprint 4.23: Real Input Fixtures and Fail-Closed Per-Row Tests [Active]
+
+**Status**: Active
+**Code-side closure**: Done + validated 2026-06-24 (code-side: the rebuilt `linux-cpu` image compiles
+`test:infernix-integration`, and `infernix lint docs` / `test unit` / `test lint` are green). Gave Phase 4
+its own real-output validation inputs so it validates self-contained on `linux-gpu` without waiting on a
+later phase. Replaced the degenerate silence-WAV /
+1×1-PNG inputs with real per-family fixtures shared across substrates (a real speech utterance, a real
+music mixture, a real instrument phrase, a real single-staff score image), and fix the OMR input-type bug
+feeding `musicXmlBuffer()` instead of a score image (`sampleInputForModel` in `test/integration/Spec.hs`,
+`browserInputArtifactForModel` in `web/playwright/inference.spec.js`,
+`web/test/fixtures/artifactSamples.js`). Keep the one substrate-agnostic per-row int+e2e dispatch but make
+it **fail-closed on `status=failed`** (trust the result; assert only the per-family `ResultFamily`
+contract plus a light object-ref existence/non-empty fetch). The Phase 0 realness lint already guarantees
+the result is real or a visible failure; this sprint owns the real *inputs* that exercise the real Linux
+engines. The `Engines/LinuxNative.hs` entry was added to the Phase 0 `realnessScopedFile` here (landed
+2026-06-23 with the Sprint 4.21 de-stub). The fixtures are generated programmatically (a real RIFF/PCM
+WAV encoder for the speech / separation / instrument-phrase inputs and a real grayscale-PNG encoder with
+hand-computed Adler-32/CRC-32 for the score image — no new cabal dep), and the per-row int+e2e plus the
+playwright per-model smoke now fail closed on `status=failed` with a real presigned object-ref byte fetch
+(magic-bytes probed). Caveat: the speech fixture is a synthesized formant-sweep, not an intelligible
+utterance — a genuinely-spoken mono 16 kHz sample should be sourced for the speech row's cohort-gate
+real-output proof. Machine-independent gates gate the next step.
+**Cohort gate**: [Wave K](cohort-validation-waves.md) — `linux-gpu` + `linux-cpu`; the same
+substrate-agnostic fixtures re-run on `apple-silicon` under [Wave L](cohort-validation-waves.md) once the
+reopened Phase 1 Apple engines land.
+**Implementation**: `test/integration/Spec.hs`, `web/playwright/inference.spec.js`, `web/test/fixtures/artifactSamples.js`
+**Docs to update**: `documents/development/testing_strategy.md`, `documents/development/demo_app_test_plan.md`
+
+### Objective
+
+Make Phase 4's real-engine validation self-contained: real per-family inputs + fail-closed per-row int/e2e
+that exercise the real Linux engines, so no Phase-4 validation is blocked by a later phase.
+
+### Deliverables
+
+- real per-family input fixtures shared across substrates; OMR input-type fix
+- fail-closed per-row int+e2e (trust the result, fail on `status=failed`, assert the per-family contract)
+
+### Validation
+
+- `./bootstrap/linux-gpu.sh test` plus rebuilt `./bootstrap/linux-cpu.sh test` per-row suites fail when a
+  Linux engine is withheld or returns a non-real result
+
+### Remaining Work
+
+All implementation plus the [Wave K](cohort-validation-waves.md) gate.
+
+---
+
 ## Remaining Work
 
-None. Phase 4 returned to `Done` on 2026-06-20 after the selected `linux-gpu` accelerator plus
-`linux-cpu` full-suite gates passed against current source. The closure evidence is recorded in
-[cohort-validation-waves.md](cohort-validation-waves.md): the GPU lane reached real routed
-framework and native rows after the vLLM memory-release/browser-session fixes, and the CPU lane
-passed the rebuilt-image `./bootstrap/linux-cpu.sh test` gate end to end. The supported substrate
-schema now emits reflected `enginePools` / `engineMembers` only, with runtime daemon metadata
-derived internally during decode.
+Phase 4 is reopened (`Active`) for realness-by-construction (Sprints 4.21–4.23). The Sprint 4.1–4.20
+architectural closure stands; the reopened sprints replace the faked engine internals with real model
+execution and are gated by [Wave K](cohort-validation-waves.md) (`linux-gpu` + `linux-cpu`). Real Apple
+native engines are owned by the reopened
+[phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md)
+under [Wave L](cohort-validation-waves.md); that Apple residual does not block Phase 4's `linux-gpu`
+closure. The fabrication surfaces being removed are tracked in
+[legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
 
 ---
 

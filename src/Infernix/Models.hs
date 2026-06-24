@@ -92,20 +92,12 @@ residualMatrixRowIdsForMode :: RuntimeMode -> [Text]
 residualMatrixRowIdsForMode runtimeMode =
   case runtimeMode of
     AppleSilicon ->
-      [ "music-mt3-jax",
-        "music-omnizart-tensorflow",
-        "video-wan21-diffusers"
+      [ "video-wan21-diffusers"
       ]
     LinuxCpu ->
-      [ "audio-basic-pitch-tensorflow",
-        "music-mt3-jax",
-        "music-omnizart-tensorflow"
-      ]
+      []
     LinuxGpu ->
-      [ "audio-basic-pitch-tensorflow",
-        "music-mt3-jax",
-        "music-omnizart-tensorflow"
-      ]
+      []
 
 -- | Phase 4 Sprint 4.15 — resolve a catalog row to its per-family result
 -- contract from @family@ + @artifactType@ + @matrixRowId@. Text families
@@ -344,8 +336,6 @@ engineBindingForSelectedEngine _runtimeMode selectedEngineValue =
         | "transformers" `Text.isInfixOf` normalizedEngine = "transformers-python"
         | "diffusers" `Text.isInfixOf` normalizedEngine = "diffusers-python"
         | "torch" `Text.isInfixOf` normalizedEngine = "pytorch-python"
-        | "tensorflow" `Text.isInfixOf` normalizedEngine = "tensorflow-python"
-        | "jax" `Text.isInfixOf` normalizedEngine = "jax-python"
         | "whisper.cpp" `Text.isInfixOf` normalizedEngine = "whisper-cpp-cli"
         | "llama.cpp" `Text.isInfixOf` normalizedEngine = "llama-cpp-cli"
         | "onnx runtime" `Text.isInfixOf` normalizedEngine = "onnx-runtime-native"
@@ -357,7 +347,7 @@ engineBindingForSelectedEngine _runtimeMode selectedEngineValue =
       pythonNative =
         any
           (`Text.isInfixOf` normalizedEngine)
-          ["vllm", "transformers", "diffusers", "torch", "tensorflow", "jax"]
+          ["vllm", "transformers", "diffusers", "torch"]
       adapterType
         | pythonNative = "python-stdio"
         | otherwise = "native-process-runner"
@@ -779,20 +769,6 @@ matrixRows =
       (Just (ModeBinding "PyTorch CPU" False))
       (Just (ModeBinding "PyTorch CUDA" True)),
     mkRow
-      "audio-basic-pitch-tensorflow"
-      "audio-basic-pitch-tensorflow"
-      "Basic Pitch TensorFlow"
-      "audio"
-      "Audio-to-MIDI or pitch transcription via TensorFlow."
-      "TensorFlow model family"
-      "basic-pitch"
-      "https://github.com/spotify/basic-pitch"
-      "Published package pins TensorFlow <2.15.1; use the ONNX or Core ML lane until a maintained TensorFlow package is adopted."
-      "Audio Input"
-      Nothing
-      Nothing
-      Nothing,
-    mkRow
       "audio-basic-pitch-coreml"
       "audio-basic-pitch-coreml"
       "Basic Pitch Core ML"
@@ -823,31 +799,31 @@ matrixRows =
     mkRow
       "music-mt3-jax"
       "music-mt3-jax"
-      "MT3"
+      "YourMT3+"
       "music"
-      "Multi-instrument music transcription on the canonical JAX stack."
-      "JAX checkpoint / codebase"
-      "MT3"
-      "https://github.com/magenta/mt3"
-      "JAX is canonical upstream, but this stack remains a compatibility residual until reproven."
+      "Multi-instrument music transcription via the modern PyTorch YourMT3+ family."
+      "PyTorch"
+      "YourMT3+"
+      "https://github.com/mimbres/YourMT3"
+      "Modern PyTorch reimplementation (YourMT3+ / mt3-infer) replacing the unmaintained JAX MT3 stack; runs on the shared pytorch adapter. Declared-runnable target; its test is red until the adapter binding lands."
       "Audio Input"
-      Nothing
-      Nothing
-      Nothing,
+      (Just (ModeBinding "PyTorch MPS" False))
+      (Just (ModeBinding "PyTorch CPU" False))
+      (Just (ModeBinding "PyTorch CUDA" True)),
     mkRow
       "music-omnizart-tensorflow"
       "music-omnizart"
-      "Omnizart"
+      "ByteDance Piano Transcription"
       "music"
-      "Music transcription and MIR family workload."
-      "TensorFlow model family"
-      "Omnizart"
-      "https://github.com/Music-and-Culture-Technology-Lab/omnizart"
-      "Compatibility is unproven on the supported Python and Apple lanes."
+      "Music transcription via a modern maintained PyTorch model."
+      "PyTorch"
+      "piano_transcription_inference"
+      "https://zenodo.org/record/4034264/files/CRNN_note_F1%3D0.9677_pedal_F1%3D0.9186.pth?download=1"
+      "Modern PyTorch transcription model replacing the ancient-TensorFlow Omnizart stack; runs on the shared pytorch adapter. Declared-runnable target; its test is red until the adapter binding lands."
       "Audio Input"
-      Nothing
-      Nothing
-      Nothing,
+      (Just (ModeBinding "PyTorch MPS" False))
+      (Just (ModeBinding "PyTorch CPU" False))
+      (Just (ModeBinding "PyTorch CUDA" True)),
     mkRow
       "image-sdxl-turbo"
       "image-sdxl-turbo"
